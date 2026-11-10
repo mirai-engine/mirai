@@ -72,7 +72,7 @@ ACL's search, per segment:
 
 - `clip_evaluate` gives the same contract for keys and streams; a single sampled track reads its
   clip's stream up to it.
-- A pose reads a whole clip in one pass: `clip_reader` and `clip_reader_next` (which `pose_blend`
+- A pose reads a whole clip in one pass: `clip_reader` and `clip_reader_next` (which `bones_blend`
   uses) or `clip_sample`. The reader gives each track with its place in the clip, not in the
   clip's order: first those that hold still or keep keys, then each block of animated tracks in
   chunks, rotations mixed four at a time. It neither allocates nor reads outside the stream,

@@ -48,20 +48,15 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     testing.expect(t,lib.clip_find(&combined.lib,base.name_hash("Walk"))==1 && lib.clip_find(&combined.lib,alias)==2 && combined.clip_count==2)
     testing.expect(t,combined.lib.stream_bytes>0 && combined.markers[0]==combined.markers[1] && combined.lib.markers[1].id==1)
     testing.expect(t,combined.generation&SOURCE_GENERATION!=0 && source_clip_label(combined,2)==sources[1].names[0])
-    nodes:=[3]Graph_Node{GRAPH_NODE_DEFAULT,GRAPH_NODE_DEFAULT,GRAPH_NODE_DEFAULT}
-    for &node,i in nodes {base.text_set(node.name[:],"source" if i==0 else "other" if i==1 else "blend");node.loop=false;node.sync_mode=.Independent}
-    base.text_set(nodes[0].clip[:],"Walk");base.text_set(nodes[1].clip[:],"Walk");nodes[1].animation=sources[1].id
-    nodes[2].kind,nodes[2].left,nodes[2].right,nodes[2].weight=.Blend,0,1,.5
-    profile:=Graph_Profile{info={animation=sources[0].id,output=2},nodes=nodes[:]}
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
-    testing.expect(t,graph_check(profile) && program_node(output,profile,2,nil,nil,nil,{}))
+    // The Walk of each source, half and half.
+    built:=program_test_output(program_test_leaf("Walk",0,.5),Program_Leaf{clip=alias,key=256,weight=.5,speed=1});output:=&built
     fixture:host.Content_Animation;state:=layer_fixture(t,&fixture);defer {lib.library_destroy(&fixture.lib);playing_free(&state)}
     state.asset,state.generation,state.source_plan=combined.id,combined.generation,1
     testing.expect(t,source_clip_source(&cache,&state,4)==sources[1].id && source_clip_source(&cache,&state,1)==sources[0].id)
     playback:Playback;events:Animation_Events;defer {playback_free(&playback);delete(events.items)}
     testing.expect(t,tracks_bind(&playback,&state,combined))
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
-    testing.expect(t,program_players(&state,output,combined,animation,&events,&playback,.5,-1,nil) && program_pose(&playback,&state,combined,animation,output,{}))
+    testing.expect(t,program_buffers(&state,combined) && program_players(&state,output,combined,animation,&events,&playback,.5,-1,nil) && program_pose(&playback,&state,combined,animation,output))
     source_markers_resolve(&cache,&state,events.items[:])
     testing.expect(t,abs(state.local[1].position.x-1.5)<.001 && abs(state.motion.translation.x-1.5)<.001)
     found:bool
@@ -75,25 +70,27 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     action_profile:=Action_Profile{info={animation=sources[0].id},actions=make([]Action_Definition,1)}
     action_profile.actions[0]=ACTION_DEFINITION_DEFAULT;definition:=&action_profile.actions[0]
     base.text_set(definition.name[:],"external");base.text_set(definition.clip[:],"Walk");definition.animation=sources[1].id;definition.fade_in=0
-    append(&actions.plans,Action_Plan{profile=action_profile});action_test_add_state(&actions,{entity=state.entity,plan=0,layers={0={active=true,starting=true,section=-1}}})
+    append(&actions.plans,Action_Plan{profile=action_profile});action_test_add_state(&actions,{entity=state.entity,plan=0,slots={0={active=true,starting=true,section=-1}}})
     animation.root_motion=.None
-    actions_sample(&actions,&state,&animation,.1,&problems,combined,&playback,&events)
-    testing.expect(t,state.layers[0].clip==alias && actions.states[0].layers[0].active && problems.count==0)
+    stack_asks(&actions,&state,animation,combined)
+    actions_sample(&actions,&state,animation,.1,&problems,combined,&playback,&events)
+    testing.expect(t,state.layers[0].clip==alias && actions.states[0].slots[0].active && problems.count==0)
+    // A layer whose space names a clip of each source keeps them apart.
     samples:=[2]Blend_Sample{{position={0,0},speed=1},{position={1,0},speed=1,animation=sources[1].id}}
     for &sample in samples {base.text_set(sample.clip[:],"Walk")}
     assets:host.Assets;app:=host.App{assets=&assets,allocator=context.allocator}
-    blend:=Blend_Content{id={101,3},checked=assets_stamp(app.assets),valid=true,profile={info={animation=sources[0].id,dimension=.One,x={min=0,max=1}},samples=samples[:]}}
-    base.text_set(blend.profile.info.x.name[:],"speed")
+    names:=[2]u64{base.name_hash("Walk"),base.name_hash("Walk")}
+    blend:=Blend_Content{id={101,3},checked=assets_stamp(app.assets),valid=true,profile={info={animation=sources[0].id,dimension=.One,x={min=0,max=1}},samples=samples[:]},sample_names=names[:]}
+    base.text_set(blend.profile.info.x.name[:],"speed");blend.axis_names[0]=base.name_hash("speed")
     testing.expect_value(t,blend_space_prepare(&blend.profile),asset.Error.None)
     defer {delete(blend.profile.segments);delete(blend.profile.triangles)}
     points:=[2]mm.Vec2{{0,0},{1,0}};blend.space={dimension=.One,points=points[:],segments=blend.profile.segments,triangles=blend.profile.triangles}
     blends:Blend_Assets;defer delete(blends.contents);append(&blends.contents,blend)
-    nodes[1].kind,nodes[1].blend_space,nodes[1].position,nodes[1].animation,nodes[1].clip=.Blend_Space,blend.id,{.5,0},{},{}
-    nodes[2].kind=.Additive
-    profile.info.output=2
-    testing.expect(t,graph_check(profile) && program_node(output,profile,2,nil,&blends,app.assets,app.allocator))
-    spaced:=output.groups[output.instructions[output.instructions[output.output].right].group]
-    testing.expect(t,spaced.count==2 && spaced.leaves[0].clip!=spaced.leaves[1].clip,"an additive space keeps the clips of each source apart")
+    state.asked[1]={space=blend.id,weight=1,speed=1,mode=.Additive};state.stack=2
+    testing.expect(t,stack_parameter_set(&state,base.name_hash("speed"),.5))
+    layers_advance(&playback,&state,combined,animation,&events,.1,&problems,&blends,&app)
+    spaced:=state.layers[1]
+    testing.expect(t,spaced.leaf_count==2 && spaced.leaves[0].clip!=spaced.leaves[1].clip && abs(spaced.leaves[0].weight-.5)<1e-5 && problems.count==0,"a space keeps the clips of each source apart")
 }
 
 @(test)
@@ -122,34 +119,35 @@ source_plans_share_exact_sets_rebuild_for_source_generations_and_survive_world_c
     for i in 0..<2 {id:=base.Asset_Id{301,u64(i+1)};append(&native.animations,sources_test_content(t,id,1,f32(i+1),.2));native.index[id]={kind=.Animation,index=u32(i)}}
     native.generations=2
     graph_id:=base.Asset_Id{302,1}
-    append(&assets.registry.files,asset.Registry_File{id=graph_id,kind=GRAPH_KIND,state=.Asset});assets.registry.by_id[graph_id]=0
-    nodes:=make([]Graph_Node,2);for &node,i in nodes {node=GRAPH_NODE_DEFAULT;base.text_set(node.name[:],"first" if i==0 else "second");base.text_set(node.clip[:],"Walk")};nodes[1].animation=native.animations[1].id
-    graphs:=Graph_Assets{allocator=context.allocator};defer graph_assets_free(&graphs)
-    append(&graphs.contents,Graph_Content{id=graph_id,checked=1,valid=true,profile={info={animation=native.animations[0].id},nodes=nodes}})
+    append(&assets.registry.files,asset.Registry_File{id=graph_id,kind=MATCH_KIND,state=.Asset});assets.registry.by_id[graph_id]=0
+    // A .match whose two clips are the Walk of each source.
+    clips:=make([]Match_Source,2);for &clip in clips {base.text_set(clip.clip[:],"Walk");clip.modes=1};clips[1].animation=native.animations[1].id
+    graphs:=Match_Assets{allocator=context.allocator};defer match_assets_free(&graphs)
+    append(&graphs.contents,Match_Content{id=graph_id,checked=1,valid=true,profile={info={animation=native.animations[0].id},clips=clips}})
     cache:=Source_Assets{allocator=context.allocator};defer source_assets_free(&cache)
     description:=ANIMATION_DEFAULT;description.asset=graph_id
     first:=Playing{entity=core.entity_make(1,1)};second:=Playing{entity=core.entity_make(2,1)}
-    one,error:=animation_content(&cache,&app,&first,description,graphs=&graphs);testing.expect_value(t,error,Program_Error.None)
-    two,error2:=animation_content(&cache,&app,&second,description,graphs=&graphs);testing.expect_value(t,error2,Program_Error.None)
+    one,error:=animation_content(&cache,&app,&first,description,matches=&graphs);testing.expect_value(t,error,Program_Error.None)
+    two,error2:=animation_content(&cache,&app,&second,description,matches=&graphs);testing.expect_value(t,error2,Program_Error.None)
     if !testing.expect(t,one!=nil && two==one && len(cache.plans)==1 && len(cache.sets)==1 && first.source_plan==second.source_plan) {return}
     first.asset,first.generation=one.id,one.generation
     testing.expect(t,len(source_ids(&cache,&first))==2 && source_ids(&cache,&first)[1]==native.animations[1].id)
     changed:=description;changed.library=native.animations[1].id
-    other,other_error:=animation_content(&cache,&app,&second,changed,graphs=&graphs)
+    other,other_error:=animation_content(&cache,&app,&second,changed,matches=&graphs)
     testing.expect(t,other_error==.None && other!=one && len(cache.plans)==2 && second.source_plan==2)
     assets.revision+=1
     generation:=one.generation
-    refreshed,refresh_error:=animation_content(&cache,&app,&first,description,graphs=&graphs)
+    refreshed,refresh_error:=animation_content(&cache,&app,&first,description,matches=&graphs)
     testing.expect(t,refresh_error==.None && refreshed==one && refreshed.generation==generation && len(cache.sets)==1)
     copied:=first;copied.entity=core.entity_make(3,1)
     testing.expect(t,animation_playing_content(&cache,&app,&copied)==one)
     native.animations[1].generation=4;native.generations=4
-    reloaded,reload_error:=animation_content(&cache,&app,&first,description,graphs=&graphs)
+    reloaded,reload_error:=animation_content(&cache,&app,&first,description,matches=&graphs)
     testing.expect(t,reload_error==.None && reloaded.generation!=generation && len(cache.sets)==1)
     first.generation=reloaded.generation
     generation=reloaded.generation;pointer:=raw_data(reloaded.lib.tracks)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();cache.allocator=runtime.nil_allocator();app.allocator=runtime.nil_allocator()
-    stable,stable_error:=animation_content(&cache,&app,&first,description,graphs=&graphs)
+    stable,stable_error:=animation_content(&cache,&app,&first,description,matches=&graphs)
     context=saved;cache.allocator=saved.allocator;app.allocator=saved.allocator
     testing.expect(t,stable_error==.None && stable.generation==generation && raw_data(stable.lib.tracks)==pointer)
 }
@@ -168,7 +166,6 @@ Source_World :: struct {
     events:Animation_Events,
     playback:Playback,
     actions:Action_Runtime,
-    action_requests:Action_Requests,
 }
 
 // While its .anim compresses in a job the entity stays as it is and nothing is reported; the tick
@@ -212,8 +209,9 @@ an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems ::
 }
 
 // A weapon's set swapped into Animation.library while its .anim compresses in a job: until it is
-// ready the entity plays on what it played, with the action it fired, without a problem; then
-// the set joins its sources.
+// ready the entity plays on what it played, with the action it plays, without a problem of its
+// own; then the set joins its sources. The actor has no feet to match by, so its .match plays its
+// first clip and says so.
 @(test)
 a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:^testing.T) {
     directory:=base.test_folder(t,"animation-swap")
@@ -228,12 +226,13 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
         clips:=[1]asset.Animation_Clip_Desc{{name="walk",tracks=tracks[:]}}
         if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/%d.anim",directory,i),&types,{id=id,clips=clips[:]}),asset.Error.None) {return}
     }
-    nodes:=[1]Graph_Node{GRAPH_NODE_DEFAULT};nodes[0].sync_mode=.Independent
-    base.text_set(nodes[0].name[:],"walk");base.text_set(nodes[0].clip[:],"walk")
-    if !testing.expect_value(t,graph_save(fmt.tprintf("%s/walk.agraph",directory),&types,GRAPH,{info={animation=CLIPS},nodes=nodes[:]}),asset.Error.None) {return}
+    sources_of_match:=[1]Match_Source{{loop=true,modes=1}};base.text_set(sources_of_match[0].clip[:],"walk")
+    info:=MATCH_INFO_DEFAULT;info.animation=CLIPS
+    if !testing.expect_value(t,match_save(fmt.tprintf("%s/walk.match",directory),&types,GRAPH,{info=info,clips=sources_of_match[:]}),asset.Error.None) {return}
+    layers:=[1]Stack_Layer{STACK_LAYER_DEFAULT};base.text_set(layers[0].name[:],"Arm")
     definitions:=[1]Action_Definition{ACTION_DEFINITION_DEFAULT}
-    base.text_set(definitions[0].name[:],"slash");base.text_set(definitions[0].clip[:],"walk");definitions[0].animation=CLIPS
-    if !testing.expect_value(t,action_profile_save(fmt.tprintf("%s/blade.action",directory),&types,ACTIONS,{info={animation=CLIPS},actions=definitions[:]}),asset.Error.None) {return}
+    base.text_set(definitions[0].name[:],"slash");base.text_set(definitions[0].clip[:],"walk");base.text_set(definitions[0].layer[:],"Arm");definitions[0].animation=CLIPS
+    if !testing.expect_value(t,action_profile_save(fmt.tprintf("%s/blade.action",directory),&types,ACTIONS,{info={animation=CLIPS},layers=layers[:],actions=definitions[:]}),asset.Error.None) {return}
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory,capacity=8})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     if !testing.expect(t,jobs.system_init(&app.jobs,{threads=2})) {return}
@@ -250,36 +249,38 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems
-    graphs:=Graph_Assets{allocator=context.allocator};defer graph_assets_free(&graphs)
+    graphs:=Match_Assets{allocator=context.allocator};defer match_assets_free(&graphs)
     sources:=Source_Assets{allocator=context.allocator};defer source_assets_free(&sources)
     w.actions.allocator=context.allocator
     action_assets:=Actions_Assets{allocator=context.allocator};defer actions_assets_free(&action_assets)
     Swap_Test :: struct {
         w:^Source_World,
-        app:^host.App,skeletons:^Skeleton_Assets,problems:^core.Problems,graphs:^Graph_Assets,
+        app:^host.App,skeletons:^Skeleton_Assets,problems:^core.Problems,graphs:^Match_Assets,
         action_assets:^Actions_Assets,sources:^Source_Assets,
     }
     tick :: proc(s:Swap_Test) {
         w:=s.w
-        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,s.app,{dt=.1,playing=true},{},s.skeletons,s.problems,graphs=s.graphs,actions=&w.actions,action_requests=&w.action_requests,action_assets=s.action_assets,sources=s.sources)
+        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,s.app,{dt=.1,playing=true},{},s.skeletons,s.problems,matches=s.graphs,actions=&w.actions,action_assets=s.action_assets,sources=s.sources)
     }
     s:=Swap_Test{&w,&app,&skeletons,&problems,&graphs,&action_assets,&sources}
     if !testing.expect(t,host.content_animation_wait(&app,CLIPS)!=nil) {return}
-    action_fire(&w.action_requests,actor,"slash")
+    // Its only problem, once it is bound: it has no feet to search by.
+    only_unmatched :: proc(problems:^core.Problems,actor:core.Entity) -> bool {return problems.count==0 || problems.count==1 && core.problem_find(problems,actor,"animation.match_database")!=nil}
+    play(&w.requests,actor,"slash")
     tick(s)
-    if !testing.expect(t,problems.count==0 && len(w.playback.states)==1 && len(w.playback.states[0].local)==2 && len(w.actions.states)==1 && w.actions.states[0].layers[0].active) {return}
+    if !testing.expect(t,only_unmatched(&problems,actor) && len(w.playback.states)==1 && len(w.playback.states[0].local)==2 && len(w.actions.states)==1 && w.actions.states[0].slots[1].active) {return}
     before:=w.playback.states[0].local[1].position.x
     core.free(&w.animations,actor).library=SET
     tick(s)
     testing.expect(t,host.content_animation_pending(&app,SET),"the set compresses in a job")
-    testing.expect_value(t,problems.count,0)
+    testing.expect(t,only_unmatched(&problems,actor))
     testing.expect(t,w.playback.states[0].local[1].position.x>before+.05,"it plays on what it played")
-    testing.expect(t,w.actions.states[0].layers[0].active && !w.actions.states[0].layers[0].finishing,"the action it fired goes on")
+    testing.expect(t,w.actions.states[0].slots[1].active && !w.actions.states[0].slots[1].finishing,"the action it plays goes on")
     testing.expect(t,len(source_ids(&sources,&w.playback.states[0]))==0)
     if !testing.expect(t,host.content_animation_wait(&app,SET)!=nil) {return}
     tick(s)
-    testing.expect_value(t,problems.count,0)
+    testing.expect(t,only_unmatched(&problems,actor))
     joined:=source_ids(&sources,&w.playback.states[0])
     testing.expect(t,len(joined)==2 && joined[0]==SET,"the set plays once it is ready")
-    testing.expect(t,w.actions.states[0].layers[0].active,"with the action")
+    testing.expect(t,w.actions.states[0].slots[1].active,"with the action")
 }

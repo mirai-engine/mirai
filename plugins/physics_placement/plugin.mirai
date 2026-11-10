@@ -1,6 +1,6 @@
 {
   "name": "physics_placement",
   "version": "0.1.0",
-  "dependencies": ["physics", "destruct"],
+  "dependencies": ["physics"],
   "parts": ["Editor"]
 }

@@ -173,10 +173,8 @@ back with the world, and a save keeps it with the clock.
 - The row is written when the wait starts and when it ends: nothing counts down tick by tick.
 - An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
   has now. What must follow a pace that changes during the wait adds its own time up every tick.
-- A request waits in its queue: `later(&q, time, seconds, item)`, and its owner takes with
-  `take_due(&q, time)` what was pushed and what is due. An owner that takes with `take` refuses
-  what was pushed for later, and its `queue_serve` reports it. A queue is not saved: a wait that
-  a save must keep is a deadline in a component.
+- A request is never delayed: a queue is taken in the tick it was pushed in. What must happen
+  later keeps its deadline in a component.
 - There is no coroutine and no `await`: what waits and then acts is a component with its tick.
 
 ## Core storages

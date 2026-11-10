@@ -9,8 +9,7 @@ import multiplayer "plugins:multiplayer/runtime"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
 import "mirai:host"
-import sim "plugins:physics/runtime/sim"
-import fr "plugins:destruct/runtime/fracture"
+import physics "plugins:physics/runtime"
 import "mirai:std/base"
 import "mirai:std/geom"
 import "mirai:std/jobs"
@@ -51,12 +50,7 @@ end_init :: proc(t:^testing.T,f:^End,name:string,role:core.Network_Role) -> bool
     f.app.assets,f.app.allocator=&f.assets,context.allocator
     if !jobs.system_init(&f.app.jobs,{threads=0}) {return false}
     if !host.assets_init(&f.assets,{root=folder,capacity=32}) {return false}
-    desc:=sim.world_desc_default();desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=16,32,64,4
-    desc.hull_capacity=8
-    f.settings={destructibles=2,pieces=32,connections=64}
-    desc.character_capacity,desc.mesh_capacity,desc.heightfield_capacity=0,0,0
-    if !sim.world_init(&f.physics.world,desc) {return false}
-    f.physics.ready=true
+    if !physics.test_state_make(&f.physics,{bodies=16,shapes=32,contacts=64,joints=4,hulls=8,breakables=2,pieces=32,bonds=64}) {return false}
     f.authority.role=role
     return true
 }
@@ -72,15 +66,15 @@ end_destroy :: proc(f:^End) {
 // A tick: the simulation, what this library asks of destruct, destruct, and what it sends.
 @(private="file")
 end_tick :: proc(f:^End,resimulating:=false) {
-    sim.world_step(&f.physics.world,1.0/60)
+    physics.simulate(&f.physics,nil,&f.app.jobs,1.0/60)
     core.test_world_settle(&f.w)
     f.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating}
     commands:=core.commands_of(core.test_world_ref(&f.w))
-    destruct_net_follow(core.ref(&f.authority),&f.net,time,&f.requests,core.ref(&f.fractures),core.read(&f.configs),core.read(&f.states),core.read(&f.ids),core.ref(&f.root))
+    destruct_net_follow(core.ref(&f.authority),&f.net,time,&f.requests,core.ref(&f.physics),core.read(&f.configs),core.read(&f.states),core.read(&f.ids),core.ref(&f.root))
     destruct.test_step(&f.rows,&f.application,commands,time)
     core.test_world_settle(&f.w)
-    destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.adoptions,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),core.ref(&f.fractures),commands,
+    destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.adoptions,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),commands,
         core.read(&f.states),core.read(&f.ids),core.read(&f.objects),core.ref(&f.entities),core.ref(&f.root),&f.problems)
     core.test_world_settle(&f.w)
 }
@@ -155,7 +149,7 @@ a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
     testing.expect_value(t,len(rewinds.queue.items),0)
     end_tick(&b)
     testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
-    testing.expect_value(t,fr.destructible_check(&b.fractures.fracture,core.at(&b.states,core.row_of(&b.states,client)).handle),fr.destructible_check(&a.fractures.fracture,core.at(&a.states,core.row_of(&a.states,server)).handle))
+    testing.expect_value(t,physics.breakable_check(core.ref(&b.physics),core.at(&b.states,core.row_of(&b.states,client)).handle),physics.breakable_check(core.ref(&a.physics),core.at(&a.states,core.row_of(&a.states,server)).handle))
     testing.expect_value(t,b.net.stats.desyncs,u64(0))
     testing.expect_value(t,a.net.stats.sent,u64(1))
 }
@@ -178,11 +172,11 @@ a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_appl
     destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     for _ in 8..=12 {end_tick(&b)}
     testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
-    hash:=sim.world_hash(&b.physics.world)~fr.fracture_hash(&b.fractures.fracture)
+    hash:=physics.state_hash(core.ref(&b.physics))
     testing.expect(t,end_restore(&b,&saved))
     for _ in 3..=12 {end_tick(&b,true)}
     testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
-    testing.expect_value(t,sim.world_hash(&b.physics.world)~fr.fracture_hash(&b.fractures.fracture),hash)
+    testing.expect_value(t,physics.state_hash(core.ref(&b.physics)),hash)
 }
 
 @(test)
@@ -209,10 +203,10 @@ a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_
     testing.expect_value(t,core.at(&b.states,core.row_of(&b.states,client)).sequence,u32(1))
     for _ in 4..=7 {end_tick(&b,true)}
     for _ in 8..=12 {end_tick(&b)}
-    hash:=sim.world_hash(&b.physics.world)~fr.fracture_hash(&b.fractures.fracture)
+    hash:=physics.state_hash(core.ref(&b.physics))
     testing.expect(t,end_restore(&b,&saved))
     for _ in 3..=12 {end_tick(&b,true)}
-    testing.expect_value(t,sim.world_hash(&b.physics.world)~fr.fracture_hash(&b.fractures.fracture),hash)
+    testing.expect_value(t,physics.state_hash(core.ref(&b.physics)),hash)
 }
 
 // A connection that enters the world of the server, as the fixed functions
@@ -289,5 +283,5 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     destruct_net_receive(core.ref(&chunks),core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root),&c.problems)
     for _ in 0..<2 {end_tick(&c)}
     testing.expect_value(t,core.at(&c.states,core.row_of(&c.states,again)).sequence,u32(1))
-    testing.expect_value(t,fr.destructible_check(&c.fractures.fracture,core.at(&c.states,core.row_of(&c.states,again)).handle),fr.destructible_check(&a.fractures.fracture,core.at(&a.states,core.row_of(&a.states,server)).handle))
+    testing.expect_value(t,physics.breakable_check(core.ref(&c.physics),core.at(&c.states,core.row_of(&c.states,again)).handle),physics.breakable_check(core.ref(&a.physics),core.at(&a.states,core.row_of(&a.states,server)).handle))
 }

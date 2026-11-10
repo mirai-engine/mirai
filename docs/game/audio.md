@@ -60,7 +60,7 @@ Project Settings, with `settings.set` (`settings.get` shows the shape) or
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
 options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing. So is
-`Audio_Output.kind`: `.Headphones` (default: ahead, behind, above) or `.Speakers` (panned).
+`Audio_Output.kind`: `.Speakers` (default: panned) or `.Headphones` (ahead, behind, above).
 
 ## Rooms and occlusion
 - `Audio_Reverb` on an entity with a `Volume` (`engine/volume`) is the room where the listener

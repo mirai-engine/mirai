@@ -51,12 +51,11 @@ Mix_Voice :: struct {
     spatial_dirty:bool,listener_serial:u32,
     // The direct sound of a spatial voice: its gain and EQ, where it comes
     // from in the listener's space, and what the last chunk ended with.
-    direct_gain,direct_gain_now:f32,
+    direct_gain:f32,
     eq_target,eq_gains:[BANDS]f32,
     eq:[2][BANDS]Biquad,eq_state:[2][BANDS]Biquad_State,eq_current:u8,
-    direct_ready:bool,
+    eq_on:bool,
     direction:[3]f32,
-    pan_now:[2]f32,pan_valid:bool,
     binaural_live,binaural_direction_valid:bool,
     binaural_clock:u64, // the chunk its next block continues from
     binaural_direction:[3]f32, // that of its HRTF
@@ -185,23 +184,10 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
     }
 }
 
-// Gains of a voice before its fade: volume, and pan. A spatial voice is
-// mixed as one mono source into the left channel, which spatial_post places.
+// Gains of a voice before its fade: volume, and pan or place.
 voice_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> (gains:[4]f32) {
     sides:[2]f32
-    if v.spatial {
-        if v.spatial_dirty || v.listener_serial!=m.listener_serial {
-            l:=m.listener
-            direction,distance:=listener_direction(l.position,l.rotation,v.position)
-            directivity:=directivity_gain(v.directivity,v.position,v.rotation,l.position)
-            v.direct_gain,v.eq_target=direct_gain_eq(attenuation_gain(v.attenuation,distance),directivity,air_absorption(distance),v.occlusion,v.transmission)
-            v.direction=direction
-            v.spatial_pitch=doppler_pitch(l.position,l.velocity,v.position,v.velocity,v.doppler,m.speed_of_sound)
-            v.spatial_dirty=false;v.listener_serial=m.listener_serial
-        }
-        if v.source.channels==2 {return {v.volume*0.5,0,v.volume*0.5,0}}
-        return {v.volume,0,0,0}
-    }
+    if v.spatial {return spatial_gains(m,v)}
     if v.source.channels==2 {
         sides=balance_gains(v.pan)*v.volume
         return {sides[0],0,0,sides[1]}
@@ -241,13 +227,18 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     target:=voice_gains(m,v)
     if v.pausing || v.stopping {target={}}
     if !v.base_valid {v.base=target;v.base_valid=true}
+    mixed:=target
+    pans:[2][2]f32
+    placed:=false
+    if v.spatial {pans,placed=spatial_apart(m,v,&v.base,&mixed)}
+    silent:=placed && mixed=={} && v.base=={}
     pitch:=clamp((v.pitch if v.pitch>0 else 1)*(v.spatial_pitch if v.spatial else 1),PITCH_MIN,PITCH_MAX)
     step:=u64(f64(pitch)*f64(v.source.rate)/f64(m.sample_rate)*f64(ONE))
     bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
     out:=bus
     // A voice that is placed, filtered or sent is mixed apart first.
     filter:=lowpass_coefficient(v.lowpass,f32(m.sample_rate))
-    apart:=v.spatial || filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0
+    apart:=placed || filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0
     if apart {
         out=raw_data(m.voice_scratch)
         #no_bounds_check for i in offset*2..<n*2 {out[i]=0}
@@ -255,17 +246,20 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     span:=f32(n-offset)
     alive:=true
     if v.source.feed>=0 {
-        alive=feed_voice_mix(m,v,out,offset,n,min(step,FEED_STEP_MAX),target,span)
+        alive=feed_voice_mix(m,v,out,offset,n,min(step,FEED_STEP_MAX),mixed,span)
     } else {
-        alive,_=segments_mix(v,v.source.samples,u64(v.source.frames),v.loop,false,out,offset,n,max(step,1),target,span)
+        alive,_=segments_mix(v,v.source.samples,u64(v.source.frames),v.loop,false,out,offset,n,max(step,1),mixed,span)
     }
     v.base=target
-    if v.spatial && spatial_post(m,v,index,out,offset,n) {
-        // Binaural: filtered and sent as one source, then added to the sums of its bus.
-        voice_post(m,v,out,nil,offset,n,filter)
-        x:=m.binaural_input[:n]
-        #no_bounds_check for i in 0..<n {x[i]=out[i*2] if i>=offset else 0}
-        binaural_add(m,v,index,x,v.direction,clock)
+    if placed && spatial_post(m,v,out,offset,n,pans,silent) {
+        // Binaural: filtered and sent as one source, then added to the sums of its
+        // bus; a silent one adds nothing once its last block is complete.
+        if filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0 {voice_post(m,v,out,nil,offset,n,filter)}
+        if !silent || v.binaural_live && v.binaural_clock==clock {
+            x:=m.binaural_input[:n]
+            #no_bounds_check for i in 0..<n {x[i]=out[i*2] if i>=offset else 0}
+            binaural_add(m,v,index,x,v.direction,clock)
+        }
     } else if apart {
         voice_post(m,v,out,bus,offset,n,filter)
     }

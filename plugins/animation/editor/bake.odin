@@ -59,8 +59,7 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
     desc:=asset.animation_library_desc(clips);desc.allocator=allocator
     if !lib.library_init(&library,desc) {return .Out_Of_Memory};defer lib.library_destroy(&library)
     if len(clips.clips)>0 && asset.animation_clips_add(clips,&library,.Once)==0 {return .Invalid}
-    pose:lib.Pose
-    if !lib.pose_init(&pose,max(len(source.bones)*3,library.track_count),allocator) {return .Out_Of_Memory};defer lib.pose_destroy(&pose)
+    bindings:=bake_array(lib.Bone_Tracks,len(source.bones),scratch) or_return
     output:=bake_array(asset.Animation_Clip_Desc,len(clips.clips),scratch) or_return
     keys_total:=0
     for &clip,i in clips.clips {
@@ -78,15 +77,10 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
                 tracks[b*3+property]={target=base.text_get(bone.path[:]),property=lib.Property(property),keys=keys}
             }
         }
+        if !lib.skeleton_bind(&library,lib.Clip(i+1),source_rig,bindings) {return .Invalid}
         for frame in 0..<frames {
             time:=min(f32(frame)/rate,duration)
-            copy(source_local,source_rig.rest);lib.pose_clear(&pose)
-            lib.pose_blend(&pose,&library,{clip=lib.Clip(i+1),time=time,speed=1,weight=1})
-            for name,b in source_rig.names {
-                if value,_,ok:=lib.pose_position(&pose,name);ok {source_local[b].position=value}
-                if value,_,ok:=lib.pose_rotation(&pose,name);ok {source_local[b].rotation=value}
-                if value,_,ok:=lib.pose_scale(&pose,name);ok {source_local[b].scale=value}
-            }
+            if !lib.skeleton_sample(&library,bindings,source_rig.rest,time,source_local) {return .Invalid}
             if !lib.retarget_pose(source_rig,target_rig,prepared,source_local,source_world,target_world,target_local) {return .Invalid}
             for chain in chains[:chain_count] {
                 if !lib.chain_retarget_pose(target_rig,chain.mapping,source_world,target_local,target_world,chain.weight) {return .Invalid}

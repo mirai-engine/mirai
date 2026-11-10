@@ -3,7 +3,6 @@ package physics_placement
 import "core:math"
 import "mirai:core"
 import "mirai:editor"
-import destruct "plugins:destruct/runtime"
 import phys "plugins:physics/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -120,12 +119,10 @@ placement_prepare :: proc(tool:^Physics_Placement) -> bool {
         for e in states.entities {core.remove(states,e)}
     }
     for &rigid in core.writable(rigids) {rigid=phys.RIGID_BODY_STATIC}
-    if destructibles:=core.world_table_of(w,destruct.Destructible);destructibles!=nil {
-        // Intact, it is the mesh it shows, with the surface and collision of its collider.
-        for e in destructibles.entities {
-            if collider:=core.edit(colliders,e);collider!=nil && collider.kind==.External {collider.kind=.Mesh}
-            else if !core.has(colliders,e) && editor.entity_has(w,e,erender.Mesh_Renderer) {core.add(colliders,e,phys.collider_mesh())}
-        }
+    // What another plugin gives its shapes (a Destructible) is, in a preview that runs physics alone, the
+    // mesh it shows, with the surface and collision of its collider.
+    for &collider,row in core.writable(colliders) {
+        if collider.kind==.External && editor.entity_has(w,colliders.entities[row],erender.Mesh_Renderer) {collider.kind=.Mesh}
     }
     core.world_settle(w)
     return phys.step_world(w,tool.app,0) && placement_clean(tool,w)
