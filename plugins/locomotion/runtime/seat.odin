@@ -41,10 +41,9 @@ locomotion_seat :: proc(
     time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     walks:=input.input_map_has(bindings.ptr,input.action_of(walk_actions,.Move),.Axis2) && input.input_map_has(bindings.ptr,input.action_of(look_actions,.Look),.Axis2)
-    for row in 0..<core.count(states) {
-        e:=core.entity_at(states,row)
-        owner,driven:=core.get(drivables,e)
-        if !driven || owner.seat==core.NONE || owner.move_relative_to==.Game || !core.at(states,row).ready || !core.owned(remotes,e) {continue}
+    driven:=core.join(states,drivables)
+    for e,state,owner in core.each_joined(&driven) {
+        if owner.seat==core.NONE || owner.move_relative_to==.Game || !state.ready || !core.owned(remotes,e) {continue}
         move:=core.edit(moves,e)
         if move==nil {continue}
         if !walks {
@@ -52,7 +51,7 @@ locomotion_seat :: proc(
             continue
         }
         seat:=owner.seat
-        if state,on:=core.get(found,e);on {move.look_yaw+=state.ground_turn}
+        if ground,on:=core.get(found,e);on {move.look_yaw+=ground.ground_turn}
         look:=input.seat_vector(look_actions,seat,.Look)
         wish:=input.seat_vector(walk_actions,seat,.Move)
         move.buttons=input.seat_buttons(walk_actions.seats,seat,bindings.ptr)
