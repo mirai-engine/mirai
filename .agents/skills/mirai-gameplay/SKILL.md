@@ -91,9 +91,9 @@ the same attributes and no private paths. Declaration and parameter binding:
    `apply`: the camera of the focused player, spawns and the sampled animation; and in `simulate`:
    locomotion and physics.
    - What corrects the sampled pose before physics (`animation_motor_drive`) goes in
-     `stage="apply",after="animation_sample"`.
-   - A game that reacts to contacts or damage of the tick goes in `stage="react"`; one whose damage
-     must break in the same tick, with `before="destruct_step"`.
+     `stage="apply"`: reading `anim.Playback` puts it after `animation_sample`.
+   - A game that reacts to contacts or damage of the tick goes in `stage="react"`; what it pushes
+     to `Destruct_Requests` there breaks in the same tick.
    - What only the server or a single-player game decides carries `server` instead of asking
      `core.Network` ([attributes](../mirai-core/references/generator.md#attributes)).
 6. `time.dt` (`core.Time`) in `fixed`; `frame.dt` and `frame.alpha` (`core.Frame_Time`) in
@@ -105,8 +105,9 @@ the same attributes and no private paths. Declaration and parameter binding:
    until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
-8. Game code names a prefab or a scene by its path in the assets; data fields hold its
-   `base.Asset_Id`.
+8. Game code names an asset by its path in the assets wherever a call takes one (`scene.spawn`,
+   `scene.request`, `audio.play_asset`, `host.content_strings`), and a field it fills by
+   `host.assets_id`; data fields hold its `base.Asset_Id`.
 
 ## Invariants
 
@@ -122,7 +123,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   - `animation_sample`/`animation_advance`: buffers and results of `Playback`.
   - The rest is requested.
 - **Input arrives through actions**, members of an enum `@(actions)` of each library, with their
-  kind and default bindings (`[E]inp.Action_Default`), read by member through `inp.Input_Of(E)`;
+  kind and default bindings beside the enum (`<enum>_defaults() -> [E]inp.Action_Default`, by the
+  naming rule of defaults; never a storage), read by member through `inp.Input_Of(E)`;
   nobody writes an action's number. `input.mirai` is not
   written by hand: it holds only what Project Settings > Input, `input.set` or the player changed.
   The menu of the game is the engine's `Menu` action (`gui.menu_pressed`); pausing and capturing

@@ -77,7 +77,7 @@ force_field_arrows :: proc(lines:^erender.Debug_Lines,field:phys.Force_Field,are
     }
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 force_field_preview :: proc(
     s:^editor.Session,preview:^Force_Field_Preview,id:core.World_Id,
     fields:core.Read(phys.Force_Field),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),extras:^host.Frame_Extras,

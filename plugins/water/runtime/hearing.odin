@@ -17,7 +17,7 @@ medium_at :: proc "contextless" (sample:phys.Fluid_Sample,found:bool) -> audio.A
     return {lowpass=UNDER_LOWPASS,reverb=UNDER_REVERB,weight=1}
 }
 
-@(step="late",stage="end",after="transforms_propagate camera_view",before="audio_reverb audio_buses")
+@(step="late",stage="end",after="camera_view")
 water_hearing :: proc(medium:^audio.Audio_Medium,physics:core.Ref(phys.Physics_State),worlds:core.Read(core.World_Transform),listeners:core.Read(audio.Audio_Listener),view:core.Ref(core.View)) {
     sample:phys.Fluid_Sample
     found:=false

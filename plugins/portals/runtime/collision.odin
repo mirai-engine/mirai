@@ -136,7 +136,7 @@ wall_measure :: proc(physics:core.Ref(phys.Physics_State),wall:core.Entity,porta
 // frame, made again only when an opening or its wall moves; those of the
 // portals that do not lose them. Each traveler halfway into an opening gets
 // its twin and its cut, and loses them when it is through.
-@(step="fixed",loops="game",stage="input",after="portals_travel")
+@(step="fixed",loops="game",stage="input")
 portals_collision :: proc(
     commands:core.Commands,portals:core.Read(Portal),travelers:core.Read(Traveler),worlds:core.Read(core.World_Transform),
     crossings:core.Ref(Portal_Crossings),physics:core.Ref(phys.Physics_State),colliders:^core.Table(phys.Collider),

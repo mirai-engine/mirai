@@ -389,7 +389,8 @@ filter_make :: proc "contextless" (settings:^Navigation_Settings,excluded:Nav_Ar
 // What the mesh of a class is made of: the static collision that blocks a
 // collider of its preset under the collision settings of the physics.
 class_filter :: proc "contextless" (collision:^phys.Collision_Settings,class:Nav_Class) -> phys.Query_Filter {
-    filter:=phys.QUERY_FILTER_DEFAULT
-    filter.filter=phys.collision_filter(collision,phys.Collider{preset=class.collision})
+    filter,collider:=phys.QUERY_FILTER_DEFAULT,phys.COLLIDER_DEFAULT
+    collider.preset=class.collision
+    filter.filter=phys.collision_filter(collision,collider)
     return filter
 }

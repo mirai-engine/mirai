@@ -123,6 +123,8 @@ texts_are_found_by_language_and_key_without_allocating :: proc(t:^testing.T) {
     s:=content_strings(&f.app,TEXTS_ID)
     if !testing.expect(t,s!=nil) {return}
     testing.expect(t,content_strings(&f.app,FONT_ID)==nil,"A font is no table of texts")
+    testing.expect(t,assets_scan(f.app.assets) && content_strings(&f.app,"menu.strings")==s,"by its path, the same texts")
+    testing.expect(t,content_strings(&f.app,"missing.strings")==nil)
     es,en,play,quit:=base.name_hash("es"),base.name_hash("en"),base.name_hash("menu.play"),base.name_hash("menu.quit")
     text,found:=strings_text(s,es,play)
     testing.expect(t,found && text=="Jugar")

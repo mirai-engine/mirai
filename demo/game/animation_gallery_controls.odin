@@ -136,7 +136,7 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
 
 // What a slider or a button of a panel asked becomes a command of its station; the sequence is
 // asked directly of its path.
-@(step="fixed",before="gallery_animate")
+@(step="fixed")
 gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(Animation_Gallery),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),paths:core.Read(anim.Keyframe_Path),path_requests:^anim.Keyframe_Path_Requests,panel:^Gallery_UI) {
     for event in ui_events.items {
         value,found:=core.get(panels,event.entity)
@@ -165,7 +165,7 @@ gallery_panel_input :: proc(panels:core.Read(Gallery_Panel),gallery:core.Read(An
 }
 
 // Fills each panel with the rows and buttons of its station and what the station does now.
-@(step="fixed",stage="react",after="gallery_observe")
+@(step="fixed",stage="react")
 gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:core.Read(Animation_Gallery),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),paths:core.Read(anim.Keyframe_Path)) {
     for row in 0..<core.count(panels) {
         current:=core.at(core.read(panels),row)

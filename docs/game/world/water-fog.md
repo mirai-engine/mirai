@@ -25,8 +25,7 @@ $P scene.add '{"name":"Pond","position":[30,0,10],"components":{
 - `Fluid_Waves` on a plane makes waves, from the `Wind` of the world (a `Wind` entity with no
   `Volume` blows everywhere) and its own trains; bodies float on them and swimmers ride them.
 - `Water` changes the look: its `material` (a `.mat`), how it absorbs and scatters light, shafts
-  and caustics. A zeroed `Water` is not the default: add it with `{}` (the
-  starting value) or copy `water.WATER_DEFAULT`.
+  and caustics. Through the API, `{}` adds it at its starting value, `water.WATER_DEFAULT`.
 - Code: `phys.Fluid{density=1025}` with `volume.plane()` is a sea, `phys.FLUID_DEFAULT` with
   `volume.box(half)` a pool, and `phys.Fluid{}` with `volume.box(half,priority=1)` a dry box.
 

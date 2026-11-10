@@ -85,14 +85,14 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     core.add(&world.transforms,owner,core.Transform{position={0,2,0},rotation=1,scale={1,1,1}})
     core.add(&world.meshes,owner,render.Mesh_Renderer{mesh=mesh})
     config:=destruct.destructible();config.fracture=fracture;config.impact_damage=false;config.debris_volume=0
-    config.interior=game.material_asset("Cobblestone");core.add(&world.configs,owner,config);core.add(&world.colliders,owner,destruct.collider_fracture())
+    config.interior=material_id("Cobblestone");core.add(&world.configs,owner,config);core.add(&world.colliders,owner,destruct.collider_fracture())
     physics_bake_settle(&world,nil,nil)
     record:cache.Cache_Recorder
     if error:=cache.record_init(&record,{frames=151,tracks=128,samples=151*128,vertices=32768,indices=65536,origin=mm.TRANSFORM_IDENTITY});error!=.None {o.content.failed=true;return id}
     defer cache.record_destroy(&record)
     source:=[1]cache.Capture_Source{{entity=owner,object=1}}
-    source[0].materials[0],source[0].materials[1]=game.material_asset("Bricks"),game.material_asset("Cobblestone")
-    source[0].materials[2]=game.material_asset("Cobblestone")
+    source[0].materials[0],source[0].materials[1]=material_id("Bricks"),material_id("Cobblestone")
+    source[0].materials[2]=material_id("Cobblestone")
     for frame in 0..=150 {
         if frame==15 || frame==30 {
             pieces:[128]destruct.Piece_Info

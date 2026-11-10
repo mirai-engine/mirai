@@ -77,7 +77,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Mantle,default=proc(dst:^Mantle) {dst^=MANTLE_DEFAULT}),
         core.test_type(Tactical_Sprint,default=proc(dst:^Tactical_Sprint) {dst^=TACTICAL_SPRINT_DEFAULT}),
         core.test_type(Ledge_Jump,default=proc(dst:^Ledge_Jump) {dst^=LEDGE_JUMP_DEFAULT}),
-        core.test_type(Walk_Actions,default=proc(dst:^Walk_Actions) {dst^=walk_actions_default()}),
     )
 }
 

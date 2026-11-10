@@ -98,7 +98,7 @@ paint_pointer :: proc(s:^editor.Session,tool:^Paint_Tool,input:core.Input) {
     tool.active,tool.over,tool.begin=editor.tool_pointer(s,"paint",input)
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 paint_brush :: proc(
     s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
     assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,

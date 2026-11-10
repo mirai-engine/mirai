@@ -94,7 +94,7 @@ A network session does not stop it. `shell_frame` turns `UI_Screen.pause` on for
 settings pages, and off for the main menu, behind which the world runs. It runs every frame, also
 with the clock stopped, because the `Menu` action and the buttons must reach it.
 `scene.request_restart(scenes)` loads the scene again, which is how Quit to Menu starts over;
-`scene.request_path(scenes,path)` loads another.
+`scene.request(scenes,path)` loads another.
 
 ## Mouse
 

@@ -36,7 +36,7 @@ VIEW_FOV_MAX :: f32(170)
 // prefab, whose sun preview_sun turns on, and in a scene while the viewport
 // asks for it (studio_light), without its ground, which the grid of the editor
 // shows. Nothing of the world changes; turned off, the scene gets back its own.
-@(step="render",after="render_sync")
+@(step="render")
 studio_lighting :: proc(s:^Session,app:^host.App,sync:core.Ref(erender.Render_Sync)) {
     r:=app.renderer
     if r==nil || app.ui_only {return}
