@@ -31,7 +31,7 @@ the body goes (`Walk.max_speed`), never which clip plays: a faster gait is a hig
 Without a `Character` (a scripted walker) the step tells the match what the body does:
 
 ```odin
-@(step="fixed",before="animation_sample")
+@(step="fixed")
 walkers :: proc(items:core.Read(Walker),requests:^anim.Animation_Requests) {
     for row in 0..<core.count(items) {
         w:=core.at(items,row)   // velocity in world axes, m/s; the model faces -Z
