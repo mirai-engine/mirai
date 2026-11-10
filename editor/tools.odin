@@ -2,7 +2,6 @@ package editor
 
 import "core:path/filepath"
 import "mirai:project"
-import "core:math"
 import "core:strings"
 import "mirai:asset"
 import importer "mirai:cook/import"
@@ -306,7 +305,7 @@ asset_name_of :: proc(a:^host.Assets,id:base.Asset_Id,missing:="") -> string {
 }
 
 // The lines a plugin draws over each selected entity with a T while the
-// editor edits (the face of a mirror, the box of a decal), into vertices.
+// editor edits (the face of a portal, the box of a decal), into vertices.
 selection_gizmo :: proc(s:^Session,app:^host.App,vertices:[]gpu.Debug_Vertex,$T:typeid,draw:proc(lines:^gpu.Debug_Lines,w:core.World_Ref,e:core.Entity,value:T)) {
     if playing(s) || len(s.selection.entities)==0 {return}
     w:=shown_world(s)
@@ -316,26 +315,4 @@ selection_gizmo :: proc(s:^Session,app:^host.App,vertices:[]gpu.Debug_Vertex,$T:
         if value,ok:=entity_get(w,e,T);ok {draw(&lines,w,e,value)}
     }
     if lines.count>0 {host.extras_debug_lines_add(&app.extras,lines)}
-}
-
-// The outline of a face of side 1 on the XY plane of placed, an ellipse or a
-// rectangle, and the arrow of the side it shows (+Z).
-gizmo_face :: proc(lines:^gpu.Debug_Lines,placed:mm.Transform,ellipse:bool,color:[4]f32) {
-    SEGMENTS :: 32
-    if ellipse {
-        previous:=mm.transform_point(placed,{0.5,0,0})
-        for i in 1..=SEGMENTS {
-            angle:=f32(i)/SEGMENTS*2*math.PI
-            point:=mm.transform_point(placed,{0.5*math.cos(angle),0.5*math.sin(angle),0})
-            gpu.debug_line(lines,previous,point,color)
-            previous=point
-        }
-    } else {
-        corners:=[4][3]f32{{-0.5,-0.5,0},{0.5,-0.5,0},{0.5,0.5,0},{-0.5,0.5,0}}
-        for corner,i in corners {
-            gpu.debug_line(lines,mm.transform_point(placed,corner),mm.transform_point(placed,corners[(i+1)%4]),color)
-        }
-    }
-    shown:=mm.quat_rotate(placed.rotation,[3]f32{0,0,1})
-    gpu.debug_arrow(lines,placed.position,placed.position+shown*0.75,color)
 }

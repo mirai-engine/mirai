@@ -14,9 +14,7 @@ type with the component's name, `scene` (`Scene_Info`), those of instances if th
 - `off`, if some component is turned off by itself: a `Component_Off {entity, component}` (the
   entity's Id and the component's `name_hash`) for each one. Without the table, everything is on;
   turning off a whole entity is its `Disabled` component.
-- What governs a whole scene (its sky, its sun, its rules) are components of its entities. A
-  one-row table (`Single`) with a single `value` column is a scene setting from an earlier version
-  of the format: nothing reads it and saving the document discards it (`scene_lone_value`).
+- What governs a whole scene (its sky, its sun, its rules) are components of its entities.
 - The other tables are kept as they are.
 
 `asset.Scene` is the editable document, independent of the data world:
