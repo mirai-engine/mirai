@@ -538,21 +538,21 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
     api_state(&f.s).step_frame=probe_frame
     testing.expectf(t,error.code==0,"%v",error)
     api_result_shape_expect(t,text,Api_Play_Step_Result)
-    testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran":4`),text)
+    testing.expect(t,strings.contains(text,`"drive": {"stopped": "Arrived"`) && strings.contains(text,`"ran": 4`),text)
     testing.expect_value(t,place.position.x,5)
     testing.expect_value(t,moves,1)
     // The limit of the step, and the conditions of the step stop it too.
     place.position={1,0,0}
     error,text=probe_call(f,"play.step",`{"drive":{"position":[5,0,0],"move":"move"},"for":2}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`) && strings.contains(text,`"ran":2`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped": "Ticks"`) && strings.contains(text,`"ran": 2`),text)
     place.position={1,0,0}
     points:=running.score.points+2
     error,text=probe_call(f,"play.step",fmt.tprintf(`{{"drive":{{"position":[5,0,0],"move":"move"}},"for":100,"until":[{{"storage":"Probe_Score","field":"points","compare":"At_Least","number":%d}}]}}`,points))
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Until"`) && strings.contains(text,`"met":true`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped": "Until"`) && strings.contains(text,`"met": true`),text)
     // Behind the wall at x 6: it jumps, sidesteps and stops getting closer, its ticks left over.
     place.position={1,0,0}
     error,text=probe_call(f,"play.step",`{"drive":{"position":[9,0,0],"move":"move"}}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Stuck"`) && !strings.contains(text,`"ran":1800`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped": "Stuck"`) && !strings.contains(text,`"ran": 1800`),text)
     testing.expect(t,place.position.x==6 && place.position.y<0,"it reached the wall and jumped")
     refused:=[?]struct{params,says:string}{
         {`{"drive":{}}`,"name where it goes"},
@@ -586,7 +586,7 @@ a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives :: proc(t:^testing.T)
     place:=core.edit(&running.transforms,f.hero)
     place.position={0,0,0}
     error,text:=probe_call(f,"play.step",`{"drive":{"position":[-4,0,0],"move":"move"},"for":2}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"stopped":"Ticks"`),text)
+    testing.expect(t,error.code==0 && strings.contains(text,`"stopped": "Ticks"`),text)
     testing.expectf(t,place.position.x>0,"along the way, away from its target: %v",place.position)
 }
 
@@ -616,12 +616,12 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     place.position={0,0,0}
     error,text:=probe_call(f,"play.step",`{"drive":{"position":[10,0,0],"within":0.5,"move":"move"},"for":"5s"}`)
     testing.expectf(t,error.code==0,"%v",error)
-    testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
+    testing.expect(t,strings.contains(text,`"stopped": "Arrived"`),text)
     testing.expect(t,place.position.y==0 && abs(place.position.x-10)<=0.6,"over the gap, on the far floor")
     testing.expect_value(t,play_stance(&f.s,run_ref(&f.s,run_find(&f.s,0)),f.hero),Stance.Standing)
     error,text=probe_call(f,"play.step",`{"drive":{"entity":"Platform","move":"move"},"for":"5s"}`)
     testing.expectf(t,error.code==0,"%v",error)
-    testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
+    testing.expect(t,strings.contains(text,`"stopped": "Arrived"`),text)
     testing.expectf(t,place.position.y==2.9 && place.position.x>=12.5 && place.position.x<=14.5,"on its top: %v",place.position)
 }
 
@@ -642,7 +642,7 @@ a_drive_measures_what_is_at_hand_by_the_body_it_steers :: proc(t:^testing.T) {
         place.position={1,0,0}
         running.body.height=c.height
         error,text:=probe_call(f,"play.step",`{"drive":{"position":[4,1.5,0],"move":"move"},"for":10}`)
-        testing.expectf(t,error.code==0 && strings.contains(text,fmt.tprintf(`"stopped":"%s"`,c.stopped)),"a body %v m tall: %s",c.height,text)
+        testing.expectf(t,error.code==0 && strings.contains(text,fmt.tprintf(`"stopped": "%s"`,c.stopped)),"a body %v m tall: %s",c.height,text)
     }
 }
 
@@ -794,14 +794,11 @@ a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last ::
     rows:=[4]u64{0,2,4,5}
     expected:=strings.builder_make(context.temp_allocator)
     for at,i in rows {fmt.sbprintf(&expected,`%s{{"tick":%d,"values":[%d]}}`,i>0?",":"",start+at,points+int(at))}
-    testing.expect_value(t,string(serial.writer_bytes(&scores.rows)),strings.to_string(expected))
+    testing.expect_value(t,trace_rows_text(&scores),strings.to_string(expected))
     testing.expect_value(t,api_trace_take(&f.s,&trace,run_ref(&f.s,r),ran),"")
-    testing.expect(t,strings.has_suffix(string(serial.writer_bytes(&trace.rows)),fmt.tprintf(`{{"tick":%d,"values":[1,3]}}`,start+5)),string(serial.writer_bytes(&trace.rows)))
-    serial.writer_reset(&f.out)
-    api_play_step_write(&f.s,&call,r,ran,false,&trace)
-    text:=string(serial.writer_bytes(&f.out))
-    testing.expect(t,strings.contains(text,fmt.tprintf(`"columns":[{{"entity":"0x%016x","name":"Hero","field":"world_position[0]"}}`,u64(f.hero))),text)
-    api_result_shape_expect(t,text,Api_Play_Step_Result)
+    testing.expect(t,strings.has_suffix(trace_rows_text(&trace),fmt.tprintf(`{{"tick":%d,"values":[1,3]}}`,start+5)),trace_rows_text(&trace))
+    table:=api_trace_table(&f.s,&trace)
+    testing.expect(t,len(table.columns)>0 && table.columns[0].entity==f.hero && table.columns[0].name=="Hero" && table.columns[0].field=="world_position[0]")
     refused:=[?]struct{params,says:string}{
         {`{"trace":{"storage":"Probe_Score","fields":["lives"]}}`,"it has"},
         {`{"trace":{"fields":["points"]}}`,"name what it reads"},
@@ -951,25 +948,25 @@ the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again 
     start:=running.time.tick
     testing.expect_value(t,api_trace_read(&f.s,&call,run_ref(&f.s,r),&p,PROBE_HISTORY_TRACE,12,&live),"")
     testing.expect(t,probe_steps(f,12,&live))
-    rows:=strings.clone(string(serial.writer_bytes(&live.rows)),context.temp_allocator)
+    rows:=trace_rows_text(&live)
     newest,points:=running.time.tick,running.score.points
     // The same rows from the past, and the game where it was.
     error,text:=probe_call(f,"play.history",fmt.tprintf(`{{"from":%d,"to":%d,"trace":%s}}`,start,newest,PROBE_HISTORY_TRACE))
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,fmt.tprintf(`"rows":[%s]}}`,rows)),text)
+    testing.expect(t,strings.contains(api.json_compact(text),fmt.tprintf(`"rows":[%s]}}`,rows)),text)
     api_result_shape_expect(t,text,Api_Play_History_Result)
     testing.expect(t,running.time.tick==newest && running.score.points==points && r.history.at==r.history.serial)
     // Every other tick from tick 7 on.
     error,text=probe_call(f,"play.history",`{"from":7,"trace":{"entity":"Hero","fields":["world_position[0]"],"every":2}}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,`"rows":[{"tick":7,"values":[7]},{"tick":9,"values":[9]},{"tick":11,"values":[11]},{"tick":13,"values":[13]}]`),text)
+    testing.expect(t,strings.contains(api.json_compact(text),`"rows":[{"tick":7,"values":[7]},{"tick":9,"values":[9]},{"tick":11,"values":[11]},{"tick":13,"values":[13]}]`),text)
     // Rewound to tick 5, the run steps the same ticks again.
     error,_=probe_call(f,"play.seek",`{"to":5}`)
     testing.expect_value(t,error.code,0)
     again:Api_Trace
     testing.expect_value(t,api_trace_read(&f.s,&call,run_ref(&f.s,r),&p,PROBE_HISTORY_TRACE,8,&again),"")
     testing.expect(t,probe_steps(f,8,&again))
-    testing.expect(t,strings.has_suffix(rows,string(serial.writer_bytes(&again.rows))),string(serial.writer_bytes(&again.rows)))
+    testing.expect(t,strings.has_suffix(rows,trace_rows_text(&again)),trace_rows_text(&again))
     // More rows than a call holds go on from next.
     testing.expect(t,probe_steps(f,300))
     error,text=probe_call(f,"play.history",`{"trace":{"storage":"Probe_Score","fields":["points"]}}`)
@@ -1277,4 +1274,11 @@ editor_input_refuses_what_no_frame_takes :: proc(t:^testing.T) {
         error,_:=probe_call(f,"editor.input",c.params)
         testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,c.says),"%s: %v",c.params,error)
     }
+}
+
+// The rows of a trace as JSON without spaces, separated by commas.
+trace_rows_text :: proc(trace:^Api_Trace) -> string {
+    text,_:=serial.text_encode(struct{rows:[]Api_Play_Trace_Row}{trace.rows[:]},.Line,context.temp_allocator)
+    compact:=api.json_compact(string(text))
+    return compact[len(`{"rows":[`):len(compact)-2]
 }
