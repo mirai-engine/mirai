@@ -22,7 +22,7 @@ import "mirai:std/serial"
 @(private="file") Probe_Ping :: struct {entity:core.Entity,amount:int}
 @(private="file") Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
 // What a plugin that moves bodies says of the hero.
-@(private="file") Probe_Stance :: struct {hero:editor.Stance}
+@(private="file") Probe_Stance :: struct {hero:editor.Stance,routes:int}
 @(private="file") PROBE_MOVE :: input.Action(0)
 @(private="file") PROBE_JUMP :: input.Action(2)
 
@@ -55,7 +55,15 @@ Probe_World :: struct {
 }
 @(private="file") Probe_Shared :: struct {problems:core.By_World(core.Problems)}
 @(private="file") Probe_Bodies :: struct {provider:editor.Body_Provider}
-@(private="file") Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener,bodies:Probe_Bodies}
+@(private="file") Probe_Routes :: struct {provider:editor.Route_Provider}
+@(private="file") Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener,bodies:Probe_Bodies,routes:Probe_Routes}
+
+// A plugin that knows no way and counts the times a drive asks it for one.
+@(private="file")
+probe_route :: proc(s:^editor.Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> editor.Route {
+    (cast(^Probe_World)w.data).stance.routes+=1
+    return {}
+}
 
 @(private="file")
 probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
@@ -66,7 +74,10 @@ probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:boo
 @(private="file")
 probe_types :: proc(types:^[dynamic]core.Test_Type) {
     test_types(types)
-    append(types,core.test_type(Probe_Bodies,default=proc(dst:^Probe_Bodies) {dst^={provider={standing=probe_standing}}}))
+    append(types,
+        core.test_type(Probe_Bodies,default=proc(dst:^Probe_Bodies) {dst^={provider={standing=probe_standing}}}),
+        core.test_type(Probe_Routes,default=proc(dst:^Probe_Routes) {dst^={provider={next=probe_route}}}),
+    )
 }
 
 // The seats take their holds and the devices of the tick, as engine/input runs them.
@@ -394,6 +405,7 @@ the_monitors_take_the_height_of_a_fall_from_the_scene :: proc(t:^testing.T) {
 
 // The bot moves over the cells of the world, the same with the same seed,
 // and its bugs come with repros; a game that asks to quit does not end it.
+// It goes to each cell as a drive does: by the way a plugin gives.
 @(test)
 the_bot_explores_the_same_with_the_same_seed_and_a_quit_does_not_end_it :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
@@ -432,27 +444,38 @@ the_bot_explores_the_same_with_the_same_seed_and_a_quit_does_not_end_it :: proc(
     repros,_:=answer["repros"].(json.Array)
     testing.expect(t,len(violations)>0 && len(repros)==1,first)
     testing.expect(t,!strings.contains(first,`"repro_error"`),first)
+    testing.expect(t,(cast(^Probe_World)editor.run_find(&f.s,0).world).stance.routes>0,"it asks for the way to its cell")
     error,_:=probe_call(f,"play.explore",`{"for":10,"move":"nothing"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
 }
 
-// The cells toward the least visited, whatever the tie-breaks of the seed;
-// a page presses what it never pressed and goes back by what led to others.
+// The nearest cell it was never in, whatever the tie-breaks of the seed, one
+// it missed after the others and, turning back, only where it has been; a
+// page presses what it never pressed and goes back by what led to others.
 @(test)
 the_bot_goes_toward_new_cells_and_presses_every_button_of_a_menu_once :: proc(t:^testing.T) {
-    keys:[64][2]i32
-    visits:[64]u16
-    cells:=Explore_Cells{keys=keys[:],visits=visits[:]}
+    keys:[128][2]i32
+    visits:[128]u16
+    misses:[128]u8
+    cells:=Explore_Cells{keys=keys[:],visits=visits[:],misses=misses[:]}
     for x in -3..=3 {
         for z in -3..=0 {explore_cell_enter(&cells,{i32(x),i32(z)})}
     }
-    testing.expect_value(t,explore_cell_visits(&cells,{0,0}),u16(1))
-    testing.expect_value(t,explore_cell_visits(&cells,{9,9}),u16(0))
-    rng:=base.rng_make(1)
-    // Forward is -Z in these axes.
-    chosen:=explore_direction(&cells,{0.5,0,-0.5},{1,0,0},{0,0,1},1,{},&rng)
-    directions:=EXPLORE_DIRECTIONS
-    testing.expect(t,directions[chosen].y>0,"toward the cells that were never entered")
+    been:=cells.count
+    testing.expect_value(t,explore_cell_of({-1,0,-0.5},1),[2]i32{-1,-1})
+    testing.expect_value(t,explore_cell_middle({-1,2},2,5),[3]f32{-1,5,5})
+    for seed in 1..=4 {
+        rng:=base.rng_make(u64(seed))
+        testing.expect_value(t,explore_target(&cells,{0,0},false,&rng).y,i32(1))
+        for x in -1..=1 {
+            for _ in 0..<2 {explore_cell_miss(&cells,{i32(x),1})}
+        }
+        target:=explore_target(&cells,{0,0},false,&rng)
+        testing.expectf(t,target.y>=1 && (target.y>1 || abs(target.x)>1),"a cell it missed twice comes after those it did not: %v",target)
+        testing.expectf(t,explore_target(&cells,{0,0},true,&rng).y<=0,"turning back, only where it has been")
+        misses={}
+    }
+    testing.expect_value(t,cells.count,been)
 
     nodes:[16]Explore_Ui_Node
     pages:[8]Explore_Ui_Page

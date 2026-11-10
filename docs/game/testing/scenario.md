@@ -83,9 +83,10 @@ neither is given), when `until` holds, or when it gets no closer:
 `{"drive": {"entity": "Checkpoint 2", "within": 1.5}, "for": "20s"}`.
 
 - An `entity` with a solid top raised off the floor, or out of reach above or below its feet
-  (about a person's height), arrives only standing on it; it climbs by itself and jumps again from
-  farther if it fell short.
-- A `position` compares `y` within `within` plus a person's height: give the ground's, not 0.
+  (about the height of the player's body), arrives only standing on it; it climbs by itself and
+  jumps again from farther if it fell short.
+- A `position` compares `y` within `within` plus about the height of the player's body: give the
+  ground's, not 0.
 - The answer says `drive.stopped`, where it ended (`drive.position`, `drive.distance`,
   `drive.height` of its feet over the target) and `ran`. In a scenario a drive that does not arrive
   (or end at `until`) fails.
