@@ -3,7 +3,6 @@ package streaming
 import "base:runtime"
 import "core:testing"
 import "mirai:core"
-import scene "mirai:engine/scene"
 
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
 @(private="file")
