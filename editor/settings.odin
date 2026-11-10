@@ -804,7 +804,6 @@ Api_Settings :: struct {
     project:serial.Json `mirai:"label=The sections and fields the file of the project sets over the engine and the code"`,
 }
 
-// What settings.set takes.
 Api_Settings_Set_Params_Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
 Api_Settings_Set_Params_Layer :: enum u8 {project,engine}
 Api_Settings_Set_Params :: struct {

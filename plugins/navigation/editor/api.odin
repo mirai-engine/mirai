@@ -50,38 +50,29 @@ Path_Params :: struct {
     excluded:nav.Nav_Areas `mirai:"optional,label=The areas it never walks by name"`,
 }
 
-// What nav.status answers.
 Nav_Status_Result :: struct {
     ready:bool,
     classes:[]serial.Json,
     builds:serial.Json `mirai:"optional"`,
 }
 
-// What nav.build, nav.move answer.
 Nav_Build_Result :: struct {
     queued:bool,
 }
 
-// What nav.bake answers.
 Nav_Bake_Result :: struct {
-    asset:string,
-    path:string,
+    asset,path:string,
     tiles:int,
     settled:bool,
 }
 
-// What nav.inspect answers.
 Nav_Inspect_Result :: struct {
     class:string,
-    tiles:[]serial.Json,
-    polygons:[]serial.Json,
-    links:[]serial.Json,
-    zones:[]serial.Json `mirai:"optional"`,
-    cells:[]serial.Json `mirai:"optional"`,
+    tiles,polygons,links:[]serial.Json,
+    zones,cells:[]serial.Json `mirai:"optional"`,
     more:bool,
 }
 
-// What nav.agent answers.
 Nav_Agent_Result :: struct {
     class:string `mirai:"optional"`,
     state:string,
@@ -92,15 +83,12 @@ Nav_Agent_Result :: struct {
     far:bool,
 }
 
-// What nav.path answers.
 Nav_Path_Result :: struct {
-    class:string,
-    status:string,
+    class,status:string,
     partial:bool,
     cost:f64 `mirai:"optional"`,
     corners:[]serial.Json,
-    polygons:int `mirai:"optional"`,
-    cells:int `mirai:"optional"`,
+    polygons,cells:int `mirai:"optional"`,
 }
 
 @(private)

@@ -89,7 +89,7 @@ asset_save_without_names_writes_the_unsaved_assets_of_the_caller :: proc(t:^test
     append(&task.review.changed_files,project.path(root,"mine.prefab",allocator=context.temp_allocator))
 
     turn:=api.Call{raw="{}",client_tag="turn-1",allocator=context.temp_allocator}
-    params:Api_Unsaved_Params
+    params:Api_Asset_Save_Params
     paths,ok:=api_unsaved_paths(s,&turn,&params,of_caller=true)
     testing.expect(t,ok && len(paths)==1 && paths[0]=="mine.prefab")
 

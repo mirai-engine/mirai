@@ -75,7 +75,6 @@ Api_Card_Part :: struct {
 @(private)
 API_WRITE_KEYS :: "id, name, preset, position, rotation_deg, scale, visible, enabled, components, off, prefab and children"
 
-// What scene.write takes.
 Api_Scene_Write_Params_Entities :: struct {
     id:string `mirai:"optional,label=matches the entity with this id under root, which may move to another parent"`,
     preset:string `mirai:"optional,label=a preset or the card of a plugin, as scene.add takes it (cube, point_light, sun, spawn...): it gives the entity its components, whose fields components changes, and the rotation and scale it has when those are left out"`,
@@ -83,8 +82,7 @@ Api_Scene_Write_Params_Entities :: struct {
     position:[3]f32 `mirai:"optional,label=local to the parent; [0,0,0] when left out"`,
     rotation_deg:[3]f32 `mirai:"optional,label=[0,0,0] or that of its preset when left out"`,
     scale:[3]f32 `mirai:"optional,label=[1,1,1] or that of its preset when left out"`,
-    visible:bool `mirai:"optional,label=true when left out"`,
-    enabled:bool `mirai:"optional,label=true when left out"`,
+    visible,enabled:bool `mirai:"optional,label=true when left out"`,
     components:serial.Json `mirai:"optional,label=by name the components it has besides those of its preset, each with the fields that differ from the value it starts with; those it leaves out go"`,
     off:[]string `mirai:"optional,label=components it declares that are turned off by themselves"`,
     prefab:serial.Json `mirai:"optional,label=A string or a object. on a new entity, the path or the id of a .prefab: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"`,

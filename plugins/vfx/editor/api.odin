@@ -58,7 +58,6 @@ Api_Particle_Control_Result :: struct {
     queued:bool `mirai:"label=It takes the request in its next fixed step"`,
 }
 
-// What particle.inspect, particle.set take.
 Particle_Inspect_Params :: struct {
     particle:string `mirai:"optional,label=An effect: its path under the assets folder, or its id"`,
     path:string `mirai:"optional,label=particle.create: where the new effect goes, under the assets folder"`,
@@ -68,7 +67,6 @@ Particle_Inspect_Params :: struct {
     resources:serial.Json `mirai:"optional,label=What each resource of its Vfx program reads when an instance binds nothing else, by name: a mesh by its path or id; null takes one away"`,
 }
 
-// What particle.instance.set takes.
 Particle_Instance_Set_Params :: struct {
     entity:string `mirai:"entity,label=The entity with the Particle_Emitter"`,
     values:serial.Json `mirai:"optional,label=Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"`,

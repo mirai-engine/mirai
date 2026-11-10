@@ -462,12 +462,12 @@ an_unsized_schema_reads_and_writes_slices_strings_and_any_json :: proc(t:^testin
     testing.expect_value(t,string(value.free),`{"k":[true,null, 1e3]}`)
     testing.expect_value(t,value.count,7)
     w:Writer;writer_init(&w,allocator=context.temp_allocator)
-    text_write_of(&w,&s,type,&value,.Line)
+    text_write(&w,&s,type,bytes_of(&value),.Line)
     testing.expect_value(t,string(writer_bytes(&w)),text)
     // Nothing held writes as empty lists, an empty string and null.
     empty:Listed
     w.count=0
-    text_write_of(&w,&s,type,&empty,.Line)
+    text_write(&w,&s,type,bytes_of(&empty),.Line)
     testing.expect_value(t,string(writer_bytes(&w)),`{"title": "", "parts": [], "names": [], "lines": [], "free": null, "count": 0}`)
 
     refused:=[]struct{text:string,code:Text_Error_Code,path:string}{
@@ -517,7 +517,7 @@ an_unsized_schema_reads_and_writes_slices_strings_and_any_json :: proc(t:^testin
         reader:Text_Reader;text_reader_init(&reader,string(bytes[:base.hostile_int(&h,len(bytes))+1]),context.temp_allocator)
         if text_read(&reader,&s,type,bytes_of(&into)) {
             out:Writer;writer_init(&out,allocator=context.temp_allocator)
-            text_write_of(&out,&s,type,&into,.Line)
+            text_write(&out,&s,type,bytes_of(&into),.Line)
         }
         free_all(context.temp_allocator)
     }

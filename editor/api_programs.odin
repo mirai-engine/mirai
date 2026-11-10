@@ -104,10 +104,8 @@ Api_Program_Edge :: struct {
     control:bool `mirai:"label=to is inside the branch or loop from; otherwise to takes the value of from"`,
 }
 
-// What material.program.check, material.program.edit, material.program.inspect take.
 Api_Program_Params_Edits :: struct {
-    old:string,
-    new:string,
+    old,new:string,
 }
 Api_Program_Params :: struct {
     program:string `mirai:"optional,label=A program by name (Surface, PostProcess, Vfx or UI), or the path of its .slang under the project"`,
@@ -116,7 +114,6 @@ Api_Program_Params :: struct {
     edits:[]Api_Program_Params_Edits `mirai:"optional,label=edit: replacements applied in order; each old occurs once in the source"`,
 }
 
-// What material.program.create takes.
 Api_Material_Program_Create_Params_Kind :: enum u8 {surface,postprocess,vfx,ui}
 Api_Material_Program_Create_Params :: struct {
     program:string `mirai:"label=The name of the new program: a Slang identifier no program of the project, its plugins or the engine has"`,

@@ -107,22 +107,18 @@ Query_Params :: struct {
 
 @(private) LAYER_NAME_BYTES :: 256
 @(private) TYPE_OUT_OF_RANGE :: "The type is out of range: densities and distances at least 0, slopes from 0 to 90 degrees, align and weight from 0 to 1"
-// What foliage.create answers.
 Foliage_Create_Result :: struct {
     id:string,
 }
 
-// What foliage.type_add, foliage.type_set, foliage.type_remove, foliage.place answer.
 Type_Result :: struct {
     type:string,
 }
 
-// What foliage.paint answers.
 Foliage_Paint_Result :: struct {
     changed:bool,
 }
 
-// What foliage.query answers.
 Foliage_Query_Result :: struct {
     types:[]serial.Json,
     instances:[]serial.Json `mirai:"optional"`,

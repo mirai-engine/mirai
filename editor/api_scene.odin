@@ -122,35 +122,28 @@ Api_Batch_Entry :: struct {
     id:base.Entity_Id `mirai:"label=The entity of the operation; the new one of scene.add and scene.duplicate"`,
 }
 
-// What scene.add takes.
 Api_Scene_Add_Params :: struct {
     preset:string `mirai:"optional,label=empty, cube, sphere, cylinder, cone, capsule, plane, prism, pyramid, point_light, spot_light, rect_light, sun, camera, spawn, particles, or the card of a plugin by its label"`,
     name:string `mirai:"optional"`,
     parent:string `mirai:"entity,optional,label=the parent by its name, a path Parent/Child or its id; null: a root"`,
-    position:[3]f32 `mirai:"optional"`,
-    rotation_deg:[3]f32 `mirai:"optional"`,
-    scale:[3]f32 `mirai:"optional"`,
+    position,rotation_deg,scale:[3]f32 `mirai:"optional"`,
     visible:bool `mirai:"optional"`,
     enabled:bool `mirai:"optional,label=false turns the entity and everything under it off: their components keep their values and no system sees them"`,
     components:serial.Json `mirai:"optional,label=by component name, the fields to set"`,
     off:serial.Json `mirai:"optional,label=by component name, true turns the component off by itself and false on; it keeps its values"`,
 }
 
-// What scene.set takes.
 Api_Scene_Set_Params :: struct {
     entity:string `mirai:"entity,label=the entity by its name, a path Parent/Child or its id; a name several entities have is an error listing them"`,
     name:string `mirai:"optional,label=its new name"`,
     parent:string `mirai:"entity,optional,label=the parent by its name, a path Parent/Child or its id; null: a root"`,
-    position:[3]f32 `mirai:"optional"`,
-    rotation_deg:[3]f32 `mirai:"optional"`,
-    scale:[3]f32 `mirai:"optional"`,
+    position,rotation_deg,scale:[3]f32 `mirai:"optional"`,
     visible:bool `mirai:"optional"`,
     enabled:bool `mirai:"optional,label=false turns the entity and everything under it off: their components keep their values and no system sees them"`,
     components:serial.Json `mirai:"optional,label=by component name, the fields to change, or null to remove it"`,
     off:serial.Json `mirai:"optional,label=by component name, true turns the component off by itself and false on; it keeps its values"`,
 }
 
-// What scene.batch takes.
 Api_Scene_Batch_Params_Operations :: struct {
     method:string `mirai:"label=One of scene.add, scene.set, scene.delete, scene.duplicate."`,
     params:serial.Json `mirai:"optional,label=the params of that method"`,

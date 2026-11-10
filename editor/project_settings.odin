@@ -237,13 +237,11 @@ Api_Project_Changed :: struct {
     active_plugins:[][64]u8 `mirai:"text,label=The plugins on after the change; project.get gives the manifest and every plugin"`,
 }
 
-// What project.set takes.
 Api_Project_Set_Params_Window_Mode :: enum u8 {Maximized,Fullscreen,Windowed}
 Api_Project_Set_Params_Window :: struct {
     title:string `mirai:"optional,label=empty: the name"`,
     mode:Api_Project_Set_Params_Window_Mode `mirai:"optional"`,
-    width:int `mirai:"optional,min=1,max=16384"`,
-    height:int `mirai:"optional,min=1,max=16384"`,
+    width,height:int `mirai:"optional,min=1,max=16384"`,
 }
 Api_Project_Set_Params_Build_Optimization :: enum u8 {Minimal,None,Size,Speed,Aggressive}
 Api_Project_Set_Params_Build :: struct {

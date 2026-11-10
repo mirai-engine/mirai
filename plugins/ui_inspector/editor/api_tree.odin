@@ -51,13 +51,11 @@ Tree_Document_Node :: struct {
     children:serial.Json `mirai:"optional,label=The nodes it holds, in order, as this one"`,
 }
 
-// What ui.inspect takes.
 Ui_Inspect_Params :: struct {
     asset:string `mirai:"label=the path of a .ui of the project (hud/hud.ui), or its id"`,
     node:string `mirai:"optional,label=name or #row: that node and what it holds, with the styles and animations they take; absent: the whole file"`,
 }
 
-// What ui.write takes.
 Ui_Write_Params :: struct {
     asset:string `mirai:"label=the path of a .ui of the project (hud/hud.ui), or its id"`,
     node:string `mirai:"optional,label=name or #row: the document declares that node and what it holds, and nothing else of the file changes; absent: the whole file"`,

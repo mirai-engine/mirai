@@ -27,7 +27,6 @@ Api_Material_Result :: struct {
     overrides:[][asset.OVERRIDE_PATH_BYTES]u8 `mirai:"text,optional,label=Of an imported material: every field that differs from imported; importing it again keeps them"`,
 }
 
-// What material.inspect, material.set take.
 Api_Material_Params :: struct {
     material:string `mirai:"optional,label=A material: its path under the assets folder, or its id"`,
     path:string `mirai:"optional,label=material.set: in place of material, a new material at this path under the assets folder, made over the defaults; it fails when that file exists"`,

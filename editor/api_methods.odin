@@ -331,7 +331,6 @@ Api_Editor_Command :: struct {
     checked:bool,
 }
 
-// What editor.input takes.
 Api_Editor_Input_Params_Events_Mouse_Buttons :: enum u8 {left,right,middle}
 Api_Editor_Input_Params_Events :: struct {
     keys:[]string `mirai:"optional,label=keys held in the frame; they replace the previous set"`,
@@ -349,13 +348,10 @@ Api_Editor_Input_Params :: struct {
     dt:f64 `mirai:"optional,max=0.25,label=Above 0. seconds"`,
 }
 
-// What camera.set takes.
 Api_Camera_Set_Params_Exposure :: enum u8 {scene,camera,manual}
 Api_Camera_Set_Params :: struct {
-    position:[3]f32 `mirai:"optional"`,
-    target:[3]f32 `mirai:"optional"`,
-    yaw:f64 `mirai:"optional,label=radians"`,
-    pitch:f64 `mirai:"optional,label=radians"`,
+    position,target:[3]f32 `mirai:"optional"`,
+    yaw,pitch:f64 `mirai:"optional,label=radians"`,
     distance:f64 `mirai:"optional,label=Above 0."`,
     fov:f64 `mirai:"optional,min=1,max=170,label=degrees, vertical"`,
     entity:string `mirai:"entity,optional,label=an entity with a perspective Camera by its name, a path Parent/Child, its id or its handle: the camera takes its eye, where it looks and its fov, without changing the scene; excludes position, target, yaw and pitch"`,
@@ -365,13 +361,11 @@ Api_Camera_Set_Params :: struct {
     from:[3]f32 `mirai:"optional,label=with frame: the direction from what is framed to the camera"`,
 }
 
-// What build.check answers.
 Api_Build_Check_Result_Diagnostics_Severity :: enum u8 {Error,Warning}
 Api_Build_Check_Result_Diagnostics :: struct {
     severity:Api_Build_Check_Result_Diagnostics_Severity,
     file:string,
-    line:int,
-    column:int,
+    line,column:int,
     message:string,
 }
 Api_Build_Check_Result :: struct {
@@ -383,7 +377,6 @@ Api_Build_Check_Result :: struct {
     text:string,
 }
 
-// What build.test, build.test.status answer.
 Api_Build_Test_Result_Failed :: struct {
     package_:string `mirai:"name=package"`,
     name:string,
@@ -393,8 +386,7 @@ Api_Build_Test_Result_Diagnostics_Severity :: enum u8 {Error,Warning}
 Api_Build_Test_Result_Diagnostics :: struct {
     severity:Api_Build_Test_Result_Diagnostics_Severity,
     file:string,
-    line:int,
-    column:int,
+    line,column:int,
     message:string,
 }
 Api_Build_Test_Result :: struct {
@@ -403,8 +395,7 @@ Api_Build_Test_Result :: struct {
     seconds:f64,
     running:bool `mirai:"label=it still builds or runs: build.test.status says when it ends"`,
     compiled:bool `mirai:"label=false: the package did not build; diagnostics say why"`,
-    total:int,
-    passed:int,
+    total,passed:int,
     failed:[]Api_Build_Test_Result_Failed,
     errors:int,
     diagnostics:[]Api_Build_Test_Result_Diagnostics,

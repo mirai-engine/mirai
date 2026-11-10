@@ -52,7 +52,6 @@ Api_Play_Push_Result :: struct {
     pushed:int `mirai:"label=Items pushed; the functions that take the queue read them in the next tick"`,
 }
 
-// What play.set takes.
 Api_Play_Set_Params :: struct {
     entity:string `mirai:"entity,label=the entity by its name, a path Parent/Child, its id or its handle; a name several entities have is an error listing them"`,
     position:[3]f32 `mirai:"optional,label=where in the world it goes, as a teleport: a body of physics jumps there in the next tick"`,
@@ -61,7 +60,6 @@ Api_Play_Set_Params :: struct {
     player:int `mirai:"optional,min=0,max=3,label=the run of that player of a game a turn plays on the network"`,
 }
 
-// What play.push takes.
 Api_Play_Push_Params :: struct {
     storage:string `mirai:"label=the name of a queue storage of the game: Seat_Requests, Spawns or one of the project"`,
     items:[]serial.Json `mirai:"label=At most 64. its requests as the schema of the type of its items, with Entity fields holding handles; play.inspect with storages names them"`,

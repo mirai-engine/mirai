@@ -165,7 +165,6 @@ Api_Preferences :: struct {
     kept:serial.Json `mirai:"label=The sections and fields the file sets over the values of the code"`,
 }
 
-// What preferences.set takes.
 Api_Preferences_Set_Params :: struct {
     preferences:serial.Json `mirai:"label={'<Area>': {'<field>': value}}: an object of areas as preferences.get names them, each with the fields to change"`,
 }

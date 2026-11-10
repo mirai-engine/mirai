@@ -129,30 +129,24 @@ Resize_Params :: struct {
 
 @(private) LAST_LAYER :: "A terrain keeps one layer at least: give this one another material with terrain.layer, or add another first"
 @(private) LAYER_NAME_BYTES :: 256
-// What terrain.create, terrain.resize answer.
 Id_Result :: struct {
     id:string,
 }
 
-// What terrain.edit answers.
 Terrain_Edit_Result :: struct {
     changed:bool,
     touches:int `mirai:"optional"`,
 }
 
-// What terrain.layer answers.
 Terrain_Layer_Result :: struct {
     layers:int,
     layer:string `mirai:"optional"`,
 }
 
-// What terrain.interior answers.
 Terrain_Interior_Result :: struct {
-    strata:int,
-    veins:int,
+    strata,veins:int,
 }
 
-// What terrain.sample answers.
 Terrain_Sample_Result :: struct {
     found:bool,
     height:f64 `mirai:"optional"`,
@@ -164,11 +158,9 @@ Terrain_Sample_Result :: struct {
     check:string `mirai:"optional"`,
 }
 
-// What terrain.heightmap answers.
 Terrain_Heightmap_Result :: struct {
     written:string `mirai:"optional"`,
-    height_scale:f64 `mirai:"optional"`,
-    height_offset:f64 `mirai:"optional"`,
+    height_scale,height_offset:f64 `mirai:"optional"`,
 }
 
 @(private)

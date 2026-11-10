@@ -35,12 +35,6 @@ text_write :: proc(w:^Writer,s:^Schema,type:Type_Index,data:[]u8,format:=Text_Fo
     text_write_value(w,s,type,data[:s.types[type].size],is_text && (type_is_bytes(s,type) || type_is_texts(s,type)),format,depth,omit_fields)
 }
 
-// The value of a struct, a slice or a string of a type the schema has: T is
-// what a schema describes, and one that is unsized is what holds it.
-text_write_of :: proc(w:^Writer,s:^Schema,type:Type_Index,value:^$T,format:=Text_Format.Pretty) {
-    text_write(w,s,type,mem.ptr_to_bytes(value),format)
-}
-
 // The text of a value, of any type an unsized schema takes: the form of a
 // file or a message Mirai defines, which text_decode reads back. In
 // allocator; ok is false when it is not of such a type or there is no memory.

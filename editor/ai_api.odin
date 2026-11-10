@@ -115,19 +115,14 @@ Api_Ai_History_Entry :: struct {
     title:string `mirai:"optional,label=Of a conversation"`,
     document:string `mirai:"optional,label=Of a conversation: the document it worked on"`,
     provider:string `mirai:"optional,label=Of a conversation: the id of its connection"`,
-    model:string `mirai:"optional,label=Of a conversation"`,
-    effort:string `mirai:"optional,label=Of a conversation"`,
+    model,effort:string `mirai:"optional,label=Of a conversation"`,
     updated_at:int `mirai:"optional,label=Of a conversation: Unix time in milliseconds"`,
     sequence:int `mirai:"optional,label=Of a message: what before takes"`,
     kind:Api_Ai_History_Search_Result_Kind `mirai:"optional,label=Of a message"`,
-    text:string `mirai:"optional,label=Of a message"`,
-    role:string `mirai:"optional,label=Of a message"`,
-    event_type:string `mirai:"optional,label=Of a message"`,
-    tool:string `mirai:"optional,label=Of a message"`,
+    text,role,event_type,tool:string `mirai:"optional,label=Of a message"`,
     context_:string `mirai:"name=context,optional,label=Of a message: JSON as text"`,
 }
 
-// What ai.history.search answers.
 Api_Ai_History_Search_Result_Kind :: enum u8 {prompt,output,note,report,divider}
 Api_Ai_History_Search_Result :: struct {
     conversation:int `mirai:"label=What ai.history takes as id"`,

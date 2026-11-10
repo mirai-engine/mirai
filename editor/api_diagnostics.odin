@@ -26,10 +26,8 @@ Api_Diagnostics_Params :: struct {
     limit:int `mirai:"optional,min=1,max=500,clamp,label=Most console entries listed: the newest ones"`,
 }
 
-// What engine.diagnostics answers.
 Api_Engine_Diagnostics_Result_Validation :: struct {
-    errors:int,
-    loader_errors:int,
+    errors,loader_errors:int,
     messages:[]string,
 }
 Api_Engine_Diagnostics_Result_Console_Entries_Level :: enum u8 {Debug,Info,Warning,Error}
@@ -46,19 +44,14 @@ Api_Engine_Diagnostics_Result_Console :: struct {
     entries:[]Api_Engine_Diagnostics_Result_Console_Entries,
 }
 Api_Engine_Diagnostics_Result_Asset_Errors :: struct {
-    id:string,
-    kind:string,
-    problem:string,
-    detail:string,
-    path:string `mirai:"optional"`,
-    message:string `mirai:"optional"`,
+    id,kind,problem,detail:string,
+    path,message:string `mirai:"optional"`,
 }
 Api_Engine_Diagnostics_Result_Build_Diagnostics_Severity :: enum u8 {Error,Warning}
 Api_Engine_Diagnostics_Result_Build_Diagnostics :: struct {
     severity:Api_Engine_Diagnostics_Result_Build_Diagnostics_Severity,
     file:string,
-    line:int,
-    column:int,
+    line,column:int,
     message:string,
 }
 Api_Engine_Diagnostics_Result_Build :: struct {
@@ -69,22 +62,16 @@ Api_Engine_Diagnostics_Result_Build :: struct {
 }
 Api_Engine_Diagnostics_Result_Problems_World :: enum u8 {edit,play}
 Api_Engine_Diagnostics_Result_Problems_Entries :: struct {
-    id:string,
-    entity:string,
-    name:string,
+    id,entity,name:string,
     alive:bool,
     code:string,
     message:string `mirai:"label=What failed and how to fix it"`,
-    count:int,
-    first:int,
-    last:int,
+    count,first,last:int,
 }
 Api_Engine_Diagnostics_Result_Problems :: struct {
     world:Api_Engine_Diagnostics_Result_Problems_World,
-    owner:int `mirai:"optional"`,
-    player:int `mirai:"optional"`,
-    serial:int,
-    evicted:int,
+    owner,player:int `mirai:"optional"`,
+    serial,evicted:int,
     entries:[]Api_Engine_Diagnostics_Result_Problems_Entries,
 }
 Api_Engine_Diagnostics_Result_Renderer :: struct {

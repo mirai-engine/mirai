@@ -391,12 +391,8 @@ api_view_mode :: proc(s: ^Session, call: ^api.Call) {
 	api_view_mode_write(call, entry)
 }
 
-// What editor.view_mode.list answers.
 Api_Editor_View_Mode_List_Result_Modes :: struct {
-    mode:string,
-    label:string,
-    group:string,
-    submenu:string,
+    mode,label,group,submenu:string,
     available:bool,
     reason:string,
 }
@@ -405,12 +401,8 @@ Api_Editor_View_Mode_List_Result :: struct {
     modes:[]Api_Editor_View_Mode_List_Result_Modes,
 }
 
-// What editor.view_mode.set answers.
 Api_Editor_View_Mode_Set_Result :: struct {
-    mode:string,
-    label:string,
-    group:string,
-    submenu:string,
+    mode,label,group,submenu:string,
     available:bool,
     reason:string,
 }

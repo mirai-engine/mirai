@@ -1143,19 +1143,16 @@ records_api_file :: proc(s:^Session,path:string) -> string {
     return project.path_absolute(project.path(s.project_root,native,allocator=context.temp_allocator),context.temp_allocator)
 }
 
-// What records.create takes.
 Api_Records_Create_Params :: struct {
     path:string `mirai:"label=Where the new table goes, under the assets folder; .records is added when missing"`,
     type:string `mirai:"label=The type of its rows as library.Name, as records.types lists them"`,
 }
 
-// What records.inspect takes.
 Api_Records_Inspect_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     rows:[]string `mirai:"optional,label=Only these rows, by name"`,
 }
 
-// What records.set takes.
 Api_Records_Set_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
@@ -1164,7 +1161,6 @@ Api_Records_Set_Params :: struct {
     name:string `mirai:"optional,label=A new name for the row"`,
 }
 
-// What records.add takes.
 Api_Records_Add_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     name:string `mirai:"label=The name of the new row: a word of ASCII letters, digits and _, unique in the table"`,
@@ -1173,26 +1169,22 @@ Api_Records_Add_Params :: struct {
     after:string `mirai:"optional,label=The row it goes after; without it, at the end"`,
 }
 
-// What records.remove takes.
 Api_Records_Remove_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     rows:[]string `mirai:"label=The names of the rows to remove"`,
 }
 
-// What records.move takes.
 Api_Records_Move_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
     after:string `mirai:"label=The row it goes right after; empty: it goes first"`,
 }
 
-// What records.import takes.
 Api_Records_Import_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     file:string `mirai:"label=A CSV file (UTF-8, comma separated, its first row the columns as records.export writes them): its path from the root of the project, or absolute"`,
 }
 
-// What records.export takes.
 Api_Records_Export_Params :: struct {
     records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
     file:string `mirai:"label=The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"`,

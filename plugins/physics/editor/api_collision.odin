@@ -37,23 +37,19 @@ Api_Collision_Target :: struct {
     prefix:string,
 }
 
-// What physics.collision.inspect answers.
 Physics_Collision_Inspect_Result_Presets :: struct {
     name:string,
     sensor:bool,
-    belongs:[]string `mirai:"label=At most 32."`,
-    collides:[]string `mirai:"label=At most 32."`,
+    belongs,collides:[]string `mirai:"label=At most 32."`,
 }
 Physics_Collision_Inspect_Result_Pushes :: struct {
-    a:string,
-    b:string,
+    a,b:string,
     force:f64 `mirai:"label=Above 0. The most they push with"`,
 }
 Physics_Collision_Inspect_Result_Undeclared_Field :: enum u8 {presets,pushes}
 Physics_Collision_Inspect_Result_Undeclared :: struct {
     field:Physics_Collision_Inspect_Result_Undeclared_Field,
-    index:int `mirai:"min=0"`,
-    value:int `mirai:"min=0"`,
+    index,value:int `mirai:"min=0"`,
 }
 Physics_Collision_Inspect_Result :: struct {
     categories:[]string `mirai:"label=Declared in code; names.create declares one"`,
@@ -62,38 +58,32 @@ Physics_Collision_Inspect_Result :: struct {
     undeclared:[]Physics_Collision_Inspect_Result_Undeclared `mirai:"label=Entries of Collision_Settings for values no code declares"`,
 }
 
-// What physics.collision.get answers.
 Physics_Collision_Get_Result :: struct {
     id:string,
     playing:bool,
-    component:string,
-    prefix:string,
+    component,prefix:string,
     preset:string `mirai:"optional,label=Of a Collider"`,
     sensor:bool `mirai:"optional,label=Of a Collider, as belongs and collides: from its preset, or its own when custom"`,
-    belongs:[]string `mirai:"optional,label=At most 32."`,
-    collides:[]string `mirai:"optional,label=At most 32."`,
+    belongs,collides:[]string `mirai:"optional,label=At most 32."`,
     pushes:serial.Json `mirai:"optional,label=Of a Collider: the categories its dynamic body yields to, with the force"`,
     group:string `mirai:"optional,label=Of a Collider"`,
     hits:[]string `mirai:"optional,label=At most 32. Of a Query_Filter: the categories it hits"`,
     sensors:bool `mirai:"optional,label=Of a Query_Filter: whether it reports sensors"`,
 }
 
-// What physics.collision.get takes.
 Physics_Collision_Get_Params :: struct {
     entity:string `mirai:"entity"`,
     component:string `mirai:"optional,label=The component that holds the collision; omitted: the only one of the entity"`,
     prefix:string `mirai:"optional,label=Dotted path of the field of the component that holds a nested collision"`,
 }
 
-// What physics.collision.set takes.
 Physics_Collision_Set_Params :: struct {
     entity:string `mirai:"entity"`,
     component:string `mirai:"optional,label=The component that holds the collision; omitted: the only one of the entity"`,
     prefix:string `mirai:"optional,label=Dotted path of the field of the component that holds a nested collision"`,
     preset:string `mirai:"optional,label=Of a Collider; 'custom' keeps what it is as its own"`,
     sensor:bool `mirai:"optional,label=Of a Collider, as belongs and collides: of its own, which make it custom from what it is"`,
-    belongs:[]string `mirai:"optional,label=At most 32."`,
-    collides:[]string `mirai:"optional,label=At most 32."`,
+    belongs,collides:[]string `mirai:"optional,label=At most 32."`,
     hits:[]string `mirai:"optional,label=At most 32. Of a Query_Filter: the categories it hits; '*' is all"`,
     sensors:bool `mirai:"optional,label=Of a Query_Filter: whether it reports sensors"`,
 }

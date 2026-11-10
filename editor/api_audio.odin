@@ -101,7 +101,6 @@ Api_Sound_Set_Result :: struct {
     sounds:serial.Json `mirai:"label=A list with the path of each of its sounds; empty for one the assets do not have"`,
 }
 
-// What sound_set.inspect, sound_set.set take.
 Api_Sound_Set_Params :: struct {
     sound_set:string `mirai:"optional,label=A sound set: its path under the assets folder, or its id"`,
     path:string `mirai:"optional,label=sound_set.set: in place of sound_set, a new sound set at this path under the assets folder, made over the defaults; it fails when that file exists"`,

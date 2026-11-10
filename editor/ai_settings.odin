@@ -52,8 +52,7 @@ Ai_Connection :: struct {
 Ai_Connection_Disk :: struct {
     provider,model,effort:string,
     configured:bool,
-    name:string,
-    command:string,
+    name,command:string,
     arguments:[]string,
 }
 Ai_Subagent_Disk :: struct {mode,connection,model,effort:string}

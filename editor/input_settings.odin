@@ -762,7 +762,6 @@ Api_Input_Action :: struct {
     bindings:serial.Json `mirai:"label=The bindings in effect as input.mirai writes them"`,
 }
 
-// What input.set takes.
 Api_Input_Set_Params_Kind :: enum u8 {Button,Axis,Axis2}
 Api_Input_Set_Params :: struct {
     action:string `mirai:"optional,label=The name of an action, as input.get lists it"`,

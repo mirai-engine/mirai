@@ -62,7 +62,6 @@ Api_Panel_Restored :: struct {
     of:Api_Panel,
 }
 
-// What panel.save takes.
 Api_Panel_Save_Params_Buttons :: struct {
     name:string `mirai:"label=Unique in the panel."`,
     sets:[]serial.Json `mirai:"label=Each one of: component, field, entity, where, value; setting, field, value. At most 12. At least 1."`,

@@ -39,7 +39,6 @@ Api_Material_Instance_Overlay :: struct {
     enabled:bool,
 }
 
-// What material.instance.set takes.
 Api_Material_Instance_Set_Params :: struct {
     entity:string `mirai:"entity,label=The entity with the Mesh_Renderer"`,
     slot:int `mirai:"optional,min=0,label=The slot of its mesh whose material the values, parameters and textures are of, from 0; 0 when omitted"`,

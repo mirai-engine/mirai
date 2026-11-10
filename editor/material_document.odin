@@ -672,7 +672,6 @@ Api_Material_Variants_Result :: struct {
     count:int,
 }
 
-// What editor.material.show takes.
 Api_Editor_Material_Show_Params_Channel :: enum u8 {lit,base_color,roughness,metallic,normal,emission}
 Api_Editor_Material_Show_Params :: struct {
     material:string `mirai:"optional,label=A material: its path under the assets folder, or its id; absent or empty closes the material document in front"`,
@@ -680,7 +679,6 @@ Api_Editor_Material_Show_Params :: struct {
     channel:Api_Editor_Material_Show_Params_Channel `mirai:"optional,label=What the preview shows, which the next message takes as context: the lit sphere, or one value the material writes"`,
 }
 
-// What editor.material.variants takes.
 Api_Editor_Material_Variants_Params_Variants :: struct {
     label:string,
     values:serial.Json `mirai:"label=Those of material.set by parameter of its program (or base_color, roughness, metallic and emission of the standard model): a number, a bool, or an array of its components, inside the range of the parameter"`,
