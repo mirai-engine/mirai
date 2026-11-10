@@ -29,7 +29,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,events,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -72,6 +72,7 @@ Type :: struct {
     lock_id:int,
     file:^ast.File,   // where it is declared
     value:^ast.Expr,  // its struct
+    where_:string,    // its file and line, for an error
 }
 
 // A struct of game data, @(record): the row of the tables of .records assets.
@@ -527,34 +528,35 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             t:=new(Type)
             t.name,t.pkg=name,pkg
             t.file,t.value=file,decl.values[0]
+            t.where_=fmt.aprintf("%s(%d)",file.fullpath,decl.pos.line)
             t.key=fmt.aprintf("%s.%s",pkg.path,name)
             t.kind=is_component?.Component:.Storage
             switch core.declared_read(&t.declared,options,pkg.editor) {
             case "replicated":
-                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner or replicated=\"others\" for the rest",pkg.folder,name,options["replicated"]))
+                append(&g.errors,fmt.aprintf("%s: %s has replicated=%q: write @(component,replicated) for every end that has the entity, replicated=\"owner\" for its owner or replicated=\"others\" for the rest",t.where_,name,options["replicated"]))
                 continue
             case "setting":
-                append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",pkg.folder,name,options["setting"]))
+                append(&g.errors,fmt.aprintf("%s: %s has setting=%q, which is not a kind of setting: write @(storage,setting) for a setting of the project or @(storage,setting=\"machine\") for a preference of whoever uses the engine on this machine",t.where_,name,options["setting"]))
                 continue
             }
             if t.replication!=.None && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is a storage and says replicated: the network replicates components of entities; make it a @(component,replicated), or send it as a @(net_message)",t.where_,name))
                 continue
             }
             if _,scene:=options["scene"];scene {
-                append(&g.errors,fmt.aprintf("%s: %s says scene: a setting of the scene is a component on an entity of the root scene, which saves, replicates and changes while the game runs; make it a @(component), with single if the world uses one at a time",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says scene: a setting of the scene is a component on an entity of the root scene, which saves, replicates and changes while the game runs; make it a @(component), with single if the world uses one at a time",t.where_,name))
                 continue
             }
             if t.single && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s says single, which is of a component the world uses one of at a time: write @(component,single)",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says single, which is of a component the world uses one of at a time: write @(component,single)",t.where_,name))
                 continue
             }
             if t.far && !is_component {
-                append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says far, which is of a component whose entity draws a far form of its own and stays when its section unloads: write @(component,far)",t.where_,name))
                 continue
             }
             if _,old:=options["events"];old {
-                append(&g.errors,fmt.aprintf("%s: %s says events, which is no option: what a library reports is a field core.Events(T) of a @(storage), which its owner pushes to and never clears; take events out and make its core.Queue(T) a core.Events(T)",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says events, which is no option: what a library reports is a field core.Events(T) of a @(storage), which its owner pushes to and never clears; take events out and make its core.Queue(T) a core.Events(T)",t.where_,name))
                 continue
             }
             if record,is_struct:=decl.values[0].derived.(^ast.Struct_Type);is_struct && is_storage {
@@ -566,37 +568,37 @@ package_read :: proc(g:^Generator,pkg:^Package) {
                 t.events=len(t.logs)>0
             }
             if t.queue && (t.kind!=.Storage || t.events) {
-                append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says queue: a storage of requests is @(storage,queue), and it holds no core.Events, which are what a library reports",t.where_,name))
                 continue
             }
             if t.kind==.Component {field_comments(&t.fields,decl.values[0])}
             for lock in strings.fields(t.lock_names) {append(&t.locks,qualified(g,file,pkg,lock))}
             if t.setting!=.None && (t.kind!=.Storage || t.place==.Editor) {
-                append(&g.errors,fmt.aprintf("%s: %s is a setting: mark it @(storage,setting) or @(storage,setting=\"machine\") in a library",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is a setting: mark it @(storage,setting) or @(storage,setting=\"machine\") in a library",t.where_,name))
                 continue
             }
             if t.by_world && (t.kind!=.Storage || t.place!=.Shared || t.setting!=.None) {
-                append(&g.errors,fmt.aprintf("%s: %s is by_world: a storage of the application with a value for each World is @(storage,host,by_world) in a library, and is not a setting",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is by_world: a storage of the application with a value for each World is @(storage,host,by_world) in a library, and is not a setting",t.where_,name))
                 continue
             }
             if t.persist && (t.kind!=.Storage || t.place!=.World || t.queue || t.events || t.setting!=.None || t.copy=="false" || t.reset!="") {
-                append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",t.where_,name))
                 continue
             }
             if t.copy_kept!="" && (t.kind!=.Storage || t.place!=.World || t.copy=="false") {
-                append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",t.where_,name))
                 continue
             }
             if (t.keep || t.reset!="") && (t.kind!=.Storage || t.place!=.World) {
-                append(&g.errors,fmt.aprintf("%s: %s says keep or reset, which are of a storage of the World: clearing a World resets its storages, and the others have no World to follow",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says keep or reset, which are of a storage of the World: clearing a World resets its storages, and the others have no World to follow",t.where_,name))
                 continue
             }
             if (t.keep || t.reset!="") && (t.setting!=.None || t.copy=="false") || t.keep && t.reset!="" {
-                append(&g.errors,fmt.aprintf("%s: %s says keep or reset and survives clearing the World already as a setting or with copy=false, or says both: a storage that the World resets says reset=\"proc\" when it needs more than its default, one that survives says keep",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s says keep or reset and survives clearing the World already as a setting or with copy=false, or says both: a storage that the World resets says reset=\"proc\" when it needs more than its default, one that survives says keep",t.where_,name))
                 continue
             }
             if t.key in g.by_key {
-                append(&g.errors,fmt.aprintf("%s: %s is declared twice",pkg.folder,name))
+                append(&g.errors,fmt.aprintf("%s: %s is declared twice",t.where_,name))
                 continue
             }
             g.by_key[t.key]=t
@@ -976,11 +978,11 @@ types_settle :: proc(g:^Generator) {
         for lock in t.locks {
             target,found:=g.by_key[lock]
             if !found || target.kind!=.Component {
-                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not a component",t.pkg.folder,t.name,lock))
+                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not a component",t.where_,t.name,lock))
             } else if !target.shared {
-                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not @(component,shared): only a table with several writers has owners by entity",t.pkg.folder,t.name,target.name))
+                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is not @(component,shared): only a table with several writers has owners by entity",t.where_,t.name,target.name))
             } else if target.place!=t.place {
-                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is in another place of the world: a row owns rows of its own World, Shared or Editor",t.pkg.folder,t.name,target.name))
+                append(&g.errors,fmt.aprintf("%s: %s locks %s, which is in another place of the world: a row owns rows of its own World, Shared or Editor",t.where_,t.name,target.name))
             }
         }
     }
@@ -1236,12 +1238,12 @@ type_key :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> str
 rules_check :: proc(g:^Generator) {
     for t in g.types {
         if t.by_world && "mirai:core.World_Id" not_in g.by_key {
-            append(&g.errors,fmt.aprintf("%s: %s is by_world, and the world has no core.World_Id to know whose value a function gets",t.pkg.folder,t.name))
+            append(&g.errors,fmt.aprintf("%s: %s is by_world, and the world has no core.World_Id to know whose value a function gets",t.where_,t.name))
         }
         if !t.persist {continue}
         if field,what,fix:=persist_unkept(g,t.file,t.pkg,t.value,"",0);what!="" {
             at:=field==""?t.name:fmt.aprintf("%s.%s",t.name,field)
-            append(&g.errors,fmt.aprintf("%s: %s says persist and %s is %s, which the profile of the player does not keep: the profile holds plain data; %s",t.pkg.folder,t.name,at,what,fix))
+            append(&g.errors,fmt.aprintf("%s: %s says persist and %s is %s, which the profile of the player does not keep: the profile holds plain data; %s",t.where_,t.name,at,what,fix))
         }
     }
     for r in g.records {
