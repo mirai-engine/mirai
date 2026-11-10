@@ -88,6 +88,7 @@ Load_Job :: struct {
     salt:base.Entity_Id, // a section: the Id of its reference
     cooked:bool,
     far:bool, // only what draws a far form of its own, kept (far_keep), and what that names
+    scenes:bool, // a warm: the scenes it names are read whatever roots they have (assets_unloaded)
     gated:bool, // a section: it waits for the libraries before it ends (Load_Phase.Waiting)
     whole:bool, // nothing on the screen to keep smooth: it has the job workers and the frames (host.assets_load_whole)
     passes:int, // frames it waited
@@ -128,13 +129,13 @@ Load_Item :: struct {
 // Starts reading in jobs prefabs and what they take that is not loaded, for
 // the spawns that wait for them (Prefab_Pending): a load without a World,
 // all Warming. nil, with the error, when it cannot start.
-prefab_warm_begin :: proc(app:^host.App,prefabs:..base.Asset_Id) -> (job:^Load_Job,error:Error) {
+prefab_warm_begin :: proc(app:^host.App,prefabs:[]base.Asset_Id,documents:=false) -> (job:^Load_Job,error:Error) {
     a:=app.assets
     if a==nil {return nil,.No_Assets}
     heap:=runtime.heap_allocator()
     no_job:runtime.Allocator_Error
     if job,no_job=new(Load_Job,heap);no_job!=nil {return nil,.Out_Of_Memory}
-    job^={app=app,cooked=a.indexed,started=time.tick_now()}
+    job^={app=app,cooked=a.indexed,scenes=documents,started=time.tick_now()}
     job.names=make([dynamic]base.Asset_Id,heap)
     job.animations=make([dynamic]base.Asset_Id,heap)
     asset.types_init(&job.types,heap)
@@ -366,9 +367,10 @@ load_named :: proc(job:^Load_Job) {
 // they load: the documents of prefabs, which a spawn places, then textures,
 // materials, which take them, and meshes, which take materials. Also what
 // the other assets take, as the meshes of a foliage source or of a prefab,
-// but not what a scene of several roots takes, which is a section of its own.
+// but not what a scene of several roots takes, which is a section of its own;
+// with documents, the scenes ids names whatever roots they have.
 @(private)
-assets_unloaded :: proc(a:^host.Assets,ids:[]base.Asset_Id) -> (lists:[4][dynamic]base.Asset_Id) {
+assets_unloaded :: proc(a:^host.Assets,ids:[]base.Asset_Id,documents:=false) -> (lists:[4][dynamic]base.Asset_Id) {
     kinds:=[4]asset.Fourcc{asset.KIND_SCENE,asset.KIND_TEXTURE,asset.KIND_MATERIAL,asset.KIND_MESH}
     for &list in lists {list=make([dynamic]base.Asset_Id,context.temp_allocator)}
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
@@ -379,7 +381,7 @@ assets_unloaded :: proc(a:^host.Assets,ids:[]base.Asset_Id) -> (lists:[4][dynami
         if id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {continue}
+        if !found || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) && !(documents && slice.contains(ids,id)) {continue}
         if !host.assets_loaded(a,id) {
             for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
         }
@@ -394,7 +396,7 @@ assets_unloaded :: proc(a:^host.Assets,ids:[]base.Asset_Id) -> (lists:[4][dynami
 @(private)
 load_warm_begin :: proc(job:^Load_Job) {
     app,a:=job.app,job.app.assets
-    lists:=assets_unloaded(a,job.names[:])
+    lists:=assets_unloaded(a,job.names[:],job.scenes)
     count:=len(lists[0])+len(lists[1])+len(lists[2])+len(lists[3])
     items,no_items:=make([]Load_Item,count,runtime.heap_allocator())
     if no_items!=nil {

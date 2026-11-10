@@ -223,7 +223,7 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
     }
     for row in 0..<count {
         switch {
-        case desc.root!=core.NONE && u32(row)==form.root: entities[row]=desc.root
+        case desc.root!=core.NONE && u32(row)==(top!=NONE_ROW?top:form.root): entities[row]=desc.root
         case kept==nil || kept[row]:                     entities[row]=core.create(es)
         case:                                            entities[row]=core.NONE
         }
@@ -392,10 +392,11 @@ sources_current :: proc(assets:^host.Assets,sources:[]Form_Source) -> bool {
     return true
 }
 
-// Whether a prefab and everything it takes are loaded: placing it reads no file.
+// Whether a prefab and everything it takes are loaded: placing it reads no
+// file. With documents, any scene, whatever roots it has.
 @(private)
-prefab_loaded :: proc(assets:^host.Assets,prefab:base.Asset_Id) -> bool {
-    lists:=assets_unloaded(assets,{prefab})
+prefab_loaded :: proc(assets:^host.Assets,prefab:base.Asset_Id,documents:=false) -> bool {
+    lists:=assets_unloaded(assets,{prefab},documents)
     for list in lists {if len(list)>0 {return false}}
     return true
 }

@@ -249,7 +249,7 @@ prefabs_warm :: proc(w:core.World_Ref,app:^host.App) {
         if file,found:=asset.registry_find(&app.assets.registry,id);found && asset.registry_prefab(file) {append(&prefabs,id)}
     }
     if len(prefabs)==0 {return}
-    if job,begun:=prefab_warm_begin(app,..prefabs[:]);begun==.None {
+    if job,begun:=prefab_warm_begin(app,prefabs[:]);begun==.None {
         load_step(job,true)
         load_free(job)
     }
@@ -292,7 +292,7 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
     if !s.transient {core.commands_add(c,root,core.Id{core.id_next(c.entities)})}
     core.commands_add(c,root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
     if !loaded {
-        core.commands_add(c,root,Prefab_Pending{s.prefab})
+        core.commands_add(c,root,Prefab_Pending{prefab=s.prefab})
         return {root=root,entities=1},.None
     }
     report,error=form_place(w,form,&assets.types,{transient=s.transient,fresh=!s.transient,documents=assets_documents(assets),root=root},entities)
@@ -303,18 +303,34 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
 // A copy of an entity of the scene of a section, by its Id in the world, and
 // of what hangs from it, as a root of the world without Ids (Spawn.transient):
 // what stands for it where its section is not loaded. salt is the Id of the
-// reference of the section.
+// reference of the section. Like spawn it reads no file: a scene that is not
+// loaded, or that takes something that is not, gives the root at once with
+// its Transform and Prefab_Pending, filled once jobs read them.
 spawn_member :: proc(c:core.Commands,assets:^host.Assets,section_scene:base.Asset_Id,salt,id:base.Entity_Id,transform:core.Transform) -> (report:Report,error:Error) {
     if assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(assets,section_scene)
+    if file,found:=asset.registry_find(&assets.registry,section_scene);!found || file.state!=.Asset || file.kind!=asset.KIND_SCENE {return {},.Not_Found}
+    root:=core.create(c)
+    core.commands_add(c,root,transform)
+    pending:=Prefab_Pending{prefab=section_scene,salt=salt,member=id}
+    if !prefab_loaded(assets,section_scene,documents=true) {
+        core.commands_add(c,root,pending)
+        return {root=root,entities=1},.None
+    }
+    report,error=member_place(core.world_ref(c.data,c.info),assets,pending,root)
+    if error!=.None {core.destroy(c,root)}
+    return
+}
+
+// Places on root the entity of a section a pending copy stands for, with
+// what hangs from it.
+@(private)
+member_place :: proc(w:core.World_Ref,assets:^host.Assets,pending:Prefab_Pending,root:core.Entity) -> (report:Report,error:Error) {
+    file:=host.assets_scene(assets,pending.prefab)
     if file==nil {return {},.Not_Found}
     resolved:asset.Asset
     defer asset.asset_close(&resolved)
     document:=current(assets_documents(assets),file,&resolved) or_return
-    report,error=instantiate(core.world_ref(c.data,c.info),document,&assets.types,{transient=true,salt=salt,only=id})
-    if error!=.None {return}
-    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {root^=transform}
-    return
+    return instantiate(w,document,&assets.types,{transient=true,salt=pending.salt,only=pending.member,root=root})
 }
 
 // The document a load or a spawn instantiates. With the assets of a project

@@ -476,6 +476,25 @@ a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^test
     pose,_=core.get(&p.world.transforms,root)
     testing.expect_value(t,pose.position,[3]f32{1,2,3})
 
+    // A copy of an entity of a section that is not loaded waits the same way, and takes it.
+    section:=PREFAB
+    section[1]=5
+    loading_scene(t,&p,section,{MESH,MESH})
+    host.assets_scan(&p.assets)
+    loads:=p.assets.stats.loads
+    copied,copy_error:=spawn_member(core.commands_of(w),&p.assets,section,0,2,{position={4,0,0},rotation=1,scale={1,1,1}})
+    testing.expect(t,copy_error==.None && p.assets.stats.loads==loads && !host.assets_loaded(&p.assets,section),"the call reads nothing")
+    core.world_settle(w)
+    for core.raw_row(core.raw(&p.world.pendings),copied.root)>=0 {
+        p.app.stats.frames+=1
+        spawns_fill(w,&p.app,&warms,nil)
+        core.world_settle(w)
+        if !testing.expect(t,time.duration_seconds(time.tick_since(started))<60,"the copy is filled") {return}
+        thread.yield()
+    }
+    copied_model,copied_has:=core.get(&p.world.models,copied.root)
+    testing.expect(t,copied_has && copied_model.mesh==MESH && !core.has(&p.world.ids,copied.root),"the entity of the section, without an Id")
+
     // A scene whose field names the prefab reads it with what it takes: the next spawn is whole at once.
     other:=PREFAB
     other[1]=4

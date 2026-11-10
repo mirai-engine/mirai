@@ -641,6 +641,11 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     w:=section_ref(&f)
     if _,error:=load(w,&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
     before:=core.raw_count(core.raw(&f.world.lamps))
+    // Read, as the queue of spawns reads it: the copy is placed in the call.
+    if job,begun:=prefab_warm_begin(&f.app,{SECTION_ROOM},true);testing.expect_value(t,begun,Error.None) {
+        load_step(job,true)
+        load_free(job)
+    }
     at:=core.Transform{position={3,4,5},rotation=1,scale={1,1,1}}
     report,error:=spawn_member(core.commands_of(w),f.app.assets,SECTION_ROOM,1,id_in(1,11),at)
     if !testing.expect_value(t,error,Error.None) {return}
