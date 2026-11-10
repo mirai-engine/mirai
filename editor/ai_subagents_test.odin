@@ -10,7 +10,6 @@ import "mirai:core"
 import "mirai:editor/acp"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
-import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -20,18 +19,12 @@ import "mirai:std/serial"
 Fixture :: struct {
     root:string,
     world:Ai_Context_Test_World,
-    tables:[4]core.Table_Info,
-    storages:[2]core.Storage_Info,
     info:core.World_Info,
     state:Api_State,
     editor_world:Ai_Context_Test_Editor,
     app:host.App,
-    viewport:Viewport,
-    selection:history.Selection,
-    edits:history.Edits,
-    document:Document,
+    using edited:Test_Session,
     ai:^Ai,
-    s:Session,
 }
 
 // A project with the two agents connected and every worker busy, so that a
@@ -39,20 +32,15 @@ Fixture :: struct {
 @(private="file")
 fixture_open :: proc(t:^testing.T,name:string) -> ^Fixture {
     f:=new(Fixture)
-    f.root=project.path_absolute(fmt.tprintf(".mirai/test-ai-%s-%d",name,os.get_pid()))
-    if !testing.expect(t,!os.exists(f.root)) {delete(f.root);free(f);return nil}
-    ai_context_test_world_init(&f.world)
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Ai_Context_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Ai_Context_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Ai_Context_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Ai_Context_Test_World,parents)},
+    f.root=base.test_folder(t,fmt.tprintf("ai-%s",name))
+    described:bool
+    f.info,described=ai_context_test_info(t)
+    if !described || !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) || f.root=="" {
+        if described {f.info.destroy[.World](&f.world);core.test_info_destroy(&f.info)}
+        free(f)
+        return nil
     }
-    f.storages={
-        {name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(Ai_Context_Test_Editor,api)},
-        {name="Time",type=core.Time,info=type_info_of(core.Time),offset=offset_of(Ai_Context_Test_World,time)},
-    }
-    f.info={entities=offset_of(Ai_Context_Test_World,entities),tables=f.tables[:],storages=f.storages[:]}
+    test_session_open(&f.edited,core.world_ref(&f.world,&f.info))
     f.state.server.port=7940
     f.editor_world.api.state=&f.state
     f.viewport.size,f.viewport.window={800,600},{800,600}
@@ -64,7 +52,7 @@ fixture_open :: proc(t:^testing.T,name:string) -> ^Fixture {
     for &worker in f.ai.workers {worker.task=-1}
     f.ai.connections[AI_CODEX].configured,f.ai.connections[AI_CLAUDE].configured=true,true
     testing.expect_value(t,ai_store.open(&f.ai.store,f.root),"")
-    f.s={info=&f.info,edit_world=&f.world,editor_world=&f.editor_world,app=&f.app,viewport=&f.viewport,selection=&f.selection,edits=&f.edits,document=&f.document,ai=f.ai,project_root=f.root,has_project=true}
+    f.s.editor_world,f.s.app,f.s.ai,f.s.project_root,f.s.has_project=&f.editor_world,&f.app,f.ai,f.root,true
     return f
 }
 
@@ -72,10 +60,9 @@ fixture_open :: proc(t:^testing.T,name:string) -> ^Fixture {
 fixture_close :: proc(f:^Fixture) {
     for &task in f.ai.tasks[:f.ai.task_count] {ai_review_free(&task.review);ai_steers_free(&task)}
     ai_store.close(&f.ai.store)
-    os.remove_all(f.root)
-    delete(f.root)
-    delete(f.selection.entities)
-    ai_context_test_world_close(&f.world)
+    test_session_close(&f.edited)
+    f.info.destroy[.World](&f.world)
+    core.test_info_destroy(&f.info)
     free(f.ai)
     free(f)
 }
@@ -548,7 +535,7 @@ the_delta_names_pins_and_annotations_every_turn_without_images_even_after_a_comp
     name:core.Name
     base.text_set(name.text[:],"Lamp")
     core.add(&f.world.names,lamp,name)
-    core.table_settle(&f.world.ids,&f.world.entities);core.table_settle(&f.world.names,&f.world.entities)
+    core.settle(&f.info,&f.world,nil)
     for pin in ([?][3]string{{AI_PIN_IMAGE,"C:/art/mood.png","mood.png"},{AI_PIN_ENTITY,"000000000000002a","Lamp"},{AI_PIN_GROUP,"lights","lights"}}) {testing.expect_value(t,ai_pin_toggle(f.s.ai,pin[0],pin[1],pin[2]),"")}
     _=ai_pins_sync(f.s.ai)
     testing.expect_value(t,m.pin_count,3)

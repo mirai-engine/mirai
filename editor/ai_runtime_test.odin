@@ -16,9 +16,7 @@ import "mirai:third_party/sqlite"
 
 @(test)
 ai_stream_persists_before_cache_eviction_and_preserves_unicode :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-stream-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,!os.exists(root));if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-stream");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"")
     defer ai_store.close(&m.store)
@@ -50,9 +48,7 @@ ai_stream_persists_before_cache_eviction_and_preserves_unicode :: proc(t:^testin
 
 @(test)
 ai_connections_of_codex_and_claude_belong_to_the_machine_and_stay_lazy :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-lazy-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,!os.exists(root));if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-lazy");if root=="" {return}
     // Two projects, or two worktrees of one, and one folder of the user.
     home:=project.path(root,"agents",allocator=context.temp_allocator)
     first,second:=project.path(root,"first",allocator=context.temp_allocator),project.path(root,"second",allocator=context.temp_allocator)
@@ -142,9 +138,7 @@ when ODIN_OS!=.Windows {
     codex_is_asked_for_the_sign_in_of_the_user_and_mirai_signs_in_to_nothing :: proc(t:^testing.T) {
         // A Codex of the user in PATH would answer instead of the one of the test.
         if program,_:=ai_user_program("codex","@openai/codex");program!="" {return}
-        root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-login-%d",os.get_pid()),context.temp_allocator)
-        testing.expect(t,!os.exists(root));if os.exists(root) {return}
-        defer os.remove_all(root)
+        root:=base.test_folder(t,"ai-login");if root=="" {return}
         m:=new(Ai);defer free(m);ai_connections_reset(m)
         base.text_set(m.agents_home[:],project.path(root,"agents",allocator=context.temp_allocator))
         folder:=ai_agents_folder(m,"codex")
@@ -186,9 +180,7 @@ exit 0
 when ODIN_OS!=.Windows {
     @(test)
     ai_agents_added_by_command_are_saved_started_with_their_arguments_and_removed :: proc(t:^testing.T) {
-        root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-command-%d",os.get_pid()),context.temp_allocator)
-        testing.expect(t,!os.exists(root));if os.exists(root) {return}
-        defer os.remove_all(root)
+        root:=base.test_folder(t,"ai-command");if root=="" {return}
         testing.expect(t,os.make_directory_all(root)==nil)
         // An agent that checks its arguments and answers initialize.
         executable:=project.path(root,"test-agent",allocator=context.temp_allocator)
@@ -324,10 +316,7 @@ ai_turns_say_when_the_agent_is_silent_and_what_it_printed :: proc(t:^testing.T) 
 
 @(test)
 ai_history_search_feeds_by_title_or_by_what_chats_said :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-history-search-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-history-search");if root=="" {return}
     m:=new(Ai);defer free(m)
     document:=new(Document);defer free(document)
     document.path_length=copy(document.path[:],"scene/main.scene")
@@ -360,9 +349,7 @@ ai_history_search_feeds_by_title_or_by_what_chats_said :: proc(t:^testing.T) {
 
 @(test)
 ai_stream_does_not_wait_for_another_editor_and_loses_no_line :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-stream-busy-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,!os.exists(root));if os.exists(root) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-stream-busy");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"")
     defer ai_store.close(&m.store)

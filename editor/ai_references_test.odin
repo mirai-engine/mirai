@@ -2,18 +2,13 @@ package editor
 
 import "core:encoding/base64"
 import "core:os"
-import "core:strings"
 import "core:testing"
 import "mirai:editor/acp"
-import "mirai:project"
 import "mirai:std/base"
 
 @(test)
 the_reference_images_of_a_message_go_with_its_prompt_after_its_text :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root,_:=strings.replace_all(project.path(temporary,"mirai-ai-references",allocator=context.temp_allocator),"\\","/",context.temp_allocator)
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-references");if root=="" {return}
     s:=Session{project_root=root}
     task:Ai_Task
     base.text_set(task.name[:],"7-0")
