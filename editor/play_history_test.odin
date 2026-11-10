@@ -11,8 +11,8 @@ import "mirai:ui"
 @(private="file")
 history_test_tick :: proc(data,shared,editor,app:rawptr) {
     w:=cast(^Play_Test_World)data
-    w.ticks+=1
-    for &transform in w.transforms.values {transform.position.x+=.W in w.input.keys_down?1:0.25}
+    play_test_ticks(data,app).count+=1
+    for &transform in core.writable(&w.transforms) {transform.position.x+=.W in w.input.keys_down?1:0.25}
 }
 
 // A step of a run with W held or not, as play.step gives it.
@@ -60,7 +60,7 @@ a_run_goes_to_any_frame_it_played_and_plays_on_from_there :: proc(t:^testing.T) 
     testing.expect(t,seek.ok && seek.matches)
     testing.expect_value(t,seek.replayed,2)
     testing.expect_value(t,w.time.tick,u64(7))
-    testing.expect_value(t,w.ticks,7)
+    testing.expect_value(t,w.ticks.count,7)
     testing.expect_value(t,history_x(f,r),played[7])
     // On from where it is, without going back to the keyframe.
     seek=history_seek(s,r,history_frame_for(r.history,8))

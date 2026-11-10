@@ -2,7 +2,6 @@ package editor
 
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -24,8 +23,8 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
     defer collab_tables_free(st)
     // The other end adds a parent and a child that names it.
     other:Play_Test_World
-    if !testing.expect(t,play_test_init(&other,context.allocator)) {return}
-    defer play_test_free(&other)
+    if !testing.expect(t,s.info.init[.World](&other,context.allocator)) {return}
+    defer s.info.destroy[.World](&other)
     edits:history.Edits;defer history.edits_free(&edits)
     selection:history.Selection;defer delete(selection.entities)
     end:=Session{info=s.info,edit_world=&other,edits=&edits,selection=&selection}
@@ -40,7 +39,7 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
     core.add(&other.transforms,parent,core.Transform{{1,0,0},1,{1,1,1}})
     core.add(&other.transforms,child,core.Transform{{0,2,0},1,{1,1,1}})
     core.add(&other.parents,child,core.Parent{entity=parent})
-    play_test_settle(&other,nil,nil)
+    core.settle(s.info,&other,nil)
     collab_edits_send(&end,sent)
     for message in sent.peers[0].out {
         collab_edit_apply(s,st,message)
@@ -67,11 +66,8 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     f:=new(Play_Test);defer free(f)
     if !play_test_open(t,f) {return}
     defer play_test_close(f)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-collab-snapshot-%d",directory,os.get_pid())
-    os.remove_all(folder)
-    if !testing.expect(t,os.make_directory_all(folder)==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"collab-snapshot")
+    if folder=="" {return}
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=folder,capacity=8})) {return}
     defer host.assets_destroy(&assets)
@@ -117,7 +113,6 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     box:=core.entity_of(&world.entities,base.Entity_Id(101))
     local,found:=core.get(core.read(&world.transforms),box)
     testing.expect(t,found && local.position==[3]f32{0,3,0})
-    document_previous_free(&f.document)
 }
 
 // Selecting holds nothing: what another editor of the session has selected
