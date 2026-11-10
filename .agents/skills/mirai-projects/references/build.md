@@ -293,7 +293,7 @@ publish. A new engine-time folder of the engine is added there.
 
 The compiler also reads the `_test.odin` files of every package the game imports, with their
 imports: a test of a runtime package does not import an engine-time one. A GPU test of a plugin
-loads the shaders that `mirai test` generates for it (`plugin_test_shaders`) instead of generating
+loads the shaders that `mirai test` generates for it (`package_test_shaders`) instead of generating
 them with `cook/shaders`.
 
 ## Known limits

@@ -92,7 +92,7 @@ Rules:
   current and the previous camera (`view_depth`, `previous_depth`).
 - `frame.footprint`: width of a pixel at depth 0 and its growth per unit of depth; texture LOD,
   ray cones and bias come from it.
-- **Clip plane.** A view with `clip_plane` uses the `clip` variants of the G-buffer
+- **Clip plane.** A view with `clip_plane` uses the `clip` variant of the G-buffer vertex stage
   (`SV_ClipDistance`), which exist with `Features.clip_distance`; the cull uses it as the sixth
   frustum plane.
 - **Layers.** `Instance_Desc.layers` (16 bits; 0: only the first) says in which layers an instance
@@ -175,7 +175,7 @@ discarding them. Zero: there was none.
      hardware depth with that of the opening.
   3. For each nested view: cull with its camera; a second depth buffer (the farthest where the mask
      named it, the nearest elsewhere, scissor in `Nested_View.rect`); G-buffer with the `nested`
-     variants, which write negated depth and index.
+     constant, which writes negated depth and index.
 - **Opening.** `Nested_View.opening` is the plane of the face through which the nested view is seen.
   What is drawn without history (lines, panels) stays in front of a nested pixel only if it is in
   front of that plane; without a plane it is compared with the distance of what the pixel shows.
@@ -474,10 +474,11 @@ frame and the current one:
     writing it);
   - for `Geometry`, `Simulate`, `Lit`, `Post`, `Custom` and `Inspect`, and for `Surface` with
     `compute`, that of `<shader>.comp`. `Gbuffer` takes `pass_gbuffer_pipeline`. A stage that traces
-    declares the `hw`, `color` and `color_hw` variants (`//! variant`, like `shadow_trace.comp`) and
-    receives that of the rays the renderer traces: by hardware, and through the colored-shadow glass
-    filters (`colored_shadows` and some blend instance). Without the variant, the stage itself: one
-    that traces without `hw` does not see the scene with ray queries.
+    declares the `hw` variant and the `color` constant (`//! variant`, `//! constant`, like
+    `shadow_trace.comp`) and receives the pipeline of the rays the renderer traces: by hardware,
+    and through the colored-shadow glass filters (`colored_shadows` and some blend instance).
+    Without the variant, the stage itself: one that traces without `hw` does not see the scene
+    with ray queries.
   - with `program`, that of a graphics stage with the fragment of that Surface program, if the stage
     marks it `//! per surface program`; that of the stage without it while it is not made.
 - The renderer creates the pipeline at the first request, keeps it (up to `STAGE_PIPELINE_CAPACITY`

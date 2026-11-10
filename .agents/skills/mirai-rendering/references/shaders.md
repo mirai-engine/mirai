@@ -41,7 +41,7 @@
   (`OpImageTexelPointer`) comes out in MSL 3.1: before, SPIRV-Cross emulates them with a linear
   texture over a buffer that the RHI does not create, and the RHI gives `ShaderAtomic` to the
   `R32_Uint` storage textures.
-- The reflection fixes slots and threadgroups of each variant; the emitted Metal entry point is
+- The reflection fixes slots and threadgroups of each stage; the emitted Metal entry point is
   stored in the table.
 - **Structs shared with the CPU** (`SHARED_STRUCTS` of `cook/shaders/layouts.odin`, each with the
   `render` type that replicates it field by field): each variant that uses one must have the same
@@ -68,8 +68,22 @@
   (`owned_constants` of `cook/shaders/extensions.odin`). Only the stages that include it follow
   it, and the stamp follows the Odin source. The same test forbids a plugin's `.slang` from
   defining a name its Odin declares.
-- The resources of a stage stay within the `rhi` limits. `//! variant <name> <DEFINE>...` adds
-  another compilation of a stage.
+- The resources of a stage stay within the `rhi` limits.
+- **Constants and variants.** What a pass chooses of a stage is a constant:
+  `//! constant <name> <DEFINE>` makes `DEFINE` a boolean the code reads as `if (DEFINE)`, false
+  unless the pipeline sets it ([rhi](rhi.md#shader-constants)), and the driver folds it. One code
+  serves every combination: a constant adds no compilation. Its id is the order of its line, the
+  manifest names it and `render/shaders_gen.odin` gives it as `<STAGE>_<NAME>`
+  (`REFLECT_COMP_COLOR`). The stage includes `native.slang`, which declares them; a source shared
+  with stages that do not declare the constant asks `#ifdef DEFINE` before reading it. What the
+  constants of a stage read is bound for every pipeline of it (a stand-in where it is off).
+- `//! variant <name> <DEFINE>...` is another compilation of the stage, `<stage>_<name>`, with
+  those defines: only for what a constant cannot choose, because it changes what the stage declares
+  to the device. A capability (`hw`: ray queries; `clip`: a clip distance), a module without which
+  loads where the device lacks it. Its fragment outputs (`plain`, `layers`, `values`, `impostor`):
+  Vulkan discards what is written to a target the pass lacks, but SPIRV-Cross fixes the outputs
+  in the Metal source and Metal may refuse a pipeline whose function writes a target it does not
+  have. The kind of a slot (`batches`), or a target the pass must not write (`sharpen`).
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software
   BVH. Validating SPIR-V does not certify GPU execution on any backend.
 
@@ -193,8 +207,8 @@
     `ctx.color` for an id it does not know. `ui.frag` includes it.
 - `scene.slang` includes `<surface_programs.slang>`: the stage itself evaluates no programs. A
   source marked `//! per surface program` is also compiled once per Surface program,
-  `<root>__<Program>[_<variant>]<suffix>` (`gbuffer__Ocean_layers.frag`), with the include of that
-  program in front; `//! per surface program only` compiles only those. They are the raster stages
+  `<root>__<Program>[_<variant>]<suffix>` (`gbuffer__Water_Surface_layers.frag`), with the include
+  of that program in front; `//! per surface program only` compiles only those. They are the raster stages
   that draw materials (G-buffer, glass layers and filter, translucents, overlays, highlight,
   thumbnails, UI and the `vfx` sprites) and `surface_points.comp`, that of the ray material points
   ([programs in rays and raster](materials.md#surface-programs-in-rays-and-raster)). A source
@@ -398,7 +412,9 @@ it. The domain is the one the source declares.
   ([programs and stages](#programs-and-stages)). The manifest lists the program stages separately
   (`program_stages`).
 - Program names are unique among engine, project and plugins; `pbr` is reserved. Examples:
-  `templates/empty/shaders/pulse.slang`, `plugins/terrain/shaders/terrain_slope.slang`.
+  `templates/empty/shaders/pulse.slang`, `plugins/terrain/shaders/terrain_slope.slang`. The engine
+  has no Surface program of its own: every one is of a project, a plugin or the tests
+  (`render/testdata/`, [verification](verification.md)).
 - The same folders extend the renderer with their own stages (`name.comp.slang`, `.vert`, `.frag`,
   of unique name) and sources with [hooks and constants](views.md#extension-hooks-and-constants).
   With hooks, constants or nested views only the stages that read them are recompiled

@@ -126,7 +126,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     builds:=make([]Test_Build,len(packages))
     for p,i in packages {
         if p.nothing {continue}
-        if !test_imports_check(root,p.folder) || !plugin_test_shaders(root,p.folder) {
+        if !test_imports_check(root,p.folder) || !package_test_shaders(root,p.folder) {
             builds[i].failed=true
             continue
         }

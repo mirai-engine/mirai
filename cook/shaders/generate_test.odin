@@ -58,6 +58,19 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID) {
 }
 `
 
+// The Surface programs the mini engine is built with, in its shaders/materials:
+// the engine has none of its own. Two move no vertices and one does.
+@(private="file")
+MINI_SURFACES :: [3][2]string{
+    {"grid.slang","//! mirai surface Grid\n//! parameter amount {\"default\":0.5,\"min\":0,\"max\":1}\nnamespace Grid {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {Mirai_Surface s=mirai_surface_default(ctx);s.roughness=p.amount;return s;}}\n"},
+    {"ocean.slang","//! mirai surface Ocean\n//! parameter amount {\"default\":0.5,\"min\":0,\"max\":1}\nnamespace Ocean {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {Mirai_Surface s=mirai_surface_default(ctx);s.metallic=p.amount;return s;}}\n"},
+    {"pieces.slang","//! mirai surface Pieces\n//! vertex reach 0.5\n//! parameter amount {\"default\":0.5,\"min\":0,\"max\":1}\nnamespace Pieces {struct Parameters {float amount;}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {Mirai_Vertex v=mirai_vertex_default(ctx);v.position.y+=clamp(p.amount,0.0,0.5);return v;} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"},
+}
+
+// The programs of the mini engine: those of the engine and its own Surface ones.
+@(private="file")
+mini_programs :: proc() -> int {return builtin_programs()+len(MINI_SURFACES)}
+
 // The marks a constant of id 0 leaves in the code of a stage: a
 // specialization constant in SPIR-V, a function constant in Metal.
 @(private="file")
@@ -101,6 +114,7 @@ mini_make :: proc(t:^testing.T,mini:^Mini) -> bool {
             fixture_write(t,mini.root,relative,string(data))
         }
     }
+    for surface in MINI_SURFACES {fixture_write(t,mini.root,strings.concatenate({"shaders/materials/",surface[0]},context.temp_allocator),surface[1])}
     fixture_write(t,mini.root,"shaders/fill.comp.slang",FILL)
     fixture_write(t,mini.root,"shaders/color.frag.slang",COLOR)
     fixture_write(t,mini.root,"shaders/point.vert.slang",POINT)
@@ -148,7 +162,7 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     if first.error!="" {return}
     testing.expect_value(t,first.shaders,4)
     testing.expect_value(t,first.tests,2)
-    testing.expect_value(t,first.programs,builtin_programs())
+    testing.expect_value(t,first.programs,mini_programs())
     testing.expect_value(t,first.compiled,6)
     testing.expect_value(t,first.reused,0)
     testing.expect_value(t,len(first.engine),64)
@@ -261,7 +275,7 @@ generation_for_a_project_adds_its_programs_and_leaves_the_engine_tables :: proc(
     options.odin=false
     reload:=mini_generate(t,&mini,options)
     testing.expect_value(t,reload.error,"")
-    testing.expect_value(t,reload.programs,builtin_programs()+1)
+    testing.expect_value(t,reload.programs,mini_programs()+1)
     testing.expect_value(t,reload.shaders,4)
     testing.expect_value(t,reload.tests,0)
     testing.expect_value(t,reload.engine,engine.engine)
@@ -283,7 +297,7 @@ generation_for_a_project_adds_its_programs_and_leaves_the_engine_tables :: proc(
     options.sources={{name="fx",folder=plugin},{name="absent",folder=path_join(mini.root,"plugins/absent/shaders",allocator=context.temp_allocator)}}
     with_plugin:=mini_generate(t,&mini,options)
     testing.expect_value(t,with_plugin.error,"")
-    testing.expect_value(t,with_plugin.programs,builtin_programs()+2)
+    testing.expect_value(t,with_plugin.programs,mini_programs()+2)
     testing.expect(t,with_plugin.changed)
     testing.expect(t,mini_read(&mini,"render/shaders_gen.odin")==table,"a generation with sources of plugins writes no engine tables either")
     catalog,_=os.read_entire_file(path_join(project,PROJECT_OUTPUT,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
@@ -364,7 +378,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     testing.expect_value(t,engine.error,"")
     if engine.error!="" {return}
     // shade.frag and one for each Surface program of the engine.
-    surfaces:=len(builtin_surface_programs())
+    surfaces:=len(builtin_surface_programs())+len(MINI_SURFACES)
     testing.expect_value(t,engine.compiled,6+surfaces)
     testing.expect(t,os.is_file(path_join(mini.output,strings.concatenate({"shade.frag",HOST_CODE},context.temp_allocator),allocator=context.temp_allocator)) && !os.exists(path_join(mini.output,strings.concatenate({"shade.frag",OTHER_CODE},context.temp_allocator),allocator=context.temp_allocator)),"the engine has the backend of this system")
 
@@ -376,7 +390,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     // The first generation: the stage of the program of the project alone, for this system alone.
     first:=mini_generate(t,&mini,options)
     testing.expect_value(t,first.error,"")
-    testing.expect_value(t,first.programs,builtin_programs()+1)
+    testing.expect_value(t,first.programs,mini_programs()+1)
     testing.expect_value(t,first.compiled,1)
     testing.expect_value(t,first.reused,6+surfaces)
     host,other:=HOST_CODE,OTHER_CODE
@@ -392,7 +406,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     // Nothing changed.
     same:=mini_generate(t,&mini,options)
     testing.expect(t,same.error=="" && same.current && !same.changed && same.compiled==0 && same.reused==7+surfaces,"an unchanged project has nothing to do")
-    testing.expect_value(t,same.programs,builtin_programs()+1)
+    testing.expect_value(t,same.programs,mini_programs()+1)
     testing.expect_value(t,same.engine,engine.engine)
 
     metadata,_:=strings.replace_all(tint_program("1.0"),"[1,0.5,0.25]","[0.25,0.5,1]",context.temp_allocator)
@@ -416,7 +430,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     fixture_write(t,project,"shaders/zglow.slang",GLOW_PROGRAM)
     glow:=mini_generate(t,&mini,options)
     testing.expect_value(t,glow.error,"")
-    testing.expect_value(t,glow.programs,builtin_programs()+2)
+    testing.expect_value(t,glow.programs,mini_programs()+2)
     testing.expect_value(t,glow.compiled,1)
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/post.frag",host},context.temp_allocator))!=mini_read(&mini,strings.concatenate({"shaders/build/post.frag",host},context.temp_allocator)))
 
@@ -563,7 +577,7 @@ generation_is_current_until_a_source_a_folder_the_request_or_an_output_changes :
     }
     again:=regenerate(t,&mini,mini.options)
     testing.expect(t,again.current && again.compiled==0 && again.reused==6 && !again.changed)
-    testing.expect(t,again.shaders==4 && again.tests==2 && again.programs==builtin_programs() && again.engine==first.engine,"a current generation says what the published one is")
+    testing.expect(t,again.shaders==4 && again.tests==2 && again.programs==mini_programs() && again.engine==first.engine,"a current generation says what the published one is")
     unchanged,_:=os.modification_time_by_path(path_join(mini.output,"manifest.json",allocator=context.temp_allocator))
     testing.expect_value(t,unchanged,manifest_time)
     // How many compilers run at once is not what is asked for.

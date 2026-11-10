@@ -182,9 +182,9 @@ programs_reject_a_name_declared_twice_or_reserved :: proc(t:^testing.T) {
     fixture_write(t,f.project,"shaders/a.slang","//! mirai postprocess pbr\nnamespace pbr {struct Parameters {float amount;};}\n")
     _,problem=programs_of(&f)
     testing.expect(t,strings.contains(problem,"duplicate/reserved program name pbr"),problem)
-    fixture_write(t,f.project,"shaders/a.slang","//! mirai surface Ocean\nnamespace Ocean {struct Parameters {float amount;};}\n")
+    fixture_write(t,f.project,"shaders/a.slang","//! mirai postprocess ColorGrade\nnamespace ColorGrade {struct Parameters {float amount;};}\n")
     _,problem=programs_of(&f)
-    testing.expect(t,strings.contains(problem,"duplicate/reserved program name Ocean"),"a project cannot take the name of a built-in program")
+    testing.expect(t,strings.contains(problem,"duplicate/reserved program name ColorGrade"),"a project cannot take the name of a built-in program")
 }
 
 @(test)
@@ -308,7 +308,7 @@ programs_without_a_project_are_the_built_in_ones :: proc(t:^testing.T) {
     testing.expect_value(t,len(catalog.programs),builtin_programs())
     domains:=make(map[string]string,context.temp_allocator)
     for program in catalog.programs {domains[program.name]=program.domain}
-    testing.expect(t,domains["ColorGrade"]=="postprocess" && domains["Ocean"]=="surface","each built-in program keeps the domain its source declares")
+    testing.expect(t,domains["ColorGrade"]=="postprocess" && domains["Ui_Shine"]=="ui","each built-in program keeps the domain its source declares")
     // What the engine has committed is this catalog, byte for byte.
     committed,_:=os.read_entire_file(path_join(root,"shaders/build/catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     generated,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
@@ -601,24 +601,25 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     }
     fixture_write(t,f.project,"shaders/sway.slang",program("Sway","//! vertex animated reach 0.25","float strength;"))
     fixture_write(t,f.project,"shaders/spread.slang",program("Spread","//! vertex reach distance","float3 color;float distance;"))
+    fixture_write(t,f.project,"shaders/still.slang","//! mirai surface Still\nnamespace Still {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n")
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
     sway,has_sway:=program_named(catalog,"Sway")
     spread,has_spread:=program_named(catalog,"Spread")
-    ocean,_:=program_named(catalog,"Ocean")
-    if !testing.expect(t,has_sway && has_spread) {return}
+    still,has_still:=program_named(catalog,"Still")
+    if !testing.expect(t,has_sway && has_spread && has_still) {return}
     testing.expect(t,sway.vertex.declared && sway.vertex.animated && sway.vertex.reach==0.25 && sway.vertex.reach_parameter=="")
     testing.expect(t,spread.vertex.declared && !spread.vertex.animated && spread.vertex.reach_parameter=="distance")
-    testing.expect(t,!ocean.vertex.declared,"a program without the line moves no vertices")
+    testing.expect(t,!still.vertex.declared,"a program without the line moves no vertices")
     listed :: proc(names:[]string,name:string) -> bool {
         for n in names {if n==name {return true}}
         return false
     }
-    testing.expect(t,listed(catalog.vertex,"Sway") && listed(catalog.vertex,"Spread") && listed(catalog.vertex,"Pieces") && !listed(catalog.vertex,"Ocean"))
+    testing.expect(t,listed(catalog.vertex,"Sway") && listed(catalog.vertex,"Spread") && !listed(catalog.vertex,"Still"))
     own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,"Sway",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(own),"inout Mirai_Vertex value) {value=Sway::vertex(ctx,mirai_load_Sway(packed));return true;}"),string(own))
-    still,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,"Ocean",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,strings.contains(string(still),NO_VERTEX_PROGRAM),"a program that moves no vertices has the function that moves none")
+    unmoved,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,"Still",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,strings.contains(string(unmoved),NO_VERTEX_PROGRAM),"a program that moves no vertices has the function that moves none")
     stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(stored),"\"reach\": \"distance\"") && strings.contains(string(stored),"\"animated\": true"),string(stored))
 
