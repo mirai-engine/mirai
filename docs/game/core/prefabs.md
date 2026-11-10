@@ -53,8 +53,8 @@ game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
 - Create without a prefab: `core.commands_create(commands)`, then `commands_add` (or
   `commands_add_default`, the row of the component at its default) for
   `core.Transform`, `core.Parent{entity=parent}` and the rest.
-- Players' bodies are not spawned by code: a `Spawn_Point` and `Spawn_Settings`
-  ([character](../character.md)).
+- Players' bodies are not spawned by code: `Spawn_Settings.prefab` names them, and they appear at
+  the `Spawn_Point`s ([character](../character.md)).
 
 ## Hierarchy
 

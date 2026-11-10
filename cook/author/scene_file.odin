@@ -360,6 +360,11 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
         write=proc(user:rawptr,reading:^Reading,node:Node,t:^core.Table_Info,text,path:string,from:[]u8,merge:bool) -> (changed,ok:bool) {
             return scene_component_apply((^Scene_File)(user),reading,base.Entity_Id(node),t,text,path,from,merge)
         },
+        forget=proc(user:rawptr,node:Node,name:string) -> bool {
+            f:=(^Scene_File)(user)
+            table,found:=asset.scene_component(&f.scene,name)
+            return found && asset.scene_component_remove(&f.scene,table,base.Entity_Id(node))
+        },
         drop=proc(user:rawptr,node:Node,t:^core.Table_Info) {
             f:=(^Scene_File)(user)
             table,_:=asset.scene_component(&f.scene,t.name)

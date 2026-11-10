@@ -32,7 +32,7 @@ mirai build server                                      # dedicated build, run w
 (`multiplayer.invite_code`, good from anywhere), `--until-empty` ends a server with nobody,
 `--status <file>` logs. `--server` with `--connect` is refused. Settings, read when the session
 opens, go in `settings.mirai`:
-`{"Net_Settings": {"max_clients": 8}, "Spawn_Settings": {"players": true}}`.
+`{"Net_Settings": {"max_clients": 8}, "Spawn_Settings": {"prefab": "<Asset_Id>"}}`.
 
 ## Replicate
 
