@@ -72,8 +72,8 @@ a_branch_mask_weighs_the_bones_under_its_bone :: proc(t:^testing.T) {
 @(test)
 marker_sync_matches_contacts_across_uneven_clip_timings :: proc(t:^testing.T) {
     lib:=make_library(t);defer library_destroy(&lib)
-    a,_:=clip_add(&lib,{loop=.Loop,markers={{0,1},{0.2,2},{1,1}}})
-    b,_:=clip_add(&lib,{loop=.Loop,markers={{0,1},{1,2},{2,1}}})
+    a,_:=clip_add(&lib,{loop=.Loop,markers={{0,1,0},{0.2,2,0},{1,1,0}}})
+    b,_:=clip_add(&lib,{loop=.Loop,markers={{0,1,0},{1,2,0},{2,1,0}}})
     player:=player_make(a);player.time=0.1
     phase,ok:=sync_phase(&lib,player)
     testing.expect(t,ok && phase.markers)
@@ -150,10 +150,9 @@ retargeting_preserves_target_proportions_and_reference_orientation :: proc(t:^te
     source:=Skeleton{parents[:],names[:],source_rest[:]}
     target:=Skeleton{parents[:],names[:],target_rest[:]}
     mapping:=[2]i32{0,1}
-    translations:=[2]Retarget_Translation{.Absolute,.Reference}
     source_world,target_world,out:[2]math.Transform
     profile:[2]Retarget_Bone
-    testing.expect(t,retarget_prepare(source,target,mapping[:],translations[:],source_world[:],target_world[:],profile[:]))
+    testing.expect(t,retarget_prepare(source,target,mapping[:],source_world[:],target_world[:],profile[:]))
     current:=source_rest
     current[0].position={0,1,0};current[0].rotation=math.quat_axis_angle({0,0,1},0.5)
     testing.expect(t,retarget_pose(source,target,profile[:],current[:],source_world[:],target_world[:],out[:]))

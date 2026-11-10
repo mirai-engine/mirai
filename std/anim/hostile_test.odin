@@ -282,7 +282,7 @@ hostile_spans_through_the_player_markers :: proc(t:^testing.T) {
     for _ in 0..<HOSTILE_ROUNDS {
         lib:Library
         if !library_init(&lib,{max_keys=2,max_tracks=1,max_clips=1,max_markers=4}) {continue}
-        markers:=[?]Marker{{0.5,1},{1,2},{0,3},{2,4}}
+        markers:=[?]Marker{{0.5,1,0},{1,2,0},{0,3,0},{2,4,0}}
         given:=markers[:base.hostile_int(&h,5)]
         clip,_:=clip_add(&lib,{loop=Loop(base.hostile_int(&h,3)),markers=given})
         p:=player_make(clip,base.hostile_int(&h,2)==0?1:-1)

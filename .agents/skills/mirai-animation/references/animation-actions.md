@@ -1,7 +1,8 @@
-# The action set: layers and actions
+# Layers and actions
 
-`Animation.actions` references a shared `.action`: the one stack of what an entity plays over its
-base (its `.match`, or the clip of its `.anim`) and the actions `play` asks for by name. Gameplay
+The layers and actions of the `.character` an entity plays are the one stack of what it plays
+over its base (the locomotion of the set, or the clip of `Animation.clip` when the set has no
+match clips) and the actions `play` asks for by name. Gameplay
 sends requests and consumes one event queue; the component keeps its configuration.
 
 ## The layer stack
@@ -11,8 +12,8 @@ layers before it. `Playing.asked` holds what each slot plays in a tick (`stack_a
 actions over it), and `layers_advance`, `pose_layers` and the curves read only that.
 
 - A layer plays by itself a clip (`clip`, of another `.anim` with `animation`, [multiple
-  sources](animation.md#multiple-sources)) or the [space](animation.md#additive-spaces) of a
-  `.blend`, or nothing until an action plays in it.
+  sources](animation.md#multiple-sources)) or a [space](animation.md#additive-spaces) of the
+  set, or nothing until an action plays in it.
 - `over` limits it to the branch of a bone or to a part or region of the body (`@upper_body`);
   empty is the whole pose. `mode` is Override (each channel its clips animate goes to their value
   by the weight) or Additive (it adds what they change from the pose at `reference` seconds of
@@ -27,14 +28,14 @@ actions over it), and `layers_advance`, `pose_layers` and the curves read only t
   the world, not saved); one that names nothing is the problem `animation.parameter` and is
   dropped. Two clips mixed by a value are a layer whose weight is that value.
 - Slot 0 is the whole body, for the actions that name no layer; slot n is layer n-1.
-- The stack composes over any base: over a `.match` the layers go over the matched pose after its
+- The stack composes over any base: over locomotion the layers go over the matched pose after its
   inertial transition, so an aim space adds over the walk the search plays.
 - What a layer cannot play is a problem of the entity that names the layer (`animation.layer_clip`,
   `layer_bone`, `layer_reference`, `layer_space`).
 
 ## Profile and authoring
 
-`Action_Profile` has layers, definitions, sections and windows over an `info.animation` library.
+The actions of a set are layers, definitions and sections over the `.anim` of the set.
 
 - Each action names its clip, the `layer` it plays in (empty: the whole body), root, weight,
   positive speed, fades, priority and cancellation, where it starts (`entry`: at its start, at
@@ -44,15 +45,18 @@ actions over it), and `layers_advance`, `pose_layers` and the curves read only t
   or `World`: the action plays at its speed in world time while its entity is dilated, as a clip
   whose play rate makes up for a slow motion (a charge that plays at full speed while its
   character is slowed). Windows of an ability that follow it count `World` time too.
-- Layer and action names are unique and those of sections and windows, within their action.
+- Layer and action names are unique, and those of sections within their action.
+- **Spans live on the clip.** A section is the span of its name on the clip of its action (a
+  marker with a duration, `animation.marker.set`), and the other spans of that clip are its
+  windows: the set names spans, never seconds, so retiming a clip keeps its sections and windows.
+  A section whose span the clip lacks is the problem `animation.action_section`.
 - A combo whose parts chain pose to pose is one clip cut in sections: the game jumps to the next
   part with `play` and the section when the current one reaches its end section, so nothing
   crossfades.
 - `animation.action.set` resolves names and derives quantities. The `next` of a section links
   another of the same clip, regardless of row order, and empty ends the action. Without sections
   the clip is played to its exit; with them it starts at the first of the action or at the one
-  `play` asks for. The ranges, in seconds, are positive and fall inside the clip. Files and
-  history: [authoring](animation-authoring.md#files-and-history).
+  `play` asks for. Files and history: [authoring](animation-authoring.md#files-and-history).
 
 ## Requests and lifecycle
 
@@ -67,7 +71,7 @@ Play/Simulation. `animation_sample` serves them.
   without starting it again.
 - **In a layer** an action crossfades over what the layer plays (`fade_in`), at its weight, and
   when it ends the layer goes back to what it plays by itself over `fade_out`.
-- **Over the whole body of a `.match`** it is the clip of the program: it leaves the search through
+- **Over the whole body of locomotion** it is the clip of the program: it leaves the search through
   an inertial transition of `fade_in`, the action keeps its clock (sections, exit, markers), and
   when it ends the search takes the rig back in the mode the body is in, through `fade_out`. It
   does not depend on the locomotion mode: physics writes the mode, and the action goes on through
@@ -109,13 +113,13 @@ Discovery and memory:
   and a resolved bone. In a layer, bone and channels must be consistent with the base, the
   outgoing clips and the other active root actions; an incompatibility interrupts the action and
   reports why.
-- An entity with `Animation.source` is a retarget destination: actions with a root are requested
-  from the source rig, and a `play` on the destination is refused (`animation.action_policy`).
+- A rig that takes the sampled pose of another (`Pose_Source` of stage `Sampled`) shows what its
+  source plays: its actions are asked of the source rig.
 - In a layer, Extract adds the played segments and blends with the base delta by the weight of
   layer, component and fade. In_Place delivers the delta and removes only its contribution to the
   internal root, without moving the gameplay transform; partial, it leaves the movement of the
   base that it does not cover. The layers blend both policies with the weights of the pose, also
-  on exit. Over the whole body of a `.match` the root delta is that of the program, by the policy
+  on exit. Over the whole body of locomotion the root delta is that of the program, by the policy
   of the action, or of the component when the action has none.
 - **Any action moves its body by its root motion with `body_move`** (Additive or Override, with
   `root_motion`; In_Place keeps the pose on a moving body), in a layer or over the whole body.
@@ -139,18 +143,18 @@ Discovery and memory:
 
 `plugins/animation/runtime`:
 
-- `actions_test.odin`: roundtrip of layers and actions, the table of what a set refuses, windows
-  and sections in one queue, cancellation, copies, queues, weighted extraction, clocks and
-  distance; the query through play, section and stop; discovery by stamp, lack of memory and
-  generational recycling.
-- `matching_test.odin`, over a `.match`:
+- `actions_test.odin`: roundtrip of layers and actions, the table of what a set refuses, windows and
+  sections as spans of the clip in one queue, cancellation, copies, queues, weighted extraction,
+  clocks and distance; the query through play, section and stop; discovery by stamp, lack of memory
+  and generational recycling.
+- `matching_test.odin`, over the locomotion of a `.character`:
   `an_aim_offset_adds_over_the_matched_pose_and_an_action_plays_over_both`,
   `a_play_gives_way_by_priority_and_cancel_policy_and_tells_each_change_once`,
   `a_whole_body_action_enters_at_its_start_time_or_phase_and_ends_at_its_exit_or_marker`,
   `a_whole_body_action_goes_on_when_the_body_changes_mode_and_stop_ends_it`,
   `a_whole_body_action_blends_inertially_from_the_last_pose_and_stable_ticks_do_not_allocate` and
   `the_root_motion_of_a_whole_body_action_moves_the_body`.
-- `runtime_test.odin`, `pose_tracks_test.odin`, `skeleton_test.odin`: layers by weight, branch,
+- `runtime_test.odin`, `skeleton_test.odin`: layers by weight, branch,
   region, additive reference and space of the rig, on the owner thread and in jobs.
 - `discovery_bench_test.odin` and `program_bench_test.odin` (with `MIRAI_BENCH`): optional
   preparation without stable allocations, and the cost of a pose by base and layers.
