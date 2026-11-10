@@ -69,15 +69,10 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 	settings := DEFAULT_SETTINGS
 	settings.occlusion_culling = false
 	settings.reflections = true
-	device, err := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("batch trace tests skipped:", err)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)}
-		return
-	}
-	renderer:=new(Renderer);defer free(renderer)
-	if !testing.expect(t, renderer_init(renderer, {device = device, width = 160, height = 96, settings = settings}), renderer.error) {return}
-	defer renderer_destroy(renderer)
-	r := renderer
+	f: Fixture
+	if !fixture_init(t, &f, 160, 96, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	mirror := DEFAULT_MATERIAL
 	mirror.base_color, mirror.metallic, mirror.roughness = {0.9, 0.9, 0.9}, 1, 0.05
 	materials_set(r, {mirror})

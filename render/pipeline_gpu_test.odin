@@ -1,11 +1,9 @@
 package mirai_render
 
-import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(private = "file", rodata)
 PASS_BINDINGS := [?]rhi.Binding_Info{
@@ -57,16 +55,12 @@ half_to_f32 :: proc(h: u16) -> f32 {
 // the frames, and two resources used one after the other share a texture.
 @(test)
 pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^testing.T) {
-	device, err := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("pipeline tests skipped:", err)} else {testing.expectf(t, false, "no GPU device: %s", err)}
-		return
-	}
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
-	r:=new(Renderer);defer free(r)
-	if !testing.expect(t, renderer_init(r, {device = device, width = 128, height = 64, settings = settings}), r.error) {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 128, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	vertices: [24]Mesh_Vertex
 	indices: [36]u32
 	normals := [6]Vec3{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}

@@ -1,18 +1,16 @@
 package mirai_render
 
-import "core:fmt"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(test)
 overlays_gpu_order_depth_coverage_and_single_ray_instance :: proc(t:^testing.T) {
-    device,error:=shared_device.take(t)
-    if device==nil {if rhi.gpu_skip_allowed() {fmt.eprintln("overlay test skipped:",error)} else {testing.expect(t,false,error)};return}
     settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.occlusion_culling=false;settings.reflections=false
-    r:=new(Renderer);defer free(r);initialized:=renderer_init(r, {device = device, width = 32, height = 32, settings = settings})
-    testing.expect(t,initialized,r.error);if !initialized {return};defer renderer_destroy(r)
+    f:Fixture
+    if !fixture_init(t,&f,32,32,settings) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     base,red,blue,green:=DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL
     base.base_color={};red.base_color={};blue.base_color={};green.base_color={}
     red.emission={1,0,0};red.opacity=.5

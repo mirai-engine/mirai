@@ -12,11 +12,10 @@ import "mirai:rhi"
 gpu_renderer_tables_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^testing.T) {
 	limit := Memory_Limit{owner = context.allocator, remaining = max(int)}
 	limited := runtime.Allocator{memory_limit_proc, &limit}
-	r := new(Renderer)
-	defer free(r)
-	device := skin_test_renderer(t, r, false, limited)
-	if device == nil {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !skin_fixture(t, &f, false, limited) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	Call :: enum {Textures, Readback}
 	for call in Call {
 		state := &r.textures

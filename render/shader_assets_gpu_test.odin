@@ -4,15 +4,9 @@ import "core:math"
 import "core:strings"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(test)
 render_draws_the_same_image_with_a_generation_loaded_from_disk :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
     settings:=DEFAULT_SETTINGS
     settings.trace_mode=.Software
     settings.probe_budget,settings.probe_rays,settings.probe_grid,settings.probe_cascades=64,32,4,2
@@ -31,9 +25,10 @@ render_draws_the_same_image_with_a_generation_loaded_from_disk :: proc(t:^testin
         testing.expect(t,ok,r.error)
         return pixels
     }
-    r:=new(Renderer);defer free(r)
-    if !renderer_init(r,{device=device,width=96,height=64,settings=settings}) {testing.expect(t,false,r.error);return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !fixture_init(t,&f,96,64,settings,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     embedded:=capture(t,r)
     defer delete(embedded)
     lit:=false

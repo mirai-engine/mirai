@@ -1,35 +1,22 @@
 package mirai_render
 
-import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(private = "file")
 Units_Fixture :: struct {
-	device:   ^rhi.Device,
-	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
-	floor:    Instance_Desc,
+	using base: Fixture,
+	floor:      Instance_Desc,
 }
 
 // A white Lambert floor wider than the view, without reflections, TAA and, unless asked, GI.
 @(private = "file")
-units_fixture :: proc(t: ^testing.T, f: ^Units_Fixture, gi := false) -> bool {
-	device, error := shared_device.take(t, hardware_rt = false)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("units test skipped:", error)} else {testing.expect(t, false, error)}
-		return false
-	}
-	f.device = device
+units_fixture :: proc(t: ^testing.T, f: ^Units_Fixture, gi := false, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = gi, false, false
-	f.renderer = new(Renderer)
-	if !renderer_init(f.renderer, {device = device, width = 64, height = 64, settings = settings}) {
-		testing.expect(t, false, f.renderer.error)
-		return false
-	}
+	if !fixture_init(t, f, 64, 64, settings, hardware_rt = false, loc = loc) {return false}
 	lambert := DEFAULT_MATERIAL
 	lambert.specular_factor = 0
 	materials_set(f.renderer, {lambert})
@@ -45,11 +32,6 @@ unit_square :: proc(r: ^Renderer) -> Mesh_Handle {
 	indices := [6]u32{0, 2, 1, 0, 3, 2}
 	mesh, _ := mesh_add(r, vertices[:], indices[:])
 	return mesh
-}
-
-@(private = "file")
-units_destroy :: proc(f: ^Units_Fixture) {
-	if f.renderer != nil {renderer_destroy(f.renderer); free(f.renderer)}
 }
 
 @(private = "file")
@@ -73,7 +55,7 @@ near :: proc(value, expected, share: f32) -> bool {return abs(value - expected) 
 lights_reach_a_white_surface_with_the_luminance_their_units_give :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
@@ -97,7 +79,7 @@ lights_reach_a_white_surface_with_the_luminance_their_units_give :: proc(t: ^tes
 without_gi_the_sky_lights_a_surface_and_nothing_else_does :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	scene_set(r, {f.floor}, nil, {}, {sky = {2000, 2000, 2000}})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
@@ -143,7 +125,7 @@ exposure_settles :: proc(t: ^testing.T, f: ^Units_Fixture, camera: Camera, time:
 the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
 	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
@@ -220,7 +202,7 @@ the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 a_parallel_view_meters_its_surfaces_and_not_its_sky :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {sky = {20, 20, 20}})
 	time := f32(0)
@@ -265,7 +247,7 @@ glow_over_the_left :: proc(f: ^Units_Fixture) -> Instance_Desc {
 a_relative_emission_shows_its_value_at_any_exposure_and_is_not_metered :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	lambert, glow := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	lambert.specular_factor = 0
@@ -307,7 +289,7 @@ a_relative_emission_shows_its_value_at_any_exposure_and_is_not_metered :: proc(t
 a_relative_emission_follows_an_adapting_exposure_a_frame_behind :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	lambert, glow := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	lambert.specular_factor = 0
@@ -349,7 +331,7 @@ a_relative_emission_follows_an_adapting_exposure_a_frame_behind :: proc(t: ^test
 a_relative_emission_lights_nothing :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f, gi = true) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	lambert, relative, physical := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	lambert.specular_factor = 0
@@ -380,7 +362,7 @@ a_relative_emission_lights_nothing :: proc(t: ^testing.T) {
 with_nothing_to_meter_the_exposure_begins_at_the_strongest_light :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	glow := DEFAULT_MATERIAL
 	glow.unlit, glow.emission, glow.emission_mode = true, {0.5, 0.25, 0.1}, .Relative
@@ -402,7 +384,7 @@ with_nothing_to_meter_the_exposure_begins_at_the_strongest_light :: proc(t: ^tes
 the_scene_exposes_the_views_whose_camera_has_no_exposure :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
-	defer units_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
 	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})

@@ -7,20 +7,10 @@ import "core:mem"
 import "core:testing"
 import "core:time"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 // 0.6 scene-linear units per render unit: the exposure the bounds of the light
 // tests against their reference were set with.
 TUNED_EXPOSURE :: Exposure{mode = .Manual, ev100 = 1.263034 + EXPOSURE_BIAS, own = true}
-
-@(private = "file")
-test_device :: proc(t: ^testing.T) -> ^rhi.Device {
-	d, err := shared_device.take(t)
-	if d == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("render tests skipped:", err)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)}
-	}
-	return d
-}
 
 @(private = "file")
 expect_clean :: proc(t: ^testing.T, d: ^rhi.Device) {
@@ -72,31 +62,19 @@ pixel :: proc(pixels: []u8, width: int, p: [2]int) -> [3]f32 {
 }
 
 @(private = "file")
-Fixture :: struct {
-	device:   ^rhi.Device,
-	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
-	cube:     Mesh_Handle,
+Cube_Fixture :: struct {
+	using base: Fixture,
+	cube:       Mesh_Handle,
 }
 
 @(private = "file")
-fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: Settings) -> bool {
-	f.device = test_device(t)
-	if f.device == nil {return false}
-	f.renderer = new(Renderer)
-	ok := renderer_init(f.renderer, {device = f.device, width = width, height = height, settings = settings})
-	testing.expect(t, ok, f.renderer.error)
-	if !ok {return false}
+cube_fixture_init :: proc(t: ^testing.T, f: ^Cube_Fixture, width, height: u32, settings: Settings, loc := #caller_location) -> bool {
+	if !fixture_init(t, f, width, height, settings, loc = loc) {return false}
 	vertices, indices := cube_mesh()
 	handle, added := mesh_add(f.renderer, vertices[:], indices[:])
 	testing.expect(t, added)
 	f.cube = handle
 	return true
-}
-
-@(private = "file")
-fixture_destroy :: proc(f: ^Fixture) {
-	if f.device == nil {return}
-	if f.renderer != nil {renderer_destroy(f.renderer); free(f.renderer)}
 }
 
 @(private = "file")
@@ -111,8 +89,8 @@ test_settings :: proc() -> Settings {
 
 @(test)
 render_sun_shadow_is_ray_traced :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 192, 128, test_settings()) {return}
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 192, 128, test_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := []Instance_Desc{
@@ -139,12 +117,12 @@ render_sun_shadow_is_ray_traced :: proc(t: ^testing.T) {
 
 @(test)
 render_soft_shadow_blurs_with_the_distance_to_its_caster :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.sun_radius = 0.05
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 256, 192, settings) {return}
+	if !cube_fixture_init(t, &f, 256, 192, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// A wall 4 m tall under a sun 45 degrees high: the side of its shadow runs
@@ -182,11 +160,11 @@ render_soft_shadow_blurs_with_the_distance_to_its_caster :: proc(t: ^testing.T) 
 
 @(test)
 render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 128, 96, settings) {return}
+	if !cube_fixture_init(t, &f, 128, 96, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := []Instance_Desc{
@@ -197,7 +175,7 @@ render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
 	scene_set(r, instances, nil, sun, {sky = {0, 0, 0}})
 	camera := Camera{position = {0, 8, 7}, forward = {0, -8, -7}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	under, beside := Vec3{0, 0.001, 0.8}, Vec3{3.5, 0.001, 2.5}
-	read :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, p: Vec3) -> f32 {
+	read :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera, p: Vec3) -> f32 {
 		rhi.device_wait_idle(f.device)
 		pixels, w, _, ok := golden_capture(f.renderer)
 		testing.expect(t, ok, f.renderer.error)
@@ -218,12 +196,12 @@ render_soft_shadow_leaves_with_its_caster :: proc(t: ^testing.T) {
 
 @(test)
 render_diffuse_color_bleeding :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	// The indirect light itself: the lit floor of a room this bright goes white
 	// through the display transform.
 	settings := test_settings()
 	settings.taa = false
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// A closed white room whose ceiling is a red emitter: the floor only
@@ -251,11 +229,11 @@ render_diffuse_color_bleeding :: proc(t: ^testing.T) {
 
 @(test)
 render_probes_keep_rough_metal_lighting_when_a_wall_moves :: proc(t:^testing.T) {
-    f:Fixture
+    f:Cube_Fixture
     settings:=test_settings()
     settings.probe_budget=8
     settings.taa=false
-    if !fixture_init(t,&f,128,96,settings) {return}
+    if !cube_fixture_init(t,&f,128,96,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     metal:=DEFAULT_MATERIAL
@@ -291,10 +269,10 @@ render_probes_keep_rough_metal_lighting_when_a_wall_moves :: proc(t:^testing.T) 
 
 @(test)
 render_culls_and_keeps_steady_frames_allocation_free :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.probe_budget = 64
-	if !fixture_init(t, &f, 64, 48, settings) {return}
+	if !cube_fixture_init(t, &f, 64, 48, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := []Instance_Desc{
@@ -321,10 +299,10 @@ render_culls_and_keeps_steady_frames_allocation_free :: proc(t: ^testing.T) {
 
 @(test)
 render_two_phase_occlusion_culls_without_popping :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.taa = false
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	camera := Camera{position = {0, 1, 6}, forward = {0, 0, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
@@ -360,7 +338,7 @@ region_mean :: proc(pixels: []u8, width, x0, y0, x1, y1: int) -> [3]f32 {
 // give the same light whatever their number: the field of the lights scene
 // of the demo.
 @(private = "file")
-lights_field :: proc(f: ^Fixture, count: int, range: f32, height: f32 = 3.5, radius: f32 = 0) {
+lights_field :: proc(f: ^Cube_Fixture, count: int, range: f32, height: f32 = 3.5, radius: f32 = 0) {
 	instances: [49]Instance_Desc
 	instances[0] = {object_id = 1, mesh = f.cube, transform = trs({0, -0.15, 0}, {24, 0.3, 20}), tint = {0.4, 0.4, 0.4}}
 	for i in 0 ..< 48 {
@@ -403,7 +381,7 @@ image_error :: proc(image, reference: []u8) -> (bias, rms: f32) {
 // The settings of the renderer are those of the image it is compared with,
 // with the reference on and without the temporal filter.
 @(private = "file")
-reference_image :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, frames: int, mode := Debug_View.None) -> (image: []u8, ok: bool) {
+reference_image :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera, frames: int, mode := Debug_View.None) -> (image: []u8, ok: bool) {
 	r := f.renderer
 	settings := r.settings
 	reference := settings
@@ -432,11 +410,11 @@ reference_image :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, frames: int,
 // of it, and the same from a frame to the next.
 @(test)
 render_many_lights_match_their_reference :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 480, 300, settings) {return}
+	if !cube_fixture_init(t, &f, 480, 300, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	lights_field(&f, 1024, 8, radius = 0.1)
@@ -469,10 +447,10 @@ render_many_lights_match_their_reference :: proc(t: ^testing.T) {
 // many more.
 @(test)
 render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
-	if !fixture_init(t, &f, 240, 150, settings) {return}
+	if !cube_fixture_init(t, &f, 240, 150, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	lights_field(&f, 64, 3, 2.6)
@@ -501,11 +479,11 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 // Lights that the tree adds up by groups give what they give one by one.
 @(test)
 render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 64, 48, settings) {return}
+	if !cube_fixture_init(t, &f, 64, 48, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	lights: [24]Light_Desc
@@ -543,11 +521,11 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 // image shows there is what every point of the disc gives.
 @(test)
 render_a_low_sun_draws_out_the_end_of_a_shadow :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 480, 300, settings) {return}
+	if !cube_fixture_init(t, &f, 480, 300, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
@@ -591,11 +569,11 @@ render_a_low_sun_draws_out_the_end_of_a_shadow :: proc(t: ^testing.T) {
 // from it, and a light with none leaves it sharp.
 @(test)
 render_a_wider_light_casts_a_softer_shadow :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 256, 192, settings) {return}
+	if !cube_fixture_init(t, &f, 256, 192, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// The light is 2.5 m up, 1 m from a wall 1.5 m tall: the edge of its
@@ -643,10 +621,10 @@ render_a_wider_light_casts_a_softer_shadow :: proc(t: ^testing.T) {
 // takes none of the light of the front, which nothing shadows.
 @(test)
 render_an_edge_takes_no_light_from_the_face_beyond_it :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
-	if !fixture_init(t, &f, 256, 160, settings) {return}
+	if !cube_fixture_init(t, &f, 256, 160, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := []Instance_Desc{
@@ -685,10 +663,10 @@ render_an_edge_takes_no_light_from_the_face_beyond_it :: proc(t: ^testing.T) {
 
 @(test)
 render_spot_light_lights_only_its_cone :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
-	if !fixture_init(t, &f, 64, 48, settings) {return}
+	if !cube_fixture_init(t, &f, 64, 48, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// 2 m above the floor, a 20 degree cone lights a disc of radius ~0.73 m.
@@ -711,8 +689,8 @@ render_spot_light_lights_only_its_cone :: proc(t: ^testing.T) {
 
 @(test)
 render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 64, 48, test_settings()) {return}
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 64, 48, test_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 5 * math.PI, range = 8}, {position = {1, 2, 1}, color = {1, 0.5, 0.2}, intensity = 5 * math.PI, range = 8}}
@@ -754,10 +732,10 @@ render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
 
 @(test)
 a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) {
-    f:Fixture
+    f:Cube_Fixture
     settings:=test_settings()
     settings.gi_enabled=false
-    if !fixture_init(t,&f,200,100,settings) {return}
+    if !cube_fixture_init(t,&f,200,100,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     scene_set(r,{{object_id=1,mesh=f.cube,transform=trs({0,0,0},{1,1,1}),tint={1,1,1}}},nil,{},{use_background=true})
@@ -793,11 +771,11 @@ a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) 
 
 @(test)
 split_screen_preserves_views_and_composes_global_ui :: proc(t:^testing.T) {
-    f:Fixture
+    f:Cube_Fixture
     settings:=test_settings()
     settings.gi_enabled=false
     settings.taa=true
-    if !fixture_init(t,&f,129,97,settings) {return}
+    if !cube_fixture_init(t,&f,129,97,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     scene_set(r,{
@@ -874,10 +852,10 @@ split_screen_preserves_views_and_composes_global_ui :: proc(t:^testing.T) {
 
 @(test)
 camera_cuts_reset_screen_history_and_preserve_world_lighting_and_pipelines :: proc(t:^testing.T) {
-    f:Fixture
+    f:Cube_Fixture
     settings:=test_settings()
     settings.taa=true
-    if !fixture_init(t,&f,64,48,settings) {return}
+    if !cube_fixture_init(t,&f,64,48,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     scene_set(r,{{object_id=1,mesh=f.cube,transform=trs({},{1,1,1}),tint={0.8,0.8,0.8}}},nil,{}, {sky={0.2,0.3,0.4}})
@@ -906,12 +884,12 @@ camera_cuts_reset_screen_history_and_preserve_world_lighting_and_pipelines :: pr
 
 @(test)
 render_many_overlapping_instances_stay_valid :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	// The tree of the instances is kept for rays traced by software.
 	settings.trace_mode = .Software
-	if !fixture_init(t, &f, 48, 32, settings) {return}
+	if !cube_fixture_init(t, &f, 48, 32, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// Dense overlapping stacks make SAH leaves hold several instances, so the
@@ -930,13 +908,13 @@ render_many_overlapping_instances_stay_valid :: proc(t: ^testing.T) {
 
 @(test)
 render_occlusion_is_conservative_at_odd_resolutions :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
 	// 250x180: pyramid level 4 has 7 texels of 32 px plus a folded remainder,
 	// so mapping UVs evenly lands one texel left of the true footprint.
-	if !fixture_init(t, &f, 250, 180, settings) {return}
+	if !cube_fixture_init(t, &f, 250, 180, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// The tall wall's right edge projects to pixel ~128. The box behind it is
@@ -961,11 +939,11 @@ render_occlusion_is_conservative_at_odd_resolutions :: proc(t: ^testing.T) {
 
 @(test)
 render_taa_is_stable_on_static_scenes :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.render_scale = 0.5
 	settings.gi_enabled = false
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := []Instance_Desc{
@@ -1007,10 +985,10 @@ render_gathered_light_leaves_a_lamp_to_its_light :: proc(t: ^testing.T) {
 	cases := [3]struct {glowing, light, body: bool}{{true, true, true}, {false, true, false}, {true, false, true}}
 	total: [3]f32
 	for c, i in cases {
-		f: Fixture
+		f: Cube_Fixture
 		settings := test_settings()
 		settings.taa = false
-		if !fixture_init(t, &f, 128, 96, settings) {return}
+		if !cube_fixture_init(t, &f, 128, 96, settings) {return}
 		defer fixture_destroy(&f)
 		r := f.renderer
 		instances := []Instance_Desc{
@@ -1038,10 +1016,10 @@ render_gathered_light_leaves_a_lamp_to_its_light :: proc(t: ^testing.T) {
 
 @(test)
 render_highlight_outlines_silhouette_without_scene_rebuild :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	style := Highlight_Style{colors = {0={0, 1, 0, 1}, 1={0, 0, 1, 1}, 2={1, 0, 1, 1}, 3={0, 0, 1, 1}}, width = 3}
@@ -1094,10 +1072,10 @@ render_highlight_outlines_silhouette_without_scene_rebuild :: proc(t: ^testing.T
 
 @(test)
 render_extended_highlights_keep_each_agent_color_and_mirrored_winding :: proc(t:^testing.T) {
-    f:Fixture
+    f:Cube_Fixture
     settings:=test_settings()
     settings.gi_enabled,settings.reflections,settings.taa=false,false,false
-    if !fixture_init(t,&f,96,64,settings) {return}
+    if !cube_fixture_init(t,&f,96,64,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     colors:=[6]Vec4{{121.0/255,203.0/255,178.0/255,1},{182.0/255,160.0/255,237.0/255,1},{229.0/255,181.0/255,120.0/255,1},{129.0/255,185.0/255,233.0/255,1},{236.0/255,149.0/255,177.0/255,1},{194.0/255,207.0/255,122.0/255,1}}
@@ -1130,11 +1108,11 @@ render_extended_highlights_keep_each_agent_color_and_mirrored_winding :: proc(t:
 
 @(test)
 render_highlight_fill_coats_the_surface_without_an_outline :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	style := Highlight_Style{colors = {0={0, 1, 0, 1}, 1={0, 0, 1, 1}, 2={1, 0, 1, 1}}, width = 3, fill = {1=0.6}}
@@ -1171,11 +1149,11 @@ render_highlight_fill_coats_the_surface_without_an_outline :: proc(t: ^testing.T
 
 @(test)
 render_highlight_ignores_objects_in_front_of_the_selection :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 96, 96, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 96, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	testing.expect(t, renderer_set_highlight_style(r, {colors = {0={0, 1, 0, 1}, 1={0, 0, 1, 1}, 2={1, 0, 1, 1}}, width = 3}))
@@ -1208,11 +1186,11 @@ render_highlight_ignores_objects_in_front_of_the_selection :: proc(t: ^testing.T
 
 @(test)
 render_game_outline_shows_behind_walls_as_its_style_says :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
 	settings.taa = false
-	if !fixture_init(t, &f, 96, 96, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 96, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	testing.expect(t, renderer_set_highlight_style(r, {colors = {0={0, 1, 0, 1}}, width = 3, behind = {0 ..< 16 = 1}}))
@@ -1258,13 +1236,13 @@ render_game_outline_shows_behind_walls_as_its_style_says :: proc(t: ^testing.T) 
 // also cannot toggle its occlusion attenuation or create another silhouette.
 @(test)
 render_highlight_is_stable_with_retina_taa_downscale_and_coplanar_geometry :: proc(t: ^testing.T) {
-    f: Fixture
+    f: Cube_Fixture
     settings := test_settings()
     settings.gi_enabled = false
     settings.reflections = false
     settings.taa = true
     settings.render_scale = 0.5
-    if !fixture_init(t, &f, 256, 160, settings) {return}
+    if !cube_fixture_init(t, &f, 256, 160, settings) {return}
     defer fixture_destroy(&f)
     r := f.renderer
     renderer_resize(r, 256, 160, 2, 2)
@@ -1304,8 +1282,8 @@ render_highlight_is_stable_with_retina_taa_downscale_and_coplanar_geometry :: pr
 
 @(test)
 render_mesh_added_under_software_tracing_gets_its_native_structure_when_hardware_returns :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 64, 48, test_settings()) {return}
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 64, 48, test_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// Only a device with ray queries has native structures to build.
@@ -1339,8 +1317,8 @@ render_mesh_added_under_software_tracing_gets_its_native_structure_when_hardware
 
 @(test)
 render_mesh_added_under_hardware_tracing_gets_its_software_tree_when_software_returns :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 64, 48, test_settings()) {return}
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 64, 48, test_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	if !r.hardware_rt {return}
@@ -1419,18 +1397,18 @@ move_frames :: proc(t: ^testing.T, r: ^Renderer, count: int) {
 
 @(test)
 scene_move_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
-	moved, set: Fixture
+	moved, set: Cube_Fixture
 	// The tree of the instances is kept for rays traced by software.
 	settings := move_settings()
 	settings.trace_mode = .Software
-	if !fixture_init(t, &moved, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &moved, 96, 64, settings) {return}
 	defer fixture_destroy(&moved)
-	if !fixture_init(t, &set, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &set, 96, 64, settings) {return}
 	defer fixture_destroy(&set)
 	instances: [5]Instance_Desc
 	move_scene(moved.cube, &instances)
 	lights := []Light_Desc{{position = {2, 3, 2}, color = {1, 0.9, 0.8}, intensity = 20 * math.PI, range = 9}}
-	for f in ([]^Fixture{&moved, &set}) {
+	for f in ([]^Cube_Fixture{&moved, &set}) {
 		scene_set(f.renderer, instances[:], lights, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
 		move_frames(t, f.renderer, 4)
 	}
@@ -1500,24 +1478,24 @@ scene_move_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
 // every ray that reached its box.
 @(test)
 an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testing.T) {
-	zero, hidden: Fixture
+	zero, hidden: Cube_Fixture
 	settings := move_settings()
 	settings.trace_mode = .Software
-	if !fixture_init(t, &zero, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &zero, 96, 64, settings) {return}
 	defer fixture_destroy(&zero)
-	if !fixture_init(t, &hidden, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &hidden, 96, 64, settings) {return}
 	defer fixture_destroy(&hidden)
 	instances: [5]Instance_Desc
 	move_scene(zero.cube, &instances)
 	lights := []Light_Desc{{position = {2, 3, 2}, color = {1, 0.9, 0.8}, intensity = 20 * math.PI, range = 9}}
-	for f in ([]^Fixture{&zero, &hidden}) {
+	for f in ([]^Cube_Fixture{&zero, &hidden}) {
 		scene_set(f.renderer, instances[:], lights, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
 		move_frames(t, f.renderer, 4)
 	}
 	r, expected := zero.renderer, hidden.renderer
 	a, b := &r.scene, &expected.scene
 	shown := instances[2].transform
-	expect_same_image :: proc(t: ^testing.T, a, b: ^Fixture, what: string) {
+	expect_same_image :: proc(t: ^testing.T, a, b: ^Cube_Fixture, what: string) {
 		move_frames(t, a.renderer, 4)
 		move_frames(t, b.renderer, 4)
 		rhi.device_wait_idle(a.device)
@@ -1582,14 +1560,14 @@ an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testi
 
 @(test)
 scene_tint_leaves_the_scene_that_setting_it_again_would :: proc(t: ^testing.T) {
-	tinted, set: Fixture
-	if !fixture_init(t, &tinted, 96, 64, move_settings()) {return}
+	tinted, set: Cube_Fixture
+	if !cube_fixture_init(t, &tinted, 96, 64, move_settings()) {return}
 	defer fixture_destroy(&tinted)
-	if !fixture_init(t, &set, 96, 64, move_settings()) {return}
+	if !cube_fixture_init(t, &set, 96, 64, move_settings()) {return}
 	defer fixture_destroy(&set)
 	instances: [5]Instance_Desc
 	move_scene(tinted.cube, &instances)
-	for f in ([]^Fixture{&tinted, &set}) {
+	for f in ([]^Cube_Fixture{&tinted, &set}) {
 		scene_set(f.renderer, instances[:], nil, MOVE_TEST_SUN, MOVE_TEST_ENVIRONMENT)
 		move_frames(t, f.renderer, 4)
 	}
@@ -1665,11 +1643,11 @@ move_grid :: proc(cube: Mesh_Handle, count: int, allocator := context.allocator)
 
 @(test)
 scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^testing.T) {
-	f: Fixture
+	f: Cube_Fixture
 	// The tree of the instances is kept for rays traced by software.
 	settings := move_settings()
 	settings.trace_mode = .Software
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := &r.scene
@@ -1732,8 +1710,8 @@ scene_move_refits_the_tree_of_a_large_scene_until_it_fits_badly :: proc(t: ^test
 
 @(test)
 scene_set_lights_replaces_the_lights_alone :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 96, 64, move_settings()) {return}
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 96, 64, move_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := &r.scene
@@ -1755,8 +1733,8 @@ scene_set_lights_replaces_the_lights_alone :: proc(t: ^testing.T) {
 
 @(test)
 scene_set_lights_sends_only_what_changed_and_the_gpu_holds_the_lights_of_the_scene :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 96, 64, move_settings()) {return}
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 96, 64, move_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := &r.scene
@@ -1792,8 +1770,8 @@ MOVE_BENCHMARK :: #config(RENDER_BENCHMARK, false)
 @(test)
 scene_benchmark_moves_one_instance_of_many :: proc(t: ^testing.T) {
 	when !MOVE_BENCHMARK {return} else {
-		f: Fixture
-		if !fixture_init(t, &f, 96, 64, move_settings()) {return}
+		f: Cube_Fixture
+		if !cube_fixture_init(t, &f, 96, 64, move_settings()) {return}
 		defer fixture_destroy(&f)
 		r := f.renderer
 		for count in ([]int{100, 500, 2000, 20000}) {
@@ -1848,8 +1826,8 @@ Stages_Seen :: struct {
 // which have nothing of extensions: no nested views, no constants, no stages.
 @(test)
 render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 96, 64, test_settings()) {return}
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 96, 64, test_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := []Instance_Desc{{object_id = 1, mesh = f.cube, transform = trs({0, 0, 0}, {1, 1, 1}), tint = {0.8, 0.8, 0.8}}}
@@ -1992,10 +1970,10 @@ render_far_from_the_centre_looks_as_at_it_and_a_jump_keeps_the_history :: proc(t
 	// On the heap: six images overflow the stack of a test.
 	shown :: proc(t: ^testing.T, at: Vec3, jump: bool, offscreen := false) -> (image, next: ^Image, origin: Vec3) {
 		image, next = new(Image), new(Image)
-		f: Fixture
+		f: Cube_Fixture
 		settings := test_settings()
 		settings.gi_enabled = false
-		if !fixture_init(t, &f, W, H, settings) {return}
+		if !cube_fixture_init(t, &f, W, H, settings) {return}
 		defer fixture_destroy(&f)
 		r := f.renderer
 		instances := []Instance_Desc{
