@@ -435,7 +435,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests |
-| Run tests | `mirai test [<package>] [test...] [--list\|--failed\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
+| Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--dev] [--copy]` |
 | Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
 | Capture without UI | `mirai capture [project] --out x.png [--reference r.png] [--repeat]` |
@@ -525,18 +525,31 @@ with `project.mirai`); a hand-given `-collection:` wins. `check` adds
 they generate the engine shaders, which git does not store; a `-target:` of another system also
 generates its backend, because the tables embed only the generated ones.
 
-`mirai test` runs one or more packages in series: an argument that is a folder with Odin sources
-is a package and the following ones, tests of that package; without tests it runs the whole
-package.
+`mirai test` takes one or more packages: an argument that is a folder with Odin sources is a
+package and the following ones, tests of that package; without tests it runs the whole package. It
+first compiles the executables that need it, at once up to `compilers_at_once()` like the
+[plugin libraries](#plugin-libraries) and inside a single turn, and then runs them one after
+another in the order asked.
 
 - Names are looked up among the `@(test)` of the sources before compiling: one that is not there
   cuts the command with 2 and names the similar ones. They reach the executable as `-tests:`, so
   asking for other tests does not compile.
+- An argument that ends in `.odin` asks for the tests of that file: the name of a file of the
+  package before it, or a path to one. A file that is not there or declares no test cuts the
+  command like a wrong name.
+- `--no-gpu` leaves out the tests of the files that reach the device of the GPU tests. A test
+  reaches it when it names `rhi/shared_device` or `rhi.device_create`, itself or through the
+  declarations of the test files of its package; it is read from the text, like the names, so a
+  GPU test takes the device in its test files and not through what is no test. `--list` takes the
+  files and `--no-gpu` too, and shows what would run.
+- A package with no test to run (it declares none, or `--failed` or `--no-gpu` leave none) is not
+  compiled: it is named in one line and is no failure, also when it is the only one asked.
 - `--failed` runs those that failed last time in the package: each run removes the ones that ran
   and adds the ones that failed.
 - Each package has its executable in `bin/tests/`, which is compiled with the turn only if its
   sources changed (the engine's, the project's and the `_test.odin` of the package), the flags or
-  the compiler. A package that does not compile is named and the others run.
+  the compiler. A package that does not compile is named in its place, with what the compiler
+  said, and the others run.
 - Its threads reserve 8 MB of stack on every system (`TEST_STACK_FLAG`: Windows gives 1 MB),
   unless the flags of the call bring linker flags of their own.
 - If no test starts or ends within `--timeout` (`TEST_TIMEOUT`; 0 does not watch; a benchmark only
