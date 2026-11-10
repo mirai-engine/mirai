@@ -9,9 +9,9 @@ import phys "plugins:physics/runtime"
 // What physics gives the editor: the rows of its collision types and of
 // Collision_Settings, the collision API, the Collider of a Character, the
 // bodies Simulate drives with the gizmo, the Simulate limited to some
-// entities that drops them to rest (physics.settle), what a character says to
-// the bots that play a game, the colliders of the selection and the Collision
-// modes of the viewport.
+// entities that drops them to rest (physics.settle and the Drop tool),
+// whether a character stands for the bots that play a game, the colliders of
+// the selection and the Collision modes of the viewport.
 
 @(storage)
 Physics_Inspector :: struct {provider:editor.Inspector_Provider}
@@ -43,7 +43,7 @@ PHYSICS_SIMULATION_DEFAULT :: Physics_Simulation{provider={owner=body_owner,move
 @(storage)
 Physics_Bodies :: struct {provider:editor.Body_Provider}
 
-PHYSICS_BODIES_DEFAULT :: Physics_Bodies{provider={standing=character_standing,measure=character_measure}}
+PHYSICS_BODIES_DEFAULT :: Physics_Bodies{provider={standing=character_standing}}
 
 @(private)
 collision_settings_problem :: proc(info:^runtime.Type_Info,value:rawptr) -> string {
@@ -79,20 +79,4 @@ character_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known
     if states==nil {return}
     state:=core.get(states,body) or_return
     return state.standing,true
-}
-
-// What its components say; its height once a step made its capsule.
-@(private)
-character_measure :: proc(w:core.World_Ref,body:core.Entity) -> (measure:editor.Body_Measure,known:bool) {
-    characters,states,walks:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Character_State),core.world_table_of(w,phys.Walk)
-    if characters==nil {return}
-    character:=core.get(characters,body) or_return
-    measure.step_height=character.step_height
-    if states!=nil {
-        if state,stepped:=core.get(states,body);stepped {measure.height=state.height}
-    }
-    if walks!=nil {
-        if walk,walks:=core.get(walks,body);walks {measure.speed,measure.jump_height=walk.max_speed,walk.jump_height}
-    }
-    return measure,true
 }

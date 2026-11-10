@@ -123,7 +123,7 @@ Route_Provider :: struct {
     next:proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route,
 }
 
-// What the plugin that moves a body in a game says of it (physics: its
+// What the plugins that move a body of a game say of it (physics, locomotion:
 // characters): the drive of play.step and the playtest plugin read it with
 // play_stance and play_body_measure, never by the name of a component. known
 // is false for a body that is not one it moves.

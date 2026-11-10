@@ -376,9 +376,10 @@ with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its
 
 What steers or watches a body in those runs asks the plugin that moves it, never a component by
 its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
-its plugin (`physics`, for its characters), and `editor.play_stance` and `editor.play_body_measure`
-read it. A body no provider answers for is `Unknown`, which each reader handles and is not taken as
-standing, and is measured as `BODY_PERSON`.
+its plugin (`physics`, whether a character stands; `locomotion`, how a walker measures), and
+`editor.play_stance` and `editor.play_body_measure` read it. A body no provider answers for is
+`Unknown`, which each reader handles and is not taken as standing, and is measured as
+`BODY_PERSON`.
 
 A bot of a plugin walks a body with the drive of `play.step`, not with steering of its own:
 `editor.play_drive_to` makes one to a place, `editor.play_drive_steer` runs before each
