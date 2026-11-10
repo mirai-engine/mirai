@@ -47,6 +47,10 @@ Scenes:
   refracts, masked materials, imported models, a door and a sample that changes material.
 - **`showcase`**: HUD (`UI_Screen`) and sign over the elevator (`World_Widget`) that show the
   `Showcase` component; elevator moved by an `.anim` and a speaker with spatial sound.
+- **HUDs of the other scenes**: each is a component a `frame` step writes only when what it shows
+  changed, and a `.ui` with the styles of `assets/interface/hud_kit.ui`, on the body it is of
+  (`Player_Hud` on `Player.prefab`, `Person.prefab` and `Dog.prefab`, `Portal_Hud`, `Raft_Hud`) or
+  on an entity of its scene (`Dig_Hud`, `Vfx_Gallery_Hud`, `Physics_Gallery_Hud`, `Gallery_Hud`).
 - **`interface`**: the interfaces of `assets/interface/` over the `Interface_Demo` component
   (`game/interface_demo.odin`). H changes the HUD variant (`minimal`, `neon`), M opens the options
   menu (controls, tooltip, two buttons from another `.ui` with overrides, language), I the

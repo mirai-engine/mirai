@@ -49,7 +49,8 @@ programs and profiles ([generated content](demo.md#generated-content)).
   (`gallery_panel_input`) and what each panel shows (`gallery_panels`).
 - `animation_gallery_player.odin`: `Gallery_Player`, the walk of its body, the station it stands at
   and what E does there (`gallery_interact`).
-- `animation_gallery_view.odin`: the HUD with the station and what E does.
+- `animation_gallery_view.odin`: `Gallery_Hud`, what `animation_hud.ui` shows of the station and
+  of what E does.
 - `animation_motor.odin`: [the motor](#demo-animation-motor) of the actions and warp stations.
 
 ## API walkthrough

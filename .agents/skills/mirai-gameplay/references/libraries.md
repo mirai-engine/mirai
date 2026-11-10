@@ -564,8 +564,16 @@ one per local player that has screens or sees a `World_Widget`.
   ([paths](../../mirai-ui/references/ui.md#data-tree)): each path starts at a component of
   `UI_Screen.entity` (null: its own; in a `World_Widget`, the panel's) or at a storage of the
   world, and an `Entity` field leads to another entity. The interface is built with a copy of the
-  bytes it reads, which is redone only when a row's stamp moved. What a widget writes to the copy
-  is seen until a tick runs; the game writes what the event asks for.
+  bytes it reads, which is redone only when a row's stamp moved. A control bound to a field of a
+  storage writes it (`bind_commits`), and so does a `Button` that binds a value, with its
+  `choice`; one bound to a component writes the copy, which is seen until a tick runs, and the
+  game writes what the event asks for: a component is simulation state, written in a tick.
+- **A game shows interfaces only as `.ui`.** The generator refuses a step of the `ui` phase
+  outside the engine and the editor parts. What only code can draw is a `Draw` node: the
+  procedure the game declares with `@(draw="name")` draws it from the node alone (its rectangle,
+  its style and the bytes of the value it binds), when the node is built
+  (`source_draw`, [the node](../../mirai-ui/references/ui.md#data-tree)); a name the game lacks is
+  the problem `gui.draw`.
 - **Modes (`UI_Input`).** `Passive` (a HUD) takes no navigation, keys or actions. Of each player's
   screens, the one with the greatest order that is not `Passive` and is not being hidden takes the
   input. `Modal` also blocks the actions of the seats it covers with `input_block`, releases the
@@ -585,8 +593,9 @@ one per local player that has screens or sees a `World_Widget`.
   split frame (`App.local_cameras`).
 - **`UI_Settings`** (project setting): `reference` is the design size in points, which
   `ui.scale_to_fit` brings to the window or the player's part. `languages` are the languages the
-  game is in (`Language`, as stores list them, with their code in `LANGUAGE_CODES`; English by
-  default) and `source` the one the interfaces are written in. Translations live in each `.ui`
+  game is in (`Language`, those the fonts have the glyphs of, with their code in
+  `LANGUAGE_CODES`; English by default) and `source` the one the interfaces are written in.
+  Translations live in each `.ui`
   ([localized texts](../../mirai-ui/references/ui.md#data-tree)). `prompts` picks the prompt
   pack (none: they are drawn). `prompt_images` gives loose entries a texture that wins over that of
   the pack; Project Settings > UI shows them in a table with the entries the game binds.
@@ -630,7 +639,8 @@ one per local player that has screens or sees a `World_Widget`.
 - **Repeated frames.** A context without changes in its interfaces, without trees that say
   `animating`, without input reaching it (pointer, buttons, keys, wheel, gamepad, text), without
   shown cameras or particles, with the same size, scale, density, atlas, family, view and ray of
-  its panels, and in which no `ui` function drew in the previous frame, is not built: it delivers
+  its panels, and in which no `ui` step of the engine or the editor asked for the window's context
+  (`gui_context`: the frame counter) in the previous frame, is not built: it delivers
   its converted layer again (the data of a `ui` frame is valid until its next `frame_begin`).
   `Gui.skipped` counts them. In a context that is built, each screen that did not change, does not
   animate, is not hiding and that no input reaches is drawn again without being built
@@ -644,7 +654,8 @@ one per local player that has screens or sees a `World_Widget`.
   `SCREEN_CAPACITY` visible screens: the one with the lowest order is left out), `gui.widgets`
   (`World_Widget`s in view that did not fit: the farthest are left out; `Gui.dropped_widgets`
   counts them), `gui.mesh` (the renderer did not give the texture of a `Mesh`), `gui.events` (more
-  than `EVENT_BATCH` events in a frame), `gui.play` and `gui.request` (a request that was not
+  than `EVENT_BATCH` events in a frame), `gui.draw` (a `Draw` names a procedure the game does not
+  declare), `gui.play` and `gui.request` (a request that was not
   applied); what does not fit in the renderer is `gui.draws` of the world, and what an interface
   nests deeper than a frame holds (`ui.Stats.dropped_nesting`), `gui.nesting`.
 - `pointer_consumed`/`keyboard_consumed` say whether the UI had the pointer or the keyboard.
@@ -654,10 +665,10 @@ one per local player that has screens or sees a `World_Widget`.
   (`render`, before `render_sync`).
 - Each world has its own contexts, instances and pending events: two worlds built in one frame do
   not mix, and `gui_release` releases those of the world being released.
-- A game that draws its own widgets does so in a `ui` function between `gui_frame_begin` and
-  `gui_frame_end`, with `gui.gui_context(gui)`, the window's context (null outside the phase;
-  requesting it makes the next frame be built). That is why `gui.Gui` is
-  `@(storage,host,by_world,shared)`: the game and the library write their world's in loop order.
+- `gui.gui_context(gui)` gives a `ui` step of the engine, the editor or the editor part of a
+  plugin the window's context between `gui_frame_begin` and `gui_frame_end` (null outside the
+  phase; requesting it makes every frame be built). That is why `gui.Gui` is
+  `@(storage,host,by_world,shared)`.
 - The functions of `gui` and `audio` run only in the game loop.
 
 ## `save`

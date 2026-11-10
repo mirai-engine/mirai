@@ -43,6 +43,36 @@ Write it with [ui.write](writing-ui.md). In the scene, the screen and its data o
 - Several local players: `UI_Screen.player` is `0` for the window and `n` for the part of
   player `n`.
 
+## Custom drawing
+
+A minimap, a graph or a radar is a `Draw` node: a leaf the layout places and a style colors,
+whose pixels a procedure of the game draws. The node names it in `draw` and binds in
+`bind_value` the field the procedure reads, of any type:
+
+```json
+{"name": "map", "kind": "Draw", "draw": "minimap", "style": "map",
+ "bind_value": "Minimap", "width": 160, "height": 160}
+```
+
+```odin
+@(component)
+Minimap :: struct {marks:[16][2]f32, count:i32}
+
+@(draw="minimap")
+minimap_draw :: proc(ctx:^ui.Context, node:ui.Draw_Node) {
+    ui.draw_rounded(ctx, node.rect, 6, node.fill)
+    map := ui.draw_value(node, Minimap) or_return
+    r, dot := node.rect, node.mark
+    for at in map.marks[:map.count] {ui.draw_circle(ctx, {r.x, r.y} + at*{r.w, r.h}, 3, dot)}
+}
+```
+
+- The procedure draws from `node` alone: its `rect`, the colors and text of its style and
+  `data`, the bytes of what it binds (`ui.draw_value`). A frame step writes the component; the
+  screen is drawn again only when it changed.
+- It uses the `ui.draw_*` procedures; what it draws past the container that clips it is cut.
+- A `draw` no procedure has is refused by `mirai ui check` and is a problem `gui.draw`.
+
 ## World panel
 
 An entity with a `World_Widget` shows a `.ui` at its place; its paths name components of that

@@ -32,7 +32,7 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
     `tree_bind.odin` (paths, copy plan and templates), `tree_data.odin` (records and loading),
     `component.odin` (how a use expands), `tree_link.odin` (what comes from the `.ui` it uses),
     `tree_names.odin` (what the names of a `.ui` leave in its records: `tree_settle`).
-- How a game shows `.ui` interfaces (`UI_Screen`, `World_Widget`) and draws its own:
+- How a game shows `.ui` interfaces (`UI_Screen`, `World_Widget`) and what draws a `Draw` node:
   [game libraries](../mirai-gameplay/references/libraries.md#gui). Bridge with the renderer:
   [host](../mirai-core/references/host.md#bridge-with-ui).
 - Inspecting and editing a `.ui` in the editor: the
@@ -122,6 +122,9 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   come from it; a file stays in `use` until someone removes it, also after its last use is removed.
 - **The override of a style by a node is an unnamed style with `extends`**: it says what differs
   and follows later changes of the style in the rest.
+- **A game has one route to an interface, the `.ui`.** What code draws is a `Draw` node, through
+  `Game_Source.draw`: its procedure reads only the node, so a screen is still skipped and replayed
+  by what it binds.
 - **The first control of each page takes the focus** when it shows (a flag set the first time a
   tree is built by `tree_pages_focus`, not inside a `List`); a node can still ask with
   `Focus_First`.
