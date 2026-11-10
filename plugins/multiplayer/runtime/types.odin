@@ -37,12 +37,24 @@ collection_get :: wire.collection_get
 collection_remove :: wire.collection_remove
 collection_count :: wire.collection_count
 
-// Which connections receive an entity.
+// Which connections receive an entity; of them, those Visibility lets.
 Audience :: enum u8 {
     Near,   // connections whose view reaches it
     Always, // every connection
     Owner,  // only the owner
-    Custom, // only connections the game lets in with relevance_set
+}
+
+// Who sees what, as data, like collision layers. On a replicated entity, mask
+// is the bits of who may see it: of the connections its audience reaches,
+// only those whose seat has one of them in sees; 0, or no Visibility, asks for
+// none. On the seat of a player (input.Seat), sees is the bits its connection
+// has; a seat without it has none, and sees what asks for none. A team is a
+// bit; what a player alone sees is a bit of that player. The server reads it
+// when it changes; it does not travel.
+@(component,description="Who sees this entity on the network (mask), and, on the seat of a player, what that player sees (sees): a connection receives it when they share a bit.")
+Visibility :: struct {
+    mask:u32,
+    sees:u32,
 }
 
 NET_PROTOCOL_ID :: 0x4d495241

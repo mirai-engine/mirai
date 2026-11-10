@@ -40,6 +40,7 @@ Net_Test_Tables :: struct {
     drivables:core.Table(inp.Drivable),
     seats:core.Table(inp.Seat),
     absents:core.Table(Seat_Absent),
+    visibility:core.Table(Visibility),
     references:core.Table(scene.Scene_Reference),
     tombstones:core.Table(scene.Tombstone),
     held:core.Table(scene.Section_Held),
@@ -803,27 +804,35 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
     connected:Connection
     replacement:=core.NONE
+    // The seat of the connection: its bits say whether it sees parent.
+    seat:=core.create(&world.entities)
     first_parent,child_object,large_object:Object
     for tick in 1..<200 {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        for command in wire.host_poll(&sessions[0].host) {
+        commands:=wire.host_poll(&sessions[0].host)
+        server_commands(&sessions[0],core.world_ref(world,&info),nil,commands,&world.remote)
+        for command in commands {
             if command.kind==.Connected {
                 connected=command.connection
                 testing.expect(t,view_set(&sessions[0],connected,{},1))
             }
         }
         wire.host_poll(&sessions[1].host)
-        if tick==20 {core.add(&world.objects,parent,net_test_replicate(audience=.Custom))}
-        if tick==40 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true))}
-        if tick==70 {testing.expect(t,relevance_set(&sessions[0],parent,connected,false))}
-        if tick==100 {testing.expect(t,relevance_set(&sessions[0],parent,connected,true));core.get(&world.objects,large).radius=10}
+        if tick==20 {
+            core.add(&world.objects,parent,net_test_replicate(audience=.Always))
+            core.add(&world.visibility,parent,Visibility{mask=1})
+            core.add(&world.seats,seat,inp.Seat{peer=u64(connected)})
+        }
+        if tick==40 {core.add(&world.visibility,seat,Visibility{sees=1})}
+        if tick==70 {core.add(&world.visibility,seat,Visibility{})}
+        if tick==100 {core.add(&world.visibility,seat,Visibility{sees=1});core.get(&world.objects,large).radius=10}
         if tick==120 {core.destroy(&world.entities,parent)}
         if tick==121 {
             replacement=net_test_body(world,&info,4,{100,0,0})
-            core.add(&world.objects,replacement,net_test_replicate(audience=.Custom))
-            testing.expect(t,relevance_set(&sessions[0],replacement,connected,true))
+            core.add(&world.objects,replacement,net_test_replicate(audience=.Always))
+            core.add(&world.visibility,replacement,Visibility{mask=1})
             testing.expect(t,replacement!=parent && core.entity_index(replacement)==core.entity_index(parent))
         }
         if tick==165 {core.add(&world.parents,child,core.Parent{entity=replacement})}

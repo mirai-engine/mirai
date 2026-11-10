@@ -80,7 +80,7 @@ server_world :: proc(s:^Net_Session,w:core.World_Ref,root:scene.Scene_Root) {
         slot.entity,slot.ancestor,slot.sections,slot.holder,slot.member=core.NONE,core.NONE,{},0,0
     }
     mem.zero_slice(server.views)
-    server.request_count=0
+    server.visibility={}
     server.ancestry={}
     mem.zero_slice(server.sections)
     server.section_count,server.sections_full=0,false

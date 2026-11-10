@@ -137,6 +137,7 @@ Repl :: struct {
     filter:[]Filter,
     auto:[]bool,
     groups:[]Groups, // server, per object: a connection must have one of them to see it; none: of no group
+    visibility:[]u32, // server, per object: a connection must share a bit with it to see it; 0: any
     parent:[]u32,
     refs:[]u16,
     lease:[]u32,
@@ -179,7 +180,7 @@ Peer_Repl :: struct {
     base_tick:[]u32,
     accum:[]f64,
     scope,work,done:[]u64,
-    relevant:[]u64, // objects of Custom filter the game lets this connection see
+    visibility:u32, // the visibility bits it has
     groups:[]u64,   // the groups it has, by number
     position:[3]f32,
     view_radius:f32,
@@ -224,6 +225,7 @@ back_init :: proc(h:^Host) -> Error {
         r.owner=host_make(h,Connection,n);r.holder=host_make(h,Connection,n)
         r.priority=host_make(h,f32,n);r.radius=host_make(h,f32,n);r.position=host_make(h,[3]f32,n)
         r.nonzero=host_make(h,u64,n);r.filter=host_make(h,Filter,n);r.auto=host_make(h,bool,n);r.groups=host_make(h,Groups,n)
+        r.visibility=host_make(h,u32,n)
         r.parent=host_make(h,u32,n);r.refs=host_make(h,u16,n);r.lease=host_make(h,u32,n)
         r.watchers=host_make(h,u64,n*r.peer_words)
         r.always=host_make(h,u64,(n+63)/64);r.wanted=host_make(h,u64,(n+63)/64)
@@ -253,7 +255,7 @@ back_destroy :: proc(h:^Host) {
     pool_destroy(&r.states,a);pool_destroy(&r.bases,a);delete(r.base_refs,a);delete(r.base_free,a);delete(r.fresh,a);delete(r.base_count,a)
     delete(r.live,a);delete(r.generation,a);delete(r.type,a);delete(r.simulation,a);delete(r.role,a)
     delete(r.epoch,a);delete(r.type_stats,a);delete(r.object_bits,a);delete(r.shared_bits,a);delete(r.owner,a);delete(r.holder,a)
-    delete(r.priority,a);delete(r.radius,a);delete(r.position,a);delete(r.nonzero,a);delete(r.filter,a);delete(r.auto,a);delete(r.groups,a)
+    delete(r.priority,a);delete(r.radius,a);delete(r.position,a);delete(r.nonzero,a);delete(r.filter,a);delete(r.auto,a);delete(r.groups,a);delete(r.visibility,a)
     delete(r.parent,a);delete(r.refs,a);delete(r.lease,a);delete(r.watchers,a);delete(r.always,a);delete(r.wanted,a)
     base.hash_map_destroy(&r.grid);delete(r.grid_next,a);delete(r.grid_prev,a);delete(r.grid_cell,a);delete(r.grid_listed,a);delete(r.grid_dirty,a)
     delete(r.keys,a);delete(r.events.data,a);delete(r.special,a);delete(r.dying,a);delete(r.deferred.data,a)
@@ -269,7 +271,7 @@ repl_peer_allocate :: proc(h:^Host,p:^Peer) {
         pr.active=host_make(h,u8,n);pr.pending=host_make(h,u8,n);pr.away=host_make(h,u8,n);pr.request=host_make(h,u8,n);pr.flight=host_make(h,u16,n)
         pr.since_base=host_make(h,u64,n);pr.since_pending=host_make(h,u64,n)
         pr.base[0]=host_make(h,u32,n);pr.base[1]=host_make(h,u32,n);pr.base_tick=host_make(h,u32,n);pr.accum=host_make(h,f64,n)
-        pr.scope=host_make(h,u64,sets);pr.done=host_make(h,u64,sets);pr.relevant=host_make(h,u64,sets)
+        pr.scope=host_make(h,u64,sets);pr.done=host_make(h,u64,sets)
         pr.groups=host_make(h,u64,(h.desc.replication.groups+64)/64)
     } else if h.desc.protocol.has_input {
         pr.inputs=host_make(h,u32,INPUT_RING*h.desc.protocol.input.words)
@@ -282,7 +284,7 @@ repl_peer_release :: proc(h:^Host,p:^Peer) {
     delete(pr.link,a);delete(pr.flags,a);delete(pr.dirty,a);delete(pr.work,a);delete(pr.active,a);delete(pr.pending,a);delete(pr.away,a);delete(pr.request,a)
     delete(pr.flight,a);delete(pr.since_base,a);delete(pr.since_pending,a);delete(pr.base[0],a);delete(pr.base[1],a)
     delete(pr.base_tick,a);delete(pr.accum,a);delete(pr.scope,a);delete(pr.done,a)
-    delete(pr.inputs,a);delete(pr.relevant,a);delete(pr.groups,a)
+    delete(pr.inputs,a);delete(pr.groups,a)
 }
 
 @(private)
@@ -292,8 +294,8 @@ repl_peer_connected :: proc(h:^Host,p:^Peer) {
     mem.zero_slice(pr.link);mem.zero_slice(pr.flags);mem.zero_slice(pr.dirty);mem.zero_slice(pr.work)
     mem.zero_slice(pr.active);mem.zero_slice(pr.pending);mem.zero_slice(pr.away);mem.zero_slice(pr.since_base)
     mem.zero_slice(pr.since_pending);mem.zero_slice(pr.base[0]);mem.zero_slice(pr.base[1]);mem.zero_slice(pr.accum)
-    mem.zero_slice(pr.scope);mem.zero_slice(pr.done);mem.zero_slice(pr.relevant);mem.zero_slice(pr.groups)
-    pr.position,pr.view_radius,pr.has_view,pr.everywhere={},0,false,false
+    mem.zero_slice(pr.scope);mem.zero_slice(pr.done);mem.zero_slice(pr.groups)
+    pr.position,pr.view_radius,pr.has_view,pr.everywhere,pr.visibility={},0,false,false,0
     pr.filter_due,pr.in_scope=true,0
     pr.held=h.desc.hold
     pr.input_ticks={}
@@ -504,7 +506,7 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         r.simulation[o],r.owner[o],r.holder[o],r.epoch[o],r.lease[o]=payload.simulation,payload.owner,0,0,0
         r.priority[o],r.radius[o],r.position[o],r.filter[o]=payload.priority,payload.radius,payload.position,payload.filter
         r.auto[o],r.refs[o]=payload.auto,0
-        r.groups[o]=payload.groups
+        r.groups[o],r.visibility[o]=payload.groups,payload.visibility
         r.parent[o]=0
         if parent,ok:=object_from(r,u64(payload.parent));ok {r.parent[o]=u32(parent)+1}
         r.fresh[o]=0
@@ -518,7 +520,7 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         if payload.filter==.Always {bitset_set(r.always,o)}
         if len(r.object_bits)>0 {r.object_bits[o]=0}
         for &p in b.peers {
-            if p.state==.Connected {bitset_clear(p.repl.done,o);bitset_clear(p.repl.scope,o);bitset_clear(p.repl.relevant,o)}
+            if p.state==.Connected {bitset_clear(p.repl.done,o);bitset_clear(p.repl.scope,o)}
         }
         r.high=max(r.high,o+1)
         grid_mark(r,o)
@@ -610,8 +612,14 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         if p:=peer_from(h,Connection(op.handle));p!=nil {
             p.repl.position,p.repl.view_radius,p.repl.has_view,p.repl.everywhere={op.v[0],op.v[1],op.v[2]},max(op.v[3],0),true,op.v[3]<0
         }
-    case .Object_Relevance:
-        relevance_apply(h,op)
+    case .Object_Visibility:
+        if o,ok:=object_from(r,op.handle);ok && r.visibility[o]!=op.c {
+            r.visibility[o]=op.c
+            r.scope_stale,r.special_stale=true,true
+        }
+    case .Connection_Visibility:
+        // Also while the server's clock is paused: what it sees changes now.
+        if p:=peer_from(h,Connection(op.handle));p!=nil && p.repl.visibility!=op.c {p.repl.visibility,p.repl.filter_due,b.send_pending=op.c,true,true}
     case .Object_Group:
         if o,ok:=object_from(r,op.handle);ok && r.groups[o]!=transmute(Groups)op.value {
             r.groups[o]=transmute(Groups)op.value

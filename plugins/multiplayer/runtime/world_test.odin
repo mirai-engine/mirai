@@ -480,7 +480,7 @@ what_the_server_keeps_of_a_section_wins_over_what_a_client_kept :: proc(t:^testi
     chest:=pair_member(server,&p.info,101,room,true)
     core.add(&server.values,chest,Net_Test_Value{force=5})
     hidden:=pair_member(server,&p.info,103,room,true)
-    core.get(&server.objects,hidden).audience=.Custom
+    core.add(&server.visibility,hidden,Visibility{mask=1})
     // A section the server dropped after a crate in it was destroyed.
     yard:=pair_section(server,&p.info,300,false)
     stone:=core.create(&server.entities)

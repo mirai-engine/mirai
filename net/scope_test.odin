@@ -45,34 +45,42 @@ priority_orders_the_same_way_at_any_scale :: proc(t:^testing.T) {
 }
 
 @(test)
-custom_relevance_lets_in_only_the_connections_the_game_names :: proc(t:^testing.T) {
+visibility_bits_let_in_only_the_connections_that_share_one :: proc(t:^testing.T) {
     s:=new(Scene);defer free(s)
     scene_init(s,2,{max_objects=8,filter_interval=4});defer scene_destroy(s)
     transform:=Test_Transform{rotation=quaternion(w=1,x=0,y=0,z=0)}
-    secret,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Custom})
+    secret,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Always,visibility=0b01})
     child,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},parent=secret})
+    open,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Always})
     has :: proc(s:^Scene,client:int,object:Object) -> bool {return object_valid(s.clients[client],object)}
     run :: proc(s:^Scene,tick:^u32) {for _ in 0..<12 {scene_tick(s,tick)}}
     tick:=u32(0)
-    run(s,&tick)
-    testing.expect(t,!has(s,0,secret) && !has(s,1,secret) && !has(s,0,child),"nobody is let in at first")
-    testing.expect_value(t,object_set_relevance(s.server,secret,s.on_server[0],true),Error.None)
-    run(s,&tick)
-    testing.expect(t,has(s,0,secret) && has(s,0,child) && !has(s,1,secret) && !has(s,1,child))
-    object_set_relevance(s.server,secret,s.on_server[0],false)
-    object_set_relevance(s.server,secret,s.on_server[1],true)
-    run(s,&tick)
-    testing.expect(t,!has(s,0,secret) && !has(s,0,child) && has(s,1,secret) && has(s,1,child))
-
-    // Another filter does not look at what the game named, which waits for Custom to come back.
-    object_set_filter(s.server,secret,.Always)
-    run(s,&tick)
-    testing.expect(t,has(s,0,secret) && has(s,1,secret))
-    object_set_filter(s.server,secret,.Custom)
-    run(s,&tick)
-    testing.expect(t,!has(s,0,secret) && has(s,1,secret))
+    // The bits of the object, those of each connection, and which of them see it.
+    Case :: struct {object:u32,connections:[2]u32,sees:[2]bool}
+    cases:=[]Case{
+        {0b001,{0,0},{false,false}}, // a connection that arrives has none
+        {0b001,{0b001,0b010},{true,false}},
+        {0b010,{0b001,0b010},{false,true}},
+        {0b011,{0b001,0b010},{true,true}},
+        {0b100,{0b011,0b110},{false,true}},
+        {0,{0,0b010},{true,true}},   // an object that asks for none
+        {1<<31,{max(u32),0},{true,false}},
+    }
+    for c,index in cases {
+        testing.expect_value(t,object_set_visibility(s.server,secret,c.object),Error.None)
+        for mask,k in c.connections {testing.expect_value(t,connection_set_visibility(s.server,s.on_server[k],mask),Error.None)}
+        run(s,&tick)
+        for sees,k in c.sees {
+            testing.expectf(t,has(s,k,secret)==sees && has(s,k,child)==sees,"case %d: connection %d sees the object %v and what follows it %v, wanted %v",index,k,has(s,k,secret),has(s,k,child),sees)
+            testing.expectf(t,has(s,k,open),"case %d: connection %d lost an object that asks for no bit",index,k)
+        }
+    }
 
     // A connection that arrives again, in the same slot, starts with none.
+    object_set_visibility(s.server,secret,0b010)
+    connection_set_visibility(s.server,s.on_server[1],0b010)
+    run(s,&tick)
+    testing.expect(t,has(s,1,secret))
     host_disconnect(s.clients[1])
     for _ in 0..<10 {
         tick+=1
@@ -84,31 +92,18 @@ custom_relevance_lets_in_only_the_connections_the_game_names :: proc(t:^testing.
     s.on_server[1],s.on_client[1]=test_connect(&s.w,s.server,s.clients[1])
     testing.expect(t,s.on_server[1]!=0 && s.on_server[1]!=previous && base.handle_index(base.Handle(s.on_server[1]))==base.handle_index(base.Handle(previous)))
     run(s,&tick)
-    testing.expect(t,!has(s,1,secret),"what the game named for a connection that left is not given to the next one")
-    testing.expect_value(t,object_set_relevance(s.server,secret,previous,true),Error.None)
+    testing.expect(t,!has(s,1,secret) && has(s,1,open),"the bits of a connection that left are not given to the next one")
+    testing.expect_value(t,connection_set_visibility(s.server,previous,0b010),Error.None)
     run(s,&tick)
     testing.expect(t,!has(s,1,secret),"a connection that left is no one")
 
-    // A new object in the slot of one that ended starts with none.
-    object_set_relevance(s.server,secret,s.on_server[0],true)
-    run(s,&tick)
-    testing.expect(t,has(s,0,secret))
     object_destroy(s.server,child)
     object_destroy(s.server,secret)
     run(s,&tick)
-    again:Object
-    for _ in 0..<16 {
-        again,_=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Custom})
-        run(s,&tick)
-        if base.handle_index(base.Handle(again))==base.handle_index(base.Handle(secret)) {break}
-        object_destroy(s.server,again)
-    }
-    testing.expect_value(t,base.handle_index(base.Handle(again)),base.handle_index(base.Handle(secret)))
-    testing.expect(t,!has(s,0,again) && !has(s,1,again))
-
-    testing.expect_value(t,object_set_relevance(s.server,secret,s.on_server[0],true),Error.Invalid)
-    testing.expect_value(t,object_set_relevance(s.server,again,0,true),Error.Invalid)
-    testing.expect_value(t,object_set_relevance(s.clients[0],again,s.on_client[0],true),Error.Invalid)
+    testing.expect_value(t,object_set_visibility(s.server,secret,1),Error.Invalid)
+    testing.expect_value(t,connection_set_visibility(s.server,0,1),Error.Invalid)
+    testing.expect_value(t,connection_set_visibility(s.clients[0],s.on_client[0],1),Error.Invalid)
+    testing.expect_value(t,object_set_visibility(s.clients[0],open,1),Error.Invalid)
 }
 
 @(test)

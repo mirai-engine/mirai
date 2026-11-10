@@ -157,7 +157,7 @@ Host_Stats :: struct {
 Op_Kind :: enum u8 {
     Tick,Connect,Disconnect,Message,
     Object_Create,Object_State,Object_Destroy,Object_Owner,Object_Priority,Object_Position,Object_Radius,Object_Filter,
-    Object_Parent,Authority_Grant,Authority_Request,Authority_Release,View,Event,Input,Object_Relevance,Hold,Clock,
+    Object_Parent,Authority_Grant,Authority_Request,Authority_Release,View,Event,Input,Object_Visibility,Connection_Visibility,Hold,Clock,
     Object_Group,Connection_Group,
 }
 @(private)

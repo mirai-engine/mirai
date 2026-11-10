@@ -39,15 +39,12 @@ Server_Object :: struct {
     position:[3]f32,       // the last one the host was told
     off:u16,               // the components off it last published (Pose.off)
     disabled:bool,         // it was off when it last published (Pose.disabled)
+    visibility:u32,        // the bits the host was told (Visibility.mask)
 }
 
 // Where a connection looks from: the entity it owns first.
 @(private)
 View :: struct {position:[3]f32,entity:core.Entity,set:bool}
-
-// A relevance_set for an entity whose object is made at the next publish.
-@(private)
-Relevance_Request :: struct {entity:core.Entity,connection:Connection,relevant:bool}
 
 // What a connection knows of the world of the server.
 @(private)
@@ -56,6 +53,7 @@ Server_Peer :: struct {
     told:bool,  // it heard the change of the world it is in now
     ready:bool, // it said it is in that world
     held:bool,  // it sees no object and hears nothing of the game (wire.connection_hold)
+    sees:u32,   // the visibility bits the host was told (Visibility.sees of its seat)
 }
 
 // A group a connection gains or loses (none: all), which the host had no room for.
@@ -71,8 +69,7 @@ Server :: struct {
     objects:[]Server_Object, // by object index
     views:[]View,            // by connection index
     peers:[]Server_Peer,     // by connection index
-    requests:[]Relevance_Request,
-    request_count:int,
+    visibility:[2]u64,       // the versions of Visibility and of input.Seat the bits of the objects and of the connections were read for, plus one
     ancestry:[3]u64,         // the version of the Hierarchy and the layouts of Replicate and of Scene_Reference the ancestors and sections follow
     boxes:[2]u64,            // the version of Scene_Reference and the stamps of the World_Transform of its rows the sections of each object were looked at for
     section_boxes:[dynamic]Section_Box, // the boxes of the sections as of boxes
@@ -119,7 +116,6 @@ filter_of :: proc "contextless" (audience:Audience) -> wire.Filter {
     case .Near:   return .Spatial
     case .Always: return .Always
     case .Owner:  return .Owner
-    case .Custom: return .Custom
     }
     return .Spatial
 }
@@ -137,7 +133,6 @@ server_init :: proc(s:^Net_Session,allocator:runtime.Allocator) -> bool {
     if s.server.views,error=make([]View,wire.MAX_CONNECTIONS,allocator);error!=nil {return false}
     if s.server.peers,error=make([]Server_Peer,wire.MAX_CONNECTIONS,allocator);error!=nil {return false}
     s.server.clock=core.CLOCK_DEFAULT
-    if s.server.requests,error=make([]Relevance_Request,s.desc.max_objects,allocator);error!=nil {return false}
     if s.server.sections,error=make([]base.Entity_Id,s.host.desc.replication.groups,allocator);error!=nil {return false}
     if s.server.loaded,error=make([]u64,wire.MAX_CONNECTIONS*loaded_words(&s.server),allocator);error!=nil {return false}
     s.server.section_boxes=make([dynamic]Section_Box,allocator)
@@ -152,7 +147,6 @@ server_destroy :: proc(s:^Net_Session) {
     delete(s.server.objects,s.allocator)
     delete(s.server.views,s.allocator)
     delete(s.server.peers,s.allocator)
-    delete(s.server.requests,s.allocator)
     delete(s.server.sections,s.allocator)
     delete(s.server.loaded,s.allocator)
     delete(s.server.section_boxes)
@@ -173,36 +167,43 @@ loaded_of :: proc "contextless" (server:^Server,index:int) -> []u64 {
     return server.loaded[index*words:][:words]
 }
 
-// Behind a waiting request it waits too, so that they apply in the order the game made them.
+// The visibility bits of the objects (Visibility.mask) and of the connections
+// (Visibility.sees of their seats), told to the host when Visibility or the
+// seats change; what the full frame refuses is told at the next publish.
 @(private)
-server_relevance :: proc(s:^Net_Session,e:core.Entity,connection:Connection,relevant:bool) -> bool {
+server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
     server:=&s.server
-    if object:=wire.object_of_user(&s.host,u64(e));object!=0 && server.request_count==0 {
-        return wire.object_set_relevance(&s.host,object,connection,relevant)==.None
+    h:=&s.host
+    visibility:=core.world_table_of(w,Visibility)
+    if visibility==nil {return}
+    seats:=core.world_table_of(w,input.Seat)
+    seen:=[2]u64{core.version(visibility)+1,seats!=nil?core.version(seats)+1:1}
+    if seen==server.visibility {return}
+    told:=true
+    for &slot in server.objects {
+        if slot.object==0 {continue}
+        mask:=visibility_of(visibility,slot.entity).mask
+        if slot.visibility==mask {continue}
+        if wire.object_set_visibility(h,slot.object,mask)==.None {slot.visibility=mask} else {told=false}
     }
-    if server.request_count==len(server.requests) {return false}
-    server.requests[server.request_count]={e,connection,relevant}
-    server.request_count+=1
-    return true
+    for &peer in server.peers {
+        if peer.connection==0 {continue}
+        sees:u32
+        if seats!=nil {
+            for row in 0..<core.count(seats) {
+                if Connection(seats.values[row].peer)==peer.connection {sees=visibility_of(visibility,core.entity_at(seats,row)).sees;break}
+            }
+        }
+        if peer.sees==sees {continue}
+        if wire.connection_set_visibility(h,peer.connection,sees)==.None {peer.sees=sees} else {told=false}
+    }
+    if told {server.visibility=seen}
 }
 
-// After the objects of the tick are made: what relevance_set asked for them.
 @(private)
-server_requests :: proc(s:^Net_Session) {
-    server:=&s.server
-    kept:=0
-    for request in server.requests[:server.request_count] {
-        object:=wire.object_of_user(&s.host,u64(request.entity))
-        if object==0 {
-            core.report(s.problems,request.entity,"net.relevance","relevance_set names an entity that is not replicated: give it Replicate and a Transform, or name it once it has its Net_Link")
-            continue
-        }
-        if kept>0 || wire.object_set_relevance(&s.host,object,request.connection,request.relevant)==.Full {
-            server.requests[kept]=request
-            kept+=1
-        }
-    }
-    server.request_count=kept
+visibility_of :: proc(visibility:^core.Table(Visibility),e:core.Entity) -> Visibility {
+    value,_:=core.get(core.read(visibility),e)
+    return value
 }
 
 // The datagrams received since the last frame, as changes to the world and as events.
@@ -227,6 +228,7 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comm
                 core.report(s.problems,core.NONE,"net.memory","a connection was closed: out of memory for the inputs of its player; free memory, or lower Net_Settings.max_clients")
             }
             s.server.peers[index]={connection=command.connection,held=s.follows}
+            s.server.visibility={}
             mem.zero_slice(loaded_of(&s.server,index))
             append(&s.arrived,Connection_Event{kind=.Connected,connection=command.connection})
             // Without the world to load, it is in it already.
@@ -579,7 +581,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
             if config:=(^Replicate)(core.raw_find(core.raw(objects),type_info_of(Replicate),slot.entity));config!=nil {server_scope(s,&slot,config^,false)}
         }
     }
-    server_requests(s)
+    server_visibility(s,w)
     events_send(s,outbox)
     wire.host_publish(h,tick)
 }
@@ -758,6 +760,9 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
         filter=filter_of(config.audience),position=position,radius=config.radius,parent=parent,auto_authority=config.simulation==.Lent,
         groups=section_groups(s,ids,sections),
     }
+    if visibility:=core.world_table_of(w,Visibility);visibility!=nil {
+        if value:=core.staged(visibility,e);value!=nil {desc.visibility=value.mask}
+    }
     // Through rawptr: the host lets go of these locals below, which the escape analysis of Odin cannot tell.
     desc.sources[0]=rawptr(&pose)
     motion,_:=motion_read(w,e)
@@ -788,7 +793,7 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
     for fragment in 0..<count {wire.object_set_source(h,object,fragment,nil)}
     s.server.objects[object_index(object)]={
         object=object,entity=e,type=type,moving=true,owner=desc.owner,filter=filter_of(config.audience),priority=config.priority,radius=config.radius,ancestor=ancestor,parent=parent,position=position,
-        off=pose.off,sections=sections,told=true,member=member_of(w,e,sections[0]),
+        off=pose.off,sections=sections,told=true,member=member_of(w,e,sections[0]),visibility=desc.visibility,
     }
     placed:=&s.server.objects[object_index(object)].placed
     row_changed(core.raw(worlds),e,&placed[0],&placed[1])

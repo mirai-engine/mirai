@@ -34,7 +34,6 @@ Filter :: enum u8 {
     Always,  // every connection
     Owner,   // only the owning connection
     Spatial, // connections whose view reaches the object
-    Custom,  // only connections the game lets in with object_set_relevance
     None,    // no connection
 }
 
@@ -90,6 +89,7 @@ Object_Desc :: struct {
     poll_interval:int,              // ticks between turns, default 1: a polled object is read only on its turn, which object_poll_due tells
     auto_authority:bool,            // Lent: the first client to ask gets it without consulting the game
     groups:Groups,                  // a connection sees it only while it has one of them (connection_set_group); none: of no group
+    visibility:u32,                 // a connection sees it only while it shares a bit with it (connection_set_visibility); 0: any
 }
 
 Input_Status :: enum u8 {
@@ -311,6 +311,7 @@ Create_Payload :: struct {
     simulation:Simulation,
     auto:bool,
     groups:Groups,
+    visibility:u32,
 }
 
 @(private)
@@ -354,7 +355,7 @@ object_create :: proc(h:^Host,desc:Object_Desc) -> (Object,Error) {
     staged:Create_Buffer
     payload:=&staged.payload
     payload^={owner=desc.owner,parent=desc.parent,position=desc.position,radius=desc.radius,
-        priority=desc.priority<=0?1:desc.priority,type=desc.type,filter=desc.filter,simulation=desc.simulation,auto=desc.auto_authority,groups=desc.groups}
+        priority=desc.priority<=0?1:desc.priority,type=desc.type,filter=desc.filter,simulation=desc.simulation,auto=desc.auto_authority,groups=desc.groups,visibility=desc.visibility}
     words:=staged.words[:type.words]
     o^={generation=generation,type=desc.type,flags={.Alive},simulation=desc.simulation,user=desc.user,sources=desc.sources}
     user_set(f,desc.user,index)
@@ -568,11 +569,19 @@ object_set_parent :: proc(h:^Host,object,parent:Object) -> Error {
     if parent==object || parent!=0 && front_object(h,parent)==nil {return .Invalid}
     return object_op(h,object,{kind=.Object_Parent,value=u64(parent)})
 }
-// Server: whether the connection sees the object while its filter is Custom. A
-// new object, and a connection that arrives, start with none.
-object_set_relevance :: proc(h:^Host,object:Object,connection:Connection,relevant:bool) -> Error {
-    if connection==0 {return .Invalid}
-    return object_op(h,object,{kind=.Object_Relevance,value=u64(connection),a=u8(relevant)})
+// Server: the visibility bits of an object, like collision layers: whatever
+// its filter and its groups let, a connection sees it only while it shares a
+// bit with it (connection_set_visibility), and so its children. 0: it asks for
+// none. Teams, fog of war and what is private to some players are bits.
+object_set_visibility :: proc(h:^Host,object:Object,mask:u32) -> Error {
+    return object_op(h,object,{kind=.Object_Visibility,c=mask})
+}
+
+// Server: the visibility bits a connection has. One that arrives has none: it
+// sees the objects that ask for none.
+connection_set_visibility :: proc(h:^Host,connection:Connection,mask:u32) -> Error {
+    if h.desc.mode!=.Server || connection==0 {return .Invalid}
+    return op_push(h,{kind=.Connection_Visibility,handle=u64(connection),c=mask})?.None:.Full
 }
 
 // Server: the groups of an object: whatever its filter, a connection sees it

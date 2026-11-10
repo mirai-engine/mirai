@@ -690,15 +690,6 @@ view_set :: proc(s:^Net_Session,connection:Connection,position:[3]f32,radius:f32
     return s.host_ready && wire.connection_set_view(&s.host,connection,position,radius)==.None
 }
 
-// Server: whether a connection sees an entity of Custom relevance. An entity
-// whose object the network makes at the end of this tick takes it then. A new
-// object and a connection that arrives start with none. False on a client and
-// when the requests waiting for their objects fill Net_Settings.max_objects.
-relevance_set :: proc(s:^Net_Session,e:core.Entity,connection:Connection,relevant:bool) -> bool {
-    if !s.host_ready || s.mode!=.Server || connection==0 {return false}
-    return server_relevance(s,e,connection,relevant)
-}
-
 // Client: asks for the simulation of a Lent entity, or gives it back.
 authority_request :: proc(s:^Net_Session,e:core.Entity) -> bool {
     return s.host_ready && wire.authority_request(&s.host,wire.object_of_user(&s.host,u64(e)))==.None
