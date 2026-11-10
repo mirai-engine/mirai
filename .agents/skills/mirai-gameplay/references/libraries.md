@@ -448,14 +448,16 @@ the reverb of the room where the listener is and what covers each source.
   ([positional audio](../../mirai-platform/references/audio.md#positional-audio)), attenuated by
   its curve between `min_distance` and `max_distance`, and with `directivity` louder toward -Z of
   the entity; without it, with its `pan`. `audio_sources` (`late`, after
-  `transforms_propagate` and `camera_view`) starts, moves and updates the voices and sends only
-  what changed.
+  `transforms_propagate` and `camera_view`) tunes, starts and stops voices from the source rows
+  written since it looked, follows each live voice (its end, its place, what hides it) and writes
+  `Audio_Source_State` only when it changes.
   - `pitch` is the speed: it moves the tone with it, like a "slowed" song; with the reverb of its
     bus it gives "slowed + reverb". There is no speed change without a tone change.
   - Volume, pitch, pan and loop are applied to the voice that is sounding; another sound, another
     bus, another curve, another doppler or directivity or a file that was reloaded start it anew.
   - Clearing `playing` or removing the component stops the voice. A sound without `loop` that ends
-    leaves `Audio_Source_State.ended` until `playing` is cleared.
+    leaves `Audio_Source_State.ended`; another value of `plays` starts it again from its start,
+    also while it sounds.
   - Doppler: the source's and the listener's velocity come from how much they moved in the frame; a
     `View` with `cut` does not move. It is only sent while there is doppler.
   - With the world's `core.Clock` paused, its voices are paused and the sources are not updated

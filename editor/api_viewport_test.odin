@@ -172,7 +172,8 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     if !testing.expect(t,made) {return}
     cube.uniform_color,cube.highlight=true,HIGHLIGHT_SELECTED
     host.assets_commit(app.assets)
-    gpu.scene_set(app.renderer,{cube},nil,{},{background={0.02,0.02,0.1},use_background=true})
+    gpu.scene_set_environment(app.renderer,{},{background={0.02,0.02,0.1},use_background=true})
+    gpu.scene_update(app.renderer,0,{cube},true)
     // A fixed exposure: metered, the dark backdrop would be made middle gray.
     host.app_camera_set(app,{position={0,1.2,4},forward={0,-0.7,-4},up={0,1,0},fov_y=40,near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE},true)
     red:=[4]f32{1,0,0,1}

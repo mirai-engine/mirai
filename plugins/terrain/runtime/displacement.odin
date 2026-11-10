@@ -88,8 +88,10 @@ terrain_displacement_free :: proc(d:^Terrain_Displacement) {
     d^={}
 }
 
+// Its entity draws its own mesh again, and its meshes go.
 @(private)
-displaced_release :: proc(assets:^host.Assets,renderer:^render.Renderer,entry:^Displaced) {
+displaced_release :: proc(assets:^host.Assets,renderer:^render.Renderer,poses:^render.Posed_Meshes,entry:^Displaced) {
+    render.posed_drop(poses,entry.entity)
     if entry.copy!=0 {render.mesh_remove(renderer,entry.copy)}
     if entry.mesh!={} {host.assets_mesh_release(assets,entry.mesh)}
     entry^={}
@@ -106,11 +108,8 @@ source_displacement :: proc "contextless" (s:^Source) -> (reach:f32) {
 @(step="render",loops="game editor",before="render_sync")
 terrain_displace :: proc(
     d:^Terrain_Displacement,data:core.Ref(Terrain_Data),settings:Terrain_Settings,terrains:core.Read(Terrain),chunks:core.Read(Terrain_Chunk),
-    meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    overrides:core.Read(render.Material_Override),tints:core.Read(render.Tint),hidden:core.Read(render.Hidden),
-    highlights:core.Read(render.Highlight),outlines:core.Read(render.Outline),offsets:core.Read(render.Draw_Offset),
-    layers:core.Read(render.Layers),locals:core.Read(core.Transform),cameras:core.Read(render.Camera),
-    assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,allocator:runtime.Allocator,frame:core.Frame_Time,view:core.View,
+    meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),hidden:core.Read(render.Hidden),
+    offsets:core.Read(render.Draw_Offset),assets:^host.Assets,renderer:^render.Renderer,allocator:runtime.Allocator,frame:core.Frame_Time,view:core.View,poses:^render.Posed_Meshes,
 ) {
     if renderer==nil || assets==nil {return}
     d.assets=assets
@@ -143,15 +142,15 @@ terrain_displace :: proc(
                 far:=0
                 for item,i in d.displaced {if item.distance>d.displaced[far].distance {far=i}}
                 if d.displaced[far].distance<=near {continue}
-                displaced_release(assets,renderer,&d.displaced[far])
+                displaced_release(assets,renderer,poses,&d.displaced[far])
                 at=far
             }
             item:=&d.displaced[at]
-            if item.entity!=e {displaced_release(assets,renderer,item);item.entity,item.owner,item.coord=e,chunk.owner,chunk.coord}
+            if item.entity!=e {displaced_release(assets,renderer,poses,item);item.entity,item.owner,item.coord=e,chunk.owner,chunk.coord}
             item.source,item.distance,item.seen=marker.source,near,d.frame
         }
     }
-    for &item in d.displaced {if item.entity!=core.NONE && item.seen!=d.frame {displaced_release(assets,renderer,&item)}}
+    for &item in d.displaced {if item.entity!=core.NONE && item.seen!=d.frame {displaced_release(assets,renderer,poses,&item)}}
     // Each side joins another displaced chunk of its terrain, or keeps the samples.
     for &item in d.displaced {
         if item.entity==core.NONE {continue}
@@ -193,29 +192,29 @@ terrain_displace :: proc(
     }
     made:=render.vertices_made(renderer)
     for &item,at in d.displaced {
-        if !item.shown {continue}
+        if item.entity==core.NONE {continue}
         e:=item.entity
-        static,has_mesh:=core.get(meshes,e)
         world,placed:=core.get(worlds,e)
         entry:=data_find(data.ptr,item.source)
-        if !has_mesh || !placed || entry==nil || render.is_hidden(hidden,parents,e) {continue}
-        tint:=render.TINT_DEFAULT
-        if value,exists:=core.get(tints,e);exists {tint=value}
-        override,_:=core.get(overrides,e)
-        anchor,transform:=render.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-        detailed:=static
-        detailed.mesh=item.mesh
-        shown,usable:=render.mesh_instance(assets,detailed,transform,tint,override)
-        if !usable {continue}
-        if item.copy==0 || item.rest!=shown.mesh {
-            if item.copy!=0 {render.mesh_remove(renderer,item.copy)}
-            low,high,known:=render.mesh_bounds(renderer,shown.mesh)
+        rest:=host.assets_mesh(assets,item.mesh)
+        // One not shown draws the mesh of its entity.
+        if !item.shown || !core.has(meshes,e) || !placed || entry==nil || rest==nil || rest.handle==host.ASSETS_MESH_NONE || render.is_hidden(hidden,parents,e) {
+            render.posed_drop(poses,e)
+            continue
+        }
+        if item.copy==0 || item.rest!=rest.handle {
+            if item.copy!=0 {
+                render.posed_drop(poses,e)
+                render.mesh_remove(renderer,item.copy)
+                item.copy=0
+            }
+            low,high,known:=render.mesh_bounds(renderer,rest.handle)
             if !known {continue}
-            copy,created:=render.deformable_create(renderer,shown.mesh)
+            copy,created:=render.deformable_create(renderer,rest.handle)
             if !created {continue}
             // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
             item.params={}
-            item.rest,item.copy,item.rest_min,item.rest_max,item.made=shown.mesh,copy,low,high,0
+            item.rest,item.copy,item.rest_min,item.rest_max,item.made=rest.handle,copy,low,high,0
         }
         params:=displace_params(assets,&entry.source,&item)
         if params!=item.params || made!=item.made || item.settle {
@@ -227,15 +226,11 @@ terrain_displace :: proc(
                 item.made=made
                 params.rest=u32(at)
                 d.jobs[d.job_count]=params
-                d.world[d.job_count]=transform
+                d.world[d.job_count]=render.instance_matrix(world,frame,offsets,parents,worlds,e)
                 d.job_count+=1
             }
         }
-        shown.mesh,shown.object_id,shown.anchor=item.copy,u64(e),anchor
-        shown.copy_owner,shown.replace_source=base.name_hash("terrain displace"),true
-        shown.highlight=render.instance_outline(highlights,outlines,e)
-        if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-        render.instance_add(extras,shown)
+        if !render.posed_set(poses,e,{mesh=item.copy}) {render.posed_drop(poses,e)}
     }
     if d.job_count>0 {render.frame_pass(renderer,.Geometry,terrain_displace_record,d)}
 }
