@@ -85,6 +85,7 @@ Collab_Message :: enum u8 {
     Agents,                                            // the agents of an editor (collab_agents.odin)
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
     File,                                              // an asset file an editor changed, in chunks (collab_files.odin)
+    File_Unsent,                                       // an asset file an editor changed that is too large to travel
     Prefab,                                            // what a step changed of the prefab records, in chunks (collab_prefabs.odin)
 }
 
@@ -195,6 +196,8 @@ Collab_State :: struct {
     agents_at:f64,
     files_out:[dynamic]string, // asset files changed here since the last update, by their paths in the registry
     applying_file:bool,        // a file of another end is being put: its change is not this end's
+    unsent:[COLLAB_UNSENT]Collab_Unsent, // the files that did not travel; the first unsent_count
+    unsent_count:int,
     prefabs_out:[dynamic][]u8, // what the steps here changed of the prefab records since the last update
 }
 
@@ -839,6 +842,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             peer.used,peer.joined=true,true
             peer.name_length=copy(peer.name[:COLLAB_NAME_BYTES-1],name)
         }
+        collab_unsent_prune(st)
     case .Reject:
         if st.role==.Guest {collab_end(st,"the host ended the session");return}
         // A guest that leaves frees its place now, and what it selected with it.
@@ -868,6 +872,8 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_ping_receive(s,st,from,data)}
     case .File:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,&r)}
+    case .File_Unsent:
+        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
     case .Prefab:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_prefab_receive(s,st,from,&r)}
     }
@@ -876,6 +882,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
 @(private)
 collab_roster_send :: proc(st:^Collab_State) {
     if st.role!=.Host {return}
+    collab_unsent_prune(st)
     w:serial.Writer
     collab_begin(&w,.Roster)
     count:=0

@@ -87,8 +87,12 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
 - **Asset files** (`collab_files.odin`, `File` message in chunks): what changes an asset file in
   an editor (an agent's material, a painted texture, an undo) travels to the others and stays in the
   memory of their registry, unsaved, as where it was edited (`file_changed`, `file_set`). The host
-  forwards it and, to whoever enters, sends its unsaved files after the scene. One larger than
-  `COLLAB_FILE_BYTES` does not travel.
+  forwards it and, to whoever enters, sends its unsaved files after the scene.
+- **A file that cannot travel** (larger than `COLLAB_FILE_BYTES`) stays where it was edited and
+  every editor is told (`File_Unsent`, `Collab_State.unsent`): a toast when it happens, a line of
+  Session while it lasts and `unsent` of `collab.status`, with the file, who changed it and what
+  makes it the same for all: saving it and sharing it through the project's repository. It leaves
+  the list when it travels or when whoever changed it leaves.
 - Bar avatars in [panels](panels.md#layout).
 
 Edits:

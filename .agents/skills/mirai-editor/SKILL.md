@@ -327,7 +327,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host` and
   `a_gesture_left_open_keeps_what_another_end_writes_to_another_field`) and
   `editor/edits_memory_test.odin`. What another editor selected is edited:
-  `what_another_editor_selected_is_edited_and_stays_outlined`.
+  `what_another_editor_selected_is_edited_and_stays_outlined`; a file that cannot travel,
+  `a_file_too_large_to_travel_is_told_to_every_editor`.
   Undo by author and selection steps: `editor/history_test.odin`. Memory with a large scene:
   `journal_memory_of_a_large_scene` with `-define:EDITOR_JOURNAL_BENCH=true`.
 - The scene a guest receives:

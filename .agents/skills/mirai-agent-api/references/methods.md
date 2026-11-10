@@ -1054,8 +1054,9 @@ file's.
 
 [Collaboration](../../mirai-editor/references/collaboration.md). In `peers` of `collab.status`,
 `playing` says that editor is in a Play or Simulate of its own and `serving`, that it serves a
-networked game. `collab.join` fails with unsaved changes unless `discard`; an invalid code is
-`-32602`.
+networked game; `unsent` lists the asset files changed in the session that the others do not have
+because they are too large to travel. `collab.join` fails with unsaved changes unless `discard`;
+an invalid code is `-32602`.
 
 ## Project panels
 
