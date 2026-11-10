@@ -45,13 +45,10 @@ Audience :: enum u8 {
     Owner,  // only the owner
 }
 
-// Who sees what, as data, like collision layers. On a replicated entity, mask
-// is the bits of who may see it: of the connections its audience reaches,
-// only those whose seat has one of them in sees; 0, or no Visibility, asks for
-// none. On the seat of a player (input.Seat), sees is the bits its connection
-// has; a seat without it has none, and sees what asks for none. A team is a
-// bit; what a player alone sees is a bit of that player. The server reads it
-// when it changes; it does not travel.
+// Who sees what, as data, like collision layers. Of the connections its
+// audience reaches, an entity with a mask reaches those whose seat has one of
+// its bits in sees; without Visibility or bits, it asks for none, and a seat
+// has none. The server reads it when it changes; it does not travel.
 @(component,description="Who sees this entity on the network (mask), and, on the seat of a player, what that player sees (sees): a connection receives it when they share a bit.")
 Visibility :: struct {
     mask:u32,
@@ -366,11 +363,9 @@ spawn_id :: proc(connection:Connection,tick:u64,sequence:u32) -> base.Entity_Id 
 }
 
 // For a fixed function that makes an entity on both ends in the same tick, as
-// the shot of the player a client predicts: gives e the Id both ends draw
-// (spawn_id), so that the replica of the server's takes the one made here
-// instead of making another one round trip later, also after a correction ran
-// the tick again. peer is Seat.peer of the seat that makes it. The entity is
-// predicted while it lives.
+// the shot of the player a client predicts: e gets the Id both ends draw, so
+// the replica of the server's takes it, also after a correction ran the tick
+// again. peer is Seat.peer of the seat that makes it.
 predict_spawn :: proc(session:core.Ref(Net_Session),ids:^core.Table(core.Id),spawns:^core.Table(Predicted_Spawn),e:core.Entity,peer:u64,time:core.Time,sequence:u32=0) {
     connection:=peer!=0?Connection(peer):own_connection(session)
     core.add(ids,e,core.Id{spawn_id(connection,time.tick,sequence)})

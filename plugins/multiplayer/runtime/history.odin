@@ -133,7 +133,6 @@ authoritative_apply :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,baseline:bo
             wire.object_read(&s.host,&command,0,&pose,max(u64))
             if t.motion>=0 {wire.object_read(&s.host,&command,t.motion,&motion,max(u64))}
             pose_apply(s,w,r.entity,t,pose,motion,false)
-            if command.tick==r.tick {r.exact=true}
         }
     }
     core.world_settle(w)

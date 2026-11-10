@@ -23,32 +23,24 @@ import wire "mirai:net"
 // bare.
 // One rule says how a replica lives here (replica_wanted):
 //
-//   Here          lent to this client, or what each end simulates: simulated
-//                 here and never corrected
-//   Predicted     what this client drives; what a simulation moves on the
-//                 server while it is within reach of what this client drives
-//                 (it shared a group of the simulation with it in the last
-//                 critical_ticks); and what the server asks to be predicted
-//                 always (Replicate.predict). The client simulates it at its
-//                 own tick, ahead of the server (core.Pose_Target, simulated)
-//   Interpolated  everything else: shown between the states of the server, a
-//                 little in the past, with its pose, its motion and its
-//                 components of one same instant (core.Pose_Target, followed)
+//   Here          lent to this client, or what each end simulates: never corrected
+//   Predicted     what this client drives, what a simulation moves on the server
+//                 while it is within reach of it (they shared a group of the
+//                 simulation in the last critical_ticks) and what the server
+//                 asks to predict always: simulated ahead of the server
+//   Interpolated  everything else: shown between the states of the server, in
+//                 the past, with pose, motion and components of one instant
 //
-// A replica that goes from one to the other does not jump: going to
-// predicted, the world goes back to its newest state of the server and runs
-// again with it simulated; going to interpolated, it is put where its states
-// have it. Either way what the eye saw is kept as an error of its drawing
-// that fades (wire.Smoothing), the same one a correction leaves.
+// A replica that goes from one to the other does not jump: what the eye saw
+// stays as an error of its drawing that fades (wire.Smoothing), like the one a
+// correction leaves.
 //
 // Prediction keeps, per tick, a copy of the whole world as the tick found it,
 // the input of the tick and the pose each predicted replica had after it. A
-// state of the server is compared with what was predicted for its tick. When
-// one differs, the world goes back to the copy of the next tick, takes the
+// state of the server is compared with what was predicted for its tick: when
+// it differs, the world goes back to the copy of the next tick, takes the
 // states of the server at their ticks and the fixed loop runs again up to the
-// present. When it cannot go back (the tick left the history, or the ticks to
-// run again do not fit the frame or the budget), the replica is put where the
-// server had it, carried to the present by its velocity.
+// present; when it cannot go back, the replica takes the state in the present.
 
 @(private) INTERPOLATION_DEPTH :: 32
 @(private) REPLICA_EXTRAPOLATION :: 0.1 // seconds an interpolated replica goes on with its last velocity when its states run out
@@ -102,7 +94,6 @@ Replica :: struct {
     adopted:bool,      // its entity was in the scene before the replica: it outlives it
     waits:bool,        // none of its sections is loaded here: it has no entity until one loads
     corrected:bool,    // it was predicted when the correction under way began
-    exact:bool,        // the correction under way gave it the state of the server at its tick
     differs:bool,      // the comparison of this frame found it off, or it turns predicted: the world goes back for it
     switched:bool,     // it changed timeline in this frame: what it was drawn off by fades slower
     touched_set,verified_set:bool,
@@ -1232,11 +1223,9 @@ replica_put :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,to:^Present) {
 }
 
 // A predicted replica takes a state of the server in the present, when the
-// world cannot go back to the tick of that state: the tick left the history,
-// or the ticks to run again do not fit the frame or the budget. It goes where
-// the state had it, carried to the present by its velocity, or moves by what
-// it was off at that tick. The drawing closes the jump, and what was
-// predicted of it until now is not compared again.
+// world cannot go back to its tick: it goes where the state had it, carried
+// by its velocity, or moves by what it was off at that tick. The drawing
+// closes the jump, and what it predicted until now is not compared again.
 @(private)
 replica_place_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,command:^wire.Command,tick_dt:f32) {
     c:=&s.client
@@ -1264,12 +1253,11 @@ replica_place_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,command:^wi
     s.stats.placed+=1
 }
 
-// A replica goes to the timeline the rule gives it now, and what is drawn of
-// it does not jump: where it was drawn stays as an error that fades. Turning
-// predicted, it asks the world to go back to its newest state of the server
-// (true), so that the ticks since run again with it simulated; with no tick
-// to run again, it is put where that state carries it. Turning interpolated,
-// it is put where its states have it at the tick shown.
+// A replica goes to the timeline the rule gives it now; where it was drawn
+// stays as an error that fades. Turning predicted, it asks the world to go
+// back to its newest state (true), so that the ticks since run again with it
+// simulated, or takes that state now. Turning interpolated, it is put where
+// its states have it at the tick shown.
 @(private)
 replica_switch :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,tick_dt:f32) -> (back:bool) {
     c:=&s.client
@@ -1280,10 +1268,7 @@ replica_switch :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,tick_dt:f32) -
     x.switched=true
     s.stats.switched+=1
     if x.mode==.Predicted {
-        if i32(c.newest-x.tick)>0 {
-            x.differs,x.check=true,x.tick
-            return true
-        }
+        if i32(c.newest-x.tick)>0 {return true}
         command:=replica_command(s,x)
         replica_place_now(s,w,x,&command,tick_dt)
     } else if sample,ok:=replica_blend(s,x,wire.clock_interpolation_tick(&s.host,c.newest)-f64(max(x.delay,0)));ok {
@@ -1326,7 +1311,7 @@ client_reconcile :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,dt:f32) {
         differing^+=1
     }
     for &x in c.replicas[:c.replica_high] {
-        x.differs,x.exact,x.switched=false,false,false
+        x.differs,x.switched=false,false
         if x.object==0 {continue}
         fresh:=x.pending
         x.pending=false
@@ -1402,7 +1387,7 @@ client_rewinds :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,ticks:[]u32
         earliest,found=tick,true
     }
     if !found {return}
-    for &x in c.replicas[:c.replica_high] {x.differs,x.exact,x.switched=false,false,false}
+    for &x in c.replicas[:c.replica_high] {x.switched=false}
     started:=time.tick_now()
     if client_rewind(s,w,app,earliest-1) {s.stats.rewound+=1}
     s.stats.resimulate_seconds+=time.duration_seconds(time.tick_since(started))

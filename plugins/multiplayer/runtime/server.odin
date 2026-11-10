@@ -176,10 +176,9 @@ loaded_of :: proc "contextless" (server:^Server,index:int) -> []u64 {
     return server.loaded[index*words:][:words]
 }
 
-// What an entity replicates is what it has: when the rows of a replicated
+// What an entity replicates is what it has: when rows of a replicated
 // component, of core.Motion or of input.Move_Input come or go, each object
-// whose entity no longer has what its type lists is marked, and the publish
-// gives it the type of what it has now (object_retype).
+// whose entity no longer has what its type lists is marked to be re-typed.
 @(private)
 server_kinds :: proc(s:^Net_Session,w:core.World_Ref) {
     server:=&s.server
@@ -282,28 +281,20 @@ server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
     told:=true
     for &slot in server.objects {
         if slot.object==0 {continue}
-        mask:=visibility_of(visibility,slot.entity).mask
-        if slot.visibility==mask {continue}
-        if wire.object_set_visibility(h,slot.object,mask)==.None {slot.visibility=mask} else {told=false}
+        value,_:=core.get(core.read(visibility),slot.entity)
+        if slot.visibility==value.mask {continue}
+        if wire.object_set_visibility(h,slot.object,value.mask)==.None {slot.visibility=value.mask} else {told=false}
     }
     for &peer in server.peers {
         if peer.connection==0 {continue}
-        sees:u32
-        if seats!=nil {
-            for row in 0..<core.count(seats) {
-                if Connection(seats.values[row].peer)==peer.connection {sees=visibility_of(visibility,core.entity_at(seats,row)).sees;break}
-            }
+        value:Visibility
+        for row in 0..<(seats!=nil?core.count(seats):0) {
+            if Connection(seats.values[row].peer)==peer.connection {value,_=core.get(core.read(visibility),core.entity_at(seats,row));break}
         }
-        if peer.sees==sees {continue}
-        if wire.connection_set_visibility(h,peer.connection,sees)==.None {peer.sees=sees} else {told=false}
+        if peer.sees==value.sees {continue}
+        if wire.connection_set_visibility(h,peer.connection,value.sees)==.None {peer.sees=value.sees} else {told=false}
     }
     if told {server.visibility=seen}
-}
-
-@(private)
-visibility_of :: proc(visibility:^core.Table(Visibility),e:core.Entity) -> Visibility {
-    value,_:=core.get(core.read(visibility),e)
-    return value
 }
 
 // The datagrams received since the last frame, as changes to the world and as events.
@@ -926,10 +917,9 @@ server_scope :: proc(s:^Net_Session,slot:^Server_Object,config:Replicate,wait:bo
 
 // Server: the body a connection drives looks where its client says, after the
 // seat turned it with the mouse (locomotion_seat, stage input) and before the
-// locomotion moves it (stage simulate). See Input_Packet. The look a client
-// sends is the one it had look_behind ticks before the tick of the input (its
-// input delay): what it differs by from the look this end had then is put
-// right now, and in the looks kept since, which the next inputs compare with.
+// locomotion moves it (stage simulate). See Input_Packet. The look is of
+// look_behind ticks before the input (its input delay): what it differs by
+// from the look this end had then is put right now, and in the looks kept since.
 @(step="fixed",loops="game",stage="intent")
 remote_look :: proc(session:core.Ref(Net_Session),inputs:^Remote_Inputs,seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),moves:^core.Table(input.Move_Input),time:core.Time) {
     if session.ptr==nil || session.mode!=.Server {return}

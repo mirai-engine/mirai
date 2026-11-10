@@ -36,7 +36,6 @@ Open_Error :: enum u8 {
 
 Net_Stats :: struct {
     objects:int,              // server: entities replicated. Client: replicas with an entity
-    predicted,interpolated:int,
     spawned,despawned:u64,    // client: entities made for a replica, or taken from the scene, and released
     events_received,events_sent:u64,
     events_dropped:u64,       // arrived while PENDING_EVENTS waited for a tick

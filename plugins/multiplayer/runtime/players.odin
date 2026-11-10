@@ -137,13 +137,11 @@ owner_of :: proc(w:core.World_Ref,e:core.Entity) -> Connection {
 }
 
 // A client with Net_Settings.input_delay: the seat it drives with acts on what
-// its devices gave that many ticks ago, as the server will when the input it
-// submitted then for this tick gets there, and from the same actions: both
-// ends derive the same edges. The seat keeps two lines of what it held, each
-// from its own tick before: the one the devices feed (outside the World: it
-// only moves when a tick runs first), which net_input_take gives it before
-// they do, and the delayed one the game sees, which net_input_delay gives
-// back before the actions taken input_delay ticks ago reach it.
+// its devices gave that many ticks ago, with seat_receive, as the server will:
+// both ends derive the same edges. It keeps two lines of what it held: the one
+// the devices feed (outside the World: it moves only when a tick runs first),
+// which net_input_take gives it before they do, and the one the game sees,
+// which net_input_delay gives back before the delayed actions reach it.
 @(step="fixed",loops="game",stage="input",before="input_seats")
 net_input_take :: proc(session:^Net_Session,seats:^core.Table(input.Seat),time:core.Time) {
     seat:=delayed_seat(session,seats)

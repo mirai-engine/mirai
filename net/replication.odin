@@ -383,11 +383,10 @@ object_create :: proc(h:^Host,desc:Object_Desc) -> (Object,Error) {
     return object,.None
 }
 
-// Server: the object is of another type from now on, the list of fragments a
-// creation of it would carry now, with the state its sources hold. Every
-// connection that has its replica takes the new type and the whole state in
-// its place: the replica goes on. Full when the state does not fit
-// Replication_Desc.state_words or the frame: try again after the next publish.
+// Server: the object is of another type from now on, with the state its
+// sources hold: every connection that has its replica takes both in its place,
+// and the replica goes on. Full when the state does not fit state_words or the
+// frame: try again after the next publish.
 object_retype :: proc(h:^Host,object:Object,type:Type_Id,sources:[MAX_FRAGMENTS]rawptr) -> Error {
     f:=&h.front
     protocol:=h.desc.protocol
