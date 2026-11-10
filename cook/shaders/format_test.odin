@@ -2,6 +2,7 @@ package shaders
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:testing"
 
@@ -317,6 +318,8 @@ odin_table_embeds_the_backends_compiled_with_the_reflected_bindings :: proc(t:^t
 
 // The constants shaders share with the CPU are written by the generation
 // alone: a source that defined one could say another value than the CPU has.
+// So are those a plugin shares with its own Odin code: no source of its
+// shaders defines a name one of its Odin sources declares.
 @(test)
 no_shader_source_defines_a_constant_the_generation_writes :: proc(t:^testing.T) {
     defined :: proc(names:^map[string]string,text,from:string) {
@@ -326,19 +329,46 @@ no_shader_source_defines_a_constant_the_generation_writes :: proc(t:^testing.T) 
             if len(words)>=3 && words[0]=="#define" {names[words[1]]=from}
         }
     }
+    files:Sources
+    sources_init(&files,context.temp_allocator)
     generated:=make(map[string]string,context.temp_allocator)
     defined(&generated,material_schema(),SCHEMA_INCLUDE)
     defined(&generated,shared_constants(),CONSTANTS_INCLUDE)
-    testing.expect(t,generated["SLOT_FRAME"]==CONSTANTS_INCLUDE && generated["CLUSTER_WORDS"]==CONSTANTS_INCLUDE && generated["MATERIAL_MAPS"]==SCHEMA_INCLUDE,"the includes define the constants")
-    files:Sources
-    sources_init(&files,context.temp_allocator)
+    Plugin :: struct {entry:Extension_Folder,declared:map[string]string}
+    plugins:=make([dynamic]Plugin,context.temp_allocator)
+    plugins_folder:=path_join(ENGINE_ROOT,"plugins",allocator=context.temp_allocator)
+    entries,_:=os.read_all_directory_by_path(plugins_folder,context.temp_allocator)
+    for each in entries {
+        root:=path_join(plugins_folder,each.name,allocator=context.temp_allocator)
+        plugin:=Plugin{entry={strings.concatenate({"plugins/",each.name},context.temp_allocator),path_join(root,"shaders",allocator=context.temp_allocator)},declared=make(map[string]string,context.temp_allocator)}
+        if !os.is_directory(plugin.entry.folder) {continue}
+        text,problem:=owned_constants(&files,plugin.entry)
+        testing.expect_value(t,problem,"")
+        defined(&generated,text,strings.concatenate({OWNED_CONSTANTS_FOLDER,"/",plugin.entry.label,".slang"},context.temp_allocator))
+        for path in sources_below(&files,root) {
+            if !strings.has_suffix(path,".odin") {continue}
+            rest:=string(sources_file(&files,path).data)
+            for line in strings.split_lines_iterator(&rest) {
+                if name,_,ok:=odin_declaration(line);ok {plugin.declared[name]=path}
+            }
+        }
+        append(&plugins,plugin)
+    }
+    testing.expect(t,generated["SLOT_FRAME"]==CONSTANTS_INCLUDE && generated["CLUSTER_WORDS"]==CONSTANTS_INCLUDE && generated["MATERIAL_MAPS"]==SCHEMA_INCLUDE && generated["PORTAL_CAPACITY"]=="constants/plugins/portals.slang","the includes define the constants")
     build:=path_join(ENGINE_ROOT,"shaders/build",allocator=context.temp_allocator)
     for folder in ([]string{"shaders","plugins"}) {
         for path in sources_below(&files,path_join(ENGINE_ROOT,folder,allocator=context.temp_allocator)) {
             if !strings.has_suffix(path,".slang") || path_inside(path,build) {continue}
             written:=make(map[string]string,context.temp_allocator)
             defined(&written,string(sources_file(&files,path).data),path)
-            for name in written {testing.expectf(t,!(name in generated),"%s defines %s, which %s gives it",path,name,generated[name])}
+            for name in written {
+                testing.expectf(t,!(name in generated),"%s defines %s, which %s gives it",path,name,generated[name])
+                for plugin in plugins {
+                    if path_inside(path,plugin.entry.folder) && name in plugin.declared {
+                        testing.expectf(t,false,"%s defines %s, which %s declares: share it with `//! mirai constant %s <int|uint|float> <file.odin>`",path,name,plugin.declared[name],name)
+                    }
+                }
+            }
         }
     }
 }

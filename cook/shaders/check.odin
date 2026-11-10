@@ -599,6 +599,10 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         result.error=strings.clone("the program could not be staged for the check",allocator)
         return
     }
+    if _,problem:=owned_constants_write(&files,include,options.project,options.sources,allocator);problem!="" {
+        result.error=problem
+        return
+    }
     copies:=[]Base{{path_parent(path),path_parent(copy_path)}}
     // What the extensions of the project add to the frame, as its generation has it.
     if _,problem:=extensions_generate(&runner,options.root,options.project,temporary,slangc,options.sources,&files,context.temp_allocator);problem!="" {
