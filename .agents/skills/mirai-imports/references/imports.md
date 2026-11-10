@@ -298,7 +298,7 @@ What costs most to write a model is built apart from writing it: `model_cook` fi
 levels, clusters and colliders of each mesh (`mesh_cook`) and the levels of each texture
 (`texture_cook`), one `Import_Options.worker` job each, in the arena of its `Cooked_Mesh` or
 `Cooked_Texture`; `import_write` takes what was built for its settings and builds what is missing
-when it gets to it, with the same functions. Ids, files, parts and what is shared are decided on a
+when it gets to it, with the same functions. Ids, files and parts are decided on a
 single thread and in the usual order: with or without a job system the same bytes are written.
 
 - An import whose outputs of the cache are all current builds nothing beforehand, except with
@@ -410,11 +410,10 @@ those a mesh uses; repeated names are told apart with `name (n)`.
 
 ## What is written
 
-What is new gets a flat file in the folder (`<name>.mesh`, `.skeleton`, `.anim`, `.mat`, `.tex` and,
+What is new gets a flat file in the folder of the import (`<name>.mat`, `.skeleton`, `.anim` and,
 with `import_source`, the model's `.scene`), with a valid file name that does not overwrite
-another asset, of the assets folder for a document; what is of the cache is a file of the imported
-folder named by its id. What already existed is written where it is
-([identity](#identity-and-reimport)).
+another asset; what is of the cache is a file of the imported folder named by its id. What already
+existed is written where it is ([identity](#identity-and-reimport)).
 Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#import-cache)).
 
 - **Ids and owner.** Random the first time and those of the sidecar afterwards; the
@@ -436,16 +435,15 @@ Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#im
 - `Written.detail` says what each asset has (triangles per level and colliders of a mesh; format,
   size and mips of a texture; entities of a prefab), also for a kept one.
 
-`mirai import <file> --out <folder>` is `import_source`, in the `mirai-import` program that the
-engine build leaves next to the editor: the importers are engine code, and the tool compiles
-without them.
+`mirai import <file>` is `import_source`, in the `mirai-import` program that the engine build
+leaves next to the editor: the importers are engine code, and the tool compiles without them. The
+file is in the assets folder of a project or a plugin; it imports where it is.
 
 - It first builds the engine if it is not up to date, in the mode of `--dev` (`--release`
   without it); what that build says goes to stderr and stdout is left with the report.
 - It starts from the settings of the sidecar, applies the given options (`IMPORT_USAGE`) and writes
-  the sidecar again: repeating the command without options gives the same assets. With `--root`,
-  the project or the plugin the import belongs to, `--out` may be left out for a source in its
-  `source/` folder: its documents go to the folder it has there.
+  the sidecar again: repeating the command without options gives the same assets. A source a format
+  of a plugin reads takes the formats of the editor library of its project.
 - The report gives one line per asset (`id kind bytes path (detail)`), how many were already up to
   date, the sidecar and the warnings. Exit codes: 0, 1 (failed) and 2 (usage).
 
