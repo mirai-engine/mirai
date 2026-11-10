@@ -341,20 +341,20 @@ program_catalog_names_the_programs_and_packs_their_parameters :: proc(t: ^testin
 	r.allocator = context.allocator
 	defer program_catalog_destroy(&r.programs)
 	if !fixture_catalog(t, r) {return}
-	ocean := program_find(r, "Ocean", .Surface)
-	if !testing.expect(t, ocean != nil) {return}
-	testing.expect(t, ocean.id != 0 && ocean.domain == .Surface)
-	testing.expect(t, program_find(r, "Ocean", .Postprocess) == nil && program_find(r, "Nothing", .Surface) == nil)
+	grid := program_find(r, "Grid", .Surface)
+	if !testing.expect(t, grid != nil) {return}
+	testing.expect(t, grid.id != 0 && grid.domain == .Surface)
+	testing.expect(t, program_find(r, "Grid", .Postprocess) == nil && program_find(r, "Nothing", .Surface) == nil)
 	testing.expect_value(t, program_find(r, "ColorGrade", .Postprocess).id, u32(1))
-	params := program_defaults(ocean)
-	color := program_parameter(ocean, "color")
+	params := program_defaults(grid)
+	color := program_parameter(grid, "color")
 	testing.expect(t, color != nil && color.color && color.components == 3 && color.offset == 0)
-	testing.expect_value(t, params[0].xyz, Vec3{0.01, 0.075, 0.11})
+	testing.expect_value(t, params[0].xyz, Vec3{0.42, 0.42, 0.42})
 	testing.expect(t, program_parameter_set(&params, color, {0.5, 0.25, 1, 0}))
 	testing.expect_value(t, params[0].xyz, Vec3{0.5, 0.25, 1})
 	testing.expect(t, !program_parameter_set(&params, color, {2, 0, 0, 0}), "a value outside the range of the parameter is refused")
 	testing.expect_value(t, params[0].xyz, Vec3{0.5, 0.25, 1})
-	testing.expect(t, program_parameter(ocean, "nothing") == nil)
+	testing.expect(t, program_parameter(grid, "nothing") == nil)
 
 	text := `{"programs":[{"id":3,"name":"Paint","domain":"surface","size":24,"parameters":[
 		{"name":"image","kind":"texture","components":1,"offset":0,"default":"","min":0,"max":0,"srgb":true},

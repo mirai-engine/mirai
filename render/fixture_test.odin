@@ -11,8 +11,8 @@ Fixture :: struct {
 	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
 }
 
-// The generation with the Surface programs of testdata/ (Grid, Ocean and
-// Pieces), which `mirai test` makes before the tests run: the engine has no
+// The generation with the Surface programs of testdata/ (Grid and Pieces),
+// which `mirai test` makes before the tests run: the engine has no
 // Surface program of its own.
 TEST_GENERATION :: #directory + "/../.mirai/tmp/render-test-shaders"
 

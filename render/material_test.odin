@@ -697,12 +697,12 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	grid, ocean := program_find(r, "Grid", .Surface), program_find(r, "Ocean", .Surface)
-	testing.expect(t, grid != nil && ocean != nil, "the tests have the Grid and Ocean programs")
-	if grid == nil || ocean == nil {return}
-	mirror, wall, sea := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
-	sea.program_id = ocean.id
-	sea.custom_params = program_defaults(ocean)
+	grid, pieces := program_find(r, "Grid", .Surface), program_find(r, "Pieces", .Surface)
+	testing.expect(t, grid != nil && pieces != nil, "the tests have the Grid and Pieces programs")
+	if grid == nil || pieces == nil {return}
+	mirror, wall, other := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	other.program_id = pieces.id
+	other.custom_params = program_defaults(pieces)
 	mirror.base_color = {0.9, 0.9, 0.9}
 	mirror.metallic = 1
 	mirror.roughness = 0.05
@@ -725,7 +725,7 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for binned in ([]bool{false, true}) {
 		// The other program is in a row of the table that no instance takes.
-		materials_set(r, {mirror, wall, sea if binned else DEFAULT_MATERIAL})
+		materials_set(r, {mirror, wall, other if binned else DEFAULT_MATERIAL})
 		scene_set(r, instances, nil, sun, {sky = {0, 0, 0.05}})
 		testing.expect_value(t, r.scene.programs_used, u32(2 if binned else 1))
 		mirrored := screen_color(t, &f, camera, {0, 0, 0})
