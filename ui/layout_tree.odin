@@ -3,6 +3,7 @@ package ui
 import "core:math"
 import "core:mem"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 // The layout of a frame. The widgets open and close its elements, and the size
 // an element asks for follows from its children as they close. layout_finish
@@ -11,11 +12,15 @@ import "mirai:std/base"
 // is drawn in the order it is drawn.
 //
 // A modified version, written in Odin, of the layout of Clay v0.14 (zlib,
-// Copyright (c) 2024 Nic Barker; THIRD_PARTY_NOTICES.md).
+// Copyright (c) 2024 Nic Barker; THIRD_PARTY_NOTICES.md). An element that asks
+// for it goes between two layouts as Clay's transitions do: from where it was
+// drawn to where the layout puts it, its size taken by a second layout.
 
 // Containers open inside one another. A deeper one is refused with what it
 // holds and counted in Stats.dropped_elements.
 LAYOUT_DEPTH :: 64
+// Elements whose rectangles the layout keeps between frames to carry them to a new layout.
+LAYOUT_TRANSITIONS :: 256
 
 @(private)
 LAYOUT_EPSILON :: 0.01
@@ -41,6 +46,19 @@ Layout_Node :: struct {
     border:u16,
     row_span:u8,        // rows of a Grid it takes; 0 is 1
     row_tracks:u16,     // of a Grid: row plus one of row_tracks; 0: none
+    transition:i32,     // its row in transitions plus one; 0: it goes straight to where it is laid out
+}
+// Where an element that transitions was and is going. Rectangles from the
+// corner of the content of its parent, so a parent that moves or scrolls
+// carries it without starting it again.
+@(private)
+Layout_Transition :: struct {
+    id:Id,
+    from,to,now:Rect, // now: where it was drawn last
+    surface:[2]f32,   // the size of the surface it was laid out on: another one places it at once
+    time,seconds:f32,
+    frame:u64,        // the last that asked for it
+    placed:bool,
 }
 // What a run measures to in one line: its width, the width of its widest word
 // and of a space, and the words it is cut into. A word carries the space that
@@ -177,6 +195,8 @@ Layout_Tree :: struct {
     overflow:bool, // a line or a command did not fit this frame
     tracks:[]Grid_Tracks,track_count:int, // the widths of the columns of the grids of the frame (grid_tracks_add)
     aspects:bool,  // an element of the frame keeps an aspect
+    transitions:[]Layout_Transition,
+    dt:f32,        // seconds since the last frame, which carry what transitions
     allocator:mem.Allocator,
 }
 
@@ -202,6 +222,7 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
     t.lines=alloc(Layout_Line,max_elements*4,a,&ok)
     t.commands=alloc(Layout_Command,max_elements*4,a,&ok)
     t.tracks=alloc(Grid_Tracks,max_tracks,a,&ok)
+    t.transitions=alloc(Layout_Transition,LAYOUT_TRANSITIONS,a,&ok)
     if !id_table_init(&t.ids,max_elements,a) {ok=false}
     // A frame has fewer runs than elements.
     slots:=16
@@ -221,6 +242,7 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
         mem.zero_slice(g.generations)
         g.generation=1
     }
+    mem.zero_slice(t.transitions)
     return true
 }
 
@@ -228,7 +250,7 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
 layout_destroy :: proc(t:^Layout_Tree) {
     a:=t.allocator
     delete(t.nodes,a);delete(t.texts,a);delete(t.spans,a);delete(t.pieces,a);delete(t.kids,a);delete(t.pending,a);delete(t.scratch,a)
-    delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a)
+    delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a);delete(t.transitions,a)
     id_table_destroy(&t.ids,a)
     for g in t.measures {
         delete(g.keys,a);delete(g.entries,a);delete(g.generations,a);delete(g.words,a);delete(g.chars,a)
@@ -283,6 +305,7 @@ layout_open :: proc(t:^Layout_Tree,e:Element,f:Layout_Float) -> bool {
     n.floating=f.to!=.None
     n.border=e.border
     n.row_span,n.row_tracks=e.row_span,e.row_tracks
+    n.transition=0
     t.node_count+=1
     t.aspects||=e.layout.aspect>0
     layout_id_put(t,e.id,index)
@@ -314,6 +337,7 @@ layout_close :: proc(t:^Layout_Tree) {
     t.open_len-=1
     index:=t.open[t.open_len]
     n:=&t.nodes[index]
+    layout_kids(t,n)
     layout_fit(t,n)
     // A floating element takes nothing from the flow of its parent.
     if !n.floating {layout_attach(t,index)}
@@ -374,10 +398,19 @@ layout_text_end :: proc(t:^Layout_Tree,font:^Font,e:Element) -> bool {
     n.text=i32(t.text_count)
     n.clip_x,n.clip_y,n.floating,n.clip_floats,n.clip_outer=false,false,false,false,0
     n.border=0
-    n.row_span,n.row_tracks=e.row_span,0
+    n.row_span,n.row_tracks,n.transition=e.row_span,0,0
     t.text_count+=1
     t.node_count+=1
     layout_id_put(t,e.id,index)
+    layout_fit_text(t,font,n)
+    layout_attach(t,index)
+    return true
+}
+// What a text asks for: the width of its widest line when its width fits and
+// one line when its height does.
+@(private)
+layout_fit_text :: proc(t:^Layout_Tree,font:^Font,n:^Layout_Node) {
+    text:=&t.texts[n.text]
     l:=&n.layout
     n.dim,n.min_dim={},{}
     if l.width.kind==.Fit {
@@ -387,16 +420,7 @@ layout_text_end :: proc(t:^Layout_Tree,font:^Font,e:Element) -> bool {
         n.min_dim.x=n.dim.x if text.wrap==.None else least
     }
     if l.height.kind==.Fit {n.dim.y,n.min_dim.y=text.line,text.line}
-    if l.width.kind!=.Percent {
-        n.dim.x=clamp(n.dim.x,axis_min(l.width),axis_max(l.width))
-        n.min_dim.x=clamp(n.min_dim.x,axis_min(l.width),axis_max(l.width))
-    } else {n.dim.x=0}
-    if l.height.kind!=.Percent {
-        n.dim.y=clamp(n.dim.y,axis_min(l.height),axis_max(l.height))
-        n.min_dim.y=clamp(n.min_dim.y,axis_min(l.height),axis_max(l.height))
-    } else {n.dim.y=0}
-    layout_attach(t,index)
-    return true
+    layout_limit(n)
 }
 // The words of a span in order: those its measure kept, or the span walked again.
 @(private)
@@ -961,14 +985,8 @@ layout_fit :: proc(t:^Layout_Tree,n:^Layout_Node) {
     l:=&n.layout
     left_right:=l.padding[0]+l.padding[2]
     top_bottom:=l.padding[1]+l.padding[3]
-    count:=int(n.kids_len)
-    first:=t.pending_len-count
-    t.pending_len=first
-    n.kids_first=i32(t.kids_len)
-    kids:=t.kids[t.kids_len:][:count]
-    copy(kids,t.pending[first:][:count])
-    t.kids_len+=count
-    gap:=f32(max(count-1,0))*l.gap
+    kids:=t.kids[n.kids_first:][:n.kids_len]
+    gap:=f32(max(len(kids)-1,0))*l.gap
     switch l.direction {
     case .Grid:
         layout_fit_grid(t,n,kids)
@@ -1007,14 +1025,7 @@ layout_fit :: proc(t:^Layout_Tree,n:^Layout_Node) {
             if !n.clip_y {n.min_dim.y=max(n.min_dim.y,child.min_dim.y+top_bottom)}
         }
     }
-    if l.width.kind!=.Percent {
-        n.dim.x=clamp(n.dim.x,axis_min(l.width),axis_max(l.width))
-        n.min_dim.x=clamp(n.min_dim.x,axis_min(l.width),axis_max(l.width))
-    } else {n.dim.x=0}
-    if l.height.kind!=.Percent {
-        n.dim.y=clamp(n.dim.y,axis_min(l.height),axis_max(l.height))
-        n.min_dim.y=clamp(n.min_dim.y,axis_min(l.height),axis_max(l.height))
-    } else {n.dim.y=0}
+    layout_limit(n)
     // A fixed axis gives the other its size; any other width gives the height once it is known.
     if l.aspect>0 {
         if l.width.kind==.Fixed {
@@ -1025,6 +1036,30 @@ layout_fit :: proc(t:^Layout_Tree,n:^Layout_Node) {
             n.min_dim.x=n.dim.x
         }
     }
+}
+
+// The children a container closed with, from pending to a run of kids of its own.
+@(private)
+layout_kids :: proc(t:^Layout_Tree,n:^Layout_Node) {
+    count:=int(n.kids_len)
+    first:=t.pending_len-count
+    t.pending_len=first
+    n.kids_first=i32(t.kids_len)
+    copy(t.kids[t.kids_len:][:count],t.pending[first:][:count])
+    t.kids_len+=count
+}
+// What an element asks for within the limits of its sizes; a percent asks for nothing.
+@(private)
+layout_limit :: proc "contextless" (n:^Layout_Node) {
+    l:=&n.layout
+    if l.width.kind!=.Percent {
+        n.dim.x=clamp(n.dim.x,axis_min(l.width),axis_max(l.width))
+        n.min_dim.x=clamp(n.min_dim.x,axis_min(l.width),axis_max(l.width))
+    } else {n.dim.x=0}
+    if l.height.kind!=.Percent {
+        n.dim.y=clamp(n.dim.y,axis_min(l.height),axis_max(l.height))
+        n.min_dim.y=clamp(n.min_dim.y,axis_min(l.height),axis_max(l.height))
+    } else {n.dim.y=0}
 }
 
 // A Grid asks for its columns side by side, each as wide as its widest
@@ -1348,9 +1383,51 @@ layout_heights :: proc(t:^Layout_Tree,index:i32) {
 // ---------------------------------------------------------------- placement
 
 @(private)
-layout_finish :: proc(t:^Layout_Tree,font:^Font) {
+layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt:f32) -> (moving:bool) {
     // The surface closes like any container, which puts the elements of the
     // top level inside it.
+    layout_kids(t,&t.nodes[0])
+    t.dt=dt if dt>0 else 0
+    layout_solve(t,font)
+    if layout_transitions_size(t,frame) {
+        for i:=t.node_count-1;i>0;i-=1 {
+            n:=&t.nodes[i]
+            if n.text>=0 {layout_fit_text(t,font,n)} else {layout_fit(t,n)}
+        }
+        layout_solve(t,font)
+    }
+    // A floating element of a higher layer covers the lower ones; within a
+    // layer, what was declared later covers what was declared before.
+    for i in 1..<t.root_count {
+        root:=t.roots[i]
+        j:=i
+        for j>0 && t.roots[j-1].layer>root.layer {t.roots[j]=t.roots[j-1];j-=1}
+        t.roots[j]=root
+    }
+    for &root in t.roots[:t.root_count] {
+        root.first_command=i32(t.command_count)
+        r:=&t.nodes[root.node]
+        position,origin:[2]f32
+        if r.floating {
+            p:=root.rect if root.hung else t.nodes[root.parent].box
+            origin={p.x,p.y}
+            position=float_position(p,root.anchor,root.pivot,root.offset,r.dim)
+            if root.contain {
+                bounds:=t.nodes[root.within].box
+                bounds={bounds.x+root.inset[0],bounds.y+root.inset[1],max(bounds.w-root.inset[0]-root.inset[2],0),max(bounds.h-root.inset[1]-root.inset[3],0)}
+                position=float_contain(p,&root,r.dim,bounds,position)
+            }
+        }
+        layout_place(t,root.node,position,origin)
+    }
+    for &e in t.transitions {moving||=e.frame==frame && e.placed && e.time<e.seconds}
+    return
+}
+
+// Sizes every element from what the leaves ask, one axis at a time.
+@(private)
+layout_solve :: proc(t:^Layout_Tree,font:^Font) {
+    t.line_count,t.piece_count=0,0
     layout_fit(t,&t.nodes[0])
     layout_size(t,true)
     // What keeps an aspect takes the height its width gives.
@@ -1370,29 +1447,79 @@ layout_finish :: proc(t:^Layout_Tree,font:^Font) {
     }
     for root in t.roots[:t.root_count] {layout_heights(t,root.node)}
     layout_size(t,false)
-    // A floating element of a higher layer covers the lower ones; within a
-    // layer, what was declared later covers what was declared before.
-    for i in 1..<t.root_count {
-        root:=t.roots[i]
-        j:=i
-        for j>0 && t.roots[j-1].layer>root.layer {t.roots[j]=t.roots[j-1];j-=1}
-        t.roots[j]=root
+}
+
+// Asks that the element id of this frame go from where it was drawn to where
+// the layout puts it over seconds. False when every rectangle the layout keeps
+// was asked for this frame.
+@(private)
+layout_transition_ask :: proc "contextless" (t:^Layout_Tree,id:Id,seconds:f32,frame:u64) -> bool {
+    if id==0 || !(seconds>0 && seconds<math.F32_MAX) {return true}
+    oldest:^Layout_Transition
+    for &e in t.transitions {
+        if e.id==id {e.frame,e.seconds=frame,seconds;return true}
+        if oldest==nil || e.frame<oldest.frame {oldest=&e}
     }
-    for &root in t.roots[:t.root_count] {
-        root.first_command=i32(t.command_count)
-        r:=&t.nodes[root.node]
-        position:[2]f32
-        if r.floating {
-            p:=root.rect if root.hung else t.nodes[root.parent].box
-            position=float_position(p,root.anchor,root.pivot,root.offset,r.dim)
-            if root.contain {
-                bounds:=t.nodes[root.within].box
-                bounds={bounds.x+root.inset[0],bounds.y+root.inset[1],max(bounds.w-root.inset[0]-root.inset[2],0),max(bounds.h-root.inset[1]-root.inset[3],0)}
-                position=float_contain(p,&root,r.dim,bounds,position)
-            }
-        }
-        layout_place(t,root.node,position)
+    if oldest==nil || oldest.frame==frame {return false}
+    oldest^={id=id,frame=frame,seconds=seconds}
+    return true
+}
+
+// Advances the elements that transition this frame and gives each the size it
+// has on its way in place of the one it asked for, so the layout around it
+// follows. True when a size changed: the layout runs again.
+@(private)
+layout_transitions_size :: proc(t:^Layout_Tree,frame:u64) -> (resized:bool) {
+    surface:=t.nodes[0].dim
+    for &e,i in t.transitions {
+        if e.frame!=frame {continue}
+        index:=layout_index(t,e.id)
+        if index==0 {e.frame=0;continue}
+        n:=&t.nodes[index]
+        n.transition=i32(i+1)
+        if !e.placed || e.surface!=surface {continue}
+        e.time=min(e.time+t.dt,e.seconds)
+        if !layout_near(n.dim,{e.to.w,e.to.h}) {layout_transition_start(&e,t.dt);e.to.w,e.to.h=n.dim.x,n.dim.y}
+        now:=layout_transition_mix(&e)
+        if layout_near({now.w,now.h},n.dim) {continue}
+        n.layout.width,n.layout.height=fixed(now.w),fixed(now.h)
+        resized=true
     }
+    return
+}
+
+// Where an element that transitions is drawn, from the corner of the content
+// of its parent: on its way to at, where the layout put it. The first time, or
+// on a surface of another size, it is at at once.
+@(private)
+layout_transition_place :: proc "contextless" (e:^Layout_Transition,at,dim,surface:[2]f32,dt:f32) -> [2]f32 {
+    if !e.placed || e.surface!=surface {
+        e.from,e.placed,e.surface,e.time={at.x,at.y,dim.x,dim.y},true,surface,e.seconds
+        e.to,e.now=e.from,e.from
+        return at
+    }
+    if !layout_near(at,{e.to.x,e.to.y}) {layout_transition_start(e,dt);e.to.x,e.to.y=at.x,at.y}
+    now:=layout_transition_mix(e)
+    e.now={now.x,now.y,dim.x,dim.y}
+    return {now.x,now.y}
+}
+
+// A new place or size starts from where the element is now, with this frame on its way.
+@(private)
+layout_transition_start :: #force_inline proc "contextless" (e:^Layout_Transition,dt:f32) {
+    e.from,e.time=e.now,min(dt,e.seconds)
+}
+
+@(private)
+layout_transition_mix :: proc "contextless" (e:^Layout_Transition) -> Rect {
+    k:=mm.ease_apply(.Cubic_Out,min(e.time/e.seconds,1))
+    a,b:=e.from,e.to
+    return {a.x+(b.x-a.x)*k,a.y+(b.y-a.y)*k,a.w+(b.w-a.w)*k,a.h+(b.h-a.h)*k}
+}
+
+@(private)
+layout_near :: #force_inline proc "contextless" (a,b:[2]f32) -> bool {
+    return abs(a.x-b.x)<=LAYOUT_EPSILON && abs(a.y-b.y)<=LAYOUT_EPSILON
 }
 
 // Where a floating element of size dim goes against the rectangle p it hangs from.
@@ -1428,8 +1555,10 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
 }
 
 @(private)
-layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
+layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
     n:=&t.nodes[index]
+    position:=position
+    if n.transition>0 {position=origin+layout_transition_place(&t.transitions[n.transition-1],position-origin,n.dim,t.nodes[0].dim,t.dt)}
     n.box={position.x,position.y,n.dim.x,n.dim.y}
     if n.text>=0 {
         layout_place_text(t,index)
@@ -1469,7 +1598,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
                 child.box.x=x+align_offset(self_align(l.align_x,child.layout.self_x),width-child.dim.x)+offset.x
                 child.box.y=y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)+offset.y
             }
-            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y})}
+            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y},position+offset)}
         case .Wrap:
             inner:=n.dim.x-left_right
             y:=position.y+l.padding[1]
@@ -1480,7 +1609,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
                 x:=position.x+l.padding[0]+align_offset(l.align_x,inner-used)
                 for kid in kids[start:end] {
                     child:=&t.nodes[kid]
-                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset)
+                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset,position+offset)
                     x+=child.dim.x+l.gap
                 }
                 y+=high+l.gap
@@ -1492,7 +1621,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
                 at:=position+{l.padding[0],l.padding[1]}
                 at.x+=align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)
                 at.y+=align_offset(self_align(l.align_y,child.layout.self_y),n.dim.y-top_bottom-child.dim.y)
-                layout_place(t,kid,at+offset)
+                layout_place(t,kid,at+offset,position+offset)
             }
         case .Row,.Column:
             row:=l.direction==.Row
@@ -1522,7 +1651,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
                 } else {
                     at.x=position.x+l.padding[0]+align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)+offset.x
                 }
-                layout_place(t,kid,at)
+                layout_place(t,kid,at,position+offset)
                 if row {next.x+=child.dim.x+l.gap} else {next.y+=child.dim.y+l.gap}
             }
         }

@@ -266,18 +266,18 @@ All take the context, an id and their state by parameter.
 - **Markdown.** `markdown` builds Markdown text at a width (paragraphs, `#` to `###` headings,
   lists nested by indentation, quotes, fenced code, rules; inline bold, code, links and escapes).
   It is a parser: each paragraph and each heading is one [text](#text) whose spans are its words,
-  its inline code (a chip), its links and its pills, and the layout breaks it. `markdown_height`
-  walks the same parser and asks those texts for their heights without building them: the height
-  is exactly the one that is built, so a list of replies measures them once and builds only those
-  in view with `rows_begin`.
+  its inline code (a chip), its links and its pills, and the layout breaks it. Its height is the
+  one the layout gives what it builds: a list of replies keeps the height of the row each was built
+  in, builds one that changed where nothing shows it when it is out of sight, and otherwise builds
+  only those in view with `rows_begin` (the chat of the editor).
   - It is parsed line by line: it stores nothing between frames or allocates. What it does not
     recognize (HTML, tables) stays as text; italic has no face and its marks are removed. Bold and
     italic open and close on the same line.
   - A word longer than the line is cut where the line ends (`text_begin` with `cut`), and a line
     of fenced code is a `solid` span, which breaks at no space and is cut the same way, so its
     height does not depend on where the spaces fall. A tab is room up to the next stop of its line.
-  - Each link goes through `Markdown_Style.resolve`, which is called when measuring and when
-    building and must give the same answer for the same destination in a frame. A `pill` link is not
+  - Each link goes through `Markdown_Style.resolve`, which must give the same answer for the same
+    destination in a frame. A `pill` link is not
     split: it passes whole to the next line and, if it is wider than a line, it is cut to it; a
     `live` one lights up whole under the pointer, on every line it is on, and its destination is
     what `markdown` returns the frame of the click. The text that `resolve` writes in `buffer`
@@ -405,10 +405,9 @@ belongs to the caller (`Anim_Player` or `Anim_State` with `anim_react`, which pl
 What an element looks like hovered, pressed, focused or selected is a state of its style, with its
 `transition`: an `Anim_Set` has no animation for a state.
 
-- `Width`, `Height`, `Value`, `Frame` and `Reveal` are properties that the tree applies to its node:
-  the size replaces that of the layout before building it and what surrounds the node follows it;
-  the others give the value of a control, the frame of an image and the visible part of a text
-  (typewriter).
+- An animation changes how a node is drawn, never its size: a size is what the layout computes, and
+  a node goes to a new one with the `transition` of its style. `Value`, `Frame` and `Reveal` give
+  the value of a control, the frame of an image and the visible part of a text (typewriter).
 - `anim_play` after another animation starts from the value that one left; the first of an element
   starts from its keys. In the tree, `clicked` arrives the frame after the click.
 - `animated(ctx, id, value)` draws what is built inside moved, scaled, rotated and tinted around the
@@ -529,6 +528,16 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
+- The same `transition` carries the rectangle of the node to a new layout (an item inserted above
+  it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the last
+  rectangle of each element that asks (`layout_transition_ask`, by id, up to
+  `LAYOUT_TRANSITIONS`), and the node goes from where it was drawn to where the layout puts it with
+  the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a parent
+  that moves or scrolls carries it without starting it; a size on its way is fixed for a second
+  layout, so what surrounds it follows. The first time, and on a surface of another size, it is
+  where the layout puts it at once. `Frame.transitioning` says the next frame differs, and
+  `engine/gui` keeps no screen of that context. Only tree nodes ask: what code builds, as the
+  editor, goes to its new place at once.
 - `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and
   the pointer do not see (`animated_begin` with `still`), so what lifts a button under the pointer
   does not lose it.
@@ -595,9 +604,9 @@ a camera.
 - The clipboard and the system cursor are not its own: they arrive through the context callbacks
   and through `ctx.cursor`, which says what shape the widget under the pointer asks for and the host
   shows (the editor, when its tools did not ask for another).
-- A text is built every frame: a long list of texts measures each one with `text_height` or
-  `markdown_height`, with the same measure and the same breaks, and builds only the visible ones
-  with `rows_begin`.
+- A text is built every frame: a long list of texts measures each one with `text_height`, with the
+  same measure and the same breaks, or keeps the height a Markdown row was built with, and builds
+  only the visible ones with `rows_begin`.
 - The text of a `markdown` link does not take bold or code from inside.
 - A `.ui` document names the `columns` of a Grid, not its tracks nor the spans of its children:
   those are set from code, and the rows of a `.ui` hold neither `row_span` nor row tracks.
