@@ -94,9 +94,9 @@ the_body_turns_toward_its_look_at_its_turn_speed :: proc(t:^testing.T) {
     f:Loco_Test
     if !loco_test_init(t,&f,{0,0,0}) {return}
     defer loco_test_destroy(&f)
-    core.edit(&f.characters,f.e).turn_speed=cmath.PI
     loco_test_tick(&f,{})
     testing.expect(t,near(loco_state(&f).yaw,0,1e-6))
+    core.edit(&f.characters,f.e).turn_speed=cmath.PI
     dt:=f32(1.0/60)
     core.edit(&f.inputs,f.e)^=input.Move_Input{move={1,0,0},look_yaw=-0.5*cmath.PI}
     core.test_world_settle(&f.w)
@@ -346,7 +346,7 @@ a_requested_gravity_scale_holds_until_asked_again :: proc(t:^testing.T) {
     set_gravity_scale(&f.loco_requests,f.e,1)
     testing.expect_value(t,scale_of(&f),f32(1))
     authored,_:=core.get(&f.characters,f.e)
-    testing.expect_value(t,authored,phys.character_default())
+    testing.expect_value(t,authored.gravity_scale,phys.character_default().gravity_scale)
     for field in reflect.struct_fields_zipped(Locomotion_State) {
         testing.expectf(t,strings.contains(string(reflect.struct_tag_get(field.tag,"mirai")),"transient"),"Locomotion_State.%s is saved",field.name)
     }

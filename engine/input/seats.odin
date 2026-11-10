@@ -46,7 +46,7 @@ Seat :: struct {
     slot:u8 `mirai:"max=3"`,
     peer:u64 `mirai:"transient,readonly,local"`,          // the connection of another end, on a server; on a client, any value but 0 for the seat of another player; 0: this machine, or a player away
     player:u64 `mirai:"readonly,hidden,local"`,           // server: the hash of the secret the player of another end presents, which gets the seat back; 0: this machine
-    body:core.Entity `mirai:"transient,readonly,local"`,  // the body it drives; none: none
+    body:core.Entity `mirai:"local"`,                     // the body it drives: a seat of a scene drives it from the start; none: none
     actions:Actions `mirai:"transient,hidden,local"`,
     held:Action_Mask `mirai:"transient,hidden,local"`,    // buttons its source holds
     rearm:Action_Mask `mirai:"transient,hidden,local"`,   // held buttons that wait for their release

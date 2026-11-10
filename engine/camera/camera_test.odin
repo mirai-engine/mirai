@@ -299,6 +299,7 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     core.add(&f.parents,base,core.Parent{entity=body})
     core.add(&f.seats,seat,input.Seat{body=body,actions={count=input.ACTION_CAPACITY}})
     core.test_world_settle(&f.w)
+    core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
     select:=proc(f:^Camera_Test) {
         camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
     }

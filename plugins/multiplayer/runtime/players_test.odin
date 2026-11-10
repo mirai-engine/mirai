@@ -178,9 +178,8 @@ a_client_drives_what_it_predicts :: proc(t:^testing.T) {
     requests:input.Seat_Requests
     defer delete(requests.queue.items)
     w.network={role=.Client}
-    local:=core.create(&w.entities)
-    core.add(&w.seats,local,input.Seat{slot=0})
-    predicted,shown:=core.create(&w.entities),core.create(&w.entities)
+    local,predicted,shown:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,local,input.Seat{slot=0,body=shown})
     core.add(&w.links,predicted,Net_Link{object=1})
     core.add(&w.replicas,predicted,core.Pose_Target{})
     core.add(&w.moves,predicted,input.Move_Input{})
@@ -188,7 +187,6 @@ a_client_drives_what_it_predicts :: proc(t:^testing.T) {
     core.add(&w.replicas,shown,core.Pose_Target{follow=true})
     core.add(&w.remotes,shown,core.Remote{})
     core.add(&w.moves,shown,input.Move_Input{})
-    core.edit(&w.seats,local).body=shown
     core.test_world_settle(&w)
     net_driving(core.read(&w.links),core.read(&w.replicas),core.read(&w.remotes),core.read(&w.moves),core.read(&w.seats),&requests,core.ref(&w.network))
     asked:=core.take(&requests.queue)
