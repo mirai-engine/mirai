@@ -21,30 +21,30 @@ import wire "mirai:net"
 // from the scene by its Id, copied from the scene of its section where that
 // section is not loaded here, made from the prefab it was spawned from, or
 // bare.
-// What the client is to a replica decides how it lives:
+// One rule says how a replica lives here (replica_wanted):
 //
-//   Interpolated  someone else's: its states go to an interpolation buffer and
-//                 it heads where the buffer says, every tick (core.Pose_Target, Shown)
-//   Predicted     the client's own, and what a simulation moves on the server:
-//                 the client simulates them at its own tick, ahead of the
-//                 server (core.Pose_Target, Simulated)
-//   Here          lent to this client, or what each end simulates: simulated
-//                 here and never corrected
+//   Here          lent to this client, or what each end simulates: never corrected
+//   Predicted     what this client drives, what a simulation moves on the server
+//                 while it is within reach of it (they shared a group of the
+//                 simulation in the last critical_ticks) and what the server
+//                 asks to predict always: simulated ahead of the server
+//   Interpolated  everything else: shown between the states of the server, in
+//                 the past, with pose, motion and components of one instant
+//
+// A replica that goes from one to the other does not jump: what the eye saw
+// stays as an error of its drawing that fades (wire.Smoothing), like the one a
+// correction leaves.
 //
 // Prediction keeps, per tick, a copy of the whole world as the tick found it,
 // the input of the tick and the pose each predicted replica had after it. A
-// state of the server is compared with what was predicted for its tick. What
-// differs and is within reach of what this client drives is critical: the
-// world goes back to the copy of the next tick, takes the states of the server
-// at their ticks and the fixed loop runs again up to the present. Anything
-// else that differs is moved in the present by the error found, without
-// simulating anything again.
+// state of the server is compared with what was predicted for its tick: when
+// it differs, the world goes back to the copy of the next tick, takes the
+// states of the server at their ticks and the fixed loop runs again up to the
+// present; when it cannot go back, the replica takes the state in the present.
 
 @(private) INTERPOLATION_DEPTH :: 32
 @(private) REPLICA_EXTRAPOLATION :: 0.1 // seconds an interpolated replica goes on with its last velocity when its states run out
-
-@(private)
-Action :: enum u8 {None,Blend,Rollback}
+@(private) SWITCH_HALF_LIFE :: 0.2 // seconds in which what a replica that changed timeline was drawn off by halves
 
 @(private)
 Mode :: enum u8 {Here,Interpolated,Predicted}
@@ -72,8 +72,15 @@ Record :: struct {
     bindings:u64,
 }
 
+// A state of the server in the interpolation buffer of a replica: what moves
+// it, then mask and available as of that state, then its words (words_per).
 @(private)
-Sample :: struct {pose:Pose,motion:Motion_State}
+Sample :: struct {
+    pose:Pose,
+    motion:Motion_State,
+    mask:u64,      // the fields that changed with this state
+    available:u64, // those known by then
+}
 
 @(private)
 Replica :: struct {
@@ -86,27 +93,31 @@ Replica :: struct {
     pending:bool,      // its newest state was not compared with the prediction yet
     adopted:bool,      // its entity was in the scene before the replica: it outlives it
     waits:bool,        // none of its sections is loaded here: it has no entity until one loads
-    corrected:bool,    // it was alive when the correction under way began
-    kept:bool,         // out of reach when the correction under way began: it stays as it was unless the correction reaches it
-    exact:bool,        // the correction under way gave it the state of the server at its tick
-    action:Action,     // what the comparison of this frame asks for
+    corrected:bool,    // it was predicted when the correction under way began
+    differs:bool,      // the comparison of this frame found it off, or it turns predicted: the world goes back for it
+    switched:bool,     // it changed timeline in this frame: what it was drawn off by fades slower
     touched_set,verified_set:bool,
     touched:u32,       // last tick it was within reach of what this client drives
     verified:u32,      // tick its newest state was last compared at
-    check:u32,         // tick of the comparison that asked for the action
-    slot:i32,          // of the interpolation buffer or of the prediction records; -1: none
+    check:u32,         // tick of the state that asked to go back
+    slot:i32,          // of the prediction records, while predicted; -1: none
+    samples:i32,       // of the interpolation buffer, for what this client neither drives nor holds; -1: none
     tick:u32,          // server tick of the newest state
     pose:Pose,         // the newest state; for a replica this client holds, the last one it sent
     motion:Motion_State,
     smoothing:wire.Smoothing,
-    drifting:bool,     // an error it was not simulated again for is being closed, tick by tick
-    drift:[3]f32,      // what of it is left: meters its position still moves
-    twist:quaternion128, // and what its rotation still turns
     before:Present,
     held_hash:u64,     // of the components last sent for a replica this client holds
     available:u64,
     references:u64,
     delay:f32,         // interpolated: ticks it is shown behind the display, for its states come further apart; negative until known
+    shown:u32,         // interpolated: the tick of the state of the server whose components its entity has; valid when shown_set
+    shown_set:bool,
+    retyped_set:bool,  // the server gave it another type (the fragments it replicates) after the tick retyped
+    retyped:u32,
+    type_before:wire.Type_Id, // the one it had until then: what a copy of the world older than that has of it
+    spawned_set:bool,  // its entity is one this client made in tick spawned, ahead of the server (Predicted_Spawn)
+    spawned:u32,
 }
 
 // The world as a tick found it, with what else the tick started from.
@@ -118,13 +129,25 @@ Frame :: struct {
     valid:bool,
     whole:bool,        // the world was replaced since: the next copy is whole
     interpolation:f64, // server tick the interpolated replicas were placed at
-    delays:[]Delay,    // by object index: ticks each interpolated replica was placed behind that one; -1 for the rest
+    shown:[]Shown,     // by object index: how each interpolated replica started the tick
     input:core.Input,
     content:u32, // host.content_generation the tick saw: it sees the same when it runs again
 }
 
+// What a tick started from of an interpolated replica, by object index: how
+// far behind the display it was placed (negative for the rest), and the
+// state of the server whose components its entity had.
 @(private)
-Delay :: struct {object:Object,ticks:f32}
+Shown :: struct {
+    object:Object,
+    ticks:f32,
+    state:u32,
+    state_set:bool,
+}
+
+// The actions the devices of a tick gave the seat a client drives with; tick is that tick plus one.
+@(private)
+Taken :: struct {tick:u32,actions:input.Remote_Actions}
 
 @(private)
 Client :: struct {
@@ -140,6 +163,8 @@ Client :: struct {
     authoritative:[]Authoritative,
     authoritative_words:[]u32,
     record_ticks:[]u32, // by tick modulo history: the tick of its row plus one
+    taken:[]Taken,      // with input_delay, by tick modulo its length: the actions the devices gave in each of the last ticks
+    fed_seat,delayed:input.Seat, // with input_delay: the seat it drives with as its devices left it, and as the game had it at the start of the tick
     record_free:[]i32,
     record_free_count:int,
     islands:[]u32,      // of what this client drives, by records_capture
@@ -147,6 +172,7 @@ Client :: struct {
     driven_count:int,
     newest:u32,         // last tick simulated
     any:bool,
+    sample:[]u8,        // one state for the interpolation buffer: a Sample and its words
     silence:u32,        // ticks without news after which a replica at rest is taken as unchanged on the server
     quiet:u32,          // newest tick of the server that old; valid when quiet_set
     quiet_set:bool,
@@ -170,9 +196,9 @@ Client :: struct {
     answered:bool,      // it told the server it is in that world
     player_told:bool,   // it told the server the player it is
     sections:[dynamic]base.Entity_Id, // the sections of the world it told the server it has
-    sections_seen:[2]u64, // the version and the layout of scene.Scene_Reference it told them for
+    sections_seen:core.Seen, // what of scene.Scene_Reference it told them for
     waiting:int,        // replicas none of whose sections is loaded here
-    sections_version:u64, // of scene.Scene_Reference, when the replicas last looked at their sections
+    sections_looked:core.Seen, // what of scene.Scene_Reference the replicas last looked at their sections for
 }
 
 @(private)
@@ -199,7 +225,17 @@ client_init :: proc(s:^Net_Session,w:core.World_Ref,allocator:runtime.Allocator)
     for &slot,index in c.record_free {slot=i32(d.predicted_capacity-1-index)}
     c.record_free_count=d.predicted_capacity
     if !history_make(s,w,c,wire.host_history(&s.host)) {return false}
-    return wire.interpolation_init(&c.interpolation,{state_size=size_of(Sample),capacity=d.max_objects,depth=INTERPOLATION_DEPTH,allocator=allocator})==.None
+    if c.sample,error=runtime.mem_alloc_bytes(sample_size(c),align_of(Sample),allocator);error!=nil {return false}
+    return wire.interpolation_init(&c.interpolation,{state_size=sample_size(c),capacity=d.max_objects,depth=INTERPOLATION_DEPTH,allocator=allocator})==.None
+}
+
+@(private)
+sample_size :: #force_inline proc "contextless" (c:^Client) -> int {return size_of(Sample)+c.words_per*size_of(u32)}
+
+// The words of a state of the interpolation buffer, after its Sample.
+@(private)
+sample_words :: #force_inline proc "contextless" (c:^Client,state:[]u8) -> []u32 {
+    return mem.slice_data_cast([]u32,state[size_of(Sample):][:c.words_per*size_of(u32)])
 }
 
 // The rings of a history of ticks, each with one slot more: the newest is the tick being
@@ -219,13 +255,14 @@ history_make :: proc(s:^Net_Session,w:core.World_Ref,c:^Client,ticks:int) -> (ok
         frame.world=data
         if !core.world_init(w.info,.World,data,allocator) {return false}
         if frame.marks,error=make([]core.Copy_Mark,core.copy_marks_count(w.info),allocator);error!=nil {return false}
-        if frame.delays,error=make([]Delay,d.max_objects,allocator);error!=nil {return false}
+        if frame.shown,error=make([]Shown,d.max_objects,allocator);error!=nil {return false}
     }
     if c.records,error=make([]Record,slots*d.predicted_capacity,allocator);error!=nil {return false}
     if c.record_words,error=make([]u32,slots*d.predicted_capacity*c.words_per,allocator);error!=nil {return false}
     if c.authoritative,error=make([]Authoritative,slots*d.predicted_capacity,allocator);error!=nil {return false}
     if c.authoritative_words,error=make([]u32,slots*d.predicted_capacity*c.words_per,allocator);error!=nil {return false}
     if c.record_ticks,error=make([]u32,slots,allocator);error!=nil {return false}
+    if c.taken,error=make([]Taken,slots+INPUT_DELAY_MAX,allocator);error!=nil {return false}
     if d.sync_test>0 {
         if c.sync_hashes,error=make([]u64,(slots+1)*(len(w.info.tables)+1),allocator);error!=nil {return false}
         if c.sync_fed,error=make([]u64,slots+1,allocator);error!=nil {return false}
@@ -242,13 +279,13 @@ history_free :: proc(s:^Net_Session,c:^Client) {
             mem.free(frame.world,allocator)
         }
         delete(frame.marks,allocator)
-        delete(frame.delays,allocator)
+        delete(frame.shown,allocator)
     }
     delete(c.frames,allocator)
-    delete(c.records,allocator);delete(c.record_ticks,allocator)
+    delete(c.records,allocator);delete(c.record_ticks,allocator);delete(c.taken,allocator)
     delete(c.record_words,allocator);delete(c.authoritative,allocator);delete(c.authoritative_words,allocator)
     delete(c.sync_hashes,allocator);delete(c.sync_fed,allocator)
-    c.frames,c.records,c.record_ticks,c.record_words,c.authoritative,c.authoritative_words,c.sync_hashes,c.sync_fed=nil,nil,nil,nil,nil,nil,nil,nil
+    c.frames,c.records,c.record_ticks,c.record_words,c.authoritative,c.authoritative_words,c.sync_hashes,c.sync_fed,c.taken=nil,nil,nil,nil,nil,nil,nil,nil,nil
     c.history=0
 }
 
@@ -280,7 +317,7 @@ client_destroy :: proc(s:^Net_Session) {
         mem.free(c.sync_world,allocator)
     }
     if c.interpolation.data!=nil {wire.interpolation_destroy(&c.interpolation)}
-    delete(c.replicas,allocator);delete(c.words,allocator);delete(c.record_free,allocator)
+    delete(c.replicas,allocator);delete(c.words,allocator);delete(c.record_free,allocator);delete(c.sample,allocator)
     delete(c.islands,allocator);delete(c.driven,allocator);delete(c.sections)
     c^={}
 }
@@ -317,7 +354,7 @@ replica_state :: proc(s:^Net_Session,r:^Replica,command:^wire.Command) {
 
 // The datagrams received since the last frame, as changes to the world and as events.
 @(private)
-client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,commands:[]wire.Command,events:^Net_Events) {
+client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,commands:[]wire.Command) {
     for &command in commands {
         #partial switch command.kind {
         case .Connected:
@@ -330,7 +367,11 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allo
         case .Disconnected:
             client_end(s,w,allocator,command.connection,command.reason,reason_text(command.reason,s.address,s.protocol.hash))
         case .Object_Created:
-            replica_create(s,w,assets,&command)
+            if r:=replica_of(s,command.object);r!=nil && command.retyped {
+                replica_retype(s,w,assets,r,&command)
+            } else {
+                replica_create(s,w,assets,&command)
+            }
         case .Object_Updated:
             replica_update(s,w,assets,&command)
         case .Object_Destroyed:
@@ -341,7 +382,7 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allo
                 replica_classify(s,w,r)
             }
         case .Event:
-            event_deliver(s,w,&command,events,nil)
+            event_deliver(s,w,&command,nil)
         }
     }
     core.world_settle(w)
@@ -356,10 +397,7 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allo
 replicas_sections :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
     c:=&s.client
     references:=core.world_table_of(w,scene.Scene_Reference)
-    if references==nil {return}
-    version:=core.version(references)
-    if version==c.sections_version {return}
-    c.sections_version=version
+    if references==nil || !core.touched(references,&c.sections_looked) {return}
     changed:=false
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 {continue}
@@ -448,7 +486,7 @@ replica_create :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comma
     r:=&c.replicas[index]
     // A slot handed out again without news of its end: what each end simulates, and ends by itself.
     if r.object!=0 {replica_destroy(s,w,r.object,r.simulation!=.Each?.End:.Forget)}
-    r^={object=command.object,type=command.type,role=command.role,simulation=command.simulation,slot=-1,entity=core.NONE,waits=true}
+    r^={object=command.object,type=command.type,role=command.role,simulation=command.simulation,slot=-1,samples=-1,entity=core.NONE,waits=true}
     c.waiting+=1
     wire.smoothing_init(&r.smoothing)
     c.replica_high=max(c.replica_high,index+1)
@@ -477,6 +515,11 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
     transforms:=core.world_table_of(w,core.Transform)
     e:=replica_adoptable(s,w,r)
     r.adopted=e!=core.NONE
+    // One this client made ahead of the server (predict_spawn) is the replica's own: it goes with it.
+    if spawn,predicted:=core.get(core.read(core.world_table_of(w,Predicted_Spawn)),e);predicted {
+        r.adopted,r.spawned,r.spawned_set=false,u32(spawn.tick),true
+        core.remove(core.world_table_of(w,Predicted_Spawn),e)
+    }
     if e==core.NONE {
         local:=core.Transform{r.pose.position,r.pose.rotation,r.pose.scale}
         // Where its section is not loaded, a copy of it from the scene of that section.
@@ -554,66 +597,77 @@ section_holding :: proc(w:core.World_Ref,e:core.Entity) -> bool {
     return found && reference.loaded!={} && reference.held
 }
 
+// A replica lets go of its row of prediction records and of its buffer of states.
 @(private)
 slot_release :: proc(s:^Net_Session,r:^Replica) {
     c:=&s.client
     if r.slot>=0 {
-        switch r.mode {
-        case .Here:
-        case .Interpolated:
-            wire.interpolation_remove(&c.interpolation,int(r.slot))
-        case .Predicted:
-            c.record_free[c.record_free_count]=r.slot
-            c.record_free_count+=1
-        }
+        c.record_free[c.record_free_count]=r.slot
+        c.record_free_count+=1
     }
-    r.slot=-1
+    if r.samples>=0 {wire.interpolation_remove(&c.interpolation,int(r.samples))}
+    r.slot,r.samples=-1,-1
 }
 
-// Decides how the client treats a replica from its simulation and its role:
-// what a simulation moves on the server is predicted.
+// How a replica lives here: the one rule of the header.
+@(private)
+replica_wanted :: proc(s:^Net_Session,r:^Replica) -> Mode {
+    c:=&s.client
+    switch {
+    case r.simulation==.Each || r.role==.Held: return .Here
+    case r.role==.Predicted || r.pose.predict || r.spawned_set: return .Predicted
+    case net_type(s,r.type).motion<0:          return .Interpolated
+    case c.any && r.touched_set && i32(c.newest-r.touched)<=i32(s.desc.critical_ticks): return .Predicted
+    }
+    return .Interpolated
+}
+
+// Gives a replica what its mode keeps: a row of prediction records while it
+// is predicted, a buffer of states while the server decides it and this
+// client does not drive it (also while it predicts it, to return to them),
+// and its components.
 @(private)
 replica_classify :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica) {
     c:=&s.client
-    mode:=Mode.Interpolated
-    switch {
-    case r.simulation==.Each || r.role==.Held:                  mode=.Here
-    case r.role==.Predicted:                                    mode=.Predicted
-    case r.simulation==.Server && net_type(s,r.type).motion>=0 && !s.desc.interpolate_others: mode=.Predicted
-    }
-    if mode==.Predicted && c.record_free_count==0 {
+    mode:=replica_wanted(s,r)
+    if mode==.Predicted && r.slot<0 && c.record_free_count==0 {
         core.report(s.problems,r.entity,"net.predicted","this replica is shown interpolated instead of predicted: the %d replicas of Net_Settings.predicted_capacity are predicted already; raise predicted_capacity",s.desc.predicted_capacity)
         mode=.Interpolated
     }
-    alive:=core.alive(core.world_entities(w),r.entity)
-    if mode==r.mode && (r.slot>=0 || mode==.Here) {
-        if alive {replica_components(s,w,r,mode)}
-        return
-    }
-    slot_release(s,r)
-    r.mode,r.pending=mode,false
-    switch mode {
-    case .Here:
-        // What the client holds starts from where it was being shown.
-        if local,has:=core.get(core.read(core.world_table_of(w,core.Transform)),r.entity);has {
-            r.pose.position,r.pose.rotation,r.pose.scale=local.position,local.rotation,local.scale
-        }
-    case .Interpolated:
-        r.delay=-1
+    if mode==.Here || r.role==.Predicted {
+        if r.samples>=0 {wire.interpolation_remove(&c.interpolation,int(r.samples))}
+        r.samples=-1
+    } else if r.samples<0 {
         if slot,ok:=wire.interpolation_add(&c.interpolation);ok {
-            r.slot=i32(slot)
-            replica_sample(s,r)
+            r.samples,r.delay,r.shown_set=i32(slot),-1,false
+            replica_sample(s,r,r.available)
         }
-    case .Predicted:
-        c.record_free_count-=1
-        r.slot=c.record_free[c.record_free_count]
-        authority_clear(s,r)
-        wire.smoothing_init(&r.smoothing)
-        r.verified_set,r.touched_set=false,false
-        command:=replica_command(s,r)
-        authoritative_capture(s,r,&command)
     }
-    if alive {replica_components(s,w,r,mode)}
+    if mode!=r.mode || mode==.Predicted && r.slot<0 {
+        if r.slot>=0 {
+            c.record_free[c.record_free_count]=r.slot
+            c.record_free_count+=1
+            r.slot=-1
+        }
+        r.mode,r.pending=mode,false
+        switch mode {
+        case .Here:
+            // What the client holds starts from where it was being shown.
+            if local,has:=core.get(core.read(core.world_table_of(w,core.Transform)),r.entity);has {
+                r.pose.position,r.pose.rotation,r.pose.scale=local.position,local.rotation,local.scale
+            }
+        case .Interpolated:
+            r.shown_set=false
+        case .Predicted:
+            c.record_free_count-=1
+            r.slot=c.record_free[c.record_free_count]
+            authority_clear(s,r)
+            r.verified_set=false
+            command:=replica_command(s,r)
+            authoritative_capture(s,r,&command)
+        }
+    }
+    if core.alive(core.world_entities(w),r.entity) {replica_components(s,w,r,mode)}
 }
 
 // The components the network gives a replica for its mode and its role:
@@ -641,21 +695,30 @@ replica_components :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,mode:Mode)
     if replica_turns(r) {replica_turn(w,r)}
 }
 
-// Without a replicated velocity a state takes the one from the state before:
-// what the replica goes on with when its states run out.
+// The newest state of a replica goes to its buffer, with the fields that
+// changed with it; a second one of a tick joins the first. Without a
+// replicated velocity a state takes the one from the state before: what the
+// replica goes on with when its states run out.
 @(private)
-replica_sample :: proc(s:^Net_Session,r:^Replica) {
+replica_sample :: proc(s:^Net_Session,r:^Replica,mask:u64) {
     c:=&s.client
-    sample:=Sample{r.pose,r.motion}
-    if net_type(s,r.type).motion<0 {
-        if before,tick,ok:=wire.interpolation_newest(&c.interpolation,int(r.slot));ok && i32(r.tick-tick)>0 {
-            last:=(^Sample)(raw_data(before))
-            seconds:=f32(r.tick-tick)/f32(s.host.desc.tick_rate)
-            sample.motion.linear=(r.pose.position-last.pose.position)/seconds
-            sample.motion.angular=rotation_rate(last.pose.rotation,r.pose.rotation,seconds)
-        }
+    if r.samples<0 {return}
+    sample:=(^Sample)(raw_data(c.sample))
+    sample^={pose=r.pose,motion=r.motion,mask=mask,available=r.available}
+    before,tick,kept:=wire.interpolation_newest(&c.interpolation,int(r.samples))
+    if kept && net_type(s,r.type).motion<0 && i32(r.tick-tick)>0 {
+        last:=(^Sample)(raw_data(before))
+        seconds:=f32(r.tick-tick)/f32(s.host.desc.tick_rate)
+        sample.motion.linear=(r.pose.position-last.pose.position)/seconds
+        sample.motion.angular=rotation_rate(last.pose.rotation,r.pose.rotation,seconds)
     }
-    wire.interpolation_push(&c.interpolation,int(r.slot),r.tick,mem.ptr_to_bytes(&sample))
+    copy(sample_words(c,c.sample),replica_words(s,r))
+    if kept && tick==r.tick {
+        sample.mask|=(^Sample)(raw_data(before)).mask
+        copy(before,c.sample)
+    } else {
+        wire.interpolation_push(&c.interpolation,int(r.samples),r.tick,c.sample)
+    }
 }
 
 // The angular velocity, in rad/s about world axes, that turns from into to in seconds.
@@ -677,15 +740,48 @@ replica_update :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comma
     replica_state(s,r,command)
     if r.pose.sections!=sections {replica_place(s,w,assets,r)}
     if r.waits {return}
+    replica_sample(s,r,command.mask)
     authoritative_capture(s,r,command)
     if core.alive(core.world_entities(w),r.entity) {
-        components_apply(s,w,r.entity,net_type(s,r.type),command,command.mask)
+        // What is shown in the past takes its components when the display reaches this state (replica_show).
+        if r.mode!=.Interpolated {components_apply(s,w,r.entity,net_type(s,r.type),command,command.mask)}
         if replica_turns(r) {replica_turn(w,r)}
     }
-    switch r.mode {
-    case .Here:
-    case .Interpolated: replica_sample(s,r)
-    case .Predicted:    r.pending=true
+    r.pending=r.mode==.Predicted
+}
+
+// The server gave the object another list of fragments, for its entity gained
+// or lost a replicated component: the replica and its entity go on. The entity
+// loses the components that left the list and takes the whole state of the
+// new one; what was kept of it, in the words of the type before, is dropped.
+@(private)
+replica_retype :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Replica,command:^wire.Command) {
+    c:=&s.client
+    after:=net_type(s,command.type)
+    if !after.fits {return}
+    if !r.waits && core.alive(core.world_entities(w),r.entity) {components_prune(w,r.entity,net_type(s,r.type),after)}
+    if r.samples>=0 {wire.interpolation_clear(&c.interpolation,int(r.samples))}
+    if r.slot>=0 {
+        authority_clear(s,r)
+        for index in 0..<c.history {c.records[index*s.desc.predicted_capacity+int(r.slot)].object=0}
+    }
+    r.type_before,r.retyped,r.retyped_set=r.type,c.newest,c.any
+    r.type,r.role,r.simulation,r.available,r.shown_set=command.type,command.role,command.simulation,0,false
+    replica_state(s,r,command)
+    replica_place(s,w,assets,r)
+    if r.waits {return}
+    if core.alive(core.world_entities(w),r.entity) {components_apply(s,w,r.entity,after,command,r.available)}
+    replica_classify(s,w,r)
+    replica_sample(s,r,r.available)
+    authoritative_capture(s,r,command)
+    r.pending=r.mode==.Predicted
+}
+
+// The components of a type that another one does not list leave the entity.
+@(private)
+components_prune :: proc(w:core.World_Ref,e:core.Entity,before,after:^Net_Type) {
+    for table in before.tables[:before.count] {
+        if !type_has(after,table) {core.raw_remove(core.world_table_at(w,&w.info.tables[table]),e)}
     }
 }
 
@@ -760,8 +856,8 @@ client_clock :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
     ran:=last.placed?max(f32(local-last.local),0):0
     c:=&s.client
     for &r in c.replicas[:c.replica_high] {
-        if r.object==0 || r.mode!=.Interpolated || r.slot<0 {continue}
-        spacing:=wire.interpolation_spacing(&c.interpolation,int(r.slot))
+        if r.object==0 || r.samples<0 {continue}
+        spacing:=wire.interpolation_spacing(&c.interpolation,int(r.samples))
         if spacing==0 {continue}
         wanted:=max(spacing-1,0)
         r.delay=r.delay<0?wanted:r.delay+clamp(wanted-r.delay,-ran*0.1,ran*0.1)
@@ -781,7 +877,7 @@ client_head :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,tick:u32,resim
         if c.any && tick!=c.newest+1 {history_reset(s)}
         started:=time.tick_now()
         frame.interpolation=wire.clock_interpolation_tick(&s.host,tick)
-        for &r,index in c.replicas[:c.replica_high] {frame.delays[index]={r.object,r.mode==.Interpolated?r.delay:-1}}
+        for &r,index in c.replicas[:c.replica_high] {frame.shown[index]={r.object,r.mode==.Interpolated?r.delay:-1,r.shown,r.shown_set}}
         frame.valid=false
         if frame_copy(w,frame) {
             frame.tick,frame.valid=tick,true
@@ -789,11 +885,10 @@ client_head :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,tick:u32,resim
             frame.content=host.content_generation(app)
         } else {snapshot_problem(s,tick)}
         s.stats.snapshot_seconds+=time.duration_seconds(time.tick_since(started))
-        drifts_apply(s,w,app.tick_dt)
     } else if frame.tick==tick && !c.sync_testing {
         if !frame_copy(w,frame) {frame.valid=false;snapshot_problem(s,tick)}
     }
-    client_place(s,w,frame.interpolation,frame.delays)
+    client_place(s,w,frame.interpolation,frame.shown,resimulating)
     client_inputs(s,w,tick)
     s.taken=s.placed
     if c.sync_fed!=nil {c.sync_fed[c.sync_testing?len(c.frames):int(tick)%len(c.frames)]=c.fed}
@@ -836,27 +931,64 @@ snapshot_problem :: proc(s:^Net_Session,tick:u32) {
 }
 
 // The interpolated replicas go where the buffer has them at a server tick,
-// each as far behind it as delays says it was when the tick ran first (by
-// object index); one that did not exist then, as far as its states come apart now.
+// each as far behind it as shown says it was when the tick ran first (by
+// object index); one that did not exist then, as far as its states come apart
+// now. A tick that runs again starts from the components it started from.
 @(private)
-client_place :: proc(s:^Net_Session,w:core.World_Ref,tick:f64,delays:[]Delay) {
+client_place :: proc(s:^Net_Session,w:core.World_Ref,tick:f64,shown:[]Shown,resimulating:bool) {
     c:=&s.client
     es:=core.world_entities(w)
     for &r,index in c.replicas[:c.replica_high] {
-        if r.object==0 || r.mode!=.Interpolated || !core.alive(es,r.entity) || core.entity_off(es,r.entity) {continue}
-        delay:=index<len(delays) && delays[index].object==r.object?delays[index].ticks:r.delay
-        if sample,ok:=replica_blend(s,&r,tick-f64(max(delay,0)));ok {
+        if r.object==0 || r.mode!=.Interpolated || r.samples<0 || !core.alive(es,r.entity) {continue}
+        delay:=r.delay
+        if was:=index<len(shown) && shown[index].object==r.object && shown[index].ticks>=0;was {
+            delay=shown[index].ticks
+            if resimulating {r.shown,r.shown_set=shown[index].state,shown[index].state_set}
+        } else if resimulating {
+            r.shown_set=false
+        }
+        at:=tick-f64(max(delay,0))
+        replica_show(s,w,&r,at)
+        if core.entity_off(es,r.entity) {continue}
+        if sample,ok:=replica_blend(s,&r,at);ok {
             feed_state(c,r.object,sample.pose,sample.motion)
             pose_follow(s,w,r.entity,net_type(s,r.type),sample.pose,sample.motion)
         }
     }
 }
 
+// The components and the Move_Input of an interpolated replica are those of
+// the newest state of the server the display reached, like its pose: its
+// entity takes the fields that changed in the states since the one it has, or
+// every one it knows when that one is not kept any more.
+@(private)
+replica_show :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,tick:f64) {
+    c:=&s.client
+    reached:[]u8
+    at:u32
+    mask:u64
+    whole:=!r.shown_set
+    for index in 0..<wire.interpolation_count(&c.interpolation,int(r.samples)) {
+        state,state_tick,_:=wire.interpolation_entry(&c.interpolation,int(r.samples),index)
+        if f64(state_tick)>tick {break}
+        if r.shown_set && i32(state_tick-r.shown)<=0 {continue}
+        whole||=index==0
+        reached,at=state,state_tick
+        mask|=(^Sample)(raw_data(state)).mask
+    }
+    if reached==nil {return}
+    command:=wire.Command{kind=.Object_Updated,type=r.type,object=r.object,tick=at,mask=whole?(^Sample)(raw_data(reached)).available:mask,words=sample_words(c,reached)}
+    feed(c,r.object);feed(c,at);feed(c,command.mask)
+    components_apply(s,w,r.entity,net_type(s,r.type),&command,command.mask)
+    driver_apply(s,w,r,&command)
+    r.shown,r.shown_set=at,true
+}
+
 // The state of a replica at a server tick: between the two around it, or past
 // the newest one with its velocity for a while and then still.
 @(private)
 replica_blend :: proc(s:^Net_Session,replica:^Replica,tick:f64) -> (out:Sample,ok:bool) {
-    from,to,alpha,status:=wire.interpolation_sample(&s.client.interpolation,int(replica.slot),tick)
+    from,to,alpha,status:=wire.interpolation_sample(&s.client.interpolation,int(replica.samples),tick)
     a:Sample
     switch status {
     case .Empty: return
@@ -889,18 +1021,20 @@ replica_blend :: proc(s:^Net_Session,replica:^Replica,tick:f64) -> (out:Sample,o
 }
 
 // Every frame, before the transforms are propagated: the error a correction
-// left on a predicted replica fades. The interpolated ones move in the ticks,
-// and the frame draws them between the last two like everything else.
+// or a change of timeline left on the drawing of a replica fades. The
+// interpolated ones move in the ticks, and the frame draws them between the
+// last two like everything else.
 @(private)
 client_frame :: proc(s:^Net_Session,w:core.World_Ref,dt:f32) {
     c:=&s.client
     es:=core.world_entities(w)
     offsets:=core.world_table_of(w,render.Draw_Offset)
     for &r in c.replicas[:c.replica_high] {
-        if r.object==0 || r.mode!=.Predicted || !core.alive(es,r.entity) {continue}
+        if r.object==0 || r.mode==.Here || !core.alive(es,r.entity) {continue}
         wire.smoothing_update(&r.smoothing,dt)
+        drawn,has:=core.get(core.read(offsets),r.entity)
+        if !has || drawn.offset==r.smoothing.offset && drawn.rotation==r.smoothing.rotation {continue}
         shown:=core.edit(offsets,r.entity)
-        if shown==nil {continue}
         shown.offset,shown.rotation=r.smoothing.offset,r.smoothing.rotation
     }
 }
@@ -921,7 +1055,9 @@ client_tail :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,outbox:^Net_Outbox)
         sync_hashes(s,w,c.sync_hashes[(int(tick)%s.client.history)*(len(w.info.tables)+1):][:len(w.info.tables)+1])
     }
     if s.status==.Connected {
-        packet:=Input_Packet{actions=driven_actions(s,w)}
+        // With an input delay, what the devices gave in this tick is the input of a later one.
+        delay:=u32(s.desc.input_delay)
+        packet:=Input_Packet{actions=delay>0?c.taken[int(tick)%len(c.taken)].actions:driven_actions(s,w),look_behind=u8(delay)}
         look:[2]f32
         look,packet.has_look=driven_look(w)
         packet.look_yaw,packet.look_pitch=mm.angle_wrap(look[0]),look[1]
@@ -930,10 +1066,10 @@ client_tail :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,outbox:^Net_Outbox)
         view,shown:=shown_tick(s,w,tick)
         if c.frame_view_ok {view=c.frame_view}
         if shown {
-            packet.view_behind=f32(clamp(f64(tick)-view,0,255))
+            packet.view_behind=f32(clamp(f64(tick+delay)-view,0,255))
             packet.has_view=true
         }
-        wire.input_submit(h,tick,&packet)
+        wire.input_submit(h,tick+delay,&packet)
     }
     client_upload(s,w)
     events_send(s,outbox)
@@ -988,8 +1124,6 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
         now,has_pose:=replica_now(s,w,&r)
         if !has_pose {continue}
         record^={object=r.object,position=now.position,rotation=now.rotation,scale=now.scale,linear=now.linear,angular=now.angular,center=motion.center}
-        // What is still being closed is part of what the server should have.
-        if r.drifting {record.position,record.rotation=record.position+r.drift,linalg.normalize(r.twist*record.rotation)}
         record_components(s,w,&r,tick)
     }
 }
@@ -1040,13 +1174,6 @@ replica_known :: proc(c:^Client,x:^Replica,tick:u32) -> bool {
     return i32(tick-x.tick)>0 && resting(&x.motion) && c.quiet_set && i32(c.quiet-tick)>=0
 }
 
-// Within reach of what this client drives around a tick: only a new
-// simulation says what a correction of it does to the rest.
-@(private)
-replica_critical :: proc(d:^Net_Settings,x:^Replica,tick:u32) -> bool {
-    return x.role==.Predicted || x.touched_set && i32(x.touched-tick)>=-i32(d.critical_ticks)
-}
-
 // What was predicted of a replica for a tick; kept is false when the tick left the history.
 @(private)
 record_of :: proc(c:^Client,d:^Net_Settings,x:^Replica,tick:u32) -> (record:^Record,kept:bool) {
@@ -1092,141 +1219,62 @@ replica_put :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,to:^Present) {
     pose_apply(s,w,x.entity,net_type(s,x.type),pose,motion,false,to.asleep)
 }
 
-// The records of a replica after a tick follow a change made to its present.
+// A predicted replica takes a state of the server in the present, when the
+// world cannot go back to its tick: it goes where the state had it, carried
+// by its velocity, or moves by what it was off at that tick. The drawing
+// closes the jump, and what it predicted until now is not compared again.
 @(private)
-records_shift :: proc(s:^Net_Session,x:^Replica,after:u32,dp,rate:[3]f32,dq:quaternion128,dv,dw:[3]f32,tick_dt:f32) {
-    c:=&s.client
-    for tick:=after+1;i32(c.newest-tick)>=0;tick+=1 {
-        record:=record_of(c,&s.desc,x,tick) or_continue
-        if record==nil {continue}
-        record.position+=dp+rate*(f32(tick-after)*tick_dt)
-        record.rotation=linalg.normalize(dq*record.rotation)
-        record.linear+=dv
-        record.angular+=dw
-    }
-}
-
-// A replica that differs from the server and is not simulated again. Its
-// velocity takes the error of velocity at once, and the error of pose, carried
-// to the present, is closed over the next ticks (drifts_apply): neither moves
-// it through what it touches. A body the server has at rest goes to that pose
-// and sleeps, and so does an error too large to close: past the distance at
-// which the smoothing of the drawing gives up.
-@(private)
-replica_adjust :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,tick_dt:f32) {
-    c:=&s.client
-    record,_:=record_of(c,&s.desc,x,x.check)
-    now,alive:=replica_now(s,w,x)
-    if record==nil || !alive {return}
-    t:=net_type(s,x.type)
-    body:=t.motion>=0
-    pose,motion:=x.pose,x.motion
-    if command,found:=authoritative_command(s,x,x.check,true);found {
-        wire.object_read(&s.host,&command,0,&pose,max(u64))
-        if t.motion>=0 {wire.object_read(&s.host,&command,t.motion,&motion,max(u64))}
-        components_apply(s,w,x.entity,t,&command,command.mask)
-    }
-    wanted:=now
-    wanted.scale=pose.scale
-    placed:=true
-    if body && resting(&motion) {
-        wanted={position=pose.position,rotation=pose.rotation,scale=pose.scale,asleep=true}
-        x.drifting=false
-        for tick:=x.check+1;i32(c.newest-tick)>=0;tick+=1 {
-            if later,_:=record_of(c,&s.desc,x,tick);later!=nil {later.position,later.rotation,later.linear,later.angular=wanted.position,wanted.rotation,{},{}}
-        }
-    } else {
-        dp:=pose.position-record.position
-        dv:=body?motion.linear-record.linear:{}
-        dw:=body?motion.angular-record.angular:{}
-        dq:=linalg.normalize(pose.rotation*conj(record.rotation))
-        error:=dp+dv*(f32(i32(c.newest-x.check))*tick_dt)
-        records_shift(s,x,x.check,dp,dv,dq,dv,dw,tick_dt)
-        wanted.linear+=dv
-        wanted.angular+=dw
-        wanted.asleep=false
-        if !x.drifting {x.drift,x.twist={},1}
-        x.drift+=error
-        x.twist=linalg.normalize(dq*x.twist)
-        x.drifting=true
-        placed=linalg.length2(x.drift)>x.smoothing.snap_distance*x.smoothing.snap_distance
-        if placed {
-            wanted.position+=x.drift
-            wanted.rotation=linalg.normalize(x.twist*now.rotation)
-            x.drifting=false
-        }
-    }
-    replica_put(s,w,x,&wanted)
-    for tick:=x.check+1;i32(c.newest-tick)>=0;tick+=1 {
-        if later,_:=record_of(c,&s.desc,x,tick);later!=nil {later.scale=wanted.scale}
-    }
-    core.world_settle(w)
-    if placed {
-        wire.smoothing_correct(&x.smoothing,now.position,wanted.position,now.rotation,wanted.rotation)
-        s.stats.placed+=1
-    }
-    s.stats.blended+=1
-}
-
-// A state of the server older than the history: there is no prediction of its
-// tick to compare it with (the client ran too far ahead of the server, as after
-// the server stopped and dropped ticks), but it is still the newest news of the
-// replica. Without it the replica would go on predicted with nothing to correct
-// it until the clock came back within the history, seconds later. It goes where
-// the server had it, carried to the present by its velocity, and the drawing
-// closes the jump by its smoothing.
-@(private)
-replica_overtaken :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,tick:u32,mask:u64,words:[]u32,tick_dt:f32) {
+replica_place_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,command:^wire.Command,tick_dt:f32) {
     c:=&s.client
     now,alive:=replica_now(s,w,x)
     if !alive {return}
     t:=net_type(s,x.type)
-    command:=wire.Command{kind=.Object_Updated,type=x.type,object=x.object,tick=tick,mask=mask,words=words}
     pose:Pose
     motion:Motion_State
-    wire.object_read(&s.host,&command,0,&pose,max(u64))
-    if t.motion>=0 {wire.object_read(&s.host,&command,t.motion,&motion,max(u64))}
-    components_apply(s,w,x.entity,t,&command,command.mask)
-    ahead:=f32(i32(c.newest-tick))*tick_dt
-    wanted:=Present{position=pose.position+motion.linear*ahead,rotation=pose.rotation,scale=pose.scale,linear=motion.linear,angular=motion.angular,asleep=resting(&motion)}
-    x.drifting=false
+    wire.object_read(&s.host,command,0,&pose,max(u64))
+    if t.motion>=0 {wire.object_read(&s.host,command,t.motion,&motion,max(u64))}
+    components_apply(s,w,x.entity,t,command,command.mask)
+    ahead:=f32(max(i32(c.newest-command.tick),0))*tick_dt
+    wanted:=Present{position=pose.position+motion.linear*ahead,rotation=pose.rotation,scale=pose.scale,linear=motion.linear,angular=motion.angular,asleep=t.motion>=0 && resting(&motion)}
+    // With what it predicted for that tick, the present keeps what it did since and moves by the error found there.
+    if record,_:=record_of(c,&s.desc,x,command.tick);record!=nil && !wanted.asleep {
+        off:=motion.linear-record.linear
+        wanted.position=now.position+pose.position-record.position+off*ahead
+        wanted.rotation=linalg.normalize(pose.rotation*conj(record.rotation)*now.rotation)
+        wanted.linear,wanted.angular=now.linear+off,now.angular+motion.angular-record.angular
+    }
     replica_put(s,w,x,&wanted)
     core.world_settle(w)
-    wire.smoothing_correct(&x.smoothing,now.position,wanted.position,now.rotation,wanted.rotation)
-    s.stats.overtaken+=1
+    for index in 0..<c.history {c.records[index*s.desc.predicted_capacity+int(x.slot)].object=0}
+    wire.smoothing_correct(&x.smoothing,now.position,wanted.position,now.rotation,wanted.rotation,x.switched?SWITCH_HALF_LIFE:0)
+    s.stats.placed+=1
 }
 
-// Every tick that runs the first time, before it: each error a replica is
-// closing moves it the share of what is left that a tick is of correction_time.
+// A replica goes to the timeline the rule gives it now; where it was drawn
+// stays as an error that fades. Turning predicted, it asks the world to go
+// back to its newest state (true), so that the ticks since run again with it
+// simulated, or takes that state now. Turning interpolated, it is put where
+// its states have it at the tick shown.
 @(private)
-drifts_apply :: proc(s:^Net_Session,w:core.World_Ref,tick_dt:f32) {
+replica_switch :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,tick_dt:f32) -> (back:bool) {
     c:=&s.client
-    share:=clamp(tick_dt/s.desc.correction_time,0,1)
-    moved:=false
-    for &x in c.replicas[:c.replica_high] {
-        if x.object==0 || !x.drifting {continue}
-        if x.mode!=.Predicted {
-            x.drifting=false
-            continue
-        }
-        now:=replica_now(s,w,&x) or_continue
-        step:=x.drift*share
-        turn:=linalg.normalize(mm.quat_nlerp(1,x.twist,share))
-        feed(c,x.object);feed(c,step);feed(c,turn)
-        wanted:=now
-        wanted.position+=step
-        wanted.rotation=linalg.normalize(turn*now.rotation)
-        replica_put(s,w,&x,&wanted)
-        x.drift-=step
-        x.twist=linalg.normalize(x.twist*conj(turn))
-        x.drifting=linalg.length2(x.drift)>DRIFT_DONE*DRIFT_DONE || abs(x.twist.w)<math.cos(f32(DRIFT_DONE)*0.5)
-        moved=true
+    was:=x.mode
+    before,alive:=replica_now(s,w,x)
+    replica_classify(s,w,x)
+    if x.mode==was || !alive {return false}
+    x.switched=true
+    s.stats.switched+=1
+    if x.mode==.Predicted {
+        if i32(c.newest-x.tick)>0 {return true}
+        command:=replica_command(s,x)
+        replica_place_now(s,w,x,&command,tick_dt)
+    } else if sample,ok:=replica_blend(s,x,wire.clock_interpolation_tick(&s.host,c.newest)-f64(max(x.delay,0)));ok {
+        pose_apply(s,w,x.entity,net_type(s,x.type),sample.pose,sample.motion,true)
+        core.world_settle(w)
+        wire.smoothing_correct(&x.smoothing,before.position,sample.pose.position,before.rotation,sample.pose.rotation,SWITCH_HALF_LIFE)
     }
-    if moved {core.world_settle(w)}
+    return false
 }
-
-// Meters, and radians, below which what is left of an error is dropped.
-@(private) DRIFT_DONE :: 0.0005
 
 // Start of a frame, after the commands: every state of the server is compared
 // with what was predicted for its tick, and what differs is corrected.
@@ -1251,53 +1299,51 @@ client_reconcile :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,dt:f32) {
     c.quiet=u32(max(heard-i64(c.silence),0))
     newest:=c.newest
     target:u32
-    wanted:=false
     compared,differing:=0,0
+    // A replica that differs, or turns predicted, asks the world to go back to tick at.
+    back :: proc(x:^Replica,at:u32,target:^u32,differing:^int) {
+        if !x.differs || i32(at-x.check)>0 {x.check=at}
+        x.differs=true
+        if differing^==0 || i32(at-target^)<0 {target^=at}
+        differing^+=1
+    }
     for &x in c.replicas[:c.replica_high] {
-        x.action,x.exact=.None,false
+        x.differs,x.switched=false,false
         if x.object==0 {continue}
         fresh:=x.pending
         x.pending=false
+        if x.mode!=.Here && !x.waits && replica_wanted(s,&x)!=x.mode {
+            if replica_switch(s,w,&x,app.tick_dt) {back(&x,x.tick,&target,&differing)}
+            continue
+        }
         if x.mode!=.Predicted || x.slot<0 {continue}
-        handled:=false
-        stale:=false
-        stale_tick:u32
-        stale_mask:u64
-        stale_words:[]u32
-        inside:=false
+        handled,inside:=false,false
+        stale:wire.Command
         for index in 0..<c.history {
             authority,words:=authority_slot(s,&x,index)
             if authority.object!=x.object || authority.checked || i32(authority.tick-newest)>0 {continue}
             authority.checked=true
             handled=true
+            command:=wire.Command{kind=.Object_Updated,type=x.type,object=x.object,tick=authority.tick,mask=authority.available,words=words}
             record,kept:=record_of(c,d,&x,authority.tick)
             if record==nil {
                 if !kept {
                     s.stats.unverified+=1
-                    if !stale || i32(authority.tick-stale_tick)>0 {stale,stale_tick,stale_mask,stale_words=true,authority.tick,authority.available,words}
+                    if stale.words==nil || i32(authority.tick-stale.tick)>0 {stale=command}
                 }
                 continue
             }
             inside=true
-            command:=wire.Command{kind=.Object_Updated,type=x.type,object=x.object,tick=authority.tick,mask=authority.available,words=words}
             pose:Pose
             motion:Motion_State
             wire.object_read(&s.host,&command,0,&pose,max(u64))
             t:=net_type(s,x.type)
             if t.motion>=0 {wire.object_read(&s.host,&command,t.motion,&motion,max(u64))}
             compared+=1
-            if !record_differs(d,t.motion>=0,record,&pose,&motion) && !record_components_differ(s,&x,authority.tick,&command) {continue}
-            differing+=1
-            if x.action==.None || i32(authority.tick-x.check)>0 {x.check=authority.tick}
-            if !replica_critical(d,&x,authority.tick) {
-                if x.action==.None {x.action=.Blend}
-                continue
-            }
-            x.action=.Rollback
-            if !wanted || i32(authority.tick-target)<0 {target=authority.tick}
-            wanted=true
+            if record_differs(d,t.motion>=0,record,&pose,&motion) || record_components_differ(s,&x,authority.tick,&command) {back(&x,authority.tick,&target,&differing)}
         }
-        if stale && !inside {replica_overtaken(s,w,&x,stale_tick,stale_mask,stale_words,app.tick_dt)}
+        // A state older than the history is still the newest news of the replica: it goes where that state has it.
+        if stale.words!=nil && !inside {replica_place_now(s,w,&x,&stale,app.tick_dt)}
         if handled || fresh {continue}
         tick:=c.quiet
         if !c.quiet_set || !resting(&x.motion) || i32(tick-x.tick)<=0 || i32(tick-newest)>0 {continue}
@@ -1307,25 +1353,19 @@ client_reconcile :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,dt:f32) {
         x.verified,x.verified_set=tick,true
         compared+=1
         command:=replica_command(s,&x)
-        if !record_differs(d,net_type(s,x.type).motion>=0,record,&x.pose,&x.motion) && !record_components_differ(s,&x,tick,&command) {continue}
-        differing+=1
-        x.check=tick
-        if !replica_critical(d,&x,tick) {
-            x.action=.Blend
-            continue
-        }
-        x.action=.Rollback
-        if !wanted || i32(tick-target)<0 {target=tick}
-        wanted=true
+        if record_differs(d,net_type(s,x.type).motion>=0,record,&x.pose,&x.motion) || record_components_differ(s,&x,tick,&command) {back(&x,tick,&target,&differing)}
     }
     if compared>0 && differing==0 {s.stats.confirmed+=1}
     if differing==0 {return}
     started:=time.tick_now()
-    if wanted {
-        if !client_rewind(s,w,app,target) {s.stats.deferred+=1}
-    }
-    for &x in c.replicas[:c.replica_high] {
-        if x.object!=0 && x.action!=.None && !x.exact {replica_adjust(s,w,&x,app.tick_dt)}
+    if !client_rewind(s,w,app,target) {
+        s.stats.deferred+=1
+        for &x in c.replicas[:c.replica_high] {
+            if x.object==0 || !x.differs || x.mode!=.Predicted {continue}
+            command,found:=authoritative_command(s,&x,x.check,false)
+            if !found {command=replica_command(s,&x)}
+            replica_place_now(s,w,&x,&command,app.tick_dt)
+        }
     }
     s.stats.resimulate_seconds+=time.duration_seconds(time.tick_since(started))
 }
@@ -1344,7 +1384,7 @@ client_rewinds :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,ticks:[]u32
         earliest,found=tick,true
     }
     if !found {return}
-    for &x in c.replicas[:c.replica_high] {x.action,x.exact=.None,false}
+    for &x in c.replicas[:c.replica_high] {x.switched=false}
     started:=time.tick_now()
     if client_rewind(s,w,app,earliest-1) {s.stats.rewound+=1}
     s.stats.resimulate_seconds+=time.duration_seconds(time.tick_since(started))
@@ -1365,7 +1405,6 @@ client_rewind :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32) 
 // server said of it and of the ticks after it, and the fixed loop runs again
 // up to the present: its clock comes with the copy and the ticks advance it
 // to where it was, and the frame (core.Frame_Time) is not part of the copy.
-// What was out of reach of this client before and after stays as it was.
 // False when a tick from there on is out of the history.
 @(private)
 client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32) -> bool {
@@ -1384,7 +1423,6 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         x.corrected=false
         if x.object==0 || x.mode!=.Predicted {continue}
         x.before,x.corrected=replica_now(s,w,&x)
-        x.kept=x.action!=.Rollback && !replica_critical(d,&x,target)
     }
     present_input:core.Input
     if input!=nil {present_input=input^}
@@ -1398,12 +1436,8 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         if &frame!=restored {core.copy_marks_follow(w,restored.marks,frame.marks)}
     }
     core.copy_marks_follow(w,restored.marks,restored.marks)
-    // What is simulated again leaves the error it was closing to the correction.
-    for &x in c.replicas[:c.replica_high] {
-        if x.corrected && !x.kept {x.drifting=false}
-    }
     clock.resimulating=true
-    replicas_relink(s,w,app.assets)
+    replicas_relink(s,w,app.assets,start)
     driven_list(c)
     authoritative_apply(s,w,target,true)
     for tick:=start;i32(c.newest-tick)>=0;tick+=1 {
@@ -1420,11 +1454,18 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         s.stats.resimulated+=1
     }
     clock.resimulating=false
+    outbox_follow(w)
     if input!=nil {input^=present_input}
     for &x in c.replicas[:c.replica_high] {
-        if x.object==0 || x.mode==.Predicted || !core.alive(core.world_entities(w),x.entity) {continue}
-        command:=replica_command(s,&x)
-        components_apply(s,w,x.entity,net_type(s,x.type),&command,x.available)
+        if x.object==0 || x.waits {continue}
+        // The ticks that ran again did not make the entity this client had made ahead of the server.
+        if x.entity==core.NONE {
+            replica_spawn(s,w,app.assets,&x)
+            replica_components(s,w,&x,x.mode)
+        } else if x.mode==.Here && core.alive(core.world_entities(w),x.entity) {
+            command:=replica_command(s,&x)
+            components_apply(s,w,x.entity,net_type(s,x.type),&command,x.available)
+        }
     }
     core.world_settle(w)
     references_refresh(s,w)
@@ -1434,13 +1475,7 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
     for &x in c.replicas[:c.replica_high] {
         if !x.corrected || x.object==0 || x.mode!=.Predicted {continue}
         after:=replica_now(s,w,&x) or_continue
-        if x.kept && !x.exact && !replica_critical(d,&x,c.newest) {
-            replica_put(s,w,&x,&x.before)
-            dq:=linalg.normalize(x.before.rotation*conj(after.rotation))
-            records_shift(s,&x,target,x.before.position-after.position,{},dq,x.before.linear-after.linear,x.before.angular-after.angular,app.tick_dt)
-        } else {
-            wire.smoothing_correct(&x.smoothing,x.before.position,after.position,x.before.rotation,after.rotation)
-        }
+        wire.smoothing_correct(&x.smoothing,x.before.position,after.position,x.before.rotation,after.rotation,x.switched?SWITCH_HALF_LIFE:0)
     }
     return true
 }
@@ -1480,6 +1515,7 @@ client_sync_test :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App) {
         if input!=nil {input^=frame.input}
         host.app_tick_replay(app,w.data,frame.content)
         clock.resimulating=false
+        outbox_follow(w)
         s.stats.sync_tested+=1
         // The network gave the tick something else: a state of the server that came after it ran.
         if c.sync_fed[c.history]!=c.sync_fed[int(tick)%c.history] {
@@ -1537,10 +1573,12 @@ sync_problem :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,table:int,last:boo
     core.report(s.problems,e,"net.sync_test","tick %d leaves %s different when it runs again from the same world and input (Net_Settings.sync_test): %s",tick,info.name,WHY)
 }
 
-// After the world was replaced by an older copy: the replicas that did not
-// exist then are made again, and the entities of replicas that ended since are destroyed.
+// After the world was replaced by the copy of tick start: the replicas that
+// did not exist then are made again, and the entities of replicas that ended
+// since are destroyed. An entity this client made ahead of the server in a
+// tick that runs again is made by that tick, and taken then (spawns_settle).
 @(private)
-replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
+replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,start:u32) {
     c:=&s.client
     es:=core.world_entities(w)
     links:=core.world_table_of(w,Net_Link)
@@ -1559,10 +1597,15 @@ replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
     }
     core.world_settle(w)
     for &r in c.replicas[:c.replica_high] {
-        if r.object==0 {continue}
+        if r.object==0 || r.waits || r.entity==core.NONE && r.spawned_set && i32(r.spawned-start)>=0 {continue}
         if r.entity==core.NONE {
             replica_spawn(s,w,assets,&r)
             s.stats.spawned-=1
+        } else if r.retyped_set && i32(r.retyped-start)>=0 {
+            // The copy has the components of the type the replica had then.
+            command:=replica_command(s,&r)
+            components_prune(w,r.entity,net_type(s,r.type_before),net_type(s,r.type))
+            components_apply(s,w,r.entity,net_type(s,r.type),&command,r.available)
         }
         // The copy has the mode the replica had then; it may have changed since.
         replica_components(s,w,&r,r.mode)
@@ -1574,14 +1617,14 @@ replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets) {
 // the place of the one the replica made when it arrived first. The replica
 // stays, with its object, and the entity of the replica is destroyed.
 @(private)
-replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.Entity) -> bool {
-    if !s.host_ready || s.mode!=.Client || id==0 {return false}
+replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.Entity) -> ^Replica {
+    if !s.host_ready || s.mode!=.Client || id==0 {return nil}
     es:=core.world_entities(w)
     links:=core.world_table_of(w,Net_Link)
-    if core.has(links,e) {return false}
+    if core.has(links,e) {return nil}
     for &r in s.client.replicas[:s.client.replica_high] {
         if r.object==0 || r.waits || r.pose.id!=id {continue}
-        if r.entity==e {return true}
+        if r.entity==e {return &r}
         if core.alive(es,r.entity) {core.world_destroy_tree(w,r.entity)}
         r.entity,r.adopted=e,true
         replicate:=REPLICATE_DEFAULT
@@ -1590,9 +1633,29 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
         core.add(links,e,Net_Link{object=r.object})
         wire.object_bind(&s.host,r.object,u64(e))
         replica_components(s,w,&r,r.mode)
-        return true
+        return &r
     }
-    return false
+    return nil
+}
+
+// Client, after a tick: an entity this client made ahead of the server
+// (Predicted_Spawn) takes the place of the entity of the replica the server
+// sent for it; one no replica took within the history was not made by the
+// server, and goes.
+@(private)
+spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
+    spawns:=core.world_table_of(w,Predicted_Spawn)
+    if spawns==nil {return}
+    for row in 0..<core.count(spawns) {
+        e,spawn:=core.entity_at(spawns,row),spawns.values[row]
+        if r:=replica_adopt(s,w,core.id_of(core.read(core.world_table_of(w,core.Id)),e),e);r!=nil {
+            r.adopted,r.spawned,r.spawned_set=false,u32(spawn.tick),true
+            core.remove(spawns,e)
+            replica_classify(s,w,r)
+        } else if !time.resimulating && time.tick>spawn.tick+u64(s.client.history) {
+            core.world_destroy_tree(w,e)
+        }
+    }
 }
 
 // Client: the look of the Move_Input of the body the seat of this machine
@@ -1651,7 +1714,7 @@ shown_tick :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) -> (view:f64,ok:boo
     sum,count:=f64(0),0
     for &r,index in c.replicas[:c.replica_high] {
         if r.object==0 || r.mode!=.Interpolated || !core.has(marked,r.entity) {continue}
-        delay:=frame.delays[index]
+        delay:=frame.shown[index]
         if delay.object!=r.object || delay.ticks<0 {continue}
         sum+=f64(delay.ticks)
         count+=1

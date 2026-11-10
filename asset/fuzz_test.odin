@@ -99,7 +99,6 @@ fuzz_attempt :: proc(f:^Fuzz,data:[]u8) {
         if view,error:=scene_view(&a,f.types);error==.None {_=scene_view_check(view)}
     case KIND_ANIMATION: animation_view(&a,f.types)
     case KIND_SKELETON:  skeleton_view(&a,f.types)
-    case KIND_FRACTURE:  fracture_view(&a,f.types)
     case KIND_SOUND:     sound_view(&a,f.types)
     case KIND_SOUND_SET: sound_set_view(&a,f.types)
     case KIND_UI:        ui_check(&a,f.types)
@@ -203,12 +202,6 @@ damaged_fonts_texts_and_prompts_go_through_every_command :: proc(t:^testing.T) {
     texts:=fmt.aprintf("%s/menu.strings",folder);defer delete(texts)
     testing.expect_value(t,strings_save(texts,&types,{id={0x57,1},languages=languages[:],keys=keys[:],entries=entries[:],text=transmute([]u8)string("JugarPlaySalir")}),Error.None)
     for file in ([]string{font,texts,#directory+"/../plugins/prompts_kenney/assets/kenney.prompts"}) {fuzz_file(t,&types,file,800)}
-}
-
-@(test)
-damaged_authored_fractures_go_through_every_command :: proc(t:^testing.T) {
-    types:Types;types_init(&types);defer types_destroy(&types)
-    fuzz_file(t,&types,DEMO+"physics_gallery/hierarchy.fracture",1200)
 }
 
 @(test)

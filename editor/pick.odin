@@ -1,24 +1,19 @@
 package editor
 
 import "core:math/linalg"
-import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
-import "mirai:std/base"
-import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:std/spatial"
 import "mirai:ui"
 
 // What a point or a rectangle of the window reaches in the scene: the discs
 // of the entities without a body first, since they are drawn over it, then
 // the nearest surface. A ray tests the box of each mesh, from what the assets
-// know of it, before it reads anything; it goes into the space of each mesh
-// whose box it crosses and through the BVH of its triangles. The triangles of
-// a mesh are read the first time something needs them and its BVH is made the
-// first time a ray reaches its box; both stay until the mesh changes: a
-// generated one is released, the file of one changes.
+// know of it, before the renderer meets the mesh as it draws it
+// (render.mesh_ray): through its software tree, or one it makes the first
+// time a ray reaches the box while rays are traced by hardware, kept until
+// the mesh goes.
 
 PICK_REACH :: f32(1e5)
 
@@ -31,132 +26,19 @@ Pick :: struct {
     instance:int,               // and that instance in it
 }
 
+// The mesh the renderer draws for a Mesh_Renderer: one that cannot be loaded
+// is the stand-in drawn in its place.
 @(private)
-Pick_Mesh :: struct {
-    id:base.Asset_Id,
-    shape:erender.Shape,
-    positions:[dynamic][3]f32,
-    indices:[dynamic]u32,
-    bvh:spatial.Bvh,
-    low,high:[3]f32,
-    generated:bool,
-    built:bool,   // the BVH was made
-    stamp:[2]i64, // size and time of the file it was read from
+pick_mesh :: proc(a:^host.Assets,mesh:erender.Mesh_Renderer) -> ^host.Assets_Mesh {
+    if a==nil {return nil}
+    return mesh.mesh!={}?host.assets_mesh(a,mesh.mesh):host.assets_shape(a,mesh.shape)
 }
 
-@(storage)
-Picker :: struct {
-    meshes:[dynamic]Pick_Mesh,
-    revision:u64, // of the assets when the meshes were last compared with them
-    structure:u64,
-    loads:u64,    // meshes whose triangles were read
-    builds:u64,   // BVHs made
-}
-
-picker_clear :: proc(p:^Picker) {
-    for &mesh in p.meshes {pick_mesh_free(&mesh)}
-    clear(&p.meshes)
-}
-
-@(private)
-pick_mesh_free :: proc(mesh:^Pick_Mesh) {
-    spatial.bvh_destroy(&mesh.bvh)
-    delete(mesh.positions);delete(mesh.indices)
-}
-
-@(private)
-picker_stamp :: proc(a:^host.Assets,id:base.Asset_Id) -> [2]i64 {
-    file,found:=asset.registry_find(&a.registry,id)
-    return found?{file.size,file.time}:{}
-}
-
-// Once the assets changed, the meshes whose geometry is no longer what was
-// read go: a generated one that was released, one whose file changed. What
-// else changed (textures, materials, other meshes) keeps the rest.
-@(private)
-picker_sync :: proc(p:^Picker,a:^host.Assets) {
-    if a==nil || a.revision==p.revision && a.structure==p.structure {return}
-    p.revision,p.structure=a.revision,a.structure
-    for i:=len(p.meshes)-1;i>=0;i-=1 {
-        mesh:=&p.meshes[i]
-        if mesh.id=={} {continue}
-        if mesh.generated?host.assets_mesh_generated(a,mesh.id):picker_stamp(a,mesh.id)==mesh.stamp {continue}
-        pick_mesh_free(mesh)
-        unordered_remove(&p.meshes,i)
-    }
-}
-
-// The geometry the renderer draws for a Mesh_Renderer. A mesh that cannot be
-// read counts as the cube drawn in its place.
-@(private)
-picker_mesh :: proc(p:^Picker,a:^host.Assets,mesh:erender.Mesh_Renderer) -> ^Pick_Mesh {
-    picker_sync(p,a)
-    for &m in p.meshes {
-        if m.id==mesh.mesh && (mesh.mesh!={} || m.shape==mesh.shape) {return len(m.indices)>0?&m:(mesh.mesh!={}?picker_mesh(p,a,{shape=.Cube}):nil)}
-    }
-    append(&p.meshes,Pick_Mesh{id=mesh.mesh,shape=mesh.shape,generated=host.assets_mesh_generated(a,mesh.mesh)})
-    m:=&p.meshes[len(p.meshes)-1]
-    if a!=nil && mesh.mesh!={} && !m.generated {m.stamp=picker_stamp(a,mesh.mesh)}
-    buffer:geom.Mesh_Buffer
-    geom.mesh_buffer_init(&buffer,context.temp_allocator)
-    if host.assets_geometry(a,mesh.mesh,mesh.shape,&buffer) && len(buffer.indices)>=3 {
-        append(&m.positions,..buffer.positions[:])
-        append(&m.indices,..buffer.indices[:])
-        m.low,m.high=geom.mesh_bounds(m.positions[:])
-        p.loads+=1
-    }
-    if len(m.indices)==0 {return mesh.mesh!={}?picker_mesh(p,a,{shape=.Cube}):nil}
-    return m
-}
-
-// The box of what a Mesh_Renderer shows, in the space of its mesh: the one
-// the assets keep for a mesh they loaded from a file, without reading its
-// triangles, or that of its geometry.
-@(private)
-picker_bounds :: proc(p:^Picker,a:^host.Assets,mesh:erender.Mesh_Renderer) -> (low,high:[3]f32,ok:bool) {
-    picker_sync(p,a)
-    if mesh.mesh!={} && a!=nil {
-        held:=false
-        for &m in p.meshes {if m.id==mesh.mesh {held=true;break}}
-        if !held {
-            if low,high,known:=host.assets_mesh_bounds(a,mesh.mesh);known {return low,high,true}
-        }
-    }
-    m:=picker_mesh(p,a,mesh)
+// The box of what a Mesh_Renderer shows, in the space of its mesh.
+mesh_bounds :: proc(a:^host.Assets,mesh:erender.Mesh_Renderer) -> (low,high:[3]f32,ok:bool) {
+    m:=pick_mesh(a,mesh)
     if m==nil {return}
-    return m.low,m.high,true
-}
-
-// The BVH of a mesh, made the first time a ray reaches its box.
-@(private)
-picker_bvh :: proc(p:^Picker,mesh:^Pick_Mesh) -> bool {
-    if !mesh.built {
-        mesh.built=true
-        if spatial.bvh_build_triangles(&mesh.bvh,mesh.positions[:],mesh.indices[:],{allocator=context.allocator}) {p.builds+=1}
-    }
-    return len(mesh.bvh.nodes)>0
-}
-
-// Nearest triangle the ray crosses, in the space of the mesh.
-@(private)
-pick_mesh_ray :: proc(p:^Picker,mesh:^Pick_Mesh,ray:mm.Ray) -> (t:f32,normal:[3]f32,hit:bool) {
-    if _,_,inside:=mm.ray_aabb(ray,{mesh.low-1e-4,mesh.high+1e-4});!inside {return}
-    if !picker_bvh(p,mesh) {return}
-    t=PICK_REACH
-    walk:=spatial.bvh_ray(&mesh.bvh,ray.origin,ray.direction*PICK_REACH,1)
-    for {
-        primitives,more:=spatial.bvh_ray_next(&walk)
-        if !more {break}
-        for primitive in primitives {
-            triangle:=mm.Triangle{mesh.positions[mesh.indices[3*primitive]],mesh.positions[mesh.indices[3*primitive+1]],mesh.positions[mesh.indices[3*primitive+2]]}
-            if distance,_,crossed:=mm.ray_triangle(ray,triangle);crossed && distance<t {
-                t,hit=distance,true
-                normal=linalg.cross(triangle.b-triangle.a,triangle.c-triangle.a)
-                walk.max_fraction=distance/PICK_REACH
-            }
-        }
-    }
-    return
+    return m.bounds_min,m.bounds_max,true
 }
 
 // One entity with a Transform as the viewport sees it.
@@ -315,28 +197,21 @@ picks_insert :: proc(out:[]Pick,count:int,hit:Pick) -> int {
 @(private)
 pick_item :: proc(s:^Session,w:core.World_Ref,item:Scene_Item,ray:mm.Ray,nearest:f32) -> (hit:Pick,found:bool) {
     if !item.body {return}
-    low,high,known:=picker_bounds(s.picker,s.app.assets,item.mesh)
-    if !known {return}
+    mesh:=pick_mesh(s.app.assets,item.mesh)
+    if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {return}
     // Most entities are far from the ray: the sphere around the box says so without inverting.
+    low,high:=mesh.bounds_min,mesh.bounds_max
     middle,half:=(low+high)*0.5,(high-low)*0.5
     center:=mm.transform_point(item.world,middle)
     radius:=linalg.length(half*linalg.abs(item.world.scale))+1e-3
     to:=center-ray.origin
     along:=linalg.dot(to,ray.direction)
     if along< -radius || along-radius>nearest || linalg.dot(to,to)-along*along>radius*radius {return}
-    matrix_world:=mm.transform_matrix(item.world)
-    inverse:=linalg.inverse(matrix_world)
-    origin:=inverse*[4]f32{ray.origin.x,ray.origin.y,ray.origin.z,1}
-    direction:=inverse*[4]f32{ray.direction.x,ray.direction.y,ray.direction.z,0}
-    local:=mm.Ray{origin.xyz,direction.xyz}
-    if !finite3(local.origin) || !finite3(local.direction) {return}
-    if _,_,inside:=mm.ray_aabb(local,{low-1e-4,high+1e-4});!inside {return}
-    mesh:=picker_mesh(s.picker,s.app.assets,item.mesh)
-    if mesh==nil {return}
-    t,local_normal,crossed:=pick_mesh_ray(s.picker,mesh,local)
+    renderer:=s.app.renderer
+    // A tree of the mesh while rays are traced by hardware: the renderer keeps none of its own.
+    erender.mesh_ray_prepare(renderer,mesh.handle)
+    t,_,normal,crossed:=erender.mesh_ray(renderer,mesh.handle,mm.transform_matrix(item.world),ray.origin,ray.direction,nearest)
     if !crossed || t>=nearest {return}
-    normal:=linalg.normalize0((linalg.transpose(inverse)*[4]f32{local_normal.x,local_normal.y,local_normal.z,0}).xyz)
-    if linalg.dot(normal,ray.direction)>0 {normal=-normal}
     return {entity=entity_author(w,item.entity),distance=t,position=ray.origin+ray.direction*t,normal=normal},true
 }
 
@@ -349,7 +224,7 @@ item_in_rect :: proc(s:^Session,w:core.World_Ref,item:Scene_Item,rect:ui.Rect) -
     pivot,front:=viewport_screen(v,item.world.position)
     if front && ui.rect_contains(rect,pivot) {return true,true}
     if !item.body {return false,front}
-    low,high,known:=picker_bounds(s.picker,s.app.assets,item.mesh)
+    low,high,known:=mesh_bounds(s.app.assets,item.mesh)
     if !known {return}
     bounds,projected:=project_box(v,mm.transform_matrix(item.world),low,high)
     if !projected {return}
@@ -387,7 +262,7 @@ entities_bounds :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> (
         if !selected {continue}
         box:mm.Aabb
         if item.body {
-            if mesh_low,mesh_high,known:=picker_bounds(s.picker,s.app.assets,item.mesh);known {
+            if mesh_low,mesh_high,known:=mesh_bounds(s.app.assets,item.mesh);known {
                 box=mm.aabb_transform({mesh_low,mesh_high},mm.transform_matrix(item.world))
             } else {
                 box={item.world.position-INDICATOR_EXTENT,item.world.position+INDICATOR_EXTENT}

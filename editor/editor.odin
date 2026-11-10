@@ -222,7 +222,6 @@ Session :: struct {
     gui:^Editor_Ui,
     console:^Console,
     build:^Build_State,
-    picker:^Picker,
     outliner:^Outliner,
     inspector:^Inspector,
     content:^Content,
@@ -1105,7 +1104,6 @@ session_bind :: proc(s:^Session) -> bool {
     s.gui=core.world_storage_of(ref,Editor_Ui)
     s.console=core.world_storage_of(ref,Console)
     s.build=core.world_storage_of(ref,Build_State)
-    s.picker=core.world_storage_of(ref,Picker)
     s.outliner=core.world_storage_of(ref,Outliner)
     s.inspector=core.world_storage_of(ref,Inspector)
     s.content=core.world_storage_of(ref,Content)
@@ -1124,7 +1122,7 @@ session_bind :: proc(s:^Session) -> bool {
     s.git=core.world_storage_of(ref,Git)
     s.projects=core.world_storage_of(ref,Projects)
     s.api=core.world_storage_of(ref,Api)
-    return !(s.selection==nil || s.edits==nil || s.document==nil || s.viewport==nil || s.gui==nil || s.console==nil || s.build==nil || s.picker==nil || s.outliner==nil || s.inspector==nil || s.content==nil || s.materials==nil || s.thumbnails==nil || s.graphics==nil || s.preferences==nil || s.importer==nil || s.finder==nil || s.ai==nil || s.play_players==nil || s.play_history==nil || s.processes==nil || s.view_modes==nil || s.panels==nil || s.git==nil || s.projects==nil)
+    return !(s.selection==nil || s.edits==nil || s.document==nil || s.viewport==nil || s.gui==nil || s.console==nil || s.build==nil || s.outliner==nil || s.inspector==nil || s.content==nil || s.materials==nil || s.thumbnails==nil || s.graphics==nil || s.preferences==nil || s.importer==nil || s.finder==nil || s.ai==nil || s.play_players==nil || s.play_history==nil || s.processes==nil || s.view_modes==nil || s.panels==nil || s.git==nil || s.projects==nil)
 }
 
 // What Session holds that core.value_free cannot free: the arenas of the
@@ -1152,7 +1150,6 @@ session_destroy :: proc(s:^Session) {
     thumbnails_destroy(s)
     gui_destroy(s.gui)
     document_previous_free(s.document)
-    picker_clear(s.picker)
     history.edits_free(s.edits)
     delete(s.edit_selection.entities)
     s.edit_selection={}

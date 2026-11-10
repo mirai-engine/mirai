@@ -231,7 +231,7 @@ skin_binding_create :: proc(r:^Renderer,original:Mesh_Record,influences:[]Skin_I
     binding.influences,error=make([]Skin_Influence,len(influences),r.allocator)
     if error!=nil {return nil}
     copy(binding.influences,influences)
-    for &bounds in binding.bounds {bounds.lo,bounds.hi=EMPTY_BOUNDS_MIN,EMPTY_BOUNDS_MAX}
+    for &bounds in binding.bounds {bounds.lo,bounds.hi=Vec3{1e30,1e30,1e30},Vec3{-1e30,-1e30,-1e30}}
     p:=record_pooled(&r.scene,original)
     for whole,ordinal in p.clusters {
         g,c,resident:=pooled_cluster(p,u32(ordinal))
@@ -271,10 +271,12 @@ skin_binding_upload :: proc(r:^Renderer,binding:^Skin_Binding) -> bool {
 
 // Copies a tree breadth first: the nodes of each depth follow one another
 // from the root and the children of a node stay together, so a refit runs a
-// level at a time over contiguous nodes. False for a tree deeper than levels.
+// level at a time over contiguous nodes. The unused slot of the tree
+// (BVH_UNUSED_NODE) goes last. False for a tree deeper than levels.
 @(private)
 bvh_breadth_first :: proc(nodes,out:[]Gpu_Bvh_Node,levels:^[BVH_MAX_DEPTH+1]Pool_Range)->bool {
     if len(nodes)==0 || len(out)!=len(nodes) {return false}
+    reached:=len(nodes)-1 if len(nodes)>BVH_UNUSED_NODE else len(nodes)
     out[0]=nodes[0]
     head,next:=0,1
     for &level in levels {
@@ -289,7 +291,9 @@ bvh_breadth_first :: proc(nodes,out:[]Gpu_Bvh_Node,levels:^[BVH_MAX_DEPTH+1]Pool
         }
         head=end
     }
-    return head==len(out)
+    if head!=reached {return false}
+    for &node in out[reached:] {node={}}
+    return true
 }
 
 // The tree of level 0 of a pose, which mesh_rays_complete just made, stored
@@ -618,7 +622,7 @@ skin_update :: proc(r:^Renderer,handle:Mesh_Handle,palette:[]Mat4,reset_motion:b
             joints[moved.joint].lo+=linalg.min(a,b);joints[moved.joint].hi+=linalg.max(a,b)
         }
     }
-    lo,hi:=EMPTY_BOUNDS_MIN,EMPTY_BOUNDS_MAX
+    lo,hi:=Vec3{1e30,1e30,1e30},Vec3{-1e30,-1e30,-1e30}
     for transform,i in palette {
         bounds:=joints[i]
         if bounds.lo.x>bounds.hi.x {continue}
@@ -674,7 +678,7 @@ pose_instance_box :: proc(s:^Scene_State,index:u32) -> bool {
     inst.bounds_min.xyz=lo;inst.bounds_max.xyz=hi
     instance_resized(s,int(index),lo,hi)
     occluder_moved(s,index,before,inst^)
-    s.tlas_items[index]={bounds_min=lo,bounds_max=hi,center=(lo+hi)*0.5}
+    s.tlas_items[index]={lo,hi}
     instance_touch(s, index)
     return true
 }

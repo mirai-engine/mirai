@@ -28,6 +28,7 @@ Clock :: struct {
     placed:bool,       // the client's tick was put where it should be since synced
     rate:f64,          // ticks per second
     lead:f64,          // ticks of input the server should have in hand
+    input_delay:f64,   // ticks ahead of its own the client submits its input for (Replication_Desc.input_delay)
     delay:f64,         // ticks behind the server that remote objects are shown, besides the jitter
     now:f64,           // seconds, as last given to clock_advance
     server:f64,        // estimate of the server's tick now
@@ -57,7 +58,7 @@ CLOCK_SCALE_LIMIT :: f32(64)
 @(private)
 clock_init :: proc(c:^Clock,h:^Host) {
     d:=&h.desc.replication
-    c^={rate=f64(h.desc.tick_rate),lead=f64(d.input_lead),delay=f64(d.interpolation_delay),scale=1,margin_low=max(f64)}
+    c^={rate=f64(h.desc.tick_rate),lead=f64(d.input_lead),input_delay=f64(d.input_delay),delay=f64(d.interpolation_delay),scale=1,margin_low=max(f64)}
     c.display_jump=f64(d.display_jump)*c.rate
     c.display_max=f64(d.display_dilation)
 }
@@ -72,7 +73,7 @@ clock_pace :: #force_inline proc(c:^Clock) -> f64 {
 }
 @(private)
 clock_target :: #force_inline proc(c:^Clock) -> f64 {
-    return c.server+(c.rtt*0.5+c.jitter*2)*clock_pace(c)+c.lead+c.bias
+    return c.server+(c.rtt*0.5+c.jitter*2)*clock_pace(c)+c.lead+c.bias-c.input_delay
 }
 @(private)
 clock_display_target :: #force_inline proc(c:^Clock) -> f64 {
