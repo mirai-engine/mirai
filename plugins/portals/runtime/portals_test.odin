@@ -107,17 +107,42 @@ a_character_that_falls_into_the_floor_comes_out_of_a_wall_upright_and_in_front_o
     testing.expect(t,near(feet+[3]f32{0,1.6,0},mm.transform_point(through_of(wall,other),{10.05,1.6,0.2})))
 }
 
+@(test)
+a_mirror_sends_what_is_in_front_of_it_as_far_behind :: proc(t:^testing.T) {
+    // A face at x = 2 that looks towards +x.
+    m:=reflection({1,0,0,-2})
+    testing.expect_value(t,m*[4]f32{5,1,-3,1},[4]f32{-1,1,-3,1})
+    // What is on the face stays where it is, and a direction along it keeps its way.
+    testing.expect_value(t,m*[4]f32{2,7,4,1},[4]f32{2,7,4,1})
+    testing.expect_value(t,m*[4]f32{0,1,0,0},[4]f32{0,1,0,0})
+    testing.expect_value(t,m*[4]f32{1,0,0,0},[4]f32{-1,0,0,0})
+    // Mirroring twice gives the world back, and it turns the world inside out once.
+    twice:=m*m
+    for row in 0..<4 {
+        for column in 0..<4 {testing.expect(t,abs(twice[row,column]-(row==column?1:0))<1e-5)}
+    }
+    testing.expect(t,abs(linalg.determinant(m)+1)<1e-5)
+    // A tilted face keeps distances, and what is in front of it goes as far behind.
+    normal:=linalg.normalize([3]f32{1,2,-0.5})
+    tilted:=reflection({normal.x,normal.y,normal.z,0.75})
+    a,b:=[4]f32{3,-1,2,1},[4]f32{-4,0.5,6,1}
+    testing.expect(t,abs(linalg.length((tilted*a-tilted*b).xyz)-linalg.length((a-b).xyz))<1e-4)
+    testing.expect(t,abs(linalg.dot(normal,(tilted*a).xyz)+0.75+linalg.dot(normal,a.xyz)+0.75)<1e-4)
+}
+
 // Far from the centre of the world, the gates a view gets relative to the
 // origin the renderer draws from find the opening and carry what crosses it
-// as the world does; a light behind a gate moves with the origin, the sun
-// does not.
+// as the world does, a mirror by its reflection; a light behind a gate moves
+// with the origin, the sun does not.
 @(test)
 gates_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
     state:Portals_Gpu
     entrance:=mm.Transform{{-18000.5,2.3,9000.25},mm.quat_axis_angle({0,1,0},math.PI/2),{3.3,4.6,1}}
     exit:=mm.Transform{{-17800,2.3,9100},1,{1,1,1}}
+    mirror:=mm.Transform{{-17900.25,1.5,9050.5},mm.quat_axis_angle({0,1,0},-0.4),{2,1.5,1}}
     state.gates[0]={entrance=entrance,exit=exit}
-    state.count=1
+    state.gates[1]={entrance=mirror,exit=mirror,mirror=true}
+    state.count=2
     state.constants.lights[0]={position_range={-17790,3,9105,10}}
     state.constants.lights[1]={position_range={0,1,0,0}}
     state.constants.light_count=2
@@ -131,6 +156,11 @@ gates_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
     front:=entrance.position+mm.quat_rotate(entrance.rotation,[3]f32{0,0,1})
     testing.expect(t,near(apply(c.gates[0].to_local,front-origin),{0,0,1}))
     testing.expect(t,near(apply(c.gates[0].through,front-origin),mm.transform_point(through_of(entrance,exit),front)-origin))
+    // Relative to the origin already: so far out, a place of the world is not kept to a millimetre.
+    seen:=mirror.position-origin+mm.quat_rotate(mirror.rotation,[3]f32{0.3,-0.2,1.5})
+    testing.expect(t,near(apply(c.gates[1].to_local,seen),{0.15,-0.2/1.5,1.5}))
+    behind:=mirror.position-origin+mm.quat_rotate(mirror.rotation,[3]f32{0.3,-0.2,-1.5})
+    testing.expect(t,near(apply(c.gates[1].through,seen),behind))
     testing.expect(t,near(c.lights[0].position_range.xyz,[3]f32{-17790,3,9105}-origin))
     testing.expect_value(t,c.lights[1].position_range,[4]f32{0,1,0,0})
 }
