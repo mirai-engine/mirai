@@ -8,7 +8,7 @@ import "mirai:std/serial"
 
 Authoring_Write_Result :: struct {
     asset:base.Asset_Id,
-    path:[1024]u8 `mirai:"text"`,
+    path:string,
     dry_run:bool `mirai:"optional,label=Only on a dry run: nothing was written"`,
     replaced:bool `mirai:"optional,label=The path already held one: it was replaced whole, keeping its id"`,
 }

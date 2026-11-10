@@ -40,7 +40,7 @@ blend_space_authoring_prepares_samples_preserves_identity_and_rejects_partial_ed
     neither:=authoring_test_execute(f,"set",fmt.tprintf(`{{%s}}`,definition))
     testing.expect_value(t,neither.code,api.INVALID_PARAMS)
     existing:=authoring_test_execute(f,"set",request)
-    testing.expect(t,existing.code==0 && strings.contains(string(serial.writer_bytes(&f.out)),`"replaced":true`) && authoring_test_id(f,"locomotion.blend")==id,existing.message)
+    testing.expect(t,existing.code==0 && strings.contains(string(serial.writer_bytes(&f.out)),`"replaced": true`) && authoring_test_id(f,"locomotion.blend")==id,existing.message)
     file:asset.Asset
     testing.expect_value(t,authoring_test_load(f,"locomotion.blend",&file),asset.Error.None)
     profile,error:=anim.blend_space_view(&file,&f.assets.types)

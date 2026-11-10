@@ -44,7 +44,7 @@ action_write_defaults :: proc() -> ^Action_Write_Params {
 }
 authoring_actions_register :: proc(s:^editor.Session) {
     defaults:=action_write_defaults();inspect:=Authoring_Inspect_Params{limit=64}
-    editor.api_method_register(s,Action_Write_Params,Authoring_Write_Result,{name="animation.action.set",summary="Makes or replaces an .action set that entities share: the stack of layers over their base (a clip or the aim offsets of a .blend each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, sections and gameplay windows. In Edit.",defaults=defaults,run=authoring_action_set,writes_result=true})
+    editor.api_method_register(s,Action_Write_Params,Authoring_Write_Result,{name="animation.action.set",summary="Makes or replaces an .action set that entities share: the stack of layers over their base (a clip or the aim offsets of a .blend each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, sections and gameplay windows. In Edit.",defaults=defaults,run=authoring_action_set})
 }
 @(private)
 action_authoring_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^Authoring_File) -> (anim.Action_Profile,bool) {
@@ -129,7 +129,7 @@ authoring_action_set :: proc(s:^editor.Session,call:^api.Call) {
     profile,valid:=action_authoring_prepare(s,call,p);defer anim.action_profile_free(&profile,call.allocator);if !valid {return}
     doc:asset.Document
     if anim.action_profile_document(&doc,&s.app.assets.types,id,profile,call.allocator)!=.None {authoring_failure(call,"definition","Invalid_Profile","a serializable action profile","invalid","The action profile could not be serialized");return};defer asset.document_destroy(&doc)
-    _=authoring_publish(s,call,file,&doc)
+    _=authoring_publish(s,call,file,&doc,api.call_result(call,Authoring_Write_Result))
 }
 authoring_action_profile_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Authoring_Inspect_Params);file:Authoring_File;defer asset.asset_close(&file.file)

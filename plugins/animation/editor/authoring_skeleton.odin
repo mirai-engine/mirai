@@ -49,10 +49,10 @@ authoring_skeleton_register :: proc(s:^editor.Session) {
     create:=authoring_skeleton_create_defaults();if create==nil {return}
     bone:=Skeleton_Bone_Set_Params{bone={rotation={0,0,0,1},scale={1,1,1}}}
     socket:=Socket_Set_Params{offset=mm.TRANSFORM_IDENTITY}
-    editor.api_method_register(s,Skeleton_Create_Params,Authoring_Write_Result,{name="skeleton.create",summary="Creates a .skeleton from its bones, parents before children, and its named sockets; an omitted transform of a bone is identity.",defaults=create,run=authoring_skeleton_create,writes_result=true})
-    editor.api_method_register(s,Skeleton_Bone_Set_Params,Authoring_Write_Result,{name="skeleton.bone.set",summary="Replaces the name and rest pose of a bone; its path and parent stay, since meshes and tracks refer to them.",defaults=&bone,run=authoring_bone_set,writes_result=true})
+    editor.api_method_register(s,Skeleton_Create_Params,Authoring_Write_Result,{name="skeleton.create",summary="Creates a .skeleton from its bones, parents before children, and its named sockets; an omitted transform of a bone is identity.",defaults=create,run=authoring_skeleton_create})
+    editor.api_method_register(s,Skeleton_Bone_Set_Params,Authoring_Write_Result,{name="skeleton.bone.set",summary="Replaces the name and rest pose of a bone; its path and parent stay, since meshes and tracks refer to them.",defaults=&bone,run=authoring_bone_set})
     authoring_bone_add_register(s)
-    editor.api_method_register(s,Socket_Set_Params,Authoring_Write_Result,{name="skeleton.socket.set",summary="Creates, replaces or removes a named socket of a .skeleton.",defaults=&socket,run=authoring_socket_set,writes_result=true})
+    editor.api_method_register(s,Socket_Set_Params,Authoring_Write_Result,{name="skeleton.socket.set",summary="Creates, replaces or removes a named socket of a .skeleton.",defaults=&socket,run=authoring_socket_set})
 }
 
 @(private)
@@ -81,7 +81,7 @@ authoring_skeleton_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_I
 authoring_skeleton_save :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,id:base.Asset_Id,view:aa.Skeleton_View) {
     doc:aa.Document;defer aa.document_destroy(&doc)
     if error:=aa.skeleton_document(&doc,&s.app.assets.types,{id=id,bones=view.bones,sockets=view.sockets,body=view.body,body_parts=view.body_parts,source=view.source},s.app.allocator);error!=.None {authoring_failure(call,"bones","Out_Of_Memory" if error==.Out_Of_Memory else "Invalid_Definition","valid paths, hierarchy, rotations, scales and socket references",fmt.tprintf("%v",error),"The skeleton edit could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    _=authoring_publish(s,call,target,&doc)
+    _=authoring_publish(s,call,target,&doc,api.call_result(call,Authoring_Write_Result))
 }
 
 @(private)

@@ -109,10 +109,10 @@ authoring_set_target :: proc(s:^editor.Session,call:^api.Call,path:string,kind:a
 // Publishes an asset document: prepares the response and writes the file as
 // a step of the editor's history (one undo with the rest of the call). The
 // asset changes in memory, unsaved; a new one exists only there until it is
-// saved. more writes fields of the result after asset and path. dry_run in
-// the params validates and answers without writing.
+// saved. written is the part of the result that names it. dry_run in the
+// params validates and answers without writing.
 @(private)
-authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,doc:^asset.Document,more:proc(call:^api.Call,data:rawptr)=nil,data:rawptr=nil) -> bool {
+authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,doc:^asset.Document,written:^Authoring_Write_Result) -> bool {
     if target.file.file==nil && editor.file_exists(s,target.path) {
         authoring_failure(call,"path","Already_Exists","a new asset path","created while the asset was prepared","The destination was created while the asset was prepared")
         return false
@@ -120,16 +120,7 @@ authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File
     bytes:serial.Writer;serial.writer_init(&bytes,4096,s.app.allocator);defer serial.writer_destroy(&bytes)
     if error:=asset.document_write(doc,&bytes);error!=.None {authoring_failure(call,"asset","Serialization","a valid asset document",fmt.tprintf("%v",error),"The asset could not be serialized",api.SERVER_ERROR);return false}
     dry_run:=authoring_dry_run(call)
-    serial.text_write_raw(call.out,"{")
-    authoring_result(call,doc.id,target.path)
-    if dry_run {api.write_bool(call.out,"dry_run",true)}
-    if target.replaced {api.write_bool(call.out,"replaced",true)}
-    if more!=nil {more(call,data)}
-    serial.text_write_raw(call.out,"}")
-    if call.out.overflow!=0 {
-        authoring_failure(call,"result","Capacity","space for the publication result","response buffer full","The asset result does not fit in the response buffer",api.SERVER_ERROR)
-        return false
-    }
+    written^={doc.id,strings.clone(target.path,call.allocator),dry_run,target.replaced}
     if dry_run {return true}
     if !authoring_write(s,call,target.path,serial.writer_bytes(&bytes)) {
         if !call.failed {authoring_failure(call,"path","Write_Error","an asset write","write failed","The asset could not be written",api.SERVER_ERROR)}

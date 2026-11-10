@@ -19,7 +19,7 @@ Retarget_Bake_Params :: struct {
 authoring_bake_register :: proc(s:^editor.Session) {
     pose_bake_register(s)
     defaults:=Retarget_Bake_Params{rate=60}
-    editor.api_method_register(s,Retarget_Bake_Params,Authoring_Write_Result,{name="animation.retarget.bake",summary="Bakes the clips of an .anim onto another skeleton, of any topology, through the bone mappings and chains of a .pose profile, into a new .anim with their curves, markers and root motion.",defaults=&defaults,run=authoring_retarget_bake,writes_result=true})
+    editor.api_method_register(s,Retarget_Bake_Params,Authoring_Write_Result,{name="animation.retarget.bake",summary="Bakes the clips of an .anim onto another skeleton, of any topology, through the bone mappings and chains of a .pose profile, into a new .anim with their curves, markers and root motion.",defaults=&defaults,run=authoring_retarget_bake})
 }
 
 @(private)
@@ -37,5 +37,5 @@ authoring_retarget_bake :: proc(s:^editor.Session,call:^api.Call) {
     if !finite(p.rate) || p.rate<1 || p.rate>240 {authoring_failure(call,"rate","Range","finite Hz in [1,240]",fmt.tprintf("%g",p.rate),"The retarget bake sample rate is invalid");return}
     error:=retarget_bake(&doc,&s.app.assets.types,id,animation,source,destination,profile,p.rate,s.app.allocator,p.target_skeleton)
     if error!=.None {authoring_failure(call,"profile","Retarget_Bake","valid bone mappings or semantic chains within output capacity",fmt.tprintf("%v",error),"The retarget bake could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    _=authoring_publish(s,call,target,&doc)
+    _=authoring_publish(s,call,target,&doc,api.call_result(call,Authoring_Write_Result))
 }

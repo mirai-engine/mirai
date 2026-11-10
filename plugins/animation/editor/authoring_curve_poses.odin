@@ -30,12 +30,10 @@ Profile_Poses_Params :: struct {
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
 Profile_Poses_Result :: struct {
-    asset:base.Asset_Id,
-    path:[1024]u8 `mirai:"text"`,
+    using written:Authoring_Write_Result `mirai:"inline"`,
     poses,rows:u32 `mirai:"label=The poses made and the rows of the bones they move"`,
     still:u32 `mirai:"optional,label=Poses whose frame moves no bone from base: they make no row"`,
     drives:u32 `mirai:"optional,label=Curve drives from the Float curves of the clip at the frame of each pose"`,
-    dry_run:bool `mirai:"optional"`,
 }
 
 @(private)
@@ -104,8 +102,7 @@ authoring_profile_poses :: proc(s:^editor.Session,call:^api.Call) {
         for &pose in poses {if pose.curve==row.from {replaced=true;break}}
         if !replaced {append(&drives,row)}
     }
-    result:=Profile_Poses_Result{asset=p.asset,dry_run=p.dry_run}
-    base.text_set(result.path[:],file.path)
+    result:=api.call_result(call,Profile_Poses_Result)
     for &pose,i in poses {
         if pose.time>duration+1e-4 || !lib.skeleton_sample(&library,bindings,rest,pose.time,frame) {authoring_failure(call,fmt.tprintf("poses[%d].time",i),"Invalid_Value",fmt.tprintf("a time within the clip (0 to %v s)",duration),fmt.tprintf("%v",pose.time),"The pose could not be sampled");return}
         moved:=false
@@ -145,9 +142,5 @@ authoring_profile_poses :: proc(s:^editor.Session,call:^api.Call) {
     profile.curve_poses,profile.curve_drives=rows[:],drives[:]
     doc:aa.Document;defer aa.document_destroy(&doc)
     if error:=anim.pose_profile_document(&doc,&s.app.assets.types,p.asset,profile,s.app.allocator);error!=.None {authoring_failure(call,"profile","Out_Of_Memory" if error==.Out_Of_Memory else "Invalid_Definition","valid curve poses within profile capacities",fmt.tprintf("%v",error),"The pose profile edit could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    write :: proc(call:^api.Call,data:rawptr) {
-        result:=(^Profile_Poses_Result)(data)
-        api.write_uint(call.out,"poses",u64(result.poses));api.write_uint(call.out,"rows",u64(result.rows));api.write_uint(call.out,"still",u64(result.still));api.write_uint(call.out,"drives",u64(result.drives))
-    }
-    _=authoring_publish(s,call,file,&doc,write,&result)
+    _=authoring_publish(s,call,file,&doc,&result.written)
 }

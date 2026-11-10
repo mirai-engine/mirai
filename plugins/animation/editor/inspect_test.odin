@@ -37,7 +37,7 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     id :: proc(a:^Authoring_Test,path:string) -> string {return authoring_test_id_text(authoring_test_id(a,path))}
     expect(t,a,fmt.tprintf(`{{"asset":"%s","clip":"Walk"}}`,authoring_test_id_text(library)),`"path"`,`"Walk"`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s","clip":"Walk","section":"Track","target":"root","property":"Position"}}`,authoring_test_id_text(library)),`"keys"`)
-    expect(t,a,fmt.tprintf(`{{"asset":"%s","section":"Body"}}`,id(a,"figure.skeleton")),`"part":"Head"`,`"stored":true`)
+    expect(t,a,fmt.tprintf(`{{"asset":"%s","section":"Body"}}`,id(a,"figure.skeleton")),`"part": "Head"`,`"stored": true`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"figure.skeleton")),`"bones_total"`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,id(a,"c/figure.pose")),`"look"`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.match")),`"match_clips":[{"clip":"Idle"`,`"modes":["WALKING"]`,`"databases":[]`)

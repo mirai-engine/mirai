@@ -74,7 +74,7 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
     if !testing.expect(t,result.code==0,result.message) {return}
     text:=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
     testing.expect_value(t,result_shape_mismatch(Metrics_Result,text),"")
-    testing.expect(t,strings.contains(text,`"root":"root"`) && strings.contains(text,`"in_place":false`))
+    testing.expect(t,strings.contains(text,`"root": "root"`) && strings.contains(text,`"in_place": false`))
     testing.expectf(t,abs(clip_test_number(text,"speed","")-1)<.01,"speed in %s",text)
     jerk:=clip_test_number(text,"jerk","mean")
 
@@ -91,7 +91,7 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
     testing.expectf(t,abs(clip_test_number(after,"duration","")-2)<1e-3,"after %s",after)
     testing.expectf(t,abs(clip_test_number(after,"speed","")-.5)<.02,"after %s",after)
     testing.expectf(t,clip_test_number(after,"jerk","mean")<jerk/4,"jerk %v to %s",jerk,after)
-    testing.expect(t,strings.contains(after,`"loop":true`))
+    testing.expect(t,strings.contains(after,`"loop": true`))
 
     file:aa.Asset
     if !testing.expect_value(t,authoring_test_load(f,"sway.anim",&file),aa.Error.None) {return}

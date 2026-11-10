@@ -47,7 +47,7 @@ motion_write_defaults :: proc() -> ^Motion_Write_Params {
 
 authoring_motion_register :: proc(s:^editor.Session) {
     defaults:=motion_write_defaults();if defaults==nil {return}
-    editor.api_method_register(s,Motion_Write_Params,Authoring_Write_Result,{name="animation.motion.set",summary="Makes or replaces a .motion profile that entities share: warp windows, pose warping and distance tracks. An invalid one changes nothing. In Edit.",defaults=defaults,run=authoring_motion_set,writes_result=true})
+    editor.api_method_register(s,Motion_Write_Params,Authoring_Write_Result,{name="animation.motion.set",summary="Makes or replaces a .motion profile that entities share: warp windows, pose warping and distance tracks. An invalid one changes nothing. In Edit.",defaults=defaults,run=authoring_motion_set})
     editor.api_method_register(s,Motion_Distance_Params_Query,Motion_Distance_Result,{name="animation.motion.distance",summary="The clip and time at which a distance track of a .motion profile reaches a distance, without advancing the world.",flags={.Read_Only},run=authoring_motion_distance})
 }
 
@@ -100,7 +100,7 @@ authoring_motion_set :: proc(s:^editor.Session,call:^api.Call) {
     profile,valid:=motion_authoring_definition(call,p);if !valid {return}
     doc:asset.Document;defer asset.document_destroy(&doc)
     if error:=anim.motion_profile_document(&doc,&s.app.assets.types,id,profile,s.app.allocator);error!=.None {authoring_failure(call,"definition","Prepare_Failed","a valid serializable motion profile",fmt.tprintf("%v",error),"The motion profile could not be prepared",api.SERVER_ERROR);return}
-    _=authoring_publish(s,call,file,&doc)
+    _=authoring_publish(s,call,file,&doc,api.call_result(call,Authoring_Write_Result))
 }
 
 @(private)

@@ -325,10 +325,9 @@ asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
         if p.section==.Body {
             file:Authoring_File;defer aa.asset_close(&file.file)
             view,ok:=authoring_skeleton_open(s,call,p.asset,&file);if !ok {return}
-            serial.text_write_raw(call.out,"{");authoring_result(call,p.asset,file.path)
-            body_write(call,view,aa.skeleton_body_map(view.bones,view.body,view.body_parts))
-            api.write_bool(call.out,"stored",view.body!=nil)
-            serial.text_write_raw(call.out,"}")
+            body:=Body_Inspect_Result{asset=p.asset,path=file.path,body=body_fields(call,view,aa.skeleton_body_map(view.bones,view.body,view.body_parts)),stored=view.body!=nil}
+            text,_:=serial.text_encode(body,.Line,call.allocator)
+            serial.text_write_raw(call.out,string(text))
             return
         }
         inner:=Authoring_Inspect_Params{asset=p.asset,offset=p.offset,limit=limit};inspect_with(s,call,&inner,authoring_skeleton_inspect)

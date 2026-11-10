@@ -65,8 +65,8 @@ skeleton_body_detect_saves_the_parts_and_set_corrects_them_by_name :: proc(t:^te
     result:=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s","dry_run":true}}`,identity))
     if !testing.expect(t,result.code==0,result.message) {return}
     text:=string(serial.writer_bytes(&f.out))
-    testing.expect(t,strings.contains(text,`"part":"Hand_L","bone":"root/pelvis/spine_01/clavicle_l/upperarm_l/lowerarm_l/hand_l"`))
-    testing.expect(t,strings.contains(text,`"unassigned_total":1`) && strings.contains(text,`"root/ik_hand_root"`) && strings.contains(text,`"missing":[]`))
+    testing.expect(t,strings.contains(text,`"part": "Hand_L", "bone": "root/pelvis/spine_01/clavicle_l/upperarm_l/lowerarm_l/hand_l"`))
+    testing.expect(t,strings.contains(text,`"unassigned_total": 1`) && strings.contains(text,`"root/ik_hand_root"`) && strings.contains(text,`"missing": []`))
     testing.expect_value(t,authoring_test_revision(f,"figure.skeleton"),before)
 
     result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s"}}`,identity))
@@ -81,7 +81,7 @@ skeleton_body_detect_saves_the_parts_and_set_corrects_them_by_name :: proc(t:^te
     if !testing.expect(t,result.code==0,result.message) {return}
     map_,bones=body_test_view(f,t)
     testing.expect(t,map_.bones[.Hand_L]==7 && map_.bones[.Elbow_L]==-1 && map_.bones[.Toe_R]==-1 && map_.manual=={.Hand_L,.Toe_R})
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"missing":["Elbow_L","Toe_R"]`))
+    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"missing": ["Elbow_L", "Toe_R"]`))
 
     // Detecting again keeps what a person set.
     result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s"}}`,identity))

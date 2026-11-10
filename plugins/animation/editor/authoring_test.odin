@@ -42,7 +42,20 @@ authoring_test_destroy :: proc(f:^Authoring_Test) {
 @(private)
 authoring_test_register :: proc(f:^Authoring_Test,t:^testing.T,name:string,$T:typeid,run:editor.Api_Handler,defaults:^T=nil) {
     entry:=new(Authoring_Test_Entry,context.temp_allocator);entry^={&f.session,run}
-    testing.expect_value(t,api.method_register(&f.server,{name=name,params=T,params_info=type_info_of(T),result=serial.Json,writes_result=true,defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
+    // The handlers that answer a result struct; the others write their result.
+    typed:=[?]struct{run:editor.Api_Handler,result:typeid}{
+        {authoring_clip_create,Authoring_Write_Result},{authoring_clip_set,Authoring_Write_Result},{authoring_track_set,Authoring_Write_Result},
+        {authoring_key_set,Authoring_Write_Result},{authoring_marker_set,Authoring_Write_Result},{authoring_motion_set,Authoring_Write_Result},
+        {authoring_profile_create,Authoring_Write_Result},{authoring_profile_set,Authoring_Write_Result},{authoring_retarget_bake,Authoring_Write_Result},
+        {authoring_skeleton_create,Authoring_Write_Result},{authoring_bone_set,Authoring_Write_Result},{authoring_socket_set,Authoring_Write_Result},
+        {authoring_action_set,Authoring_Write_Result},{authoring_pose_bake,Authoring_Write_Result},{program_blend_set,Authoring_Write_Result},
+        {authoring_profile_poses,Profile_Poses_Result},{body_detect,Body_Result},{body_set,Body_Result},{clip_edit,Clip_Edit_Result},{clip_analyze,Metrics_Result},
+    }
+    desc:=api.Method_Desc{name=name,params=T,params_info=type_info_of(T),result=serial.Json,writes_result=true,defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}
+    for each in typed {
+        if each.run==run {desc.result,desc.result_info,desc.writes_result=each.result,type_info_of(each.result),false}
+    }
+    testing.expect_value(t,api.method_register(&f.server,desc),api.Register_Error.None)
 }
 
 @(private)
@@ -279,7 +292,7 @@ curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves
     json=fmt.tprintf(`{{"asset":"%s","animation":"%s","clip":"poses","skeleton":"%s","poses":[{{"time":1,"curve":"jaw_open"}},{{"time":2,"curve":"rest"}}]}}`,profile,clip,skeleton)
     result:=authoring_test_execute(f,"poses",json)
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"poses":1,"rows":1,"still":1`),string(serial.writer_bytes(&f.out)))
+    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"poses": 1, "rows": 1, "still": 1`),string(serial.writer_bytes(&f.out)))
     // Again: the rows of its curves are replaced, not added.
     if !testing.expect_value(t,authoring_test_execute(f,"poses",json).code,0) {return}
     file:asset.Asset;testing.expect_value(t,authoring_test_load(f,"face.pose",&file),asset.Error.None)
@@ -305,7 +318,7 @@ curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves
     json=fmt.tprintf(`{{"asset":"%s","animation":"%s","clip":"poses","skeleton":"%s"}}`,profile,clip,skeleton)
     result=authoring_test_execute(f,"poses",json)
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"poses":1,"rows":1,"still":0,"drives":1`),string(serial.writer_bytes(&f.out)))
+    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"poses": 1, "rows": 1, "drives": 1`),string(serial.writer_bytes(&f.out)))
     testing.expect_value(t,authoring_test_load(f,"face.pose",&file),asset.Error.None)
     view,error=anim.pose_profile_view(&file,&f.assets.types)
     if testing.expect(t,error==.None && len(view.curve_poses)==1 && len(view.curve_drives)==1) {
