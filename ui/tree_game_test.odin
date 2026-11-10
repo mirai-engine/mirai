@@ -615,7 +615,7 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
         test_point(&input,test_rect(t,&ctx,tree_element_id(&ctx,name)))
         for _ in 0..<3 {test_frame(&ctx,&input,test_game_build,&s)}
         found:=false
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.style.color==red {found=true}}
+        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {found=true}}
         testing.expectf(t,found,"%s draws its text red under the pointer",name)
     }
     // Pressed over a Text, the rule of Pressed applies.
@@ -641,12 +641,12 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
         input.pointer={-100,-100}
         for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
         reds:=0
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.style.color==red {reds+=1}}
+        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {reds+=1}}
         testing.expect_value(t,reds,1)
         s.shown=3
         for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
         reds=0
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.style.color==red {reds+=1}}
+        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {reds+=1}}
         testing.expect_value(t,reds,1)
     }
 }

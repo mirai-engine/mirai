@@ -400,14 +400,14 @@ documents_build :: proc(s:^Session) {
                         if active {
                             if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(4),fill=fill,float={to=.Parent,anchor=.Bottom_Left,pivot=.Bottom_Left,layer=ui.LAYER_BAR}}) {}
                         }
-                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ctx.theme.control,size=ctx.theme.font,icon_size=12,use_appearance=true,appearance=appearance}).clicked || surface.clicked {
+                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ctx.theme.control,size=ctx.theme.font,icon_size=12,look=&appearance}).clicked || surface.clicked {
                             switch {
                             case tab.asset>=0: asset_document_request(s,tab.asset)
                             case:              s.document_request=index;s.requests+={.Document_Switch}
                             }
                         }
                         close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ctx.theme.text,65):ui.Color{},radius=12,text={color=text_color}}
-                        if ui.button(ctx,close_id,{icon=.Cross,width=19,height=19,icon_size=10,icon_color=text_color,use_appearance=true,appearance=close}).clicked {
+                        if ui.button(ctx,close_id,{icon=.Cross,width=19,height=19,icon_size=10,icon_color=text_color,look=&close}).clicked {
                             switch {
                             case tab.asset>=0: s.asset_request=tab.asset;s.requests+={.Asset_Close}
                             case:              s.document_request=index;s.requests+={.Document_Close}

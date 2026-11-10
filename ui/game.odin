@@ -7,7 +7,9 @@ import "mirai:std/serial"
 
 // What game interfaces add to the widgets of the editor: images, text with a
 // style of its own, elements placed from the edges of the screen and the
-// controls of a game, which take every color and corner from a Node_Style.
+// controls only a game has. A button, a checkbox, a slider and a number are
+// those of the editor (button, checkbox, slider, number_field) with a look:
+// the Node_Style resolved for the state they are in.
 
 // The scale that fits a layout designed for `reference` into `size`, keeping
 // its proportions: pass it in Input.scale.
@@ -133,6 +135,7 @@ anchored_end :: proc(ctx:^Context,id:Id,anchor:Anchor,offset:[2]f32,layout:Layou
     box_end(ctx,{id=id,float={to=.Surface}})
 }
 
+// The images or flat colors of a button per state, with its text and its size.
 Skin :: struct {
     normal,hovered,pressed,disabled:Image_State,
     text:Text_Style,
@@ -145,53 +148,30 @@ Skin :: struct {
 // How a skinned widget looks in one state: an image, or a color when quad is none.
 Image_State :: struct {quad:Quad,tint:Color,text_color:Color}
 
-// A button drawn with images or flat colors per state and a centered label.
-skin_button :: proc(ctx:^Context,id:Id,content:string,skin:Skin,disabled:bool=false) -> Interaction {
-    it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
+// What a skin gives a button in the state the widget id is in: its look and
+// the image that goes behind it.
+skin_look :: proc(ctx:^Context,id:Id,skin:Skin,disabled:bool=false) -> (look:Node_Style,image:Node_Image) {
+    states:=widget_states(ctx,id,false,disabled)
     state:=skin.normal
-    if disabled {if skin.disabled!={} {state=skin.disabled}} else if it.active && skin.pressed!={} {state=skin.pressed} else if (it.hot || it.focused&&ctx.focus_ring) && skin.hovered!={} {state=skin.hovered}
-    background:Paint
-    if state.quad.kind!=.Solid {
-        background=image_paint({quad=state.quad,tint=state.tint,border=skin.border,border_uv=skin.border_uv})
-    } else {background={kind=.Rect,fill=state.tint,radius=skin.radius}}
-    style:=skin.text
-    if state.text_color!={} {style.color=state.text_color}
-    style.align_x=.Center;style.align_y=.Center
-    width:=skin.width
-    if width=={} {width=fixed(text_width(&ctx.font,content,style.size,int(style.font))+skin.padding[0]+skin.padding[2]+1)}
-    height:=skin.height
-    if height=={} {height=fixed(style.size*TEXT_LINE+skin.padding[1]+skin.padding[3])}
-    declaration:=Element{id=id,layout={width=width,height=height},custom=paint_add(ctx,background)}
-    if element_open(ctx,declaration) {
-        label_paint:=paint_add(ctx,{kind=.Text_Block,text=content,style=style})
-        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=label_paint})
+    switch {
+    case .Disabled in states: if skin.disabled!={} {state=skin.disabled}
+    case .Pressed in states && skin.pressed!={}: state=skin.pressed
+    case states&{.Hovered,.Focused}!={} && skin.hovered!={}: state=skin.hovered
     }
-    element_close(ctx)
-    return it
+    look.fill,look.radius,look.text=state.tint,skin.radius,skin.text
+    if state.text_color!={} {look.text.color=state.text_color}
+    image={quad=state.quad,border=skin.border,border_uv=skin.border_uv}
+    return
 }
 
-// Code widgets and asset trees apply the same token and state rules.
-styled_button :: proc(ctx:^Context,id:Id,content:string,base:Node_Style,rules:[]Style_Variant=nil,style:u16=0,variant:u64=0,layout:Layout={},selected:bool=false,disabled:bool=false,image_ref:Node_Image={},shown:Maybe(Style_States)=nil) -> Interaction {
-    disabled:=disabled || ctx.disabled_depth>0
-    it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
-    // Focused is the focus of navigation, with its ring: a click that gives the focus is not it.
-    ring:=it
-    ring.focused=it.focused && ctx.focus_ring
-    resolved:=style_resolve(&ctx.theme,base,rules,style,variant,shown.? or_else style_states(ring,selected,disabled))
-    background:=Paint{kind=.Rect,fill=resolved.fill,fill2=resolved.fill2,stroke=resolved.stroke,corners=resolved.radius,stroke_width=resolved.stroke_width,
-        shadow=resolved.shadow,shadow_color=resolved.shadow_color,shadow_blur=resolved.shadow_blur,shadow_offset=resolved.shadow_offset}
-    if image_ref.quad.kind!=.Solid {background=image_paint({quad=image_ref.quad,tint=resolved.fill,border=image_ref.border,border_uv=image_ref.border_uv})}
-    text_style:=resolved.text
-    text_style.align_x=.Center;text_style.align_y=.Center
-    width,height:=layout.width,layout.height
-    if width=={} {width=fixed(text_width(&ctx.font,content,text_style.size,int(text_style.font))+layout.padding[0]+layout.padding[2]+1)}
-    if height=={} {height=fixed(text_style.size*TEXT_LINE+layout.padding[1]+layout.padding[3])}
-    declaration:=Element{id=id,layout={width=width,height=height},custom=paint_add(ctx,background)}
-    if element_open(ctx,declaration) {
-        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=content,style=text_style})})
-    }
-    element_close(ctx)
-    return it
+// The states a widget is in before it is built this frame, which a look is
+// resolved for: pressed from the press it is about to take. Focused is the
+// focus of navigation, with its ring: a click that gives the focus is not it.
+widget_states :: proc(ctx:^Context,id:Id,selected:=false,disabled:=false) -> Style_States {
+    if id==0 {return style_states({},selected,disabled || ctx.disabled_depth>0)}
+    hot:=ctx.hot==id
+    active:=ctx.active==id || hot && ctx.active==0 && .Left in ctx.input.pressed && !ctx.press_used
+    return style_states({hot=hot,focused=ctx.focus==id && ctx.focus_ring,active=active},selected,disabled || ctx.disabled_depth>0)
 }
 
 // Squares of two colors, side units wide, over width by height: what shows
@@ -217,27 +197,27 @@ Game_Control :: struct {
 }
 
 @(private)
-game_em :: proc(ctx:^Context,style:^Node_Style) -> f32 {
+control_em :: proc(ctx:^Context,style:^Node_Style) -> f32 {
     return style.text.size if style.text.size>0 else ctx.theme.font
 }
-// What the layout says, or width sizes of its text wide by a line with its room.
+// What the layout says, or sizes sizes of its text wide by a line with its room.
 @(private)
-game_size :: proc(ctx:^Context,c:Game_Control,style:^Node_Style,width:f32) -> (w,h:Size,line:f32) {
-    em:=game_em(ctx,style)
+control_size :: proc(ctx:^Context,width,height:Size,style:^Node_Style,sizes:f32) -> (w,h:Size,line:f32) {
+    em:=control_em(ctx,style)
     line=em*TEXT_LINE+2*em*GAME_PAD
-    w=c.width if c.width!={} else fixed(em*width)
-    h=c.height if c.height!={} else fixed(line)
+    w=width if width!={} else fixed(em*sizes)
+    h=height if height!={} else fixed(line)
     return
 }
 // The height a control has: as it was laid out last frame, or as it asks.
 @(private)
-game_height :: proc(ctx:^Context,id:Id,height:Size,line:f32) -> f32 {
+control_height :: proc(ctx:^Context,id:Id,height:Size,line:f32) -> f32 {
     if r,found:=widget_rect(ctx,id);found && r.h>0 {return r.h}
     return height.value if height.kind==.Fixed else line
 }
 // -1 or 1 as left or right step a control that has the focus, where the keys reach it.
 @(private)
-game_step :: proc(ctx:^Context,focused:bool) -> (step:int) {
+control_step :: proc(ctx:^Context,focused:bool) -> (step:int) {
     if !focused || ctx.unfocusable>0 {return}
     in_:=&ctx.input
     if .Left in in_.keys_repeated || .Left in in_.pad {step-=1}
@@ -251,67 +231,19 @@ game_background :: proc(style:^Node_Style) -> Paint {
 }
 // An arrow of a control: as wide as the control is tall, it steps the control when clicked.
 @(private)
-game_arrow :: proc(ctx:^Context,id:Id,direction:int,side,em:f32,color:Color,disabled:bool) -> bool {
+control_arrow :: proc(ctx:^Context,id:Id,direction:int,side,em:f32,color:Color,disabled:bool) -> bool {
     it:=interact(ctx,id,{.Disabled} if disabled else {})
     element_leaf(ctx,{id=id,layout={width=fixed(side),height=GROW},custom=paint_add(ctx,{kind=.Arrow,fill=color,size=em*GAME_ARROW,value=f32(direction)})})
     return it.clicked
 }
 
-// A slider of a game: its track (track), the part of it up to the value
-// (mark) and a knob (knob) as tall as the slider, over a track a third of
-// that. The pointer drags it and left and right step it while it has the
-// focus; the value changes only then. range: least, most and step (0: any).
-game_slider :: proc(ctx:^Context,id:Id,value:^f64,range:[3]f64,c:Game_Control={}) -> (changed:bool) {
-    none:Node_Style
-    style:=c.style if c.style!=nil else &none
-    lo,hi,step:=range[0],range[1],range[2]
-    if hi<=lo {hi=lo+1}
-    disabled:=c.disabled || ctx.disabled_depth>0
-    it:=interact(ctx,id,{.Focusable,.Adjusts}+({.Disabled} if disabled else {}))
-    width,height,line:=game_size(ctx,c,style,GAME_WIDTH)
-    knob:=game_height(ctx,id,height,line)
-    next:=value^
-    moved:=it.active
-    if it.active {
-        if r,found:=widget_rect(ctx,id);found && r.w>knob {next=lo+f64(clamp((ctx.pointer.x-r.x-knob*0.5)/(r.w-knob),0,1))*(hi-lo)}
-    }
-    if s:=game_step(ctx,it.focused);s!=0 {
-        next+=f64(s)*(step if step>0 else (hi-lo)/20)
-        moved=true
-    }
-    if moved {
-        if step>0 {next=lo+math.round((next-lo)/step)*step}
-        next=clamp(next,lo,hi)
-        if next!=value^ {value^,changed=next,true}
-    }
-    paint:=Paint{kind=.Slider,value=f32(clamp((value^-lo)/(hi-lo),0,1)),fill=style.track,fill2=style.mark,stroke=style.knob,radius=knob*0.5,stroke_width=knob/3,corners=style.radius}
-    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,paint)})
-    return
-}
-
-// The side of a checkbox or a radio: as laid out, or a line of its text.
+// The side of a radio: as laid out, or a line of its text.
 @(private)
 game_side :: proc(ctx:^Context,id:Id,c:Game_Control,style:^Node_Style) -> (w,h:Size,side:f32) {
-    line:=game_em(ctx,style)*TEXT_LINE
+    line:=control_em(ctx,style)*TEXT_LINE
     w=c.width if c.width!={} else fixed(line)
     h=c.height if c.height!={} else fixed(line)
-    side=game_height(ctx,id,h,line)
-    return
-}
-
-// A checkbox of a game: a box of fill, stroke and corners with a tick of
-// mark three quarters of its side while value is true. A click flips it.
-game_checkbox :: proc(ctx:^Context,id:Id,value:^bool,c:Game_Control={}) -> (changed:bool) {
-    none:Node_Style
-    style:=c.style if c.style!=nil else &none
-    disabled:=c.disabled || ctx.disabled_depth>0
-    it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
-    if it.clicked {value^=!value^;changed=true}
-    w,h,side:=game_side(ctx,id,c,style)
-    paint:=paint_add(ctx,{kind=.Box,fill=style.fill,fill2=style.fill2,stroke=style.stroke,stroke_width=style.stroke_width,corners=style.radius,center=true,
-        shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,
-        icon=.Check if value^ else .None,icon_color=style.mark,icon_size=side*0.75})
-    element_leaf(ctx,{id=id,layout={width=w,height=h},custom=paint})
+    side=control_height(ctx,id,h,line)
     return
 }
 
@@ -342,17 +274,17 @@ game_selector :: proc(ctx:^Context,id:Id,options:Options,current:^int,c:Game_Con
     count:=options_count(options)
     disabled:=c.disabled || ctx.disabled_depth>0
     it:=interact(ctx,id,{.Focusable,.Adjusts}+({.Disabled} if disabled else {}))
-    next:=current^+game_step(ctx,it.focused)
-    width,height,line:=game_size(ctx,c,style,GAME_WIDTH)
-    side:=game_height(ctx,id,height,line)
-    em:=game_em(ctx,style)
+    next:=current^+control_step(ctx,it.focused)
+    width,height,line:=control_size(ctx,c.width,c.height,style,GAME_WIDTH)
+    side:=control_height(ctx,id,height,line)
+    em:=control_em(ctx,style)
     text_style:=style.text
     text_style.align_x,text_style.align_y=.Center,.Center
     if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center},custom=paint_add(ctx,game_background(style))}) {
-        if game_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,style.mark,disabled) {next-=1}
+        if control_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,style.mark,disabled) {next-=1}
         shown:=option(options,current^) if count>0 && current^>=0 else ""
         element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=shown,style=text_style})})
-        if game_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,style.mark,disabled) {next+=1}
+        if control_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,style.mark,disabled) {next+=1}
     }
     element_close(ctx)
     if it.clicked && ctx.activate==id {next+=1}
@@ -375,40 +307,6 @@ number_decimals :: proc "contextless" (step:f64) -> int {
     return 6
 }
 
-// A number of a game: a field of its style between two arrows of mark that
-// step it, as left and right do while it has the focus; a click on its text,
-// or Enter, types it. range: least, most and step; with most not over least
-// it has no limits, and without a step the arrows move it by one.
-game_number :: proc(ctx:^Context,id:Id,value:^f64,range:[3]f64,c:Game_Control={}) -> (changed:bool) {
-    none:Node_Style
-    style:=c.style if c.style!=nil else &none
-    lo,hi,step:=range[0],range[1],range[2]
-    em:=game_em(ctx,style)
-    width,height,line:=game_size(ctx,c,style,GAME_WIDTH)
-    side:=game_height(ctx,id,height,line)
-    disabled:=c.disabled || ctx.disabled_depth>0
-    scratch,text:[64]u8
-    length:=copy(text[:],number_format(scratch[:],value^,number_decimals(step)))
-    by:=step if step>0 else 1
-    next:=value^
-    result:=text_field(ctx,id,text[:],&length,{style=style,padding=side,filter=.Number,adjusts=true,open=true,width=width,height=height.value if height.kind==.Fixed else line,disabled=disabled})
-    if result.open {
-        if game_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,style.mark,disabled) {next-=by}
-        element_leaf(ctx,{layout={width=GROW,height=GROW}})
-        if game_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,style.mark,disabled) {next+=by}
-    }
-    element_close(ctx)
-    if !disabled && ctx.edit.id!=id {next+=f64(game_step(ctx,ctx.focus==id))*by}
-    if result.changed {
-        if typed,ok:=strconv.parse_f64(string(text[:length]));ok {next=typed}
-    }
-    if next==value^ {return}
-    if step>0 {next=(lo if hi>lo else 0)+math.round((next-(lo if hi>lo else 0))/step)*step}
-    if hi>lo {next=clamp(next,lo,hi)}
-    if next!=value^ {value^,changed=next,true}
-    return
-}
-
 // A field of a game.
 Game_Field :: struct {
     using control:Game_Control,
@@ -423,8 +321,8 @@ Game_Field :: struct {
 game_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,f:Game_Field={}) -> Text_Result {
     none:Node_Style
     style:=f.style if f.style!=nil else &none
-    width,_,_:=game_size(ctx,f.control,style,GAME_WIDTH)
-    em:=game_em(ctx,style)
+    width,_,_:=control_size(ctx,f.width,f.height,style,GAME_WIDTH)
+    em:=control_em(ctx,style)
     return text_field(ctx,id,buffer,length,{style=style,padding=em*GAME_PAD,width=width,height=f.height.value if f.height.kind==.Fixed else 0,
         placeholder=f.placeholder,limit=f.limit,multiline=f.multiline,rows=3 if f.multiline else 1,password=f.password,disabled=f.disabled})
 }
@@ -441,9 +339,9 @@ game_dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,c:Game_Co
     disabled:=c.disabled || ctx.disabled_depth>0
     list:=id_derive(ctx,id,"list")
     it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
-    em:=game_em(ctx,style)
+    em:=control_em(ctx,style)
     pad:=em*GAME_PAD
-    width,height,line:=game_size(ctx,c,style,GAME_WIDTH)
+    width,height,line:=control_size(ctx,c.width,c.height,style,GAME_WIDTH)
     text_style:=style.text
     text_style.align_y=.Center
     if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center,padding={pad,0,0,0}},custom=paint_add(ctx,game_background(style))}) {

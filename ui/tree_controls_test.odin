@@ -263,7 +263,7 @@ a_transition_carries_the_colors_of_a_node_between_its_states :: proc(t:^testing.
     defer context_destroy(&ctx)
     input:=test_input()
     fill :: proc(ctx:^Context) -> Color {
-        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Rect {return p.fill}}
+        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Box {return p.fill}}
         return {}
     }
     test_frame(&ctx,&input,test_shop_build,&s)

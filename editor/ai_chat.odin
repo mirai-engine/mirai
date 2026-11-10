@@ -826,9 +826,9 @@ ai_selection_context_build :: proc(s:^Session,width:f32,rows:int) {
             name:=entity_name(w,e)
             label:=ai_chat_menu_label(ctx,name,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ctx.theme.font_small)
             look:=ui.Node_Style{radius=2,text={size=ctx.theme.font_small,color=ctx.theme.text_muted}}
-            if ui.button(ctx,ui.id(ctx,"context",index+1),{label=label,icon=icon,icon_color=ctx.theme.text_muted,icon_size=12,padding=-1,style=.Ghost,width=size-28-AI_CHIP_PIN_ROOM,height=AI_CHIP_HEIGHT-2,size=ctx.theme.font_small,use_appearance=true,appearance=look}).clicked {focus_selection(s,w)}
+            if ui.button(ctx,ui.id(ctx,"context",index+1),{label=label,icon=icon,icon_color=ctx.theme.text_muted,icon_size=12,padding=-1,style=.Ghost,width=size-28-AI_CHIP_PIN_ROOM,height=AI_CHIP_HEIGHT-2,size=ctx.theme.font_small,look=&look}).clicked {focus_selection(s,w)}
             ai_chip_pin(s,ui.id(ctx,"pin_context",index+1),AI_PIN_ENTITY,ai_entity_id_text(w,entity_author(w,e)),name)
-            if ui.button(ctx,ui.id(ctx,"remove_context",index+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12,use_appearance=true,appearance=look}).clicked {remove=e}
+            if ui.button(ctx,ui.id(ctx,"remove_context",index+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12,look=&look}).clicked {remove=e}
         }
         used+=size+5;shown+=1
     }
@@ -887,7 +887,7 @@ ai_material_chips_build :: proc(s:^Session,width:f32,rows:int) {
             look:=ui.Node_Style{radius=2,text={size=ctx.theme.font_small,color=ctx.theme.text_muted}}
             ui.icon(ctx,.Material,ctx.theme.text_muted,12)
             ui.label(ctx,ai_chat_menu_label(ctx,chip.label,max(size-AI_CHIP_ROOM,1),ctx.theme.font_small),ctx.theme.font_small,ctx.theme.text_muted,size-40)
-            if ui.button(ctx,ui.id(ctx,"remove_material",i+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12,use_appearance=true,appearance=look}).clicked {remove=chip.pick}
+            if ui.button(ctx,ui.id(ctx,"remove_material",i+1),{icon=.Cross,icon_color=ctx.theme.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12,look=&look}).clicked {remove=chip.pick}
         }
         used+=size+5
     }

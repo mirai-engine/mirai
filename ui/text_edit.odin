@@ -447,12 +447,7 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
         if !field.disabled && field.color[3]>0 {paint.text_color=field.color}
         if field.bare {paint.fill={};paint.stroke={}}
         if field.inline && !result.editing {paint.fill={};paint.stroke=th.border if it.hot && !field.disabled else {}}
-        if look!=nil {
-            text:=look.text.color
-            paint.fill,paint.stroke,paint.stroke_width,paint.corners,paint.text_color=look.fill,look.stroke,look.stroke_width,look.radius,text
-            paint.fill2=look.mark if look.mark[3]>0 else color_alpha(text,text[3]/4)
-            paint.faint=color_alpha(text,text[3]/2)
-        }
+        if look!=nil {field_paint_look(paint,look)}
     }
     height:=field.height
     if height<=0 {
