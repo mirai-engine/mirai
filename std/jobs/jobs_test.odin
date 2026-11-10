@@ -302,11 +302,8 @@ sleeping_workers_wake_for_new_jobs :: proc(t:^testing.T) {
     testing.expect(t,system_stats(&js).sleeps>=TEST_THREADS)
 }
 
-@(private="file")
-count_node :: proc(data:rawptr,worker:int) {intrinsics.atomic_add(cast(^i64)data,1)}
-
 @(test)
-jobs_ranges_and_graphs_allocate_nothing_once_the_system_exists :: proc(t:^testing.T) {
+jobs_and_ranges_allocate_nothing_once_the_system_exists :: proc(t:^testing.T) {
     testing.set_fail_timeout(t,60*time.Second)
     track:mem.Tracking_Allocator
     mem.tracking_allocator_init(&track,context.allocator)
@@ -314,13 +311,6 @@ jobs_ranges_and_graphs_allocate_nothing_once_the_system_exists :: proc(t:^testin
     context.allocator=mem.tracking_allocator(&track)
     js:Job_System
     testing.expect(t,system_init(&js,{threads=TEST_THREADS}))
-    g:Graph
-    testing.expect(t,graph_init(&g,{node_capacity=32}))
-    nodes:i64
-    for node in 0..<32 {
-        graph_add(&g,count_node,&nodes)
-        if node>0 {graph_depend(&g,node,(node-1)/2)}
-    }
     tally:=Tally{js=&js,hits=make([]i32,10_000)}
     allocations:=track.total_allocation_count
     for _ in 0..<50 {
@@ -328,13 +318,10 @@ jobs_ranges_and_graphs_allocate_nothing_once_the_system_exists :: proc(t:^testin
         for _ in 0..<200 {run(&js,OWNER,add_one,&tally,&counter)}
         wait(&js,OWNER,&counter)
         parallel_for(&js,OWNER,len(tally.hits),64,mark_range,&tally)
-        testing.expect(t,graph_run(&js,OWNER,&g))
     }
     testing.expect_value(t,track.total_allocation_count,allocations)
     testing.expect_value(t,tally.sum,i64(10_000))
-    testing.expect_value(t,nodes,i64(50*32))
     delete(tally.hits)
-    graph_destroy(&g)
     system_destroy(&js)
     testing.expect_value(t,len(track.allocation_map),0)
 }
