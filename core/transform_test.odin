@@ -227,21 +227,22 @@ propagating_what_changed_equals_propagating_all_on_random_hierarchies :: proc(t:
                 if !testing.expectf(t,found && other==at_row(&a.worlds,row),"seed %d step %d: entity %v is %v, and all of them computed leaves it %v",seed,step,at,at_row(&a.worlds,row),other) {return}
             }
         }
-        // More links moved than a reader is told one by one: it is told to read the tree whole.
-        seen:u64
+        // A reader that reads after every settle is told each link, however many moved before;
+        // one that read none of more than the log holds is told to read the tree whole.
+        seen,behind:u64
         _,_=hierarchy_moved(ref(&a.hierarchy),&seen)
-        for e,k in live {
-            if k>0 {add(&a.parents,e,Parent{live[0],i32(k)})}
-        }
-        for _ in 0..<3 {
-            for e,k in live {
-                if k>0 {add(&a.parents,e,Parent{live[0],i32(k+len(live))})}
-            }
+        _,_=hierarchy_moved(ref(&a.hierarchy),&behind)
+        homes:=[2]Entity{create(&a.es),create(&a.es)}
+        child:=create(&a.es)
+        for k in 0..<3*HIERARCHY_MOVED {
+            add(&a.parents,child,Parent{homes[k%2],0})
             table_settle(&a.parents,&a.es)
             hierarchy_settle(&a.hierarchy,read(&a.parents),&a.es)
+            moved,whole:=hierarchy_moved(ref(&a.hierarchy),&seen)
+            if !testing.expect(t,!whole && len(moved)==1 && moved[0]==child) {break}
         }
-        moved,whole:=hierarchy_moved(ref(&a.hierarchy),&seen)
-        testing.expect(t,whole==(3*(len(live)-1)>HIERARCHY_MOVED) || len(moved)>0)
+        _,whole:=hierarchy_moved(ref(&a.hierarchy),&behind)
+        testing.expect(t,whole)
     }
 }
 

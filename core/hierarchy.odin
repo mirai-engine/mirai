@@ -2,6 +2,7 @@ package core
 
 import "core:log"
 import "core:slice"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 // The tree the Parent rows make, as they were at the last settle: by entity
@@ -24,7 +25,7 @@ Hierarchy :: struct {
     moved_first:u64,       // how many moved before moved[0]
 }
 
-// The links a reader of the tree is told one by one between two of its reads; past them it reads the tree whole.
+// The links moved holds: full, it drops its older half, and a reader that had not read those reads the tree whole.
 HIERARCHY_MOVED :: 1024
 
 hierarchy_clear :: proc(h:^Hierarchy) {
@@ -43,7 +44,12 @@ moved_reset :: proc "contextless" (h:^Hierarchy) {
 
 @(private)
 moved_push :: proc(h:^Hierarchy,e:Entity) {
-    if len(h.moved)>=HIERARCHY_MOVED {moved_reset(h)}
+    if len(h.moved)>=HIERARCHY_MOVED {
+        half:=len(h.moved)/2
+        copy(h.moved[:],h.moved[half:])
+        base.truncate(&h.moved,len(h.moved)-half)
+        h.moved_first+=u64(half)
+    }
     if _,error:=append(&h.moved,e);error!=nil {moved_reset(h)}
 }
 
