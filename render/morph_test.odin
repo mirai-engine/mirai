@@ -184,7 +184,6 @@ gpu_skins_with_influences_of_every_level_pose_each_level_and_keep_its_history_an
         palette[0][0,3]=f32(frame)*.1;palette[1][1,3]=f32(frame)*.2
         weight:=f32(frame)*-.75+.5
         settings:=r.settings
-        settings.occlusion_culling=false
         settings.lod_error_pixels=0 if frame==0 else 100
         testing.expect(t,renderer_apply_settings(r,settings))
         testing.expect(t,skin_update(r,skin,palette[:],frame==0,{weight}))

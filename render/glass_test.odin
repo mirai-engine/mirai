@@ -14,7 +14,6 @@ glass_settings :: proc() -> Settings {
 	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
-	s.occlusion_culling = false
 	s.reflections = false
 	return s
 }
@@ -596,7 +595,6 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
-	settings.occlusion_culling = true
 	if !fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer

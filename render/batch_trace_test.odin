@@ -67,7 +67,6 @@ trace_at :: proc(image: Trace_Image, p: [2]f32) -> Vec3 {
 @(test)
 a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.occlusion_culling = false
 	settings.reflections = true
 	f: Fixture
 	if !fixture_init(t, &f, 160, 96, settings) {return}
@@ -144,7 +143,6 @@ TLAS_INSTANCES :: #config(TLAS_INSTANCES, 0)
 a_native_tlas_larger_than_the_upload_ring_is_built_and_met :: proc(t: ^testing.T) {
 	RING :: 4 << 20
 	settings := DEFAULT_SETTINGS
-	settings.occlusion_culling = false
 	settings.trace_mode = .Hardware
 	device := shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai large tlas test", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = RING})
 	if device == nil {return}

@@ -58,6 +58,14 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
     without a job. If not, a job builds it and the tile is published
     on a later tick only if nobody marked it again. Publishing does not allocate; a replaced tile
     expires its references.
+  - **Carving.** A build from the collision leaves the heightfield of its tile with
+    `Navigation_Builds`, which keeps those of the last `NAV_FIELDS` tiles. A tile marked only by a
+    `Nav_Area` or an obstacle since its build began is built again from that heightfield
+    ([std/ai](../../mirai-std/references/ai.md#tile-building-nav_buildodin)): its collision is
+    neither gathered nor voxelized, and the tile and its hash are those the collision would give.
+    Any other mark (the change log of the physics, the bounds, `nav_rebuild`, what loads) has the
+    collision read again. `Build_Stats.carved` counts them.
+  - **Nothing to do.** A tick in which no table, mark or build changed goes through none of them.
 - **Areas.** `Nav_Area_Kind` is a named id (`AREA_BLOCKED`, `AREA_WALKABLE` and the game's).
   `Nav_Area` marks its area on the surface inside its box; the cost per meter of each area is in
   the settings and an agent excludes areas with `Nav_Agent.avoid`.
@@ -132,18 +140,31 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - It is asked through `Nav_Requests`: `nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`,
   `nav_look_along`, `nav_crossing_done`. `Nav_Path`, which navigation adds and only navigation
   writes, says what it is doing; `Nav_Events` reports arrivals, failures and crossings.
+- **Followers of one target.** Several walkers of a class that walk and cross the same and follow
+  the same entity read their paths from one search toward it
+  ([std/ai](../../mirai-std/references/ai.md#queries-nav_queryodin)): the first plans its own way,
+  the second starts the shared search, and it starts again when the target moved on, no more often
+  than a follower plans again, or the mesh changed. One it does not reach (cut off, or beyond what
+  the search holds) searches its own way. Those that fly, swim or cross between spaces, and a way
+  into a far section, search alone.
 - `navigation_agents` (`fixed`, `apply`, `server`): searches paths in portions in arrival order
   within `path_iterations` per tick, moves the corridor to where the body is, goes to the next
   corner, steps aside from the others with ORCA (characters that do not navigate and obstacles
   enter as neighbors that do not step aside) and writes the `Move_Input`, unless a seat drives the
-  body. It turns at the `turn_speed` of its `Character` and adds the turn of the ground.
+  body: toward its velocity, at the share of the speed of its `Walk`, `Fly` or `Swim` that the
+  velocity asks. It turns at the `turn_speed` of its `Character` and adds the turn of the ground.
+- **Neighbors as far as the horizon.** An agent gathers those it may meet within
+  `NAV_AGENT_HORIZON` at its speed and theirs, from the cells around its own in blocks that grow
+  until they hold that reach, or as many neighbors nearer than the block as ORCA counts.
 - **Seated** (`Nav_Agent.seated`, click to move): a body a seat drives walks while its path is
   `Moving` or `Crossing`, after the seat wrote its `Move_Input` in the tick: navigation replaces
   the move and the look, and keeps the seat's buttons and the turn of the ground it added. Idle,
   arrived or failed, the seat moves it again.
-- **Stepping aside without leaving the navmesh.** The velocity that ORCA chooses for one that
-  walks is bounded to its navmesh: toward an edge it slides along it. Without that, those that
-  gather at the start of a link (a staircase, a drop) push each other off a platform. One that is
+- **Stepping aside without leaving the navmesh.** The edges of its navmesh that one that walks
+  could reach within `NAV_AGENT_WALL_HORIZON` are walls of its ORCA program, ahead of its
+  neighbors: no velocity it chooses crosses them, and toward an edge it slides along it. Without
+  that, those that gather at the start of a link (a staircase, a drop) push each other off a
+  platform. One that is
   still far from the level of its corridor (more than its `climb` and half a meter: pushed,
   fallen, placed elsewhere) searches again from where it is, instead of walking against the wall
   toward a corner above.
@@ -163,7 +184,8 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
 - **Crossing.** On reaching the start of a link it goes to `Crossing`. `Jump` and `Drop` are
   crossed by the `MODE_NAV_LINK` locomotion mode with a ballistic launch that lands at the end, by
   the same arc that generation checked; `Climb` and `Ladder`, along the link without gravity
-  (`navigation_crossing`, before `locomotion_step`). `Door`, the game's types and those of
+  (`navigation_crossing`, before `locomotion_step`, which looks at the paths only while
+  `Nav_Crossings` counts an agent crossing). `Door`, the game's types and those of
   `Nav_Agent.manual` wait for `nav_crossing_done`. A crossing that does not land in time plans
   again.
 
@@ -282,7 +304,10 @@ It needs no component or configuration.
   it, beside one that is not seated and stays; six that patrol together over a staircase, a drop
   and a fence that the game crosses without falling off the platform, and one that is taken out of
   its level and climbs back, and one that is asked for another destination in the middle of a
-  jump; the tiles waiting for unloaded collision, with and without `Nav_Bounds`, and those of the
+  jump; eight that follow a runner by one search toward it; tiles that an area or an obstacle
+  changes, built again from their heightfields and equal to those the collision gives; the
+  crossing of links that looks at no path while none crosses; the tiles waiting for unloaded
+  collision, with and without `Nav_Bounds`, and those of the
   unloaded terrain, which are dropped in a running world, kept in the edited one and come back
   from their bake without being built. Sections: the bakes of two that stitch at their border,
   the tiles of one that leaves and comes back with its bake, nothing to do without changes, an

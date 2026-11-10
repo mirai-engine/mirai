@@ -134,6 +134,8 @@ In `plugins/multiplayer/runtime`:
 - After `host_init`, every capacity comes from `Host_Desc`/`Replication_Desc`; exhausting one
   returns `Error` or counts in the statistics. Replicated traffic, even damaged, does not
   allocate.
+- **Every connection is sealed, and nothing answers an unproven sender:** before a returned cookie
+  only the challenge, and nothing to a proof that does not open. There is no unsealed mode.
 - **Every byte from the network is hostile.** It is read with `Bit_Reader`, which never leaves the
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another
