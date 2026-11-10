@@ -2138,8 +2138,9 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.tlas_capacity = u32(capacity) if s.tlas != 0 && s.tlas_instance_buffer != 0 else 0
 		s.tlas_dirty = true
 	}
+	// Only rays traced by software walk the tree of instances on the GPU.
 	nodes := max(len(s.tlas_nodes), 1)
-	if nodes > s.tlas_node_capacity || s.tlas_node_buffer == 0 {
+	if !r.hardware_rt && (nodes > s.tlas_node_capacity || s.tlas_node_buffer == 0) {
 		capacity := max(nodes + nodes / 2, 128)
 		if s.tlas_node_buffer != 0 {rhi.buffer_destroy(d, s.tlas_node_buffer)}
 		s.tlas_node_buffer = rhi.buffer_create(d, {size = u64(capacity * size_of(Gpu_Bvh_Node)), usage = {.Storage}, name = "tlas nodes"})
@@ -2149,7 +2150,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	// One reference per instance, independent of the node count (leaves may
 	// hold several instances).
 	refs := max(len(s.tlas_refs), 1)
-	if refs > s.tlas_ref_capacity || s.tlas_ref_buffer == 0 {
+	if !r.hardware_rt && (refs > s.tlas_ref_capacity || s.tlas_ref_buffer == 0) {
 		capacity := max(refs + refs / 2, 128)
 		if s.tlas_ref_buffer != 0 {rhi.buffer_destroy(d, s.tlas_ref_buffer)}
 		s.tlas_ref_buffer = rhi.buffer_create(d, {size = u64(capacity * size_of(u32)), usage = {.Storage}, name = "tlas refs"})
@@ -2171,7 +2172,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.light_tree_capacity = capacity
 		s.lights_dirty = true
 	}
-	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0 && s.light_buffer != 0 && s.light_tree_buffer != 0
+	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
 	if !ok {set_error(r, "scene buffers: %s", rhi.device_error(d))}
 	return ok
 }
