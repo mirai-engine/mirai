@@ -152,6 +152,38 @@ compiler_find :: proc(root:string,allocator:=context.allocator) -> (path:string,
     return "",false
 }
 
+// Whether what links against a library links against an import library made
+// from its declarations before it compiles, and so compiles beside it: on
+// Windows. Elsewhere a shared library links against the others themselves
+// and waits for them.
+@(private)
+IMPORT_LIBRARIES_AHEAD :: ODIN_OS==.Windows
+
+// Makes the import libraries of libraries from the module definitions
+// declare wrote, {definition, import library} each, with the linker the
+// compiler carries, all at once. Returns the one that could not be made; ""
+// when all were.
+@(private)
+import_libraries_make :: proc(compiler:string,made:[][2]string) -> string {
+    when !IMPORT_LIBRARIES_AHEAD {return ""}
+    linker:=strings.concatenate({compiler[:max(strings.last_index_byte(compiler,'/'),0)],"/bin/lld-link.exe"},context.temp_allocator)
+    processes:=make([dynamic]os.Process,0,len(made),context.temp_allocator)
+    failed:=""
+    for pair in made {
+        process,error:=subprocess.start({command={linker,"/lib","/nologo","/machine:x64",fmt.tprintf("/def:%s",pair[0]),fmt.tprintf("/out:%s",pair[1])}})
+        if error!=nil {
+            failed=pair[1]
+            break
+        }
+        append(&processes,process)
+    }
+    for process,i in processes {
+        state,error:=os.process_wait(process)
+        if failed=="" && (error!=nil || state.exit_code!=0) {failed=made[i][1]}
+    }
+    return failed
+}
+
 @(private)
 slashes :: proc(path:string,allocator:runtime.Allocator) -> string {
     result,_:=strings.replace_all(path,"\\","/",allocator)

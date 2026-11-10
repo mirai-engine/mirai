@@ -244,12 +244,12 @@ Generator :: struct {
     engine_root,root:string,
 }
 
-// Play is built from game_world, which has no editor package; the editor from
-// editor_world; the game that ships from shipped_world, game_world without the
-// development plugins. The editor and play are the libraries the editor and
-// the player load; game is the program that ships, with the engine in it.
+// The editor is built from editor_world; the game that ships from
+// shipped_world, game_world (the world without an editor package) without the
+// development plugins. The editor is the library the editor and the player
+// load; game is the program that ships, with the engine in it.
 Generated :: struct {
-    game_world,editor_world,shipped_world,editor_main,play_main,game_main:string,
+    game_world,editor_world,shipped_world,editor_main,game_main:string,
     errors:[]string,
     machine_settings:[]string, // the names of the @(storage,setting="machine"): the sections the file of the engine gives a shipped game
 }
@@ -291,7 +291,6 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
         out.shipped_world=world_generate_world(&q)
     }
     out.editor_main=library_entry("editor_world")
-    out.play_main=library_entry("game_world")
     machine:=make([dynamic]string)
     for t in g.types {
         if t.setting==.Machine {append(&machine,t.name)}
@@ -360,7 +359,7 @@ world_write_files :: proc(p:^project.Project,shipped:=false) -> (out:Generated,o
     out=world_generate(p,context.temp_allocator,shipped)
     if len(out.errors)>0 {return}
     gen:=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"gen",allocator=context.temp_allocator)
-    files:=[6][2]string{{"game_world/world.odin",out.game_world},{"editor_world/world.odin",out.editor_world},{"shipped_world/world.odin",out.shipped_world},{"editor/main.odin",out.editor_main},{"play/main.odin",out.play_main},{"game/main.odin",out.game_main}}
+    files:=[4][2]string{{"editor_world/world.odin",out.editor_world},{"shipped_world/world.odin",out.shipped_world},{"editor/main.odin",out.editor_main},{"game/main.odin",out.game_main}}
     for f in files {
         if f[0]=="shipped_world/world.odin" && !shipped {continue}
         file:=project.path(gen,f[0],allocator=context.temp_allocator)

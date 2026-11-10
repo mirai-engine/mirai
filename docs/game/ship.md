@@ -29,7 +29,7 @@ says how to fix each finding.
 | `mirai play test . [name]` | run `tests/scenarios` in a headless editor, exit 1 on a failure |
 | `mirai edit .` | the editor, to author scenes and use Play |
 | `mirai build editor .` | the editor's library without opening it |
-| `mirai build game . [--out dir]` | the game, fast and incremental: see below |
+| `mirai build game . [--out dir]` | the game at `-o:minimal`, whole: what the built game lacks |
 | `mirai build game . --release [--out dir]` | the game you ship: slow |
 | `mirai build server . [--out dir]` | a dedicated server folder, run with `--dedicated` |
 | `mirai package engine --out dir` | assembles the engine itself as an installed engine |
@@ -41,10 +41,6 @@ says how to fix each finding.
 - `build game` generates the shaders, cooks the assets that every scene and `cook.mirai`
   reach and writes `.mirai/game` (or `--out`): the executable, `project.mirai`, `input.mirai`,
   `settings.mirai`, `assets/` and `shaders/`. It alone shows what the built game lacks.
-- `mirai build game` without `--release` is the fast incremental path: the engine and its
-  plugins come from a cached library, `mirai-shipped.dll` next to the executable
-  (`libmirai-shipped.so` or `.dylib` elsewhere), and only the game compiles. What crosses into
-  that library does not inline, so it is about a tenth slower in CPU.
 - `build server` is the same executable without what is only seen or heard; run it with
   `--dedicated` (no window, renderer or local players).
 - `package` belongs to the engine's own checkout and release; a game never runs it. A game is
