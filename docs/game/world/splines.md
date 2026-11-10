@@ -35,8 +35,8 @@ $P scene.write '{"merge":true,"entities":[
   `material`.
 - In the editor: Create has a Spline card, a selected spline shows its points, and the Corners
   mode of the Shapes tool (key K, then 2) drags, inserts (double click on the line) and removes
-  (Ctrl click) them; the panel shows the width and height of the last point taken. Through the
-  API, `shapes.corner` does the same at world points.
+  (Ctrl click) them; the width and height of each point are in the inspector. Through the API,
+  `shapes.corner` does the same at world points.
 
 ## Pitfalls that fail silently
 

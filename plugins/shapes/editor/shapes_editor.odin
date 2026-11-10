@@ -60,7 +60,6 @@ Shapes_Tool :: struct {
     stroke:Stroke,
     drag:Corner_Drag,
     hover:Corner_Hover,
-    taken:Corner_Taken, // the point of a spline whose width and height the panel shows
     lines_storage:[dynamic]erender.Debug_Vertex,
     lines:erender.Debug_Lines,
 }
@@ -264,7 +263,6 @@ corners_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,w:core.World_Ref,input
     case !tool.begin:
     case hover.vertex>=0:
         corner_drag_begin(drag,e,hover.vertex,corners)
-        tool.taken={e,hover.vertex}
     case hover.edge>=0:
         if ctx.input.clicks>=2 {corner_refused(s,.Insert,corner_edit(s,e,.Insert,hover.edge,hover.at,"Insert corner"))}
     case:
@@ -455,8 +453,11 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
             if solid:=selected_solid(s,world);solid!=core.NONE {e,shape,found=solid,editor.entity_get(world,solid,shapes.Shape)}
         }
         note:=""
-        corners_e,corners,cornered:=selected_corners(s,world)
-        if tool.mode==.Corners && cornered {e,found,note=corners_e,true,fmt.tprintf("%d corners",corner_count(&corners))}
+        if tool.mode==.Corners {
+            corners:Corners
+            e,corners,found=selected_corners(s,world)
+            note=fmt.tprintf("%d corners",corner_count(&corners))
+        }
         if tool.mode==.Stamp && found && shape.loop_count>0 {note=fmt.tprintf("%d corners",shape.point_count)}
         if found && tool.mode==.Brush {
             count:=0
@@ -482,14 +483,6 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
             editor.held_field_row(s,h,"angle")
             editor.held_field_row(s,h,"material","","Of the shapes a stamp makes outside every shape")
         case .Corners:
-            if cornered && corners.spline && tool.taken.entity==e && tool.taken.vertex<corner_count(&corners) {
-                point:=corners.path.points[tool.taken.vertex]
-                size:=Corner_Size{point.width,point.height}
-                same:=size
-                held:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|2,info=type_info_of(Corner_Size),value=&size,defaults=&same,width=editor.tool_panel_inner(g),write=corner_size_write,user=&tool.taken,name="Point size"}
-                editor.held_field_row(s,held,"width")
-                editor.held_field_row(s,held,"height")
-            }
         case .Brush:
             editor.held_field_row(s,h,"brush")
             editor.held_field_row(s,h,"combine")

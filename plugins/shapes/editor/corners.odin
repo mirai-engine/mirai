@@ -43,17 +43,6 @@ Corner_Hover :: struct {
     at:[2]f32,
 }
 
-// The point of a spline last taken, whose width and height the panel shows.
-Corner_Taken :: struct {
-    entity:core.Entity,
-    vertex:int,
-}
-
-Corner_Size :: struct {
-    width:f32 `mirai:"min=0,unit=m"`,
-    height:f32 `mirai:"unit=m"`, // over the ground
-}
-
 // The corners of an entity: those of the polygon of its Shape, else those of its Spline.
 corners_of :: proc(w:core.World_Ref,e:core.Entity) -> (c:Corners,found:bool) {
     if shape,ok:=editor.entity_get(w,e,shapes.Shape);ok && shape.loop_count>0 {return {shape=shape},true}
@@ -113,25 +102,6 @@ corner_apply :: proc(c:^Corners,op:Corner_Op,index:int,at:[2]f32) -> shapes.Shap
         p.count-=1
     }
     return .None
-}
-
-// Writes the width or the height of the point taken, in the step that is open or in one of its own.
-corner_size_write :: proc(s:^editor.Session,user:rawptr,offset:int,bytes:[]u8) {
-    taken:=(^Corner_Taken)(user)^
-    w:=editor.editing_world(s)
-    c,found:=corners_of(w,taken.entity)
-    if !found || !c.spline || taken.vertex<0 || taken.vertex>=corner_count(&c) {return}
-    point:=&c.path.points[taken.vertex]
-    size:=Corner_Size{point.width,point.height}
-    if offset<0 || offset+len(bytes)>size_of(size) {return}
-    mem.copy(rawptr(uintptr(&size)+uintptr(offset)),raw_data(bytes),len(bytes))
-    point.width,point.height=max(size.width,0),size.height
-    opened:=!s.edits.open
-    if opened && !history.edits_begin(s.edits,s.selection,"Point size") {return}
-    written:=corners_write(s,w,taken.entity,&c)
-    if opened {
-        if written {history.edits_end(s.edits)} else {history.edits_cancel(s.edits,w)}
-    }
 }
 
 corner_drag_begin :: proc(drag:^Corner_Drag,e:core.Entity,vertex:int,c:Corners) {

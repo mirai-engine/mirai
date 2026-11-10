@@ -159,8 +159,8 @@ it back.
   the width and height in proportion and the path keeps two). The selected entity shows its loops
   or path and corners. A drag moves a corner on its plane, a double click on an edge inserts
   one, Ctrl+click or Delete removes the one under the pointer; a click elsewhere selects the shape
-  under it. An edit the shape refuses does not apply. The panel shows the width and height of the
-  point of a spline taken last, and a change of them is one step. Create has a Spline card.
+  under it. An edit the shape refuses does not apply. The width and height of each point of a
+  spline are fields of the `Spline` in the inspector. Create has a Spline card.
 - **Brush** (3): a box, sphere or cylinder brush, added, cut or intersected (X), shown as lines on
   the surface
   under the pointer (`editor.pick_point`), its Y along the normal and turned by the angle around
@@ -201,7 +201,7 @@ on the ground as a ribbon without collider and follows the ground and its entity
 a cut that splits makes a second shape entity and undo restores one, Escape puts back every shape
 a cut stroke changed, a corner drag is
 one step and a crossing move does not apply, `shapes.stamp` and `shapes.corner` as steps, the
-points of a spline edited from above and the size of one as a step, a brush
+points of a spline edited from above, a brush
 placed on a surface as one step and a child with `Id` (and a new Solid with it), and where a ray
 meets each brush primitive.
 Gestures with the pointer are tested by the user.

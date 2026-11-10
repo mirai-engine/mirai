@@ -337,8 +337,7 @@ a_ray_meets_a_brush_primitive_where_it_enters_and_leaves :: proc(t:^testing.T) {
 
 // The points of a Spline lie in its local XZ, edited by the one corner tool:
 // the API takes them by world points from above, inserts with the width and
-// height in proportion, lets the path cross itself and keeps two; the panel
-// writes the size of one point as a step.
+// height in proportion, lets the path cross itself and keeps two.
 @(test)
 shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
@@ -371,12 +370,6 @@ shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     _,failed=run(s,{op=.Move,at={0,0,-6},to={2,5,-14}})
     spline=core.at(&w.splines,core.row_of(&w.splines,e))
     testing.expectf(t,!failed && abs(spline.points[1].position.x-2)<1e-4 && abs(spline.points[1].position.z+14)<1e-4,"%v",spline.points[1])
-    taken:=Corner_Taken{e,1}
-    width:=f32(6)
-    corner_size_write(s,&taken,int(offset_of(Corner_Size,width)),([^]u8)(&width)[:size_of(f32)])
-    testing.expect(t,core.at(&w.splines,core.row_of(&w.splines,e)).points[1].width==6)
-    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection) && abs(core.at(&w.splines,core.row_of(&w.splines,e)).points[1].width-4)<1e-4,"one step")
-    testing.expect(t,history.redo(&f.edits,f.ref,&f.selection))
     run(s,{op=.Remove,at={2,0,-14}})
     _,failed=run(s,{op=.Remove,at={0,0,0}})
     testing.expect(t,failed && core.at(&w.splines,core.row_of(&w.splines,e)).count==2,"a spline keeps two points")
