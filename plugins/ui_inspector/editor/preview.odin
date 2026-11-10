@@ -986,7 +986,7 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
     if ui.button(ctx,ui.id(ctx,"play"),{icon=.Play,icon_size=13,icon_color=th.text_muted,tip="Play",style=.Ghost,width=th.control,height=th.control,disabled=preview_node_of(&u.preview,u.selected)<0}).clicked {preview_play(u)}
     backgrounds:=BACKGROUND_NAMES
     background:=int(u.stage.background)
-    if ui.dropdown(ctx,ui.id(ctx,"background"),backgrounds[:],&background,{width=84}) {u.stage.background=Background(background)}
+    if ui.dropdown(ctx,ui.id(ctx,"background"),{list=backgrounds[:]},&background,{width=84}) {u.stage.background=Background(background)}
     if u.stage.background==.Color {
         rgb:=[3]f32{f32(u.stage.color.r)/255,f32(u.stage.color.g)/255,f32(u.stage.color.b)/255}
         if ui.box(ctx,{width=ui.fixed(210),height=ui.fixed(th.row),align_y=.Center}) {
@@ -1001,13 +1001,13 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
     append(&devices,fmt.tprintf("Auto: %s",families[u.stage.family]))
     for name in families {append(&devices,name)}
     device:=int(u.stage.family)+1 if u.stage.fixed else 0
-    if ui.dropdown(ctx,ui.id(ctx,"device"),devices[:],&device,{width=124}) {
+    if ui.dropdown(ctx,ui.id(ctx,"device"),{list=devices[:]},&device,{width=124}) {
         u.stage.fixed=device>0
         if device>0 {u.stage.family=ui.Prompt_Family(device-1)}
     }
     stage_language(ctx,u,cast(^gui.UI_Settings)editor.setting_value(s,gui.UI_Settings))
     references:=REFERENCE_NAMES
-    if ui.dropdown(ctx,ui.id(ctx,"reference"),references[:],&u.stage.reference,{width=104}) {
+    if ui.dropdown(ctx,ui.id(ctx,"reference"),{list=references[:]},&u.stage.reference,{width=104}) {
         if u.stage.reference<len(REFERENCES) {u.stage.custom=stage_reference(&u.stage)}
     }
     if u.stage.reference>=len(REFERENCES) {
@@ -1041,7 +1041,7 @@ stage_language :: proc(ctx:^ui.Context,u:^Ui_Inspector,settings:^gui.UI_Settings
         append(&values,language)
     }
     ui.label(ctx,"Language",ctx.theme.font_small,ctx.theme.text_muted)
-    if ui.dropdown(ctx,ui.id(ctx,"language"),names[:],&chosen,{width=110}) {u.stage.language,u.stage.chosen=values[chosen],true}
+    if ui.dropdown(ctx,ui.id(ctx,"language"),{list=names[:]},&chosen,{width=110}) {u.stage.language,u.stage.chosen=values[chosen],true}
 }
 
 @(private) STAGE_TEXTURE_KEY :: u64(0x75697374616765)

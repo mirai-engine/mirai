@@ -70,7 +70,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
     // fit the width of the panel.
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
         chosen:=u.anim+1
-        if ui.dropdown(ctx,ui.id(ctx,"anim"),names,&chosen,{width=-1}) {u.anim=chosen-1}
+        if ui.dropdown(ctx,ui.id(ctx,"anim"),{list=names},&chosen,{width=-1}) {u.anim=chosen-1}
         if ui.button(ctx,ui.id(ctx,"anim_remove"),{icon=ui.icon_user(u8(editor.User_Icon.Trash)),icon_size=13,icon_color=th.text_muted,tip="Delete",style=.Ghost,width=th.row,height=th.row,disabled=u.anim<0 || u.anim>=len(r.anims)}).clicked {
             author.records_anim_remove(r,u.anim)
             u.anim=min(u.anim,len(r.anims)-1)
@@ -204,7 +204,7 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     picked:=-1
     for row,i in rows {if row==int(n.component)-1 {picked=i}}
     if row(p,"Of") {
-        if ui.dropdown(ctx,ui.id(ctx,"component"),names[:],&picked,{width=-1}) {n.component=u16(rows[picked]+1);changed(u,"Component")}
+        if ui.dropdown(ctx,ui.id(ctx,"component"),{list=names[:]},&picked,{width=-1}) {n.component=u16(rows[picked]+1);changed(u,"Component")}
     }
     if picked<0 {return}
     chosen:=rows[picked]
@@ -252,7 +252,7 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     }
     if removed>=0 {ordered_remove(&r.overrides,removed);changed(u,"Remove override")}
     added:=-1
-    if ui.dropdown(ctx,ui.id(ctx,"override_add"),targets,&added,{width=-1,empty="Override a node",disabled=len(targets)==0}) {
+    if ui.dropdown(ctx,ui.id(ctx,"override_add"),{list=targets},&added,{width=-1,empty="Override a node",disabled=len(targets)==0}) {
         author.records_override(r,u.selected,targets[added],{})
         changed(u,"Add override")
     }
@@ -320,7 +320,7 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         chosen:=0
         for name,j in nodes {if name==node_name {chosen=j}}
         if row(p,"Node","The node it goes to; Root: the root of the widget") {
-            if ui.dropdown(ctx,ui.id(ctx,"node"),nodes[:],&chosen,{width=-1}) {
+            if ui.dropdown(ctx,ui.id(ctx,"node"),{list=nodes[:]},&chosen,{width=-1}) {
                 author.records_param_target(r,i,nodes[chosen] if chosen>0 else "",ui.Tree_Param_Field.Text,"")
                 changed(u,"Parameter")
             }
@@ -339,7 +339,7 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         picked:=int(param.field)
         if name:=serial.text_field(param.param[:]);name!="" {for option,j in names {if j>=field_count && option==name {picked=j}}}
         if row(p,"Field","Which field of the node it gives, or a parameter of the widget that node uses") {
-            if ui.dropdown(ctx,ui.id(ctx,"field"),names[:],&picked,{width=-1}) {
+            if ui.dropdown(ctx,ui.id(ctx,"field"),{list=names[:]},&picked,{width=-1}) {
                 if picked<field_count {
                     author.records_param_target(r,i,serial.text_field(param.node[:]),ui.Tree_Param_Field(picked),"")
                 } else {
@@ -381,7 +381,7 @@ override_rows :: proc(p:^Pane,a:^host.Assets,o:^ui.Tree_Override,field:ui.Node_F
             append(&names,author.records_style_name(r,i));append(&rows,i)
         }
         if row(p,"Style","A style of this file the node takes instead of its own") {
-            if ui.dropdown(ctx,ui.id(ctx,"style"),names[:],&chosen,{width=-1,empty="Choose a style"}) {v.style=u16(rows[chosen]);changed(u,"Override")}
+            if ui.dropdown(ctx,ui.id(ctx,"style"),{list=names[:]},&chosen,{width=-1,empty="Choose a style"}) {v.style=u16(rows[chosen]);changed(u,"Override")}
         }
     case .Layout:
         edit(u,"Override",size_row(p,"Width",&v.layout.width,d.layout.width))
@@ -402,7 +402,7 @@ override_rows :: proc(p:^Pane,a:^host.Assets,o:^ui.Tree_Override,field:ui.Node_F
         }
         chosen:=int(v.image)
         if row(p,"Image","An image of this file it shows instead") {
-            if ui.dropdown(ctx,ui.id(ctx,"image"),names[:],&chosen,{width=-1}) {v.image=u16(chosen);changed(u,"Override")}
+            if ui.dropdown(ctx,ui.id(ctx,"image"),{list=names[:]},&chosen,{width=-1}) {v.image=u16(chosen);changed(u,"Override")}
         }
     case .Animations:
         anims:=anim_names(r)
@@ -414,7 +414,7 @@ override_rows :: proc(p:^Pane,a:^host.Assets,o:^ui.Tree_Override,field:ui.Node_F
         }
         chosen:=int(v.anims)
         if row(p,"Animations","The animations of this file it plays in its events instead") {
-            if ui.dropdown(ctx,ui.id(ctx,"anims"),names[:],&chosen,{width=-1}) {v.anims=u16(chosen);changed(u,"Override")}
+            if ui.dropdown(ctx,ui.id(ctx,"anims"),{list=names[:]},&chosen,{width=-1}) {v.anims=u16(chosen);changed(u,"Override")}
         }
     case .Bindings:
         edit(u,"Override",binding_row(p,"Text field",&v.bind_text,"Shows it as its text"))

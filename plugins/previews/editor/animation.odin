@@ -534,7 +534,7 @@ animation_toolbar :: proc(s:^editor.Session,p:^Animation,clip:anim.Clip) {
         names:=make([]string,len(p.clips),context.temp_allocator)
         for &info,i in p.clips {names[i]=base.text_get(info.name[:])}
         selected:=max(int(clip)-1,0)
-        if ui.dropdown(ctx,ui.id(ctx,"clip"),names,&selected,{width=200,height=th.control,searchable=len(names)>10}) {
+        if ui.dropdown(ctx,ui.id(ctx,"clip"),{list=names},&selected,{width=200,height=th.control,searchable=len(names)>10}) {
             base.text_set(p.clip_name[:],names[selected])
             p.time,p.playing=0,false
         }
@@ -712,7 +712,7 @@ animation_cards :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,
             if candidate.mesh==p.mesh {selected=i+1}
         }
         editor.row_begin(ctx,"Subject")
-        if ui.dropdown(ctx,ui.id(ctx,"subject"),names,&selected,{width=-1,height=th.row,searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
+        if ui.dropdown(ctx,ui.id(ctx,"subject"),{list=names},&selected,{width=-1,height=th.row,searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
         editor.row_end(ctx)
         if p.subject.short {ui.label(ctx,"Part of the subject is left out",th.font_small,th.text_muted)}
     }

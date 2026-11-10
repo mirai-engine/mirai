@@ -235,7 +235,7 @@ side_rows :: proc(s:^editor.Session,c:^Cinematic_Editor,w:core.World_Ref) {
     chosen:=-1
     for e,i in timelines.entities {if e==c.timeline {chosen=i}}
     if ui.property(ctx,"Timeline") {
-        if ui.dropdown(ctx,ui.id(ctx,"timeline"),timelines.names,&chosen,{width=-1,empty="None"}) && chosen>=0 {
+        if ui.dropdown(ctx,ui.id(ctx,"timeline"),{list=timelines.names},&chosen,{width=-1,empty="None"}) && chosen>=0 {
             c.timeline,c.head,c.playing,c.strip=timelines.entities[chosen],0,false,{}
             preview_restart(s,c)
         }
@@ -282,7 +282,7 @@ side_rows :: proc(s:^editor.Session,c:^Cinematic_Editor,w:core.World_Ref) {
     properties:=[len(cine.Cinematic_Property)]string{"Position","Rotation","Scale","Fov","Near"}
     property:=int(c.property)
     if ui.property(ctx,"Property") {
-        if ui.dropdown(ctx,ui.id(ctx,"property"),properties[:],&property,{width=-1}) {c.property=cine.Cinematic_Property(property)}
+        if ui.dropdown(ctx,ui.id(ctx,"property"),{list=properties[:]},&property,{width=-1}) {c.property=cine.Cinematic_Property(property)}
     }
     if ui.button(ctx,ui.id(ctx,"track"),{label="Add track",style=.Field,width=-1,center=true,disabled=c.target==core.NONE}).clicked {
         add(s,c,w,{part=.Track,timeline=c.timeline,target=c.target,property=c.property,tick=u32(math.round(c.head))})
@@ -300,7 +300,7 @@ side_rows :: proc(s:^editor.Session,c:^Cinematic_Editor,w:core.World_Ref) {
         chosen:=-1
         for e,i in names.entities {if e==value^ {chosen=i}}
         if ui.property(ctx,label) {
-            if ui.dropdown(ctx,ui.id(ctx,label),names.names,&chosen,{width=-1,empty="None"}) && chosen>=0 {value^=names.entities[chosen]}
+            if ui.dropdown(ctx,ui.id(ctx,label),{list=names.names},&chosen,{width=-1,empty="None"}) && chosen>=0 {value^=names.entities[chosen]}
         }
     }
 }

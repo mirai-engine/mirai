@@ -327,7 +327,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
             options[i]=n.name
             if n.value==current {selected=i}
         }
-        if ui.dropdown(ctx,id,options,&selected,{width=-1,height=th.row,searchable=true}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true}) && selected>=0 {
             number_write(p,c.info,f64(names[selected].value))
             return true
         }
@@ -351,7 +351,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
             options[i]=readable(name)
             if i64(v.values[i])==current {selected=i}
         }
-        if ui.dropdown(ctx,id,options,&selected,{width=-1,height=th.row}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row}) && selected>=0 {
             number_write(p,v.base,f64(v.values[selected]))
             return true
         }
@@ -471,7 +471,7 @@ record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^
         if entry.table==table^ && entry.row==row^ {selected=i+1}
     }
     if ui.box(ctx,{width=width,height=ui.fixed(th.row),gap=2,align_y=.Center}) {
-        if ui.dropdown(ctx,id,options,&selected,{width=-1,height=th.row,searchable=true,empty="Missing"}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true,empty="Missing"}) && selected>=0 {
             if selected==0 {
                 table^,row^={},0
             } else {

@@ -1253,7 +1253,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
                     }
                 }
             }
-        } else if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),v.names,&selected,{width=-1,height=th.row,searchable=true}) {
+        } else if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),{list=v.names},&selected,{width=-1,height=th.row,searchable=true}) {
             buffer:[8]u8
             number_write(raw_data(buffer[:]),v.base,f64(v.values[selected]))
             inspect_write(c,int(offset),buffer[:info.size])
@@ -1402,7 +1402,7 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
         if r.committed || r.cancelled || (!r.editing && !r.began && ctx.edit.id!=field) {ins.naming=0}
     } else {
         created:string
-        if ui.dropdown(ctx,ui.id(ctx,"named",int(offset)+1),options,&selected,{width=-1,height=th.row,searchable=true,empty=fmt.tprintf("%d",current)},&created) {
+        if ui.dropdown(ctx,ui.id(ctx,"named",int(offset)+1),{list=options},&selected,{width=-1,height=th.row,searchable=true,empty=fmt.tprintf("%d",current)},&created) {
             write(c,info,offset,names[selected].value)
         }
         if created!="" {
@@ -1886,7 +1886,7 @@ data_row :: proc(c:^Inspect,label:string,offset:uintptr,count:int) {
         append(&names,fmt.tprintf("%s (missing)",current))
     }
     row_begin(ctx,label)
-    if ui.dropdown(ctx,ui.id(ctx,"data",int(offset)+1),names[:],&selected,{width=-1,height=ctx.theme.row,searchable=true}) && !(missing && selected==len(names)-1) {
+    if ui.dropdown(ctx,ui.id(ctx,"data",int(offset)+1),{list=names[:]},&selected,{width=-1,height=ctx.theme.row,searchable=true}) && !(missing && selected==len(names)-1) {
         buffer:=make([]u8,count,context.temp_allocator)
         if selected>0 {copy(buffer[:max(count-1,0)],names[selected])}
         inspect_write(c,int(offset),buffer)

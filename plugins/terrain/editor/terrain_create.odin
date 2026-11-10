@@ -33,7 +33,7 @@ terrain_creation_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
     ctx:=s.gui.ctx
     kinds:=[3]terrain.Source_Kind{.Heightfield,.Mesh,.Volume}
     kind:=tool.create_kind==.Heightfield?0:tool.create_kind==.Mesh?1:2
-    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{"Heightfield Terrain","3D Terrain","Volumetric Terrain"},&kind,{width=-1,height=ctx.theme.row}) {tool.create_kind=kinds[kind]}
+    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{list={"Heightfield Terrain","3D Terrain","Volumetric Terrain"}},&kind,{width=-1,height=ctx.theme.row}) {tool.create_kind=kinds[kind]}
     if tool.create_kind!=.Volume {
         if tool.create_kind==.Heightfield && tool.create_source==.Selection {tool.create_source=.Plane}
         source:=int(tool.create_source)
