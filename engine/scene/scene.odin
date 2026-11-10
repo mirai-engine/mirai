@@ -54,6 +54,7 @@ Instantiate_Desc :: struct {
     scope_extents:[3]f32,
     saved:bool,             // a saved game: what hangs from its references came with it, loaded as it was
     only:base.Entity_Id,    // when given, only the entity whose Id in the world (id_in with salt) is this and what hangs from it, a root; its references stay unloaded
+    stored:^[dynamic]Stored, // when given, receives each component the document and the scenes it loads store otherwise than the world reads them
 }
 
 Capture_Desc :: struct {
@@ -71,8 +72,6 @@ Report :: struct {
     root:core.Entity, // instantiate: the first root of the document, the only one of a prefab
     entities:int,
     components:int,   // values attached or saved, Id, Name and Parent aside
-    migrated:int,     // instantiate: tables stored with another layout
-    unknown:int,      // tables the world has no component for
     dangling:int,     // entity references that named nothing inside: set to none
     sections:int,     // instantiate: referenced scenes loaded under their references
     missing:int,      // instantiate: references whose scene is not in the assets
@@ -197,7 +196,8 @@ load_id :: proc(w:core.World_Ref,app:^host.App,id:base.Asset_Id) -> (report:Repo
 // entities, when given, receives the entity of every row of the document, as
 // the world has it once replaced. Without references the scenes the document
 // references are not loaded: a saved game, which keeps them as they were.
-replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset.Types,entities:[]core.Entity=nil,references:=true) -> (report:Report,error:Error) {
+// stored, when given, receives what Instantiate_Desc.stored does.
+replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset.Types,entities:[]core.Entity=nil,references:=true,stored:^[dynamic]Stored=nil) -> (report:Report,error:Error) {
     if app.info==nil || w.info!=app.info || w.place!=.World {return {},.Invalid}
     making:=host.load_phase_begin(app,.Instantiate)
     data:=host.app_world_create(app)
@@ -215,7 +215,7 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
         host.load_phase_end(app,making)
         return {},.Out_Of_Memory
     }
-    report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references})
+    report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references,stored=stored})
     host.load_phase_end(app,making,core.world_entities(candidate).alive)
     settling:=host.load_phase_begin(app,.Settle)
     defer host.load_phase_end(app,settling)
@@ -357,6 +357,7 @@ is_structural :: proc(type:typeid) -> bool {
 instantiate :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Instantiate_Desc={}) -> (report:Report,error:Error) {
     if desc.parent!=core.NONE && !core.alive(core.world_entities(w),desc.parent) {return {},.Invalid}
     form,_:=form_make(w,a,asset_types,context.temp_allocator) or_return
+    if desc.stored!=nil && !stored_collect(w,a,asset_types,desc.stored) {return {},.Out_Of_Memory}
     count:=len(form.ids)
     if desc.entities!=nil && len(desc.entities)<count {return {},.Invalid}
     entities:=desc.entities
@@ -400,11 +401,9 @@ sections_load :: proc(w:core.World_Ref,scene:base.Asset_Id,asset_types:^asset.Ty
         resolved:asset.Asset
         defer asset.asset_close(&resolved)
         document:=current(desc.documents,file,&resolved) or_return
-        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,scope=section.entity,scope_extents=section.reference.extents})
+        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,scope=section.entity,scope_extents=section.reference.extents,stored=desc.stored})
         report.entities+=inner.entities
         report.components+=inner.components
-        report.migrated+=inner.migrated
-        report.unknown+=inner.unknown
         report.dangling+=inner.dangling
         report.sections+=1+inner.sections
         report.missing+=inner.missing
@@ -644,7 +643,6 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
             }
             target:=asset.scene_component_add(scene,table.name,&previous.doc.schema,table.columns[1].type) or_return
             asset.scene_component_fill(scene,target,table_rows[:],images[:]) or_return
-            report.unknown+=1
             continue
         }
         target:=asset.document_table_add(&scene.doc,table.name,table.flags) or_return
