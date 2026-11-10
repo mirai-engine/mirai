@@ -15,8 +15,8 @@ plus requests queued from a `fixed` step; what is invalid or full shows in `engi
 - Walk, jump, swim, fall: [Locomotion](#locomotion).
 - Vault, hit received, death, emote (whole body): [Whole-body moves](#whole-body-moves).
 - Reload, wave, swing while walking (part of the body): [actions.md](animation/actions.md).
-- A door or prop that plays a clip, layers, curves, root motion of a body that is not a
-  `Character`: [props.md](animation/props.md).
+- A door, a lift or a light moved by a clip, a cutscene with cameras and shots, layers, curves, root
+  motion of a body that is not a `Character`: [props.md](animation/props.md).
 - IK, look-at, feet on the ground, warp to a target, held objects, retarget, mirror, distant
   characters: [rigs.md](animation/rigs.md).
 - Importing clips: [assets](assets.md); AI: [ai](ai.md).

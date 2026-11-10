@@ -178,7 +178,7 @@ content_animation_finish :: proc(app:^App,entry:^Content_Animation,job:bool) {
     content_animation_free(c,entry)
     built:=&load.built
     entry.lib,entry.clip_count,entry.markers=built.lib,built.clip_count,built.markers
-    entry.names,entry.roots,entry.morphs=built.names,built.roots,built.morphs
+    entry.names,entry.roots,entry.morphs,entry.fields=built.names,built.roots,built.morphs,built.fields
     built^={}
     if first {content_loaded(c,entry,true)} else {content_reloaded(c,entry)}
 }
@@ -316,7 +316,9 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
     built.roots,e3=make([]asset.Animation_Root,count,load.allocator)
     morphing:bool
     built.morphs,morphing=content_animation_morphs(view,load.allocator)
-    if e1!=nil || e2!=nil || e3!=nil || !morphing {return}
+    fielded:bool
+    built.fields,fielded=content_animation_fields(view,load.allocator)
+    if e1!=nil || e2!=nil || e3!=nil || !morphing || !fielded {return}
     if count>0 && asset.animation_clips_add(view,&built.lib,.Once)==0 {return}
     content_animation_loops(&built.lib,count)
     built.clip_count=count

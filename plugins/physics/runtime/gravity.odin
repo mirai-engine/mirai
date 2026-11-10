@@ -65,7 +65,7 @@ gravity_place :: proc(fields:^Gravity_Fields,gravities:core.Read(volume.Gravity)
 // a border or pulls toward a center.
 @(private)
 gravity_local :: proc "contextless" (fields:^Gravity_Fields) -> bool {
-    return fields.center || fields.index.tree.proxy_count>0
+    return fields.center || volume.index_bounded(&fields.index)
 }
 
 // The simulation falls with the gravity of the place of each body; where it

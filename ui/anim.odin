@@ -2,6 +2,7 @@ package ui
 
 import "base:runtime"
 import "core:math"
+import std_anim "mirai:std/anim"
 import mm "mirai:std/math"
 
 // Animation of game interfaces. An animation is data: tracks of keyframes
@@ -9,27 +10,6 @@ import mm "mirai:std/math"
 // alone, one after another (sequence) or together (parallel). The state of
 // what is playing belongs to the caller. An animated element moves on screen
 // without changing the layout around it.
-
-Ease :: enum u8 {Linear,Step,In_Quad,Out_Quad,In_Out_Quad,In_Cubic,Out_Cubic,In_Out_Cubic,Out_Back,Out_Elastic,Out_Bounce}
-
-@(private)
-ease :: proc "contextless" (e:Ease,t:f32) -> f32 {
-    t:=clamp(t,0,1)
-    switch e {
-    case .Linear:return t
-    case .Step:return 1 if t>=1 else 0
-    case .In_Quad:return mm.ease_quad_in(t)
-    case .Out_Quad:return mm.ease_quad_out(t)
-    case .In_Out_Quad:return mm.ease_quad_in_out(t)
-    case .In_Cubic:return mm.ease_cubic_in(t)
-    case .Out_Cubic:return mm.ease_cubic_out(t)
-    case .In_Out_Cubic:return mm.ease_cubic_in_out(t)
-    case .Out_Back:return mm.ease_back_out(t)
-    case .Out_Elastic:return mm.ease_elastic_out(t)
-    case .Out_Bounce:return mm.ease_bounce_out(t)
-    }
-    return t
-}
 
 Anim_Property :: enum u8 {
     Offset,   // x, y in layout units
@@ -44,22 +24,16 @@ Anim_Property :: enum u8 {
     Reveal,   // x: 0 to 1, the part of the characters of its text shown
 }
 Anim_Properties :: bit_set[Anim_Property;u16]
-Keyframe :: struct {
-    time:f32,      // seconds from the start of its track
-    value:[4]f32,
-    ease:Ease,     // how the value arrives here from the previous key
-}
 @(private)
 Anim_Track :: struct {property:Anim_Property,first,count:u32}
-Anim_Loop :: enum u8 {Once,Loop,Ping_Pong}
 @(private)
-Anim_Node :: struct {kind:Anim_Kind,loop:Anim_Loop,first,count:u32,duration:f32}
+Anim_Node :: struct {kind:Anim_Kind,loop:std_anim.Loop,first,count:u32,duration:f32}
 
 // An animation of a library; 0 is none.
 Anim :: distinct u16
 
 Anim_Library :: struct {
-    keys:[]Keyframe,key_count:int,
+    keys:[]std_anim.Keyframe,key_count:int,
     tracks:[]Anim_Track,track_count:int,
     nodes:[]Anim_Node,node_count:int,
     children:[]Anim,child_count:int,
@@ -74,7 +48,7 @@ anim_library_init :: proc(lib:^Anim_Library,desc:Anim_Library_Desc={}) -> bool {
     a:=desc.allocator if desc.allocator.procedure!=nil else context.allocator
     lib^={allocator=a}
     e1,e2,e3,e4:runtime.Allocator_Error
-    lib.keys,e1=make([]Keyframe,desc.max_keys if desc.max_keys>0 else 1024,a)
+    lib.keys,e1=make([]std_anim.Keyframe,desc.max_keys if desc.max_keys>0 else 1024,a)
     lib.tracks,e2=make([]Anim_Track,desc.max_tracks if desc.max_tracks>0 else 256,a)
     lib.nodes,e3=make([]Anim_Node,desc.max_anims if desc.max_anims>0 else 128,a)
     lib.children,e4=make([]Anim,desc.max_children if desc.max_children>0 else 256,a)
@@ -86,12 +60,13 @@ anim_library_destroy :: proc(lib:^Anim_Library) {
     lib^={}
 }
 
-Track :: struct {property:Anim_Property,keys:[]Keyframe}
+// The keys of a property: those of std/anim, in seconds from the start of the track.
+Track :: struct {property:Anim_Property,keys:[]std_anim.Keyframe}
 
 // Adds tracks that play together. Keys go in time order; a track holds its
 // first value before its first key and its last one after the last. Returns
 // 0 when the library is full.
-anim_clip :: proc(lib:^Anim_Library,tracks:[]Track,loop:Anim_Loop=.Once) -> Anim {
+anim_clip :: proc(lib:^Anim_Library,tracks:[]Track,loop:std_anim.Loop=.Once) -> Anim {
     keys:=0
     for track in tracks {keys+=len(track.keys)}
     if lib.node_count>=len(lib.nodes) || lib.track_count+len(tracks)>len(lib.tracks) || lib.key_count+keys>len(lib.keys) {return 0}
@@ -107,12 +82,12 @@ anim_clip :: proc(lib:^Anim_Library,tracks:[]Track,loop:Anim_Loop=.Once) -> Anim
     return Anim(lib.node_count)
 }
 // A tween: one property from a value to another.
-anim_tween :: proc(lib:^Anim_Library,property:Anim_Property,from,to:[4]f32,duration:f32,easing:Ease=.Out_Cubic,delay:f32=0) -> Anim {
-    keys:=[3]Keyframe{{time=0,value=from},{time=delay,value=from},{time=delay+duration,value=to,ease=easing}}
+anim_tween :: proc(lib:^Anim_Library,property:Anim_Property,from,to:[4]f32,duration:f32,easing:mm.Ease=.Cubic_Out,delay:f32=0) -> Anim {
+    keys:=[3]std_anim.Keyframe{{time=0,value=from},{time=delay,value=from},{time=delay+duration,value=to,ease=easing}}
     return anim_clip(lib,{{property,keys[:] if delay>0 else keys[1:]}})
 }
 @(private)
-anim_group :: proc(lib:^Anim_Library,kind:Anim_Kind,parts:[]Anim,loop:Anim_Loop) -> Anim {
+anim_group :: proc(lib:^Anim_Library,kind:Anim_Kind,parts:[]Anim,loop:std_anim.Loop) -> Anim {
     if lib.node_count>=len(lib.nodes) || lib.child_count+len(parts)>len(lib.children) {return 0}
     node:=Anim_Node{kind=kind,loop=loop,first=u32(lib.child_count),count=u32(len(parts))}
     for part in parts {
@@ -126,9 +101,9 @@ anim_group :: proc(lib:^Anim_Library,kind:Anim_Kind,parts:[]Anim,loop:Anim_Loop)
     return Anim(lib.node_count)
 }
 // Animations played one after another. A looping step counts once.
-anim_sequence :: proc(lib:^Anim_Library,steps:[]Anim,loop:Anim_Loop=.Once) -> Anim {return anim_group(lib,.Sequence,steps,loop)}
+anim_sequence :: proc(lib:^Anim_Library,steps:[]Anim,loop:std_anim.Loop=.Once) -> Anim {return anim_group(lib,.Sequence,steps,loop)}
 // Animations played together.
-anim_parallel :: proc(lib:^Anim_Library,parts:[]Anim,loop:Anim_Loop=.Once) -> Anim {return anim_group(lib,.Parallel,parts,loop)}
+anim_parallel :: proc(lib:^Anim_Library,parts:[]Anim,loop:std_anim.Loop=.Once) -> Anim {return anim_group(lib,.Parallel,parts,loop)}
 
 anim_duration :: proc(lib:^Anim_Library,anim:Anim) -> f32 {
     if anim==0 || int(anim)>lib.node_count {return 0}
@@ -147,28 +122,26 @@ Anim_Value :: struct {
 }
 ANIM_IDENTITY :: Anim_Value{scale={1,1},opacity=1,color={1,1,1,1}}
 
-// The value of a track at time. from: where the first segment starts
-// instead of its first key, the value the property had when the animation
-// began; before a first key later than 0 it goes from there to that key.
+// The value of a track at time, as std_anim.track_evaluate gives it. from: where
+// the first segment starts instead of its first key, the value the property
+// had when the animation began; before a first key later than 0 it goes from
+// there to that key.
 @(private)
-anim_track_sample :: proc(lib:^Anim_Library,track:Anim_Track,time:f32,from:Maybe([4]f32)=nil) -> [4]f32 {
+anim_track_value :: proc(lib:^Anim_Library,track:Anim_Track,time:f32,from:Maybe([4]f32)=nil) -> [4]f32 {
     keys:=lib.keys[track.first:][:track.count]
     start,blend:=from.?
-    if time<=keys[0].time {
-        if !blend {return keys[0].value}
-        if keys[0].time<=0 {return start if len(keys)>1 else keys[0].value}
-        return start+(keys[0].value-start)*ease(keys[0].ease,max(time,0)/keys[0].time)
+    if !blend {return std_anim.track_evaluate(keys,.Vector,time)}
+    lead:[2]std_anim.Keyframe
+    if keys[0].time>0 {
+        if time>=keys[0].time {return std_anim.track_evaluate(keys,.Vector,time)}
+        lead={{value=start},keys[0]}
+    } else {
+        if len(keys)==1 {return keys[0].value}
+        if time>=keys[1].time {return std_anim.track_evaluate(keys,.Vector,time)}
+        lead={keys[0],keys[1]}
+        lead[0].value=start
     }
-    for i in 1..<len(keys) {
-        if time<keys[i].time {
-            a,b:=keys[i-1],keys[i]
-            if i==1 && blend && a.time<=0 {a.value=start}
-            span:=b.time-a.time
-            t:=ease(b.ease,(time-a.time)/span if span>0 else 1)
-            return a.value+(b.value-a.value)*t
-        }
-    }
-    return keys[len(keys)-1].value
+    return std_anim.track_evaluate(lead[:],.Vector,max(time,0))
 }
 
 // What value holds of a property, and whether it holds it: Width, Height,
@@ -200,23 +173,14 @@ anim_sample :: proc(lib:^Anim_Library,anim:Anim,time:f32,value:^Anim_Value,from:
     from:=from
     // Only the first pass of a loop starts from there.
     if node.loop!=.Once && time>=node.duration {from=nil}
-    t:=time
-    switch node.loop {
-    case .Once:t=clamp(time,0,node.duration)
-    case .Loop:if node.duration>0 {t=math.mod(max(time,0),node.duration)}
-    case .Ping_Pong:
-        if node.duration>0 {
-            t=math.mod(max(time,0),2*node.duration)
-            if t>node.duration {t=2*node.duration-t}
-        }
-    }
+    t,_:=std_anim.loop_time(node.loop,node.duration,max(time,0))
     switch node.kind {
     case .Clip:
         for track in lib.tracks[node.first:][:node.count] {
             if track.count==0 {continue}
             start:Maybe([4]f32)
             if from!=nil {if held,ok:=anim_value_get(from,track.property);ok {start=held}}
-            v:=anim_track_sample(lib,track,t,start)
+            v:=anim_track_value(lib,track,t,start)
             switch track.property {
             case .Offset:value.offset={v.x,v.y}
             case .Scale:value.scale={v.x,v.y}
@@ -274,9 +238,11 @@ anim_update :: proc(lib:^Anim_Library,player:^Anim_Player,dt:f32) -> bool {
     return player.playing
 }
 
-// Animations an element plays when its state changes; 0 leaves it as it is.
-Anim_Set :: struct {shown,hidden,hovered,unhovered,pressed,released,focused,unfocused,selected,unselected,clicked:Anim}
-Anim_Flags :: struct {shown,hovered,pressed,focused,selected,clicked:bool}
+// Animations an element plays when something happens to it; 0 leaves it as
+// it is. What it looks like while hovered, pressed, focused or selected is
+// of its style, with its transition.
+Anim_Set :: struct {shown,hidden,clicked:Anim}
+Anim_Flags :: struct {shown,clicked:bool}
 Anim_State :: struct {
     using player:Anim_Player,
     flags:Anim_Flags, // as of the last anim_react
@@ -284,30 +250,17 @@ Anim_State :: struct {
 }
 
 // Plays what the set says for the changes between the flags of the previous
-// call and these, and advances it: of the changes that come together, the
-// first in this order that has an animation. Returns true while the element
-// has to be built: it is shown, or still playing how it hides.
+// call and these, and advances it: being shown before being clicked. Returns
+// true while the element has to be built: it is shown, or still playing how
+// it hides.
 anim_react :: proc(lib:^Anim_Library,state:^Anim_State,set:Anim_Set,flags:Anim_Flags,dt:f32) -> bool {
     before:=state.flags
     if !state.started {before={};state.started=true;state.value=ANIM_IDENTITY}
     if !flags.shown && before.shown {
         if set.hidden!=0 {anim_play(state,set.hidden)} else {state.playing=false}
     } else {
-        changes:=[?]struct{changed:bool,anim:Anim}{
-            {flags.shown && !before.shown,set.shown},
-            {flags.pressed && !before.pressed,set.pressed},
-            {!flags.pressed && before.pressed,set.released},
-            {flags.hovered && !before.hovered,set.hovered},
-            {!flags.hovered && before.hovered,set.unhovered},
-            {flags.clicked && !before.clicked,set.clicked},
-            {flags.focused && !before.focused,set.focused},
-            {!flags.focused && before.focused,set.unfocused},
-            {flags.selected && !before.selected,set.selected},
-            {!flags.selected && before.selected,set.unselected},
-        }
-        for change in changes {
-            if change.changed && change.anim!=0 {anim_play(state,change.anim);break}
-        }
+        if flags.shown && !before.shown && set.shown!=0 {anim_play(state,set.shown)}
+        else if flags.clicked && !before.clicked && set.clicked!=0 {anim_play(state,set.clicked)}
     }
     state.flags=flags
     playing:=anim_update(lib,state,dt)
