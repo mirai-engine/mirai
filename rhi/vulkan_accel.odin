@@ -54,7 +54,7 @@ vk_accel_range :: proc(d: ^Device, size: u64) -> (buffer: Buffer, block: int, of
 		if empty >= len(d.accel_arena.blocks) || d.accel_arena.blocks[empty].size == 0 || d.accel_arena.blocks[empty].used > 0 {continue}
 		buffer_destroy(d, d.accel_blocks[empty])
 		d.accel_blocks[empty] = 0
-		accel_arena_drop(&d.accel_arena, empty)
+		arena_drop(&d.accel_arena, empty)
 	}
 	clear(&d.accel_empty)
 	if d.accel_arena.allocator.procedure == nil {
@@ -62,16 +62,29 @@ vk_accel_range :: proc(d: ^Device, size: u64) -> (buffer: Buffer, block: int, of
 		d.accel_blocks = make([dynamic]Buffer, d.allocator)
 		d.accel_empty = make([dynamic]int, d.allocator)
 	}
-	block, offset, ok = accel_arena_take(&d.accel_arena, size, ACCEL_ALIGNMENT)
+	block, offset, ok = arena_take(&d.accel_arena, size, ACCEL_ALIGNMENT)
 	if !ok {
 		bytes := accel_block_size(size)
 		made := vk_create_buffer(d, {size = bytes, memory = .GPU, name = "acceleration structures"}, {.ACCELERATION_STRUCTURE_STORAGE_KHR, .SHADER_DEVICE_ADDRESS}, zero = false)
 		if made == 0 {return}
-		at := accel_arena_add(&d.accel_arena, bytes)
-		for len(d.accel_blocks) <= at {append(&d.accel_blocks, 0)}
-		d.accel_blocks[at] = made
-		block, offset, ok = accel_arena_take(&d.accel_arena, size, ACCEL_ALIGNMENT)
-		if !ok {return}
+		at, added := arena_add(&d.accel_arena, bytes)
+		if added && len(d.accel_blocks) <= at && resize(&d.accel_blocks, at + 1) != nil {
+			arena_drop(&d.accel_arena, at)
+			added = false
+		}
+		if added {
+			d.accel_blocks[at] = made
+			block, offset, ok = arena_take(&d.accel_arena, size, ACCEL_ALIGNMENT)
+		}
+		if !ok {
+			if added {
+				d.accel_blocks[at] = 0
+				arena_drop(&d.accel_arena, at)
+			}
+			buffer_destroy(d, made)
+			set_error(d, "out of memory for the blocks of the acceleration structures")
+			return
+		}
 	}
 	return d.accel_blocks[block], block, offset, true
 }
@@ -86,7 +99,7 @@ vk_create_accel :: proc(d: ^Device, type: vk.AccelerationStructureTypeKHR, sizes
 	info := vk.AccelerationStructureCreateInfoKHR{sType = .ACCELERATION_STRUCTURE_CREATE_INFO_KHR, buffer = b.handle, offset = vk.DeviceSize(offset), size = sizes.accelerationStructureSize, type = type}
 	a := Vk_Accel{buffer = buffer, block = i32(block + 1), offset = offset, size = size, top_level = type == .TOP_LEVEL, blas = blas, max_instances = max_instances, scratch_size = u64(max(sizes.buildScratchSize,sizes.updateScratchSize))}
 	if !vk_check(d, d.dvk.CreateAccelerationStructureKHR(d.handle, &info, nil, &a.handle), "vkCreateAccelerationStructureKHR") {
-		if accel_arena_give(&d.accel_arena, block, offset, size) {append(&d.accel_empty, block)}
+		if arena_give(&d.accel_arena, block, offset, size) {append(&d.accel_empty, block)}
 		return 0
 	}
 	address_info := vk.AccelerationStructureDeviceAddressInfoKHR{sType = .ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR, accelerationStructure = a.handle}
@@ -241,7 +254,7 @@ cmd_compact_blases :: proc(c: ^Command_List) -> (replaced: int, freed: u64) {
 		info := vk.AccelerationStructureCreateInfoKHR{sType = .ACCELERATION_STRUCTURE_CREATE_INFO_KHR, buffer = b.handle, offset = vk.DeviceSize(offset), size = vk.DeviceSize(size), type = .BOTTOM_LEVEL}
 		handle: vk.AccelerationStructureKHR
 		if d.dvk.CreateAccelerationStructureKHR(d.handle, &info, nil, &handle) != .SUCCESS {
-			if accel_arena_give(&d.accel_arena, block, offset, taken) {append(&d.accel_empty, block)}
+			if arena_give(&d.accel_arena, block, offset, taken) {append(&d.accel_empty, block)}
 			continue
 		}
 		cmd_barrier_buffer(c, a.buffer, .Accel_Build_Input)

@@ -85,6 +85,52 @@ rhi_device_reports_what_is_alive :: proc(t:^testing.T) {
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 
+// More small resources than the memory allocations a Vulkan driver has to
+// give at once (4096): they share the memory of a few, each keeps what was
+// written to it, and the device makes them all.
+@(test)
+rhi_holds_more_resources_than_a_driver_gives_memory_allocations :: proc(t:^testing.T) {
+    d:=small_device(t,{})
+    if d==nil {return}
+    defer rhi.device_destroy(d)
+    textures:=make([]rhi.Texture,5000)
+    defer delete(textures)
+    made:=0
+    for &texture in textures {
+        texture=rhi.texture_create(d,{width=4,height=4,format=.RGBA8_Unorm,usage={.Sampled},name="one of many"})
+        if texture==0 {break}
+        made+=1
+    }
+    testing.expectf(t,made==len(textures),"%d of %d textures: %s",made,len(textures),rhi.device_error(d))
+    buffers:[16]rhi.Buffer
+    written:[1024]u8
+    for &buffer,i in buffers {
+        memory:=rhi.Memory.GPU if i%2==0 else rhi.Memory.Upload
+        buffer=rhi.buffer_create(d,{size=len(written),usage={.Storage},memory=memory,name="neighbour"})
+        for &b in written {b=u8(i+1)}
+        testing.expect(t,buffer!=0 && rhi.buffer_upload(d,buffer,0,written[:]),rhi.device_error(d))
+    }
+    for texture,i in textures[:min(made,16)] {
+        texels:[4*4*4]u8
+        for &b in texels {b=u8(i+1)}
+        testing.expect(t,rhi.texture_upload(d,texture,texels[:],16),rhi.device_error(d))
+    }
+    for buffer,i in buffers {
+        read:[1024]u8
+        testing.expect(t,rhi.buffer_read(d,buffer,0,read[:]),rhi.device_error(d))
+        testing.expectf(t,read[0]==u8(i+1) && read[len(read)-1]==u8(i+1),"buffer %d holds what a neighbour wrote",i)
+        rhi.buffer_destroy(d,buffer)
+    }
+    for texture,i in textures[:min(made,16)] {
+        read:[4*4*4]u8
+        testing.expect(t,rhi.texture_read(d,texture,read[:]),rhi.device_error(d))
+        testing.expectf(t,read[0]==u8(i+1) && read[len(read)-1]==u8(i+1),"texture %d holds what a neighbour wrote",i)
+    }
+    for texture in textures[:made] {rhi.texture_destroy(d,texture)}
+    rhi.device_wait_idle(d)
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
+}
+
 @(test)
 rhi_destroying_more_than_a_frame_slot_holds_between_frames_releases_them :: proc(t:^testing.T) {
     d:=small_device(t,{deletions=4})

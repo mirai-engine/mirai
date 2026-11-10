@@ -14,7 +14,14 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   allocated once with `Device_Desc.allocator`. Creating one more, or a `frame_alloc` with no room
   in the ring, returns the zero handle, leaves the message in `device_error` and adds to
   `device_stats().exhausted`. The live counts of `device_stats` are those the user made: what the
-  device does for itself (rings, scratch, structure blocks, the table default) does not count.
+  device does for itself (rings, scratch, upload staging, structure blocks, the table default)
+  does not count.
+- **Device memory.** On Vulkan, buffers and textures take ranges of blocks of memory, per memory
+  type (`rhi/vulkan_memory.odin`), with the range allocator of the acceleration structures
+  (`rhi/arena.odin`). Only a resource too large for a block, or one the driver prefers alone,
+  takes an allocation of the driver, and their count never passes `maxMemoryAllocationCount`; a
+  refusal says in `device_error` whether the memory or that count ran out. A new texture or
+  buffer of `GPU` memory holds what its range held before: it is written before it is read.
 - Each frame slot keeps up to `deletions` destroyed objects. Between frames, a full slot waits
   for the GPU and frees them; within a frame the list grows and is counted in
   `deletion_overflows`.
@@ -182,7 +189,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   column-wise transform, where flags and index go). The shader travels in the renderer's
   generation, which provides it with `tlas_translator_set` before the self-test.
 - **Structure memory.** BLAS and TLAS live in ranges of large blocks (`ACCEL_BLOCK_BYTES`, or a
-  dedicated one for a larger structure), with a common range allocator (`rhi/accel_arena.odin`):
+  dedicated one for a larger structure), with a common range allocator (`rhi/arena.odin`):
   on Vulkan each block is a buffer, on Metal a placement heap with tracked hazards. A structure
   does not occupy a buffer of the device pool; its range returns to the block when the frames
   that could use it finish, and an empty block goes away with the next creation.
