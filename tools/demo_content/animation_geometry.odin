@@ -62,7 +62,7 @@ gallery_spider :: proc(o:^Out) {
         leg.phase=f32((i+i/4)%2)*.5;leg.step_distance=.3;leg.step_height=.15;leg.sole_height=.03;leg.pole_offset={-1 if i<4 else 1,.2,0}
         grounding.legs[i]=leg
     }
-    pose_write(o,"characters/spider","spider_grounding",{grounding={grounding}})
+    gallery_set(o,"characters/spider","spider",{},{pose={grounding={grounding}}})
 }
 
 @(private)
@@ -80,7 +80,7 @@ gallery_skin_box :: proc(cube:^geom.Mesh_Buffer,vertices:^[dynamic]asset.Vertex,
 @(private) GALLERY_TALL :: 1.25
 
 // A Mirai stretched upward, with its skeleton stretched the same, and the clips of the gallery
-// baked for it: the same paths, with the translations scaled to its proportions.
+// baked for it: each bone by the bone of its name, with the translations scaled to its proportions.
 @(private)
 gallery_retarget :: proc(o:^Out,model:^importer.Imported_Model,source:string) {
     folder:="assets/characters/tall_mirai";os.make_directory_all(path(o,folder))
@@ -122,8 +122,6 @@ gallery_retarget :: proc(o:^Out,model:^importer.Imported_Model,source:string) {
     if importer.levels_geometry(levels,mesh.flags,&desc.geometry,context.temp_allocator) {
         asset.content_check(&o.content,"tall_mirai.mesh",asset.mesh_save(path(o,fmt.tprintf("%s/tall_mirai.mesh",folder)),&o.content.types,desc))
     } else {asset.content_check(&o.content,"tall_mirai.mesh",.Invalid)}
-    constraint:=anim.RETARGET_MAPPING_DEFAULT;constraint.mode=.Paths;constraint.translation=.Scaled
-    profile:=anim.Pose_Profile{retarget={constraint}}
     input:asset.Asset
     if error:=asset.asset_load(&input,path(o,"assets/characters/mirai/mirai_gallery.anim"));error!=.None {asset.content_check(&o.content,"mirai retarget input",error);return}
     defer asset.asset_close(&input)
@@ -132,7 +130,7 @@ gallery_retarget :: proc(o:^Out,model:^importer.Imported_Model,source:string) {
     source_info:=asset.Skeleton_Info{u32(len(model.skeletons[0].bones))};target_info:=asset.Skeleton_Info{u32(len(bones))}
     baked:asset.Document
     baked_id:=asset.content_id(PROJECT,"animation","tall_mirai")
-    error:=animation_editor.retarget_bake(&baked,&o.content.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},profile,skeleton=skeleton_id)
+    error:=animation_editor.retarget_bake(&baked,&o.content.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},nil,skeleton=skeleton_id)
     if error!=.None {asset.content_check(&o.content,"mirai retarget bake",error);return}
     defer asset.document_destroy(&baked)
     asset.content_check(&o.content,"tall_mirai.anim",asset.document_save(&baked,path(o,"assets/characters/tall_mirai/tall_mirai.anim")))

@@ -33,7 +33,7 @@ PATH_CAPACITY :: asset.NODE_PATH_CAPACITY // the field asset hides the package i
 
 Play_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
-    asset:base.Asset_Id `mirai:"optional,label=An .anim; or a .match, its locomotion; omitted keeps what it plays"`,
+    asset:base.Asset_Id `mirai:"optional,label=An .anim; or a .character, its locomotion; omitted keeps what it plays"`,
     clip:[64]u8 `mirai:"text,optional,label=A clip of the .anim; only with an .anim asset"`,
     speed:f32 `mirai:"optional"`,
     fade:f32 `mirai:"optional,min=0"`,
@@ -82,7 +82,7 @@ register :: proc(s:^editor.Session) {
     preview_defaults:=new(Preview_Params,context.temp_allocator);if preview_defaults==nil {return}
     preview_defaults.dt,preview_defaults.limit,preview_defaults.trace_limit=1.0/60,256,16
     request_rows_defaults(preview_defaults)
-    editor.api_method_register(s,Play_Params,Control_Result,{name="animation.play",summary="Plays a clip of an .anim or the motion matching of a .match on an entity. What plays over it are the layers and actions of its action set (animation.action.set, animation.request). One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
+    editor.api_method_register(s,Play_Params,Control_Result,{name="animation.play",summary="Plays a clip of an .anim or a .character, its locomotion by motion matching, on an entity. What plays over it are the layers and actions of its .character (animation.action.set, animation.request). One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
     editor.api_method_register(s,Preview_Params,Preview_Result,{name="animation.preview",summary="Evaluates an entity on a copy of the world with the fields of animation.request scheduled by tick and returns its poses; the document and the running world stay intact.",defaults=preview_defaults,flags={.Read_Only},run=preview,writes_result=true})
 }
 
@@ -158,7 +158,7 @@ play :: proc(s:^editor.Session,call:^api.Call) {
     content:=host.content_animation_wait(s.app,source)
     if content==nil {authoring_failure(call,"asset","Invalid_Asset","a loadable animation source","source load failed","The animation asset could not be loaded");return}
     name:=base.text_get(p.clip[:])
-    if source!=value.asset && name!="" {authoring_failure(call,"clip","Program_Source","no clip with a .match","base clip supplied","The search of a .match picks its clips",fix="Play a clip over it as an action of its action set: animation.action.set, then animation.request actions");return}
+    if source!=value.asset && name!="" {authoring_failure(call,"clip","Program_Source","no clip with a .character whose locomotion picks its clips","base clip supplied","The locomotion of a .character picks its clips",fix="Play a clip over it as an action of its .character: animation.action.set, then animation.request actions");return}
     if name!="" && lib.clip_find(&content.lib,base.name_hash(name))==0 {authoring_failure(call,"clip","Missing_Clip","a clip name in the source",name,"The clip does not exist in this animation asset");return}
     if !anim.animation_clip(&value,name,p.fade,p.loop,p.speed) {authoring_failure(call,"clip","Invalid_Value","a clip name under 64 bytes",name,"The clip could not be set");return}
     if !edit_begin(s,call,"Play animation") {return}
