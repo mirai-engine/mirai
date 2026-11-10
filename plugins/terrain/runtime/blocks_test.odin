@@ -183,12 +183,12 @@ volume_snapshots_hold_only_their_blocks_and_give_back_each_stroke :: proc(t:^tes
     source,before,after:Source
     defer source_destroy(&source);defer source_destroy(&before);defer source_destroy(&after)
     if !blocks_volume(t,&source) {return}
-    testing.expect(t,source_clone(&before,&source,editable=false))
+    testing.expect(t,source_clone(&before,&source))
     dense:=97*97*97
     testing.expect(t,grid_dense(&before.distances)<dense,"a snapshot holds no values for the blocks all air or all solid")
     testing.expect(t,source_edit(&source,{kind=.Carve,center=BLOCKS_CENTER,radius=20,amount=1}).changed)
     testing.expect(t,source_edit(&source,{kind=.Add,center=BLOCKS_CENTER,radius=6,amount=1}).changed)
-    testing.expect(t,source_clone(&after,&source,editable=false))
+    testing.expect(t,source_clone(&after,&source))
     testing.expect_value(t,grid_dense(&after.distances),grid_dense(&source.distances))
     // Undo and redo copy a snapshot back over the source.
     testing.expect(t,data_source_copy(&source,&before))

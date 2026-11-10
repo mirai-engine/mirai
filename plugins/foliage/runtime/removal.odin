@@ -11,8 +11,8 @@ import "base:runtime"
 // up to REMOVED_PAGE of them, as the tombstones of what is destroyed in a
 // section; a cell that loses more has more. A saved game keeps them, Play and
 // rollback copy them, a Foliage kept for a section that is not loaded keeps
-// them with it (scene.Far_Kept), and the network takes each to the clients as
-// one object whose changes travel alone (the bridge foliage_multiplayer). The
+// them with it (scene.Far_Kept), and the network takes each to every client as
+// one object whose changes travel alone (replicated="object"). The
 // source does not change. The game asks with foliage_remove; the end that
 // decides writes the entities, and a client asks nothing: what it is told
 // arrives. The Foliage is named by its Id, which every end of a session and
@@ -26,7 +26,7 @@ import "base:runtime"
 
 REMOVED_PAGE :: 128 // instances of a cell one entity holds
 
-@(component,replicated,description="Instances of a cell of a Foliage taken out in play: the Foliage with this Id neither shows them nor collides with them. A saved game keeps them; taking this entity away puts them back.")
+@(component,replicated="object",description="Instances of a cell of a Foliage taken out in play: the Foliage with this Id neither shows them nor collides with them. A saved game keeps them; taking this entity away puts them back.")
 Foliage_Removed :: struct {
     foliage:base.Entity_Id `mirai:"readonly"`,                   // the Id of the Foliage entity
     coord:[2]i32 `mirai:"readonly"`,                             // the cell of the instances
@@ -272,6 +272,7 @@ removed_write :: proc(removed:^core.Table(Foliage_Removed),pages:[]Removed_Page,
         left=left[n:]
         made:=core.commands_create(commands)
         core.commands_add(commands,made,core.Parent{entity=e})
+        core.commands_add(commands,made,core.TRANSFORM_IDENTITY)
         core.add(removed,made,value)
     }
 }

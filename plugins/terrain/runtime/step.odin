@@ -675,9 +675,10 @@ terrain_update :: proc(
     meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),overrides:^core.Table(render.Material_Override),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
     view:core.View,worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),kept:core.Read(scene.Far_Kept),physics:phys.Physics_Settings,
-    loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,
+    loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,tints,overrides}
+    if queries.open==nil {queries.open=ground_open}
     if resident==nil || app.assets==nil {return}
     if !data_ready(data,settings,app.allocator) || !work_ready(data,&app.jobs,app.allocator) {
         core.report(problems,core.NONE,"terrain.memory","out of memory for the list of %d terrain sources of Terrain_Settings.sources; no terrain shows until it fits: free memory, or lower it",max(settings.sources,1))
@@ -889,6 +890,7 @@ terrain_update :: proc(
     }
     resident.shown={core.version(terrains),core.version(c.tints),core.version(c.overrides)}
     if resident.room.starved {resident.room.seen=core.version(c.colliders)}
+    ground_update(resident,data,core.read(terrains),colliders,worlds,focus)
     host.assets_commit(app.assets)
 }
 

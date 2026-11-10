@@ -532,6 +532,13 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     moves:=core.world_table_of(w,input.Move_Input)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     seats:=core.world_table_of(w,input.Seat)
+    // An entity with a component declared replicated="object" is replicated without Replicate of its own.
+    for &info in w.info.tables {
+        if info.replicated!=.Object || info.place!=.World {continue}
+        for e in core.world_table_at(w,&info).entities {
+            if !core.staged_has(objects,e) {core.add(objects,e,Replicate{audience=.Always,priority=1,radius=1})}
+        }
+    }
     for &slot in server.objects {
         if slot.object==0 {continue}
         if core.alive(es,slot.entity) && replicated(w,objects,slot.entity) {continue}
