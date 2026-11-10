@@ -195,12 +195,10 @@ Connection_Event :: struct {
     reason:Disconnect_Reason,
 }
 
-// Who arrived and who left, for the fixed functions: at the start of each tick
-// the network leaves here what happened since the tick before. A frame
-// without ticks keeps it for the next tick, and of a frame with several only
-// the first has it.
+// Who arrived and who left: at the start of each tick the network pushes
+// what happened since the tick before, which each reader gets once.
 @(storage)
-Net_Connections :: struct {events:core.Queue(Connection_Event)}
+Net_Connections :: struct {events:core.Events(Connection_Event)}
 
 // An event of the protocol that arrived: read it with event_read.
 Received :: struct {
@@ -211,7 +209,7 @@ Received :: struct {
     data:[EVENT_BYTES]u8,
 }
 
-// The messages that arrived, for the fixed functions, like Net_Connections: at
+// The messages that arrived, for the fixed functions: at
 // the start of each tick the network leaves here what arrived since the tick
 // before. A frame without ticks keeps them for the next tick, of a frame with
 // several only the first has them, and a tick that runs again has those it had.
