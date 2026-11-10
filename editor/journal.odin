@@ -57,6 +57,8 @@ Journal_Change :: struct {
     id:base.Entity_Id, // of the entity, also once it is gone
     table:i32,
     present,off:bool,
+    valued:bool, // its bytes of before are in the values of the changes: taken while collaboration read
+    value:u64,   // where, counted from the first value ever kept
 }
 
 // A row of a table whose saved bytes, off state or presence the World and the
@@ -321,7 +323,12 @@ journal_sync :: proc(edits:^Edits,w:core.World_Ref) -> bool {
         d:=journal_diff(table,image,size,edits.ranges[i].ranges,authors,only_authors && i!=id)
         for r in journal_diff_next(&d) {
             if edits.reading || edits.logging {
-                _,error:=append(&edits.changes,Journal_Change{r.entity,journal_id(edits,w,id,r.entity),i32(i),r.image_row>=0,r.image_row>=0 && image.off[r.image_row]})
+                change:=Journal_Change{entity=r.entity,id=journal_id(edits,w,id,r.entity),table=i32(i),present=r.image_row>=0,off=r.image_row>=0 && image.off[r.image_row]}
+                if edits.reading && change.present {
+                    at:=edits.change_values_first+u64(len(edits.change_values))
+                    if _,error:=append(&edits.change_values,..([^]u8)(journal_value(image,size,r.image_row))[:size]);error==nil {change.valued,change.value=true,at}
+                }
+                _,error:=append(&edits.changes,change)
                 ok&&=error==nil
             }
             if r.row<0 {journal_drop(image,r.image_row,size)} else {ok&&=journal_put(image,r.entity,r.image_row,table_value(table,size,r.row),size,table.off[r.row])}
@@ -377,6 +384,17 @@ journal_take_field :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity
     row,image_row:=core.raw_row(current,e),journal_row(image,e)
     if row<0 || image_row<0 || offset<0 || offset+size>width {return}
     mem.copy(rawptr(uintptr(journal_value(image,width,image_row))+uintptr(offset)),rawptr(uintptr(table_value(current,width,row))+uintptr(offset)),size)
+}
+
+// The image takes whether the row of e is turned off by itself, without a
+// step nor a change. Nothing when the image has no row of e.
+@(private)
+journal_take_off :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity) {
+    if table<0 || table>=len(edits.image) || !edits.saved[table] {return}
+    current:=core.world_table_at(w,&w.info.tables[table])
+    image:=&edits.image[table]
+    row,image_row:=core.raw_row(current,e),journal_row(image,e)
+    if row>=0 && image_row>=0 {image.off[image_row]=current.off[row]}
 }
 
 // The image of the index of an entity takes what the World has there.
@@ -584,6 +602,16 @@ journal_read :: proc(edits:^Edits,cursor:^u64) -> []Journal_Change {
     return edits.changes[from-edits.changes_first:]
 }
 
+// What the row of a change held before the image took it; false when it was
+// not kept. Valid until a reader is done or the image takes the World again.
+@(private)
+journal_change_value :: proc(edits:^Edits,change:Journal_Change,size:int) -> (value:[]u8,kept:bool) {
+    if !change.valued || change.value<edits.change_values_first {return}
+    at:=int(change.value-edits.change_values_first)
+    if at+size>len(edits.change_values) {return}
+    return edits.change_values[at:][:size],true
+}
+
 @(private)
 journal_read_done :: proc(edits:^Edits,cursor:u64) {
     edits.read_done=cursor
@@ -606,6 +634,12 @@ journal_trim :: proc(edits:^Edits) {
     read:=int(clamp(first,edits.changes_first,end)-edits.changes_first)
     remove_range(&edits.changes,0,read)
     edits.changes_first+=u64(read)
+    kept:=edits.change_values_first+u64(len(edits.change_values))
+    for change in edits.changes {
+        if change.valued {kept=change.value;break}
+    }
+    remove_range(&edits.change_values,0,int(kept-edits.change_values_first))
+    edits.change_values_first=kept
 }
 
 // Forgets the changes for every reader: the World they were of was replaced.
@@ -622,6 +656,7 @@ journal_reading :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
     edits.reading=on
     end:=edits.changes_first+u64(len(edits.changes))
     journal_read_done(edits,end)
+    if !on {shrink(&edits.change_values)}
     if !on && !edits.logging {shrink(&edits.changes)}
     return end
 }

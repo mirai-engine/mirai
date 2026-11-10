@@ -61,7 +61,7 @@ asset_delete_users :: proc(r:^asset.Registry,files:[]u32) -> []u32 {
 @(private)
 asset_delete_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
     if refusal:=asset_owned_refusal(r,file);refusal!="" {return refusal}
-    if watching(s) {return "A watcher does not change the files of the host"}
+    if watching(s) {return "The run of an agent is being watched; stop watching it first"}
     if busy:=import_busy(s);busy!="" {return busy}
     for at in asset_delete_files(r,file.id) {
         if scene_tab(s,r.files[at].id)>=0 {return "It is open in a tab: close the tab first"}

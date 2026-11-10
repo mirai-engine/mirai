@@ -307,7 +307,7 @@ preset_shape :: proc "contextless" (preset:Preset) -> erender.Shape {
 
 // Destroys entities and everything under them.
 entities_delete :: proc(s:^Session,entities:[]core.Entity) {
-    if watching(s) || edit_held(s,..entities) || section_refused(s,..section_alone(s,entities)) {return}
+    if watching(s) || section_refused(s,..section_alone(s,entities)) {return}
     w:=editing_world(s)
     if len(entities)==0 {return}
     opened,edit_ready:=edit_open(s,"Delete")
@@ -428,7 +428,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
 }
 
 entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return false}
+    if watching(s) || section_refused(s,e) {return false}
     w:=editing_world(s)
     names:=core.world_table_of(w,core.Name)
     text:=strings.trim_space(name)
@@ -448,7 +448,7 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
 // the world. False when the parent is the entity or under it, or a parent
 // without size on an axis cannot hold it there.
 entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
-    if watching(s) || edit_held(s,e) {return false}
+    if watching(s) {return false}
     w:=editing_world(s)
     parent:=parent
     if root:=document_root(s,w);root!=core.NONE && w.data==s.edit_world {
@@ -474,7 +474,7 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
 
 // Places an entity among the children of its parent: order says where.
 entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
+    if watching(s) || section_refused(s,e) {return}
     w:=editing_world(s)
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return}
@@ -487,7 +487,7 @@ entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
 }
 
 entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
+    if watching(s) || section_refused(s,e) {return}
     w:=editing_world(s)
     table:=core.world_table_of(w,erender.Hidden)
     if table==nil || entity_has(w,e,erender.Hidden)==hidden {return}
@@ -500,7 +500,7 @@ entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
 // Writes the Transform of an entity. While a Play runs, a row another
 // component owns (a body) is left to it.
 transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return false}
+    if watching(s) || section_refused(s,e) {return false}
     w:=editing_world(s)
     transforms:=core.world_table_of(w,core.Transform)
     if transforms==nil {return false}
@@ -538,7 +538,7 @@ api_component_named :: proc(w:core.World_Ref,name:string) -> (table:^core.Table_
 // Gives an entity a component, or replaces its value: value nil gives the
 // one it starts with (component_default).
 component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=nil) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
+    if watching(s) || section_refused(s,e) {return}
     w:=editing_world(s)
     if t==nil || t.place!=.World || !entity_alive(w,e) {return}
     opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",readable(t.name)))
@@ -555,7 +555,7 @@ component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=n
 }
 
 component_remove :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
+    if watching(s) || section_refused(s,e) {return}
     w:=editing_world(s)
     if t==nil || t.place!=.World {return}
     opened,edit_ready:=edit_open(s,fmt.tprintf("Remove %s",readable(t.name)))
@@ -566,7 +566,7 @@ component_remove :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
 
 // Turns a component of an entity off by itself, or on: it keeps its values.
 component_turn :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,off:bool) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
+    if watching(s) || section_refused(s,e) {return}
     w:=editing_world(s)
     if t==nil || t.place!=.World {return}
     table:=core.world_table_at(w,t)
@@ -580,7 +580,7 @@ component_turn :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,off:bool) {
 
 // Turns an entity and everything under it off, or on (core.Disabled).
 entity_enabled_set :: proc(s:^Session,e:core.Entity,enabled:bool) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
+    if watching(s) || section_refused(s,e) {return}
     w:=editing_world(s)
     table:=core.world_table_of(w,core.Disabled)
     if table==nil || entity_has(w,e,core.Disabled)!=enabled {return}
@@ -593,7 +593,7 @@ entity_enabled_set :: proc(s:^Session,e:core.Entity,enabled:bool) {
 // Writes bytes at an offset of the component of every entity given that has
 // it. The step is the gesture that is open, or one of its own.
 field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:int,bytes:[]u8) -> bool {
-    if watching(s) || edit_held(s,..entities) || section_refused(s,..entities) {return false}
+    if watching(s) || section_refused(s,..entities) {return false}
     w:=editing_world(s)
     if t==nil || offset<0 || offset+len(bytes)>t.info.size {return false}
     table:=core.world_table_at(w,t)
@@ -623,24 +623,43 @@ entity_offsets :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator
 
 // Byte ranges of the transient fields of a type: what a copy leaves zero.
 transient_ranges :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator,error:^runtime.Allocator_Error=nil) -> [][2]int {
-    walk :: proc(info:^runtime.Type_Info,at:uintptr,out:[][2]int,index:^int) {
+    return field_ranges(type,false,allocator,error)
+}
+
+// Byte ranges of the fields of a type a scene saves, in order: every field
+// that is not transient, those of a struct inside it one by one.
+saved_fields :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator,error:^runtime.Allocator_Error=nil) -> [][2]int {
+    return field_ranges(type,true,allocator,error)
+}
+
+@(private)
+field_ranges :: proc(type:^runtime.Type_Info,saved:bool,allocator:runtime.Allocator,error:^runtime.Allocator_Error) -> [][2]int {
+    walk :: proc(info:^runtime.Type_Info,at:uintptr,saved:bool,out:[][2]int,index:^int) {
         value,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-        if !is_struct {return}
+        if !is_struct {
+            if saved && info.size>0 {
+                if out!=nil {out[index^]={int(at),info.size}}
+                index^+=1
+            }
+            return
+        }
         for field in 0..<int(value.field_count) {
             offset:=at+value.offsets[field]
             if _,transient:=core.field_option(reflect.Struct_Tag(value.tags[field]),"transient");transient {
-                if out!=nil {out[index^]={int(offset),value.types[field].size}}
-                index^+=1
-            } else {walk(value.types[field],offset,out,index)}
+                if !saved {
+                    if out!=nil {out[index^]={int(offset),value.types[field].size}}
+                    index^+=1
+                }
+            } else {walk(value.types[field],offset,saved,out,index)}
         }
     }
     count:=0
-    walk(type,0,nil,&count)
+    walk(type,0,saved,nil,&count)
     ranges,failed:=make([][2]int,count,allocator)
     if error!=nil {error^=failed}
     if failed!=nil {return nil}
     index:=0
-    walk(type,0,ranges,&index)
+    walk(type,0,saved,ranges,&index)
     return ranges
 }
 

@@ -393,20 +393,6 @@ view_write :: proc(s:^Session,w:core.World_Ref) {
             s.app.detail={camera=host.camera_from_view(s.paused_view),on=true}
         }
     }
-    // The Play of the host arrives with the view the host sees. The camera of
-    // the viewport follows it, so what the editor draws over the scene and
-    // what it picks line up with the image.
-    if s.mode==.Watch && s.watch.host {
-        v:=s.viewport
-        if o,ok:=orbit_from_points(view.position,view.position+core.view_forward(view^)*v.orbit.distance,view.fov*mm.DEG_PER_RAD);ok {
-            v.orbit=o
-            viewport_camera(v)
-        }
-        view.size=host.app_scene_size(s.app)
-        view.cut=s.view_cut
-        s.view_cut=false
-        return
-    }
     v:=s.viewport
     forward,_,up:=orbit_basis(v.orbit)
     view.position=orbit_position(v.orbit)
@@ -817,7 +803,7 @@ prefab_place :: proc(s:^Session,w:core.World_Ref,prefab:base.Asset_Id,point:[3]f
 
 // Gives a material to the first slot of the meshes of some entities, as one step.
 material_assign :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity,material:base.Asset_Id) {
-    if watching(s) || edit_held(s,..entities) || section_refused(s,..entities) {return}
+    if watching(s) || section_refused(s,..entities) {return}
     t:=core.world_table_of(w,erender.Mesh_Renderer)
     if t==nil {return}
     opened,edit_ready:=edit_open(s,"Material")

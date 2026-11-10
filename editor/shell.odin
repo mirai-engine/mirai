@@ -798,8 +798,8 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         if right_dock>0 {style.height,style.offset,style.corners=ui.fixed(max_height),{0,bars},{}}
         if ui.panel(ctx,id,style) {
             ui.id_push(ctx,id)
-            // What is watched, or what another editor holds, is read, not edited.
-            read_only:=watching(s) || selection_held(s)
+            // What is watched is read, not edited.
+            read_only:=watching(s)
             if read_only {ui.disabled_begin(ctx)}
             if content {inspector_build(s,w,right_width,max_height)}
             if read_only {ui.disabled_end(ctx)}

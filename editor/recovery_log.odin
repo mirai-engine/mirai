@@ -237,7 +237,7 @@ recovery_log_write :: proc(s:^Session) {
         is_ids:=int(key.table)==id_table
         if row:=journal_row(image,key.entity);row>=0 {
             current:=make([]u8,max(t.size,1),context.temp_allocator)
-            collab_normalize(w,t,journal_value(image,t.size,row),current,false)
+            collab_normalize(w,t,journal_value(image,t.size,row),current)
             collab_op_write(&ops,is_ids?&ops.head:&ops.body,.Set,t.hash,id,current[:t.size])
             if !is_ids {
                 turn:=[1]u8{u8(image.off[row])}
