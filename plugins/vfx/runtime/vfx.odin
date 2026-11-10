@@ -132,7 +132,7 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 
 // The clocks of the emitters one step further: the requests of the step,
 // what each starts and the entities of the effects that are done.
-@(step="fixed",loops="game editor",stage="end",after="transforms_propagate")
+@(step="fixed",loops="game editor",stage="end")
 particles_tick :: proc(
     emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
     worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:^core.Entities,

@@ -195,7 +195,7 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
 // instances a cell shows and has not taken out go to the entities of that
 // cell with room, and past them to new ones under the Foliage. A client asks
 // nothing; what the server took out arrives.
-@(step="fixed frame",loops="game editor",stage="simulate",after="foliage_load",before="physics_prepare")
+@(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 foliage_removals :: proc(
     r:^Foliage_Removals,requests:^Foliage_Requests,removed:^core.Table(Foliage_Removed),foliages:core.Read(Foliage),ids:core.Read(core.Id),
     data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,

@@ -14,16 +14,13 @@ import sim "plugins:physics/runtime/sim"
 Walk_Action :: enum u8 {Move,Jump,Sprint,Crouch}
 
 // Their bindings when input.mirai of the project does not name them.
-@(storage,host)
-Walk_Actions :: struct {defaults:[Walk_Action]input.Action_Default}
-
-walk_actions_default :: proc "contextless" () -> Walk_Actions {
-    return {defaults={
+walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Default {
+    return {
         .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
         .Jump=input.action_default(.Button,input.binding_key(.Space),input.binding_gamepad_button(.South)),
         .Sprint=input.action_default(.Button,input.binding_key(.Left_Shift),input.binding_gamepad_button(.Left_Stick)),
         .Crouch=input.action_default(.Button,input.binding_key(.Left_Control),input.binding_gamepad_button(.Right_Stick)),
-    }}
+    }
 }
 
 // The Move_Input of every Character a seat drives comes from the move and
@@ -34,7 +31,7 @@ walk_actions_default :: proc "contextless" () -> Walk_Actions {
 // While no seat drives it, while it moves relative to the Game, or where
 // another end decides it, the Move_Input stays as whoever else writes it left
 // it (the game, an AI, the network).
-@(step="fixed",stage="input",after="input_drive")
+@(step="fixed",stage="input")
 locomotion_seat :: proc(
     characters:core.Read(Character),moves:^core.Table(input.Move_Input),found:core.Read(Character_State),
     drivables:core.Read(input.Drivable),walk_actions:input.Input_Of(Walk_Action),look_actions:input.Input_Of(input.Look_Action),bindings:core.Ref(input.Input_Map),

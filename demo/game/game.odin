@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
+import "core:strings"
 import "mirai:core"
 import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
@@ -42,8 +43,11 @@ DOOR_OPEN_GLOW   :: [3]f32{3,48,10}
 DOOR_CLOSED_GLOW :: [3]f32{48,4,2.4}
 // The nose of the dog when it barks, nits, in the light of the control scene.
 BARK_GLOW :: [3]f32{64,25,4.8}
-// The materials a Swatch walks through.
-SWATCH_MATERIALS :: [?]string{"Chrome","Satin metal","Brushed steel","Lacquer","Planks","Stained glass","Neon sign"}
+// The materials a Swatch walks through, by their paths in the assets.
+SWATCH_MATERIALS :: [?]string{
+    "surfaces/metal/Chrome.mat","surfaces/metal/Satin metal.mat","surfaces/metal/Brushed steel.mat",
+    "surfaces/paint/Lacquer.mat","surfaces/wood/Planks.mat","surfaces/glass/Stained glass.mat","surfaces/neon/Neon sign.mat",
+}
 
 THROWN_CUBE :: "characters/player/Thrown cube.prefab"
 
@@ -100,7 +104,8 @@ Door_State :: struct {
 @(component)
 Projectile :: struct {
     speed:f32 `mirai:"min=0,unit=m/s"`, // along the forward of the entity
-    seconds_left:f32,
+    seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is seen first
+    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at; 0 until it is seen first
     velocity:[3]f32 `mirai:"transient"`,
     launched:bool `mirai:"transient"`,
 }
@@ -132,13 +137,6 @@ Pulse :: struct {
     ready:bool `mirai:"transient"`,
 }
 
-// SWATCH_MATERIALS, found once.
-@(storage)
-Palette :: struct {
-    materials:[len(SWATCH_MATERIALS)]base.Asset_Id,
-    ready:bool,
-}
-
 @(storage)
 Game :: struct {
     left:core.Entity, // the body the Menu action let go of
@@ -152,12 +150,6 @@ SWATCH_DEFAULT :: Swatch{reach=3}
 PULSE_DEFAULT :: Pulse{speed=2,low=0.3,high=1}
 PROJECTILE_DEFAULT :: Projectile{speed=THROW_SPEED,seconds_left=CUBE_SECONDS}
 
-// The id of the material <name>.mat, which follows from its name.
-material_asset :: proc(name:string) -> base.Asset_Id {
-    buffer:[192]u8
-    return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))
-}
-
 // The look yaw of an upright character body: where its front, -Z, heads.
 yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
     ahead:=mm.quat_forward(rotation)
@@ -170,8 +162,8 @@ player_walk :: proc "contextless" () -> phys.Walk {
     return walk
 }
 
-// The actions the game reads, bound by Demo_Actions, those of interface_demo.odin too; move and
-// jump are of physics (phys.Walk_Action) and look of the engine (inp.Look_Action).
+// The actions the game reads, those of interface_demo.odin too; move and jump are of physics
+// (phys.Walk_Action) and look of the engine (inp.Look_Action).
 @(actions)
 Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,
@@ -180,17 +172,14 @@ Action :: enum u8 {
     Hud_Style,Interface_Menu,Inventory,Talk,
 }
 
-// The bindings of the actions of the demo. The editor (Project Settings > Input), input.set and
-// the player write in an input.mirai only what they change.
-@(storage,host)
-Demo_Actions :: struct {defaults:[Action]inp.Action_Default}
-
-demo_actions_default :: proc "contextless" () -> Demo_Actions {
+// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
+// input.mirai only what they change.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
     key :: inp.binding_key
     pad :: inp.binding_gamepad_button
     mouse :: inp.binding_mouse_button
     trigger :: inp.binding_gamepad_axis
-    return {defaults={
+    return {
         .Use=inp.action_default(.Button,key(.E),pad(.West)),
         .Flashlight=inp.action_default(.Button,key(.F),pad(.East)),
         .Throw=inp.action_default(.Button,mouse(.Left),trigger(.Right_Trigger)),
@@ -210,7 +199,7 @@ demo_actions_default :: proc "contextless" () -> Demo_Actions {
         .Interface_Menu=inp.action_default(.Button,key(.M),pad(.Dpad_Down)),
         .Inventory=inp.action_default(.Button,key(.I),pad(.Back)),
         .Talk=inp.action_default(.Button,key(.T),pad(.Right_Stick)),
-    }}
+    }
 }
 
 // The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
@@ -296,16 +285,14 @@ game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:
 // meshes are written through the world so that their version changes only
 // when a material does.
 @(step="fixed")
-game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),palette:^Palette,swatches:core.Read(Swatch)) {
-    if !palette.ready {
-        for name,i in SWATCH_MATERIALS {palette.materials[i]=material_asset(name)}
-        palette.ready=true
-    }
+game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),swatches:core.Read(Swatch),assets:^host.Assets) {
+    paths:=SWATCH_MATERIALS
     for row in 0..<core.count(swatches) {
         e:=core.entity_at(swatches,row)
         mesh,drawn:=core.get(meshes,e)
-        if !drawn {continue}
-        for &material in mesh.materials {material=palette.materials[swatch_index(core.at(swatches,row))]}
+        wanted,found:=host.assets_id(assets,paths[swatch_index(core.at(swatches,row))])
+        if !drawn || !found {continue}
+        for &material in mesh.materials {material=wanted}
         core.set(meshes,e,mesh)
     }
 }
@@ -358,7 +345,7 @@ bob_height :: proc(bob:^Bob,y,seconds:f32) -> f32 {
 
 // Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks,
 // the globe of a lamp of the horror house glows while lit.
-@(step="fixed",after="physics_gallery_actions")
+@(step="fixed")
 game_glow :: proc(
     tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:core.Read(Door),buttons:core.Read(Floor_Button),barkers:core.Read(Barker),
     hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),time:core.Time,
@@ -389,7 +376,7 @@ game_glow :: proc(
         if tint,has:=core.get(tints,button.plate);has && tint.emission!=glow {core.edit(tints,button.plate).emission=glow}
     }
     for row in 0..<core.count(barkers) {
-        flashing:=core.at(barkers,row).flash_ticks>0
+        flashing:=!core.due(time,core.at(barkers,row).flash_until)
         for child:=core.first_child(hierarchy,core.entity_at(barkers,row));child!=core.NONE;child=core.next_sibling(hierarchy,child) {
             if core.name_get(names,child)!="Nose" {continue}
             if tint:=core.edit(tints,child);tint!=nil {tint.emission=flashing?BARK_GLOW:[3]f32{}}
@@ -401,7 +388,7 @@ game_glow :: proc(
 // tumbles and bounces on its own, and goes after CUBE_SECONDS. A destructible
 // it strikes takes a blow of its velocity before the strike times PROJECTILE_MASS;
 // destruct leaves alone what is not one.
-@(step="fixed",stage="react",before="destruct_step")
+@(step="fixed",stage="react")
 game_projectiles :: proc(
     es:^core.Entities,projectiles:^core.Table(Projectile),transforms:core.Read(core.Transform),body_states:core.Read(core.Motion),
     events:core.Ref(phys.Physics_Events),bodies:^phys.Body_Requests,
@@ -428,8 +415,11 @@ game_projectiles :: proc(
                 projectile.launched=true
             }
         }
-        projectile.seconds_left-=time.dt
-        if projectile.seconds_left<=0 {core.destroy(es,e)}
+        if projectile.until==0 {
+            projectile.until=max(core.deadline(time,projectile.seconds_left),1)
+        } else if core.due(time,projectile.until) {
+            core.destroy(es,e)
+        }
     }
 }
 
@@ -482,7 +472,8 @@ game_hud :: proc(
     for row in 0..<core.count(swatches) {
         swatch:=core.at(swatches,row)
         if hint!="" || !in_reach(worlds,feet,core.entity_at(swatches,row),swatch.reach) {continue}
-        hint=fmt.tprintf("E: change the material (%s)",swatch_names[swatch_index(swatch)])
+        name:=swatch_names[swatch_index(swatch)]
+        hint=fmt.tprintf("E: change the material (%s)",name[strings.last_index_byte(name,'/')+1:len(name)-len(".mat")])
     }
     if hint!="" {
         if ui.box(ctx,hud_box(ctx,"hint",.Center,.Top_Center,{0,40},ui.fit(),ui.fit(),{},ui.padding_xy(4,2))) {

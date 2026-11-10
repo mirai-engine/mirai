@@ -53,6 +53,26 @@ open_set_refuses_new_nodes_when_full_and_after_clear_starts_empty :: proc(t:^tes
     testing.expect(t,!nothing)
 }
 
+// A space given by procedures of the test: `neighbors` writes the edges of a
+// node, `heuristic` estimates the cost from a node to the goal (nil: none).
+Graph :: struct {
+    user:rawptr,
+    neighbors:proc(user:rawptr,node:u64,edges:^Edge_List),
+    heuristic:proc(user:rawptr,node,goal:u64) -> f32,
+}
+graph_neighbors :: proc(graph:Graph,node:u64,edges:^Edge_List) {graph.neighbors(graph.user,node,edges)}
+graph_heuristic :: proc(graph:Graph,node,goal:u64) -> f32 {
+    if graph.heuristic==nil {return 0}
+    return graph.heuristic(graph.user,node,goal)
+}
+// The cheapest path from start to goal, with its nodes written to `out`.
+graph_find_path :: proc(s:^Search,graph:Graph,start,goal:u64,out:[]u64) -> (count:int,status:Search_Status) {
+    if graph.neighbors==nil {return 0,.Invalid}
+    status=search_run(s,start,goal,graph,graph_neighbors,graph_heuristic)
+    if status!=.Found {return 0,status}
+    return search_path(s,out)
+}
+
 // A graph of explicit edges: node i connects to list[i].
 Edges_Of :: struct {edges:[][]Edge}
 

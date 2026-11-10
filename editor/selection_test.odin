@@ -20,20 +20,25 @@ copy_and_paste_duplicate_the_copied_roots_as_one_step :: proc(t:^testing.T) {
     previous:asset.Scene
     document:=Document{previous=&previous}
     app:host.App
-    s:=Session{info=core.test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,document=&document,app=&app}
+    viewport:Viewport
+    gui:Editor_Ui
+    s:=Session{info=core.test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,document=&document,app=&app,viewport=&viewport,gui=&gui}
     w:=edited_world(&s)
     history.edits_reset(&edits,w)
     defer history.edits_free(&edits)
     defer delete(selection.entities)
     defer delete(s.copied)
+    commands:Api
+    if !test_commands_open(t,&s,&commands) {return}
+    defer test_commands_close(&s)
 
-    testing.expect(t,action_state(&s,.Copy).disabled)
-    testing.expect(t,action_state(&s,.Paste).disabled)
+    testing.expect(t,command_state(&s,"copy").disabled)
+    testing.expect(t,command_state(&s,"paste").disabled)
     history.selection_set(&selection,{original})
-    testing.expect(t,action_run(&s,.Copy))
+    testing.expect(t,test_command(&s,"copy"))
     testing.expect_value(t,len(s.copied),1)
     history.selection_clear(&selection)
-    testing.expect(t,action_run(&s,.Paste))
+    testing.expect(t,test_command(&s,"paste"))
     history.edits_flush(&edits,w,&selection)
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,history.undo_label(&edits),"Paste")
@@ -43,7 +48,7 @@ copy_and_paste_duplicate_the_copied_roots_as_one_step :: proc(t:^testing.T) {
     testing.expect(t,api_entity_id(w,pasted)!=1)
 
     // Paste again makes another copy of the same source.
-    testing.expect(t,action_run(&s,.Paste))
+    testing.expect(t,test_command(&s,"paste"))
     history.edits_flush(&edits,w,&selection)
     testing.expect_value(t,edits.cursor,2)
     testing.expect(t,history.selection_active(&selection)!=pasted)
@@ -55,7 +60,7 @@ copy_and_paste_duplicate_the_copied_roots_as_one_step :: proc(t:^testing.T) {
     // Once the source is gone there is nothing to paste and no step.
     core.destroy(&world.entities,original)
     core.world_settle(w)
-    testing.expect(t,action_run(&s,.Paste))
+    testing.expect(t,test_command(&s,"paste"))
     testing.expect_value(t,edits.cursor,0)
     testing.expect(t,len(s.copied)==1 && s.toast_length>0)
 }

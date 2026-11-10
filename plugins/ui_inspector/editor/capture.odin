@@ -52,7 +52,8 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
     u:=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Ui_Inspector)
     if u==nil {api.call_fail(call,api.SERVER_ERROR,"the ui_inspector plugin has no state in this editor");return}
     settings:=cast(^gui.UI_Settings)editor.setting_value(s,gui.UI_Settings)
-    stage:=Stage{family=p.family}
+    stage:=STAGE_DEFAULT
+    stage.family=p.family
     if name:=serial.text_field(p.language[:]);name!="" {
         for language in gui.Language {if fmt.tprintf("%v",language)==name {stage.language,stage.chosen=language,true}}
         if !stage.chosen {api.call_failf(call,api.INVALID_PARAMS,"language '%s' is none of the gui.Language names (English, Spanish, ...)",name);return}

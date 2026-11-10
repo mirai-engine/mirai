@@ -701,13 +701,13 @@ render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
 	testing.expect(t, !r.targets.taa_valid && !r.targets.hiz_valid, "histories restart after a resize")
 	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	settings := r.settings
-	settings.render_scale = 0.5
+	settings.resolution = Render_Scale(0.5)
 	settings.light_budget = 0 // the lights of a cell are sampled from here on
 	testing.expect(t, renderer_apply_settings(r, settings))
 	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect_value(t, r.targets.width, u32(40))
 	renderer_resize(r, 64, 48)
-	settings.render_scale = 1
+	settings.resolution = Render_Scale(1)
 	testing.expect(t, renderer_apply_settings(r, settings))
 	scene_set(r, nil, nil, {}, {}) // empty scene
 	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
@@ -741,7 +741,7 @@ a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) 
     scene_set(r,{{object_id=1,mesh=f.cube,transform=trs({0,0,0},{1,1,1}),tint={1,1,1}}},nil,{},{use_background=true})
     camera:=Camera{position={0,0,4},forward={0,0,-4},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     target:=proc(t:^testing.T,r:^Renderer,settings:^Settings,lines:u32) {
-        settings.render_height=lines
+        settings.resolution=Render_Lines(lines)
         testing.expect(t,renderer_apply_settings(r,settings^))
     }
     // A target over the lines of the window keeps a pixel per point.
@@ -765,8 +765,48 @@ a_target_of_lines_scales_the_views_of_the_window_together :: proc(t:^testing.T) 
     renderer_resize(r,200,100,2,2)
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     testing.expect(t,r.targets.width==100 && r.targets.height==50)
-    settings.render_scale=-1
-    testing.expect(t,!renderer_apply_settings(r,settings))
+    for invalid in ([]Resolution{Render_Scale(-1),Render_Scale(0.1),Render_Scale(3),Render_Scale(f32(math.nan_f32())),Render_Lines(0)}) {
+        settings.resolution=invalid
+        testing.expectf(t,!renderer_apply_settings(r,settings),"%v is refused",invalid)
+    }
+}
+
+// A settings change starts again only what was made with the fields that
+// changed, in every view: the rest keeps its targets, histories and probes.
+@(test)
+a_settings_change_starts_again_only_what_depends_on_it :: proc(t:^testing.T) {
+    f:Cube_Fixture
+    if !cube_fixture_init(t,&f,128,64,test_settings()) {return}
+    defer fixture_destroy(&f)
+    r:=f.renderer
+    sun:=Sun_Desc{direction={0.2,1,0.1},color={1,1,1},illuminance=math.PI,enabled=true}
+    scene_set(r,{{object_id=1,mesh=f.cube,transform=trs({0,0.5,0},{1,1,1}),tint={1,1,1}}},nil,sun,{})
+    camera:=Camera{position={0,3,5},forward={0,-3,-5},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
+    views:=[2]Frame_View{{camera=camera,rect={0,0,64,64}},{camera=camera,rect={64,0,64,64}}}
+    Case :: struct {field:string,change:proc(s:^Settings),histories,volume,gather:bool}
+    cases:=[]Case{
+        {"lod_error_pixels",proc(s:^Settings) {s.lod_error_pixels=2},true,true,false},
+        {"light_budget",proc(s:^Settings) {s.light_budget=4},true,true,true},
+        {"sun_shadows",proc(s:^Settings) {s.sun_shadows=false},false,false,false},
+    }
+    for c in cases {
+        for _ in 0..<4 {testing.expect(t,renderer_frame(r,{views=views[:]}),r.error)}
+        before:=[2]rhi.Texture{r.views[0].targets.taa[0],r.views[1].targets.taa[0]}
+        irradiance:=r.ddgi.irradiance
+        testing.expectf(t,r.ddgi.valid && !r.scene.changes.all,"before %s the probes are settled",c.field)
+        settings:=r.settings
+        c.change(&settings)
+        testing.expect(t,renderer_apply_settings(r,settings),r.error)
+        for &view,i in r.views[:2] {
+            kept:=view.targets.taa_valid && view.targets.shadow.valid
+            testing.expectf(t,view.targets.taa[0]==before[i] && view.has_previous,"%s keeps the targets and the camera of view %d",c.field,i)
+            testing.expectf(t,kept==c.histories,"%s: view %d keeps its histories: %v, not %v",c.field,i,kept,c.histories)
+        }
+        volume:=r.ddgi.valid && r.ddgi.irradiance==irradiance
+        testing.expectf(t,volume==c.volume,"%s: the probe volume is kept: %v, not %v",c.field,volume,c.volume)
+        testing.expectf(t,r.scene.changes.all==c.gather,"%s: the probes gather again: %v, not %v",c.field,r.scene.changes.all,c.gather)
+    }
+    expect_clean(t,f.device)
 }
 
 @(test)
@@ -941,7 +981,7 @@ render_occlusion_is_conservative_at_odd_resolutions :: proc(t: ^testing.T) {
 render_taa_is_stable_on_static_scenes :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
-	settings.render_scale = 0.5
+	settings.resolution = Render_Scale(0.5)
 	settings.gi_enabled = false
 	if !cube_fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -1241,7 +1281,7 @@ render_highlight_is_stable_with_retina_taa_downscale_and_coplanar_geometry :: pr
     settings.gi_enabled = false
     settings.reflections = false
     settings.taa = true
-    settings.render_scale = 0.5
+    settings.resolution = Render_Scale(0.5)
     if !cube_fixture_init(t, &f, 256, 160, settings) {return}
     defer fixture_destroy(&f)
     r := f.renderer
@@ -1256,7 +1296,7 @@ render_highlight_is_stable_with_retina_taa_downscale_and_coplanar_geometry :: pr
     reference: []u8
     defer delete(reference)
     for variant in 0 ..< 3 {
-        if variant == 1 {r.settings.render_scale = 1; renderer_resize(r, 256, 160, 2, 2)}
+        if variant == 1 {r.settings.resolution = Render_Scale(1); renderer_resize(r, 256, 160, 2, 2)}
         if variant == 2 {instances[1].hidden = true; scene_set(r, instances, nil, {}, {background = {}, use_background = true})}
         for _ in 0 ..< 8 {
             testing.expect(t, renderer_frame(r, {camera = camera}), r.error)

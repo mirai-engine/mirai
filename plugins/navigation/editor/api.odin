@@ -148,6 +148,7 @@ status :: proc(s:^editor.Session,call:^api.Call) {
     st:=n.stats
     serial.text_write_raw(w,"{")
     api.write_uint(w,"built",st.built,true)
+    api.write_uint(w,"carved",st.carved)
     api.write_uint(w,"emptied",st.emptied)
     api.write_uint(w,"unchanged",st.unchanged)
     api.write_uint(w,"discarded",st.discarded)

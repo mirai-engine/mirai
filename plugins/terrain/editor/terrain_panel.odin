@@ -22,9 +22,6 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
     tool_ready(tool);ctx:=g.ctx
-    if core.key_pressed(input,.T) && ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0 {editor.tool_set(s,"terrain",!tool.active)}
-    tool.active=editor.tool_on(s,"terrain")
-    if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),ui.icon_user(u8(editor.User_Icon.Terrain)),"Terrain","T",tool.active) {editor.tool_set(s,"terrain",!tool.active)}
     tool.active=editor.tool_on(s,"terrain")
     if !tool.active || s.viewport.pick.active {return}
     selected_entity:=history.selection_active(s.selection)

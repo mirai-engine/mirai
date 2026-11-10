@@ -16,11 +16,8 @@ import "mirai:platform"
 Menu_Action :: enum u8 {Menu}
 
 // The bindings of the menu action when input.mirai of the project does not name it.
-@(storage,host)
-Menu_Actions :: struct {defaults:[Menu_Action]inp.Action_Default}
-
-menu_actions_default :: proc "contextless" () -> Menu_Actions {
-    return {defaults={.Menu=inp.action_default_in(inp.CONTEXT_ALWAYS,.Button,inp.binding_key(.Escape),inp.binding_gamepad_button(.Start))}}
+menu_action_defaults :: proc "contextless" () -> [Menu_Action]inp.Action_Default {
+    return {.Menu=inp.action_default_in(inp.CONTEXT_ALWAYS,.Button,inp.binding_key(.Escape),inp.binding_gamepad_button(.Start))}
 }
 
 // Whether a screen stops the clock this frame.

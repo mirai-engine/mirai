@@ -66,6 +66,20 @@ Behavior_World :: struct {
     physics:phys.Physics_State,
 }
 
+// A world whose perceivers look: with what the application keeps for them.
+@(private="file")
+Sight_World :: struct {
+    using behavior:Behavior_World,
+    sight:Sight,
+    problems:core.Problems,
+}
+
+@(private="file")
+sight_world_destroy :: proc(f:^Sight_World) {
+    sight_free(&f.sight)
+    core.test_world_destroy(&f.behavior)
+}
+
 @(private="file")
 Count_Act :: enum u8 {Count}
 
@@ -258,9 +272,9 @@ move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
 }
 
 @(private="file")
-sight_tick :: proc(f:^Behavior_World,seconds:f64) {
+sight_tick :: proc(f:^Sight_World,seconds:f64) {
     core.test_world_settle(f)
-    perception_update(core.read(&f.perceivers),&f.perceptions,core.read(&f.perceivables),core.read(&f.worlds),core.ref(&f.settings),&f.turns,&f.noises,&f.events,core.ref(&f.physics),{},core.ref(&f.entities),{seconds=seconds,dt=1.0/60,playing=true})
+    perception_update(core.read(&f.perceivers),&f.perceptions,core.read(&f.perceivables),core.read(&f.worlds),core.ref(&f.settings),&f.turns,&f.sight,&f.noises,&f.events,core.ref(&f.physics),core.read(&f.fars),core.ref(&f.entities),{seconds=seconds,dt=1.0/60,playing=true},&f.problems)
     core.test_world_settle(f)
 }
 
@@ -273,9 +287,9 @@ placed :: proc(f:^Behavior_World,position:mm.Vec3) -> core.Entity {
 
 @(test)
 perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: proc(t:^testing.T) {
-    f:Behavior_World
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    f:Sight_World
+    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    defer sight_world_destroy(&f)
     // A guard at the origin looking down -Z (its front), noticing team 1.
     guard:=placed(&f,{})
     watch:=PERCEIVER_DEFAULT
@@ -316,9 +330,9 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
 // noise remembered without a maker stays.
 @(test)
 a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T) {
-    f:Behavior_World
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    f:Sight_World
+    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    defer sight_world_destroy(&f)
     guard:=placed(&f,{})
     watch:=PERCEIVER_DEFAULT
     watch.forget=100
@@ -345,9 +359,9 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
 
 @(test)
 sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
-    f:Behavior_World
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    f:Sight_World
+    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    defer sight_world_destroy(&f)
     f.settings.rays=1
     guards:[3]core.Entity
     for &g,i in guards {
@@ -366,9 +380,9 @@ sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
 
 @(test)
 every_perceiver_gets_its_turn_and_forgets_only_in_it :: proc(t:^testing.T) {
-    f:Behavior_World
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    f:Sight_World
+    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    defer sight_world_destroy(&f)
     f.settings.rays=1
     guards:[4]core.Entity
     for &g,i in guards {
@@ -749,4 +763,132 @@ influence_maps_follow_the_teams :: proc(t:^testing.T) {
     world.settings.influence_cell=0
     influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=20,dt=1.0/60,playing=true})
     testing.expect_value(t,influence_at(&influence,{-10,0,0},reds),0)
+}
+
+// Random crowds of perceivers and perceivables, near and far apart, on both
+// sides of the origin: what each remembers after a look through the grid is
+// what looking at every perceivable in the order of their table gives, with
+// rays for all and with rays for a few.
+@(test)
+perceivers_find_by_the_grid_whom_they_would_among_every_perceivable :: proc(t:^testing.T) {
+    round :: proc(t:^testing.T,seed:u64,spread:f32,rays:i32) {
+        f:Sight_World
+        if !core.test_world_init(t,&f.behavior,test_types) {return}
+        defer sight_world_destroy(&f)
+        f.settings.rays=rays
+        rng:=mm.rng_make(seed)
+        somewhere :: proc(rng:^mm.Rng,spread:f32) -> mm.Vec3 {
+            return {mm.random_range(rng,-spread,spread),mm.random_range(rng,-3,3),mm.random_range(rng,-spread,spread)}
+        }
+        for i in 0..<70 {
+            e:=core.create(&f.entities)
+            pose:=mm.Transform{position=somewhere(&rng,spread),rotation=mm.quat_axis_angle({0,1,0},mm.random_range(&rng,-4,4)),scale=1}
+            core.add(&f.worlds,e,core.World_Transform{transform=pose})
+            if i%3!=0 {core.add(&f.perceivables,e,Perceivable{team=Team(i%4),point=mm.random_range(&rng,0,2)})}
+            if i%2==0 {
+                watch:=PERCEIVER_DEFAULT
+                watch.sight=mm.random_range(&rng,2,70)
+                watch.angle=mm.random_range(&rng,0.2,3.5)
+                watch.notices=Teams(1+u32(mm.random_range(&rng,0,15)))
+                core.add(&f.perceivers,e,watch)
+            }
+        }
+        sight_tick(&f,0) // gives them their Perception
+        sight_tick(&f,0.1)
+        left:=int(rays)
+        seen:=0
+        for row in 0..<core.count(&f.perceivers) {
+            e:=core.entity_at(&f.perceivers,row)
+            p:=f.perceivers.values[row]
+            pose:=core.edit(&f.worlds,e)
+            eye:=pose.position+mm.Vec3{0,p.eyes,0}
+            expected:[ai.PERCEPTION_CAPACITY]core.Entity
+            count,total:=0,0
+            for target in 0..<core.count(&f.perceivables) {
+                if left<=0 {break}
+                subject:=core.entity_at(&f.perceivables,target)
+                other:=f.perceivables.values[target]
+                at:=core.edit(&f.worlds,subject)
+                if subject==e || u32(p.notices)&(1<<u32(other.team))==0 || !ai.sight_in_cone(eye,mm.quat_forward(pose.rotation),at.position+mm.Vec3{0,other.point,0},p.sight,p.angle) {continue}
+                left-=1
+                total+=1
+                if count<len(expected) {expected[count]=subject;count+=1}
+            }
+            seen+=total
+            mine:=core.edit(&f.perceptions,e)
+            if !testing.expect(t,mine!=nil) {return}
+            testing.expectf(t,int(mine.memory.count)==count,"seed %d: perceiver %d remembers %d of the %d it sees",seed,row,mine.memory.count,total)
+            for subject in expected[:count] {testing.expectf(t,ai.memory_find(&mine.memory,u64(subject))!=nil,"seed %d: perceiver %d does not remember %v, which it sees",seed,row,subject)}
+        }
+        testing.expectf(t,seen>10,"seed %d: the perceivers see %d in all: the scene shows little",seed,seen)
+        testing.expect_value(t,f.problems.count,0)
+    }
+    spreads:=[?]f32{6,25,60,150,25,60}
+    for spread,i in spreads {round(t,u64(40+i),spread,1<<20 if i<4 else 45)}
+}
+
+// With nobody to look at or hear and nothing remembered, perception looks at
+// no perceiver and makes no grid; with no request and none waiting, the
+// places touch nothing; and the smart objects are gone through only when
+// their table or that of their states changed.
+@(test)
+a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
+    f:Sight_World
+    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    defer sight_world_destroy(&f)
+    guard:=placed(&f,{})
+    watch:=PERCEIVER_DEFAULT
+    watch.forget=1
+    core.add(&f.perceivers,guard,watch)
+    sight_tick(&f,0)
+    sight_tick(&f,0.1)
+    testing.expect(t,len(f.sight.grid.items)==0 && cap(f.sight.rows)==0 && f.turns.remembering==0)
+    // A memory forged behind its back would be forgotten by a tick that looked at the perceiver.
+    ghost:=u64(1<<40)
+    ai.memory_perceive(&core.edit(&f.perceptions,guard).memory,ghost,{},.Sight,1,0)
+    sight_tick(&f,50)
+    testing.expect(t,ai.memory_find(&core.edit(&f.perceptions,guard).memory,ghost)!=nil && len(f.sight.grid.items)==0)
+    ai.memory_remove(&core.edit(&f.perceptions,guard).memory,ghost)
+    // Someone to look at, a noise or a memory: it works again, and the count of memories follows.
+    target:=placed(&f,{0,0,-5})
+    core.add(&f.perceivables,target,Perceivable{point=1})
+    sight_tick(&f,60)
+    mine:=core.edit(&f.perceptions,guard)
+    testing.expect(t,ai.memory_find(&mine.memory,u64(target))!=nil && f.turns.remembering==1 && len(f.sight.grid.items)>0)
+    core.remove(&f.perceivables,target)
+    sight_tick(&f,60.1)
+    testing.expect_value(t,f.turns.remembering,1)
+    sight_tick(&f,70)
+    testing.expect(t,core.edit(&f.perceptions,guard).memory.count==0 && f.turns.remembering==0)
+    noise(&f.noises,{0,0,2},10)
+    sight_tick(&f,71)
+    testing.expect_value(t,f.turns.remembering,1)
+
+    // No request and none waiting: no table is looked at, the results least of all.
+    places:Places
+    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},nil,{},{},nil)
+
+    // The objects get their state when they come; a tick after, with the tables as they were, none is gone through.
+    box:=placed(&f,{})
+    core.add(&f.objects,box,Smart_Object{})
+    core.test_world_settle(&f.behavior)
+    smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=0})
+    core.test_world_settle(&f.behavior)
+    testing.expect(t,core.has(&f.states,box))
+    smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=1})
+    core.test_world_settle(&f.behavior)
+    testing.expect(t,f.uses.layouts==[2]u64{core.layout(&f.objects),core.layout(&f.states)})
+    // One without its state is not looked for while the tables say nothing changed.
+    other:=placed(&f,{})
+    core.add(&f.objects,other,Smart_Object{})
+    core.test_world_settle(&f.behavior)
+    changed:=f.uses.layouts
+    f.uses.layouts={core.layout(&f.objects),core.layout(&f.states)}
+    smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=2})
+    core.test_world_settle(&f.behavior)
+    testing.expect(t,!core.has(&f.states,other))
+    f.uses.layouts=changed
+    smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=3})
+    core.test_world_settle(&f.behavior)
+    testing.expect(t,core.has(&f.states,other))
 }

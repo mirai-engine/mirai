@@ -157,18 +157,18 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     m:=&agent.state
-    now:f64
-    if t:=core.world_storage_of(world,core.Time);t!=nil {now=t.seconds}
+    now:core.Time
+    if t:=core.world_storage_of(world,core.Time);t!=nil {now=t^}
     api.write_uint(w,"ticks",u64(m.ticks))
     action,step:=ai.mind_running(m)
-    frame_write :: proc(w:^serial.Writer,world:core.World_Ref,key:string,entry:^behavior.Mind_Entry,action:u16,frame:^ai.Act_Frame,now:f64) {
+    frame_write :: proc(w:^serial.Writer,world:core.World_Ref,key:string,entry:^behavior.Mind_Entry,action:u16,frame:^ai.Act_Frame,now:core.Time) {
         api.write_key(w,key)
         if action==ai.MIND_NONE {serial.text_write_raw(w,"null");return}
         serial.text_write_raw(w,"{")
         api.write_text(w,"action",action_name(entry,action),true)
         api.write_int(w,"stage",i64(frame.stage))
-        api.write_key(w,"seconds");api.write_number(w,f32(now-frame.entered))
-        api.write_key(w,"stage_seconds");api.write_number(w,f32(now-frame.staged))
+        api.write_key(w,"seconds");api.write_number(w,core.elapsed(now,frame.entered))
+        api.write_key(w,"stage_seconds");api.write_number(w,core.elapsed(now,frame.staged))
         if frame.reserved.target!=0 {
             api.write_key(w,"holds")
             serial.text_write_raw(w,"{")

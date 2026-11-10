@@ -1,6 +1,7 @@
 package ai
 
 import "base:intrinsics"
+import math "mirai:std/math"
 
 // How an agent decides. Every tick a think procedure of the game proposes the
 // actions it can take now with their scores, and the highest wins; the
@@ -36,7 +37,7 @@ Reservation_Key :: struct {target:u64,what:u16}
 Act_Frame :: struct {
     action:u16,         // the action plus one; 0 when nothing runs
     stage:u16,          // the stage of the action, or the step it runs
-    entered,staged:f64, // when the action and its stage started
+    entered,staged:u64, // the ticks the action and its stage started at
     reserved:Reservation_Key, // what it holds until it exits; target 0 for nothing
     memory:[MIND_WORDS]u64,
 }
@@ -52,7 +53,7 @@ Mind_Proposal :: struct {action:u16,score:f32}
 
 Mind :: struct {
     main,step:Act_Frame,
-    ended:[MIND_ACTIONS]f64, // when each action last exited
+    ended:[MIND_ACTIONS]u64, // the tick each action last exited at
     exited:u32,              // bit a: the action a has exited once
     commit:f32,              // the running action counts at least this until it exits; 0 for none
     score:f32,               // what it counted on the last tick
@@ -97,8 +98,8 @@ propose :: proc "contextless" (t:^Think($A),action:A,score:f32) {
 // What the game hands a tick.
 Mind_Context :: struct {
     user:rawptr,
-    time:f64,     // seconds of the simulation
-    tick:u64,     // the tick, for the leases of reservations
+    tick:u64,     // the tick: the mind counts its waits and the leases of reservations in ticks
+    dt:f32,       // seconds of a tick
     keep:f32,     // the margin of the running action over the others
     holder:u64,   // the agent, as the holder of reservations
     reservations:^Reservations,
@@ -184,16 +185,30 @@ mind_doing :: proc "contextless" (m:^Mind,$A:typeid) -> (action:A,step:A,running
     return
 }
 
-// Seconds since the action last exited, or +inf if it never ran.
-mind_since :: proc "contextless" (m:^Mind,action:$A,time:f64) -> f64 {
+// Seconds since the action last exited, at the tick `tick` of `dt` seconds, or +inf if it never ran.
+mind_since :: proc "contextless" (m:^Mind,action:$A,tick:u64,dt:f32) -> f64 {
     a:=int(action)
     if !mind_valid(A,a) || m.exited&(1<<uint(a))==0 {return 0h7FF0000000000000}
-    return time-m.ended[a]
+    return seconds_since(tick,m.ended[a],dt)
 }
 
 // Whether `cooldown` seconds passed since the action last exited.
-mind_ready :: proc "contextless" (m:^Mind,action:$A,time:f64,cooldown:f64) -> bool {
-    return !(mind_since(m,action,time)<cooldown)
+mind_ready :: proc "contextless" (m:^Mind,action:$A,tick:u64,dt:f32,cooldown:f64) -> bool {
+    a:=int(action)
+    if !mind_valid(A,a) || m.exited&(1<<uint(a))==0 {return true}
+    return waited(tick,m.ended[a],dt,cooldown)
+}
+
+@(private)
+seconds_since :: #force_inline proc "contextless" (tick,since:u64,dt:f32) -> f64 {
+    return f64(tick-since)*f64(dt) if tick>since && dt>0 else 0
+}
+
+// Whether `seconds` passed from the tick `since` to `tick`: counted in ticks,
+// so it lasts the same at any tick rate. Never while the clock does not advance.
+@(private)
+waited :: #force_inline proc "contextless" (tick,since:u64,dt:f32,seconds:f64) -> bool {
+    return dt>0 && tick>=since && tick-since>=math.ticks_of(seconds,dt)
 }
 
 // The last exits, the latest first: back 0 is the latest.
@@ -206,12 +221,12 @@ mind_exit_trace :: proc "contextless" (m:^Mind,back:int) -> (exit:Mind_Exit,ok:b
 entering :: #force_inline proc "contextless" (a:^Act($A)) -> bool {return a.phase==.Enter}
 
 // Seconds since the action (or the step) entered, and since its stage started.
-elapsed :: #force_inline proc "contextless" (a:^Act($A)) -> f64 {return a.time-a.frame.entered}
-stage_elapsed :: #force_inline proc "contextless" (a:^Act($A)) -> f64 {return a.time-a.frame.staged}
+elapsed :: #force_inline proc "contextless" (a:^Act($A)) -> f64 {return seconds_since(a.tick,a.frame.entered,a.dt)}
+stage_elapsed :: #force_inline proc "contextless" (a:^Act($A)) -> f64 {return seconds_since(a.tick,a.frame.staged,a.dt)}
 
 // Success once the action has run `seconds`.
 after :: #force_inline proc "contextless" (a:^Act($A),seconds:f64) -> Status {
-    return .Success if a.time-a.frame.entered>=seconds else .Running
+    return .Success if waited(a.tick,a.frame.entered,a.dt,seconds) else .Running
 }
 
 stage :: #force_inline proc "contextless" (a:^Act($A)) -> int {return int(a.frame.stage)}
@@ -219,7 +234,7 @@ stage :: #force_inline proc "contextless" (a:^Act($A)) -> int {return int(a.fram
 // Goes to the next stage now; returns Running.
 next_stage :: proc "contextless" (a:^Act($A)) -> Status {
     a.frame.stage+=1
-    a.frame.staged=a.time
+    a.frame.staged=a.tick
     return .Running
 }
 
@@ -289,7 +304,7 @@ act_call :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context,frame:^Act_Frame,phase:P
 
 @(private)
 act_enter :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context,frame:^Act_Frame,action:int) -> Status {
-    frame^={action=u16(action+1),entered=ctx.time,staged=ctx.time}
+    frame^={action=u16(action+1),entered=ctx.tick,staged=ctx.tick}
     r:=act_call(m,acts,ctx,frame,.Enter,.Success)
     if r!=.Running {
         if frame==&m.main {mind_exit(m,acts,ctx,exit_cause(r),MIND_NONE)} else {frame_exit(m,acts,ctx,frame,exit_cause(r),MIND_NONE)}
@@ -304,7 +319,7 @@ frame_exit :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context,frame:^Act_Frame,cause
     action:=int(frame.action)-1
     act_call(m,acts,ctx,frame,.Exit,cause)
     if frame.reserved.target!=0 && ctx.reservations!=nil {reserve_release(ctx.reservations,frame.reserved,ctx.holder)}
-    m.ended[action]=ctx.time
+    m.ended[action]=ctx.tick
     m.exited|=1<<uint(action)
     m.exits[m.exits_seen%MIND_TRACE]={action=u16(action),by=by,cause=cause,step=frame==&m.step}
     m.exits_seen+=1

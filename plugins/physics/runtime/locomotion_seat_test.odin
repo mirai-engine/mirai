@@ -25,13 +25,6 @@ Seat_World :: struct {
     bindings:input.Input_Map,
 }
 
-// The defaults of the actions, which the application holds.
-@(private="file")
-Seat_Shared :: struct {
-    walk:Walk_Actions,
-    look:input.Look_Actions,
-}
-
 @(private="file")
 Seat_Test :: struct {
     using w:Seat_World,
@@ -79,10 +72,12 @@ seat_test_seat :: proc(f:^Seat_Test) -> core.Entity {
 // The input map of a world whose code declares the walk actions, without input.mirai.
 @(private="file")
 seat_test_map :: proc(t:^testing.T,m:^input.Input_Map,problems:^core.Problems) -> bool {
-    info:=core.test_info(t,Seat_World,Seat_Shared,core.Test_None,test_types) or_return
+    info:=core.test_info(t,Seat_World,core.Test_None,core.Test_None,test_types) or_return
     defer core.test_info_destroy(&info)
     names:=[]core.Name_Info{{type=input.Action,value=0,name="look"},{type=input.Action,value=i64(TEST_MOVE),name="move"},{type=input.Action,value=i64(TEST_JUMP),name="jump"},{type=input.Action,value=i64(TEST_SPRINT),name="sprint"},{type=input.Action,value=i64(TEST_CROUCH),name="crouch"}}
-    actions:=[]core.Actions_Info{{type=input.Look_Action,info=type_info_of(input.Look_Action)},{type=Walk_Action,info=type_info_of(Walk_Action),base=i64(TEST_WALK_BASE)}}
+    look_defaults :: proc(dst:rawptr) {(cast(^[input.Look_Action]input.Action_Default)dst)^=input.look_action_defaults()}
+    walk_defaults :: proc(dst:rawptr) {(cast(^[Walk_Action]input.Action_Default)dst)^=walk_action_defaults()}
+    actions:=[]core.Actions_Info{{type=input.Look_Action,info=type_info_of(input.Look_Action),defaults=look_defaults},{type=Walk_Action,info=type_info_of(Walk_Action),base=i64(TEST_WALK_BASE),defaults=walk_defaults}}
     info.names,info.actions=names,actions
     input.input_map_make(m,&info,"","",problems)
     return true

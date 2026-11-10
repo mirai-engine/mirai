@@ -176,7 +176,7 @@ terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:core.Read(ter
     }
     editor.revision_sync(s,&tool.history,terrains,a,REVISIONS,tool,follow)
 }
-@(step="frame",after="editor_tools")
+@(step="frame")
 terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,input:core.Input,view:core.View,frame:core.Frame_Time) {
     stroke:=&tool.stroke
     defer terrain_focus(s,tool,world,input)

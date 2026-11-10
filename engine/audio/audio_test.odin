@@ -166,6 +166,24 @@ a_tick_that_runs_again_does_not_play_its_sounds_again :: proc(t:^testing.T) {
     testing.expect_value(t,play_asset(&f.app,tick,HUM,bus=Audio_Bus(AUDIO_BUS_CAPACITY)),Voice{})
 }
 
+// Code names a sound by its path in the assets as by its id; a path the
+// assets do not have plays nothing.
+@(test)
+a_sound_plays_by_its_path_in_the_assets :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    testing.expect(t,host.assets_scan(&f.assets))
+    tick:=core.Time{dt=1.0/60,playing=true}
+    cases:=[]struct{path:string,plays:bool}{{"hum.sound",true},{"steps.sound_set",true},{"missing.sound",false},{"",false}}
+    for c in cases {
+        for voice in ([2]Voice{play_asset(&f.app,tick,c.path),play_asset_at(&f.app,tick,c.path,{1,0,0})}) {
+            testing.expectf(t,(voice!={})==c.plays,"%q plays: %v",c.path,voice!={})
+            if voice!={} {testing.expect(t,stop(f.app.mixer,voice))}
+        }
+    }
+}
+
 @(test)
 a_sound_set_plays_its_sounds_by_weight_in_its_ranges_and_not_the_same_twice :: proc(t:^testing.T) {
     set:=asset.SOUND_SET_DEFAULTS

@@ -831,7 +831,7 @@ def scenario_simulation(b: Bench):
     engine_start(b, [] if b.args.simulation_gpu else ["--no-gpu"])
     try:
         box = {"Collider": {"kind": "Box", "size": [1, 1, 1]}}
-        rpc(b, "editor.action", {"name": "new"})
+        rpc(b, "scene.new", {"discard": True})
         rpc(b, "scene.add", {"preset": "cube", "name": "Floor", "position": [0, -0.5, 0], "scale": [10, 0.5, 10], "components": box})
         wall = rpc(b, "scene.add", {"preset": "cube", "name": "Wall", "position": [-2, 1, 0], "scale": [0.25, 1, 2], "components": box})
         rpc(b, "scene.add", {"preset": "cube", "name": "Box", "position": [0, 0.51, 0], "scale": [0.5, 0.5, 0.5], "components": {
@@ -928,7 +928,7 @@ def scenario_fade(b: Bench):
         description = rpc(b, "engine.describe", {"methods": ["scene.set"]})
         if not description["methods"][0]["params"]["properties"].get("components"):
             raise BenchError("scene.set does not expose component editing")
-        rpc(b, "editor.action", {"name": "new"})
+        rpc(b, "scene.new", {"discard": True})
         grid_new(b, Path(args.scratch) / f"fade_{b.variant}_{args.cubes}.scene")
         entity = rpc(b, "scene.inspect", {"limit": 1})["entities"][0]["id"]
         rpc(b, "camera.set", grid_camera(b))
