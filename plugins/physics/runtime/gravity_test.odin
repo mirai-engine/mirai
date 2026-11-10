@@ -11,7 +11,7 @@ import sim "plugins:physics/runtime/sim"
 field_place :: proc(f:^Physics_Test,g:volume.Gravity,v:Maybe(volume.Volume),position:[3]f32) -> core.Entity {
     e:=core.create(&f.entities)
     core.add(&f.gravities,e,g)
-    if v,ok:=v.?;ok {core.add(&f.gravity_volumes,e,v)}
+    if v,ok:=v.?;ok {core.add(&f.volumes,e,v)}
     core.add(&f.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale=1}})
     physics_test_settle(f)
     return e
