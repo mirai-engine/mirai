@@ -176,7 +176,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             name:=preview_marker_name(preview_trace_source_view(&trace,event.animation),event.name)
             if name[0]==0 {authoring_failure(call,"markers","Missing_Name","a source name for every crossed marker",fmt.tprintf("%x",event.name),"A marker name could not be resolved");return false}
             label:=base.text_get(name[:]);owned:=strings.clone(label,call.allocator)
-            if len(owned)!=len(label) || len(markers)>=asset.ANIMATION_MAX_MARKERS || append(&markers,asset.Animation_Marker_Desc{previous+(time-previous)*event.fraction,owned})!=1 {authoring_failure(call,"markers","Capacity","memory and capacity for crossed markers","full marker buffer","The baked markers could not be stored",api.SERVER_ERROR);return false}
+            if len(owned)!=len(label) || len(markers)>=asset.ANIMATION_MAX_MARKERS || append(&markers,asset.Animation_Marker_Desc{time=previous+(time-previous)*event.fraction,name=owned})!=1 {authoring_failure(call,"markers","Capacity","memory and capacity for crossed markers","full marker buffer","The baked markers could not be stored",api.SERVER_ERROR);return false}
         }}}
         previous=time
     }

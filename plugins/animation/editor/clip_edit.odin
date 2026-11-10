@@ -466,6 +466,6 @@ clip_desc :: proc(sampled:Clip_Sampled,frames:lib.Frames,name:string,markers:[]a
         append(&tracks,aa.Animation_Track_Desc{target=base.text_get(curve.target[:]),property=curve.property,slot=curve.slot,keys=keys})
     }
     kept:=make([dynamic]aa.Animation_Marker_Desc,allocator)
-    for marker in markers {if marker.time<=duration+1e-4 {append(&kept,aa.Animation_Marker_Desc{min(marker.time,duration),marker.name})}}
+    for marker in markers {if marker.time<=duration+1e-4 {append(&kept,aa.Animation_Marker_Desc{min(marker.time,duration),marker.name,min(marker.duration,duration-min(marker.time,duration))})}}
     return {name=name,tracks=tracks[:],markers=kept[:],root=sampled.root}
 }

@@ -459,17 +459,13 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Ability_User,ref:core.Record(Abil
     for &b in u.buffer {if b.ability==ref {b={}}}
     u.ability,u.start,u.own,u.hits,u.hit_count=ref,t.tick,0,{},0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
-    if name:=ability_name_text(&a.action);name!="" {
-        anim.play(t.w.animations,e,name)
-    } else if name:=ability_name_text(&a.clip);name!="" {
-        anim.play(t.w.animations,e,name)
-    }
+    if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,e,name)}
 }
 
 // Ends the running ability at at: its open windows close, their moves stop and its animation
-// stops unless next plays the same action, or a whole-body one of its own. An action next does not
-// play again is stopped even when next plays another: in another layer nothing would replace it,
-// and a looping section would play on, and in the same layer the one next plays takes the layer.
+// stops unless next plays the same action. An action next does not play again is stopped even when
+// next plays another: in another layer nothing would replace it, and a looping section would play
+// on, and in the same layer the one next plays takes the layer.
 @(private)
 ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_Time,kind:Ability_Event_Kind,next:^Ability) {
     ref:=u.ability
@@ -481,7 +477,6 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_
         }
         if kind!=.Completed || a.hold {
             if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,e,name)}
-            if name:=ability_name_text(&a.clip);name!="" && (next==nil || ability_name_text(&next.clip)=="") {anim.stop(t.w.animations,e,name)}
         }
     }
     u.ability,u.start,u.own,u.hits,u.hit_count={},0,0,{},0

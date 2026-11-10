@@ -121,8 +121,8 @@ preview_program_write :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,
     serial.text_write_raw(call.out,",\"parameters\":[")
     if state!=nil {
         parameters:[anim.STACK_PARAMETERS*2]anim.Stack_Parameter_Info
-        blends:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Blend_Assets)
-        count:=anim.stack_parameters(core.world_storage_of(world,anim.Action_Runtime),blends,core.world_storage_of(world,anim.Playback),state.entity,parameters[:])
+        characters:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Character_Assets)
+        count:=anim.stack_parameters(core.world_storage_of(world,anim.Action_Runtime),characters,core.world_storage_of(world,anim.Playback),state.entity,parameters[:])
         for &parameter,i in parameters[:count] {if i>0 {serial.write_u8(call.out,',')};authoring_write_value(call,&parameter,type_info_of(anim.Stack_Parameter_Info))}
     }
     serial.text_write_raw(call.out,"]")
@@ -180,9 +180,9 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
         value:=Preview_Marker_Result{kind=event.kind,animation=event.animation,clip_hash=event.clip,time=event.time,weight=event.weight,source=event.source,group=event.group}
         if event.kind==.Marker {view:=preview_trace_source_view(trace,event.animation);value.clip,value.marker,value.marker_hash=preview_clip_name(view,event.clip),preview_marker_name(view,event.name),event.name}
         if actions!=nil && event.action!=0 {for &plan in actions.plans {
-            if plan.asset!=description.actions {continue}
+            if plan.asset!=description.asset {continue}
             for &action in plan.profile.actions {if base.name_hash(base.text_get(action.name[:]))==event.action {value.action=action.name}}
-            if event.kind==.Span_Begin || event.kind==.Span_End {for &window in plan.profile.windows {if base.name_hash(base.text_get(window.name[:]))==event.name {value.name=window.name}}} else if event.kind!=.Marker {for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.name {value.name=section.name}}}
+            if event.kind==.Span_Begin || event.kind==.Span_End {value.name=preview_marker_name(preview_trace_source_view(trace,plan.animation),event.name)} else if event.kind!=.Marker {for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.name {value.name=section.name}}}
         }}
         authoring_write_value(call,&value,type_info_of(Preview_Marker_Result))
     }}
