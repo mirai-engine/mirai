@@ -151,7 +151,6 @@ ui_composite :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,source:rhi.T
 ui_backdrop :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,input:rhi.Texture,blur:f32,scale:f32) -> rhi.Texture {
     source:=input
     for i in 0..<2 {
-        rhi.cmd_barrier_texture(cmd,source,.Shader_Read)
         pass:=rhi.Render_Pass_Desc{color_count=1,name="UI backdrop blur"}
         pass.colors[0]={texture=s.blur[i],load=.Dont_Care,store=.Store}
         rhi.cmd_begin_render_pass(cmd,&pass)
@@ -164,7 +163,6 @@ ui_backdrop :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,input:rhi.Tex
         rhi.cmd_end_render_pass(cmd)
         source=s.blur[i]
     }
-    rhi.cmd_barrier_texture(cmd,source,.Shader_Read)
     return source
 }
 
@@ -230,7 +228,6 @@ ui_layers_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,slot:int,w
                 source:=s.layers[depth]
                 parent:=s.ldr if depth==0 else s.layers[depth-1]
                 rhi.cmd_end_render_pass(cmd)
-                rhi.cmd_barrier_texture(cmd,source,.Shader_Read)
                 ui_target_begin(r,cmd,parent,false)
                 ui_composite(r,cmd,s,source,layer.effects[draw.layer],points,stack[depth].scissor,scale)
                 bound=false

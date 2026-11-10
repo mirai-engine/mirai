@@ -97,7 +97,7 @@ mirai ui check
   makes the asset say the document of that file, making an asset that does not exist.
   `check` also reads `game/`: the literals `gui.clicked` and its like name are nodes of a `.ui`.
 - `write` refuses what `ui.write` refuses, with its message, and leaves the file as it was. Paths
-  are checked against the built game: `mirai build editor . --dev` after its code changes.
+  are checked against the built game: `mirai build editor .` after its code changes.
 
 ## Controls
 

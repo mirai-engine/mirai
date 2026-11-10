@@ -133,8 +133,8 @@ section_made :: proc(image:^history.Journal_Table,e:core.Entity) -> bool {return
 @(private)
 section_reload :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     references:=core.world_table_of(w,scene.Scene_Reference)
-    reference:=core.edit(references,e)
-    if reference==nil || reference.loaded=={} {return}
+    reference,found:=core.get(references,e)
+    if !found || reference.loaded=={} {return}
     file:=host_scene(s,reference.scene)
     gone:=section_entities(w,e)
     h:=entity_hierarchy(w)
@@ -150,10 +150,9 @@ section_reload :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
         }
     }
     core.world_settle(w)
-    reference=core.edit(references,e)
-    if reference!=nil {
-        reference.loaded,reference.held={},false
-        if file!=nil {reference.loaded=reference.scene}
+    if written:=core.edit(references,e);written!=nil {
+        written.loaded,written.held={},false
+        if file!=nil {written.loaded=written.scene}
     }
     journal_take_entities(s.edits,w,gone)
     journal_take_entities(s.edits,w,section_entities(w,e))

@@ -79,7 +79,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(renderer)
     assets:host.Assets
@@ -228,7 +228,7 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(renderer)
     assets:host.Assets

@@ -70,8 +70,9 @@ tables and is the only package that imports it. The game and the other plugins, 
   of the simulation, who may import the solver → [owned bodies](references/engine.md#owned-bodies)
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
-- Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, Collision
-  view modes) → [engine.md#editor-part](references/engine.md#editor-part)
+- Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, dropping
+  objects to rest with `physics.settle` and the Drop tool, Collision view modes) →
+  [engine.md#editor-part](references/engine.md#editor-part)
 
 ## Workflow
 
@@ -206,7 +207,7 @@ tables and is the only package that imports it. The game and the other plugins, 
     `static`, `teleport`, `fluids`, `sync` (sealed rows against the full reconciliation),
     `breakables` (the facade, its copies and `strain_area`), `characters` (the character queries
     of the facade: `character_capsule`, `character_landing`), `planet` (a character on a planet).
-    Editor: `collision`, `api_collision`, `colliders`, `view_mode`, `bodies`.
+    Editor: `collision`, `api_collision`, `colliders`, `view_mode`, `bodies`, `settle`.
   - Locomotion, on the world through the facade (`test_world_test.odin`): `locomotion` (walk, jump,
     coyote, layers, flight, swimming, start mode, locks), `moves` (crouch, slide, mantle, tactical
     sprint, ledge jump), `planet` (own vertical: walking, jumping and a world copy on a planet,

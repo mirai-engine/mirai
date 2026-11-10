@@ -3,6 +3,8 @@ package input
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:project"
+import "mirai:std/serial"
 
 @(private="file") MOVE :: Action(0)
 @(private="file") JUMP :: Action(2)
@@ -19,11 +21,11 @@ menu_bindings :: proc() -> (m:Input_Map) {
     input_map_bind(&m,MOVE,binding_keys(.A,.D,.S,.W))
     input_map_action(&m,JUMP,.Button)
     input_map_bind(&m,JUMP,binding_key(.Space))
-    input_map_bind(&m,JUMP,binding_gamepad_button(.South,0))
+    input_map_bind(&m,JUMP,binding_gamepad_button(.South,1))
     input_map_action(&m,CONFIRM,.Button)
     input_map_bind(&m,CONFIRM,binding_key(.Space))
     input_map_bind(&m,CONFIRM,binding_gamepad_button(.South))
-    m.contexts[CONFIRM]=MENU
+    m.actions[CONFIRM].input_context=MENU
     return
 }
 
@@ -35,7 +37,7 @@ the_always_context_reads_under_a_modal_one :: proc(t:^testing.T) {
     m:=menu_bindings()
     input_map_action(&m,PAUSE,.Button)
     input_map_bind(&m,PAUSE,binding_key(.Escape))
-    m.contexts[PAUSE]=CONTEXT_ALWAYS
+    m.actions[PAUSE].input_context=CONTEXT_ALWAYS
     device:=core.Input{keys_down={.Escape},keys_pressed={.Escape}}
     modal:=Context_Stack{layers={0=MENU},count=1,modal=1}
     actions:Actions
@@ -143,10 +145,10 @@ a_button_held_across_a_change_of_context_waits_for_its_release :: proc(t:^testin
     testing.expect(t,seat.rearm==0 && action(&seat.actions,JUMP).pressed,"pressed again, it jumps")
 }
 
-// input.mirai puts an action in a context and gives a binding a chord; the
-// options of the player write the chord and read it back.
+// Input_Settings puts an action in a context and gives a binding a chord,
+// and its text names them.
 @(test)
-input_mirai_names_contexts_and_chords :: proc(t:^testing.T) {
+input_settings_name_contexts_and_chords :: proc(t:^testing.T) {
     names:=[]core.Name_Info{
         {type=Action,value=2,name="jump",file="game/game.odin",line=1},
         {type=Action,value=17,name="save",file="game/game.odin",line=2},
@@ -156,13 +158,14 @@ input_mirai_names_contexts_and_chords :: proc(t:^testing.T) {
     if !made {return}
     defer core.test_info_destroy(&info)
     info.names=names
+    settings:Input_Settings
+    input_settings_put(&settings,"jump",action_default(.Button,binding_key(.S)))
+    input_settings_put(&settings,"save",action_default_in(MENU,.Button,binding_chord(binding_key(.S),code_key(.Left_Control))))
     problems:core.Problems
     m:Input_Map
-    input_map_make(&m,&info,"input.mirai",`{"actions":[
-        {"name":"jump","kind":"Button","bindings":[{"key":"S"}]},
-        {"name":"save","kind":"Button","context":"menu","bindings":[{"key":"S","chord":[{"key":"Left_Control"}]}]}]}`,&problems)
+    input_map_make(&m,&info,&settings,&problems)
     testing.expect_value(t,problems.count,0)
-    testing.expect(t,m.contexts[SAVE]==MENU && m.contexts[JUMP]==CONTEXT_BASE)
+    testing.expect(t,m.actions[SAVE].input_context==MENU && m.actions[JUMP].input_context==CONTEXT_BASE)
 
     menu:=Context_Stack{layers={0=MENU},count=1}
     actions:Actions
@@ -170,21 +173,13 @@ input_mirai_names_contexts_and_chords :: proc(t:^testing.T) {
     actions_update(&actions,&m,&device,1.0/60,&menu)
     testing.expect(t,action(&actions,SAVE).pressed && !action(&actions,JUMP).down,"the menu takes S, and Ctrl+S saves")
 
-    below:Input_Map
-    input_map_make(&below,&info,"",``,&problems)
-    text,ok:=input_map_text(&m,&below,&info)
-    testing.expect(t,ok && strings.contains(text,`"chord": [{"key": "Left_Control"}]`),text)
-    again:=below
-    error,_:=input_map_parse(&again,&info,text)
-    testing.expect(t,error==.None && again.bindings[again.binding_count-1]==m.bindings[m.binding_count-1])
-
-    for bad in ([]string{
-        `{"actions":[{"name":"save","kind":"Button","context":"pause","bindings":[]}]}`,
-        `{"actions":[{"name":"save","kind":"Button","bindings":[{"key":"S","chord":[{"mouse":"X"}]}]}]}`,
-        `{"actions":[{"name":"save","kind":"Button","bindings":[{"key":"S","chord":[{"key":"A"},{"key":"B"},{"key":"C"}]}]}]}`,
-    }) {
-        error,at:=input_map_parse(&again,&info,bad)
-        testing.expectf(t,error!=.None && at=="save","%s reads as %v",bad,error)
-    }
-    testing.expect(t,!input_map_bind(&again,SAVE,binding_chord(binding_key(.S),Input_Code{.Mouse_Axis,0})),"an axis is no chord")
+    named:=make(map[typeid]serial.Named,context.temp_allocator)
+    named[Input_Context]={choices={{"base",0},{"menu",1}}}
+    list:=[]project.Setting{{name="Input_Settings",info=type_info_of(Input_Settings),value=&settings,named=named}}
+    text:=project.settings_text(list,allocator=context.temp_allocator)
+    for want in ([]string{`"context": "menu"`,`"inputs": ["S"]`,`"chord": ["Left_Control"]`}) {testing.expectf(t,strings.contains(text,want),"%q is not in %s",want,text)}
+    back:Input_Settings
+    list[0].value=&back
+    testing.expect_value(t,project.settings_parse(text,list).code,project.Error_Code.None)
+    testing.expect(t,back==settings)
 }

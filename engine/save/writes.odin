@@ -9,9 +9,9 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:core"
-import inp "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import "mirai:std/serial"
@@ -62,8 +62,7 @@ Save_Work :: struct {
     sections_seen:bool, // some Manual section was on since a scene last replaced the world
     due:bool,           // an autosave waits for room
     watching:bool,      // the files of the player have been looked at (kept_watch)
-    look:f32,           // s since the last look
-    kept:[Kept_File]Kept,
+    kept:[Kept_File]project.Rest,
 }
 
 work_free :: proc(work:^Save_Work) {
@@ -256,11 +255,11 @@ saves_thumbnail :: proc(renderer:^erender.Renderer,extras:^host.Frame_Extras,wor
 // A world that goes writes the slots it holds and what the files of the player
 // have not got yet, and lets go of the thumbnails it showed.
 @(step="release")
-saves_release :: proc(world:core.World_Ref,work:^Save_Work,thumbnails:^Save_Thumbnails,app:^host.App,state:^Save_State,bindings:core.Ref(inp.Input_Map),problems:^core.Problems) {
+saves_release :: proc(world:core.World_Ref,work:^Save_Work,thumbnails:^Save_Thumbnails,app:^host.App,state:^Save_State,problems:^core.Problems) {
     thumbnails_release(thumbnails,app.assets)
     if work==nil {return}
     writes_flush(work,&app.jobs,nil)
-    kept_flush(work,world,app,state,bindings.ptr,problems)
+    kept_flush(work,world,app,state,problems)
     if work.texture!=0 {erender.view_texture_remove(app.renderer,work.texture)}
     work.texture=0
 }

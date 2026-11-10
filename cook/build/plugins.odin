@@ -133,7 +133,7 @@ part_path :: proc(p:^project.Project,plugin:^project.Plugin,part:project.Plugin_
 	return root,fmt.aprintf("%s/%s",plugin.folder[len(root)+1:],parts[part],allocator=allocator)
 }
 
-// A library is named by what it is built from (plugin_library_hash): a
+// A library is named by what it is built from (plugin_library_hashes): a
 // program that loaded one loads the one built after it beside it, as the
 // editor does when a build changes a plugin.
 plugin_library_name :: proc(root:string,lib:^Plugin_Library,hash:u64,allocator:=context.allocator) {
@@ -232,52 +232,56 @@ plugin_folder_of :: proc(lib:^Plugin_Library) -> (folder,decl:string) {
 @(private="file")
 plugin_collection :: proc(lib:^Plugin_Library) -> string {return "project" if lib.project else "plugins"}
 
-// What a library is built from: its sources, the declarations of the
-// plugins it compiles against as they are now, the declarations of the
-// engine that its sources and those declarations name (by the hashes the
-// build of the engine keeps, each of a declaration and of what it reaches:
-// declared.odin), the compiler and the flags. A change of the engine that
-// declares the same builds no plugin again, and one of a declaration builds
-// again the parts that name it or something that reaches it. The mode of the
-// engine counts: its libraries, which the part links against, are others in
-// each. Nothing of it names the project: with the same
+// What a library is built from: its sources, the declarations its parsed
+// sources name of the engine and of the plugins it compiles against (by the
+// hashes of the index, each of a declaration and of what it reaches:
+// declared.odin), the compiler and the flags. A change of a declaration builds
+// again the parts that name it or something that reaches it, and nothing
+// else. The mode of the engine counts: its libraries, which the part links
+// against, are others in each. Nothing of it names the project: with the same
 // flags, every project of an engine shares its libraries through the cache,
-// and those a package of the engine brings. It names the library
-// (plugin_library_name).
+// and those a package of the engine brings. compile is what its objects are
+// compiled from; hash adds the names of the plugin libraries it links
+// against, which its link names, and names the library (plugin_library_name):
+// one whose hash moves and whose compile does not is linked again
+// (relink.odin). libraries: those of the project, named up to index.
 @(private)
-plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:Declared) -> u64 {
-	return plugin_library_hash_of(p,lib,compiler,flags,engine,declared,false)
-}
-
-// The same with the names of the libraries it links against masked: what its
-// objects are compiled from. A library whose name moves and whose compile
-// hash does not is linked again (relink.odin).
-@(private)
-plugin_library_compile_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:Declared) -> u64 {
-	return plugin_library_hash_of(p,lib,compiler,flags,engine,declared,true)
-}
-
-@(private="file")
-plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:Declared,masked:bool) -> u64 {
+plugin_library_hashes :: proc(p:^project.Project,libraries:[]Plugin_Library,index:int,compiler:string,flags:[]string,engine:Engine_Paths,declared:Declared) -> (hash,compile:u64) {
+	lib:=&libraries[index]
+	collection:=plugin_collection(lib)
+	skip:=make([]string,len(lib.packages),context.temp_allocator)
+	for path,at in lib.packages {skip[at]=fmt.tprintf("%s:%s",collection,path)}
+	names:=make(map[string]bool,context.temp_allocator)
+	for path in lib.packages {
+		errors:=make([dynamic]string,context.temp_allocator)
+		_,files,_:=sources_read(project.path(lib.root,path,allocator=context.temp_allocator),&errors,context.temp_allocator)
+		declared_named(files,skip,&names)
+	}
 	sources:=make([dynamic]string,context.temp_allocator)
 	append(&sources,..engine_sources(lib.root,lib.packages))
+	// Without the hashes of what it names, every build of the engine builds it again.
+	if !os.is_file(engine.declared) {append(&sources,engine.stamp)}
 	hashed:=make([dynamic]string,context.temp_allocator)
 	append(&hashed,..flags)
-	// The declarations it compiles against, relative to the folder of the project that has them.
-	folder,_:=plugin_folder_of(lib)
-	needed:=make([dynamic]string,context.temp_allocator)
-	append(&needed,..engine_sources(project.path(folder,"decl",allocator=context.temp_allocator),lib.needs))
-	append(&needed,..engine_sources(project.path(folder,"decl-project",allocator=context.temp_allocator),lib.project_needs))
-	plugins_declared,_:=fingerprint(folder,"",nil,needed[:],masked=folder if masked else "")
-	append(&hashed,fmt.tprintf("<plugin declarations %x>",plugins_declared))
-	names:=make(map[string]bool,context.temp_allocator)
-	declared_names_of(sources[:],nil,&names)
-	declared_names_of(needed[:],nil,&names)
-	append(&hashed,fmt.tprintf("<%sdeclarations %v %x>",ENGINE_COLLECTION,engine.mode,declared_key(declared,names)))
-	// Without the hashes of what it names, every build of the engine builds it again.
-	if len(declared)==0 {append(&sources,engine.stamp)}
-	hash,_:=fingerprint(p.engine_root,compiler,hashed[:],sources[:])
-	return hash
+	append(&hashed,fmt.tprintf("<declare %d>",DECLARE_VERSION),fmt.tprintf("<declarations %v %x>",engine.mode,declared_key(declared,names)))
+	compile,_=fingerprint(p.engine_root,compiler,hashed[:],sources[:])
+	hash=compile
+	for &other in libraries[:index] {
+		needs:=lib.project_needs if other.project else lib.needs
+		for path in other.packages {
+			if !slice.contains(needs,path) {continue}
+			hash=base.hash_combine(hash,base.name_hash(other.file))
+			break
+		}
+	}
+	return
+}
+
+// Adds to the index the declarations of a library, as its declarations folder has them.
+@(private)
+plugin_library_declared :: proc(lib:^Plugin_Library,declared:^Declared) {
+	_,decl:=plugin_folder_of(lib)
+	declared_add(declared,plugin_collection(lib),decl,lib.packages)
 }
 
 // Where a library keeps the record of its last compile (Link_Record).
@@ -286,23 +290,17 @@ plugin_link_file :: proc(lib:^Plugin_Library) -> string {
 	return strings.concatenate({lib.stamp[:len(lib.stamp)-len(".stamp")],".link"},context.temp_allocator)
 }
 
-// Writes the stage and the declarations of a library, with the declarations
-// it compiles against beside its sources, and its module definition on
-// Windows, which names it by the file it is published as. The errors say what
-// keeps a source from being declared.
+// Writes the stage and the declarations of a library, with what each declares
+// and names (DECLARED_NAMES), and its module definition on Windows, which
+// names it by the file it is published as. The stage is compiled as
+// STAGE_COLLECTION, through which its packages import each other, while the
+// others are their declarations. The errors say what keeps a source from being declared.
 @(private)
 plugin_library_prepare :: proc(lib:^Plugin_Library) -> []string {
 	_,decl:=plugin_folder_of(lib)
-	collection:=plugin_collection(lib)
-	errors,_:=declare({root=lib.root,packages=lib.packages,binary=collection,library=lib.linked,stage=lib.stage,decl=decl,definition=plugin_definition(lib)})
+	errors,_:=declare({root=lib.root,packages=lib.packages,binary=plugin_collection(lib),library=lib.linked,stage=lib.stage,decl=decl,staged=STAGE_COLLECTION,names=true,definition=plugin_definition(lib)})
 	if len(errors)>0 {return errors}
-	// The stage is its collection: what it compiles against of the same one is copied there.
-	if !decl_mirror(lib.stage,decl,lib.project_needs if lib.project else lib.needs) {
-		failed:=make([]string,1)
-		failed[0]=fmt.aprintf("%s: the declarations it compiles against could not be copied",lib.stage)
-		return failed
-	}
-	entry_write(lib.stage,PLUGIN_ENTRY,entry_imports(collection,lib.packages)[:])
+	entry_write(lib.stage,PLUGIN_ENTRY,entry_imports(STAGE_COLLECTION,lib.packages)[:])
 	return nil
 }
 
@@ -317,12 +315,11 @@ plugin_definition :: proc(lib:^Plugin_Library) -> string {
 plugin_command :: proc(lib:^Plugin_Library,compiler,engine_decl,staged:string,flags:[]string,allocator:=context.allocator) -> []string {
 	command:=make([dynamic]string,allocator)
 	append(&command,compiler,"build",project.path(lib.stage,PLUGIN_ENTRY,allocator=allocator))
-	append(&command,fmt.aprintf("-collection:mirai=%s",engine_decl,allocator=allocator),fmt.aprintf("-collection:%s=%s",plugin_collection(lib),lib.stage,allocator=allocator))
-	// The code of the project sees the engine plugins through their declarations.
-	if lib.project {
-		folder,_:=plugin_folder_of(lib)
-		append(&command,fmt.aprintf("-collection:plugins=%s",project.path(folder,"decl",allocator=context.temp_allocator),allocator=allocator))
-	}
+	folder,_:=plugin_folder_of(lib)
+	append(&command,fmt.aprintf("-collection:mirai=%s",engine_decl,allocator=allocator),fmt.aprintf("-collection:%s=%s",STAGE_COLLECTION,lib.stage,allocator=allocator))
+	append(&command,fmt.aprintf("-collection:plugins=%s",project.path(folder,"decl",allocator=context.temp_allocator),allocator=allocator))
+	// The code of the project sees its own plugins and game/ through their declarations.
+	if lib.project {append(&command,fmt.aprintf("-collection:project=%s",project.path(folder,"decl-project",allocator=context.temp_allocator),allocator=allocator))}
 	append(&command,fmt.aprintf("-out:%s",staged,allocator=allocator))
 	append(&command,..flags)
 	append(&command,"-json-errors")
@@ -343,11 +340,12 @@ plugins_current :: proc(p:^project.Project,compiler:string,dev:bool,engine:Engin
 	flags:=plugin_flags(p,dev,context.temp_allocator)
 	paths:=engine_paths(p.engine_root,engine,context.temp_allocator)
 	declared:=declared_read(paths.declared,context.temp_allocator)
-	for &lib in libraries {
+	for &lib,i in libraries {
 		saved,_,stamped:=stamp_read(lib.stamp)
-		hash:=plugin_library_hash(p,&lib,compiler,flags,paths,declared)
+		hash,_:=plugin_library_hashes(p,libraries,i,compiler,flags,paths,declared)
 		plugin_library_name(p.root,&lib,hash,context.temp_allocator)
 		if !stamped || !os.is_file(lib.library) || saved!=hash {return false}
+		plugin_library_declared(&lib,&declared)
 	}
 	return true
 }
@@ -358,7 +356,7 @@ plugins_current :: proc(p:^project.Project,compiler:string,dev:bool,engine:Engin
 PLUGIN_CACHE_ENTRIES :: 256
 
 // A plugin library in the cache every checkout of the repository shares, by
-// what it is built from (plugin_library_hash): built once, by whichever
+// what it is built from (plugin_library_hashes): built once, by whichever
 // checkout gets there first. Its stage, its declarations and the
 // declarations it compiles against are written by every checkout, from the
 // same sources.

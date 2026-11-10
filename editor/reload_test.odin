@@ -19,7 +19,7 @@ the_engine_of_an_editor_is_the_folder_it_started_from :: proc(t:^testing.T) {
 }
 
 // The record of mirai session follows an editor to the one it starts in its place, keeping the
-// mode and the arguments; a record of another editor stays as it is.
+// arguments; a record of another editor stays as it is.
 @(test)
 the_session_record_follows_an_editor_that_restarts :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -34,11 +34,11 @@ the_session_record_follows_an_editor_that_restarts :: proc(t:^testing.T) {
     }
     s:=Session{has_project=true,project_root=folder}
     for owner,i in ([]int{os.get_pid(),os.get_pid()+1}) {
-        record:=fmt.tprintf(`{{"pid": %d, "mode": "dev", "args": ["--api-port", "0"]}}`,owner)
+        record:=fmt.tprintf(`{{"pid": %d, "args": ["--api-port", "0"]}}`,owner)
         testing.expect(t,os.write_entire_file(path,record)==nil)
         session_record_follow(&s,4242)
         followed:=read(path)
         testing.expect_value(t,followed.pid,i==0?4242:owner)
-        testing.expect(t,followed.mode=="dev" && len(followed.args)==2 && followed.args[1]=="0")
+        testing.expect(t,len(followed.args)==2 && followed.args[1]=="0")
     }
 }
