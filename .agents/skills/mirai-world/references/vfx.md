@@ -558,8 +558,8 @@ they light everything within their reach, without shadow rays or a place in thos
   (`puff.slang`), particle lights with shadow that light the floor within their reach and not
   behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's
   world texture (`count_ground.slang`), channel births and their rollback (`testdata/gather.slang`),
-  reports, all the modes around glass without validation errors and stable frames without
-  allocating.
+  reports, sprites behind a `fog` box dimmed by it and one in front of it not, all the modes
+  around glass without validation errors and stable frames without allocating.
 - `mirai test plugins/vfx/editor` (with `-collection:plugins=<root>/plugins`): the effects document
   (`document_test.odin`).
 - In the demo editor, without a window and with validation: the physics gallery launches
