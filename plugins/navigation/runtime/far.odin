@@ -5,6 +5,7 @@ import "mirai:core"
 import scene "mirai:engine/scene"
 import "mirai:std/ai"
 import mm "mirai:std/math"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // What moves by itself where the players are not. An agent with somewhere to
@@ -178,7 +179,7 @@ far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:
 agents_far :: proc(
     n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),
     fars:^core.Table(Nav_Far),roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),
-    walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),colliders:core.Read(phys.Collider),worlds:core.Read(core.World_Transform),
+    walks:core.Read(locomotion.Walk),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),colliders:core.Read(phys.Collider),worlds:core.Read(core.World_Transform),
     placer:core.Placer,bodies:^phys.Body_Requests,events:^Nav_Events,time:core.Time,
 ) {
     if n.ptr==nil || builds.ptr==nil || !n.ready || !time.playing || time.dt<=0 {return}

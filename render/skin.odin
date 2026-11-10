@@ -705,7 +705,6 @@ poses_record :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
         (cast(^Gpu_Mesh)row.ptr)^=gpu_mesh(mesh)
         rhi.cmd_copy_buffer(cmd,row.buffer,row.offset,s.mesh_buffer,u64(handle)*size_of(Gpu_Mesh),size_of(Gpu_Mesh))
     }
-    rhi.cmd_barrier_buffer(cmd,s.mesh_buffer,.Shader_Read)
     // What an extension deforms, or the programs of its instance move, keeps the vertices it had as its previous ones.
     for handle in s.skinned {
         mesh:=s.meshes[handle]
@@ -713,8 +712,6 @@ poses_record :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
         bytes:=u64(mesh.vertices_posed)*size_of(Gpu_Posed_Vertex)
         rhi.cmd_copy_buffer(cmd,s.vertex_buffer,u64(mesh.posed_word)*4,s.vertex_buffer,u64(mesh.previous_word)*4,bytes)
     }
-    rhi.cmd_barrier_buffer(cmd,s.vertex_buffer,.Shader_Write)
-    rhi.cmd_barrier_buffer(cmd,s.index_buffer,.Shader_Read)
     for handle in s.skinned {
         mesh:=s.meshes[handle]
         skin:=mesh.skin
@@ -723,7 +720,6 @@ poses_record :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
         palette:=rhi.frame_alloc(r.device,u64(size),16)
         if palette.ptr==nil {set_error(r,"transient ring exhausted uploading skin palette");return false}
         mem.copy(palette.ptr,raw_data(skin.joints),size)
-        rhi.cmd_barrier_buffer(cmd,skin.binding.source,.Shader_Read)
         // Targets at rest now and before add nothing: they are not read.
         morph:Skin_Morph_Buffers
         for weight in skin.morph_weights {if weight!={} {morph.count=u32(len(skin.morph_weights));break}}
@@ -733,7 +729,6 @@ poses_record :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
             if weights.ptr==nil {set_error(r,"transient ring exhausted uploading morph weights");return false}
             mem.copy(weights.ptr,raw_data(skin.morph_weights),bytes)
             morph.ranges,morph.deltas,morph.weights,morph.weights_offset,morph.step=skin.binding.morph_ranges,skin.binding.morph_deltas,weights.buffer,weights.offset,skin.binding.morph.step
-            rhi.cmd_barrier_buffer(cmd,morph.ranges,.Shader_Read);rhi.cmd_barrier_buffer(cmd,morph.deltas,.Shader_Read)
         } else {morph.count=0}
         params:=Skin_Params{mesh=u32(handle),clusters=posed_clusters(s,mesh),output=mesh.posed_word,previous=mesh.previous_word}
         skin_dispatch(r,cmd,skin.binding.source,palette.buffer,palette.offset,s.mesh_buffer,s.vertex_buffer,s.index_buffer,params,morph=morph)
@@ -788,15 +783,12 @@ poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
         rhi.cmd_bind_buffer(cmd,SLOT_INDICES,s.index_buffer)
         rhi.cmd_bind_buffer(cmd,SLOT_BLAS_TRIANGLES,s.blas_triangle_buffer)
         set_params(cmd,&params)
-        rhi.cmd_barrier_buffer(cmd,s.vertex_buffer,.Shader_Read);rhi.cmd_barrier_buffer(cmd,s.index_buffer,.Shader_Read)
-        rhi.cmd_barrier_buffer(cmd,s.blas_triangle_buffer,.Shader_Write)
         rhi.cmd_dispatch(cmd,groups(triangles,64),1)
         // From the deepest level up: a node reads the boxes the level below wrote.
         rhi.cmd_bind_pipeline(cmd,r.pipelines[.Skin_Refit])
         rhi.cmd_bind_buffer(cmd,SLOT_PASS0,bytes.buffer,bytes.offset,size)
         rhi.cmd_bind_buffer(cmd,SLOT_BLAS_TRIANGLES,s.blas_triangle_buffer)
         rhi.cmd_bind_buffer(cmd,SLOT_BLAS_NODES,s.blas_node_buffer)
-        rhi.cmd_barrier_buffer(cmd,s.blas_triangle_buffer,.Shader_Read)
         for depth:=deepest;depth>=0;depth-=1 {
             first:=at
             nodes:u32
@@ -811,7 +803,6 @@ poses_refit :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
             if nodes==0 {continue}
             params=Skin_Jobs_Params{u32(first),u32(at-first),nodes,0}
             set_params(cmd,&params)
-            rhi.cmd_barrier_buffer(cmd,s.blas_node_buffer,.Shader_Write)
             rhi.cmd_dispatch(cmd,groups(nodes,64),1)
         }
     }
