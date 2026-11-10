@@ -10,8 +10,9 @@
   Quality presets, frame limit and vsync belong to whoever presents (`rhi.swapchain_set_vsync`).
 - Exposure belongs to each camera ([exposure](display.md#exposure)), not to the settings.
 - `trace_mode` selects the tracer; `hardware_ray_tracing_active` says whether the hardware one is
-  used and `Renderer.hardware_rt_note` why not. Changing it builds the structures of the other
-  ([tracer in use](gi.md#bvh-and-acceleration-structures)).
+  used and `Renderer.hardware_rt_note` why not. Changing it makes the pipelines and builds the
+  structures of the other ([tracer in use](gi.md#bvh-and-acceleration-structures)); if the
+  software pipelines are not made, `renderer_apply_settings` returns `false` and changes nothing.
 - `reference_lights` and `reference_gi` replace the direct and indirect light with their
   references ([shadows](lights.md#shadows), [indirect](gi.md#indirect-reference)).
 - A change recreates only what depends on it: the states of the additional and texture views
