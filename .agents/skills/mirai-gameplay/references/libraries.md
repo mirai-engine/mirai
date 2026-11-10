@@ -45,6 +45,9 @@ the name of their type) and a world (handles and tables).
   that spawned it. The root receives `Prefab_Source`, which a server sends with what it replicates
   so that the client instantiates that prefab
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)).
+  A World keeps the form of each prefab it spawned (`Prefab_Forms`): spawning it again reads no
+  file and gives the world reading it anew gives, until the prefab or a prefab it places changes.
+  The forms are of their World and are not copied with it.
 - With a project's assets, `load` and `spawn` instantiate a copy in which outdated prefab instances
   follow their current prefab
   ([resolution](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab));

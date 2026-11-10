@@ -26,6 +26,8 @@ import "mirai:std/serial"
 @(private="file") Probe_Standing :: struct {standing:bool `mirai:"transient"`}
 // on: the driven body runs and jumps over probe_level_top as a character would.
 @(private="file") Probe_Climb :: struct {on:bool,velocity,rise:f32,platform:core.Entity}
+// What a plugin that moves bodies says of the size of the hero; 0: nothing.
+@(private="file") Probe_Body :: struct {height:f32}
 @(private="file") PROBE_MOVE :: input.Action(0)
 @(private="file") PROBE_JUMP :: input.Action(2)
 
@@ -38,7 +40,7 @@ Probe_World :: struct {
     seats:core.Table(input.Seat),
     drivables:core.Table(input.Drivable),
     moves:core.Table(input.Move_Input),
-    standings:core.Table(Probe_Standing) `mirai:"name=Character_State"`,
+    standings:core.Table(Probe_Standing),
     players:input.Seats,
     bindings:input.Input_Map,
     holds:input.Hold_Requests,
@@ -52,6 +54,7 @@ Probe_World :: struct {
     view:core.View,
     queries:core.World_Queries,
     climb:Probe_Climb,
+    body:Probe_Body,
     id:core.World_Id,
 }
 @(private="file") Probe_Shared :: struct {problems:core.By_World(core.Problems)}
@@ -81,6 +84,19 @@ probe_query_probe :: proc(user:rawptr,origin,direction:[3]f32,length,radius:f32,
     top,entity,there:=probe_level_top(world,origin.x,origin.y)
     if !there || origin.y-top>length {return}
     return {point={origin.x,top,origin.z},normal={0,1,0},distance=origin.y-top,entity=entity},true
+}
+
+// What a plugin that moves bodies says of those of the test (Body_Provider).
+@(private="file")
+probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
+    state:=core.get(core.read(&(cast(^Probe_World)w.data).standings),body) or_return
+    return state.standing,true
+}
+
+@(private="file")
+probe_measure :: proc(w:core.World_Ref,body:core.Entity) -> (measure:Body_Measure,known:bool) {
+    height:=(cast(^Probe_World)w.data).body.height
+    return {height=height},height>0
 }
 
 // A character of a test: it runs at 5 m/s, a jump held rises at 6 m/s for up to
@@ -453,10 +469,20 @@ a_key_named_by_consecutive_calls_stays_held_and_a_call_that_omits_it_lets_go :: 
     testing.expect(t,jump.released && !jump.down && .Space in running.input.keys_released,"a call that omits it lets go")
 }
 
+// A frame that also counts the moves asked of the seat for its tick, into the int of the context.
+@(private="file")
+probe_frame_moves :: proc(s:^Session) -> bool {
+    requests:=core.world_storage_of(run_ref(s,run_find(s,0)),input.Hold_Requests)
+    for r in requests.queue.items {
+        if r.action==PROBE_MOVE {(cast(^int)context.user_ptr)^+=1}
+    }
+    return probe_frame(s)
+}
+
 // A drive steers the focused player by the move action of the game to its
 // target, and says where it ended and why: within its distance, at its ticks
 // or at its until; blocked it jumps and at last gives up, not spending
-// the ticks left.
+// the ticks left. Going straight it asks its move once, not every tick.
 @(test)
 a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stopped :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
@@ -465,11 +491,16 @@ a_drive_steers_the_focused_player_to_its_target_and_says_where_and_why_it_stoppe
     probe_drive(f)
     running:=cast(^Probe_World)run_find(&f.s,0).world
     place:=core.get(&running.transforms,f.hero)
+    moves:=0
+    context.user_ptr=&moves
+    api_state(&f.s).step_frame=probe_frame_moves
     error,text:=probe_call(f,"play.step",`{"drive":{"entity":"Foe","within":0.5,"move":"move"},"for":300}`)
+    api_state(&f.s).step_frame=probe_frame
     testing.expectf(t,error.code==0,"%v",error)
     api_result_shape_expect(t,text,Api_Play_Step_Result)
     testing.expect(t,strings.contains(text,`"drive":{"stopped":"Arrived"`) && strings.contains(text,`"ran":4`),text)
     testing.expect_value(t,place.position.x,5)
+    testing.expect_value(t,moves,1)
     // The limit of the step, and the conditions of the step stop it too.
     place.position={1,0,0}
     error,text=probe_call(f,"play.step",`{"drive":{"position":[5,0,0],"move":"move"},"for":2}`)
@@ -521,6 +552,8 @@ a_drive_heads_for_the_next_point_of_the_way_a_plugin_gives :: proc(t:^testing.T)
 
 // Over a gap a drive takes off at the edge and holds the jump for all it needs,
 // and a platform raised over its feet it arrives at standing on it, not under it.
+// Whether its body stands is what the plugin that moves it says, and nothing
+// without one.
 @(test)
 a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
@@ -533,6 +566,11 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     core.add(&running.transforms,platform,core.Transform{{13.5,2.9,0},1,{1,1,1}})
     core.add(&running.standings,f.hero,Probe_Standing{standing=true})
     core.settle(&f.info,running,nil)
+    w:=run_ref(&f.s,run_find(&f.s,0))
+    testing.expect_value(t,play_stance(&f.s,w,f.hero),Stance.Unknown)
+    f.s.providers={library=f.s.library_generation+1,bodies={0={standing=probe_standing}},body_count=1}
+    testing.expect_value(t,play_stance(&f.s,w,f.hero),Stance.Standing)
+    testing.expect_value(t,play_stance(&f.s,w,f.foe),Stance.Unknown)
     running.climb.on,running.climb.platform=true,platform
     place:=core.get(&running.transforms,f.hero)
     place.position={0,0,0}
@@ -540,12 +578,32 @@ a_drive_holds_its_jump_across_a_gap_and_stands_on_a_raised_platform :: proc(t:^t
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
     testing.expect(t,place.position.y==0 && abs(place.position.x-10)<=0.6,"over the gap, on the far floor")
-    error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","field":"Character_State.standing","compare":"Equal","number":1}]}`)
-    testing.expect(t,error.code==0 && strings.contains(text,`"passed":true`),text)
+    testing.expect_value(t,play_stance(&f.s,run_ref(&f.s,run_find(&f.s,0)),f.hero),Stance.Standing)
     error,text=probe_call(f,"play.step",`{"drive":{"entity":"Platform","move":"move"},"for":"5s"}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect(t,strings.contains(text,`"stopped":"Arrived"`),text)
     testing.expectf(t,place.position.y==2.9 && place.position.x>=12.5 && place.position.x<=14.5,"on its top: %v",place.position)
+}
+
+// What is at hand to a drive is measured by the body it steers: a point over
+// the head of a small one is not, as it is to a person, which a body that
+// does not say its size is taken for.
+@(test)
+a_drive_measures_what_is_at_hand_by_the_body_it_steers :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    probe_drive(f)
+    f.s.providers={library=f.s.library_generation+1,bodies={0={measure=probe_measure}},body_count=1}
+    running:=cast(^Probe_World)run_find(&f.s,0).world
+    place:=core.get(&running.transforms,f.hero)
+    cases:=[?]struct{height:f32,stopped:string}{{0,"Arrived"},{BODY_PERSON.height*0.1,"Ticks"}}
+    for c in cases {
+        place.position={1,0,0}
+        running.body.height=c.height
+        error,text:=probe_call(f,"play.step",`{"drive":{"position":[4,1.5,0],"move":"move"},"for":10}`)
+        testing.expectf(t,error.code==0 && strings.contains(text,fmt.tprintf(`"stopped":"%s"`,c.stopped)),"a body %v m tall: %s",c.height,text)
+    }
 }
 
 // A frame of the editor as a step runs it, without the window.

@@ -1,6 +1,7 @@
 package author
 
 import "core:mem"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -59,12 +60,14 @@ a_document_written_back_leaves_the_file_as_it_was :: proc(t:^testing.T) {
     defer records_destroy(&r)
     for root in ([2]int{-1,0}) {
         before:=document_text(&types,&r,root)
+        translations:=slice.clone(r.translations[:],context.temp_allocator)
         reading:Reading
         args:=call_args(&reading,&types,"{}")
         made,removed,ok:=document_apply(&args,&r,root,before)
         if !testing.expectf(t,ok,"%s",reading.problem) {return}
         testing.expect(t,made==0 && removed==0)
         testing.expect_value(t,document_text(&types,&r,root),before)
+        testing.expect(t,slice.equal(r.translations[:],translations),"the translations stay row by row")
     }
     title:=document_row_of(&r,"title")
     testing.expect(t,.Localized in r.nodes[title].flags && r.nodes[title].text_id==77 && len(r.translations)==2)
@@ -120,6 +123,58 @@ a_document_without_nodes_changes_only_the_styles_and_animations_it_names :: proc
 }
 
 @(test)
+a_document_declares_the_text_of_a_node_in_each_language :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    r:Records
+    if !document_sample(t,&r) {return}
+    defer records_destroy(&r)
+    write :: proc(t:^testing.T,types:^asset.Types,r:^Records,node,document:string) -> bool {
+        reading:Reading
+        args:=call_args(&reading,types,"{}")
+        _,_,ok:=document_apply(&args,r,document_row_of(r,node) if node!="" else -1,document)
+        return testing.expectf(t,ok,"%s",reading.problem)
+    }
+    in_language :: proc(r:^Records,id:u64,code:string) -> string {
+        at:=records_translation(r,id,code)
+        return records_text(r,r.translations[at].text) if at>=0 else ""
+    }
+    first:=document_text(&types,&r,-1)
+    testing.expectf(t,strings.contains(first,`"text":"Trips","translations":{"es":"Traducido"},"text_id":"000000000000004d"`),"a localized node says its translations and their id: %s",first)
+    if !write(t,&types,&r,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi","translations":{"fr":"Salut","es":"Hola","de":""}}]}`) {return}
+    title:=&r.nodes[document_row_of(&r,"title")]
+    testing.expect(t,.Localized in title.flags && title.text_id==77,"a node keeps the id of its text")
+    testing.expect_value(t,in_language(&r,77,"es"),"Hola")
+    testing.expect_value(t,in_language(&r,77,"fr"),"Salut")
+    testing.expect_value(t,in_language(&r,78,"es"),"Traducido")
+    testing.expect_value(t,len(r.translations),3)
+    // Without translations it is not localized; what it had waits under its id.
+    if !write(t,&types,&r,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi"}]}`) {return}
+    title=&r.nodes[document_row_of(&r,"title")]
+    testing.expect(t,.Localized not_in title.flags && in_language(&r,77,"fr")=="Salut")
+    testing.expect(t,!strings.contains(document_text(&types,&r,-1),"Salut"))
+    if !write(t,&types,&r,"title",`{"nodes":[{"name":"title","kind":"Text","text":"Hi","translations":{}}]}`) {return}
+    title=&r.nodes[document_row_of(&r,"title")]
+    testing.expect(t,.Localized in title.flags && title.text_id==77 && in_language(&r,77,"fr")=="" && len(r.translations)==1)
+    // A new node takes the id its document gives, or one of its own.
+    if !write(t,&types,&r,"menu",`{"nodes":[{"name":"menu","kind":"Button","text":"Menu","translations":{"es":"Menú"},"text_id":"00000000000000aa"}]}`) {return}
+    if !write(t,&types,&r,"fuel",`{"nodes":[{"name":"fuel","kind":"Progress","bind_value":"fuel","translations":{"it":"Benzina"}}]}`) {return}
+    fuel:=r.nodes[document_row_of(&r,"fuel")].text_id
+    testing.expect_value(t,in_language(&r,0xaa,"es"),"Menú")
+    testing.expect(t,fuel!=0 && fuel!=77 && fuel!=78 && fuel!=0xaa && in_language(&r,fuel,"it")=="Benzina")
+    // A localized node the file keeps without an id stays so until it has a translation.
+    bar:=document_row_of(&r,"bar")
+    r.nodes[bar].flags+={.Localized}
+    bare:=document_text(&types,&r,bar)
+    testing.expect(t,strings.contains(bare,`"kind":"Box","translations":{}`) && !strings.contains(bare,`"translations":{},"text_id"`))
+    if !write(t,&types,&r,"bar",bare) {return}
+    testing.expect(t,r.nodes[document_row_of(&r,"bar")].text_id==0 && .Localized in r.nodes[document_row_of(&r,"bar")].flags)
+    again:=document_text(&types,&r,-1)
+    if !write(t,&types,&r,"",again) {return}
+    testing.expect_value(t,document_text(&types,&r,-1),again)
+    testing.expect(t,records_load_as_tree(&r))
+}
+
+@(test)
 a_document_says_where_it_cannot_be_written :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     Case :: struct {node,document,message:string}
@@ -135,6 +190,12 @@ a_document_says_where_it_cannot_be_written :: proc(t:^testing.T) {
         {"",`{"styles":{"card":{"family":"Box","rules":[{"states":["Hovered"],"colour":1}]}}}`,"styles.card: rules[0]: a state has no 'colour'"},
         {"",`{"styles":{"card":null}}`,"styles.card: nodes still take it"},
         {"",`{"nodes":[{"name":"x","kind":"Text","style":"card","look":{"radius":1}}]}`,"nodes[0]: look: a node has a style or a look"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","translations":{"spanish":"Hola"}}]}`,"nodes[0]: translations: 'spanish' is no language a game can be in; give its code: en,"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","translations":{"es":7}}]}`,"nodes[0]: translations.es must be the text"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","text_id":"000000000000004d"}]}`,"nodes[0]: text_id: the id of the translations of a node goes with them"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","text":"Hi","translations":{},"text_id":"77"}]}`,"nodes[0]: text_id: '77' is no id of a text: 16 hexadecimal digits"},
+        {"",`{"nodes":[{"name":"a","kind":"Text","translations":{},"text_id":"000000000000004d"},{"name":"b","kind":"Text","translations":{},"text_id":"000000000000004d"}]}`,"nodes[0]: text_id: 000000000000004d is also the text of the node b"},
+        {"",`{"nodes":[{"name":"x","kind":"Text","flags":["Localized"]}]}`,"nodes[0]: flags: a node is Localized by its translations"},
     }
     for c in cases {
         r:Records

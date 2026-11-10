@@ -164,16 +164,6 @@ observe_facing :: proc(w:core.World_Ref,body:core.Entity) -> [3]f32 {
     return mm.FORWARD
 }
 
-// A stand or a walk on nothing: the bool of the physics that a game may not have.
-@(private)
-observe_grounded :: proc(s:^editor.Session,w:core.World_Ref,body:core.Entity,allocator:=context.temp_allocator) -> (grounded,known:bool) {
-    table:=editor.component_table(s,"Character_State")
-    if table==nil || core.raw_find(core.world_table_at(w,table),table.info,body)==nil {return}
-    value,problem:=editor.api_entity_field(s,w,body,"Character_State.standing",allocator)
-    if problem!="" {return}
-    return value=="true",true
-}
-
 // Writes the answer of play.observe for a run: one JSON object.
 @(private)
 play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,names:[]string,nearest:int,allocator:=context.temp_allocator) {
@@ -202,7 +192,7 @@ play_observe_write :: proc(s:^editor.Session,out:^serial.Writer,r:^editor.Run,na
         api.write_key(out,"player");serial.write_u8(out,'{')
         observe_vector_write(out,"position",moved[:],first=true)
         observe_vector_write(out,"velocity",velocity[:])
-        if grounded,known:=observe_grounded(s,w,body,allocator);known {api.write_bool(out,"grounded",grounded)}
+        if stance:=editor.play_stance(s,w,body);stance!=.Unknown {api.write_bool(out,"grounded",stance==.Standing)}
         observe_vector_write(out,"facing",facing[:],1000)
         serial.write_u8(out,'}')
     }

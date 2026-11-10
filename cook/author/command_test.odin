@@ -286,6 +286,7 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
         {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the file"},
         {`{"entities":[{"name":"x","components":{"Tint":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Tint"},
         {`{"entities":[{"name":"x","sizes":3}]}`,"entities[0] has no 'sizes'; an entity has id, name"},
+        {`{"entities":[{"name":"x","components":{"Prefab_Instance":{}}}]}`,"entities[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
     }
     held:=slice.clone(file_bytes(&p,"arena/main.scene"),context.temp_allocator)
     for c in cases {

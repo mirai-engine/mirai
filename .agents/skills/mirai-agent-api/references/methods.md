@@ -421,6 +421,9 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
     entity that is there.
   - A `core.Entity` field names an entity that already exists. An error says where
     (`entities[0].children[2].components.Light: …`) and changes nothing.
+  - The result names what it made: `created` has the `{id,name}` of each entity of the document
+    that is new, in its order, and of a prefab it placed the root of the instance, under which
+    its members are.
   - Changing a few fields of scattered entities is for `scene.set`.
 - `scene.batch`: from 1 to 64 `{method,params}` with `scene.add`, `scene.set`, `scene.delete` or
   `scene.duplicate` in one step. Returns `{results:[{id}]}` in order; if one fails none is
