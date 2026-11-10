@@ -252,7 +252,7 @@ preview_request :: proc(s:^Session,key:u64,subject:^Thumbnail_Subject,points:f32
     if cell.signature==signature || s.edits.open {return thumbnail_quad(cell,slot)}
     folder:=thumbnail_folder(s) if stored!={} else ""
     if folder!="" && cell.checked!=signature {
-        programs:=base.hash_combine(base.hash64(transmute([]u8)string(gpu.SHADERS_FINGERPRINT)),s.app.shaders.identity)
+        programs:=base.hash_combine(base.hash64(transmute([]u8)string(gpu.SHADERS_INTERFACE)),s.app.shaders.identity)
         cell.wanted,cell.checked=thumbnail_store_key(&a.registry,stored,subject^,level,programs),signature
     }
     wanted:=cell.wanted if folder!="" else 0

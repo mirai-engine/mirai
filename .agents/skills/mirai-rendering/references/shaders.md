@@ -244,10 +244,13 @@
   that `shader_assets_load` reads.
 - The engine generation also compiles the RHI test shaders and writes `render/shaders_gen.odin`
   and `rhi/shaders_gen_test.odin`, `@(rodata)` tables.
-- The `render` table embeds the code of its stages and then of its program stages as one LZ
-  stream per backend (`shaders/build/shaders.spv.lz`, `.metal.lz`), each stage an
-  `Embedded_Shader` with its size in it. It is packed `PACK_EDIT`, and `SHIP` when the generation is
-  asked to ship (`Options.ship`: the release builds of the engine); either serves every build.
+- The `render` table embeds the code of its stages and then of its program stages as one file
+  per backend (`shaders/build/shaders.spv.lz`, `.metal.lz`, returned by `shaders_packed`): the
+  size of each stage, then the code as one LZ stream. Nothing in the table follows the code, so a
+  change of code alone leaves the `render` table byte for byte and a dev engine is not rebuilt
+  (the code it embeds is that of its last compile). It is packed `PACK_EDIT`, and `SHIP` when
+  the generation is asked to ship (`Options.ship`: the release builds of the engine); either
+  serves every build.
   `renderer_init` decodes it once (`embedded_shaders_decode`) unless it starts with a loaded
   generation. The `rhi` test table loads each stage as it is.
 - The `rhi` table stays under `rhi.TEST_SHADERS` (`MIRAI_TEST_SHADERS`, true in test builds and in
@@ -365,8 +368,13 @@
   contains a complete generation. If the filesystem prevents the rollback, the error names the
   folders that keep the previous copies.
 - A generation identical by content keeps the output and its dates. The executable embeds the
-  fingerprint of the engine sources (`SHADERS_FINGERPRINT`) and `shader_assets_load` rejects
-  shaders from other sources.
+  interface of its engine stages (`SHADERS_INTERFACE`, `engine_interface`: the generator contract,
+  the binding ABI, the shared structs as Slang lays them out and, of each stage, its kind,
+  workgroup, bindings and constants) and `shader_assets_load` rejects a generation that names
+  another; the code of the stages may be any. A project generation names the interface of the
+  engine generation of the same sources, which it runs first. So an engine shader edit that keeps
+  the interface is published into a running editor like a project shader (`mirai shaders`, or
+  `mirai build editor`); one that changes it rebuilds `render` and restarts the editor.
 
 ## Diagnostics
 
@@ -484,7 +492,7 @@ does not publish again
   another makes obsolete. A load that changes only preview or idle stages keeps the temporal
   accumulation and the probes; another discards them. Afterwards, `assets_programs_refresh`
   resolves again the program and parameters of each material (the ids change).
-- **State** (`app.shaders.state`): `Stale` is a generation from other engine sources, which is
+- **State** (`app.shaders.state`): `Stale` is a generation of another engine interface, which is
   ignored with a warning until the next build; `Failed`, an unreadable one or one with rejected
   pipelines, which keeps what was there. A generation that disappears does not return the renderer
   to the embedded ones until restart.

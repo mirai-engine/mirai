@@ -28,6 +28,12 @@ import "mirai:std/base"
 // declarations, what each of them is and which others it names: what compiles
 // against a declaration follows that one and the ones it reaches, not its
 // whole package (declared.odin).
+//
+// With Declare_Desc.slots an export calls its procedure through a table of
+// its package, filled as the library loads: a program takes a newer build of
+// the library by loading it beside the one it runs and copying its tables
+// over the ones every caller reaches (host.engine_library_swap). The
+// declarations are the same either way.
 
 Declare_Desc :: struct {
     root:string,       // where the packages are
@@ -38,6 +44,7 @@ Declare_Desc :: struct {
     decl:string,       // the declarations
     staged:string,     // the collection the stage is compiled as, through which its packages import each other while every other package is its declarations. "": they import each other as written
     names:bool,        // each package writes DECLARED_NAMES
+    slots:bool,        // the exports call through the table of their package (project.LIBRARY_SLOTS)
     definition:string, // Windows: the module definition it writes, with the library and what it exports, which its import library is made from before it compiles. "": none
 }
 
@@ -47,6 +54,9 @@ Declare_Desc :: struct {
 @(private)
 Declare_Changed :: struct {
     stage,decl:bool,
+    declared:u64,  // with names: the hash of what the packages declare, in their order
+    moved:string,  // with names: the first declaration that is not what the declarations there had
+    pinned:string, // what the packages keep that a newer build of them would not have: a C library, a variable
 }
 
 @(private="file")
@@ -54,12 +64,15 @@ Declare :: struct {
     desc:Declare_Desc,
     changed:Declare_Changed,
     errors:[dynamic]string,
+    slots:int,     // of the package being declared
+    slots_key:u64,
     exports:map[string]bool, // the link names the stage exports, in every branch of a when
 }
 
 @(private="file")
 Output :: struct {
     head,decl,exports:strings.Builder,
+    fills:strings.Builder, // with slots: what stores each procedure of the file in its slot, under the when blocks of exports
     foreign_count,export_count:int,
     names:^strings.Builder, // of the package: a line per declaration (DECLARED_NAMES); nil: not asked for
 }
@@ -73,6 +86,7 @@ File_Scope :: struct {
     decl_folder:string,  // of its declarations: what the paths of their #load are made relative to
     link_prefix:string,
     private_file,private_package:bool,
+    c_library:bool, // it imports a library that is linked into the binary
     named:map[^ast.Value_Decl]bool, // the private procedures of its package that are declared
     desc:^Declare_Desc,
     imports:map[string]string,      // the packages of the collection of the binary it imports, by the name it gives each
@@ -168,6 +182,7 @@ declare_package :: proc(d:^Declare,path:string) {
         }
     }
     named:=privates_named(scopes)
+    d.slots,d.slots_key=0,0
     for &scope in scopes {
         scope.named=named
         file:=scope.file
@@ -178,23 +193,38 @@ declare_package :: proc(d:^Declare,path:string) {
         strings.builder_init(&out.head,context.temp_allocator)
         strings.builder_init(&out.decl,context.temp_allocator)
         strings.builder_init(&out.exports,context.temp_allocator)
+        strings.builder_init(&out.fills,context.temp_allocator)
+        filled:=d.slots
         header(d,&scope,&out)
         decls_write(d,&scope,&out,file.decls[:],"")
         staged:=rewrite_paths(&scope,file.src,file.decls[:])
         // After the last line, so that the lines of the source keep their numbers.
         if out.export_count>0 {staged=strings.concatenate({staged,"\n",strings.to_string(out.exports)},context.temp_allocator)}
+        if d.slots>filled {staged=fmt.tprintf("%s@(init,private=\"file\") __mirai_slots_fill :: proc \"contextless\" () {{\n%s}}\n",staged,strings.to_string(out.fills))}
+        if scope.c_library && d.changed.pinned=="" {d.changed.pinned=fmt.aprintf("c-library:%s",path)}
         write(d,project.path(stage,name,allocator=context.temp_allocator),staged,&d.changed.stage)
         if out.foreign_count>0 {fmt.sbprintfln(&out.head,"foreign import __mirai %q\n",relative(decl,d.desc.library))}
         write(d,project.path(decl,name,allocator=context.temp_allocator),strings.concatenate({strings.to_string(out.head),strings.to_string(out.decl)},context.temp_allocator),&d.changed.decl)
+    }
+    if d.slots>0 {
+        written[SLOTS_FILE]=true
+        write(d,project.path(stage,SLOTS_FILE,allocator=context.temp_allocator),fmt.tprintf("package %s\n\n__mirai_slots:[%d]rawptr\n\n@(export,link_name=\"%s%s\") __mirai_slots_of :: proc \"contextless\" () -> (slots:[]rawptr,key:u64) {{return __mirai_slots[:],0x%x}}\n",scopes[0].file.pkg_name,d.slots,link_prefix,project.LIBRARY_SLOTS,d.slots_key),&d.changed.stage)
     }
     // What a source no longer produces does not stay in either folder.
     sweep(stage,written,&d.changed.stage)
     sweep(decl,written,&d.changed.decl)
     if d.desc.names {
         // The files come sorted, so the same declarations write the same lines.
-        write(d,project.path(decl,DECLARED_NAMES,allocator=context.temp_allocator),strings.to_string(names),&d.changed.decl)
+        text,file:=strings.to_string(names),project.path(decl,DECLARED_NAMES,allocator=context.temp_allocator)
+        d.changed.declared=base.hash_combine(d.changed.declared,xxhash.XXH3_64_default(transmute([]u8)text))
+        if old,error:=os.read_entire_file(file,context.temp_allocator);error==nil && d.changed.moved=="" && string(old)!=text {d.changed.moved=declared_moved(path,string(old),text)}
+        write(d,file,text,&d.changed.decl)
     }
 }
+
+// The table of a package built with Declare_Desc.slots, in its stage.
+@(private="file")
+SLOTS_FILE :: "mirai__slots.odin"
 
 // The package of the collection of the binary an import names; false for one of another collection.
 @(private="file")
@@ -278,6 +308,7 @@ when_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.When_Stmt,ind
     opening:=chained?fmt.tprintf(" else when %s {{\n",cond):fmt.tprintf("%swhen %s {{\n",indent,cond)
     strings.write_string(&out.decl,opening)
     strings.write_string(&out.exports,opening)
+    strings.write_string(&out.fills,opening)
     inner:=strings.concatenate({indent,"    "},context.temp_allocator)
     // What a branch declares is what it is under its condition, and what the
     // branches after it declare, under that one too.
@@ -286,6 +317,7 @@ when_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.When_Stmt,ind
     if body,ok:=s.body.derived.(^ast.Block_Stmt);ok {decls_write(d,scope,out,body.stmts[:],inner)}
     strings.write_string(&out.decl,fmt.tprintf("%s}",indent))
     strings.write_string(&out.exports,fmt.tprintf("%s}",indent))
+    strings.write_string(&out.fills,fmt.tprintf("%s}",indent))
     if s.else_stmt!=nil {
         #partial switch e in s.else_stmt.derived {
         case ^ast.When_Stmt:
@@ -294,13 +326,16 @@ when_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.When_Stmt,ind
         case ^ast.Block_Stmt:
             strings.write_string(&out.decl," else {\n")
             strings.write_string(&out.exports," else {\n")
+            strings.write_string(&out.fills," else {\n")
             decls_write(d,scope,out,e.stmts[:],inner)
             strings.write_string(&out.decl,fmt.tprintf("%s}",indent))
             strings.write_string(&out.exports,fmt.tprintf("%s}",indent))
+            strings.write_string(&out.fills,fmt.tprintf("%s}",indent))
         }
     }
     strings.write_string(&out.decl,"\n")
     strings.write_string(&out.exports,"\n")
+    strings.write_string(&out.fills,"\n")
 }
 
 // Procedures of C stay in the binary; the binary exports each one under its
@@ -325,7 +360,7 @@ foreign_block_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.Fore
     for stmt in body.stmts {
         decl,is_value:=stmt.derived.(^ast.Value_Decl)
         if !is_value {continue}
-        kind,lit,private,_:=value_kind(scope,decl,s)
+        kind,lit,private,_,_:=value_kind(scope,decl,s)
         switch kind {
         case .Skipped:
         case .Copied:
@@ -348,7 +383,7 @@ foreign_block_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.Fore
 // How a declaration reaches the declarations, and whether its package or its
 // file keeps it private. block: the foreign block it is in.
 @(private="file")
-value_kind :: proc(scope:^File_Scope,decl:^ast.Value_Decl,block:^ast.Foreign_Block_Decl=nil) -> (kind:Value_Kind,lit:^ast.Proc_Lit,private,private_file:bool) {
+value_kind :: proc(scope:^File_Scope,decl:^ast.Value_Decl,block:^ast.Foreign_Block_Decl=nil) -> (kind:Value_Kind,lit:^ast.Proc_Lit,private,private_file,variable:bool) {
     if len(decl.values)==1 {lit,_=decl.values[0].derived.(^ast.Proc_Lit)}
     private_file=scope.private_file
     private=scope.private_package || private_file
@@ -384,6 +419,7 @@ value_kind :: proc(scope:^File_Scope,decl:^ast.Value_Decl,block:^ast.Foreign_Blo
         // variable of the package only when the rest can see it, and a
         // read-only table always, which the inline bodies copied here read.
         if !decl.is_mutable || !private || rodata {kind=.Copied}
+        variable=decl.is_mutable && !rodata
     // A procedure with a deferred one runs it in the scope of its caller: a
     // call through the binary would run it on leaving the export as well.
     // An `any` carries a typeid that only the type table of the module that
@@ -432,7 +468,7 @@ privates_named :: proc(scopes:[]File_Scope) -> (named:map[^ast.Value_Decl]bool) 
 @(private="file")
 names_collect :: proc(scope:^File_Scope,file:int,names:^Names,privates:^[dynamic]Private_Proc,stmts:[]^ast.Stmt) {
     value :: proc(scope:^File_Scope,file:int,names:^Names,privates:^[dynamic]Private_Proc,decl:^ast.Value_Decl,block:^ast.Foreign_Block_Decl) {
-        kind,lit,private,private_file:=value_kind(scope,decl,block)
+        kind,lit,private,private_file,_:=value_kind(scope,decl,block)
         switch kind {
         case .Skipped:
         case .Copied:
@@ -518,7 +554,8 @@ intrinsic :: proc(decl:^ast.Value_Decl) -> bool {
 
 @(private="file")
 value_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_Decl,indent:string) {
-    kind,lit,private,private_file:=value_kind(scope,decl)
+    kind,lit,private,private_file,variable:=value_kind(scope,decl)
+    if variable && d.changed.pinned=="" {d.changed.pinned=fmt.aprintf("variable:%s.%s",scope.link_prefix[len(scope.desc.binary)+1:],ident_text(decl.names[0]))}
     switch kind {
     case .Skipped:
     case .Copied:
@@ -578,6 +615,13 @@ proc_declare :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_De
     names_line(scope,out,{name},declared,type)
     out.foreign_count+=1
     call:=fmt.tprintf("%s(%s)",name,arguments)
+    // A procedure of C is the one of the library the program started with: its library is never swapped.
+    if scope.desc.slots && convention=="" {
+        call=fmt.tprintf("(cast(type_of(%s))__mirai_slots[%d])(%s)",name,d.slots,arguments)
+        fmt.sbprintfln(&out.fills,"%s    __mirai_slots[%d]=rawptr(%s)",indent,d.slots,name)
+        d.slots+=1
+        d.slots_key=base.hash_combine(d.slots_key,xxhash.XXH3_64_default(transmute([]u8)declared))
+    }
     if type.results!=nil && !type.diverging {call=fmt.tprintf("return %s",call)}
     fmt.sbprintfln(&out.exports,"%s@(export,link_name=%q%s) __mirai_export_%s :: %s {{%s}}",indent,link,private_file?",private=\"file\"":"",name,wrapper,call)
     out.export_count+=1
@@ -849,6 +893,7 @@ rewrite_paths :: proc(scope:^File_Scope,src:string,decls:[]^ast.Stmt) -> string 
                     if !ok {continue}
                     value:=strings.trim(lit.tok.text,"\"`")
                     if strings.contains(value,":") || filepath.is_abs(value) {continue}
+                    scope.c_library=true
                     append(edits,[3]int{lit.pos.offset,lit.end.offset,len(replacements)})
                     joined,_:=filepath.join({scope.folder,value},context.temp_allocator)
                     append(replacements,fmt.tprintf("%q",relative(scope.stage_folder,joined)))

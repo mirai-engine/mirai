@@ -154,9 +154,12 @@ storage_kept :: #force_inline proc "contextless" (revisions:[]u64,k:int,mark:Cop
 // Makes the World dst what src holds, for a src that world_copy_changed
 // keeps as a copy of dst with marks: the tables dst still has as that copy
 // took them, with nothing pending, and the storages whose revision did not
-// move since, stay as they are, and their readers see no change. The others
-// are copied into stage, a third World, and then traded with dst without
-// allocating. All or nothing: false without memory, with dst as it was. With
+// move since, stay as they are, and their readers see no change. A table of
+// flat values that still holds the rows of the copy, on and off, takes back
+// in place the rows that differ (raw_restore): its readers see those rows
+// alone. The other tables and storages are copied into stage, a third World,
+// and then traded with dst without allocating, and their readers read them
+// whole. All or nothing: false without memory, with dst as it was. With
 // fewer marks than copy_marks_count all of it is copied and traded. mixed:
 // stage is left with parts of several Worlds, to stage another copy in or
 // to clear, never to run; false after all of it was traded.
@@ -175,7 +178,8 @@ world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -
     revisions,staged:=revisions_of(info,dst),revisions_of(info,stage)
     first:=len(info.tables)
     for &t,at in info.tables {
-        if t.place!=.World || table_kept(table_of(dst,&t),marks[at]) {continue}
+        live:=table_of(dst,&t)
+        if t.place!=.World || table_kept(live,marks[at]) || t.flat && restore_since(live,table_of(src,&t),marks[at])>=0 {continue}
         if !raw_copy(table_of(stage,&t),table_of(src,&t),t.info,t.flat) {return false,true}
     }
     for &s,k in info.storages {
@@ -185,8 +189,12 @@ world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -
     slice.ptr_swap_non_overlapping(to,held,size_of(Entities))
     for &t,at in info.tables {
         if t.place!=.World {continue}
-        live:=table_of(dst,&t)
-        if table_kept(live,marks[at]) {table_waits(live,false)} else {raw_swap(live,table_of(stage,&t))}
+        live,from:=table_of(dst,&t),table_of(src,&t)
+        if table_kept(live,marks[at]) {
+            table_waits(live,false)
+        } else if since:=restore_since(live,from,marks[at]);t.flat && since>=0 {
+            raw_restore(live,from,t.info.size,since)
+        } else {raw_swap(live,table_of(stage,&t))}
     }
     for &s,k in info.storages {
         if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) {continue}
