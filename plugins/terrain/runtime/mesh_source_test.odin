@@ -1,7 +1,6 @@
 package terrain
 
 import "base:runtime"
-import "core:os"
 import "core:fmt"
 import "core:testing"
 import "mirai:asset"
@@ -113,7 +112,7 @@ mesh_terrain_serializes_materials_attributes_chunks_and_independent_history :: p
     testing.expect(t,source_from_mesh(&source,geom.mesh_buffer_view(&box),1,4,slots[:]))
     source.revision=12
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    path:=source_test_path("mesh-roundtrip.terrain");defer os.remove(path)
+    path:=fmt.tprintf("%s/mesh-roundtrip.terrain",base.test_folder(t,"terrain"))
     testing.expect_value(t,source_save(&source,path,{17,18},&types),asset.Error.None)
     id,ok:=source_load(&loaded,path,&types)
     testing.expect(t,ok && id==base.Asset_Id{17,18})
@@ -181,11 +180,11 @@ mesh_terrain_boolean_caves_keep_roofs_and_reject_open_surfaces_atomically :: pro
 
 @(test)
 mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
     allocator:=Terrain_Test_Allocator{owner=context.allocator}
     temporary:=Terrain_Test_Allocator{owner=context.temp_allocator}
     context.allocator={terrain_test_allocator,&allocator}
     context.temp_allocator={terrain_test_allocator,&temporary}
-    root:=source_test_path("mesh-runtime");os.make_directory_all(root);defer os.remove_all(root)
     path:=fmt.tprintf("%s/source.terrain",root)
     height,source:Source;defer source_destroy(&height);defer source_destroy(&source)
     testing.expect(t,source_make(&height,.Heightfield,{17,1,17},1,4));height.revision=1
@@ -195,14 +194,14 @@ mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections 
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=64}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     worlds:[2]Terrain_Test_World
-    for &w in worlds {terrain_test_world_init(&w)}
     defer for &w in worlds {terrain_test_world_free(&w)}
+    for &w in worlds {if !terrain_test_world_init(t,&w) {return}}
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     w:=&worlds[0]
     owner:=core.create(&w.entities)
-    core.add(&w.ids,owner,{value=1});core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+    core.add(&w.ids,owner,{value=1});core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,revision=1,solid=true})
-    terrain_test_world_settle(w);terrain_test_update(w,&resident,&app)
+    core.test_world_settle(&w.w);terrain_test_update(w,&resident,&app)
     testing.expect(t,source_convert_heightfield(&source,&height,6));source.revision=2
     terrain_test_write(t,&assets,"source.terrain",&source,id)
     core.get(&w.terrains,owner).revision=2
@@ -210,15 +209,15 @@ mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections 
     testing.expect_value(t,w.data.entries[0].source.kind,Source_Kind.Mesh)
     testing.expect_value(t,len(w.chunks.values),16)
     for collider in w.colliders.values {testing.expect_value(t,collider.kind,phys.Collider_Kind.Mesh)}
-    for e in w.colliders.entities {testing.expect(t,phys.collider_ready({&w.physics},e))}
+    for e in w.colliders.entities {testing.expect(t,phys.collider_ready({&w.state},e))}
     before:[16]base.Asset_Id
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {before[i]=chunk.mesh}
-    dig(&w.requests,{kind=.Raise,center={-6,0,-6},normal={0,1,0},radius=0.6,amount=1},owner)
+    dig(&w.terrain_requests,{kind=.Raise,center={-6,0,-6},normal={0,1,0},radius=0.6,amount=1},owner)
     terrain_test_update(w,&resident,&app)
     changed:=0
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {if chunk.mesh!=before[i] {changed+=1}}
     testing.expect(t,changed>0 && changed<8)
-    hit,hit_ok:=phys.raycast({&w.physics},{-6,10,-6},{0,-1,0})
+    hit,hit_ok:=phys.raycast({&w.state},{-6,10,-6},{0,-1,0})
     testing.expect(t,hit_ok && abs(hit.point.y-1)<1e-4)
     version,structure,built:=w.statics.version,assets.structure,resident.stats.built
     calls,temps:=allocator.requests,temporary.requests
@@ -226,12 +225,12 @@ mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections 
     stable_calls,stable_temps:=allocator.requests,temporary.requests
     testing.expect_value(t,stable_calls,calls);testing.expect_value(t,stable_temps,temps)
     testing.expect_value(t,w.statics.version,version);testing.expect_value(t,assets.structure,structure);testing.expect_value(t,resident.stats.built,built)
-    cloned:=&worlds[1];terrain_test_world_copy(cloned,w)
-    dig(&cloned.requests,{kind=.Raise,center={-6,1,-6},normal={0,1,0},radius=0.6,amount=1},owner)
+    cloned:=&worlds[1];core.test_world_copy(&cloned.w,&w.w)
+    dig(&cloned.terrain_requests,{kind=.Raise,center={-6,1,-6},normal={0,1,0},radius=0.6,amount=1},owner)
     terrain_test_update(cloned,&resident,&app)
     point,_,found:=source_ray(&w.data.entries[0].source,{-6,10,-6},{0,-1,0})
     testing.expect(t,found && abs(point.y-1)<1e-4)
-    hit,hit_ok=phys.raycast({&cloned.physics},{-6,10,-6},{0,-1,0})
+    hit,hit_ok=phys.raycast({&cloned.state},{-6,10,-6},{0,-1,0})
     testing.expect(t,hit_ok && abs(hit.point.y-2)<1e-4)
     terrain_test_update(w,&resident,&app)
     height.revision=1;terrain_test_write(t,&assets,"source.terrain",&height,id)
@@ -260,7 +259,7 @@ mesh_terrain_budget_failure_keeps_geometry_and_dirty_state_unchanged :: proc(t:^
 
 @(test)
 mesh_terrain_reload_updates_collision_halo_across_a_hard_normal_seam :: proc(t:^testing.T) {
-    root:=source_test_path("mesh-hard-seam");os.make_directory_all(root);defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/source.terrain",root)
     geometry:geom.Mesh_Buffer;geom.mesh_buffer_init(&geometry);defer geom.mesh_buffer_destroy(&geometry)
     append(&geometry.positions,[3]f32{-4,0,-2},{0,0,-2},{-4,0,2},{0,0,2},{0,0,-2},{4,0,-2},{0,0,2},{4,0,2})
@@ -275,12 +274,14 @@ mesh_terrain_reload_updates_collision_halo_across_a_hard_normal_seam :: proc(t:^
     testing.expect_value(t,source_save(&source,path,id,&types),asset.Error.None)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=16}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     owner:=core.create(&w.entities)
-    core.add(&w.locals,owner,core.TRANSFORM_IDENTITY);
+    core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY);
     core.add(&w.terrains,owner,Terrain{source=id,revision=1,solid=true})
-    terrain_test_world_settle(&w);terrain_test_update(&w,&resident,&app)
+    core.test_world_settle(&w.w);terrain_test_update(&w,&resident,&app)
     original:=resident.sources[0].chunks[1].mesh
     mask:=host.assets_mesh_disabled_edges(&assets,original)
     previous_mask:=make([]u8,len(mask));defer delete(previous_mask)

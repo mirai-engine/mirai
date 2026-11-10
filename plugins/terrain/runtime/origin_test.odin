@@ -3,7 +3,6 @@ package terrain
 import "base:runtime"
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -22,8 +21,7 @@ import mm "mirai:std/math"
 // millimetre.
 @(test)
 terrain_pieces_far_from_the_render_origin_cover_their_region_on_both_sides :: proc(t:^testing.T) {
-    root:=source_test_path("origin");defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"terrain")
     id:=base.Asset_Id{701,702}
     SAMPLES :: 129
     SIDE :: f32(335.28)
@@ -36,8 +34,9 @@ terrain_pieces_far_from_the_render_origin_cover_their_region_on_both_sides :: pr
     }
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=1024}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=runtime.heap_allocator()}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
-    core.table_init(&w.poses,"World_Transform")
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     // The Landscape under the tiles of index 7 and 0, as the scene composes it.
     landscape:=[3]f32{-167.65868,-1.28911,-167.63974}
@@ -47,22 +46,20 @@ terrain_pieces_far_from_the_render_origin_cover_their_region_on_both_sides :: pr
         e:=core.create(&w.entities)
         local:=core.TRANSFORM_IDENTITY
         local.position=place
-        core.add(&w.locals,e,local)
-        core.add(&w.poses,e,core.World_Transform{transform={position=place,rotation=local.rotation,scale=local.scale}})
+        core.add(&w.transforms,e,local)
+        core.add(&w.worlds,e,core.World_Transform{transform={position=place,rotation=local.rotation,scale=local.scale}})
         core.add(&w.terrains,e,Terrain{source=id,solid=true})
         owners[i]=e
     }
-    core.table_settle(&w.poses,&w.entities)
-    terrain_test_world_settle(&w)
+    core.test_world_settle(&w.w)
     eye:=[3]f32{0,900,-1800}
     view:=core.VIEW_DEFAULT
     view.position,view.size=eye,{1440,900}
-    w.sources.items[0]={eye,eye,0};w.sources.count=1;w.sources.revision+=1
-    w.physics_settings={}
+    w.streaming.items[0]={eye,eye,0};w.streaming.count=1;w.streaming.revision+=1
+    w.settings={}
     for _ in 0..<64 {
-        c:=terrain_test_tables(&w)
-        terrain_update(c.commands,&w.terrains,c.chunks,c.locals,c.parents,c.ids,c.colliders,c.meshes,c.tints,c.overrides,&w.data,&resident,&w.requests,&w.digs,{},&app,{playing=true},{phase=.Fixed},view,core.read(&w.poses),core.ref(&w.sources),{},{},{},nil,&w.problems,{})
-        terrain_test_world_settle(&w)
+        test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),&resident,&app,&w.problems,Terrain_Settings{},view=view)
+        core.test_world_settle(&w.w)
         idle:=!work_busy(&w.data,nil)
         for &source in resident.sources {if len(source.pending)>0 {idle=false}}
         if idle {break}
@@ -80,13 +77,13 @@ terrain_pieces_far_from_the_render_origin_cover_their_region_on_both_sides :: pr
         start:=places[i]+source_origin(s)
         low_expected,high_expected:=[2]f64{f64(start.x),f64(start.z)}-{f64(origin.x),f64(origin.z)},[2]f64{f64(start.x+SIDE),f64(start.z+SIDE)}-{f64(origin.x),f64(origin.z)}
         area,drawn:=0.0,0
-        world,_:=core.get(core.read(&w.poses),owner)
+        world,_:=core.get(core.read(&w.worlds),owner)
         for node,index in o.nodes {
             if !node.visible {continue}
             e:=o.chunks[index]
             mesh:=source.chunks[index].mesh
             if !testing.expectf(t,e!=core.NONE && mesh!={},"terrain %d: piece %d is shown with its entity and mesh",i,index) {continue}
-            local,placed:=core.get(core.read(&w.locals),e)
+            local,placed:=core.get(core.read(&w.transforms),e)
             parent,parented:=core.get(core.read(&w.parents),e)
             testing.expect(t,placed && parented && parent.entity==owner)
             m:=render.origin_matrix(mm.transform_matrix(mm.transform_compose(world.transform,core.to_math(local))),origin)

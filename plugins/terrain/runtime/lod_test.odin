@@ -2,7 +2,6 @@ package terrain
 
 import "core:math"
 import "core:math/rand"
-import "core:os"
 import "core:fmt"
 import "core:testing"
 import "mirai:asset"
@@ -94,7 +93,7 @@ chunks_of_mixed_levels_join_without_cracks_or_overlaps :: proc(t:^testing.T) {
 // level apart at most.
 @(test)
 far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^testing.T) {
-    root:=source_test_path("lod");os.make_directory_all(root);defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     source:Source;defer source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{129,1,129},1,16))
     // A bump of one sample, far from the view: no coarse level shows it, and the view would see it.
@@ -105,12 +104,14 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     owner:=core.create(&w.entities)
-    core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+    core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    terrain_test_world_settle(&w)
+    core.test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={-60,5,-60}
     settings:=Terrain_Settings{lod_distance=16}
@@ -135,7 +136,7 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
         }
     }
     apart(t,s,chunks[:64])
-    hit,ok:=phys.raycast({&w.physics},{57,20,57},{0,-1,0})
+    hit,ok:=phys.raycast({&w.state},{57,20,57},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y-3)<1e-4,"the collider keeps the sample")
     built:=resident.stats.built
     view.position={-59.9,5,-60}
@@ -148,7 +149,7 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     testing.expect(t,chunks[0].built.lod.level>=2)
     apart(t,s,chunks[:64])
     testing.expect(t,resident.stats.built>built && resident.stats.built<built+64)
-    hit,ok=phys.raycast({&w.physics},{57,20,57},{0,-1,0})
+    hit,ok=phys.raycast({&w.state},{57,20,57},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y-3)<1e-4)
     // Colliders only near the view.
     settings.collision_distance=20
@@ -157,7 +158,7 @@ far_chunks_show_coarser_levels_while_colliders_keep_every_sample :: proc(t:^test
     with_collider:=0
     for row in 0..<core.count(&w.chunks) {if core.has(core.read(&w.colliders),w.chunks.entities[row]) {with_collider+=1}}
     testing.expect(t,with_collider>0 && with_collider<64)
-    _,ok=phys.raycast({&w.physics},{-57,20,-57},{0,-1,0})
+    _,ok=phys.raycast({&w.state},{-57,20,-57},{0,-1,0})
     testing.expect(t,!ok)
     testing.expect_value(t,w.problems.count,0)
 }

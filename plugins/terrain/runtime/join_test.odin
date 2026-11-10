@@ -2,7 +2,6 @@ package terrain
 
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -63,7 +62,7 @@ a_joined_volume_meets_the_ground_on_the_sides_of_its_box_without_a_seam :: proc(
 
 @(test)
 a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:^testing.T) {
-    root:=source_test_path("join");os.make_directory_all(root);defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     ground,volume:Source
     defer source_destroy(&ground);defer source_destroy(&volume)
@@ -77,16 +76,18 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     testing.expect_value(t,source_save(&volume,fmt.tprintf("%s/volume.terrain",root),volume_id,&types),asset.Error.None)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     field:=core.create(&w.entities)
-    core.add(&w.locals,field,core.TRANSFORM_IDENTITY)
+    core.add(&w.transforms,field,core.TRANSFORM_IDENTITY)
     core.add(&w.ids,field,core.Id{value=7})
     core.add(&w.terrains,field,Terrain{source=ground_id,solid=true})
     dug:=core.create(&w.entities)
-    core.add(&w.locals,dug,core.TRANSFORM_IDENTITY)
+    core.add(&w.transforms,dug,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,dug,Terrain{source=volume_id,solid=true,ground=7})
-    terrain_test_world_settle(&w)
+    core.test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={0,6,0}
     for _ in 0..<3 {terrain_test_update(&w,&resident,&app,view=view)}
@@ -94,19 +95,19 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     cut:=resident_source_find(&resident,ground_id,field)
     testing.expect(t,cut!=nil && len(cut.join.cuts)==1 && cut.join.cuts[0]==Join_Cut{{24,24},{40,40}})
     // The ground inside the box is the Volume's: at its middle, the bottom of its pit.
-    hit,found:=phys.raycast({&w.physics},{0,10,0},{0,-1,0})
+    hit,found:=phys.raycast({&w.state},{0,10,0},{0,-1,0})
     surface:=grid_get(&ground.heights,32,32)
     testing.expectf(t,found && hit.point.y<surface-1.5,"the ray stops at %v, the ground at %v",hit.point,surface)
     // Within the band, the ground.
-    hit,found=phys.raycast({&w.physics},{-7.5,10,-2.5},{0,-1,0})
+    hit,found=phys.raycast({&w.state},{-7.5,10,-2.5},{0,-1,0})
     testing.expect(t,found && abs(hit.point.y-source_height(&ground,-7.5,-2.5))<0.05)
     // A Volume moved off the samples of the ground joins nothing and says how far to move it.
-    core.add(&w.locals,dug,core.Transform{position={0.5,0,0},rotation=1,scale=1})
-    terrain_test_world_settle(&w)
+    core.add(&w.transforms,dug,core.Transform{position={0.5,0,0},rotation=1,scale=1})
+    core.test_world_settle(&w.w)
     for _ in 0..<2 {terrain_test_update(&w,&resident,&app,view=view)}
     testing.expect(t,core.problem_find(&w.problems,dug,"terrain.ground_misaligned")!=nil)
     cut=resident_source_find(&resident,ground_id,field)
     testing.expect(t,cut!=nil && len(cut.join.cuts)==0)
-    hit,found=phys.raycast({&w.physics},{0,10,0},{0,-1,0})
+    hit,found=phys.raycast({&w.state},{0,10,0},{0,-1,0})
     testing.expect(t,found && abs(hit.point.y-surface)<0.05,"the Heightfield is whole again")
 }
