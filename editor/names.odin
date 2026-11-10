@@ -289,7 +289,7 @@ Api_Names_Params :: struct {
 Api_Names_Result :: struct {types:[1]Api_Names_Type `mirai:"list"`}
 Api_Names_Type :: struct {
     type:[128]u8 `mirai:"text"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,key=package,label=The import path of the package that declares it"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,name=package,label=The import path of the package that declares it"`,
     names:[1]Api_Names_Value `mirai:"list,label=The values the code declares"`,
 }
 Api_Names_Value :: struct {

@@ -282,7 +282,7 @@ text_write_key :: proc(w:^Writer,name:string,first:bool,format:Text_Format,depth
 // The value of a field of a struct, its bytes in part.
 @(private="file")
 text_write_field :: proc(w:^Writer,s:^Schema,field:Field,part:[]u8,format:Text_Format,depth:int,omit_fields:Field_Flags) {
-    if field.trim && s.types[field.type].kind==.Array {
+    if .Trim in field.hints && s.types[field.type].kind==.Array {
         array:=s.types[field.type]
         size:=int(s.types[array.elem].size)
         used:=int(array.count)
@@ -874,7 +874,7 @@ text_read_value :: proc(r:^Text_Reader,s:^Schema,index:Type_Index,bytes:[]u8,is_
             text_expect(r,':') or_return
             r.asset_kinds=found.asset_kinds
             part:=bytes[found.offset:][:s.types[found.type].size]
-            if found.any_value {
+            if .Any in found.hints {
                 text_skip(r) or_return
             } else if !text_read_value(r,s,found.type,part,.Text in found.flags && (type_is_bytes(s,found.type) || type_is_texts(s,found.type))) {
                 text_error_within(r,found.name)

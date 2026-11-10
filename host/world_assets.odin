@@ -3,10 +3,10 @@ package host
 import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
-import "core:reflect"
 import "core:slice"
 import "mirai:core"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 // Every asset id the tables and the storages of a world hold, each once,
 // found by the type of each field, so the components of plugins and of the
@@ -173,7 +173,8 @@ ids_take :: proc(plan:^Ids_Plan,value:rawptr,seen:^map[base.Asset_Id]bool,ids:^[
 
 @(private="file")
 field_owned :: proc(tag:string) -> bool {
-    _,owned:=core.field_option(reflect.Struct_Tag(tag),"owned")
+    owned_tagged,_:=serial.field_tag(tag)
+    owned:=.Owned in owned_tagged.hints
     return owned
 }
 

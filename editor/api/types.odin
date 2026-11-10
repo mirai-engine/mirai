@@ -18,7 +18,7 @@ import "mirai:std/serial"
 // min and max, which also bound each element of an array field. A result a
 // handler writes itself describes a list of any length with an array tagged
 // `list`, any JSON value with a field tagged `any`, and a key that cannot be
-// the name of a field (an Odin keyword such as where) with `key=where`. A
+// the name of a field (an Odin keyword such as where) with `name=where`. A
 // param tagged `any` takes any JSON too; its handler reads it from Call.raw.
 // An integer param that only bounds how much a method answers is tagged
 // `clamp`: past its max it takes the max and the answer says so in _clamped.
@@ -123,10 +123,6 @@ Method :: struct {
     clamps:bool, // a field of its params is tagged clamp
 }
 
-// What the tag of a field tells the API beyond std/serial.
-Field_Tag :: enum u8 {Optional,List,Any,Clamp}
-Field_Tags :: bit_set[Field_Tag;u8]
-
 Call :: struct {
     server:^Server,
     method:^Method,
@@ -217,9 +213,6 @@ Server :: struct {
     port:int,
     timeout:time.Duration,
     schema:serial.Schema,
-    tags:[dynamic]Field_Tags, // per field of the schema
-    keys:[dynamic]string,     // per field of the schema: its key=, or ""
-
     methods:[]Method,
     method_count:int,
     conns:[]Conn,

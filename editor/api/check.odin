@@ -86,7 +86,7 @@ check_required :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index)
             }
         }
         for &f,i in fields {
-            if field_visible(&f) && .Optional not_in c.server.tags[int(type.first)+i] && i not_in seen {
+            if field_visible(&f) && .Optional not_in f.hints && i not_in seen {
                 path_name(c,f.name)
                 return check_fail(c,"is required")
             }
@@ -179,11 +179,11 @@ check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.
         for choice in s.choices[type.first:][:type.count] {mask|=1<<uint(choice.value)}
         if load_u64(bytes)&~mask!=0 {return check_fail(c,"has bits that are not members of its set")}
     case .Struct:
-        for &f,i in s.fields[type.first:][:type.count] {
+        for &f in s.fields[type.first:][:type.count] {
             if !field_visible(&f) {continue}
             mark:=c.path_len
             path_name(c,f.name)
-            ok:=check_value(c,f.type,bytes[f.offset:][:s.types[f.type].size],&f,c.server!=nil && .Clamp in c.server.tags[int(type.first)+i])
+            ok:=check_value(c,f.type,bytes[f.offset:][:s.types[f.type].size],&f,c.server!=nil && .Clamp in f.hints)
             c.path_len=mark
             if !ok {return false}
         }

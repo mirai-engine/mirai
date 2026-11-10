@@ -2,7 +2,6 @@ package history
 
 import "base:runtime"
 import "core:mem"
-import "core:reflect"
 import "core:slice"
 import "core:strings"
 import "mirai:cook/author"
@@ -199,7 +198,7 @@ change_equal :: proc(info:^runtime.Type_Info,a,b:rawptr) -> bool {
     fields,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if is_struct && fields.field_count>0 {
         for i in 0..<int(fields.field_count) {
-            if _,transient:=core.field_option(reflect.Struct_Tag(fields.tags[i]),"transient");transient {continue}
+            if tagged,_:=serial.field_tag(fields.tags[i]);.Transient in tagged.flags {continue}
             if !change_equal(fields.types[i],rawptr(uintptr(a)+fields.offsets[i]),rawptr(uintptr(b)+fields.offsets[i])) {return false}
         }
         return true
@@ -216,7 +215,7 @@ change_restore_fields :: proc(info:^runtime.Type_Info,current,before,after:rawpt
     changed:=false
     if is_struct && fields.field_count>0 {
         for i in 0..<int(fields.field_count) {
-            if _,transient:=core.field_option(reflect.Struct_Tag(fields.tags[i]),"transient");transient {continue}
+            if tagged,_:=serial.field_tag(fields.tags[i]);.Transient in tagged.flags {continue}
             offset:=fields.offsets[i]
             if change_restore_fields(fields.types[i],rawptr(uintptr(current)+offset),rawptr(uintptr(before)+offset),rawptr(uintptr(after)+offset),kept) {changed=true}
         }

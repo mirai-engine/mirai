@@ -134,9 +134,9 @@ api_collision_member :: proc(info:^runtime.Type_Info,name:string,origin:int,set:
     for field in 0..<int(record.field_count) {
         if record.names[field]!=name {continue}
         tag:=reflect.Struct_Tag(record.tags[field])
-        if _,hidden:=core.field_option(tag,"hidden");hidden {return}
-        if _,transient:=core.field_option(tag,"transient");transient {return}
-        if _,readonly:=core.field_option(tag,"readonly");set && readonly {return}
+        if tagged,_:=serial.field_tag(string(tag));.Hidden in tagged.flags {return}
+        if tagged,_:=serial.field_tag(string(tag));.Transient in tagged.flags {return}
+        if tagged,_:=serial.field_tag(string(tag));set && .Read_Only in tagged.flags {return}
         return record.types[field],origin+int(record.offsets[field]),true
     }
     return

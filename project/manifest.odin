@@ -628,7 +628,7 @@ struct_write :: proc(w:^serial.Writer,s:^serial.Schema,type:serial.Type_Index,da
             }
             serial.text_write_break(w,depth+1)
             serial.write_u8(w,']')
-        case field.trim && field_type.kind==.Array:
+        case .Trim in field.hints && field_type.kind==.Array:
             // Up to its last element with a byte set, each on its lines.
             size:=int(serial.schema_type(s,field_type.elem).size)
             used:=int(field_type.count)

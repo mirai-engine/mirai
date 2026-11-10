@@ -301,9 +301,9 @@ graphics_plugin_rows_of :: proc(s:^Session) -> []Graphics_Plugin_Row {
         fields,is_struct:=runtime.type_info_base(info.info).variant.(runtime.Type_Info_Struct)
         if !is_struct {continue}
         for i in 0..<int(fields.field_count) {
-            label,tagged:=core.field_option(reflect.Struct_Tag(fields.tags[i]),"graphics")
-            if !tagged {continue}
-            row:=Graphics_Plugin_Row{storage=index,type=fields.types[i],offset=fields.offsets[i],label=label if label!="" else readable(fields.names[i])}
+            label:=field_tagged(fields.tags[i]).graphics
+            if label=="" {continue}
+            row:=Graphics_Plugin_Row{storage=index,type=fields.types[i],offset=fields.offsets[i],label=label}
             #partial switch v in runtime.type_info_base(fields.types[i]).variant {
             case runtime.Type_Info_Boolean:
                 row.choices=make([]string,2,context.temp_allocator)

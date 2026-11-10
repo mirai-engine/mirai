@@ -3,11 +3,11 @@ package core
 import "base:runtime"
 import "core:fmt"
 import "core:os"
-import "core:reflect"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "mirai:std/serial"
 
 // The world of a test, described from its struct as the generator describes
 // that of a project from its declarations. The struct starts with
@@ -384,9 +384,10 @@ build_fields :: proc(b:^Build,place:Place,layout:runtime.Type_Info_Struct,base:u
             if problem=build_fields(b,place,group,base+layout.offsets[i]);problem!="" {return}
             continue
         }
-        tag:=reflect.Struct_Tag(layout.tags[i])
         f:=Test_Field{place=place,offset=base+layout.offsets[i],info=layout.types[i],name=layout.names[i]}
-        _,f.game=field_option(tag,"game")
+        tagged,invalid:=serial.field_tag(layout.tags[i])
+        if invalid!="" {return fmt.tprintf("%s: %s",layout.names[i],invalid)}
+        f.game=.Game in tagged.hints
         if held!=nil {f.kind,f.info=kind,held}
         if f.kind==.Table && place==.Shared || f.kind==.By_World && place!=.Shared {
             return fmt.tprintf("%s: a table goes in the World or in the editor, and a By_World in the struct of the application",layout.names[i])
@@ -394,7 +395,7 @@ build_fields :: proc(b:^Build,place:Place,layout:runtime.Type_Info_Struct,base:u
         f.type=f.info.id
         named,is_named:=f.info.variant.(runtime.Type_Info_Named)
         if is_named {f.name,f.library=named.name,named.pkg}
-        if name,renamed:=field_option(tag,"name");renamed {f.name=name}
+        if tagged.name!="" {f.name=tagged.name}
         for type in b.given {
             if type.type==f.type {
                 f.procs=type

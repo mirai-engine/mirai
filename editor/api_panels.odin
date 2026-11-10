@@ -38,7 +38,7 @@ Api_Panel_Set :: struct {
     setting:[PANEL_NAME_BYTES]u8 `mirai:"text,optional,label=A section of the settings"`,
     field:[PANEL_FIELD_BYTES]u8 `mirai:"text"`,
     entity:base.Entity_Id `mirai:"optional"`,
-    match:u8 `mirai:"any,optional,key=where,label=The fields an entity must have; {} is every entity with the component"`,
+    match:u8 `mirai:"any,optional,name=where,label=The fields an entity must have; {} is every entity with the component"`,
     value:u8 `mirai:"any,label=The JSON the field takes"`,
 }
 Api_Panel_Row :: struct {
@@ -47,7 +47,7 @@ Api_Panel_Row :: struct {
     setting:[PANEL_NAME_BYTES]u8 `mirai:"text,optional"`,
     field:[PANEL_FIELD_BYTES]u8 `mirai:"text,optional"`,
     entity:base.Entity_Id `mirai:"optional"`,
-    match:u8 `mirai:"any,optional,key=where"`,
+    match:u8 `mirai:"any,optional,name=where"`,
     label:[PANEL_TITLE_BYTES]u8 `mirai:"text,optional"`,
 }
 Api_Panel_List :: struct {panels:[1]Api_Panel `mirai:"list"`}

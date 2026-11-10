@@ -134,12 +134,12 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         fields:=sc.fields[type.first:][:type.count]
         entry(w,&count,"properties");raw(w,"{")
         emitted:=0
-        for &f,i in fields {
+        for &f in fields {
             if !field_visible(&f) {continue}
             if emitted>0 {raw(w,",")}
             emitted+=1
-            serial.text_write_string(w,field_key(s,&f,int(type.first)+i));raw(w,":")
-            tags:=s.tags[int(type.first)+i]
+            serial.text_write_string(w,f.name);raw(w,":")
+            tags:=f.hints
             if .Any in tags {
                 described:=0
                 raw(w,"{");write_decor(w,&described,&f);raw(w,"}")
@@ -153,18 +153,18 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         }
         raw(w,"}")
         required:=0
-        for &f,i in fields {
-            if !field_visible(&f) || .Optional in s.tags[int(type.first)+i] {continue}
+        for &f in fields {
+            if !field_visible(&f) || .Optional in f.hints {continue}
             if required==0 {entry(w,&count,"required");raw(w,"[")} else {raw(w,",")}
             required+=1
-            serial.text_write_string(w,field_key(s,&f,int(type.first)+i))
+            serial.text_write_string(w,f.name)
         }
         if required>0 {raw(w,"]")}
         entry(w,&count,"additionalProperties");raw(w,"false")
     case .Array:
         if decor && field!=nil && .Text in field.flags && serial.type_is_bytes(sc,index) {
             entry(w,&count,"type");raw(w,`"string"`)
-            if field.entity_name {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
+            if .Entity in field.hints {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
             entry(w,&count,"maxLength");serial.text_write_uint(w,u64(type.count))
         } else if field!=nil && .Text in field.flags && serial.type_is_texts(sc,index) {
             shown=nil

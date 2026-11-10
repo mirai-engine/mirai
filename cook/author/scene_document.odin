@@ -3,7 +3,6 @@ package author
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -62,7 +61,7 @@ type_saved :: proc(info:^runtime.Type_Info) -> bool {
     s,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if !is_struct || s.field_count==0 {return true}
     for i in 0..<int(s.field_count) {
-        if _,transient:=core.field_option(reflect.Struct_Tag(s.tags[i]),"transient");!transient {return true}
+        if tagged,_:=serial.field_tag(s.tags[i]);.Transient not_in tagged.flags {return true}
     }
     return false
 }
@@ -84,7 +83,7 @@ component_listed :: proc(t:^core.Table_Info) -> bool {
     fields,structured:=runtime.type_info_base(t.info).variant.(runtime.Type_Info_Struct)
     if structured && fields.field_count>0 {
         visible:=false
-        for tag in fields.tags[:fields.field_count] {if _,hidden:=core.field_option(reflect.Struct_Tag(tag),"hidden");!hidden {visible=true;break}}
+        for tag in fields.tags[:fields.field_count] {if tagged,_:=serial.field_tag(tag);.Hidden not_in tagged.flags {visible=true;break}}
         if !visible {return false}
     }
     return type_saved(t.info)

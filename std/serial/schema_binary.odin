@@ -308,12 +308,7 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
         if reserve(&dst.fields,len(dst.fields)+len(fields))!=nil {return TYPE_NONE}
         whole:=true
         for &field in fields {
-            from:=field
-            field.name=schema_string(dst,from.name)
-            field.label,field.unit=schema_string(dst,from.label),schema_string(dst,from.unit)
-            field.description=schema_string(dst,from.description)
-            field.asset_kinds=schema_string(dst,from.asset_kinds)
-            whole&&=len(field.name)==len(from.name) && len(field.label)==len(from.label) && len(field.unit)==len(from.unit) && len(field.description)==len(from.description) && len(field.asset_kinds)==len(from.asset_kinds)
+            if !schema_field_keep(dst,&field) {whole=false}
         }
         if !whole {
             for field in fields {schema_field_free(dst,field)}
@@ -362,12 +357,8 @@ schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) -> Sc
     }
     for field in src.fields {
         copied:=field
-        copied.name=schema_string(dst,field.name)
-        copied.label,copied.unit=schema_string(dst,field.label),schema_string(dst,field.unit)
-        copied.description=schema_string(dst,field.description)
-        copied.asset_kinds=schema_string(dst,field.asset_kinds)
+        if !schema_field_keep(dst,&copied) {whole=false}
         append(&dst.fields,copied)
-        whole&&=len(copied.name)==len(field.name) && len(copied.label)==len(field.label) && len(copied.unit)==len(field.unit) && len(copied.description)==len(field.description) && len(copied.asset_kinds)==len(field.asset_kinds)
     }
     for choice in src.choices {
         name:=schema_string(dst,choice.name)

@@ -38,8 +38,6 @@ server_init :: proc(s:^Server,desc:Server_Desc) -> Init_Error {
     if !base.arena_init(&s.scratch,max(or_default(desc.scratch,2<<20),2*s.max_request+64*1024),allocator) {server_destroy(s);return .Out_Of_Memory}
     if !base.arena_init(&s.text,2*s.max_request+4096,allocator) {server_destroy(s);return .Out_Of_Memory}
     serial.schema_init(&s.schema,allocator)
-    s.tags=make([dynamic]Field_Tags,allocator)
-    s.keys=make([dynamic]string,allocator)
     s.name=clone_text(allocator,desc.name!=""?desc.name:"mirai")
     s.version=clone_text(allocator,desc.version!=""?desc.version:"1")
     s.instructions=clone_text(allocator,desc.instructions!=""?desc.instructions:"engine_describe lists the methods and the plugins of the project; the tools of a plugin come with mirai mcp --plugins <names>.")
@@ -70,9 +68,6 @@ server_destroy :: proc(s:^Server) {
     guides_free(s)
     delete(s.methods,s.allocator);delete(s.conns,s.allocator);delete(s.conn_memory,s.allocator)
     delete(s.response,s.allocator);delete(s.staging,s.allocator)
-    delete(s.tags)
-    for key in s.keys {delete(key,s.allocator)}
-    delete(s.keys)
     base.arena_destroy(&s.scratch);base.arena_destroy(&s.text)
     if s.schema.types!=nil {serial.schema_destroy(&s.schema)}
     s^={}
@@ -120,9 +115,6 @@ server_methods_reset :: proc(s:^Server) -> bool {
     s.method_count=0
     serial.schema_destroy(&s.schema)
     serial.schema_init(&s.schema,s.allocator)
-    clear(&s.tags)
-    for key in s.keys {delete(key,s.allocator)}
-    clear(&s.keys)
     return describe_register(s)
 }
 

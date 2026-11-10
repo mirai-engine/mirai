@@ -478,6 +478,7 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
             name:=ident_name(decl.names[0])
             pkg.names[name]=true
+            field_tags_check(g,file,name,decl.values[0])
             options:=attributes_read(decl.attributes[:])
             _,is_names:=options["names"]
             _,is_bits:=options["name_bits"]
@@ -1915,6 +1916,29 @@ attributes_read :: proc(attributes:[]^ast.Attribute) -> map[string]string {
         }
     }
     return options
+}
+
+// The tag of each field of a struct, and of the structs declared inside it,
+// is one std/serial reads (serial.field_tag): a tag that is not one would only
+// fail when the type reaches a schema, or leave the field without what it asks.
+@(private="file")
+field_tags_check :: proc(g:^Generator,file:^ast.File,name:string,value:^ast.Expr) {
+    record,is_struct:=value.derived.(^ast.Struct_Type)
+    if !is_struct || record.fields==nil {return}
+    for field in record.fields.list {
+        if field.type!=nil {field_tags_check(g,file,name,field.type)}
+        text:=field.tag.text
+        if len(text)<2 {continue}
+        if text[0]=='`' {
+            text=text[1:len(text)-1]
+        } else if unquoted,_,unquoted_ok:=strconv.unquote_string(text,context.temp_allocator);unquoted_ok {
+            text=unquoted
+        }
+        _,problem:=serial.field_tag(text)
+        if problem=="" {continue}
+        first:=len(field.names)>0?ident_name(field.names[0]):"_"
+        append(&g.errors,fmt.aprintf("%s(%d:%d): %s.%s: %s",file.fullpath,field.tag.pos.line,field.tag.pos.column,name,first,problem))
+    }
 }
 
 // The comment on the line of each field of the struct of a component: what

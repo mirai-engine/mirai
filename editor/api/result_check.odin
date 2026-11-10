@@ -69,10 +69,10 @@ result_value :: proc(s:^Server,r:^serial.Text_Reader,index:serial.Type_Index,fie
                 key,ok:=serial.text_string(r)
                 if !ok || !serial.text_expect(r,':') {return fmt.tprintf("%s is not JSON",at)}
                 found:=-1
-                for &f,i in fields {if field_key(s,&f,int(type.first)+i)==key && field_visible(&f) {found=i;break}}
+                for &f,i in fields {if f.name==key && field_visible(&f) {found=i;break}}
                 if found<0 {return fmt.tprintf("%s has %s, which its type lacks",at,key)}
                 seen[found]=true
-                tags:=s.tags[int(type.first)+found]
+                tags:=fields[found].hints
                 inner:=fmt.tprintf("%s.%s",at,key)
                 if .Any in tags {
                     if !serial.text_skip(r) {return fmt.tprintf("%s is not JSON",inner)}
@@ -83,7 +83,7 @@ result_value :: proc(s:^Server,r:^serial.Text_Reader,index:serial.Type_Index,fie
             }
         }
         for &f,i in fields {
-            if field_visible(&f) && !seen[i] && .Optional not_in s.tags[int(type.first)+i] {return fmt.tprintf("%s lacks %s",at,field_key(s,&f,int(type.first)+i))}
+            if field_visible(&f) && !seen[i] && .Optional not_in f.hints {return fmt.tprintf("%s lacks %s",at,f.name)}
         }
         return ""
     case .Array:

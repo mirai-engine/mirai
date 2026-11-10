@@ -522,8 +522,9 @@ panel_field_find :: proc(info:^runtime.Type_Info,owner,path:string) -> (field:Pa
         v,_:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
         for i in 0..<int(v.field_count) {
             tag:=reflect.Struct_Tag(v.tags[i])
-            if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
-            if _,transient:=core.field_option(tag,"transient");transient {continue}
+            tagged:=field_tagged(v.tags[i])
+            if .Hidden in tagged.flags {continue}
+            if .Transient in tagged.flags {continue}
             if v.usings[i] {names(v.types[i],out);continue}
             if strings.builder_len(out^)>0 {strings.write_string(out,", ")}
             strings.write_string(out,v.names[i])
@@ -541,8 +542,9 @@ panel_field_find :: proc(info:^runtime.Type_Info,owner,path:string) -> (field:Pa
             return {},fmt.tprintf("%s has no fields: it is a value",shown)
         }
         found,ok:=find(current,name)
-        _,hidden:=core.field_option(found.tag,"hidden")
-        _,transient:=core.field_option(found.tag,"transient")
+        tagged:=field_tagged(string(found.tag))
+        hidden:=.Hidden in tagged.flags
+        transient:=.Transient in tagged.flags
         if !ok || hidden || transient {
             b:=strings.builder_make(context.temp_allocator)
             names(current,&b)
@@ -720,7 +722,7 @@ panel_inspect :: proc(s:^Session,w:core.World_Ref,t:^Panel_Target,defaults:[]u8)
 @(private)
 panel_label :: proc(label:string,field:Panel_Field) -> string {
     if label!="" {return label}
-    if custom,found:=core.field_option(field.tag,"label");found && custom!="" {return custom}
+    if custom:=field_tagged(string(field.tag)).label;custom!="" {return custom}
     return readable(field.name)
 }
 

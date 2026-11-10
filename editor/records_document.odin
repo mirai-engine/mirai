@@ -192,7 +192,7 @@ records_columns_add :: proc(s:^Session,r:^Records_Document,info:^runtime.Type_In
     case runtime.Type_Info_Boolean,runtime.Type_Info_Integer,runtime.Type_Info_Float,runtime.Type_Info_Enum:
         column(r,info,tag,name,label,offset,description,RECORDS_CELL_WIDTH)
     case runtime.Type_Info_Array:
-        if _,text:=core.field_option(tag,"text");text && v.elem.size==1 {
+        if .Text in field_tagged(string(tag)).flags && v.elem.size==1 {
             column(r,info,tag,name,label,offset,description,RECORDS_TEXT_WIDTH)
             return
         }

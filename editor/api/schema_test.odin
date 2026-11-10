@@ -77,7 +77,7 @@ Written :: struct {
     names:[1][16]u8 `mirai:"text,list"`,
     rows:[1]Inner `mirai:"list"`,
     value:u8 `mirai:"any,optional,label=Any JSON"`,
-    filter:bool `mirai:"key=where"`,
+    filter:bool `mirai:"name=where"`,
 }
 
 written_handler :: proc(call:^Call) {

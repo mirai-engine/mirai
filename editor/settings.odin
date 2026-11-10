@@ -408,14 +408,15 @@ settings_sections :: proc(info:^runtime.Type_Info,name,needle:string) -> []strin
     found:=false
     for i in 0..<int(v.field_count) {
         tag:=reflect.Struct_Tag(v.tags[i])
-        if title,named:=core.field_option(tag,"section");named && title!="" && title!=current {
+        tagged:=field_tagged(v.tags[i])
+        if title:=tagged.section;title!="" && title!=current {
             if found {append(&titles,current)}
             current,found=title,false
         }
-        if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
-        if _,transient:=core.field_option(tag,"transient");transient {continue}
+        if .Hidden in tagged.flags {continue}
+        if .Transient in tagged.flags {continue}
         label:=readable(v.names[i])
-        if custom,labeled:=core.field_option(tag,"label");labeled && custom!="" {label=custom}
+        if custom:=tagged.label;custom!="" {label=custom}
         found|=every || base.contains_fold(current,needle) || base.contains_fold(label,needle)
     }
     if found {append(&titles,current)}
@@ -431,12 +432,13 @@ settings_section_fields :: proc(info:^runtime.Type_Info,title,needle:string) -> 
     current:=""
     for i in 0..<int(v.field_count) {
         tag:=reflect.Struct_Tag(v.tags[i])
-        if section,named:=core.field_option(tag,"section");named && section!="" {current=section}
-        if current!=title || core_has(tag,"hidden") || core_has(tag,"transient") {continue}
+        tagged:=field_tagged(v.tags[i])
+        if section:=tagged.section;section!="" {current=section}
+        if current!=title || .Hidden in tagged.flags || .Transient in tagged.flags {continue}
         label:=readable(v.names[i])
-        if custom,labeled:=core.field_option(tag,"label");labeled && custom!="" {label=custom}
+        if custom:=tagged.label;custom!="" {label=custom}
         if needle!="" && !base.contains_fold(label,needle) {continue}
-        if core_has(tag,"advanced") {advanced=true} else {plain=true}
+        if .Advanced in tagged.hints {advanced=true} else {plain=true}
     }
     return
 }
