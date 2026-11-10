@@ -18,7 +18,7 @@ import "mirai:editor/history"
 prefab_save_and_placing_in_a_scene_of_many_instances :: proc(t:^testing.T) {
     if !EDITOR_PREFAB_BENCH {return}
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"bench")) {return}
+    if !prefab_fixture_init(t,f,"bench") {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)

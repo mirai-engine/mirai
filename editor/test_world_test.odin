@@ -31,7 +31,7 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
 
 // The tables and the storage every entity of a scene has rows in. The test
 // world of what edits a scene holds them after its header with
-// `using scene:Test_Scene`, and its own after them.
+// `using scene_tables:Test_Scene`, and its own after them.
 Test_Scene :: struct {
     ids:core.Table(core.Id),
     names:core.Table(core.Name),

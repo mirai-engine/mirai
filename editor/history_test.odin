@@ -11,7 +11,7 @@ History_Lamp :: struct {intensity:f32,range:f32}
 @(private="file")
 History_World :: struct {
     using world:core.Test_World,
-    using scene:Test_Scene,
+    using scene_tables:Test_Scene,
     lamps:core.Table(History_Lamp),
 }
 

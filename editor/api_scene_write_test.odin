@@ -14,10 +14,7 @@ import "mirai:std/serial"
 
 @(private="file")
 write_fixture_init :: proc(t:^testing.T,f:^Prefab_Fixture,state:^Api_State,name:string) -> bool {
-    if !testing.expect(t,prefab_fixture_init(f,name)) {return false}
-    for &storage in f.storages {
-        if storage.info==nil {storage.info=type_info_of(storage.type)}
-    }
+    if !prefab_fixture_init(t,f,name) {return false}
     f.api.state=state
     api_schema_build(&f.s,state)
     return true

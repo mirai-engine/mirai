@@ -126,11 +126,8 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
 @(test)
 what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"collab-selected")) {return}
+    if !prefab_fixture_init(t,f,"collab-selected") {return}
     defer prefab_fixture_destroy(f)
-    for &storage in f.storages {
-        if storage.info==nil {storage.info=type_info_of(storage.type)}
-    }
     state:Api_State
     f.api.state=&state
     api_schema_build(&f.s,&state)
@@ -202,9 +199,9 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
 a_file_too_large_to_travel_is_told_to_every_editor :: proc(t:^testing.T) {
     host_end,guest_end:=new(Prefab_Fixture),new(Prefab_Fixture)
     defer {free(host_end);free(guest_end)}
-    if !testing.expect(t,prefab_fixture_init(host_end,"collab-file-host")) {return}
+    if !prefab_fixture_init(t,host_end,"collab-file-host") {return}
     defer prefab_fixture_destroy(host_end)
-    if !testing.expect(t,prefab_fixture_init(guest_end,"collab-file-guest")) {return}
+    if !prefab_fixture_init(t,guest_end,"collab-file-guest") {return}
     defer prefab_fixture_destroy(guest_end)
     for f,i in ([2]^Prefab_Fixture{host_end,guest_end}) {
         st:=new(Collab_State)

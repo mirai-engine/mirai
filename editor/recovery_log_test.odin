@@ -9,28 +9,19 @@ import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/jobs"
 
 @(test)
 recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^testing.T) {
+    info,described:=prefab_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Prefab_Test_World
-    prefab_test_init(&world,context.allocator)
-    defer prefab_test_destroy(&world)
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Prefab_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Prefab_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Prefab_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Prefab_Test_World,parents)},
-    }
-    storages:=[2]core.Storage_Info{{type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
-        sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
-        init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-recovery-log-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    os.make_directory_all(root)
-    defer os.remove_all(root)
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
+    root:=base.test_folder(t,"recovery-log")
+    if root=="" {return}
     assets:host.Assets
     asset.types_init(&assets.types)
     defer asset.types_destroy(&assets.types)
@@ -43,8 +34,8 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
     selection:history.Selection
     edits:history.Edits
     document:Document
-    prefabs:Prefabs
-    s:=Session{info=&info,edit_world=&world,editor_world=&prefabs,assets_root=root,project_root=root,app=&app,selection=&selection,edits=&edits,document=&document}
+    editor:Prefab_Fixture_Editor
+    s:=Session{info=&info,edit_world=&world,editor_world=&editor,assets_root=root,project_root=root,app=&app,selection=&selection,edits=&edits,document=&document}
     defer delete(selection.entities)
     defer history.edits_free(&edits)
     defer document_previous_free(&document)
@@ -116,7 +107,7 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
 @(test)
 every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"recovery-tabs")) {return}
+    if !prefab_fixture_init(t,f,"recovery-tabs") {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     s.project_root=f.root
@@ -190,7 +181,7 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
 @(test)
 a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"recovery-aside")) {return}
+    if !prefab_fixture_init(t,f,"recovery-aside") {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     s.project_root=f.root

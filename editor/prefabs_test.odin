@@ -19,79 +19,21 @@ import "mirai:std/serial"
 import "mirai:ui"
 
 Prefab_Test_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    names:core.Table(core.Name),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-    disabled:core.Table(core.Disabled),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     lamps:core.Table(Prefab_Test_Lamp),
     point_lights:core.Table(erender.Point_Light),
     instances:core.Table(scene.Prefab_Instance),
     members:core.Table(scene.Prefab_Member),
-    hierarchy:core.Hierarchy,
 }
 
 // A component a scene saves and the API writes.
 Prefab_Test_Lamp :: struct {intensity,range:f32,target:core.Entity,uses:u32 `mirai:"hidden"`}
 
-prefab_test_clear :: proc(data:rawptr) -> bool {
-    w:=cast(^Prefab_Test_World)data
-    core.table_clear(&w.ids)
-    core.table_clear(&w.names)
-    core.table_clear(&w.transforms)
-    core.table_clear(&w.parents)
-    core.table_clear(&w.disabled)
-    core.table_clear(&w.lamps)
-    core.table_clear(&w.point_lights)
-    core.table_clear(&w.instances)
-    core.table_clear(&w.members)
-    core.hierarchy_clear(&w.hierarchy)
-    return core.entities_clear(&w.entities)
-}
-
-prefab_test_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    context.allocator=allocator
-    w:=cast(^Prefab_Test_World)data
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id")
-    core.table_init(&w.names,"Name")
-    core.table_init(&w.transforms,"Transform")
-    core.table_init(&w.parents,"Parent")
-    core.table_init(&w.disabled,"Disabled")
-    core.table_init(&w.lamps,"Prefab_Test_Lamp")
-    core.table_init(&w.point_lights,"Point_Light")
-    core.table_init(&w.instances,"Prefab_Instance")
-    core.table_init(&w.members,"Prefab_Member")
-    w.ids.base,w.names.base,w.transforms.base,w.parents.base,w.disabled.base=true,true,true,true,true
-    return len(w.entities.generation)>0
-}
-
-prefab_test_destroy :: proc(data:rawptr) {
-    w:=cast(^Prefab_Test_World)data
-    core.entities_destroy(&w.entities)
-    core.table_destroy(&w.ids)
-    core.table_destroy(&w.names)
-    core.table_destroy(&w.transforms)
-    core.table_destroy(&w.parents)
-    core.table_destroy(&w.disabled)
-    core.table_destroy(&w.lamps)
-    core.table_destroy(&w.point_lights)
-    core.table_destroy(&w.instances)
-    core.table_destroy(&w.members)
-    core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
-}
-
-prefab_test_copy :: proc(dst,src:rawptr) -> bool {
-    dst,src:=cast(^Prefab_Test_World)dst,cast(^Prefab_Test_World)src
-    return core.entities_copy(&dst.entities,&src.entities) && core.table_copy(&dst.ids,&src.ids) && core.table_copy(&dst.names,&src.names) && core.table_copy(&dst.transforms,&src.transforms) && core.table_copy(&dst.parents,&src.parents) && core.table_copy(&dst.disabled,&src.disabled) && core.table_copy(&dst.lamps,&src.lamps) && core.table_copy(&dst.point_lights,&src.point_lights) && core.table_copy(&dst.instances,&src.instances) && core.table_copy(&dst.members,&src.members) && core.value_copy(&dst.hierarchy,&src.hierarchy,type_info_of(core.Hierarchy))
-}
-
-prefab_test_swap :: proc(a,b:rawptr) {
-    a,b:=(^Prefab_Test_World)(a),(^Prefab_Test_World)(b)
-    a.entities,b.entities=b.entities,a.entities
-    core.table_swap(&a.ids,&b.ids);core.table_swap(&a.names,&b.names);core.table_swap(&a.transforms,&b.transforms);core.table_swap(&a.parents,&b.parents);core.table_swap(&a.disabled,&b.disabled);core.table_swap(&a.lamps,&b.lamps);core.table_swap(&a.point_lights,&b.point_lights);core.table_swap(&a.instances,&b.instances);core.table_swap(&a.members,&b.members)
-    a.hierarchy,b.hierarchy=b.hierarchy,a.hierarchy
+// The World_Info of Prefab_Test_World with what a session over it holds of the editor.
+@(private)
+prefab_test_info :: proc(t:^testing.T) -> (info:core.World_Info,ok:bool) {
+    return core.test_info(t,Prefab_Test_World,core.Test_None,Prefab_Fixture_Editor,test_types)
 }
 
 // A session over Prefab_Test_World with an assets folder of its own. It
@@ -99,66 +41,41 @@ prefab_test_swap :: proc(a,b:rawptr) {
 @(private)
 Prefab_Fixture :: struct {
     world:Prefab_Test_World,
-    tables:[9]core.Table_Info,
-    storages:[4]core.Storage_Info,
     info:core.World_Info,
     assets:host.Assets,
     app:host.App,
-    viewport:Viewport,
-    selection:history.Selection,
+    using edited:Test_Session,
     inspector:Inspector,
-    edits:history.Edits,
-    document:Document,
     using editor:Prefab_Fixture_Editor,
     outliner:Outliner,
-    g:Editor_Ui,
     ai:Ai,
     root:string,
-    s:Session,
 }
 
 @(private)
-prefab_fixture_init :: proc(f:^Prefab_Fixture,name:string) -> bool {
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Prefab_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Prefab_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Prefab_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Prefab_Test_World,parents)},
-        {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Prefab_Test_World,disabled)},
-        {name="Prefab_Test_Lamp",type=Prefab_Test_Lamp,info=type_info_of(Prefab_Test_Lamp),offset=offset_of(Prefab_Test_World,lamps)},
-        {name="Point_Light",type=erender.Point_Light,info=type_info_of(erender.Point_Light),offset=offset_of(Prefab_Test_World,point_lights)},
-        {name="Prefab_Instance",type=scene.Prefab_Instance,info=type_info_of(scene.Prefab_Instance),offset=offset_of(Prefab_Test_World,instances)},
-        {name="Prefab_Member",type=scene.Prefab_Member,info=type_info_of(scene.Prefab_Member),offset=offset_of(Prefab_Test_World,members)},
-    }
-    f.storages={{type=Prefabs,place=.Editor,offset=offset_of(Prefab_Fixture_Editor,prefabs)},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)},
-        {type=Collab,place=.Editor,offset=offset_of(Prefab_Fixture_Editor,collab)},{name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(Prefab_Fixture_Editor,api)}}
-    f.info=core.World_Info{tables=f.tables[:],storages=f.storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
-        sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
-        init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
-    prefab_test_init(&f.world,context.allocator)
-    f.root=project.path_absolute(fmt.tprintf(".mirai/test-prefabs-%s-%d",name,os.get_pid()))
-    os.remove_all(f.root)
-    if os.make_directory_all(f.root)!=nil {return false}
+prefab_fixture_init :: proc(t:^testing.T,f:^Prefab_Fixture,name:string) -> bool {
+    f.info=prefab_test_info(t) or_return
+    if !testing.expect(t,f.info.init[.World](&f.world,context.allocator)) {return false}
+    f.root=base.test_folder(t,fmt.tprintf("prefabs-%s",name))
+    if f.root=="" {return false}
     asset.types_init(&f.assets.types)
     asset.registry_init(&f.assets.registry,f.root)
     f.app=host.App{assets=&f.assets,info=&f.info,allocator=context.allocator}
-    f.s=Session{info=&f.info,edit_world=&f.world,editor_world=&f.editor,assets_root=f.root,app=&f.app,gui=&f.g,viewport=&f.viewport,selection=&f.selection,inspector=&f.inspector,edits=&f.edits,document=&f.document,outliner=&f.outliner,ai=&f.ai}
+    test_session_open(&f.edited,core.world_ref(&f.world,&f.info))
+    f.s.editor_world,f.s.assets_root,f.s.app,f.s.inspector,f.s.outliner,f.s.ai=&f.editor,f.root,&f.app,&f.inspector,&f.outliner,&f.ai
     return true
 }
 
 @(private)
 prefab_fixture_destroy :: proc(f:^Prefab_Fixture) {
     prefabs_free(&f.s)
-    document_previous_free(&f.document)
-    history.edits_free(&f.edits)
+    test_session_close(&f.edited)
     core.value_free(&f.inspector,type_info_of(Inspector))
-    delete(f.selection.entities)
     delete(f.app.worlds)
     asset.registry_destroy(&f.assets.registry)
     asset.types_destroy(&f.assets.types)
-    prefab_test_destroy(&f.world)
-    os.remove_all(f.root)
-    delete(f.root)
+    if f.info.destroy[.World]!=nil {f.info.destroy[.World](&f.world)}
+    core.test_info_destroy(&f.info)
 }
 
 @(private)
@@ -251,40 +168,14 @@ overrides_held :: proc(s:^Session) -> (count:int) {
 
 @(test)
 prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T) {
+    info,described:=prefab_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Prefab_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.names,"Name")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    core.table_init(&world.instances,"Prefab_Instance")
-    core.table_init(&world.members,"Prefab_Member")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.names)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    defer core.table_destroy(&world.instances)
-    defer core.table_destroy(&world.members)
-    defer core.value_free(&world.hierarchy,type_info_of(core.Hierarchy))
-    tables:=[7]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Prefab_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Prefab_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Prefab_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Prefab_Test_World,parents)},
-        {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Prefab_Test_World,disabled)},
-        {name="Prefab_Instance",type=scene.Prefab_Instance,info=type_info_of(scene.Prefab_Instance),offset=offset_of(Prefab_Test_World,instances)},
-        {name="Prefab_Member",type=scene.Prefab_Member,info=type_info_of(scene.Prefab_Member),offset=offset_of(Prefab_Test_World,members)},
-    }
-    storages:=[2]core.Storage_Info{{type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
-        sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
-        init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-prefabs-%d",os.get_pid()),context.temp_allocator)
-    testing.expect(t,!os.exists(root))
-    if os.exists(root) {return}
-    os.make_directory_all(root)
-    defer os.remove_all(root)
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
+    root:=base.test_folder(t,"prefabs")
+    if root=="" {return}
     assets:host.Assets
     asset.types_init(&assets.types)
     defer asset.types_destroy(&assets.types)
@@ -297,7 +188,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     inspector:Inspector
     edits:history.Edits
     document:Document
-    prefabs:Prefabs
+    editor:Prefab_Fixture_Editor
     ai:=new(Ai)
     defer free(ai)
     g:Editor_Ui
@@ -305,7 +196,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     // The session and the UI context are large: off the stack of the test.
     s:=new(Session)
     defer free(s)
-    s.info,s.edit_world,s.editor_world,s.assets_root,s.app=&info,&world,&prefabs,root,&app
+    s.info,s.edit_world,s.editor_world,s.assets_root,s.app=&info,&world,&editor,root,&app
     s.gui,s.viewport,s.selection,s.inspector,s.edits,s.document,s.outliner,s.ai=&g,&viewport,&selection,&inspector,&edits,&document,&outliner,ai
     defer delete(selection.entities)
     defer core.value_free(&inspector,type_info_of(Inspector))
@@ -671,7 +562,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
 @(test)
 a_prefab_operation_is_one_step_of_the_rows_of_its_instance :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"steps")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"steps")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -720,7 +611,7 @@ a_prefab_operation_is_one_step_of_the_rows_of_its_instance :: proc(t:^testing.T)
 @(test)
 the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_files :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"overrides")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"overrides")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -779,7 +670,7 @@ the_overrides_of_an_instance_are_derived_reverted_and_applied_without_writing_fi
 @(test)
 unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"nested")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"nested")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -840,7 +731,7 @@ unlinking_gives_back_what_a_prefab_placed_and_a_variant_applies_to_its_base :: p
 @(test)
 a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_set :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"reopen")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"reopen")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -877,7 +768,7 @@ a_scene_opened_after_its_prefab_changed_follows_it_and_keeps_what_its_instances_
 @(test)
 a_refresh_after_a_placed_prefab_changed_leaves_nothing_stale :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"converge")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"converge")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -923,7 +814,7 @@ a_refresh_after_a_placed_prefab_changed_leaves_nothing_stale :: proc(t:^testing.
 @(test)
 an_instance_whose_base_is_not_held_keeps_what_it_has_when_it_is_refreshed :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"unknown")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"unknown")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -958,7 +849,7 @@ an_instance_whose_base_is_not_held_keeps_what_it_has_when_it_is_refreshed :: pro
 @(test)
 a_copy_of_an_instance_is_another_and_a_member_keeps_its_place :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"copies")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"copies")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -1011,7 +902,7 @@ prefab_test_all :: proc(f:^Prefab_Fixture) -> []asset.Override {
 @(test)
 prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_revert :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"places")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"places")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -1130,7 +1021,7 @@ prefab_instances_add_entities_and_turn_members_off_through_updates_apply_and_rev
 @(test)
 prefab_overrides_follow_an_undo_another_author_leaves_taken_back :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"taken-back")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"taken-back")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -1160,7 +1051,7 @@ prefab_overrides_follow_an_undo_another_author_leaves_taken_back :: proc(t:^test
 @(test)
 prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"variants")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"variants")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -1287,11 +1178,11 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
 @(test)
 prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"old-fields")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"old-fields")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
-    lamps:=&f.tables[5]
+    _,lamps:=core.world_table(edited_world(s),Prefab_Test_Lamp)
     lamps.default=proc(dst:rawptr) {(^Prefab_Test_Lamp)(dst)^={intensity=1,range=10}}
     Lamp_Without_Range :: struct {intensity:f32}
     old:asset.Scene
@@ -1384,10 +1275,10 @@ prefab_collab_send :: proc(f,to:^Prefab_Fixture) {
 @(test)
 prefab_instances_travel_a_session_as_rows_and_their_prefab_as_an_unsaved_file :: proc(t:^testing.T) {
     host:=new(Prefab_Fixture);defer free(host)
-    if !testing.expect(t,prefab_fixture_init(host,"collab-host")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,host,"collab-host")) {return}
     defer prefab_fixture_destroy(host)
     guest:=new(Prefab_Fixture);defer free(guest)
-    if !testing.expect(t,prefab_fixture_init(guest,"collab-guest")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,guest,"collab-guest")) {return}
     defer prefab_fixture_destroy(guest)
     prefab_collab_join(host,.Host)
     defer prefab_collab_leave(host)
@@ -1435,7 +1326,7 @@ prefab_instances_travel_a_session_as_rows_and_their_prefab_as_an_unsaved_file ::
 @(test)
 an_asset_is_named_by_its_path_with_or_without_its_extension_or_by_its_id :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(f,"asset-resolve")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"asset-resolve")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
