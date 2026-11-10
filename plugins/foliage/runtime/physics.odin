@@ -250,12 +250,10 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         physics_owner_clear(fp,state,owner.entity)
         unordered_remove(&fp.owners,i)
     }
-    for row in 0..<core.count(foliages) {
-        e:=core.entity_at(foliages,row)
-        f:=core.at(foliages,row)
+    placed:=core.join(foliages,worlds)
+    for e,f,world in core.each_joined(&placed) {
         entry:=data_find(data.ptr,f.source)
-        world,placed:=core.get(worlds,e)
-        if entry==nil || !placed || (kept.table!=nil && core.has(kept,e)) {continue}
+        if entry==nil || (kept.table!=nil && core.has(kept,e)) {continue}
         ground:=ground_owner(grounds.ptr,e)
         revision:=ground!=nil?ground.revision:0
         streamed:=sources.ptr!=nil?sources.ptr.revision:0

@@ -337,11 +337,9 @@ navigation_agents :: proc(
         return
     }
     clear(&a.near)
-    for row in 0..<core.count(paths) {
-        e:=core.entity_at(paths,row)
-        p:=core.edit_at(paths,row)
-        agent,is_agent:=core.get(agents,e)
-        if !is_agent {continue}
+    walking:=core.join(paths,agents)
+    for e,_,agent in core.each_joined(&walking) {
+        p:=core.edit_at(paths,walking.row)
         character,has_character:=core.get(characters,e)
         collider,has_collider:=core.get(colliders,e)
         pose,placed:=core.get(worlds,e)
@@ -449,11 +447,9 @@ navigation_agents :: proc(
         height:=2*(collider.size.x+collider.size.y)*abs(pose.scale.y)
         append(&a.near,Near{entity=e,position=pose.position+{0,height*0.5,0},velocity=motion.linear,radius=collider.size.x*max(abs(pose.scale.x),abs(pose.scale.z)),height=height})
     }
-    for row in 0..<core.count(obstacles) {
-        e:=core.entity_at(obstacles,row)
-        pose,placed:=core.get(worlds,e)
-        size,boxed:=box_half(volumes,e)
-        if !placed || !boxed {continue}
+    placed:=core.join(obstacles,worlds)
+    for e,_,pose in core.each_joined(&placed) {
+        size:=box_half(volumes,e) or_continue
         half:=size*pose.scale
         motion,_:=core.get(motions,e)
         append(&a.near,Near{entity=e,position=pose.position,velocity=motion.linear,radius=linalg.length(mm.Vec2{half.x,half.z}),height=half.y*2})

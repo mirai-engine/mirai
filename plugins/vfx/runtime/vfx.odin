@@ -153,11 +153,8 @@ particles_tick :: proc(
     a:=assets
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
-    for row in 0..<core.count(emitters) {
-        e:=core.entity_at(emitters,row)
-        emitter:=core.at(emitters,row)
-        world,placed:=core.get(worlds,e)
-        if !placed {continue}
+    placed:=core.join(emitters,worlds)
+    for e,emitter,world in core.each_joined(&placed) {
         clock:=clock_of(clocks,e)
         if clock==nil {continue}
         if key:=emission_key(emitter.particle,a,row_stamp(core.read(overrides),e));clock.resolved!=key {
@@ -223,11 +220,8 @@ particles_sync :: proc(
     // What an emitter is resolved from besides its own: the triangles of meshes move when the scene is made again.
     made:=erender.vertices_made(app.renderer)
     used:[DATA_CHANNELS]bool
-    for row in 0..<core.count(emitters) {
-        e:=core.entity_at(emitters,row)
-        emitter:=core.at(emitters,row)
-        world,placed:=core.get(worlds,e)
-        if !placed {continue}
+    placed:=core.join(emitters,worlds)
+    for e,emitter,world in core.each_joined(&placed) {
         shown:=shown_of(sync,e)
         if shown==nil {continue}
         key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),a!=nil?a.revision:0)
