@@ -125,7 +125,7 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     // What the document binds that the game does not have, or why it does not load, until it is fixed.
     for &problem,i in u.problem[:u.problem_count] {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},gap=6,align_y=.Center,fill=ui.color_alpha(th.danger,36),stroke=ui.color_alpha(th.danger,120),radius=4}) {
-            ui.paragraph(ctx,author.bind_problem_text(author.assets_of(a),&problem),th.font_small,th.text)
+            ui.text(ctx,author.bind_problem_text(author.assets_of(a),&problem),ui.prose(ctx,th.font_small,th.text))
             if problem.row>=0 && problem.row!=u.selected {
                 if ui.button(ctx,ui.id(ctx,"problem_node",i+1),{label="Show",style=.Ghost,height=th.row,size=th.font_small}).clicked {choose_rows(u,{problem.row})}
             }

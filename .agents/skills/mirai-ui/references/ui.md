@@ -52,16 +52,26 @@ each screen that did not change this way.
   the block. A `GROW` distributes what is left by its weight.
   - `Grid` places the children row by row in equal columns or in those of `grid_tracks_add`; a
     child occupies `span` columns and moves to the next row if it does not fit in what is left of
-    its own. The track rows that the frame cannot store are counted in `Stats.dropped_tracks` and
-    their Grid is left with equal columns.
+    its own. A child of `row_span` rows keeps its columns in the rows under it and the children
+    after it flow around them. A row is as high as its highest child of one row, or what the row
+    tracks of `grid_rows_add` say with the same kinds of `Size`; a child of several rows that
+    needs more gives the rest to its last one. The tracks that the frame cannot store are counted
+    in `Stats.dropped_tracks` and their Grid is left with equal columns, or rows of their children.
   - `Wrap` continues on another row where the next child does not fit; `Stack` overlaps the
     children.
   - `self_x`/`self_y` align a child in its place; `Stretch` stretches it like a `GROW` (what is
     fixed is not stretched). `aspect` gives one axis from the other: the fixed one gives the one
     that is not and, if neither is, the width gives the height.
-  - A `float` with `contain` stays inside its surface (the world panel or a player's part): if it
-    does not fit, it goes to the other side of what it hangs from and shifts as much as needed.
-    This is how the tree's tooltips, popups and context menus are placed.
+  - `align_y=.Baseline` on a `Row` puts the first line of text of each child on one baseline (a
+    container gives that of its first child, a child without text stands on it) and the row is as
+    high as what goes over the baseline plus what hangs under it. A child with a `self_y` keeps
+    its own place.
+  - A `float` with `contain` stays inside its surface (the world panel or a player's part), less
+    its `inset`: if it does not fit on the side it hangs outside of, it goes to the other side of
+    what it hangs from, and then shifts as much as needed; lined up with what it hangs from, it
+    only shifts. With `from` it hangs from a rectangle instead of an element. **Every popup, menu,
+    submenu and tooltip, of the editor and of the tree, is placed this way and by nothing else**:
+    no widget computes where a floating surface goes, so its first frame is already in its place.
   - What floats is not cut by the clip of its ancestors, except inside a box with `clip_floats`.
 - The layers (`LAYER_*` in `theme.odin`) order the floating surfaces. A `Parent` float without
   `layer` stays in its parent's layer: the layout places each layer after the lower ones, and in
@@ -80,16 +90,37 @@ result. It is built every frame and resolved in `frame_end`, one axis at a time:
    there is a shortfall, the largest is cut first, never below its minimum. A container that clips
    does not shrink its children: it shifts them. Across the direction, and on both axes of a Stack,
    a `GROW` fills its parent.
-3. What has `aspect` takes its height from its width, the paragraphs are split into lines at the
-   width they received and the heights rise to the roots. Afterwards the height is distributed like
-   the width.
+3. What has `aspect` takes its height from its width, every text is split into lines at the width
+   it received and the heights rise to the roots. Afterwards the height is distributed like the
+   width.
 4. The floating roots are ordered by layer (within a layer, the one declared later stays on top) and
    placed against what they hang from; a `GROW` float takes the size of that. Afterwards each
    element is placed and the commands are listed in draw order.
 
-The measure of a paragraph is stored by text, size and face in two generations that swap between
-frames: what a frame shows again is taken from the previous one without measuring it, comparing the
-text and not only its hash.
+The measure of a span of text is stored by text, size and face in two generations that swap
+between frames: what a frame shows again is taken from the previous one without measuring it,
+comparing the text and not only its hash.
+
+### Text
+
+**Text is one leaf of the layout** (`text.odin`), and there is no other way to put text in a box:
+spans of words, each in the style of the text or in its own, with boxes in their line. The layout
+measures each span once for what it says, breaks the leaf into lines at the width the width pass
+gave it and takes the height of those lines in the same frame, whatever the width is.
+
+- Only a `FIT` width asks for what the text says, on one line; a text that wraps breaks down to its
+  widest word when its parent is narrower. Any other width is what the layout gives. A `FIT`
+  height holds the lines; any other shows the lines that fit, aligned by the style.
+- `label`, `text`, `rich_text`, `markdown`, the label of a column, a tooltip and the text of a
+  game control are that leaf with different spans: `text_begin`, then `text_span` (words),
+  `text_link` (words that take the pointer on every line they end up on), `text_box` (an image, a
+  pill, a prompt) and `text_space`, then `text_end`. `prose` is the style of the editor's running
+  text.
+- A line is as high as the line box of the text, taller where a span of a larger size or a box
+  needs it. Spans of words sit on one baseline; a box and a chip (a span with `pad`, such as
+  inline code) are centered in the line.
+- `text_height` gives the height of a text at a width through the same measure and the same
+  breaks, without building it: what a list that builds only its rows in view asks.
 
 ## Draw list
 
@@ -112,8 +143,7 @@ text and not only its hash.
 - `draw_text_decorated` adds shadow, outline and `Text_Decorations`: italic slants the glyph quads
   around the baseline (the clip cuts the rectangle without slanting), synthetic bold repeats the
   `TEXT_BOLD` line of its size to the right and underline and strikethrough are `TEXT_RULE`
-  rectangles. `draw_text_block` draws up to `limit` characters, each where the whole text places
-  it.
+  rectangles.
 - `draw_program` paints a rounded rectangle with a renderer
   [UI program](../../mirai-rendering/references/shaders.md#programs), whose `ui` id it does not
   interpret; the scope tints it by the vertex color, like a shape. With `program` in a `Box`, a
@@ -183,16 +213,15 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
 - **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
-  where the layout breaks a paragraph (`layout_break_next`): a word goes to the next line unless it
-  fits with the space after it, and one wider than the line takes a line of its own. `text_line`
-  is that break for a text with a style; rich text and Markdown fill their lines with the same
-  builder (`Flow`), which keeps on one line what no space parts.
+  where Clay breaks a text (`layout_break_next`): a word goes to the next line unless it fits with
+  the space after it, and one wider than the line takes a line of its own. A text of several spans
+  fills its lines with `Flow`, which breaks at the same places and keeps on one line what no space
+  parts. `text_line` is that break for the text a field edits.
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
-  centers its text this way, `Text_Style.line_height` distributes the excess of each line and a
-  paragraph uses the line height it receives or `PARAGRAPH_LINE`, that of the prototype's chat
-  messages, with the same measure in `paragraph_height`. The baseline lands on a device pixel with
-  the ascent rounded, as in Chrome.
+  centers its text this way and `Text_Style.line_height` distributes the excess of each line;
+  `prose` gives `PARAGRAPH_LINE`, that of the prototype's chat messages, in whole units. The
+  baseline lands on a device pixel with the ascent rounded, as in Chrome.
 
 ## Interaction
 
@@ -222,8 +251,9 @@ All take the context, an id and their state by parameter.
 
 - **Canvas.** `canvas` is an area that its owner draws with `Context_Desc.draw_user`: the layout
   places it, the container with clip clips it and the pointer over it is its interaction.
-- **Text and icons.** `label` is a line clipped to its box and `paragraph` is wrapped by the layout.
-  The `Icon`s are drawn on a 16 vector grid.
+- **Text and icons.** `label` is a line clipped to its box, which can fade out at its end, and
+  `text` with `prose` is the running text ([text](#text)). The `Icon`s are drawn on a 16 vector
+  grid.
   - **One icon per concept, everywhere**: `Scene` (a folded map) on the asset, the document tab and
     the scene configuration; `Prefab` (the cube with the top face filled) on the asset, an instance
     in the hierarchy and its actions; `Grid` only for the grid.
@@ -233,24 +263,25 @@ All take the context, an id and their state by parameter.
     the context and `icon_custom` is its `Icon`, which any widget accepts: this is how the editor
     draws the plugins' icons.
 - **Markdown.** `markdown` builds Markdown text at a width (paragraphs, `#` to `###` headings,
-  lists nested by indentation, quotes, fenced code, rules; inline bold, code, links and escapes) and
-  `markdown_height` gives its height by running the same procedures without building: the height is
-  exactly the one that is built, so a list of replies measures them and builds only those in view
-  with `rows_begin`.
-  - It is interpreted while being laid out, line by line and in fixed buffers: it stores nothing
-    between frames or allocates, and what is built points to the text, which the caller keeps alive
-    until the frame is drawn. What it does not recognize (HTML, tables) stays as text; italic has no
-    face and its marks are removed. Bold and italic open and close on the same line.
-  - Words are split as the layout splits a paragraph; one longer than the line is cut where the line
-    ends (`Flow.cut`), and fenced code is cut by characters, so the height does not depend on where
-    the spaces fall. A line that holds more pieces than its buffer goes on in the next, never lost.
+  lists nested by indentation, quotes, fenced code, rules; inline bold, code, links and escapes).
+  It is a parser: each paragraph and each heading is one [text](#text) whose spans are its words,
+  its inline code (a chip), its links and its pills, and the layout breaks it. `markdown_height`
+  walks the same parser and asks those texts for their heights without building them: the height
+  is exactly the one that is built, so a list of replies measures them once and builds only those
+  in view with `rows_begin`.
+  - It is parsed line by line: it stores nothing between frames or allocates. What it does not
+    recognize (HTML, tables) stays as text; italic has no face and its marks are removed. Bold and
+    italic open and close on the same line.
+  - A word longer than the line is cut where the line ends (`text_begin` with `cut`), and a line
+    of fenced code is a `solid` span, which breaks at no space and is cut the same way, so its
+    height does not depend on where the spaces fall. A tab is room up to the next stop of its line.
   - Each link goes through `Markdown_Style.resolve`, which is called when measuring and when
     building and must give the same answer for the same destination in a frame. A `pill` link is not
     split: it passes whole to the next line and, if it is wider than a line, it is cut to it; a
-    `live` one lights up under the pointer and its destination is what `markdown` returns the frame
-    of the click. The text that `resolve` writes in `buffer` holds until the end of its block. A
-    pill can carry an icon before its text, which widens it, and be a `button`: the accent fill and
-    its `on_accent` text, at the line height.
+    `live` one lights up whole under the pointer, on every line it is on, and its destination is
+    what `markdown` returns the frame of the click. The text that `resolve` writes in `buffer`
+    holds until the end of its block. A pill can carry an icon before its text, which widens it,
+    and be a `button`: the accent fill and its `on_accent` text, at the line height.
   - A code block shows, while the pointer is over it, a button that copies its code with
     `clipboard_set`; the button does not change the height. The ids of what it builds derive from
     the given id.
@@ -299,10 +330,10 @@ All take the context, an id and their state by parameter.
   it draws the line of its inner edge).
 
 - **Popups** (`popup.odin`, up to `POPUP_DEPTH` nested):
-  - A popup without a known height spends its first frame invisible, to measure itself: this way it
-    appears only once, already below or above its anchor, without jumping. It changes side only if
-    it does not fit in the request; with `Popup.within` it aligns with a panel and not with its
-    anchor.
+  - A popup is a float that hangs from the rectangle its opener gave `popup_open`, contained in its
+    surface ([ids and layout](#ids-and-layout)): under it, or over it with `Popup.side`, and on the
+    other side when it does not fit; a submenu beside its item. With `Popup.within` it lines up
+    with a panel and not with its anchor. The frame that opens it draws it in its place.
   - `Popup.search` puts on top the only popup search box, which takes the keyboard on opening;
     `dropdown` and the inspector's asset lists use it.
   - **A `dropdown` list has one current row** (`Popup_Entry.cursor`), editor and game alike: the
@@ -315,7 +346,8 @@ All take the context, an id and their state by parameter.
   - Menus follow the prototype (`Popover.vue`): a bar menu measures at least `MENU_WIDTH`, each item
     measures `Theme.control` and the icon column (`MENU_ICON`) exists only if some item has an icon
     (according to the previous frame). A menu without icons starts its text where its titles start.
-  - Every tooltip appears after the pointer rests `TOOLTIP_DELAY` on the same element.
+  - Every tooltip appears after the pointer rests `TOOLTIP_DELAY` on the same element, under the
+    pointer, or over it where it does not fit under.
   - A click outside a popup only closes it; Escape closes the last (the submenu first).
   - A `modal` with `close` is dismissed with its cross or a click outside, and whoever opened it
     closes it. The questions (save, recover) are not dismissed.
@@ -347,10 +379,10 @@ or the controls of the editor panels:
 ## Game interfaces
 
 - `image` (part of a texture with tint, or 9-slice) is placed with `Image.fit` according to the size
-  in texels of the part; `image_frame` gives the frame of a sprite sheet. `text` has its own style
-  and `reveal` draws a part of its characters where the whole text places them, so it does not
-  reflow while it appears. `anchored` hangs a container from a screen point inside the safe area and
-  `skin_look` gives a button images or colors per state.
+  in texels of the part; `image_frame` gives the frame of a sprite sheet. `text` ([text](#text))
+  takes a `reveal` that draws a part of its characters where the whole text places them, so it does
+  not reflow while it appears. `anchored` hangs a container from a screen point inside the safe
+  area and `skin_look` gives a button images or colors per state.
 - **Game controls**: a button, a checkbox, a slider, a number and a dropdown are the editor's with
   a `look`; a radio, a selector and a field are in `game.odin`. Every color and corner comes from
   the `Node_Style` resolved for its state (`widget_states`): neither the theme nor constants.
@@ -560,8 +592,9 @@ a camera.
 - The clipboard and the system cursor are not its own: they arrive through the context callbacks
   and through `ctx.cursor`, which says what shape the widget under the pointer asks for and the host
   shows (the editor, when its tools did not ask for another).
-- `paragraph` is built every frame: a long list of paragraphs measures each one with
-  `paragraph_height`, with the same measure and the same cuts, and builds only the visible ones with
-  `rows_begin`.
-- A `markdown` link that spans several lines lights up only on the line that is under the pointer,
-  and its text does not take bold or code from inside.
+- A text is built every frame: a long list of texts measures each one with `text_height` or
+  `markdown_height`, with the same measure and the same breaks, and builds only the visible ones
+  with `rows_begin`.
+- The text of a `markdown` link does not take bold or code from inside.
+- A `.ui` document names the `columns` of a Grid, not its tracks nor the spans of its children:
+  those are set from code, and the rows of a `.ui` hold neither `row_span` nor row tracks.
