@@ -33,15 +33,6 @@ Shown :: struct {mesh:base.Asset_Id}
 @(private="file")
 Picture :: struct {image:base.Asset_Id}
 
-@(private="file")
-cook_folder :: proc(name:string) -> string {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    path,_:=strings.replace_all(fmt.tprintf("%s/mirai-cook-%d-%s",directory,os.get_pid(),name),"\\","/",context.temp_allocator)
-    os.remove_all(path)
-    os.make_directory_all(path)
-    return path
-}
-
 // 8x8 with two levels; opaque unless `alpha`.
 @(private="file")
 texture_write :: proc(t:^testing.T,types:^asset.Types,path:string,id:base.Asset_Id,flags:asset.Texture_Flags,alpha:=false,format:=asset.Texture_Format.RGBA8) {
@@ -134,8 +125,8 @@ names :: proc(report:^Cook_Report) -> (kept,dropped:string) {
 @(test)
 a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=cook_folder("reach")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-reach")
+    if folder=="" {return}
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     project_write(t,&types,assets)
     manifest:=fmt.tprintf("%s/project/%s",folder,COOK_FILE)
@@ -220,8 +211,8 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
 @(test)
 a_cook_that_cannot_be_what_was_asked_says_why :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=cook_folder("errors")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-errors")
+    if folder=="" {return}
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     manifest:=fmt.tprintf("%s/project/%s",folder,COOK_FILE)
     missing:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
@@ -258,8 +249,8 @@ a_cook_that_cannot_be_what_was_asked_says_why :: proc(t:^testing.T) {
 @(test)
 a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=cook_folder("plugins")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-plugins")
+    if folder=="" {return}
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     project_write(t,&types,assets)
     plugin:=fmt.tprintf("%s/project/plugins/probe/assets",folder)
@@ -321,8 +312,8 @@ glow_range :: proc(t:^testing.T,types:^asset.Types,path:string) -> f32 {
 @(test)
 a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=cook_folder("resolve")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-resolve")
+    if folder=="" {return}
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     for inside in ([]string{"prefabs","scenes"}) {os.make_directory_all(fmt.tprintf("%s/%s",assets,inside))}
     lamp_path,level_path:=fmt.tprintf("%s/prefabs/lamp.prefab",assets),fmt.tprintf("%s/scenes/level.scene",assets)
@@ -351,8 +342,8 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
 @(test)
 a_cook_on_many_workers_writes_what_a_cook_on_one_does :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=cook_folder("workers")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-workers")
+    if folder=="" {return}
     assets:=fmt.tprintf("%s/project/assets",folder)
     project_write(t,&types,assets)
     for at in 0..<16 {
@@ -411,8 +402,8 @@ a_cook_ships_animations_sampled_on_the_rest_pose_of_their_skeleton :: proc(t:^te
     CLIPS :: base.Asset_Id{7,2}
     STAGE :: base.Asset_Id{7,3}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=cook_folder("animations")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-animations")
+    if folder=="" {return}
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     for sub in ([]string{"models","scenes"}) {os.make_directory_all(fmt.tprintf("%s/%s",assets,sub))}
     // Bones in centimeters under a root that scales them to meters.

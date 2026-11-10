@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
 contracts_project :: proc(t:^testing.T,folder,core_source,game_source:string) -> (p:project.Project,ok:bool) {
@@ -25,9 +26,8 @@ contracts_project :: proc(t:^testing.T,folder,core_source,game_source:string) ->
 // no settle of the World.
 @(test)
 storages_have_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 @(storage) State :: struct {value:i32}
 @(storage,queue) Requests :: struct {count:i32}
@@ -91,9 +91,8 @@ import "mirai:core"
 // is not copied and what says keep or persist stay.
 @(test)
 clearing_a_world_resets_its_derived_storages :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 @(storage) Cache :: struct {values:[dynamic]i32}
 @(storage,free="tally_free") Tally :: struct {count:i32}
@@ -152,9 +151,8 @@ r :: proc(b:^Both) {}
 // what to hold instead.
 @(test)
 the_progress_of_the_player_holds_plain_data :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 import "mirai:std/base"
 Entity :: base.Entity
@@ -186,9 +184,8 @@ Slot :: struct {at:core.Entity}
 // with a default is an error: the generator binds every parameter.
 @(test)
 functions_are_called_from_the_loops_and_from_their_order :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 @(storage) Clock :: struct {tick:u64}
 @(component) Thing :: struct {value:f32}

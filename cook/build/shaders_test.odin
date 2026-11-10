@@ -15,13 +15,6 @@ shaders_write :: proc(t:^testing.T,parts:..string,text:="") {
     testing.expect(t,os.write_entire_file(file,text)==nil,file)
 }
 
-@(private="file")
-shaders_folder :: proc(t:^testing.T) -> string {
-    folder,error:=os.make_directory_temp("","mirai-build-shaders-*",context.temp_allocator)
-    testing.expect(t,error==nil)
-    return project.path_absolute(folder,context.temp_allocator)
-}
-
 // A project with three plugins that declare shaders: glow (active), fog
 // (active, its folder without a Slang source) and dust (not active).
 @(private="file")
@@ -44,8 +37,8 @@ shaders_fixture :: proc(t:^testing.T,root:string,own:bool) {
 
 @(test)
 shader_sources_are_those_of_the_project_and_of_its_active_plugins :: proc(t:^testing.T) {
-    root:=shaders_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"build-shaders")
+    if root=="" {return}
     shaders_fixture(t,root,true)
     p,error:=project.open(root,"")
     defer project.close(&p)
@@ -62,8 +55,8 @@ shader_sources_are_those_of_the_project_and_of_its_active_plugins :: proc(t:^tes
 
 @(test)
 a_project_without_programs_has_no_generation_and_drops_the_one_it_had :: proc(t:^testing.T) {
-    root:=shaders_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"build-shaders")
+    if root=="" {return}
     m:=project.manifest_default("Plain Game")
     shaders_write(t,root,project.PROJECT_FILE,text=project.manifest_text(&m,context.temp_allocator))
     shaders_write(t,root,"shaders","notes.txt",text="no programs here")
@@ -90,10 +83,10 @@ a_project_without_programs_has_no_generation_and_drops_the_one_it_had :: proc(t:
 
 @(test)
 shaders_that_cannot_be_generated_say_why_and_leave_what_was_published :: proc(t:^testing.T) {
-    root:=shaders_folder(t)
-    defer os.remove_all(root)
-    engine:=shaders_folder(t)
-    defer os.remove_all(engine)
+    root:=base.test_folder(t,"build-shaders")
+    if root=="" {return}
+    engine:=base.test_folder(t,"build-shaders")
+    if engine=="" {return}
     shaders_fixture(t,root,true)
     shaders_write(t,root,".mirai","shaders","manifest.json",text="{}")
 
@@ -128,8 +121,8 @@ shaders_that_cannot_be_generated_say_why_and_leave_what_was_published :: proc(t:
 
 @(test)
 a_game_carries_the_manifest_the_catalog_and_the_code_of_its_system :: proc(t:^testing.T) {
-    root:=shaders_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"build-shaders")
+    if root=="" {return}
     copies:=make([dynamic]Copy,context.temp_allocator)
     shaders_copies(&copies,root,"ship",context.temp_allocator)
     testing.expect_value(t,len(copies),0)

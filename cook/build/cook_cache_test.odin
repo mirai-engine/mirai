@@ -6,14 +6,13 @@ import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:cook/textures"
+import "mirai:std/base"
 
 @(test)
 a_cook_takes_the_blocks_of_a_texture_from_the_cache_of_its_content :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-cook-%d-texture-cache",directory,os.get_pid())
-    os.remove_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-texture-cache")
+    if folder=="" {return}
     assets,cache:=fmt.tprintf("%s/assets",folder),fmt.tprintf("%s/cache",folder)
     os.make_directory_all(fmt.tprintf("%s/textures",assets))
     source:=fmt.tprintf("%s/textures/wood.tex",assets)

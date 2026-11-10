@@ -4,14 +4,14 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 // What the library of a game depends on moves its key, each by itself; an
 // edit of the game alone leaves the library that stands.
 @(test)
 the_key_of_the_shipped_engine_follows_everything_it_is_built_from :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-shipped-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"shipped")
+    if folder=="" {return}
     root:=project.path(folder,"engine",allocator=context.temp_allocator)
     path:=proc(root,file:string) -> string {return project.path(root,file,allocator=context.temp_allocator)}
     compiler:=path(root,"tools/odin.exe")

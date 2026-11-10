@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // A multiple assignment of a value of more than 64 bytes leaves in the IR a
@@ -21,10 +22,8 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
     root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(root,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    folder,folder_error:=os.make_directory_temp("","mirai-aggregates-*",context.temp_allocator)
-    if !testing.expect(t,folder_error==nil) {return}
-    folder=slashes(project.path_absolute(folder,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"aggregates")
+    if folder=="" {return}
     flags:=engine_flags(root,true)
     ir :: proc(t:^testing.T,root,compiler,package_folder,out:string,flags:[]string,collections:..string) -> bool {
         command:=make([dynamic]string,context.temp_allocator)

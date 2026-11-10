@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // The attributes the line of a kind gives its files; "" without a line of its own, or with two.
@@ -76,10 +77,8 @@ git :: proc(folder:string,arguments:..string) -> (out:string,ok:bool) {
 @(test)
 git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^testing.T) {
     if _,_,_,missing:=subprocess.exec({command={"git","--version"}},context.temp_allocator);missing!=nil {log.warn("git is not installed: the setup of a clone is not tested");return}
-    root,made:=os.make_directory_temp("","mirai-git-*",context.temp_allocator)
-    if !testing.expect(t,made==nil) {return}
-    defer os.remove_all(root)
-    root=project.path_absolute(root,context.temp_allocator)
+    root:=base.test_folder(t,"git")
+    if root=="" {return}
     join :: proc(parts:..string) -> string {return project.path(..parts,allocator=context.temp_allocator)}
     write :: proc(t:^testing.T,file,text:string,loc:=#caller_location) {
         folder:=file[:strings.last_index_byte(file,'/')]

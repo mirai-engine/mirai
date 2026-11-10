@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
 params_project :: proc(t:^testing.T,folder,core_source,game_source:string) -> (p:project.Project,ok:bool) {
@@ -40,9 +41,8 @@ PARAMS_CORE :: `package core
 // its one writer.
 @(test)
 a_params_struct_binds_each_field_as_its_parameter :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-params-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"params")
+    if folder=="" {return}
     game_source:=`package game
 import "mirai:core"
 @(step="fixed") game_look :: proc(marks:^core.Table(core.Mark),look:core.Looker,spots:core.Read(core.Spot)) {}
@@ -78,9 +78,8 @@ import "mirai:core"
 // queue it pushes to, may come twice.
 @(test)
 a_written_datum_reaches_a_step_once :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-params-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"params")
+    if folder=="" {return}
     p,ok:=params_project(t,folder,PARAMS_CORE,"package game\n")
     if !ok {return}
     errors:=params_errors(t,&p,`package game
@@ -106,9 +105,8 @@ import "mirai:core"
 // one with no fields are errors that say what to write.
 @(test)
 a_params_struct_has_only_parameters_and_does_not_nest :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-params-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"params")
+    if folder=="" {return}
     p,ok:=params_project(t,folder,PARAMS_CORE,"package game\n")
     if !ok {return}
     errors:=params_errors(t,&p,`package game
@@ -135,9 +133,8 @@ import "mirai:core"
 // another form, the error says which form to receive.
 @(test)
 a_part_of_the_application_reaches_a_step_by_its_type :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-params-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"params")
+    if folder=="" {return}
     game_source:=`package game
 import "base:runtime"
 import "mirai:core"

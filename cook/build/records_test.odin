@@ -4,12 +4,12 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
-records_fixture :: proc(t:^testing.T,game_source:string,editor_source:="") -> (output:Generated,folder:string,ok:bool) {
-    error:os.Error
-    folder,error=os.make_directory_temp("","mirai-records-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
+records_fixture :: proc(t:^testing.T,game_source:string,editor_source:="") -> (output:Generated,ok:bool) {
+    folder:=base.test_folder(t,"records")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     folders:=[]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator),project.path(game,"editor",allocator=context.temp_allocator)}
@@ -26,7 +26,7 @@ Spin :: struct {speed:f32}
     testing.expect(t,os.write_entire_file(project.path(folders[1],"game.odin",allocator=context.temp_allocator),game_source)==nil)
     if editor_source!="" {testing.expect(t,os.write_entire_file(project.path(folders[2],"editor.odin",allocator=context.temp_allocator),editor_source)==nil)}
     p:=project.Project{root=game,engine_root=engine}
-    return world_generate(&p,context.temp_allocator),folder,true
+    return world_generate(&p,context.temp_allocator),true
 }
 
 // A struct marked @(record) is in World_Info.records of both worlds, with its
@@ -49,9 +49,8 @@ Holder :: struct {weapon:core.Record(Weapon)}
 @(step="fixed")
 fire :: proc(weapons:core.Records(Weapon),holders:core.Read(Holder)) {}
 `
-    output,folder,ok:=records_fixture(t,source)
+    output,ok:=records_fixture(t,source)
     if !ok {return}
-    defer os.remove_all(folder)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     for text in ([]string{output.game_world,output.editor_world}) {
         testing.expectf(t,strings.contains(text,`records[0]={"Weapon","game",typeid_of(p_game.Weapon),type_info_of(p_game.Weapon),typeid_of(p_core.Record(p_game.Weapon)),record_default_game_weapon,"A weapon a player can hold",record_fields_game_weapon[:],true}`),"%s",text)
@@ -78,9 +77,8 @@ records_that_are_not_plain_game_data_are_errors :: proc(t:^testing.T) {
         {"package game\nimport \"mirai:core\"\n@(component)\nHeld :: struct {value:f32}\n@(step=\"fixed\")\nread :: proc(rows:core.Records(Held)) {}\n","","the parameter rows of read is core.Records(Held)"},
     }
     for c in cases {
-        output,folder,ok:=records_fixture(t,c.source,c.editor)
+        output,ok:=records_fixture(t,c.source,c.editor)
         if !ok {return}
-        defer os.remove_all(folder)
         found:=false
         for message in output.errors {found||=strings.contains(message,c.wanted)}
         testing.expectf(t,found,"%q not in %v",c.wanted,output.errors)
