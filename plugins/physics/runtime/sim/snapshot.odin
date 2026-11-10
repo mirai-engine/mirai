@@ -2,172 +2,134 @@ package mirai_physics
 
 import "core:mem"
 import "core:hash/xxhash"
+import "mirai:std/base"
 import "mirai:std/spatial"
 
-@(private) SNAPSHOT_MAGIC :: u32(0x5048594d)
-@(private) SNAPSHOT_VERSION :: u32(14)
-@(private) SNAPSHOT_BLOCKS :: 12
+// An array of the state: all its slots, the size of one, the slots in use and the pool it is of.
+@(private) State_Array :: struct {bytes:[]byte,size:int,high:i32,pool:Pool}
 
+// The arrays of the state, which world_state_copy copies and world_hash hashes up to their counts.
 @(private)
-Snapshot_Header :: struct {
-    magic,version:u32,
-    size:u64,
-    payload:u64, // hash of the header, with this field zero, and the bytes after it
-    element_sizes:[SNAPSHOT_BLOCKS]u32,
-    state:World_State,
-}
-
-@(private) SNAPSHOT_ELEMENT_SIZES :: [SNAPSHOT_BLOCKS]u32{
-    size_of(Body),size_of(Shape),size_of(Contact),size_of(Joint),size_of(Manifold_Block),size_of(Character),
-    size_of(Joint_Axes),size_of(Island),size_of(Fluid),size_of(Breakable),size_of(Piece),size_of(Bond),
-}
-
-// The arrays a snapshot holds, each up to the count that `s` gives it.
-@(private)
-snapshot_blocks :: proc(w:^World,s:^World_State) -> [SNAPSHOT_BLOCKS][]byte {
+state_arrays :: proc(w:^World) -> [12]State_Array {
     return {
-        mem.slice_to_bytes(w.bodies[:s.body_high]),mem.slice_to_bytes(w.shapes[:s.shape_high]),
-        mem.slice_to_bytes(w.contacts[:s.contact_high]),mem.slice_to_bytes(w.joints[:s.joint_high]),
-        mem.slice_to_bytes(w.blocks[:s.block_high]),mem.slice_to_bytes(w.characters[:s.character_high]),
-        mem.slice_to_bytes(w.joint_axes[:s.joint_high]),mem.slice_to_bytes(w.islands[:s.island_high]),
-        mem.slice_to_bytes(w.fluids[:s.fluid_high]),mem.slice_to_bytes(w.breakables[:s.breakable_high]),
-        mem.slice_to_bytes(w.pieces[:s.piece_high]),mem.slice_to_bytes(w.bonds[:s.bond_high]),
+        {mem.slice_to_bytes(w.bodies),size_of(Body),w.body_high,.Bodies},
+        {mem.slice_to_bytes(w.shapes),size_of(Shape),w.shape_high,.Shapes},
+        {mem.slice_to_bytes(w.contacts),size_of(Contact),w.contact_high,.Contacts},
+        {mem.slice_to_bytes(w.joints),size_of(Joint),w.joint_high,.Joints},
+        {mem.slice_to_bytes(w.blocks),size_of(Manifold_Block),w.block_high,.Blocks},
+        {mem.slice_to_bytes(w.characters),size_of(Character),w.character_high,.Characters},
+        {mem.slice_to_bytes(w.joint_axes),size_of(Joint_Axes),w.joint_high,.Joints},
+        {mem.slice_to_bytes(w.islands),size_of(Island),w.island_high,.Islands},
+        {mem.slice_to_bytes(w.fluids),size_of(Fluid),w.fluid_high,.Fluids},
+        {mem.slice_to_bytes(w.breakables),size_of(Breakable),w.breakable_high,.Breakables},
+        {mem.slice_to_bytes(w.pieces),size_of(Piece),w.piece_high,.Pieces},
+        {mem.slice_to_bytes(w.bonds),size_of(Bond),w.bond_high,.Bonds},
     }
 }
 
-@(private)
-snapshot_counts_fit :: proc(w:^World,s:^World_State) -> bool {
-    fits :: proc(count:i32,capacity:int) -> bool {return count>=0 && int(count)<=capacity}
-    return fits(s.body_high,len(w.bodies)) && fits(s.shape_high,len(w.shapes)) && fits(s.contact_high,len(w.contacts)) &&
-        fits(s.joint_high,len(w.joints)) && fits(s.joint_high,len(w.joint_axes)) && fits(s.block_high,len(w.blocks)) && fits(s.character_high,len(w.characters)) &&
-        fits(s.island_high,len(w.islands)) && fits(s.fluid_high,len(w.fluids)) &&
-        fits(s.breakable_high,len(w.breakables)) && fits(s.piece_high,len(w.pieces)) && fits(s.bond_high,len(w.bonds))
-}
-
-// Bytes that world_snapshot writes for the current state.
-world_snapshot_size :: proc(w:^World) -> int {
-    size:=size_of(Snapshot_Header)
-    for block in snapshot_blocks(w,&w.state) {size+=len(block)}
-    for &tree in w.trees {size+=spatial.dynamic_tree_snapshot_size(&tree)}
-    return size+len(w.hulls)*size_of(u32)
-}
-
-// Bytes that a snapshot of this world can ever need: the size of a buffer that always fits.
-world_snapshot_capacity :: proc(w:^World) -> int {
-    size:=size_of(Snapshot_Header)
-    size+=len(w.bodies)*size_of(Body)+len(w.shapes)*size_of(Shape)+len(w.contacts)*size_of(Contact)
-    size+=len(w.joints)*size_of(Joint)+len(w.blocks)*size_of(Manifold_Block)+len(w.characters)*size_of(Character)
-    size+=len(w.joint_axes)*size_of(Joint_Axes)+len(w.islands)*size_of(Island)+len(w.fluids)*size_of(Fluid)
-    // The pools of the breakables may not be made yet.
-    size+=w.desc.breakable_capacity*size_of(Breakable)+w.desc.piece_capacity*size_of(Piece)+w.desc.bond_capacity*size_of(Bond)
-    for &tree in w.trees {size+=size_of(spatial.Tree_Node)*len(tree.nodes)+64}
-    return size+len(w.hulls)*size_of(u32)
-}
-
-// Copies the simulation state into `buffer` by blocks. The geometry registered with hull_create and
-// similar is not part of it: only the revision of each hull, which a restore must find again. Returns the
-// bytes written, or false if the buffer is too small.
-world_snapshot :: proc(w:^World,buffer:[]byte) -> (written:int,ok:bool) {
-    size:=world_snapshot_size(w)
-    if len(buffer)<size {return 0,false}
-    cursor:=size_of(Snapshot_Header)
-    for block in snapshot_blocks(w,&w.state) {
-        mem.copy_non_overlapping(raw_data(buffer[cursor:]),raw_data(block),len(block))
-        cursor+=len(block)
+// Makes dst what src is: stepped alike, both repeat the same steps bit for bit. dst is a kept world
+// (world_kept_init) or holds the geometry src names. Between two worlds of one timeline, a world kept for
+// another that only takes its copies and gives them back, only the chunks written since they were last
+// alike are copied; otherwise all of them. Fails, leaving dst unchanged, for a world never made, when the
+// pools of dst do not hold what src uses, or when dst lacks the geometry a shape to copy names or has
+// rebuilt its hull since. Returns the bytes of the pools and trees written.
+world_state_copy :: proc(dst,src:^World) -> (written:int,ok:bool) {
+    if dst==src {return 0,true}
+    if dst.allocator.procedure==nil || src.allocator.procedure==nil {return}
+    if src.breaking.made && !dst.kept && !breakables_make(dst) {return}
+    if !world_state_fits(dst,src) {return}
+    if src.fluid_count>0 && !dst.kept && !fluid_scratch_make(dst) {return}
+    whole:=dst.lineage!=src.lineage
+    into,from:=dst.stamps[.Shapes],src.stamps[.Shapes]
+    shape_chunks:=base.chunks_of(int(max(src.shape_high,dst.shape_high)))
+    for k in 0..<shape_chunks {
+        if !whole && into[k]==base.chunk_stamp_at(from,k) {continue}
+        for &shape in src.shapes[min(k*base.CHUNK,int(src.shape_high)):min((k+1)*base.CHUNK,int(src.shape_high))] {
+            if shape.generation&1==0 {continue}
+            // A kept world needs no geometry, only the revision of the hulls its shapes were made with.
+            if dst.kept {
+                if shape.type==.Hull {dst.hulls[shape.resource].revision=src.hulls[shape.resource].revision}
+                continue
+            }
+            if !shape_geometry_known(dst,&shape) {return}
+            if shape.type==.Hull && src.hulls[shape.resource].revision!=dst.hulls[shape.resource].revision {return}
+        }
     }
-    for &tree in w.trees {
-        count:=spatial.dynamic_tree_snapshot(&tree,buffer[cursor:]) or_return
-        cursor+=count
+    // What the geometry of dst is used by follows the shapes the copy replaces.
+    for k in 0..<shape_chunks {
+        if !whole && into[k]==base.chunk_stamp_at(from,k) {continue}
+        for &shape in dst.shapes[min(k*base.CHUNK,int(dst.shape_high)):min((k+1)*base.CHUNK,int(dst.shape_high))] {
+            if shape.generation&1!=0 {shape_refs_add(dst,&shape,-1)}
+        }
+        for &shape in src.shapes[min(k*base.CHUNK,int(src.shape_high)):min((k+1)*base.CHUNK,int(src.shape_high))] {
+            if shape.generation&1!=0 {shape_refs_add(dst,&shape,1)}
+        }
     }
-    for &slot in w.hulls {
-        mem.copy_non_overlapping(raw_data(buffer[cursor:]),&slot.revision,size_of(u32))
-        cursor+=size_of(u32)
+    for &tree,i in dst.trees {
+        nodes,_:=spatial.dynamic_tree_copy(&tree,&src.trees[i],whole)
+        written+=nodes
     }
-    header:=Snapshot_Header{
-        magic=SNAPSHOT_MAGIC,version=SNAPSHOT_VERSION,size=u64(size),element_sizes=SNAPSHOT_ELEMENT_SIZES,state=w.state,
+    copies:[Pool][3]base.Chunk_Copy
+    counts,slots:[Pool]int
+    to:=state_arrays(dst)
+    for a,i in state_arrays(src) {
+        copies[a.pool][counts[a.pool]]={to[i].bytes,a.bytes,a.size}
+        counts[a.pool]+=1
+        slots[a.pool]=max(slots[a.pool],int(a.high),int(to[i].high))
     }
-    header.payload=snapshot_payload_hash(header,buffer[size_of(Snapshot_Header):size])
-    mem.copy_non_overlapping(raw_data(buffer),&header,size_of(Snapshot_Header))
-    return cursor,true
-}
-
-// Returns the world to a state written by world_snapshot on a world of the same capacities. Stepping
-// from it repeats the original steps exactly. Events and the manifolds of the last step are cleared.
-// Fails, leaving the world unchanged, for a buffer that is not a whole snapshot of a world like this one:
-// cut short or changed (its bytes hash to another value), of other capacities or layout, naming hulls,
-// meshes or heightfields this world does not have, or naming a hull that this world has since rebuilt.
-world_restore :: proc(w:^World,buffer:[]byte) -> bool {
-    if len(buffer)<size_of(Snapshot_Header) {return false}
-    header:Snapshot_Header
-    mem.copy_non_overlapping(&header,raw_data(buffer),size_of(Snapshot_Header))
-    if header.magic!=SNAPSHOT_MAGIC || header.version!=SNAPSHOT_VERSION || header.size<size_of(Snapshot_Header) || u64(len(buffer))<header.size {return false}
-    if snapshot_payload_hash(header,buffer[size_of(Snapshot_Header):header.size])!=header.payload {return false}
-    if header.element_sizes!=SNAPSHOT_ELEMENT_SIZES {return false}
-    if header.state.breakable_high>0 && !breakables_make(w) {return false}
-    if !snapshot_counts_fit(w,&header.state) {return false}
-    restored:=snapshot_blocks(w,&header.state)
-    cursor:=size_of(Snapshot_Header)
-    for block in restored {cursor+=len(block)}
-    if cursor>int(header.size) {return false}
-    trees:=cursor
-    for &tree in w.trees {
-        count:=spatial.dynamic_tree_snapshot_check(&tree,buffer[cursor:header.size]) or_return
-        cursor+=count
+    // The hull and the origin of a piece slot go with it, but a world put back keeps its own: they are
+    // geometry, newer than those of its copy, that the pieces it repeats build over again.
+    pieces:=dst.kept || whole
+    if pieces {
+        copies[.Pieces][1]={mem.slice_to_bytes(dst.piece_hulls),mem.slice_to_bytes(src.piece_hulls),size_of(Hull_Handle)}
+        copies[.Pieces][2]={mem.slice_to_bytes(dst.piece_origins),mem.slice_to_bytes(src.piece_origins),size_of(Piece_Origin)}
+        counts[.Pieces]=3
+        slots[.Pieces]=max(slots[.Pieces],int(src.piece_hull_high),int(dst.piece_hull_high))
+        if dst.breaking.made {dst.piece_hull_high=src.piece_hull_high}
     }
-    revisions:=cursor
-    cursor+=len(w.hulls)*size_of(u32)
-    if cursor!=int(header.size) || !snapshot_geometry_known(w,buffer,revisions,&header.state) {return false}
-    if header.state.fluid_count>0 && !fluid_scratch_make(w) {return false}
-    cursor=trees
-    for &tree in w.trees {
-        count,_:=spatial.dynamic_tree_restore(&tree,buffer[cursor:])
-        cursor+=count
-    }
-    // Slots used after the snapshot was taken go back to never used: generations restart as in the original run.
-    current:=snapshot_blocks(w,&w.state)
-    cursor=size_of(Snapshot_Header)
-    for block,i in restored {
-        if len(current[i])>len(block) {mem.zero_slice(current[i][len(block):])}
-        if len(block)>0 {mem.copy_non_overlapping(raw_data(block),raw_data(buffer[cursor:]),len(block))}
-        cursor+=len(block)
-    }
-    w.state=header.state
-    world_restored(w)
-    return true
-}
-
-// Makes dst, a world of the same capacities that holds the geometry src
-// names, what world_restore makes of a snapshot of src, without the bytes in
-// between. Fails, leaving dst unchanged, as world_restore does.
-world_state_copy :: proc(dst,src:^World) -> bool {
-    if dst==src {return true}
-    if src.breaking.made && !dst.kept && !breakables_make(dst) {return false}
-    if !world_state_fits(dst,src) {return false}
-    if src.fluid_count>0 && !dst.kept && !fluid_scratch_make(dst) {return false}
-    for &shape in src.shapes[:src.shape_high] {
-        if !shape_geometry_known(dst,&shape) {return false}
-        if shape.generation&1!=0 && shape.type==.Hull && src.hulls[shape.resource].revision!=dst.hulls[shape.resource].revision {return false}
-    }
-    for &tree,i in src.trees {
-        to:=&dst.trees[i]
-        copy(to.nodes[:tree.node_high],tree.nodes[:tree.node_high])
-        to.root,to.free_list,to.node_high,to.proxy_count=tree.root,tree.free_list,tree.node_high,tree.proxy_count
-    }
-    current:=snapshot_blocks(dst,&dst.state)
-    restored:=snapshot_blocks(dst,&src.state)
-    for block,i in snapshot_blocks(src,&src.state) {
-        if len(current[i])>len(block) {mem.zero_slice(current[i][len(block):])}
-        copy(restored[i],block)
-    }
-    if dst.breaking.made {breakables_geometry_copy(dst,src)}
+    for pool in Pool {written+=base.chunks_copy(copies[pool][:counts[pool]],dst.stamps[pool],src.stamps[pool],slots[pool],whole)}
     dst.state=src.state
-    world_restored(dst)
-    return true
+    revision:=max(dst.revision,src.revision)+1
+    dst.revision,src.revision=revision,revision
+    // Its next copy takes them.
+    if !pieces {
+        for k in 0..<base.chunks_of(int(dst.piece_hull_high)) {stamp(dst,.Pieces,i32(k*base.CHUNK))}
+    }
+    if dst.kept {
+        dst.lineage=src.lineage
+    } else if whole {
+        dst.lineage=lineage_new(dst)
+        dst.source=src.kept?src.lineage:0
+    }
+    dst.events.counts={}
+    if written>0 {static_log_restart(dst)}
+    dst.step.woken_count,dst.step.awake_count,dst.step.active_count,dst.step.character_count=0,0,0,0
+    return written,true
+}
+
+// next took the place of previous, as a world put back from a copy kept for previous takes it when they
+// trade places: if next holds what that copy held and has not stepped since, it goes on with the
+// timeline of previous, so the copies kept for it still take only what changed, and previous leaves it.
+world_succeed :: proc(next,previous:^World) {
+    if next.source==0 || next.source!=previous.lineage {return}
+    revision:=max(next.revision,previous.revision)+1
+    next.revision,previous.revision=revision,revision
+    for &tree,i in next.trees {
+        other:=&previous.trees[i]
+        tree.revision=max(tree.revision,other.revision)+1
+        other.revision=tree.revision
+    }
+    next.lineage,next.source=previous.lineage,0
+    previous.lineage=lineage_new(previous)
 }
 
 // Whether the pools of dst hold the state of src.
 world_state_fits :: proc(dst,src:^World) -> bool {
-    if !snapshot_counts_fit(dst,&src.state) || int(src.piece_hull_high)>len(dst.piece_hulls) {return false}
+    to:=state_arrays(dst)
+    for a,i in state_arrays(src) {
+        if int(a.high)>len(to[i].bytes)/a.size {return false}
+    }
+    if int(src.piece_hull_high)>len(dst.piece_hulls) {return false}
     for &tree,i in src.trees {
         if int(tree.node_high)>len(dst.trees[i].nodes) {return false}
     }
@@ -205,52 +167,6 @@ world_kept_init :: proc(w,src:^World,allocator:mem.Allocator) -> bool {
     return true
 }
 
-// What a world whose state was put back recounts: the shapes of its geometry, and nothing of the last step.
-@(private)
-world_restored :: proc(w:^World) {
-    for &slot in w.hulls {slot.refs=0}
-    for &slot in w.meshes {slot.refs=0}
-    for &slot in w.heightfields {slot.refs=0}
-    for &shape in w.shapes[:w.shape_high] {
-        if shape.generation&1!=0 {shape_refs_add(w,&shape,1)}
-    }
-    w.events.counts={}
-    static_log_restart(w)
-    w.step.woken_count=0
-    w.step.awake_count=0
-    w.step.active_count=0
-    w.step.character_count=0
-}
-
-@(private)
-snapshot_payload_hash :: proc(header:Snapshot_Header,body:[]byte) -> u64 {
-    h:=header
-    h.payload=0
-    return xxhash.XXH3_64_with_seed(body,xxhash.XXH3_64_default(mem.ptr_to_bytes(&h)))
-}
-
-// Every live shape of the snapshot names geometry registered in this world, its hull as it was then.
-@(private)
-snapshot_geometry_known :: proc(w:^World,buffer:[]byte,revisions:int,s:^World_State) -> bool #no_bounds_check {
-    blocks:=snapshot_blocks(w,s)
-    offsets:[SNAPSHOT_BLOCKS]int
-    cursor:=size_of(Snapshot_Header)
-    for block,i in blocks {
-        offsets[i]=cursor
-        cursor+=len(block)
-    }
-    for i in 0..<int(s.shape_high) {
-        shape:Shape
-        mem.copy_non_overlapping(&shape,raw_data(buffer[offsets[1]+i*size_of(Shape):]),size_of(Shape))
-        if !shape_geometry_known(w,&shape) {return false}
-        if shape.generation&1==0 || shape.type!=.Hull {continue}
-        revision:u32
-        mem.copy_non_overlapping(&revision,raw_data(buffer[revisions+int(shape.resource)*size_of(u32):]),size_of(u32))
-        if revision!=w.hulls[shape.resource].revision {return false}
-    }
-    return true
-}
-
 // A shape that is not live, or whose geometry is registered in w.
 @(private)
 shape_geometry_known :: proc "contextless" (w:^World,shape:^Shape) -> bool {
@@ -263,13 +179,13 @@ shape_geometry_known :: proc "contextless" (w:^World,shape:^Shape) -> bool {
     return true
 }
 
-// Hash of everything a snapshot holds. Two worlds that were built and stepped alike have equal hashes.
+// Hash of the state. Two worlds that were built and stepped alike have equal hashes.
 world_hash :: proc(w:^World) -> u64 {
     state:=w.state
     hash:=xxhash.XXH3_64_with_seed(mem.ptr_to_bytes(&state),0)
-    for block in snapshot_blocks(w,&w.state) {
-        if len(block)==0 {continue}
-        hash=xxhash.XXH3_64_with_seed(block,hash)
+    for a in state_arrays(w) {
+        if a.high==0 {continue}
+        hash=xxhash.XXH3_64_with_seed(a.bytes[:int(a.high)*a.size],hash)
     }
     for &tree in w.trees {
         head:=[4]i32{tree.root,tree.free_list,tree.node_high,tree.proxy_count}

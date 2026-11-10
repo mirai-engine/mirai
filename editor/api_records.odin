@@ -48,7 +48,6 @@ Records_Api_Context :: struct {
     schema:^serial.Schema,
     type:serial.Type_Index,  // of the rows
     name:string,             // "library.Name" of the rows
-    text:serial.Type_Index,  // of core.Text; TYPE_NONE when the schema has none
     refs:[]Records_Api_Ref_Type,
     tables:[]Records_Api_Rows,
     edit:^records.Edit,      // the table that changes: its rows stand for those of its file in tables
@@ -59,7 +58,6 @@ Records_Api_Context :: struct {
 Records_Api_Leaf_Kind :: enum u8 {
     Value,  // a number, bool, enum, entity or asset, by its path
     Bytes,  // a text field ([N]u8 mirai:"text")
-    Text,   // a core.Text
     Ref,    // a core.Record
     Member, // of a bit set, as a bool
 }
@@ -75,13 +73,7 @@ Records_Api_Leaf :: struct {
 
 Records_Api_Column :: struct {
     title:string,
-    leaf:int,        // -1: the name of the row
-    language:string, // of a Text column; "": its source text
-}
-
-// A text of a core.Text field the params give.
-Records_Api_Text :: struct {
-    path,language,text:string,
+    leaf:int, // -1: the name of the row
 }
 
 Records_Api_Rejected :: struct {
@@ -128,8 +120,7 @@ Api_Records_Table :: struct {
 Api_Records_Row :: struct {
     id:u64 `mirai:"label=What a core.Record keeps"`,
     name:string,
-    values:serial.Json `mirai:"label=The row as records.set takes it; a core.Text is its id and a core.Record its table and row"`,
-    texts:serial.Json `mirai:"optional,label=By path of each core.Text field with a text: its text by language code; the key \"\" is the language the game is written in"`,
+    values:serial.Json `mirai:"label=The row as records.set takes it; a core.Text is the key of the texts of the game it shows (texts.set writes what it says) and a core.Record its table and row"`,
 }
 @(private)
 Api_Records_Removed :: struct {
@@ -160,6 +151,44 @@ Api_Records_Export :: struct {
     columns:int,
 }
 
+Api_Records_Create_Params :: struct {
+    path:string `mirai:"label=Where the new table goes, under the assets folder; .records is added when missing"`,
+    type:string `mirai:"label=The type of its rows as library.Name, as records.types lists them"`,
+}
+Api_Records_Inspect_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    rows:[]string `mirai:"optional,label=Only these rows, by name"`,
+}
+Api_Records_Set_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
+    values:serial.Json `mirai:"optional,label=Fields of the row, as records.inspect shows them, or paths of a part of one ('stats.speed', 'windows[2].to'); each is set whole: an object or a list leaves what it does not give at the default of the type, and what no key names keeps its value. A core.Record field also takes the name of a row ('sword') or its table and name ('data/weapons/sword'); a core.Text field is the key of the texts of the game it shows, as {'key':'item.sword'}: texts.set writes what the key says"`,
+    name:string `mirai:"optional,label=A new name for the row"`,
+}
+Api_Records_Add_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    name:string `mirai:"label=The name of the new row: a word of ASCII letters, digits and _, unique in the table"`,
+    values:serial.Json `mirai:"optional,label=Fields of the row, as records.inspect shows them, or paths of a part of one ('stats.speed', 'windows[2].to'); each is set whole: an object or a list leaves what it does not give at the default of the type, and what no key names keeps its value. A core.Record field also takes the name of a row ('sword') or its table and name ('data/weapons/sword'); a core.Text field is the key of the texts of the game it shows, as {'key':'item.sword'}: texts.set writes what the key says"`,
+    after:string `mirai:"optional,label=The row it goes after; without it, at the end"`,
+}
+Api_Records_Remove_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    rows:[]string `mirai:"label=The names of the rows to remove"`,
+}
+Api_Records_Move_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
+    after:string `mirai:"label=The row it goes right after; empty: it goes first"`,
+}
+Api_Records_Import_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    file:string `mirai:"label=A CSV file (UTF-8, comma separated, its first row the columns as records.export writes them): its path from the root of the project, or absolute"`,
+}
+Api_Records_Export_Params :: struct {
+    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
+    file:string `mirai:"label=The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"`,
+}
+
 // ---------------------------------------------------------------- the shape of a row
 
 records_api_ref_record :: proc(c:^Records_Api_Context,type:serial.Type_Index) -> int {
@@ -182,10 +211,6 @@ records_api_leaves :: proc(c:^Records_Api_Context,allocator:=context.temp_alloca
     add :: proc(c:^Records_Api_Context,type:serial.Type_Index,path:string,offset:int,text:bool,out:^[dynamic]Records_Api_Leaf,depth:int) {
         s:=c.schema
         if depth>16 || !serial.type_valid(s,type) {return}
-        if c.text!=serial.TYPE_NONE && type==c.text {
-            append(out,Records_Api_Leaf{path=path,kind=.Text,type=type,offset=offset,record=-1})
-            return
-        }
         if record:=records_api_ref_record(c,type);record>=0 {
             append(out,Records_Api_Leaf{path=path,kind=.Ref,type=type,offset=offset,record=record})
             return
@@ -244,28 +269,6 @@ records_api_leaf_find :: proc(leaves:[]Records_Api_Leaf,path:string) -> int {
         if leaf.path==path {return i}
     }
     return -1
-}
-
-// The paths of the core.Text fields, for a message.
-records_api_text_paths :: proc(leaves:[]Records_Api_Leaf) -> string {
-    paths:=make([dynamic]string,context.temp_allocator)
-    for leaf in leaves {
-        if leaf.kind==.Text {append(&paths,leaf.path)}
-    }
-    if len(paths)==0 {return "it has none"}
-    return fmt.tprintf("they are %s",strings.join(paths[:],", ",context.temp_allocator))
-}
-
-// A language code of a .records: letters, digits, - and _; "" is the source.
-records_api_language_valid :: proc(code:string) -> bool {
-    if len(code)>=asset.RECORDS_LANGUAGE {return false}
-    for c in transmute([]u8)code {
-        switch c {
-        case 'a'..='z','A'..='Z','0'..='9','-','_':
-        case: return false
-        }
-    }
-    return true
 }
 
 // ---------------------------------------------------------------- references and assets
@@ -390,14 +393,11 @@ records_api_bool :: proc(text:string) -> (value,ok:bool) {
     return
 }
 
-// Puts the text of a cell into the value at a leaf of a row. A core.Text is
-// not a value of the row: its texts go through records_text_set.
+// Puts the text of a cell into the value at a leaf of a row.
 records_api_cell_read :: proc(c:^Records_Api_Context,leaf:^Records_Api_Leaf,row:[]u8,cell:string) -> (message:string) {
     s:=c.schema
     t:=s.types[leaf.type]
     switch leaf.kind {
-    case .Text:
-        return "a core.Text takes its texts by language"
     case .Bytes:
         if len(cell)>int(t.size) {return fmt.tprintf("the text is longer than its %d bytes",t.size)}
         part:=row[leaf.offset:][:t.size]
@@ -471,7 +471,6 @@ records_api_cell_text :: proc(c:^Records_Api_Context,leaf:^Records_Api_Leaf,row:
     s:=c.schema
     t:=s.types[leaf.type]
     switch leaf.kind {
-    case .Text: return ""
     case .Bytes: return serial.text_field(row[leaf.offset:][:t.size])
     case .Ref:
         ref:Records_Api_Ref
@@ -509,18 +508,10 @@ records_api_header :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf,head
             if named {return nil,"two columns are name: keep one"}
             named=true
         } else {
-            path,language:=title,""
-            at:=strings.last_index_byte(title,'@')
-            if at>=0 {path,language=title[:at],title[at+1:]}
-            column.leaf=records_api_leaf_find(leaves,path)
+            column.leaf=records_api_leaf_find(leaves,title)
             if column.leaf<0 {return nil,fmt.tprintf("column %d %q is not a field of %s; the columns are %s",i+1,title,c.name,records_api_columns_text(leaves))}
-            if at>=0 {
-                if leaves[column.leaf].kind!=.Text {return nil,fmt.tprintf("column %d %q: %s is not a core.Text, which has no translations; write it as %s",i+1,title,path,path)}
-                if language=="" || !records_api_language_valid(language) {return nil,fmt.tprintf("column %d %q: %q is not the code of a language: letters, digits, - and _, shorter than %d bytes, as es or pt-BR; %s alone is its source text",i+1,title,language,asset.RECORDS_LANGUAGE,path)}
-                column.language=language
-            }
             for earlier,j in out[:i] {
-                if earlier.leaf==column.leaf && earlier.language==column.language {return nil,fmt.tprintf("columns %d and %d are both %s: keep one",j+1,i+1,title)}
+                if earlier.leaf==column.leaf {return nil,fmt.tprintf("columns %d and %d are both %s: keep one",j+1,i+1,title)}
             }
         }
         out[i]=column
@@ -535,18 +526,15 @@ records_api_columns_text :: proc(leaves:[]Records_Api_Leaf) -> string {
     strings.write_string(&b,"name")
     for leaf in leaves {
         fmt.sbprintf(&b,", %s",leaf.path)
-        if leaf.kind==.Text {fmt.sbprintf(&b,", %s@<language>",leaf.path)}
     }
     return strings.to_string(b)
 }
 
-// Puts the cells of a record of a CSV but its texts into a row; an empty
-// cell leaves its value.
+// Puts the cells of a record of a CSV into a row; an empty cell leaves its value.
 records_api_row_cells :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf,columns:[]Records_Api_Column,record:[]string,row:[]u8) -> (message:string) {
     for column,i in columns {
         if column.leaf<0 || i>=len(record) || record[i]=="" {continue}
         leaf:=&leaves[column.leaf]
-        if leaf.kind==.Text {continue}
         if message=records_api_cell_read(c,leaf,row,record[i]);message!="" {return fmt.tprintf("column %s: %s",column.title,message)}
     }
     return ""
@@ -591,84 +579,36 @@ records_api_import_rows :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Recor
             copy(records.row_bytes(e,row),scratch)
             updated+=1
         }
-        for column,i in columns {
-            if column.leaf<0 || i>=len(record) || record[i]=="" || leaves[column.leaf].kind!=.Text {continue}
-            records.text_set(e,&s.id_state,row,leaves[column.leaf].offset,column.language,record[i])
-        }
     }
     return updated,added,out[:]
 }
 
-records_api_csv_cell :: proc(b:^strings.Builder,cell:string) {
-    if !strings.contains_any(cell,",\"\r\n") {
-        strings.write_string(b,cell)
-        return
-    }
-    strings.write_byte(b,'"')
-    for i in 0..<len(cell) {
-        if cell[i]=='"' {strings.write_byte(b,'"')}
-        strings.write_byte(b,cell[i])
-    }
-    strings.write_byte(b,'"')
-}
-
-// The languages of the translations of a table, in order.
-records_api_languages :: proc(e:^records.Edit) -> []string {
-    out:=make([dynamic]string,context.temp_allocator)
-    for &entry in e.texts {
-        language:=serial.text_field(entry.language[:])
-        if language!="" && !slice.contains(out[:],language) {append(&out,language)}
-    }
-    slice.sort(out[:])
-    return out[:]
-}
-
-// The CSV of every row of c.edit that records_api_import_rows reads: name,
-// every value and, for each core.Text, its source text and a column per
-// language it has.
+// The CSV of every row of c.edit that records_api_import_rows reads: name
+// and every value.
 records_api_csv :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf) -> (text:string,columns:int) {
     e:=c.edit
-    languages:=records_api_languages(e)
     b:=strings.builder_make(context.temp_allocator)
     strings.write_string(&b,"name")
     columns=1
     for leaf in leaves {
         strings.write_byte(&b,',')
-        records_api_csv_cell(&b,leaf.path)
+        importer.csv_cell(&b,leaf.path)
         columns+=1
-        if leaf.kind!=.Text {continue}
-        for language in languages {
-            strings.write_byte(&b,',')
-            records_api_csv_cell(&b,fmt.tprintf("%s@%s",leaf.path,language))
-            columns+=1
-        }
     }
     strings.write_byte(&b,'\n')
     for row in 0..<records.row_count(e) {
         bytes:=records.row_bytes(e,row)
-        records_api_csv_cell(&b,records.row_name(e,row))
+        importer.csv_cell(&b,records.row_name(e,row))
         for &leaf in leaves {
             strings.write_byte(&b,',')
-            if leaf.kind!=.Text {
-                records_api_csv_cell(&b,records_api_cell_text(c,&leaf,bytes))
-                continue
-            }
-            id:=(cast(^core.Text)&bytes[leaf.offset]).id
-            source,_:=records.text_get(e,id,"")
-            if id!=0 {records_api_csv_cell(&b,source)}
-            for language in languages {
-                strings.write_byte(&b,',')
-                if id==0 {continue}
-                translated,_:=records.text_get(e,id,language)
-                records_api_csv_cell(&b,translated)
-            }
+            importer.csv_cell(&b,records_api_cell_text(c,&leaf,bytes))
         }
         strings.write_byte(&b,'\n')
     }
     return strings.to_string(b),columns
 }
 
-// ---------------------------------------------------------------- values and texts by JSON
+// ---------------------------------------------------------------- values by JSON
 
 records_api_json_error :: proc(r:^serial.Text_Reader,what:string) -> string {
     offset:=r.error.offset if r.error.code!=.None else r.offset
@@ -677,19 +617,11 @@ records_api_json_error :: proc(r:^serial.Text_Reader,what:string) -> string {
 }
 
 // Copies the JSON of a value of type into out, with the core.Record fields
-// given as a string turned into their serial form, and the core.Text fields
-// given as a string taken out into texts as their source text.
-records_api_rewrite :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,type:serial.Type_Index,path:string,out:^serial.Writer,texts:^[dynamic]Records_Api_Text) -> (message:string) {
+// given as a string turned into their serial form.
+records_api_rewrite :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,type:serial.Type_Index,path:string,out:^serial.Writer) -> (message:string) {
     s:=c.schema
     peek:=serial.text_peek(r)
     if peek=='"' && serial.type_valid(s,type) {
-        if c.text!=serial.TYPE_NONE && type==c.text {
-            text,read:=serial.text_string(r)
-            if !read {return records_api_json_error(r,"values")}
-            append(texts,Records_Api_Text{path=path,text=strings.clone(text,context.temp_allocator)})
-            serial.text_write_raw(out,"{}")
-            return ""
-        }
         if record:=records_api_ref_record(c,type);record>=0 {
             text,read:=serial.text_string(r)
             if !read {return records_api_json_error(r,"values")}
@@ -721,7 +653,7 @@ records_api_rewrite :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,type:se
             if field==nil {
                 if message=records_api_copy(r,out);message!="" {return}
             } else {
-                if message=records_api_rewrite(c,r,field.type,path=="" ? key : fmt.tprintf("%s.%s",path,key),out,texts);message!="" {return}
+                if message=records_api_rewrite(c,r,field.type,path=="" ? key : fmt.tprintf("%s.%s",path,key),out);message!="" {return}
             }
             if serial.text_accept(r,',') {
                 serial.write_u8(out,',')
@@ -739,7 +671,7 @@ records_api_rewrite :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,type:se
             return ""
         }
         for i:=0;;i+=1 {
-            if message=records_api_rewrite(c,r,s.types[type].elem,fmt.tprintf("%s[%d]",path,i),out,texts);message!="" {return}
+            if message=records_api_rewrite(c,r,s.types[type].elem,fmt.tprintf("%s[%d]",path,i),out);message!="" {return}
             if serial.text_accept(r,',') {
                 serial.write_u8(out,',')
                 continue
@@ -766,8 +698,8 @@ records_api_copy :: proc(r:^serial.Text_Reader,out:^serial.Writer) -> (message:s
 // that part whole: an object or a list leaves what it does not give at the
 // default of the row type (zeros where the type has none), while the fields
 // and parts no key names keep what they have. core.Record fields may be named
-// by their rows and core.Text fields by their source text, which go to texts.
-records_api_values_put :: proc(c:^Records_Api_Context,row:[]u8,values:string,texts:^[dynamic]Records_Api_Text) -> (message:string) {
+// by their rows.
+records_api_values_put :: proc(c:^Records_Api_Context,row:[]u8,values:string) -> (message:string) {
     if values=="" {return ""}
     r:serial.Text_Reader
     serial.text_reader_init(&r,values,context.temp_allocator)
@@ -777,7 +709,7 @@ records_api_values_put :: proc(c:^Records_Api_Context,row:[]u8,values:string,tex
             key,read:=serial.text_string(&r)
             if !read || !serial.text_expect(&r,':') {return records_api_json_error(&r,"values")}
             key=strings.clone(key,context.temp_allocator)
-            if message=records_api_value_put(c,&r,row,key,texts);message!="" {return}
+            if message=records_api_value_put(c,&r,row,key);message!="" {return}
             if serial.text_accept(&r,',') {continue}
             if !serial.text_expect(&r,'}') {return records_api_json_error(&r,"values")}
             break
@@ -790,7 +722,7 @@ records_api_values_put :: proc(c:^Records_Api_Context,row:[]u8,values:string,tex
 // The value of one key of values, read from r into the part of row that key
 // names.
 @(private)
-records_api_value_put :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,row:[]u8,key:string,texts:^[dynamic]Records_Api_Text) -> (message:string) {
+records_api_value_put :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,row:[]u8,key:string) -> (message:string) {
     s:=c.schema
     target,error,at:=serial.path_resolve(s,c.type,key)
     if error==.None && target.bit>=0 {error=.Not_A_Struct}
@@ -806,12 +738,11 @@ records_api_value_put :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,row:[
     // An object or a list is the whole part: what it leaves out goes back to the default.
     serial.text_space(r)
     peek:=serial.text_peek(r)
-    whole:=(peek=='{' || peek=='[') && !(c.text!=serial.TYPE_NONE && target.type==c.text)
+    whole:=peek=='{' || peek=='['
     out:serial.Writer
     serial.writer_init(&out,64,context.temp_allocator)
-    if message=records_api_rewrite(c,r,target.type,key,&out,texts);message!="" {return}
+    if message=records_api_rewrite(c,r,target.type,key,&out);message!="" {return}
     part:=row[target.offset:][:s.types[target.type].size]
-    before:=slice.clone(part,context.temp_allocator)
     if whole {
         if len(c.default)>=len(row) {copy(part,c.default[target.offset:][:len(part)])} else {mem.zero_slice(part)}
     }
@@ -820,66 +751,7 @@ records_api_value_put :: proc(c:^Records_Api_Context,r:^serial.Text_Reader,row:[
     if !serial.text_read(&rewritten,s,target.type,part,target.text) || !serial.text_end(&rewritten) {
         return serial.text_error_message(&rewritten,fmt.tprintf("values.%s",key),context.temp_allocator)
     }
-    // The texts of a part given whole stay its texts: they change through texts or a source text.
-    if whole && c.text!=serial.TYPE_NONE {
-        for leaf in records_api_leaves(c) {
-            if leaf.kind!=.Text || leaf.offset<target.offset || leaf.offset+size_of(core.Text)>target.offset+len(part) {continue}
-            text:=cast(^core.Text)&row[leaf.offset]
-            if text.id==0 {text^=(cast(^core.Text)&before[leaf.offset-target.offset])^}
-        }
-    }
     return ""
-}
-
-// The texts of the params: an object of field paths, each an object of
-// language codes and texts.
-records_api_texts_read :: proc(text:string,out:^[dynamic]Records_Api_Text) -> (message:string) {
-    if text=="" {return ""}
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,context.temp_allocator)
-    shape :: `texts is an object of core.Text fields, each an object of texts by language code: {"title":{"":"Sword","es":"Espada"}}`
-    if !serial.text_accept(&r,'{') {return shape}
-    if serial.text_accept(&r,'}') {return ""}
-    for {
-        path,read:=serial.text_string(&r)
-        if !read || !serial.text_expect(&r,':') {return shape}
-        path=strings.clone(path,context.temp_allocator)
-        if !serial.text_accept(&r,'{') {return shape}
-        if !serial.text_accept(&r,'}') {
-            for {
-                language,named:=serial.text_string(&r)
-                if !named || !serial.text_expect(&r,':') {return shape}
-                language=strings.clone(language,context.temp_allocator)
-                value,given:=serial.text_string(&r)
-                if !given {return fmt.tprintf("texts.%s.%s must be a string",path,language)}
-                if !records_api_language_valid(language) {return fmt.tprintf("texts.%s: %q is not the code of a language: letters, digits, - and _, shorter than %d bytes, as es or pt-BR; \"\" is the language the game is written in",path,language,asset.RECORDS_LANGUAGE)}
-                append(out,Records_Api_Text{path=path,language=language,text=strings.clone(value,context.temp_allocator)})
-                if serial.text_accept(&r,',') {continue}
-                if !serial.text_expect(&r,'}') {return shape}
-                break
-            }
-        }
-        if serial.text_accept(&r,',') {continue}
-        if !serial.text_expect(&r,'}') || !serial.text_end(&r) {return shape}
-        return ""
-    }
-}
-
-// Why the texts cannot be set on rows of c; "" when they can.
-records_api_texts_check :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf,texts:[]Records_Api_Text) -> string {
-    for text in texts {
-        at:=records_api_leaf_find(leaves,text.path)
-        if at<0 || leaves[at].kind!=.Text {return fmt.tprintf("texts: %s is not a core.Text field of %s; %s",text.path,c.name,records_api_text_paths(leaves))}
-    }
-    return ""
-}
-
-records_api_texts_put :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Records_Api_Leaf,row:int,texts:[]Records_Api_Text) {
-    for text in texts {
-        at:=records_api_leaf_find(leaves,text.path)
-        if at<0 {continue}
-        records.text_set(c.edit,&s.id_state,row,leaves[at].offset,text.language,text.text)
-    }
 }
 
 // ---------------------------------------------------------------- the session
@@ -920,8 +792,7 @@ records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^records.Edit) 
 records_api_context :: proc(s:^Session,e:^records.Edit) -> (c:Records_Api_Context,leaves:[]Records_Api_Leaf) {
     info:=s.app.info
     ws:=info.schema
-    c={schema=&ws.schema,type=ws.records[e.record].type,name=records.type_name(info,e.record),text=serial.TYPE_NONE,edit=e,registry=&s.app.assets.registry}
-    if t,found:=ws.schema.lookup[core.Text];found {c.text=t}
+    c={schema=&ws.schema,type=ws.records[e.record].type,name=records.type_name(info,e.record),edit=e,registry=&s.app.assets.registry}
     refs:=make([dynamic]Records_Api_Ref_Type,context.temp_allocator)
     for &r,i in info.records {
         if t,found:=ws.schema.lookup[r.ref];found {append(&refs,Records_Api_Ref_Type{t,i,records.type_name(info,i)})}
@@ -966,51 +837,20 @@ records_api_default :: proc(s:^Session,e:^records.Edit) -> []u8 {
 // The table as records.inspect gives it, with the rows at the places given;
 // nil: every row.
 @(private)
-records_api_table :: proc(s:^Session,call:^api.Call,c:^Records_Api_Context,leaves:[]Records_Api_Leaf,rows:[]int,all:bool) {
+records_api_table :: proc(s:^Session,call:^api.Call,c:^Records_Api_Context,rows:[]int,all:bool) {
     e:=c.edit
     count:=all ? records.row_count(e) : len(rows)
     shown:=make([]Api_Records_Row,count,call.allocator)
-    for &row,i in shown {row=records_api_row(c,leaves,all ? i : rows[i],call.allocator)}
+    for &row,i in shown {row=records_api_row(c,all ? i : rows[i],call.allocator)}
     api.call_result(call,Api_Records_Table)^={e.id,asset_path(s,e.id),c.name,shown}
 }
 
-records_api_row :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf,row:int,allocator:=context.temp_allocator) -> (shown:Api_Records_Row) {
+records_api_row :: proc(c:^Records_Api_Context,row:int,allocator:=context.temp_allocator) -> Api_Records_Row {
     e:=c.edit
-    bytes:=records.row_bytes(e,row)
-    shown.id,shown.name=e.ids[row],strings.clone(records.row_name(e,row),allocator)
     values:serial.Writer
     serial.writer_init(&values,256,allocator)
-    serial.text_write(&values,c.schema,c.type,bytes,.Line)
-    shown.values=serial.Json(serial.writer_bytes(&values))
-    out:serial.Writer
-    serial.writer_init(&out,0,allocator)
-    first:=true
-    for &leaf in leaves {
-        if leaf.kind!=.Text {continue}
-        id:=(cast(^core.Text)&bytes[leaf.offset]).id
-        if id==0 {continue}
-        started:=false
-        for &entry in e.texts {
-            if entry.text!=id {continue}
-            if !started {
-                serial.write_u8(&out,first ? '{' : ',')
-                serial.text_write_string(&out,leaf.path)
-                serial.text_write_raw(&out,":{")
-            } else {
-                serial.write_u8(&out,',')
-            }
-            first,started=false,true
-            serial.text_write_string(&out,serial.text_field(entry.language[:]))
-            serial.write_u8(&out,':')
-            serial.text_write_string(&out,string(e.text[entry.offset:][:entry.length]))
-        }
-        if started {serial.write_u8(&out,'}')}
-    }
-    if !first {
-        serial.write_u8(&out,'}')
-        shown.texts=serial.Json(serial.writer_bytes(&out))
-    }
-    return
+    serial.text_write(&values,c.schema,c.type,records.row_bytes(e,row),.Line)
+    return {e.ids[row],strings.clone(records.row_name(e,row),allocator),serial.Json(serial.writer_bytes(&values))}
 }
 
 // Writes the table as one step of the history; false with the call failed.
@@ -1040,60 +880,13 @@ records_api_file :: proc(s:^Session,path:string) -> string {
     return project.path_absolute(project.path(s.project_root,native,allocator=context.temp_allocator),context.temp_allocator)
 }
 
-Api_Records_Create_Params :: struct {
-    path:string `mirai:"label=Where the new table goes, under the assets folder; .records is added when missing"`,
-    type:string `mirai:"label=The type of its rows as library.Name, as records.types lists them"`,
-}
-
-Api_Records_Inspect_Params :: struct {
-    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
-    rows:[]string `mirai:"optional,label=Only these rows, by name"`,
-}
-
-Api_Records_Set_Params :: struct {
-    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
-    row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
-    values:serial.Json `mirai:"optional,label=Fields of the row, as records.inspect shows them, or paths of a part of one ('stats.speed', 'windows[2].to'); each is set whole: an object or a list leaves what it does not give at the default of the type, and what no key names keeps its value. A core.Record field also takes the name of a row ('sword') or its table and name ('data/weapons/sword'); a core.Text field also takes its source text"`,
-    texts:serial.Json `mirai:"optional,label=Texts of core.Text fields by field path, each by language code, as {'title':{'':'Sword','es':'Espada'}}; '' is the language the game is written in and an empty translation removes it"`,
-    name:string `mirai:"optional,label=A new name for the row"`,
-}
-
-Api_Records_Add_Params :: struct {
-    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
-    name:string `mirai:"label=The name of the new row: a word of ASCII letters, digits and _, unique in the table"`,
-    values:serial.Json `mirai:"optional,label=Fields of the row, as records.inspect shows them, or paths of a part of one ('stats.speed', 'windows[2].to'); each is set whole: an object or a list leaves what it does not give at the default of the type, and what no key names keeps its value. A core.Record field also takes the name of a row ('sword') or its table and name ('data/weapons/sword'); a core.Text field also takes its source text"`,
-    texts:serial.Json `mirai:"optional,label=Texts of core.Text fields by field path, each by language code, as {'title':{'':'Sword','es':'Espada'}}; '' is the language the game is written in and an empty translation removes it"`,
-    after:string `mirai:"optional,label=The row it goes after; without it, at the end"`,
-}
-
-Api_Records_Remove_Params :: struct {
-    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
-    rows:[]string `mirai:"label=The names of the rows to remove"`,
-}
-
-Api_Records_Move_Params :: struct {
-    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
-    row:string `mirai:"label=The name of a row, as records.inspect lists them"`,
-    after:string `mirai:"label=The row it goes right after; empty: it goes first"`,
-}
-
-Api_Records_Import_Params :: struct {
-    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
-    file:string `mirai:"label=A CSV file (UTF-8, comma separated, its first row the columns as records.export writes them): its path from the root of the project, or absolute"`,
-}
-
-Api_Records_Export_Params :: struct {
-    records:string `mirai:"label=A table of game data: its path under the assets folder, with or without .records, or its id; records.types lists them"`,
-    file:string `mirai:"label=The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"`,
-}
-
 @(private)
 records_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="records.types",summary="The record types of the project (structs marked @(record)) with their fields and their .records tables.",result=Api_Records_Types,flags={.Read_Only},run=api_records_types})
     api_register(s,st,{name="records.create",params=Api_Records_Create_Params,summary="Makes a new empty table (.records) of a record type at a path under the assets folder.",result=Api_Records_Table,run=api_records_create})
-    api_register(s,st,{name="records.inspect",params=Api_Records_Inspect_Params,summary="The rows of a table of game data (.records) with their ids, names, values and texts by language.",result=Api_Records_Table,flags={.Read_Only},run=api_records_inspect})
-    api_register(s,st,{name="records.set",params=Api_Records_Set_Params,summary="Changes the values, the texts or the name of a row of a table of game data.",result=Api_Records_Table,run=api_records_set})
-    api_register(s,st,{name="records.add",params=Api_Records_Add_Params,summary="Adds a row to a table of game data with the defaults of its type and the values and texts given.",result=Api_Records_Table,run=api_records_add})
+    api_register(s,st,{name="records.inspect",params=Api_Records_Inspect_Params,summary="The rows of a table of game data (.records) with their ids, names and values.",result=Api_Records_Table,flags={.Read_Only},run=api_records_inspect})
+    api_register(s,st,{name="records.set",params=Api_Records_Set_Params,summary="Changes the values or the name of a row of a table of game data.",result=Api_Records_Table,run=api_records_set})
+    api_register(s,st,{name="records.add",params=Api_Records_Add_Params,summary="Adds a row to a table of game data with the defaults of its type and the values given.",result=Api_Records_Table,run=api_records_add})
     api_register(s,st,{name="records.remove",params=Api_Records_Remove_Params,summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=Api_Records_Removed,flags={.Destructive},run=api_records_remove})
     api_register(s,st,{name="records.move",params=Api_Records_Move_Params,summary="Moves a row of a table of game data to another place of its order; its id stays.",result=Api_Records_Table,run=api_records_move})
     api_register(s,st,{name="records.import",params=Api_Records_Import_Params,summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=Api_Records_Import,run=api_records_import})
@@ -1175,7 +968,7 @@ api_records_create :: proc(s:^Session,call:^api.Call) {
     if !records_api_publish(s,call,&e,"Create records") {return}
     host.assets_scan(s.app.assets)
     c,leaves:=records_api_context(s,&e)
-    records_api_table(s,call,&c,leaves,nil,true)
+    records_api_table(s,call,&c,nil,true)
 }
 
 @(private)
@@ -1190,23 +983,18 @@ api_records_inspect :: proc(s:^Session,call:^api.Call) {
         if row<0 {return}
         append(&rows,row)
     }
-    records_api_table(s,call,&c,leaves,rows[:],!api.call_given(call,"rows"))
+    records_api_table(s,call,&c,rows[:],!api.call_given(call,"rows"))
 }
 
-// Puts the values and texts of the params over a row; false with the call failed.
+// Puts the values of the params over a row; false with the call failed.
 @(private)
-records_api_row_put :: proc(s:^Session,call:^api.Call,c:^Records_Api_Context,leaves:[]Records_Api_Leaf,row:int,values,given_texts:serial.Json) -> bool {
-    texts:=make([dynamic]Records_Api_Text,context.temp_allocator)
+records_api_row_put :: proc(call:^api.Call,c:^Records_Api_Context,row:int,values:serial.Json) -> bool {
     value:=slice.clone(records.row_bytes(c.edit,row),context.temp_allocator)
-    message:=records_api_values_put(c,value,string(values),&texts)
-    if message=="" {message=records_api_texts_read(string(given_texts),&texts)}
-    if message=="" {message=records_api_texts_check(c,leaves,texts[:])}
-    if message!="" {
+    if message:=records_api_values_put(c,value,string(values));message!="" {
         api.call_failf(call,api.INVALID_PARAMS,"row %s: %s",records.row_name(c.edit,row),message)
         return false
     }
     copy(records.row_bytes(c.edit,row),value)
-    records_api_texts_put(s,c,leaves,row,texts[:])
     return true
 }
 
@@ -1218,7 +1006,7 @@ api_records_set :: proc(s:^Session,call:^api.Call) {
     row:=records_api_row_named(call,&e,p.row)
     if row<0 {return}
     c,leaves:=records_api_context(s,&e)
-    if !records_api_row_put(s,call,&c,leaves,row,p.values,p.texts) {return}
+    if !records_api_row_put(call,&c,row,p.values) {return}
     if api.call_given(call,"name") && p.name!=p.row {
         if message:=records.row_rename(&e,row,p.name);message!="" {
             api.call_fail(call,api.INVALID_PARAMS,message)
@@ -1226,7 +1014,7 @@ api_records_set :: proc(s:^Session,call:^api.Call) {
         }
     }
     if !records_api_publish(s,call,&e,"Records") {return}
-    records_api_table(s,call,&c,leaves,[]int{row},false)
+    records_api_table(s,call,&c,[]int{row},false)
 }
 
 @(private)
@@ -1244,9 +1032,9 @@ api_records_add :: proc(s:^Session,call:^api.Call) {
         return
     }
     c,leaves:=records_api_context(s,&e)
-    if !records_api_row_put(s,call,&c,leaves,row,p.values,p.texts) {return}
+    if !records_api_row_put(call,&c,row,p.values) {return}
     if !records_api_publish(s,call,&e,"Add record") {return}
-    records_api_table(s,call,&c,leaves,[]int{row},false)
+    records_api_table(s,call,&c,[]int{row},false)
 }
 
 @(private)
@@ -1288,7 +1076,7 @@ api_records_move :: proc(s:^Session,call:^api.Call) {
     records.row_move(&e,row,to)
     if !records_api_publish(s,call,&e,"Move record") {return}
     c,leaves:=records_api_context(s,&e)
-    records_api_table(s,call,&c,leaves,[]int{to},false)
+    records_api_table(s,call,&c,[]int{to},false)
 }
 
 @(private)

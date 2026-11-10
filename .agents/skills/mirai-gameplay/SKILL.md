@@ -106,7 +106,7 @@ the same attributes and no private paths. Declaration and parameter binding:
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
 8. Game code names an asset by its path in the assets wherever a call takes one (`scene.spawn`,
-   `scene.request`, `audio.play`, `host.content_strings`), and a field it fills by
+   `scene.request`, `audio.play`), and a field it fills by
    `host.assets_id`; data fields hold its `base.Asset_Id`.
 
 ## Invariants

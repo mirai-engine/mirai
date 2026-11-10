@@ -36,8 +36,8 @@ A game is a struct in memory and a list of functions that transform it
 - Named values that the code declares and that the data, the API and the editor name (modes,
   actions, categories; `@(names)`, `@(name_bits)`):
   [named ids](references/core.md#named-ids).
-- Game data catalogs (`@(record)`, `.records`, `core.Record(T)`, `core.Records(T)`, localized texts
-  of a row): [game data](references/core.md#game-data).
+- Game data catalogs (`@(record)`, `.records`, `core.Record(T)`, `core.Records(T)`) and texts by
+  key (`core.Text`, `core.Texts`): [game data](references/core.md#game-data).
 - What a function could not do, with its entity and how to fix it:
   [problems](references/core.md#problems).
 - The world of a test, and what a library gives the tests of others (`core.Test_World`,

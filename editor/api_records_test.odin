@@ -65,9 +65,7 @@ csv_fixture :: proc(f:^Csv_Fixture) {
     f.edit={id={9,9},info=type_info_of(Csv_Weapon),allocator=context.temp_allocator}
     f.edit.ids=make([dynamic]u64,context.temp_allocator)
     f.edit.names=make([dynamic]asset.Records_Name,context.temp_allocator)
-    f.edit.texts=make([dynamic]asset.Records_Text,context.temp_allocator)
-    f.edit.text=make([dynamic]u8,context.temp_allocator)
-    f.c={schema=&f.schema,type=type,name="game.Weapon",text=f.schema.lookup[core.Text],refs=f.refs[:],tables=f.tables[:],edit=&f.edit}
+    f.c={schema=&f.schema,type=type,name="game.Weapon",refs=f.refs[:],tables=f.tables[:],edit=&f.edit}
 }
 
 @(private="file")
@@ -90,15 +88,15 @@ csv_row :: proc(f:^Csv_Fixture,name:string) -> (value:Csv_Weapon,found:bool) {
 }
 
 // Every value of a row is a column by its serial path: structs and arrays
-// open, a core.Text, a core.Record and a text field are one column, and a bit
-// set is a column per member.
+// open, a core.Record and a text field are one column, a core.Text is the
+// column of its key, and a bit set is a column per member.
 @(test)
 records_csv_columns_are_the_leaf_paths_of_the_row :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
     paths:=make([dynamic]string,context.temp_allocator)
     for leaf in records_api_leaves(&f.c) {append(&paths,leaf.path)}
-    testing.expect_value(t,strings.join(paths[:],",",context.temp_allocator),"damage,rarity,stats.speed,stats.weight,position[0],position[1],title,lines[0].text,lines[0].pause,lines[1].text,lines[1].pause,ammo,label,tags.Fire,tags.Ice,sharp")
+    testing.expect_value(t,strings.join(paths[:],",",context.temp_allocator),"damage,rarity,stats.speed,stats.weight,position[0],position[1],title.key,lines[0].text.key,lines[0].pause,lines[1].text.key,lines[1].pause,ammo,label,tags.Fire,tags.Ice,sharp")
 }
 
 // A field in double quotes holds commas, line breaks and doubled quotes; an
@@ -108,7 +106,7 @@ records_csv_columns_are_the_leaf_paths_of_the_row :: proc(t:^testing.T) {
 records_csv_reads_quotes_line_breaks_and_empty_cells :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
-    updated,added,rejected,message:=csv_import(&f,"\xef\xbb\xbfname,damage,label,title,title@es\r\nsword,7,\"a, b\",\"Sharp\nsword\",\"Espada \"\"fina\"\"\"\r\naxe,,,,\n")
+    updated,added,rejected,message:=csv_import(&f,"\xef\xbb\xbfname,damage,label,title.key\r\nsword,7,\"a, b\",\"item.\"\"sharp\"\"\nsword\"\r\naxe,,,\n")
     testing.expect_value(t,message,"")
     testing.expect_value(t,updated,0)
     testing.expect_value(t,added,2)
@@ -117,12 +115,9 @@ records_csv_reads_quotes_line_breaks_and_empty_cells :: proc(t:^testing.T) {
     if !testing.expect(t,found) {return}
     testing.expect_value(t,sword.damage,7)
     testing.expect_value(t,serial.text_field(sword.label[:]),"a, b")
-    source,_:=records.text_get(&f.edit,sword.title.id,"")
-    spanish,_:=records.text_get(&f.edit,sword.title.id,"es")
-    testing.expect_value(t,source,"Sharp\nsword")
-    testing.expect_value(t,spanish,`Espada "fina"`)
+    testing.expect_value(t,serial.text_field(sword.title.key[:]),"item.\"sharp\"\nsword")
     axe,_:=csv_row(&f,"axe")
-    testing.expect_value(t,axe.title.id,0)
+    testing.expect_value(t,axe.title,core.Text{})
 
     updated,added,rejected,message=csv_import(&f,"name,damage,label\nsword,,b\n")
     testing.expect_value(t,updated,1)
@@ -143,15 +138,11 @@ records_csv_header_names_the_wrong_column :: proc(t:^testing.T) {
         _,message:=records_api_header(&f.c,leaves,columns)
         return message
     }
-    testing.expect_value(t,header(&f,leaves,"name","damage","title","title@es","title@pt-BR","lines[1].text","tags.Fire","position[1]","ammo"),"")
+    testing.expect_value(t,header(&f,leaves,"name","damage","title.key","lines[1].text.key","tags.Fire","position[1]","ammo"),"")
     unknown:=header(&f,leaves,"name","speed")
-    testing.expectf(t,strings.contains(unknown,`column 2 "speed" is not a field of game.Weapon`) && strings.contains(unknown,"stats.speed") && strings.contains(unknown,"title@<language>"),"%s",unknown)
+    testing.expectf(t,strings.contains(unknown,`column 2 "speed" is not a field of game.Weapon`) && strings.contains(unknown,"stats.speed") && strings.contains(unknown,"title.key"),"%s",unknown)
     missing:=header(&f,leaves,"damage")
     testing.expectf(t,strings.contains(missing,"none is name"),"%s",missing)
-    translated:=header(&f,leaves,"name","damage@es")
-    testing.expectf(t,strings.contains(translated,"damage is not a core.Text"),"%s",translated)
-    language:=header(&f,leaves,"name","title@e s")
-    testing.expectf(t,strings.contains(language,"is not the code of a language"),"%s",language)
     twice:=header(&f,leaves,"name","damage","damage")
     testing.expectf(t,strings.contains(twice,"columns 2 and 3"),"%s",twice)
     _,_,_,refused:=csv_import(&f,"name,colour\nsword,red\n")
@@ -200,19 +191,18 @@ whip,,,,,,,nothing,
     }
 }
 
-// What records.export writes, records.import reads back: the same values and
-// texts in every language.
+// What records.export writes, records.import reads back: the same values.
 @(test)
 records_csv_export_reads_back :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
-    _,_,_,message:=csv_import(&f,"name,damage,rarity,stats.weight,lines[1].pause,ammo,label,tags.Fire,title,title@es,lines[0].text\nsword,7,Epic,0.1,3,data/crates/small,\"x,y\",true,Sword,Espada,Hi\naxe,1,,,,,,,,,\n")
+    _,_,_,message:=csv_import(&f,"name,damage,rarity,stats.weight,lines[1].pause,ammo,label,tags.Fire,title.key,lines[0].text.key\nsword,7,Epic,0.1,3,data/crates/small,\"x,y\",true,item.sword,lines.hi\naxe,1,,,,,,,,\n")
     testing.expect_value(t,message,"")
     leaves:=records_api_leaves(&f.c)
     text,columns:=records_api_csv(&f.c,leaves)
-    testing.expect_value(t,columns,len(leaves)+1+3)
-    testing.expectf(t,strings.has_prefix(text,"name,damage,rarity,stats.speed,stats.weight,position[0],position[1],title,title@es,lines[0].text,lines[0].text@es,"),"%s",text)
-    testing.expectf(t,strings.contains(text,"sword,7,Epic,0,0.1,0,0,Sword,Espada,Hi,,0,,,3,data/crates/small,\"x,y\",true,false,false"),"%s",text)
+    testing.expect_value(t,columns,len(leaves)+1)
+    testing.expectf(t,strings.has_prefix(text,"name,damage,rarity,stats.speed,stats.weight,position[0],position[1],title.key,lines[0].text.key,"),"%s",text)
+    testing.expectf(t,strings.contains(text,"sword,7,Epic,0,0.1,0,0,item.sword,lines.hi,0,,3,data/crates/small,\"x,y\",true,false,false"),"%s",text)
     sword,_:=csv_row(&f,"sword")
 
     g:Csv_Fixture
@@ -228,10 +218,8 @@ records_csv_export_reads_back :: proc(t:^testing.T) {
     testing.expect_value(t,copied.ammo,sword.ammo)
     testing.expect_value(t,copied.label,sword.label)
     testing.expect_value(t,copied.tags,sword.tags)
-    spanish,_:=records.text_get(&g.edit,copied.title.id,"es")
-    hello,_:=records.text_get(&g.edit,copied.lines[0].text.id,"")
-    testing.expect_value(t,spanish,"Espada")
-    testing.expect_value(t,hello,"Hi")
+    testing.expect_value(t,copied.title,sword.title)
+    testing.expect_value(t,serial.text_field(copied.lines[0].text.key[:]),"lines.hi")
     testing.expect_value(t,records.row_name(&g.edit,1),"axe")
 }
 
@@ -260,60 +248,37 @@ records_ref_names_a_row_by_name_or_table_and_name :: proc(t:^testing.T) {
 }
 
 // The values of records.set and records.add take a core.Record by the name of
-// its row and a core.Text by its source text. A field given as an object or a
+// its row and a core.Text by its key. A field given as an object or a
 // list is given whole (what it leaves out goes back to the default); a path
 // changes only its part; the fields not named keep theirs.
 @(test)
-records_values_take_row_names_and_source_texts :: proc(t:^testing.T) {
+records_values_take_row_names_and_text_keys :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
     row:=Csv_Weapon{damage=1,stats={speed=4,weight=5}}
-    texts:=make([dynamic]Records_Api_Text,context.temp_allocator)
     default:=Csv_Weapon{stats={weight=9}}
     f.c.default=([^]u8)(&default)[:size_of(default)]
     row.lines[1].pause=3
-    row.lines[0].text.id=77
-    message:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"damage": 7, "ammo": "data/crates/small", "title": "Sword", "stats": {"speed": 2}, "lines": [{"pause": 1.5}, {"text": "Bye"}]}`,&texts)
+    message:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"damage": 7, "ammo": "data/crates/small", "title": {"key": "item.sword"}, "stats": {"speed": 2}, "lines": [{"pause": 1.5}, {"text": {"key": "lines.bye"}}]}`)
     testing.expect_value(t,message,"")
     testing.expect_value(t,row.damage,7)
     testing.expect_value(t,row.stats,Csv_Stats{2,9})
     testing.expect_value(t,row.lines[1].pause,0)
-    testing.expect_value(t,row.lines[0].text.id,77)
     testing.expect_value(t,row.lines[0].pause,1.5)
     testing.expect_value(t,row.ammo,core.Record(Csv_Ammo){CRATES,21})
-    testing.expect_value(t,len(texts),2)
-    testing.expect(t,texts[0]==Records_Api_Text{"title","","Sword"} && texts[1]==Records_Api_Text{"lines[1].text","","Bye"})
-    clear(&texts)
-    unknown:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"dmg": 3}`,&texts)
+    testing.expect(t,serial.text_field(row.title.key[:])=="item.sword" && serial.text_field(row.lines[1].text.key[:])=="lines.bye")
+    unknown:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"dmg": 3}`)
     testing.expectf(t,strings.contains(unknown,"dmg") && strings.contains(unknown,"damage"),"%s",unknown)
-    named:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"ammo": "small"}`,&texts)
+    named:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"ammo": "small"}`)
     testing.expectf(t,strings.has_prefix(named,"values.ammo: small is a row of 2 tables"),"%s",named)
     testing.expect_value(t,row.damage,7)
     // A path changes only its part.
-    clear(&texts)
-    testing.expect_value(t,records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.weight": 4, "lines[1].pause": 2}`,&texts),"")
+    testing.expect_value(t,records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.weight": 4, "lines[1].pause": 2}`),"")
     testing.expect_value(t,row.stats,Csv_Stats{2,4})
     testing.expect_value(t,row.lines[1].pause,2)
     testing.expect_value(t,row.lines[0].pause,1.5)
-    nested:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.wait": 1}`,&texts)
+    nested:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.wait": 1}`)
     testing.expectf(t,strings.contains(nested,"stats.wait") && strings.contains(nested,"speed, weight"),"%s",nested)
-}
-
-// texts are by field path and language code; a path that is no core.Text
-// names those there are.
-@(test)
-records_texts_go_by_field_path_and_language :: proc(t:^testing.T) {
-    f:Csv_Fixture
-    csv_fixture(&f)
-    leaves:=records_api_leaves(&f.c)
-    texts:=make([dynamic]Records_Api_Text,context.temp_allocator)
-    testing.expect_value(t,records_api_texts_read(`{"title": {"": "Sword", "es": "Espada"}, "lines[0].text": {"pt-BR": "Oi"}}`,&texts),"")
-    testing.expect_value(t,len(texts),3)
-    testing.expect_value(t,records_api_texts_check(&f.c,leaves,texts[:]),"")
-    wrong:=records_api_texts_check(&f.c,leaves,[]Records_Api_Text{{"damage","","x"}})
-    testing.expectf(t,strings.contains(wrong,"damage is not a core.Text") && strings.contains(wrong,"title, lines[0].text, lines[1].text"),"%s",wrong)
-    language:=records_api_texts_read(`{"title": {"e s": "x"}}`,&texts)
-    testing.expectf(t,strings.contains(language,"is not the code of a language"),"%s",language)
 }
 
 // records.move puts a row right after another: the place it ends at is that
@@ -326,15 +291,13 @@ records_move_places_a_row_right_after_another :: proc(t:^testing.T) {
     }
 }
 
-// A row as inspect gives it has its texts by field and language, and none
-// without a text.
+// A row as inspect gives it holds the key of its texts in its values.
 @(test)
-records_api_rows_give_their_texts :: proc(t:^testing.T) {
+records_api_rows_give_their_values :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
-    _,_,_,message:=csv_import(&f,"name,damage,title,title@es\nsword,7,Sword,Espada\naxe,1,,\n")
+    _,_,_,message:=csv_import(&f,"name,damage,title.key\nsword,7,item.sword\naxe,1,\n")
     testing.expect_value(t,message,"")
-    sword:=records_api_row(&f.c,records_api_leaves(&f.c),0)
-    testing.expect_value(t,string(sword.texts),`{"title":{"":"Sword","es":"Espada"}}`)
-    testing.expect_value(t,records_api_row(&f.c,records_api_leaves(&f.c),1).texts,serial.Json(""))
+    sword:=records_api_row(&f.c,0)
+    testing.expectf(t,sword.name=="sword" && strings.contains(string(sword.values),`"title": {"key": "item.sword"}`),"%v",sword)
 }

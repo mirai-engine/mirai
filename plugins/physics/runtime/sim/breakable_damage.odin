@@ -54,7 +54,7 @@ breakables_strain :: proc(w:^World,region:Break_Region,amount:f32,impulse:Vec3={
 
 // The breakable a body is of, and one of its pieces on that body; zero and -1 for any other body.
 breakable_of :: proc(w:^World,body:Body_Handle) -> (h:Breakable_Handle,piece:i32) {
-    b,_:=body_get(w,body)
+    b,_:=body_read(w,body)
     if b==nil || !w.breaking.made || w.kept {return {},-1}
     for shape:=b.shape_list;shape>=0;shape=w.shapes[shape].next {
         tag:=w.shapes[shape].tag
@@ -151,7 +151,7 @@ break_clusters_damage :: proc(w:^World,index:i32,event:^Break_Event,only:Body_Ha
 }
 
 breakable_clusters :: proc(w:^World,h:Breakable_Handle,out:[]Cluster_Info) -> int {
-    d,_:=breakable_get(w,h)
+    d,_:=breakable_read(w,h)
     if d==nil {return 0}
     count:=0
     for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {

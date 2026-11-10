@@ -483,7 +483,6 @@ bind_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,Ui_Paths_Params,Ui_Paths_Result,{name="ui.paths",summary="Lists what a binding of a node of a .ui can take, one level of the data of the game at a time.",writes_result=true,flags={.Read_Only},run=api_paths})
     editor.api_method_register(s,Ui_Empty_Params,Ui_Check_Result,{name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, the names of styles, tokens, components and parameters that resolve to nothing, and each .ui that does not load with why.",writes_result=true,flags={.Read_Only},run=api_check})
     editor.api_method_register(s,Ui_Rename_Params,Ui_Rename_Result,{name="ui.path.rename",summary="Follows a field or a source the code renamed in the paths of every .ui: bindings, widget data and the fields of texts. One step of history per file.",writes_result=true,run=api_rename})
-    texts_api_register(s)
 }
 
 @(private)

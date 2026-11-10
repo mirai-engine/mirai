@@ -20,7 +20,7 @@ Weapon_Before :: struct {title:core.Text,damage:f32}
 WEAPON_DEFAULT :: Weapon{weight=2}
 
 @(private="file")
-records_save :: proc(t:^testing.T,path:string,id:base.Asset_Id,type:string,ids:[]u64,names:[]string,values:[]$T,texts:[]asset.Records_Text={},text:string="") -> bool {
+records_save :: proc(t:^testing.T,path:string,id:base.Asset_Id,type:string,ids:[]u64,names:[]string,values:[]$T) -> bool {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     schema:serial.Schema
     serial.schema_init(&schema,context.temp_allocator)
@@ -28,7 +28,7 @@ records_save :: proc(t:^testing.T,path:string,id:base.Asset_Id,type:string,ids:[
     value_type,_:=serial.schema_add_type_info(&schema,type_info_of(T))
     named:=make([]asset.Records_Name,len(names),context.temp_allocator)
     for name,i in names {base.text_set(named[i][:],name)}
-    bytes,error:=asset.records_bytes(&types,{id=id,type=type,ids=ids,names=named,schema=&schema,value_type=value_type,images=mem.slice_to_bytes(values),texts=texts,text=transmute([]u8)text},context.temp_allocator)
+    bytes,error:=asset.records_bytes(&types,{id=id,type=type,ids=ids,names=named,schema=&schema,value_type=value_type,images=mem.slice_to_bytes(values)},context.temp_allocator)
     testing.expect_value(t,error,asset.Error.None) or_return
     return testing.expect(t,os.write_entire_file(path,bytes)==nil)
 }
@@ -41,9 +41,7 @@ the_rows_of_a_type_load_from_every_table_and_follow_their_files :: proc(t:^testi
     root:=base.test_folder(t,"host-records")
     if root=="" {return}
     swords,bows,ammo:=base.Asset_Id{0x51,1},base.Asset_Id{0x52,1},base.Asset_Id{0x53,1}
-    texts:=[]asset.Records_Text{{text=7,offset=0,length=5},{text=7,offset=5,length=6}}
-    base.text_set(texts[1].language[:],"es")
-    if !records_save(t,fmt.tprintf("%s/swords.records",root),swords,"game.Weapon",{10,11},{"iron","steel"},[]Weapon{{damage=5,title={7},weight=3},{damage=8,weight=4}},texts,"SwordEspada") {return}
+    if !records_save(t,fmt.tprintf("%s/swords.records",root),swords,"game.Weapon",{10,11},{"iron","steel"},[]Weapon{{damage=5,weight=3},{damage=8,weight=4}}) {return}
     if !records_save(t,fmt.tprintf("%s/bows.records",root),bows,"game.Weapon",{10},{"long"},[]Weapon_Before{{damage=6}}) {return}
     if !records_save(t,fmt.tprintf("%s/ammo.records",root),ammo,"game.Ammo",{1},{"arrow"},[]Weapon_Before{{}}) {return}
 
@@ -69,8 +67,6 @@ the_rows_of_a_type_load_from_every_table_and_follow_their_files :: proc(t:^testi
     testing.expect_value(t,core.record_name(rows,{bows,10}),"long")
     _,found=core.record_get(rows,{ammo,1})
     testing.expect(t,!found,"A table of another type is not one of these")
-    text,said:=core.record_text(rows,{7},base.name_hash("es"))
-    testing.expect(t,said && text=="Espada")
     testing.expect(t,app_record_set(&app,1)==nil && app_record_set(&app,-1)==nil)
 
     // Asking again without changes keeps the set.

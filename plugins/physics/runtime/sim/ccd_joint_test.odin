@@ -57,9 +57,9 @@ ccd_joint_components_replay_identically_with_one_and_four_workers :: proc(t:^tes
         }
     }
     testing.expect_value(t,world_hash(&a),world_hash(&b))
-    before:=make([]byte,world_snapshot_capacity(&a));defer delete(before)
-    during:=make([]byte,world_snapshot_capacity(&a));defer delete(during)
-    initial,ok:=world_snapshot(&a,before)
+    before:World;defer world_destroy(&before)
+    during:World;defer world_destroy(&during)
+    ok:=test_keep(&before,&a)
     if !testing.expect(t,ok) {return}
     hashes:[60]u64
     middle:=0
@@ -74,14 +74,14 @@ ccd_joint_components_replay_identically_with_one_and_four_workers :: proc(t:^tes
                 for body,index in component {expect_near3(t,body_position(&a,body),impact+Vec3{0,f32(index)*.42,0},1e-4)}
             }
         }
-        if tick==11 {middle,ok=world_snapshot(&a,during);if !testing.expect(t,ok) {return}}
+        if tick==11 {ok=test_keep(&during,&a);if !testing.expect(t,ok) {return}}
     }
-    if !testing.expect(t,world_restore(&a,before[:initial])) {return}
+    if !testing.expect(t,test_restore(&a,&before)) {return}
     for tick in 0..<len(hashes) {
         world_step(&a,1.0/60)
         if !testing.expect_value(t,world_hash(&a),hashes[tick]) {return}
     }
-    if !testing.expect(t,world_restore(&b,during[:middle])) {return}
+    if !testing.expect(t,test_restore(&b,&during)) {return}
     for tick in 12..<len(hashes) {
         world_step(&b,1.0/60)
         if !testing.expect_value(t,world_hash(&b),hashes[tick]) {return}

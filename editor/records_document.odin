@@ -180,10 +180,6 @@ records_columns_add :: proc(s:^Session,r:^Records_Document,info:^runtime.Type_In
     column :: proc(r:^Records_Document,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name,label:string,offset:int,description:string,width:f32) {
         append(&r.columns,Records_Column{label=strings.clone(label),offset=offset,info=info,tag=tag,name=name,description=description,width=width})
     }
-    if info.id==core.Text {
-        column(r,info,tag,name,label,offset,description,RECORDS_TEXT_WIDTH)
-        return
-    }
     if info.id==base.Asset_Id || core.record_of_ref(s.app.info,info.id)>=0 || core.named_type_of(s.app.info,info.id)!=nil {
         column(r,info,tag,name,label,offset,description,RECORDS_CELL_WIDTH)
         return
@@ -309,10 +305,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
     value:=records.row_bytes(e,row)[c.offset:][:c.info.size]
     p:=raw_data(value)
     id:=ui.id(ctx,"cell",at+1)
-    switch {
-    case c.info.id==core.Text:
-        return records_text_cell(s,r,row,c,id)
-    case c.info.id==base.Asset_Id:
+    if c.info.id==base.Asset_Id {
         key:=KEY_RECORDS_ROW~(u64(row)<<20|u64(at))
         return held_asset_button(s,id,key,field_asset_kinds(s,c.tag,c.name),cast(^base.Asset_Id)p,c.width-6)
     }
@@ -366,21 +359,6 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
     return false
 }
 
-// The text of a core.Text in the language the game is written in.
-@(private="file")
-records_text_cell :: proc(s:^Session,r:^Records_Document,row:int,c:^Records_Column,id:ui.Id) -> (changed:bool) {
-    ctx:=s.gui.ctx
-    th:=&ctx.theme
-    e:=&r.edit
-    text:=(cast(^core.Text)&records.row_bytes(e,row)[c.offset]).id
-    shown,_:=records.text_get(e,text,"")
-    buffer:[1024]u8
-    length:=copy(buffer[:],shown)
-    if !ui.text_field(ctx,id,buffer[:],&length,{height=th.row,size=th.font_small}).changed {return false}
-    records.text_set(e,&s.id_state,row,c.offset,"",strings.clone(string(buffer[:length]),context.temp_allocator))
-    return true
-}
-
 @(private="file")
 records_grid_add :: proc(s:^Session,r:^Records_Document) {
     e:=&r.edit
@@ -424,23 +402,9 @@ records_details :: proc(s:^Session,r:^Records_Document,app:^host.App) {
             for f in record.fields {
                 if f.name==name {description=f.text}
             }
-            if fields.types[i].id==core.Text {
-                records_text_row(s,r,int(fields.offsets[i]),readable(name),i)
-                continue
-            }
             if held_field_row(s,h,name,description=description) {r.changed=true}
         }
     }
-}
-
-// A text of the row as a field of its own, in the language the game is written in.
-@(private="file")
-records_text_row :: proc(s:^Session,r:^Records_Document,offset:int,label:string,at:int) {
-    ctx:=s.gui.ctx
-    row_begin(ctx,label)
-    column:=Records_Column{offset=offset,info=type_info_of(core.Text)}
-    if records_text_cell(s,r,r.selected,&column,ui.id(ctx,"text",at+1)) {r.changed=true}
-    row_end(ctx)
 }
 
 // ---------------------------------------------------------------- references
