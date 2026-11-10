@@ -90,7 +90,8 @@ component_listed :: proc(t:^core.Table_Info) -> bool {
         for tag in fields.tags[:fields.field_count] {if _,hidden:=core.field_option(reflect.Struct_Tag(tag),"hidden");!hidden {visible=true;break}}
         if !visible {return false}
     }
-    return type_saved(t.info)
+    // A component whose fields are all transient is saved by its presence.
+    return true
 }
 
 // Copies from kept the fields a document neither shows nor changes: hidden, transient and read-only ones.

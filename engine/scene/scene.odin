@@ -546,7 +546,6 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         linked:=info.type==Prefab_Instance?core.world_table_of(w,Prefab_Member):nil // a spawned copy has none: no document holds it
         if slice.contains(desc.excluded,info.type) {continue}
         size:=info.info.size
-        if size>0 && len(value_type.layout.runs)==0 {continue}
         table:=core.world_table_at(w,&info)
         hash:=base.name_hash(info.name)
         clear(&table_rows);clear(&images)

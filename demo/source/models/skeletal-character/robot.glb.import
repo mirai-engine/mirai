@@ -1,23 +1,6 @@
 {
   "version": 2,
-  "settings": {
-    "max_texture_size": 0,
-    "textures": "Blocks",
-    "rdo_lambda": 0,
-    "image": "Data",
-    "alpha_coverage": 0,
-    "lods": "Auto",
-    "max_triangles": 0,
-    "collision": "None",
-    "force_collision": false,
-    "collision_hulls": 0,
-    "parts": "Auto",
-    "front": "Auto",
-    "rig": "Source",
-    "rig_crotch": 0,
-    "rig_neck": 0,
-    "skeleton": "00000000000000000000000000000000"
-  },
+  "settings": {},
   "outputs": [
     {"kind": "SCEN", "name": "robot", "index": 0, "id": "e431738105898dd368735a6ebb1d3c19"},
     {"kind": "MAT", "name": "robot blue", "index": 0, "id": "1c5c7311b02f9c27a26158a5dfbbfe47"},

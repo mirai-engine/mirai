@@ -125,15 +125,9 @@ scene_value :: proc(f:^Scene_File,t:^core.Table_Info,v:^core.Value_Schema,id:bas
 scene_value_set :: proc(f:^Scene_File,t:^core.Table_Info,v:^core.Value_Schema,id:base.Entity_Id,value:[]u8) -> bool {
     table,error:=asset.scene_component_add(&f.scene,t.name,&f.ws.schema,v.type)
     if error!=.None {return false}
-    stored:=f.scene.doc.tables[table].columns[1]
-    if f.scene.doc.hashes[stored.type]==v.hash {return asset.scene_component_set(&f.scene,table,id,value)==.None}
-    image:=make([]u8,max(stored.size,1),context.temp_allocator)[:stored.size]
-    migration:serial.Migration
-    if serial.migration_init(&migration,&f.ws.schema,v.type,&f.scene.doc.schema,stored.type,context.temp_allocator)!=.None {return false}
-    defer serial.migration_destroy(&migration)
-    if current,has:=asset.scene_component_get(&f.scene,table,id);has {copy(image,current)}
-    serial.migration_apply(&migration,image,value,1)
-    return asset.scene_component_set(&f.scene,table,id,image)==.None
+    // A table stored with another layout takes the game's first, so no value of the document is lost.
+    if f.scene.doc.hashes[f.scene.doc.tables[table].columns[1].type]!=v.hash && asset.document_column_retype(&f.scene.doc,table,1,&f.ws.schema,v.type,scene_start(t,v))!=.None {return false}
+    return asset.scene_component_set(&f.scene,table,id,value)==.None
 }
 
 @(private="file")
