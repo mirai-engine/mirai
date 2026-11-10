@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/serial"
@@ -194,7 +195,7 @@ rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (
         editor,err=connection_ready(connection,method)
         if err.code!=0 {return}
         watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
-        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,connection.link)
+        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,connection.link,workspace.measurement(context.temp_allocator))
         if called || retried || !connection_ended(connection,method,err) {return}
     }
 }

@@ -28,6 +28,8 @@ DEFAULT_PORT :: 7940
 // The editor starts each AI agent with the port of its API and the context
 // of its turns, and the commands the agent runs inherit them: mirai rpc sends
 // that context as X-Mirai-Ai-Task to that port.
+// A command that runs inside a measurement (mirai measure) sends which one as
+// X-Mirai-Measure: the editor is no child of it and would wait for its turn.
 AI_TASK_VARIABLE :: "MIRAI_AI_TASK"
 // An agent outside the editor names itself with X-Mirai-Client: mirai mcp
 // sends the name of its MCP client, and mirai rpc that of --client or of this.
@@ -132,6 +134,7 @@ Call :: struct {
     raw:string,                   // the params as received: a JSON object
     client_tag:string,
     client_name:string,           // X-Mirai-Client: the agent outside the editor that calls, or ""
+    measure:string,               // X-Mirai-Measure: the measurement the caller is part of, or ""
     params:rawptr,                // validated; nil when free-form
     result:rawptr,                // zeroed; nil when the handler writes the result
     out:^serial.Writer,           // the result the handler writes; nil when typed
@@ -202,6 +205,7 @@ Conn :: struct {
     stream:bool, // Accept: text/event-stream: its tools/call may answer as a stream
     client_tag:[64]u8,
     client_name:[CLIENT_NAME_BYTES]u8,
+    measure:[24]u8, // X-Mirai-Measure
     plugins:[512]u8, // X-Mirai-Plugins: the plugins whose tools tools/list adds to those of the editor
 }
 
@@ -230,6 +234,7 @@ Server :: struct {
     stats:Server_Stats,
     client_tag:string,
     client_name:string,
+    client_measure:string,
     client_plugins:string, // of the request that runs
     image:string,          // Call.image of the call that ran last; in its scratch
     running:Running,       // the tools/call that holds the server

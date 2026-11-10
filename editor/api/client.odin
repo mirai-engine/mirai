@@ -60,10 +60,11 @@ client_error :: proc(allocator:runtime.Allocator,code:int,format:string,args:..a
 
 // POST of a JSON body, in the turn of an AI task when task is not empty.
 // plugins: the X-Mirai-Plugins of the request, or nothing; client: the
-// X-Mirai-Client. timeout_ms bounds the whole wait for the answer; with a
+// X-Mirai-Client; measure: the X-Mirai-Measure, the measurement the caller is
+// part of. timeout_ms bounds the whole wait for the answer; with a
 // watch an editor that ended or hung fails it at once. status is 0 when no
 // answer arrived.
-client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil,events:=Client_Events{}) -> (status:int,response:[]u8,error:Error) {
+client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.Allocator,task:string="",plugins:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil,events:=Client_Events{},measure:string="") -> (status:int,response:[]u8,error:Error) {
     socket:net.TCP_Socket
     if connection!=nil && connection.open && connection.port==port {
         socket=connection.socket
@@ -85,8 +86,9 @@ client_post :: proc(port:int,path,body:string,timeout_ms:int,allocator:runtime.A
     turn:=fmt.aprintf("X-Mirai-Ai-Task: %s\r\n",task,allocator=allocator) if task!="" else ""
     named:=fmt.aprintf("X-Mirai-Plugins: %s\r\n",plugins,allocator=allocator) if plugins!="" else ""
     caller:=fmt.aprintf("X-Mirai-Client: %s\r\n",client,allocator=allocator) if client!="" && task=="" else ""
+    measured:=fmt.aprintf("X-Mirai-Measure: %s\r\n",measure,allocator=allocator) if measure!="" else ""
     accept:="Accept: application/json, text/event-stream\r\n" if events.handle!=nil else ""
-    request:=fmt.aprintf("POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n%s%s%s%sContent-Length: %d\r\nConnection: %s\r\n\r\n%s",path,port,accept,turn,named,caller,len(body),connection!=nil?"keep-alive":"close",body,allocator=allocator)
+    request:=fmt.aprintf("POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n%s%s%s%s%sContent-Length: %d\r\nConnection: %s\r\n\r\n%s",path,port,accept,turn,named,caller,measured,len(body),connection!=nil?"keep-alive":"close",body,allocator=allocator)
     for sent:=0;sent<len(request); {
         n,err:=net.send_tcp(socket,transmute([]u8)request[sent:])
         if timed_out(err) {return 0,nil,client_error(allocator,TIMEOUT,"the Mirai editor at 127.0.0.1:%d did not take the request in %d ms",port,timeout_ms)}
@@ -274,13 +276,13 @@ error_read :: proc(allocator:runtime.Allocator,text:string) -> Error {
 // is not empty, or as the agent client names. params is a JSON object. The
 // result is JSON text. watch tells an editor that ended or hung from one that
 // works, and its label names on stderr the note of an answer.
-rpc_call :: proc(port:int,method,params:string,id:int,timeout_ms:int,allocator:runtime.Allocator,task:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil) -> (result:string,error:Error,ok:bool) {
+rpc_call :: proc(port:int,method,params:string,id:int,timeout_ms:int,allocator:runtime.Allocator,task:string="",client:string="",watch:=Client_Watch{},connection:^Client_Connection=nil,measure:string="") -> (result:string,error:Error,ok:bool) {
     w:serial.Writer
     serial.writer_init(&w,len(params)+128,allocator)
     raw(&w,`{"jsonrpc":"2.0","id":`);serial.text_write_int(&w,i64(id))
     raw(&w,`,"method":`);serial.text_write_string(&w,method)
     raw(&w,`,"params":`);raw(&w,params==""?"{}":params);raw(&w,"}")
-    status,body,post_error:=client_post(port,"/rpc",string(serial.writer_bytes(&w)),timeout_ms,allocator,task,"",client,watch,connection)
+    status,body,post_error:=client_post(port,"/rpc",string(serial.writer_bytes(&w)),timeout_ms,allocator,task,"",client,watch,connection,measure=measure)
     if post_error.code!=0 {return "",post_error,false}
     envelope,valid:=envelope_read(allocator,string(body))
     if !valid {

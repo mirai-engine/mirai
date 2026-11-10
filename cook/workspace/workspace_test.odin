@@ -57,6 +57,31 @@ the_turns_of_the_compilations_follow_the_memory_and_a_measurement_waits_for_them
     lock_release(&measure)
 }
 
+// What runs for the measurement that holds the turn does not wait for it
+// again; for another one, or for none, it waits.
+@(test)
+a_measurement_does_not_wait_for_its_own_turn :: proc(t:^testing.T) {
+    if measuring() {return}
+    root,error:=os.make_directory_temp("","mirai-workspace-*",context.temp_allocator)
+    if error!=nil {testing.fail_now(t,fmt.tprintf("no temporary folder: %v",error))}
+    defer os.remove_all(root)
+    what:=measure_holder("mirai measure",context.temp_allocator)
+    held,ok:=lock_acquire(lock_path(root,MEASURE_LOCK,context.temp_allocator),what)
+    testing.expect(t,ok)
+    own:=fmt.tprintf("%d",os.get_pid())
+    part,started,_,_:=measure_try(root,"profile.capture",0,own)
+    testing.expect(t,started && !part.held,"it runs as part of the measurement, without the lock")
+    for other in ([]string{"",fmt.tprintf("%d",os.get_pid()+1),fmt.tprintf("%d0",os.get_pid())}) {
+        _,taken,holder,_:=measure_try(root,"profile.capture",0,other)
+        testing.expectf(t,!taken,"%q is not the measurement that holds the turn",other)
+        testing.expect_value(t,holder,what)
+    }
+    lock_release(&held)
+    alone,alone_started,_,_:=measure_try(root,"profile.capture",0,own)
+    testing.expect(t,alone_started && alone.held,"a measurement that ended holds nothing: the turn is taken")
+    lock_release(&alone)
+}
+
 // Two compilations of a checkout do not run at once, and what a compilation
 // holds of its checkout goes with its turn.
 @(test)

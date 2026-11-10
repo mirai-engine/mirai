@@ -49,7 +49,7 @@ build_lock_measured :: proc(root:string) {
 // process is part of a measurement already.
 measure_lock :: proc(root,what:string) -> workspace.Lock {
     if workspace.measuring() {return {}}
-    holder:=fmt.tprintf("pid %d, mirai %s in %s",os.get_pid(),what,root)
+    holder:=workspace.measure_holder(fmt.tprintf("mirai %s in %s",what,root))
     lock,_:=workspace.lock_acquire(workspace.lock_path(root,workspace.MEASURE_LOCK,context.temp_allocator),holder,proc(holder:string) {
         fmt.eprintfln("mirai: waiting for another measurement to finish (%s)",holder!=""?holder:"another process")
     })
