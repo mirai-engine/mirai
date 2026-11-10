@@ -86,7 +86,7 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     paths:=reported_paths(first.out)
     testing.expect_value(t,len(paths),6)
     testing.expect(t,strings.contains(first.out,"6 assets\n") && !strings.contains(first.out,"warning"),first.out)
-    for kind in ([]string{"mesh ","material ","texture ","prefab "}) {testing.expectf(t,strings.contains(first.out,kind),"the report names a %s",kind)}
+    for kind in ([]string{"mesh ","material ","texture ","scene "}) {testing.expectf(t,strings.contains(first.out,kind),"the report names a %s",kind)}
     verify:=make([dynamic]string,context.temp_allocator)
     append(&verify,"asset","verify")
     append(&verify,..paths)
