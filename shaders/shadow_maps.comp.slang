@@ -6,8 +6,7 @@
 // (cluster_cut): what casts a shadow is what the view draws, at the detail
 // its distance from the eye asks for. The clusters of an instance with masked
 // or blended materials go apart, from the end of the list, to be drawn with
-// their coverage. A map of the heights (SHADOW_MAP_HEIGHTS) takes what a ray
-// of the view meets instead of what casts a shadow.
+// their coverage.
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
@@ -49,16 +48,16 @@ void main(uint3 id : SV_DispatchThreadID) {
     uint instance = id.x, map = id.y;
     if (instance >= params.instances || map >= params.maps) return;
     float reach = 0.0;
-    Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
     if (instance_batched(instance)) {
         Instance row = batch_row(batch_of(instance));
         // The slots after the last instance of a batch fill its last group.
         if (instance - frame.instance_count - batch_first(row) >= batch_count(row)) return;
-        if ((batch_classes(row) & (m.kind == SHADOW_MAP_HEIGHTS ? RAY_SEEN : RAY_SHADOWS)) == 0u) return;
+        if ((batch_classes(row) & RAY_SHADOWS) == 0u) return;
         reach = batch_reach(row);
     }
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) != 0u) return;
+    Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
     if (!shadow_map_reaches(m, inst.bounds_min.xyz - reach, inst.bounds_max.xyz + reach)) return;
     Mesh mesh = meshes[instance_mesh(inst)];
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;

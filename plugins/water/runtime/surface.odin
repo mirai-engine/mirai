@@ -1,7 +1,6 @@
 package water
 
 import "core:math"
-import "core:math/linalg"
 import "core:mem"
 import "mirai:core"
 import render "mirai:engine/render"
@@ -20,11 +19,6 @@ SURFACE_CELL :: f32(0.5) // m, of the finest level
 SURFACE_HALF :: 32       // cells of a level from its middle to its edge
 SURFACE_LEVELS :: 9      // the last reaches SURFACE_CELL*SURFACE_HALF*2^(SURFACE_LEVELS-1) from the middle
 SURFACE_STEP :: SURFACE_CELL*8 // m the grid moves by as it follows the camera
-// Of what the heights of the waves change a metre, how much more a triangle of the border of a ring leans than
-// one of its cells, and a wave that fades out along a ring than one that does not.
-@(private) SHEET_BORDER :: f32(1.3)
-@(private) SHEET_FADE :: f32(1.16)
-@(private) SHEET_SQUEEZE :: f32(0.9) // the most of a metre the waves may squeeze a triangle for the sheet to say how steep it is
 
 // The vertices and triangles of the grid, facing +Y, in metres around its middle.
 surface_build :: proc(out:^geom.Mesh_Buffer) {
@@ -133,24 +127,6 @@ dry_crosses :: proc "contextless" (state:^Water_Gpu,dry,plane:int) -> bool {
     return floor<p.surface.x+reach && top>p.surface.x-reach
 }
 
-// The box around the middle of the grid of a plane where a dry box of the frame that crosses its surface gives
-// its sheet walls: the box, and as far around it as the vertices of the ring it is in go onto its walls
-// (water_sheet.comp).
-@(private)
-dry_walls :: proc "contextless" (dry:Gpu_Body,middle:[3]f32) -> (low,high:[3]f32) {
-    r:=dry.to_box
-    to_world:=linalg.inverse(mm.Mat4{r[0].x,r[0].y,r[0].z,r[0].w,r[1].x,r[1].y,r[1].z,r[1].w,r[2].x,r[2].y,r[2].z,r[2].w,0,0,0,1})
-    low,high=max(f32),-max(f32)
-    for i in 0..<8 {
-        corner:=[4]f32{i&1==0?-0.5:0.5,i&2==0?-0.5:0.5,i&4==0?-0.5:0.5,1}
-        p:=(to_world*corner).xyz-middle
-        low,high=linalg.min(low,p),linalg.max(high,p)
-    }
-    far:=max(abs(low.x),abs(low.z),abs(high.x),abs(high.z))
-    ring:=SURFACE_CELL*math.pow(2,max(0,math.ceil(math.log2(max(far,1e-6)/(SURFACE_CELL*SURFACE_HALF)))))
-    return low-{1.5*ring,0,1.5*ring},high+{1.5*ring,0,1.5*ring}
-}
-
 // Whether a dry box of the frame crosses the surface of some plane.
 @(private)
 crosses_plane :: proc "contextless" (state:^Water_Gpu,dry:int) -> bool {
@@ -172,18 +148,13 @@ sheet_place :: proc(state:^Water_Gpu,app:^host.App,view:core.View,body:int,e:cor
     moving:=state.waves[body].count>0
     lowest:=f32(0)
     cut:=false
-    // Where the sheet goes down the walls of the dry boxes that cross it, around its middle: none yet.
-    walls_min,walls_max:=[3]f32{1,1,1},[3]f32{-1,-1,-1}
     key:=base.hash64(mem.ptr_to_bytes(&middle))
     for j in 0..<state.count {
         if !dry_crosses(state,j,body) {continue}
+        cut=true
         floor,_:=dry_span(state.bodies[j])
         lowest=min(lowest,floor-top)
         key=base.hash64(mem.ptr_to_bytes(&state.bodies[j]),key)
-        low,high:=dry_walls(state.bodies[j],middle)
-        if !cut {walls_min,walls_max=low,high}
-        walls_min,walls_max=linalg.min(walls_min,low),linalg.max(walls_max,high)
-        cut=true
     }
     if !moving && !cut {return}
     if state.sheet_pipeline==0 {state.sheet_pipeline=render.stage_pipeline(app,{stage=.Geometry,shader="water_sheet",name="water sheet"})}
@@ -212,20 +183,7 @@ sheet_place :: proc(state:^Water_Gpu,app:^host.App,view:core.View,body:int,e:cor
         reach:=phys.waves_reach(state.waves[body])
         bounds_min:=[3]f32{rest_min.x-reach,min(lowest,-reach),rest_min.z-reach}
         bounds_max:=[3]f32{rest_max.x+reach,reach,rest_max.z+reach}
-        // How steep the triangles of the grid get with their vertices on the waves: as the heights of the waves
-        // between them, more where a wave fades out along a ring and in the triangles of the borders of the
-        // rings, and by how much the waves squeeze them sideways. Past SHEET_SQUEEZE it says nothing.
-        rise,moved:=phys.waves_slope(state.waves[body])
-        shape:=render.Sheet{rise=-1}
-        if squeeze:=SHEET_BORDER*moved;squeeze<SHEET_SQUEEZE {
-            // As far out as the waves move the water sideways, and as high and low as they take the surface.
-            if cut {
-                walls_min,walls_max=walls_min-reach,walls_max+reach
-                walls_min.y,walls_max.y=min(walls_min.y,-reach),max(walls_max.y,reach)
-            }
-            shape={rise=SHEET_BORDER*SHEET_FADE*rise/(1-squeeze),walls_min=walls_min,walls_max=walls_max}
-        }
-        if !render.deformable_update(app,sheet.mesh,bounds_min,bounds_max,&shape) {return}
+        if !render.deformable_update(app,sheet.mesh,bounds_min,bounds_max) {return}
         sheet.key,sheet.made,sheet.middle,sheet.body,sheet.write=key,made,middle,body,true
         sheet.eye={view.position.x-middle.x,view.position.z-middle.z}
     }

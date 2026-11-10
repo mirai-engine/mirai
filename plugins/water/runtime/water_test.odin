@@ -96,9 +96,6 @@ the_waves_go_to_the_shaders_from_the_origin_and_dry_boxes_cut_the_planes_they_cr
     floor,top:=dry_span(state.bodies[1])
     testing.expect(t,abs(floor+0.5)<1e-4 && abs(top-3.5)<1e-4)
     testing.expect(t,dry_crosses(&state,1,0) && crosses_plane(&state,1))
-    // The sheet of the plane has walls in the box and as far around it as the cells of its ring reach.
-    low,high:=dry_walls(state.bodies[1],{0,2,0})
-    testing.expectf(t,low.x<=24.01 && high.x>=35.99 && low.z<= -5.99 && high.z>=5.99 && abs(low.y+2.5)<1e-3 && abs(high.y-1.5)<1e-3,"walls from %v to %v",low,high)
     testing.expect(t,!dry_crosses(&state,2,0),"a dry box deep under the waves")
     testing.expect(t,!dry_crosses(&state,0,1),"a plane is not a dry box")
 }

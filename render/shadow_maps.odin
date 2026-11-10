@@ -31,7 +31,6 @@ SHADOW_RASTER_LIGHTS :: 32 // the most lights rasterized in a frame, those that 
 SHADOW_SUN_CASCADES :: [3]f32{8, 32, 128}
 SHADOW_SUN_SIDES :: [3]u32{2048, 2048, 1024}
 SHADOW_MAP_ORTHOGRAPHIC :: 1
-SHADOW_MAP_HEIGHTS :: 2 // of the heights of the scene (heights.odin), not of a light
 
 Gpu_Shadow_Map :: struct {
 	origin:  Vec3,
@@ -70,7 +69,7 @@ Shadow_Buffers :: struct {
 @(private)
 Shadow_Want :: struct {
 	m:      Gpu_Shadow_Map,
-	light:  int, // -1: the sun; HEIGHTS_LIGHT: none, the heights of the scene
+	light:  int, // -1: the sun
 	face:   u32,
 	weight: f32, // how much of the view it serves
 	side:   u32,
@@ -235,12 +234,10 @@ shadow_sun_cascades :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, t
 	}
 }
 
-// The maps of this frame: which lights, their faces and the sun (lit), those
-// of the heights of the scene (tops), and the square of the atlas of each;
-// written to a buffer of this frame. heights: those placed, from the map
-// heights_first.
+// The maps of this frame: which lights, their faces and the sun, and the
+// square of the atlas of each; written to a buffer of this frame.
 @(private)
-shadow_maps_plan :: proc(p: ^Pass, lit, tops: bool) -> (maps: Shadow_Maps, heights: Gpu_Heights, heights_first: u32, ok: bool) {
+shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	r, t := p.r, p.t
 	s := &r.scene
 	b := &t.shadow_buffers
@@ -267,7 +264,7 @@ shadow_maps_plan :: proc(p: ^Pass, lit, tops: bool) -> (maps: Shadow_Maps, heigh
 	for light, i in s.lights {
 		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum, orthographic, camera.height)
 		keep := SHADOW_RASTER_KEEP if was(b, i) else SHADOW_RASTER_SHARE
-		if !lit || orthographic || share < keep {continue}
+		if orthographic || share < keep {continue}
 		at := picked
 		for at > 0 && shares[at - 1] < share {at -= 1}
 		if at >= SHADOW_RASTER_LIGHTS {continue}
@@ -279,24 +276,22 @@ shadow_maps_plan :: proc(p: ^Pass, lit, tops: bool) -> (maps: Shadow_Maps, heigh
 	wants: [SHADOW_MAPS_MAX]Shadow_Want
 	count := 0
 	sun := s.sun
-	if lit && sun.enabled && !orthographic {
+	if sun.enabled && !orthographic {
 		shadow_sun_cascades(&wants, &count, sun.direction, eye, forward, right, up, tan_x, tan_y, near, camera.far, s.bounds_min, s.bounds_max, s.has_bounds)
 	}
 	suns := count
-	if tops {heights_wants(&wants, &count, eye, s.bounds_min, s.bounds_max)}
-	sized := count
 	for k in 0 ..< picked {
 		shadow_light_faces(&wants, &count, s.lights[chosen[k]], chosen[k], shares[k], eye, forward, right, up, tan_x, tan_y, near)
 	}
-	if count == 0 {return maps, heights, 0, true}
-	// The atlas left after the sun and the heights, shared by how much of the
-	// view each map serves, no more than its points need.
+	if count == 0 {return maps, true}
+	// The atlas left after the sun, shared by how much of the view each map
+	// serves, no more than its points need.
 	pixels := f32(t.width * t.height)
 	left := f32(SHADOW_ATLAS * SHADOW_ATLAS)
-	for w in wants[:sized] {left -= f32(w.side * w.side)}
+	for w in wants[:suns] {left -= f32(w.side * w.side)}
 	weights: f32
-	for w in wants[sized:count] {weights += w.weight}
-	for &w in wants[sized:count] {
+	for w in wants[suns:count] {weights += w.weight}
+	for &w in wants[suns:count] {
 		texels := max(left, 0) * w.weight / max(weights, 1e-6)
 		needed := 2 * w.weight * pixels
 		side := u32(math.sqrt(min(texels, needed)))
@@ -349,17 +344,12 @@ shadow_maps_plan :: proc(p: ^Pass, lit, tops: bool) -> (maps: Shadow_Maps, heigh
 	placed := 0
 	for w in wants[:count] {if w.placed {placed += 1}}
 	words, data := rhi.frame_alloc_typed(r.device, u32, int(maps.rows) * 4 + placed * SHADOW_MAP_ROWS * 4)
-	if words == nil {set_error(r, "transient ring exhausted with %d shadow maps", placed); return maps, heights, 0, false}
+	if words == nil {set_error(r, "transient ring exhausted with %d shadow maps", placed); return maps, false}
 	for &word in words[:maps.rows * 4] {word = 0}
 	at := 0
 	for w in wants[:count] {
 		if !w.placed {continue}
-		if w.light == HEIGHTS_LIGHT {
-			if heights.count == 0 {heights_first = u32(at)}
-			heights.maps[heights.count] = {w.m.origin.x, w.m.origin.z, w.m.span.z, 0}
-			heights.top, heights.bottom = w.m.origin.y, w.m.origin.y - w.m.far
-			heights.count += 1
-		} else if w.light < 0 {
+		if w.light < 0 {
 			if maps.sun == max(u32) {maps.sun = u32(at)}
 			maps.sun += 1 << 16
 		} else {
@@ -377,21 +367,16 @@ shadow_maps_plan :: proc(p: ^Pass, lit, tops: bool) -> (maps: Shadow_Maps, heigh
 	maps.maps = u32(placed)
 	maps.on = 1 if placed > 0 else 0
 	b.data = data
-	return maps, heights, heights_first, true
+	return maps, true
 }
 
-// Draws the maps of the frame: those of the shadows of the direct light while
-// it takes them from maps (lit), which it reads, and those of the heights of
-// the scene while the view draws a solid of glass (p.heights).
 @(private)
-shadow_maps_pass :: proc(p: ^Pass, lit: bool) -> (maps: Shadow_Maps) {
+shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
 	maps.sun = max(u32)
-	lit := lit && r.settings.shadow_maps
-	tops := heights_wanted(r)
-	if !p.draw || (!lit && !tops) {return}
-	planned, heights, heights_first, ok := shadow_maps_plan(p, lit, tops)
+	if !r.settings.shadow_maps || !p.draw {return}
+	planned, ok := shadow_maps_plan(p)
 	if !ok || planned.on == 0 {return}
 	b := &t.shadow_buffers
 	good := target(r, cmd, &t.shadow_atlas, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas")
@@ -432,8 +417,6 @@ shadow_maps_pass :: proc(p: ^Pass, lit: bool) -> (maps: Shadow_Maps) {
 	}
 	rhi.cmd_end_render_pass(cmd)
 	rhi.cmd_barrier_texture(cmd, t.shadow_atlas, .Depth_Read)
-	heights_pass(p, heights, heights_first, planned.rows)
-	if !lit {return}
 	// The maps of the sun, for the passes after this one that take its shadow
 	// from them (sun_shadow_seen): the constants of the view are read when the
 	// frame runs.

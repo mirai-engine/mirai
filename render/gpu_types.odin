@@ -245,11 +245,9 @@ Gpu_Mesh :: struct {
 	uv1_step:        f32,
 	lod_reach:       f32, // how far a sphere of its levels reaches past its box, in its space
 	bounds_word:     u32, // of a pose: the box and the cone of the normals of each cluster it poses, POSED_BOUNDS_WORDS each in the vertex pool, as the skin writes them; GPU_NONE: none
-	sheet_rise:      f32, // of a sheet (MESH_FLAG_SHEET): the most it rises, metres a metre along its XZ plane
+	pad0:            u32,
 	bounds_min:      Vec4,
 	bounds_max:      Vec4,
-	sheet_walls_min: Vec4, // of a sheet: the box of its space where it may be as steep as a wall; min over max: none
-	sheet_walls_max: Vec4,
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
 }
 // Level 0 is closed: a cluster of it seen from behind the cone of its normals is hidden.
@@ -265,9 +263,6 @@ MESH_FLAG_COLORS :: 16
 // Its pages out of the root come and go in slots (pages.odin): the cull
 // draws what is in the pools and asks for what it lacks.
 MESH_FLAG_STREAMED :: 32
-// A sheet: an open surface over the XZ plane of the mesh that faces +Y, no
-// steeper than sheet_rise outside the box of its walls (deformable_update).
-MESH_FLAG_SHEET :: 64
 
 // uv' = linear * uv + offset: the transform of the material and that of the
 // map, composed. ray_lod: the texture level a ray adds for what they shrink.

@@ -80,7 +80,6 @@ Pass :: struct {
 	glass:   Glass_Side, // of the Lit or Blend stage being recorded
 	glass_layered: bool, // the layers of glass were drawn before the Lit stage, which runs on each side of them
 	glass_medium: u32, // instance plus one of the solid of glass the camera may be in (glass_layers), 0 none
-	heights: Gpu_Heights, // of the scene around the camera, when the view drew them (shadow_maps_pass)
 	reflections: rhi.Texture, // the filtered traced reflections, when the view traced any
 	gi:    rhi.Texture, // the light of the probe volume at each pixel, or the reference of the indirect light
 	gathered: bool, // gi holds the light of the probe volume (contact_pixels.comp)
@@ -1270,7 +1269,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	}
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
 	params.shadow = {sun = max(u32)}
-	params.shadow = shadow_maps_pass(p, !reference)
+	if !reference {params.shadow = shadow_maps_pass(p)}
 	atlas := t.shadow_atlas if params.shadow.on != 0 else r.dummy_texture
 	grid := or_dummy(r, s.light_grid_buffer)
 	hw := r.hardware_rt

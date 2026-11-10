@@ -19,9 +19,6 @@
 #define SHADOW_MAP_ROWS 6u
 #define SHADOW_LIGHT_FACES 16u
 #define SHADOW_MAP_ORTHOGRAPHIC 1u
-// Orthographic from over the scene, straight down: not of a light, but of the
-// heights of the scene (heights.slang).
-#define SHADOW_MAP_HEIGHTS 2u
 // The most clusters the maps draw in a frame, and of them those of the
 // instances with masked or blended materials, listed from the end.
 #define SHADOW_ENTRIES (1u << 18u)
@@ -36,7 +33,7 @@ struct Shadow_Map {
     float3 right;
     float far;
     float3 up;
-    uint kind;     // SHADOW_MAP_ORTHOGRAPHIC or SHADOW_MAP_HEIGHTS, or 0 for a perspective from origin
+    uint kind;     // SHADOW_MAP_ORTHOGRAPHIC, or 0 for a perspective from origin
     float3 forward;
     float skip;    // nearer than this along it lies the body of the light, metres
     float4 span;   // perspective: x / z and y / z, low then high; orthographic: x and y, metres
@@ -68,7 +65,7 @@ uint shadow_light_word(StructuredBuffer<uint4> data, uint light) {
     return data[light >> 2u][light & 3u];
 }
 
-bool shadow_map_orthographic(Shadow_Map m) { return m.kind != 0u; }
+bool shadow_map_orthographic(Shadow_Map m) { return m.kind == SHADOW_MAP_ORTHOGRAPHIC; }
 
 // A point of the world on the axes of a map: x right, y up, z along it.
 float3 shadow_map_local(Shadow_Map m, float3 world) {

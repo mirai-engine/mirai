@@ -8,13 +8,11 @@
 #include "gbuffer.slang"
 #include <extension_hooks.slang>
 #include "depth.slang"
-#include "heights.slang"
 
 // medium: the instance plus one of the solid the camera may be in, 0 none; near_top: m over and under its top
 // within which each pixel decides whether it starts in it (glass_inside.comp).
 // resume: a thread for each head of the round of the batch, instead of each pixel.
-// heights: of the scene around the camera, which say where the rays of a walk meet nothing.
-struct Params_Block { uint light_budget; uint traced; float max_distance; float firefly_clamp; float pixel_spread; uint snapshot; uint medium; float near_top; uint resume; uint pad0; uint pad1; uint pad2; Heights heights; };
+struct Params_Block { uint light_budget; uint traced; float max_distance; float firefly_clamp; float pixel_spread; uint snapshot; uint medium; float near_top; uint resume; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> layer_albedo : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);   // rgb base color, a metallic
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> layer_normal : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);   // encoded as the normal target of the G-buffer
@@ -236,49 +234,6 @@ float3 walk_shown(Surface s, Glass_Walk w, float t) {
     return l > params.firefly_clamp ? radiance * (params.firefly_clamp / l) : radiance;
 }
 
-// Whether a ray inside a solid never meets its mesh again: a flat mesh it
-// leaves, or a sheet (MESH_FLAG_SHEET) it goes away under more steeply than
-// the sheet rises, without crossing the box where the sheet has walls.
-bool walk_leaves(uint instance, float3 origin, float3 direction) {
-    Instance inst = scene_instance(instance);
-    Mesh mesh = meshes[instance_mesh(inst)];
-    float3 d = transform_vector(inst.world_inv, direction);
-    float3 size = mesh.bounds_max.xyz - mesh.bounds_min.xyz;
-    for (int axis = 0; axis < 3; axis++) {
-        if (size[axis] == 0.0 && d[axis] != 0.0) return true;
-    }
-    if ((mesh.flags & MESH_FLAG_SHEET) == 0u || !(-d.y > mesh.sheet_rise * length(d.xz))) return false;
-    if (any(mesh.sheet_walls_min.xyz > mesh.sheet_walls_max.xyz)) return true;
-    float3 o = transform_point(inst.world_inv, origin);
-    float3 inverse = 1.0 / select(abs(d) < float3(1e-12), float3(1e-12), d);
-    float3 a = (mesh.sheet_walls_min.xyz - o) * inverse, b = (mesh.sheet_walls_max.xyz - o) * inverse;
-    float3 near = min(a, b), far = max(a, b);
-    return max(max(near.x, near.y), max(near.z, 0.0)) > min(far.x, min(far.y, far.z));
-}
-
-// The nearest surface along a ray of a walk up to reach, as trace_ray: the
-// ray is sent from where it comes down to the heights of the scene, and not
-// at all while it stays over them.
-Hit walk_trace(float3 origin, float3 direction, float reach, out Ray_Path path) {
-    float clear = heights_clear(params.heights, origin, direction, reach);
-#ifdef MIRAI_HOOK_RAY
-    // A gate of an extension is not in the heights.
-    float gate;
-    if (clear > 0.0 && ray_gated(origin, direction, reach, gate)) clear = 0.0;
-#endif
-    if (clear < reach) return trace_ray(origin, direction, clear, reach, false, path);
-    path.origin = origin;
-    path.direction = direction;
-    path.gate = -1.0;
-    path.glass = float3(1.0);
-    Hit hit;
-    hit.t = -1.0;
-    hit.instance = INVALID;
-    hit.primitive = INVALID;
-    hit.bary = float2(0.0);
-    return hit;
-}
-
 // Goes on with a walk until it ends (WALK_DONE, with what it shows) or it
 // waits for a point: then false, and the pixel stops here this round. A
 // surface without a program it meets is in s, to shade (shade): one call
@@ -289,17 +244,12 @@ bool walk_advance(inout Glass_Walk w, Material m, uint instance, float depth, fl
     t = 0.0;
     if (w.stage == WALK_INSIDE) {
         while (w.stage == WALK_INSIDE) {
-            Hit hit;
-            hit.t = -1.0;
-            hit.instance = INVALID;
-            hit.primitive = INVALID;
-            hit.bary = float2(0.0);
-            if (!walk_leaves(instance, w.origin, w.direction)) hit = trace_instance(instance, w.origin, w.direction);
+            Hit hit = trace_instance(instance, w.origin, w.direction);
 #if GLASS_WALK_IN_SCENE
             {
                 Ray_Path crossed;
                 // Past the face it found: with ray tracing hardware what that found can be what is met.
-                Hit met = walk_trace(w.origin, w.direction, hit.instance == INVALID ? params.max_distance : hit.t + bias, crossed);
+                Hit met = trace_ray(w.origin, w.direction, 0.0, hit.instance == INVALID ? params.max_distance : hit.t + bias, false, crossed);
                 if (met.instance != INVALID && met.instance != instance) {
                     w.flags |= WALK_FOUND;
                     w.glass = crossed.glass;
@@ -357,7 +307,7 @@ bool walk_advance(inout Glass_Walk w, Material m, uint instance, float depth, fl
     // than what it finds would still show through.
     float reach = (w.flags & WALK_OPEN) != 0u ? min(params.max_distance, material_clear_reach(m)) : params.max_distance;
     Ray_Path arrival;
-    Hit hit = walk_trace(w.origin, w.direction, reach, arrival);
+    Hit hit = trace_ray(w.origin, w.direction, 0.0, reach, false, arrival);
     w.direction = arrival.direction;
     w.glass = arrival.glass;
     if (hit.instance == INVALID) {

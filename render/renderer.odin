@@ -284,7 +284,7 @@ Stats :: struct {
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Clusters_Candidates, Cull_Programs, Tlas_Batches, Gbuffer, Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, Direct_Rays, Direct_Rays_Hw, Direct_Samples, Direct_Samples_Hw, Direct_Points, Direct_Spread, Direct_Filter, Direct_Filter_Hw, Ddgi_Trace, Ddgi_Trace_Hw, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Hw, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
-	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Map_Tested, Shadow_Maps, Heights, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
+	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Map_Tested, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
 	Ddgi_Trace_Color, Ddgi_Trace_Color_Hw,
 	Reflect_Color, Reflect_Color_Hw, Translucent_Color, Translucent_Color_Hw,
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Hw, Glass_Color, Glass_Color_Hw, Reflect_Resolve_Glass, Glass_Mean,
@@ -533,7 +533,6 @@ Renderer :: struct {
 	dummy_layers:    rhi.Texture, // in place of the layers target (RGBA32 uint) while there is none
 	dfg:             rhi.Texture, // the split-sum table of the specular lobe, in the entry DFG_TEXTURE of the texture table
 	air:             Air_State,   // the tables of the air of an atmosphere (air.odin)
-	heights:         Heights_State, // of the scene around the camera of the view being drawn (heights.odin)
 	display_lut:     rhi.Texture, // the display transform (display.odin)
 	font:            rhi.Texture,
 	font_size:       [2]int,
@@ -691,7 +690,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	white := [4]u8{255, 255, 255, 255}
 	if !renderer_set_font(r, white[:], 1, 1) {return false}
 	if !extension_counters_init(r) || !ui_offscreen_init(r) {return false}
-	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !heights_build(r) || !display_build(r, DISPLAY_SDR) {return false}
+	if !create_pipelines(r) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
 	r.hardware_rt = info.features.ray_query && r.settings.trace_mode != .Software && hardware_pipelines_ready(r)
 	if info.features.ray_query {
 		verified, note := hardware_rt_self_test(r)
@@ -746,7 +745,6 @@ renderer_destroy :: proc(r: ^Renderer) {
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
-	heights_destroy(r)
 	if r.linear_sampler != 0 {rhi.sampler_destroy(d, r.linear_sampler)}
 	if r.point_sampler != 0 {rhi.sampler_destroy(d, r.point_sampler)}
 	if r.material_sampler != 0 {rhi.sampler_destroy(d, r.material_sampler)}
@@ -985,7 +983,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps of masked materials",
 	})
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
-	compute(list, r, .Heights, .Heights_Comp)
 	graphics(list, r, .Tonemap, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Tonemap_Frag],
 		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "tonemap",

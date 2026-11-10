@@ -466,48 +466,6 @@ glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
-// Under a flat sheet of a solid, as the surface of still water, the view goes
-// on bent to what it finds out of the frame, and no ray looks for where it
-// leaves a mesh it cannot meet again. The heights of the scene say where that
-// ray meets nothing, and change nothing of what it shows: a floor, the rock on
-// it, or what is left past the edge of the floor.
-@(test)
-glass_sheet_of_a_solid_shows_the_same_through_the_heights_of_the_scene :: proc(t: ^testing.T) {
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 256, 192, glass_settings()) {return}
-	defer glass_fixture_destroy(&f)
-	r := f.renderer
-	water := glass_material({1, 1, 1}, 0, 0.02)
-	water.thickness, water.ior = 1, 1.333
-	materials_set(r, {water})
-	sheet, box := sheet_mesh(r), box_mesh(r)
-	// A floor that glows red where x < 0 and blue where x > 0, a rock that glows green on it, and the
-	// surface a metre over it, which goes on past the floor.
-	red := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({-5, 0, 0}, {10, 1, 10}), tint = {0, 0, 0}, emission = {1, 0, 0}}
-	blue := Instance_Desc{object_id = 2, mesh = sheet, transform = placed({5, 0, 0}, {10, 1, 10}), tint = {0, 0, 0}, emission = {0, 0, 1}}
-	rock := Instance_Desc{object_id = 3, mesh = box, transform = placed({3, 0.25, 0}, {1, 0.5, 1}), tint = {0, 0, 0}, emission = {0, 1, 0}}
-	surface := Instance_Desc{object_id = 4, mesh = sheet, transform = placed({0, 1, 0}, {60, 1, 60}), material = 1, tint = {1, 1, 1}}
-	scene_set(r, {red, blue, rock, surface}, nil, {}, {})
-	testing.expect(t, heights_wanted(r), "a scene with a solid of glass draws its heights")
-	// So narrow a view that what shows through the surface is under the frame.
-	looks := [4]Vec3{{-0.5, 1, 1}, {0.5, 1, 1}, {3, 1, 1}, {0, 1, 12}}
-	names := [4]string{"the red floor", "the blue floor", "the rock", "nothing"}
-	with, without: [4]Vec3
-	for at, i in looks {
-		camera := Camera{position = at + {0, 2, 6}, forward = {0, -2, -6}, up = {0, 1, 0}, fov_y = 4, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-		with[i] = shown(t, &f, camera, at)
-		heights := r.heights.texture
-		r.heights.texture = 0
-		without[i] = shown(t, &f, camera, at)
-		r.heights.texture = heights
-		off := with[i] - without[i]
-		testing.expectf(t, abs(off.r) + abs(off.g) + abs(off.b) < 0.03, "over %s the heights show %v and the rays alone %v", names[i], with[i], without[i])
-	}
-	testing.expectf(t, with[0].r > 0.5 && with[0].b < 0.1 && with[1].b > 0.5 && with[1].r < 0.1, "the floor under the frame shows through: %v and %v", with[0], with[1])
-	testing.expectf(t, with[2].g > 0.5 && with[2].b < 0.1, "the rock shows through: %v", with[2])
-	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
-}
-
 @(test)
 glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 	f: Glass_Fixture

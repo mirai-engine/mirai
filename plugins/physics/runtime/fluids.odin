@@ -27,14 +27,6 @@ waves_reach :: proc "contextless" (waves:Surface_Waves) -> f32 {
     return sim.waves_reach(&w)
 }
 
-// The most the height of the waves changes, metres a metre of the still
-// surface the water rests on, and the most of that metre the water moves
-// sideways, under 1: the surface rises no more than rise / (1 - moved).
-waves_slope :: proc "contextless" (waves:Surface_Waves) -> (rise,moved:f32) {
-    w:=waves
-    return sim.waves_slope(&w)
-}
-
 // Water, or another fluid, that bodies float in by their density and
 // characters swim in; with density zero, the air of a box that takes the
 // fluid of lower priority out of where it is: a base under the sea, a room
