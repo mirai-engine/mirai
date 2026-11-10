@@ -1,7 +1,7 @@
 package asset
 
 import "core:mem"
-import "core:os"
+import "core:fmt"
 import cmath "core:math"
 import "core:slice"
 import "core:testing"
@@ -55,8 +55,7 @@ animation_round_trips_and_fills_a_library :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     storage:Test_Animation
     desc:=test_animation(&storage)
-    path:=test_path("lift.anim")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/lift.anim",base.test_folder(t,"asset"))
     testing.expect_value(t,animation_save(path,&types,desc),Error.None)
 
     a:Asset
@@ -180,8 +179,7 @@ sound_round_trips_lossless_and_as_a_file :: proc(t:^testing.T) {
     source:Import_Info
     text_set(source.source[:],"sounds/step.wav")
     text_set(source.importer[:],"sound")
-    path:=test_path("step.sound")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/step.sound",base.test_folder(t,"asset"))
     testing.expect_value(t,sound_save(path,&types,{id={0x50,1},channels=2,sample_rate=48000,frames=480,lossless=lossless,source=&source}),Error.None)
     a:Asset
     testing.expect_value(t,asset_load(&a,path),Error.None)

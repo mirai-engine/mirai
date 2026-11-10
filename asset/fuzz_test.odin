@@ -127,9 +127,7 @@ fuzz_row_type :: proc(types:^Types) -> serial.Type_Index {
 @(test)
 damaged_tables_of_game_data_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    folder:=strings.clone(test_path("fuzz-records"));defer delete(folder)
-    os.make_directory_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"fuzz-records")
     Written :: struct {damage:f32,rarity:u8,prefab:base.Asset_Id}
     values:=[2]Written{{damage=10,rarity=2,prefab={5,6}},{damage=25}}
     index,_:=types_index(&types,Written)
@@ -187,9 +185,7 @@ damaged_interfaces_animations_and_sounds_go_through_every_command :: proc(t:^tes
 damaged_fonts_texts_and_prompts_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     // The paths outlive the temp allocator, which fuzz_file frees.
-    folder:=strings.clone(test_path("fuzz-interface"));defer delete(folder)
-    os.make_directory_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"fuzz-interface")
     font:=fmt.aprintf("%s/face.font",folder);defer delete(font)
     testing.expect_value(t,font_save(font,&types,{id={0xf0,1},file=#load("../assets/fixtures/cff.otf"),compression=.LZ}),Error.None)
     languages:=[2]String_Language{};text_set(languages[0].code[:],"es");text_set(languages[1].code[:],"en")

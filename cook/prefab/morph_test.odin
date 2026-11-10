@@ -1,7 +1,6 @@
 package prefab
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import importer "mirai:cook/import"
@@ -21,8 +20,9 @@ morph_prefabs_keep_the_weights_a_node_sets_apart_from_its_mesh :: proc(t:^testin
     model:=importer.Imported_Model{meshes=meshes[:],nodes=nodes[:]}
     ids:=[1]base.Asset_Id{{1,2}}
     assets:=importer.Import_Report{mesh_ids=ids[:],animation_id={3,4}}
-    temp,_:=os.temp_directory(context.temp_allocator)
-    file:=fmt.tprintf("%s/mirai-morph-prefab-%d.prefab",temp,os.get_pid());defer os.remove(file)
+    folder:=base.test_folder(t,"morph-prefab")
+    if folder=="" {return}
+    file:=fmt.tprintf("%s/morph-prefab.prefab",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     _,error:=model_prefab(&model,&assets,&types,{31,32},"Faces",file)
     if !testing.expect_value(t,error,Error.None) {return}

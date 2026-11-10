@@ -1,7 +1,7 @@
 package asset
 
 import "core:math"
-import "core:os"
+import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
 
@@ -12,8 +12,7 @@ sound_sets_keep_their_sounds_and_ranges_and_depend_on_their_sounds :: proc(t:^te
     info.sounds[0]={sound=base.Asset_Id{1,2},weight=2}
     info.sounds[1]={sound=base.Asset_Id{3,4}}
     info.volume_min,info.pitch_min,info.pitch_max=0.5,0.9,1.1
-    path:=test_path("steps.sound_set")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/steps.sound_set",base.test_folder(t,"asset"))
     testing.expect_value(t,sound_set_save(path,&types,{id={7,8},info=info}),Error.None)
 
     a:Asset
