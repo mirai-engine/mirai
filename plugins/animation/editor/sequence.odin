@@ -71,7 +71,8 @@ sequence_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Sequence_Set_Params)
     text:=api.json_member(call.raw,"value");nested:=api.Call{raw=text,allocator=call.allocator};count,_:=api.params_array_count(&nested,"frames")
     if count==0 || count>anim.KEYFRAME_PATH_FRAMES {authoring_failure(call,"value.frames","Capacity","1 to 16 frames",fmt.tprintf("%d",count),"The sequence requires frames");return}
-    value:=anim.Keyframe_Path{count=u8(count),speed=p.value.speed,loop=p.value.loop,playing=p.value.playing,relative=p.value.relative}
+    value:=anim.keyframe_path_default()
+    value.count,value.speed,value.loop,value.playing,value.relative=u8(count),p.value.speed,p.value.loop,p.value.playing,p.value.relative
     for frame,i in p.value.frames[:count] {value.frames[i]={pose=frame.pose,duration=frame.duration,hold=frame.hold,ease=frame.ease,interpolation=frame.interpolation}}
     if !sequence_valid(&value) {authoring_failure(call,"value","Invalid_Definition","valid transform frames and finite playback settings","invalid sequence","The sequence definition is invalid");return}
     w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}

@@ -229,9 +229,9 @@ demo enables. How an `editor/` adds steps, panels and tools:
   agent reaches through `call`.
 - **`profiler`** (`Editor`, development) and **`tracy`** (`Runtime`, development): captures panel
   of `profile.*` and Tracy GUI client. See [profiling](profiling.md).
-- **`vfx`** (`Runtime`, `Editor`, `Shaders`; depends on `physics`, whose gravity its particles
-  take): GPU [particles](../../mirai-world/references/vfx.md), their `.particle` format, the
-  inspector and document of an effect and the `particle.*` methods.
+- **`vfx`** (`Runtime`, `Editor`, `Shaders`; no dependencies: its particles take the gravity and
+  wind of the `engine/volume` volumes): GPU [particles](../../mirai-world/references/vfx.md), their
+  `.particle` format, the inspector and document of an effect and the `particle.*` methods.
 - **`fluids`** is not part of the engine: the plugin lives in
   <https://github.com/tomaszbk/mirai-fluids>, with its `water_fluids` bridge, and is installed
   from the catalog.

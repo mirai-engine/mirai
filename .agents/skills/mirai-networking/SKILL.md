@@ -28,7 +28,7 @@ neither the data world nor physics. A replicated object is an opaque game id plu
 ## Map
 
 - Bitstream, transport, host, connections and security, channels, protocol and types, replication,
-  events, authority, clock, rollback →
+  events, authority, clock, interpolation →
   [bitstream](references/networking.md#bitstream-stdserialbitstreamodin),
   [transport](references/networking.md#transport), [host](references/networking.md#host-two-halves),
   [connections](references/networking.md#connections),
@@ -37,7 +37,7 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   [replication](references/networking.md#replication), [events](references/networking.md#events),
   [authority](references/networking.md#authority),
   [clock and inputs](references/networking.md#time-and-inputs),
-  [rollback](references/networking.md#prediction-rollbackodin) and
+  [interpolation](references/networking.md#smoothing-and-interpolation-interpolationodin) and
   [known limits](references/networking.md#known-limits)
 - Opening a host's UDP port (`mapping_start`, `mapping_poll`, `mapping_stop`, `mapping_close`;
   PCP, NAT-PMP, UPnP) → [API and lifecycle](references/port-mapping.md#api-and-lifecycle),
@@ -87,7 +87,7 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   `net/back.odin`: network half (canonical state, links, baselines, reader).
 - `net/scope.odin`: scope (filters, spatial grid, `Custom` relevance) and priority.
   `net/event.odin`: events and authority messages.
-- `net/clock.odin`: client clock, time section and inputs. `net/rollback.odin`: `Rollback`,
+- `net/clock.odin`: client clock, time section and inputs. `net/interpolation.odin`:
   `Smoothing`, `Interpolation`.
 - `net/portmap*.odin`: port opening.
 
@@ -134,6 +134,8 @@ In `plugins/multiplayer/runtime`:
 - After `host_init`, every capacity comes from `Host_Desc`/`Replication_Desc`; exhausting one
   returns `Error` or counts in the statistics. Replicated traffic, even damaged, does not
   allocate.
+- **Every connection is sealed, and nothing answers an unproven sender:** before a returned cookie
+  only the challenge, and nothing to a proof that does not open. There is no unsealed mode.
 - **Every byte from the network is hostile.** It is read with `Bit_Reader`, which never leaves the
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another
@@ -222,7 +224,7 @@ In `plugins/multiplayer/runtime`:
   `mirai test plugins/multiplayer/runtime`. Run the `*_test.odin` of the touched area: `address`,
   `connection`, `secure`, `invite`, `congestion`, `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
-  `authority`, `prediction`, `clock`, `worker`, `baseline` (pools and shared baselines),
+  `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
   `packing` (packet fill) and `portmap` ([port-mapping](references/port-mapping.md)).
 - `test_baselines_match` and `test_baselines_counted` check that each active baseline is the one
   the client stored and that the counts of shared ones are exact; the convergence tests compare

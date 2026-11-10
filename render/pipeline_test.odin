@@ -1,6 +1,7 @@
 package mirai_render
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 
@@ -30,6 +31,15 @@ pipelines_keep_their_order_leave_out_what_nothing_reads_and_say_what_is_wrong ::
 	plan_compile(&light, {passes = standard_pipeline_passes(.Light)}, buffer[:])
 	testing.expect(t, .Reflections not_in light.stages && .Indirect not_in light.stages)
 	testing.expect_value(t, light.direct, Direct_Mode.Traced)
+	// The Indirect stage declares what its passes read: contact occlusion and the reference.
+	{
+		full: Render_Plan
+		plan_compile(&full, {passes = standard_pipeline_passes(.Full)}, buffer[:])
+		want := []Render_Use{{.Normal, .Read, false}, {.Linear_Depth, .Read, false}, {.Motion, .Read, false}, {.Gi, .Write, false}}
+		for &pass in full.passes[:full.pass_count] {
+			if pass.stage == .Indirect {testing.expectf(t, slice.equal(pass.uses[:pass.use_count], want), "the Indirect stage uses %v", pass.uses[:pass.use_count])}
+		}
+	}
 
 	// A pass whose resource nothing reads is left out; the passes it would have read from stay.
 	{
@@ -67,7 +77,7 @@ pipelines_keep_their_order_leave_out_what_nothing_reads_and_say_what_is_wrong ::
 	previous := []Render_Use{{.Display, .Read, true}}
 	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Custom, name = "past", uses = previous, record = nothing}}}, "previous Display")
 	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Custom, name = "silent", uses = previous}}}, "has no record procedure")
-	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Output}}, resources = []Render_Resource_Desc{{id = .Hdr, format = .RGBA16_Float}}}, "declares Hdr")
+	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Output}}, resources = []Render_Resource_Desc{{id = .Taa, format = .RGBA16_Float}}}, "declares Taa")
 	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Output}}, resources = []Render_Resource_Desc{{id = .Custom0, format = .RGBA8_Srgb}}}, "format RGBA8_Srgb")
 	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Output}}, resources = []Render_Resource_Desc{{id = .Custom0, bytes = 6}}}, "multiple of 4")
 	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Output}}, resources = []Render_Resource_Desc{{id = .Custom0, format = .R8_Unorm, history = true, kept = true}}}, "history and kept")

@@ -15,7 +15,7 @@ import phys "plugins:physics/runtime"
 // one it has. A climb is driven by its own (mantle.odin).
 BODY_ROOT_MOVE :: u32(0x41435452) // the id of its layered moves
 
-@(step="fixed",stage="apply",after="animation_sample")
+@(step="fixed",stage="apply")
 animation_body_move :: proc(characters:core.Read(phys.Character),worlds:core.Read(core.World_Transform),verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(characters) {

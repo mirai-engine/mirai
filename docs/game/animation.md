@@ -29,8 +29,8 @@ jumps and swims with no game code: physics tells the match the mode and velocity
 `animation.character.setup` (editor API) writes it from the clip names (idle, walk, run, sprint,
 fall, jump, land, swim); check it with `animation.inspect` part `Match`. The game sets how fast
 the body goes (`Walk.max_speed`), never which clip plays: a faster gait is a higher speed.
-Without a `Character` (a scripted walker) a `fixed` step before `animation_sample` tells the
-match what the body does, velocity in world axes and m/s (the model faces -Z):
+Without a `Character` (a scripted walker) a `fixed` step tells the match what the body does,
+velocity in world axes and m/s (the model faces -Z):
 
 ```odin
 anim.match_goal(requests,{rig=e,mode=u16(phys.MODE_WALKING),   // requests:^anim.Animation_Requests
@@ -58,7 +58,7 @@ anim.look(requests,e,anim.spatial_entity(target))   // the head turns to it; wei
 
 ## One event loop
 
-React to results, not to a state, in a `fixed` step after `animation_sample`:
+React to results, not to a state, in a `fixed` step:
 
 ```odin
 for ev in events.items {                   // events:core.Ref(anim.Animation_Events)

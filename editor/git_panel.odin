@@ -89,7 +89,7 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
             if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=UNSAVED_COLOR,radius=3}) {}
             ui.label(ctx,"Unsaved changes",th.font_small,th.text)
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"git_save"),{label="Save all",style=.Field,height=th.control-6}).clicked {action_run(s,.Save_All)}
+            if ui.button(ctx,ui.id(ctx,"git_save"),{label="Save all",style=.Field,height=th.control-6}).clicked {command_run(s,"save_all")}
         }
     }
     // Discarding all of them shows while the pointer is on their head.

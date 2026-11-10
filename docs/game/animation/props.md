@@ -48,8 +48,8 @@ if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
 }
 ```
 
-- Run it in a `fixed` step after `animation_sample`:
-  `@(step="fixed",stage="apply",after="animation_sample")`.
+- Run it in a `fixed` step of the stage of `animation_sample`, `@(step="fixed",stage="apply")`:
+  reading `anim.Playback` puts it after the sampling.
 - A body owned by physics is never written directly: ask physics, or use `body_move`.
 - A seek gives no displacement, and every source blended must share the root bone or the
   evaluation is rejected (a problem of the entity).

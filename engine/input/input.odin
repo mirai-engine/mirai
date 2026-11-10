@@ -22,9 +22,9 @@ import "mirai:std/math"
 // core.Input of the tick and from its own state of the tick before, so a tick
 // simulated again gives the same.
 //
-// Each library declares its actions as an enum @(actions), and the defaults
-// of the ones it wants driven without input.mirai ([E]Action_Default). The
-// map is built once, in the first input phase: those defaults, and then
+// Each library declares its actions as an enum @(actions), and beside it the
+// defaults of the ones it wants driven without input.mirai (Action_Default).
+// The map is built once, in the first input phase: those defaults, and then
 // input.mirai of the project, which gives the kind and the bindings of the
 // actions it names. A step reads the actions of an enum through Input_Of(E).
 
@@ -77,11 +77,8 @@ Look_Action :: enum u8 {Look}
 LOOK_SPEED :: f32(0.12*math.RAD_PER_DEG)
 
 // The bindings of look when input.mirai of the project does not name it.
-@(storage,host)
-Look_Actions :: struct {defaults:[Look_Action]Action_Default}
-
-look_actions_default :: proc "contextless" () -> Look_Actions {
-    return {defaults={.Look=action_default(.Axis2,binding_mouse_delta(),binding_gamepad_stick(.Right,25))}}
+look_action_defaults :: proc "contextless" () -> [Look_Action]Action_Default {
+    return {.Look=action_default(.Axis2,binding_mouse_delta(),binding_gamepad_stick(.Right,25))}
 }
 
 Action_Kind :: si.Action_Kind
@@ -126,11 +123,10 @@ Input_Binding :: struct {
 }
 
 // How an action is driven when input.mirai of the project does not name it.
-// Whoever declares an enum @(actions) gives the defaults of its members in a
-// storage of its package that has a field [E]Action_Default, set by the
-// default of the storage (<name>_default() or <NAME>_DEFAULT): the compiler
-// asks for every member, the map reads those defaults when it is built, and
-// nothing reads the storage.
+// Whoever declares an enum @(actions) E gives the defaults of its members
+// beside it, by the naming rule of defaults: <e>_defaults :: proc() ->
+// [E]Action_Default, or a constant <E>_DEFAULTS. The compiler asks for every
+// member, and the map reads them when it is built.
 Action_Default :: struct {
     kind:Action_Kind,
     input_context:Input_Context,
@@ -393,34 +389,28 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,probl
         if entry.value<CONTEXT_CAPACITY {continue}
         input_report(problems,"input.context_value","the input context %q (%s:%d) has the value %d; contexts take values below %d: give it a free one",entry.name,entry.file,entry.line,entry.value,CONTEXT_CAPACITY)
     }
-    defaulted:Action_Mask
     if info!=nil {
-        for &storage in info.storages {
-            for &given in action_defaults(info,&storage) {
-                d,action:=given.default,given.action
+        for &enum_actions in info.actions {
+            if enum_actions.defaults==nil || enum_actions.info==nil {continue}
+            members:=runtime.type_info_base(enum_actions.info).variant.(runtime.Type_Info_Enum) or_continue
+            defaults:=make([]Action_Default,len(members.values),context.temp_allocator)
+            enum_actions.defaults(raw_data(defaults))
+            for &d,member in defaults {
+                action:=Action(enum_actions.base+i64(member))
                 name,declared:=core.name_of(info,Action,i64(action))
-                switch {
-                case given.unknown!=nil:
-                    input_report(problems,"input.default_unknown","%s gives defaults to the members of %v, which is not an enum @(actions); mark it @(actions), or remove the defaults",storage.name,given.unknown)
-                case !declared || int(action)>=ACTION_CAPACITY:
-                    input_report(problems,"input.default_unknown","%s gives a default to the action of value %d, which no enum @(actions) declares; declare the action or remove its default",storage.name,action)
-                case defaulted&action_bit(action)!=0:
-                    input_report(problems,"input.default_twice","the action %q has two defaults, the second in %s; leave one",name,storage.name)
-                case int(d.count)>DEFAULT_BINDING_CAPACITY:
-                    input_report(problems,"input.default_bindings","the default of the action %q in %s has %d bindings, and a default holds %d; bind the rest in %s",name,storage.name,d.count,DEFAULT_BINDING_CAPACITY,project.INPUT_FILE)
-                    fallthrough
-                case:
-                    defaulted|=action_bit(action)
-                    input_map_action(&result,action,d.kind)
-                    if int(d.input_context)<CONTEXT_CAPACITY {
-                        result.contexts[action]=d.input_context
-                    } else {
-                        input_report(problems,"input.default_context","the default of the action %q in %s puts it in the input context of value %d; contexts take values below %d: declare it as a free one",name,storage.name,d.input_context,CONTEXT_CAPACITY)
-                    }
-                    for binding in d.bindings[:min(int(d.count),DEFAULT_BINDING_CAPACITY)] {
-                        if !input_map_bind(&result,action,binding) {
-                            input_report(problems,"input.default_binding","a default binding of the action %q in %s does not suit its kind %v, or the map holds %d bindings already; fix that binding",name,storage.name,d.kind,BINDING_CAPACITY)
-                        }
+                if !declared || int(action)>=ACTION_CAPACITY {continue}
+                if int(d.count)>DEFAULT_BINDING_CAPACITY {
+                    input_report(problems,"input.default_bindings","the default of the action %q has %d bindings, and a default holds %d; bind the rest in %s",name,d.count,DEFAULT_BINDING_CAPACITY,project.INPUT_FILE)
+                }
+                input_map_action(&result,action,d.kind)
+                if int(d.input_context)<CONTEXT_CAPACITY {
+                    result.contexts[action]=d.input_context
+                } else {
+                    input_report(problems,"input.default_context","the default of the action %q puts it in the input context of value %d; contexts take values below %d: declare it as a free one",name,d.input_context,CONTEXT_CAPACITY)
+                }
+                for binding in d.bindings[:min(int(d.count),DEFAULT_BINDING_CAPACITY)] {
+                    if !input_map_bind(&result,action,binding) {
+                        input_report(problems,"input.default_binding","a default binding of the action %q does not suit its kind %v, or the map holds %d bindings already; fix that binding",name,d.kind,BINDING_CAPACITY)
                     }
                 }
             }
@@ -456,7 +446,7 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,probl
     }
     if strings.builder_len(unbound)>0 {
         where_:=file!=""?file:project.INPUT_FILE
-        input_report(problems,"input.action_unbound","%s: no binding, neither a default in code nor in %s; give each its kind and default bindings where it is declared (a host storage with a field [E]Action_Default), or bind it in Project Settings > Input",strings.to_string(unbound),where_)
+        input_report(problems,"input.action_unbound","%s: no binding, neither a default in code nor in %s; give each its kind and default bindings beside its enum (<enum>_defaults :: proc() -> [E]Action_Default), or bind it in Project Settings > Input",strings.to_string(unbound),where_)
     }
     m^=result
 }
@@ -490,40 +480,6 @@ member_name :: proc(name:string) -> string {
         strings.write_byte(&b,(i==0 || name[i-1]=='_') && c>='a' && c<='z'?c-32:c)
     }
     return strings.to_string(b)
-}
-
-@(private)
-Given_Default :: struct {
-    action:Action,
-    default:Action_Default,
-    unknown:typeid, // the enum of a field [E]Action_Default that is not @(actions)
-}
-
-// The defaults of a storage: those of its fields [E]Action_Default, in the
-// value its default gives it, each with the action of its member.
-@(private)
-action_defaults :: proc(info:^core.World_Info,storage:^core.Storage_Info) -> []Given_Default {
-    if storage.default==nil || storage.info==nil {return nil}
-    record,is_struct:=runtime.type_info_base(storage.info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return nil}
-    value:[]u8
-    found:=make([dynamic]Given_Default,context.temp_allocator)
-    for i in 0..<int(record.field_count) {
-        array,is_array:=runtime.type_info_base(record.types[i]).variant.(runtime.Type_Info_Enumerated_Array)
-        if !is_array || array.elem.id!=Action_Default {continue}
-        actions:=core.actions_of(info,array.index.id)
-        if actions==nil {
-            append(&found,Given_Default{unknown=array.index.id})
-            continue
-        }
-        if value==nil {
-            value=make([]u8,storage.info.size,context.temp_allocator)
-            storage.default(raw_data(value))
-        }
-        defaults:=([^]Action_Default)(&value[record.offsets[i]])[:array.count]
-        for d,member in defaults {append(&found,Given_Default{action=Action(actions.base+i64(member)),default=d})}
-    }
-    return found[:]
 }
 
 // How std/input reads a binding of an action of that kind.

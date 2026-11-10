@@ -120,6 +120,13 @@ what it perceives; `think` only reads and proposes, and the actions write.
   perceivers in turns. Hearing takes the noises of `Noises` (`noise`) within its range by volume.
   Memory lowers confidence until forgetting, only on the perceiver's turn: what it could not look
   at it does not forget before looking at it again. A destroyed subject is forgotten at once.
+- Each perceiver looks only at the `Perceivable`s around it: those of the tick are put in a
+  [grid](../../mirai-std/references/spatial.md#grid-uniform-grid-and-spatial-hash) over the ground
+  (`Sight`, of the application) and each takes those within its range, in the order of their table,
+  so the turns of the rays and what a full memory keeps do not depend on the grid.
+- With nobody to look at or hear and nothing remembered, the tick looks at no perceiver. The same
+  holds for the place queries without a request and for the smart objects whose tables did not
+  change.
 - A far perceiver (`nav.Nav_Far`) perceives when its mind decides: what is in its cone and range,
   enabled or far as well, without rays (the collision there is not loaded), and the noises of
   that tick.
@@ -160,7 +167,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
 - `mirai test plugins/behavior/runtime`: registration and checking by name, agent tick without
   allocating, the presentation and that it does not decide when resimulating, far agents and their
   lease, movement actions, sight by cone and team, noise, forgetting, a remembered subject that is
-  destroyed, ray turns, places by budget, from the navmesh, from entities and from offers, a place
+  destroyed, ray turns, random crowds that remember by the grid whom they would among every
+  perceivable, a tick with nothing to do that goes through no row, places by budget, from the
+  navmesh, from entities and from offers, a place
   target that is destroyed, the offers by team, ability, capacity, uses and cooldown, and the
   influence maps without allocating.
   `mirai test plugins/multiplayer/runtime

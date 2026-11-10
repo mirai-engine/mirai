@@ -43,6 +43,7 @@ Drop_Result :: struct {
 
 @(private)
 placement_api_register :: proc(s:^editor.Session) {
+    editor.tool_entry(s,PLACEMENT_TOOL,"Placement",.Import,{key=.P,set=true})
     defaults:=Drop_Params{interval=1/f32(5),time=PLACEMENT_TICKS*PLACEMENT_DT}
     for &drop in defaults.drops {drop.shape,drop.height,drop.scale=.Cube,1,{1,1,1}}
     editor.api_method_register(s,{name="placement.drop",summary="Drops new meshes onto the scene and lets physics settle them as the Physics placement tool does; the scene stays fixed. One step of undo with the entities and their poses.",params=Drop_Params,params_info=type_info_of(Drop_Params),result=Drop_Result,result_info=type_info_of(Drop_Result),defaults=&defaults,run=placement_api_drop})

@@ -75,7 +75,7 @@ physics_prepare :: proc(state:^Physics_State,settings:core.Ref(Physics_Settings)
     if queries.open==nil {queries.open=query_open}
 }
 
-@(step="fixed",loops="game editor",stage="simulate",after="physics_places places_drop")
+@(step="fixed",loops="game editor",stage="simulate",after="places_drop")
 physics_step :: proc(
     state:^Physics_State,settings:core.Ref(Physics_Settings),requests:^Body_Requests,events:^Physics_Events,meshes:^Collider_Meshes,
     app:^host.App,time:core.Time,
