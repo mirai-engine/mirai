@@ -305,6 +305,8 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
             job.result.text=strings.join(errors,"\n",a)
             return .Generate
         }
+        // What compiles against it after it follows the declarations just written.
+        plugin_library_declared(&lib,&declared)
         // A check reads the declarations just written; it links nothing.
         if desc.action==.Check {
             job.plugin_published[i]=true

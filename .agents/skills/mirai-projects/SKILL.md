@@ -90,9 +90,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
 - A private procedure is declared and exported only when the declarations of its package name it:
   what `declare` copies as text and what it looks for names in are the same set.
-- What compiles against the engine declarations follows the declarations it names and what they
-  reach, by the names in the text: a name that is hidden or inside a comment still counts, and a
-  type reached through a pointer too. More is followed, never less.
+- What compiles against declarations, of the engine, its plugins or the project (one index),
+  follows the declarations its parsed sources name and what they reach: a name a local hides still
+  counts, and a type reached through a pointer too. More is followed, never less.
 - In dev a package that is edited often is a library of its own, and a library imports only
   packages listed before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and

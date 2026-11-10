@@ -219,9 +219,11 @@ changed declaration of the game compiles the world too.
 - Under `plugins/<optimization>/`: `decl/<name>/<part>` the declarations of the engine plugins
   (`build.declare`, prefix `plugins.`), the collection `plugins`, and `decl-project/` those of the
   project (prefix `project.`), the collection `project` of the world; `stage-<id>/` the copy a
-  library is compiled from, with the declarations of what it imports of its own collection next
-  to it and at the same depth as its declarations, and `<id>.stamp` the fingerprint of the last
-  build.
+  library is compiled from, as the collection `staged`, beside its declarations and at their
+  depth: its packages import each other through it and every other package is its declarations;
+  `<id>.stamp` the fingerprint of the last build. Each package also writes what it declares and
+  names, so a part is keyed, as the engine libraries are, on the declarations its sources name of
+  the engine and of the parts before it (one index), with the names of the libraries it links.
 - The declarations copy the body of `#force_inline`, generic or `where` procedures and declare the
   others as functions of the library, the private ones
   [only when named](#engine-binaries). An `@(private="file")` one is private in the declarations
