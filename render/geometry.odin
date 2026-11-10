@@ -490,6 +490,11 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 	record.ray_count = u32(given.count)
 	for cut, k in given.cuts[:given.count] {record.rays[k].error = cut.error}
 	handle: Mesh_Handle
+	// Room first for its record and for its place among the streamed: the mesh is not left without them.
+	if len(s.free_meshes) == 0 && !pool_reserve(&s.meshes, 1) || record.stream != nil && !pool_reserve(&s.pages.streamed, 1) {
+		mesh_stream_free(record.stream)
+		return 0, false
+	}
 	if later != nil {
 		if !mesh_reserve(s, g, stored, slot_words, &record) {
 			mesh_stream_free(record.stream)
@@ -497,6 +502,12 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 		}
 		handle = mesh_place(r, record)
 	} else {
+		// And in the pools for its blocks, its tables and its trees: they are written whole or not at all.
+		vertices, indices, nodes, triangles := mesh_pool_counts(g, stored, len(slot_words), given, r.hardware_rt)
+		if !pool_reserve(&s.vertices, vertices) || !pool_reserve(&s.indices, indices) || !pool_reserve(&s.blas_nodes, nodes) || !pool_reserve(&s.blas_triangles, triangles) {
+			mesh_stream_free(record.stream)
+			return 0, false
+		}
 		vertex_start, index_start := u32(len(s.vertices)), u32(len(s.indices))
 		append(&s.indices, ..mem.slice_data_cast([]u32, g.clusters))
 		record.page_word = u32(len(s.indices)) - index_start

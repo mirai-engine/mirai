@@ -292,8 +292,13 @@ spawn_member :: proc(c:core.Commands,app:^host.App,section_scene:base.Asset_Id,s
 @(private)
 current :: proc(d:Documents,file:^asset.Asset,resolved:^asset.Asset) -> (document:^asset.Asset,error:Error) {
     if _,placed:=asset.asset_table(file,asset.TABLE_INSTANCES);!placed || d.cooked || d.open==nil {return file,.None}
+    d:=d
+    open :: proc(data:rawptr,id:base.Asset_Id) -> (^asset.Asset,asset.Error) {
+        d:=(^Documents)(data)
+        return d.open(d.user,id),.None
+    }
     r:asset.Prefab_Resolver
-    asset.resolver_init(&r,d.types,{d.user,d.open},context.temp_allocator)
+    asset.resolver_init(&r,d.types,{&d,open},context.temp_allocator)
     defer asset.resolver_destroy(&r)
     if !asset.resolver_stale(&r,file) {return file,.None}
     copied:asset.Scene

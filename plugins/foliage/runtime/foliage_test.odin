@@ -776,7 +776,10 @@ foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
             }
             context.allocator=owner
             limit.remaining=max(int)
-            if done {break}
+            if done {
+                if call==.Cell_Build {testing.expectf(t,len(work.placed)==len(whole.placed),"a cell built with %d requests served has %d of its %d instances",served,len(work.placed),len(whole.placed))}
+                break
+            }
             refused=true
             #partial switch call {
             case .Cell_Build:  testing.expectf(t,len(work.placed)==0,"%v with %d requests served leaves %d instances",call,served,len(work.placed))

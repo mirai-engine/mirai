@@ -255,7 +255,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         if surface && collision {
             if geom.isosurface(grid,low,high,m)!=.None {return false}
             collides:=lod.level>0?&mesh.collision:&mesh.welded
-            geom.mesh_weld(geom.mesh_buffer_view(m),0,collides)
+            if !geom.mesh_weld(geom.mesh_buffer_view(m),0,collides) {return false}
             if lod.level==0 {
                 mesh.geometry,mesh.welded=mesh.welded,mesh.geometry
                 collides=m
@@ -264,7 +264,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         }
         if surface && (lod.level>0 || !collision) {
             if geom.isosurface(grid,low,high,m,0,chunk_iso_lod(lod))!=.None {return false}
-            geom.mesh_weld(geom.mesh_buffer_view(m),0,&mesh.welded)
+            if !geom.mesh_weld(geom.mesh_buffer_view(m),0,&mesh.welded) {return false}
             mesh.geometry,mesh.welded=mesh.welded,mesh.geometry
             // What a coarse level misses still shows while it collides.
             if len(m.indices)==0 && len(mesh.collision.indices)>0 {

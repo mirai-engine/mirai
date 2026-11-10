@@ -34,7 +34,7 @@ MEMORY_CATALOG :: `{"programs":[{"id":3,"name":"Paint","domain":"vfx","attribute
 renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^testing.T) {
 	limit := Memory_Limit{owner = context.allocator, remaining = max(int)}
 	limited := runtime.Allocator{memory_limit_proc, &limit}
-	Call :: enum {Bvh, Light_Tree, Texture, Catalog, Scene_Init, Materials, Scene_Set, Scene_Update, Lights, Shader_Reload}
+	Call :: enum {Bvh, Light_Tree, Texture, Catalog, Scene_Init, Materials, Scene_Set, Scene_Update, Lights, Shader_Reload, Mesh}
 	SAYS :: bit_set[Call]{.Materials, .Scene_Set, .Scene_Update, .Lights, .Shader_Reload}
 
 	vertices: [8]Mesh_Vertex
@@ -126,6 +126,8 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 				candidate := renderer_shader_reload_begin(r, &assets)
 				done = candidate != nil
 				renderer_abort_shader_reload(candidate)
+			case .Mesh:
+				_, done = mesh_add(r, vertices[:], indices[:])
 			}
 			limit.remaining = max(int)
 			if done {break}

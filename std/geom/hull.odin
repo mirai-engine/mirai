@@ -812,13 +812,18 @@ hull_is_valid :: proc(hull:Hull,tolerance:f32) -> bool {
 
 
 // Appends the hull as triangles, each face as a fan from its first corner.
-hull_append_mesh :: proc(hull:Hull,out:^Mesh_Buffer) {
+// False, with nothing appended, without memory.
+hull_append_mesh :: proc(hull:Hull,out:^Mesh_Buffer) -> bool {
+    corners:=0
+    for face in hull.faces {corners+=3*max(int(face.vertex_count)-2,0)}
+    if reserve_more(&out.positions,len(hull.vertices))!=nil || reserve_more(&out.indices,corners)!=nil {return false}
     base:=u32(len(out.positions))
     append(&out.positions,..hull.vertices)
     for face in hull.faces {
         loop:=hull.face_vertices[face.first_vertex:][:face.vertex_count]
         for i in 1..<len(loop)-1 {append(&out.indices,base+loop[0],base+loop[i],base+loop[i+1])}
     }
+    return true
 }
 
 // The flat hull: the convex polygon of the points in coordinates of their

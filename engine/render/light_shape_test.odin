@@ -1,5 +1,6 @@
 package render
 
+import "base:runtime"
 import "core:math"
 import "core:testing"
 import "mirai:core"
@@ -57,6 +58,13 @@ lights_take_their_shape_from_the_scale_of_their_entity :: proc(t: ^testing.T) {
 	testing.expectf(t, rectangle.size == {2, 0.5} && rectangle.radius == 0 && rectangle.intensity == 2, "the square of its entity, x by y: %v", rectangle.size)
 	testing.expectf(t, near(rectangle.direction, mm.quat_forward(turned)) && near(rectangle.axis, mm.quat_rotate(turned, [3]f32{-1, 0, 0})), "facing -z, wide along -x, its right seen from the side it lights: %v %v", rectangle.direction, rectangle.axis)
 	testing.expectf(t, sync.sun.enabled && sync.sun.illuminance == 3 && near(sync.sun.direction, mm.quat_rotate(turned, [3]f32{0, 0, 1})), "the sun shown, shining toward -z: %v", sync.sun)
+	// Without memory for them no light is left out in silence: the build says so, with none.
+	refuse :: proc(data: rawptr, mode: runtime.Allocator_Mode, size, alignment: int, old_memory: rawptr, old_size: int, loc := #caller_location) -> ([]byte, runtime.Allocator_Error) {
+		return nil, .Out_Of_Memory if mode == .Alloc || mode == .Alloc_Non_Zeroed || mode == .Resize || mode == .Resize_Non_Zeroed else nil
+	}
+	starved: Render_Sync
+	starved.lights.allocator = {refuse, nil}
+	testing.expect(t, !lights_build(&starved, nil, core.read(&worlds), {core.read(&suns), core.read(&points), core.read(&spots), core.read(&rects), core.NONE}, core.read(&emissions), core.read(&meshes), core.read(&hidden), core.read(&parents), nil, 0) && len(starved.lights) == 0, "lights built without memory for them")
 }
 
 // A sun with a height fade dims from start to end and keeps minimum past it;
