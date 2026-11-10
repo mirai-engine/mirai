@@ -38,7 +38,6 @@ Api_Collab_Status :: struct {
     role:Collab_Role,
     phase:Collab_Phase,
     invite:[48]u8 `mirai:"text,label=The host: the code to give others to join with"`,
-    lan_invite:[48]u8 `mirai:"text,label=The host: the code its network joins with"`,
     port:int,
     reason:[96]u8 `mirai:"text,label=Why the session ended"`,
     peers:[COLLAB_PEERS]Api_Collab_Peer `mirai:"label=The first count are in the session"`,
@@ -63,7 +62,6 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
     if st==nil {return}
     r.role,r.phase=st.role,st.phase
     base.text_set(r.invite[:],string(st.code[:st.code_length]))
-    base.text_set(r.lan_invite[:],string(st.lan_code[:st.lan_length]))
     base.text_set(r.reason[:],st.reason)
     r.port=st.port
     for &peer,i in st.peers {
@@ -173,7 +171,7 @@ share_code :: proc(s:^Session,id,name,code,missing:string) {
         }
         if ui.button(ctx,shell_id(g,id),{label="Copy",style=.Field,width=0,height=24,size=10.5,padding=8,center=true,disabled=code==""}).clicked {
             platform.clipboard_set(s.app.platform,code)
-            notify(s,fmt.tprintf("Copied the code for %s",name=="Internet"?"the internet":"the same network"))
+            notify(s,"Copied the code")
         }
     }
 }
@@ -221,11 +219,8 @@ share_build :: proc(s:^Session) {
                 if share_row(ctx,"Reason") {ui.label(ctx,st.reason,10.5,th.text,0)}
             }
             if st.role==.Host {
-                // Who is on the network of the host joins by its address there;
-                // who is not, by the one the router opened, once it did.
-                share_code(s,"share_copy_lan","Same network",string(st.lan_code[:st.lan_length]),"")
-                internet,waiting:=collab_internet_code(st)
-                share_code(s,"share_copy_internet","Internet",internet,waiting)
+                // One code joins from anywhere: a guest asks at its address and nearby.
+                share_code(s,"share_copy","Code",string(st.code[:st.code_length]),"Opening the port on the router...")
             }
             for &peer,i in st.peers {
                 if !peer.used {continue}
