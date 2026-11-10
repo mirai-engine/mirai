@@ -269,7 +269,7 @@ net_test_interpolated :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity) -> 
 net_test_state :: proc(s:^Net_Session,r:^Replica,tick:u32,position:[3]f32) {
     r.tick=tick
     r.pose.position=position
-    replica_sample(s,r)
+    replica_sample(s,r,0)
 }
 
 // With late, an interpolated replica gets the states of its last ticks after they ran.

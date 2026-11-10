@@ -81,6 +81,8 @@ server_world :: proc(s:^Net_Session,w:core.World_Ref,root:scene.Scene_Root) {
     }
     mem.zero_slice(server.views)
     server.visibility={}
+    mem.zero_slice(server.layouts)
+    server.moved={}
     server.ancestry={}
     mem.zero_slice(server.sections)
     server.section_count,server.sections_full=0,false

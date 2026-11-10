@@ -41,6 +41,7 @@ Net_Test_Tables :: struct {
     seats:core.Table(inp.Seat),
     absents:core.Table(Seat_Absent),
     visibility:core.Table(Visibility),
+    spawns:core.Table(Predicted_Spawn),
     references:core.Table(scene.Scene_Reference),
     tombstones:core.Table(scene.Tombstone),
     held:core.Table(scene.Section_Held),
@@ -268,7 +269,7 @@ net_test_fragment :: proc(s:^Net_Session,type:wire.Type_Id,component:typeid) -> 
 net_test_replica :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,role:Role,simulation:Simulation) -> ^Replica {
     r:=&s.client.replicas[1]
     local,_:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
-    r^={object=1,entity=e,type=net_test_type(s,w,e),role=role,simulation=simulation,slot=-1}
+    r^={object=1,entity=e,type=net_test_type(s,w,e),role=role,simulation=simulation,slot=-1,samples=-1}
     r.pose={id=core.id_of(core.read(core.world_table_of(w,core.Id)),e),position=local.position,rotation=local.rotation,scale=local.scale}
     r.motion,_=motion_read(w,e)
     wire.smoothing_init(&r.smoothing)
@@ -755,20 +756,29 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     if !testing.expect(t,net_test_session(&s,&world,&info,&app,&network,1,.Client,settings={max_objects=64,predicted_capacity=8,replication={history_seconds=0.25}})) {return}
     defer session_destroy(&s)
     c:=&s.client
-    replica :: proc(c:^Client,index:int,e:core.Entity,role:Role) {c.replicas[index]={object=Object(index),entity=e,role=role,slot=-1}}
+    ref:=core.world_ref(&world,&info)
+    replica :: proc(s:^Net_Session,w:core.World_Ref,index:int,e:core.Entity,role:Role) {
+        s.client.replicas[index]={object=Object(index),entity=e,role=role,type=net_test_type(s,w,e),slot=-1,samples=-1}
+    }
     for k in 0..<PAIRS {
         a,_:=core.get(core.read(&world.bodies),driven[k])
         b,_:=core.get(core.read(&world.bodies),joined[k])
         testing.expectf(t,a.island!=0 && a.island==b.island,"pair %d: islands %d and %d",k,a.island,b.island)
-        replica(c,1+k,driven[k],.Predicted)
-        replica(c,1+PAIRS+k,joined[k],.Shown)
+        replica(&s,ref,1+k,driven[k],.Predicted)
+        replica(&s,ref,1+PAIRS+k,joined[k],.Shown)
     }
-    replica(c,1+2*PAIRS,alone,.Shown)
+    replica(&s,ref,1+2*PAIRS,alone,.Shown)
     c.replica_high=2+2*PAIRS
     driven_list(c)
-    records_capture(&s,core.world_ref(&world,&info),1)
-    for k in 0..<PAIRS {testing.expectf(t,replica_critical(&s.desc,&c.replicas[1+PAIRS+k],1),"the replica joined to body %d is not critical",k)}
-    testing.expect(t,!replica_critical(&s.desc,&c.replicas[1+2*PAIRS],1))
+    records_capture(&s,ref,1)
+    c.newest,c.any=1,true
+    for k in 0..<PAIRS {testing.expectf(t,replica_wanted(&s,&c.replicas[1+PAIRS+k])==.Predicted,"the replica joined to body %d is not predicted",k)}
+    testing.expect_value(t,replica_wanted(&s,&c.replicas[1+2*PAIRS]),Mode.Interpolated)
+    // And it is interpolated again once it has been out of reach for critical_ticks.
+    c.newest=1+u32(s.desc.critical_ticks)
+    testing.expect_value(t,replica_wanted(&s,&c.replicas[1+PAIRS]),Mode.Predicted)
+    c.newest+=1
+    testing.expect_value(t,replica_wanted(&s,&c.replicas[1+PAIRS]),Mode.Interpolated)
 }
 
 // The child hangs from parent in the hierarchy: a root while parent does not

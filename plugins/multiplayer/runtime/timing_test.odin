@@ -364,7 +364,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         r.tick=tick
         r.pose.position={f32(tick)*0.05,0,0}
         r.motion.linear={3,0,0}
-        replica_sample(&s,r)
+        replica_sample(&s,r,0)
     }
     body_type :: proc(w:^Net_Test_World,e:core.Entity) -> phys.Body_Type {
         info,_:=phys.body_info(core.ref(&w.state),phys.body_of(core.ref(&w.state),e))
@@ -422,7 +422,7 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         r.tick=tick
         r.pose.position={f32(tick)*0.05,0,0}
         r.motion.linear={3,0,0}
-        replica_sample(&s,r)
+        replica_sample(&s,r,0)
     }
     held:=[3]f32{0,2,0}
     for tick in 1..<30 {

@@ -105,12 +105,13 @@ net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outb
     // What is sent outside the ticks is not of a tick that runs again.
     outbox.replaying=false
     adopted:=core.take(&adoptions.queue)
-    if session.host_ready && session.mode==.Client {
-        for item in adopted {replica_adopt(session,world,item.id,item.entity)}
-    }
-    if !session.host_ready {return}
     time:=core.world_storage_of(world,core.Time)
-    if time==nil || time.resimulating {return}
+    if !session.host_ready || time==nil {return}
+    if session.mode==.Client {
+        for item in adopted {replica_adopt(session,world,item.id,item.entity)}
+        spawns_settle(session,world,time)
+    }
+    if time.resimulating {return}
     tick:=u32(time.tick)
     if session.mode==.Server {
         server_publish(session,world,outbox,tick)

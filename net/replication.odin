@@ -67,6 +67,7 @@ Replication_Desc :: struct {
     // its ticks in the handshake and a client takes them. Default 0.5, at most HISTORY_MAX_SECONDS
     history_seconds:f32,
     input_lead:f32,        // ticks of input the server should have in hand, default 2
+    input_delay:f32,       // client: ticks ahead of its own that it submits its input for; its tick runs that many less ahead of the server
     interpolation_delay:f32, // ticks behind the server that remote objects are shown besides the jitter, default 2.5
     display_jump:f32,      // client: seconds the display of remote objects may fall behind where it should be before it jumps there; default 30 ticks
     display_dilation:f32,  // client: how much faster or slower than its ticks the display may run to catch up, default 0.1
@@ -380,6 +381,34 @@ object_create :: proc(h:^Host,desc:Object_Desc) -> (Object,Error) {
         f.poll_count+=1
     }
     return object,.None
+}
+
+// Server: the object is of another type from now on, the list of fragments a
+// creation of it would carry now, with the state its sources hold. Every
+// connection that has its replica takes the new type and the whole state in
+// its place: the replica goes on. Full when the state does not fit
+// Replication_Desc.state_words or the frame: try again after the next publish.
+object_retype :: proc(h:^Host,object:Object,type:Type_Id,sources:[MAX_FRAGMENTS]rawptr) -> Error {
+    f:=&h.front
+    protocol:=h.desc.protocol
+    o:=front_object(h,object)
+    if o==nil || h.desc.mode!=.Server || protocol==nil || int(type)>=type_count(protocol) {return .Invalid}
+    if o.type==type {return .None}
+    sources:=sources
+    before,after:=&protocol.types[o.type],&protocol.types[type]
+    size:=int(offset_of(Create_Buffer,words))+after.words*4
+    if f.state_words-before.words+after.words>h.desc.replication.state_words || !op_fits(h,size) {return .Full}
+    staged:Create_Buffer
+    staged.payload.type=type
+    words:=staged.words[:after.words]
+    for fragment in 0..<after.fragment_count {
+        if sources[fragment]!=nil {fragment_quantize(protocol,after,fragment,sources[fragment],words,h,front_to_reference)}
+    }
+    if !op_push(h,{kind=.Object_Retype,handle=u64(object)},mem.ptr_to_bytes(&staged)[:size]) {return .Full}
+    f.state_words+=after.words-before.words
+    o.type,o.dirty,o.sources=type,0,sources
+    f.binding_revision+=1
+    return .None
 }
 
 @(private)
@@ -857,7 +886,12 @@ front_absorb :: proc(h:^Host,buffer:^Command_Buffer) {
                 f.binding_revision+=1
             }
         case .Object_Created:
-            if !server {
+            if !server && command.retyped {
+                // The replica goes on: what the game bound it to stays.
+                o:=&f.objects[index]
+                o.type,o.role,o.simulation,o.dirty=command.type,command.role,command.simulation,0
+                f.binding_revision+=1
+            } else if !server {
                 f.objects[index]={generation=base.handle_generation(base.Handle(command.object)),type=command.type,flags={.Alive},role=command.role,simulation=command.simulation}
             }
         case .Object_Destroyed:

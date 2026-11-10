@@ -471,6 +471,14 @@ raycast :: proc(physics:core.Ref(Physics_State),origin,direction:[3]f32,max_dist
     return hit_of(&physics.world,found,max_distance),true
 }
 
+// The ray against the colliders of one entity as if its body were at a pose, whatever they collide with: where
+// it was at another time, as the lag compensation of the network tells (physics_multiplayer).
+raycast_at :: proc(physics:core.Ref(Physics_State),e:core.Entity,position:[3]f32,rotation:mm.Quat,origin,direction:[3]f32,max_distance:f32=1000) -> (hit:Hit,ok:bool) {
+    translation,_:=query_prepare(physics,direction,max_distance,core.NONE,{}) or_return
+    found:=sim.body_ray_cast(&physics.world,body_of(physics,e),{position,rotation},origin,translation) or_return
+    return hit_of(&physics.world,found,max_distance),true
+}
+
 // The shapes along the ray, nearest first: by channel the ones it only overlaps (when filter.overlaps)
 // up to the first that blocks, by object type all of them. Writes up to QUERY_HIT_CAPACITY, keeping the
 // nearest, and returns how many it wrote.

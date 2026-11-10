@@ -124,7 +124,7 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
         for &session in sessions {wire.host_update(&session.host,now)}
         server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
         client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
-        client_place(&sessions[1],core.world_ref(client,&info),wire.clock_interpolation_tick(&sessions[1].host,u32(tick)),nil)
+        client_place(&sessions[1],core.world_ref(client,&info),wire.clock_interpolation_tick(&sessions[1].host,u32(tick)),nil,false)
         core.settle(&info,client,nil)
         // The server decides; the client, a function `server` that does not run there, does not.
         mind_net_decide(server,&info,minds,u64(tick))
