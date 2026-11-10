@@ -89,7 +89,7 @@ File_Scope :: struct {
     c_library:bool, // it imports a library that is linked into the binary
     named:map[^ast.Value_Decl]bool, // the private procedures of its package that are declared
     desc:^Declare_Desc,
-    imports:map[string]string,      // the packages of the collection of the binary it imports, by the name it gives each
+    imports:map[string]string,      // the packages it imports whose declarations are keyed (imports_named)
     conditions:[dynamic]^ast.Expr,  // of the when blocks around what is being declared
     tags:u64,                       // the hash of the tags of the file: what it declares, it declares under them
 }
@@ -104,10 +104,10 @@ Value_Kind :: enum u8 {
 
 // The names in the text the declarations of a package carry: those of one
 // file, where what is private to a file is looked up, and those of them all.
-@(private="file")
+@(private)
 Names :: struct {
-    file,all:^map[string]bool,
-    imports:^map[string]string, // given: what is selected of a package the file imports counts, as `<package>.<name>`
+    file,all:^map[string]bool, // all nil: bare names are not wanted, only what imports gives
+    imports:^map[string]string, // given: what is selected of a package the file imports counts, as its key in file (imports_named)
 }
 
 // A private procedure that is declared foreign if the declarations name it.
@@ -163,16 +163,8 @@ declare_package :: proc(d:^Declare,path:string) {
     for file,index in files {
         scope:=&scopes[index]
         scope^={file=file,src=file.src,folder=filepath.dir(file.fullpath),stage_folder=stage,decl_folder=decl,link_prefix=link_prefix,desc=&d.desc}
-        scope.imports=make(map[string]string,context.temp_allocator)
+        scope.imports=imports_named(file)
         scope.conditions=make([dynamic]^ast.Expr,context.temp_allocator)
-        for stmt in file.decls {
-            imp,is_import:=stmt.derived.(^ast.Import_Decl)
-            if !is_import {continue}
-            path,ours:=import_package(&d.desc,imp)
-            if !ours {continue}
-            name:=imp.name.text!=""?imp.name.text:path[strings.last_index_byte(path,'/')+1:]
-            scope.imports[name]=path
-        }
         for tag in file.tags {
             text:=strings.trim_space(tag.text)
             scope.tags=base.hash_combine(scope.tags,xxhash.XXH3_64_default(transmute([]u8)text))
@@ -216,7 +208,7 @@ declare_package :: proc(d:^Declare,path:string) {
     if d.desc.names {
         // The files come sorted, so the same declarations write the same lines.
         text,file:=strings.to_string(names),project.path(decl,DECLARED_NAMES,allocator=context.temp_allocator)
-        d.changed.declared=base.hash_combine(d.changed.declared,xxhash.XXH3_64_default(transmute([]u8)text))
+        if text!="" {d.changed.declared=base.hash_combine(d.changed.declared,xxhash.XXH3_64_default(transmute([]u8)text))}
         if old,error:=os.read_entire_file(file,context.temp_allocator);error==nil && d.changed.moved=="" && string(old)!=text {d.changed.moved=declared_moved(path,string(old),text)}
         write(d,file,text,&d.changed.decl)
     }
@@ -501,13 +493,14 @@ names_collect :: proc(scope:^File_Scope,file:int,names:^Names,privates:^[dynamic
     }
 }
 
-@(private="file")
+@(private)
 names_add :: proc(names:^Names,node:^ast.Node) {
     visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
         if node==nil {return nil}
         names:=cast(^Names)v.data
         #partial switch n in node.derived {
         case ^ast.Ident:
+            if names.all==nil {break}
             names.file[n.name]=true
             names.all[n.name]=true
         // What is selected is a field or a name of another package, the names

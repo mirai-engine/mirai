@@ -111,7 +111,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         files:=package_parse(p.folder)
         package_flags,ok:=test_flags(root,p.folder,files,release,flags[:])
         if !ok || !test_imports_check(root,p.folder,files) || !package_test_shaders(root,p.folder) {
-            builds[i].failed=true
+            builds[i].failure=.Generate
             continue
         }
         builds[i]=build.test_build_plan(root,compiler,p.folder,test_executable(root,p),package_flags)
@@ -499,7 +499,7 @@ test_builds_run :: proc(root:string,packages:[]Test_Package,builds:[]build.Test_
     waiting:=make([dynamic]int,context.temp_allocator)
     paths:=make([dynamic]string,context.temp_allocator)
     for planned,i in builds {
-        if packages[i].nothing || packages[i].owner!="" || planned.failed {continue}
+        if packages[i].nothing || packages[i].owner!="" || planned.failure!=.None {continue}
         if len(planned.command)==0 {
             times.current+=1
             continue
@@ -540,19 +540,9 @@ test_builds_run :: proc(root:string,packages:[]Test_Package,builds:[]build.Test_
 test_build_say :: proc(path:string,b:build.Test_Build) -> bool {
     for d in b.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if said:=strings.trim_right_space(b.said);said!="" {fmt.eprintln(said)}
-    switch {
-    case !b.failed:
-        return true
-    case b.code<=0:
-        fmt.eprintfln("mirai test: %s was not built; why is said above",path)
-    case:
-        if build.compiler_out_of_memory(b.said) {
-            fmt.eprintln(out_of_memory_text("mirai test"))
-        } else if strings.trim_space(b.said)=="" && len(b.diagnostics)==0 && build.compiler_crashed(b.code) {
-            fmt.eprintfln("mirai test: %s",build.compiler_silent_failure(b.code,context.temp_allocator))
-        }
-        fmt.eprintfln("mirai test: could not build %s (the compiler exited with %d)",path,b.code)
-    }
+    if b.failure==.None {return true}
+    if b.failure==.Out_Of_Memory {fmt.eprintln(out_of_memory_text("mirai test"))}
+    fmt.eprintfln("mirai test: could not build %s",path)
     return false
 }
 
