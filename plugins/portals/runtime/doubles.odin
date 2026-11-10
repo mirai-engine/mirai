@@ -9,7 +9,8 @@ import mm "mirai:std/math"
 // A traveler halfway through a portal is seen on both of its sides: while a
 // mesh of it reaches across the plane of an opening, it is drawn again where
 // the portal carries it, so the part that went in comes out of the exit. The
-// part of each copy behind its plane is inside the wall the portal is on.
+// part of each copy behind its plane is inside the wall the portal is on. A
+// mirror shows the whole traveler in its nested view.
 
 @(step="render",loops="game editor",before="render_sync")
 portals_doubles :: proc(
@@ -23,7 +24,7 @@ portals_doubles :: proc(
         portal:=core.at(portals,row)
         world,placed:=core.get(worlds,e)
         exit_world,has_exit:=core.get(worlds,portal.exit)
-        if !placed || !has_exit || erender.is_hidden(hidden,parents,e) {continue}
+        if !placed || !has_exit || portal.exit==e || erender.is_hidden(hidden,parents,e) {continue}
         entrance:=erender.drawn_transform(world,frame)
         through:=mm.transform_matrix(through_of(entrance,erender.drawn_transform(exit_world,frame)))
         for t in 0..<core.count(travelers) {
