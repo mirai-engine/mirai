@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -62,7 +63,7 @@ post_process_picker_id :: proc(g:^Editor_Ui) -> ui.Id {
 // component. The first entity with one decides the stack in the renderer.
 post_process_selection :: proc(s:^Session) -> (sel:Post_Process_Selection,ok:bool) {
 	w:=shown_world(s)
-	e:=selection_active(s.selection)
+	e:=history.selection_active(s.selection)
 	if w.info==nil || e==core.NONE {return}
 	for &t in w.info.tables {
 		if t.type!=erender.View_Volume {continue}

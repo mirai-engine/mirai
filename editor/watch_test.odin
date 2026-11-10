@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import mm "mirai:std/math"
@@ -20,7 +21,7 @@ an_agent_run_is_watched_without_input_or_edits_while_the_game_of_the_user_goes_o
     s,app,gui,selection,original:=&f.s,&f.app,&f.gui,&f.selection,f.original
     f.info.loops[.Game][.Fixed]=watch_test_tick
     layout:=gui.layout
-    selection_set(selection,{original})
+    history.selection_set(selection,{original})
     testing.expect(t,!watch_start(s,7),"a task without a run has nothing to show")
     testing.expect(t,play_start(s,false,7) && play_start(s))
     agent,user:=run_find(s,7),run_find(s,0)
@@ -62,12 +63,12 @@ an_agent_run_is_watched_without_input_or_edits_while_the_game_of_the_user_goes_o
     watch_stop(s)
     testing.expect(t,s.mode==.Edit && shown_world(s).data==f.data)
     testing.expect_value(t,gui.layout,layout)
-    testing.expect_value(t,selection_active(selection),original)
+    testing.expect_value(t,history.selection_active(selection),original)
     // From Edit, the selection of the document comes back when the run ends.
     testing.expect(t,watch_start(s,7))
     testing.expect(t,s.watch.from==.Edit && len(selection.entities)==0)
     run_stop(s,7)
     watch_update(s)
     testing.expect(t,s.mode==.Edit && shown_world(s).data==f.data)
-    testing.expect_value(t,selection_active(selection),original)
+    testing.expect_value(t,history.selection_active(selection),original)
 }

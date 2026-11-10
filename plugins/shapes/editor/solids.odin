@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import shapes "plugins:shapes/runtime"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -45,7 +46,7 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
     local,usable:=mm.transform_relative(place,solid_world)
     if !usable {return core.NONE,.Invalid}
     opened:=!s.edits.open
-    if opened && !editor.edits_begin(s.edits,s.selection,subtract?"Cut brush":"Add brush") {return core.NONE,.Invalid}
+    if opened && !history.edits_begin(s.edits,s.selection,subtract?"Cut brush":"Add brush") {return core.NONE,.Invalid}
     solid:=target
     if solid==core.NONE {
         solid=editor.entity_create(s,{preset=.Empty,name="Solid",transform=core.from_math(solid_world)})
@@ -65,7 +66,7 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
         }
     }
     if opened {
-        if brush!=core.NONE {editor.edits_end(s.edits)} else {editor.edits_cancel(s.edits,w)}
+        if brush!=core.NONE {history.edits_end(s.edits)} else {history.edits_cancel(s.edits,w)}
     }
     return brush,brush!=core.NONE?.None:.Invalid
 }

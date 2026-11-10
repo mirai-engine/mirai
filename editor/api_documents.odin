@@ -3,6 +3,7 @@ package editor
 import "core:strings"
 import "mirai:editor/api"
 import "mirai:asset"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -47,7 +48,7 @@ api_documents :: proc(s:^Session,call:^api.Call) {
         v:=index==s.active_document?s.viewport:&tab.viewport
         if index>0 {serial.write_u8(out,',')}
         serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(d))
-        api.write_key(out,"dirty");api.write_flag(out,d.unsaved || edits_scene_state(e)!=d.saved)
+        api.write_key(out,"dirty");api.write_flag(out,d.unsaved || history.edits_scene_state(e)!=d.saved)
         api.write_key(out,"preview_sun");api.write_flag(out,v.preview_sun)
         serial.write_u8(out,'}')
     }
@@ -110,7 +111,7 @@ api_document :: proc(s:^Session,call:^api.Call) {
     case .Close:
         d:=index==s.active_document?s.document:&s.documents[index].document
         e:=index==s.active_document?s.edits:&s.documents[index].edits
-        if d.unsaved || edits_scene_state(e)!=d.saved {
+        if d.unsaved || history.edits_scene_state(e)!=d.saved {
             if api_turn_refused(s,call,"close a document with unsaved changes") {return}
             if !p.discard {api.call_fail(call,api.SERVER_ERROR,"The document has unsaved changes; save it or pass discard");return}
         }

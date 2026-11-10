@@ -11,6 +11,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
@@ -297,7 +298,7 @@ ai_context_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool 
             if text:=ai_entity_id_text(w,e);text!="" {append(&selection,text)}
         }
     }
-    document:=Ai_Context_Document{path=document_path(s.document),state=edits_scene_state(s.edits),dirty=document_dirty(s),entities=core.world_entities(w).alive}
+    document:=Ai_Context_Document{path=document_path(s.document),state=history.edits_scene_state(s.edits),dirty=document_dirty(s),entities=core.world_entities(w).alive}
     context_value:=Ai_Context{
         task=base.text_get(task.name[:]),mode=task.play?"play":"edit",instructions=ai_instructions_read(s),
         region={rect={task.region.x,task.region.y,task.region.w,task.region.h},window=task.window},
@@ -531,7 +532,7 @@ ai_material_context :: proc(s:^Session,task:^Ai_Task) -> (out:Ai_Context_Materia
     if task.image {out.preview=AI_FILE_IMAGE}
     out.parameters=ai_material_values(s,m)
     if out.program=="" {return out,true}
-    if path,_,found:=program_locate(s,out.program);found {out.file=file_relative(s,path)}
+    if path,_,found:=program_locate(s,out.program);found {out.file=history.file_relative(s.project_root,path)}
     return out,true
 }
 

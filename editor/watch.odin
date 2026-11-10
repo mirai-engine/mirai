@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:strings"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -39,12 +40,12 @@ watch_start :: proc(s:^Session,task:int) -> bool {
     asset_document_activate(s,-1)
     tools_release(s)
     if s.mode==.Edit {
-        edits_commit(s.edits,edited_world(s),s.selection)
-        selection_set(&s.edit_selection,s.selection.entities[:])
+        history.edits_commit(s.edits,edited_world(s),s.selection)
+        history.selection_set(&s.edit_selection,s.selection.entities[:])
     }
     if s.mode==.Play {play_release_input(s)}
     s.watch={task=task,from=s.mode,orbit=s.viewport.orbit}
-    selection_clear(s.selection)
+    history.selection_clear(s.selection)
     if s.gui.ctx!=nil {s.gui.ctx.edit={};ui.popup_close(s.gui.ctx)}
     s.mode=.Watch
     s.view_cut=true
@@ -57,16 +58,16 @@ watch_stop :: proc(s:^Session) {
     if s.mode!=.Watch {return}
     w:=s.watch
     tools_release(s)
-    selection_clear(s.selection)
+    history.selection_clear(s.selection)
     s.watch={}
     s.mode=w.from
     s.viewport.orbit=w.orbit
     viewport_camera(s.viewport)
     s.view_cut=true
     if w.from==.Edit {
-        selection_set(s.selection,s.edit_selection.entities[:])
-        selection_clear(&s.edit_selection)
-        selection_prune(s.selection,edited_world(s))
+        history.selection_set(s.selection,s.edit_selection.entities[:])
+        history.selection_clear(&s.edit_selection)
+        history.selection_prune(s.selection,edited_world(s))
     } else if run_find(s,0)==nil {
         play_view_restore(s)
     }

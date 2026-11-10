@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import terrain "plugins:terrain/runtime"
@@ -236,12 +237,12 @@ terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     hit:=editor.pick_point(s,world,input.mouse_position)
     if child,ok:=core.get(chunks,hit.entity);ok {hit.entity=child.owner}
     // The source of the selected terrain answers where the picker has nothing of it.
-    if hit.entity==core.NONE && stroke.id!={} && editor.selection_has(s.selection,stroke.entity) {
+    if hit.entity==core.NONE && stroke.id!={} && history.selection_has(s.selection,stroke.entity) {
         if _,_,ok:=stroke_point(stroke,s.viewport,input.mouse_position);ok {hit={entity=stroke.entity}}
     }
     if hit.entity==core.NONE || hit.indicator || !core.has(terrains,hit.entity) {return}
-    if !editor.selection_has(s.selection,hit.entity) {
-        if tool.begin {editor.selection_set(s.selection,{hit.entity})}
+    if !history.selection_has(s.selection,hit.entity) {
+        if tool.begin {history.selection_set(s.selection,{hit.entity})}
         return
     }
     if !stroke_prepare(tool,assets,allocator,terrains,worlds,hit) {return}
@@ -498,10 +499,10 @@ stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,ass
     if !terrain_write(s,a,stroke.id,&held.head,keep=true) {step_revert(&step,&held.head);editor.notify(s,"The terrain could not be written");return}
     if !editor.revision_push(&tool.history,&step,step_destroy) {editor.notify(s,"The terrain history could not be stored")}
     stroke.stamp=terrain.terrain_stamp(a,stroke.id)
-    editor.edits_begin(s.edits,s.selection,label)
+    history.edits_begin(s.edits,s.selection,label)
     for value,row in table.values[:core.count(table)] {if value.source==stroke.id {core.at(table,row).revision=next}}
-    if consume!=core.NONE {editor.entities_delete(s,{consume});editor.selection_set(s.selection,{stroke.entity})}
-    editor.edits_end(s.edits)
+    if consume!=core.NONE {editor.entities_delete(s,{consume});history.selection_set(s.selection,{stroke.entity})}
+    history.edits_end(s.edits)
     held.revision,held.stamp=next,stroke.stamp
     for preview in stroke.previews {
         if preview.mesh!={} {host.assets_mesh_release(a,preview.mesh)}

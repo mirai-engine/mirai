@@ -6,13 +6,14 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 Api_Diagnostics_Test_Editor :: struct {api:Api}
 
 @(private="file")
-api_diagnostics_session :: proc(world:^Api_Diagnostics_Test_Editor,edits:^Edits,storages:^[1]core.Storage_Info,info:^core.World_Info) -> Session {
+api_diagnostics_session :: proc(world:^Api_Diagnostics_Test_Editor,edits:^history.Edits,storages:^[1]core.Storage_Info,info:^core.World_Info) -> Session {
     storages^={{name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(Api_Diagnostics_Test_Editor,api)}}
     info^={storages=storages[:]}
     return {info=info,editor_world=world,edits=edits}
@@ -21,7 +22,7 @@ api_diagnostics_session :: proc(world:^Api_Diagnostics_Test_Editor,edits:^Edits,
 @(test)
 editor_api_registers_every_method_and_refuses_loudly_when_full :: proc(t:^testing.T) {
     world:Api_Diagnostics_Test_Editor
-    edits:Edits
+    edits:history.Edits
     storages:[1]core.Storage_Info
     info:core.World_Info
     session:=api_diagnostics_session(&world,&edits,&storages,&info)
@@ -50,7 +51,7 @@ editor_api_registers_every_method_and_refuses_loudly_when_full :: proc(t:^testin
 @(test)
 editor_engine_diagnostics_lists_the_console_after_a_serial :: proc(t:^testing.T) {
     world:Api_Diagnostics_Test_Editor
-    edits:Edits
+    edits:history.Edits
     storages:[1]core.Storage_Info
     info:core.World_Info
     console:Console

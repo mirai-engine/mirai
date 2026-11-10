@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/geom"
@@ -68,9 +69,9 @@ marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.
     viewport.view_projection=viewport.projection*viewport.view_matrix
     picker:Picker
     defer picker_clear(&picker);defer delete(picker.meshes)
-    selection:Selection
+    selection:history.Selection
     defer delete(selection.entities)
-    selection_set(&selection,{other})
+    history.selection_set(&selection,{other})
     serial:=selection.serial
     app:host.App
     session:=Session{app=&app,viewport=&viewport,picker=&picker,selection=&selection}
@@ -166,7 +167,7 @@ derived_geometry_selects_its_author_and_keeps_internal_nodes_out_of_the_tree :: 
     picker:Picker
     defer picker_clear(&picker)
     defer delete(picker.meshes)
-    selection:Selection
+    selection:history.Selection
     defer delete(selection.entities)
     app:host.App
     session:=Session{app=&app,viewport=&viewport,picker=&picker,selection=&selection}
@@ -240,7 +241,7 @@ hidden_and_turned_off_meshes_are_picked_as_ghosts_while_the_scene_is_edited :: p
     viewport.view_projection=viewport.projection*viewport.view_matrix
     picker:Picker
     defer picker_clear(&picker);defer delete(picker.meshes)
-    selection:Selection
+    selection:history.Selection
     defer delete(selection.entities)
     app:host.App
     session:=Session{app=&app,viewport=&viewport,picker=&picker,selection=&selection}

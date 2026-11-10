@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -492,7 +493,7 @@ prefab_bases_prune :: proc(s:^Session) {
         for &rows in step.tables {
             if rows.table!=index {continue}
             for k in 0..<len(rows.entities) {
-                for side in ([2]^Step_Side{&rows.other,&rows.held}) {
+                for side in ([2]^history.Step_Side{&rows.other,&rows.held}) {
                     if !side.present[k] {continue}
                     instance:=(^scene.Prefab_Instance)(&side.values[k*size])^
                     held[{instance.prefab,instance.stamp}]=true
@@ -607,7 +608,7 @@ prefab_gesture_begin :: proc(s:^Session,label:string,joined:=false) -> (g:Prefab
     g={s=s,joined=joined && s.edits.open && !s.edits.preview}
     if !g.joined {
         tools_release(s)
-        edits_cancel(s.edits,w)
+        history.edits_cancel(s.edits,w)
     }
     core.world_settle(w)
     if !g.joined {
@@ -625,15 +626,15 @@ prefab_gesture_end :: proc(g:^Prefab_Gesture,error:Prefab_Error) -> Prefab_Error
     core.world_settle(w)
     if g.joined {return error}
     if error!=.None {
-        edits_cancel(s.edits,w)
-        selection_prune(document_selection(s),w)
+        history.edits_cancel(s.edits,w)
+        history.selection_prune(document_selection(s),w)
         return error
     }
     scene.propagate(w,s.app)
-    selection_prune(document_selection(s),w)
-    edits_end(s.edits)
-    if !edits_commit(s.edits,w,document_selection(s)) && s.edits.error!=.No_Change {
-        edits_cancel(s.edits,w)
+    history.selection_prune(document_selection(s),w)
+    history.edits_end(s.edits)
+    if !history.edits_commit(s.edits,w,document_selection(s)) && s.edits.error!=.No_Change {
+        history.edits_cancel(s.edits,w)
         return .Out_Of_Memory
     }
     prefab_bases_prune(s)
@@ -899,10 +900,10 @@ prefab_create_entities :: proc(s:^Session,entities:[]core.Entity,path:string) ->
     if a==nil {return {},.No_Assets}
     if len(entities)==0 {return {},.Unknown_Entity}
     w:=edited_world(s)
-    chosen:=Selection{}
+    chosen:=history.Selection{}
     chosen.entities.allocator=context.temp_allocator
     append(&chosen.entities,..entities)
-    roots:=selection_roots(&chosen,w)
+    roots:=history.selection_roots(&chosen,w)
     if len(roots)==0 {return {},.Unknown_Entity}
     for e in roots {
         _=prefab_entity_id(s,e) or_return
@@ -915,7 +916,7 @@ prefab_create_entities :: proc(s:^Session,entities:[]core.Entity,path:string) ->
     selected:=slice.clone(s.selection.entities[:],context.temp_allocator)
     id,error=prefab_create_in(s,roots,file,LABEL)
     if error=prefab_gesture_end(&g,error);error!=.None {
-        if grouped {selection_restore(s.selection,w,selected)}
+        if grouped {history.selection_restore(s.selection,w,selected)}
         return {},error
     }
     return id,.None
@@ -927,10 +928,10 @@ prefab_create_in :: proc(s:^Session,roots:[]core.Entity,file,label:string) -> (i
     w:=edited_world(s)
     root:=roots[0]
     if len(roots)>1 {
-        selection_set(s.selection,roots)
+        history.selection_set(s.selection,roots)
         selection_group(s,w)
         core.world_settle(w)
-        root=selection_active(s.selection)
+        root=history.selection_active(s.selection)
         for e in roots {
             if entity_parent(w,e)!=root {return {},.Rejected}
         }
@@ -1320,7 +1321,7 @@ prefab_place_linked :: proc(s:^Session,prefab_id:base.Asset_Id,point:[3]f32) -> 
 // The entity the prefab actions work on: the active one, when it is alone in what is selected or last.
 @(private)
 prefab_target :: proc(s:^Session) -> core.Entity {
-    return selection_active(s.selection)
+    return history.selection_active(s.selection)
 }
 
 // Whether a prefab action cannot run now.
@@ -1329,7 +1330,7 @@ prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
     if s.mode!=.Edit || s.app.assets==nil {return true}
     w:=edited_world(s)
     if action==.Prefab_Create {
-        roots:=selection_roots(s.selection,w)
+        roots:=history.selection_roots(s.selection,w)
         if len(roots)==0 {return true}
         for e in roots {
             if prefab_member_locked(s,w,e) || api_entity_id(w,e)==0 {return true}

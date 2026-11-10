@@ -7,6 +7,7 @@ import "core:slice"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:std/serial"
 import "mirai:host"
 import erender "mirai:engine/render"
@@ -115,7 +116,7 @@ sections_sync :: proc(s:^Session) {
 
 // The image the journal keeps of the references of w; nil without one.
 @(private)
-sections_image :: proc(s:^Session,w:core.World_Ref) -> ^Journal_Table {
+sections_image :: proc(s:^Session,w:core.World_Ref) -> ^history.Journal_Table {
     edits:=s.edits
     if edits==nil || edits.world!=w.data {return nil}
     for t,i in w.info.tables {
@@ -126,7 +127,7 @@ sections_image :: proc(s:^Session,w:core.World_Ref) -> ^Journal_Table {
 
 // Whether the reference e is new since the last step: the image has no row of it.
 @(private)
-section_made :: proc(image:^Journal_Table,e:core.Entity) -> bool {return image!=nil && journal_row(image,e)<0}
+section_made :: proc(image:^history.Journal_Table,e:core.Entity) -> bool {return image!=nil && history.journal_row(image,e)<0}
 
 // Loads the section of e again from its scene, outside the undo: what saving
 // that scene from another reference leaves. A section loaded and off turns
@@ -179,14 +180,14 @@ section_entities :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_
 // The image of the journal takes the rows and the life of some entities as
 // the World has them, without a step: what the sections did is no edit.
 @(private)
-journal_take_entities :: proc(edits:^Edits,w:core.World_Ref,entities:[]core.Entity) {
+journal_take_entities :: proc(edits:^history.Edits,w:core.World_Ref,entities:[]core.Entity) {
     if edits==nil || edits.world!=w.data {return}
-    authors,_:=history_authors(edits,w)
+    authors,_:=history.history_authors(edits,w)
     for e in entities {
-        if history_is_author(authors,e) {
-            for i in 0..<len(edits.image) {journal_take(edits,w,i,e)}
+        if history.history_is_author(authors,e) {
+            for i in 0..<len(edits.image) {history.journal_take(edits,w,i,e)}
         }
-        journal_take_entity(edits,w,e)
+        history.journal_take_entity(edits,w,e)
     }
 }
 
@@ -834,7 +835,7 @@ sections_resolved :: proc(s:^Session,world:core.World_Ref) {
         if t.place!=world.place {continue}
         hash:=base.name_hash(t.name)
         for item in u.resolved {
-            if item.table==hash {journal_take_field(edits,world,i,item.entity,int(item.offset),size_of(core.Entity))}
+            if item.table==hash {history.journal_take_field(edits,world,i,item.entity,int(item.offset),size_of(core.Entity))}
         }
     }
 }
@@ -852,12 +853,12 @@ sections_take_in :: proc(s:^Session,watch:^Sections_Watch,w:core.World_Ref) {
     resize(&watch.verdicts,len(es.generation))
     slice.zero(watch.verdicts[:])
     clear(&watch.taken)
-    authors,_:=history_authors(edits,w)
+    authors,_:=history.history_authors(edits,w)
     parent_table:=-1
     for t,i in w.info.tables {
         if t.place==w.place && t.type==core.Parent {parent_table=i;break}
     }
-    theirs :: proc(watch:^Sections_Watch,edits:^Edits,w:core.World_Ref,e:core.Entity,parent_table:int) -> bool {
+    theirs :: proc(watch:^Sections_Watch,edits:^history.Edits,w:core.World_Ref,e:core.Entity,parent_table:int) -> bool {
         i:=int(core.entity_index(e))
         if i>=len(watch.verdicts) {return false}
         if watch.verdicts[i]==0 {
@@ -871,9 +872,9 @@ sections_take_in :: proc(s:^Session,watch:^Sections_Watch,w:core.World_Ref) {
                 image:=&edits.image[parent_table]
                 at:=e
                 for depth:=0;depth<1024;depth+=1 {
-                    row:=journal_row(image,at)
+                    row:=history.journal_row(image,at)
                     if row<0 {break}
-                    at=(^core.Parent)(journal_value(image,size_of(core.Parent),row)).entity
+                    at=(^core.Parent)(history.journal_value(image,size_of(core.Parent),row)).entity
                     if entity_alive(w,at) {
                         holder=entity_has(w,at,scene.Scene_Reference)?at:section_holder(w,at)
                         break
@@ -891,14 +892,14 @@ sections_take_in :: proc(s:^Session,watch:^Sections_Watch,w:core.World_Ref) {
         c:=core.raw_changes(table,&watch.seen[i])
         if !c.all && table.version<=c.since && len(c.gone)==0 {continue}
         for e in c.gone {
-            if theirs(watch,edits,w,e,parent_table) && history_is_author(authors,e) {journal_take(edits,w,i,e)}
+            if theirs(watch,edits,w,e,parent_table) && history.history_is_author(authors,e) {history.journal_take(edits,w,i,e)}
         }
         for e,row in table.entities {
             if !c.all && table.stamps[row]<=c.since {continue}
-            if theirs(watch,edits,w,e,parent_table) && history_is_author(authors,e) {journal_take(edits,w,i,e)}
+            if theirs(watch,edits,w,e,parent_table) && history.history_is_author(authors,e) {history.journal_take(edits,w,i,e)}
         }
     }
-    for e in watch.taken {journal_take_entity(edits,w,e)}
+    for e in watch.taken {history.journal_take_entity(edits,w,e)}
 }
 
 // ---------------------------------------------------------------- travel

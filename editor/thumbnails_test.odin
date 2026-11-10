@@ -6,6 +6,7 @@ import "core:slice"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import "mirai:editor/history"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
@@ -118,7 +119,7 @@ a_provider_image_is_drawn_between_frames_after_the_frame_that_asked :: proc(t:^t
     assets.renderer=(^gpu.Renderer)(uintptr(16))
     app:host.App
     app.assets=&assets
-    edits:Edits
+    edits:history.Edits
     s:=new(Session)
     defer free(s)
     s.app,s.thumbnails,s.edits,s.frame=&app,&p,&edits,10

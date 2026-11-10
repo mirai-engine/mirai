@@ -7,6 +7,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import input "mirai:engine/input"
 import "mirai:project"
 import "mirai:std/base"
@@ -225,7 +226,7 @@ action_documents_rename :: proc(s:^Session,old,name:string) {
         append(&paths,path)
     }
     for path in paths {
-        data,present,readable:=file_contents(r,path,context.temp_allocator)
+        data,present,readable:=history.file_contents(r,path,context.temp_allocator)
         if !present || !readable {continue}
         doc:asset.Document
         if asset.document_read(&doc,data,context.temp_allocator)!=.None {continue}

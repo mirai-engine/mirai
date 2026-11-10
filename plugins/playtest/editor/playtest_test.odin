@@ -9,6 +9,7 @@ import "core:testing"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:platform"
@@ -85,8 +86,8 @@ Probe :: struct {
     app:host.App,
     data:rawptr,
     hero,foe,seat:core.Entity,
-    edits:editor.Edits,
-    selection:editor.Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     document:editor.Document,
@@ -125,8 +126,8 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.viewport={orbit=editor.ORBIT_DEFAULT}
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.tools,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
-    editor.edits_reset(&f.edits,editor.edited_world(&f.s))
-    f.document.saved=editor.edits_state(&f.edits)
+    history.edits_reset(&f.edits,editor.edited_world(&f.s))
+    f.document.saved=history.edits_state(&f.edits)
     if !testing.expect(t,editor.api_open(&f.s,0,true)==.None) {return false}
     editor.api_state(&f.s).poll_temp=context.temp_allocator
     serial.writer_init(&f.out)
@@ -138,7 +139,7 @@ probe_close :: proc(f:^Probe) {
     serial.writer_destroy(&f.out)
     editor.runs_stop(&f.s)
     editor.api_close(&f.s)
-    editor.edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     delete(f.s.edit_selection.entities)
     host.app_world_scratch_free(&f.app)
@@ -177,8 +178,8 @@ probe_drive :: proc(f:^Probe) {
         world.view=core.View{rotation=1,fov=90*math.RAD_PER_DEG,near=0.1,size={800,600}}
         core.settle(&f.info,world,nil)
     }
-    editor.edits_reset(&f.edits,editor.edited_world(&f.s))
-    f.document.saved=editor.edits_state(&f.edits)
+    history.edits_reset(&f.edits,editor.edited_world(&f.s))
+    f.document.saved=history.edits_state(&f.edits)
     editor.api_state(&f.s).step_frame=probe_frame
 }
 

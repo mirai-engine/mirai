@@ -3,6 +3,7 @@ package physics_editor
 import "mirai:editor"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import "mirai:ui"
 
@@ -45,7 +46,7 @@ collision_inspector_click :: proc(t:^testing.T,s:^editor.Session,id:ui.Id,type:t
         if phase==2 {input.released={.Left}}
         collision_inspector_frame(t,s,input,type)
     }
-    editor.edits_flush(s.edits,editor.edited_world(s),s.selection)
+    history.edits_flush(s.edits,editor.edited_world(s),s.selection)
 }
 
 @(private="file")
@@ -56,13 +57,13 @@ Collision_Inspector :: struct {
     names:[6]core.Name_Info,
     named_types:[2]core.Named_Type_Info,
     name_bits:[1]core.Name_Bits_Info,
-    selection:editor.Selection,
+    selection:history.Selection,
     ctx:ui.Context,
     gui:editor.Editor_Ui,
     inspector:editor.Inspector,
     document:editor.Document,
     viewport:editor.Viewport,
-    edits:editor.Edits,
+    edits:history.Edits,
     session:editor.Session,
 }
 
@@ -89,7 +90,7 @@ collision_inspector_init :: proc(t:^testing.T,f:^Collision_Inspector) -> bool {
 @(private="file")
 collision_inspector_destroy :: proc(f:^Collision_Inspector) {
     ui.context_destroy(&f.ctx)
-    editor.edits_free(&f.edits)
+    history.edits_free(&f.edits)
     core.value_free(&f.inspector,type_info_of(editor.Inspector))
     delete(f.selection.entities)
     f.info.destroy[.World](&f.world)
@@ -110,8 +111,8 @@ the_inspector_shows_presets_and_masks_by_name :: proc(t:^testing.T) {
     core.add(&world.rows,b,{layers=phys.collision_layers(INSPECTOR_WORLD)})
     core.settle(&f.info,world,nil)
     session:=&f.session
-    editor.selection_set(&f.selection,{a})
-    editor.edits_reset(&f.edits,editor.edited_world(session))
+    history.selection_set(&f.selection,{a})
+    history.edits_reset(&f.edits,editor.edited_world(session))
     for _ in 0..<3 {collision_inspector_frame(t,session,{size={800,600},pointer_absent=true},phys.Collider)}
     _,preset:=ui.widget_rect(&f.ctx,ui.id(&f.ctx,"collider_preset",1))
     testing.expect(t,preset,"the preset is a list of names")
@@ -126,7 +127,7 @@ the_inspector_shows_presets_and_masks_by_name :: proc(t:^testing.T) {
     for _ in 0..<3 {collision_inspector_frame(t,session,{size={800,600},pointer_absent=true},phys.Collider)}
     _,boxes=ui.widget_rect(&f.ctx,ui.id_derive(&f.ctx,ui.id(&f.ctx,"matrix",int(offset_of(phys.Collider,belongs))+1),"bit",1))
     testing.expect(t,boxes,"a custom collider edits its own categories")
-    editor.selection_set(&f.selection,{b})
+    history.selection_set(&f.selection,{b})
     for _ in 0..<3 {collision_inspector_frame(t,session,{size={800,600},pointer_absent=true},Collision_Inspector_Row)}
     _,boxes=ui.widget_rect(&f.ctx,ui.id(&f.ctx,"named_bit",1))
     testing.expect(t,boxes)
@@ -145,23 +146,23 @@ choosing_custom_keeps_what_the_preset_was_and_undoes_as_one_action :: proc(t:^te
     core.add(&world.colliders,a,trigger)
     core.add(&world.colliders,b,custom)
     core.settle(&f.info,world,nil)
-    editor.selection_set(&f.selection,{b,a})
+    history.selection_set(&f.selection,{b,a})
     session:=&f.session
-    editor.edits_reset(&f.edits,editor.edited_world(session))
+    history.edits_reset(&f.edits,editor.edited_world(session))
     w:=editor.edited_world(session)
     table:=&f.info.tables[1]
     collision_preset_apply(session,table,core.world_table_at(w,table),f.selection.entities[:],phys.PRESET_CUSTOM,&world.settings)
-    editor.edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     first,_:=core.get(core.read(&world.colliders),a)
     second,_:=core.get(core.read(&world.colliders),b)
     testing.expect(t,first.preset==phys.PRESET_CUSTOM && first.sensor && first.belongs==1 && first.collides==phys.COLLISION_LAYERS_ALL)
     testing.expect_value(t,second,custom)
     testing.expect_value(t,len(f.edits.steps),1)
     collision_preset_apply(session,table,core.world_table_at(w,table),f.selection.entities[:],phys.PRESET_DEFAULT,&world.settings)
-    editor.edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     first,_=core.get(core.read(&world.colliders),a)
     testing.expect(t,first.preset==phys.PRESET_DEFAULT && phys.collision_filter(&world.settings,first)==phys.collision_filter(nil,phys.COLLIDER_DEFAULT))
-    testing.expect(t,editor.undo(&f.edits,w,&f.selection) && editor.undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection) && history.undo(&f.edits,w,&f.selection))
     first,_=core.get(core.read(&world.colliders),a);second,_=core.get(core.read(&world.colliders),b)
     testing.expect(t,first==trigger && second==custom)
 }

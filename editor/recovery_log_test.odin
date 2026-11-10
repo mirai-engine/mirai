@@ -5,6 +5,7 @@ import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
@@ -39,42 +40,42 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
     defer delete(app.worlds)
     testing.expect(t,jobs.system_init(&app.jobs,{threads=1,allocator=context.allocator}))
     defer jobs.system_destroy(&app.jobs)
-    selection:Selection
-    edits:Edits
+    selection:history.Selection
+    edits:history.Edits
     document:Document
     prefabs:Prefabs
     s:=Session{info=&info,edit_world=&world,editor_world=&prefabs,assets_root=root,project_root=root,app=&app,selection=&selection,edits=&edits,document=&document}
     defer delete(selection.entities)
-    defer edits_free(&edits)
+    defer history.edits_free(&edits)
     defer document_previous_free(&document)
     defer prefabs_free(&s)
     defer recovery_log_destroy(&s)
     w:=edited_world(&s)
     kept:=entity_create(&s,{name="Kept",transform={position={2,0,0},rotation=1,scale={1,1,1}}})
     core.world_settle(w)
-    edits_reset(&edits,w)
+    history.edits_reset(&edits,w)
     // A clean document with a file: the log follows that file.
     scene:=project.path(root,"kept.scene",allocator=context.temp_allocator)
     document_name(&document,"kept.scene",scene)
-    document.saved=edits_scene_state(&edits)
+    document.saved=history.edits_scene_state(&edits)
     recovery_update(&s)
     testing.expect(t,s.recovery.log.following && s.recovery.log.base==.Source && edits.logging)
     testing.expect(t,os.is_file(recovery_log_path(&s,s.recovery.slot,1)))
 
     testing.expect(t,entity_rename(&s,kept,"Moved"))
-    testing.expect(t,edits_commit(&edits,w,&selection))
+    testing.expect(t,history.edits_commit(&edits,w,&selection))
     born:=entity_create(&s,{name="Born",transform={position={0,3,0},rotation=1,scale={1,1,1}}})
-    testing.expect(t,edits_commit(&edits,w,&selection))
+    testing.expect(t,history.edits_commit(&edits,w,&selection))
     testing.expect(t,born!=core.NONE)
     born_id:=api_entity_id(w,born)
     recovery_update(&s)
     testing.expect(t,s.recovery.log.records>0 && s.recovery.log.since!=0)
     testing.expect(t,len(edits.changes)==0,"what the log wrote leaves the journal")
     // Undoing in order is a step of the log too.
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     recovery_update(&s)
     testing.expect(t,!entity_alive(w,born))
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,history.redo(&edits,w,&selection))
     recovery_update(&s)
     testing.expect(t,recovery_log_flush(&s,true))
 
@@ -91,7 +92,7 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
 
     // Back to the saved state, the log puts the steps back by Id.
     recovery_log_end(&s,false)
-    for undo(&edits,w,&selection) {}
+    for history.undo(&edits,w,&selection) {}
     core.world_settle(w)
     testing.expect_value(t,entity_name(w,kept),"Kept")
     testing.expect(t,recovery_log_replay(&s,chain)==records)
@@ -126,7 +127,7 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
     root:=entity_create(s,{name="Root",named=true})
     plain:=entity_create(s,{name="Plain",named=true})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
 
     plain_id,linked_id:=api_entity_id(w,plain),api_entity_id(w,root)
     _,created:=prefab_create(s,root,"kept")
@@ -201,7 +202,7 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     w:=edited_world(s)
     plain:=entity_create(s,{name="Plain",named=true})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
 
     plain_id:=api_entity_id(w,plain)
     if !testing.expect_value(t,scene_save(s,"crashed.scene"),Document_Error.None) {return}
@@ -234,7 +235,7 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     w=edited_world(s)
     later:=entity_create(s,{name="Later",named=true})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
 
     entity_rename(s,later,"Edited meanwhile")
     prefab_fixture_step(f)
@@ -265,7 +266,7 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     w=edited_world(s)
     other:=entity_create(s,{name="Other",named=true})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
 
     entity_rename(s,other,"Mine")
     prefab_fixture_step(f)

@@ -2,6 +2,7 @@ package editor
 
 import "core:log"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 
@@ -15,7 +16,7 @@ import "mirai:std/base"
 // step keeps and how it trades it with a head is of the tool
 // (Revision_Source); Step has the fields source, from and to.
 
-REVISION_STEPS_CAPACITY :: 2*EDITS_STEP_CAPACITY
+REVISION_STEPS_CAPACITY :: 2*history.EDITS_STEP_CAPACITY
 
 // The revision the file of a source holds, its stamp once the tool wrote it,
 // and once the tool edits it, its head.
@@ -123,7 +124,7 @@ revision_rebase :: proc(h:^Revision_History($Step,$Source,$Stamp),src:Revision_S
 // what the revision its owners are at holds.
 revision_sync :: proc(s:^Session,h:^Revision_History($Step,$Source,$Stamp),markers:core.Read($Marker),a:^host.Assets,src:Revision_Source(Step,Source,Stamp),user:rawptr=nil,follow:proc(user:rawptr,held:^Revision_Head(Source,Stamp),path:[]int)=nil) {
     if core.count(markers)>0 && s.edits!=nil && h.initial!=s.edits.initial {
-        _=edits_sync_initial(s.edits,edited_world(s))
+        _=history.edits_sync_initial(s.edits,edited_world(s))
         h.initial=s.edits.initial
     }
     changed:=h.registry!=a.registry.revision

@@ -6,6 +6,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:platform"
@@ -223,10 +224,10 @@ stroke_move :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,asse
 @(private)
 stroke_write :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) -> bool {
     opened:=!tool.stroke.written
-    if opened {editor.edits_begin(s.edits,s.selection,"Paint")}
+    if opened {history.edits_begin(s.edits,s.selection,"Paint")}
     if !stroke_apply(s,&tool.stroke,world,assets,allocator,tool.color,tool.strength) {
         editor.notify(s,"The painted mesh could not be written")
-        if opened {editor.edits_cancel(s.edits,world)}
+        if opened {history.edits_cancel(s.edits,world)}
         stroke_cancel(s,tool,world)
         return false
     }
@@ -260,7 +261,7 @@ stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,asset
 stroke_end :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     stroke:=&tool.stroke
     if stroke.dirty && !stroke_write(s,tool,world,assets,allocator) {return}
-    if stroke.written {editor.edits_end(s.edits)}
+    if stroke.written {history.edits_end(s.edits)}
     stroke_free(tool)
 }
 
@@ -268,7 +269,7 @@ stroke_end :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,asset
 // with the step.
 @(private)
 stroke_cancel :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref) {
-    if tool.stroke.written {editor.edits_cancel(s.edits,world)}
+    if tool.stroke.written {history.edits_cancel(s.edits,world)}
     stroke_free(tool)
 }
 
@@ -276,9 +277,9 @@ stroke_cancel :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref) {
 @(private)
 paint_clear :: proc(s:^editor.Session,world:core.World_Ref) {
     if core.world_table_of(world,paint.Painted)==nil || core.world_table_of(world,erender.Mesh_Renderer)==nil {return}
-    editor.edits_begin(s.edits,s.selection,"Clear paint")
+    history.edits_begin(s.edits,s.selection,"Clear paint")
     paint_restore(world,s.selection.entities[:])
-    editor.edits_end(s.edits)
+    history.edits_end(s.edits)
 }
 
 // Gives entities back what they showed before they were painted: how many were.

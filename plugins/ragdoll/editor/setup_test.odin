@@ -8,6 +8,7 @@ import aa "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import lib "mirai:std/anim"
@@ -39,8 +40,8 @@ Setup_Test :: struct {
     app:host.App,
     world:Setup_Test_World,
     session:editor.Session,
-    selection:editor.Selection,
-    edits:editor.Edits,
+    selection:history.Selection,
+    edits:history.Edits,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     document:^editor.Document,
@@ -113,7 +114,7 @@ setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
     if !core.test_world_init(t,w,rag.test_types) {return false}
     f.document=new(editor.Document)
     f.session=editor.Session{app=&f.app,assets_root=f.root,mode=.Edit,headless=true,info=core.test_world_info(w),edit_world=&f.world,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=f.document,id_state=977}
-    editor.edits_reset(&f.edits,core.test_world_ref(&f.world))
+    history.edits_reset(&f.edits,core.test_world_ref(&f.world))
     if !testing.expect_value(t,api.server_init(&f.server,{max_connections=1,max_methods=4}),api.Init_Error.None) {return false}
     serial.writer_init(&f.out,1<<20)
     defaults:=new(Ragdoll_Setup_Params,context.temp_allocator);defaults^={mode=rag.RAGDOLL_DEFAULT.mode}
@@ -121,14 +122,14 @@ setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
     turned:=mm.Transform{{2,0,3},mm.quat_axis_angle({0,1,0},.5),{1,1,1}}
     f.figure=setup_test_rig(f,t,"figure",0x11,701,true,turned)
     f.plain=setup_test_rig(f,t,"plain",0x12,702,false,mm.TRANSFORM_IDENTITY)
-    editor.edits_reset(&f.edits,core.test_world_ref(&f.world))
+    history.edits_reset(&f.edits,core.test_world_ref(&f.world))
     return true
 }
 
 @(private)
 setup_test_destroy :: proc(f:^Setup_Test) {
     core.test_world_destroy(&f.world)
-    editor.edits_free(&f.edits);delete(f.selection.entities);free(f.document)
+    history.edits_free(&f.edits);delete(f.selection.entities);free(f.document)
     host.app_content_destroy(&f.app)
     serial.writer_destroy(&f.out);api.server_destroy(&f.server);host.assets_destroy(&f.assets)
 }
@@ -215,9 +216,9 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
     testing.expect(t,abs(mass-70)<.01)
 
     ref:=core.test_world_ref(&f.world)
-    testing.expect(t,editor.undo(&f.edits,ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,ref,&f.selection))
     testing.expect(t,len(w.bones.values)==0 && len(w.rigids.values)==0 && len(w.joints.values)==0 && !core.has(&w.configs,f.figure))
-    testing.expect(t,editor.redo(&f.edits,ref,&f.selection))
+    testing.expect(t,history.redo(&f.edits,ref,&f.selection))
     testing.expect(t,len(w.bones.values)==16 && core.has(&w.configs,f.figure))
 }
 
@@ -255,6 +256,6 @@ ragdoll_setup_replaces_the_ragdoll_of_a_rig_in_one_step_of_undo :: proc(t:^testi
     for _,e in first {testing.expect(t,!core.alive(&w.entities,e))}
     testing.expect(t,len(w.bones.values)==16 && len(w.rigids.values)==16 && len(w.joints.values)==15)
     testing.expect(t,core.get(&w.configs,f.figure).mode==.Driven && f.edits.cursor==2)
-    testing.expect(t,editor.undo(&f.edits,core.test_world_ref(&f.world),&f.selection))
+    testing.expect(t,history.undo(&f.edits,core.test_world_ref(&f.world),&f.selection))
     testing.expect(t,len(w.bones.values)==16 && core.get(&w.configs,f.figure).mode==.Simulated)
 }

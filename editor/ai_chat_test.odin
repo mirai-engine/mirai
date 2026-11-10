@@ -5,6 +5,7 @@ import "core:strings"
 import "core:time"
 import "mirai:core"
 import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
@@ -370,10 +371,10 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     defer free(ai)
     app:host.App
     viewport:Viewport
-    selection:Selection
+    selection:history.Selection
     defer delete(selection.entities)
     session:=Session{info=&info,edit_world=&world,app=&app,gui=&g,viewport=&viewport,selection=&selection,ai=ai}
-    selection_set(&selection,{entity})
+    history.selection_set(&selection,{entity})
     for _ in 0..<3 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
         ai_chat_content_build(&session,280,420)
@@ -422,7 +423,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     core.add(&world.names,second,core.name_make("A"))
     core.add(&world.transforms,second,core.TRANSFORM_IDENTITY)
     shell_test_settle(&world,nil,nil)
-    selection_set(&selection,{entity,second})
+    history.selection_set(&selection,{entity,second})
     for _ in 0..<2 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
         ai_chat_content_build(&session,280,420)
@@ -447,7 +448,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     context_send,_:=ui.widget_rect(&ctx,ui.id(&ctx,"send"))
     ui.id_pop(&ctx)
     testing.expect(t,second_chip.y>first_chip.y && second_chip.w<=240 && context_send.y+context_send.h<=420,"long chips wrap and truncate within the available panel")
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
     ai_chat_content_build(&session,280,420)
     frame:=ui.frame_end(&ctx)
@@ -464,7 +465,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     ai_transcript_add(&ai.tasks[0].transcript,"Make the selected entity larger",.Prompt)
     ai_transcript_add(&ai.tasks[0].transcript,"Done",.Output)
     ai_transcript_add(&ai.tasks[0].transcript,"/Users/example/a-project-with-a-long-directory/.agents/skills/mirai-agent-api/SKILL.md",.Output)
-    selection_set(&selection,{entity})
+    history.selection_set(&selection,{entity})
     for _ in 0..<3 {
         ui.frame_begin(&ctx,{size={800,420},pointer_absent=true})
         ai_chat_content_build(&session,280,300)
@@ -484,7 +485,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
         extra:=core.create(&world.entities)
         core.add(&world.names,extra,core.name_make("Another selected entity"))
         core.add(&world.transforms,extra,core.TRANSFORM_IDENTITY)
-        selection_add(&selection,extra)
+        history.selection_add(&selection,extra)
     }
     shell_test_settle(&world,nil,nil)
     for height in ([2]f32{300,390}) {

@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:strings"
 import "mirai:asset"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -41,7 +42,7 @@ collab_file_changed :: proc(s:^Session,relative:string) {
 collab_file_payload :: proc(s:^Session,st:^Collab_State,relative:string) -> (payload:[]u8,size:int,ok:bool) {
     r:=files_registry(s)
     if r==nil {return}
-    data,present,read:=file_contents(r,asset.registry_file_path(r,relative,context.temp_allocator),context.temp_allocator)
+    data,present,read:=history.file_contents(r,asset.registry_file_path(r,relative,context.temp_allocator),context.temp_allocator)
     if !read {return}
     if len(data)>COLLAB_FILE_BYTES {return nil,len(data),false}
     w:serial.Writer

@@ -9,6 +9,7 @@ import "core:time"
 import "mirai:editor/acp"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -57,7 +58,7 @@ an_agent_command_is_attributed_to_the_turn_its_agent_runs :: proc(t:^testing.T) 
 }
 
 @(private="file")
-ai_external_test_read :: proc(s:^Session,call:^api.Call) {s.ai.next_id=-1 if s.edits.author==EDIT_AUTHOR_API else int(s.edits.author)}
+ai_external_test_read :: proc(s:^Session,call:^api.Call) {s.ai.next_id=-1 if s.edits.author==history.EDIT_AUTHOR_API else int(s.edits.author)}
 
 // The calls of an agent outside the editor are the turn of a chat of its own,
 // which ends when it says so or stops calling, opens again while its review
@@ -70,7 +71,7 @@ an_agent_outside_the_editor_works_in_a_turn_of_its_own_until_it_ends :: proc(t:^
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     m.initialized=true
-    edits:Edits
+    edits:history.Edits
     document:Document
     viewport:Viewport
     s:=Session{ai=m,has_project=true,project_root=root,edits=&edits,document=&document,viewport=&viewport}
@@ -148,7 +149,7 @@ cancelled_turn_rejects_mcp_mutations_and_releases_an_unresponsive_worker :: proc
     defer acp.destroy(&worker.client,nil)
     worker.created=true;worker.task=1;worker.client.phase=.Prompting
     app:host.App
-    edits:Edits
+    edits:history.Edits
     document:Document
     s:=Session{ai=m,app=&app,edits=&edits,document=&document,project_root=".mirai/missing-cancel-test"}
     m.permissions[0]={worker=0,count=1};m.permission_count=1
@@ -237,7 +238,7 @@ failed_session_setup_stops_its_worker_and_completed_sessions_stay_warm :: proc(t
     task:=&m.tasks[0];task.id=1;task.started=time.tick_now()
     worker:=&m.workers[0]
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=".mirai/missing-setup-test"}
     phases:=[4]acp.Phase{.Initialized,.Opening,.Configuring,.Failed}
     for phase in phases {
@@ -289,7 +290,7 @@ the_usage_an_agent_reports_lands_in_its_conversation :: proc(t:^testing.T) {
     defer acp.destroy(&worker.client,nil)
     base.text_set(worker.client.session[:],"current-session")
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=".mirai/missing-usage-test"}
     callback:=Ai_Callback{session=&s,worker=worker}
     update,_:=json.parse_string(`{"sessionId":"current-session","update":{"sessionUpdate":"usage_update","used":48000,"size":200000,"cost":{"amount":0.25,"currency":"USD"}}}`,allocator=context.temp_allocator)

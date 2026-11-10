@@ -11,6 +11,7 @@ import "core:time"
 import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import escene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:platform"
@@ -433,9 +434,9 @@ api_trampoline :: proc(call:^api.Call) {
     edits:=entry.session.edits
     if edits!=nil && api_call_edits(call) {
         if turn!=nil || edits.open || edits.commit || edits.preview {tools_release(entry.session)}
-        edits_commit(edits,edited_world(entry.session),entry.session.selection)
+        history.edits_commit(edits,edited_world(entry.session),entry.session.selection)
     }
-    if edits!=nil {edits_select(edits,edited_world(entry.session),document_selection(entry.session))}
+    if edits!=nil {history.edits_select(edits,edited_world(entry.session),document_selection(entry.session))}
     task_id,external_id:=task!=nil?task.id:0,external!=nil?external.id:0
     // What the call works on is named before it runs: a deletion takes its name with it.
     target_buffer:[96]u8
@@ -444,7 +445,7 @@ api_trampoline :: proc(call:^api.Call) {
     refs:=ai_call_refs(call.raw,refs_buffer[:]) if turn!=nil else ""
     serial_before:=edits!=nil?edits.serial:0
     started:=time.tick_now()
-    if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?Edit_Author(turn.id):EDIT_AUTHOR_API}
+    if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?history.Edit_Author(turn.id):history.EDIT_AUTHOR_API}
     api_refusal_begin(entry.session)
     event(entry.session,"api",call.method.name)
     if st.in_call>1 || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
@@ -453,11 +454,11 @@ api_trampoline :: proc(call:^api.Call) {
         // A gesture the call opened and ended is its step, without waiting for the frame.
         if edits.commit && edits.opener==edits.author {
             sections_sync(entry.session)
-            edits_flush(edits,edited_world(entry.session),document_selection(entry.session))
+            history.edits_flush(edits,edited_world(entry.session),document_selection(entry.session))
         }
         // What the call selected is a step of its author.
-        edits_select(edits,edited_world(entry.session),document_selection(entry.session))
-        edits.author=EDIT_AUTHOR_USER
+        history.edits_select(edits,edited_world(entry.session),document_selection(entry.session))
+        edits.author=history.EDIT_AUTHOR_USER
     }
     files_settle(entry.session)
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
@@ -567,9 +568,9 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
 // run stops.
 api_guard :: proc(s:^Session,call:^api.Call) -> bool {
     tools_release(s)
-    edits_cancel(s.edits,edited_world(s))
+    history.edits_cancel(s.edits,edited_world(s))
     if s.edits.open || s.edits.commit || s.edits.preview {
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(s.edits.error))
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
         return false
     }
     return true
@@ -578,14 +579,14 @@ api_guard :: proc(s:^Session,call:^api.Call) -> bool {
 // Opens the transaction of an edit. False, with the call failed, when the scene cannot be edited now.
 api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
     api_guard(s,call) or_return
-    if !edits_begin(s.edits,document_selection(s),label) {
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(s.edits.error))
+    if !history.edits_begin(s.edits,document_selection(s),label) {
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
         return false
     }
-    if error:=edits_cancel_prepare(s.edits,edited_world(s));error!=.None {
+    if error:=history.edits_cancel_prepare(s.edits,edited_world(s));error!=.None {
         s.edits.open,s.edits.commit=false,false
         s.edits.error=error
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(error))
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(error))
         return false
     }
     return true
@@ -596,21 +597,21 @@ api_edit_end :: proc(s:^Session,call:^api.Call,applied:bool) -> bool {
     w:=edited_world(s)
     selection:=document_selection(s)
     if !applied || call.failed {
-        edits_cancel(s.edits,w)
-        selection_restore(selection,w,s.edits.selection[:])
+        history.edits_cancel(s.edits,w)
+        history.selection_restore(selection,w,s.edits.selection[:])
         if !call.failed {api.call_fail(call,api.SERVER_ERROR,"The edit could not be applied")}
         return false
     }
     sections_sync(s)
-    edits_end(s.edits)
-    if !edits_commit(s.edits,w,selection) && s.edits.error!=.No_Change {
+    history.edits_end(s.edits)
+    if !history.edits_commit(s.edits,w,selection) && s.edits.error!=.No_Change {
         error:=s.edits.error
-        edits_cancel(s.edits,w)
-        selection_restore(selection,w,s.edits.selection[:])
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(error))
+        history.edits_cancel(s.edits,w)
+        history.selection_restore(selection,w,s.edits.selection[:])
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(error))
         return false
     }
-    selection_prune(selection,w)
+    history.selection_prune(selection,w)
     return true
 }
 

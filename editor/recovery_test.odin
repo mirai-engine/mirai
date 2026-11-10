@@ -5,6 +5,7 @@ import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/jobs"
@@ -39,25 +40,25 @@ recovery_copy_is_written_by_a_job_and_read_back :: proc(t:^testing.T) {
     // One thread besides the caller: the copy is written beside it.
     testing.expect(t,jobs.system_init(&app.jobs,{threads=1,allocator=context.allocator}))
     defer jobs.system_destroy(&app.jobs)
-    selection:Selection
-    edits:Edits
+    selection:history.Selection
+    edits:history.Edits
     document:Document
     prefabs:Prefabs
     s:=Session{info=&info,edit_world=&world,editor_world=&prefabs,assets_root=root,project_root=root,app=&app,selection=&selection,edits=&edits,document=&document}
     defer delete(selection.entities)
-    defer edits_free(&edits)
+    defer history.edits_free(&edits)
     defer document_previous_free(&document)
     defer prefabs_free(&s)
     w:=edited_world(&s)
     entity_create(&s,{name="Kept",transform={position={2,0,0},rotation=1,scale={1,1,1}}})
     core.world_settle(w)
-    edits_reset(&edits,w)
+    history.edits_reset(&edits,w)
 
     testing.expect(t,document_recovery(&s))
     testing.expect(t,s.recovery.write.busy)
     testing.expect(t,recovery_wait(&s))
     testing.expect(t,!s.recovery.write.busy && s.recovery.owned)
-    testing.expect_value(t,s.recovery.saved,edits_state(&edits))
+    testing.expect_value(t,s.recovery.saved,history.edits_state(&edits))
 
     file:=recovery_file(&s,s.recovery.slot)
     copy:asset.Scene

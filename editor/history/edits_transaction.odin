@@ -1,4 +1,4 @@
-package editor
+package history
 
 import "base:runtime"
 import "core:mem"
@@ -20,13 +20,10 @@ Edit_Preparation :: struct {
     ready,changed:bool,
 }
 
-@(private)
 Edit_Transient_Ranges :: struct {info:^runtime.Type_Info,ranges:[][2]int}
 
-@(private)
 History_Authors :: struct {current:^core.Raw_Table,previous:^Journal_Table}
 
-@(private)
 history_is_author :: proc(authors:History_Authors,e:core.Entity) -> bool {
     return authors.current!=nil && core.raw_row(authors.current,e)>=0 || authors.previous!=nil && journal_row(authors.previous,e)>=0
 }

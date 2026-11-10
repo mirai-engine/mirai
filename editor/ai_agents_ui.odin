@@ -6,6 +6,7 @@ import "core:path/filepath"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -431,7 +432,7 @@ ai_review_change_row :: proc(s:^Session,task:^Ai_Task,index:int) -> (changed:boo
         if ai_review_deleted(w,task,id) {
             name,status=ai_review_deleted_name(w,task,id),'D'
         } else {
-            name=entity_name(w,change_entity(w,id))
+            name=entity_name(w,history.change_entity(w,id))
             added,kept:=false,false
             for &transaction in task.review.transactions {
                 for &row in transaction.rows {
@@ -547,11 +548,11 @@ ai_review_walk :: proc(s:^Session,task:^Ai_Task,step:=1) {
     m.review_shown=0
     if m.review_at>=len(ids) {return}
     w:=edited_world(s)
-    if e:=change_entity(w,ids[m.review_at]);e!=core.NONE {
-        selection_set(s.selection,{e})
+    if e:=history.change_entity(w,ids[m.review_at]);e!=core.NONE {
+        history.selection_set(s.selection,{e})
         library_select(s,.Ai)
     } else if place,deleted:=ai_review_deleted_world(w,task,ids[m.review_at],0);deleted {
-        selection_clear(s.selection)
+        history.selection_clear(s.selection)
         m.review_shown,m.review_selection=ids[m.review_at],s.selection.serial
         s.viewport.orbit.target=place.position
         viewport_camera(s.viewport)
@@ -569,7 +570,7 @@ ai_review_resolved :: proc(s:^Session,task:^Ai_Task,id:base.Entity_Id,walked:boo
         m.review_at-=1
         if ai_task_reviewable(task) && task.review.pending {ai_review_walk(s,task);return}
     }
-    if e:=change_entity(edited_world(s),id);e!=core.NONE && len(s.selection.entities)==0 {selection_set(s.selection,{e})}
+    if e:=history.change_entity(edited_world(s),id);e!=core.NONE && len(s.selection.entities)==0 {history.selection_set(s.selection,{e})}
 }
 
 // The deletion Details shows: the one the walk brought into sight, while the
@@ -590,7 +591,7 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
     ctx:=s.gui.ctx;th:=&ctx.theme
     transaction:=ai_review_deletion(w,task,id)
     if transaction==nil {return}
-    before:=make([]^Change_Row,len(w.info.tables),context.temp_allocator)
+    before:=make([]^history.Change_Row,len(w.info.tables),context.temp_allocator)
     for &row in transaction.rows {
         if row.id==id && row.before_present && !row.after_present && row.table>=0 && row.table<len(before) {before[row.table]=&row}
     }
@@ -628,7 +629,7 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
             for &t,index in w.info.tables {
                 row:=before[index]
                 if row==nil || t.place!=.World || !inspector_visible(s,&t) || inspector_primary(&t)!=(pass==0) {continue}
-                value:=change_materialize(w,t.info,row.before)
+                value:=history.change_materialize(w,t.info,row.before)
                 c:=Inspect{s=s,w=w,t=&t,index=index,table=core.world_table_at(w,&t),name=t.name,type=t.type,value=raw_data(value),size=t.info.size}
                 component_section(&c,width)
             }

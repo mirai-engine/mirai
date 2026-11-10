@@ -7,6 +7,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -54,11 +55,11 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     record,_:=asset.registry_find(&f.assets.registry,id)
     append(&shared.skin.rigs,anim.Skin_Rig{id=id,revision=1,stamp={record.size,record.time},morphs=targets[:]})
     f.app.shared=&shared
-    selection:editor.Selection;defer delete(selection.entities)
-    edits:editor.Edits;defer editor.edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
     viewport:editor.Viewport;gui:editor.Editor_Ui
     f.session.info,f.session.edit_world,f.session.selection,f.session.edits,f.session.viewport,f.session.gui=&info,&document,&selection,&edits,&viewport,&gui
-    editor.edits_reset(&edits,core.world_ref(&document,&info))
+    history.edits_reset(&edits,core.world_ref(&document,&info))
     inspect:=Morph_Inspect_Params{limit=256}
     set:=Morph_Set_Params{mode=.Override}
     authoring_test_register(f,t,"inspect",Morph_Inspect_Params,morph_inspect,&inspect)
@@ -73,8 +74,8 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     mesh:=document.meshes.entities[0]
     configured,has_config:=core.get(core.read(&document.configs),mesh)
     testing.expect(t,has_config && morph_api_test_count(configured)==1)
-    testing.expect(t,editor.undo(&edits,core.world_ref(&document,&info),&selection));testing.expect(t,!core.has(&document.configs,mesh))
-    testing.expect(t,editor.redo(&edits,core.world_ref(&document,&info),&selection))
+    testing.expect(t,history.undo(&edits,core.world_ref(&document,&info),&selection));testing.expect(t,!core.has(&document.configs,mesh))
+    testing.expect(t,history.redo(&edits,core.world_ref(&document,&info),&selection))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012"}`).code,0)
     output=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(output,`"mesh_default": 0.25`) && strings.contains(output,`"default_value": 0.35`) && strings.contains(output,`"evaluated": false`))
     before:=document.configs.values[0];cursor:=edits.cursor

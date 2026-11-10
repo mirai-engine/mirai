@@ -5,6 +5,7 @@ import "core:math"
 import "core:slice"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:ui"
@@ -308,7 +309,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                 }
                 if r.committed || r.cancelled || (!r.editing && !r.began && ctx.edit.id!=field) {o.rename=core.NONE}
             } else {
-                selected:=selection_has(s.selection,e)
+                selected:=history.selection_has(s.selection,e)
                 over:=g.drag.kind==.Entity && drag_over(g,line_rect) && g.drag.entity!=e
                 label:=entity_label(w,e)
                 it:=ui.row(ctx,id,{label=label,icon=icon,icon_color=color,icon_size=14,text_color=text_color,font=kind!=.None?ui.FONT_SEMIBOLD:0,selected=selected || over,height=OUTLINER_ROW})
@@ -320,10 +321,10 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                         switch {
                         case v.pick.active:                inspector_pick_finish(s,w,e)
                         case it.double && !linked:         outliner_rename(o,e)
-                        case .Primary in ctx.input.modifiers: selection_toggle(s.selection,target)
-                        case .Shift in ctx.input.modifiers:   selection_add(s.selection,target)
-                        case !selection_has(s.selection,target): selection_set(s.selection,{target})
-                        case:                              selection_set(s.selection,{target},true)
+                        case .Primary in ctx.input.modifiers: history.selection_toggle(s.selection,target)
+                        case .Shift in ctx.input.modifiers:   history.selection_add(s.selection,target)
+                        case !history.selection_has(s.selection,target): history.selection_set(s.selection,{target})
+                        case:                              history.selection_set(s.selection,{target},true)
                         }
                         if !v.pick.active {drag_begin(g,{kind=.Entity,entity=target},entity_label(w,target))}
                     }
@@ -332,17 +333,17 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                     tool_preview_cancel(s)
                     if entity_alive(w,e) {
                         o.menu=e
-                        if !selected {selection_set(s.selection,{e})}
+                        if !selected {history.selection_set(s.selection,{e})}
                         ui.popup_open(ctx,outliner_menu_id(g),{ctx.pointer.x,ctx.pointer.y,0,0})
                     }
                 }
             }
             // On the row that is selected or under the pointer: the root of what holds it, and its document alone as a tree.
-            if selection_has(s.selection,e) || ui.rect_contains(line_rect,ctx.pointer) {
+            if history.selection_has(s.selection,e) || ui.rect_contains(line_rect,ctx.pointer) {
                 up:=container_of(w,e)
                 tree:=kind!=.None?e:up
                 if up!=core.NONE && ui.button(ctx,ui.id(ctx,"outliner_root",index+1),{icon=ui.icon_user(u8(User_Icon.Up)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=20,height=OUTLINER_ROW}).clicked {
-                    selection_set(s.selection,{up})
+                    history.selection_set(s.selection,{up})
                     if o.scope!=core.NONE && !entity_within(w,up,o.scope) {o.scope=core.NONE}
                     outliner_reveal(o,w,up)
                 }
@@ -375,7 +376,7 @@ outliner_drop :: proc(s:^Session,w:core.World_Ref,target:core.Entity) {
     tool_preview_cancel(s)
     d:=&s.gui.drag
     moved:=[]core.Entity{d.entity}
-    if selection_has(s.selection,d.entity) {moved=selection_roots(s.selection,w)}
+    if history.selection_has(s.selection,d.entity) {moved=history.selection_roots(s.selection,w)}
     opened,edit_ready:=edit_open(s,"Parent")
     if !edit_ready {return}
     defer edit_close(s,opened)
@@ -411,7 +412,7 @@ outliner_menu :: proc(s:^Session,w:core.World_Ref) {
             tool_preview_cancel(s)
             if !entity_alive(w,e) {return}
             child:=entity_create(s,{preset=.Empty,parent=e})
-            selection_set(s.selection,{child})
+            history.selection_set(s.selection,{child})
             outliner_reveal(o,w,child)
         }
         if ui.menu_item(ctx,ui.id(ctx,"menu_rename"),"Rename",{shortcut="F2"}) {outliner_rename(o,e)}

@@ -5,6 +5,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:testing"
 import "core:time"
+import "mirai:editor/history"
 import "mirai:std/base"
 
 @(private="file")
@@ -21,7 +22,7 @@ code_test_write :: proc(t:^testing.T,root,path,text:string) {
 }
 
 @(private="file")
-code_test_file :: proc(task:^Ai_Task,path:string) -> ^Change_File {
+code_test_file :: proc(task:^Ai_Task,path:string) -> ^history.Change_File {
     for &set in task.review.transactions {
         for &file in set.files {if file.path==path {return &file}}
     }

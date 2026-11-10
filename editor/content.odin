@@ -6,6 +6,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -653,7 +654,7 @@ content_selection_set :: proc(c:^Content,registry:^asset.Registry,ids:[]base.Ass
 @(private)
 content_selection_read :: proc(s:^Session,c:^Content,w:core.World_Ref,registry:^asset.Registry) {
     if !c.selection_only || s.selection==nil {return}
-    key:=[4]u64{u64(uintptr(raw_data(registry.files))),registry.revision,s.selection.serial,edits_state(s.edits) if s.edits!=nil else 0}
+    key:=[4]u64{u64(uintptr(raw_data(registry.files))),registry.revision,s.selection.serial,history.edits_state(s.edits) if s.edits!=nil else 0}
     if key==c.selection_key {return}
     c.selection_key=key
     ids:=make([dynamic]base.Asset_Id,context.temp_allocator)

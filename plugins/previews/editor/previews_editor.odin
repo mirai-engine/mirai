@@ -6,6 +6,7 @@ import "core:mem"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import eanim "plugins:animation/runtime"
 import "mirai:host"
 import "mirai:ui"
@@ -77,8 +78,8 @@ previews_drop :: proc(s:^editor.Session) {
     drop,ok:=editor.asset_drop_take(s,asset.KIND_ANIMATION)
     if !ok || editor.playing(s) {return}
     t:=core.world_table_of(editor.edited_world(s),eanim.Animation)
-    if t==nil || !editor.edits_begin(s.edits,s.selection,"Play animation") {return}
-    defer editor.edits_end(s.edits)
+    if t==nil || !history.edits_begin(s.edits,s.selection,"Play animation") {return}
+    defer history.edits_end(s.edits)
     // An added component is there at the end of the function: it goes whole.
     if animation:=core.get(t,drop.entity);animation!=nil {
         animation.asset,animation.clip=drop.id,drop.part

@@ -1,4 +1,4 @@
-package editor
+package history
 
 import "base:runtime"
 import "core:mem"
@@ -65,7 +65,6 @@ Journal_Change :: struct {
 // image disagree on; -1 where it has none.
 Journal_Row :: struct {entity:core.Entity,image_row,row:int}
 
-@(private)
 Journal_Diff :: struct {
     table:^core.Raw_Table,
     image:^Journal_Table,
@@ -79,12 +78,10 @@ Journal_Diff :: struct {
 
 @(private)
 ENTITY_FREE :: u8(1)
-@(private)
 ENTITY_TURNED :: u8(2)
 @(private)
 ENTITY_GOING :: u8(4)
 
-@(private)
 journal_row :: proc "contextless" (image:^Journal_Table,e:core.Entity) -> int {
     i:=core.entity_index(e)
     if i>=len(image.rows) {return -1}
@@ -92,7 +89,6 @@ journal_row :: proc "contextless" (image:^Journal_Table,e:core.Entity) -> int {
     return row>=0 && image.entities[row]==e?row:-1
 }
 
-@(private)
 journal_value :: proc "contextless" (image:^Journal_Table,size,row:int) -> rawptr {
     return rawptr(uintptr(raw_data(image.values))+uintptr(row*size))
 }
@@ -150,7 +146,6 @@ journal_drop :: proc(image:^Journal_Table,row,size:int) {
     resize(&image.values,last*size)
 }
 
-@(private)
 journal_table_free :: proc(image:^Journal_Table) {
     delete(image.values);delete(image.entities);delete(image.off);delete(image.rows)
     image^={}
@@ -191,12 +186,10 @@ journal_table_take :: proc(image:^Journal_Table,t:^core.Raw_Table,size:int,autho
 }
 
 // Whether a table changed since its image was taken.
-@(private)
 journal_moved :: proc "contextless" (t:^core.Raw_Table,image:^Journal_Table) -> bool {
     return t.version!=image.seen.version || t.gone_first+u64(len(t.gone))!=image.seen.gone
 }
 
-@(private)
 journal_diff :: proc(t:^core.Raw_Table,image:^Journal_Table,size:int,ranges:[][2]int,authors:History_Authors,only_authors:bool) -> (d:Journal_Diff) {
     seen:=image.seen
     d={table=t,image=image,size=size,ranges=ranges,c=core.raw_changes(t,&seen),authors=authors,only_authors=only_authors}
@@ -214,7 +207,6 @@ journal_differ :: proc(d:^Journal_Diff,image_row,row:int) -> bool {
 // row went or turned off, once each, and of the rows stamped since; of every
 // row of both when the table holds rows the image did not see. Rows are
 // visited from the last, so a row dropped meanwhile does not hide another.
-@(private)
 journal_diff_next :: proc(d:^Journal_Diff) -> (r:Journal_Row,ok:bool) {
     t,image:=d.table,d.image
     for {
@@ -258,7 +250,6 @@ journal_diff_next :: proc(d:^Journal_Diff) -> (r:Journal_Row,ok:bool) {
 }
 
 // The index of the table Id in the world info; -1 without one.
-@(private)
 journal_id_table :: proc(w:core.World_Ref) -> int {
     for t,i in w.info.tables {
         if t.place==w.place && t.type==core.Id {return i}
@@ -267,7 +258,6 @@ journal_id_table :: proc(w:core.World_Ref) -> int {
 }
 
 // The Id of an entity: in the World, or in the image once it is gone.
-@(private)
 journal_id :: proc(edits:^Edits,w:core.World_Ref,id_table:int,e:core.Entity) -> base.Entity_Id {
     if id_table<0 {return 0}
     if t:=core.world_table_at(w,&w.info.tables[id_table]);core.raw_row(t,e)>=0 {return (^core.Id)(table_value(t,size_of(core.Id),core.raw_row(t,e))).value}
@@ -287,7 +277,6 @@ journal_order :: proc(edits:^Edits,w:core.World_Ref,id_table,at:int) -> (index:i
 }
 
 // The transient ranges of every table a scene saves, kept for the diffs that may not allocate.
-@(private)
 journal_ranges :: proc(edits:^Edits,w:core.World_Ref) -> bool {
     for ranges in edits.ranges[min(len(w.info.tables),len(edits.ranges)):] {delete(ranges.ranges)}
     if resize(&edits.ranges,len(w.info.tables))!=nil {return false}
@@ -356,7 +345,6 @@ journal_count :: proc(edits:^Edits,w:core.World_Ref,table:int,authors:History_Au
 
 // The image takes the row of one entity, without a step nor a change: what
 // collaboration received from the others.
-@(private)
 journal_take :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity) -> bool {
     if table<0 || table>=len(edits.image) || !edits.saved[table] {return true}
     info:=&w.info.tables[table]
@@ -374,7 +362,6 @@ journal_take :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity) -> b
 // The image takes size bytes at offset of the row of e as the World has
 // them, without a step nor a change: a field the engine wrote. Nothing when
 // the image has no row of e, which is new to the next step whole.
-@(private)
 journal_take_field :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity,offset,size:int) {
     if table<0 || table>=len(edits.image) || !edits.saved[table] {return}
     info:=&w.info.tables[table]
@@ -388,7 +375,6 @@ journal_take_field :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity
 
 // The image takes whether the row of e is turned off by itself, without a
 // step nor a change. Nothing when the image has no row of e.
-@(private)
 journal_take_off :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity) {
     if table<0 || table>=len(edits.image) || !edits.saved[table] {return}
     current:=core.world_table_at(w,&w.info.tables[table])
@@ -398,7 +384,6 @@ journal_take_off :: proc(edits:^Edits,w:core.World_Ref,table:int,e:core.Entity) 
 }
 
 // The image of the index of an entity takes what the World has there.
-@(private)
 journal_take_entity :: proc(edits:^Edits,w:core.World_Ref,e:core.Entity) -> bool {
     es:=core.world_entities(w)
     image:=&edits.image_entities
@@ -547,7 +532,6 @@ entity_turned :: #force_inline proc "contextless" (es:^core.Entities,marks:[]u8,
 // in every table; a World_Transform without a Transform (of a turned entity,
 // or of one whose Transform went since transforms); with a table Id, the
 // entities turned alive without a row. Clears the marks.
-@(private)
 world_turned_prune :: proc(w:core.World_Ref,marks:[]u8,bound:int,transforms:core.Seen) {
     core.world_settle(w)
     es:=core.world_entities(w)
@@ -594,7 +578,6 @@ world_turned_prune :: proc(w:core.World_Ref,marks:[]u8,bound:int,transforms:core
 // What the image took since a reader looked at cursor, which then points
 // past it. Collaboration and the recovery log read the changes, each with
 // its own cursor: what both read goes (journal_read_done, journal_log_done).
-@(private)
 journal_read :: proc(edits:^Edits,cursor:^u64) -> []Journal_Change {
     end:=edits.changes_first+u64(len(edits.changes))
     from:=clamp(cursor^,edits.changes_first,end)
@@ -604,7 +587,6 @@ journal_read :: proc(edits:^Edits,cursor:^u64) -> []Journal_Change {
 
 // What the row of a change held before the image took it; false when it was
 // not kept. Valid until a reader is done or the image takes the World again.
-@(private)
 journal_change_value :: proc(edits:^Edits,change:Journal_Change,size:int) -> (value:[]u8,kept:bool) {
     if !change.valued || change.value<edits.change_values_first {return}
     at:=int(change.value-edits.change_values_first)
@@ -612,14 +594,12 @@ journal_change_value :: proc(edits:^Edits,change:Journal_Change,size:int) -> (va
     return edits.change_values[at:][:size],true
 }
 
-@(private)
 journal_read_done :: proc(edits:^Edits,cursor:u64) {
     edits.read_done=cursor
     journal_trim(edits)
 }
 
 // The recovery log wrote what it read up to cursor.
-@(private)
 journal_log_done :: proc(edits:^Edits,cursor:u64) {
     edits.logged=cursor
     journal_trim(edits)
@@ -643,7 +623,6 @@ journal_trim :: proc(edits:^Edits) {
 }
 
 // Forgets the changes for every reader: the World they were of was replaced.
-@(private)
 journal_changes_drop :: proc(edits:^Edits) {
     end:=edits.changes_first+u64(len(edits.changes))
     edits.read_done,edits.logged=end,end
@@ -651,7 +630,6 @@ journal_changes_drop :: proc(edits:^Edits) {
 }
 
 // Starts or stops reading the changes: a reader that starts sees from now on.
-@(private)
 journal_reading :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
     edits.reading=on
     end:=edits.changes_first+u64(len(edits.changes))
@@ -662,7 +640,6 @@ journal_reading :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
 }
 
 // Starts or stops the reading of the recovery log, which sees from now on.
-@(private)
 journal_logging :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
     edits.logging=on
     end:=edits.changes_first+u64(len(edits.changes))
@@ -672,7 +649,6 @@ journal_logging :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
 }
 
 // Whether the rows of the authors are as the journal has them.
-@(private)
 journal_settled :: proc(edits:^Edits,w:core.World_Ref) -> bool {
     if w.data!=edits.world || !journal_ranges(edits,w) {return false}
     authors,only_authors:=history_authors(edits,w)

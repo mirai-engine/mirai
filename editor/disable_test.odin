@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 
 @(private="file")
@@ -38,36 +39,36 @@ turning_off_and_disabling_are_undone_and_keep_the_values :: proc(t:^testing.T) {
     core.add(&w.parents,bulb,core.Parent{lamp,0})
     core.add(&w.points,lamp,erender.Point_Light{intensity=10});core.add(&w.points,bulb,erender.Point_Light{intensity=20})
     core.world_settle(ref)
-    selection:Selection;defer delete(selection.entities)
-    edits:Edits;defer edits_free(&edits)
-    edits_reset(&edits,ref)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
 
     core.disable(&w.points,bulb)
     core.world_settle(ref)
-    testing.expect(t,edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect(t,!core.has(&w.points,bulb) && core.has(&w.points,lamp))
-    testing.expect(t,undo(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     value,on:=core.get(core.read(&w.points),bulb)
     testing.expect(t,on && value.intensity==20)
-    testing.expect(t,redo(&edits,ref,&selection))
+    testing.expect(t,history.redo(&edits,ref,&selection))
     testing.expect(t,!core.has(&w.points,bulb))
 
     core.add(&w.disabled,lamp,core.Disabled{})
     core.world_settle(ref)
-    testing.expect(t,edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect_value(t,core.count(&w.points),0)
-    testing.expect(t,undo(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect(t,core.has(&w.points,lamp) && !core.has(&w.points,bulb),"the bulb stays off by itself")
-    testing.expect(t,redo(&edits,ref,&selection))
+    testing.expect(t,history.redo(&edits,ref,&selection))
     testing.expect_value(t,core.count(&w.points),0)
 
     // Turning on a component of an entity off with the lamp is a step too.
     core.enable(&w.points,bulb)
     core.world_settle(ref)
-    testing.expect(t,edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
     _,turned_off,_:=core.raw_state(core.raw(&w.points),bulb)
     testing.expect(t,!turned_off)
-    testing.expect(t,undo(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     _,turned_off,_=core.raw_state(core.raw(&w.points),bulb)
     testing.expect(t,turned_off,"the bulb is off by itself again")
     core.remove(&w.disabled,lamp)

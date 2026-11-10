@@ -6,6 +6,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import shapes "plugins:shapes/runtime"
 import mm "mirai:std/math"
@@ -27,8 +28,8 @@ Shapes_Test :: struct {
     world:Shapes_Test_World,
     ref:core.World_Ref,
     app:host.App,
-    selection:editor.Selection,
-    edits:editor.Edits,
+    selection:history.Selection,
+    edits:history.Edits,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     previous:asset.Scene,
@@ -42,14 +43,14 @@ shapes_test_open :: proc(t:^testing.T,f:^Shapes_Test) -> bool {
     f.ref=core.test_world_ref(&f.world)
     f.app={allocator=context.allocator}
     f.document={previous=&f.previous}
-    editor.edits_reset(&f.edits,f.ref)
+    history.edits_reset(&f.edits,f.ref)
     f.session={app=&f.app,info=f.ref.info,edit_world=&f.world,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=&f.document,id_state=101}
     return true
 }
 
 @(private)
 shapes_test_close :: proc(f:^Shapes_Test) {
-    editor.edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     core.test_world_destroy(&f.world)
 }
@@ -64,7 +65,7 @@ shapes_test_shape :: proc(f:^Shapes_Test,shape:shapes.Shape) -> core.Entity {
     core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&w.shapes,e,shape)
     core.test_world_settle(w)
-    editor.edits_reset(&f.edits,f.ref)
+    history.edits_reset(&f.edits,f.ref)
     return e
 }
 
@@ -98,7 +99,7 @@ a_stamp_stroke_is_one_step_that_undo_and_redo_take_back_and_forth :: proc(t:^tes
     testing.expect_value(t,stroke_to(stroke,{3,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
     stroke_end(s,&tool)
-    if !testing.expect(t,editor.edits_commit(&f.edits,f.ref,&f.selection)) {return}
+    if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,1)
     testing.expect_value(t,w.entities.alive,1)
     if !testing.expect_value(t,len(w.shapes.values),1) {return}
@@ -108,10 +109,10 @@ a_stamp_stroke_is_one_step_that_undo_and_redo_take_back_and_forth :: proc(t:^tes
     testing.expect_value(t,hi,[2]f32{3.5,0.5})
     testing.expect_value(t,made.point_count,u16(4))
 
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,w.entities.alive,0)
     testing.expect_value(t,len(w.shapes.values),0)
-    testing.expect(t,editor.redo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.redo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,w.entities.alive,1)
     if testing.expect_value(t,len(w.shapes.values),1) {testing.expect(t,w.shapes.values[0]==made)}
 }
@@ -133,7 +134,7 @@ a_cut_that_splits_makes_a_second_shape_and_undo_restores_one :: proc(t:^testing.
     testing.expect_value(t,stroke_to(stroke,{0,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
     stroke_end(s,&tool)
-    if !testing.expect(t,editor.edits_commit(&f.edits,f.ref,&f.selection)) {return}
+    if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,1)
     testing.expect_value(t,w.entities.alive,2)
     if !testing.expect_value(t,len(w.shapes.values),2) {return}
@@ -145,10 +146,10 @@ a_cut_that_splits_makes_a_second_shape_and_undo_restores_one :: proc(t:^testing.
         testing.expect(t,core.get(&w.ids,w.shapes.entities[row])!=nil)
     }
 
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,w.entities.alive,1)
     if testing.expect_value(t,len(w.shapes.values),1) {testing.expect(t,core.get(&w.shapes,e)^==bar)}
-    testing.expect(t,editor.redo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.redo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,len(w.shapes.values),2)
 }
 
@@ -196,20 +197,20 @@ a_corner_drag_is_one_step_and_a_move_that_crosses_does_not_apply :: proc(t:^test
     testing.expect_value(t,core.get(&w.shapes,e).points[2],[2]f32{1,1})
     testing.expect_value(t,corner_drag_move(s,&drag,{1.5,1}),shapes.Shape_Error.None)
     corner_drag_end(s,&drag)
-    if !testing.expect(t,editor.edits_commit(&f.edits,f.ref,&f.selection)) {return}
+    if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,1)
     testing.expect_value(t,core.get(&w.shapes,e).points[2],[2]f32{1.5,1})
 
     // A removal is a step of its own.
     testing.expect_value(t,corner_edit(s,e,.Remove,0,{},"Remove corner"),shapes.Shape_Error.None)
-    if !testing.expect(t,editor.edits_commit(&f.edits,f.ref,&f.selection)) {return}
+    if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,2)
     testing.expect_value(t,core.get(&w.shapes,e).point_count,u16(3))
     testing.expect_value(t,corner_edit(s,e,.Remove,0,{},"Remove corner"),shapes.Shape_Error.Invalid)
     testing.expect_value(t,f.edits.cursor,2)
 
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect(t,core.get(&w.shapes,e)^==shapes.SHAPE_DEFAULT)
 }
 
@@ -260,11 +261,11 @@ shapes_api_stamps_and_moves_corners_as_steps_of_undo :: proc(t:^testing.T) {
     testing.expect(t,crossing.failed && crossing.error.code==api.INVALID_PARAMS)
     testing.expect_value(t,f.edits.cursor,2)
 
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     lo,hi:=shapes_test_bounds(core.get(&w.shapes,e)^)
     testing.expect_value(t,lo,[2]f32{-0.5,-0.5})
     testing.expect_value(t,hi,[2]f32{1.5,0.5})
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,w.entities.alive,0)
 }
 
@@ -281,7 +282,7 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     place:=brush_place_at(false,{0,0,0.5},{0,0,1},0.25,0)
     brush,error:=brush_place(s,place,{0,0,0.5},.Box,false,{},solid)
     testing.expect_value(t,error,shapes.Shape_Error.None)
-    if !testing.expect(t,editor.edits_commit(&f.edits,f.ref,&f.selection)) {return}
+    if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,1)
     testing.expect(t,core.get(&w.ids,brush)!=nil)
     parent,has_parent:=core.get(core.read(&w.parents),brush)
@@ -299,16 +300,16 @@ a_brush_placed_on_a_surface_is_one_step_and_a_child_with_an_id :: proc(t:^testin
     away=brush_place_at(false,{5,0,0},{0,0,1},0.25,0)
     made,made_error:=brush_place(s,away,{5,0,0},.Cylinder,false,{},core.NONE)
     testing.expect_value(t,made_error,shapes.Shape_Error.None)
-    if !testing.expect(t,editor.edits_commit(&f.edits,f.ref,&f.selection)) {return}
+    if !testing.expect(t,history.edits_commit(&f.edits,f.ref,&f.selection)) {return}
     testing.expect_value(t,f.edits.cursor,2)
     testing.expect_value(t,w.entities.alive,4)
     made_parent,_:=core.get(core.read(&w.parents),made)
     made_solid,_:=core.get(core.read(&w.shapes),made_parent.entity)
     testing.expect_value(t,made_solid.kind,shapes.Shape_Kind.Solid)
 
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,w.entities.alive,2)
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,w.entities.alive,1)
     testing.expect_value(t,len(w.brushes.values),0)
 }

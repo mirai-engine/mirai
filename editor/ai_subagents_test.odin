@@ -10,6 +10,7 @@ import "mirai:core"
 import "mirai:editor/acp"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -26,8 +27,8 @@ Fixture :: struct {
     editor_world:Ai_Context_Test_Editor,
     app:host.App,
     viewport:Viewport,
-    selection:Selection,
-    edits:Edits,
+    selection:history.Selection,
+    edits:history.Edits,
     document:Document,
     ai:^Ai,
     s:Session,

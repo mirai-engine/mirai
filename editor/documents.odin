@@ -5,6 +5,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:ui"
 
@@ -12,8 +13,8 @@ import "mirai:ui"
 Document_Tab :: struct {
     world:rawptr,
     document:Document,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:Viewport,
     inspector:Inspector,
     outliner:Outliner,
@@ -38,7 +39,7 @@ document_tab_exchange :: proc(s:^Session,tab:^Document_Tab) {
     // Who edits stays with the document in front.
     author:=s.edits.author
     swap_values(s.edits,&tab.edits)
-    s.edits.author,tab.edits.author=author,EDIT_AUTHOR_USER
+    s.edits.author,tab.edits.author=author,history.EDIT_AUTHOR_USER
     swap_values(s.selection,&tab.selection)
     preferences:=s.viewport.preferences
     swap_values(s.viewport,&tab.viewport)
@@ -55,9 +56,9 @@ document_tab_free :: proc(s:^Session,tab:^Document_Tab) {
     recovery_chain_close(s,&tab.recovery,false)
     host.app_world_free(s.app,tab.world)
     document_previous_free(&tab.document)
-    edits_free(&tab.edits)
+    history.edits_free(&tab.edits)
     prefabs_state_free(&tab.prefabs)
-    core.value_free(&tab.selection,type_info_of(Selection))
+    core.value_free(&tab.selection,type_info_of(history.Selection))
     viewport_free(&tab.viewport)
     core.value_free(&tab.inspector,type_info_of(Inspector))
     core.value_free(&tab.outliner,type_info_of(Outliner))
@@ -80,7 +81,7 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     if s.gui.ctx!=nil {s.gui.ctx.edit={};s.gui.ctx.scrub={}}
     s.inspector.gesture=0
     settings_flush(s)
-    edits_commit(s.edits,edited_world(s),s.selection)
+    history.edits_commit(s.edits,edited_world(s),s.selection)
     document_tab_exchange(s,&s.documents[s.active_document])
     document_tab_exchange(s,&s.documents[index])
     s.active_document=index
@@ -138,7 +139,7 @@ document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
     if document_is_prefab(s) {
         w:=edited_world(s)
         for e in core.world_table_of(w,core.Id).entities {
-            if entity_parent(w,e)==core.NONE {selection_add(s.selection,e)}
+            if entity_parent(w,e)==core.NONE {history.selection_add(s.selection,e)}
         }
         focus_selection(s,w)
     }
@@ -226,7 +227,7 @@ document_uses_unsaved :: proc(s:^Session,index:int) -> bool {
     active:=index==s.active_document
     if !active && (index>=len(s.documents) || s.documents[index].world==nil) {return false}
     world:=active?s.edit_world:s.documents[index].world
-    key:=[2]u64{s.app.assets.registry.revision,edits_state(active?s.edits:&s.documents[index].edits)}
+    key:=[2]u64{s.app.assets.registry.revision,history.edits_state(active?s.edits:&s.documents[index].edits)}
     g:=s.gui
     for &known in g.unsaved_uses {
         if known.world==world && known.key==key {return known.uses}
@@ -266,7 +267,7 @@ documents_dirty :: proc(s:^Session) -> bool {
 document_tab_dirty :: proc(s:^Session,index:int) -> bool {
     if index==s.active_document {return document_dirty(s)}
     tab:=&s.documents[index]
-    return tab.document.unsaved || edits_scene_state(&tab.edits)!=tab.document.saved
+    return tab.document.unsaved || history.edits_scene_state(&tab.edits)!=tab.document.saved
 }
 
 documents_quit_next :: proc(s:^Session) {
@@ -276,7 +277,7 @@ documents_quit_next :: proc(s:^Session) {
         d:=index==s.active_document?s.document:&tab.document
         e:=index==s.active_document?s.edits:&tab.edits
         // Agents work only on the active document: quitting asks while they do.
-        if !d.unsaved && edits_scene_state(e)==d.saved && (index!=s.active_document || ai_working_count(s)==0) {continue}
+        if !d.unsaved && history.edits_scene_state(e)==d.saved && (index!=s.active_document || ai_working_count(s)==0) {continue}
         // The first question lists every unsaved asset too, so none is asked twice.
         document_activate(s,index)
         confirm_open(s,.Quit,assets_unsaved_paths(s))
@@ -318,7 +319,7 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
     if index!=s.active_document && index<len(s.documents) {d,e=&s.documents[index].document,&s.documents[index].edits}
     tab.label=document_title(d)
     tab.icon=d.previous!=nil && d.previous.doc.kind==asset.KIND_PREFAB?.Prefab:.Scene
-    tab.dirty=d.unsaved || edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
+    tab.dirty=d.unsaved || history.edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
     tab.active=index==s.active_document && !scene_covered(s)
     return
 }

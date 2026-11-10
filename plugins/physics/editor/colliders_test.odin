@@ -3,6 +3,7 @@ package physics_editor
 import "mirai:editor"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -27,7 +28,7 @@ Collider_Test :: struct {
     using application:phys.Test_Physics_Host,
     info:core.World_Info,
     tools:^Collider_Editor,
-    selection:editor.Selection,
+    selection:history.Selection,
     session:editor.Session,
 }
 
@@ -83,7 +84,7 @@ selected_colliders_show_their_physics_shape_even_with_the_grid_hidden :: proc(t:
     collider_test_step(&f)
     testing.expect_value(t,f.problems.count,0)
     testing.expect(t,phys.body_of({&f.state},selected)==phys.body_of({&f.state},owner))
-    editor.selection_set(&f.selection,{selected})
+    history.selection_set(&f.selection,{selected})
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,2)
     lines:=f.app.extras.debug[0]
@@ -102,10 +103,10 @@ selected_colliders_show_their_physics_shape_even_with_the_grid_hidden :: proc(t:
         testing.expect(t,abs(vertex.position.x-9)==1 && abs(vertex.position.y-4)==1 && abs(vertex.position.z-6)==1)
     }
     f.app.extras.debug_count=0
-    editor.selection_clear(&f.selection)
+    history.selection_clear(&f.selection)
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,0)
-    editor.selection_set(&f.selection,{selected})
+    history.selection_set(&f.selection,{selected})
     f.session.mode=.Play
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,0)
@@ -139,13 +140,13 @@ selected_author_colliders_exclude_derived_geometry_and_never_draw_partial_shapes
     f.settings={bodies=i32(children+1),shapes=i32(children+1),contacts=16,joints=1,characters=1,hulls=1,meshes=1,heightfields=1}
     collider_test_step(&f)
     testing.expect_value(t,f.problems.count,0)
-    editor.selection_set(&f.selection,{first})
+    history.selection_set(&f.selection,{first})
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,2)
     testing.expect_value(t,f.app.extras.debug[0].count,24)
     for vertex in f.app.extras.debug[0].vertices[:24] {testing.expect(t,abs(vertex.position.x)==0.5)}
     f.app.extras.debug_count=0
-    editor.selection_set(&f.selection,{owner,first})
+    history.selection_set(&f.selection,{owner,first})
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,2)
     testing.expect_value(t,f.app.extras.debug[0].count,editor.LINE_CAPACITY/24*24)
@@ -188,7 +189,7 @@ selected_author_colliders_exclude_derived_geometry_and_never_draw_partial_shapes
     }
     _,invalid:=phys.collider_bounds({&f.state},core.NONE);testing.expect(t,!invalid)
     f.app.extras.debug_count=0
-    editor.selection_clear(&f.selection)
+    history.selection_clear(&f.selection)
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,0)
 }

@@ -8,6 +8,7 @@ import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -612,7 +613,7 @@ ai_chat_content_build :: proc(s:^Session,width,height:f32,size:f32=0) {
     if drag_dropped(g,area) {
         switch g.drag.kind {
         case .Asset:  ai_attachment_add(s,g.drag.asset_id)
-        case .Entity: if g.drag.entity!=core.NONE {selection_add(s.selection,g.drag.entity);m.focus=true}
+        case .Entity: if g.drag.entity!=core.NONE {history.selection_add(s.selection,g.drag.entity);m.focus=true}
         case .None,.Preset:
         }
         g.drag={}
@@ -836,7 +837,7 @@ ai_selection_context_build :: proc(s:^Session,width:f32,rows:int) {
         text:=ui.text_commit(ctx,fmt.bprintf(ui.text_reserve(ctx,32),"+%d selected",len(s.selection.entities)-shown))
         ui.label(ctx,text,ctx.theme.font_small,ctx.theme.text_faint)
     }
-    if remove!=core.NONE {selection_toggle(s.selection,remove)}
+    if remove!=core.NONE {history.selection_toggle(s.selection,remove)}
 }
 
 // What the next message takes of the document of a material, as chips: the

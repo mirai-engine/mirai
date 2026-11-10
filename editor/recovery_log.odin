@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
@@ -176,7 +177,7 @@ recovery_log_begin :: proc(s:^Session) {
     keep:=l.keep
     l.world,l.epoch,l.info,l.following,l.keep=s.edits.world,s.edits.epoch,s.info,true,false
     l.bytes,l.since=0,0
-    journal_logging(s.edits,true)
+    history.journal_logging(s.edits,true)
     next:=u64(1)
     if generations:=recovery_log_generations(s,recovery_slot(s));len(generations)>0 {next=generations[len(generations)-1]+1}
     if keep {
@@ -210,20 +211,20 @@ recovery_log_write :: proc(s:^Session) {
     if edits.logged>=end || l.file==nil || w.data!=edits.world {return}
     st:=recovery_log_tables(s)
     cursor:=edits.logged
-    changes:=journal_read(edits,&cursor)
+    changes:=history.journal_read(edits,&cursor)
     Key :: struct {table:i32,entity:core.Entity}
     seen:=make(map[Key]base.Entity_Id,len(changes),context.temp_allocator)
     for change in changes {
         key:=Key{change.table,change.entity}
         if key not_in seen {seen[key]=change.id}
     }
-    id_table:=journal_id_table(w)
+    id_table:=history.journal_id_table(w)
     present:=make(map[Collab_Row]bool,len(seen),context.temp_allocator)
     for key,before in seen {
         if int(key.table)>=len(st.tables) || !st.tables[key.table].used {continue}
-        id:=journal_id(edits,w,id_table,key.entity)
+        id:=history.journal_id(edits,w,id_table,key.entity)
         if id==0 {id=before}
-        if journal_row(&edits.image[key.table],key.entity)>=0 {present[{key.table,id}]=true}
+        if history.journal_row(&edits.image[key.table],key.entity)>=0 {present[{key.table,id}]=true}
     }
     ops:Collab_Ops
     collab_ops_begin(&ops)
@@ -231,13 +232,13 @@ recovery_log_write :: proc(s:^Session) {
         if int(key.table)>=len(st.tables) || !st.tables[key.table].used {continue}
         t:=&st.tables[key.table]
         image:=&edits.image[key.table]
-        id:=journal_id(edits,w,id_table,key.entity)
+        id:=history.journal_id(edits,w,id_table,key.entity)
         if id==0 {id=before}
         if id==0 {continue}
         is_ids:=int(key.table)==id_table
-        if row:=journal_row(image,key.entity);row>=0 {
+        if row:=history.journal_row(image,key.entity);row>=0 {
             current:=make([]u8,max(t.size,1),context.temp_allocator)
-            collab_normalize(w,t,journal_value(image,t.size,row),current)
+            collab_normalize(w,t,history.journal_value(image,t.size,row),current)
             collab_op_write(&ops,is_ids?&ops.head:&ops.body,.Set,t.hash,id,current[:t.size])
             if !is_ids {
                 turn:=[1]u8{u8(image.off[row])}
@@ -247,7 +248,7 @@ recovery_log_write :: proc(s:^Session) {
             collab_op_write(&ops,is_ids?&ops.tail:&ops.body,.Remove,t.hash,id,nil)
         }
     }
-    journal_log_done(edits,cursor)
+    history.journal_log_done(edits,cursor)
     if ops.count==0 {return}
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
@@ -322,7 +323,7 @@ recovery_log_copy_done :: proc(s:^Session,generation:u64) {
 recovery_log_end :: proc(s:^Session,remove:bool) {
     l:=&s.recovery.log
     if remove {recovery_logs_remove(s,0,all=true)} else {recovery_log_close(s)}
-    if s.edits!=nil {journal_logging(s.edits,false)}
+    if s.edits!=nil {history.journal_logging(s.edits,false)}
     l.following=false
 }
 

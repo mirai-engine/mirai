@@ -5,6 +5,7 @@ import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -54,10 +55,10 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     // A folder only an unsaved file is in is taken too.
     testing.expect_value(t,asset_create_path(r,"","Materials",""),"Materials 2")
     // Undo takes it away: it was only memory.
-    testing.expect(t,undo(&f.edits,edited_world(s),&f.selection))
+    testing.expect(t,history.undo(&f.edits,edited_world(s),&f.selection))
     _,found=asset.registry_find(r,material)
     testing.expect(t,!found)
-    testing.expect(t,redo(&f.edits,edited_world(s),&f.selection))
+    testing.expect(t,history.redo(&f.edits,edited_world(s),&f.selection))
 
     // A folder is made at once and the registry knows it without files.
     testing.expect_value(t,asset_create(s,ASSET_CREATE_FOLDER,"Empty",{}),"")

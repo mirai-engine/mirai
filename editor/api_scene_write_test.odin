@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:editor/api"
 import "mirai:std/base"
@@ -91,7 +92,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     core.add(&f.world.lamps,a,Prefab_Test_Lamp{intensity=2,range=3,uses=7})
     core.add(&f.world.lamps,c,Prefab_Test_Lamp{intensity=1})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     ids:=[4]base.Entity_Id{api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)}
     d_id:=api_entity_id(w,d)
     steps:=len(f.edits.steps)
@@ -127,7 +128,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     testing.expect_value(t,len(f.edits.steps),steps+1)
 
     // One step: undone, the subtree is what it was.
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     core.world_settle(w)
     testing.expect_value(t,write_child_names(f,root),"A,B,C,D")
     testing.expect(t,core.has(core.read(&f.world.lamps),api_entity(w,ids[3])))
@@ -155,7 +156,7 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     b:=write_entity(f,"B",root)
     c:=write_entity(f,"C",a)
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     root_id,a_id,b_id,c_id:=api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)
     _,created:=prefab_create(s,root,"members")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
@@ -207,7 +208,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     core.add(&f.world.lamps,write_entity(f,"Lamp",lid),Prefab_Test_Lamp{intensity=2,range=3})
     level:=write_entity(f,"Level")
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     level_id:=api_entity_id(w,level)
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
@@ -252,10 +253,10 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     testing.expect(t,ok && result==Api_Write_Result{id=level_id} && len(f.edits.steps)==steps+1,failure)
 
     // One step: undone, the instance is gone with its link; done again, it is linked as before.
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,core.world_entities(w).alive,alive)
     testing.expect_value(t,core.count(&f.world.instances),1)
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     north,lamp=placed_lamp(f,level_id)
     link,linked=prefab_link_of(w,north)
     testing.expect(t,linked && link.root && api_entity_id(w,north)==north_id && core.count(&f.world.instances)==2)
@@ -309,7 +310,7 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
     other:=write_entity(f,"Other")
     core.add(&f.world.lamps,a,Prefab_Test_Lamp{intensity=2})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     root_id,other_id:=api_entity_id(w,root),api_entity_id(w,other)
     alive,steps:=core.world_entities(w).alive,len(f.edits.steps)
     at:=fmt.tprintf(`"root":"0x%016x"`,u64(root_id))
@@ -349,7 +350,7 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
     defer api_schema_free(&state)
     w:=edited_world(&f.s)
     root:=write_entity(f,"Root")
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     root_id:=api_entity_id(w,root)
     light :: proc(f:^Prefab_Fixture,root:core.Entity,name:string) -> (value:erender.Point_Light,e:core.Entity) {
         w:=edited_world(&f.s)

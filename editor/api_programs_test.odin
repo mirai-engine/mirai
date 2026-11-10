@@ -10,6 +10,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:cook/shaders"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/serial"
@@ -99,7 +100,7 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
 
     // Its undo takes the edit back, and then the program: the steps are of the API.
     w:=edited_world(s)
-    f.edits.author=EDIT_AUTHOR_API
+    f.edits.author=history.EDIT_AUTHOR_API
     testing.expect(t,programs_test_quiet_undo(&f,w))
     testing.expect_value(t,held(&assets.registry,path),template)
     testing.expect(t,programs_test_quiet_undo(&f,w))
@@ -122,5 +123,5 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
 @(private="file")
 programs_test_quiet_undo :: proc(f:^Files_Test,w:core.World_Ref) -> bool {
     context.logger=log.nil_logger()
-    return undo(&f.edits,w,&f.selection)
+    return history.undo(&f.edits,w,&f.selection)
 }

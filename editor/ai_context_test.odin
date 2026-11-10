@@ -8,6 +8,7 @@ import "core:testing"
 import "mirai:core"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -69,9 +70,9 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     editor_world:=Ai_Context_Test_Editor{api={state=&state}}
     app:host.App
     viewport:=Viewport{size={800,600},window={800,600}}
-    selection:Selection
+    selection:history.Selection
     defer delete(selection.entities)
-    edits:Edits
+    edits:history.Edits
     document:Document
     document.path_length=copy(document.path[:],"scenes/main.scene")
     ai:=new(Ai);defer free(ai);ai_connections_reset(ai)
@@ -88,7 +89,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     core.add(&world.ids,selected_entity,{value=33})
     core.add(&world.transforms,selected_entity,core.TRANSFORM_IDENTITY)
     core.table_settle(&world.ids,&world.entities);core.table_settle(&world.transforms,&world.entities)
-    selection_set(&selection,{selected_entity})
+    history.selection_set(&selection,{selected_entity})
     first,message:=ai_task_create(&s,ai,{0,0,800,600},"USER_REQUEST_SENT_SEPARATELY","codex")
     if !testing.expect(t,first!=nil && message=="") {return}
     testing.expect_value(t,first.id,1)
@@ -123,7 +124,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     testing.expect(t,context_error==nil && !strings.contains(string(context_file),"USER_REQUEST_SENT_SEPARATELY"))
     first.state=.Done
     first.finish_called=true
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     ai_store.conversation_set_text(first.conversation.native_session[:],&first.conversation.native_session_len,"persisted-native-session")
     ai_transcript_add(&first.transcript,"The prior answer",.Output)
     ai_task_dirty(first);ai_task_persist(&s,first)
@@ -146,7 +147,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     core.add(&live.ids,player,{value=7});core.add(&live.names,player,core.name_make("Live player"))
     core.add(&live.transforms,player,{position={42,0,0},rotation=1,scale={1,1,1}})
     core.table_settle(&live.ids,&live.entities);core.table_settle(&live.names,&live.entities);core.table_settle(&live.transforms,&live.entities)
-    selection_set(&selection,{player})
+    history.selection_set(&selection,{player})
     s.mode=.Play;s.runs[0]={world=&live}
     playing,play_error:=ai_task_create(&s,ai,{0,0,800,600},"Where am I?","codex",first.id)
     if !testing.expect(t,playing!=nil && play_error=="") {return}
@@ -178,13 +179,13 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     paused_prompt,_:=os.read_entire_file(ai_task_path(&s,paused,AI_FILE_PROMPT),context.temp_allocator)
     testing.expect(t,strings.contains(string(paused_prompt),"paused at tick 120") && strings.contains(string(paused_prompt),AI_FILE_STATE))
     paused.state=.Done
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     unselected,unselected_error:=ai_task_create(&s,ai,{0,0,800,600},"And now?","codex",first.id)
     if !testing.expect(t,unselected!=nil && unselected_error=="") {return}
     testing.expect(t,!os.exists(ai_task_path(&s,unselected,AI_FILE_STATE)))
     unselected.state=.Done
     s.mode=.Edit;s.runs[0]={}
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     ai.connections[AI_CLAUDE].configured=true
     base.text_set(ai.connections[AI_CLAUDE].model[:],"default")
     base.text_set(ai.connections[AI_CLAUDE].effort[:],"low")

@@ -3,6 +3,7 @@ package editor
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:std/serial"
 
 Api_Test_Provider :: struct {provider:Api_Provider}
@@ -26,7 +27,7 @@ api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Tes
 @(test)
 editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: proc(t:^testing.T) {
     world:Api_Test_Editor
-    edits:Edits
+    edits:history.Edits
     storages:=[2]core.Storage_Info{
         {name="Api",type=Api,info=type_info_of(Api),place=.Editor,offset=offset_of(Api_Test_Editor,api)},
         {name="Api_Test_Provider",type=Api_Test_Provider,info=type_info_of(Api_Test_Provider),place=.Editor,offset=offset_of(Api_Test_Editor,provider),default=api_test_provider_v1,plugin="test_plugin"},

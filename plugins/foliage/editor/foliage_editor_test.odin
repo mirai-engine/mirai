@@ -8,6 +8,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -76,13 +77,13 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     core.add(&world.transforms,meadow,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,meadow,foliage.Foliage{source=id,revision=1})
     core.test_world_settle(&world)
-    selection:editor.Selection;defer delete(selection.entities)
-    edits:editor.Edits;defer editor.edits_free(&edits)
-    editor.edits_reset(&edits,ref)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
-    editor.selection_set(&selection,{meadow})
+    history.selection_set(&selection,{meadow})
     foliages:=core.read(&world.foliages)
     owner:=mm.Transform{rotation=1,scale={1,1,1}}
     prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,foliages:core.Read(foliage.Foliage),e:core.Entity) -> bool {
@@ -91,7 +92,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     }
     step :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,ref:core.World_Ref,label:string) {
         testing.expect(t,edit_commit(s,tool,ref,s.app.assets,label))
-        testing.expect(t,editor.edits_commit(s.edits,ref,s.selection))
+        testing.expect(t,history.edits_commit(s.edits,ref,s.selection))
     }
     random:=mm.rng_make(9,1)
 
@@ -156,7 +157,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
 
     // Undo goes back through each step, and redo forward.
     for revision:=u32(5);revision>=1;revision-=1 {
-        testing.expect(t,editor.undo(&edits,ref,&selection))
+        testing.expect(t,history.undo(&edits,ref,&selection))
         foliage_sync(&s,&tool,foliages,app.assets)
         testing.expect_value(t,core.at(foliages,0).revision,revision)
         held=held_source(t,&assets,id)
@@ -167,7 +168,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     testing.expect_value(t,manual_count(&held),0)
     testing.expect_value(t,len(held.cells[0].overrides),0)
     foliage.source_destroy(&held)
-    testing.expect(t,editor.redo(&edits,ref,&selection))
+    testing.expect(t,history.redo(&edits,ref,&selection))
     foliage_sync(&s,&tool,foliages,app.assets)
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),3)
@@ -264,13 +265,13 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     core.add(&world.transforms,patch,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,patch,foliage.Foliage{source=id})
     core.test_world_settle(&world)
-    selection:editor.Selection;defer delete(selection.entities)
-    edits:editor.Edits;defer editor.edits_free(&edits)
-    editor.edits_reset(&edits,ref)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
-    editor.selection_set(&selection,{patch})
+    history.selection_set(&selection,{patch})
     foliages:=core.read(&world.foliages)
     data:foliage.Foliage_Data
     defer {for &entry in data.entries {foliage.source_destroy(&entry.source)};delete(data.entries)}
@@ -297,19 +298,19 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     _,moved:=instance_set(&tool.edit.source,nil,instance,placed)
     testing.expect(t,moved)
     testing.expect(t,edit_commit(&s,&tool,ref,app.assets,"Move foliage instance"))
-    testing.expect(t,editor.edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(1))
     testing.expect(t,abs(x_of(t,&assets,id)-5)<1e-4)
 
-    testing.expect(t,editor.undo(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(0))
     testing.expect(t,abs(x_of(t,&assets,id)-2)<1e-4,"undo puts the instance back")
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(0))
 
-    testing.expect(t,editor.redo(&edits,ref,&selection))
+    testing.expect(t,history.redo(&edits,ref,&selection))
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(1))
     testing.expect(t,abs(x_of(t,&assets,id)-5)<1e-4,"redo moves it again")

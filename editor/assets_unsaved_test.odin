@@ -7,6 +7,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -114,9 +115,9 @@ quitting_asks_once_about_the_scene_and_the_unsaved_assets :: proc(t:^testing.T) 
     gui:Editor_Ui
     defer confirm_assets_set(&gui,nil)
     defer delete(gui.confirm_assets)
-    edits:Edits
+    edits:history.Edits
     document:Document
-    selection:Selection
+    selection:history.Selection
     defer delete(selection.entities)
     s:=Session{app=&app,gui=&gui,document=&document,selection=&selection}
     defer documents_free(&s)

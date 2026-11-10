@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:platform"
@@ -72,9 +73,9 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     viewport:Viewport
     viewport_init(&viewport)
     defer viewport_free(&viewport)
-    selection:Selection
+    selection:history.Selection
     inspector:Inspector
-    edits:Edits
+    edits:history.Edits
     document:Document
     build:Build_State
     ai:=new(Ai)
@@ -87,7 +88,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     defer delete(selection.entities)
     defer core.value_free(&inspector,type_info_of(Inspector))
     defer core.value_free(&content,type_info_of(Content))
-    selection_set(&selection,{selected})
+    history.selection_set(&selection,{selected})
     for size in ([2][2]f32{{1440,900},{800,420}}) {
         for _ in 0..<3 {
             ui.frame_begin(&ctx,{size=size,pointer_absent=true,dt=1.0/60})

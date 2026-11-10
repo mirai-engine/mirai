@@ -8,6 +8,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import wire "mirai:net"
 import "mirai:std/base"
@@ -25,10 +26,10 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
     other:Play_Test_World
     if !testing.expect(t,play_test_init(&other,context.allocator)) {return}
     defer play_test_free(&other)
-    edits:Edits;defer edits_free(&edits)
-    selection:Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
     end:=Session{info=s.info,edit_world=&other,edits=&edits,selection=&selection}
-    edits_reset(&edits,core.world_ref(&other,s.info))
+    history.edits_reset(&edits,core.world_ref(&other,s.info))
     sent:=new(Collab_State);defer free(sent)
     sent.role,sent.phase=.Guest,.Joined
     collab_tables_build(&end,sent)
@@ -138,7 +139,7 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
     w:=edited_world(s)
     e:=entity_create(s,{name="Box",named=true})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     id:=api_entity_id(w,e)
     st:=new(Collab_State)
     st.role,st.phase=.Host,.Joined
@@ -152,14 +153,14 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
         for message in st.peers[1].out {delete(message)}
         delete(st.peers[1].out)
         collab_tables_free(st)
-        journal_reading(&f.edits,false)
+        history.journal_reading(&f.edits,false)
         free(st)
         f.collab.state=nil
     }
-    selection_set(&f.selection,{e})
+    history.selection_set(&f.selection,{e})
     Edit :: enum u8 {Move,Scale,Rename,Write,Turn_Off}
-    agent:=Edit_Author(7)
-    cases:=[?]struct{edit:Edit,author:Edit_Author}{{.Move,EDIT_AUTHOR_USER},{.Scale,EDIT_AUTHOR_USER},{.Rename,EDIT_AUTHOR_USER},{.Write,agent},{.Move,agent},{.Turn_Off,EDIT_AUTHOR_USER}}
+    agent:=history.Edit_Author(7)
+    cases:=[?]struct{edit:Edit,author:history.Edit_Author}{{.Move,history.EDIT_AUTHOR_USER},{.Scale,history.EDIT_AUTHOR_USER},{.Rename,history.EDIT_AUTHOR_USER},{.Write,agent},{.Move,agent},{.Turn_Off,history.EDIT_AUTHOR_USER}}
     for c,at in cases {
         steps,told:=len(f.edits.steps),st.sent_ops
         f.edits.author=c.author
@@ -179,8 +180,8 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
             testing.expect(t,done,call.error.message)
         case .Turn_Off: entity_enabled_set(s,e,false)
         }
-        edits_commit(&f.edits,w,&f.selection)
-        f.edits.author=EDIT_AUTHOR_USER
+        history.edits_commit(&f.edits,w,&f.selection)
+        f.edits.author=history.EDIT_AUTHOR_USER
         if !testing.expectf(t,done && len(f.edits.steps)==steps+1,"%v by %d was not done",c.edit,c.author) {continue}
         testing.expect_value(t,f.edits.steps[steps].author,c.author)
         collab_edits_send(s,st)

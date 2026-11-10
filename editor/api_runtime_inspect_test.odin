@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -65,7 +66,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     state:Api_State
     editor:=Inspect_Editor{api={state=&state}}
     document:Document
-    edits:Edits
+    edits:history.Edits
     session:=Session{info=&info,editor_world=&editor,edit_world=&world,document=&document,edits=&edits}
     api_schema_build(&session,&state)
     defer api_schema_free(&state)
@@ -230,12 +231,12 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     filter_world_settle(&world,nil,nil)
     for i in 0..<300 {filter_entity(&running,0,fmt.tprintf("Body %d",i))}
     filter_world_settle(&running,nil,nil)
-    selection:Selection;defer delete(selection.entities)
-    viewport:Viewport;gui:Editor_Ui;edits:Edits;defer edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
+    viewport:Viewport;gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     document:Document
     api_storage:Api
     session:=Session{info=&info,edit_world=&world,editor_world=&api_storage,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
-    edits_reset(&edits,edited_world(&session))
+    history.edits_reset(&edits,edited_world(&session))
     if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -337,7 +338,7 @@ play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^te
     state:Api_State
     editor:=Inspect_Editor{api={state=&state}}
     document:Document
-    edits:Edits
+    edits:history.Edits
     session:=Session{info=&info,editor_world=&editor,edit_world=&world,document=&document,edits=&edits}
     api_schema_build(&session,&state)
     defer api_schema_free(&state)

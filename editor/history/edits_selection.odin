@@ -1,4 +1,4 @@
-package editor
+package history
 
 import "core:fmt"
 import "core:slice"
@@ -36,7 +36,14 @@ edits_select :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection) {
     label:string
     switch len(selection.entities) {
     case 0: label="Deselect"
-    case 1: label=fmt.tprintf("Select %s",entity_label(w,selection.entities[0])) if w.data!=nil else "Select"
+    case 1:
+        label="Select"
+        if w.data!=nil {
+            e:=selection.entities[0]
+            name:=""
+            if names:=core.world_table_of(w,core.Name);names!=nil {name=core.name_get(core.read(names),e)}
+            label=fmt.tprintf("Select %s",name) if name!="" else fmt.tprintf("Select Entity %d",core.entity_index(e))
+        }
     case:   label=fmt.tprintf("Select %d entities",len(selection.entities))
     }
     step:=Selection_Step{author=edits.author,made=edits.serial}
@@ -58,7 +65,6 @@ edits_select :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection) {
 }
 
 // The history knows the selection as it is. edits.selected must have room.
-@(private)
 edits_selection_take :: proc(edits:^Edits,selection:^Selection) {
     if resize(&edits.selected,len(selection.entities))!=nil {
         edits.selected_known=false
@@ -120,7 +126,6 @@ selection_redo_index :: proc(edits:^Edits) -> int {
 
 // Whether undo takes back a step of the selection before the step of the
 // World it would take: the one made after.
-@(private)
 selection_undo_first :: proc(edits:^Edits) -> (index:int,first:bool) {
     index=selection_undo_index(edits)
     if index<0 {return}
@@ -129,7 +134,6 @@ selection_undo_first :: proc(edits:^Edits) -> (index:int,first:bool) {
 }
 
 // Whether redo brings again a step of the selection: the one an undo took back after.
-@(private)
 selection_redo_first :: proc(edits:^Edits) -> (index:int,first:bool) {
     index=selection_redo_index(edits)
     if index<0 {return}
@@ -138,7 +142,6 @@ selection_redo_first :: proc(edits:^Edits) -> (index:int,first:bool) {
 }
 
 // Takes back (forward false) or brings again a step of the selection.
-@(private)
 selection_step_move :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection,index:int,forward:bool) -> bool {
     edits_cancel(edits,w)
     if edits.open || edits.commit || edits.preview {return false}

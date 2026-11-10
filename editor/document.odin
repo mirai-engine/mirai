@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -67,7 +68,7 @@ scene_folder :: proc(s:^Session,otherwise:string) -> string {
     return otherwise
 }
 
-document_dirty :: proc(s:^Session) -> bool {return s.document.unsaved || edits_scene_state(s.edits)!=s.document.saved}
+document_dirty :: proc(s:^Session) -> bool {return s.document.unsaved || history.edits_scene_state(s.edits)!=s.document.saved}
 
 // The name a person reads for the scene.
 document_title :: proc(d:^Document) -> string {
@@ -183,7 +184,7 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     file:=scene_file(s,target)
     if file=="" {return .Bad_Path}
     if !strings.has_suffix(file,SCENE_EXTENSION) && !strings.has_suffix(file,PREFAB_EXTENSION) {file=strings.concatenate({file,document_is_prefab(s)?PREFAB_EXTENSION:SCENE_EXTENSION},context.temp_allocator)}
-    if !edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
+    if !history.edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
     if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
     if error:=document_write(s,file,true);error!=.None {return error}
     // What memory held of the file, unsaved (a prefab an operation made), is of before this save.
@@ -250,7 +251,7 @@ document_write :: proc(s:^Session,file:string,as_document:bool) -> Document_Erro
         free(saved)
     }
     d.id=id
-    d.saved=edits_scene_state(s.edits)
+    d.saved=history.edits_scene_state(s.edits)
     d.unsaved=false
     return .None
 }
@@ -286,7 +287,7 @@ document_reset :: proc(s:^Session) {
     document_previous_free(d)
     d.id={}
     d.unsaved=false
-    d.saved=edits_scene_state(s.edits)
+    d.saved=history.edits_scene_state(s.edits)
     document_name(d,"","")
 }
 
@@ -354,7 +355,7 @@ save_all :: proc(s:^Session) {
         tab:=&s.documents[index]
         d:=index==active?s.document:&tab.document
         e:=index==active?s.edits:&tab.edits
-        if !d.unsaved && edits_scene_state(e)==d.saved {continue}
+        if !d.unsaved && history.edits_scene_state(e)==d.saved {continue}
         if document_path(d)=="" {untitled+=1;continue}
         document_activate(s,index)
         if scene_save(s)!=.None {notify(s,"A scene could not be saved")}
@@ -574,14 +575,14 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
 @(private)
 document_opened :: proc(s:^Session) {
     w:=edited_world(s)
-    edits_reset(s.edits,w)
+    history.edits_reset(s.edits,w)
     prefabs_opened(s)
-    s.document.saved=edits_scene_state(s.edits)
+    s.document.saved=history.edits_scene_state(s.edits)
     s.document.unsaved=false
     s.document.sections={}
     if views:=core.world_storage_of(w,scene.Section_Views);views!=nil {clear(&views.items)}
     if u:=core.world_storage_of(w,scene.Unresolved_References);u!=nil {s.edits.resolved=u.written}
-    selection_clear(s.selection)
+    history.selection_clear(s.selection)
     outliner_reset(s.outliner)
     s.viewport.exposure={}
     if s.viewport.exposure_source==.Camera {s.viewport.exposure_source=.Scene}

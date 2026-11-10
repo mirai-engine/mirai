@@ -4,6 +4,7 @@ import "core:strings"
 import "core:time"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -33,14 +34,14 @@ Ai_Provenance_View :: struct {
 @(private)
 ai_asset_path_of :: proc(s:^Session,path:string) -> (relative:string,ok:bool) {
     if s.project_root=="" {return}
-    folder:=file_relative(s,project.folder_path(s.project_root,.Assets,context.temp_allocator))
+    folder:=history.file_relative(s.project_root,project.folder_path(s.project_root,.Assets,context.temp_allocator))
     if len(path)<=len(folder) || !strings.has_prefix(path,folder) || path[len(folder)]!='/' {return}
     return path[len(folder)+1:],true
 }
 
 // A transaction of a turn: every entity it changed and every asset it wrote
 // now names that turn.
-ai_provenance_record :: proc(s:^Session,task:^Ai_Task,transaction:^Change_Set) {
+ai_provenance_record :: proc(s:^Session,task:^Ai_Task,transaction:^history.Change_Set) {
     m:=s.ai
     if m.store.db==nil || task.conversation.id==0 {return}
     sequence:=ai_task_turn_sequence(task)

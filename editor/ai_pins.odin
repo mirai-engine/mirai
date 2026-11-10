@@ -7,6 +7,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -110,7 +111,7 @@ ai_pin_in_message :: proc(s:^Session,row:^Ai_Pin_Row) -> bool {
         id,ok:=base.entity_id_parse(ref)
         if !ok {return false}
         w:=shown_world(s)
-        e:=change_entity(w,id)
+        e:=history.change_entity(w,id)
         if e==core.NONE {return false}
         for selected in s.selection.entities {if entity_author(w,selected)==e {return true}}
     }
@@ -170,7 +171,7 @@ ai_pin_look :: proc(s:^Session,row:^Ai_Pin_Row) -> (icon:ui.Icon,color:ui.Color,
     case AI_PIN_ENTITY:
         if id,ok:=base.entity_id_parse(ref);ok {
             w:=shown_world(s)
-            if e:=change_entity(w,id);e!=core.NONE {icon,_=entity_icon(s,w,e)}
+            if e:=history.change_entity(w,id);e!=core.NONE {icon,_=entity_icon(s,w,e)}
         }
     }
     return

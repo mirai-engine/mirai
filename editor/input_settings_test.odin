@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:project"
@@ -42,10 +43,10 @@ Input_Fixture :: struct {
     names:[3]core.Name_Info,
     storages:[3]core.Storage_Info,
     info:core.World_Info,
-    selection:Selection,
+    selection:history.Selection,
     viewport:Viewport,
     gui:Editor_Ui,
-    edits:Edits,
+    edits:history.Edits,
     inspector:Inspector,
     api_storage:Api,
     app:host.App,
@@ -73,7 +74,7 @@ input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
     f.info={entities=offset_of(Input_World,entities),names=f.names[:],storages=f.storages[:],actions=input_test_actions()}
     core.entities_init(&f.world.entities)
     f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.api_storage,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=folder,has_project=true}
-    edits_reset(&f.edits,edited_world(&f.session))
+    history.edits_reset(&f.edits,edited_world(&f.session))
     if !testing.expect(t,api_open(&f.session,0,true)==.None) {return false}
     state:=api_state(&f.session)
     state.poll_temp=context.temp_allocator
@@ -86,7 +87,7 @@ input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
 input_fixture_destroy :: proc(f:^Input_Fixture) {
     serial.writer_destroy(&f.out)
     api_close(&f.session)
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
     core.entities_destroy(&f.world.entities)
     os.remove_all(f.folder)

@@ -7,6 +7,7 @@ import "core:os"
 import "core:reflect"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:project"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -799,7 +800,7 @@ panel_press :: proc(s:^Session,p:^Project_Panel,button:int) -> (changed:int,prob
     for &write in writes {
         if write.table==nil {continue}
         if !opened && !s.edits.open {opened,ready=edit_open(s,fmt.tprintf("%s: %s",base.text_get(p.title[:]),base.text_get(b.name[:])))}
-        if !ready {return 0,edits_error_text(s.edits.error)}
+        if !ready {return 0,history.edits_error_text(s.edits.error)}
         one[0]=write.entity
         field_write(s,write.table,one[:],write.offset,write.bytes)
     }
@@ -881,7 +882,7 @@ panel_restore :: proc(s:^Session,p:^Project_Panel) -> (restored:int,problem:stri
         }
         if (!entity_alive(w,k.entity) || core.raw_find(core.world_table_at(w,k.table),k.table.info,k.entity)==nil) {continue}
         if !opened && !s.edits.open {opened,ready=edit_open(s,fmt.tprintf("%s: Restore",base.text_get(p.title[:])))}
-        if !ready {return 0,edits_error_text(s.edits.error)}
+        if !ready {return 0,history.edits_error_text(s.edits.error)}
         one[0]=k.entity
         field_write(s,k.table,one[:],k.offset,bytes)
         restored+=1
@@ -1002,7 +1003,7 @@ panel_delete :: proc(s:^Session,panels:^Project_Panels,at:int) -> bool {
 panels_build :: proc(s:^Session,g:^Editor_Ui,panels:^Project_Panels) {
     if !g.begun || playing(s) {return}
     panels_sync(s,panels)
-    if panel_shown(panels)!=nil && selection_active(s.selection)!=panels.selection {panel_show(s,panels,-1,false)}
+    if panel_shown(panels)!=nil && history.selection_active(s.selection)!=panels.selection {panel_show(s,panels,-1,false)}
     if s.viewport.pick.active || scene_covered(s) {return}
     removed:=-1
     for &p,i in panels.list {
@@ -1132,7 +1133,7 @@ panel_show :: proc(s:^Session,panels:^Project_Panels,at:int,on:bool) {
     for &p,i in panels.list {p.open=on && i==at}
     if !on || at<0 {return}
     if s.viewport.plugin_tool!=0 {tool_leave(s)}
-    panels.selection=selection_active(s.selection)
+    panels.selection=history.selection_active(s.selection)
 }
 
 panel_shown :: proc(panels:^Project_Panels) -> ^Project_Panel {

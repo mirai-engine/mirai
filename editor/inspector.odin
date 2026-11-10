@@ -11,6 +11,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"
 import "mirai:core"
+import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
 import erender "mirai:engine/render"
@@ -361,7 +362,7 @@ gesture_end :: proc(s:^Session,key:u64) {
 }
 @(private)
 gesture_history_end :: proc(s:^Session) {
-    if h:=asset_history_front(s);h!=nil {asset_history_end(h)} else {edits_end(s.edits)}
+    if h:=asset_history_front(s);h!=nil {asset_history_end(h)} else {history.edits_end(s.edits)}
 }
 gesture_follow :: proc(s:^Session,key:u64,r:ui.Number_Result,label:string) {
     if r.began {gesture_begin(s,key,label)}
@@ -381,7 +382,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
         git_review_build(s,w,width,max_height)
         return
     }
-    active:=selection_active(s.selection)
+    active:=history.selection_active(s.selection)
     if !entity_alive(w,active) {
         if task,id,shown:=ai_review_shown(s);shown {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding=ui.padding_all(PANEL_PADDING)}) {ai_review_deleted_details(s,w,task,id,width-2*PANEL_PADDING,max_height-2*PANEL_PADDING)}
@@ -528,7 +529,7 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
             // Inside a prefab instance or a section, it selects the root of what holds it;
             // on the root of an instance, a double click opens its prefab.
             if up:=container_of(w,e);up!=core.NONE {
-                if ui.button(ctx,ui.id(ctx,"holder_root"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).clicked {selection_set(s.selection,{up})}
+                if ui.button(ctx,ui.id(ctx,"holder_root"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).clicked {history.selection_set(s.selection,{up})}
             } else if linked && link.root && s.mode==.Edit {
                 if ui.button(ctx,ui.id(ctx,"prefab_open"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).double {
                     if _,path,found:=prefab_file(s,link.asset);found {
@@ -669,7 +670,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     if len(children)>count {ui.label(ctx,fmt.tprintf("and %d more",len(children)-count),th.font_label,th.text_faint)}
     if release!=core.NONE {
         if !entity_reparent(s,release,core.NONE) {notify(s,"The entity could not leave its parent")}
-    } else if selected!=core.NONE {selection_set(s.selection,{selected})}
+    } else if selected!=core.NONE {history.selection_set(s.selection,{selected})}
 }
 
 HIERARCHY_TREE_HEIGHT :: f32(132)
@@ -702,7 +703,7 @@ hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
             if ui.row(ctx,ui.id(ctx,"hierarchy_tree_row",i+1),{label=entity_label(w,row.entity),icon=icon,icon_color=color,icon_size=13,text_color=text,font=kind!=.None?ui.FONT_SEMIBOLD:0,selected=row.entity==e,height=22,depth=row.depth}).clicked {picked=row.entity}
         }
     }
-    if picked!=core.NONE {selection_set(s.selection,{picked})}
+    if picked!=core.NONE {history.selection_set(s.selection,{picked})}
 }
 
 @(private)
@@ -723,7 +724,7 @@ Transform_Field :: enum u8 {Position,Rotation,Scale}
 transform_rows :: proc(s:^Session,w:core.World_Ref) {
     ins:=s.inspector
     ctx:=s.gui.ctx
-    active:=selection_active(s.selection)
+    active:=history.selection_active(s.selection)
     local:=entity_local(w,active)
     // The angles shown follow those typed or shown before for the same rotation.
     angles:=mm.quat_to_euler(local.rotation)
@@ -2068,7 +2069,7 @@ entity_row :: proc(c:^Inspect,label:string,offset:int,key:u64) {
         if ui.button(ctx,ui.id(ctx,"entity_clear",offset+1),{icon=.Cross,style=.Ghost,width=th.row,height=th.row}).clicked || it.right {
             inspect_entity_set(c,offset,core.NONE)
         } else if it.clicked {
-            selection_set(s.selection,{referred})
+            history.selection_set(s.selection,{referred})
             outliner_reveal(s.outliner,w,referred)
         }
     } else {
@@ -2427,7 +2428,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
     icons:=SHAPE_ICONS
     filter,_:=ui.popup_search(ctx,popup)
     if l.key==ADD_COMPONENT_KEY {
-        active:=selection_active(s.selection)
+        active:=history.selection_active(s.selection)
         for &t,index in w.info.tables {
             if t.place!=.World || !inspector_visible(s,&t) {continue}
             if core.raw_find(core.world_table_at(w,&t),t.info,active)!=nil {continue}

@@ -8,6 +8,7 @@ import "core:os"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
@@ -119,15 +120,15 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     core.add(&world.cameras,eye,erender.Camera{fov=40*mm.RAD_PER_DEG,near=0.1,active=true})
     core.add(&world.cameras,flat,erender.Camera{projection=.Orthographic,height=10,active=true})
     camera_world_settle(&world,nil,nil)
-    selection:Selection;defer delete(selection.entities)
+    selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport
     viewport_init(&viewport);defer viewport_free(&viewport)
     viewport.size={1280,720}
-    gui:Editor_Ui;edits:Edits;defer edits_free(&edits)
+    gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     document:Document
     api_storage:Api
     session:=Session{info=&info,edit_world=&world,editor_world=&api_storage,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
-    edits_reset(&edits,edited_world(&session))
+    history.edits_reset(&edits,edited_world(&session))
     if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -138,7 +139,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
         return
     }
     near :: proc(a,b:[3]f32) -> bool {return linalg.length(a-b)<1e-3}
-    history,transforms,cameras:=edits_scene_state(&edits),world.transforms.version,world.cameras.version
+    scene_state,transforms,cameras:=history.edits_scene_state(&edits),world.transforms.version,world.cameras.version
 
     error,result:=execute(state,&out,"{}")
     testing.expect_value(t,error.code,0)
@@ -166,7 +167,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
         testing.expectf(t,error.code==api.INVALID_PARAMS,"%s: %v",wrong,error)
     }
     testing.expect_value(t,viewport.orbit.fov,f32(70))
-    testing.expect_value(t,edits_scene_state(&edits),history)
+    testing.expect_value(t,history.edits_scene_state(&edits),scene_state)
     testing.expect_value(t,world.transforms.version,transforms)
     testing.expect_value(t,world.cameras.version,cameras)
     testing.expect_value(t,len(edits.steps),0)

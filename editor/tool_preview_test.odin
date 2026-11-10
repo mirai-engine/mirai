@@ -3,6 +3,7 @@ package editor
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import api "mirai:editor/api"
 
@@ -26,17 +27,17 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     core.add(&world.ids,original,core.Id{1})
     core.add(&world.transforms,original,core.Transform{{1,0,0},1,{1,1,1}})
     simulation_test_settle(&world,nil,nil)
-    edits:Edits
-    selection:Selection
+    edits:history.Edits
+    selection:history.Selection
     viewport:Viewport
     gui:Editor_Ui
     app:host.App
     s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,app=&app}
     w:=edited_world(&s)
-    edits_reset(&edits,w)
-    defer edits_free(&edits)
+    history.edits_reset(&edits,w)
+    defer history.edits_free(&edits)
     defer delete(selection.entities)
-    selection_set(&selection,{original})
+    history.selection_set(&selection,{original})
     tool_set(&s,"test",true)
     testing.expect(t,tool_preview_begin(&s,"test","Place"))
     testing.expect(t,!tool_preview_begin(&s,"test","Other"))
@@ -44,17 +45,17 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     core.add(&world.ids,duplicate,core.Id{2})
     core.add(&world.transforms,duplicate,core.Transform{{2,0,0},1,{1,1,1}})
     core.world_settle(w)
-    selection_set(&selection,{duplicate})
+    history.selection_set(&selection,{duplicate})
     core.get(&world.transforms,original).position.x=5
-    edits_end(&edits)
-    edits_flush(&edits,w,&selection)
-    testing.expect(t,!edits_commit(&edits,w,&selection))
+    history.edits_end(&edits)
+    history.edits_flush(&edits,w,&selection)
+    testing.expect(t,!history.edits_commit(&edits,w,&selection))
     testing.expect(t,tool_preview_active(&s,"test"))
     testing.expect_value(t,edits.cursor,0)
     tools_release(&s)
     testing.expect(t,!tool_preview_active(&s,"test"))
     testing.expect(t,tool_on(&s,"test"))
-    testing.expect_value(t,selection_active(&selection),original)
+    testing.expect_value(t,history.selection_active(&selection),original)
     testing.expect(t,!entity_alive(w,duplicate))
     testing.expect_value(t,entity_local(w,original).position.x,f32(1))
     testing.expect_value(t,edits.cursor,0)
@@ -64,16 +65,16 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     core.add(&world.ids,duplicate,core.Id{2})
     core.add(&world.transforms,duplicate,core.Transform{{3,0,0},1,{1,1,1}})
     core.world_settle(w)
-    selection_set(&selection,{duplicate})
+    history.selection_set(&selection,{duplicate})
     testing.expect(t,tool_preview_end(&s,"test",true))
     testing.expect_value(t,edits.cursor,1)
-    testing.expect_value(t,undo_label(&edits),"Place")
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect_value(t,history.undo_label(&edits),"Place")
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect(t,!entity_alive(w,duplicate))
-    testing.expect_value(t,selection_active(&selection),original)
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect_value(t,history.selection_active(&selection),original)
+    testing.expect(t,history.redo(&edits,w,&selection))
     testing.expect(t,entity_alive(w,duplicate))
-    testing.expect_value(t,selection_active(&selection),duplicate)
+    testing.expect_value(t,history.selection_active(&selection),duplicate)
 
     testing.expect(t,tool_preview_begin(&s,"test","Move"))
     core.get(&world.transforms,duplicate).position.x=8
@@ -103,22 +104,22 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
     testing.expect_value(t,edits.cursor,1)
     testing.expect(t,!tool_preview_end(&s,"other",true))
 
-    selection_set(&selection,{original})
+    history.selection_set(&selection,{original})
     testing.expect(t,tool_preview_begin(&s,"other","Place prefab"))
     copies:=entities_duplicate(&s,{original})
     testing.expect_value(t,len(copies),1)
-    selection_set(&selection,copies)
+    history.selection_set(&selection,copies)
     testing.expect(t,tool_preview_end(&s,"other",false))
-    testing.expect_value(t,selection_active(&selection),original)
+    testing.expect_value(t,history.selection_active(&selection),original)
     testing.expect_value(t,edits.cursor,1)
 
     testing.expect(t,tool_preview_begin(&s,"other","Place prefab"))
     copies=entities_duplicate(&s,{original})
-    selection_set(&selection,copies)
+    history.selection_set(&selection,copies)
     testing.expect(t,tool_preview_end(&s,"other",true))
     testing.expect_value(t,edits.cursor,2)
-    testing.expect(t,undo(&edits,w,&selection))
-    testing.expect(t,redo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
+    testing.expect(t,history.redo(&edits,w,&selection))
 }
 
 // W, E and R take the scene a plugin tool lends, which stays on and takes it back.
@@ -138,14 +139,14 @@ tool_lent_to_the_gizmo_stays_on :: proc(t:^testing.T) {
         {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Simulation_Test_World,transforms)},
     }
     info:=core.World_Info{entities=offset_of(Simulation_Test_World,entities),tables=tables[:]}
-    edits:Edits
-    selection:Selection
+    edits:history.Edits
+    selection:history.Selection
     viewport:Viewport
     gui:Editor_Ui
     app:host.App
     s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,app=&app}
-    edits_reset(&edits,edited_world(&s))
-    defer edits_free(&edits)
+    history.edits_reset(&edits,edited_world(&s))
+    defer history.edits_free(&edits)
     defer delete(selection.entities)
     tool_set(&s,"test",true)
     testing.expect(t,action_state(&s,.Tool_Move).checked)

@@ -2,6 +2,7 @@ package editor
 
 import "core:slice"
 import "mirai:core"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:std/base"
 
@@ -11,7 +12,7 @@ import "mirai:std/base"
 // The history of a World whose layout migrated: its steps name the tables by
 // their new index and hold their values in the new layout, and the image is
 // taken again from the World, which holds what it held: it was committed.
-edits_relayout :: proc(edits:^Edits,w:core.World_Ref,m:^core.World_Migration) {
+edits_relayout :: proc(edits:^history.Edits,w:core.World_Ref,m:^core.World_Migration) {
     for &step in edits.steps {
         for i:=len(step.tables)-1;i>=0;i-=1 {
             rows:=&step.tables[i]
@@ -20,23 +21,23 @@ edits_relayout :: proc(edits:^Edits,w:core.World_Ref,m:^core.World_Migration) {
                 if !step_side_convert(m,to,&rows.other,len(rows.entities)) || !step_side_convert(m,to,&rows.held,len(rows.entities)) {to=-1}
             }
             if to<0 {
-                rows_free(rows)
+                history.rows_free(rows)
                 ordered_remove(&step.tables,i)
                 continue
             }
             rows.table=to
         }
     }
-    journal_changes_drop(edits)
-    for &image in edits.image {journal_table_free(&image)}
+    history.journal_changes_drop(edits)
+    for &image in edits.image {history.journal_table_free(&image)}
     clear(&edits.image)
     for ranges in edits.ranges {delete(ranges.ranges)}
     clear(&edits.ranges)
-    edits_image_take(edits,w)
+    history.edits_image_take(edits,w)
 }
 
 @(private="file")
-step_side_convert :: proc(m:^core.World_Migration,to:int,side:^Step_Side,count:int) -> bool {
+step_side_convert :: proc(m:^core.World_Migration,to:int,side:^history.Step_Side,count:int) -> bool {
     from:=&m.from.tables[m.table_sources[to]]
     if len(side.values)!=count*from.info.size {return false}
     converted:=core.table_values_convert(m,to,side.values[:],count)
@@ -49,7 +50,7 @@ step_side_convert :: proc(m:^core.World_Migration,to:int,side:^Step_Side,count:i
 
 // The rows a review keeps, by the new index of their tables and in the new
 // layout of their values. A row of a table that is gone goes.
-change_rows_relayout :: proc(set:^Change_Set,m:^core.World_Migration) {
+change_rows_relayout :: proc(set:^history.Change_Set,m:^core.World_Migration) {
     for i:=len(set.rows)-1;i>=0;i-=1 {
         row:=&set.rows[i]
         to:=row.table>=0 && row.table<len(m.table_map)?m.table_map[row.table]:-1
@@ -57,7 +58,7 @@ change_rows_relayout :: proc(set:^Change_Set,m:^core.World_Migration) {
             ok:=true
             if row.before_present {ok&&=change_value_convert(m,to,&row.before)}
             if row.after_present {ok&&=change_value_convert(m,to,&row.after)}
-            if ok {row.layout=change_layout(m.to.tables[to].info)} else {to=-1}
+            if ok {row.layout=history.change_layout(m.to.tables[to].info)} else {to=-1}
         }
         if to<0 {
             delete(row.before);delete(row.after)

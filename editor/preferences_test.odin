@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -199,14 +200,14 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
     storages:=[1]core.Storage_Info{{type=Api,info=type_info_of(Api),place=.Editor}}
     info:=core.World_Info{entities=offset_of(Preferences_World,entities),storages=storages[:]}
-    selection:Selection;defer delete(selection.entities)
-    edits:Edits;defer edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
     inspector:Inspector
     api_storage:Api
     app:host.App
     f.s.info,f.s.edit_world,f.s.editor_world,f.s.app=&info,&world,&api_storage,&app
     f.s.selection,f.s.edits,f.s.inspector=&selection,&edits,&inspector
-    edits_reset(&edits,edited_world(&f.s))
+    history.edits_reset(&edits,edited_world(&f.s))
     if !testing.expect(t,api_open(&f.s,0,true)==.None) {return};defer api_close(&f.s)
     state:=api_state(&f.s);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"preferences.get")==nil {preferences_api_register(&f.s,state)}

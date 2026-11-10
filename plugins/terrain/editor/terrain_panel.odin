@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/geom"
@@ -26,10 +27,10 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),ui.icon_user(u8(editor.User_Icon.Terrain)),"Terrain","T",tool.active) {editor.tool_set(s,"terrain",!tool.active)}
     tool.active=editor.tool_on(s,"terrain")
     if !tool.active || s.viewport.pick.active {return}
-    selected_entity:=editor.selection_active(s.selection)
+    selected_entity:=history.selection_active(s.selection)
     if !tool.stroke.active {
         terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
-        target:=editor.selection_has(s.selection,tool.stroke.entity)?tool.stroke.entity:core.NONE
+        target:=history.selection_has(s.selection,tool.stroke.entity)?tool.stroke.entity:core.NONE
         if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(core.read(terrains),selected_entity) {target=selected_entity}
         tool.selection=selected_entity
         if terrains!=nil && worlds!=nil && core.has(core.read(terrains),target) {
@@ -321,6 +322,6 @@ terrain_choose_panel :: proc(s:^editor.Session,world:core.World_Ref) {
     table:=core.read(terrains)
     for i in 0..<core.count(table) {
         e:=core.entity_at(table,i)
-        if ui.button(ctx,ui.id(ctx,"terrain",core.entity_index(e)+1),{label=editor.entity_label(world,e),icon=ui.icon_user(u8(editor.User_Icon.Terrain)),style=.Field,width=-1}).clicked {editor.selection_set(s.selection,{e})}
+        if ui.button(ctx,ui.id(ctx,"terrain",core.entity_index(e)+1),{label=editor.entity_label(world,e),icon=ui.icon_user(u8(editor.User_Icon.Terrain)),style=.Field,width=-1}).clicked {history.selection_set(s.selection,{e})}
     }
 }

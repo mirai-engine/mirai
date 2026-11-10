@@ -8,6 +8,7 @@ import "core:slice"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:platform"
@@ -224,9 +225,9 @@ edit_commit :: proc(s:^editor.Session,t:^Foliage_Tool,world:core.World_Ref,asset
     }
     editor.revision_push(&t.history,&step,step_destroy)
     edit.stamp=foliage.foliage_stamp(a,edit.id)
-    editor.edits_begin(s.edits,s.selection,label)
+    history.edits_begin(s.edits,s.selection,label)
     for value,row in table.values[:core.count(table)] {if value.source==edit.id {core.at(table,row).revision=next}}
-    editor.edits_end(s.edits)
+    history.edits_end(s.edits)
     edit.revision=next
     if held:=editor.revision_applied(&t.history,edit.id);held!=nil {held.revision,held.stamp=next,edit.stamp}
     return true
@@ -604,7 +605,7 @@ choose_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,a
     ui.section(ctx,"Select or create a foliage","",80)
     for i in 0..<core.count(foliages) {
         e:=core.entity_at(foliages,i)
-        if ui.button(ctx,ui.id(ctx,"foliage",core.entity_index(e)+1),{label=editor.entity_label(world,e),icon=.Edit,style=.Field,width=-1}).clicked {editor.selection_set(s.selection,{e})}
+        if ui.button(ctx,ui.id(ctx,"foliage",core.entity_index(e)+1),{label=editor.entity_label(world,e),icon=.Edit,style=.Field,width=-1}).clicked {history.selection_set(s.selection,{e})}
     }
     if ui.button(ctx,ui.id(ctx,"create"),{label="New foliage",style=.Field,width=-1,center=true}).clicked {foliage_create(s,tool,world,assets,allocator)}
 }
@@ -625,13 +626,13 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
     bytes,error:=foliage.source_bytes(&source,id,&a.types,allocator)
     if error!=.None {editor.notify(s,"The foliage could not be written");return core.NONE}
     defer delete(bytes,allocator)
-    editor.edits_begin(s.edits,editor.document_selection(s),"Add foliage")
-    if !editor.file_write(s,path,bytes,"Add foliage") {editor.edits_cancel(s.edits,world);editor.notify(s,"The foliage could not be written");return core.NONE}
+    history.edits_begin(s.edits,editor.document_selection(s),"Add foliage")
+    if !editor.file_write(s,path,bytes,"Add foliage") {history.edits_cancel(s.edits,world);editor.notify(s,"The foliage could not be written");return core.NONE}
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
     e:=editor.entity_create(s,{preset=.Empty,name=label,transform={position=position,rotation=1,scale={1,1,1}}})
     core.add(table,e,foliage.Foliage{source=id,revision=1})
-    editor.edits_end(s.edits)
-    editor.selection_set(editor.document_selection(s),{e})
+    history.edits_end(s.edits)
+    history.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=foliage.foliage_stamp(a,id)})
     return e
 }

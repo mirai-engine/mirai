@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import mm "mirai:std/math"
 import terrain "plugins:terrain/runtime"
@@ -82,30 +83,30 @@ terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^test
     if !core.test_world_init(t,&world,test_types) {return}
     defer core.test_world_destroy(&world)
     ref:=core.test_world_ref(&world)
-    edits:editor.Edits;defer editor.edits_free(&edits)
-    selection:editor.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
     assets:host.Assets
     app:=host.App{allocator=context.allocator,assets=&assets}
     session:=editor.Session{app=&app,info=ref.info,edit_world=&world,selection=&selection,edits=&edits,id_state=42}
     owner:=editor.entity_create(&session,{name="Terrain"})
     core.add(&world.terrains,owner,{source={1,2},revision=1})
     core.test_world_settle(&world)
-    editor.edits_reset(&edits,ref)
-    initial:=editor.edits_state(&edits)
+    history.edits_reset(&edits,ref)
+    initial:=history.edits_state(&edits)
     core.get(&world.terrains,owner).revision=7
     tool:Terrain_Tool;defer terrain_tool_free(&tool)
     terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
-    testing.expect_value(t,editor.edits_state(&edits),initial)
+    testing.expect_value(t,history.edits_state(&edits),initial)
     testing.expect_value(t,len(edits.steps),0)
-    editor.edits_begin(&edits,&selection,"Sculpt")
+    history.edits_begin(&edits,&selection,"Sculpt")
     core.get(&world.terrains,owner).revision=8
-    testing.expect(t,!editor.edits_sync_initial(&edits,ref))
-    editor.edits_end(&edits)
-    testing.expect(t,editor.edits_commit(&edits,ref,&selection))
-    testing.expect(t,editor.undo(&edits,ref,&selection))
+    testing.expect(t,!history.edits_sync_initial(&edits,ref))
+    history.edits_end(&edits)
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(7))
-    testing.expect(t,!editor.edits_sync_initial(&edits,ref))
-    testing.expect(t,editor.redo(&edits,ref,&selection))
+    testing.expect(t,!history.edits_sync_initial(&edits,ref))
+    testing.expect(t,history.redo(&edits,ref,&selection))
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(8))
-    testing.expect(t,!editor.edits_sync_initial(nil,{}))
+    testing.expect(t,!history.edits_sync_initial(nil,{}))
 }

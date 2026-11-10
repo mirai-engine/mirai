@@ -9,6 +9,7 @@ import "core:time"
 import "mirai:editor/acp"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -71,7 +72,7 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
     m:=new(Ai);defer free(m)
     testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=root}
     task:=&m.tasks[0]
     m.task_count,m.workers[0].task,m.selected=2,1,1;m.chat_open=true
@@ -133,7 +134,7 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
 finish_ends_the_turn_its_tag_names_and_no_other :: proc(t:^testing.T) {
     m:=new(Ai);defer free(m)
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits}
     m.task_count=2
     for &task,index in m.tasks[:m.task_count] {
@@ -166,7 +167,7 @@ finish_ends_the_turn_its_tag_names_and_no_other :: proc(t:^testing.T) {
 finish_is_required_and_acp_errors_and_cancellation_remain_visible :: proc(t:^testing.T) {
     m:=new(Ai);defer free(m)
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=".mirai/missing-ai-finish-project"}
     m.task_count,m.selected=1,1;m.chat_open=true
     task:=&m.tasks[0];task.id=1;task.conversation.id=1
