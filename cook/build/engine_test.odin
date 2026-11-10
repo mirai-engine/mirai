@@ -559,9 +559,8 @@ a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^tes
         if mode==.Dev {
             testing.expect(t,reach.needs[render][core] && !reach.needs[cook][host] && !reach.needs[cook][asset],"a package is a library, and a literal outside an import imports nothing")
             names:=reach.names[render]
-            testing.expect(t,"core.count" in names && "core.more" in names && "core.rest" in names && "core." in names,"what follows the name of the import, and the head of its package")
+            testing.expect(t,"core.count" in names && "core.more" in names && "core.rest" in names,"what follows the name of the import")
             testing.expect(t,"render.frames" in reach.names[cook],"under the name it is imported with")
-            testing.expect(t,"cook/build." in reach.names[editor] && "ui." in reach.names[editor])
             for name in reach.names[cook] {testing.expectf(t,!strings.has_prefix(name,"editor.") && !strings.has_prefix(name,"host.") && !strings.has_prefix(name,"asset."),"%s is of no import",name)}
             // With no declaration moved only the libraries whose sources changed are read, and they link in order.
             only:=make([]bool,len(libraries))
@@ -607,11 +606,11 @@ what_names_a_declaration_follows_it_and_what_it_reaches :: proc(t:^testing.T) {
         if !declared_ok(t,errors) {return}
         testing.expect(t,declared_write(desc.decl,index))
         declared:=declared_read(index,context.temp_allocator)
-        testing.expect(t,declared.known && "core.Entity" in declared.hashes && "render.draw" in declared.hashes)
+        testing.expect(t,"core.Entity" in declared && "render.draw" in declared)
         for source,consumer in consumers {
             names:=make(map[string]bool,context.temp_allocator)
             declared_names(source,nil,&names)
-            keys[consumer]=declared_key(&declared,names)
+            keys[consumer]=declared_key(declared,names)
         }
         return
     }
@@ -636,14 +635,14 @@ what_names_a_declaration_follows_it_and_what_it_reaches :: proc(t:^testing.T) {
     }
     // Without the index nothing is known, and what is not declared yet moves a key once it is.
     missing:=declared_read(project.path(root,"none"),context.temp_allocator)
-    testing.expect(t,!missing.known)
+    testing.expect_value(t,len(missing),0)
     names:=make(map[string]bool,context.temp_allocator)
     declared_names("package game\n\nimport \"mirai:core\"\n\nrun :: proc() {core.extra()}\n",nil,&names)
     declared:=declared_read(index,context.temp_allocator)
-    without:=declared_key(&declared,names)
+    without:=declared_key(declared,names)
     _=keys(t,root,desc,index,consumers,{7="\nextra :: proc() {}\n"},"")
     declared=declared_read(index,context.temp_allocator)
-    testing.expect(t,declared_key(&declared,names)!=without,"a declaration that appears moves what already named it")
+    testing.expect(t,declared_key(declared,names)!=without,"a declaration that appears moves what already named it")
 }
 
 // The packages of a library are compiled together from the stage, as the

@@ -60,7 +60,6 @@ Output :: struct {
     head,decl,exports:strings.Builder,
     foreign_count,export_count:int,
     names:^strings.Builder, // of the package: a line per declaration (DECLARED_NAMES); nil: not asked for
-    head_hash:^u64,         // of the package: what every declaration of it is read with
 }
 
 @(private="file")
@@ -76,6 +75,7 @@ File_Scope :: struct {
     desc:^Declare_Desc,
     imports:map[string]string,      // the packages of the collection of the binary it imports, by the name it gives each
     conditions:[dynamic]^ast.Expr,  // of the when blocks around what is being declared
+    tags:u64,                       // the hash of the tags of the file: what it declares, it declares under them
 }
 
 // How a declaration of a source reaches the declarations.
@@ -129,7 +129,6 @@ declare_package :: proc(d:^Declare,path:string) {
     }
     written:=make(map[string]bool,context.temp_allocator)
     names:=strings.builder_make(context.temp_allocator)
-    head_hash:u64
     link_prefix:=fmt.aprintf("%s.%s",d.desc.binary,strings.join(strings.split(path,"/",context.temp_allocator),".",context.temp_allocator),allocator=context.temp_allocator)
     scopes:=make([]File_Scope,len(files),context.temp_allocator)
     for file,index in files {
@@ -147,7 +146,7 @@ declare_package :: proc(d:^Declare,path:string) {
         }
         for tag in file.tags {
             text:=strings.trim_space(tag.text)
-            head_hash=base.hash_combine(head_hash,xxhash.XXH3_64_default(transmute([]u8)text))
+            scope.tags=base.hash_combine(scope.tags,xxhash.XXH3_64_default(transmute([]u8)text))
             if strings.has_prefix(text,"#+private") {
                 if strings.contains(text,"file") {scope.private_file=true} else {scope.private_package=true}
             }
@@ -160,7 +159,7 @@ declare_package :: proc(d:^Declare,path:string) {
         name:=filepath.base(file.fullpath)
         written[name]=true
         out:Output
-        if d.desc.names {out.names,out.head_hash=&names,&head_hash}
+        if d.desc.names {out.names=&names}
         strings.builder_init(&out.head,context.temp_allocator)
         strings.builder_init(&out.decl,context.temp_allocator)
         strings.builder_init(&out.exports,context.temp_allocator)
@@ -178,8 +177,7 @@ declare_package :: proc(d:^Declare,path:string) {
     sweep(decl,written,&d.changed.decl)
     if d.desc.names {
         // The files come sorted, so the same declarations write the same lines.
-        text:=fmt.tprintf("%s %x\n%s",DECLARED_HEAD,head_hash,strings.to_string(names))
-        write(d,project.path(decl,DECLARED_NAMES,allocator=context.temp_allocator),text,&d.changed.decl)
+        write(d,project.path(decl,DECLARED_NAMES,allocator=context.temp_allocator),strings.to_string(names),&d.changed.decl)
     }
 }
 
@@ -192,13 +190,13 @@ import_package :: proc(desc:^Declare_Desc,imp:^ast.Import_Decl) -> (path:string,
 }
 
 // The line of DECLARED_NAMES of what was declared as text under names: its
-// hash, with the conditions of the when blocks around it, and the names it
+// hash, with the tags of its file and the conditions of the when blocks around it, and the names it
 // and they carry: one of its package bare, one of a package its file imports
 // with the path of that package.
 @(private="file")
 names_line :: proc(scope:^File_Scope,out:^Output,names:[]string,text:string,nodes:..^ast.Node) {
     if out.names==nil {return}
-    hash:=xxhash.XXH3_64_default(transmute([]u8)text)
+    hash:=base.hash_combine(scope.tags,xxhash.XXH3_64_default(transmute([]u8)text))
     carried:=make(map[string]bool,context.temp_allocator)
     found:=Names{file=&carried,all=&carried,imports=&scope.imports}
     for condition in scope.conditions {
@@ -252,9 +250,7 @@ decls_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,stmts:[]^ast.Stmt,i
         case ^ast.Value_Decl:
             value_write(d,scope,out,s,indent)
         case ^ast.Expr_Stmt:
-            text:=rewritten_text(scope,s)
-            fmt.sbprintfln(&out.decl,"%s%s",indent,text)
-            if out.head_hash!=nil {out.head_hash^=base.hash_combine(out.head_hash^,xxhash.XXH3_64_default(transmute([]u8)text))}
+            fmt.sbprintfln(&out.decl,"%s%s",indent,rewritten_text(scope,s))
         case:
             append(&d.errors,fmt.aprintf("%s(%d): a declaration of a kind that cannot be declared",scope.file.fullpath,stmt.pos.line))
         }

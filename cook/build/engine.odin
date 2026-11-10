@@ -568,7 +568,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
             against[which]=plan.previous.libraries[which].against
             continue
         }
-        against[which]=declared_key(&declared,reach.names[which])
+        against[which]=declared_key(declared,reach.names[which])
         if against[which]==plan.previous.libraries[which].against {continue}
         if !staged[which] {
             if _,failed,ok:=stage(root,paths,library);!ok {return failed}
@@ -587,7 +587,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     programs:=engine_program_sources(paths)
     program_names:=make(map[string]bool,context.temp_allocator)
     for program in programs {declared_names(program.source,nil,&program_names)}
-    programs_against:=declared_key(&declared,program_names)
+    programs_against:=declared_key(declared,program_names)
     build_programs:=desc.force || stamp.programs!=plan.programs || stamp.programs_against!=programs_against
     for program in programs {
         folder:=project.path(paths.folder,"programs",program.package_name,allocator=context.temp_allocator)
@@ -628,27 +628,11 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     for &task in tasks {
         if task.library>=0 {task.needs=reach.needs[task.library]}
     }
-    Run :: struct {
-        paths:Engine_Paths,
-        libraries:[]Engine_Library,
-        stamp:^Engine_Stamp,
-        plan:^Engine_Plan,
-        against:[]u64,
-        entries:[]string,
-        compiled:^[dynamic]string,
-    }
-    run:=Run{paths,libraries,&stamp,&plan,against,entries,compiled}
-    failed,built:=engine_tasks_run(root,paths,tasks[:],&run,proc(task:^Engine_Task,data:rawptr) {
-        run:=cast(^Run)data
-        if task.library<0 {return}
-        which:=task.library
-        run.stamp.libraries[which]={run.plan.libraries[which].sources,run.plan.libraries[which].tools,run.against[which]}
-        _=engine_stamp_write(run.paths.stamp,run.stamp^,run.libraries)
-        append(run.compiled,strings.clone(run.libraries[which].file,run.compiled.allocator))
-        engine_cache_store(run.entries[which],run.paths,run.libraries[which])
-    })
+    built:=make([]Library_Stamp,len(libraries),context.temp_allocator)
+    for &library,which in built {library={plan.libraries[which].sources,plan.libraries[which].tools,against[which]}}
+    failed,ok:=engine_tasks_run(root,paths,libraries,tasks[:],&stamp,built,entries,compiled)
     if len(compiled)>0 {cache_trim(workspace.cache_folder(root,ENGINE_CACHE,context.temp_allocator),ENGINE_CACHE_ENTRIES)}
-    if !built {return failed}
+    if !ok {return failed}
     done.programs=build_programs
     for copy in engine_copies(root,paths.folder,compiler) {
         if !build_programs && os.is_file(copy.to) {continue}
@@ -674,10 +658,11 @@ Engine_Task :: struct {
 
 // Runs the pending tasks, as many at once as compilers_at_once, each once the
 // libraries it links against stand: on Windows it links against their import
-// libraries. finished is called as each ends well. The first that fails ends
+// libraries. A library that ends well is stamped as built, named in compiled
+// and kept in its entry of the shared cache. The first task that fails ends
 // the build once the ones running end.
 @(private)
-engine_tasks_run :: proc(root:string,paths:Engine_Paths,tasks:[]Engine_Task,data:rawptr,finished:proc(task:^Engine_Task,data:rawptr)) -> (failed:Engine_Result,ok:bool) {
+engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Library,tasks:[]Engine_Task,stamp:^Engine_Stamp,built:[]Library_Stamp,entries:[]string,compiled:^[dynamic]string) -> (failed:Engine_Result,ok:bool) {
     if os.make_directory_all(paths.work)!=nil && !os.is_dir(paths.work) {return engine_fail(.Write_Failed,paths.work,""),false}
     limit:=compilers_at_once()
     ok=true
@@ -746,7 +731,12 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,tasks:[]Engine_Task,data
             if !bad {
                 task.state=.Done
                 for file in files {_=os.remove(file)}
-                if ok {finished(&task,data)}
+                if which:=task.library;ok && which>=0 {
+                    stamp.libraries[which]=built[which]
+                    _=engine_stamp_write(paths.stamp,stamp^,libraries)
+                    append(compiled,strings.clone(libraries[which].file,compiled.allocator))
+                    engine_cache_store(entries[which],paths,libraries[which])
+                }
                 continue
             }
             task.state=.Failed

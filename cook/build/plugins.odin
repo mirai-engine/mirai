@@ -214,7 +214,7 @@ plugin_decl_of :: proc(lib:^Plugin_Library) -> string {
 // and those a package of the engine brings. It names the library
 // (plugin_library_name).
 @(private)
-plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:^Declared) -> u64 {
+plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:Declared) -> u64 {
 	return plugin_library_hash_of(p,lib,compiler,flags,engine,declared,false)
 }
 
@@ -222,12 +222,12 @@ plugin_library_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:stri
 // objects are compiled from. A library whose name moves and whose compile
 // hash does not is linked again (relink.odin).
 @(private)
-plugin_library_compile_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:^Declared) -> u64 {
+plugin_library_compile_hash :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:Declared) -> u64 {
 	return plugin_library_hash_of(p,lib,compiler,flags,engine,declared,true)
 }
 
 @(private="file")
-plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:^Declared,masked:bool) -> u64 {
+plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:string,flags:[]string,engine:Engine_Paths,declared:Declared,masked:bool) -> u64 {
 	sources:=make([dynamic]string,context.temp_allocator)
 	append(&sources,..engine_sources(project.path(p.engine_root,"plugins",allocator=context.temp_allocator),lib.packages))
 	hashed:=make([dynamic]string,context.temp_allocator)
@@ -242,7 +242,7 @@ plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:s
 	declared_names_of(needed,nil,&names)
 	append(&hashed,fmt.tprintf("<%sdeclarations %v %x>",ENGINE_COLLECTION,engine.mode,declared_key(declared,names)))
 	// Without the hashes of what it names, every build of the engine builds it again.
-	if !declared.known {append(&sources,engine.stamp)}
+	if len(declared)==0 {append(&sources,engine.stamp)}
 	hash,_:=fingerprint(p.engine_root,compiler,hashed[:],sources[:])
 	return hash
 }
@@ -323,7 +323,7 @@ plugins_current :: proc(p:^project.Project,target:Target,compiler:string,dev:boo
 	declared:=declared_read(paths.declared,context.temp_allocator)
 	for &lib in libraries {
 		saved,_,stamped:=stamp_read(lib.stamp)
-		hash:=plugin_library_hash(p,&lib,compiler,flags,paths,&declared)
+		hash:=plugin_library_hash(p,&lib,compiler,flags,paths,declared)
 		plugin_library_name(p.root,&lib,hash,context.temp_allocator)
 		if !stamped || !os.is_file(lib.library) || saved!=hash {return false}
 	}

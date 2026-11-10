@@ -27,17 +27,10 @@ import "mirai:std/base"
 @(private)
 DECLARED_NAMES :: "declared.names"
 
-// The line of what every declaration of a package is read with: the tags of its files.
-@(private)
-DECLARED_HEAD :: "."
-
 // Of each declaration of the engine, by `<package>.<name>`, the hash of what
-// whoever names it compiles against. `<package>.` is the head of a package.
+// whoever names it compiles against. Empty: no build of the engine wrote it.
 @(private)
-Declared :: struct {
-    hashes:map[string]u64,
-    known:bool, // read from the index a build of the engine wrote
-}
+Declared :: map[string]u64
 
 @(private="file")
 Declared_Node :: struct {
@@ -68,13 +61,11 @@ declared_write :: proc(decl,file:string) -> bool {
         data,error:=os.read_entire_file(project.path(decl,path,DECLARED_NAMES,allocator=context.temp_allocator),context.temp_allocator)
         if error!=nil {continue}
         text=string(data)
-        head:=node(&nodes,&ids,fmt.tprintf("%s.",path))
         rest:=text
         for line in strings.split_lines_iterator(&rest) {
             name,hash:=declared_line(line) or_continue
-            id:=name==DECLARED_HEAD?head:node(&nodes,&ids,fmt.tprintf("%s.%s",path,name))
+            id:=node(&nodes,&ids,fmt.tprintf("%s.%s",path,name))
             nodes[id].own=base.hash_combine(nodes[id].own,hash)
-            if id!=head {append(&nodes[id].edges,head)}
         }
     }
     // Every declaration is known by now: a bare name that is none of its package is a local one.
@@ -83,7 +74,6 @@ declared_write :: proc(decl,file:string) -> bool {
         rest:=text
         for line in strings.split_lines_iterator(&rest) {
             name,_:=declared_line(line) or_continue
-            if name==DECLARED_HEAD {continue}
             id:=ids[fmt.tprintf("%s.%s",path,name)]
             fields:=line
             skipped:=0
@@ -201,24 +191,18 @@ declared_reach :: proc(nodes:[]Declared_Node) -> []u64 {
 // and what compiles against the declarations follows every build of the engine.
 @(private)
 declared_read :: proc(file:string,allocator:=context.allocator) -> (declared:Declared) {
-    declared.hashes=make(map[string]u64,allocator)
-    data,error:=os.read_entire_file(file,context.temp_allocator)
-    if error!=nil {return}
+    declared=make(Declared,allocator)
+    data,_:=os.read_entire_file(file,context.temp_allocator)
     rest:=string(data)
     for line in strings.split_lines_iterator(&rest) {
-        space:=strings.index_byte(line,' ')
-        if space<=0 {continue}
-        hash,parsed:=strconv.parse_u64_of_base(line[space+1:],16)
-        if !parsed {continue}
-        declared.hashes[strings.clone(line[:space],allocator)]=hash
+        if key,hash,ok:=declared_line(line);ok {declared[strings.clone(key,allocator)]=hash}
     }
-    declared.known=len(declared.hashes)>0
     return
 }
 
 // Adds to names the declarations of the engine a source names, each as its
-// key: of every package it imports, the head and whatever follows the name
-// it gives the package and a dot. A literal that names a package counts only
+// key: of every package it imports, whatever follows the name it gives the
+// package and a dot. A literal that names a package counts only
 // after `import` and the name it may give it: the text of a program a source
 // carries imports nothing. The packages of skip are not followed: they are
 // compiled with the source. A package of the engine imports only the ones
@@ -251,9 +235,7 @@ declared_names :: proc(source:string,skip:[]string,names:^map[string]bool,reache
         }
         if name=="" {continue}
         if reached!=nil {reached[index]=true}
-        if slice.contains(skip,path) {continue}
-        names[strings.concatenate({path,"."},context.temp_allocator)]=true
-        if name!="_" {append(&aliases,Alias{name,path})}
+        if name!="_" && !slice.contains(skip,path) {append(&aliases,Alias{name,path})}
     }
     for alias in aliases {
         at=0
@@ -304,10 +286,10 @@ declared_names_of :: proc(files:[]string,skip:[]string,names:^map[string]bool,re
 // names them is built again by. One the index does not have counts as
 // missing, and moves the hash when it is declared.
 @(private)
-declared_key :: proc(declared:^Declared,names:map[string]bool) -> u64 {
+declared_key :: proc(declared:Declared,names:map[string]bool) -> u64 {
     keys,_:=slice.map_keys(names,context.temp_allocator)
     slice.sort(keys)
     hash:u64=1
-    for key in keys {hash=base.hash_combine(base.hash_combine(hash,base.name_hash(key)),declared.hashes[key])}
+    for key in keys {hash=base.hash_combine(base.hash_combine(hash,base.name_hash(key)),declared[key])}
     return hash
 }

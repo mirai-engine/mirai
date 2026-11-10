@@ -88,7 +88,7 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
             testing.expect(t,os.make_directory_all(decl)==nil)
             testing.expect(t,os.write_entire_file(project.path(decl,"declared.odin"),need)==nil)
         }
-        hash=plugin_library_hash(&p,found,"odin",plugin_flags(&p,true),engine,&Declared{})
+        hash=plugin_library_hash(&p,found,"odin",plugin_flags(&p,true),engine,nil)
     }
     testing.expect_value(t,hashes[1],hashes[0])
 }
@@ -523,7 +523,7 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
     engine:=Engine_Paths{decl=project.path(built,"decl"),declared=project.path(built,"engine.declared"),stamp=project.path(built,ENGINE_STAMP)}
     keys :: proc(p:^project.Project,libraries:^[Part]Plugin_Library,engine:Engine_Paths) -> (keys:[Part]u64) {
         declared:=declared_read(engine.declared,context.temp_allocator)
-        for &lib,part in libraries {keys[part]=plugin_library_hash(p,&lib,"",nil,engine,&declared)}
+        for &lib,part in libraries {keys[part]=plugin_library_hash(p,&lib,"",nil,engine,declared)}
         return
     }
     // The engine declares its sources and what each declaration reaches, as its build does.
