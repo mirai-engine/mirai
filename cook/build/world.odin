@@ -1432,6 +1432,7 @@ Ordering :: struct {
     waits:map[^Step][dynamic]Wait, // what each step runs after, in its stage
     direct:map[^Step][dynamic]Wait, // of those, the ones no other of its waits brings
     state:map[^Step]u8,            // 1 while its waits are visited, 2 once visited, 3 once ordered
+    seen:map[^Step]bool,           // of the walk of waits_for
     cycle:[]^Step,                 // steps that wait for each other, each for the next and the last for the first
 }
 
@@ -1464,6 +1465,7 @@ phase_order :: proc(g:^Generator,loop,phase:int) -> (o:Ordering) {
     o.waits=make(map[^Step][dynamic]Wait,context.temp_allocator)
     o.direct=make(map[^Step][dynamic]Wait,context.temp_allocator)
     o.state=make(map[^Step]u8,context.temp_allocator)
+    o.seen=make(map[^Step]bool,context.temp_allocator)
     o.ordered=make([dynamic]^Step,context.temp_allocator)
     o.path=make([dynamic]^Step,context.temp_allocator)
     for s in o.chosen {
@@ -1581,9 +1583,8 @@ waits_for :: proc(o:^Ordering,s,first:^Step) -> bool {
         return false
     }
     if len(o.waits[s])==0 {return false}
-    seen:=make(map[^Step]bool,context.temp_allocator)
-    defer delete(seen)
-    return visit(o,&seen,s,first)
+    clear(&o.seen)
+    return visit(o,&o.seen,s,first)
 }
 
 // Finds a cycle of waits, if there is one.
