@@ -340,7 +340,7 @@ parameters by hand.
   `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes what is disabled
   and then settles the others, which move the rows of the entities that were disabled or enabled.
   It comes only to the tables that wait: `add`, `remove`, `enable` and `disable` mark their table
-  in the `Entities` of its World (`core.world_init` gives each table its mark with `raw_follow`), and
+  in the `Entities` of its World (`core.world_init` gives each table its mark, `raw_follow`), and
   an entity destroyed or turned marks the tables that hold a row of it. A World made by hand has no
   marks, and its settle looks at every table.
 - It adds the time of each function to `app.step_ns` (`engine.status` reports the most expensive
