@@ -77,16 +77,13 @@ Layout_Measures :: struct {
 @(private)
 Layout_Span :: struct {
     text:string,
-    size:f32,
-    face:u8,
+    using look:Text_Span, // the font, the size and the color it is drawn with
     box:bool,
-    solid:bool, // its text is one piece that breaks at no space: only where a line that cuts ends
-    width:f32,  // on one line: of its text with pad, or its own when it is a box or room
-    pad:f32,    // of the width of a chip, what is no text. Its text is not words
-    gap:f32,    // room after it that is no part of it
-    height:f32, // of a box or a chip; 0: a line of its size
+    width:f32,     // on one line: of its text with pad, or its own when it is a box or room
+    gap:f32,       // room after it that is no part of it
     measure:Layout_Measure,
-    user:i32,   // what its owner draws it with
+    paint:^Paint,  // of a box: what draws it
+    widget:i32,    // the widget its pieces are, plus one; 0: the pointer goes through
 }
 // What a text asks of its lines.
 @(private)
@@ -324,8 +321,7 @@ layout_close :: proc(t:^Layout_Tree) {
     if !n.floating {layout_attach(t,index)}
 }
 
-// Starts a text: the spans put until layout_text_end or layout_text_height are
-// what it says. False when the tree has no room for it.
+// Starts a text: the spans put until it ends are what it says. False when the tree has no room for it.
 @(private)
 layout_text_begin :: proc(t:^Layout_Tree,desc:Layout_Text_Desc) -> bool {
     if t.text_count>=len(t.texts) {return false}
@@ -349,7 +345,7 @@ layout_text_span :: proc(t:^Layout_Tree,font:^Font,span:Layout_Span) -> bool {
     if !(s.gap>0) {s.gap=0}
     if !(s.height>0) {s.height=0}
     if !s.box && s.text!="" {
-        s.measure=layout_measure(t,font,s.text,s.size,s.face)
+        s.measure=layout_measure(t,font,s.text,s.size,s.font)
         s.width=s.measure.width+s.pad
     }
     t.span_count+=1
@@ -404,16 +400,6 @@ layout_text_end :: proc(t:^Layout_Tree,font:^Font,e:Element) -> bool {
     layout_attach(t,index)
     return true
 }
-// The height the lines of the text begun take in width, as an element of that
-// width breaks it; the text is not kept.
-@(private)
-layout_text_height :: proc(t:^Layout_Tree,font:^Font,width:f32) -> f32 {
-    text:=&t.texts[t.text_count]
-    height:=layout_text_wrap(t,font,text,width,false)
-    t.span_count=int(text.spans_first)
-    return height
-}
-
 // The words of a span in order: those its measure kept, or the span walked again.
 @(private)
 Layout_Words :: struct {words:[]Layout_Word,index:int,walk:Layout_Walk,walked:bool}
@@ -421,7 +407,7 @@ Layout_Words :: struct {words:[]Layout_Word,index:int,walk:Layout_Walk,walked:bo
 layout_words :: proc "contextless" (t:^Layout_Tree,font:^Font,s:^Layout_Span) -> (w:Layout_Words) {
     m:=&s.measure
     if m.words_first>=0 {w.words=t.measures[0].words[m.words_first:][:m.words_len];return}
-    w.walked,w.walk=true,{font=font,text=s.text,size=s.size,face=int(s.face),space=m.space}
+    w.walked,w.walk=true,{font=font,text=s.text,size=s.size,face=int(s.font),space=m.space}
     return
 }
 @(private)
@@ -680,13 +666,13 @@ layout_line_end :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,first:int,wi
     }
     // A line without text stands on its bottom.
     baseline:=high
-    if big!=nil {baseline=(high-big.size*TEXT_LINE)*0.5+face_ascent(font,big.face)*big.size}
+    if big!=nil {baseline=(high-big.size*TEXT_LINE)*0.5+face_ascent(font,big.font)*big.size}
     for &p in pieces {
         s:=&t.spans[p.span]
         switch {
         case s.box || s.pad>0: p.y=(high-(s.height if s.height>0 else s.size*TEXT_LINE))*0.5
-        case big==nil || s.size==big.size && s.face==big.face: p.y=(high-s.size*TEXT_LINE)*0.5
-        case: p.y=baseline-face_ascent(font,s.face)*s.size
+        case big==nil || s.size==big.size && s.font==big.font: p.y=(high-s.size*TEXT_LINE)*0.5
+        case: p.y=baseline-face_ascent(font,s.font)*s.size
         }
     }
     if t.line_count<len(t.lines) {
@@ -748,7 +734,7 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
             } else {y=line}
             return max(y,text.line)
         }
-        b:=Layout_Break{text=s.text,walk={font=font,text=s.text,size=s.size,face=int(s.face),space=m.space},walked=m.words_first<0,width=room,space=m.space}
+        b:=Layout_Break{text=s.text,walk={font=font,text=s.text,size=s.size,face=int(s.font),space=m.space},walked=m.words_first<0,width=room,space=m.space}
         if !b.walked {b.words=t.measures[0].words[m.words_first:][:m.words_len]}
         layout_break_word(&b)
         for {
@@ -766,7 +752,7 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
     for &s,i in spans {
         index:=text.spans_first+i32(i)
         if s.box || s.pad>0 || s.solid {
-            p:=Flow_Piece(i32){text=s.text,width=s.width,gap=s.gap,pad=s.pad,size=s.size,font=s.face,box=s.box,run=index}
+            p:=Flow_Piece(i32){text=s.text,width=s.width,gap=s.gap,pad=s.pad,size=s.size,font=s.font,box=s.box,run=index}
             // What is solid fills the line it starts on, whatever it follows.
             if s.solid {f.glued,f.unit,f.unit_at,f.unit_x=true,f.count,0,0}
             for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
@@ -778,7 +764,7 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
             w,ok:=layout_words_next(&words)
             if !ok {break}
             if w.length==0 {layout_flow_line(t,font,text,keep,&f,&y);continue}
-            p:=Flow_Piece(i32){text=s.text[w.start:][:w.length],width=w.width,size=s.size,font=s.face,run=index}
+            p:=Flow_Piece(i32){text=s.text[w.start:][:w.length],width=w.width,size=s.size,font=s.font,run=index}
             for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
         }
     }

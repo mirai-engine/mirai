@@ -145,7 +145,6 @@ Context :: struct {
     // Containers that clip around what is being built; 0 is none, which a popup pushes.
     clip_stack:[LAYOUT_DEPTH+POPUP_DEPTH]u16,clip_depth,clip_skipped:int,
     paints:[]Paint,paint_count:int,
-    runs:[]Text_Run,run_count:int, // what the spans of the texts of the frame are drawn with
     text_open:Text_Open,
     widget_pieces:int,  // where the widgets frame_end adds for the pieces of texts start
     text:[]u8,text_length:int,
@@ -266,7 +265,6 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     ctx.groups=slice(Focus_Group,FOCUS_LINKS,a,&ok)
     ctx.previous_groups=slice(Focus_Group,FOCUS_LINKS,a,&ok)
     ctx.paints=slice(Paint,count(desc.max_paints,ctx.max_elements),a,&ok)
-    ctx.runs=slice(Text_Run,len(ctx.paints),a,&ok)
     ctx.text=slice(u8,count(desc.max_text,65536),a,&ok)
     vertices:=count(desc.max_vertices,262144)
     if base.region_reserve(&ctx.draw.region,vertices*size_of(Vertex)) {
@@ -305,7 +303,7 @@ context_destroy :: proc(ctx:^Context) {
     a:=ctx.allocator
     if ctx.font_owner==nil && ctx.font.allocator.procedure!=nil {font_destroy(&ctx.font)}
     layout_destroy(&ctx.layout)
-    delete(ctx.widgets,a);delete(ctx.previous,a);delete(ctx.paints,a);delete(ctx.runs,a);delete(ctx.text,a)
+    delete(ctx.widgets,a);delete(ctx.previous,a);delete(ctx.paints,a);delete(ctx.text,a)
     id_table_destroy(&ctx.previous_ids,a)
     delete(ctx.links,a);delete(ctx.previous_links,a);delete(ctx.groups,a);delete(ctx.previous_groups,a)
     retained_destroy(ctx)
@@ -575,7 +573,7 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.stats.frame+=1
     ctx.dropped_before=dropped_total(&ctx.stats)
 
-    ctx.widget_count=0;ctx.paint_count=0;ctx.text_length=0;ctx.run_count=0;ctx.text_open={}
+    ctx.widget_count=0;ctx.paint_count=0;ctx.text_length=0;ctx.text_open={}
     ctx.effect_count=1;ctx.effect_clip=0;ctx.effect_depth=0;ctx.effect_skipped=0;ctx.effect_refused=0
     ctx.clip_count=1;ctx.clip_depth=0;ctx.clip_skipped=0;ctx.scope_count=1;ctx.scope=0
     ctx.scopes[0]={m=AFFINE_IDENTITY,tint={1,1,1,1}}
