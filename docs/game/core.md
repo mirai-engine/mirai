@@ -35,7 +35,6 @@ tests/scenarios/  mirai play test .           .mirai/  generated, never edited (
 @(component)
 Health :: struct {
     hp:f32 `mirai:"min=0"`,
-    regen:f32 `mirai:"unit=1/s"`,
     hurt_at:f64 `mirai:"transient"`,   // derived: neither saved nor replicated
 }
 HEALTH_DEFAULT :: Health{hp=100}       // NAME_DEFAULT: new rows and literals start from it
@@ -50,8 +49,9 @@ HEALTH_DEFAULT :: Health{hp=100}       // NAME_DEFAULT: new rows and literals st
 
 ```odin
 @(step="fixed")
-game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
-    for &health in core.writable(healths) {health.hp=min(health.hp+health.regen*time.dt,100)}
+game_fall :: proc(vels:^core.Table(Vel),masses:core.Read(Mass),airs:core.Read(Air),time:core.Time) {
+    j:=core.join(vels,masses,airs) // the entities with all three on, over the rows of vels
+    for _,_,m,_ in core.each_joined(&j) {core.edit_at(vels,j.row).y-=m.gravity*time.dt}
 }
 ```
 

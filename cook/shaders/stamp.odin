@@ -13,7 +13,7 @@ import "core:time"
 // compiler and leaves the output alone.
 STAMP_FILE :: "generation.json"
 @(private)
-STAMP_VERSION :: 2
+STAMP_VERSION :: 3
 
 @(private)
 Stamp_File :: struct {path:string,size,time:i64}
