@@ -561,10 +561,12 @@ report_update :: proc(s:^Net_Session,app:^host.App) {
     invited:=invite_update(s)
     if !s.launched {return}
     told:=&s.told
-    lost:=s.status==.Disconnected && s.reason_text!=""
+    // By the end of the session and not by the text of its reason, which may have found no memory.
+    lost:=s.status==.Disconnected && s.ended
     if lost && !told.lost {
         told.lost=true
-        fmt.eprintfln("mirai: %s",s.reason_text)
+        if s.reason_text!="" {fmt.eprintfln("mirai: %s",s.reason_text)}
+        else {fmt.eprintln("mirai: the session ended, and there was no memory to keep why")}
     }
     if s.mode==.Client {
         if s.status==.Connected && !told.joined {
