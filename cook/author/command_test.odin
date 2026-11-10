@@ -350,10 +350,15 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
         testing.expectf(t,strings.contains(text,part),"the document has %s: %s",part,text)
     }
     // What a document cannot declare says where and what does.
+    scene_file,_:=asset.registry_find_path(&p.registry,"arena/main.scene")
+    scene_id:[base.ASSET_ID_TEXT]u8
     cases:=[]struct{document,message:string}{
+        {fmt.tprintf(`{{"entities":[{{"name":"x","prefab":"%s"}}]}}`,base.asset_id_format(scene_file.id,scene_id[:])),"is no prefab of the project; give the path or the id of a .prefab"},
         {`{"entities":[{"name":"x","components":{"Nope":{}}}]}`,"entities[0].components.Nope: the game of this build has no component 'Nope'"},
         {`{"entities":[{"name":"x","preset":"cubes"}]}`,"entities[0].preset: "},
         {`{"entities":[{"name":"x","prefab":"player/Nobody.prefab"}]}`,"entities[0].prefab: "},
+        {`{"entities":[{"name":"x","prefab":"arena/main.scene"}]}`,`entities[0].prefab: "arena/main.scene" is no .prefab asset`},
+        {`{"entities":[{"name":"x","prefab":{"asset":"player/Player.prefab","size":2}}]}`,"entities[0].prefab has no 'size'"},
         {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the file"},
         {`{"entities":[{"name":"x","components":{"Tint":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Tint"},
         {`{"entities":[{"name":"x","sizes":3}]}`,"entities[0] has no 'sizes'; an entity has id, name"},
@@ -442,6 +447,31 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     after:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&after,&p.types,file,context.temp_allocator),asset.Error.None) {return}
     testing.expect(t,len(after.instances)==1 && len(after.members)==len(yard.members))
+
+    // What the document says of a member, however deep, by its name, the instance holds on its own.
+    _,gate_why:=scene_write(&p,"arena/Gate.prefab",`{"entities":[{"name":"Gate","children":[{"name":"Frame","children":[{"name":"Lamp","preset":"point_light"}]}]}]}`)
+    if !testing.expect(t,gate_why=="",gate_why) {return}
+    court:=`{"entities":[{"name":"North","prefab":"arena/Gate.prefab","children":[{"name":"Frame","children":[{"name":"Lamp","position":[0,2,0],"components":{"Point_Light":{"intensity":9}}}]}]}]}`
+    north,north_why:=scene_write(&p,"arena/court.scene",court)
+    if !testing.expect(t,north_why=="" && north.made==3,fmt.tprintf("%s %v",north_why,north)) {return}
+    held:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&held,&p.types,project.path(p.assets_root,"arena/court.scene",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}
+    lit:=named(&held,"Lamp")
+    bulb,_:=asset.scene_get(&held,lit,"Point_Light",erender.Point_Light)
+    testing.expect(t,asset.scene_entity_instance(&held,lit)!=0 && bulb.intensity==9,"the lamp is the member of the instance, with what the document says of it")
+    testing.expect(t,asset.scene_overridden(&held,lit,base.name_hash("Point_Light"),"intensity"))
+    again,why=scene_write(&p,"arena/court.scene",court)
+    testing.expect(t,why=="" && again.same,fmt.tprintf("%s %v",why,again))
+
+    // A prefab is not placed in a file it holds, itself or through the prefabs it places.
+    _,wall_why:=scene_write(&p,"arena/Wall.prefab",`{"entities":[{"name":"Wall","children":[{"name":"Door","prefab":"arena/Gate.prefab"}]}]}`)
+    testing.expect(t,wall_why=="",wall_why)
+    gate:=slice.clone(file_bytes(&p,"arena/Gate.prefab"),context.temp_allocator)
+    for inner in ([]string{"arena/Gate.prefab","arena/Wall.prefab"}) {
+        _,refused:=scene_write(&p,"arena/Gate.prefab",fmt.tprintf(`{{"entities":[{{"name":"Gate","children":[{{"name":"In","prefab":%q}}]}}]}}`,inner))
+        testing.expectf(t,strings.contains(refused,"entities[0].children[0].prefab: ") && strings.contains(refused,"holds the file it would be placed in"),"%s gave '%s'",inner,refused)
+    }
+    testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.prefab"),gate),"a refused document leaves the file as it was")
 }
 
 

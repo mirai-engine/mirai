@@ -711,6 +711,22 @@ resolver_stale :: proc(r:^Prefab_Resolver,a:^Asset) -> bool {
     return resolver_instances_stale(r,instances_of(a,r.types))
 }
 
+// How deep a prefab is followed through the prefabs it places.
+PREFAB_DEPTH :: 16
+
+// Whether a prefab holds another: it is that one, or places it, itself or
+// through the prefabs it places. One deeper than PREFAB_DEPTH holds it.
+prefab_holds :: proc(files:Prefab_Files,types:^Types,id,target:base.Asset_Id,depth:=0) -> bool {
+    if id==target || depth>PREFAB_DEPTH {return true}
+    file:=files.open(files.data,id)
+    if file==nil || file.blob.header.kind!=KIND_PREFAB {return false}
+    for instance in instances_of(file,types) {
+        if instance.prefab==target {return true}
+        if instance.outer==0 && prefab_holds(files,types,instance.prefab,target,depth+1) {return true}
+    }
+    return false
+}
+
 // A prefab with its instances up to date, which the resolver keeps; nil when
 // it is missing.
 resolver_prefab :: proc(r:^Prefab_Resolver,id:base.Asset_Id) -> (prefab:^Scene,error:Error) {
