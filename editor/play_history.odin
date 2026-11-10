@@ -170,15 +170,16 @@ history_hash :: proc(w:core.World_Ref) -> u64 {
     return h
 }
 
-// What says that something wrote the World: the versions and layouts of its
-// tables and the entities alive.
+// What says that something wrote the World: the versions of its tables,
+// which move with every write and every row that comes, goes or moves, and
+// the entities alive.
 @(private)
 history_fingerprint :: proc(w:core.World_Ref) -> u64 {
     key:=u64(core.world_entities(w).alive)
     for &info in w.info.tables {
         if info.place!=w.place {continue}
         t:=core.world_table_at(w,&info)
-        key=base.hash_u64(key~t.version~base.hash_u64(t.layout))
+        key=base.hash_u64(key~t.version)
     }
     return key
 }

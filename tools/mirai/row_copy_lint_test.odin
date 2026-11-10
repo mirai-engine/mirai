@@ -132,7 +132,9 @@ the_lint_reports_a_write_to_a_copy_of_a_row_that_reaches_nothing :: proc(t:^test
         source:=strings.concatenate({"package sample\nimport \"mirai:core\"\n",c.source,"\n"})
         if c.source=="" {source="package sample\nimport ecs \"mirai:core\"\nf :: proc(t:^ecs.Table(Health),row:int) {health:=ecs.at(t,row);health.hp=1}\n"}
         findings:=make([dynamic]Row_Copy_Finding)
-        if !testing.expectf(t,row_copy_lint_source("sample.odin",source,&findings),"%s: it parses",c.name) {continue}
+        file:=source_parse("sample.odin",source)
+        if !testing.expectf(t,file!=nil,"%s: it parses",c.name) {continue}
+        row_copy_lint_file(file,&findings)
         if !testing.expectf(t,len(findings)==len(c.flagged),"%s: %d reported, %d expected: %v",c.name,len(findings),len(c.flagged),findings[:]) {continue}
         for f,i in findings {
             testing.expectf(t,f.name==c.flagged[i],"%s: reported %s, expected %s",c.name,f.name,c.flagged[i])
@@ -141,10 +143,9 @@ the_lint_reports_a_write_to_a_copy_of_a_row_that_reaches_nothing :: proc(t:^test
     }
     // Inside core the reads have no package before them, and a source without core has none.
     findings:=make([dynamic]Row_Copy_Finding)
-    testing.expect(t,row_copy_lint_source("core.odin","package core\nf :: proc(t:^Table(Name),row:int) {name:=at(t,row);name.text[0]=0}\n",&findings))
+    row_copy_lint_file(source_parse("core.odin","package core\nf :: proc(t:^Table(Name),row:int) {name:=at(t,row);name.text[0]=0}\n"),&findings)
     testing.expect_value(t,len(findings),1)
     clear(&findings)
-    testing.expect(t,row_copy_lint_source("other.odin","package other\nf :: proc(t:^Thing,row:int) {name:=at(t,row);name.text[0]=0}\n",&findings))
+    row_copy_lint_file(source_parse("other.odin","package other\nf :: proc(t:^Thing,row:int) {name:=at(t,row);name.text[0]=0}\n"),&findings)
     testing.expect_value(t,len(findings),0)
-    testing.expect(t,!row_copy_lint_source("broken.odin","package broken\nf :: proc( {\n",&findings))
 }

@@ -1,5 +1,6 @@
 package mirai_render
 
+import "core:slice"
 import "mirai:rhi"
 
 @(private)
@@ -124,10 +125,19 @@ texture_views_evict :: proc(r:^Renderer,views:[]Frame_View) {
 @(private)
 texture_views_count :: proc(r:^Renderer) {
     bytes:u64
+    // A target of the frame they share counts once.
+    counted:[TEXTURE_VIEW_CAPACITY*FRAME_TARGETS]rhi.Texture
+    count:=0
     for &state in r.texture_views {
         if state.texture==0 {continue}
         base,glass:=targets_textures(&state.targets),glass_textures(&state.targets)
         for texture in base {bytes+=rhi.texture_bytes(r.device,texture)}
+        for texture in targets_frame(&state.targets) {
+            if texture^==0 || slice.contains(counted[:count],texture^) {continue}
+            counted[count]=texture^
+            count+=1
+            bytes+=rhi.texture_bytes(r.device,texture^)
+        }
         for texture in glass {bytes+=rhi.texture_bytes(r.device,texture)}
         bytes+=rhi.texture_bytes(r.device,state.wide)
         for buffer in ([2]rhi.Buffer{state.targets.direct_traced,state.targets.direct_dispatch}) {bytes+=rhi.buffer_size(r.device,buffer)}
@@ -140,7 +150,7 @@ texture_views_count :: proc(r:^Renderer) {
             for texture in entry.textures {bytes+=rhi.texture_bytes(r.device,texture)}
         }
     }
-    if bytes!=r.texture_view_bytes {r.textures.residency.stale=true}
+    if bytes!=r.texture_view_bytes {r.textures.residency.retarget=true}
     r.texture_view_bytes=bytes
 }
 
@@ -283,17 +293,13 @@ compose_views :: proc(r:^Renderer,cmd:^rhi.Command_List,frame:Frame_Desc,slot:in
     index:=0
     for view in frame.views {
         if view.texture!=0 {continue}
-        if !view.disabled {rhi.cmd_barrier_texture(cmd,shown(r,index,generated),.Shader_Read)}
         index+=1
     }
     thumbnails:=r.thumbnails if r.thumbnails!=0 else r.dummy_texture
-    rhi.cmd_barrier_texture(cmd,r.font,.Shader_Read)
-    rhi.cmd_barrier_texture(cmd,thumbnails,.Shader_Read)
     rhi.cmd_bind_sampler(cmd,SLOT_LINEAR_SAMPLER,r.linear_sampler)
     rhi.cmd_bind_sampler(cmd,SLOT_POINT_SAMPLER,r.point_sampler)
     rhi.cmd_bind_sampler(cmd,SLOT_MATERIAL_SAMPLER,r.material_sampler)
     materials:=or_dummy(r,r.scene.material_buffer)
-    rhi.cmd_barrier_buffer(cmd,materials,.Shader_Read)
     rhi.cmd_bind_buffer(cmd,SLOT_MATERIALS,materials)
     rhi.cmd_bind_transient(cmd,SLOT_FRAME,frame_constants(r,{time={r.time,r.previous_time,r.delta_time,0},resolution={f32(r.window_width),f32(r.window_height)}}))
     t:=&r.main.targets

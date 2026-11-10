@@ -8,7 +8,7 @@ import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
 Ragdoll_Mode :: enum u8 {Animated,Simulated,Driven,Disabled}
-Ragdoll_Error :: enum u8 {None,Invalid_Settings,Missing_Rig,Missing_Bone,Missing_Body,Unsupported_Joint,Pose_Capacity,Request_Capacity}
+Ragdoll_Error :: enum u8 {None,Invalid_Settings,Missing_Rig,Missing_Bone,Missing_Body,Pose_Capacity,Request_Capacity}
 
 @(component,replicated,description="Controls skeletal rigid bodies: animated kinematics, free simulation or physical animation through joint motors.")
 Ragdoll :: struct {
@@ -20,7 +20,7 @@ Ragdoll :: struct {
 }
 RAGDOLL_DEFAULT :: Ragdoll{mode=.Simulated,weight=1,hertz=5,damping_ratio=1,max_torque=100}
 
-@(component,description="Binds a rigid body to a skeleton bone. The body offset is expressed in the bone frame; joints and colliders use the normal physics components.")
+@(component,description="Binds a rigid body to a skeleton bone. The body offset is expressed in the bone frame; colliders use the normal physics components, and the Joint to the body of its parent bone is on a child of the body.")
 Ragdoll_Bone :: struct {rig:core.Entity,bone:anim.Bone_Ref,offset:mm.Transform}
 RAGDOLL_BONE_DEFAULT :: Ragdoll_Bone{offset=mm.TRANSFORM_IDENTITY}
 
@@ -75,10 +75,22 @@ ragdoll_bind :: proc(world:core.World_Ref,rig:core.Entity,bodies:[]core.Entity,b
     return .None
 }
 
+// The Joint of a body of a ragdoll: the one on a child of it, joined to the body of its parent bone.
 @(private)
-ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,joint_rows:core.Read(phys.Joint)) {
+bone_joint :: proc(joint_rows:core.Read(phys.Joint),parents:core.Read(core.Parent),body:core.Entity) -> (e:core.Entity,joint:phys.Joint,found:bool) {
+    for row in 0..<core.count(joint_rows) {
+        candidate:=core.entity_at(joint_rows,row)
+        if parent,ok:=core.get(parents,candidate);ok && parent.entity==body {return candidate,core.at(joint_rows,row),true}
+    }
+    return
+}
+
+@(private)
+ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,joint_rows:core.Read(phys.Joint),parents:core.Read(core.Parent)) {
     if state.active && state.mode==.Animated {phys.manipulation_end(bodies,entity,true)}
-    if state.active && state.mode==.Driven && core.has(joint_rows,entity) {phys.set_joint_drive_enabled(joints,entity,false)}
+    if state.active && state.mode==.Driven {
+        if joint,_,found:=bone_joint(joint_rows,parents,entity);found {phys.set_joint_drive_enabled(joints,joint,false)}
+    }
     state.active=false
 }
 
@@ -88,7 +100,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
         entity:=core.entity_at(states,row)
         state:=core.edit_at(states,row)
         bone,exists:=core.get(bones,entity)
-        if !exists || !core.has(configs,bone.rig) {ragdoll_release(state,entity,bodies,joints,joint_rows);core.remove(states,entity)}
+        if !exists || !core.has(configs,bone.rig) {ragdoll_release(state,entity,bodies,joints,joint_rows,parents);core.remove(states,entity)}
     }
     if time.dt<=0 || !time.playing || core.count(configs)==0 {return}
     if !anim.animation_requests_reserve(poses,core.count(bones)) {
@@ -104,7 +116,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
         }
         for row in 0..<core.count(states) {
             entity:=core.entity_at(states,row);state:=core.edit_at(states,row)
-            ragdoll_release(state,entity,bodies,joints,joint_rows);state.error=.Pose_Capacity
+            ragdoll_release(state,entity,bodies,joints,joint_rows,parents);state.error=.Pose_Capacity
         }
         return
     }
@@ -136,37 +148,31 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
             }
             if state.error==.None && (state.binding.index<0 || int(state.binding.index)>=count) {state.error=.Missing_Bone}
             if state.error!=.None {bone_problem(problems,entity,bone,state.error,capacity)}
-            if state.error!=.None || config.mode==.Disabled {ragdoll_release(state,entity,bodies,joints,joint_rows);continue}
-            if state.active && state.mode!=config.mode {ragdoll_release(state,entity,bodies,joints,joint_rows)}
+            if state.error!=.None || config.mode==.Disabled {ragdoll_release(state,entity,bodies,joints,joint_rows,parents);continue}
+            if state.active && state.mode!=config.mode {ragdoll_release(state,entity,bodies,joints,joint_rows,parents)}
             target:=mm.transform_compose(runtime.pose[state.binding.index],bone.offset)
             if config.mode==.Animated {phys.manipulation_target(bodies,entity,target.position,target.rotation)}
             if config.mode==.Driven {
-                joint,exists:=core.get(joint_rows,entity)
-                if exists {
-                    if joint.kind!=.SixDOF && joint.kind!=.Spherical {
-                        state.error=.Unsupported_Joint
-                        core.report(problems,entity,"ragdoll.joint","its Joint is %v, and a Driven Ragdoll drives only SixDOF and Spherical joints, so this body is not driven; change the kind of the Joint, or make the Ragdoll Simulated",joint.kind)
-                        ragdoll_release(state,entity,bodies,joints,joint_rows);continue
-                    }
+                if joint_entity,joint,exists:=bone_joint(joint_rows,parents,entity);exists {
                     if config.hertz==0 || config.max_torque==0 {
-                        phys.set_joint_drive_enabled(joints,entity,false)
+                        phys.set_joint_drive_enabled(joints,joint_entity,false)
                         state.mode,state.active=config.mode,true
                         continue
                     }
-                    frame_a:=mm.TRANSFORM_IDENTITY
-                    if joint.target!=core.NONE {
-                        parent_bone,bound:=core.get(bones,joint.target)
+                    frame_b:=mm.TRANSFORM_IDENTITY
+                    if joint.b!=core.NONE {
+                        parent_bone,bound:=core.get(bones,joint.b)
                         if !bound || parent_bone.rig!=rig {
                             state.error=.Missing_Bone
-                            core.report(problems,entity,"ragdoll.joint_target","Joint.target 0x%016x of this Driven ragdoll body is not a Ragdoll_Bone of the same rig, so it is not driven; target the body of its parent bone",u64(joint.target))
-                            ragdoll_release(state,entity,bodies,joints,joint_rows);continue
+                            core.report(problems,entity,"ragdoll.joint_target","Joint.b 0x%016x of the joint of this Driven ragdoll body is not a Ragdoll_Bone of the same rig, so it is not driven; join it to the body of its parent bone",u64(joint.b))
+                            ragdoll_release(state,entity,bodies,joints,joint_rows,parents);continue
                         }
                         if !ragdoll_bone_valid(parent_bone) {
                             state.error=.Invalid_Settings
-                            bone_problem(problems,joint.target,parent_bone,.Invalid_Settings,capacity)
-                            ragdoll_release(state,entity,bodies,joints,joint_rows);continue
+                            bone_problem(problems,joint.b,parent_bone,.Invalid_Settings,capacity)
+                            ragdoll_release(state,entity,bodies,joints,joint_rows,parents);continue
                         }
-                        parent_state,present_parent:=core.get(states,joint.target)
+                        parent_state,present_parent:=core.get(states,joint.b)
                         parent_binding:=parent_state.binding
                         parent_reference,_:=anim.bone_ref_hash(parent_bone.bone)
                         resolved:=present_parent && parent_binding.rig==rig && parent_binding.revision==revision && parent_state.reference==parent_reference
@@ -175,12 +181,12 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
                         }
                         if !resolved || parent_binding.index<0 || int(parent_binding.index)>=count {
                             state.error=.Missing_Bone
-                            bone_problem(problems,joint.target,parent_bone,.Missing_Bone,capacity)
-                            ragdoll_release(state,entity,bodies,joints,joint_rows);continue
+                            bone_problem(problems,joint.b,parent_bone,.Missing_Bone,capacity)
+                            ragdoll_release(state,entity,bodies,joints,joint_rows,parents);continue
                         }
-                        frame_a=mm.transform_compose(runtime.pose[parent_binding.index],parent_bone.offset)
+                        frame_b=mm.transform_compose(runtime.pose[parent_binding.index],parent_bone.offset)
                     }
-                    phys.set_joint_world_rotation(joints,entity,target.rotation,frame_a.rotation,config.hertz,config.damping_ratio,config.max_torque)
+                    phys.set_joint_world_rotation(joints,joint_entity,target.rotation,frame_b.rotation,config.hertz,config.damping_ratio,config.max_torque)
                 }
             }
             state.mode,state.active=config.mode,true
@@ -213,7 +219,7 @@ bone_problem :: proc(problems:^core.Problems,e:core.Entity,bone:Ragdoll_Bone,err
     bone:=bone
     path:=base.text_get(bone.bone.path[:])
     switch error {
-    case .None,.Unsupported_Joint,.Request_Capacity:
+    case .None,.Request_Capacity:
     case .Invalid_Settings:
         core.report(problems,e,"ragdoll.settings","its Ragdoll_Bone or the Ragdoll of rig 0x%016x is not valid: no rig or bone, an offset with scale or not finite, or a weight, hertz, damping or torque out of range; fix them",u64(bone.rig))
     case .Missing_Body:

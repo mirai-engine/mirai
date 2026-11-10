@@ -20,7 +20,9 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   `import wire "mirai:net"`. It stays in the engine: editor collaboration uses it.
 - Game networking is the `multiplayer` plugin (`plugins/multiplayer/runtime`). It does not know
   physics: the two share [`core` tables](references/multiplayer.md#what-another-library-simulates).
-  Fractures are replicated by the automatic `destruct_multiplayer` bridge. The player does not know
+  What a library changes by operations goes as an
+  [operation journal](references/multiplayer.md#operation-journal): fractures
+  (`destruct_multiplayer`) and terrain edits (`terrain_multiplayer`). The player does not know
   the network: the plugin takes its own arguments from `host.Launch`.
 - A granted port mapping is only a candidate endpoint; the application handshake confirms the
   real reach.
@@ -53,6 +55,8 @@ neither the data world nor physics. A replicated object is an opaque game id plu
   do → [problems](references/multiplayer.md#problems)
 - Lag compensation (`Rewind`, `rewind_tick`, `rewind_pose`, `rewind_tolerance`) and the absolute
   look in the input → [lag compensation](references/multiplayer.md#lag-compensation)
+- Networking a library's operations (numbering, order, predictions, parts, what a correction
+  replays) → [operation journal](references/multiplayer.md#operation-journal)
 - Replicated bodies, `core.Pose_Target` and `core.Motion` →
   [what another library simulates](references/multiplayer.md#what-another-library-simulates)
 - Role of this end, replicated seats, player identity and owners per seat →
@@ -111,6 +115,7 @@ In `plugins/multiplayer/runtime`:
   component records.
 - `rewind.odin`: lag compensation; the server remembers the poses of what has `Rewind` and gives
   the tick each client saw (`rewind_tick`, `rewind_pose`).
+- `journal.odin`: the replicated operation journal (`Journal`, `Net_Journal_*`).
 
 `plugins/destruct_multiplayer/runtime/fracture.odin` replicates fractures and
 `plugins/terrain_multiplayer/runtime/terrain_multiplayer.odin`, terrain edits.
@@ -163,8 +168,8 @@ In `plugins/multiplayer/runtime`:
   `testing.expect` and `return`.
 - **A correction restores the world: everything the network writes into it must be repeatable.**
   What comes back is the copy of the `World` that the client stores at every tick; state outside it
-  (`host` storages, one per world: the session, `Destruct_Net`) does not come back, and keeps what
-  it needs to reapply (the destruction journal with its `sequence`, the last received state).
+  (`host` storages, one per world: the session, the `Journal` of a library) does not come back, and
+  keeps what it needs to reapply (each entry of a journal with the tick it was first applied at).
 - **The network does not call the library that simulates nor write its state.** It writes
   `core.Pose_Target`, `core.Remote`, `core.Network`, the `core.Disabled` of replicas
   ([switched off](references/multiplayer.md#what-the-game-declares)) and the replicated
@@ -188,7 +193,7 @@ In `plugins/multiplayer/runtime`:
   until it says it is in it.
 - **What the game sends belongs to a world.** A held connection hears only `Held` events, and each
   end discards game messages from another world that is not its own; what a library keeps outside
-  the `World` (`Destruct_Net`) is forgotten on scene change.
+  the `World` (its `Journal`) is forgotten on scene change.
 - **A player is the hash of their secret.** The server never takes as a player something the
   client presents as is nor derives it from a name; a connection presents only one.
 - **The network does not write `core.Clock`:** a client requests the server's pause and scale

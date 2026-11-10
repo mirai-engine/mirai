@@ -909,14 +909,22 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     if r==nil {return nil}
     if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,history.edits_error_text(s.edits.error));return nil}
     if !recovery_protect(s) {return nil}
+    world:=document_copy(s)
+    if world==nil {return nil}
+    s.run_serial+=1
+    r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
+    return r
+}
+
+// A World that copies the edited one, which Play and Simulate run: nil without memory.
+@(private)
+document_copy :: proc(s:^Session) -> rawptr {
     world:=host.app_world_create(s.app)
     if world==nil {return nil}
     // Physics takes the edits since the last frame as its own, or the copy reads them as written by another.
     simulation_settle(s,edited_world(s))
     if !core.world_copy(s.info,world,s.edit_world) {host.app_world_free(s.app,world);return nil}
-    s.run_serial+=1
-    r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
-    return r
+    return world
 }
 
 // Ends the run of the user and returns to Edit. A turn that began inside it

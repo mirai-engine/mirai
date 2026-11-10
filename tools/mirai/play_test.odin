@@ -8,7 +8,7 @@ import "core:strings"
 import "mirai:editor/api"
 import "mirai:project"
 
-PLAY_TEST_USAGE :: "play test [project] [scenario...] [--dev|--release]"
+PLAY_TEST_USAGE :: "play test [project] [scenario...] [--release]"
 
 // The folder and extension of the scenarios of a project, as the editor reads
 // them (editor/api_play_scenario.odin).
@@ -22,9 +22,7 @@ PLAY_SCENARIO_EXTENSION :: ".mirai"
 // per scenario and, for one that fails, the step and what its method
 // answered. Exit 0 when all pass, 1 when one fails, 2 when they cannot run.
 cmd_play_test :: proc(root:string,args:[]string) -> int {
-    mode,rest,ok:=build_mode_take(args)
-    usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",PLAY_TEST_USAGE);return 2}
-    if !ok {return usage()}
+    mode,rest:=build_mode_take(args)
     folder:="."
     names:=make([dynamic]string,context.temp_allocator)
     for arg,i in rest {

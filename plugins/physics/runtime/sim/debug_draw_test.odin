@@ -12,8 +12,7 @@ debug_draw_writes_shapes_contacts_and_joints_to_the_buffers_given :: proc(t:^tes
     ball:=test_body(&w,Sphere{0.5},{3,2,0})
     test_body(&w,Capsule{0.25,0.5},{-3,2,0})
     far:=test_body(&w,Sphere{0.5},{40,2,40},.Static)
-    fa,fb:=joint_frames(&w,box,ball,{1.5,1,0},{0,0,1})
-    joint_create(&w,{type=.Spherical,body_a=box,body_b=ball,frame_a=fa,frame_b=fb})
+    joint_create(&w,test_joint(&w,.Spherical,box,ball,{1.5,1,0},{0,0,1}))
     for _ in 0..<10 {world_step(&w,1.0/60)}
     lines:=make([]Debug_Line,1024)
     points:=make([]Debug_Point,64)

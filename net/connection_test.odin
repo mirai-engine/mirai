@@ -7,7 +7,7 @@ import "mirai:std/serial"
 import "mirai:std/base"
 
 @(private="file")
-CHANNELS :: []Channel_Desc{{kind=.Reliable,max_message_bytes=20000,queue_bytes=64<<10},{kind=.Unreliable},{kind=.Sequenced}}
+CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=64<<10},{kind=.Unreliable},{kind=.Sequenced}}
 
 @(test)
 client_connects_through_the_challenge_and_both_ends_report_it :: proc(t:^testing.T) {
@@ -363,7 +363,7 @@ unreliable_messages_arrive_at_most_once_and_sequenced_ones_keep_only_the_latest 
 @(test)
 a_full_reliable_queue_refuses_messages_instead_of_closing_the_connection :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=256<<10,max_message_bytes=16<<10}}
+    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=256<<10}}
     server:=test_host(&w,{mode=.Server,channels=channels})
     client:=test_host(&w,{mode=.Client,channels=channels})
     on_server,_:=test_connect(&w,server,client)
@@ -402,10 +402,54 @@ a_full_reliable_queue_refuses_messages_instead_of_closing_the_connection :: proc
     testing.expect_value(t,stats.messages_dropped,0)
 }
 
+// A reliable message larger than its queue streams in as the window drains
+// it, under loss, and arrives whole and in order in pieces; the channel takes
+// no other message until it is in.
+@(test)
+a_reliable_message_larger_than_its_queue_streams_and_arrives_in_pieces :: proc(t:^testing.T) {
+    w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
+    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=8<<10}}
+    server:=test_host(&w,{mode=.Server,channels=channels})
+    client:=test_host(&w,{mode=.Client,channels=channels})
+    on_server,_:=test_connect(&w,server,client)
+    sim_endpoint_conditions(&w.sim,1,{loss=0.2})
+    blob:=make([]u8,300000);defer delete(blob)
+    for &b,i in blob {b=u8(i*7+i/251)}
+    tail:=[3]u8{9,8,7}
+    sent,got,pieces:=0,0,0
+    whole,after:=false,false
+    for step in 0..<6000 {
+        if sent<len(blob) {
+            message_send(server,on_server,0,blob,&sent)
+            if sent<len(blob) {testing.expect_value(t,message_send(server,on_server,0,tail[:]),Error.Full)}
+        } else if !after {
+            after=message_send(server,on_server,0,tail[:])==.None
+        }
+        test_step(&w)
+        host_poll(server)
+        for command in host_poll(client) {
+            if command.kind!=.Message {testing.expect(t,false,"the client keeps the connection");return}
+            if whole {
+                testing.expect(t,string(command.data)==string(tail[:]),"the next message follows the streamed one")
+                return
+            }
+            pieces+=1
+            testing.expect(t,len(command.data)<=PIECE_BYTES)
+            for b,k in command.data {
+                if b!=blob[got+k] {testing.expect(t,false,"the pieces are the message, in order");return}
+            }
+            got+=len(command.data)
+            whole=!command.more
+        }
+        _=step
+    }
+    testing.expect(t,false,"the message and the one after it arrive")
+}
+
 @(test)
 send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,2);defer test_world_destroy(&w)
-    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20,max_message_bytes=1<<19}}
+    channels:=[]Channel_Desc{{kind=.Reliable,queue_bytes=1<<20}}
     server:=test_host(&w,{mode=.Server,channels=channels,command_bytes=4<<20})
     client:=test_host(&w,{mode=.Client,channels=channels,send_rate=20000,command_bytes=4<<20,frame_bytes=1<<20})
     _,on_client:=test_connect(&w,server,client)
@@ -416,12 +460,16 @@ send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
     host_poll(client);host_poll(server)
     before,_:=connection_stats(client,on_client)
     arrived:=false
-    steps:=0
+    steps,got:=0,0
     for !arrived && steps<1200 {
         test_step(&w)
         steps+=1
         host_poll(client)
-        for command in host_poll(server) {arrived=command.kind==.Message && len(command.data)==len(blob) && command.data[777]==u8(777&0xff)}
+        for command in host_poll(server) {
+            if command.kind!=.Message {continue}
+            got+=len(command.data)
+            arrived=!command.more && got==len(blob)
+        }
     }
     testing.expect(t,arrived)
     after,_:=connection_stats(client,on_client)

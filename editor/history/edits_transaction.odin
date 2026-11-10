@@ -34,7 +34,7 @@ edits_world_fingerprint :: proc(edits:^Edits,w:core.World_Ref) -> u64 {
     for &table,index in w.info.tables {
         if index>=len(edits.saved) || !edits.saved[index] {continue}
         current:=core.world_table_at(w,&table)
-        key=base.hash_u64(key~current.version~base.hash_u64(current.layout)~u64(index)~base.hash_u64(u64(len(current.pending)))~u64(uintptr(table.info)))
+        key=base.hash_u64(key~current.version~u64(index)~base.hash_u64(u64(len(current.pending)))~u64(uintptr(table.info)))
         image:=&edits.image[index]
         key=base.hash_u64(key~image.seen.version~base.hash_u64(image.seen.gone)~base.hash_u64(u64(len(image.entities))))
     }
@@ -309,7 +309,7 @@ edits_cancel_reserved :: proc(edits:^Edits,w:core.World_Ref) -> bool {
                 }
                 if r.image_row<0 {core.raw_remove(current,r.entity);continue}
                 value:=journal_value(image,size,r.image_row)
-                if !saved_equal(table_value(current,size,r.row),value,size,ranges) {saved_copy(core.raw_edit(current,info.info,r.entity),value,size,ranges)}
+                if !saved_equal(table_value(current,size,r.row),value,size,ranges) {saved_copy(core.raw_author(current,info.info,r.entity),value,size,ranges)}
                 if image.off[r.image_row]!=current.off[r.row] {
                     if image.off[r.image_row] {core.raw_disable(current,r.entity)} else {core.raw_enable(current,r.entity)}
                 }

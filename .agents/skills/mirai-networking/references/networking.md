@@ -146,11 +146,14 @@ command. `budget` limits the bytes of a channel per update.
 
 - `Unreliable` is sent once; `Sequenced` too, and a message that is still waiting is replaced by
   the next one.
-- `Reliable` is resent until its ack, delivered in order and cut into chunks with a window: a
-  message can exceed the datagram. `message_send` returns `Full` and sends nothing if the message
-  does not fit in the queue of some destination connection (it knows from
-  `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the sender
-  retries after `host_poll`.
+- `Reliable` is resent until its ack, delivered in order and cut into chunks as the window draws
+  them from the queue: the one fragmentation of the transport. `message_send` returns `Full` and
+  sends nothing if the message does not fit in the queue of some destination connection (it knows
+  from `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the
+  sender retries after `host_poll`. With `sent`, a message to one connection streams: each call
+  queues what has room, and the channel takes nothing else until it is in, so a message has no
+  size limit. A message longer than `PIECE_BYTES` arrives in pieces (`Command.more`), which the
+  receiver joins; the library's own reliable channel takes only whole messages.
 - The library channels count their queue the same way: `event_send` of a `Reliable` event and the
   authority requests return `Full` and send nothing if they do not fit in the queue of some
   connection they may go to, and the sender retries. The connection is not closed;

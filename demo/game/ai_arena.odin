@@ -9,6 +9,7 @@ import "mirai:std/ai"
 import mm "mirai:std/math"
 import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // AI arenas: an entity with an AI_Arena builds, when its world runs, a place
@@ -41,7 +42,6 @@ AI_Arena :: struct {
     kind:Arena_Kind,
     agents:i32 `mirai:"min=1,max=2000"`, // zombies, drones, patrollers or listeners, or soldiers of each squad
     place:bool, // it builds its place too; false when the scene holds it
-    built:bool `mirai:"transient"`,
 }
 AI_ARENA_DEFAULT :: AI_Arena{agents=60,place=true}
 
@@ -77,9 +77,12 @@ Horde_Waves :: struct {
     wave:core.Record(Horde_Wave) `mirai:"transient,readonly"`, // the one sending; none: over
     sent:i32 `mirai:"transient,readonly"`,                     // of that wave
     total:i32 `mirai:"transient,readonly"`,                    // of every wave
-    wait:f32 `mirai:"transient,hidden"`,                       // s to the next zombie
     rng:mm.Rng `mirai:"transient,hidden"`,
 }
+
+// The hordes that wait for their next zombie, each pushed for the tick it is due at.
+@(storage,queue)
+Horde_Sends :: struct {queue:core.Queue(core.Entity)}
 
 @(component,description="A zombie of an arena: it wanders, chases what it sees and bites what it reaches.")
 Zombie :: struct {
@@ -195,7 +198,7 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act),w:Arena) {
 
 // Walks somewhere near for a second or so, then stands a second and a half.
 @(act="Wander")
-zombie_wander :: proc(a:^ai.Act(Zombie_Act),w:Arena,flights:core.Read(phys.Fly),state:^Arena_State) -> ai.Status {
+zombie_wander :: proc(a:^ai.Act(Zombie_Act),w:Arena,flights:core.Read(locomotion.Fly),state:^Arena_State) -> ai.Status {
     if ai.stage(a)==0 {
         if a.phase==.Enter {
             e:=behavior.agent(a)
@@ -555,16 +558,16 @@ guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:core.Read(nav.Nav_Link),p
 }
 
 // Builds the arenas that have not been built, once the world runs: their
-// place, unless the scene holds it, and their agents.
+// place, unless the scene holds it, and their agents. An arena is built when
+// its row is no longer new (core.added): the build writes it.
 @(step="fixed",stage="apply",server)
 arena_build :: proc(
     commands:core.Commands,arenas:^core.Table(AI_Arena),worlds:core.Read(core.World_Transform),time:core.Time,
 ) {
     if !time.playing {return}
     for row in 0..<core.count(arenas) {
+        if !core.added(arenas,row) {continue}
         a:=core.edit_at(arenas,row)
-        if a.built {continue}
-        a.built=true
         e:=core.entity_at(arenas,row)
         origin:mm.Vec3
         if pose,ok:=core.get(worlds,e);ok {origin=pose.position}
@@ -749,7 +752,7 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
     core.commands_add_default(c,e,phys.Character)
     core.commands_add(c,e,phys.collider_character())
-    walk:=core.default(c,phys.Walk)
+    walk:=core.default(c,locomotion.Walk)
     walk.max_speed=speed
     core.commands_add(c,e,walk)
     core.commands_add_default(c,e,nav.Nav_Agent)
@@ -769,33 +772,34 @@ arena_target :: proc(c:core.Commands,position:mm.Vec3,team:behavior.Team) -> cor
     return e
 }
 
-// Sends the waves of the horde arenas that have them, once the arena is built.
+// Sends the waves of the horde arenas that have them, once the arena is
+// built: a horde waits for its next zombie as a request due at its tick.
 @(step="fixed",stage="apply",server)
 horde_waves :: proc(
-    commands:core.Commands,hordes:^core.Table(Horde_Waves),arenas:core.Read(AI_Arena),worlds:core.Read(core.World_Transform),
+    commands:core.Commands,hordes:^core.Table(Horde_Waves),sends:^Horde_Sends,arenas:core.Read(AI_Arena),worlds:core.Read(core.World_Transform),
     waves:core.Records(Horde_Wave),kinds:core.Records(Zombie_Kind),time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
         e:=core.entity_at(hordes,row)
-        arena,built:=core.get(arenas,e)
-        if !built || !arena.built || arena.kind!=.Horde {continue}
-        first:=core.added(hordes,row)
+        at:=core.row_of(arenas,e)
+        if !core.added(hordes,row) || at<0 || core.added(arenas,at) || core.at(arenas,at).kind!=.Horde {continue}
         h:=core.edit_at(hordes,row)
-        if first {
-            h.rng=mm.rng_make(h.seed,7)
-            h.wave=h.first
-            first,_:=core.record(waves,h.wave,problems,e)
-            h.wait=first.delay
-        }
+        h.rng=mm.rng_make(h.seed,7)
+        h.wave=h.first
+        first,_:=core.record(waves,h.wave,problems,e)
+        core.later(&sends.queue,time,first.delay,e)
+    }
+    for e in core.take_due(&sends.queue,time) {
+        h:=core.edit(hordes,e)
+        if h==nil {continue}
         origin:mm.Vec3
         if pose,ok:=core.get(worlds,e);ok {origin=pose.position}
-        left:=f32(time.dt)
-        // A chain of waves that send nothing and wait nothing would never end the tick.
+        // A chain of waves that send nothing and wait nothing goes on in the next tick.
+        wait:f32 // s to the next zombie; below 0: the waves are over
         for _ in 0..<HORDE_SENDS {
+            wait=-1
             if h.wave=={} || h.total>=HORDE_MOST {break}
-            if left<h.wait {h.wait-=left;break}
-            left-=h.wait
             wave,found:=core.record(waves,h.wave,problems,e)
             if !found {h.wave={};break}
             if h.sent<wave.count {
@@ -806,13 +810,15 @@ horde_waves :: proc(
                 h.total+=1
             }
             if h.sent<wave.count {
-                h.wait=wave.interval
-                continue
+                wait=wave.interval
+            } else {
+                h.wave,h.sent=wave.next,0
+                next,_:=core.record(waves,h.wave,problems,e)
+                wait=next.delay
             }
-            h.wave,h.sent=wave.next,0
-            next,_:=core.record(waves,h.wave,problems,e)
-            h.wait=next.delay
+            if wait>0 {break}
         }
+        if wait>=0 {core.later(&sends.queue,time,wait,e)}
     }
 }
 
@@ -935,12 +941,9 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     e:=core.commands_create(c)
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
-    character:=core.default(c,phys.Character)
-    character.mode=phys.MODE_FLYING
-    core.commands_add(c,e,character)
+    core.commands_add_default(c,e,phys.Character)
     core.commands_add(c,e,phys.collider_character(0.25,0.8))
-    core.commands_add_default(c,e,phys.Walk)
-    core.commands_add(c,e,phys.Fly{speed=5,acceleration=20})
+    core.commands_add(c,e,locomotion.Fly{speed=5,acceleration=20})
     core.commands_add_default(c,e,nav.Nav_Agent)
     look:=core.commands_create(c)
     core.commands_add(c,look,core.Transform{{0,0.4,0},1,{0.5,0.4,0.5}})
