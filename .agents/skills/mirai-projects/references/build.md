@@ -11,10 +11,13 @@ compiles against: [engine binaries](projects.md#engine-binaries). Which folders 
 errors of the attributes.
 
 - `Editor`: exports `mirai_project_info` over `gen/editor_world` (world of the editor, the game,
-  the `editor/` of the project and the active plugins). A library (`-build-mode:dll`,
-  `-use-separate-modules`) against the engine `decl/` and the declarations of the
-  [plugin libraries](projects.md#plugin-libraries), which the job compiles first if they are
-  stale; with the optimization and the `-debug` of the manifest; output `.mirai/editor<ext>`.
+  the `editor/` of the project and the active plugins). A library (`-build-mode:dll`) against the
+  engine `decl/` and the declarations of the [plugin libraries](projects.md#plugin-libraries),
+  which the job compiles first if they are stale; with the optimization and the `-debug` of the
+  manifest; output `.mirai/editor<ext>`. Optimized (`Size`, `Speed`, `Aggressive`) it is a single
+  LLVM module, as the shipped game compiles it, because a `#force_inline` procedure of another
+  package is not inlined across modules; with `--dev` (`minimal`) or `None`, one module per
+  package (`library_optimization_append`).
 - `Play`: the same over `gen/game_world` (game and runtime of the plugins), with the runtime
   libraries of the plugins; output `.mirai/play<ext>`.
 - `Game`: a `main` that calls `host.player_run` over `gen/shipped_world`, the world without the
