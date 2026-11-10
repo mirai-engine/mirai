@@ -389,7 +389,7 @@ game_glow :: proc(
 // destruct leaves alone what is not one.
 @(step="fixed",stage="react")
 game_projectiles :: proc(
-    es:^core.Entities,projectiles:^core.Table(Projectile),transforms:core.Read(core.Transform),body_states:core.Read(core.Motion),
+    es:core.Commands,projectiles:^core.Table(Projectile),transforms:core.Read(core.Transform),body_states:core.Read(core.Motion),
     events:core.Ref(phys.Physics_Events),bodies:^phys.Body_Requests,
     damage:^destruct.Destruct_Requests,time:core.Time,
 ) {

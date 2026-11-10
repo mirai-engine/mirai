@@ -85,7 +85,7 @@ entities_clear :: proc(es:^Entities) -> bool {
     return true
 }
 
-create :: proc(es:^Entities) -> Entity {
+entity_create :: proc(es:^Entities) -> Entity {
     index:int
     if len(es.free)>0 {
         index=int(pop(&es.free))
@@ -98,7 +98,7 @@ create :: proc(es:^Entities) -> Entity {
 }
 
 // The handle stops being alive at once; its rows go with the next settle.
-destroy :: proc(es:^Entities,e:Entity) -> bool {
+entity_destroy :: proc(es:^Entities,e:Entity) -> bool {
     if !alive(es,e) {return false}
     i:=entity_index(e)
     es.generation[i]+=1

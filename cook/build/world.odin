@@ -95,7 +95,7 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities,Entities_Read,Commands,World_Ref,App,App_Part,Records}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Entities_Read,Commands,World_Ref,App,App_Part,Records}
 
 // What host.App holds that a step receives by itself, bound by the type that
 // names it: the call hands out what the application owns.
@@ -120,7 +120,7 @@ APP_PARTS :: [?]App_Part{
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, ^core.Entities, core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator) or ^host.App"
 
 @(private="file")
 Param :: struct {
@@ -1186,7 +1186,6 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
     }
     key:=type_key(g,file,pkg,e)
     switch key {
-    case "mirai:core.Entities": return {kind=.Entities,type=nil},pointer
     case "mirai:core.Commands": return {kind=.Commands,type=nil},!pointer
     case "mirai:core.World_Ref": return {kind=.World_Ref,type=nil},!pointer
     case "mirai:host.App": return {kind=.App,type=nil},pointer
@@ -1294,7 +1293,7 @@ rules_check :: proc(g:^Generator) {
         for a,i in s.params {
             for b in s.params[i+1:] {
                 if a.bundle==nil && b.bundle==nil || !same_datum(a,b) || !writes(a) && !writes(b) {continue}
-                what:=a.type!=nil?a.type.name:"Entities"
+                what:=a.type.name
                 fix:="receive the two @(params) in different steps, or declare one without that field"
                 if a.bundle==b.bundle && a.arg==b.arg {fix=fmt.tprintf("take %s or %s out of %s",a.name,b.name,a.bundle.name)}
                 else if a.bundle==b.bundle {fix=fmt.tprintf("receive %s once",a.bundle.name)}
@@ -1353,10 +1352,8 @@ rules_check :: proc(g:^Generator) {
                     if param.type.replication!=.None {
                         append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and writes %s, which is replicated: a dedicated server runs neither and would send what the scene says; write it in input, fixed, frame or late",s.where_,s.name,param.type.name))
                     }
-                case .Entities:
-                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and receives ^core.Entities, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities), which also leaves the tables unsettled after it",s.where_,s.name))
                 case .Commands:
-                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and creates or destroys entities, which a dedicated server would not: create them in input, fixed, frame or late",s.where_,s.name))
+                    append(&g.errors,fmt.aprintf("%s: %s runs only in ui or render and receives core.Commands, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities), which also leaves the tables unsettled after it",s.where_,s.name))
                 }
             }
             if param.type==nil || !writes(param) {continue}
@@ -1466,16 +1463,12 @@ names_split :: proc(names:^[dynamic]string,text:string) {
 }
 
 @(private="file")
-same_datum :: proc(a,b:Param) -> bool {
-    if a.type!=nil || b.type!=nil {return a.type==b.type}
-    entities :: proc(p:Param) -> bool {return p.kind==.Entities || p.kind==.Entities_Read}
-    return entities(a) && entities(b)
-}
+same_datum :: proc(a,b:Param) -> bool {return a.type!=nil && a.type==b.type}
 
 // A queue is pushed by many: pushing to it is not writing it.
 @(private="file")
 writes :: proc(p:Param) -> bool {
-    return p.kind==.Table_Write || p.kind==.Entities || p.kind==.Storage_Write && !p.type.queue
+    return p.kind==.Table_Write || p.kind==.Storage_Write && !p.type.queue
 }
 
 @(private="file")
@@ -1684,7 +1677,7 @@ order_visit :: proc(o:^Ordering,s:^Step) -> bool {
 step_whole :: proc(g:^Generator,s:^Step) -> bool {
     disabled,parent:=g.by_key["mirai:core.Disabled"],g.by_key["mirai:core.Parent"]
     for param in s.params {
-        if param.kind==.Entities || param.kind==.Commands || param.kind==.World_Ref {return true}
+        if param.kind==.Commands || param.kind==.World_Ref {return true}
         if param.kind==.Table_Write && (param.type==disabled || param.type==parent) {return true}
     }
     return false
@@ -1797,7 +1790,6 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             case .Storage_Ref:
                 if param.type.by_world {fmt.sbprintf(&args,"%s.ref(%s.by_world_get(&%s.%s,w.%s))",core_alias,core_alias,holder,param.type.field,world_id.field)} else {fmt.sbprintf(&args,"%s.ref(&%s.%s)",core_alias,holder,param.type.field)}
             case .Storage_Value: fmt.sbprintf(&args,"%s.%s",holder,param.type.field)
-            case .Entities: fmt.sbprint(&args,"&w.entities")
             case .Entities_Read: fmt.sbprintf(&args,"%s.ref(&w.entities)",core_alias)
             case .Commands: fmt.sbprintf(&args,"%s.commands(w,app.info)",core_alias)
             case .World_Ref: fmt.sbprintf(&args,"%s.world_ref(w,app.info)",core_alias)
