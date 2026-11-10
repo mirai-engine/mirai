@@ -1321,20 +1321,41 @@ rules_check :: proc(g:^Generator) {
             append(&g.errors,fmt.aprintf("%s: %s runs in fixed and reads %s, which only %s fills, and which is emptied every frame: a frame runs any number of ticks, so a tick would see it twice or never; read it in a frame step",s.where_,s.name,param.type.name,writer.name))
         }
     }
-    // A cycle of after and before is reported once, also when its steps share several phases.
+    // A cycle is reported once, also when its steps share several phases.
     reported:=make(map[string]bool,context.temp_allocator)
     phases:=PHASES
     for loop in 0..<2 {
         for phase in 0..<len(PHASES) {
-            _,cycle:=phase_order(g,loop,phase)
-            if len(cycle)==0 {continue}
-            path:=strings.builder_make(context.temp_allocator)
-            for s in cycle {fmt.sbprintf(&path,"%s -> ",s.name)}
-            strings.write_string(&path,cycle[0].name)
-            text:=strings.to_string(path)
+            o:=phase_order(g,loop,phase)
+            if len(o.cycle)==0 {continue}
+            // Each step of the cycle waits for the next one, and the last for the first.
+            links:=strings.builder_make(context.temp_allocator)
+            fix:=""
+            fix_kind:=Wait_Kind.Named
+            for s,i in o.cycle {
+                first:=o.cycle[(i+1)%len(o.cycle)]
+                wait:Wait
+                for known in o.waits[s] {
+                    if known.first==first {wait=known}
+                }
+                if i>0 {strings.write_string(&links,"; ")}
+                switch wait.kind {
+                case .Named:
+                    fmt.sbprintf(&links,"%s runs after %s by after or before",s.name,first.name)
+                case .Request:
+                    fmt.sbprintf(&links,"%s runs after %s, which pushes to %s, a queue %s takes",s.name,first.name,wait.datum.name,s.name)
+                    if fix_kind==.Named {fix_kind=.Request;fix=fmt.tprintf("write after=\"%s\" on %s, or before=\"%s\" on %s, and what %s pushes to %s waits for the next tick",s.name,first.name,first.name,s.name,first.name,wait.datum.name)}
+                case .Data:
+                    fmt.sbprintf(&links,"%s runs after %s, which writes %s, which %s reads",s.name,first.name,wait.datum.name,s.name)
+                    if fix_kind!=.Data {fix_kind=.Data;fix=fmt.tprintf("write before=\"%s\" on %s, or after=\"%s\" on %s, and %s reads %s as the last tick left it",first.name,s.name,s.name,first.name,s.name,wait.datum.name)}
+                }
+            }
+            text:=strings.to_string(links)
             if reported[text] {continue}
             reported[text]=true
-            append(&g.errors,fmt.aprintf("%s: the steps %s of %s in the %s loop wait for each other through after and before: take one of those names out",cycle[0].where_,text,phases[phase],loops[loop]))
+            if fix_kind==.Named {fix="take one of those names out of after or before"}
+            else {fix=fmt.tprintf("a name wins over what the data says, so one name settles it: %s; or name another pair of the cycle",fix)}
+            append(&g.errors,fmt.aprintf("%s: steps of the stage %s of %s in the %s loop wait for each other: %s. %s",o.cycle[0].where_,stages[o.cycle[0].stage],phases[phase],loops[loop],text,fix))
         }
     }
 }
@@ -1392,13 +1413,46 @@ param_text :: proc(p:Param) -> string {
     return fmt.tprintf("its parameter %s",p.name)
 }
 
-// The steps of a loop and phase in the order they run: stage by stage, and
-// inside a stage in the order of the libraries, where a step runs first the
-// ones it waits for (its after, and the before that name it), in that same
-// order. cycle has the steps that wait for each other, if some do.
+// Why a step runs after another of its stage, strongest first: one names the
+// other (after, before); it takes the requests the other pushes; it reads
+// what the other writes.
 @(private="file")
-phase_order :: proc(g:^Generator,loop,phase:int) -> (ordered,cycle:[]^Step) {
-    o:Ordering
+Wait_Kind :: enum u8 {Named,Request,Data}
+
+@(private="file")
+Wait :: struct {
+    first:^Step,
+    kind:Wait_Kind,
+    datum:^Type, // Request and Data: the queue, the table or the storage
+}
+
+@(private="file")
+Ordering :: struct {
+    chosen,ordered,path:[dynamic]^Step,
+    waits:map[^Step][dynamic]Wait, // what each step runs after, in its stage
+    direct:map[^Step][dynamic]Wait, // of those, the ones no other of its waits brings
+    state:map[^Step]u8,            // 1 while its waits are visited, 2 once visited, 3 once ordered
+    cycle:[]^Step,                 // steps that wait for each other, each for the next and the last for the first
+}
+
+// The steps of a stage that reach a datum no library shares.
+@(private="file")
+Datum_Use :: struct {
+    type:^Type,
+    writers,readers:[dynamic]^Step, // a queue: writers are the ones that take it and the ones that push to it
+}
+
+// The steps of a loop and phase in the order they run: stage by stage, and
+// inside a stage in the order of the libraries, where what a step waits for
+// runs before it. A step waits for the ones it names (its after, and the
+// before that name it), for the ones that push to a queue of its library that
+// it receives, and for the ones that write a table or a storage it reads. A
+// wait the stronger ones answer the other way round is not one: a step that
+// names the writer of what it reads to run before it, or pushes a request to
+// it, reads what the last tick left. Steps that still wait for each other are
+// a cycle, which only a name settles.
+@(private="file")
+phase_order :: proc(g:^Generator,loop,phase:int) -> (o:Ordering) {
     o.chosen=make([dynamic]^Step,context.temp_allocator)
     for s in g.steps {
         if s.loops[loop] && s.phases[phase] {append(&o.chosen,s)}
@@ -1407,64 +1461,148 @@ phase_order :: proc(g:^Generator,loop,phase:int) -> (ordered,cycle:[]^Step) {
         if a.stage!=b.stage {return a.stage<b.stage}
         return a.rank<b.rank
     })
-    o.waits=make(map[^Step][dynamic]^Step,context.temp_allocator)
+    o.waits=make(map[^Step][dynamic]Wait,context.temp_allocator)
+    o.direct=make(map[^Step][dynamic]Wait,context.temp_allocator)
     o.state=make(map[^Step]u8,context.temp_allocator)
     o.ordered=make([dynamic]^Step,context.temp_allocator)
     o.path=make([dynamic]^Step,context.temp_allocator)
     for s in o.chosen {
         for name in s.after {
             for other in o.chosen {
-                if other.name==name && other.stage==s.stage {wait_add(&o,s,other)}
+                if other.name==name && other.stage==s.stage {wait_add(&o,s,{other,.Named,nil})}
             }
         }
         for name in s.before {
             for other in o.chosen {
-                if other.name==name && other.stage==s.stage {wait_add(&o,other,s)}
+                if other.name==name && other.stage==s.stage {wait_add(&o,other,{s,.Named,nil})}
             }
         }
     }
-    for _,waited in o.waits {
-        slice.sort_by(waited[:],proc(a,b:^Step) -> bool {return a.rank<b.rank})
+    for from:=0;from<len(o.chosen); {
+        to:=from
+        for to<len(o.chosen) && o.chosen[to].stage==o.chosen[from].stage {to+=1}
+        stage_waits(&o,o.chosen[from:to])
+        from=to
     }
     for s in o.chosen {
-        if !order_visit(&o,s) {return o.ordered[:],o.cycle}
+        if !order_visit(&o,s) {return}
     }
-    return o.ordered[:],nil
+    // A wait another wait of the step already brings orders nothing by itself:
+    // without them the order is the same however many waits say the same.
+    for s in o.chosen {
+        waited:=o.waits[s]
+        direct:=make([dynamic]Wait,context.temp_allocator)
+        for wait,i in waited {
+            brought:=false
+            for other,k in waited {
+                if k!=i && waits_for(&o,other.first,wait.first) {brought=true}
+            }
+            if !brought {append(&direct,wait)}
+        }
+        slice.sort_by(direct[:],proc(a,b:Wait) -> bool {return a.first.rank<b.first.rank})
+        o.direct[s]=direct
+    }
+    for s in o.chosen {order_run(&o,s)}
+    return
+}
+
+// What a step waits for runs right before it, in the order of the libraries.
+@(private="file")
+order_run :: proc(o:^Ordering,s:^Step) {
+    if o.state[s]==3 {return}
+    o.state[s]=3
+    for wait in o.direct[s] {order_run(o,wait.first)}
+    append(&o.ordered,s)
+}
+
+// The waits the data of a stage gives: the requests, then what is read.
+@(private="file")
+stage_waits :: proc(o:^Ordering,stage:[]^Step) {
+    uses:=make([dynamic]Datum_Use,context.temp_allocator)
+    index:=make(map[^Type]int,context.temp_allocator)
+    for s in stage {
+        for p in s.params {
+            if p.type==nil || p.type.shared {continue}
+            at,known:=index[p.type]
+            if !known {
+                at=len(uses)
+                index[p.type]=at
+                append(&uses,Datum_Use{p.type,make([dynamic]^Step,context.temp_allocator),make([dynamic]^Step,context.temp_allocator)})
+            }
+            list:=p.kind==.Table_Write || p.kind==.Storage_Write?&uses[at].writers:&uses[at].readers
+            if !slice.contains(list[:],s) {append(list,s)}
+        }
+    }
+    found:=make([dynamic]struct{step:^Step,wait:Wait},context.temp_allocator)
+    for use in uses {
+        if !use.type.queue {continue}
+        for taker in use.writers {
+            if taker.pkg!=use.type.pkg {continue}
+            for pusher in use.writers {
+                if pusher.pkg!=use.type.pkg && !waits_for(o,pusher,taker) {append(&found,struct{step:^Step,wait:Wait}{taker,{pusher,.Request,use.type}})}
+            }
+        }
+    }
+    for f in found {wait_add(o,f.step,f.wait)}
+    clear(&found)
+    for use in uses {
+        if use.type.queue {continue}
+        for reader in use.readers {
+            if slice.contains(use.writers[:],reader) {continue}
+            for writer in use.writers {
+                if !waits_for(o,writer,reader) {append(&found,struct{step:^Step,wait:Wait}{reader,{writer,.Data,use.type}})}
+            }
+        }
+    }
+    for f in found {wait_add(o,f.step,f.wait)}
 }
 
 @(private="file")
-Ordering :: struct {
-    chosen,ordered,path:[dynamic]^Step,
-    waits:map[^Step][dynamic]^Step, // what each step runs after, in its stage
-    state:map[^Step]u8,             // 1 while its waits are visited, 2 once ordered
-    cycle:[]^Step,
-}
-
-@(private="file")
-wait_add :: proc(o:^Ordering,s,first:^Step) {
+wait_add :: proc(o:^Ordering,s:^Step,wait:Wait) {
     waited:=o.waits[s]
-    if waited==nil {waited=make([dynamic]^Step,context.temp_allocator)}
-    append(&waited,first)
+    if waited==nil {waited=make([dynamic]Wait,context.temp_allocator)}
+    for known in waited {
+        if known.first==wait.first {return}
+    }
+    append(&waited,wait)
     o.waits[s]=waited
 }
 
+// Whether s runs after first by the waits found so far, directly or through others.
+@(private="file")
+waits_for :: proc(o:^Ordering,s,first:^Step) -> bool {
+    visit :: proc(o:^Ordering,seen:^map[^Step]bool,s,first:^Step) -> bool {
+        if s==first {return true}
+        if seen[s] {return false}
+        seen[s]=true
+        for wait in o.waits[s] {
+            if visit(o,seen,wait.first,first) {return true}
+        }
+        return false
+    }
+    if len(o.waits[s])==0 {return false}
+    seen:=make(map[^Step]bool,context.temp_allocator)
+    defer delete(seen)
+    return visit(o,&seen,s,first)
+}
+
+// Finds a cycle of waits, if there is one.
 @(private="file")
 order_visit :: proc(o:^Ordering,s:^Step) -> bool {
     switch o.state[s] {
     case 2: return true
     case 1:
         at,_:=slice.linear_search(o.path[:],s)
-        o.cycle=o.path[at:]
+        o.cycle=slice.clone(o.path[at:],context.temp_allocator)
         return false
     }
     o.state[s]=1
     append(&o.path,s)
-    for first in o.waits[s] {
-        if !order_visit(o,first) {return false}
+    for wait in o.waits[s] {
+        if !order_visit(o,wait.first) {return false}
     }
     pop(&o.path)
     o.state[s]=2
-    append(&o.ordered,s)
     return true
 }
 
@@ -1648,7 +1786,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     defined:[2][len(PHASES)]bool
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
-            steps,_:=phase_order(g,loop,phase)
+            steps:=phase_order(g,loop,phase).ordered
             if len(steps)==0 {continue}
             defined[loop][phase]=true
             fmt.sbprintf(w,"%s_%s :: proc(world,shared,editor:rawptr,app_data:rawptr) {{\n",loops[loop],phases[phase])

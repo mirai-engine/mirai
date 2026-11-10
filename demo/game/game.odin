@@ -358,7 +358,7 @@ bob_height :: proc(bob:^Bob,y,seconds:f32) -> f32 {
 
 // Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks,
 // the globe of a lamp of the horror house glows while lit.
-@(step="fixed",after="physics_gallery_actions")
+@(step="fixed")
 game_glow :: proc(
     tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:core.Read(Door),buttons:core.Read(Floor_Button),barkers:core.Read(Barker),
     hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),time:core.Time,
@@ -401,7 +401,7 @@ game_glow :: proc(
 // tumbles and bounces on its own, and goes after CUBE_SECONDS. A destructible
 // it strikes takes a blow of its velocity before the strike times PROJECTILE_MASS;
 // destruct leaves alone what is not one.
-@(step="fixed",stage="react",before="destruct_step")
+@(step="fixed",stage="react")
 game_projectiles :: proc(
     es:^core.Entities,projectiles:^core.Table(Projectile),transforms:core.Read(core.Transform),body_states:core.Read(core.Motion),
     events:core.Ref(phys.Physics_Events),bodies:^phys.Body_Requests,

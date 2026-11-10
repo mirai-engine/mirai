@@ -115,7 +115,7 @@ spawn_seat_bodies :: proc(es:^core.Entities,hierarchy:core.Ref(core.Hierarchy),b
 
 // Before driving in the tick (input_drive), which gives the bodies that
 // appear to their seats in the same tick.
-@(step="fixed",stage="input",after="input_seats",before="input_drive")
+@(step="fixed",stage="input",after="input_seats")
 spawn_step :: proc(
     commands:core.Commands,assets:^host.Assets,drivables:core.Read(input.Drivable),bodies:^core.Table(Seat_Body),
     seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,

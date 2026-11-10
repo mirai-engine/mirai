@@ -72,7 +72,7 @@ vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Inpu
     }
 }
 
-@(step="fixed",after="vfx_gallery_actions")
+@(step="fixed")
 vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:core.Read(Vfx_Gallery_View),worlds:core.Read(core.World_Transform),channels:^vfx.Particle_Channels,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
     view:=core.at(views,0) if core.count(views)>0 else Vfx_Gallery_View{}

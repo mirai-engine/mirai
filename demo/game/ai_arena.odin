@@ -811,7 +811,7 @@ arena_target :: proc(c:core.Commands,position:mm.Vec3,team:behavior.Team) -> cor
 }
 
 // Sends the waves of the horde arenas that have them, once the arena is built.
-@(step="fixed",stage="apply",server,after="arena_build")
+@(step="fixed",stage="apply",server)
 horde_waves :: proc(
     commands:core.Commands,hordes:^core.Table(Horde_Waves),arenas:core.Read(AI_Arena),worlds:core.Read(core.World_Transform),
     waves:core.Records(Horde_Wave),kinds:core.Records(Zombie_Kind),time:core.Time,problems:^core.Problems,

@@ -256,7 +256,7 @@ target :: proc(s:^editor.Session,foliages:core.Read(foliage.Foliage)) -> core.En
     return core.NONE
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 foliage_tool :: proc(
     s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),
     grounds:core.Ref(foliage.Foliage_Ground),requests:^foliage.Foliage_Ground_Requests,resident:core.Ref(foliage.Foliage_Resident),
