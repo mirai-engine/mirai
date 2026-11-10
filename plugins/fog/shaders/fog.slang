@@ -11,7 +11,7 @@ struct Fog_Params {
     float distance; // metres along the view the grid reaches
     float scale;    // metres: about where slices start growing with the distance
     float history;  // the weight of what the frames before found
-    uint hidden;    // a cell behind everything its column sees is lit one frame in this many; 0: never
+    uint hidden;    // a cell behind everything its column sees is lit one frame in this many
     uint dry;       // some volume is a dry box
     uint shade;     // some volume takes the light of the sun
     uint far;       // slices past the grid

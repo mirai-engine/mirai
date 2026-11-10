@@ -60,7 +60,6 @@ WISP_OCTAVES :: 3
 Fog_Hidden :: enum u8 {
     Every_Frame,  // as the cells that show
     Every_Fourth, // one frame in four, by turns, keeping what it had in the others: what moving shows is as settled
-    Never,        // what moving shows starts its light again, grainy for a few frames
 }
 
 @(storage,setting="machine")
@@ -148,7 +147,7 @@ Gpu_Params :: struct {
     distance:f32,
     scale:f32,
     history:f32,
-    hidden:u32,  // a cell behind everything seen is lit one frame in this many; 0: never
+    hidden:u32,  // a cell behind everything seen is lit one frame in this many
     dry:u32,     // some volume is a dry box
     shade:u32,   // some volume takes the light of the sun
     far:u32,     // slices past the grid
@@ -186,8 +185,7 @@ fog_render :: proc(
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),settings:core.Ref(Fog_Settings),app:^host.App,
 ) {
     state.count,state.dry,state.shade=0,false,false
-    periods:=[Fog_Hidden]u32{.Every_Frame=1,.Every_Fourth=4,.Never=0}
-    state.hidden=periods[settings.hidden] if settings.hidden<=.Never else 1
+    state.hidden=settings.hidden==.Every_Fourth?4:1
     added:=core.take(&media.queue)
     if app.renderer==nil || core.count(volumes)==0 && len(added)==0 {return}
     // The media keep their room: the lowest priorities of the world are left out first.

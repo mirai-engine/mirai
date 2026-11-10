@@ -254,8 +254,6 @@ lit:
 - `Every_Frame`: like those that are seen.
 - `Every_Fourth` (default): one frame in four, in turns; in the others it keeps its reprojected
   light. When the camera shows it, it already has its light settled.
-- `Never`: it is not lit, and on being shown its light starts again: a few frames with more grain
-  than the rest.
 
 ### Media from other plugins
 
@@ -292,8 +290,8 @@ boxes.
 - `fog_light.comp` takes at each froxel a fixed point of the cell and writes two textures: the
   medium of the volumes there, with the wisps of the variable ones as they are now, and the light
   that point receives for each meter of what it scatters (except a hidden cell out of its turn,
-  which copies its reprojected light and leaves the medium empty, or with `Never` is marked as not
-  lit; one without history is lit at once). The light is weighted with the mean medium of each
+  which copies its reprojected light and leaves the medium empty; one without history is lit at
+  once). The light is weighted with the mean medium of each
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
   the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):

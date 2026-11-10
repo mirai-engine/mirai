@@ -8,7 +8,7 @@ editor (inspector, document, thumbnails and `particle.*`) is in [its reference](
 
 ## Format
 
-`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 2; another
+`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION`; another
 version asks to write it again). An effect is like a material: entities name it
 (`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, and
 `vfx.Particle_Parameters` for its program). Tables: `particle` (`Particle_Info`), `parameters`
@@ -37,7 +37,7 @@ version asks to write it again). An effect is like a material: entities name it
     `R_axis` turns about the normalized `spin_axis`, and `F` is the frame of `facing`: `Entity` the
     axes of the simulation space; `Camera_Position` X toward the camera, Z = X × up with up = world
     +Y (world ∓X when X is within 0.99 of it), Y = Z × X; `Camera_Plane` the same with X = −camera
-    forward and up = camera up. `Random` (the default) keeps the old turn about an axis of each
+    forward and up = camera up. `Random` (the default) turns about an axis of each
     particle's own instead of `F · R_axis` and ignores `spin_axis`; `mesh_rotation` and
     `mesh_scale` apply to every facing. Zeros stand for X, no turn and a scale of one
     (`particle_mesh_placement`).
@@ -460,8 +460,7 @@ In the `Simulate` stage, per step:
 - **simulate**: one thread per slot of each program's span; `_hw` variant.
   - Program, acceleration, value-noise rotor with analytic derivatives (no sources), attractor and
     drag.
-  - `Screen` collision against the depth and normal of this frame's G-buffer, or `World` with
-    `trace_ray` and the triangle's normal.
+  - `World` collision with `trace_ray` and the triangle's normal.
   - Deaths to the free list; death or hit events, and reports of those that the emitter's `report`
     names.
   - In the last step: the live ones to the draw list and, the `lit` ones, their light (sun with
