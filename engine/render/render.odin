@@ -882,8 +882,15 @@ body_owner :: proc(t:Sync_Tables,e:core.Entity) -> u8 {
 instance_wanted :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity) -> bool {
     static,has_mesh:=core.get(t.meshes,e)
     if !has_mesh || !core.has(t.worlds,e) || core.has(t.elsewhere,e) {return false}
+    _,known:=mesh_handle(a,static)
+    return known
+}
+
+// The mesh of the renderer a Mesh_Renderer draws; false while it has none.
+mesh_handle :: proc(a:^host.Assets,static:Mesh_Renderer) -> (handle:Mesh_Handle,ok:bool) {
     mesh:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
-    return mesh!=nil && mesh.handle!=host.ASSETS_MESH_NONE
+    if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {return}
+    return mesh.handle,true
 }
 
 // The instance of the mesh of an entity, with its tint, values, visibility,

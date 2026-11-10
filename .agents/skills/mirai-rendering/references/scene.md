@@ -220,13 +220,15 @@ frame follow those of the world, given whole in every frame.
   shadow filters; a program still reads them as data. A translucent white copy is this flag with a
   white blend material and shares the resident geometry.
 - **Replacement** (`host.extras_instance_add` with `replace_source=true`): visually substitutes the
-  world mesh with the same `object_id`, for a frame; `engine/render` hides the instance of the
+  world mesh with the same `object_id`, for a frame, for what is drawn with another look than the
+  entity's rows (a screen, a preview of a tool); `engine/render` hides the instance of the
   entity while it keeps coming and shows it again in the frame it stops. It does not change
   picking, colliders, scenes or undo; with `hidden=true` it also hides its source.
 - **Posed mesh** (`engine/render` `Posed_Meshes`, `posed_set` and `posed_drop`): the copy of its
-  mesh a library poses on the GPU for an entity, as a skin, is the mesh of the instance of that
-  entity, not a visual instance: `render_sync` places, tints, hides and outlines it as any mesh,
-  and makes it again only when the pose is given, changed or taken. With `materialed` it also
+  mesh a library poses on the GPU for an entity (a skin, a `Deform`, an imprint, a displaced
+  terrain chunk) is the mesh of the instance of that entity, not a visual instance:
+  `render_sync` places, tints, hides and outlines it as any mesh, and makes it again only when the
+  pose is given, changed or taken. With `materialed` it also
   carries the values of its materials for the frame (the curves of an animation). The library
   owns the mesh and takes the pose away before it removes it.
 

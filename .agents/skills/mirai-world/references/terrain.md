@@ -253,8 +253,9 @@ Construction and publishing:
 - `displacement.odin` does it: the level 0 chunks within `Terrain_Settings.displacement_distance`,
   the nearest ones, are built again with each cell split into `2^displacement_detail` per side
   (`chunk_detail_build`), over the collider's triangles. They are drawn with a deformable copy of
-  that mesh, whose vertices the `terrain_displace.comp` Geometry pass writes once: when built, when
-  what it reads changes or when the vertex buffer is rebuilt.
+  that mesh, the posed mesh of the chunk (`posed_set`), whose vertices the `terrain_displace.comp`
+  Geometry pass writes once: when built, when what it reads changes or when the vertex buffer is
+  rebuilt.
 - Two displaced chunks build the side they share at the step of their cells; a side with a chunk
   that is not displaced keeps the samples, stitched to the interior grid with the strip of
   `piece_build`, and the relief turns off within a cell of it. A chunk is shown displaced only
