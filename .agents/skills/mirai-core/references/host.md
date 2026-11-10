@@ -1,9 +1,11 @@
 # `host`: the application
 
-`host` (layer 4) is what the loop functions receive as `^host.App` and what runs the loops that the
-generator wrote. It imports `core`, `asset`, `audio`, `platform`, `project`, `render`, `rhi`, `ui`
-and `std/*`; the `engine/*` libraries import it, never the other way around. It does not know which
-components exist: it works with `core.World_Info`.
+`host` (layer 4) is the application: the loop functions receive the part of it they reach
+(`^host.Assets`, `^host.Frame_Extras`, the renderer, the mixer, the job system, its allocator:
+[parameters](generator.md#parameters)) or, for the application itself, `^host.App`, and it runs the
+loops that the generator wrote. It imports `core`, `asset`, `audio`, `platform`, `project`,
+`render`, `rhi`, `ui` and `std/*`; the `engine/*` libraries import it, never the other way around.
+It does not know which components exist: it works with `core.World_Info`.
 
 ## The application
 
@@ -156,10 +158,11 @@ spreads its work with `std/jobs`, as their owner (`jobs.OWNER`).
 `Time`, its `Frame_Time` and its input, and its `Fixed` phase is only that of the game.
 
 **What a frame adds.** `host` does not know what an editor is: the owner of the application adds its
-own through the `app_*_add` (screen layers, panels in the world, debug lines, visual instances,
-panels and particles in textures, pixels whose depth is read:
-[offscreen UI](../../mirai-rendering/references/ui.md#offscreen-ui)). They last one frame
-with fixed capacity; what does not fit adds to `stats.extras_dropped`. Visual instances create no
+own through the `extras_*` of `Frame_Extras` (screen layers, panels in the world, debug lines,
+visual instances, panels and particles in textures, views into a texture, pixels whose depth is
+read: [offscreen UI](../../mirai-rendering/references/ui.md#offscreen-ui)); a function that adds to
+the frame receives `^host.Frame_Extras`. They last one frame with fixed capacity; what does not fit
+adds to `Frame_Extras.dropped`. Visual instances create no
 entities or persistent data.
 
 - When running the `render` phase of a world, `host` takes the camera and the frame time from its
@@ -287,12 +290,12 @@ player is heard. The end of stdin terminates it.
 
 ## Loaded assets
 
-`Assets` (`app.assets`, `host/assets.odin`) loads by `base.Asset_Id` meshes, textures, materials,
-scenes and prefabs, and the primitives (`Shape`). An asset is loaded the first time it is asked for,
-as a transaction between frames; asking again is a lookup. Id zero is "none". The tables of each
-type reserve address space for `Assets_Desc.capacity` (by default, a million) and take memory as
-loads fill them: the quantity a world asks for (a terrain of thousands of pieces) is not a fixed
-cap, and a frame that does not load does not allocate.
+`Assets` (a function receives it as `^host.Assets`; `host/assets.odin`) loads by `base.Asset_Id`
+meshes, textures, materials, scenes and prefabs, and the primitives (`Shape`). An asset is loaded
+the first time it is asked for, as a transaction between frames; asking again is a lookup. Id zero
+is "none". The tables of each type reserve address space for `Assets_Desc.capacity` (by default, a
+million) and take memory as loads fill them: the quantity a world asks for (a terrain of thousands
+of pieces) is not a fixed cap, and a frame that does not load does not allocate.
 
 - `assets_mesh(a, id)`, `assets_shape(a, shape)`: `^Assets_Mesh` with a renderer handle
   (`ASSETS_MESH_NONE` without a renderer), bounds, counts, slots and the material of each slot.

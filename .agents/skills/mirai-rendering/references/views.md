@@ -131,17 +131,17 @@ discarding them. Zero: there was none.
   buffer.
 - The targets of each texture are created the first time a view names it and are kept (up to
   `TEXTURE_VIEW_CAPACITY` = 16 states; when full, the one drawn longest ago is withdrawn).
-- `host.app_texture_view_add(app, view)` delivers them (up to 8 per frame).
+- `host.extras_texture_view_add(extras, view)` delivers them (up to 8 per frame).
 - `view_texture_remove(r, texture)` removes the entry and the targets of its view, between frames.
 - With `Frame_View.readback` the image returns to the CPU without waiting for the GPU, through the
   machinery of [reads](#extension-stages): `view_texture_pixels(r, texture)` gives it, with its
   frame, when the frame that copied it finishes (a few frames later). `view_texture_capture` reads
   the last image waiting for the GPU, between frames.
-- In `engine/render`: `view_texture_add(app, ...)`,
-  `view_texture_draw(app, texture, view, width, height, cut, pipeline, readback)` (draws a
+- In `engine/render`: `view_texture_add(renderer, ...)`,
+  `view_texture_draw(extras, texture, view, width, height, cut, pipeline, readback)` (draws a
   `core.View` into the texture in this frame with a [pipeline](#render-pipelines)),
-  `view_texture_pixels(app, texture)`, `view_texture_capture(app, texture)` and
-  `view_texture_remove(app, texture)`.
+  `view_texture_pixels(renderer, texture)`, `view_texture_capture(renderer, texture)` and
+  `view_texture_remove(renderer, texture)`.
 - The standard `Light` pipeline leaves out contact occlusion, traced reflections and per-block
   shadows (hard per-pixel shadows), for views that are shown small.
 - What runs once per frame (probes, the extensions' `Simulate` stage, previews) goes with the first
@@ -238,8 +238,8 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
     resources with history have the previous frame (`history`, false after a cut, a size change or
     a pipeline change) with how many frames (`history_frames`).
   - `Reactive` is zero in a frame without particles.
-- `engine/render` exposes it as `pipeline(app, desc)`, `pipeline_standard(app, kind)`,
-  `pipeline_main(app, pipeline)` and the `pass_*`.
+- `engine/render` exposes it as `pipeline(renderer, desc)`, `pipeline_standard(renderer, kind)`,
+  `pipeline_main(renderer, pipeline)` and the `pass_*`.
 
 ### Antialiasing techniques
 
@@ -280,10 +280,13 @@ frame and the current one:
 
 - A plugin's runtime uses the renderer only through `engine/render` (`extend.odin`): the `pass_*`
   and types of `render/extend.odin` under another package name.
-- A `@(step="render")` function requests passes for the next frame with
-  `frame_pass(app, stage, record, user)`: up to `FRAME_PASS_CAPACITY` (32), in the requested order;
-  the list lasts that frame and requesting the same pass again (stage, `record` and `user`) is
-  requesting it once.
+- A function that reaches the renderer receives it, `renderer: ^erender.Renderer` (nil without a
+  GPU: each procedure answers its zero), and one that adds to the frame, `extras:
+  ^host.Frame_Extras`; a step gets both
+  [bound](../../mirai-core/references/generator.md#parameters).
+- A `@(step="render")` function requests passes for the next frame with `frame_pass(renderer, stage,
+  record, user)`: up to `FRAME_PASS_CAPACITY` (32), in the requested order; the list lasts that
+  frame and requesting the same pass again (stage, `record` and `user`) is requesting it once.
 - `record(pass: ^Pass, user)` records with `pass_*`. The `Pass` gives the stage, the size of the
   view's targets, the eye (`eye`: position with `w` 1, or direction of an orthographic one with `w`
   0), the matrix without jitter (`view_projection`), the world the frame draws (`world`, the key of
@@ -385,12 +388,12 @@ frame and the current one:
   the renderer's scene: it lasts the frame, it is not the instance's identity. From
   `frame.instance_count` it is an instance of a [batch](scene.md#instance-batches); `scene_instance`
   reads any.
-- `instance_values_set(app, index, values)` gives four numbers to an instance of
+- `instance_values_set(renderer, index, values)` gives four numbers to an instance of
   `Render_Sync.instances` (by its index there), which the shaders read with
   `instance_values(instance)` of `scene.slang`: the instance's row carries them, they continue
   while the instance keeps its identity and they change neither its light nor its rays.
-- `instance_wet_set(app, index, wet)` says how wet an instance of `Render_Sync.instances` is, from
-  0 to 1, with the same rules of identity, light and rays; every material applies it
+- `instance_wet_set(renderer, index, wet)` says how wet an instance of `Render_Sync.instances` is,
+  from 0 to 1, with the same rules of identity, light and rays; every material applies it
   ([wet](materials.md#evaluation)). It has a single writer, the
   [water](../../mirai-world/references/water.md#what-physics-shows) plugin.
 - `pass_scissor` limits the pixels (without size: the whole view); `pass_draw` and `pass_dispatch`
@@ -417,10 +420,10 @@ frame and the current one:
   - `pass_texture_sample(pass, slot, desc, previous)` binds it so that the draws of the next pass
     read what the earlier dispatches wrote: it goes before `pass_surface_begin` or
     `pass_mask_begin`, which no longer admit barriers.
-- **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in
-  `SLOT_PASS0 + slot` a buffer that the renderer keeps for the extension under that name and the
-  pass's world, until it releases it (`buffer_release(app, world, name)`, in the world's `release`)
-  or the renderer closes (up to `EXTENSION_BUFFER_CAPACITY` = 64):
+- **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in `SLOT_PASS0 +
+  slot` a buffer that the renderer keeps for the extension under that name and the pass's world,
+  until it releases it (`buffer_release(renderer, world, name)`, in the world's `release`) or the
+  renderer closes (up to `EXTENSION_BUFFER_CAPACITY` = 64):
   - it creates it the first time and again if it is requested with another size, and returns
     `made`: what it holds is not known. One larger than what the device binds is not created;
   - a world that is not drawn keeps its own: its state waits, still, for its next frame;
@@ -432,24 +435,24 @@ frame and the current one:
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
     `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
     and `.Quad`, the six of a quad.
-- **Lights.** `lights_ask(app, with_shadow, without_shadow)` asks for room for lights that
+- **Lights.** `lights_ask(renderer, with_shadow, without_shadow)` asks for room for lights that
   a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like those of the
   scene; those of the first part cast shadows and those of the second trace no rays
   ([GPU lights](lights.md#gpu-lights)).
-- **Table textures.** `table_texture(app, world, Table_Texture_Desc{name, width, height})`, between
-  frames, gives the table place of an RGBA16F texture of the world under that name, which the
-  extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a
+- **Table textures.** `table_texture(renderer, world, Table_Texture_Desc{name, width, height})`,
+  between frames, gives the table place of an RGBA16F texture of the world under that name, which
+  the extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a
   buffer of the world and which the materials read like any other. Making it, or with another size,
   is a transaction; `table_texture_release` frees it (up to `EXTENSION_TABLE_TEXTURE_CAPACITY`). A
   transaction that frees what it brought can take its place: then it is made again.
 - **Rows of a frame.** `pass_rows_upload` copies rows once to the frame memory and `pass_rows` binds
   them in that frame's passes (`Pass.frame` says when to upload them again).
 - **Counters.** `pass_counters(pass, slot, name)` binds four `u32` of a name that the renderer sets
-  to zero every frame and reads with its statistics: `erender.counters(app, name)` and
+  to zero every frame and reads with its statistics: `erender.counters(renderer, name)` and
   `Stats.counters` give those of two frames back (up to `EXTENSION_COUNTER_CAPACITY` = 16 names).
 - **Reads.** `pass_readback(pass, buffer, offset, Buffer_Desc{name, size})`, outside a draw pass,
   copies a part of a world buffer at the end of the frame; when that frame finished, the CPU has it
-  without waiting for the GPU: `erender.readback(app, world, name)` gives the bytes of the last
+  without waiting for the GPU: `erender.readback(renderer, world, name)` gives the bytes of the last
   copied frame and its number, valid until the next frame. Making it, or with another size, is a
   transaction; the extension frees it with `readback_release` in the world's `release` (up to
   `EXTENSION_READBACK_CAPACITY`). What returns arrives frames later and is not deterministic: it is
@@ -458,8 +461,8 @@ frame and the current one:
 - **Pipelines.** A plugin's stages are sources `name.vert.slang`, `name.frag.slang` or
   `name.comp.slang` in its `shaders/`; the project generation compiles them (`extensions` key of
   the manifest).
-- `stage_pipeline(app, {stage, shader, targets, blend, compute, name, fragment, program})` gives
-  (and `pass_stage_pipeline`, inside a pass):
+- `stage_pipeline(renderer, {stage, shader, targets, blend, compute, name, fragment, program})`
+  gives (and `pass_stage_pipeline`, inside a pass):
   - for `Mask`, `Surface` and `Blend`, the pipeline of `<shader>.vert` and `<shader>.frag` (without
     `.vert`, a three-vertex triangle over the whole view) with the formats and state of the stage
     (`Mask`: those of the mask, with depth test and write; `Surface`: the named targets, with that
@@ -536,9 +539,10 @@ their handles in a `by_world` storage and removes them in the `release` of its w
 
 ## Deformable meshes
 
-- `deformable_create(app, source)` registers a copy of a mesh whose vertices an extension writes on
-  the GPU, like a [skinning](scene.md#gpu-skinning) pose: the renderer copies current to previous
-  before the `Geometry` stage and afterwards refits the ray structure; `mesh_remove` frees it.
+- `deformable_create(renderer, source)` registers a copy of a mesh whose vertices an extension
+  writes on the GPU, like a [skinning](scene.md#gpu-skinning) pose: the renderer copies current to
+  previous before the `Geometry` stage and afterwards refits the ray structure; `mesh_remove` frees
+  it.
 - Each frame in which the shape changes, the extension calls `deformable_update` with its box and
   writes the current vertices in `Geometry`; a shape that stops changing makes one last pass to
   equalize current and previous. A box that does not change marks no light.
@@ -562,18 +566,18 @@ their handles in a `by_world` storage and removes them in the `release` of its w
 
 ## Skinned meshes
 
-- `skin_create(app, source, influences, joint_count, morph={})` registers a copy of a skinned mesh
-  that the renderer deforms by joints on the GPU ([skinning](scene.md#gpu-skinning));
+- `skin_create(renderer, source, influences, joint_count, morph={})` registers a copy of a skinned
+  mesh that the renderer deforms by joints on the GPU ([skinning](scene.md#gpu-skinning));
   `influences` (`Skin_Influence`, one per vertex of level 0 or of all levels) name joints of the
   palettes and `morph` (`Morph_Data`) its targets. Load transaction. One larger than what a frame
-  uploads is not drawn until it has been uploaded
-  ([several frames](scene.md#geometry-over-several-frames), `mesh_uploading`): an instance that
-  replaces the world mesh with it leaves the entity undrawn until then.
-- `skin_update(app, handle, palette, reset_motion=false, morph_weights=nil)` gives the palette of
-  the next frame, one matrix per joint, from the bind pose to the mesh space, and the weights of
+  uploads is not drawn until it has been uploaded ([several
+  frames](scene.md#geometry-over-several-frames), `mesh_uploading`): an instance that replaces the
+  world mesh with it leaves the entity undrawn until then.
+- `skin_update(renderer, handle, palette, reset_motion=false, morph_weights=nil)` gives the palette
+  of the next frame, one matrix per joint, from the bind pose to the mesh space, and the weights of
   its targets; `reset_motion` draws no motion since the previous frame.
-- `skin_palette(app, handle, current, previous)` reads the palette that will deform the next frame
-  and that of the previous one, per joint and as rows of a 3x4: what an extension needs to follow
-  the pose (the bones of the particles).
+- `skin_palette(renderer, handle, current, previous)` reads the palette that will deform the next
+  frame and that of the previous one, per joint and as rows of a 3x4: what an extension needs to
+  follow the pose (the bones of the particles).
 - `mesh_remove` frees it; those that remain go with the renderer. This way the `animation` plugin's
   skin deforms without importing `render` or `rhi`.

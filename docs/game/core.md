@@ -16,8 +16,7 @@ reads `game/` and the active plugins; `mirai generate` lists its errors.
 - Order, asking a library, telling the rest what happened: [wiring.md](core/wiring.md).
 - Children, runtime prefabs, destroying a subtree: [prefabs.md](core/prefabs.md).
 - Catalogs as rows: [records.md](core/records.md). Saves: [saves.md](core/saves.md).
-- Characters: [character](character.md); scenes and light:
-  [world](world.md); ids: [assets](assets.md).
+- Characters: [character](character.md); scenes, light: [world](world.md); ids: [assets](assets.md).
 
 ## Layout
 
@@ -57,7 +56,8 @@ game_regen :: proc(healths:^core.Table(Health),time:core.Time) {
 
 - Parameters say what it touches: `^core.Table(C)` writes, `core.Read(C)` reads, `^S` writes a
   storage, `core.Ref(S)` reads one, `core.Time`, `core.Input`, `core.Commands`, `^core.Entities`,
-  `^host.App`, `core.Placer`. No result, no default values. Names are unique in the whole world.
+  `core.Placer`; of the application, its part (`^host.Assets`, `^render.Renderer`, `^audio.Mixer`,
+  `runtime.Allocator`) or `^host.App`. No result or defaults. Names are unique in the whole world.
 - `core.Read` hands out copies; a write needs `^core.Table`, whose `core.writable`, `core.at` and
   `core.get` mark rows changed (`core.read(table)` reads). `core.add` waits (`core.staged_has`).
 - One function writes each table; the others push a request ([wiring.md](core/wiring.md)).

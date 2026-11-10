@@ -200,7 +200,7 @@ the whole tables: it is used when what is drawn changes. For the rest:
 - `uniform_color` omits the vertex colors as tint and keeps the tint, the same in raster, hits and
   shadow filters; a program still reads them as data. A translucent white copy is this flag with a
   white blend material and shares the resident geometry.
-- **Replacement** (`host.app_instance_add` with `replace_source=true`): visually substitutes the
+- **Replacement** (`host.extras_instance_add` with `replace_source=true`): visually substitutes the
   world mesh with the same `object_id`; `engine/render` hides the base sent to the GPU and when it
   stops delivering it, draws it again. It uses `scene_update` without extracting the world again;
   it does not change picking, colliders, scenes or undo; with `hidden=true` it also hides its
