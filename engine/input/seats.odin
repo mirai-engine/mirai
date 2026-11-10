@@ -34,11 +34,25 @@ Move_Input :: struct {
 }
 #assert(size_of(Move_Input)==32)
 
-@(component,description="A seat can drive this body, and the camera that sees through it. A seat can drive a different body during play.")
+// What forward is for the seat that drives a body: where its Move_Input
+// comes from while a seat drives it.
+Move_Relative :: enum u8 {
+    Look,   // where it looks; the look action of the seat turns it and tilts its look: first person, a camera on its head
+    Camera, // where the camera of its Drivable looks; it turns toward its move: a camera that orbits it
+    World,  // -Z of the world; it turns toward its move: seen from above
+    Game,   // the game writes its Move_Input
+    View,   // Look while the camera of its Drivable looks with it (Eyes, or an Orbit that aims), Camera otherwise: for a camera that changes mode
+}
+
+@(component,description="A seat can drive this body, and the camera that sees through it; forward for the seat is where it looks, where its camera looks or -Z of the world. A seat can drive a different body during play.")
 Drivable :: struct {
     seat:core.Entity,   // none: nobody drives it
     camera:core.Entity, // an entity with a render.Camera; may be shared and outside the body
+    move_relative_to:Move_Relative,
+    pitch_limit:f32 `mirai:"angle,min=0"`, // of the look the seat gives it, up and down from level
 }
+
+DRIVABLE_DEFAULT :: Drivable{pitch_limit=85*mm.RAD_PER_DEG}
 
 // Someone who plays: at this machine, the seat of a slot, made at runtime for
 // every slot below the number of local players when the scene has none; at

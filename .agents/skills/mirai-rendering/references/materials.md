@@ -437,8 +437,9 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   below `MIRROR_ROUGHNESS` it traces the mirror direction, without a spatial filter. At the hit,
   one ray to each light up to `reflection_light_budget`; above it, groups of the
   [light tree](lights.md#local-lights).
-- **Half resolution.** From `REFLECTION_SHARED_ROUGHNESS` a 2×2 block shares a ray that each frame
-  traces a different pixel; `reflection_half_resolution` turns it off.
+- **A choice.** `Settings.reflections` is `Off` unless the game or the player chooses it; no
+  preset turns it on. `Traced` lets a 2×2 block from `REFLECTION_SHARED_ROUGHNESS` share a ray
+  that each frame traces a different pixel; `Detailed` traces every pixel and adds the detail.
 - **Filters.** The spatial one weights samples of a disc that grows with the roughness by the
   similarity of the source pixel. The temporal one looks up the history where the reflected point
   was, according to its distance and the curvature of the neighboring normals (a normal map does
@@ -450,9 +451,9 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   leaves a trail (the foot of a wall on a polished floor).
 - **Transition.** Between half of `reflection_roughness` and that limit, the traced reflection
   yields to that of the probe volume.
-- **Detail.** Below `reflection_detail_roughness` the reflection shows the glass that its ray
-  crosses (as a color filter) and the specular lobe of the hit; the rougher ones see diffuse hits
-  and the [medium filter](#medium-filter) of the glass they cross.
+- **Detail.** With `Detailed`, below `REFLECTION_SHARED_ROUGHNESS` the reflection shows the glass
+  that its ray crosses (as a color filter) and the specular lobe of the hit; the rougher ones see
+  diffuse hits and the [medium filter](#medium-filter) of the glass they cross.
 
 ## Glass
 

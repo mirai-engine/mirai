@@ -2,7 +2,7 @@ package abilities
 
 import "core:fmt"
 import "core:mem"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 // What is wrong with a sheet and how to fix it, written into out; empty when it is valid. The
 // step reports it as a problem of the user and the API returns it, so both say the same.
@@ -43,7 +43,7 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
             if text:=effect_check(h.effect,out);text!="" {return fmt.bprintf(out,"windows[%d].hitbox.effect %s",i,text)}
         }
         for v in w.move.velocity {if !finite(v) {return fmt.bprintf(out,"windows[%d].move.velocity is not a velocity: give finite metres per second",i)}}
-        if w.move.mix>max(phys.Move_Mix) {return fmt.bprintf(out,"windows[%d].move.mix is %d: use additive or override",i,u8(w.move.mix))}
+        if w.move.mix>max(locomotion.Move_Mix) {return fmt.bprintf(out,"windows[%d].move.mix is %d: use additive or override",i,u8(w.move.mix))}
     }
     return ""
 }

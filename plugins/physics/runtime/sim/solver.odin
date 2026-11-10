@@ -135,7 +135,7 @@ step_init :: proc(st:^Step,d:World_Desc,a:mem.Allocator) -> bool {
     st.joint_order=alloc(i32,d.joint_capacity,a,&ok)
     st.joint_slots=alloc(i32,d.joint_capacity,a,&ok)
     st.joint_data=alloc(Joint_Solver,d.joint_capacity,a,&ok)
-    joint_blocks:=d.joint_capacity>0?d.joint_capacity/WIDE+GRAPH_COLORS*LANE_JOINT_TYPES:0
+    joint_blocks:=d.joint_capacity>0?d.joint_capacity/WIDE+GRAPH_COLORS*LANE_JOINT_KERNELS:0
     st.joint_blocks=alloc(Joint_Block(WIDE),joint_blocks,a,&ok)
     st.joint_lanes=alloc(i32,joint_blocks*WIDE,a,&ok)
     st.joint_scratch=alloc(Joint_Lane,d.joint_capacity,a,&ok)
@@ -221,6 +221,7 @@ world_step :: proc(w:^World,dt:f32) {
     joints_break(w)
     islands_sleep(w)
     step_hits(w)
+    for i in st.active[:st.active_count] {stamp(w,.Contacts,i);w.contacts[i].flags-={.Visited}}
     w.stats.awake_bodies=st.awake_count
     w.stats.active_contacts=st.active_count
     w.stats.constraints=st.ref_count
@@ -246,7 +247,6 @@ solve_stage :: proc(w:^World,pass:Solve_Pass) {
     st:=&w.step
     st.pass=pass
     joints:=pass!=.Restitution
-    // The drives of a spherical joint go before the rest of it, which is solved in lanes.
     if joints {
         st.stage_offset=st.joint_color_start[OVERFLOW_COLOR]
         if count:=st.joint_color_start[OVERFLOW_COLOR+1]-st.stage_offset;count>0 {joints_scalar_task(w,0,count,0)}
@@ -265,16 +265,14 @@ solve_stage :: proc(w:^World,pass:Solve_Pass) {
     }
 }
 
-// Awake bodies in slot order, with their velocities and the constants of the step.
+// Awake bodies in the order of their list, with their velocities and the constants of the step.
 @(private)
 solver_bodies_gather :: proc(w:^World) #no_bounds_check {
     st:=&w.step
-    count:=0
-    for i in 0..<w.body_high {
+    st.awake_count=bodies_awake(w,st.awake)
+    for i,count in st.awake[:st.awake_count] {
         body:=&w.bodies[i]
-        if body.generation&1==0 || .Awake not_in body.flags {continue}
         body.solver_index=i32(count)
-        st.awake[count]=i
         st.bodies[count]={v=body.linear_velocity,flags=body.flags,w=body.angular_velocity,dq=QUAT_IDENTITY}
         params:=&st.params[count]
         if body.type==.Dynamic {
@@ -288,9 +286,7 @@ solver_bodies_gather :: proc(w:^World) #no_bounds_check {
         } else {
             params^={q0=body.rotation}
         }
-        count+=1
     }
-    st.awake_count=count
 }
 
 // The root of the set of index, in a forest where parents[i]==i is a root. Halves the paths it walks.
@@ -352,34 +348,42 @@ constraints_gather :: proc(w:^World) #no_bounds_check {
 
     st.joint_count=0
     st.joint_single_count=0
+    // The joints of the awake bodies in their order; one of two awake bodies comes from the lower slot.
     st.joint_solved_count=0
-    JOINT_BUCKETS :: GRAPH_COLORS*LANE_JOINT_TYPES
+    for index in st.awake[:st.awake_count] {
+        for key:=w.bodies[index].joint_list;key>=0; {
+            joint:=&w.joints[key>>1]
+            other:=key&1==0?joint.body_b:joint.body_a
+            if w.bodies[other].solver_index<0 || other>index {
+                st.joint_solved[st.joint_solved_count]=key>>1
+                st.joint_solved_count+=1
+            }
+            key=joint.edges[key&1].next
+        }
+    }
+    JOINT_BUCKETS :: GRAPH_COLORS*LANE_JOINT_KERNELS
     lane_buckets:[JOINT_BUCKETS]int
     lanes:=0
-    for i in 0..<w.joint_high {
+    for i in st.joint_solved[:st.joint_solved_count] {
         joint:=&w.joints[i]
-        if joint.generation&1==0 {continue}
         a,b:=w.bodies[joint.body_a].solver_index,w.bodies[joint.body_b].solver_index
-        if a<0 && b<0 {continue}
         island_constraint(w,joint.body_a,joint.body_b)
         color:=color_assign(st,a,b)
         // The solver writes the impulses of every joint it lists, and of its axes.
         stamp(w,.Joints,i)
-        st.joint_solved[st.joint_solved_count]=i
-        st.joint_solved_count+=1
-        if joint.type==.SixDOF || joint.type==.Spherical && .Angular_Drive in joint.flags {
+        if joint.kernel==.General {
             st.joint_slots[st.joint_count]=i32(color)
             st.joint_data[st.joint_count].joint=i
             st.joint_count+=1
             counts[color]+=1
+            continue
         }
-        if joint.type==.SixDOF {continue}
         if color==OVERFLOW_COLOR {
             st.joint_single_slots[st.joint_single_count]=i
             st.joint_single_count+=1
             continue
         }
-        bucket:=color*LANE_JOINT_TYPES+int(joint.type)
+        bucket:=color*LANE_JOINT_KERNELS+int(joint.kernel)
         st.joint_scratch[lanes]={i,i32(bucket)}
         lanes+=1
         lane_buckets[bucket]+=1
@@ -396,13 +400,13 @@ constraints_gather :: proc(w:^World) #no_bounds_check {
         st.joint_order[cursor[color]]=i32(i)
         cursor[color]+=1
     }
-    // A block holds joints of one type: each type of each color starts a block.
+    // A block holds joints of one kernel: each kernel of each color starts a block.
     lane_slots:[JOINT_BUCKETS]int
     joint_blocks:=0
     for color in 0..<GRAPH_COLORS {
         st.joint_block_start[color]=joint_blocks
-        for type in 0..<LANE_JOINT_TYPES {
-            bucket:=color*LANE_JOINT_TYPES+type
+        for kernel in 0..<LANE_JOINT_KERNELS {
+            bucket:=color*LANE_JOINT_KERNELS+kernel
             lane_slots[bucket]=joint_blocks*WIDE
             joint_blocks+=(lane_buckets[bucket]+WIDE-1)/WIDE
         }
@@ -579,14 +583,14 @@ finalize_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
             if .Character in body.flags {reach=spatial.aabb_translate_extend(reach,solved.v*st.dt)}
             if !math.aabb_contains(shape.fat,reach) {
                 shape.fat=shape_fat(reach)
-                shape.flags+={.Moved}
                 body.flags+={.Enlarged}
             }
         }
     }
 }
 
-// Moves in the tree the proxies whose fat box changed. Serial: the tree is shared.
+// Moves in the tree the proxies whose fat box changed, which then need new pairs. Serial: the tree and the list
+// of the moved shapes are shared.
 @(private)
 proxies_update :: proc(w:^World) #no_bounds_check {
     st:=&w.step
@@ -596,7 +600,9 @@ proxies_update :: proc(w:^World) #no_bounds_check {
         if .Enlarged not_in body.flags {continue}
         for s:=body.shape_list;s>=0;s=w.shapes[s].next {
             shape:=&w.shapes[s]
-            if spatial.dynamic_tree_aabb(tree,shape.proxy)!=shape.fat {spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)}
+            if spatial.dynamic_tree_aabb(tree,shape.proxy)==shape.fat {continue}
+            spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)
+            shape_moved(w,s)
         }
     }
 }

@@ -42,7 +42,7 @@ shown :: proc(lut: []f16, scene: Vec3) -> Vec3 {
 @(test)
 every_display_transform_shows_the_card_it_is_exposed_for_alike :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	f: Fixture
 	if !fixture_init(t, &f, 96, 64, settings, hardware_rt = false) {return}
 	defer fixture_destroy(&f)

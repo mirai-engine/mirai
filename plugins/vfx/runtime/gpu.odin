@@ -1124,7 +1124,7 @@ particles_shift :: proc(pass:^erender.Pass,user:rawptr) {
     pool:=&sync.pool
     if pass.world!=sync.world || !pool.made || pool.slot_end==0 || pool.origin==pass.origin {return}
     for b in ([]Pool_Buffer{.Particles,.Lists,.State,.Events}) {
-        if !erender.pass_buffer_ready(pass,pool_buffer(pool,b)) {return}
+        if !erender.pass_buffer_held(pass,pool_buffer(pool,b)) {return}
     }
     if !pool_prepare(sync,pass,false) {return}
     erender.pass_buffer(pass,0,pool_buffer(pool,.Particles))
@@ -1216,9 +1216,9 @@ pool_drawable :: proc(pass:^erender.Pass,sync:^Particle_Sync) -> bool {
     pool:=&sync.pool
     if !pool.made || pool.slot_end==0 {return false}
     for b in ([]Pool_Buffer{.Particles,.Lists,.Data}) {
-        if !erender.pass_buffer_ready(pass,pool_buffer(pool,b)) {return false}
+        if !erender.pass_buffer_held(pass,pool_buffer(pool,b)) {return false}
     }
-    return erender.pass_buffer_ready(pass,world_buffer(sync)) && erender.pass_buffer_ready(pass,pool_buffer(pool,.State),indirect=true) && pool_prepare(sync,pass,false)
+    return erender.pass_buffer_held(pass,world_buffer(sync)) && erender.pass_buffer_held(pass,pool_buffer(pool,.State)) && pool_prepare(sync,pass,false)
 }
 
 // Binds the rows of the frame and the world buffer at the slots the passes
