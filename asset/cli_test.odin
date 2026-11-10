@@ -36,7 +36,8 @@ run :: proc(cli:^Cli,args:..string) -> Result {
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,cli.exe,"asset")
     append(&command,..args)
-    state,stdout,stderr,error:=subprocess.exec({command=command[:]},context.temp_allocator)
+    // In the folder of the files, which no project holds: a scene is in none.
+    state,stdout,stderr,error:=subprocess.exec({command=command[:],working_dir=cli.folder},context.temp_allocator)
     if error!=nil {
         testing.expectf(cli.t,false,"could not run %s: %v",cli.exe,error)
         return {code=-1}
@@ -203,7 +204,8 @@ cli_reads_and_edits_assets_of_every_kind :: proc(t:^testing.T) {
     expect_run(&cli,1,DIFF,"diff",file(&cli,"level.scene"),copy_path)
     expect_run(&cli,2,"","diff",file(&cli,"level.scene"),file(&cli,"missing.scene"))
 
-    // verify, and ls once the scene names a mesh that exists.
+    // verify, and ls once the scene names a mesh that exists. A scene of no
+    // project is not checked against a game, and verify says so.
     serial.file_write_atomic(file(&cli,"level.scene"),after)
     os.remove(copy_path)
     verified:=make([dynamic]string,context.temp_allocator)
@@ -213,12 +215,18 @@ cli_reads_and_edits_assets_of_every_kind :: proc(t:^testing.T) {
         append(&verified,file(&cli,name))
         fmt.sbprintf(&expected,"ok %s\n",file(&cli,name))
     }
-    expect_run(&cli,0,strings.to_string(expected),..verified[:])
+    verdict:=expect_run(&cli,0,ANY,..verified[:])
+    testing.expect(t,strings.has_prefix(verdict.out,strings.to_string(expected)) && strings.contains(verdict.out,"note: the components of the scenes were not checked against a game: ") && strings.contains(verdict.out,"is in no project"),verdict.out)
     listed:=expect_run(&cli,0,ANY,"ls",cli.folder)
     testing.expect(t,!strings.contains(listed.out,"!") && strings.count(listed.out,"\n")==5,listed.out)
 
-    // unpack and pack: the same bytes back, for every kind.
+    // A scene is edited as its document, not as tables.
+    refused:=expect_run(&cli,1,"","unpack",file(&cli,"level.scene"),file(&cli,"level.scene.unpacked"))
+    testing.expect(t,strings.contains(refused.err,"mirai scene read") && !os.exists(file(&cli,"level.scene.unpacked")),refused.err)
+
+    // unpack and pack: the same bytes back, for every kind of tables.
     for name in names {
+        if name=="level.scene" {continue}
         folder:=file(&cli,fmt.tprintf("%s.unpacked",name))
         expect_run(&cli,0,"","unpack",file(&cli,name),folder)
         packed:=file(&cli,fmt.tprintf("%s.packed",name))
@@ -248,20 +256,24 @@ cli_reads_and_edits_assets_of_every_kind :: proc(t:^testing.T) {
     testing.expect(t,strings.contains(wrong.err,"a bulk column needs its file") && !os.exists(file(&cli,"plant-bad.mesh")),wrong.err)
 
     // dump: JSON, with the types when asked.
-    dump:=expect_run(&cli,0,ANY,"dump",file(&cli,"level.scene"))
-    testing.expect(t,strings.has_prefix(dump.out,"{\n  \"mirai_asset\": 1,\n  \"kind\": \"SCEN\",") && strings.contains(dump.out,`{"id": "0x0000000000000020", "parent": "0x0000000000000010", "order": 0, "name": "Big \"lamp\""}`) && !strings.contains(dump.out,`"schema"`),dump.out)
+    dump:=expect_run(&cli,0,ANY,"dump",file(&cli,"water.quest"))
+    testing.expect(t,strings.has_prefix(dump.out,"{\n  \"mirai_asset\": 1,\n  \"kind\": \"QUST\",") && strings.contains(dump.out,`"reward": 250`) && !strings.contains(dump.out,`"schema"`),dump.out)
     reader:serial.Text_Reader
     serial.text_reader_init(&reader,dump.out,context.temp_allocator)
     testing.expect(t,serial.text_skip(&reader) && serial.text_end(&reader),"dump prints one JSON value")
     with_schema:=expect_run(&cli,0,ANY,"dump",file(&cli,"plant.mesh"),"--schema")
     testing.expect(t,strings.contains(with_schema.out,`{"kind": "Struct", "name": "Mesh_Page", "size": 44, "align": 4, "fields": [`) && !strings.contains(with_schema.out,`"data": [0,`),"the schema is printed and bulk rows are not")
+    // A scene is its document, which the game of its project reads: of no project, there is none.
+    lone:=expect_run(&cli,1,"","dump",file(&cli,"level.scene"))
+    testing.expect(t,strings.contains(lone.err,"is in no project"),lone.err)
 
-    // dump --textconv, what git diffs: rows by the key of what they refer to, and a file that does not read in one line.
-    for_diff:=expect_run(&cli,0,ANY,"dump",file(&cli,"level.scene"),"--textconv")
-    testing.expect(t,strings.contains(for_diff.out,`{"entity": "0x0000000000000020", "value": {"color": `),for_diff.out)
-    serial.file_write_atomic(file(&cli,"not.scene"),transmute([]u8)string("not an asset"))
-    unread:=expect_run(&cli,0,ANY,"dump",file(&cli,"not.scene"),"--textconv")
-    testing.expect(t,unread.out!="" && strings.count(unread.out,"\n")==1,unread.out)
+    // dump --textconv, what git diffs: a file it cannot show, as a scene of no project or a file
+    // that does not read, in one line.
+    for name in ([]string{"level.scene","not.scene"}) {
+        if name=="not.scene" {serial.file_write_atomic(file(&cli,name),transmute([]u8)string("not an asset"))}
+        unread:=expect_run(&cli,0,ANY,"dump",file(&cli,name),"--textconv")
+        testing.expect(t,strings.has_prefix(unread.out,"mirai asset dump: ") && strings.count(unread.out,"\n")==1,unread.out)
+    }
 
     // merge: rows of one table that name rows of another by what they hold. Ours removed a bone
     // and theirs hung a socket from it: the result breaks the rules of a skeleton and is not written.
@@ -365,7 +377,7 @@ cli_commands_answer_for_damaged_files :: proc(t:^testing.T) {
         lossless:=[8]u8{'M','L','P','C',0,0,0,0}
         testing.expect_value(t,sound_save(file(&cli,"tick.sound"),&types,{id={0x50d,2},channels=2,sample_rate=48000,frames=4,lossless=lossless[:]}),Error.None)
     }
-    for name in ([]string{"showcase/hud.ui","showcase/lift.anim","tick.sound","gallery/plant.gltf/Leaves.mat"}) {
+    for name in ([]string{"ai/horde_waves.records","showcase/lift.anim","tick.sound","gallery/plant.gltf/Leaves.mat"}) {
         seed:=file(&cli,name) if name=="tick.sound" else fmt.tprintf("%s/demo/assets/%s",root,name)
         good,read_error:=serial.file_read(seed,context.temp_allocator)
         if !testing.expectf(t,read_error==.None,"%s cannot be read",seed) {continue}

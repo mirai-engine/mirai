@@ -129,29 +129,24 @@ LINK_VAULT :: nav.Nav_Link_Kind(7)
 
 ZOMBIE_BITERS :: 3 // zombies that bite the same target at once; the rest circle it
 
-// What the actions of the arenas work on: the world the arena function received.
-@(private)
-Arena_Tick :: struct {
-    using tick:behavior.Mind_Tick,
-    placer:core.Placer,
-    zombies:^core.Table(Zombie),
-    soldiers:^core.Table(Soldier),
-    bosses:^core.Table(Boss),
-    patrols:^core.Table(Arena_Patrol),
-    flights:core.Read(phys.Fly),
-    physics:core.Ref(phys.Physics_State),
-    rng:^mm.Rng,
+// What the minds of the arenas read of their agents and what they perceive.
+@(params)
+Arena :: struct {
+    worlds:core.Read(core.World_Transform),
+    perceptions:core.Read(behavior.Perception),
+    perceivables:core.Read(behavior.Perceivable),
+    agents:core.Read(nav.Nav_Agent),
 }
 
 @(storage)
 Arena_State :: struct {
     rng:mm.Rng,
-    seeded:bool,
 }
+arena_state_default :: proc() -> Arena_State {return {rng=mm.rng_make(17)}}
 
 // The best subject an agent remembers and how sure it is.
 @(private)
-arena_seen :: proc(w:^Arena_Tick,e:core.Entity) -> (subject:core.Entity,position:mm.Vec3,confidence:f32) {
+arena_seen :: proc(w:Arena,e:core.Entity) -> (subject:core.Entity,position:mm.Vec3,confidence:f32) {
     mine,ok:=core.get(w.perceptions,e)
     if !ok {return}
     pose,_:=core.get(w.worlds,e)
@@ -161,14 +156,14 @@ arena_seen :: proc(w:^Arena_Tick,e:core.Entity) -> (subject:core.Entity,position
 }
 
 @(private)
-arena_position :: proc(w:^Arena_Tick,e:core.Entity) -> mm.Vec3 {
+arena_position :: proc(w:Arena,e:core.Entity) -> mm.Vec3 {
     pose,_:=core.get(w.worlds,e)
     return pose.position
 }
 
 // Who an agent is to the smart objects.
 @(private)
-arena_user :: proc(w:^Arena_Tick,e:core.Entity) -> behavior.Smart_User {
+arena_user :: proc(w:Arena,e:core.Entity) -> behavior.Smart_User {
     user:=behavior.Smart_User{entity=e}
     if p,ok:=core.get(w.perceivables,e);ok {user.team=p.team}
     if a,ok:=core.get(w.agents,e);ok {user.abilities=a.abilities}
@@ -182,14 +177,14 @@ arena_user :: proc(w:^Arena_Tick,e:core.Entity) -> behavior.Smart_User {
 // it until a place frees. Drones and listeners are zombies too.
 Zombie_Act :: enum u8 {Wander,Chase,Circle,Bite}
 
-@(private)
-zombie_think :: proc(t:^ai.Think(Zombie_Act)) {
-    w:=(^Arena_Tick)(t.user)
-    subject,_,confidence:=arena_seen(w,w.entity)
+@(mind="zombie")
+zombie_think :: proc(t:^ai.Think(Zombie_Act),w:Arena) {
+    e:=behavior.agent(t)
+    subject,_,confidence:=arena_seen(w,e)
     ai.propose(t,.Wander,0.1)
     if confidence<=0.2 || subject==core.NONE {return}
     ai.propose(t,.Chase,0.5)
-    distance:=linalg.length(arena_position(w,subject)-arena_position(w,w.entity))
+    distance:=linalg.length(arena_position(w,subject)-arena_position(w,e))
     if distance>4 {return}
     if distance<1.8 && ai.reserve_free(t,subject,ZOMBIE_BITERS) {
         ai.propose(t,.Bite,1)
@@ -199,19 +194,19 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act)) {
 }
 
 // Walks somewhere near for a second or so, then stands a second and a half.
-@(private)
-zombie_wander :: proc(a:^ai.Act(Zombie_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
+@(act="Wander")
+zombie_wander :: proc(a:^ai.Act(Zombie_Act),w:Arena,flights:core.Read(phys.Fly),state:^Arena_State) -> ai.Status {
     if ai.stage(a)==0 {
         if a.phase==.Enter {
-            angle:=mm.random_range(w.rng,0,2*math.PI)
+            e:=behavior.agent(a)
+            angle:=mm.random_range(&state.rng,0,2*math.PI)
             s,c:=mm.sincos_det(angle)
-            to:=arena_position(w,w.entity)+mm.Vec3{c,0,s}*mm.random_range(w.rng,3,8)
+            to:=arena_position(w,e)+mm.Vec3{c,0,s}*mm.random_range(&state.rng,3,8)
             // A drone wanders up and down too; its goal is where its middle goes.
-            if core.has(w.flights,w.entity) {to.y+=mm.random_range(w.rng,-1.5,3)}
-            return behavior.move_act(w,a,to)
+            if core.has(flights,e) {to.y+=mm.random_range(&state.rng,-1.5,3)}
+            return behavior.move_act(a,to)
         }
-        status:=behavior.move_act(w,a,{})
+        status:=behavior.move_act(a,{})
         if a.phase==.Exit || status==.Running {return status}
         return ai.next_stage(a)
     }
@@ -219,39 +214,26 @@ zombie_wander :: proc(a:^ai.Act(Zombie_Act)) -> ai.Status {
     return .Success if ai.stage_elapsed(a)>=1.5 else .Running
 }
 
-// Follows what it remembers best; a new subject is followed instead.
-@(private)
-zombie_chase :: proc(a:^ai.Act(Zombie_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    subject,_,_:=arena_seen(w,w.entity)
-    if a.phase==.Exit {nav.nav_stop(w.requests,w.entity);return .Success}
-    if subject==core.NONE {return .Failure}
-    distance:=f32(1.2 if a.action==.Chase else 3.5)
-    if a.phase==.Enter || u64(subject)!=a.memory[0] {
-        a.memory[0]=u64(subject)
-        nav.nav_follow(w.requests,w.entity,subject,distance)
-        return .Running
-    }
-    p,_:=behavior.agent_path(w)
-    return .Failure if p.state==.Failed else .Running
+// Follows what it remembers best: near to chase it, farther to circle it.
+@(act="Chase Circle")
+zombie_chase :: proc(a:^ai.Act(Zombie_Act),w:Arena) -> ai.Status {
+    subject,_,_:=arena_seen(w,behavior.agent(a))
+    return behavior.chase_act(a,subject,1.2 if a.action==.Chase else 3.5)
 }
 
 // Bites now and again 0.8 s later, holding one of the places to bite its target.
-@(private)
-zombie_bite :: proc(a:^ai.Act(Zombie_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
+@(act="Bite")
+zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,zombies:^core.Table(Zombie)) -> ai.Status {
     if a.phase==.Exit {return .Success}
-    subject,_,_:=arena_seen(w,w.entity)
     if a.phase==.Enter {
+        e:=behavior.agent(a)
+        subject,_,_:=arena_seen(w,e)
         if subject==core.NONE || !ai.token_take(a,u64(subject),ZOMBIE_BITERS) {return .Failure}
-        if z:=core.edit(w.zombies,w.entity);z!=nil {z.bites+=1}
-        behavior.present_look(w,subject)
+        if z:=core.edit(zombies,e);z!=nil {z.bites+=1}
+        behavior.present_look(a,subject)
     }
     return ai.after(a,0.8)
 }
-
-@(private)
-ZOMBIE_ACTS := [Zombie_Act]proc(a:^ai.Act(Zombie_Act)) -> ai.Status{.Wander=zombie_wander,.Chase=zombie_chase,.Circle=zombie_chase,.Bite=zombie_bite}
 
 // ---------------------------------------------------------------- soldiers
 
@@ -267,26 +249,25 @@ SOLDIER_MAG :: 6
 SOLDIER_SURE :: f32(0.8) // how sure of an enemy it fires at it: seen a moment ago, in its turn of rays
 SOLDIER_ERRAND :: f32(0.8) // what going for a smart object counts once begun: only healing and fetching ammo interrupt it
 
-@(private)
-soldier_think :: proc(t:^ai.Think(Soldier_Act)) {
-    w:=(^Arena_Tick)(t.user)
-    e:=w.entity
-    s:=core.edit(w.soldiers,e)
-    if s==nil {return}
+@(mind="soldier")
+soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:core.Read(Soldier)) {
+    e:=behavior.agent(t)
+    s,ok:=core.get(soldiers,e)
+    if !ok {return}
     user:=arena_user(w,e)
     here:=arena_position(w,e)
     subject,_,confidence:=arena_seen(w,e)
     sees:=confidence>=SOLDIER_SURE && subject!=core.NONE
     if s.health<40 {
-        if _,ok:=behavior.smart_nearest(&w.smart,USE_HEALTH,here,60,user);ok {ai.propose(t,.Heal,0.9)}
+        if _,open:=behavior.smart_nearest(t,USE_HEALTH,here,60,user);open {ai.propose(t,.Heal,0.9)}
     }
     if s.ammo==0 && s.reserve>0 {ai.propose(t,.Reload,0.8)}
     if s.ammo==0 && s.reserve==0 {
-        if _,ok:=behavior.smart_nearest(&w.smart,USE_AMMO,here,60,user);ok {ai.propose(t,.Get_Ammo,0.85)}
+        if _,open:=behavior.smart_nearest(t,USE_AMMO,here,60,user);open {ai.propose(t,.Get_Ammo,0.85)}
     }
     if sees {
-        if _,ok:=behavior.smart_nearest(&w.smart,USE_ALARM,here,25,user);ok {ai.propose(t,.Alarm,0.75)}
-        if _,ok:=behavior.smart_nearest(&w.smart,USE_TURRET,here,15,user);ok {ai.propose(t,.Man_Turret,0.72)}
+        if _,open:=behavior.smart_nearest(t,USE_ALARM,here,25,user);open {ai.propose(t,.Alarm,0.75)}
+        if _,open:=behavior.smart_nearest(t,USE_TURRET,here,15,user);open {ai.propose(t,.Man_Turret,0.72)}
         if s.ammo>0 && ai.reserve_free(t,subject,SOLDIER_SHOOTERS) {ai.propose(t,.Fire,0.7)}
         ai.propose(t,.Take_Cover,0.55)
     } else if confidence>0 {
@@ -296,25 +277,24 @@ soldier_think :: proc(t:^ai.Think(Soldier_Act)) {
 }
 
 // Walks to where it last perceived an enemy, or ahead toward the other squad.
-@(private)
-soldier_advance :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    if a.phase!=.Enter {return behavior.move_act(w,a,{})}
-    _,position,confidence:=arena_seen(w,w.entity)
+@(act="Advance")
+soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:core.Read(Soldier)) -> ai.Status {
+    if a.phase!=.Enter {return behavior.move_act(a,{})}
+    e:=behavior.agent(a)
+    _,position,confidence:=arena_seen(w,e)
     if confidence<=0 {
         ahead:=f32(-1)
-        if s:=core.edit(w.soldiers,w.entity);s!=nil && s.ahead!=0 {ahead=s.ahead}
-        position=arena_position(w,w.entity)+{0,0,8*ahead}
+        if s,ok:=core.get(soldiers,e);ok && s.ahead!=0 {ahead=s.ahead}
+        position=arena_position(w,e)+{0,0,8*ahead}
     }
-    return behavior.move_act(w,a,position)
+    return behavior.move_act(a,position)
 }
 
 // Asks for the wall that covers it best and stays behind it: stage 0 waits
 // for the answer and claims the place, 1 walks there, 2 holds it.
-@(private)
-soldier_cover :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    e:=w.entity
+@(act="Take_Cover")
+soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,smart_objects:core.Read(behavior.Smart_Object),places:^behavior.Place_Requests,results:core.Read(behavior.Place_Result),requests:^nav.Nav_Requests) -> ai.Status {
+    e:=behavior.agent(a)
     switch a.phase {
     case .Enter:
         subject,_,_:=arena_seen(w,e)
@@ -325,74 +305,72 @@ soldier_cover :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
         q.tests[1]={measure=.Path,from=.Querier,min=0,max=30,response=falling}
         q.tests[2]={measure=.Influence,teams=behavior.Teams(1<<u32(TEAM_RED+TEAM_BLUE-mine)),min=0,max=2,response={kind=.Linear,slope=-0.5,shift_y=1}}
         q.test_count=3
-        a.memory[0]=u64(behavior.place_query(w.places,q))
+        a.memory[0]=u64(behavior.place_query(places,q))
         return .Running
     case .Update:
         switch ai.stage(a) {
         case 0:
-            result,ok:=core.get(w.results,e)
+            result,ok:=core.get(results,e)
             if !ok || result.request!=u32(a.memory[0]) || result.status==.Waiting {return .Running}
             if result.status!=.Found || result.offers[0]<0 {return .Failure}
-            object,_:=core.get(w.smart.objects,result.entities[0])
+            object,_:=core.get(smart_objects,result.entities[0])
             found:=behavior.Smart_Found{result.entities[0],int(result.offers[0]),result.points[0],max(int(object.offers[result.offers[0]].users),1)}
             if !behavior.smart_claim(a,found) {return .Failure}
-            nav.nav_move_to(w.requests,e,found.at)
+            nav.nav_move_to(requests,e,found.at)
             return ai.next_stage(a)
         case 1:
-            status:=behavior.path_status(w)
+            status:=behavior.path_status(a)
             if status!=.Success {return status}
             return ai.next_stage(a)
         }
         return .Running
     case .Exit:
-        if a.cause==.Aborted && ai.stage(a)==1 {nav.nav_stop(w.requests,e)}
+        if a.cause==.Aborted && ai.stage(a)==1 {nav.nav_stop(requests,e)}
     }
     return .Success
 }
 
 // Fires its magazine at the enemy it sees, a round every 0.4 s, holding one
 // of the tokens to fire at it.
-@(private)
-soldier_fire :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    e:=w.entity
-    if a.phase==.Exit {nav.nav_look_along(w.requests,e);return .Success}
-    s:=core.edit(w.soldiers,e)
+@(act="Fire")
+soldier_fire :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier),physics:core.Ref(phys.Physics_State),requests:^nav.Nav_Requests) -> ai.Status {
+    e:=behavior.agent(a)
+    if a.phase==.Exit {nav.nav_look_along(requests,e);return .Success}
+    s:=core.edit(soldiers,e)
     subject,position,confidence:=arena_seen(w,e)
     if s==nil || subject==core.NONE || confidence<SOLDIER_SURE {return .Failure}
     if a.phase==.Enter {
         if !ai.token_take(a,u64(subject),SOLDIER_SHOOTERS) {return .Failure}
-        nav.nav_stop(w.requests,e)
-        nav.nav_look_at(w.requests,e,position)
+        nav.nav_stop(requests,e)
+        nav.nav_look_at(requests,e,position)
         return .Running
     }
     if ai.stage_elapsed(a)<0.4 {return .Running}
     ai.next_stage(a)
-    arena_shot(w,e,subject,position)
+    arena_shot(w,soldiers,physics,e,subject,position)
     s.ammo-=1
     return .Success if s.ammo<=0 else .Running
 }
 
 // A round from e at what it sees: a hit takes health from a soldier, down to 10.
 @(private)
-arena_shot :: proc(w:^Arena_Tick,e,subject:core.Entity,position:mm.Vec3) {
-    s:=core.edit(w.soldiers,e)
+arena_shot :: proc(w:Arena,soldiers:^core.Table(Soldier),physics:core.Ref(phys.Physics_State),e,subject:core.Entity,position:mm.Vec3) {
+    s:=core.edit(soldiers,e)
     if s!=nil {s.shots+=1}
     eye:=arena_position(w,e)+{0,1.5,0}
     to:=position+{0,1.2,0}-eye
-    if hit,ok:=phys.raycast(w.physics,eye,linalg.normalize0(to),linalg.length(to)+1,e);ok && hit.entity==subject {
+    if hit,ok:=phys.raycast(physics,eye,linalg.normalize0(to),linalg.length(to)+1,e);ok && hit.entity==subject {
         if s!=nil {s.hits+=1}
-        if other:=core.edit(w.soldiers,subject);other!=nil {
+        if other:=core.edit(soldiers,subject);other!=nil {
             other.hit+=1
             other.health=max(other.health-12,10)
         }
     }
 }
 
-@(private)
-soldier_reload :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    s:=core.edit(w.soldiers,w.entity)
+@(act="Reload")
+soldier_reload :: proc(a:^ai.Act(Soldier_Act),soldiers:^core.Table(Soldier)) -> ai.Status {
+    s:=core.edit(soldiers,behavior.agent(a))
     if a.phase==.Exit {return .Success}
     if s==nil {return .Failure}
     if ai.elapsed(a)<1.5 {return .Running}
@@ -403,62 +381,54 @@ soldier_reload :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
 }
 
 // Fetches ammo from a crate of its side, or health from a kit.
-@(private)
-soldier_supply :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
+@(act="Get_Ammo Heal")
+soldier_supply :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier),uses:^behavior.Smart_Uses) -> ai.Status {
+    e:=behavior.agent(a)
     use:=USE_AMMO if a.action==.Get_Ammo else USE_HEALTH
-    status,found:=behavior.offer_act(w,&w.smart,a,use,arena_user(w,w.entity),60,1 if use==USE_AMMO else 2)
+    status,found:=behavior.offer_act(a,use,arena_user(w,e),60,1 if use==USE_AMMO else 2)
     if a.phase==.Enter {ai.commit(a,SOLDIER_ERRAND)}
     if a.phase==.Exit || status!=.Success {return status}
-    if s:=core.edit(w.soldiers,w.entity);s!=nil {
+    if s:=core.edit(soldiers,e);s!=nil {
         if use==USE_AMMO {s.reserve+=2*SOLDIER_MAG} else {s.health=100}
     }
-    behavior.smart_used(w.uses,found)
+    behavior.smart_used(uses,found)
     return .Success
 }
 
 // Mans the turret of its side near it and fires from it, fast and without
 // using its rounds, while it sees an enemy.
-@(private)
-soldier_turret :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    e:=w.entity
+@(act="Man_Turret")
+soldier_turret :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier),physics:core.Ref(phys.Physics_State),requests:^nav.Nav_Requests) -> ai.Status {
+    e:=behavior.agent(a)
     if ai.stage(a)<2 || a.phase==.Enter {
-        status,_:=behavior.offer_act(w,&w.smart,a,USE_TURRET,arena_user(w,e),15,0.5)
+        status,_:=behavior.offer_act(a,USE_TURRET,arena_user(w,e),15,0.5)
         if a.phase==.Enter {ai.commit(a,SOLDIER_ERRAND)}
         if a.phase==.Exit || status!=.Success {return status}
         // Manned: it stays while it sees an enemy.
         ai.commit(a,0)
         return ai.next_stage(a)
     }
-    if a.phase==.Exit {nav.nav_look_along(w.requests,e);return .Success}
+    if a.phase==.Exit {nav.nav_look_along(requests,e);return .Success}
     subject,position,confidence:=arena_seen(w,e)
     if subject==core.NONE || confidence<SOLDIER_SURE {return .Failure}
-    nav.nav_look_at(w.requests,e,position)
+    nav.nav_look_at(requests,e,position)
     if ai.stage_elapsed(a)<0.2 {return .Running}
     ai.next_stage(a)
-    arena_shot(w,e,subject,position)
+    arena_shot(w,soldiers,physics,e,subject,position)
     return .Running
 }
 
 // Sounds the alarm of its side: everyone within 60 m hears where the enemy it saw is.
-@(private)
-soldier_alarm :: proc(a:^ai.Act(Soldier_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    e:=w.entity
-    status,found:=behavior.offer_act(w,&w.smart,a,USE_ALARM,arena_user(w,e),25,1)
+@(act="Alarm")
+soldier_alarm :: proc(a:^ai.Act(Soldier_Act),w:Arena,noises:^behavior.Noises,uses:^behavior.Smart_Uses) -> ai.Status {
+    e:=behavior.agent(a)
+    status,found:=behavior.offer_act(a,USE_ALARM,arena_user(w,e),25,1)
     if a.phase==.Enter {ai.commit(a,SOLDIER_ERRAND)}
     if a.phase==.Exit || status!=.Success {return status}
     subject,position,_:=arena_seen(w,e)
-    behavior.noise(w.noises,position,60,subject)
-    behavior.smart_used(w.uses,found)
+    behavior.noise(noises,position,60,subject)
+    behavior.smart_used(uses,found)
     return .Success
-}
-
-@(private)
-SOLDIER_ACTS := [Soldier_Act]proc(a:^ai.Act(Soldier_Act)) -> ai.Status{
-    .Advance=soldier_advance,.Take_Cover=soldier_cover,.Fire=soldier_fire,.Reload=soldier_reload,
-    .Get_Ammo=soldier_supply,.Heal=soldier_supply,.Man_Turret=soldier_turret,.Alarm=soldier_alarm,
 }
 
 // ------------------------------------------------------------------- the boss
@@ -473,14 +443,14 @@ BOSS_PHASE :: 3
 BOSS_STUNNED :: 50
 BOSS_DEAD :: 100
 
-@(private)
-boss_think :: proc(t:^ai.Think(Boss_Act)) {
-    w:=(^Arena_Tick)(t.user)
-    b:=core.edit(w.bosses,w.entity)
-    if b==nil {return}
+@(mind="boss")
+boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:core.Read(Boss)) {
+    e:=behavior.agent(t)
+    b,ok:=core.get(bosses,e)
+    if !ok {return}
     alive:=b.health>0
     first:=b.health>BOSS_HEALTH/2
-    near:=f32(1 if linalg.length(arena_position(w,b.hero)-arena_position(w,w.entity))<4 else 0)
+    near:=f32(1 if linalg.length(arena_position(w,b.hero)-arena_position(w,e))<4 else 0)
     ai.propose(t,.Dead,BOSS_DEAD if !alive else 0)
     ai.propose(t,.Stunned,BOSS_STUNNED if alive && b.staggered else 0)
     ai.propose(t,.Rage,BOSS_PHASE if alive && !first else 0)
@@ -491,18 +461,17 @@ boss_think :: proc(t:^ai.Think(Boss_Act)) {
     }
 }
 
-@(private)
-boss_attack :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    b:=core.edit(w.bosses,w.entity)
+@(act="Slam Charge Summon Roar")
+boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss)) -> ai.Status {
+    b:=core.edit(bosses,behavior.agent(a))
     if b==nil {return .Failure if a.phase!=.Exit else .Success}
     if a.action==.Charge {
         if a.phase==.Enter {
             b.charges+=1
             ai.commit(a,BOSS_COMMITTED)
-            return behavior.move_act(w,a,arena_position(w,b.hero))
+            return behavior.move_act(a,arena_position(w,b.hero))
         }
-        status:=behavior.move_act(w,a,{})
+        status:=behavior.move_act(a,{})
         return .Success if status==.Failure else status
     }
     switch a.phase {
@@ -513,7 +482,7 @@ boss_attack :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
         case .Summon: b.summons+=1
         case .Roar: b.roars+=1
         }
-        behavior.present_animation(w,u16(a.action))
+        behavior.present_animation(a,u16(a.action))
         return .Running
     case .Update: return ai.after(a,1)
     case .Exit:
@@ -521,40 +490,32 @@ boss_attack :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
     return .Success
 }
 
-@(private)
-boss_rage :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
+@(act="Rage")
+boss_rage :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:core.Read(Boss)) -> ai.Status {
     if a.phase==.Exit {return .Success}
     if ai.entering(a) {
-        if b,ok:=core.get(w.bosses,w.entity);ok && linalg.length(arena_position(w,b.hero)-arena_position(w,w.entity))<4 {a.memory[0]=1}
+        e:=behavior.agent(a)
+        if b,ok:=core.get(bosses,e);ok && linalg.length(arena_position(w,b.hero)-arena_position(w,e))<4 {a.memory[0]=1}
     }
     if a.memory[0]==1 {return ai.steps(a,.Slam,.Slam,.Roar)}
     return ai.steps(a,.Charge,.Slam)
 }
 
 // The stagger is a flag of the Boss that the fight raises; being stunned takes it down.
-@(private)
-boss_stunned :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
+@(act="Stunned")
+boss_stunned :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss)) -> ai.Status {
     if ai.entering(a) {
         ai.commit(a,BOSS_STUNNED)
-        if b:=core.edit(w.bosses,w.entity);b!=nil {b.staggered=false}
+        if b:=core.edit(bosses,behavior.agent(a));b!=nil {b.staggered=false}
     }
     return ai.after(a,1.5)
 }
 
-@(private)
-boss_dead :: proc(a:^ai.Act(Boss_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
+@(act="Dead")
+boss_dead :: proc(a:^ai.Act(Boss_Act),bosses:core.Read(Boss)) -> ai.Status {
     if ai.entering(a) {ai.commit(a,BOSS_DEAD)}
-    b,ok:=core.get(w.bosses,w.entity)
+    b,ok:=core.get(bosses,behavior.agent(a))
     return .Success if !ok || b.health>0 else .Running
-}
-
-@(private)
-BOSS_ACTS := [Boss_Act]proc(a:^ai.Act(Boss_Act)) -> ai.Status{
-    .Slam=boss_attack,.Charge=boss_attack,.Summon=boss_attack,.Roar=boss_attack,
-    .Rage=boss_rage,.Stunned=boss_stunned,.Dead=boss_dead,
 }
 
 // ------------------------------------------------------------------ guards
@@ -563,24 +524,23 @@ BOSS_ACTS := [Boss_Act]proc(a:^ai.Act(Boss_Act)) -> ai.Status{
 // before it to vault, then vaults, and walks on to the same point.
 Guard_Act :: enum u8 {Patrol,Vault}
 
-@(private)
+@(mind="guard")
 guard_think :: proc(t:^ai.Think(Guard_Act)) {
-    w:=(^Arena_Tick)(t.user)
-    if p,ok:=behavior.agent_path(w);ok && p.state==.Crossing && p.manual && p.kind==LINK_VAULT {ai.propose(t,.Vault,1)}
+    if p,ok:=behavior.agent_path(t);ok && p.state==.Crossing && p.manual && p.kind==LINK_VAULT {ai.propose(t,.Vault,1)}
     ai.propose(t,.Patrol,0.1)
 }
 
 // Its way goes on while it vaults: an exit leaves navigation as it is.
-@(private)
-guard_patrol :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
-    patrol:=core.edit(w.patrols,w.entity)
+@(act="Patrol")
+guard_patrol :: proc(a:^ai.Act(Guard_Act),patrols:^core.Table(Arena_Patrol),requests:^nav.Nav_Requests) -> ai.Status {
+    e:=behavior.agent(a)
+    patrol:=core.edit(patrols,e)
     if patrol==nil || a.phase==.Exit {return .Success if a.phase==.Exit else .Failure}
     if a.phase==.Enter {
-        nav.nav_move_to(w.requests,w.entity,patrol.points[patrol.next])
+        nav.nav_move_to(requests,e,patrol.points[patrol.next])
         return .Running
     }
-    status:=behavior.path_status(w)
+    status:=behavior.path_status(a)
     if status==.Running {return .Running}
     // There, or where it cannot get: the next point.
     patrol.next=(patrol.next+1)%4
@@ -588,15 +548,11 @@ guard_patrol :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {
 }
 
 // Once begun it lasts until navigation takes the guard on from the other side.
-@(private)
-guard_vault :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {
-    w:=(^Arena_Tick)(a.user)
+@(act="Vault")
+guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:core.Read(nav.Nav_Link),placer:core.Placer) -> ai.Status {
     if ai.entering(a) {ai.commit(a,1)}
-    return behavior.cross_act(w,&w.smart,a,w.links,w.placer,USE_VAULT,arena_user(w,w.entity),0.6)
+    return behavior.cross_act(a,links,placer,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
 }
-
-@(private)
-GUARD_ACTS := [Guard_Act]proc(a:^ai.Act(Guard_Act)) -> ai.Status{.Patrol=guard_patrol,.Vault=guard_vault}
 
 // Builds the arenas that have not been built, once the world runs: their
 // place, unless the scene holds it, and their agents.
@@ -1020,22 +976,36 @@ arena_carts :: proc(carts:core.Read(Arena_Cart),bodies:^phys.Body_Requests,bells
     }
 }
 
-// The runner walks its round; the hero walks around the boss.
+// The runner walks its round; the hero walks around the boss, hurts it while
+// near and staggers it now and then; a fallen boss rises again after a while.
 @(step="fixed",server)
 arena_targets :: proc(
-    targets:^core.Table(Arena_Target),bosses:core.Read(Boss),
+    targets:^core.Table(Arena_Target),bosses:^core.Table(Boss),worlds:core.Read(core.World_Transform),
     paths:core.Read(nav.Nav_Path),requests:^nav.Nav_Requests,
     state:^Arena_State,time:core.Time,
 ) {
     if !time.playing || time.dt<=0 {return}
-    if !state.seeded {state.rng,state.seeded=mm.rng_make(17),true}
+    for row in 0..<core.count(bosses) {
+        b:=core.edit_at(bosses,row)
+        if b.health<=0 {
+            if b.rises==0 {b.rises=core.deadline(time,3);b.deaths+=1}
+            if core.due(time,b.rises) {b.health,b.rises=BOSS_HEALTH,0}
+            continue
+        }
+        boss,_:=core.get(worlds,core.entity_at(bosses,row))
+        hero,_:=core.get(worlds,b.hero)
+        if linalg.length(boss.position-hero.position)<12 {
+            b.health-=6*time.dt
+            if every:=core.ticks_of(time,3);every>0 && time.tick%every==0 {b.staggered=true}
+        }
+    }
     round:=[4]mm.Vec3{{-22,0,-22},{22,0,-22},{22,0,22},{-22,0,22}}
     for row in 0..<core.count(targets) {
         e:=core.entity_at(targets,row)
         t:=core.edit_at(targets,row)
         p,ok:=core.get(paths,e)
         hunting:=false
-        for b in bosses.table.values[:core.count(bosses)] {hunting|=b.hero==e}
+        for b in bosses.values[:core.count(bosses)] {hunting|=b.hero==e}
         if hunting {
             if core.due(time,t.again) {
                 t.again=core.deadline(time,2.5)
@@ -1050,40 +1020,4 @@ arena_targets :: proc(
             nav.nav_move_to(requests,e,t.center+{22,0,22}+round[t.next])
         }
     }
-}
-
-// The agents of the arenas decide, each kind with its mind. The hero hurts
-// the boss near it and staggers it now and then; a fallen boss rises again
-// after a while.
-@(step="fixed",server)
-arena_think :: proc(
-    world:behavior.Mind_World,zombies:^core.Table(Zombie),soldiers:^core.Table(Soldier),bosses:^core.Table(Boss),patrols:^core.Table(Arena_Patrol),
-    flights:core.Read(phys.Fly),placer:core.Placer,physics:core.Ref(phys.Physics_State),state:^Arena_State,
-) {
-    minds,agents,time,problems:=world.minds,world.agents,world.time,world.problems
-    if !time.playing || time.dt<=0 || core.count(agents)==0 {return}
-    if !state.seeded {state.rng,state.seeded=mm.rng_make(17),true}
-    w:=Arena_Tick{
-        tick=behavior.mind_tick(world),placer=placer,
-        zombies=zombies,soldiers=soldiers,bosses=bosses,patrols=patrols,flights=flights,physics=physics,rng=&state.rng,
-    }
-    for row in 0..<core.count(bosses) {
-        e:=core.entity_at(bosses,row)
-        b:=core.edit_at(bosses,row)
-        if b.health<=0 {
-            if b.rises==0 {b.rises=core.deadline(time,3);b.deaths+=1}
-            if core.due(time,b.rises) {b.health,b.rises=BOSS_HEALTH,0}
-            continue
-        }
-        if linalg.length(arena_position(&w,e)-arena_position(&w,b.hero))<12 {
-            b.health-=6*time.dt
-            if every:=core.ticks_of(time,3);every>0 && time.tick%every==0 {b.staggered=true}
-        }
-    }
-    ctx:=ai.Mind_Context{user=&w,keep=0.05,reservations=&world.claims.reservations}
-    behavior.minds_tick(minds,agents,"zombie",&ZOMBIE_ACTS,zombie_think,&ctx,&w.act,time,problems)
-    behavior.minds_tick(minds,agents,"soldier",&SOLDIER_ACTS,soldier_think,&ctx,&w.act,time,problems)
-    behavior.minds_tick(minds,agents,"boss",&BOSS_ACTS,boss_think,&ctx,&w.act,time,problems)
-    behavior.minds_tick(minds,agents,"guard",&GUARD_ACTS,guard_think,&ctx,&w.act,time,problems)
-    behavior.minds_unknown(minds,agents,problems)
 }
