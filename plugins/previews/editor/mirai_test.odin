@@ -31,8 +31,8 @@ Avatar_Shared :: struct {skeletons:eanim.Skeleton_Assets}
 @(test)
 preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T) {
     when !PREVIEW_MIRAI_AVATAR {return} else {
-        device,message:=shared_device.take(t, hardware_rt = false)
-        if device==nil {testing.expect(t,false,message);return}
+        device:=shared_device.take_or_skip(t,hardware_rt=false)
+        if device==nil {return}
         renderer:gpu.Renderer
         settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
         if !testing.expect(t,gpu.renderer_init(&renderer,{device=device,width=64,height=64,settings=settings}),renderer.error) {return}

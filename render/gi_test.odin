@@ -32,16 +32,12 @@ GI_BENCHMARK :: #config(GI_BENCHMARK, false)
 @(test)
 gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 	for mode in ([2]Trace_Mode{.Software, .Hardware}) {
-		device, message := shared_device.take(t)
-		if device == nil {
-			if !rhi.gpu_skip_allowed() {testing.expect(t, false, message)}
-			return
-		}
 		settings := DEFAULT_SETTINGS
 		settings.reflections, settings.taa, settings.reference_gi, settings.trace_mode = false, false, true, mode
-		r:=new(Renderer);defer free(r)
-		if !testing.expect(t, renderer_init(r, {device = device, width = 48, height = 48, settings = settings}), r.error) {return}
-		defer renderer_destroy(r)
+		f: Fixture
+		if !fixture_init(t, &f, 48, 48, settings) {return}
+		defer fixture_destroy(&f)
+		r, device := f.renderer, f.device
 		if mode == .Hardware && !r.hardware_rt {continue}
 		cube, added := gi_cube(r)
 		if !testing.expect(t, added) {return}

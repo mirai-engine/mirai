@@ -1,54 +1,20 @@
 package host
 
-import "base:runtime"
 import "core:mem"
 import "core:testing"
 import "mirai:core"
 
-@(private) Replace_Local :: struct {mark:u32}
-@(private) Replace_World :: struct {entities:core.Entities,values:core.Table(u32),state:[dynamic]u32,local:Replace_Local}
-
-@(private)
-replace_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Replace_World)data
-    if !core.entities_init(&w.entities,allocator) {return false}
-    core.table_init(&w.values,"values",allocator)
-    w.state=make([dynamic]u32,allocator)
-    return true
-}
-
-@(private)
-replace_destroy :: proc(data:rawptr) {
-    w:=cast(^Replace_World)data
-    core.table_destroy(&w.values)
-    delete(w.state)
-    core.entities_destroy(&w.entities)
-}
-
-@(private)
-replace_copy :: proc(dst,src:rawptr) -> bool {
-    d,s:=cast(^Replace_World)dst,cast(^Replace_World)src
-    return core.entities_copy(&d.entities,&s.entities) && core.table_copy(&d.values,&s.values) && core.value_copy(&d.state,&s.state,type_info_of([dynamic]u32))
-}
-
-@(private)
-replace_swap :: proc(a,b:rawptr) {
-    a,b:=cast(^Replace_World)a,cast(^Replace_World)b
-    a.entities,b.entities=b.entities,a.entities
-    core.table_swap(&a.values,&b.values)
-    a.state,b.state=b.state,a.state
-}
+@(private) @(storage,copy=false) Replace_Local :: struct {mark:u32}
+@(private) Replace_World :: struct {using world:core.Test_World,values:core.Table(u32),state:[dynamic]u32,local:Replace_Local}
 
 @(test)
 world_replacement_out_of_memory_keeps_the_destination_and_a_warm_one_does_not_allocate :: proc(t:^testing.T) {
-    info:=core.World_Info{
-        sizes={.World=size_of(Replace_World),.Shared=0,.Editor=0},aligns={.World=align_of(Replace_World),.Shared=1,.Editor=1},
-        init={.World=replace_init,.Shared=nil,.Editor=nil},destroy={.World=replace_destroy,.Shared=nil,.Editor=nil},
-        copy=replace_copy,swap=replace_swap,
-    }
+    info,described:=core.test_info(t,Replace_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     source:Replace_World
-    testing.expect(t,replace_init(&source,context.allocator))
-    defer replace_destroy(&source)
+    if !testing.expect(t,info.init[.World](&source,context.allocator)) {return}
+    defer info.destroy[.World](&source)
     for value in 0..<40 {
         e:=core.create(&source.entities)
         core.add(&source.values,e,u32(value))

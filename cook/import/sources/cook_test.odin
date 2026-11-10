@@ -24,10 +24,8 @@ reimport :: proc(source,folder:string,desc:^build.Cook_Desc,worker:jobs.Worker_R
 @(test)
 a_cook_encodes_a_fast_texture_again_as_final_from_its_source :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-cook-%d-fast",directory,os.get_pid())
-    os.remove_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-fast")
+    if folder=="" {return}
     defer free_all(context.temp_allocator)
     os.make_directory_all(fmt.tprintf("%s/source",folder))
     // An uncompressed TGA, top to bottom, of noise that RDO changes.

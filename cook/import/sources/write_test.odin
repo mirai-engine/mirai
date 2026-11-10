@@ -61,8 +61,8 @@ written_of :: proc(report:^importer.Import_Report,kind:asset.Fourcc,name:string)
 
 @(test)
 a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^testing.T) {
-    folder:=temp_folder("write-obj")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-obj")
+    if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"concave.obj")
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -100,8 +100,8 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
 
 @(test)
 a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
-    folder:=temp_folder("write-plant")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-plant")
+    if folder=="" {return}
     model,ok:=import_ok(t,DEMO+"models/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -124,8 +124,8 @@ a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
     testing.expect(t,.Srgb in texture.info.flags && .Normal_Map not_in texture.info.flags && texture.info.alpha_coverage==0.5 && texture.info.format==.BC7,"a masked color texture is sRGB, keeps its coverage and is stored in blocks with alpha")
     testing.expect_value(t,int(texture.info.mip_count),asset.texture_mip_count(int(texture.info.width),int(texture.info.height)))
 
-    plain_folder:=temp_folder("write-plant-rgba8")
-    defer os.remove_all(plain_folder)
+    plain_folder:=base.test_folder(t,"write-plant-rgba8")
+    if plain_folder=="" {return}
     plain_report,plain_error:=importer.import_write(&model,plain_folder,{textures=.Uncompressed,ignore_stored=true})
     defer importer.report_destroy(&plain_report)
     testing.expect_value(t,plain_error.code,importer.Error_Code.None)
@@ -149,8 +149,8 @@ a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
 
 @(test)
 a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
-    folder:=temp_folder("write-skin")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-skin")
+    if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"skeletal-analytic.glb")
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -200,8 +200,8 @@ a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
 // skeleton of the project: the motion of another file onto a character imported before.
 @(test)
 clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
-    folder:=temp_folder("write-clips-onto")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-clips-onto")
+    if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"skeletal-analytic.glb")
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -231,8 +231,8 @@ clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
 
 @(test)
 a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc(t:^testing.T) {
-    folder:=temp_folder("write-body")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-body")
+    if folder=="" {return}
     options:=importer.Import_Options{ignore_stored=true,no_save=true}
     options.max_texture_size=4
     body_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (map_:anim.Body_Map,bones:[]asset.Skeleton_Bone,path:string,sockets:[]asset.Skeleton_Socket) {
@@ -299,8 +299,8 @@ a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc
 // in place, and one that leaves it still gets none. A root a person set stays on importing again.
 @(test)
 imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: proc(t:^testing.T) {
-    folder:=temp_folder("write-root")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-root")
+    if folder=="" {return}
     options:=importer.Import_Options{ignore_stored=true,no_save=true}
     options.max_texture_size=4
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -367,7 +367,8 @@ imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: pro
 
 @(test)
 importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the_source :: proc(t:^testing.T) {
-    folder:=temp_folder("write-material-layers");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-material-layers")
+    if folder=="" {return}
     source:=fmt.tprintf("%s/plant.gltf",folder)
     text,error:=os.read_entire_file(DEMO+"models/plant.gltf",context.temp_allocator)
     if !testing.expect(t,error==nil) {return}
@@ -412,8 +413,8 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
 
 @(test)
 importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
-    folder:=temp_folder("write-identity")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-identity")
+    if folder=="" {return}
     model,ok:=import_ok(t,DEMO+"models/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -474,8 +475,8 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
 
 @(test)
 images_that_are_missing_or_not_images_leave_a_warning_and_no_reference :: proc(t:^testing.T) {
-    folder:=temp_folder("write-images")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-images")
+    if folder=="" {return}
     write_text(folder,"m.mtl","newmtl paint\nKd 1 0 0\nmap_Kd gone.png\nmap_Ke garbage.png\nmap_Bump good.png\n")
     _=os.write_entire_file(fmt.tprintf("%s/garbage.png",folder),[]u8{1,2,3,4,5,6,7,8})
     _=os.write_entire_file(fmt.tprintf("%s/good.png",folder),png_bytes(8,8,{128,128,255}))
@@ -504,8 +505,8 @@ images_that_are_missing_or_not_images_leave_a_warning_and_no_reference :: proc(t
 
 @(test)
 embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
-    folder:=temp_folder("write-embedded")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-embedded")
+    if folder=="" {return}
     encoded,_:=base64.encode(png_bytes(64,32,{200,100,50}),allocator=context.temp_allocator)
     positions:=[9]f32{0,0,0,1,0,0,0,1,0}
     uvs:=[6]f32{0,0,1,0,0,1}
@@ -539,8 +540,8 @@ embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
 
 @(test)
 gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: proc(t:^testing.T) {
-    folder:=temp_folder("pbr-gltf-glb")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"pbr-gltf-glb")
+    if folder=="" {return}
     images:=[3][]u8{png_bytes(8,8,{180,70,25}),png_bytes(8,8,{32,96,224}),png_bytes(8,8,{128,128,255})}
     names:=[3]string{"paint color","orm","normal"}
     geometry:=[21]f32{0,0,0,1,0,0,0,1,0, 0,0,1,0,0,1, 0.25,0.75,0.75,0.75,0.25,0.25}
@@ -683,8 +684,8 @@ gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: pr
 
 @(test)
 a_standalone_image_becomes_a_texture :: proc(t:^testing.T) {
-    folder:=temp_folder("write-texture")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-texture")
+    if folder=="" {return}
     path:=fmt.tprintf("%s/Bricks Color.png",folder)
     _=os.write_entire_file(path,png_bytes(16,16,{150,60,40}))
     report,error:=importer.import_texture(path,fmt.tprintf("%s/out",folder),{image=.Color})
@@ -708,8 +709,8 @@ a_standalone_image_becomes_a_texture :: proc(t:^testing.T) {
 // A Radiance image is an image whose light above 1 the texture keeps, in BC6H.
 @(test)
 a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
-    folder:=temp_folder("write-hdr")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-hdr")
+    if folder=="" {return}
     path:=fmt.tprintf("%s/sky.hdr",folder)
     hdr:=make([dynamic]u8,context.temp_allocator)
     append(&hdr,"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 4\n")
@@ -733,7 +734,8 @@ a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
 
 @(test)
 embedded_images_with_the_same_name_keep_distinct_texture_ids :: proc(t:^testing.T) {
-    folder:=temp_folder("duplicate-image-names");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"duplicate-image-names")
+    if folder=="" {return}
     red,_:=base64.encode(png_bytes(4,4,{255,0,0}),allocator=context.temp_allocator)
     blue,_:=base64.encode(png_bytes(4,4,{0,0,255}),allocator=context.temp_allocator)
     vertices:=[15]f32{0,0,0,1,0,0,0,1,0,0,0,1,0,0,1}
@@ -770,8 +772,8 @@ embedded_images_with_the_same_name_keep_distinct_texture_ids :: proc(t:^testing.
 
 @(test)
 names_are_made_safe_and_unique_as_file_names :: proc(t:^testing.T) {
-    folder:=temp_folder("write-names")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-names")
+    if folder=="" {return}
     path:=write_text(folder,"n.obj","o a/b:c\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\no a_b_c\nv 0 0 1\nv 1 0 1\nv 0 1 1\nf 4 5 6\no a/b:c\nv 0 0 2\nv 1 0 2\nv 0 1 2\nf 7 8 9\n")
     model,ok:=import_ok(t,path)
     if !ok {return}
@@ -791,8 +793,8 @@ names_are_made_safe_and_unique_as_file_names :: proc(t:^testing.T) {
 
 @(test)
 a_destination_that_cannot_be_a_folder_fails_without_leaving_files :: proc(t:^testing.T) {
-    folder:=temp_folder("write-fail")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-fail")
+    if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"concave.obj")
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -805,8 +807,8 @@ a_destination_that_cannot_be_a_folder_fails_without_leaving_files :: proc(t:^tes
 
 @(test)
 every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: proc(t:^testing.T) {
-    folder:=temp_folder("write-fixtures")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-fixtures")
+    if folder=="" {return}
     sources:=[]string{
         FIXTURES+"concave.obj",FIXTURES+"multiple.obj",FIXTURES+"hierarchy.gltf",FIXTURES+"hierarchy.glb",FIXTURES+"single-transform.gltf",
         FIXTURES+"skeletal-analytic.gltf",FIXTURES+"skeletal-analytic.glb",FIXTURES+"khronos-simple-skin/SimpleSkin.gltf",FIXTURES+"hierarchy.usda",
@@ -856,8 +858,8 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
 
 @(test)
 the_report_names_the_asset_of_every_row_of_the_model :: proc(t:^testing.T) {
-    folder:=temp_folder("write-rows")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-rows")
+    if folder=="" {return}
     model,ok:=import_ok(t,DEMO+"models/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -883,8 +885,8 @@ the_report_names_the_asset_of_every_row_of_the_model :: proc(t:^testing.T) {
 // amounts, and the factors become 1.
 @(test)
 gltf_anisotropy_with_a_roughness_texture_is_converted_texel_by_texel :: proc(t:^testing.T) {
-    folder:=temp_folder("write-anisotropy")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-anisotropy")
+    if folder=="" {return}
     encoded,_:=base64.encode(png_bytes(8,8,{255,128,64}),allocator=context.temp_allocator)
     positions:=[9]f32{0,0,0,1,0,0,0,1,0}
     uvs:=[6]f32{0,0,1,0,0,1}

@@ -5,14 +5,14 @@ import "core:os"
 import win "core:sys/windows"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 // A binary something holds is moved aside and a copy takes its place, which the build can write; the
 // others stay as they are, and a later build deletes what was moved once nothing holds it.
 @(test)
 a_binary_in_use_moves_aside_and_leaves_a_copy_to_write :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-engine-unlock-*",context.temp_allocator)
-    testing.expect(t,error==nil)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"engine-unlock")
+    if folder=="" {return}
     held:=project.path(folder,"mirai-engine.dll",allocator=context.temp_allocator)
     free:=project.path(folder,"mirai-editor.dll",allocator=context.temp_allocator)
     stamp:=project.path(folder,ENGINE_STAMP,allocator=context.temp_allocator)

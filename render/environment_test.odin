@@ -1,23 +1,17 @@
 package mirai_render
 
-import "core:fmt"
 import "core:mem"
 import "core:math"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(test)
 ground_grid_is_visible_on_the_background_and_occluded_by_geometry :: proc(t:^testing.T) {
-    device,error:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if rhi.gpu_skip_allowed() {fmt.eprintln("grid test skipped:",error)} else {testing.expect(t,false,error)}
-        return
-    }
     settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
-    r:=new(Renderer);defer free(r)
-    if !renderer_init(r, {device = device, width = 160, height = 120, settings = settings}) {testing.expect(t,false,r.error);return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !fixture_init(t,&f,160,120,settings,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     vertices:=[4]Mesh_Vertex{
         {position={-1,1,-1},normal={0,1,0}},
         {position={-1,1,1},normal={0,1,0}},
@@ -66,15 +60,11 @@ grid_read_hdr :: proc(t:^testing.T,r:^Renderer,target:rhi.Texture)->[]f16 {
 
 @(test)
 ground_grid_blends_behind_transparency_without_entering_radiance_history :: proc(t:^testing.T) {
-    device,error:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if rhi.gpu_skip_allowed() {fmt.eprintln("translucent grid test skipped:",error)} else {testing.expect(t,false,error)}
-        return
-    }
     settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
-    r:=new(Renderer);defer free(r)
-    if !renderer_init(r, {device = device, width = 160, height = 120, settings = settings}) {testing.expect(t,false,r.error);return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !fixture_init(t,&f,160,120,settings,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     vertices:=[4]Mesh_Vertex{
         {position={-1,1,-1},normal={0,1,0}},
         {position={-1,1,1},normal={0,1,0}},
@@ -135,15 +125,11 @@ ground_grid_blends_behind_transparency_without_entering_radiance_history :: proc
 
 @(test)
 a_backdrop_is_shown_behind_the_scene_instead_of_the_sky_until_it_is_removed :: proc(t:^testing.T) {
-    device,error:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if rhi.gpu_skip_allowed() {fmt.eprintln("backdrop test skipped:",error)} else {testing.expect(t,false,error)}
-        return
-    }
     settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
-    r:=new(Renderer);defer free(r)
-    if !renderer_init(r, {device = device, width = 96, height = 64, settings = settings}) {testing.expect(t,false,r.error);return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !fixture_init(t,&f,96,64,settings,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     camera:=Camera{position={0,1,4},forward={0,0,-4},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     scene_set(r,nil,nil,{},{sky={0.5,0.6,0.9}})
     center:=(32*96+48)*4

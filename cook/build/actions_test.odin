@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file")
@@ -34,9 +35,8 @@ ACTIONS_CORE :: `package core
 // Input_Of(E) gets the base of E.
 @(test)
 the_members_of_the_actions_enums_take_the_actions_in_order :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-actions-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"actions")
+    if folder=="" {return}
     p,ok:=actions_project(t,folder,ACTIONS_CORE,`package game
 import "mirai:core"
 @(actions)
@@ -73,9 +73,8 @@ Action :: enum u8 {
 // how to fix them.
 @(test)
 the_actions_enums_are_checked :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-actions-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"actions")
+    if folder=="" {return}
     many:=strings.builder_make(context.temp_allocator)
     for i in 0..<62 {fmt.sbprintf(&many,"A%d,",i)}
     cases:=[]struct{game,says:string}{

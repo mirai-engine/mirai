@@ -42,10 +42,9 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	output := fmt.tprintf("%s/.mirai/tmp/fog-test-shaders", root)
 	loaded, problem := gpu.shader_assets_load(output)
 	if !testing.expect(t, problem == "", problem) {return false}
-	device, message := shared_device.take(t)
+	device := shared_device.take_or_skip(t)
 	if device == nil {
 		gpu.shader_assets_destroy(&loaded)
-		if rhi.gpu_skip_allowed() {fmt.eprintln("fog GPU tests skipped:", message)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", message)}
 		return false
 	}
 	f.device = device

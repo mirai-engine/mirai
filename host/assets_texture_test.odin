@@ -2,7 +2,6 @@ package host
 
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:render"
@@ -13,20 +12,14 @@ import mm "mirai:std/math"
 
 @(test)
 loaded_textures_take_the_limits_the_renderer_changes_to :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer);defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)
 
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-textures",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-textures")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     SIZE :: 512
     mips:=make([dynamic][]u8,context.temp_allocator)
@@ -84,21 +77,15 @@ loaded_textures_take_the_limits_the_renderer_changes_to :: proc(t:^testing.T) {
 // from its file. Its handle stays, and the materials that name it with it.
 @(test)
 a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer)
     defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)
 
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-residency",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-residency")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     SIZE :: 512
     mips:=make([dynamic][]u8,context.temp_allocator)
@@ -184,21 +171,15 @@ a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
 // texture has them all, with the same handle.
 @(test)
 a_texture_a_load_takes_over_frames_shows_its_small_levels_until_the_rest_went :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer)
     defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)
 
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-over-frames",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-over-frames")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     SIZE :: 2048
     mips:=make([dynamic][]u8,context.temp_allocator)
@@ -262,21 +243,15 @@ pools_hold :: proc(device:^rhi.Device,r:^render.Renderer,m:render.Mesh_Record,ve
 // is not drawn at all, outlined or met by rays, and then it shows posed.
 @(test)
 a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_went :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer)
     defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)
 
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-mesh-over-frames",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-mesh-over-frames")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     COUNT :: LOAD_FRAME_BYTES/size_of(asset.Cluster_Vertex)+1024
     vertices:=make([]asset.Vertex,COUNT)
@@ -375,20 +350,14 @@ a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_
 // textures; a material that names it gets nothing, and an Unsupported error.
 @(test)
 a_cube_loads_whole_and_a_material_does_not_sample_it :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer);defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)
 
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-cube",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-cube")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     SIZE :: 16
     mips:=make([dynamic][]u8,context.temp_allocator)

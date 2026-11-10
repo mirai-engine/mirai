@@ -34,10 +34,10 @@ morph_test_tangent :: proc(tangent:Vec3,influence:Skin_Influence,palette:[]Mat4)
 gpu_morphs_move_the_bind_shape_before_the_skin_with_motion_tangents_bounds_and_both_ray_paths :: proc(t:^testing.T) {
     for hardware in ([2]bool{false,true}) {
         tracker:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracker,context.allocator);defer mem.tracking_allocator_destroy(&tracker)
-        r:=new(Renderer);defer free(r)
-        device:=skin_test_renderer(t,r,hardware,mem.tracking_allocator(&tracker))
-        if device==nil {return}
-        defer renderer_destroy(r)
+        f:Fixture
+        if !skin_fixture(t,&f,hardware,mem.tracking_allocator(&tracker)) {return}
+        defer fixture_destroy(&f)
+        r,device:=f.renderer,f.device
         if hardware && !r.hardware_rt {fmt.println("morph native RT skipped: device has no ray queries");continue}
         vertices,indices,given:=skin_test_geometry()
         for &vertex in vertices {vertex.tangent={1,0,0,1}}
@@ -128,10 +128,10 @@ gpu_morphs_move_the_bind_shape_before_the_skin_with_motion_tangents_bounds_and_b
 
 @(test)
 gpu_skins_with_influences_of_every_level_pose_each_level_and_keep_its_history_and_bounds :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r)
-    device:=skin_test_renderer(t,r,false)
-    if device==nil {return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !skin_fixture(t,&f,false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     high:=[4]Mesh_Vertex{
         {position={-.8,-.8,0},normal={0,0,1},color={1,1,1},tangent={1,0,0,1}},
         {position={.8,-.8,0},normal={0,0,1},color={1,1,1},tangent={1,0,0,1}},

@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
 
 // Without an editor a project still lists something to call, and calling it
 // says how to start that project's editor.
@@ -65,10 +66,10 @@ a_tools_call_says_the_method_it_runs :: proc(t:^testing.T) {
 @(test)
 a_project_follows_the_editor_its_port_file_names :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root:=fmt.tprintf("%s/mirai-mcp-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
+    root:=base.test_folder(t,"mcp")
+    if root=="" {return}
     folder:=project.path(root,".mirai",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(folder)==nil)
-    defer os.remove_all(root)
 
     connection,ok:=connection_args({"--project",root},{})
     testing.expect(t,ok && connection.project!="" && len(connection.rest)==0)

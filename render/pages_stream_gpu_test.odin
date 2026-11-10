@@ -1,25 +1,19 @@
 package mirai_render
 
-import "core:fmt"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 // On the GPU: a streamed sheet seen from near asks for its pages, the CPU
 // loads them, and they stay; seen from far, only its root draws.
 @(test)
 gpu_streamed_pages_load_what_a_near_view_asks_for :: proc(t: ^testing.T) {
-	device, error := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("page streaming test skipped:", error)} else {testing.expect(t, false, error)}
-		return
-	}
-	r:=new(Renderer);defer free(r)
 	settings := DEFAULT_SETTINGS
 	settings.reflections, settings.taa = false, false
 	settings.page_pool_bytes = 64 * PAGE_SLOT_WORDS * 4
-	if !renderer_init(r, {device = device, width = 256, height = 256, settings = settings}) {testing.expect(t, false, r.error);return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 256, 256, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	g, ok := streamed_sheet(256)
 	if !testing.expect(t, ok, "the sheet has pages out of its root") {return}
 	mesh, added := mesh_add_geometry(r, g, nil)

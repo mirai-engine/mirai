@@ -7,6 +7,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(test)
 game_build_rejects_the_cook_and_acp_packages :: proc(t:^testing.T) {
@@ -71,10 +72,8 @@ the_tests_of_runtime_packages_import_no_engine_time_package :: proc(t:^testing.T
 // does in the folder of the project: the file travels when the project has it.
 @(test)
 a_game_ships_the_bindings_of_its_project_when_it_has_them :: proc(t:^testing.T) {
-    folder,folder_error:=os.make_directory_temp("","mirai-ship-*",context.temp_allocator)
-    if !testing.expect(t,folder_error==nil) {return}
-    folder=project.path_absolute(folder,context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"ship")
+    if folder=="" {return}
     root:=project.path(folder,"project",allocator=context.temp_allocator)
     bindings:=`{"actions":[{"name":"jump","kind":"Button","bindings":[{"key":"Space"}]}]}`
     m:=project.manifest_default("Bound Game")
@@ -109,10 +108,8 @@ a_game_ships_the_bindings_of_its_project_when_it_has_them :: proc(t:^testing.T) 
 // read them.
 @(test)
 a_game_ships_the_settings_of_the_engine_and_of_its_project_merged :: proc(t:^testing.T) {
-    folder,folder_error:=os.make_directory_temp("","mirai-ship-*",context.temp_allocator)
-    if !testing.expect(t,folder_error==nil) {return}
-    folder=project.path_absolute(folder,context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"ship")
+    if folder=="" {return}
     root,engine:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil)
     m:=project.manifest_default("Set Game")

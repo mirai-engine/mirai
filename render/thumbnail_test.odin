@@ -2,17 +2,13 @@ package mirai_render
 
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(test)
 gpu_geometry_thumbnail_evaluates_uv1_maps_and_custom_surface :: proc(t:^testing.T) {
-    device,problem:=shared_device.take(t)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,problem)};return}
-    renderer:=new(Renderer);defer free(renderer)
-    initialized:=renderer_init(renderer, {device = device, width = 64, height = 64, settings = DEFAULT_SETTINGS})
-    testing.expect(t,initialized,renderer.error)
-    if !initialized {renderer_destroy(renderer);return}
-    defer renderer_destroy(renderer)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS) {return}
+    defer fixture_destroy(&f)
+    renderer,device:=f.renderer,f.device
     state:Thumbnail_GPU;defer thumbnail_destroy(device,&state)
     positions:=[6]Vec3{{-1,0,-1},{1,0,1},{1,0,-1},{-1,0,-1},{-1,0,1},{1,0,1}}
     vertices:[6]Thumbnail_Vertex
@@ -54,13 +50,10 @@ gpu_geometry_thumbnail_evaluates_uv1_maps_and_custom_surface :: proc(t:^testing.
 
 @(test)
 gpu_material_capture_reads_what_a_material_gives_at_each_pixel :: proc(t:^testing.T) {
-    device,problem:=shared_device.take(t, hardware_rt = false)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,problem)};return}
-    renderer:=new(Renderer);defer free(renderer)
-    initialized:=renderer_init(renderer, {device = device, width = 64, height = 64, settings = DEFAULT_SETTINGS})
-    testing.expect(t,initialized,renderer.error)
-    if !initialized {renderer_destroy(renderer);return}
-    defer renderer_destroy(renderer)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    renderer,device:=f.renderer,f.device
     state:Thumbnail_Values_GPU;defer thumbnail_values_destroy(device,&state)
     positions:=[6]Vec3{{-1,0,-1},{1,0,1},{1,0,-1},{-1,0,-1},{-1,0,1},{1,0,1}}
     vertices:[6]Thumbnail_Vertex
@@ -114,13 +107,10 @@ gpu_material_capture_reads_what_a_material_gives_at_each_pixel :: proc(t:^testin
 
 @(test)
 gpu_thumbnail_frames_a_given_box_and_an_image_of_the_table_takes_new_pixels :: proc(t:^testing.T) {
-    device,problem:=shared_device.take(t, hardware_rt = false)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,problem)};return}
-    renderer:=new(Renderer);defer free(renderer)
-    initialized:=renderer_init(renderer, {device = device, width = 64, height = 64, settings = DEFAULT_SETTINGS})
-    testing.expect(t,initialized,renderer.error)
-    if !initialized {renderer_destroy(renderer);return}
-    defer renderer_destroy(renderer)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    renderer,device:=f.renderer,f.device
     state:Thumbnail_GPU;defer thumbnail_destroy(device,&state)
     positions:=[6]Vec3{{-1,0,-1},{1,0,1},{1,0,-1},{-1,0,-1},{-1,0,1},{1,0,1}}
     vertices:[6]Thumbnail_Vertex

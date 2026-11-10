@@ -1,20 +1,12 @@
 package mirai_render
 
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-
-@(private = "file")
-Material_Fixture :: struct {
-	device:   ^rhi.Device,
-	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
-}
 
 // No temporal jitter, so a pixel center always shows the same surface point.
 @(private = "file")
@@ -27,27 +19,6 @@ material_settings :: proc() -> Settings {
 	s.taa = false
 	s.occlusion_culling = false
 	return s
-}
-
-@(private = "file")
-material_fixture :: proc(t: ^testing.T, f: ^Material_Fixture, width, height: u32, settings: Settings, pipeline_thread := false) -> bool {
-	device, err := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("material tests skipped:", err)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)}
-		return false
-	}
-	f.device = device
-	f.renderer = new(Renderer)
-	ok := renderer_init(f.renderer, {device = device, width = width, height = height, settings = settings, pipeline_thread = pipeline_thread})
-	testing.expect(t, ok, f.renderer.error)
-	if !ok {f.device = nil}
-	return ok
-}
-
-@(private = "file")
-material_fixture_destroy :: proc(f: ^Material_Fixture) {
-	if f.device == nil {return}
-	if f.renderer != nil {renderer_destroy(f.renderer); free(f.renderer)}
 }
 
 // A unit square on the ground facing up. u grows with +X and v with +Z, so a
@@ -69,9 +40,9 @@ OVERHEAD :: Camera{position = {0, 2, 0}, forward = {0, -2, 0}, up = {0, 0, -1}, 
 // the UI pipeline, including materials not assigned to scene geometry.
 @(test)
 material_selector_thumbnails_sample_the_material_table :: proc(t: ^testing.T) {
-    f: Material_Fixture
-    if !material_fixture(t, &f, 128, 64, material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f: Fixture
+    if !fixture_init(t, &f, 128, 64, material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     pixels:=make([]u8,32*32*4,context.temp_allocator)
     for y in 0..<32 {
@@ -150,7 +121,7 @@ target_pixel :: proc(r: ^Renderer, camera: Camera, world: Vec3, output: bool = f
 
 // G-buffer base color (sRGB bytes) and metallic (alpha) at a world position.
 @(private = "file")
-read_albedo :: proc(t: ^testing.T, f: ^Material_Fixture, camera: Camera, world: Vec3) -> [4]int {
+read_albedo :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [4]int {
 	r := f.renderer
 	rhi.device_wait_idle(f.device)
 	pixels := make([]u8, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
@@ -162,7 +133,7 @@ read_albedo :: proc(t: ^testing.T, f: ^Material_Fixture, camera: Camera, world: 
 
 // G-buffer shading normal and roughness (w) at a world position.
 @(private = "file")
-read_normal :: proc(t: ^testing.T, f: ^Material_Fixture, camera: Camera, world: Vec3) -> Vec4 {
+read_normal :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> Vec4 {
 	r := f.renderer
 	rhi.device_wait_idle(f.device)
 	halves := make([]f16, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
@@ -189,9 +160,9 @@ frames :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, count: int, mode := 
 // view that hides nothing draw it whole.
 @(test)
 a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	red := DEFAULT_MATERIAL
 	red.base_color = {1, 0, 0}
@@ -222,9 +193,9 @@ a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^tes
 // not draw of any body.
 @(test)
 a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	red := DEFAULT_MATERIAL
 	red.base_color = {1, 0, 0}
@@ -258,9 +229,9 @@ a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
 
 @(test)
 material_texture_is_upright_and_keeps_its_colors :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	// Four quadrants, from the top: red, green / blue, gray. Their centers are
 	// far from any other color, whatever the filter.
@@ -308,9 +279,9 @@ material_texture_is_upright_and_keeps_its_colors :: proc(t: ^testing.T) {
 
 @(test)
 material_instance_overrides_the_mesh_materials :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	red, blue := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	red.base_color = {1, 0, 0}
@@ -335,9 +306,9 @@ material_instance_overrides_the_mesh_materials :: proc(t: ^testing.T) {
 
 @(test)
 material_mips_average_light_and_follow_distance :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	SIZE :: 64
 	image := make([]u8, SIZE * SIZE * 4)
@@ -370,9 +341,9 @@ material_mips_average_light_and_follow_distance :: proc(t: ^testing.T) {
 
 @(test)
 material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	// 30 degrees towards +X of the image, and towards its top (+Y).
 	right := [4]u8{191, 128, 238, 255}
@@ -405,9 +376,9 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 
 @(test)
 material_gloss_adds_a_highlight_and_metal_tints_it :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 96, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	matte, glossy, metal := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	matte.base_color = {0.5, 0.5, 0.5}
@@ -421,7 +392,7 @@ material_gloss_adds_a_highlight_and_metal_tints_it :: proc(t: ^testing.T) {
 	// The light, the camera and the floor point between them form a mirror path.
 	camera := Camera{position = {0, 2, 4}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 30}}
-	shot :: proc(t: ^testing.T, f: ^Material_Fixture, quad: Mesh_Handle, lights: []Light_Desc, camera: Camera, material: Material_Handle, world: Vec3) -> [3]f32 {
+	shot :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, lights: []Light_Desc, camera: Camera, material: Material_Handle, world: Vec3) -> [3]f32 {
 		r := f.renderer
 		scene_set(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = material, tint = {1, 1, 1}}}, lights, {}, {})
 		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
@@ -452,7 +423,7 @@ material_gloss_adds_a_highlight_and_metal_tints_it :: proc(t: ^testing.T) {
 
 @(test)
 material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
-	f: Material_Fixture
+	f: Fixture
 	settings := DEFAULT_SETTINGS
 	// The indirect light itself: the lit floor of a room this bright goes white
 	// through the display transform.
@@ -461,8 +432,8 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 	settings.probe_rays = 64
 	settings.probe_grid, settings.probe_cascades = 8, 2
 	settings.probe_spacing = 1.5
-	if !material_fixture(t, &f, 96, 64, settings) {return}
-	defer material_fixture_destroy(&f)
+	if !fixture_init(t, &f, 96, 64, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	red := [4]u8{255, 0, 0, 255}
 	texture, added := texture_add(r, {pixels = red[:], width = 1, height = 1, srgb = true, name = "red"})
@@ -582,12 +553,12 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 
 @(test)
 texture_table_has_a_budget :: proc(t: ^testing.T) {
-	f: Material_Fixture
+	f: Fixture
 	settings := material_settings()
 	settings.texture_max_size = 4
 	settings.texture_compression = false
-	if !material_fixture(t, &f, 32, 32, settings) {return}
-	defer material_fixture_destroy(&f)
+	if !fixture_init(t, &f, 32, 32, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	image: [16 * 16 * 4]u8
 	for &b in image {b = 200}
@@ -625,9 +596,9 @@ texture_table_has_a_budget :: proc(t: ^testing.T) {
 
 @(test)
 material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	texel := [4]u8{90, 160, 220, 255}
 	texture, added := texture_add(r, {pixels = texel[:], width = 1, height = 1, srgb = true, name = "texel"})
@@ -659,9 +630,9 @@ material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
 
 @(test)
 material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 96, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	mirror, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	mirror.base_color = {0.9, 0.9, 0.9}
@@ -682,7 +653,7 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 	}
 	scene_set(r, instances, nil, {}, {sky = {0, 0, 0.2}})
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	floor_point :: proc(t: ^testing.T, f: ^Material_Fixture, camera: Camera, world: Vec3) -> [3]f32 {
+	floor_point :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
 		r := f.renderer
 		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 		rhi.device_wait_idle(f.device)
@@ -724,9 +695,9 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 // points; with another one the points are binned by program.
 @(test)
 material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 96, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	grid, ocean := program_find(r, "Grid", .Surface), program_find(r, "Ocean", .Surface)
 	testing.expect(t, grid != nil && ocean != nil, "the engine has the Grid and Ocean programs")
@@ -772,9 +743,9 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 // them.
 @(test)
 material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 96, 64, material_settings(), pipeline_thread = true) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings(), desc = {pipeline_thread = true}) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
 	if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
@@ -806,7 +777,7 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
 	}, nil, {direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0, 0, 0.05}})
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	look :: proc(t: ^testing.T, f: ^Material_Fixture, camera: Camera) -> (seen, mirrored: [3]f32) {
+	look :: proc(t: ^testing.T, f: ^Fixture, camera: Camera) -> (seen, mirrored: [3]f32) {
 		rhi.device_wait_idle(f.device)
 		pixels, w, _, ok := golden_capture(f.renderer)
 		testing.expect(t, ok, f.renderer.error)
@@ -838,9 +809,9 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 // glass, not the values of their rows.
 @(test)
 material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
 	if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
@@ -890,9 +861,9 @@ pieces_material :: proc(t: ^testing.T, pieces: ^Program, progress: f64) -> Mater
 // the frame its parameters move it in, and none in the next.
 @(test)
 material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	pieces := program_find(r, "Pieces", .Surface)
 	if !testing.expect(t, pieces != nil && pieces.vertex.declared, "the engine has the Pieces program, which moves vertices") {return}
@@ -951,7 +922,7 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 
 // Color on screen at a world position, after a few frames.
 @(private = "file")
-screen_color :: proc(t: ^testing.T, f: ^Material_Fixture, camera: Camera, world: Vec3) -> [3]f32 {
+screen_color :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
 	r := f.renderer
 	frames(t, r, camera, 3)
 	rhi.device_wait_idle(f.device)
@@ -973,9 +944,9 @@ placed :: proc(scale: f32, height: f32) -> Mat4 {
 
 @(test)
 material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 96, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	// The left half of the image is solid and the right half is a hole.
 	SIZE :: 8
@@ -1052,10 +1023,10 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 
 @(test)
 material_selection_mask_respects_surface_alpha :: proc(t:^testing.T) {
-    f:Material_Fixture
+    f:Fixture
     settings:=material_settings();settings.gi_enabled=false
-    if !material_fixture(t,&f,96,64,settings) {return}
-    defer material_fixture_destroy(&f)
+    if !fixture_init(t,&f,96,64,settings) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     image:[8*8*4]u8
     for y in 0..<8 {for x in 0..<8 {
@@ -1105,9 +1076,9 @@ material_selection_mask_respects_surface_alpha :: proc(t:^testing.T) {
 
 @(test)
 material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 64, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	// Leaves: the alpha of every texel is random, and 40% of them reach the
 	// cutoff. Averages of a few texels gather around one half, below it.
@@ -1136,7 +1107,7 @@ material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
 	materials_set(r, {fence, with_coverage})
 	quad := ground_quad(r)
 	far := Camera{position = {0, 6, 0}, forward = {0, -6, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	covered :: proc(t: ^testing.T, f: ^Material_Fixture, quad: Mesh_Handle, camera: Camera, material: Material_Handle) -> int {
+	covered :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, camera: Camera, material: Material_Handle) -> int {
 		r := f.renderer
 		instances := []Instance_Desc{
 			{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}},
@@ -1161,9 +1132,9 @@ material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
 
 @(test)
 material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 96, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	red, blue := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	red.base_color = {1, 0, 0}
@@ -1214,7 +1185,7 @@ material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T
 // Read linear light before translucency and tone mapping; the camera can look
 // through the filter without confusing its visible color with its shadow.
 @(private="file")
-read_light :: proc(t:^testing.T,f:^Material_Fixture,camera:Camera,world:Vec3,target:rhi.Texture)->Vec3 {
+read_light :: proc(t:^testing.T,f:^Fixture,camera:Camera,world:Vec3,target:rhi.Texture)->Vec3 {
     rhi.device_wait_idle(f.device)
     r:=f.renderer
     pixels:=make([]f16,int(r.targets.width*r.targets.height)*4,context.temp_allocator)
@@ -1225,9 +1196,9 @@ read_light :: proc(t:^testing.T,f:^Material_Fixture,camera:Camera,world:Vec3,tar
 
 @(test)
 material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,64,64,material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     image:[16*16*4]u8
     for y in 0..<16 {for x in 0..<16 {
@@ -1326,9 +1297,9 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
 
 @(test)
 uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,64,64,material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     vertices:=[4]Mesh_Vertex{
         {position={-0.5,0,-0.5},normal={0,1,0},color={1,0,0}},
@@ -1379,9 +1350,9 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
 
 @(test)
 material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,64,64,material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     mirror:=DEFAULT_MATERIAL;mirror.metallic=1;mirror.roughness=0.03
     materials_set(r,{mirror})
@@ -1434,9 +1405,9 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
 
 @(test)
 material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
-	f: Material_Fixture
-	if !material_fixture(t, &f, 96, 64, material_settings()) {return}
-	defer material_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	floor, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	floor.base_color = {0.9, 0.9, 0.9}
@@ -1455,7 +1426,7 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	// The mirror image of the emitter covers the floor from x = -0.375 to 0.375.
 	inside := Vec3{0, 0, 0}
 	beside := Vec3{0.6, 0, 0}
-	settled :: proc(t: ^testing.T, f: ^Material_Fixture, camera: Camera, world: Vec3) -> [3]f32 {
+	settled :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
 		frames(t, f.renderer, camera, 24)
 		return screen_color(t, f, camera, world)
 	}
@@ -1508,11 +1479,11 @@ flat_blocks :: proc(size: int) -> (data: Texture_Data) {
 
 @(test)
 block_textures_and_the_pool_bound_memory :: proc(t: ^testing.T) {
-	f: Material_Fixture
+	f: Fixture
 	settings := material_settings()
 	settings.texture_pool_megabytes = 1
-	if !material_fixture(t, &f, 64, 64, settings) {return}
-	defer material_fixture_destroy(&f)
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	if !rhi.device_info(f.device).features.texture_bc {return}
 	testing.expect(t, texture_limits(r).blocks, "the device samples blocks and the setting is on")
@@ -1561,9 +1532,9 @@ block_textures_and_the_pool_bound_memory :: proc(t: ^testing.T) {
 
 @(test)
 material_slots_instance_palette_preserves_triangle_partition_and_geometry :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,128,128,material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,128,128,material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     red,green,blue:=DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL
     red.base_color={1,0,0};green.base_color={0,1,0};blue.base_color={0,0,1}
@@ -1594,9 +1565,9 @@ material_slots_instance_palette_preserves_triangle_partition_and_geometry :: pro
 // This checks map binding interpretation on the GPU, rather than only the JSON catalog.
 @(test)
 material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,64,64,material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     SIZE :: 32
     pixels:[SIZE*SIZE*4]u8
@@ -1625,7 +1596,7 @@ material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:
     frames(t,r,OVERHEAD,2)
     at:=Vec3{0.25,0,-0.25}
     testing.expectf(t,near_bytes(read_albedo(t,&f,OVERHEAD,at),{0,0,255,0},4),"Base color selects UV1: %v",read_albedo(t,&f,OVERHEAD,at))
-    read_half_target :: proc(t:^testing.T,f:^Material_Fixture,target:rhi.Texture,world:Vec3)->Vec4 {
+    read_half_target :: proc(t:^testing.T,f:^Fixture,target:rhi.Texture,world:Vec3)->Vec4 {
         rhi.device_wait_idle(f.device)
         values:=make([]f16,int(f.renderer.targets.width*f.renderer.targets.height)*4,context.temp_allocator)
         testing.expect(t,golden_read_texture(f.device,target,mem.slice_data_cast([]u8,values)),rhi.device_error(f.device))
@@ -1652,17 +1623,17 @@ material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:
 
 @(test)
 material_specular_conserves_diffuse_energy_and_ior_zero_is_angle_independent :: proc(t:^testing.T) {
-    f:Material_Fixture
+    f:Fixture
     settings:=material_settings();settings.reflections=false;settings.reflection_detail_roughness=0
-    if !material_fixture(t,&f,64,64,settings) {return}
-    defer material_fixture_destroy(&f)
+    if !fixture_init(t,&f,64,64,settings) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     material:=DEFAULT_MATERIAL
     material.base_color={1,1,1};material.roughness=1;material.specular_factor=0
     materials_set(r,{material})
     mesh:=ground_quad(r)
     scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
-    direct_at_origin :: proc(t:^testing.T,f:^Material_Fixture,camera:Camera)->Vec3 {
+    direct_at_origin :: proc(t:^testing.T,f:^Fixture,camera:Camera)->Vec3 {
         frames(t,f.renderer,camera,2)
         rhi.device_wait_idle(f.device)
         values:=make([]f16,int(f.renderer.targets.width*f.renderer.targets.height)*4,context.temp_allocator)
@@ -1717,10 +1688,10 @@ material_specular_conserves_diffuse_energy_and_ior_zero_is_angle_independent :: 
 
 @(test)
 material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(t:^testing.T) {
-    f:Material_Fixture
+    f:Fixture
     settings:=material_settings()
-    if !material_fixture(t,&f,32,32,settings) {return}
-    defer material_fixture_destroy(&f)
+    if !fixture_init(t,&f,32,32,settings) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     plain,reflective:=DEFAULT_MATERIAL,DEFAULT_MATERIAL
     plain.roughness=.2
@@ -1771,9 +1742,9 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
 // surfaces are, for that frame alone.
 @(test)
 material_gbuffer_stage_surfaces_ask_for_their_targets :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,32,32,material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,32,32,material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     plain,reflective,coated:=DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL
     reflective.ior=0;reflective.specular_color={.2,.8,.4}
@@ -1829,7 +1800,7 @@ OBLIQUE :: Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, f
 
 // A half-float target at the pixel that shows a world point.
 @(private = "file")
-target_at :: proc(t:^testing.T,f:^Material_Fixture,target:rhi.Texture,camera:Camera,world:Vec3) -> Vec3 {
+target_at :: proc(t:^testing.T,f:^Fixture,target:rhi.Texture,camera:Camera,world:Vec3) -> Vec3 {
     r:=f.renderer
     rhi.device_wait_idle(f.device)
     values:=make([]f16,int(r.targets.width*r.targets.height)*4,context.temp_allocator)
@@ -1841,7 +1812,7 @@ target_at :: proc(t:^testing.T,f:^Material_Fixture,target:rhi.Texture,camera:Cam
 
 // The split-sum table the renderer built (dfg.comp), DFG_SIZE texels a side.
 @(private = "file")
-dfg_table :: proc(t:^testing.T,f:^Material_Fixture) -> []f16 {
+dfg_table :: proc(t:^testing.T,f:^Fixture) -> []f16 {
     table:=make([]f16,DFG_SIZE*DFG_SIZE*2,context.temp_allocator)
     testing.expect(t,golden_read_texture(f.device,f.renderer.dfg,mem.slice_data_cast([]u8,table)),rhi.device_error(f.device))
     return table
@@ -1893,7 +1864,7 @@ layered_cases :: proc(base:Vec3) -> [5]Layered_Case {
 
 // What the camera sees of a surface under a white sky, over the sky's luminance.
 @(private = "file")
-sky_albedo :: proc(t:^testing.T,f:^Material_Fixture,mesh:Mesh_Handle,material:Material_Handle,camera:Camera) -> Vec3 {
+sky_albedo :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_Handle,camera:Camera) -> Vec3 {
     r:=f.renderer
     scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{},{sky={1,1,1}})
     frames(t,r,camera,2)
@@ -1905,7 +1876,7 @@ sky_albedo :: proc(t:^testing.T,f:^Material_Fixture,mesh:Mesh_Handle,material:Ma
 // stratified disk lifted to the hemisphere). π lux show π·f·cos, and the
 // density of a direction is cos/π.
 @(private = "file")
-light_albedo :: proc(t:^testing.T,f:^Material_Fixture,mesh:Mesh_Handle,material:Material_Handle,camera:Camera) -> Vec3 {
+light_albedo :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_Handle,camera:Camera) -> Vec3 {
     r:=f.renderer
     SIDE :: 12
     sum:Vec3
@@ -1925,9 +1896,9 @@ light_albedo :: proc(t:^testing.T,f:^Material_Fixture,mesh:Mesh_Handle,material:
 // its base: every layer takes from what is below what it reflects itself.
 @(test)
 material_layers_keep_a_white_furnace :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,32,32,layer_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,32,32,layer_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     cases:=layered_cases({1,1,1})
     materials:[len(cases)]Material_Desc
@@ -1953,9 +1924,9 @@ material_layers_keep_a_white_furnace :: proc(t:^testing.T) {
 // behind takes the place of what it does not reflect.
 @(test)
 diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,32,32,layer_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,32,32,layer_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     leaf:=DEFAULT_MATERIAL
     leaf.base_color={1,1,1}
@@ -1965,7 +1936,7 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
     opaque.diffuse_transmission.weight=0
     materials_set(r,{leaf,opaque})
     quad:=ground_quad(r)
-    below:=proc(t:^testing.T,f:^Material_Fixture,quad:Mesh_Handle,material:Material_Handle) -> Vec3 {
+    below:=proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,material:Material_Handle) -> Vec3 {
         r:=f.renderer
         scene_set(r,{{object_id=1,mesh=quad,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
         frames(t,r,OVERHEAD,2)
@@ -2000,9 +1971,9 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
 // what is under it, a fuzz takes what it scatters, by the same amounts.
 @(test)
 material_layers_light_alike_from_lights_and_from_the_sky :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,32,32,layer_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,32,32,layer_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     base:=layered_cases({0.5,0.5,0.5})
     tinted:=base[1]
@@ -2027,9 +1998,9 @@ material_layers_light_alike_from_lights_and_from_the_sky :: proc(t:^testing.T) {
 // towards grazing views, and does not turn the surface into the sky.
 @(test)
 material_fuzz_is_a_sheen_and_not_a_mirror :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,32,32,layer_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,32,32,layer_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     velvet:=DEFAULT_MATERIAL
     velvet.base_color={0,0,0}
@@ -2048,9 +2019,9 @@ material_fuzz_is_a_sheen_and_not_a_mirror :: proc(t:^testing.T) {
 // light and the camera turn together.
 @(test)
 material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,32,32,layer_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,32,32,layer_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     brushed:=DEFAULT_MATERIAL
     brushed.base_color={1,1,1}
@@ -2061,7 +2032,7 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
     quad:=ground_quad(r)
     // Near the mirror direction of the view, off it along the tangent: the stretched lobe keeps it.
     sun:=Vec3{0.4,1,-1}
-    seen :: proc(t:^testing.T,f:^Material_Fixture,quad:Mesh_Handle,turn:mm.Quat,spin:f32,camera:Camera,sun:Vec3) -> f32 {
+    seen :: proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,turn:mm.Quat,spin:f32,camera:Camera,sun:Vec3) -> f32 {
         transform:=mm.transform_matrix({rotation=turn*mm.quat_axis_angle({0,1,0},spin),scale={12,12,12}})
         direction:=mm.quat_rotate(turn,sun)
         scene_set(f.renderer,{{object_id=1,mesh=quad,transform=transform,material=1,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
@@ -2085,9 +2056,9 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
 // image tilts both halves alike, and one that tilts along u mirrors.
 @(test)
 material_mirrored_uvs_share_their_bitangent :: proc(t:^testing.T) {
-    f:Material_Fixture
-    if !material_fixture(t,&f,64,64,material_settings()) {return}
-    defer material_fixture_destroy(&f)
+    f:Fixture
+    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    defer fixture_destroy(&f)
     r:=f.renderer
     right:=[4]u8{191,128,238,255}
     up:=[4]u8{128,191,238,255}

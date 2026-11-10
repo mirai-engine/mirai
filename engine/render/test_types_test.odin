@@ -1,10 +1,12 @@
 package render
 
 import "mirai:core"
+import volume "mirai:engine/volume"
 import "mirai:rhi"
 
-// What the declarations of this library name: core.Test_Types.
+// What the declarations of this library and of those it uses name: core.Test_Types.
 test_types :: proc(types:^[dynamic]core.Test_Type) {
+    volume.test_types(types)
     append(types,
         core.test_type(Graphics_Settings,default=proc(dst:^Graphics_Settings) {dst^=GRAPHICS_SETTINGS_DEFAULT},for_device=proc(dst:^Graphics_Settings,device:rawptr) {dst^=graphics_settings_for_device((cast(^rhi.Device_Info)device)^)}),
         core.test_type(Tint,default=proc(dst:^Tint) {dst^=TINT_DEFAULT}),

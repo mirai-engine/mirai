@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
 stages_project :: proc(t:^testing.T,folder,core_source,game_source:string) -> (p:project.Project,ok:bool) {
@@ -51,9 +52,8 @@ errors_have :: proc(errors:[]string,parts:..string) -> bool {
 // that makes entities settles the World before the next one runs.
 @(test)
 stages_run_in_order_and_after_and_before_order_a_stage :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-stages-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"stages")
+    if folder=="" {return}
     core_source:=`package core
 @(storage) Clock :: struct {tick:u64}
 @(component) Thing :: struct {value:f32}
@@ -112,9 +112,8 @@ slice_equal :: proc(a,b:[]string) -> bool {
 // against the order of the stages are errors that name the steps.
 @(test)
 order_names_cycles_and_stages_that_cannot_be_are_errors :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-stages-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"stages")
+    if folder=="" {return}
     core_source:=`package core
 @(step="fixed",order=5) numbered :: proc() {}
 @(step="fixed",stage="later") staged :: proc() {}
@@ -148,9 +147,8 @@ order_names_cycles_and_stages_that_cannot_be_are_errors :: proc(t:^testing.T) {
 // returns before it on a client, also when a correction resimulates.
 @(test)
 a_server_step_is_skipped_on_a_client :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-stages-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"stages")
+    if folder=="" {return}
     core_source:=`package core
 Network_Role :: enum u8 {Standalone,Server,Client}
 @(storage,keep) Network :: struct {role:Network_Role}

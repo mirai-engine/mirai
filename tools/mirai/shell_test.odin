@@ -5,14 +5,14 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 // A script is known by its #! line; a plain file or a missing one is not run by the shell.
 @(test)
 a_script_is_told_by_its_shebang :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-shell-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"shell")
+    if folder=="" {return}
     cases:=[?]struct{text:string,script:bool}{{"#!/usr/bin/env sh\nset -e\n",true},{"echo no shebang\n",false},{"#",false}}
     for c in cases {
         path:=join(folder,"script")

@@ -5,6 +5,7 @@ import "core:math"
 import "core:strings"
 import "core:testing"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 // A Z-up stage in centimeters with a floor and each light UsdLux has an
@@ -99,7 +100,8 @@ near :: proc(a,b:f32,tolerance:f32=1e-4) -> bool {return abs(a-b)<=tolerance*max
 // Z-up stage, and the children of a light stay where they were.
 @(test)
 usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testing.T) {
-    folder:=temp_folder("lights")
+    folder:=base.test_folder(t,"lights")
+    if folder=="" {return}
     model,ok:=import_ok(t,write_text(folder,"lights.usda",LIGHTS),TEXT_ONLY)
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -156,7 +158,8 @@ usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testin
 // What a light cannot be is refused with the prim that has it.
 @(test)
 usd_lights_that_cannot_be_kept_are_refused :: proc(t:^testing.T) {
-    folder:=temp_folder("lights-refused")
+    folder:=base.test_folder(t,"lights-refused")
+    if folder=="" {return}
     HEADER :: "#usda 1.0\n(\n metersPerUnit = 1\n upAxis = \"Y\"\n)\n"
     cases:=[]struct{body:string,code:importer.Error_Code,part:string}{
         {"def RectLight \"Panel\"\n{\n def Xform \"Inside\"\n {\n }\n}\n",.Unsupported,"/Panel/Inside"},

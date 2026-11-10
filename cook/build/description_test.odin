@@ -5,12 +5,12 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(test)
 component_descriptions_preserve_quoted_text_in_both_generated_worlds :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-description-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"description")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
@@ -51,9 +51,8 @@ Commented :: struct {
 // @(storage,scene) is no more: the message says to make it a component.
 @(test)
 settings_are_of_the_project_or_of_the_machine :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-setting-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"setting")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {

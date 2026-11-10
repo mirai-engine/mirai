@@ -214,30 +214,27 @@ a_hidden_screen_builds_until_nothing_of_it_shows :: proc(t:^testing.T) {
 
 @(private="file")
 Bind_Test_World :: struct {
-    es:core.Entities,
+    using world:core.Test_World,
     healths:core.Table(Bind_Test_Health),
     match:Bind_Test_Match,
 }
 @(private="file") Bind_Test_Health :: struct {value:f32,most:f32}
-@(private="file") Bind_Test_Match :: struct {seconds:f32}
+
+@(private="file") @(storage,setting="machine")
+Bind_Test_Match :: struct {seconds:f32}
 
 @(test)
 paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T) {
     w:Bind_Test_World
-    core.entities_init(&w.es)
-    defer core.entities_destroy(&w.es)
-    core.table_init(&w.healths,"Bind_Test_Health")
-    defer core.table_destroy(&w.healths)
-    e:=core.create(&w.es)
+    if !core.test_world_init(t,&w) {return}
+    defer core.test_world_destroy(&w)
+    e:=core.create(&w.entities)
     core.add(&w.healths,e,Bind_Test_Health{3,10})
-    core.table_settle(&w.healths,&w.es)
-    tables:=[]core.Table_Info{{name="Bind_Test_Health",type=Bind_Test_Health,info=type_info_of(Bind_Test_Health),offset=offset_of(Bind_Test_World,healths)}}
-    storages:=[]core.Storage_Info{{name="Bind_Test_Match",type=Bind_Test_Match,info=type_info_of(Bind_Test_Match),offset=offset_of(Bind_Test_World,match),setting=.Machine}}
-    info:=core.World_Info{entities=offset_of(Bind_Test_World,es),tables=tables,storages=storages}
+    core.test_world_settle(&w)
     gui:Gui
     gui.allocator=context.allocator
     defer gui_free(&gui)
-    b:=Bind{gui=&gui,world=core.world_ref(&w,&info)}
+    b:=Bind{gui=&gui,world=core.test_world_ref(&w)}
     host:=bind_host(&b)
     // A component, by its name, is the row of the entity with its stamp.
     _,storage,found:=host.source(host.user,base.name_hash("Bind_Test_Health"))
@@ -280,7 +277,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
         low:Gui
         low.allocator=limited
         low.sources=make([dynamic]Bound_Source,limited)
-        binding:=Bind{gui=&low,world=core.world_ref(&w,&info)}
+        binding:=Bind{gui=&low,world=core.test_world_ref(&w)}
         {
             context.allocator=limited
             low_host:=bind_host(&binding)
@@ -433,16 +430,13 @@ the_reference_scales_the_interfaces_with_the_scale_of_the_player :: proc(t:^test
 
 @(test)
 a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) {
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    first,second,menu,pause:=core.create(&es),core.create(&es),core.create(&es),core.create(&es)
-    seats:core.Table(inp.Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
-    core.add(&seats,first,inp.Seat{})
-    core.add(&seats,second,inp.Seat{slot=1})
-    core.table_settle(&seats,&es)
+    w:Seats_Test_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    first,second,menu,pause:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,first,inp.Seat{})
+    core.add(&w.seats,second,inp.Seat{slot=1})
+    core.test_world_settle(&w)
     state:inp.Seats
     requests:inp.Seat_Requests
     defer delete(requests.items)
@@ -452,7 +446,7 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
     gui:Gui
     defer {delete(gui.instances);delete(gui.unblock)}
     append(&gui.instances,Instance{entity=menu,modal=true,taking=true,player=2},Instance{entity=pause,modal=true,taking=true})
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),2)
     testing.expect(t,requests.items[0].kind==.Block_Add && requests.items[0].seat==second && requests.items[0].owner==menu)
     testing.expect(t,requests.items[1].kind==.Block_Add && requests.items[1].seat==core.NONE && requests.items[1].owner==pause)
@@ -461,12 +455,12 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
     // Applied by input, the blocks are not asked again.
     state.blocks[0]={owner=menu,seat=second,mask=inp.ALL_ACTIONS,active=true}
     state.blocks[1]={owner=pause,mask=inp.ALL_ACTIONS,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests) && len(requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(requests.items)==0)
     // Off the top, or gone, they give the seats back.
     gui.instances[0].modal,gui.instances[0].taking=false,false
     pop(&gui.instances)
     append(&gui.unblock,pause)
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),2)
     testing.expect(t,requests.items[0].kind==.Block_Remove && requests.items[1].kind==.Block_Remove)
     testing.expect(t,!gui.instances[0].blocking)
@@ -477,35 +471,34 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
 @(test)
 the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing.T) {
     DROP :: inp.Action(4)
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    seat,inventory,cinematic:=core.create(&es),core.create(&es),core.create(&es)
-    seats:core.Table(inp.Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
-    core.add(&seats,seat,inp.Seat{})
-    core.table_settle(&seats,&es)
+    w:Seats_Test_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    seat,inventory,cinematic:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,seat,inp.Seat{})
+    core.test_world_settle(&w)
     bindings:inp.Input_Map
     inp.input_map_action(&bindings,DROP,.Button)
     inp.input_map_bind(&bindings,DROP,inp.binding_key(.X))
     device:=core.Input{keys_down={.X},keys_pressed={.X}}
-    inp.seat_feed(core.get(&seats,seat),&device,&bindings,false)
+    inp.seat_feed(core.get(&w.seats,seat),&device,&bindings,false)
     state:inp.Seats
     state.blocks[0]={owner=inventory,mask=inp.ALL_ACTIONS,active=true}
-    core.get(&seats,seat).blocked=inp.ALL_ACTIONS
+    core.get(&w.seats,seat).blocked=inp.ALL_ACTIONS
     names:=[1]core.Name_Info{{type=inp.Action,value=i64(DROP),name="drop_item"}}
-    info:=core.World_Info{names=names[:]}
+    info:=core.test_world_info(&w)
+    info.names=names[:]
+    core.test_info_index(info)
     app:=new(host.App)
     defer free(app)
-    app.info=&info
+    app.info=info
     gui:Gui
     defer delete(gui.actions)
     instance:=Instance{entity=inventory}
-    src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=&state,seats=core.read(&seats),building=&instance}
+    src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=&state,seats=core.read(&w.seats),building=&instance}
     down,pressed:=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,down && pressed)
-    testing.expect(t,!inp.seat_action(core.read(&seats),seat,DROP).down,"the game does not get it")
+    testing.expect(t,!inp.seat_action(core.read(&w.seats),seat,DROP).down,"the game does not get it")
     instance.entity=cinematic
     down,pressed=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,!down && !pressed,"another interface does not read past the block of the Modal")
@@ -516,13 +509,10 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
 @(test)
 a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing.T) {
     MENU :: inp.Input_Context(1)
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    inventory:=core.create(&es)
-    seats:core.Table(inp.Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
+    w:Seats_Test_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    inventory:=core.create(&w.entities)
     state:inp.Seats
     requests:inp.Seat_Requests
     defer delete(requests.items)
@@ -532,7 +522,7 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     gui:Gui
     defer {delete(gui.instances);delete(gui.unblock)}
     append(&gui.instances,Instance{entity=inventory,modal=true,taking=true,input_context=MENU})
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),0)
     if testing.expect_value(t,len(context_requests.items),1) {
         r:=context_requests.items[0]
@@ -541,9 +531,9 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     clear(&context_requests.items)
     // Applied by input, it is not asked again.
     contexts.entries[0]={owner=inventory,input_context=MENU,modal=true,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
     gui.instances[0].modal,gui.instances[0].taking=false,false
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect(t,len(context_requests.items)==1 && context_requests.items[0].leave && !gui.instances[0].entered)
 }
 

@@ -4,6 +4,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 // A package like the official ones, made with the tar of the system: bin/slangc and a library.
 @(private="file")
@@ -28,8 +29,8 @@ slang_test_package :: proc(sha256:string) -> Prebuilt {
 // A package whose files are under one folder of the archive, like the releases of ripgrep.
 @(test)
 prebuilt_package_takes_its_files_from_the_top_folder :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     content:=path_join(root,"content",allocator=context.temp_allocator)
     fixture_write(t,content,"tool-1.0/tool.txt","the tool")
     archive:=path_join(root,"tool-1.0.tar.gz",allocator=context.temp_allocator)
@@ -51,8 +52,8 @@ prebuilt_package_takes_its_files_from_the_top_folder :: proc(t:^testing.T) {
 
 @(test)
 slang_package_is_checked_unpacked_and_marked :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     archive,sha256,made:=archive_make(t,root,"first compiler")
     if !made {return}
     target:=path_join(root,".deps/slang",allocator=context.temp_allocator)
@@ -82,8 +83,8 @@ slang_package_is_checked_unpacked_and_marked :: proc(t:^testing.T) {
 
 @(test)
 slang_package_with_another_hash_or_without_compiler_changes_nothing :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     archive,sha256,made:=archive_make(t,root,"good compiler")
     if !made {return}
     target:=path_join(root,".deps/slang",allocator=context.temp_allocator)

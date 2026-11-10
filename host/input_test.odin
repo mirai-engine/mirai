@@ -5,6 +5,7 @@ import "mirai:core"
 import "mirai:platform"
 
 Input_Test_World :: struct {
+    using world:core.Test_World,
     time:core.Time,
     input:core.Input,
     frame:core.Frame_Input,
@@ -25,17 +26,13 @@ frame_input_is_immediate_without_consuming_or_repeating_tick_input :: proc(t:^te
     testing.expect_value(t,error,platform.Error.None)
     if p==nil {return}
     defer platform.destroy(p)
-    storages:=[4]core.Storage_Info{
-        {name="Time",type=core.Time,info=type_info_of(core.Time),offset=offset_of(Input_Test_World,time)},
-        {name="Input",type=core.Input,info=type_info_of(core.Input),offset=offset_of(Input_Test_World,input)},
-        {name="Frame_Input",type=core.Frame_Input,info=type_info_of(core.Frame_Input),offset=offset_of(Input_Test_World,frame)},
-        {name="Frame_Time",type=core.Frame_Time,info=type_info_of(core.Frame_Time),offset=offset_of(Input_Test_World,frame_time)},
-    }
-    info:=core.World_Info{storages=storages[:]}
-    info.loops[.Game][.Fixed]=input_test_tick
-    app:=App{info=&info,platform=p,tick_dt=1.0/60,max_ticks=8}
-    defer delete(app.worlds)
     w:Input_Test_World
+    if !core.test_world_init(t,&w) {return}
+    defer core.test_world_destroy(&w)
+    info:=core.test_world_info(&w)
+    info.loops[.Game][.Fixed]=input_test_tick
+    app:=App{info=info,platform=p,tick_dt=1.0/60,max_ticks=8}
+    defer delete(app.worlds)
     for i in 0..<8 {
         platform.input_inject(p,platform.Mouse_Motion_Event{delta={2,-1}})
         if i==0 {platform.input_inject(p,platform.Key_Event{key=.Space,down=true})}

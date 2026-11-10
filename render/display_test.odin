@@ -1,10 +1,8 @@
 package mirai_render
 
-import "core:fmt"
 import "core:math"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 // The scene-linear value at the index of an axis of the display LUT (display_unshaper).
 @(private = "file")
@@ -43,16 +41,12 @@ shown :: proc(lut: []f16, scene: Vec3) -> Vec3 {
 // a frame draws. Neutral shows a midtone as authored, less its offset.
 @(test)
 every_display_transform_shows_the_card_it_is_exposed_for_alike :: proc(t: ^testing.T) {
-	device, error := shared_device.take(t, hardware_rt = false)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("display test skipped:", error)} else {testing.expect(t, false, error)}
-		return
-	}
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
-	r:=new(Renderer);defer free(r)
-	if !renderer_init(r, {device = device, width = 96, height = 64, settings = settings}) {testing.expect(t, false, r.error); return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, settings, hardware_rt = false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	scene_set(r, nil, nil, {}, {})
 	// What the display shows, in linear light, of a backdrop the view exposes to scene.
 	seen :: proc(t: ^testing.T, r: ^Renderer, scene: Vec3) -> (shown: Vec3, ok: bool) {
@@ -92,14 +86,10 @@ every_display_transform_shows_the_card_it_is_exposed_for_alike :: proc(t: ^testi
 
 @(test)
 the_display_lut_holds_the_aces_2_output_transform :: proc(t: ^testing.T) {
-	device, error := shared_device.take(t, hardware_rt = false)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("display test skipped:", error)} else {testing.expect(t, false, error)}
-		return
-	}
-	r:=new(Renderer);defer free(r)
-	if !renderer_init(r, {device = device, width = 8, height = 8}) {testing.expect(t, false, r.error); return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 8, 8, hardware_rt = false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	lut := make([]f16, N * N * N * 4, context.temp_allocator)
 	if !testing.expect(t, rhi.texture_read(device, r.display_lut, ([^]u8)(raw_data(lut))[:len(lut) * 2]), rhi.device_error(device)) {return}
 	finite, inside := true, true

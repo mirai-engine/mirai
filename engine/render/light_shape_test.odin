@@ -78,24 +78,15 @@ sun_dims_with_the_height_of_the_view_only_when_asked :: proc(t: ^testing.T) {
 	testing.expect_value(t, sun_height_factor({}, -500), 1)
 	testing.expect_value(t, sun_height_factor({enabled = true, start = 5, end = 5}, -500), 1)
 
-	es: core.Entities
-	defer core.entities_destroy(&es)
-	worlds: core.Table(core.World_Transform)
-	suns: core.Table(Sun)
-	points: core.Table(Point_Light)
-	spots: core.Table(Spot_Light)
-	rects: core.Table(Rect_Light)
-	emissions: core.Table(Light_Emission)
-	meshes: core.Table(Mesh_Renderer)
-	hidden: core.Table(Hidden)
-	parents: core.Table(core.Parent)
-	defer {core.table_destroy(&worlds); core.table_destroy(&suns); core.table_destroy(&points); core.table_destroy(&spots); core.table_destroy(&rects); core.table_destroy(&emissions); core.table_destroy(&meshes); core.table_destroy(&hidden); core.table_destroy(&parents)}
+	w: Render_World
+	if !core.test_world_init(t, &w, test_types) {return}
+	defer core.test_world_destroy(&w)
 	sync: Render_Sync
 	defer sync_free(&sync)
-	e := core.create(&es)
-	core.add(&worlds, e, core.World_Transform{transform = {rotation = 1, scale = {1, 1, 1}}, previous = {rotation = 1, scale = {1, 1, 1}}})
-	core.add(&suns, e, Sun{color = {1, 1, 1}, illuminance = 1000, height_fade = fade})
-	core.table_settle(&worlds, &es); core.table_settle(&suns, &es)
-	lights_build(&sync, nil, core.read(&worlds), {core.read(&suns), core.read(&points), core.read(&spots), core.read(&rects), core.NONE}, core.read(&emissions), core.read(&meshes), core.read(&hidden), core.read(&parents), nil, -50)
+	e := core.create(&w.entities)
+	core.add(&w.worlds, e, core.World_Transform{transform = {rotation = 1, scale = {1, 1, 1}}, previous = {rotation = 1, scale = {1, 1, 1}}})
+	core.add(&w.suns, e, Sun{color = {1, 1, 1}, illuminance = 1000, height_fade = fade})
+	core.test_world_settle(&w)
+	lights_build(&sync, nil, core.read(&w.worlds), {core.read(&w.suns), core.read(&w.points), core.read(&w.spots), core.read(&w.rects), core.NONE}, core.read(&w.emissions), core.read(&w.meshes), core.read(&w.hidden), core.read(&w.parents), nil, -50)
 	testing.expectf(t, abs(sync.sun.illuminance - 600) < 1e-3 && sync.sun_illuminance == 1000 && abs(sync.sun_factor - 0.6) < 1e-6, "halfway down, 0.6 of its 1000 lux: %v", sync.sun)
 }

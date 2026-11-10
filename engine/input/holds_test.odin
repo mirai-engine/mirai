@@ -13,9 +13,7 @@ import "mirai:core"
 
 @(private="file")
 Hold_Test :: struct {
-    es:core.Entities,
-    seats:core.Table(Seat),
-    requests:Hold_Requests,
+    using w:Test_Seats,
     problems:core.Problems,
     time:core.Time,
     bindings:Input_Map,
@@ -23,13 +21,12 @@ Hold_Test :: struct {
 }
 
 @(private="file")
-hold_test_init :: proc(f:^Hold_Test,jump:..Input_Binding) {
-    core.entities_init(&f.es)
-    core.table_init(&f.seats,"Seat")
-    f.local,f.remote=core.create(&f.es),core.create(&f.es)
+hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
+    core.test_world_init(t,&f.w,test_types) or_return
+    f.local,f.remote=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.seats,f.local,Seat{})
     core.add(&f.seats,f.remote,Seat{peer=7})
-    core.table_settle(&f.seats,&f.es)
+    core.test_world_settle(&f.w)
     input_map_action(&f.bindings,HOLD_MOVE,.Axis2)
     input_map_bind(&f.bindings,HOLD_MOVE,binding_keys(.A,.D,.S,.W))
     input_map_action(&f.bindings,HOLD_JUMP,.Button)
@@ -37,13 +34,7 @@ hold_test_init :: proc(f:^Hold_Test,jump:..Input_Binding) {
     input_map_action(&f.bindings,HOLD_CONFIRM,.Button)
     f.bindings.contexts[HOLD_CONFIRM]=HOLD_MENU
     f.time.tick=10
-}
-
-@(private="file")
-hold_test_free :: proc(f:^Hold_Test) {
-    delete(f.requests.queue.items)
-    core.table_destroy(&f.seats)
-    core.entities_destroy(&f.es)
+    return true
 }
 
 // One fixed tick of the seats without devices: the holds first, as the loop
@@ -51,7 +42,7 @@ hold_test_free :: proc(f:^Hold_Test) {
 // connection takes them as its client sends them to the server.
 @(private="file")
 hold_test_tick :: proc(f:^Hold_Test) {
-    input_holds(&f.seats,&f.requests,f.time,&f.problems)
+    input_holds(&f.seats,&f.hold_requests,f.time,&f.problems)
     device:core.Input
     seat_feed(core.get(&f.seats,f.local),&device,&f.bindings,false)
     sent,_:=seat_remote(core.read(&f.seats),f.local,&f.bindings)
@@ -64,14 +55,14 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
     rebound:=[3][]Input_Binding{{binding_key(.Space)},{binding_key(.K),binding_gamepad_button(.East)},{}}
     for jump in rebound {
         f:Hold_Test
-        hold_test_init(&f,..jump)
-        defer hold_test_free(&f)
+        if !hold_test_init(t,&f,..jump) {return}
+        defer core.test_world_destroy(&f.w)
         read:=core.read(&f.seats)
         typed:=Input_Of(Hold_Test_Action){seats=read}
-        hold(&f.requests,f.local,HOLD_JUMP,{1,0},3)
-        hold(&f.requests,f.local,HOLD_MOVE,{0,1})
+        hold(&f.hold_requests,f.local,HOLD_JUMP,{1,0},3)
+        hold(&f.hold_requests,f.local,HOLD_MOVE,{0,1})
         testing.expect(t,!seat_down(typed,f.local,.Jump),"nothing acts before the tick")
-        _,ahead:=holds_at(f.seats.values[core.row_of(read,f.local)],f.local,&f.requests,f.time.tick)
+        _,ahead:=holds_at(f.seats.values[core.row_of(read,f.local)],f.local,&f.hold_requests,f.time.tick)
         testing.expect_value(t,ahead,2)
         hold_test_tick(&f)
         testing.expect(t,seat_pressed(typed,f.local,.Jump),"pressed on the next tick")
@@ -83,7 +74,7 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
         testing.expect(t,seat_down(typed,f.remote,.Jump) && !seat_pressed(typed,f.remote,.Jump))
         testing.expect_value(t,seat_action(read,f.remote,HOLD_JUMP).held_ticks,3)
         // Its seat still has the jump, which the next tick no longer holds.
-        _,ahead=holds_at(f.seats.values[core.row_of(read,f.local)],f.local,&f.requests,f.time.tick)
+        _,ahead=holds_at(f.seats.values[core.row_of(read,f.local)],f.local,&f.hold_requests,f.time.tick)
         testing.expect(t,ahead==1 && f.seats.values[core.row_of(read,f.local)].hold_count==2)
         hold_test_tick(&f)
         state:=seat_action(read,f.remote,HOLD_JUMP)
@@ -91,7 +82,7 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
         testing.expect_value(t,f.seats.values[core.row_of(read,f.local)].hold_count,1)
         testing.expect_value(t,seat_vector(typed,f.local,.Move),[2]f32{0,1})
         // Until it is let go: released on the tick after.
-        let_go(&f.requests,f.local,HOLD_MOVE)
+        let_go(&f.hold_requests,f.local,HOLD_MOVE)
         hold_test_tick(&f)
         testing.expect(t,seat_released(typed,f.local,.Move) && seat_released(typed,f.remote,.Move))
         testing.expect_value(t,f.problems.count,0)
@@ -101,25 +92,25 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
 @(test)
 a_held_action_keeps_the_contexts_blocks_and_capacity_of_its_seat :: proc(t:^testing.T) {
     f:Hold_Test
-    hold_test_init(&f,binding_key(.Space))
-    defer hold_test_free(&f)
+    if !hold_test_init(t,&f,binding_key(.Space)) {return}
+    defer core.test_world_destroy(&f.w)
     read:=core.read(&f.seats)
     typed:=Input_Of(Hold_Test_Action){seats=read}
-    hold(&f.requests,f.local,HOLD_CONFIRM,{1,0})
+    hold(&f.hold_requests,f.local,HOLD_CONFIRM,{1,0})
     hold_test_tick(&f)
     testing.expect(t,!seat_down(typed,f.local,.Confirm),"an action of a context the seat is not in")
-    let_go(&f.requests,f.local,HOLD_CONFIRM)
+    let_go(&f.hold_requests,f.local,HOLD_CONFIRM)
     seat:=core.get(&f.seats,f.local)
     seat.contexts.layers[0],seat.contexts.count=HOLD_MENU,1
     hold_test_tick(&f)
-    hold(&f.requests,f.local,HOLD_CONFIRM,{1,0})
+    hold(&f.hold_requests,f.local,HOLD_CONFIRM,{1,0})
     hold_test_tick(&f)
     testing.expect(t,seat_pressed(typed,f.local,.Confirm),"in the context, it acts")
     seat.blocked=action_bit(HOLD_CONFIRM)
     testing.expect(t,!seat_down(typed,f.local,.Confirm),"a block takes it")
-    for action in 4..<4+HOLD_CAPACITY {hold(&f.requests,f.local,Action(action),{1,0})}
-    hold(&f.requests,core.Entity(0xdead),HOLD_JUMP,{1,0})
-    hold(&f.requests,f.remote,HOLD_JUMP,{1,0})
+    for action in 4..<4+HOLD_CAPACITY {hold(&f.hold_requests,f.local,Action(action),{1,0})}
+    hold(&f.hold_requests,core.Entity(0xdead),HOLD_JUMP,{1,0})
+    hold(&f.hold_requests,f.remote,HOLD_JUMP,{1,0})
     hold_test_tick(&f)
     testing.expect_value(t,f.problems.count,3)
     testing.expect_value(t,f.seats.values[core.row_of(read,f.remote)].hold_count,0)
@@ -128,25 +119,25 @@ a_held_action_keeps_the_contexts_blocks_and_capacity_of_its_seat :: proc(t:^test
 
 @(test)
 the_same_holds_on_the_same_seats_give_the_same_ticks :: proc(t:^testing.T) {
-    run :: proc() -> (states:[12][2]Action_State) {
+    run :: proc(t:^testing.T) -> (states:[12][2]Action_State) {
         f:Hold_Test
-        hold_test_init(&f,binding_key(.Space))
-        defer hold_test_free(&f)
+        if !hold_test_init(t,&f,binding_key(.Space)) {return}
+        defer core.test_world_destroy(&f.w)
         read:=core.read(&f.seats)
         typed:=Input_Of(Hold_Test_Action){seats=read}
         for tick in 0..<len(states) {
             switch tick {
-            case 0: hold(&f.requests,f.local,HOLD_JUMP,{1,0},2)
-            case 1: hold(&f.requests,f.local,HOLD_MOVE,{0.5,-0.5},4)
-            case 4: hold(&f.requests,f.local,HOLD_JUMP,{1,0},5)
-            case 6: let_go(&f.requests,f.local,HOLD_JUMP)
+            case 0: hold(&f.hold_requests,f.local,HOLD_JUMP,{1,0},2)
+            case 1: hold(&f.hold_requests,f.local,HOLD_MOVE,{0.5,-0.5},4)
+            case 4: hold(&f.hold_requests,f.local,HOLD_JUMP,{1,0},5)
+            case 6: let_go(&f.hold_requests,f.local,HOLD_JUMP)
             }
             hold_test_tick(&f)
             states[tick]={seat_action(read,f.local,HOLD_JUMP),seat_action(read,f.local,HOLD_MOVE)}
         }
         return
     }
-    first,second:=run(),run()
+    first,second:=run(t),run(t)
     testing.expect(t,first==second)
     testing.expect(t,first[0][0].pressed && first[2][0].released && first[4][0].pressed && first[5][0].down && first[6][0].released)
     testing.expect(t,first[1][1].pressed && first[4][1].down && first[5][1].released)

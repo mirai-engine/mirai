@@ -26,8 +26,8 @@ SETTINGS_FORMAT :: Format{name="Settings test",extensions={0=".seen"},space=ENGI
 // applies them, else those the import was given.
 @(test)
 a_reader_sees_the_settings_kept_with_its_source :: proc(t:^testing.T) {
-    folder:=temp_folder("reader-settings")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"reader-settings")
+    if folder=="" {return}
     path:=fmt.tprintf("%s/model.seen",folder)
     _=os.write_entire_file(path,"anything")
     formats:=[1]Format{SETTINGS_FORMAT}

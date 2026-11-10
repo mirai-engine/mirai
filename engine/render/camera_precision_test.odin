@@ -34,18 +34,15 @@ a_child_of_the_camera_far_from_the_centre_stays_still_when_drawn_from_the_camera
         for row in 0..<3 {world[row]=m[row,0]*vertex.x+m[row,1]*vertex.y+m[row,2]*vertex.z+m[row,3]}
         return world-eye
     }
-    es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
-    worlds:core.Table(core.World_Transform);defer core.table_destroy(&worlds)
-    locals:core.Table(core.Transform);defer core.table_destroy(&locals)
-    parents:core.Table(core.Parent);defer core.table_destroy(&parents)
-    cameras:core.Table(Camera);defer core.table_destroy(&cameras)
-    offsets:core.Table(Draw_Offset);defer core.table_destroy(&offsets)
-    camera_entity,child:=core.create(&es),core.create(&es)
-    core.add(&cameras,camera_entity,Camera{})
-    core.add(&locals,camera_entity,core.TRANSFORM_IDENTITY)
-    core.add(&locals,child,core.from_math(local))
-    core.add(&parents,child,core.Parent{entity=camera_entity})
-    core.table_settle(&cameras,&es);core.table_settle(&locals,&es);core.table_settle(&parents,&es)
+    w:Render_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    camera_entity,child:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.cameras,camera_entity,Camera{})
+    core.add(&w.locals,camera_entity,core.TRANSFORM_IDENTITY)
+    core.add(&w.locals,child,core.from_math(local))
+    core.add(&w.parents,child,core.Parent{entity=camera_entity})
+    core.test_world_settle(&w)
     worst_world,worst_carried:f64
     for frame in 0..<600 {
         time:=f32(frame)/60
@@ -63,9 +60,9 @@ a_child_of_the_camera_far_from_the_centre_stays_still_when_drawn_from_the_camera
         seen:=drawn(gpu.origin_matrix(mm.transform_matrix(world),origin),vertex,eye)
         worst_world=max(worst_world,pixels(linalg.array_cast(seen,f64)-exact,depth))
         // Composed from the camera, as render_sync does it.
-        core.add(&worlds,camera_entity,core.World_Transform{camera,camera})
-        core.table_settle(&worlds,&es)
-        anchor,carried,ok:=camera_carried(core.FRAME_TIME_DEFAULT,core.read(&offsets),core.read(&parents),core.read(&worlds),core.read(&locals),core.read(&cameras),child)
+        core.add(&w.worlds,camera_entity,core.World_Transform{camera,camera})
+        core.test_world_settle(&w)
+        anchor,carried,ok:=camera_carried(core.FRAME_TIME_DEFAULT,core.read(&w.offsets),core.read(&w.parents),core.read(&w.worlds),core.read(&w.locals),core.read(&w.cameras),child)
         if !testing.expect(t,ok && anchor==camera.position) {return}
         seen=drawn(gpu.origin_matrix(mm.transform_matrix(carried),origin-anchor),vertex,eye)
         worst_carried=max(worst_carried,pixels(linalg.array_cast(seen,f64)-exact,depth))

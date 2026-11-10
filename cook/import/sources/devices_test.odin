@@ -1,18 +1,18 @@
 package sources
 
 import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:std/base"
 import "mirai:std/geom"
 import importer "mirai:cook/import"
 
 @(test)
 paths_that_name_devices_are_not_read :: proc(t:^testing.T) {
     when ODIN_OS==.Windows {
-        folder:=temp_folder("devices")
-        defer os.remove_all(folder)
+        folder:=base.test_folder(t,"devices")
+        if folder=="" {return}
         path:=write_text(folder,"d.obj","mtllib con\nmtllib nul.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
         model,ok:=import_ok(t,path)
         if ok {

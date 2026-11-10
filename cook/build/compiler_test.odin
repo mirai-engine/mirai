@@ -11,10 +11,8 @@ import "mirai:std/base"
 
 @(test)
 build_fingerprint_ignores_tests_and_tracks_runtime_source_changes :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-fingerprint-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    folder=project.path_absolute(folder,context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"fingerprint")
+    if folder=="" {return}
     source:=project.path(folder,"main.odin",allocator=context.temp_allocator)
     added:=project.path(folder,"added.odin",allocator=context.temp_allocator)
     tests:=project.path(folder,"main_test.odin",allocator=context.temp_allocator)
@@ -47,12 +45,10 @@ build_fingerprint_ignores_tests_and_tracks_runtime_source_changes :: proc(t:^tes
 build_fingerprint_follows_content_not_dates_checkouts_or_thread_counts :: proc(t:^testing.T) {
     roots:[2]string
     for &root in roots {
-        folder,error:=os.make_directory_temp("","mirai-fingerprint-root-*",context.temp_allocator)
-        if !testing.expect(t,error==nil) {return}
-        root=project.path_absolute(folder,context.temp_allocator)
+        root=base.test_folder(t,"fingerprint-root")
+        if root=="" {return}
         if !testing.expect(t,os.make_directory_all(project.path(root,"core",allocator=context.temp_allocator))==nil) {return}
     }
-    defer for root in roots {os.remove_all(root)}
     hashes:[2]u64
     for root,i in roots {
         source:=project.path(root,"core","core.odin",allocator=context.temp_allocator)
@@ -76,10 +72,8 @@ build_fingerprint_follows_content_not_dates_checkouts_or_thread_counts :: proc(t
 // engine compiles with its own compiler, whatever MIRAI_ODIN names.
 @(test)
 the_compiler_of_an_installed_engine_counts_by_its_manifest_not_its_date :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-installed-compiler-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    root:=project.path_absolute(folder,context.temp_allocator)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"installed-compiler")
+    if root=="" {return}
     compiler:=project.path(root,".deps","odin","dist",strings.concatenate({"odin",EXECUTABLE_EXTENSION},context.temp_allocator),allocator=context.temp_allocator)
     if !testing.expect(t,os.make_directory_all(project.path(root,".deps","odin","dist",allocator=context.temp_allocator))==nil) {return}
     if !testing.expect(t,os.write_entire_file(compiler,"compiler")==nil) {return}
@@ -104,10 +98,8 @@ the_compiler_of_an_installed_engine_counts_by_its_manifest_not_its_date :: proc(
 
 @(test)
 tool_refresh_ignores_newer_tests_and_tracks_runtime_and_loaded_files :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-refresh-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    folder=project.path_absolute(folder,context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"refresh")
+    if folder=="" {return}
     source:=project.path(folder,"main.odin",allocator=context.temp_allocator)
     tests:=project.path(folder,"main_test.odin",allocator=context.temp_allocator)
     imported:=project.path(folder,"lib","lib.odin",allocator=context.temp_allocator)
@@ -197,9 +189,8 @@ compilers_at_once_follow_the_cores_and_the_memory_or_what_is_asked :: proc(t:^te
 // not those of a job whose process still runs, however long it takes.
 @(test)
 a_finished_job_leaves_the_files_of_a_job_that_still_runs :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-job-files-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"job-files")
+    if folder=="" {return}
     job:=Job{work=folder,target=.Editor,prefix=fmt.tprintf("editor-2-%d",os.get_pid()),started=time.now()}
     job.result.status=.Built
     // Windows numbers processes by fours, and no system goes as far.

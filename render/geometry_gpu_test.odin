@@ -11,10 +11,10 @@ import mm "mirai:std/math"
 // RAY_CUT_KEEP frames after no instance wants it.
 @(test)
 gpu_a_coarser_ray_cut_is_built_while_an_instance_wants_it :: proc(t: ^testing.T) {
-	r:=new(Renderer);defer free(r)
-	device := skin_test_renderer(t, r, true)
-	if device == nil {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !skin_fixture(t, &f, true) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	if !r.hardware_rt {return}
 	// A rolling grid: its DAG has coarser cuts rays may trace far away.
 	CELLS :: 48
@@ -63,10 +63,10 @@ gpu_a_coarser_ray_cut_is_built_while_an_instance_wants_it :: proc(t: ^testing.T)
 // against holds it.
 @(test)
 gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
-	r:=new(Renderer);defer free(r)
-	device := skin_test_renderer(t, r, false)
-	if device == nil {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !skin_fixture(t, &f, false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	box := [8]Mesh_Vertex{}
 	for &v, i in box {v = {position = {f32(i & 1) - 0.5, f32(i >> 1 & 1) - 0.5, f32(i >> 2) - 0.5}, normal = {0, 1, 0}, color = 1, tangent = {1, 0, 0, 1}}}
 	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
@@ -103,10 +103,10 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 // is not rasterized; one twice as large is, and without the setting every one.
 @(test)
 gpu_instances_of_batches_smaller_than_a_pixel_are_not_rasterized :: proc(t: ^testing.T) {
-	r:=new(Renderer);defer free(r)
-	device := skin_test_renderer(t, r, false)
-	if device == nil {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !skin_fixture(t, &f, false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	box := [8]Mesh_Vertex{}
 	for &v, i in box {v = {position = {f32(i & 1) - 0.5, f32(i >> 1 & 1) - 0.5, f32(i >> 2) - 0.5}, normal = {0, 1, 0}, color = 1, tangent = {1, 0, 0, 1}}}
 	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
@@ -138,10 +138,10 @@ gpu_instances_of_batches_smaller_than_a_pixel_are_not_rasterized :: proc(t: ^tes
 // its own eye the levels and ray cuts that camera would choose.
 @(test)
 gpu_the_detail_camera_chooses_the_levels_the_view_draws :: proc(t: ^testing.T) {
-	r:=new(Renderer);defer free(r)
-	device := skin_test_renderer(t, r, false)
-	if device == nil {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !skin_fixture(t, &f, false) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	CELLS :: 64
 	vertices := make([dynamic]asset.Vertex, context.temp_allocator)
 	indices := make([dynamic]u32, context.temp_allocator)

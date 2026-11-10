@@ -1,7 +1,6 @@
 package host
 
 import "core:fmt"
-import "core:os"
 import "core:slice"
 import "core:testing"
 import "mirai:asset"
@@ -9,11 +8,8 @@ import "mirai:std/base"
 
 @(test)
 material_values_change_in_memory_one_row_at_a_time :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-materials",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-materials")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     stone,wood:=base.Asset_Id{1,1},base.Asset_Id{2,2}
     info:=asset.MATERIAL_DEFAULTS
@@ -64,11 +60,8 @@ material_values_change_in_memory_one_row_at_a_time :: proc(t:^testing.T) {
 
 @(test)
 assets_read_the_files_the_registry_holds_in_memory :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-memory",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-memory")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     stone,brick:=base.Asset_Id{1,1},base.Asset_Id{3,3}
     info:=asset.MATERIAL_DEFAULTS

@@ -1,29 +1,18 @@
 package mirai_render
 
-import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 import mm "mirai:std/math"
 
 @(private = "file")
-edit_renderer :: proc(t: ^testing.T, r: ^Renderer) -> ^rhi.Device {
-	device, message := shared_device.take(t, hardware_rt = false)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("scene edit test skipped:", message)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", message)}
-		return nil
-	}
+edit_fixture :: proc(t: ^testing.T, f: ^Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
 	// Images are compared pixel by pixel: every pixel traces its own rays.
 	settings.reference_lights = true
-	if !renderer_init(r, {device = device, width = 160, height = 120, settings = settings}) {
-		testing.expect(t, false, r.error)
-		return nil
-	}
-	return device
+	return fixture_init(t, f, 160, 120, settings, hardware_rt = false, loc = loc)
 }
 
 @(private = "file")
@@ -36,10 +25,10 @@ edit_texture :: proc(r: ^Renderer, color: [4]u8) -> Texture_Handle {
 
 @(test)
 shared_grid_instances_keep_all_quadrants_after_scene_rebuild_and_preview_retirement :: proc(t:^testing.T) {
-	r:=new(Renderer);defer free(r)
-	device:=edit_renderer(t,r)
-	if device==nil {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !edit_fixture(t, &f) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	camera:=Camera{position={8,8,12},forward={-8,-8,-12},up={0,1,0},fov_y=50,near=0.05,far=200,exposure=UNIT_EXPOSURE}
 	material:=DEFAULT_MATERIAL
 	material.emission={3,3,3}
@@ -133,10 +122,10 @@ removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^
 	images: [2][]u8
 	defer for image in images {delete(image)}
 	for pass in 0 ..< 2 {
-		r:=new(Renderer);defer free(r)
-		device := edit_renderer(t, r)
-		if device == nil {return}
-		defer renderer_destroy(r)
+		f: Fixture
+		if !edit_fixture(t, &f) {return}
+		defer fixture_destroy(&f)
+		r, device := f.renderer, f.device
 		meshes: [3]Mesh_Handle
 		textures: [3]Texture_Handle
 		for cells, i in ([3]int{20, 16, 4}) {

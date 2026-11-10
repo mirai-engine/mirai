@@ -9,6 +9,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:std/base"
 import mm "mirai:std/math"
 import importer "mirai:cook/import"
 
@@ -78,8 +79,8 @@ the_plant_of_the_demo_has_slots_per_primitive_and_a_masked_texture :: proc(t:^te
 
 @(test)
 a_node_matrix_decomposes_to_the_same_transform_and_shear_is_rejected :: proc(t:^testing.T) {
-    folder:=temp_folder("gltf-matrix")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"gltf-matrix")
+    if folder=="" {return}
     for rotation in ([]quaternion128{quaternion(x=0.1,y=0.2,z=0.3,w=0.9),quaternion(x=0,y=0.7071068,z=0,w=0.7071068)}) {
         source:=mm.Transform{{2,3,4},linalg.normalize(rotation),{-2,3,4}}
         m:=mm.transform_matrix(source)
@@ -116,8 +117,8 @@ a_node_matrix_decomposes_to_the_same_transform_and_shear_is_rejected :: proc(t:^
 
 @(test)
 punctual_lights_become_light_descriptions :: proc(t:^testing.T) {
-    folder:=temp_folder("gltf-light")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"gltf-light")
+    if folder=="" {return}
     lights:=`,"extensionsUsed":["KHR_lights_punctual"],"extensions":{"KHR_lights_punctual":{"lights":[{"type":"spot","color":[1,0.5,0.25],"intensity":40,"range":12,"spot":{"innerConeAngle":0.2,"outerConeAngle":0.6}}]}}`
     path:=write_text(folder,"light.gltf",tiny_gltf(`,"extensions":{"KHR_lights_punctual":{"light":0}}`,lights))
     model,ok:=import_ok(t,path)
@@ -132,8 +133,8 @@ punctual_lights_become_light_descriptions :: proc(t:^testing.T) {
 
 @(test)
 a_truncated_or_corrupt_glb_and_missing_buffers_fail_cleanly :: proc(t:^testing.T) {
-    folder:=temp_folder("gltf-broken")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"gltf-broken")
+    if folder=="" {return}
     bytes,error:=os.read_entire_file(FIXTURES+"hierarchy.glb",context.temp_allocator)
     testing.expect(t,error==nil)
     for length in ([]int{4,12,40,len(bytes)-10}) {
@@ -158,8 +159,8 @@ a_truncated_or_corrupt_glb_and_missing_buffers_fail_cleanly :: proc(t:^testing.T
 
 @(test)
 a_primitive_asking_for_a_missing_texture_coordinate_set_is_rejected :: proc(t:^testing.T) {
-    folder:=temp_folder("gltf-uv")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"gltf-uv")
+    if folder=="" {return}
     text,_:=strings.replace(tiny_gltf(""),`"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}]`,`"meshes":[{"primitives":[{"attributes":{"POSITION":0},"material":0}]}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}],"textures":[{"source":0}],"images":[{"uri":"color.png"}]`,1,context.temp_allocator)
     path:=write_text(folder,"uv.gltf",text)
     _,error:=importer.import_model(path,FORMATS[:])
@@ -169,8 +170,8 @@ a_primitive_asking_for_a_missing_texture_coordinate_set_is_rejected :: proc(t:^t
 
 @(test)
 layered_gltf_extensions_become_the_layers_of_the_material :: proc(t:^testing.T) {
-    folder:=temp_folder("gltf-layers")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"gltf-layers")
+    if folder=="" {return}
     primitives:=`"meshes":[{"primitives":[{"attributes":{"POSITION":0},"material":0},{"attributes":{"POSITION":0},"material":1},{"attributes":{"POSITION":0},"material":2},{"attributes":{"POSITION":0},"material":3},{"attributes":{"POSITION":0},"material":4}]}]`
     materials:=`,"materials":[
         {"extensions":{"KHR_materials_clearcoat":{"clearcoatFactor":0.8,"clearcoatRoughnessFactor":0.3}}},

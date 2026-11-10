@@ -5,6 +5,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // End to end: builds the mirai tool from this tree and runs `mirai image` on
@@ -38,9 +39,8 @@ mirai_image_reports_metrics_and_exit_codes :: proc(t:^testing.T) {
     }
     compiler,has_compiler:=os.lookup_env("MIRAI_ODIN",context.temp_allocator)
     if !has_compiler || compiler=="" {compiler="odin"}
-    folder:=temp_path("cli")
-    os.make_directory_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"image-cli")
+    if folder=="" {return}
     exe:=fmt.tprintf("%s/bin/tests/mirai-image-cli%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {

@@ -38,11 +38,8 @@ records_save :: proc(t:^testing.T,path:string,id:base.Asset_Id,type:string,ids:[
 // again, and one that goes takes its rows with it.
 @(test)
 the_rows_of_a_type_load_from_every_table_and_follow_their_files :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-records",directory,os.get_pid())
-    os.remove_all(root)
-    os.make_directory_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"host-records")
+    if root=="" {return}
     swords,bows,ammo:=base.Asset_Id{0x51,1},base.Asset_Id{0x52,1},base.Asset_Id{0x53,1}
     texts:=[]asset.Records_Text{{text=7,offset=0,length=5},{text=7,offset=5,length=6}}
     base.text_set(texts[1].language[:],"es")

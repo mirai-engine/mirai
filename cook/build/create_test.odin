@@ -4,13 +4,12 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(test)
 a_new_project_gets_what_the_templates_share :: proc(t:^testing.T) {
-    engine,error:=os.make_directory_temp("","mirai-create-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(engine)
-    engine=project.path_absolute(engine,context.temp_allocator)
+    engine:=base.test_folder(t,"create")
+    if engine=="" {return}
     write :: proc(t:^testing.T,file,text:string,loc:=#caller_location) {
         testing.expect(t,os.make_directory_all(file[:len(file)-len("/x")])==nil || os.is_dir(file[:len(file)-len("/x")]),loc=loc)
         testing.expect(t,os.write_entire_file(file,text)==nil,loc=loc)

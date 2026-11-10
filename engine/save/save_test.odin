@@ -19,13 +19,15 @@ import stbi "vendor:stb/image"
 
 @(private="file")
 Save_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
+    disabled:core.Table(core.Disabled),
     remotes:core.Table(core.Remote),
     targets:core.Table(core.Pose_Target),
+    references:core.Table(scene.Scene_Reference),
     hierarchy:core.Hierarchy,
     root:scene.Scene_Root,
 }
@@ -33,99 +35,30 @@ Save_Test_World :: struct {
 // The layout of the World and an application that makes it.
 @(private="file")
 Save_Test :: struct {
-    tables:[6]core.Table_Info,
-    storages:[2]core.Storage_Info,
     info:core.World_Info,
     app:host.App,
     w:^Save_Test_World,
 }
 
 @(private="file")
-save_test_settle :: proc(world,shared,editor:rawptr) {
-    w:=cast(^Save_Test_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.remotes,&w.entities);core.table_settle(&w.targets,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_settle(&w.entities)
-}
-
-@(private="file")
-save_test_clear :: proc(world:rawptr) -> bool {
-    w:=cast(^Save_Test_World)world
-    if !core.entities_clear(&w.entities) {return false}
-    core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms);core.table_clear(&w.parents)
-    core.table_clear(&w.remotes);core.table_clear(&w.targets)
-    core.hierarchy_clear(&w.hierarchy)
-    return true
-}
-
-@(private="file")
-save_test_world_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Save_Test_World)data
-    w^={}
-    core.entities_init(&w.entities,allocator)
-    core.table_init(&w.ids,"Id",allocator);core.table_init(&w.names,"Name",allocator)
-    core.table_init(&w.transforms,"Transform",allocator);core.table_init(&w.parents,"Parent",allocator)
-    core.table_init(&w.remotes,"Remote",allocator);core.table_init(&w.targets,"Pose_Target",allocator)
-    return len(w.entities.generation)>0
-}
-
-@(private="file")
-save_test_world_destroy :: proc(data:rawptr) {
-    w:=cast(^Save_Test_World)data
-    core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms);core.table_destroy(&w.parents)
-    core.table_destroy(&w.remotes);core.table_destroy(&w.targets)
-    core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
-    core.entities_destroy(&w.entities)
-}
-
-@(private="file")
-save_test_copy :: proc(dst,src:rawptr) -> bool {
-    d,s:=cast(^Save_Test_World)dst,cast(^Save_Test_World)src
-    return core.entities_copy(&d.entities,&s.entities) && core.table_copy(&d.ids,&s.ids) && core.table_copy(&d.names,&s.names) &&
-        core.table_copy(&d.transforms,&s.transforms) && core.table_copy(&d.parents,&s.parents) &&
-        core.table_copy(&d.remotes,&s.remotes) && core.table_copy(&d.targets,&s.targets) &&
-        core.value_copy(&d.hierarchy,&s.hierarchy,type_info_of(core.Hierarchy)) && core.value_copy(&d.root,&s.root,type_info_of(scene.Scene_Root))
-}
-
-@(private="file")
-save_test_swap :: proc(a,b:rawptr) {
-    a,b:=cast(^Save_Test_World)a,cast(^Save_Test_World)b
-    a.entities,b.entities=b.entities,a.entities
-    core.table_swap(&a.ids,&b.ids);core.table_swap(&a.names,&b.names)
-    core.table_swap(&a.transforms,&b.transforms);core.table_swap(&a.parents,&b.parents)
-    core.table_swap(&a.remotes,&b.remotes);core.table_swap(&a.targets,&b.targets)
-    a.hierarchy,b.hierarchy=b.hierarchy,a.hierarchy
-    a.root,b.root=b.root,a.root
-}
-
-@(private="file")
 save_test_init :: proc(t:^testing.T,f:^Save_Test) -> bool {
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Save_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Save_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Save_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Save_Test_World,parents)},
-        {name="Remote",type=core.Remote,info=type_info_of(core.Remote),offset=offset_of(Save_Test_World,remotes)},
-        {name="Pose_Target",type=core.Pose_Target,info=type_info_of(core.Pose_Target),offset=offset_of(Save_Test_World,targets)},
-    }
-    f.storages={
-        {type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Save_Test_World,hierarchy)},
-        {type=scene.Scene_Root,info=type_info_of(scene.Scene_Root),offset=offset_of(Save_Test_World,root),keep=true},
-    }
-    f.info={entities=offset_of(Save_Test_World,entities),tables=f.tables[:],storages=f.storages[:],clear=save_test_clear,copy=save_test_copy,swap=save_test_swap}
-    f.info.sizes[.World],f.info.aligns[.World]=size_of(Save_Test_World),align_of(Save_Test_World)
-    f.info.init[.World],f.info.destroy[.World]=save_test_world_init,save_test_world_destroy
+    described:bool
+    f.info,described=core.test_info(t,Save_Test_World)
+    if !described {return false}
     f.app={info=&f.info,allocator=context.allocator}
     f.w=cast(^Save_Test_World)host.app_world_create(&f.app)
-    return testing.expect(t,f.w!=nil)
+    if !testing.expect(t,f.w!=nil) {
+        core.test_info_destroy(&f.info)
+        return false
+    }
+    return true
 }
 
 @(private="file")
 save_test_destroy :: proc(f:^Save_Test) {
     host.app_world_free(&f.app,f.w)
     delete(f.app.worlds)
+    core.test_info_destroy(&f.info)
 }
 
 // An entity without an Id, as a transient copy, travels with one it is lent
@@ -141,7 +74,7 @@ a_transient_entity_comes_back_from_a_save_without_the_id_it_was_lent :: proc(t:^
     core.add(&w.transforms,authored,core.TRANSFORM_IDENTITY)
     core.add(&w.transforms,copy,core.Transform{position={1,2,3},rotation=1,scale={1,1,1}})
     core.add(&w.parents,copy,core.Parent{entity=authored})
-    save_test_settle(w,nil,nil)
+    core.settle(&f.info,w,nil)
     ref:=host.app_world_ref(&f.app,w)
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
@@ -178,7 +111,7 @@ an_id_of_the_scene_that_the_lending_sequence_would_give_stays_its_own :: proc(t:
     core.add(&w.ids,authored,core.Id{taken})
     core.add(&w.transforms,authored,core.TRANSFORM_IDENTITY)
     core.add(&w.transforms,copy,core.TRANSFORM_IDENTITY)
-    save_test_settle(w,nil,nil)
+    core.settle(&f.info,w,nil)
     ref:=host.app_world_ref(&f.app,w)
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
@@ -210,7 +143,7 @@ a_slot_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
         core.add(&w.ids,e,core.Id{base.Entity_Id(i)})
         core.add(&w.transforms,e,core.Transform{position={1,2,3},rotation=1,scale={1,1,1}})
     }
-    save_test_settle(w,nil,nil)
+    core.settle(&f.info,w,nil)
     ref:=host.app_world_ref(&f.app,w)
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
@@ -265,7 +198,7 @@ a_server_saves_what_a_client_simulates_without_the_marks_of_the_session :: proc(
     core.add(&w.transforms,lent,core.Transform{position={4,0,0},rotation=1,scale={1,1,1}})
     core.add(&w.remotes,lent,core.Remote{})
     core.add(&w.targets,lent,core.Pose_Target{position={5,0,0},rotation=1,scale={1,1,1},placed=2})
-    save_test_settle(w,nil,nil)
+    core.settle(&f.info,w,nil)
     ref:=host.app_world_ref(&f.app,w)
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
@@ -301,22 +234,19 @@ Serve :: struct {
     network:core.Network,
     frame:core.Frame_Time,
     clock:core.Clock,
-    references:core.Table(scene.Scene_Reference),
     problems:^core.Problems,
     folder:string,
 }
 
 @(private="file")
 serve_init :: proc(t:^testing.T,f:^Save_Test,s:^Serve) -> bool {
-    dir,error:=os.make_directory_temp("","mirai-save-*",context.allocator)
-    if !testing.expect(t,error==nil) {return false}
-    s.folder=dir
-    folder_set(&s.state,f.app.allocator,dir)
+    s.folder=base.test_folder(t,"save")
+    if s.folder=="" {return false}
+    folder_set(&s.state,f.app.allocator,s.folder)
     s.settings=SAVE_SETTINGS_DEFAULT
     s.profile.read=true
     s.frame.dt=1.0/60
     s.clock=core.CLOCK_DEFAULT
-    core.table_init(&s.references,"Scene_Reference")
     s.problems=new(core.Problems)
     return true
 }
@@ -325,12 +255,9 @@ serve_init :: proc(t:^testing.T,f:^Save_Test,s:^Serve) -> bool {
 serve_destroy :: proc(f:^Save_Test,s:^Serve) {
     saves_release(host.app_world_ref(&f.app,f.w),&s.work,&s.thumbnails,&f.app,&s.state,{},s.problems)
     work_free(&s.work)
-    os.remove_all(s.folder)
-    delete(s.folder)
     delete(s.state.folder,f.app.allocator)
     delete(s.requests.queue.items)
     delete(s.results.queue.items)
-    core.table_destroy(&s.references)
     free(s.problems)
 }
 
@@ -339,7 +266,7 @@ serve_destroy :: proc(f:^Save_Test,s:^Serve) {
 serve :: proc(f:^Save_Test,s:^Serve) {
     saves_serve(
         host.app_world_ref(&f.app,f.w),&f.app,&s.requests,&s.results,&s.state,&s.work,&s.thumbnails,&s.game,core.ref(&s.settings),&s.profile,{},
-        core.ref(&s.network),core.ref(&s.frame),core.ref(&s.clock),core.read(&s.references),s.problems,
+        core.ref(&s.network),core.ref(&s.frame),core.ref(&s.clock),core.read(&f.w.references),s.problems,
     )
 }
 
@@ -361,11 +288,12 @@ place :: proc(w:^Save_Test_World,id:base.Entity_Id,position:[3]f32) {
 }
 
 @(private="file")
-save_test_entity :: proc(w:^Save_Test_World,id:base.Entity_Id,position:[3]f32) {
+save_test_entity :: proc(f:^Save_Test,id:base.Entity_Id,position:[3]f32) {
+    w:=f.w
     e:=core.create(&w.entities)
     core.add(&w.ids,e,core.Id{id})
     core.add(&w.transforms,e,core.Transform{position=position,rotation=1,scale={1,1,1}})
-    save_test_settle(w,nil,nil)
+    core.settle(&f.info,w,nil)
 }
 
 // A slot says what it is from its header: its label, kind, scene, time played
@@ -381,7 +309,7 @@ a_slot_lists_what_it_is_and_its_thumbnail_without_loading_the_world :: proc(t:^t
     defer serve_destroy(&f,&s)
     w:=f.w
     w.root={scene={7,9},changes=1}
-    save_test_entity(w,5,{1,2,3})
+    save_test_entity(&f,5,{1,2,3})
     ref:=host.app_world_ref(&f.app,w)
     out:serial.Writer
     serial.writer_init(&out,0,context.allocator)
@@ -460,7 +388,7 @@ a_thumbnail_becomes_a_texture_the_game_shows_until_the_slot_changes :: proc(t:^t
     testing.expect_value(t,unavailable,Error.Unavailable)
     f.app.assets=&assets
     defer f.app.assets=nil
-    save_test_entity(f.w,5,{1,2,3})
+    save_test_entity(&f,5,{1,2,3})
     ref:=host.app_world_ref(&f.app,f.w)
     width,height:=int(THUMBNAIL_SIZE.x)*2,int(THUMBNAIL_SIZE.y)*2
     pixels:=make([]u8,width*height*4)
@@ -523,7 +451,7 @@ a_slot_that_does_not_load_says_why_and_lists_only_when_asked :: proc(t:^testing.
     s:Serve
     if !serve_init(t,&f,&s) {return}
     defer serve_destroy(&f,&s)
-    save_test_entity(f.w,5,{1,2,3})
+    save_test_entity(&f,5,{1,2,3})
     if !testing.expect_value(t,write(host.app_world_ref(&f.app,f.w),&f.app,&s.state,"gate",.Checkpoint,"Gate",12),Error.None) {return}
     path,_:=slot_path(&s.state,&f.app,"gate")
     data,read_error:=serial.file_read(path,context.allocator)
@@ -576,7 +504,7 @@ autosaves_go_round_their_slots_and_a_checkpoint_loads_back :: proc(t:^testing.T)
     if !serve_init(t,&f,&s) {return}
     defer serve_destroy(&f,&s)
     w:=f.w
-    save_test_entity(w,5,{1,2,3})
+    save_test_entity(&f,5,{1,2,3})
     s.settings.autosave_slots=2
     for expected,i in ([]string{"autosave 1","autosave 2","autosave 1"}) {
         request_autosave(&s.requests,fmt.tprintf("Save %d",i))
@@ -623,15 +551,15 @@ autosaves_follow_play_scenes_and_levels_but_not_the_start :: proc(t:^testing.T) 
     testing.expect_value(t,autosaves_of(&s),0)
 
     level:=core.create(&w.entities)
-    core.add(&s.references,level,scene.Scene_Reference{rule=.Manual,state=.Active,loaded={1,2}})
-    core.table_settle(&s.references,&w.entities)
+    core.add(&w.references,level,scene.Scene_Reference{rule=.Manual,state=.Active,loaded={1,2}})
+    core.settle(&f.info,w,nil)
     serve(&f,&s)
     testing.expect_value(t,autosaves_of(&s),0)
 
-    core.at(&s.references,0).held=true
+    core.at(&w.references,0).held=true
     next:=core.create(&w.entities)
-    core.add(&s.references,next,scene.Scene_Reference{rule=.Manual,state=.Active,loaded={1,3}})
-    core.table_settle(&s.references,&w.entities)
+    core.add(&w.references,next,scene.Scene_Reference{rule=.Manual,state=.Active,loaded={1,3}})
+    core.settle(&f.info,w,nil)
     serve(&f,&s)
     testing.expect_value(t,autosaves_of(&s),1)
     serve(&f,&s)
@@ -675,7 +603,7 @@ a_job_writes_the_slot_and_its_result_comes_once_it_is_written :: proc(t:^testing
     s:Serve
     if !serve_init(t,&f,&s) {return}
     defer serve_destroy(&f,&s)
-    save_test_entity(f.w,5,{1,2,3})
+    save_test_entity(&f,5,{1,2,3})
     request_save(&s.requests,"job")
     path,_:=slot_path(&s.state,&f.app,"job")
     for _ in 0..<5000 {
@@ -701,7 +629,7 @@ a_slot_waiting_for_its_thumbnail_is_written_before_a_load_or_after_a_while :: pr
     if !serve_init(t,&f,&s) {return}
     defer serve_destroy(&f,&s)
     w:=f.w
-    save_test_entity(w,5,{1,2,3})
+    save_test_entity(&f,5,{1,2,3})
     ref:=host.app_world_ref(&f.app,w)
     path,_:=slot_path(&s.state,&f.app,"wait")
     result:=Result{op=.Save}

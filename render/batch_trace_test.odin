@@ -69,15 +69,10 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 	settings := DEFAULT_SETTINGS
 	settings.occlusion_culling = false
 	settings.reflections = true
-	device, err := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("batch trace tests skipped:", err)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)}
-		return
-	}
-	renderer:=new(Renderer);defer free(renderer)
-	if !testing.expect(t, renderer_init(renderer, {device = device, width = 160, height = 96, settings = settings}), renderer.error) {return}
-	defer renderer_destroy(renderer)
-	r := renderer
+	f: Fixture
+	if !fixture_init(t, &f, 160, 96, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	mirror := DEFAULT_MATERIAL
 	mirror.base_color, mirror.metallic, mirror.roughness = {0.9, 0.9, 0.9}, 1, 0.05
 	materials_set(r, {mirror})
@@ -147,16 +142,12 @@ TLAS_INSTANCES :: #config(TLAS_INSTANCES, 0)
 // what a frame that builds the TLAS costs the CPU against one that does not.
 @(test)
 a_native_tlas_larger_than_the_upload_ring_is_built_and_met :: proc(t: ^testing.T) {
-	shared_device.hold(t)
 	RING :: 4 << 20
 	settings := DEFAULT_SETTINGS
 	settings.occlusion_culling = false
 	settings.trace_mode = .Hardware
-	device, err := rhi.device_create({on_message = rhi.message_print, app_name = "mirai large tlas test", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = RING})
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("large tlas test skipped:", err)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)}
-		return
-	}
+	device := shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai large tlas test", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = RING})
+	if device == nil {return}
 	defer rhi.device_destroy(device)
 	renderer:=new(Renderer);defer free(renderer)
 	if !testing.expect(t, renderer_init(renderer, {device = device, width = 160, height = 96, settings = settings}), renderer.error) {return}

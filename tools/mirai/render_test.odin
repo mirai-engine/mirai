@@ -6,6 +6,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import img "mirai:cook/image"
+import "mirai:std/base"
 
 @(private="file")
 measured :: proc(view:string,frame_ms,stability,luma:f64,luma_target:=0.0) -> Render_Measure {
@@ -146,9 +147,8 @@ render_free_region_leaves_out_the_bar_and_the_panels :: proc(t:^testing.T) {
 @(test)
 render_plan_load_refuses_a_camera_without_a_target :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-render-plan-camera-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"render-plan-camera")
+    if folder=="" {return}
     write :: proc(t:^testing.T,folder,text:string) {testing.expect(t,os.write_entire_file(join(folder,RENDER_PLAN_FILE),text)==nil)}
     write(t,folder,`{"sizes":[[1440,900]],"warmup":10,"frames":10,"interval":5,"captures":2,"views":[{"name":"a","scene":"scenes/a.scene","position":[0,1,2]}]}`)
     _,ok:=render_plan_load(folder,"","")
@@ -416,9 +416,8 @@ render_judge_finds_a_push_that_leaves_more_behind :: proc(t:^testing.T) {
 @(test)
 render_plan_load_refuses_a_push_it_cannot_make :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-render-plan-push-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"render-plan-push")
+    if folder=="" {return}
     write :: proc(t:^testing.T,folder,push:string) {
         testing.expect(t,os.write_entire_file(join(folder,RENDER_PLAN_FILE),strings.concatenate({`{"sizes":[[1440,900]],"warmup":10,"frames":10,"interval":5,"captures":2,"views":[{"name":"a","scene":"scenes/a.scene","position":[0,1,2],"target":[0,0,0],"push":`,push,`}]}`}))==nil)
     }
@@ -438,9 +437,8 @@ render_plan_load_refuses_a_push_it_cannot_make :: proc(t:^testing.T) {
 @(test)
 render_base_prepare_refuses_a_folder_that_is_not_a_worktree :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root,error:=os.make_directory_temp("","mirai-render-base-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"render-base")
+    if root=="" {return}
     commit :: proc(t:^testing.T,root,text:string) {
         testing.expect(t,os.write_entire_file(join(root,"file.txt"),text)==nil)
         _,added:=render_git(root,"add","file.txt")

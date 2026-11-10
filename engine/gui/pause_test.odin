@@ -94,34 +94,27 @@ the_menu_action_is_reported_unless_an_interface_used_escape :: proc(t:^testing.T
 // mouse turns and no Modal is up.
 @(test)
 the_mouse_is_captured_while_the_seat_with_it_drives_a_body_with_look :: proc(t:^testing.T) {
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    seats:core.Table(inp.Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
-    drivables:core.Table(inp.Drivable)
-    core.table_init(&drivables,"Drivable")
-    defer core.table_destroy(&drivables)
+    w:Seats_Test_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     bindings:inp.Input_Map
     LOOK :: inp.Action(0)
     inp.input_map_action(&bindings,LOOK,.Axis2)
     state:=inp.Seats{local_count=1}
-    seat,body:=core.create(&es),core.create(&es)
-    core.add(&seats,seat,inp.Seat{})
-    core.add(&drivables,body,inp.Drivable{})
-    core.table_settle(&seats,&es)
-    core.table_settle(&drivables,&es)
+    seat,body:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,seat,inp.Seat{})
+    core.add(&w.drivables,body,inp.Drivable{})
+    core.test_world_settle(&w)
 
     wants:=proc(seats:^core.Table(inp.Seat),drivables:^core.Table(inp.Drivable),state:^inp.Seats,bindings:^inp.Input_Map,modal:bool) -> bool {
         return mouse_wanted(core.read(seats),core.read(drivables),state,bindings,LOOK,modal)
     }
-    testing.expect(t,!wants(&seats,&drivables,&state,&bindings,false),"the mouse does not turn its look")
+    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"the mouse does not turn its look")
     inp.input_map_bind(&bindings,LOOK,inp.binding_gamepad_stick(.Right))
-    testing.expect(t,!wants(&seats,&drivables,&state,&bindings,false),"a stick does not need the mouse")
+    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"a stick does not need the mouse")
     inp.input_map_bind(&bindings,LOOK,inp.binding_mouse_delta())
-    testing.expect(t,!wants(&seats,&drivables,&state,&bindings,false),"no body driven")
-    core.get(&drivables,body).seat=seat
-    testing.expect(t,wants(&seats,&drivables,&state,&bindings,false))
-    testing.expect(t,!wants(&seats,&drivables,&state,&bindings,true),"a Modal frees it")
+    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"no body driven")
+    core.get(&w.drivables,body).seat=seat
+    testing.expect(t,wants(&w.seats,&w.drivables,&state,&bindings,false))
+    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,true),"a Modal frees it")
 }

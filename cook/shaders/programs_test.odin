@@ -6,6 +6,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 // The programs of shaders/materials: a source that declares one in its first
 // line (//! mirai <domain> <name>) gives one.
@@ -48,7 +49,8 @@ programs_fixture :: proc(t:^testing.T,f:^Programs_Fixture) -> bool {
     version,ran:=tool_run(&f.runner,{slangc,"-version"},context.temp_allocator)
     testing.expect(t,ran,version)
     f.version=strings.trim_space(version)
-    f.project=fixture_make(t)
+    f.project=base.test_folder(t,"shaders")
+    if f.project=="" {return false}
     f.output=path_join(f.project,"out",allocator=context.temp_allocator)
     f.cache=path_join(f.project,".mirai/shader-cache/reflection",allocator=context.temp_allocator)
     os.make_directory_all(path_join(f.project,"shaders",allocator=context.temp_allocator))
@@ -74,7 +76,6 @@ program_named :: proc(catalog:Catalog,name:string) -> (Program,bool) {
 programs_reflect_typed_parameters_defaults_and_portable_includes :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     fixture_write(t,f.project,"shaders/helpers.slang","float3 sample_color(float x) {return float3(x,x,x);}\n")
     fixture_write(t,f.project,"shaders/typed.slang",`//! mirai surface Fixture
 //! parameter tint {"default":[1,0.5,0.25],"min":0,"max":10,"color":true,"group":"Look"}
@@ -145,7 +146,6 @@ namespace Fixture {
 programs_reject_a_default_of_another_type_or_out_of_range :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     Case :: struct {declaration,metadata,expected:string}
     cases:=[]Case{
         {"bool flag",`{"default":1}`,"invalid typed default"},
@@ -173,7 +173,6 @@ programs_reject_a_default_of_another_type_or_out_of_range :: proc(t:^testing.T) 
 programs_reject_a_name_declared_twice_or_reserved :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     text:="//! mirai surface Duplicate\nnamespace Duplicate {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"
     fixture_write(t,f.project,"shaders/a.slang",text)
     fixture_write(t,f.project,"shaders/b.slang",text)
@@ -192,7 +191,6 @@ programs_reject_a_name_declared_twice_or_reserved :: proc(t:^testing.T) {
 programs_take_parameter_ranges_within_the_bounds_of_the_loader :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     declare :: proc(t:^testing.T,f:^Programs_Fixture,lower,upper:string) {
         fixture_write(t,f.project,"shaders/range.slang",fmt.tprintf("//! mirai surface Range\n//! parameter amount {{\"min\":%s,\"max\":%s}}\nnamespace Range {{struct Parameters {{float amount;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{return mirai_surface_default(ctx);}}}}\n",lower,upper))
     }
@@ -214,7 +212,6 @@ programs_take_parameter_ranges_within_the_bounds_of_the_loader :: proc(t:^testin
 programs_reuse_a_warm_reflection_and_reflect_again_only_what_changed :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     fixture_write(t,f.project,"shaders/helper.slang","float helper() {return 1;}\n")
     fixture_write(t,f.project,"shaders/helper.inc","#include \"parameters.h\"\n")
     fixture_write(t,f.project,"shaders/parameters.h","#include \"helper.slang\"\n")
@@ -229,8 +226,8 @@ programs_reuse_a_warm_reflection_and_reflect_again_only_what_changed :: proc(t:^
     cached,found:=program_named(warm,"Cached")
     testing.expect(t,found && cached.size==16 && len(cached.parameters)==1 && cached.parameters[0].kind=="float32","a cached reflection gives the same parameters")
     // The same program in another project, or another checkout, is the same entry.
-    elsewhere:=fixture_make(t)
-    defer fixture_remove(elsewhere)
+    elsewhere:=base.test_folder(t,"shaders")
+    if elsewhere=="" {return}
     for path in listing_read(path_join(f.project,"shaders",allocator=context.temp_allocator),true,context.temp_allocator).files {
         relative,_:=path_relative(path,f.project)
         data,_:=os.read_entire_file(path,context.temp_allocator)
@@ -267,7 +264,6 @@ programs_reuse_a_warm_reflection_and_reflect_again_only_what_changed :: proc(t:^
 parameter_metadata_publishes_a_new_catalog_without_reflecting_or_changing_dispatch :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     original:="//! mirai surface Metadata\n//! parameter tint {\"default\":[1,0.5,0.25],\"min\":0,\"max\":1,\"color\":false}\n//! parameter map {\"kind\":\"texture\",\"srgb\":false,\"normal\":false}\nnamespace Metadata {struct Parameters {float3 tint;uint map;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"
     fixture_write(t,f.project,"shaders/metadata.slang",original)
     first,problem:=programs_of(&f)
@@ -306,7 +302,6 @@ parameter_metadata_publishes_a_new_catalog_without_reflecting_or_changing_dispat
 programs_without_a_project_are_the_built_in_ones :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     root:=path_clean(ENGINE_ROOT,context.temp_allocator)
     catalog,problem:=programs_generate(&f.runner,root,"",f.output,f.slangc,f.version,f.cache,allocator=context.temp_allocator)
     testing.expect_value(t,problem,"")
@@ -362,7 +357,6 @@ reflections :: proc(catalog:Catalog,probes:=true) -> (runs:int) {
 surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     Case :: struct {name,body:string,coverage:bool}
     cases:=[]Case{
         {"Untouched","s.base_color=p.tint*mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).rgb;",false},
@@ -404,7 +398,6 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
 the_stages_that_trace_follow_the_alpha_of_a_program_and_not_its_text :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     prints :: proc(t:^testing.T,f:^Programs_Fixture,body:string) -> (tracing,own:string) {
         fixture_write(t,f.project,"shaders/holes.slang",fmt.tprintf("//! mirai surface Holes\nnamespace Holes {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",body))
         _,problem:=programs_of(f)
@@ -426,7 +419,6 @@ the_stages_that_trace_follow_the_alpha_of_a_program_and_not_its_text :: proc(t:^
 vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     fixture_write(t,f.project,"shaders/drift.slang","//! mirai vfx Drift\n//! parameter speed {\"default\":2,\"min\":0,\"max\":10}\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {float3 home;uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {a.home=particle.position;}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {a.hits+=1u;}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n")
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
@@ -513,7 +505,6 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
 ui_programs_dispatch_in_an_include_of_their_own :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     fixture_write(t,f.project,"shaders/pulse.slang",`//! mirai ui Pulse
 //! parameter rate {"default":2,"min":0,"max":10}
 namespace Pulse {
@@ -567,7 +558,6 @@ a_layout_without_a_declared_parameter_is_refused :: proc(t:^testing.T) {
 programs_take_a_material_without_parameters :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     fixture_write(t,f.project,"shaders/plain.slang","//! mirai surface Plain\nnamespace Plain {struct Parameters {}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n")
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
@@ -580,7 +570,6 @@ programs_take_a_material_without_parameters :: proc(t:^testing.T) {
 programs_leave_out_one_that_fails_and_publish_the_others :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     fixture_write(t,f.project,"shaders/good.slang","//! mirai surface Good\nnamespace Good {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n")
     fixture_write(t,f.project,"shaders/broken.slang","//! mirai surface Broken\nnamespace Broken {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return not_a_function(ctx);}}\n")
     catalog,problem:=programs_generate(&f.runner,path_clean(ENGINE_ROOT,context.temp_allocator),f.project,f.output,f.slangc,f.version,f.cache,allocator=context.temp_allocator)
@@ -599,7 +588,6 @@ programs_leave_out_one_that_fails_and_publish_the_others :: proc(t:^testing.T) {
 programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.T) {
     f:Programs_Fixture
     if !programs_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     program :: proc(name,line,fields:string) -> string {
         return fmt.tprintf("//! mirai surface %s\n%s\nnamespace %s {{struct Parameters {{%s}}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {{Mirai_Vertex v=mirai_vertex_default(ctx);v.position.y+=sin(ctx.time);return v;}} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{return mirai_surface_default(ctx);}}}}\n",name,line,name,fields)
     }

@@ -7,11 +7,12 @@ import "core:testing"
 import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:cook/import/obj"
+import "mirai:std/base"
 
 @(test)
 sources_are_known_by_their_content :: proc(t:^testing.T) {
-    folder:=temp_folder("sniff")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"sniff")
+    if folder=="" {return}
     glb,_:=os.read_entire_file(FIXTURES+"hierarchy.glb",context.temp_allocator)
     gltf,_:=os.read_entire_file(FIXTURES+"single-transform.gltf",context.temp_allocator)
     usda,_:=os.read_entire_file(FIXTURES+"hierarchy.usda",context.temp_allocator)
@@ -87,8 +88,8 @@ kept_of :: proc(report:^importer.Import_Report) -> (meshes,textures,others:int) 
 
 @(test)
 an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: proc(t:^testing.T) {
-    folder:=temp_folder("cache")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cache")
+    if folder=="" {return}
     os.make_directory_all(fmt.tprintf("%s/models",folder))
     os.make_directory_all(fmt.tprintf("%s/textures",folder))
     for file in ([]string{"models/vase.obj","models/vase.mtl","textures/vase_color.png"}) {
@@ -145,8 +146,8 @@ an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: 
 @(test)
 an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=temp_folder("texture-cache")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"texture-cache")
+    if folder=="" {return}
     cache,image:=fmt.tprintf("%s/cache",folder),fmt.tprintf("%s/wood.png",folder)
     testing.expect(t,os.write_entire_file(image,png_bytes(16,16,{200,100,50}))==nil)
     imported :: proc(t:^testing.T,types:^asset.Types,image,out:string,options:importer.Import_Options) -> (format:asset.Texture_Format,mips:int,bytes:string) {
@@ -206,8 +207,8 @@ an_import_takes_a_texture_that_another_import_built_from_the_texture_cache :: pr
 @(test)
 an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    folder:=temp_folder("mesh-cache")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"mesh-cache")
+    if folder=="" {return}
     os.make_directory_all(fmt.tprintf("%s/models",folder))
     for file in ([]string{"models/vase.obj","models/vase.mtl"}) {
         data,_:=os.read_entire_file(fmt.tprintf("%s%s",DEMO,file),context.temp_allocator)

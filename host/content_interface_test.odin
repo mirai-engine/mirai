@@ -1,7 +1,6 @@
 package host
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:std/base"
@@ -29,10 +28,8 @@ UI_ID :: base.Asset_Id{0x41,1}
 // the font, and an application that reads it without a renderer.
 @(private="file")
 interface_fixture :: proc(t:^testing.T,f:^Interface_Fixture,name:string) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.root=fmt.aprintf("%s/mirai-host-%d-%s",directory,os.get_pid(),name)
-    os.remove_all(f.root)
-    os.make_directory_all(f.root)
+    f.root=base.test_folder(t,name)
+    if f.root=="" {return false}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     testing.expect_value(t,asset.font_save(fmt.tprintf("%s/face.font",f.root),&types,{id=FONT_ID,file=CFF_OTF}),asset.Error.None) or_return
 
@@ -72,8 +69,6 @@ interface_fixture_destroy :: proc(f:^Interface_Fixture) {
     ui.font_destroy(&f.app.ui_font)
     app_content_destroy(&f.app)
     assets_destroy(&f.assets)
-    os.remove_all(f.root)
-    delete(f.root)
 }
 
 @(test)

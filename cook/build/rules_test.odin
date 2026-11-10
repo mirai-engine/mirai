@@ -5,14 +5,14 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 // Every rule of the generator that the other tests do not reach refuses its
 // declaration with an error that names it and says what to write instead.
 @(test)
 each_rule_of_the_generator_names_the_declaration_that_breaks_it :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-rules-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"rules")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     files:=[][2]string{
@@ -122,9 +122,8 @@ import "mirai:core"
 // loop refills or fixed reads is not.
 @(test)
 a_step_of_the_game_that_reads_the_input_of_the_tick_outside_fixed_is_refused :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-rules-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"rules")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     files:=[][2]string{

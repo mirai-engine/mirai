@@ -79,48 +79,43 @@ a_context_on_top_takes_the_inputs_its_actions_read :: proc(t:^testing.T) {
 // top. What cannot be entered is a problem that says why.
 @(test)
 seats_enter_and_leave_contexts_by_owner :: proc(t:^testing.T) {
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    first,second,inventory,map_screen:=core.create(&es),core.create(&es),core.create(&es),core.create(&es)
-    seats:core.Table(Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
-    core.add(&seats,first,Seat{})
-    core.add(&seats,second,Seat{slot=1})
-    core.table_settle(&seats,&es)
+    w:Test_Seats
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    first,second,inventory,map_screen:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,first,Seat{})
+    core.add(&w.seats,second,Seat{slot=1})
+    core.test_world_settle(&w)
     state:Input_Contexts
-    requests:Context_Requests
-    defer delete(requests.items)
     problems:core.Problems
     stack :: proc(seats:^core.Table(Seat),e:core.Entity) -> Context_Stack {return seats.values[core.row_of(seats,e)].contexts}
 
-    input_context_enter(&requests,inventory,core.NONE,MENU)
-    input_context_enter(&requests,map_screen,second,MAP,modal=true)
-    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
-    testing.expect(t,stack(&seats,first)==Context_Stack{layers={0=MENU},count=1},"none puts every local seat in it")
-    testing.expect(t,stack(&seats,second)==Context_Stack{layers={0=MENU,1=MAP},count=2,modal=0b10},"the one entered last is on top")
+    input_context_enter(&w.context_requests,inventory,core.NONE,MENU)
+    input_context_enter(&w.context_requests,map_screen,second,MAP,modal=true)
+    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.seats,first)==Context_Stack{layers={0=MENU},count=1},"none puts every local seat in it")
+    testing.expect(t,stack(&w.seats,second)==Context_Stack{layers={0=MENU,1=MAP},count=2,modal=0b10},"the one entered last is on top")
     testing.expect(t,in_context(&state,inventory) && in_context(&state,map_screen))
 
     // Asked again with the same context, it keeps its place.
-    input_context_enter(&requests,inventory,core.NONE,MENU)
-    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
-    testing.expect(t,stack(&seats,second).layers[1]==MAP)
+    input_context_enter(&w.context_requests,inventory,core.NONE,MENU)
+    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.seats,second).layers[1]==MAP)
 
-    input_context_leave(&requests,inventory)
-    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
-    testing.expect(t,stack(&seats,first).count==0 && stack(&seats,second)==Context_Stack{layers={0=MAP},count=1,modal=1})
+    input_context_leave(&w.context_requests,inventory)
+    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.seats,first).count==0 && stack(&w.seats,second)==Context_Stack{layers={0=MAP},count=1,modal=1})
 
     // An owner that goes takes its seats out.
-    core.destroy(&es,map_screen)
-    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
-    testing.expect(t,stack(&seats,second).count==0 && !in_context(&state,map_screen))
+    core.destroy(&w.entities,map_screen)
+    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.seats,second).count==0 && !in_context(&state,map_screen))
     testing.expect_value(t,problems.count,0)
 
-    input_context_enter(&requests,inventory,core.NONE,CONTEXT_BASE)
-    input_context_enter(&requests,inventory,core.NONE,Input_Context(CONTEXT_CAPACITY))
-    input_context_enter(&requests,inventory,map_screen,MENU)
-    input_contexts(core.ref(&es),&seats,&state,&requests,&problems)
+    input_context_enter(&w.context_requests,inventory,core.NONE,CONTEXT_BASE)
+    input_context_enter(&w.context_requests,inventory,core.NONE,Input_Context(CONTEXT_CAPACITY))
+    input_context_enter(&w.context_requests,inventory,map_screen,MENU)
+    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
     for code in ([]string{"input.context_base","input.context_value","input.context_seat"}) {
         testing.expectf(t,core.problem_find(&problems,inventory,code)!=nil,"%s is a problem",code)
     }
@@ -157,7 +152,10 @@ input_mirai_names_contexts_and_chords :: proc(t:^testing.T) {
         {type=Action,value=17,name="save",file="game/game.odin",line=2},
         {type=Input_Context,value=1,name="menu",file="game/game.odin",line=3},
     }
-    info:=core.World_Info{names=names}
+    info,made:=core.test_info(t,Test_Seats,test_types)
+    if !made {return}
+    defer core.test_info_destroy(&info)
+    info.names=names
     problems:core.Problems
     m:Input_Map
     input_map_make(&m,&info,"input.mirai",`{"actions":[

@@ -7,16 +7,15 @@ import "core:testing"
 import "core:time"
 import "mirai:asset"
 import "mirai:cook/cache"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 @(test)
 built_textures_are_kept_by_image_and_settings_and_read_back_whole :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-textures-%d-cache",directory,os.get_pid())
-    os.remove_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"textures-cache")
+    if folder=="" {return}
     pixels:=make([]u8,16*16*4,context.temp_allocator)
     for &value,at in pixels {value=at%4==3?255:u8(at*7)}
     options:=Build_Options{srgb=true}
@@ -45,9 +44,8 @@ built_textures_are_kept_by_image_and_settings_and_read_back_whole :: proc(t:^tes
     testing.expect(t,!no_folder && !cache_write("",key,&types,&built))
 
     // Above its budget the cache keeps what was used last: a read counts as a use.
-    trimmed:=fmt.tprintf("%s-trim",folder)
-    os.remove_all(trimmed)
-    defer os.remove_all(trimmed)
+    trimmed:=base.test_folder(t,"textures-trim")
+    if trimmed=="" {return}
     keys:[3]u64
     for &key_of,at in keys {
         other[0]=u8(at)

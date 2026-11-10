@@ -3,7 +3,6 @@ package host
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -16,9 +15,8 @@ import mm "mirai:std/math"
 // names unloads; with memory enough it goes through.
 @(test)
 host_calls_without_memory_fail_whole :: proc(t:^testing.T) {
-    root:=fmt.tprintf("%s/mirai-host-memory-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"host-memory")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
     meshes:=[2]base.Asset_Id{{0x6c6f776d,1},{0x6c6f776d,2}}
@@ -29,13 +27,9 @@ host_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     if !testing.expect(t,assets_init(&assets,{root=root,capacity=8})) {return}
     defer assets_destroy(&assets)
 
-    tables:=[1]core.Table_Info{{name="Marks_Model",type=Marks_Model,info=type_info_of(Marks_Model),offset=offset_of(Marks_World,models)}}
-    storages:=[1]core.Storage_Info{{name="Marks_Held",type=Marks_Held,info=type_info_of(Marks_Held),offset=offset_of(Marks_World,held)}}
-    info:=core.World_Info{entities=offset_of(Marks_World,entities),tables=tables[:],storages=storages[:]}
-    info.sizes[.World],info.aligns[.World]=size_of(Marks_World),align_of(Marks_World)
-    info.init[.World],info.destroy[.World]=marks_init,marks_destroy
-    core.world_info_index(&info)
-    defer {core.world_schema_destroy(info.schema);delete(info.tables_by_type);delete(info.storages_by_type)}
+    info,described:=core.test_info(t,Marks_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
 
     Call :: enum {Assets_Init,Content,Ui_Context,Marks}
     for call in Call {

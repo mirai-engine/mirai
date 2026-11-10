@@ -5,7 +5,6 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 // A grid of quads of side cells, flat on y = 0.
 @(private = "file")
@@ -29,15 +28,11 @@ pools_grid :: proc(r: ^Renderer, cells: int) -> (Mesh_Handle, bool) {
 
 @(test)
 a_small_pool_growth_keeps_its_data_with_aligned_copies :: proc(t: ^testing.T) {
-	device, error := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("pool test skipped:", error)} else {testing.expect(t, false, error)}
-		return
-	}
-	r:=new(Renderer);defer free(r)
 	settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
-	if !testing.expect(t,renderer_init(r,{device=device,width=64,height=64,settings=settings}),r.error) {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	if !testing.expect(t,pool_room(r,.Vertex,13),r.error) {return}
 	first:=r.scene.vertex_buffer
 	testing.expectf(t,rhi.buffer_size(device,first)%4==0,"pool capacity must permit an aligned copy")
@@ -58,16 +53,12 @@ a_small_pool_growth_keeps_its_data_with_aligned_copies :: proc(t: ^testing.T) {
 // and grows again after. A pool that grows keeps what its old buffer held.
 @(test)
 a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testing.T) {
-	device, error := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("pool test skipped:", error)} else {testing.expect(t, false, error)}
-		return
-	}
-	r:=new(Renderer);defer free(r)
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
-	if !renderer_init(r, {device = device, width = 64, height = 64, settings = settings}) {testing.expect(t, false, r.error);return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	s := &r.scene
 	camera := Camera{position = {8, 10, -6}, forward = {0, -10, 14}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 100, exposure = UNIT_EXPOSURE}
 
@@ -118,17 +109,13 @@ a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testi
 // its build, and the TLAS of that frame names the smaller one.
 @(test)
 blas_of_a_mesh_at_rest_is_compacted :: proc(t: ^testing.T) {
-	device, error := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("compaction test skipped:", error)} else {testing.expect(t, false, error)}
-		return
-	}
-	if !rhi.device_info(device).features.ray_query {fmt.eprintln("compaction test skipped: no hardware ray tracing");return}
-	r:=new(Renderer);defer free(r)
 	settings := DEFAULT_SETTINGS
 	settings.reflections, settings.taa = false, false
-	if !renderer_init(r, {device = device, width = 64, height = 64, settings = settings}) {testing.expect(t, false, r.error);return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
+	if !rhi.device_info(device).features.ray_query {fmt.eprintln("compaction test skipped: no hardware ray tracing");return}
 	if !r.hardware_rt {fmt.eprintln("compaction test skipped: rays are traced by software");return}
 	mesh, added := pools_grid(r, 64)
 	if !testing.expect(t, added, r.error) {return}

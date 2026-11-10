@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
 names_project :: proc(t:^testing.T,folder,core_source,game_source:string) -> (p:project.Project,ok:bool) {
@@ -32,9 +33,8 @@ LIMIT :: 4
 // @(name); a mask @(name_bits) names its bits by them.
 @(test)
 the_constants_of_a_named_type_are_its_values :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-names-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"names")
+    if folder=="" {return}
     p,ok:=names_project(t,folder,NAMES_CORE,`package game
 import "mirai:core"
 MODE_SWIM :: core.Mode(16)
@@ -65,9 +65,8 @@ MODE_SWIM :: core.Mode(16)
 // to fix them.
 @(test)
 named_types_and_their_names_are_checked :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-names-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"names")
+    if folder=="" {return}
     p,ok:=names_project(t,folder,NAMES_CORE,`package game
 import "mirai:core"
 WALKING :: core.Mode(5)

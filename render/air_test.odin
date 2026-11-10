@@ -1,36 +1,23 @@
 package mirai_render
 
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(private = "file")
 Air_Fixture :: struct {
-	device:   ^rhi.Device,
-	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
-	square:   Mesh_Handle,
+	using base: Fixture,
+	square:     Mesh_Handle,
 }
 
 // A renderer without GI, reflections and TAA, and a white Lambert material.
 @(private = "file")
-air_fixture :: proc(t: ^testing.T, f: ^Air_Fixture) -> bool {
-	device, error := shared_device.take(t, hardware_rt = false)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("air test skipped:", error)} else {testing.expect(t, false, error)}
-		return false
-	}
-	f.device = device
+air_fixture :: proc(t: ^testing.T, f: ^Air_Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
-	f.renderer = new(Renderer)
-	if !renderer_init(f.renderer, {device = device, width = 64, height = 64, settings = settings}) {
-		testing.expect(t, false, f.renderer.error)
-		return false
-	}
+	if !fixture_init(t, f, 64, 64, settings, hardware_rt = false, loc = loc) {return false}
 	lambert := DEFAULT_MATERIAL
 	lambert.specular_factor = 0
 	materials_set(f.renderer, {lambert})
@@ -38,11 +25,6 @@ air_fixture :: proc(t: ^testing.T, f: ^Air_Fixture) -> bool {
 	indices := [6]u32{0, 1, 2, 0, 2, 3}
 	f.square, _ = mesh_add(f.renderer, vertices[:], indices[:])
 	return true
-}
-
-@(private = "file")
-air_destroy_fixture :: proc(f: ^Air_Fixture) {
-	if f.renderer != nil {renderer_destroy(f.renderer); free(f.renderer)}
 }
 
 // A sun at an elevation, degrees, toward -z.
@@ -88,7 +70,7 @@ sky_frame :: proc(t: ^testing.T, f: ^Air_Fixture, sun: Sun_Desc, camera: Camera,
 the_air_is_blue_by_day_red_at_sunset_and_still_lit_at_dusk :: proc(t: ^testing.T) {
 	f: Air_Fixture
 	if !air_fixture(t, &f) {return}
-	defer air_destroy_fixture(&f)
+	defer fixture_destroy(&f)
 	noon := sun_at(70)
 	high := sky_frame(t, &f, noon, LEVEL, 0.5, 0.05)
 	horizon := sky_frame(t, &f, noon, LEVEL, 0.5, 0.49)
@@ -115,7 +97,7 @@ the_air_is_blue_by_day_red_at_sunset_and_still_lit_at_dusk :: proc(t: ^testing.T
 the_sky_from_high_above_is_darker_and_shows_the_ground_below_the_horizon :: proc(t: ^testing.T) {
 	f: Air_Fixture
 	if !air_fixture(t, &f) {return}
-	defer air_destroy_fixture(&f)
+	defer fixture_destroy(&f)
 	noon := sun_at(60)
 	ground := sky_frame(t, &f, noon, UP, 0.5, 0.5)
 	high := AIR_SKY
@@ -135,7 +117,7 @@ the_sky_from_high_above_is_darker_and_shows_the_ground_below_the_horizon :: proc
 the_sun_through_the_air_gives_its_illuminance_overhead_and_reddens_low :: proc(t: ^testing.T) {
 	f: Air_Fixture
 	if !air_fixture(t, &f) {return}
-	defer air_destroy_fixture(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	// A white floor, the camera above it looking down.
 	floor := Instance_Desc{object_id = 1, mesh = f.square, transform = linalg.matrix4_rotate_f32(-math.PI / 2, {1, 0, 0}) * linalg.matrix4_scale_f32({40, 40, 1}), material = 1, tint = {1, 1, 1}}
@@ -159,7 +141,7 @@ the_sun_through_the_air_gives_its_illuminance_overhead_and_reddens_low :: proc(t
 the_air_hazes_what_is_far_and_not_what_is_near :: proc(t: ^testing.T) {
 	f: Air_Fixture
 	if !air_fixture(t, &f) {return}
-	defer air_destroy_fixture(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	sun := sun_at(40)
 	sun.direction.z = 0.5
@@ -195,7 +177,7 @@ hdr_view :: proc(t: ^testing.T, f: ^Air_Fixture) -> []f16 {
 the_air_draws_the_same_while_nothing_changes_and_follows_the_sun :: proc(t: ^testing.T) {
 	f: Air_Fixture
 	if !air_fixture(t, &f) {return}
-	defer air_destroy_fixture(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	scene_set(r, nil, nil, sun_at(10), AIR_SKY)
 	testing.expect(t, renderer_frame(r, {camera = LEVEL}), r.error)

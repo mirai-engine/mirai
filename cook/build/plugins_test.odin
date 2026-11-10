@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // The demo's engine plugins build one library per part: the runtime parts in
@@ -55,10 +56,8 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
     engine:=Engine_Paths{stamp=project.path(root,".mirai","engine","none",ENGINE_STAMP)}
     hashes:[2]u64
     for &hash in hashes {
-        directory,error:=os.make_directory_temp("","mirai-plugin-project-*",context.temp_allocator)
-        if !testing.expect(t,error==nil) {return}
-        folder:=project.path_absolute(directory)
-        defer os.remove_all(folder)
+        folder:=base.test_folder(t,"plugin-project")
+        if folder=="" {return}
         testing.expect(t,os.write_entire_file(project.path(folder,project.PROJECT_FILE),`{"name": "Shared", "plugins": ["ragdoll"]}`)==nil)
         p,open_error:=project.open(folder,root)
         if !testing.expectf(t,open_error.code==.None,"the project opens: %v",open_error) {return}
@@ -92,10 +91,8 @@ a_plugin_library_under_a_folder_with_spaces_links_with_its_definition :: proc(t:
         root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
         compiler,found:=compiler_find(root,context.temp_allocator)
         if !testing.expect(t,found,"no Odin compiler") {return}
-        directory,directory_error:=os.make_directory_temp("","mirai-plugin-spaces-*",context.temp_allocator)
-        if !testing.expect(t,directory_error==nil) {return}
-        folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-        defer os.remove_all(folder)
+        folder:=base.test_folder(t,"plugin-spaces")
+        if folder=="" {return}
         lib:=spaced_library(folder)
         testing.expect(t,os.make_directory_all(lib.stage)==nil)
         entry_write(lib.stage,PLUGIN_ENTRY,{})
@@ -163,10 +160,8 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-split-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-split")
+    if folder=="" {return}
     engine,game:=split_plugin_write(t,folder)
     p,error:=project.open(game,engine)
     if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
@@ -228,10 +223,8 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
 @(test)
 the_shared_cache_keeps_the_entries_used_last :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    directory,error:=os.make_directory_temp("","mirai-plugin-cache-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-cache")
+    if folder=="" {return}
     entries:=[3]string{project.path(folder,"a"),project.path(folder,"b"),project.path(folder,"c")}
     for entry,i in entries {
         staging,fresh:=cache_entry_begin(entry)
@@ -256,10 +249,8 @@ the_shared_cache_keeps_the_entries_used_last :: proc(t:^testing.T) {
 @(test)
 a_plugin_that_imports_a_plugin_it_does_not_depend_on_is_an_error :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-imports-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-imports")
+    if folder=="" {return}
     write :: proc(t:^testing.T,folder:string,files:[][2]string) {
         for file in files {
             path:=project.path(folder,file[0],allocator=context.temp_allocator)
@@ -305,10 +296,8 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-params-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-params")
+    if folder=="" {return}
     files:=[][2]string{
         {"engine/core/data.odin","package core\n\nTable :: struct($T:typeid) {values:[2]T}\nRead :: struct($T:typeid) {table:^Table(T)}\n\n@(component)\nProbe :: struct {value:i32}\n\n@(storage,queue)\nAsks :: struct {count:i32}\n\n@(params)\nProber :: struct {probes:^Table(Probe),asks:^Asks}\n"},
         {"engine/plugins/thing/plugin.mirai",`{"name": "thing", "version": "1.0.0", "parts": ["Runtime"]}`},
@@ -371,10 +360,8 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-declare-any-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"declare-any")
+    if folder=="" {return}
     files:=[][2]string{
         {"engine/thing/say.odin","package thing\n\nimport \"core:fmt\"\n\nsay :: proc(buffer:[]u8,format:string,args:..any) -> string {return fmt.bprintf(buffer,format,..args)}\n\ncount :: proc(n:int) -> int {return n+1}\n"},
         // Passes its arguments on, as core.report does to base.text_format.
@@ -425,10 +412,8 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-order-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-order")
+    if folder=="" {return}
     files:=[][2]string{
         {"engine/core/data.odin","package core\n"},
         {"engine/plugins/base_thing/plugin.mirai",`{"name": "base_thing", "version": "1.0.0", "parts": ["Runtime"]}`},
@@ -488,10 +473,8 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
 @(test)
 a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-decl-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-decl")
+    if folder=="" {return}
     write :: proc(t:^testing.T,root,file,text:string) {
         path:=project.path(root,file)
         parent:=path[:strings.last_index_byte(path,'/')]

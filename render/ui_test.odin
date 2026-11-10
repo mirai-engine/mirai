@@ -5,34 +5,24 @@ import "core:math"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 // A renderer without lighting effects that move from frame to frame: what is
 // drawn over the image is read exactly.
 @(private)
 Overlay_Fixture :: struct {
-    device:  ^rhi.Device,
-    renderer:^Renderer, // on the heap: a Renderer is too big for the stack
+    using base:Fixture,
     tracking:mem.Tracking_Allocator, // of everything the renderer allocates
     cube:    Mesh_Handle,
 }
 
 @(private)
-overlay_fixture :: proc(t:^testing.T,f:^Overlay_Fixture,width,height:u32,taa:=false,ui_capacity:=0,debug_capacity:=0,ui_shape_capacity:=0,ui_layer_depth:=0) -> bool {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return false
-    }
-    f.device=device
+overlay_fixture :: proc(t:^testing.T,f:^Overlay_Fixture,width,height:u32,taa:=false,ui_capacity:=0,debug_capacity:=0,ui_shape_capacity:=0,ui_layer_depth:=0,loc:=#caller_location) -> bool {
     mem.tracking_allocator_init(&f.tracking,context.allocator)
     settings:=DEFAULT_SETTINGS
     settings.gi_enabled,settings.reflections,settings.taa=false,false,taa
     settings.trace_mode=.Software
     settings.texture_compression=false
-    f.renderer = new(Renderer)
-    if !renderer_init(f.renderer,{device=device,width=width,height=height,settings=settings,allocator=mem.tracking_allocator(&f.tracking),ui_vertex_capacity=ui_capacity,debug_vertex_capacity=debug_capacity,ui_shape_capacity=ui_shape_capacity,ui_layer_depth=ui_layer_depth}) {
-        testing.expect(t,false,f.renderer.error)
+    if !fixture_init(t,f,width,height,settings,hardware_rt=false,desc={allocator=mem.tracking_allocator(&f.tracking),ui_vertex_capacity=ui_capacity,debug_vertex_capacity=debug_capacity,ui_shape_capacity=ui_shape_capacity,ui_layer_depth=ui_layer_depth},loc=loc) {
         mem.tracking_allocator_destroy(&f.tracking)
         return false
     }
@@ -57,7 +47,7 @@ overlay_fixture :: proc(t:^testing.T,f:^Overlay_Fixture,width,height:u32,taa:=fa
 @(private)
 overlay_fixture_destroy :: proc(t:^testing.T,f:^Overlay_Fixture) {
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
-    if f.renderer != nil {renderer_destroy(f.renderer); free(f.renderer)}
+    fixture_destroy(f)
     testing.expect_value(t,len(f.tracking.allocation_map),0)
     mem.tracking_allocator_destroy(&f.tracking)
 }

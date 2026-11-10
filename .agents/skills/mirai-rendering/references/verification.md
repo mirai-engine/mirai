@@ -10,12 +10,14 @@
   `.deps/vulkan-sdk-windows`). Metal: `MTL_DEBUG_LAYER=1`.
 - The `_hw` variants need a GPU with ray queries or Mesa lavapipe (`VK_DRIVER_FILES` pointing to
   its ICD). `MIRAI_RT=software` forces the software BVH.
-- A GPU test takes its device with `shared_device.take` (`rhi/shared_device`): the tests of a
+- A GPU test takes its device with `shared_device.take_or_skip` (`rhi/shared_device`), and one of
+  `render` its renderer with `fixture_init` (`render/fixture_test.odin`): the tests of a
   process share one per variant (with and without hardware ray tracing) and run one at a time
   even if there are several threads. It fails if it leaves alive anything it made or if the
   device or the validation report errors. Only a test that exercises a device (capacities, ring,
-  messages, loss) or measures without validation makes its own device, and calls
-  `shared_device.hold` beforehand to run alone. The GPU tests of `rhi` are in `rhi/tests`
+  messages, loss) or measures without validation makes its own device, with
+  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone. The GPU tests of
+  `rhi` are in `rhi/tests`
   (`mirai test rhi/tests`), which can import it; those of `rhi` do not touch the GPU.
 - The GPU tests of a plugin load the shaders that `mirai test` generates before compiling them in
   `.mirai/tmp/<plugin>-test-shaders`: those of the plugin and, as `<plugin>_test`, the programs of
