@@ -59,6 +59,7 @@ Tick :: struct {
     kits:core.Records(Ability_Kit),
     requests:^Ability_Requests,
     events:^Ability_Events,
+    events_from:int, // the events the log held when the tick began
     w:^Ability_World,
     overlap:Hitbox_Overlap,
     tick:u64,
@@ -67,9 +68,8 @@ Tick :: struct {
 }
 
 abilities_tick :: proc(users:^core.Table(Ability_User),abilities:core.Records(Ability),kits:core.Records(Ability_Kit),requests:^Ability_Requests,events:^Ability_Events,w:^Ability_World,overlap:Hitbox_Overlap) {
-    if events!=nil {core.queue_clear(&events.queue)}
     if users==nil || w==nil || !(w.time.dt>0) || !finite(w.time.dt) {return}
-    t:=Tick{users=users,abilities=abilities,kits=kits,requests=requests,events=events,w=w,overlap=overlap,tick=w.time.tick,dt=w.time.dt}
+    t:=Tick{users=users,abilities=abilities,kits=kits,requests=requests,events=events,events_from=events!=nil?len(events.queue.items):0,w=w,overlap=overlap,tick=w.time.tick,dt=w.time.dt}
     if requests!=nil {
         for r in requests.queue.items {request_apply(&t,r)}
         core.queue_clear(&requests.queue)
@@ -591,10 +591,8 @@ derive :: proc(t:^Tick,u:^Ability_User,active:^Ability,at:Ability_Time) {
 @(private)
 event_push :: proc(t:^Tick,event:Ability_Event) {
     if t.events==nil {return}
-    if cap(t.events.queue.items)==0 {
-        if reserve(&t.events.queue.items,EVENT_CAPACITY)!=nil {return}
-    }
-    if len(t.events.queue.items)>=EVENT_CAPACITY {
+    if cap(t.events.queue.items)<t.events_from+EVENT_CAPACITY && reserve(&t.events.queue.items,t.events_from+EVENT_CAPACITY)!=nil {return}
+    if len(t.events.queue.items)>=t.events_from+EVENT_CAPACITY {
         core.report(t.w.problems,core.NONE,"abilities.events","more than %d ability events in one tick: the rest were dropped",EVENT_CAPACITY)
         return
     }

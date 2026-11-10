@@ -12,8 +12,10 @@ Game_Source :: struct {
     prompts:proc(user:rawptr,action:u64,family:Prompt_Family,out:[]Prompt) -> int,
     // Whether an action is held, and whether it was pressed since the last frame.
     action:proc(user:rawptr,action:u64) -> (down,pressed:bool),
-    // The language the localized texts show in: the name_hash of its code
-    // ("es", "pt-BR"); 0, the one they are written in.
+    // What the localized nodes read their keys in: the texts of the game
+    // and the language they show in, the name_hash of its code ("es",
+    // "pt-BR"); 0, the one each key was written in.
+    texts:^base.Texts,
     language:u64,
     // What an Image shows for a texture asset.
     texture:proc(user:rawptr,id:base.Asset_Id) -> Quad,

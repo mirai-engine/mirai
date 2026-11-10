@@ -92,7 +92,7 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
         head:=strings.index(text,"\r\n\r\n")
         if !testing.expect(t,head>=0) {return}
         body:=text[head+4:]
-        _,declared_length,_:=response_head(text[:head])
+        _,declared_length:=response_head(text[:head])
         testing.expect_value(t,len(body),declared_length)
         if !testing.expect(t,!strings.contains(body,"HTTP/1.1"),"a partial send never repeats the HTTP header") {return}
         reply,parse_error:=json.parse(transmute([]u8)body,parse_integers=true,allocator=context.temp_allocator)

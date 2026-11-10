@@ -135,14 +135,19 @@ stage_navigate :: proc(ctx:^ui.Context,u:^Ui_Inspector,room:ui.Rect) {
 }
 
 // A node as the preview builds it. With samples its paths stay; without,
-// they go: bound texts show their field, templates their text, and a bound
+// they go: bound texts show their field, templates their text, a localized
+// node what its key says in the language texts are written in, and a bound
 // list three elements. Its text goes to shown, from the texts of the records.
 @(private)
-preview_node :: proc(n:^ui.Tree_Node,texts:[]u8,shown:^[dynamic]u8,sampled:bool) {
+preview_node :: proc(n:^ui.Tree_Node,texts:[]u8,shown:^[dynamic]u8,sampled:bool,said:^base.Texts) {
     text:=ui.tree_string(texts,n.text)
     if sampled {
         n.text=ui.tree_string_add(shown,text)
         return
+    }
+    if .Localized in n.flags {
+        text=base.text(said,text,0) or_else text
+        n.flags-={.Localized}
     }
     if field:=serial.text_field(n.bind_text[:]);field!="" {
         n.text=ui.tree_string_add(shown,strings.concatenate({"{{",preview_last(field),"}}"},context.temp_allocator))
@@ -413,27 +418,22 @@ preview_build :: proc(p:^Preview,app:^host.App,linked:ui.Tree_Data,sampled:bool,
     overrides:=make([]ui.Tree_Override,len(linked.overrides),context.temp_allocator)
     copy(nodes,linked.nodes);copy(component_nodes,linked.component_nodes);copy(overrides,linked.overrides)
     shown:=make([dynamic]u8,context.temp_allocator)
-    for &n in nodes {preview_node(&n,linked.text,&shown,sampled)}
-    for &n in component_nodes {preview_node(&n,linked.text,&shown,sampled)}
-    for &o in overrides {preview_node(&o.values,linked.text,&shown,sampled)}
-    translations:=make([]ui.Tree_Translation,len(linked.translations),context.temp_allocator)
-    for &t,i in translations {
-        t=linked.translations[i]
-        text:=ui.tree_string(linked.text,t.text)
-        t.text=ui.tree_string_add(&shown,text if sampled else preview_text(text))
-    }
-    linked.nodes,linked.component_nodes,linked.overrides,linked.translations,linked.text=nodes,component_nodes,overrides,translations,shown[:]
+    said:=host.app_texts(app)
+    for &n in nodes {preview_node(&n,linked.text,&shown,sampled,said)}
+    for &n in component_nodes {preview_node(&n,linked.text,&shown,sampled,said)}
+    for &o in overrides {preview_node(&o.values,linked.text,&shown,sampled,said)}
+    linked.nodes,linked.component_nodes,linked.overrides,linked.text=nodes,component_nodes,overrides,shown[:]
     // A font that does not load shows its texts in the font of the editor.
     fonts:=make([]u8,len(linked.fonts),context.temp_allocator)
     for font,i in linked.fonts {fonts[i],_=host.content_font(app,font.font)}
     resources:=ui.Tree_Resources{textures=preview_textures(linked.images,a),fonts=fonts,programs=host.content_ui_programs(a,linked.styles)}
     if !ui.tree_load(&p.tree,linked,resources,allocator) {return false}
     if !sampled {
-        p.valid=ui.tree_instance_init(&p.instance,&p.tree,nil,0,allocator)
+        p.valid=ui.tree_instance_init(&p.instance,&p.tree,nil,nil,0,allocator)
         return p.valid
     }
     host_of:=preview_samples_host(&p.samples,app.info,allocator)
-    if !ui.tree_instance_init(&p.instance,&p.tree,host_of,0,allocator) {
+    if !ui.tree_instance_init(&p.instance,&p.tree,host_of,said,0,allocator) {
         if p.instance.allocator.procedure!=nil {ui.tree_instance_destroy(&p.instance)}
         ui.tree_destroy(&p.tree)
         preview_samples_free(&p.samples)
@@ -496,6 +496,7 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
     }
     return {
         user=user,
+        texts=host.app_texts(app),
         family=stage.family,
         prompts=proc(user:rawptr,action:u64,family:ui.Prompt_Family,out:[]ui.Prompt) -> int {
             g:=cast(^Preview_Game)user
@@ -913,7 +914,7 @@ inline_begin :: proc(s:^editor.Session,u:^Ui_Inspector) {
         return
     }
     u.editing={row=u.selected,open=true,language=shown}
-    u.editing.length=copy(u.editing.buffer[:len(u.editing.buffer)-1],node_text_in(&u.records,n,shown,source))
+    u.editing.length=copy(u.editing.buffer[:len(u.editing.buffer)-1],node_text_in(s,&u.records,n,shown,source))
 }
 
 @(private)
@@ -927,11 +928,7 @@ inline_field :: proc(s:^editor.Session,u:^Ui_Inspector,drawn:ui.Rect,layer:i16) 
         result:=ui.text_field(ctx,field,e.buffer[:len(e.buffer)-1],&e.length,{width=ui.GROW})
         if result.committed || result.cancelled {
             if result.committed {
-                if n:=selected_node(u);n!=nil {
-                    _,source:=texts_languages(s)
-                    node_text_set(&u.records,n,u.selected,e.language,source,string(e.buffer[:e.length]))
-                    changed(u,"Text")
-                }
+                if n:=selected_node(u);n!=nil && node_text_set(s,&u.records,n,e.language,string(e.buffer[:e.length])) {changed(u,"Text")}
             }
             e.open=false
         }

@@ -31,9 +31,10 @@ No spawn or camera code: `settings.mirai` has `{"Spawn_Settings":{"players":true
 body and a camera both face -Z, so the eyes child needs no turn. For a first-person view:
 
 ```json
-{"method":"scene.set","params":{"entity":"Player","components":{"Locomotion":{"move_relative_to":"Look"}}}}
-{"method":"scene.set","params":{"entity":"Player view",
- "components":{"Camera_Follow":{"mode":"Eyes","offset":[0,1.6,0]}}}}
+{"method":"scene.write","params":{"root":"Player","merge":true,"entities":[{
+ "components":{"Locomotion":{"move_relative_to":"Look"}},
+ "children":[{"name":"Player view",
+   "components":{"Camera_Follow":{"mode":"Eyes","offset":[0,1.6,0]}}}]}]}}
 ```
 
 `move_relative_to` says what forward is for the seat: `Look` (first person), `Camera` (a camera

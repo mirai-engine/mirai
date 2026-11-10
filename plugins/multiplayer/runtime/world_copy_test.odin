@@ -136,14 +136,6 @@ a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were 
 }
 
 @(test)
-a_tick_that_runs_again_sends_nothing :: proc(t:^testing.T) {
-    outbox:Net_Outbox;defer delete(outbox.queue.items)
-    testing.expect(t,!send(&outbox,core.Time{tick=4,resimulating=true},u32(7)))
-    testing.expect(t,send(&outbox,core.Time{tick=6},u32(7)))
-    testing.expect_value(t,len(outbox.queue.items),1)
-}
-
-@(test)
 a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
@@ -267,7 +259,7 @@ net_test_interpolated :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity) -> 
 net_test_state :: proc(s:^Net_Session,r:^Replica,tick:u32,position:[3]f32) {
     r.tick=tick
     r.pose.position=position
-    replica_sample(s,r)
+    replica_sample(s,r,0)
 }
 
 // With late, an interpolated replica gets the states of its last ticks after they ran.

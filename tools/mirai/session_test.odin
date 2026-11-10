@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import "mirai:cook/workspace"
 import "mirai:project"
@@ -27,20 +28,42 @@ session_options_take_their_flags_and_leave_the_rest_to_the_editor :: proc(t:^tes
     options,problem:=session_options({"--dev","--discard","--copy","--timeout","30","--frames","5","--dev"})
     testing.expect_value(t,problem,"")
     testing.expect_value(t,options.mode,Build_Mode.Dev)
+    testing.expect(t,options.mode_asked)
     testing.expect(t,options.discard && options.copy && !options.no_build && !options.orphans)
     testing.expect_value(t,options.timeout,30)
     testing.expect(t,slice.equal(options.editor_args,[]string{"--frames","5"}))
     options,problem=session_options({})
     testing.expect_value(t,problem,"")
-    testing.expect_value(t,options.mode,Build_Mode.Keep)
+    testing.expect(t,options.mode==.Dev && !options.mode_asked,"dev unless a mode is asked for")
     testing.expect_value(t,options.timeout,180)
     testing.expect_value(t,len(options.editor_args),0)
 }
 
+// Every command that builds or picks engine binaries takes its mode from
+// build_mode_take (session through session_options): dev unless --release.
 @(test)
-session_options_refuse_both_modes_and_a_timeout_that_is_no_number :: proc(t:^testing.T) {
+build_mode_is_dev_unless_release_is_asked_for :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    for args in ([][]string{{"--dev","--release"},{"--timeout"},{"--timeout","0"},{"--timeout","x"}}) {
+    Case :: struct {args:[]string,mode:Build_Mode,ok:bool}
+    cases:=[]Case{
+        {{"demo"},.Dev,true},
+        {{"demo","--release"},.Release,true},
+        {{"--dev","demo"},.Dev,true},
+        {{"--dev","demo","--release"},{},false},
+    }
+    for c in cases {
+        mode,rest,ok:=build_mode_take(c.args)
+        testing.expectf(t,ok==c.ok && (!ok || mode==c.mode && slice.equal(rest,[]string{"demo"})),"build_mode_take %v: %v %v %v",c.args,mode,rest,ok)
+        options,problem:=session_options(c.args)
+        testing.expectf(t,(problem=="")==c.ok && (!c.ok || options.mode==c.mode),"session_options %v: %v %q",c.args,options.mode,problem)
+        if !c.ok {testing.expectf(t,strings.contains(problem,"--dev and --release"),"%q says the two modes clash",problem)}
+    }
+}
+
+@(test)
+session_options_refuse_a_timeout_that_is_no_number :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    for args in ([][]string{{"--timeout"},{"--timeout","0"},{"--timeout","x"}}) {
         _,problem:=session_options(args)
         testing.expectf(t,problem!="","%v is refused",args)
     }
@@ -137,7 +160,10 @@ the_role_and_the_record_come_from_the_files_of_the_project :: proc(t:^testing.T)
     testing.expect_value(t,engine_process_role(other),Engine_Role.Orphan)
     record,found:=session_record(folder)
     testing.expect(t,found)
-    testing.expect_value(t,session_record_mode(record),Build_Mode.Dev)
+    mode,named:=session_record_mode(record)
+    testing.expect(t,named && mode==.Dev)
+    _,named=session_record_mode({pid=pid})
+    testing.expect(t,!named,"a record without a mode names none")
     testing.expect(t,slice.equal(record.args,[]string{"--frames","2"}))
     file,alive:=session_find(folder)
     testing.expect(t,alive && file.port==7999 && file.manual,"this process is the one the port file names")

@@ -172,7 +172,7 @@ mirai_stride :: proc(model:^importer.Imported_Model,rig:Mirai_Rig,walk:asset.Ani
 // The clips of the gallery's Mirai, made from its idle and walk: the walk with its steps and a
 // pulse curve, a faster jog, a wave and the stride that root motion moves.
 @(private)
-mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id,stride,stride_time:f32) {
+mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion:[]asset.Animation_Clip_Desc) -> (id:base.Asset_Id,stride_time:f32) {
     id=asset.content_id(PROJECT,"animation","mirai_gallery")
     rig,valid:=mirai_rig(model)
     idle,has_idle:=mirai_clip_find(locomotion,"idle")
@@ -195,6 +195,6 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     for &clip in clips {clip.skeleton=idle.skeleton}
     file:="assets/characters/mirai/mirai_gallery.anim"
     asset.content_check(&o.content,file,asset.animation_save(path(o,file),&o.content.types,{id=id,clips=clips}))
-    // What the stride covers and how long it lasts: the window of its warp (mirai_reach.motion).
-    return id,advance,duration
+    // How long the stride lasts: the window of its warp (mirai_reach.motion).
+    return id,duration
 }

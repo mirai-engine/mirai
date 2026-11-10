@@ -54,7 +54,7 @@ Ragdoll_Setup_Result :: struct {
 @(private)
 register :: proc(s:^editor.Session) {
     defaults:=Ragdoll_Setup_Params{mode=rag.RAGDOLL_DEFAULT.mode}
-    editor.api_method_register(s,{name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton, the one it stores or one found in memory for the call: a dynamic body with collider and Ragdoll_Bone per part, with a child holding its limited Joint to the body of its parent part, and the Ragdoll of the rig, in one step of undo that also takes away the ragdoll the rig had.",params=Ragdoll_Setup_Params,params_info=type_info_of(Ragdoll_Setup_Params),result=Ragdoll_Setup_Result,result_info=type_info_of(Ragdoll_Setup_Result),defaults=&defaults,run=setup})
+    editor.api_method_register(s,Ragdoll_Setup_Params,Ragdoll_Setup_Result,{name="ragdoll.setup",summary="Builds the ragdoll of a rig from the body of its skeleton, the one it stores or one found in memory for the call: a dynamic body with collider and Ragdoll_Bone per part, with a child holding its limited Joint to the body of its parent part, and the Ragdoll of the rig, in one step of undo that also takes away the ragdoll the rig had.",defaults=&defaults,run=setup})
 }
 
 // What a part takes from the body: its parent part, its joint with limits in

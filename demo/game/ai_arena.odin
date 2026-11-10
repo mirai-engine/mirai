@@ -40,7 +40,7 @@ Arena_Kind :: enum u8 {Horde,Firefight,Boss,Swarm,Paths,Senses}
 AI_Arena :: struct {
     kind:Arena_Kind,
     agents:i32 `mirai:"min=1,max=2000"`, // zombies, drones, patrollers or listeners, or soldiers of each squad
-    place:bool, // it builds its place too; tools/demo_content writes it into the scene instead
+    place:bool, // it builds its place too; false when the scene holds it
     built:bool `mirai:"transient"`,
 }
 AI_ARENA_DEFAULT :: AI_Arena{agents=60,place=true}
@@ -78,7 +78,6 @@ Horde_Waves :: struct {
     sent:i32 `mirai:"transient,readonly"`,                     // of that wave
     total:i32 `mirai:"transient,readonly"`,                    // of every wave
     wait:f32 `mirai:"transient,hidden"`,                       // s to the next zombie
-    started:bool `mirai:"transient,hidden"`,
     rng:mm.Rng `mirai:"transient,hidden"`,
 }
 
@@ -623,7 +622,7 @@ arena_build :: proc(
 }
 
 // A piece of the place of an arena. The world adds it when the arena runs, or
-// the scene holds it (AI_Arena.place false; tools/demo_content writes it), so
+// the scene holds it (AI_Arena.place false), so
 // that the navigation mesh is there in the editor.
 Arena_Piece_Kind :: enum u8 {
     Solid, // a box of the static collision
@@ -823,12 +822,12 @@ horde_waves :: proc(
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
-        h:=core.edit_at(hordes,row)
         e:=core.entity_at(hordes,row)
         arena,built:=core.get(arenas,e)
         if !built || !arena.built || arena.kind!=.Horde {continue}
-        if !h.started {
-            h.started=true
+        first:=core.added(hordes,row)
+        h:=core.edit_at(hordes,row)
+        if first {
             h.rng=mm.rng_make(h.seed,7)
             h.wave=h.first
             first,_:=core.record(waves,h.wave,problems,e)

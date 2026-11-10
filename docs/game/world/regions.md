@@ -6,11 +6,12 @@ component has a shape, a size or a priority of its own.
 
 ```sh
 P="mirai rpc --project ."
-$P scene.add '{"name":"Low gravity room","position":[0,3,0],"components":{
-  "Volume":{"shape":"Box","extents":[5,3,5],"blend":1,"priority":1},"Gravity":{"acceleration":2}}}'
-$P scene.add '{"name":"Lift","position":[8,2,0],"components":{
-  "Volume":{"shape":"Box","extents":[1,2,1]},"Force_Field":{"force":400,"along":[0,1,0]}}}'
-$P scene.add '{"name":"Sea","components":{"Volume":{"shape":"Plane"},"Fluid":{"density":1025}}}'
+$P scene.write '{"merge":true,"entities":[
+  {"name":"Low gravity room","position":[0,3,0],"components":{
+    "Volume":{"shape":"Box","extents":[5,3,5],"blend":1,"priority":1},"Gravity":{"acceleration":2}}},
+  {"name":"Lift","position":[8,2,0],"components":{
+    "Volume":{"shape":"Box","extents":[1,2,1]},"Force_Field":{"force":400,"along":[0,1,0]}}},
+  {"name":"Sea","components":{"Volume":{"shape":"Plane"},"Fluid":{"density":1025}}}]}'
 ```
 
 ## The Volume

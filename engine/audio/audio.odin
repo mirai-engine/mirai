@@ -18,9 +18,8 @@ import "mirai:std/base"
 // where the listener is.
 // What collides in the world (core.World_Query) hides the sources that have
 // an Audio_Occlusion, letting through what the Audio_Material of each body
-// it crosses lets through. Its game-thread procedures are not thread-safe, so only
-// this library's steps and the helpers below, called from a step that
-// receives the mixer or the application, talk to it.
+// it crosses lets through. A step plays a sound once by pushing it to
+// Sound_Requests (play), which this library starts as it starts a source.
 
 VOICE_RESERVE :: 256
 AUDIO_BUS_CAPACITY :: 8  // the buses of the mixer, the master included
@@ -147,10 +146,11 @@ Audio_Medium :: struct {
     weight:f32 `mirai:"min=0,max=1"`,    // of its reverb over that of the room
 }
 
-// How a bus sounds. A bus without an entry plays as its voices come; an
-// entry of zeros says nothing.
+// How a bus sounds. A bus without an entry plays as its voices come into the
+// master; an entry of zeros says nothing.
 Audio_Bus_Setting :: struct {
     bus:Audio_Bus,
+    send:Audio_Bus, // the bus it plays into, with its gain, filter and ducking: the master, or one of a lower number (ambience into effects)
     gain:f32 `mirai:"min=-80,max=24,unit=dB"`, // 0: as it comes; AUDIO_SILENCE_DB or below: silent
     lowpass:f32 `mirai:"min=0,unit=Hz"`,       // cutoff of its low-pass filter; 0: none
     duck_by:Audio_Bus,                         // while it is louder than duck_threshold, this bus goes down by duck_amount
@@ -346,14 +346,14 @@ reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
 // The buses of the mixer as the settings and the medium of the listener say;
 // only what differs is sent.
 @(step="late",stage="end")
-audio_buses :: proc(settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),m:^Mixer) {
-    buses_apply(m,settings.ptr,volumes.ptr,medium.ptr)
+audio_buses :: proc(settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),m:^Mixer,problems:^core.Problems) {
+    buses_apply(m,settings.ptr,volumes.ptr,medium.ptr,problems)
 }
 
 // Gives the buses of the mixer what the settings say, and the master the
 // lowpass of the medium: what audio_buses does each frame of a game, and the
 // editor before it plays a sound to be heard.
-buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium:^Audio_Medium=nil) {
+buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium:^Audio_Medium=nil,problems:^core.Problems=nil) {
     if m==nil || settings==nil && medium==nil {return}
     if settings!=nil {
         for setting in settings.buses {
@@ -371,6 +371,12 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
         if mixer.bus_lowpass(m,mixer.Bus(bus))!=lowpass {mixer.bus_set_lowpass(m,mixer.Bus(bus),lowpass)}
         if reverb:=reverb_clamp(setting.reverb);mixer.bus_reverb(m,mixer.Bus(bus))!=reverb {mixer.bus_set_reverb(m,mixer.Bus(bus),reverb)}
         if bus==BUS_MASTER {continue}
+        send:=setting.send
+        if send>=bus {
+            if send!=BUS_MASTER {core.report(problems,core.NONE,"audio.send","Audio_Settings: bus %d sends to bus %d, which does not come before it, so it plays into the master; send it to BUS_MASTER or a bus of a lower number",int(bus),int(send))}
+            send=BUS_MASTER
+        }
+        if mixer.bus_send(m,mixer.Bus(bus))!=mixer.Bus(send) {mixer.bus_set_send(m,mixer.Bus(bus),mixer.Bus(send))}
         duck:mixer.Duck
         if amount:=clamp(setting.duck_amount,0,1);amount>0 && setting.duck_by!=bus && int(setting.duck_by)<mixer.bus_count(m) {
             duck={mixer.Bus(setting.duck_by),max(setting.duck_threshold,0),amount,max(setting.duck_attack,0),max(setting.duck_release,0)}
@@ -673,38 +679,13 @@ voice_update :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[
             }
         }
     }
-    if !bus_ready(m,source.bus) {
-        core.report(problems,e,"audio.bus","its Audio_Source plays nothing: Audio_Source.bus %d is not a bus of the mixer, which has %d; give it a bus below that",int(source.bus),AUDIO_BUS_CAPACITY)
-        return
-    }
-    pick:=host.content_sound_pick(app,source.sound)
-    if !mixer.sound_valid(m,pick.sound) {
-        if source.sound!={} {
-            name:[base.ASSET_ID_TEXT]u8
-            core.report(problems,e,"audio.sound","its Audio_Source plays nothing: Audio_Source.sound %s does not load as a sound (it is missing, damaged, not a .sound or a .sound_set, or a set none of whose sounds load); give it a .sound or a .sound_set of the assets",host.assets_name(app.assets,source.sound,&name))
-        } else {
-            core.report(problems,e,"audio.sound","its Audio_Source plays nothing: it has no sound; give Audio_Source.sound a .sound or a .sound_set of the assets")
-        }
-        return
-    }
-    desc:=mixer.VOICE_DEFAULT
-    desc.bus,desc.volume,desc.pitch,desc.loop=mixer.Bus(source.bus),source.volume*pick.volume,pitch*pick.pitch,source.loop
-    desc.reverb=source.reverb
-    position:[3]f32
-    if spatial {
-        position=world.position
-        desc.spatial,desc.position,desc.rotation,desc.attenuation,desc.directivity,desc.doppler=true,position,rotation,attenuation,directivity,source.doppler
-        desc.occlusion,desc.transmission=state.occlusion,transmission
-    } else {
-        desc.pan=source.pan
-    }
-    voice:=mixer.voice_play(m,pick.sound,desc)
-    if voice=={} {
-        core.report(problems,e,"audio.voices","its Audio_Source did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, or raise the voices of the mixer")
-        return
-    }
+    heard:=source
+    heard.spatial=spatial
+    position:=world.position if spatial else {}
+    voice,pick:=voice_start(m,app,heard,e,problems,position,rotation,state.occlusion,transmission)
+    if voice=={} {return}
     // Without memory to keep it the voice cannot be followed: it does not play.
-    kept_entry:=Voice_Entry{voice=voice,sound=source.sound,generation=generation,pick={pick.volume,pick.pitch},volume=desc.volume,pitch=pitch,pan=source.pan,reverb=source.reverb,bus=source.bus,loop=source.loop,spatial=spatial,attenuation=attenuation,directivity=directivity,doppler=source.doppler,occlusion=desc.occlusion,transmission=transmission,position=position,rotation=rotation}
+    kept_entry:=Voice_Entry{voice=voice,sound=source.sound,generation=generation,pick={pick.volume,pick.pitch},volume=source.volume*pick.volume,pitch=pitch,pan=source.pan,reverb=source.reverb,bus=source.bus,loop=source.loop,spatial=spatial,attenuation=attenuation,directivity=directivity,doppler=source.doppler,occlusion=state.occlusion,transmission=transmission,position=position,rotation=rotation}
     if _,kept:=core.entity_map_put(&voices.entries,e,kept_entry);!kept {
         mixer.voice_stop(m,voice)
         core.report(problems,e,"audio.memory","its Audio_Source did not start: out of memory to follow its voice; free memory")
@@ -714,95 +695,101 @@ voice_update :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[
     voices.stats.started+=1
 }
 
-@(private)
-voice_start :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,desc:mixer.Voice_Desc) -> Voice {
-    if app.mixer==nil || time.resimulating || !bus_ready(app.mixer,Audio_Bus(desc.bus)) {return {}}
-    pick:=host.content_sound_pick(app,asset)
-    if pick.sound=={} {return {}}
-    desc:=desc
-    desc.volume*=pick.volume
-    desc.pitch=(desc.pitch>0?desc.pitch:1)*pick.pitch
-    return mixer.voice_play(app.mixer,pick.sound,desc)
-}
-
-// Plays a .sound, or one of a .sound_set, once, not placed in the world: by
-// its path in the assets ("player/step.sound") or its id. Zero when the
-// application has no mixer, the asset is not there or does not load as a
-// sound, no voice is free or the tick runs again (time.resimulating): it
-// played the first time.
-play_asset :: proc{play_asset_path,play_asset_id}
-
-play_asset_path :: proc(app:^host.App,time:core.Time,path:string,volume:f32=1,pitch:f32=1,pan:f32=0,bus:=BUS_EFFECTS) -> Voice {
-    id,_:=host.assets_id(app.assets,path)
-    return play_asset_id(app,time,id,volume,pitch,pan,bus)
-}
-
-play_asset_id :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,volume:f32=1,pitch:f32=1,pan:f32=0,bus:=BUS_EFFECTS) -> Voice {
+// Starts a voice of a source as it is set: at position, facing rotation and
+// as hidden as occlusion says when source.spatial, panned when not. A source
+// on an entity, a request of Sound_Requests and what the editor plays to be
+// heard start theirs here. Zero, with the problem of e (NONE: of a request),
+// when it does not start.
+voice_start :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,position:[3]f32={},rotation:quaternion128=1,occlusion:f32=0,transmission:=mixer.TRANSMISSION_DEFAULT) -> (voice:Voice,pick:host.Sound_Pick) {
+    who:=e==core.NONE?"audio.play":"its Audio_Source"
+    if !bus_ready(m,source.bus) {
+        core.report(problems,e,"audio.bus","%s plays nothing: bus %d is not a bus of the mixer, which has %d; give it a bus below that",who,int(source.bus),AUDIO_BUS_CAPACITY)
+        return
+    }
+    pick=host.content_sound_pick(app,source.sound)
+    if !mixer.sound_valid(m,pick.sound) {
+        name:[base.ASSET_ID_TEXT]u8
+        if source.sound=={} {
+            core.report(problems,e,"audio.sound","%s plays nothing: it has no sound; give it a .sound or a .sound_set of the assets",who)
+        } else {
+            core.report(problems,e,"audio.sound","%s plays nothing: sound %s does not load as a sound (it is missing, damaged, not a .sound or a .sound_set, or a set none of whose sounds load); give it a .sound or a .sound_set of the assets",who,host.assets_name(app.assets,source.sound,&name))
+        }
+        return
+    }
     desc:=mixer.VOICE_DEFAULT
-    desc.bus,desc.volume,desc.pitch,desc.pan=mixer.Bus(bus),volume,pitch,pan
-    return voice_start(app,time,asset,desc)
+    desc.bus,desc.volume,desc.pitch,desc.loop=mixer.Bus(source.bus),source.volume*pick.volume,(source.pitch>0?source.pitch:1)*pick.pitch,source.loop
+    desc.reverb=source.reverb
+    if source.spatial {
+        desc.spatial,desc.position,desc.rotation,desc.attenuation,desc.doppler=true,position,rotation,attenuation_of(source),source.doppler
+        desc.directivity={clamp(source.directivity,0,1),max(source.directivity_power,0)}
+        desc.occlusion,desc.transmission=occlusion,transmission
+    } else {
+        desc.pan=source.pan
+    }
+    if voice=mixer.voice_play(m,pick.sound,desc);voice=={} {
+        core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, or raise the voices of the mixer",who)
+    }
+    return
 }
 
-// Plays a .sound, or one of a .sound_set, once at a point of the world,
-// sending reverb of it to the room of the listener: by path or id, as play_asset.
-play_asset_at :: proc{play_asset_at_path,play_asset_at_id}
+SOUND_PATH_CAPACITY :: 128
 
-play_asset_at_path :: proc(app:^host.App,time:core.Time,path:string,position:[3]f32,volume:f32=1,pitch:f32=1,bus:=BUS_EFFECTS,reverb:f32=1) -> Voice {
-    id,_:=host.assets_id(app.assets,path)
-    return play_asset_at_id(app,time,id,position,volume,pitch,bus,reverb)
+// A sound played once, as an Audio_Source of AUDIO_SOURCE_DEFAULT with these
+// values plays it: by id, or by path when the id is zero.
+Sound_Request :: struct {
+    sound:base.Asset_Id,
+    path:[SOUND_PATH_CAPACITY]u8 `mirai:"text"`,
+    at:[3]f32,
+    placed:bool, // spatial at `at`; else not placed
+    bus:Audio_Bus,
+    volume,pitch:f32,
 }
 
-play_asset_at_id :: proc(app:^host.App,time:core.Time,asset:base.Asset_Id,position:[3]f32,volume:f32=1,pitch:f32=1,bus:=BUS_EFFECTS,reverb:f32=1) -> Voice {
-    desc:=mixer.VOICE_DEFAULT
-    desc.bus,desc.volume,desc.pitch,desc.spatial,desc.position,desc.reverb=mixer.Bus(bus),volume,pitch,true,position,reverb
-    return voice_start(app,time,asset,desc)
+// Requests: any step pushes with play; audio_requests starts them at the end
+// of the tick that asked and at the end of every frame.
+@(storage,queue)
+Sound_Requests :: struct {using queue:core.Queue(Sound_Request)}
+
+// Plays a .sound, or one of a .sound_set, once: by its path in the assets
+// ("arena/crash.sound") or its id; at a point of the world, or not placed.
+// What must stop, loop or follow a thing is an Audio_Source.
+play :: proc{play_path,play_id}
+
+play_id :: proc(sounds:^Sound_Requests,sound:base.Asset_Id,at:Maybe([3]f32)=nil,bus:=BUS_EFFECTS,volume:f32=1,pitch:f32=1) {
+    position,placed:=at.?
+    core.push(&sounds.queue,Sound_Request{sound=sound,at=position,placed=placed,bus=bus,volume=volume,pitch=pitch})
 }
 
-// Plays a source once as it is set, in no place: its sound, bus, volume,
-// pitch, pan, loop and what it sends to the room; spatial or not, as a
-// sound that is not spatial.
-play_source :: proc(app:^host.App,time:core.Time,source:Audio_Source) -> Voice {
-    desc:=mixer.VOICE_DEFAULT
-    desc.bus,desc.volume,desc.pitch,desc.pan,desc.loop,desc.reverb=mixer.Bus(source.bus),source.volume,source.pitch,source.pan,source.loop,source.reverb
-    return voice_start(app,time,source.sound,desc)
+// A path that does not fit SOUND_PATH_CAPACITY plays as one the assets do not have.
+play_path :: proc(sounds:^Sound_Requests,path:string,at:Maybe([3]f32)=nil,bus:=BUS_EFFECTS,volume:f32=1,pitch:f32=1) {
+    position,placed:=at.?
+    r:=Sound_Request{at=position,placed=placed,bus=bus,volume=volume,pitch=pitch}
+    if len(path)<SOUND_PATH_CAPACITY {base.text_set(r.path[:],path)}
+    core.push(&sounds.queue,r)
 }
 
-// Plays a source once at a point of the world as it is set: its sound, bus,
-// volume, pitch, loop, send and the curve it falls by (attenuation,
-// min_distance, max_distance, rolloff), heard from the listener whatever its
-// spatial says. source_place moves it, as a loop that follows something.
-play_source_at :: proc(app:^host.App,time:core.Time,source:Audio_Source,position:[3]f32) -> Voice {
-    desc:=mixer.VOICE_DEFAULT
-    desc.bus,desc.volume,desc.pitch,desc.loop,desc.reverb=mixer.Bus(source.bus),source.volume,source.pitch,source.loop,source.reverb
-    desc.spatial,desc.position,desc.attenuation=true,position,attenuation_of(source)
-    desc.directivity={clamp(source.directivity,0,1),max(source.directivity_power,0)}
-    return voice_start(app,time,source.sound,desc)
-}
-
-// Moves a voice that play_source_at or play_asset_at started to another point
-// of the world.
-source_place :: proc(m:^Mixer,voice:Voice,position:[3]f32) {
-    if m==nil || !mixer.voice_valid(m,voice) {return}
-    mixer.voice_set_position(m,voice,position)
-}
-
-// Gives a voice play_source started the volume, pitch, pan, loop and send of
-// a source that changed while it plays; a set keeps the sound it chose.
-source_tune :: proc(m:^Mixer,voice:Voice,source:Audio_Source) {
-    if m==nil || !mixer.voice_valid(m,voice) {return}
-    mixer.voice_set_volume(m,voice,source.volume)
-    mixer.voice_set_pitch(m,voice,source.pitch>0?source.pitch:1)
-    mixer.voice_set_pan(m,voice,source.pan)
-    mixer.voice_set_loop(m,voice,source.loop)
-    mixer.voice_set_reverb(m,voice,source.reverb)
-}
-
-// Ends a voice play_asset started, after fading out for fade seconds.
-stop :: proc(m:^Mixer,voice:Voice,fade:f32=0) -> bool {
-    return m!=nil && mixer.voice_stop(m,voice,fade)
-}
-
-// Whether a voice still plays, as of the last frame.
-playing :: proc(m:^Mixer,voice:Voice) -> bool {
-    return m!=nil && mixer.voice_valid(m,voice)
+// Starts what was asked since the last time, once. A tick that runs again
+// (time.resimulating) asked for it the first time, when this step played it
+// at its end: what it asks again is dropped, and no copy of the world holds a
+// request it played, since copies are made between ticks.
+@(step="fixed late",stage="end",loops="game editor")
+audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,app:^host.App,problems:^core.Problems) {
+    requests:=core.take(&sounds.queue)
+    if app.mixer==nil || time.resimulating {return}
+    for &r in requests {
+        if !(r.volume>=0 && r.volume<=max(f32) && r.pitch>=0 && r.pitch<=max(f32) && abs(r.at.x)<=max(f32) && abs(r.at.y)<=max(f32) && abs(r.at.z)<=max(f32)) {
+            core.report(problems,core.NONE,"audio.request","audio.play was refused: volume %v, pitch %v, at %v; give it a volume and a pitch of 0 or more and a place of finite numbers",r.volume,r.pitch,r.at)
+            continue
+        }
+        source:=AUDIO_SOURCE_DEFAULT
+        source.sound,source.bus,source.volume,source.pitch,source.spatial=r.sound,r.bus,r.volume,r.pitch,r.placed
+        if r.sound=={} {
+            path:=base.text_get(r.path[:])
+            if source.sound,_=host.assets_id(app.assets,path);source.sound=={} {
+                core.report(problems,core.NONE,"audio.sound","audio.play plays nothing: \"%s\" is not a path of the assets; give it the path of a .sound or a .sound_set under the assets folder, shorter than SOUND_PATH_CAPACITY",path)
+                continue
+            }
+        }
+        voice_start(app.mixer,app,source,core.NONE,problems,r.at)
+    }
 }

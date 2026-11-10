@@ -238,7 +238,9 @@ priority), otherwise `Drivable.camera` of its body, and otherwise `NONE`.
 - `camera_override(r, owner, seat, camera, ...)` makes `seat` see through `camera` while `owner`
   asks for it, with its lens or another; with `blend` the view enters and leaves in a transition,
   without it, it cuts. An override that cannot be applied is a problem of the `owner` (`camera.*`).
-- `camera_select` (`fixed`, `apply`) settles the overrides; it writes no `render.Camera`.
+- `camera_select` (`fixed`, `input`) settles the overrides with who drives what, before the
+  `Move_Input` of the seats: a seat request and a camera request pushed together (a cinematic that
+  ends) are in force in the same tick. It writes no `render.Camera`.
   `Cameras` is derived, like `Seats`: whoever requested an override requests it again after loading
   (a `Cinematic_Viewer` does it from its `Cinematic_View`).
 

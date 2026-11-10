@@ -59,29 +59,31 @@ an_import_stores_levels_and_colliders_and_reports_them :: proc(t:^testing.T) {
 }
 
 @(test)
-settings_live_next_to_the_source_and_importing_again_uses_them :: proc(t:^testing.T) {
+the_sidecar_of_a_source_keeps_its_settings_and_importing_again_uses_them :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"settings")
     if folder=="" {return}
     source:=sphere_obj(folder)
-    stored,found,load_error:=importer.settings_load(source)
-    testing.expect(t,!found && load_error.code==.None && stored=={},"a source without settings has the defaults")
+    file:=importer.sidecar_path(source,folder,allocator=context.temp_allocator)
+    testing.expect_value(t,file,fmt.tprintf("%s.import",source))
+    stored,found,load_error:=importer.settings_load(source,folder)
+    testing.expect(t,!found && load_error.code==.None && stored=={},"a source without a sidecar has the defaults")
     wanted:=importer.Import_Settings{max_texture_size=512,textures=.Uncompressed,rdo_lambda=-1,image=.Normal,alpha_coverage=0.5,lods=.None,collision=.Pieces,collision_hulls=4,rig=.Spider}
-    testing.expect(t,importer.settings_save(source,wanted))
-    text,_:=os.read_entire_file(importer.settings_path(source,context.temp_allocator),context.temp_allocator)
+    testing.expect(t,importer.sidecar_save(file,{settings=wanted}))
+    text,_:=os.read_entire_file(file,context.temp_allocator)
     testing.expect(t,strings.contains(string(text),"\"lods\": \"None\"") && strings.contains(string(text),"\"collision\": \"Pieces\"") && strings.contains(string(text),"\"max_texture_size\": 512") && strings.contains(string(text),"\"alpha_coverage\": 0.5") && strings.contains(string(text),"\"rdo_lambda\": -1"),string(text))
-    stored,found,load_error=importer.settings_load(source)
+    stored,found,load_error=importer.settings_load(source,folder)
     testing.expect(t,found && load_error.code==.None && stored==wanted)
-    // The same settings are not written again.
-    before,_:=os.modification_time_by_path(importer.settings_path(source,context.temp_allocator))
-    testing.expect(t,importer.settings_save(source,wanted))
-    after,_:=os.modification_time_by_path(importer.settings_path(source,context.temp_allocator))
+    // The same sidecar is not written again.
+    before,_:=os.modification_time_by_path(file)
+    testing.expect(t,importer.sidecar_save(file,{settings=wanted}))
+    after,_:=os.modification_time_by_path(file)
     testing.expect_value(t,after,before)
 
     // The stored settings are the ones of the import, whatever the options say.
-    model,ok:=import_ok(t,source,{collision=.Hull})
+    model,ok:=import_ok(t,source,{root=folder,collision=.Hull})
     if !ok {return}
     testing.expect_value(t,model.settings,wanted)
-    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder),{collision=.Hull})
+    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder),{root=folder,collision=.Hull})
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if error.code==.None {
         detail:=report.assets[len(report.assets)-1].detail
@@ -90,24 +92,33 @@ settings_live_next_to_the_source_and_importing_again_uses_them :: proc(t:^testin
     }
     importer.model_destroy(&model)
     // Unless whoever imports sets them now.
-    model,ok=import_ok(t,source,{collision=.Hull,ignore_stored=true})
+    model,ok=import_ok(t,source,{root=folder,collision=.Hull,ignore_stored=true})
     if !ok {return}
     testing.expect_value(t,model.settings,importer.Import_Settings{collision=.Hull})
     importer.model_destroy(&model)
 
-    // Settings nobody chose are an error, not the defaults.
-    for broken in ([]string{"{\"lods\": \"Sometimes\"}","{\"scale\": 2}","{","{\"max_texture_size\": -1}","{\"alpha_coverage\": 1.5}","{\"alpha_coverage\": \"nan\"}","{\"rig\": \"Fox\", \"rig_crotch\": 0.9}"}) {
+    // A sidecar nobody wrote is an error, not the defaults nor other ids: settings an import
+    // does not know, a text of another version or of none, an output without an id, one id
+    // twice, a part that is not of the cache, a field no sidecar has.
+    ID :: "\"id\": \"00000000000000010000000000000002\""
+    whole :: proc(settings,outputs:string) -> string {return fmt.tprintf("{{\"version\": 2, \"settings\": %s, \"outputs\": [%s]}}",settings,outputs)}
+    for broken in ([]string{
+        whole("{\"lods\": \"Sometimes\"}",""),whole("{\"scale\": 2}",""),"{",whole("{\"max_texture_size\": -1}",""),whole("{\"alpha_coverage\": 1.5}",""),whole("{\"alpha_coverage\": \"nan\"}",""),whole("{\"rig\": \"Fox\", \"rig_crotch\": 0.9}",""),
+        "{}","{\"lods\": \"None\"}","{\"version\": 3, \"settings\": {}, \"outputs\": []}",
+        whole("{}","{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0}"),
+        whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s}}, {{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s}}",ID,ID)),
+        whole("{}",fmt.tprintf("{{\"kind\": \"MAT\", \"name\": \"Skin\", \"index\": 0, %s, \"part\": true}}",ID)),
+        whole("{}",fmt.tprintf("{{\"kind\": \"MESH\", \"name\": \"Ball\", \"index\": 0, %s, \"path\": \"Ball.mesh\"}}",ID)),
+    }) {
         write_text(folder,"ball.obj.import",broken)
-        _,_,broken_error:=importer.settings_load(source)
+        _,_,broken_error:=importer.settings_load(source,folder)
         testing.expectf(t,broken_error.code==.Malformed,"%s is refused",broken)
-        _,import_error:=importer.import_model(source,FORMATS[:])
+        _,import_error:=importer.import_model(source,FORMATS[:],{root=folder})
         testing.expect_value(t,import_error.code,importer.Error_Code.Malformed)
     }
-    write_text(folder,"ball.obj.import","{}")
-    stored,found,load_error=importer.settings_load(source)
+    write_text(folder,"ball.obj.import",whole("{}",""))
+    stored,found,load_error=importer.settings_load(source,folder)
     testing.expect(t,found && load_error.code==.None && stored=={},"a setting that is not named has its default")
-    parsed,valid:=importer.settings_parse(importer.settings_text(wanted,context.temp_allocator))
-    testing.expect(t,valid && parsed==wanted)
 }
 
 @(test)
@@ -131,8 +142,9 @@ a_standalone_image_takes_its_use_from_its_settings :: proc(t:^testing.T) {
     if folder=="" {return}
     path:=fmt.tprintf("%s/normal.png",folder)
     _=os.write_entire_file(path,png_bytes(8,8,{128,128,255}))
-    testing.expect(t,importer.settings_save(path,{image=.Normal,max_texture_size=4}))
-    report,error:=importer.import_texture(path,fmt.tprintf("%s/out",folder),{image=.Color})
+    out:=fmt.tprintf("%s/out",folder)
+    testing.expect(t,importer.sidecar_save(importer.sidecar_path(path,"",out,context.temp_allocator),{settings={image=.Normal,max_texture_size=4}}))
+    report,error:=importer.import_texture(path,out,{image=.Color})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     if error.code!=.None {return}
@@ -142,7 +154,7 @@ a_standalone_image_takes_its_use_from_its_settings :: proc(t:^testing.T) {
 }
 
 @(test)
-the_coverage_of_a_standalone_image_is_a_setting_kept_next_to_it :: proc(t:^testing.T) {
+the_coverage_of_a_standalone_image_is_a_setting_its_sidecar_keeps :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"image-coverage")
     if folder=="" {return}
     path:=fmt.tprintf("%s/leaves.png",folder)
@@ -164,8 +176,9 @@ the_coverage_of_a_standalone_image_is_a_setting_kept_next_to_it :: proc(t:^testi
     first,coverage,ok:=import_image(t,path,out,{image=.Color,alpha_coverage=0.5})
     if !ok {return}
     testing.expect_value(t,coverage,f32(0.5))
-    stored,found,_:=importer.settings_load(path)
+    stored,found,_:=importer.settings_load(path,"",out)
     testing.expect(t,found && stored==importer.Import_Settings{image=.Color,alpha_coverage=0.5},"the coverage is saved with the use of the image")
+    testing.expect(t,!os.exists(fmt.tprintf("%s.import",path)),"an import without a root writes nothing next to its source")
     // Whoever imports it again, without knowing the material that shows it, gets the same texture.
     again,kept_coverage,kept_ok:=import_image(t,path,out,{})
     testing.expect(t,kept_ok && again.kept && again.id==first.id && kept_coverage==0.5,"importing again with the stored settings keeps the texture")

@@ -90,7 +90,13 @@ another into its place, with its stamp, without mixing the two sections.
   before it is used again. After `host.app_world_replace`, `copy_marks_follow` keeps the marks
   valid. Going back to such a copy with its marks brings back only what the world changed since
   ([replace](host.md#the-application)): a table says it changed with its `version` and its
-  `layout`, which also move when who owns its rows does, and a storage with its revision.
+  `layout`, which also move when who owns its rows does, and a storage with the stamp of its row.
+- **New rows.** `added(t, row)` says the row has its value from an `add` and was not written
+  since: the writer of a table asks it before it asks for the row, to set up what the row starts
+  with in its first tick. It is the parity of the stamp of the row, so a copy and a rollback keep
+  it, and a row turned off and on stays added. A stateful object keeps the phase it is in and the
+  tick it entered it, and derives the rest from `core.Time`; it has no field that says it was set
+  up.
 - **Owners.** `@(component,locks="core.Transform")` makes each row the owner of the `Transform` row
   of its entity; the others write with `free`, which gives `nil` on an owned row. The lock names the
   locked table by its distance within the world, not by a pointer, because the world is copied in
@@ -155,9 +161,18 @@ write: a prefab, a piece of terrain, a piece of something broken.
   A request queue of a library has fixed room: its procs `offer` (or `refuse` what is invalid) and
   return nothing, and the owner's `queue_serve` step keeps the room from its settings and reports
   once what was dropped or refused.
-- In a **request** (`@(storage,queue)`) many push and one library takes; in an **event**
-  (`@(storage,events)`) the owning library empties it and fills it every tick and the others read.
-  Any other storage is written by a single library, except `@(storage,shared)`.
+- In a **request** (`@(storage,queue)`) many push and one library takes. Any other storage is
+  written by a single library, except `@(storage,shared)`.
+- **Events** are logs, `core.Events(T)` fields of a storage: the owning library pushes what
+  happened and never clears. Each reader gets what came since it last looked, whatever its
+  cadence: a function that receives the storage to read finds exactly that in `items` (the
+  generated call keeps its cursor), and code outside the loops keeps a cursor and asks
+  `events_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
+  `World_Info.events_age`; `world_events_age` after a `world_run` of a World no loop runs), those
+  a `fixed` function reads only when the frame ran a tick. A test that calls the owner by hand
+  reads the log it holds: it clears it between ticks, or keeps a cursor.
+- There are two ways to learn that something happened and no more: state, read by change
+  (`changes`, `touched`, `added`), and occurrences, read by cursor.
 - `Ref(S)` is a read-only pointer to a storage: writing through it is a bug that the generator does
   not see.
 
@@ -190,9 +205,9 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   - `resimulating`: the network repeats ticks that already ran to correct a prediction. The
     rollback sets it; `tick`, `seconds` and `dt` come back with the copy of the world and the
     repeated ticks advance them up to the present. What is not simulation is not repeated:
-    `audio.play*` makes no sound and `multiplayer.send` does not enqueue. What entered the tick is
-    repeated: each repeated tick receives the UI events it received the first time
-    ([gui](../../mirai-gameplay/references/libraries.md#gui)).
+    `audio_requests` drops the sounds it asks for and `multiplayer.send` does not enqueue. What
+    entered the tick is repeated: each repeated tick receives the UI events it received the first
+    time ([gui](../../mirai-gameplay/references/libraries.md#gui)).
     What stays in the `World` (a prefab, a counter, the clock of a particle emitter) is repeated the
     same as the first time.
 - `Frame_Time` (`copy=false`): the frame the world runs, not its simulation. `accumulator` (seconds
@@ -244,7 +259,7 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
 - `Jumps`: jumps of the tick. `jump(jumps, e, by)`: `e` appears somewhere else without passing
   through the middle, carried by the rigid transformation `by`.
 - `Hierarchy`: the tree of `Parent` ([the `Hierarchy`](#the-hierarchy)).
-- `Propagation`: order and scratch of `transforms_propagate`.
+- `Propagation`: what `transforms_propagate` keeps between passes.
 - `World_Id` (`copy=false`): which world of its application this is, a handle (index and
   generation) that no world made later repeats. `host` sets it when creating the world; copying and
   swapping worlds do not move it, so a replaced world keeps its own. What the application stores
@@ -357,9 +372,11 @@ Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibl
 `std/math`, which keeps the shape of the child under parents with uneven scale. The authoring
 hierarchy is not a spatial structure: culling, physics and queries use their own.
 
-- It sorts everything only if the `layout` of `Transform` or the `version` of the `Hierarchy`
-  changes; otherwise it composes the stamped rows and what hangs from them, and only stamps a
-  `World_Transform` whose value changed.
+- It composes what changed and what hangs from it, higher entities first: the `Transform` rows
+  stamped, the entities whose link moved (`hierarchy_moved`, a log of the `Hierarchy` read by
+  cursor as the `gone` of a table) and the children of one that lost its `Transform`. It composes
+  everything only when it had not seen the rows or the tree there are (a World copied over, more
+  links moved than the log holds), and only stamps a `World_Transform` whose value changed.
 - A jump (`Jumps`) carries by `by` also the `previous` of the entity and of what hangs from it: who
   interpolates does so on the arrival side and never shows the path. The owner of the transform
   requests it on the tick where it applies it; physics, on every teleport.
@@ -405,7 +422,8 @@ library.
   ([classes](generator.md#attributes)).
 - `world_copy_changed` takes only the tables that changed and the storages that were written,
   with their `copy_kept` if they have one, and keeps `copy_marks_count` marks for it. A `World`
-  holds a revision for each storage, which moves when a function receives the storage with `^S`
+  holds a stamp for each storage, the one of its one row, which `core.Stamp(S)` gives a function
+  for `core.touched` and which moves when a function receives the storage with `^S`
   ([generated functions](generator.md#generated-functions)), when code outside the loop asks for it
   (`world_storage`, `world_storage_of`, `world_storage_at`: what writes a storage outside the loop
   reaches it through one of these), when `core.settle` changes the `Hierarchy`, and when the world
@@ -484,10 +502,11 @@ the schema and the editor and the API, the rows.
 - The rows are read-only and live outside the `World`, in the application: Play, copies and
   rollback do not copy them, and all worlds read the same ones. What changes in a save goes in
   components that name rows.
-- `core.Text` is a localized text of a row: the table stores the text in the language the game is
-  written in and its translations under its id. `core.record_text(rows, text, language)` gives it in
-  the language of the `name_hash` of its code (that of `gui.ui_language`) and, without a translation
-  or with 0, the original.
+- `core.Text` is a text a player reads, as a field of a row or of a component: the key of a
+  `.strings` ([one store](../../mirai-assets/references/kinds.md#texts)). A function receives
+  `^core.Texts`, every `.strings` of the assets as one table, and `core.text(texts, text, language)`
+  gives what a `core.Text` or a key by name says in the language of the `name_hash` of its code
+  (that of `gui.ui_language`).
 - `host` loads the tables of a type the first time a function asks for it, and again when one of its
   files changes (on disk or in the editor's memory), appears or leaves: editing a row during Play
   is seen on the next tick; `records_generation` changes with each load, so what a function builds

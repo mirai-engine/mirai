@@ -20,7 +20,6 @@ Diver :: struct {
     refill:f32 `mirai:"min=0"`,          // seconds of oxygen it gets back each second with the head out
     oxygen:f32 `mirai:"transient,readonly,unit=s"`, // left
     drowned:u32 `mirai:"transient,readonly"`,       // times it drowned
-    ready:bool `mirai:"transient,hidden"`,          // took its first breath
 }
 
 DIVER_DEFAULT :: Diver{capacity=45,refill=15}
@@ -45,7 +44,7 @@ raft_breath :: proc(
         if !has {continue}
         // Only a breath that changes is written: a full one over the surface stays as it is.
         next:=core.at(divers,row)
-        if !next.ready {next.oxygen,next.ready=next.capacity,true}
+        if core.added(divers,row) {next.oxygen=next.capacity} // its first breath
         if state.head_depth>0 {
             next.oxygen=max(next.oxygen-time.dt,0)
         } else {next.oxygen=min(next.oxygen+next.refill*time.dt,next.capacity)}

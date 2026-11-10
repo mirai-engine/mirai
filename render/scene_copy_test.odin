@@ -35,8 +35,6 @@ rendered_copies_keep_motion_history_by_source_owner_and_variant :: proc(t:^testi
         testing.expect_value(t,inst.world,rows_3x4(reordered[i].transform))
     }
     testing.expect_value(t,r.scene.touched_count,4)
-    testing.expect(t,scene_set_highlights(r,[]u8{0,0,1,0}))
-    testing.expect(t,r.scene.instances[0].meta.w & INSTANCE_FLAG_UNIFORM_COLOR!=0 && r.scene.instances[2].meta.w & INSTANCE_FLAG_UNIFORM_COLOR==0,"Highlight updates preserve uniform-copy appearance")
     // Dropping and recreating a variant starts with its own new pose.
     scene_set(r,reordered[:3],nil,{}, {})
     reordered[3].copy_variant=2

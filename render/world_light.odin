@@ -21,11 +21,11 @@ World_Light :: struct {
 	ddgi:         Ddgi_State,
 }
 
-// The scene that follows (scene_set) is that of the world `world`, a key its
+// The scene given before the next frame is that of the world `world`, a key its
 // caller keeps for it, after a discontinuity of what is shown: another world,
 // or `world` replaced by a new one (`fresh`: a scene opened in its place). The
 // light the world shown so far gathered stays with it; a world shown again
-// takes back its own, and the scene_set that follows changes none of it.
+// takes back its own, and the scene it is given changes none of it.
 // Every view starts a new history and takes its exposure at once.
 scene_world :: proc(r: ^Renderer, world: u64, fresh := false) {
 	defer {

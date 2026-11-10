@@ -38,7 +38,7 @@ PARAMS_CORE :: `package core
 // A @(params) struct reaches a step as its fields would one by one: the call
 // builds it with each field bound as that parameter alone, and what it
 // writes is written by the step, with its settle, its check of writes and
-// its one writer.
+// its writing library.
 @(test)
 a_params_struct_binds_each_field_as_its_parameter :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"params")
@@ -62,15 +62,13 @@ import "mirai:core"
         testing.expect(t,strings.contains(call,"p_core.write_check_begin(p_core.raw(&w.spot),size_of(p_core.Spot))"),call)
         testing.expect(t,strings.contains(call,"p_core.table_settle(&w.spot,&w.entities)"),call)
     }
-    // The table a @(params) writes has one writer, as if the step received it alone.
+    // The table a @(params) writes is written by its library, as if the step received it alone.
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
 @(step="fixed") game_move :: proc(move:core.Mover) {}
 @(step="fixed") game_push :: proc(spots:^core.Table(core.Spot)) {}
 `)
-    found:=false
-    for message in errors {found||=strings.contains(message,"game_move and game_push write Spot")}
-    testing.expectf(t,found,"%v",errors)
+    testing.expectf(t,len(errors)==0,"%v",errors)
 }
 
 // What a step writes reaches it once: by itself and in a @(params), or in two
@@ -116,16 +114,18 @@ import "mirai:core"
 @(params) Empty :: struct {}
 @(params,component) Both :: struct {value:f32}
 @(step="fixed") game_pointer :: proc(move:^core.Mover) {}
+@(step="fixed") game_untyped :: proc(marks:core.Read(core.Mark),count:=3) {}
 `)
-    found:[5]bool
+    found:[6]bool
     for message in errors {
         found[0]||=strings.contains(message,"Outer has a field of Looker, another @(params): they do not nest")
         found[1]||=strings.contains(message,"the field count of Odd is int")
         found[2]||=strings.contains(message,"Empty is @(params) and has no fields")
         found[3]||=strings.contains(message,"Both is @(params) and a component")
         found[4]||=strings.contains(message,"game_pointer receives ^core.Mover, a @(params) struct, by pointer: receive it by value, core.Mover")
+        found[5]||=strings.contains(message,"game_untyped gives a default to count")
     }
-    testing.expectf(t,found==[5]bool{true,true,true,true,true},"%v",errors)
+    testing.expectf(t,found==[6]bool{true,true,true,true,true,true},"%v",errors)
 }
 
 // What the application owns reaches a step by the type that names it, alone

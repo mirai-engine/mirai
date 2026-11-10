@@ -91,7 +91,7 @@ request_rows_defaults :: proc(p:^$T) {
 @(private)
 request_register :: proc(s:^editor.Session) {
     defaults:=request_defaults();if defaults==nil {return}
-    authoring_method_register(s,{name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its action set to intents. Edit takes only stop; the rest needs Play or Simulation.",params=Request_Params,params_info=type_info_of(Request_Params),defaults=defaults,run=request},Request_Result,type_info_of(Request_Result))
+    editor.api_method_register(s,Request_Params,Request_Result,{name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its action set to intents. Edit takes only stop; the rest needs Play or Simulation.",defaults=defaults,run=request,writes_result=true})
 }
 
 // Fields of a request that change the document in Edit; the rest change only a running world.

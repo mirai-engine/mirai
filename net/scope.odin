@@ -9,9 +9,10 @@ import "mirai:std/base"
 // What each connection of a server sees, and in which order it is sent.
 //
 // Scope. An object is wanted by a connection according to its filter: always,
-// only by its owner, by distance to the connection's view, by the connections
-// the game names one by one (Custom, a bit per connection and object), or by
-// none. An object with a parent follows its parent. Spatial objects update the
+// only by its owner, by distance to the connection's view, or by none; of
+// those, by the connections that have one of its groups and share one of its
+// visibility bits, when it has any. An object with a parent follows its
+// parent. Spatial objects update the
 // grid only when their cell changes. One that is seen stays seen up to a margin
 // beyond the view, and past it for a number of evaluations before its replica
 // is destroyed.
@@ -92,22 +93,11 @@ grid_update :: proc(h:^Host) {
     r.special_stale=false
     r.special_count=0
     for o in 0..<r.high {
-        if r.live[o]==1 && (r.filter[o]==.Owner || r.filter[o]==.Custom || r.filter[o]==.None || r.parent[o]!=0 || r.groups[o]!={}) {
+        if r.live[o]==1 && (r.filter[o]==.Owner || r.filter[o]==.None || r.parent[o]!=0 || r.groups[o]!={} || r.visibility[o]!=0) {
             r.special[r.special_count]=u32(o)
             r.special_count+=1
         }
     }
-}
-
-// Whether a connection may see an object of Custom filter; only a change makes it evaluate its scope again.
-@(private)
-relevance_apply :: proc(h:^Host,op:^Op) {
-    r:=&h.back.repl
-    o,ok:=object_from(r,op.handle)
-    p:=peer_from(h,Connection(op.value))
-    if !ok || p==nil || bitset_test(p.repl.relevant,o)==(op.a!=0) {return}
-    if op.a!=0 {bitset_set(p.repl.relevant,o)} else {bitset_clear(p.repl.relevant,o)}
-    if r.filter[o]==.Custom {p.repl.filter_due=true}
 }
 
 @(private)
@@ -132,6 +122,12 @@ groups_lacks :: #force_inline proc "contextless" (pr:^Peer_Repl,groups:Groups) -
         if group!=0 && bitset_test(pr.groups,int(group)) {return false}
     }
     return true
+}
+
+// Whether a connection may not see an object for its groups or its visibility bits.
+@(private)
+scope_lacks :: #force_inline proc "contextless" (r:^Repl,pr:^Peer_Repl,o:int) -> bool {
+    return r.visibility[o]!=0 && r.visibility[o]&pr.visibility==0 || groups_lacks(pr,r.groups[o])
 }
 
 @(private)
@@ -177,7 +173,6 @@ scope_update :: proc(h:^Host,p:^Peer) {
         inside:=bitset_test(wanted,o)
         #partial switch r.filter[o] {
         case .Owner:  inside=r.owner[o]==handle
-        case .Custom: inside=bitset_test(pr.relevant,o)
         case .None:   inside=false
         }
         if inside {bitset_set(wanted,o)} else {bitset_clear(wanted,o)}
@@ -199,10 +194,10 @@ scope_update :: proc(h:^Host,p:^Peer) {
             }
         }
     }
-    // An object of groups the connection lacks is not seen, however near, nor what follows it.
+    // An object of groups or of visibility bits the connection lacks is not seen, however near, nor what follows it.
     for index in special {
         o:=int(index)
-        if groups_lacks(pr,r.groups[o]) {bitset_clear(wanted,o)}
+        if scope_lacks(r,pr,o) {bitset_clear(wanted,o)}
     }
     for index in special {
         o:=int(index)
@@ -212,7 +207,7 @@ scope_update :: proc(h:^Host,p:^Peer) {
             root=int(r.parent[root])-1
             if r.live[root]!=1 {break}
         }
-        lacks:=groups_lacks(pr,r.groups[o])
+        lacks:=scope_lacks(r,pr,o)
         if r.live[root]==1 && r.parent[root]==0 && bitset_test(wanted,root) && !lacks {bitset_set(wanted,o)} else {bitset_clear(wanted,o)}
     }
     if pr.held {mem.zero_slice(wanted)}

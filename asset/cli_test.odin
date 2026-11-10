@@ -359,8 +359,14 @@ cli_commands_answer_for_damaged_files :: proc(t:^testing.T) {
     }
     runs,refused:=0,0
     state:=u64(0x13198a2e03707344)
-    for name in ([]string{"showcase/hud.ui","showcase/lift.anim","showcase/hum.sound","gallery/plant.gltf/Leaves.mat"}) {
-        seed:=fmt.tprintf("%s/demo/assets/%s",root,name)
+    // A sound is no file of the demo: its import builds it.
+    {
+        types:Types;types_init(&types);defer types_destroy(&types)
+        lossless:=[8]u8{'M','L','P','C',0,0,0,0}
+        testing.expect_value(t,sound_save(file(&cli,"tick.sound"),&types,{id={0x50d,2},channels=2,sample_rate=48000,frames=4,lossless=lossless[:]}),Error.None)
+    }
+    for name in ([]string{"showcase/hud.ui","showcase/lift.anim","tick.sound","gallery/plant.gltf/Leaves.mat"}) {
+        seed:=file(&cli,name) if name=="tick.sound" else fmt.tprintf("%s/demo/assets/%s",root,name)
         good,read_error:=serial.file_read(seed,context.temp_allocator)
         if !testing.expectf(t,read_error==.None,"%s cannot be read",seed) {continue}
         // A value set would change: the first field of the first row of the first table.

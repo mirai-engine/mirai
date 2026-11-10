@@ -26,9 +26,8 @@ terrain_holes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool) {
     slope_fields(s,tool)
 }
 
-// What the selected terrain shows: the materials of the slots of a Mesh past
-// slot 0 and the layers slot 0 shows, each with its thumbnail, and under the
-// list what the chosen one has; the brush paints it. The program that blends
+// What the selected terrain shows: its layers, each with its thumbnail, and
+// under the list what the chosen one has; the brush paints it. The program that blends
 // them shows only when it is not the one of the plugin.
 @(private)
 terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
@@ -36,14 +35,8 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
     source:=&tool.stroke.source
     count:=int(source.layer_count)
     tool.layer=clamp(tool.layer,0,count-1)
-    if len(source.slots)>0 {
-        ui.section(ctx,"Materials","",80)
-        for material,i in source.slots {
-            if chosen,changed:=material_field(s,u64(i+1),fmt.tprintf("Slot %d",i+1),material);changed {terrain_material_commit(s,tool,world,assets,i+1,chosen)}
-        }
-    }
     add,remove:=layers_heading(ctx,count)
-    if source.layers_material!={} {if material,changed:=material_field(s,0x200,"Blend",source.layers_material);changed {terrain_material_commit(s,tool,world,assets,LAYERS_SLOT,material)}}
+    if source.layers_material!={} {if material,changed:=material_field(s,0x200,"Blend",source.layers_material);changed {terrain_material_commit(s,tool,world,assets,material)}}
     for i in 0..<count {
         if editor.asset_list_row_begin(s,ui.id(ctx,"layer",i+1),source.layers[i].material,asset.KIND_MATERIAL,layer_name(assets,source.layers[i],i),i==tool.layer).clicked {tool.layer=i}
         editor.asset_list_row_end(s)
@@ -58,7 +51,7 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
     ui.section(ctx,"Brush","",80)
     selected:=-1 if editor.tool_aside(s,"terrain") else 1 if tool.brush==.Erase else 0
     if ui.tabs(ctx,ui.id(ctx,"paint"),{"Paint","Erase"},&selected) {tool.brush=selected==1?.Erase:.Paint;editor.tool_take(s,"terrain")}
-    brush_fields(s,tool,true,true,tool.stroke.source.kind!=.Mesh)
+    brush_fields(s,tool,true,true,true)
     if tool.brush==.Paint {
         if ui.property(ctx,"Up to a weight") {ui.checkbox(ctx,ui.id(ctx,"toward"),&tool.toward)}
         if tool.toward {
@@ -158,18 +151,13 @@ layer_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,layer:^terrain.Terrain
     return
 }
 
-// The slot of terrain_material_commit that is the material of the layers.
+// Sets the material that blends the layers, as one step of undo.
 @(private)
-LAYERS_SLOT :: -1
-
-// Sets the material of a slot of a Mesh past slot 0, which shows the layers,
-// or the one that blends them, as one step of undo.
-@(private)
-terrain_material_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,slot:int,material:base.Asset_Id) -> bool {
+terrain_material_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,material:base.Asset_Id) -> bool {
     stroke:=&tool.stroke
-    if stroke.active || stroke.id=={} || slot<LAYERS_SLOT || slot==0 || slot>len(stroke.source.slots) {return false}
+    if stroke.active || stroke.id=={} {return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
-    if slot==LAYERS_SLOT {stroke.source.layers_material=material} else {stroke.source.slots[slot-1]=material}
+    stroke.source.layers_material=material
     stroke.changed=true;stroke.dirty_all=true
     stroke_end(s,tool,world,assets,label="Terrain material")
     return true

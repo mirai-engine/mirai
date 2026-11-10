@@ -115,7 +115,7 @@ player_build_start :: proc(s:^Session) -> string {
     if error.code!=.None {return "The project could not be opened"}
     l.project=new(project.Project)
     l.project^=opened
-    l.job=build.job_start({project=l.project,target=.Play,dev=build.ENGINE_MODE_HERE==.Dev})
+    l.job=build.job_start({project=l.project,target=.Play,dev=build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE})
     return ""
 }
 

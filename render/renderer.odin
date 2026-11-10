@@ -589,7 +589,7 @@ Renderer :: struct {
 	frame_views:          [VIEW_CAPACITY + TEXTURE_VIEW_CAPACITY]Frame_View, // those of the frame being recorded, relative to the origin
 	frame_detail:         Frame_Detail, // of the frame being recorded, relative to the origin
 	world_known:          bool, // scene_world named one
-	world_kept:           bool, // the world shown is shown again with its light: the scene_set that follows changes none of it
+	world_kept:           bool, // the world shown is shown again with its light: the scene it is given before the next frame changes none of it
 	world_switched:       bool, // the next frame follows another world: it keeps the delta time of the one before
 	kept:                 [WORLDS_MAX - 1]World_Light, // the light of the worlds not shown
 	kept_count:           int,
@@ -1920,7 +1920,7 @@ reflectance_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> (reflectance, l
 	for entry in r.scene.batch.reflective {
 		if reflectance && (layered || !entry.layered) {continue}
 		box := &r.scene.batch.boxes[entry.instance]
-		if mm.frustum_overlaps_aabb(frustum, {box.bounds_min, box.bounds_max}) {
+		if mm.frustum_overlaps_aabb(frustum, box^) {
 			reflectance = true
 			layered ||= entry.layered
 		}

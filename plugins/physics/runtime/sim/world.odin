@@ -1,6 +1,7 @@
 package mirai_physics
 
 import "core:mem"
+import "core:time"
 import "mirai:std/base"
 import "mirai:std/spatial"
 
@@ -35,6 +36,10 @@ World_State :: struct {
 @(private) Hull_Slot :: struct {hull:Hull,generation:u32,refs:i32,revision:u32} // revision: rebuilds under its handle
 @(private) Mesh_Slot :: struct {mesh:Mesh,generation:u32,refs:i32}
 @(private) Heightfield_Slot :: struct {field:Heightfield,generation:u32,refs:i32}
+
+// The pools of the state by the stamps of their chunks: a pool of joints is its joints and their axes, one
+// of pieces its pieces with the hull and the origin of each slot.
+@(private) Pool :: enum u8 {Bodies,Shapes,Contacts,Joints,Blocks,Characters,Islands,Fluids,Breakables,Pieces,Bonds}
 
 @(private) STATIC_TREE :: 0
 @(private) DYNAMIC_TREE :: 1
@@ -74,6 +79,30 @@ World :: struct {
     stats:Stats,
     profile:Profile,
     kept:bool, // made by world_kept_init: its pools are smaller than desc says
+    // Of the chunks of each pool, the revision of their last write (base.chunk_stamp). lineage: the
+    // timeline those stamps are of, which world_state_copy compares and moves with revision. source:
+    // the timeline of the kept world it last took whole, until it steps (world_succeed).
+    stamps:[Pool][]u64,
+    revision,lineage,source:u64,
+}
+
+// A slot of a pool was written: a copy of the world takes its chunk again.
+@(private) stamp_slot :: #force_inline proc "contextless" (w:^World,pool:Pool,slot:i32) {base.chunk_stamp(w.stamps[pool],int(slot),w.revision)}
+@(private) slot_of :: #force_inline proc "contextless" (items:[]$T,item:^T) -> i32 {return i32((uintptr(item)-uintptr(raw_data(items)))/size_of(T))}
+@(private) stamp_body :: #force_inline proc "contextless" (w:^World,body:^Body) {stamp_slot(w,.Bodies,slot_of(w.bodies,body))}
+@(private) stamp_shape :: #force_inline proc "contextless" (w:^World,shape:^Shape) {stamp_slot(w,.Shapes,slot_of(w.shapes,shape))}
+@(private) stamp_contact :: #force_inline proc "contextless" (w:^World,contact:^Contact) {stamp_slot(w,.Contacts,slot_of(w.contacts,contact))}
+@(private) stamp_joint :: #force_inline proc "contextless" (w:^World,joint:^Joint) {stamp_slot(w,.Joints,slot_of(w.joints,joint))}
+@(private) stamp_character :: #force_inline proc "contextless" (w:^World,ch:^Character) {stamp_slot(w,.Characters,slot_of(w.characters,ch))}
+@(private) stamp_piece :: #force_inline proc "contextless" (w:^World,piece:^Piece) {stamp_slot(w,.Pieces,slot_of(w.pieces,piece))}
+@(private) stamp_bond :: #force_inline proc "contextless" (w:^World,bond:^Bond) {stamp_slot(w,.Bonds,slot_of(w.bonds,bond))}
+@(private) stamp_breakable :: #force_inline proc "contextless" (w:^World,d:^Breakable) {stamp_slot(w,.Breakables,slot_of(w.breakables,d))}
+@(private) stamp :: proc{stamp_slot,stamp_body,stamp_shape,stamp_contact,stamp_joint,stamp_character,stamp_piece,stamp_bond,stamp_breakable}
+
+// A timeline no other world has: where the stamps of a world that took a copy from another are of.
+@(private)
+lineage_new :: proc(w:^World) -> u64 {
+    return base.hash_u64(u64(time.tick_now()._nsec)~u64(uintptr(w))*0x9e3779b97f4a7c15)
 }
 
 @(private)
@@ -147,6 +176,14 @@ world_init :: proc(w:^World,desc:World_Desc) -> bool {
     w.events.sleep=alloc(Body_Event,d.event_capacity,a,&ok)
     w.events.wake=alloc(Body_Event,d.event_capacity,a,&ok)
     w.static_log.boxes=alloc(Aabb,d.static_change_capacity,a,&ok)
+    chunks:=#partial [Pool]int{
+        .Bodies=d.body_capacity,.Shapes=d.shape_capacity,.Contacts=d.contact_capacity,.Joints=d.joint_capacity,
+        .Blocks=d.contact_capacity/4,.Characters=d.character_capacity,.Islands=d.body_capacity,.Fluids=d.fluid_capacity,
+    }
+    for slots,pool in chunks {
+        if pool<.Breakables {w.stamps[pool]=alloc(u64,base.chunks_of(slots),a,&ok)}
+    }
+    w.revision,w.lineage=1,lineage_new(w)
     for &tree in w.trees {
         ok&&=spatial.dynamic_tree_init(&tree,{proxy_capacity=d.shape_capacity,margin=AABB_MARGIN,allocator=a})
     }
@@ -177,6 +214,7 @@ world_destroy :: proc(w:^World) {
     delete(w.events.joint_break,a);delete(w.events.sleep,a);delete(w.events.wake,a)
     delete(w.static_log.boxes,a)
     breakables_free(w)
+    for stamps in w.stamps {delete(stamps,a)}
     for &tree in w.trees {spatial.dynamic_tree_destroy(&tree)}
     step_destroy(&w.step,a)
     w^={}
@@ -259,39 +297,57 @@ event_push :: proc(w:^World,buffer:[]$T,kind:int,event:T) {
     return Joint_Handle(base.handle_make(u32(index),w.joints[index].generation))
 }
 
-// Slot of a live handle, or nil.
+// Slot of a live handle, or nil, to read. *_get gives it to write: it stamps its chunk.
 @(private)
-body_get :: #force_inline proc "contextless" (w:^World,h:Body_Handle) -> (^Body,i32) {
+body_read :: #force_inline proc "contextless" (w:^World,h:Body_Handle) -> (^Body,i32) {
     index:=base.handle_index(base.Handle(h))
     generation:=base.handle_generation(base.Handle(h))
     if index>=u32(w.body_high) || generation&1==0 || w.bodies[index].generation!=generation {return nil,-1}
     return &w.bodies[index],i32(index)
 }
 @(private)
-shape_get :: #force_inline proc "contextless" (w:^World,h:Shape_Handle) -> (^Shape,i32) {
+shape_read :: #force_inline proc "contextless" (w:^World,h:Shape_Handle) -> (^Shape,i32) {
     index:=base.handle_index(base.Handle(h))
     generation:=base.handle_generation(base.Handle(h))
     if index>=u32(w.shape_high) || generation&1==0 || w.shapes[index].generation!=generation {return nil,-1}
     return &w.shapes[index],i32(index)
 }
 @(private)
-joint_get :: #force_inline proc "contextless" (w:^World,h:Joint_Handle) -> (^Joint,i32) {
+joint_read :: #force_inline proc "contextless" (w:^World,h:Joint_Handle) -> (^Joint,i32) {
     index:=base.handle_index(base.Handle(h))
     generation:=base.handle_generation(base.Handle(h))
     if index>=u32(w.joint_high) || generation&1==0 || w.joints[index].generation!=generation {return nil,-1}
     return &w.joints[index],i32(index)
 }
+@(private)
+body_get :: #force_inline proc "contextless" (w:^World,h:Body_Handle) -> (^Body,i32) {
+    body,index:=body_read(w,h)
+    if body!=nil {stamp(w,.Bodies,index)}
+    return body,index
+}
+@(private)
+shape_get :: #force_inline proc "contextless" (w:^World,h:Shape_Handle) -> (^Shape,i32) {
+    shape,index:=shape_read(w,h)
+    if shape!=nil {stamp(w,.Shapes,index)}
+    return shape,index
+}
+@(private)
+joint_get :: #force_inline proc "contextless" (w:^World,h:Joint_Handle) -> (^Joint,i32) {
+    joint,index:=joint_read(w,h)
+    if joint!=nil {stamp(w,.Joints,index)}
+    return joint,index
+}
 
 body_valid :: proc(w:^World,h:Body_Handle) -> bool {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     return body!=nil
 }
 shape_valid :: proc(w:^World,h:Shape_Handle) -> bool {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape!=nil
 }
 joint_valid :: proc(w:^World,h:Joint_Handle) -> bool {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     return joint!=nil
 }
 

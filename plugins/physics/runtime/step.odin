@@ -90,7 +90,6 @@ physics_step :: proc(
     fluid_waves:core.Read(Fluid_Waves),winds:core.Read(volume.Wind),
     hierarchy:core.Ref(core.Hierarchy),
 ) {
-    events_clear(events)
     if !state_make(state,settings.ptr,&app.jobs,problems) {
         core.queue_clear(&requests.queue)
         return

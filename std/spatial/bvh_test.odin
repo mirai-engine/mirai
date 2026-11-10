@@ -275,6 +275,9 @@ bvh_build_rejects_malformed_input :: proc(t:^testing.T) {
     testing.expect(t,!bvh_build(&bvh,{{{0,0,0},{1,1,1}},{{2,2,2},{1,3,3}}},{}))
     testing.expect(t,!bvh_build(&bvh,{{{0,0,0},{1,1/zero,1}}},{}))
     testing.expect(t,!bvh_build(&bvh,{{{0,0,0},{1,1,1}},{{zero/zero,0,0},{1,1,1}}},{}))
+    // A depth deeper than the stack of an iterator, or below zero.
+    testing.expect(t,!bvh_build(&bvh,{{{0,0,0},{1,1,1}}},{max_depth=BVH_STACK_CAPACITY+1}))
+    testing.expect(t,!bvh_build(&bvh,{{{0,0,0},{1,1,1}}},{max_depth=-1}))
     testing.expect_value(t,len(bvh.nodes),0)
     testing.expect_value(t,len(bvh.order),0)
     bvh_destroy(&bvh)
@@ -429,19 +432,25 @@ bvh_depth_never_exceeds_the_iterator_stack :: proc(t:^testing.T) {
     }
     scratch:=boxes
     free_form:Bvh
-    testing.expect(t,bvh_build_boxes(&free_form,scratch[:],{max_leaf_size=1},BVH_STACK_CAPACITY))
+    testing.expect(t,bvh_build_boxes(&free_form,scratch[:],{max_leaf_size=1}))
     defer bvh_destroy(&free_form)
     testing.expect(t,bvh_validate(&free_form))
     testing.expect(t,bvh_depth(&free_form)>24&&bvh_depth(&free_form)<=BVH_STACK_CAPACITY)
     // The same input under a tighter limit: past it the build halves the ranges.
     scratch=boxes
     limited:Bvh
-    testing.expect(t,bvh_build_boxes(&limited,scratch[:],{max_leaf_size=1},16))
+    testing.expect(t,bvh_build_boxes(&limited,scratch[:],{max_leaf_size=1,max_depth=16}))
     defer bvh_destroy(&limited)
     testing.expect(t,bvh_validate(&limited))
     testing.expect(t,order_is_a_permutation(&limited,COUNT))
     testing.expect_value(t,bvh_largest_leaf(&limited),u32(1))
     testing.expectf(t,bvh_depth(&limited)<=16,"depth %d under a limit of 16",bvh_depth(&limited))
+    // A limit below what halving needs: the leaves at it hold the rest.
+    shallow:Bvh
+    testing.expect(t,bvh_build(&shallow,boxes[:],{max_leaf_size=1,max_depth=3}))
+    defer bvh_destroy(&shallow)
+    testing.expect(t,bvh_validate(&shallow)&&order_is_a_permutation(&shallow,COUNT))
+    testing.expect(t,bvh_depth(&shallow)==3&&bvh_largest_leaf(&shallow)>1)
     random:=random_make(81)
     failures:=0
     for _ in 0..<200 {

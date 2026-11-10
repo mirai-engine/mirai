@@ -116,16 +116,16 @@ six_dof_drives_keep_warm_impulses_and_replay_identically_with_workers :: proc(t:
         world_step(&b,1.0/60)
         testing.expect_value(t,world_hash(&a),world_hash(&b))
     }
-    snapshot:=make([]byte,world_snapshot_size(&a))
-    defer delete(snapshot)
-    world_snapshot(&a,snapshot)
+    snapshot:World
+    defer world_destroy(&snapshot)
+    test_keep(&snapshot,&a)
     for _ in 0..<60 {
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
         testing.expect_value(t,world_hash(&a),world_hash(&b))
     }
     final:=world_hash(&a)
-    testing.expect(t,world_restore(&a,snapshot))
+    testing.expect(t,test_restore(&a,&snapshot))
     test_steps(&a,60)
     testing.expect_value(t,world_hash(&a),final)
 }
@@ -143,11 +143,11 @@ six_dof_snapshots_restore_into_another_world_and_survive_joint_slot_reuse :: pro
     joint_drive_pose(&desc,{0.3,0.2,0.5},q_axis_angle(normalize({1,2,3}),1),5,1,100000,100000)
     joint:=joint_create(&a,desc)
     test_steps(&a,30)
-    buffer:=make([]byte,world_snapshot_capacity(&a))
-    defer delete(buffer)
-    written,ok:=world_snapshot(&a,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&a)
     testing.expect(t,ok)
-    testing.expect(t,world_restore(&b,buffer[:written]))
+    testing.expect(t,test_restore(&b,&buffer))
     testing.expect_value(t,world_hash(&a),world_hash(&b))
     change :: proc(w:^World,joint:Joint_Handle,desc:Joint_Desc) {
         joint_destroy(w,joint)
@@ -162,13 +162,9 @@ six_dof_snapshots_restore_into_another_world_and_survive_joint_slot_reuse :: pro
     change(&a,joint,desc)
     change(&b,joint,desc)
     testing.expect_value(t,world_hash(&a),world_hash(&b))
-    testing.expect(t,world_restore(&a,buffer[:written]))
+    testing.expect(t,test_restore(&a,&buffer))
     change(&a,joint,desc)
     testing.expect_value(t,world_hash(&a),world_hash(&b))
-    before:=world_hash(&a)
-    buffer[written-1]~=1
-    testing.expect(t,!world_restore(&a,buffer[:written]))
-    testing.expect_value(t,world_hash(&a),before)
 }
 
 // A drive solved one axis at a time stops at the cone of the swings, whose angle toward each side is the limit

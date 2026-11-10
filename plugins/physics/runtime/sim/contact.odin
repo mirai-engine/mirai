@@ -9,6 +9,7 @@ import math "mirai:std/math"
 @(private)
 contact_mix_material :: proc "contextless" (w:^World,contact:^Contact) {
     a,b:=&w.shapes[contact.shape_a],&w.shapes[contact.shape_b]
+    stamp(w,contact)
     contact.friction=cmath.sqrt(a.friction*b.friction)
     contact.restitution=max(a.restitution,b.restitution)
     contact.rolling_resistance=max(a.rolling_resistance,b.rolling_resistance)
@@ -46,13 +47,14 @@ contact_create :: proc(w:^World,shape_a,shape_b:i32) -> i32 {
         } else {
             w.stats.manifold_capacity_exhausted+=1
         }
-        if contact.extra>=0 {w.blocks[contact.extra]={}}
+        if contact.extra>=0 {stamp(w,.Blocks,contact.extra);w.blocks[contact.extra]={}}
     }
     for body_index,side in ([2]i32{contact.body_a,contact.body_b}) {
         body:=&w.bodies[body_index]
+        stamp(w,body)
         key:=index<<1|i32(side)
         contact.edges[side]={-1,body.contact_list}
-        if body.contact_list>=0 {w.contacts[body.contact_list>>1].edges[body.contact_list&1].prev=key}
+        if body.contact_list>=0 {stamp(w,.Contacts,body.contact_list>>1);w.contacts[body.contact_list>>1].edges[body.contact_list&1].prev=key}
         body.contact_list=key
         body.contact_count+=1
     }
@@ -72,15 +74,18 @@ contact_destroy :: proc(w:^World,index:i32,wake:=true) {
     }
     for body_index,side in ([2]i32{contact.body_a,contact.body_b}) {
         body:=&w.bodies[body_index]
+        stamp(w,body)
         edge:=contact.edges[side]
-        if edge.prev>=0 {w.contacts[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.contact_list=edge.next}
-        if edge.next>=0 {w.contacts[edge.next>>1].edges[edge.next&1].prev=edge.prev}
+        if edge.prev>=0 {stamp(w,.Contacts,edge.prev>>1);w.contacts[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.contact_list=edge.next}
+        if edge.next>=0 {stamp(w,.Contacts,edge.next>>1);w.contacts[edge.next>>1].edges[edge.next&1].prev=edge.prev}
         body.contact_count-=1
     }
     if contact.extra>=0 {
+        stamp(w,.Blocks,contact.extra)
         w.blocks[contact.extra].next_free=w.block_free
         w.block_free=contact.extra
     }
+    stamp(w,contact)
     contact^={shape_a=w.contact_free,shape_b=-1,extra=-1}
     w.contact_free=index
     w.contact_count-=1
@@ -196,7 +201,7 @@ pairs_update :: proc(w:^World) {
     }
     // Pairs that did not fit are searched again at the next step.
     if !overflow {
-        for i in st.moved[:moved] {w.shapes[i].flags-={.Moved}}
+        for i in st.moved[:moved] {stamp(w,.Shapes,i);w.shapes[i].flags-={.Moved}}
         w.moved_head=-1
     }
 }
@@ -302,6 +307,8 @@ manifold_to_world :: proc "contextless" (out:^Manifold,local:^Local_Manifold,xf:
 contact_update :: proc(w:^World,index:i32) #no_bounds_check {
     contact:=&w.contacts[index]
     a,b:=&w.shapes[contact.shape_a],&w.shapes[contact.shape_b]
+    stamp(w,contact)
+    if contact.extra>=0 {stamp(w,.Blocks,contact.extra)}
     contact.flags-={.Started,.Stopped,.Disjoint}
     was_touching:=.Touching in contact.flags
     if !math.aabb_overlaps(a.fat,b.fat) {
@@ -439,6 +446,7 @@ contacts_update :: proc(w:^World) #no_bounds_check {
             if .Awake not_in w.bodies[other].flags || other>index {
                 st.active[count]=key>>1
                 count+=1
+                stamp(w,contact)
                 contact.flags+={.Visited}
             }
             key=contact.edges[key&1].next

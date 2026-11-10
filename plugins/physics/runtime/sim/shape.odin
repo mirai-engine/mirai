@@ -164,6 +164,7 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
     }
     w.shape_count+=1
     shape:=&w.shapes[index]
+    stamp(w,shape)
     shape^={
         user_data=desc.user_data,
         local={desc.transform.p,q_normalize(desc.transform.q)},size=size,
@@ -176,7 +177,7 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
     if desc.one_way {shape.flags+={.One_Way}}
     if desc.hits {shape.flags+={.Hits};w.hit_shapes+=1}
     shape.tag=desc.tag
-    if body.shape_list>=0 {w.shapes[body.shape_list].prev=index}
+    if body.shape_list>=0 {stamp(w,.Shapes,body.shape_list);w.shapes[body.shape_list].prev=index}
     body.shape_list=index
     body.shape_count+=1
     shape_moved(w,index)
@@ -198,7 +199,7 @@ shape_destroy :: proc(w:^World,h:Shape_Handle,update_mass:=true) {
 }
 
 shape_tag :: proc(w:^World,h:Shape_Handle) -> u32 {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape!=nil?shape.tag:0
 }
 
@@ -223,11 +224,13 @@ shape_destroy_index :: proc(w:^World,index:i32,update_mass,static_log:bool) {
     if w.twin_count>0 {twin_source_removed(w,w.shapes[index].body,index)}
     shape:=&w.shapes[index]
     body:=&w.bodies[shape.body]
+    stamp(w,shape)
+    stamp(w,body)
     if static_log && body.type==.Static {static_log_push(w,shape.aabb)}
     shape_destroy_contacts(w,index)
     spatial.dynamic_tree_remove(&w.trees[body.type==.Static?STATIC_TREE:DYNAMIC_TREE],shape.proxy)
-    if shape.prev>=0 {w.shapes[shape.prev].next=shape.next} else {body.shape_list=shape.next}
-    if shape.next>=0 {w.shapes[shape.next].prev=shape.prev}
+    if shape.prev>=0 {stamp(w,.Shapes,shape.prev);w.shapes[shape.prev].next=shape.next} else {body.shape_list=shape.next}
+    if shape.next>=0 {stamp(w,.Shapes,shape.next);w.shapes[shape.next].prev=shape.prev}
     body.shape_count-=1
     if .Hits in shape.flags {w.hit_shapes-=1}
     shape_refs_add(w,shape,-1)
@@ -408,40 +411,40 @@ shape_proxy :: proc "contextless" (w:^World,shape:^Shape,storage:^[8]Vec3) -> Pr
 }
 
 shape_body :: proc(w:^World,h:Shape_Handle) -> Body_Handle {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape==nil?{}:body_handle(w,shape.body)
 }
 shape_type :: proc(w:^World,h:Shape_Handle) -> Shape_Type {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape==nil?.Sphere:shape.type
 }
 // The hull of a hull shape; zero for any other.
 shape_hull :: proc(w:^World,h:Shape_Handle) -> Hull_Handle {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     if shape==nil || shape.type!=.Hull {return {}}
     return Hull_Handle(base.handle_make(shape.resource,w.hulls[shape.resource].generation))
 }
 // How much the edges of a box, hull or cylinder are rounded; zero for the other shapes.
 shape_convex_radius :: proc(w:^World,h:Shape_Handle) -> f32 {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape==nil?0:shape.radius
 }
 // World box of the shape as of the last step or teleport.
 shape_bounds :: proc(w:^World,h:Shape_Handle) -> Aabb {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape==nil?{}:shape.aabb
 }
 shape_world_transform :: proc(w:^World,h:Shape_Handle) -> Transform {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape==nil?TRANSFORM_IDENTITY:shape_transform_of(w,shape)
 }
 
 shape_local_transform :: proc(w:^World,h:Shape_Handle) -> Transform {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape!=nil?shape.local:Transform{}
 }
 shape_user_data :: proc(w:^World,h:Shape_Handle) -> u64 {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape==nil?0:shape.user_data
 }
 shape_set_user_data :: proc(w:^World,h:Shape_Handle,user_data:u64) {
@@ -449,7 +452,7 @@ shape_set_user_data :: proc(w:^World,h:Shape_Handle,user_data:u64) {
     if shape!=nil {shape.user_data=user_data}
 }
 shape_filter :: proc(w:^World,h:Shape_Handle) -> Filter {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape==nil?{}:shape.filter
 }
 // The contacts of the shape are discarded and found again at the next step under the new filter.
@@ -477,7 +480,7 @@ shape_set_rolling_resistance :: proc(w:^World,h:Shape_Handle,rolling_resistance:
 }
 // Takes effect on the contacts created from now on.
 shape_material :: proc(w:^World,h:Shape_Handle) -> (friction,restitution:f32) {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     if shape==nil {return}
     return shape.friction,shape.restitution
 }
@@ -507,12 +510,12 @@ shape_set_surface :: proc(w:^World,h:Shape_Handle,surface_speed:Vec3,one_way:boo
         side:=key&1
         key=contact.edges[side].next
         if contact.shape_a!=index && contact.shape_b!=index {continue}
-        if !one_way {contact.flags-={.Pass}}
+        if !one_way && .Pass in contact.flags {stamp(w,contact);contact.flags-={.Pass}}
         body_wake(w,side==0?contact.body_b:contact.body_a)
     }
 }
 shape_surface :: proc(w:^World,h:Shape_Handle) -> (surface_speed:Vec3,one_way:bool,dominance:i8) {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     if shape==nil {return}
     return shape.surface_speed,.One_Way in shape.flags,i8(shape.dominance)
 }
@@ -524,7 +527,7 @@ shape_set_drag :: proc(w:^World,h:Shape_Handle,drag:f32) {
     shape.drag=drag>0 && drag<=max(f32)?drag:shape_drag_default(shape.type)
 }
 shape_drag :: proc(w:^World,h:Shape_Handle) -> f32 {
-    shape,_:=shape_get(w,h)
+    shape,_:=shape_read(w,h)
     return shape!=nil?shape.drag:0
 }
 
@@ -556,9 +559,10 @@ shape_fat :: #force_inline proc "contextless" (aabb:Aabb) -> Aabb {
 shape_moved :: proc "contextless" (w:^World,index:i32) #no_bounds_check {
     shape:=&w.shapes[index]
     if .Moved in shape.flags {return}
+    stamp(w,shape)
     shape.flags+={.Moved}
     shape.moved_prev,shape.moved_next=-1,w.moved_head
-    if w.moved_head>=0 {w.shapes[w.moved_head].moved_prev=index}
+    if w.moved_head>=0 {stamp(w,.Shapes,w.moved_head);w.shapes[w.moved_head].moved_prev=index}
     w.moved_head=index
 }
 
@@ -566,7 +570,8 @@ shape_moved :: proc "contextless" (w:^World,index:i32) #no_bounds_check {
 shape_unmoved :: proc "contextless" (w:^World,index:i32) #no_bounds_check {
     shape:=&w.shapes[index]
     if .Moved not_in shape.flags {return}
+    stamp(w,shape)
     shape.flags-={.Moved}
-    if shape.moved_prev>=0 {w.shapes[shape.moved_prev].moved_next=shape.moved_next} else {w.moved_head=shape.moved_next}
-    if shape.moved_next>=0 {w.shapes[shape.moved_next].moved_prev=shape.moved_prev}
+    if shape.moved_prev>=0 {stamp(w,.Shapes,shape.moved_prev);w.shapes[shape.moved_prev].moved_next=shape.moved_next} else {w.moved_head=shape.moved_next}
+    if shape.moved_next>=0 {stamp(w,.Shapes,shape.moved_next);w.shapes[shape.moved_next].moved_prev=shape.moved_prev}
 }

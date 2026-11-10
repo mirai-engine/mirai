@@ -166,7 +166,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
 
 // The options of a Selector or a Dropdown: the elements of the array its
 // items bind, whose enums its text maps to what they show, or its text
-// separated by '|', each a translation when the node is localized.
+// separated by '|', as its key says it when the node is localized.
 @(private)
 tree_options :: proc(b:^Tree_Build,index:int,values:rawptr,content:string) -> Options {
     o:=&b.instance.bounds[index].options
@@ -180,12 +180,7 @@ tree_options :: proc(b:^Tree_Build,index:int,values:rawptr,content:string) -> Op
 // the placeholder of a Field.
 @(private)
 tree_own_text :: proc(b:^Tree_Build,node:^Node,index:int) -> string {
-    tree,instance:=b.tree,b.instance
-    if .Localized in node.flags && index<len(instance.texts) {
-        shown:=instance.texts[index]
-        return string(tree.strings[shown.offset:][:shown.length])
-    }
-    return string(tree.strings[node.text_offset:][:node.text_length])
+    return b.instance.texts[index]
 }
 
 // A Button: clicked by the pointer, by navigation or by its action; with a

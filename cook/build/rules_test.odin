@@ -42,19 +42,15 @@ import "mirai:ui"
 @(component,replicated) Score_Row :: struct {value:f32}
 @(component) Glow :: struct {value:f32}
 @(storage) Hud_State :: struct {value:f32}
-@(storage,events) Clicked :: struct {count:int}
+@(storage) Clicked :: struct {log:core.Events(int)}
 @(storage,events) Hits :: struct {count:int}
 @(storage,queue) Wishes :: struct {count:int}
 @(step="render") hud_scores :: proc(rows:^core.Table(Score_Row)) {}
-@(step="render") hud_spawns :: proc(entities:^core.Entities) {}
 @(step="render release") hud_commands :: proc(commands:core.Commands) {}
 @(step="render",server) hud_rules :: proc() {}
 @(step="render") hud_glow :: proc(glows:^core.Table(Glow),state:^Hud_State,clicked:^Clicked,wishes:^Wishes) {}
 @(step="fixed") glow_reader :: proc(glows:core.Read(Glow),state:core.Ref(Hud_State),clicked:core.Ref(Clicked),wishes:^Wishes) {}
 @(step="frame render") glow_both :: proc(state:^Hud_State) {}
-@(step="frame") hits_shown :: proc(hits:^Hits) {}
-@(step="fixed") hits_ticked :: proc(hits:^Hits) {}
-@(step="fixed") hits_reader :: proc(hits:core.Ref(Hits)) {}
 @(step="ui") hud_drawn :: proc() {}
 @(draw="map") map_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
 @(draw="map") map_again :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
@@ -113,11 +109,10 @@ import "mirai:ui"
         "panel_in_game runs in the game and receives Panel, which is of the editor",
         "panel_fixed runs in fixed, which a rollback runs again, and receives Panel of the editor",
         "hud_scores runs only in ui or render and writes Score_Row, which is replicated",
-        "hud_spawns runs only in ui or render and receives ^core.Entities, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities)",
-        "hud_commands runs only in ui or render and creates or destroys entities",
+        "hud_commands runs only in ui or render and receives core.Commands, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities)",
         "hud_rules is server and runs only in ui or render",
         "glow_reader reads Glow, which only hud_glow writes, in ui or render",
-        "glow_reader runs in fixed and reads Clicked, which only hud_glow fills",
+        "Hits says events, which is no option: what a library reports is a field core.Events(T) of a @(storage), which its owner pushes to and never clears",
         "hud_drawn is a step of the ui phase in a game: a game shows its interfaces as .ui documents",
         `map_again draws "map", which map_draw already draws`,
         "unnamed_draw has @(draw) without a name",

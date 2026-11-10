@@ -222,15 +222,15 @@ a_model_is_turned_to_minus_z_in_place_by_its_rig_or_by_the_front_its_settings_st
 the_front_of_a_source_is_a_setting_kept_with_it_that_makes_another_mesh :: proc(t:^testing.T) {
     for front in Front {
         stated:=Import_Settings{front=front}
-        parsed,ok:=settings_parse(settings_text(stated,context.temp_allocator))
-        testing.expectf(t,ok && parsed==stated,"%v is read as written",front)
+        parsed,ok:=sidecar_parse(sidecar_text({settings=stated},context.temp_allocator),context.temp_allocator)
+        testing.expectf(t,ok && parsed.settings==stated,"%v is read as written",front)
         named,known:=front_from_name(strings.to_lower(fmt.tprint(front),context.temp_allocator))
         testing.expectf(t,known && named==front,"%v is named in lowercase",front)
         for other in Front {
             if other!=front {testing.expectf(t,mesh_settings_hash(stated)!=mesh_settings_hash({front=other}),"%v and %v make the same mesh",front,other)}
         }
     }
-    _,ok:=settings_parse(`{"front": "Up"}`)
+    _,ok:=sidecar_parse(`{"version": 2, "settings": {"front": "Up"}, "folder": "", "outputs": []}`,context.temp_allocator)
     testing.expect(t,!ok,"a front the import does not know is not the settings of a source")
 }
 

@@ -370,10 +370,12 @@ continuous_continue :: proc(w:^World,index:i32,start:f32) {
 @(private)
 continuous_place :: proc(w:^World,index:i32,pose:Transform) {
     body:=&w.bodies[index]
+    stamp(w,body)
     body.position,body.rotation=pose.p,pose.q
     body.center=pose.p+q_rotate(pose.q,body.local_center)
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
         shape:=&w.shapes[s]
+        stamp(w,shape)
         shape.aabb=shape_aabb(w,shape,pose)
         if !math.aabb_contains(shape.fat,shape.aabb) {
             shape.fat=shape_fat(shape.aabb)

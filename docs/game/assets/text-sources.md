@@ -1,37 +1,31 @@
 # Interfaces and scenes as text
 
-A project keeps its interfaces and scenes as files of text under `source/`, and one
-command turns them into the assets the game loads. No editor runs: an agent writes the files with
-its own tools, and git shows what changed.
-
-```
-source/hud/hud.ui.json          ->  assets/hud/hud.ui
-source/arena/main.scene.json    ->  assets/arena/main.scene
-source/player/Player.scene.json ->  assets/player/Player.scene
-```
+A `.ui` and a `.scene` are files of `assets/`, and each reads and writes as a document of text.
+One command reads the document of an asset and makes an asset say a document, with no editor: an
+agent writes the text with its own tools. The asset is the source; the text is kept nowhere.
 
 ## The loop
 
 ```sh
-mirai build editor . --dev      # once, and again after the code of the game changes
-mirai ui write source           # every .ui.json under source/
-mirai scene write source        # every .scene.json
-mirai play test .               # the scenarios of tests/scenarios
+mirai build editor . --dev                        # once, and again after the code changes
+mirai scene read arena/main.scene --out main.json # the document of the scene
+mirai scene write arena/main.scene main.json      # the scene says the document
+mirai ui write hud/score.ui score.json            # an asset that does not exist is made
+mirai play test .                                 # the scenarios of tests/scenarios
 ```
 
-- `mirai ui read --sources` and `mirai scene read --sources` write the text of every asset the
-  project already has: start from them. `read <asset>` prints one.
+- `read <asset>` prints the document, or writes it to `--out`: start from it.
 - A write refuses what it cannot check and exits with 1, saying where in the document and what
   the game has there; the asset stays as it was. `mirai ui check` and `mirai scene check` say what
   would fail without writing.
 - Documents are checked against the game as it was built: a component or a field the code just
   declared is unknown until `mirai build editor . --dev`, and a write says so when the library
   is missing or older than the code.
-- A file that already says its document is left alone, so writing the whole folder is cheap.
+- An asset that already says its document is left alone.
 
 ## An interface
 
-`source/hud/score.ui.json`, the document of [writing-ui.md](../ui/writing-ui.md):
+The document of [writing-ui.md](../ui/writing-ui.md):
 
 ```json
 {"use": ["menu/theme.ui"],
@@ -43,7 +37,8 @@ A widget is a file of its own, named in `use` by its path under `assets/`. Writi
 
 ## A scene
 
-`source/arena/yard.scene.json`: the entities at the top of the file, nesting by `children`.
+The entities at the top of the scene, nesting by `children`. It is the document `scene.write` of
+the editor takes and `scene.inspect` with `root` gives: one grammar, with or without an editor.
 
 ```json
 {"entities": [
@@ -57,9 +52,9 @@ A widget is a file of its own, named in `use` by its path under `assets/`. Writi
 ]}
 ```
 
-- `preset` is a recipe of `scene.add` (`cube`, `sphere`, `plane`, `point_light`, `sun`, `camera`...)
-  or the card of a plugin (`spawn`, `fog`...): it gives the components, and `components` changes
-  their fields or adds others. A field left out starts as its component does.
+- `preset` is a recipe (`cube`, `sphere`, `plane`, `point_light`, `sun`, `camera`...) or the card
+  of a plugin (`spawn`, `fog`...): it gives the components, and `components` changes their fields
+  or adds others. A field left out starts as its component does.
 - `prefab` with the path or the id of a `.scene` that has one entity at the top is a linked
   instance of it, placed the first time. What the document leaves out of it and of its children
   stays as the prefab gives it; what it says of them, by their names, the instance holds on its own.
@@ -68,4 +63,8 @@ A widget is a file of its own, named in `use` by its path under `assets/`. Writi
 - Entities are matched by `id`, else by `name` among their siblings, else by place: keep the names
   and a later write changes those entities instead of making new ones. What the document leaves
   out goes.
+- `"merge": true` beside `entities` keeps what the document leaves out: it names only the
+  entities, components and fields it adds or changes, an entity says `"delete": true` to go and a
+  component `null`. `"root"` names the one entity the document declares instead of the whole
+  scene, by its name, a path `Parent/Child` or its id.
 - A prefab is a scene with one entity at the top: the same document, and no other kind of file.

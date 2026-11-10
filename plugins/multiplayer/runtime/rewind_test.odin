@@ -18,7 +18,7 @@ rewind_put :: proc(history:^Rewind_History,tick:u64,poses:..Rewind_Pose) {
 rewind_pose_interpolates_between_ticks_and_not_across_a_teleport :: proc(t:^testing.T) {
     slots:=u64(31)
     history:=new(Rewind_History)
-    history.frames,history.allocator=make([]Rewind_Frame,slots),context.allocator
+    testing.expect(t,rewind_make(history,int(slots),4,context.allocator))
     defer {rewind_free(history);free(history)}
     runner,other:=core.Entity(5),core.Entity(9)
     turned:=mm.quat_axis_angle({0,1,0},1)
@@ -81,12 +81,11 @@ rewind_tick_is_what_the_client_showed_within_the_limit :: proc(t:^testing.T) {
     testing.expect(t,!ok)
 }
 
-// A body the server simulates and this client does not drive is predicted by
-// default, and interpolated with interpolate_others; the one it drives is
-// predicted either way.
+// A body the server simulates and this client does not drive is shown in the
+// past, unless its Replicate asks to predict it; the one it drives is predicted.
 @(test)
-interpolate_others_shows_bodies_of_others_in_the_past :: proc(t:^testing.T) {
-    for case_ in ([3]struct{others:bool,role:Role,mode:Mode}{{false,.Shown,.Predicted},{true,.Shown,.Interpolated},{true,.Predicted,.Predicted}}) {
+what_a_client_does_not_drive_is_shown_in_the_past_unless_it_is_asked_to_predict_it :: proc(t:^testing.T) {
+    for case_ in ([3]struct{predict:bool,role:Role,mode:Mode}{{false,.Shown,.Interpolated},{true,.Shown,.Predicted},{false,.Predicted,.Predicted}}) {
         f:Correction_Fixture
         described:bool
         f.info,described=net_test_info(t)
@@ -97,10 +96,12 @@ interpolate_others_shows_bodies_of_others_in_the_past :: proc(t:^testing.T) {
         f.app={info=&f.info,allocator=context.allocator,tick_dt=1.0/60,shared=&f.shared}
         net_test_physics(&f.world,&f.shared,&f.app)
         if testing.expect(t,wire.sim_network_init(&f.network,{seed=31,endpoints=2,packets=64})) &&
-           testing.expect(t,net_test_session(&f.session,&f.world,&f.info,&f.app,&f.network,1,.Client,settings={max_objects=8,predicted_capacity=8,replication={history_seconds=0.5},interpolate_others=case_.others})) {
+           testing.expect(t,net_test_session(&f.session,&f.world,&f.info,&f.app,&f.network,1,.Client,settings={max_objects=8,predicted_capacity=8,replication={history_seconds=0.5}})) {
             f.shared.session=&f.session
             r:=net_test_replica(&f.session,core.world_ref(&f.world,&f.info),f.e,case_.role,.Server)
-            testing.expectf(t,r.mode==case_.mode,"interpolate_others %v, role %v: %v, not %v",case_.others,case_.role,r.mode,case_.mode)
+            r.pose.predict=case_.predict
+            replica_classify(&f.session,core.world_ref(&f.world,&f.info),r)
+            testing.expectf(t,r.mode==case_.mode,"Replicate.predict %v, role %v: %v, not %v",case_.predict,case_.role,r.mode,case_.mode)
         }
         correction_fixture_destroy(&f)
     }

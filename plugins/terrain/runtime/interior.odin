@@ -124,29 +124,26 @@ source_interior_apply :: proc(s:^Source) -> bool {
     if s.kind!=.Volume || !source_samples_held(s) || !interior_valid(s.interior,s.layer_count) {return false}
     size:=weights_size(s)
     tops,tops_error:=make([]f32,size.x*size.z,context.temp_allocator)
-    scratch,scratch_error:=make([]Weights,PAGE_VALUES,context.temp_allocator)
-    if tops_error!=nil || scratch_error!=nil {return false}
+    if tops_error!=nil {return false}
     for z in 0..<size.z {for x in 0..<size.x {tops[x+size.x*z]=volume_column_top(s,x,z)}}
     next:Grid(Weights)
     if !grid_init(&next,size,Weights{WEIGHT_FULL,0,0,0},s.allocator) {return false}
-    for &page,i in next.pages {
-        first,_:=grid_page_region(&next,i)
-        extent,count:=grid_page_extent(&next,i)
-        values:=scratch[:count]
+    Columns :: struct {s:^Source,tops:[]f32,width:int}
+    page :: proc(user:rawptr,first,extent:[3]int,values:[]Weights) -> (fill:Weights,uniform:bool) {
+        c:=(^Columns)(user)
         for z in 0..<extent.z {for y in 0..<extent.y {for x in 0..<extent.x {
             q:=first+{x,y,z}
-            p:=source_point(s,q)
+            p:=source_point(c.s,q)
             w:Weights
-            w[interior_layer(&s.interior,p,tops[q.x+size.x*q.z]-p.y)]=WEIGHT_FULL
+            w[interior_layer(&c.s.interior,p,c.tops[q.x+c.width*q.z]-p.y)]=WEIGHT_FULL
             values[x+extent.x*(y+extent.y*z)]=w
         }}}
-        page.fill,page.altered=values[0],true
-        if page_uniform(values) {continue}
-        held,made:=shared_make(Weights,count,s.allocator)
-        if !made {grid_destroy(&next,s.allocator);return false}
-        copy(held,values)
-        page.values=held
+        return
     }
+    columns:=Columns{s,tops,size.x}
+    if !grid_generate(&next,&columns,page,s.allocator) {grid_destroy(&next,s.allocator);return false}
+    for &held in next.pages {held.altered=true}
+    next.filled=true
     grid_destroy(&s.weights,s.allocator)
     s.weights=next
     return true

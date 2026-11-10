@@ -193,16 +193,16 @@ continuous_collision_uses_immutable_sweeps_with_threads_and_after_restore :: pro
             test_bullet(w,{1,0,z},{-200,0,0},true)
         }
     }
-    before:=make([]byte,world_snapshot_size(&a))
-    defer delete(before)
-    world_snapshot(&a,before)
+    before:World
+    defer world_destroy(&before)
+    test_keep(&before,&a)
     for _ in 0..<40 {
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
         testing.expect_value(t,world_hash(&a),world_hash(&b))
     }
     final:=world_hash(&a)
-    testing.expect(t,world_restore(&a,before))
+    testing.expect(t,test_restore(&a,&before))
     test_steps(&a,40)
     testing.expect_value(t,world_hash(&a),final)
 }

@@ -168,6 +168,7 @@ world_step :: proc(w:^World,dt:f32) {
     w.events.counts={}
     if !(dt>0) || w.kept {return}
     st:=&w.step
+    w.source=0
     st.dt,st.inv_dt=dt,1/dt
     st.h=dt/f32(w.desc.substeps)
     st.inv_h=1/st.h
@@ -220,7 +221,7 @@ world_step :: proc(w:^World,dt:f32) {
     joints_break(w)
     islands_sleep(w)
     step_hits(w)
-    for i in st.active[:st.active_count] {w.contacts[i].flags-={.Visited}}
+    for i in st.active[:st.active_count] {stamp(w,.Contacts,i);w.contacts[i].flags-={.Visited}}
     w.stats.awake_bodies=st.awake_count
     w.stats.active_contacts=st.active_count
     w.stats.constraints=st.ref_count
@@ -368,6 +369,8 @@ constraints_gather :: proc(w:^World) #no_bounds_check {
         a,b:=w.bodies[joint.body_a].solver_index,w.bodies[joint.body_b].solver_index
         island_constraint(w,joint.body_a,joint.body_b)
         color:=color_assign(st,a,b)
+        // The solver writes the impulses of every joint it lists, and of its axes.
+        stamp(w,.Joints,i)
         if joint.kernel==.General {
             st.joint_slots[st.joint_count]=i32(color)
             st.joint_data[st.joint_count].joint=i
@@ -555,6 +558,7 @@ finalize_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
     for i in first..<last {
         index:=st.awake[i]
         body:=&w.bodies[index]
+        stamp(w,body)
         solved:=&st.bodies[i]
         // The passes after the last move of the substeps leave velocity along locked axes that never moves the body.
         if body.flags&BODY_LOCKS!={} && st.params[i].inv_mass>0 {solved.v,solved.w=locks_apply(body.flags,solved.v,solved.w)}
@@ -573,6 +577,7 @@ finalize_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
         body.flags-={.Enlarged}
         for s:=body.shape_list;s>=0;s=w.shapes[s].next {
             shape:=&w.shapes[s]
+            stamp(w,shape)
             shape.aabb=shape_aabb(w,shape,xf)
             reach:=shape.aabb
             if .Character in body.flags {reach=spatial.aabb_translate_extend(reach,solved.v*st.dt)}

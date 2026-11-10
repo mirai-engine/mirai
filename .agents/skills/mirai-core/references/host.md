@@ -375,8 +375,6 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
 - `assets_unsaved(a)`: the files that the registry has in memory unwritten.
   `app_asset_changed(app, path)` rereads what is loaded from a file that changed on disk or in
   memory, as when the watcher sees it.
-- `assets_fracture(a,id,&Asset)`: a validated `.fracture` view, valid until the caller closes the
-  file.
 - `assets_material_derive`, `assets_material_values`, `assets_material_faded`,
   `assets_material_overlays`, `assets_postprocess`: derived rows of the material table, with the
   values of a material as an entity or a layer shows it; equal values share a row.
@@ -479,7 +477,8 @@ row.
 ## Content
 
 `Content` (`app_content(app)`, `host/content.odin`) loads on demand what is not meshes or materials:
-`.ui`, `.anim`, `.sound`, `.sound_set`, `.font`, `.strings` and `.prompts`.
+`.ui`, `.anim`, `.sound`, `.sound_set`, `.font` and `.prompts`. The `.strings` are one table of
+the application, as the rows of the records (`host/texts.odin`).
 
 - Each entry carries a `generation` that changes with each load: whoever stores state made for the
   previous one rebuilds it.

@@ -17,7 +17,7 @@ import "mirai:std/serial"
 // the same widget procedures as code does.
 
 Node_Flag :: enum u8 {
-    Localized,   // its text, and each of its options, has translations in its tree, by text_id
+    Localized,   // its text is a key of the texts of the game (Game_Source.texts): it shows what the key says in the language of now
     Draggable,   // the pointer drags it: Dragged, and Dropped on the node it is let go over
     Drop,        // takes what is let go over it
     Focus_First, // takes the focus when its tree takes input and nothing there has it, or when the page of a Switcher that had it gives way to its own
@@ -98,7 +98,6 @@ Node :: struct {
     image:u16,        // index in images plus one; 0: none
     anims:u16,        // index in anim_sets plus one; 0: none
     text_offset,text_length:u32, // in strings
-    text_id:u64,      // Localized: its text among the translations of the tree
     tab:Name_Ref,     // of a node a Tabs holds: its name, in strings, which its tab shows when it has no text
     binds:[Binding]Name_Ref, // the fields it binds, by their names in strings
     fields:[TREE_TEXT_FIELDS]Node_Field_Ref, // what the names in braces of its text show
@@ -120,16 +119,8 @@ Node :: struct {
     order:i16,        // where Tab reaches it among the others; 0: in the order of the tree
 }
 
-// The text of a localized node in a language.
-Translation :: struct {
-    id:u64,       // the text_id of the node
-    language:u64, // name_hash of its code
-    text:Name_Ref,
-}
-
 Widget_Tree :: struct {
     nodes:[]Node,node_count:int,
-    translations:[]Translation,translation_count:int,
     styles:[]Node_Style,style_count:int,
     variants:[]Style_Variant,variant_count:int, // by style and, within one, in the order style_resolve applies them
     style_rules:[]Style_Rules, // of each style: its rules in variants
@@ -149,7 +140,6 @@ Widget_Tree_Desc :: struct {
     allocator:runtime.Allocator, // context.allocator when unset
     max_nodes,max_styles,max_images,max_anim_sets,max_strings:int, // 256, 64, 64, 32 and 4096 when 0
     max_variants:int,
-    max_translations:int, // 64 when 0
     max_grid_tracks:int,  // 8 when 0
     anims:Anim_Library_Desc,
 }
@@ -157,15 +147,14 @@ Widget_Tree_Desc :: struct {
 tree_init :: proc(tree:^Widget_Tree,desc:Widget_Tree_Desc={}) -> bool {
     a:=desc.allocator if desc.allocator.procedure!=nil else context.allocator
     tree^={allocator=a}
-    e:[8]runtime.Allocator_Error
+    e:[7]runtime.Allocator_Error
     tree.nodes,e[0]=make([]Node,desc.max_nodes if desc.max_nodes>0 else 256,a)
     tree.styles,e[1]=make([]Node_Style,desc.max_styles if desc.max_styles>0 else 64,a)
     tree.images,e[2]=make([]Node_Image,desc.max_images if desc.max_images>0 else 64,a)
     tree.anim_sets,e[3]=make([]Anim_Set,desc.max_anim_sets if desc.max_anim_sets>0 else 32,a)
     tree.strings,e[4]=make([]u8,desc.max_strings if desc.max_strings>0 else 4096,a)
     tree.variants,e[5]=make([]Style_Variant,desc.max_variants if desc.max_variants>0 else 64,a)
-    tree.translations,e[6]=make([]Translation,desc.max_translations if desc.max_translations>0 else 64,a)
-    tree.grid_tracks,e[7]=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
+    tree.grid_tracks,e[6]=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
     anims:=desc.anims
     if anims.allocator.procedure==nil {anims.allocator=a}
     e2:[3]runtime.Allocator_Error
@@ -177,7 +166,7 @@ tree_init :: proc(tree:^Widget_Tree,desc:Widget_Tree_Desc={}) -> bool {
 }
 tree_destroy :: proc(tree:^Widget_Tree) {
     a:=tree.allocator
-    delete(tree.nodes,a);delete(tree.styles,a);delete(tree.variants,a);delete(tree.images,a);delete(tree.anim_sets,a);delete(tree.strings,a);delete(tree.translations,a);delete(tree.grid_tracks,a)
+    delete(tree.nodes,a);delete(tree.styles,a);delete(tree.variants,a);delete(tree.images,a);delete(tree.anim_sets,a);delete(tree.strings,a);delete(tree.grid_tracks,a)
     delete(tree.anim_names,a);delete(tree.programs,a);delete(tree.style_rules,a)
     if tree.anims.allocator.procedure!=nil {anim_library_destroy(&tree.anims)}
     tree^={}
@@ -248,7 +237,6 @@ Node_Desc :: struct {
     image:u16,
     anims:u16,
     text:string,
-    text_id:u64, // Localized: its text among the translations of the tree
     fields:[TREE_TEXT_FIELDS]Node_Field_Desc, // the names in braces of its text and the paths they show
     bind_text,bind_value,bind_visible,bind_selected,bind_disabled:string, // names of fields of the bound value
     bind_items:string, // of a List: an array; the nodes it holds bind fields of its elements
@@ -313,7 +301,7 @@ tree_node :: proc(tree:^Widget_Tree,parent:i32,desc:Node_Desc) -> i32 {
     node:=Node{kind=desc.kind,name=hashed(desc.name),parent=parent,layout=desc.layout,float=desc.float,clip=desc.clip,block=desc.block,
         style=desc.style,image=desc.image,anims=desc.anims,layer=desc.layer,variant=style_variant(desc.variant),selected=desc.selected,disabled=desc.disabled,
         index=desc.index,count=desc.count,choice=desc.choice,limit=desc.limit,delay=desc.delay,tag=hashed(desc.tag),accepts=hashed(desc.accepts),ghost=hashed(desc.ghost),particle=desc.particle,draw=hashed(desc.draw),
-        flags=desc.flags,action=hashed(desc.action),hold=desc.hold,range=desc.range,text_id=desc.text_id,
+        flags=desc.flags,action=hashed(desc.action),hold=desc.hold,range=desc.range,
         nav={hashed(desc.nav[0]),hashed(desc.nav[1]),hashed(desc.nav[2]),hashed(desc.nav[3])},order=desc.order}
     text:=keep(tree,desc.text)
     node.text_offset,node.text_length=text.offset,text.length
@@ -393,7 +381,8 @@ Tree_Instance :: struct {
     failure:Bind_Failure,     // why the tree was not taken
     replan:bool,              // a localized text names a path the plan does not read: make the instance again
     language:u64,             // Game_Source.language the localized texts were read in
-    texts:[]Name_Ref,         // of each node: the text it shows in that language
+    texts_generation:u32,     // of Game_Source.texts then
+    texts:[]string,           // of each node: the text it shows by itself, in that language
     slots:[]u32,              // of each node: its first slot
     states:[]Anim_State,      // by slot
     scrolls:[][2]f32,         // by slot: how far a Scroll or a List that clips moved its content, left and up
@@ -405,41 +394,26 @@ Tree_Instance :: struct {
     allocator:runtime.Allocator,
 }
 
-// Adds the text of a localized node in a language (name_hash of its code).
-// False when the tree is full.
-tree_translation_add :: proc(tree:^Widget_Tree,id,language:u64,text:string) -> bool {
-    if tree.translation_count>=len(tree.translations) || tree.string_length+len(text)>len(tree.strings) {return false}
-    ref:=Name_Ref{u32(tree.string_length),u32(len(text))}
-    copy(tree.strings[tree.string_length:],text)
-    tree.string_length+=len(text)
-    tree.translations[tree.translation_count]={id,language,ref}
-    tree.translation_count+=1
-    return true
-}
-
-// The text a node shows in a language: its translation, or its own.
-tree_localized :: proc "contextless" (tree:^Widget_Tree,node:^Node,language:u64) -> Name_Ref {
-    if .Localized in node.flags && language!=0 && node.text_id!=0 {
-        for t in tree.translations[:tree.translation_count] {
-            if t.id==node.text_id && t.language==language {return t.text}
-        }
-    }
-    return {node.text_offset,node.text_length}
+// The text a node shows by itself: its own, or for a Localized one what its
+// key says in a language (base.text); a key the texts lack shows as it is.
+tree_text :: proc "contextless" (tree:^Widget_Tree,node:^Node,texts:^base.Texts,language:u64) -> string {
+    own:=string(tree.strings[node.text_offset:][:node.text_length])
+    if .Localized not_in node.flags {return own}
+    return base.text(texts,own,language) or_else own
 }
 
 // Resolves the paths of the tree against what host gives and makes the plan
 // of the copy (tree_bind); what a List holds binds the elements of its
-// array. texts: those of the language of now, for the paths of the localized
-// templates. A transaction: fails, leaving nothing but failure, when a node
+// array. texts and language: what the localized nodes read their keys in
+// (Game_Source.texts and Game_Source.language). A transaction: fails, leaving nothing but failure, when a node
 // names a path the game does not have or one it cannot show, or the lists
 // need more than TREE_SLOTS slots. Without a host a path binds nothing.
-// language: that of the localized texts (Game_Source.language).
-tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_Host,language:u64=0,allocator:=context.allocator) -> bool {
-    instance^={allocator=allocator,host=host,failure={node=-1},language=language}
+tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_Host,texts:^base.Texts=nil,language:u64=0,allocator:=context.allocator) -> bool {
+    instance^={allocator=allocator,host=host,failure={node=-1},language=language,texts_generation=texts.generation if texts!=nil else 0}
     if host!=nil {instance.schema=host.schema}
     count:=tree.node_count
     e:[6]runtime.Allocator_Error
-    instance.texts,e[5]=make([]Name_Ref,count,allocator)
+    instance.texts,e[5]=make([]string,count,allocator)
     instance.bounds,e[0]=make([]Node_Bound,count,allocator)
     instance.items,e[1]=make([]Node_Items,count,allocator)
     instance.slots,e[2]=make([]u32,count,allocator)
@@ -489,10 +463,9 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         }
         if !ok {break}
         // A localized text is read in the language of now, and its paths with it.
-        instance.texts[i]=tree_localized(tree,&node,language)
-        text:=string(tree.strings[instance.texts[i].offset:][:instance.texts[i].length])
+        instance.texts[i]=tree_text(tree,&node,texts,language)
         first:=len(instance.parts)
-        template,parsed:=tree_template_parse(&instance.parts,text,instance,scope,tree,&node)
+        template,parsed:=tree_template_parse(&instance.parts,instance.texts[i],instance,scope,tree,&node)
         if !parsed {ok=false;instance.failure={node=i,binding=.Text,template=true};break}
         if template {instance.templates[i]={u32(first),u32(len(instance.parts)-first),true}}
         kept[i]=b.text.bound || instance.templates[i].template || .Localized in node.flags
@@ -535,18 +508,19 @@ tree_instance_destroy :: proc(instance:^Tree_Instance) {
 }
 
 // The texts of the localized nodes, and their templates, read again in the
-// language of now. A path the plan does not read asks for the instance
-// again (replan).
+// language and from the texts of now. A path the plan does not read asks for
+// the instance again (replan).
 @(private)
 tree_instance_texts :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance) {
-    if instance.language==ctx.game.language || len(instance.texts)<tree.node_count {return}
-    instance.language=ctx.game.language
+    generation:=ctx.game.texts.generation if ctx.game.texts!=nil else 0
+    if instance.language==ctx.game.language && instance.texts_generation==generation || len(instance.texts)<tree.node_count {return}
+    instance.language,instance.texts_generation=ctx.game.language,generation
     for &kept in instance.kept {kept.valid=false}
     for &node,i in tree.nodes[:tree.node_count] {
         if .Localized not_in node.flags {continue}
         instance.templates[i]={}
-        instance.texts[i]=tree_localized(tree,&node,instance.language)
-        found:=string(tree.strings[instance.texts[i].offset:][:instance.texts[i].length])
+        instance.texts[i]=tree_text(tree,&node,ctx.game.texts,instance.language)
+        found:=instance.texts[i]
         first:=len(instance.parts)
         scope:=instance.scopes[node.parent] if node.parent>=0 else Bind_Scope{}
         template,parsed:=tree_template_parse(&instance.parts,found,instance,scope,tree,&node)
@@ -741,20 +715,14 @@ tree_sound :: proc(ctx:^Context,style:^Node_Style,cue:Sound_Cue) {
     if id:=style.sounds[cue];id!={} && ctx.game.sound!=nil {ctx.game.sound(ctx.game.user,id)}
 }
 
-// The text a node shows: its own, its translation in the language of now,
-// its bound field or its template, kept while the values do not change.
+// The text a node shows: its own or what its key says in the language of
+// now, its bound field or its template, kept while the values do not change.
 @(private)
 tree_node_text :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,values:rawptr) -> string {
-    tree,instance:=b.tree,b.instance
-    own:=string(tree.strings[node.text_offset:][:node.text_length])
+    instance:=b.instance
     bound:=&instance.bounds[index]
     template:=instance.templates[index]
-    localized:=.Localized in node.flags
-    if !bound.text.bound && !template.template {
-        if !localized || index>=len(instance.texts) {return own}
-        shown:=instance.texts[index]
-        return string(tree.strings[shown.offset:][:shown.length])
-    }
+    if !bound.text.bound && !template.template {return instance.texts[index]}
     kept:=&instance.kept[slot]
     if kept.valid {return string(instance.kept_bytes[kept.offset:][:kept.length])}
     made:string
@@ -1478,9 +1446,7 @@ tree_node_state :: proc(tree:^Widget_Tree,instance:^Tree_Instance,index:int) -> 
         }
     }
     if bound.text.bound || instance.templates[index].template {return state,true}
-    shown:=Name_Ref{node.text_offset,node.text_length}
-    if .Localized in node.flags && index<len(instance.texts) {shown=instance.texts[index]}
-    if int(shown.offset)+int(shown.length)<=len(tree.strings) {state.text=string(tree.strings[shown.offset:][:shown.length])}
+    state.text=instance.texts[index]
     return state,true
 }
 

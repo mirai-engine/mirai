@@ -91,8 +91,8 @@ networking ([networking](../mirai-networking/SKILL.md)).
    - `debug_draw.odin`: lines and points for a debug view.
 2. Decide whether the new data is **state** or **scratch**.
    - State: lives in `Body`, `Shape`, `Contact`, `Joint`, `Joint_Axes`, `Island`, `Manifold_Block`,
-     `Character`, `Breakable`, `Piece`, `Bond`, `World_State` or the trees, and enters the snapshot
-     through `snapshot_blocks`.
+     `Character`, `Breakable`, `Piece`, `Bond`, `World_State` or the trees, and enters the state
+     copy through `state_arrays`; whoever writes a slot of a pool stamps its chunk.
    - Scratch: lives in `Step`, `World.manifolds` or the events and is rebuilt every step.
 3. Write the test next to the code (`*_test.odin`, name as a sentence) and run only the affected
    ones.
@@ -107,9 +107,12 @@ networking ([networking](../mirai-networking/SKILL.md)).
   any number of workers: nothing depends on addresses or thread arrival order, new pairs are sorted
   before creating contacts, parallel stages write only to their own element and shared consequences
   (events, waking, destroying contacts) are applied afterwards, in index order.
-- **Everything that influences a future step is in the snapshot.** A cache that changes the path of
-  the narrow phase is state. On restore, slots used after the snapshot go back to zero so that
+- **Everything that influences a future step is in the state copy.** A cache that changes the path
+  of the narrow phase is state. Put back, slots used after the copy go back to zero so that
   generations repeat.
+- **A copy follows what changed.** A write to a slot of a pool stamps its chunk (`stamp`, the
+  `*_get` accessors; `*_read` only reads), and a step does not write what sleeps, an idle character
+  included: a tick where nothing moved copies nothing.
 - State structs without padding or pointers, with `#assert(size_of(...))`: they are copied and
   hashed in blocks.
 - **No allocation in the step.** Memory is reserved in `world_init` according to `World_Desc`; an

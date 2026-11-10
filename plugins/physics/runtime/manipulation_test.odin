@@ -36,6 +36,9 @@ physics_test_settle :: proc(f:^Physics_Test) {core.test_world_settle(&f.w)}
 @(private)
 physics_test_step :: proc(f:^Physics_Test,dt:f32=1.0/60) {
     physics_test_settle(f)
+    // The logs of a tick, as their readers are handed them.
+    e:=&f.events
+    clear(&e.contact_begin.items);clear(&e.contact_end.items);clear(&e.overlap_begin.items);clear(&e.overlap_end.items);clear(&e.sleep.items);clear(&e.wake.items);clear(&e.joint_break.items)
     physics_test_run(f,dt)
     physics_test_settle(f)
 }

@@ -6,7 +6,7 @@ attributes and writes the code that joins the libraries. `mirai generate <projec
 
 `-custom-attribute:` carries `build.CUSTOM_ATTRIBUTES`: `component`, `storage`, `step`, `loops`,
 `stage`, `after`, `before`, `server`, `shared`, `locks`, `host`, `by_world`, `copy`, `swap`, `free`,
-`replicated`, `setting`, `scene`, `description`, `queue`, `events`, `keep`, `reset`, `net_message`,
+`replicated`, `setting`, `scene`, `description`, `queue`, `keep`, `reset`, `net_message`,
 `from`, `reliable`, `params`, `names`, `name_bits`, `name`, `name_requires`, `presentation`,
 `record` and `actions`. The CLI and `cook/build` pass it on their own; a hand-compiled program needs
 it. The
@@ -35,7 +35,7 @@ receives the place of its origin: a type or a function of an editor package neve
 @(component,replicated="owner") @(net_message) @(net_message,from="client",reliable)
 @(component,single) @(component,far) @(storage) @(storage,host) @(storage,setting)
 @(storage,setting="machine")
-@(storage,queue) @(storage,events) @(storage,shared) @(storage,keep) @(storage,persist)
+@(storage,queue) @(storage,shared) @(storage,keep) @(storage,persist)
 @(storage,reset="state_reset")
 @(storage,copy="state_copy",swap="state_swap") @(storage,copy=false) @(storage,free="state_free")
 @(step="fixed late",loops="game editor",stage="end",after="a b",before="c",server)
@@ -69,8 +69,9 @@ receives the place of its origin: a type or a function of an editor package neve
   written by a single library (any of its functions).
 - `queue` (of a storage): a queue of requests; any function receives it with `^` to push and the
   owning library takes it.
-- `events` (of a storage): what a library empties and fills every tick; the others read it with
-  `core.Ref`.
+- A storage with `core.Events(T)` fields holds what its library reports: the owner pushes and
+  never clears, and a function that receives it to read (`core.Ref(S)` or `S`) finds in each log
+  what came since it last ran ([queues](core.md#queues-and-references)).
 - `shared`: several functions may write the table, in loop order. In a storage, several libraries
   write it in loop order: the UI context of each world (`gui.Gui`), the input registries
   (`Input_Map`), the view (`core.View`), the simulation that physics and destruction share
@@ -126,7 +127,7 @@ receives the place of its origin: a type or a function of an editor package neve
   default `core.value_free`.
 - **Class of a `World` storage.** Clearing a world (`core.world_clear`: loading a scene or a save,
   opening a document) removes its entities, and a storage is of one of these classes:
-  - derived (the default, also `queue` and `events`): state that a library derives from the
+  - derived (the default, also `queue` and the logs of events): state a library derives from the
     entities or requests about them; it goes back to its start. What a save must keep goes in a
     component, which is saved and whose `Entity` fields are remapped.
   - `keep`: state of the run, not of its entities (`Time`, `Input`, `View`, the input map, the save
@@ -232,10 +233,13 @@ Each parameter is bound by its type; the order in the signature is free.
 - `^core.Table(C)` writes the table of `C`; `core.Read(C)` reads it.
 - `^S` writes the storage `S`; `core.Ref(S)` reads it without copying; `S`, a copy, for the small
   ones (`Time`, `Input`, `View`).
-- `^core.Entities` creates and destroys entities; `core.Ref(core.Entities)` reads which are alive.
-- `core.Commands`: creates and destroys entities and gives them or takes from them rows of any
-  component, also of tables that the function does not write
-  ([commands](core.md#creating-with-components-of-other-libraries)).
+- `core.Stamp(S)`: the stamp of the storage `S` of the World, for `core.touched(stamp, &seen)`: a
+  function that derives something from a storage makes it again only when the storage was handed
+  out to write.
+- `core.Ref(core.Entities)` reads which entities are alive.
+- `core.Commands`: the one parameter that creates and destroys entities (`core.create`,
+  `core.destroy`), and gives them or takes from them rows of any component, also of tables that
+  the function does not write ([commands](core.md#creating-with-components-of-other-libraries)).
 - `core.World_Ref`: the whole world by reflection, for code that does not know the types (scenes,
   saving, network, the binding of an interface by name, the editor).
 - A part of the application, by the type that names it: `^host.Assets` (nil without assets),
@@ -267,7 +271,7 @@ doors_open :: proc(doors:core.Read(Door),placer:core.Placer,time:core.Time) {...
   builds the struct. For the order, the writer rules, the settle and `CHECK_WRITES`, the function
   receives each field.
 - A write field gives the right to write that data under the same rules as a loose parameter: a
-  table that is not `shared` still has a single writer function.
+  table that is not `shared` is still written by one library.
 - What a function writes reaches it once: also receiving it loose, in another field or in another
   `@(params)` is an error; what it only reads, or a `queue` it pushes to, may arrive twice.
 - It is declared in any package that the generator reads and is used by the functions that import
@@ -287,11 +291,11 @@ all. The ones most often stumbled on:
 - A parameter with a default value: the generator binds them all; whoever calls the function
   outside the loop uses `core.world_run` or passes all of them.
 - A function that returns something.
-- Two writers of a table that is not `shared` in the same loop (the second sends a request through
-  a storage).
-- Two libraries that write (`^S`) a storage that is neither `queue` nor `shared` in the same loop:
-  the other pushes a request to a `queue` storage of the owner.
-- `queue` or `events` on something that is not a storage, or both on one.
+- Two libraries that write a table (`^core.Table(C)`) or a storage (`^S`) that is neither `queue`
+  nor `shared` in the same loop: the other pushes a request to a `queue` storage of the owner.
+  The functions of one library write it in the order of the loop.
+- `queue` on something that is not a storage, or on one that holds a `core.Events`; `events`,
+  which is no option.
 - `keep` or `reset` on something that is not a `World` storage, on a setting or a `copy=false`
   (which already stay), or both on one.
 - An `order=`: functions are not ordered by number; the message says to use a stage and
@@ -330,8 +334,8 @@ those phases (with or without `release`) and that:
 
 - is `server`;
 - writes a `replicated` component;
-- creates or destroys entities (`^core.Entities`, `core.Commands`);
-- writes a table, or a storage that is neither `queue` nor `events`, that a function of another
+- creates or destroys entities (`core.Commands`);
+- writes a table, or a storage that is neither `queue` nor of events, that a function of another
   phase reads and that no function of another phase writes.
 
 Queues and events are left out: what an interface pushes is a request of a player of this end,
@@ -349,7 +353,7 @@ parameters by hand.
 
 - After each function it applies the pending changes with `table_settle` of each `^core.Table` it
   received.
-- A function with `^core.Entities`, `core.Commands` or `core.World_Ref`, or that writes `Disabled`
+- A function with `core.Commands` or `core.World_Ref`, or that writes `Disabled`
   or `Parent`, may touch any table, destroy entities or change what is disabled: after it
   `core.settle` runs on the World and releases the destroyed indices. One that only asks whether an
   entity is alive or off receives `core.Ref(core.Entities)`: it asks for no settle of the World
@@ -381,11 +385,10 @@ between packages; in `fixed`:
 
 - `begin`: the core and the network at the start of the tick: inputs and seats of the connections,
   pose targets.
-- `input`: actions and seats of this machine, bodies that appear, who drives what and the
-  `Move_Input` of what a seat drives.
+- `input`: actions and seats of this machine, bodies that appear, who drives what, the camera of
+  each seat and the `Move_Input` of what a seat drives.
 - `intent`, the default stage: the game logic, which writes `Move_Input` and pushes requests.
-- `apply`: what does what was requested before simulating: spawns, the camera of each seat, paths
-  and animation sampling.
+- `apply`: what does what was requested before simulating: spawns, paths and animation sampling.
 - `simulate`: what feeds physics (locomotion, ragdolls, fields, terrain), the requested places and
   the step.
 - `react`: what reads physics: destruction, animation after physics, game contacts.
@@ -410,7 +413,7 @@ cameras before `camera_follow`. A function of several phases has the same stage 
 - **`after` and `before` say what the parameters do not**: an order against the data (reading the
   last tick on purpose), which one of a cycle runs first, functions of one library that receive
   the same queue or write the same storage, and what goes through `shared` data,
-  `core.Commands`, `^core.Entities` or the application (the renderer, the UI context, the
+  `core.Commands` or the application (the renderer, the UI context, the
   simulation of physics), which order nothing. The order depends only on which function waits for
   which: a name that repeats what the data says changes nothing.
 - **Between stages** the order is already given: an `after` toward an earlier stage is met on its
@@ -434,8 +437,12 @@ it, which [orders it inside its stage](#order), and each form has its reader:
 - `^S`: the function's library owns the storage (or pushes to a `queue`, or it is `shared`), and
   the revision of a `World` storage moves before it runs, so the copy a rollback keeps takes it
   again ([reflection](core.md#world-reflection)).
-- `^core.Entities`, `core.Commands` and `core.World_Ref`: the World settles after the function;
+- `core.Commands` and `core.World_Ref`: the World settles after the function;
   `core.Ref(core.Entities)` asks for no settle.
+- A storage with `core.Events` fields received to read: the call hands the function a copy whose
+  logs hold what came since it last ran, by a cursor per function and log that the World keeps
+  (copied with it for a function of `fixed`, which a rollback runs again; with the frame for the
+  others). `World_Info.events_age` drops what every reader had a frame and a tick to read.
 - `^host.App` and its parts, `core.Records(T)` and the storages of the application or of the
   editor: what the rules of the loops and phases check ([rules](#rules-the-generator-checks)).
 

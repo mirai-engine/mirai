@@ -1084,20 +1084,22 @@ render_highlight_outlines_silhouette_without_scene_rebuild :: proc(t: ^testing.T
 	plain, _ := count_green(r, t, camera)
 	testing.expect_value(t, plain, 0)
 	tlas_nodes := len(r.scene.tlas_nodes)
-	testing.expect(t, scene_set_highlights(r, []u8{1}))
-	testing.expect(t, !scene_set_highlights(r, []u8{1, 1}), "levels must match the instance list")
+	instances[0].highlight = 1
+	testing.expect(t, scene_update(r, 0, instances))
 	testing.expect(t, !r.scene.tlas_dirty || !r.hardware_rt, "a highlight change does not rebuild the hardware TLAS")
 	testing.expect_value(t, len(r.scene.tlas_nodes), tlas_nodes)
 	outlined, center := count_green(r, t, camera)
 	testing.expectf(t, outlined > 40, "the silhouette is outlined, got %d green pixels", outlined)
 	testing.expect(t, !center, "the interior of the highlighted object is not tinted")
-	testing.expect(t, scene_set_highlights(r, []u8{0}))
+	instances[0].highlight = 0
+	testing.expect(t, scene_update(r, 0, instances))
 	cleared, _ := count_green(r, t, camera)
 	testing.expect_value(t, cleared, 0)
 	// A level with a fill coats the object in its color instead of outlining it: the fourth one, in blue.
 	style.fill[3] = 0.8
 	testing.expect(t, renderer_set_highlight_style(r, style))
-	testing.expect(t, scene_set_highlights(r, []u8{4}))
+	instances[0].highlight = 4
+	testing.expect(t, scene_update(r, 0, instances))
 	outlined, _ = count_green(r, t, camera)
 	testing.expect_value(t, outlined, 0)
 	coated, w, h, captured := golden_capture(r)
@@ -1265,7 +1267,8 @@ render_game_outline_shows_behind_walls_as_its_style_says :: proc(t: ^testing.T) 
 	testing.expect(t, renderer_set_outline_style(r, style))
 	red, green = count(r, t, camera)
 	testing.expectf(t, red == 0, "a style that shows nothing behind other surfaces is hidden by the wall: %d red", red)
-	testing.expect(t, scene_set_highlights(r, []u8{1, 0}))
+	instances[0].highlight, instances[1].highlight = 1, 0
+	testing.expect(t, scene_update(r, 0, instances))
 	red, green = count(r, t, camera)
 	testing.expectf(t, green > 40 && red == 0, "the editor's level is drawn in place of the game's: %d green, %d red", green, red)
 	expect_clean(t, f.device)
@@ -1642,7 +1645,7 @@ an_instance_scaled_to_zero_is_drawn_and_traced_as_a_hidden_one :: proc(t: ^testi
 		testing.expectf(t, inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED) == INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED, "%s: the instance is hidden by its transform", what)
 		testing.expectf(t, inst.world_inv == {} && s.hw_instances[index].transform == {} && s.hw_instances[index].mask_flags & 0xff == 0, "%s: rays have no way into it", what)
 		item := s.tlas_items[index]
-		testing.expectf(t, item.bounds_min == item.bounds_max, "%s: its box %v is a point", what, item)
+		testing.expectf(t, item.min == item.max, "%s: its box %v is a point", what, item)
 	}
 
 	testing.expect(t, scene_move(r, {2}, {trs({0, 1.5, 0}, {0, 0, 0})}))
@@ -1747,7 +1750,7 @@ tlas_exact :: proc(s: ^Scene_State, node: int) -> (bmin, bmax: Vec3, ok: bool) {
 	if n.count > 0 {
 		for ref in s.tlas_refs[n.left_first:][:n.count] {
 			item := s.tlas_items[ref &~ TLAS_REF_GLASS]
-			for axis in 0 ..< 3 {bmin[axis], bmax[axis] = min(bmin[axis], item.bounds_min[axis]), max(bmax[axis], item.bounds_max[axis])}
+			for axis in 0 ..< 3 {bmin[axis], bmax[axis] = min(bmin[axis], item.min[axis]), max(bmax[axis], item.max[axis])}
 		}
 	} else {
 		for child in ([2]int{int(n.left_first), int(n.left_first) + 1}) {

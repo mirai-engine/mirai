@@ -12,12 +12,13 @@ import "mirai:project"
 
 // The imports of demo/source/textures and demo/source/models into
 // demo/assets, with sources.import_source as the editor and mirai import do.
-// Each image is read as its use asks, which its name tells; the maps of the
-// materials name it by the id that use gives.
+// Each image is read as its use asks, which its name tells the first time and
+// its sidecar keeps; the maps of the materials name it by the id its sidecar
+// gives it. Their textures and meshes go to the imported folder of the demo,
+// which mirai build makes again from these sources on a checkout without it.
 
 // The cutoff of the masked materials that read an image: every level of its
-// texture keeps that coverage. Their settings are written next to them, so
-// the editor and mirai import give the same textures when they import them.
+// texture keeps that coverage.
 @(private) ALPHA_COVERAGE :: [?]struct{file:string,cutoff:f32}{{"grate_color.png",0.5},{"leaves_color.png",0.5}}
 
 // Files under a folder, relative to it with forward slashes, sorted.
@@ -38,17 +39,17 @@ files_under :: proc(folder:string,out:^[dynamic]string,relative:="") {
 
 // The textures built by an import before, which the editor of the demo shares.
 @(private="file")
-texture_cache :: proc(o:^Out) -> string {return project.cache_path(fmt.tprintf("%s/demo",o.root),project.TEXTURE_CACHE,allocator=context.temp_allocator)}
+texture_cache :: proc(o:^Out) -> string {return project.content_cache_path(fmt.tprintf("%s/demo",o.root),project.TEXTURE_CACHE,allocator=context.temp_allocator)}
 
 // How an image is read, by the end of its name: _normal a normal map, _orm
 // occlusion, roughness and metalness as they are, any other a color.
 @(private)
 texture_options :: proc(o:^Out,file:string) -> importer.Import_Options {
     stem:=filepath.stem(file)
-    options:=importer.Import_Options{root=fmt.tprintf("%s/demo",o.root),image=.Color,no_save=true,texture_cache=texture_cache(o)}
+    options:=importer.Import_Options{root=fmt.tprintf("%s/demo",o.root),image=.Color,texture_cache=texture_cache(o)}
     if strings.has_suffix(stem,"_normal") {options.image=.Normal} else if strings.has_suffix(stem,"_orm") {options.image=.Data}
     for entry in ALPHA_COVERAGE {
-        if entry.file==file {options.alpha_coverage,options.ignore_stored,options.no_save=entry.cutoff,true,false}
+        if entry.file==file {options.alpha_coverage,options.ignore_stored=entry.cutoff,true}
     }
     return options
 }

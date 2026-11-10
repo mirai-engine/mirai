@@ -14,7 +14,7 @@ storage whose only field is the provider, with its default:
   [document](#particle-document), which also makes the content browser list the type.
 - `Vfx_Thumbnails` (`editor.Thumbnail_Provider` with `image`): the [thumbnails](#thumbnails).
 - `Vfx_Cards` (`editor.Card_Provider`): the **Particles** card of Create, in Logic, which adds
-  `PARTICLE_EMITTER_DEFAULT`; `scene.add` with `preset` `particles` creates it. It is the card of
+  `PARTICLE_EMITTER_DEFAULT`; `scene.write` with `preset` `particles` creates it. It is the card of
   `Particle_Emitter`: the icon of its entities and of its section.
 - `Vfx_Inspector` (`editor.Inspector_Provider`): the [section](#particle_emitter-section) of
   `Particle_Emitter`; `within` says that `Particle_Override` and `Particle_Parameters` are shown

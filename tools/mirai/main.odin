@@ -15,7 +15,7 @@ Command :: struct {name,usage,summary:string,run:proc(root:string,args:[]string)
 COMMANDS :: [?]Command{
     {"build",BUILD_USAGE,"Builds the mirai tool into bin/",cmd_build},
     {"build",BUILD_ENGINE_USAGE,"Builds the engine libraries, their declarations and the programs that load a project",cmd_build},
-    {"build",BUILD_PROJECT_USAGE,"Builds the editor, the game or the dedicated server of a project",cmd_build},
+    {"build",BUILD_PROJECT_USAGE,"Builds the editor, the game or the dedicated server of a project; the game to ship with --release",cmd_build},
     {"generate",GENERATE_USAGE,"Generates the world of a project from the attributes of its packages",cmd_generate},
     {"edit",EDIT_USAGE,"Generates, builds and opens the editor of a project",cmd_edit},
     {"play",PLAY_USAGE,"Generates, builds and plays a project without cooking its assets",cmd_play},
@@ -44,7 +44,7 @@ COMMANDS :: [?]Command{
     {"rpc",RPC_USAGE,"Calls a method of the editor of the project or of the given port, shows fields of the response or waits for a state; describe shows the params of the methods",cmd_rpc},
     {"docs",DOCS_USAGE,"Prints the game documentation of this engine: the index, a topic or one section of it",cmd_docs},
     {"mcp",MCP_USAGE,"MCP server over stdio that forwards to the editor of the project or of the given port; gives the editor tools and those of the plugins in --plugins",cmd_mcp},
-    {"texts",TEXTS_USAGE,"Takes the translatable texts of the project's .ui files to a CSV to translate, and back, through the open editor",cmd_texts},
+    {"texts",TEXTS_USAGE,"Lists, sets and checks the texts of a project by key (its .strings, which its interfaces, its game data and its code show), and takes them to a CSV for translators and back, with no editor",cmd_texts},
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
     {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
@@ -84,6 +84,7 @@ installed_runs :: proc(args:[]string) -> bool {
 
 usage :: proc() {
     fmt.eprintln("Usage: mirai <command> [arguments]")
+    fmt.eprintln("A command that builds or picks engine binaries is --dev unless --release is given; package is always --release, and the game to ship is build game --release.")
     for command in COMMANDS {fmt.eprintfln("  %-52s %s",command.usage,command.summary)}
 }
 
@@ -263,7 +264,8 @@ check_project :: proc(root,folder:string) -> int {
     opened,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
     clean:=plugin_api_lint_project(&opened)
-    job:=build.job_run({project=&opened,target=.Editor,action=.Check})
+    // Against the declarations an agent builds with: a check comes before a --dev build.
+    job:=build.job_run({project=&opened,target=.Editor,action=.Check,engine=.Dev})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {

@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "mirai:core"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
+import render "mirai:engine/render"
 import mm "mirai:std/math"
 import portals "plugins:portals/runtime"
 
@@ -20,7 +21,6 @@ import portals "plugins:portals/runtime"
 // that goes through it back to where it started, also a thrown one: the
 // cubes are bullets, whose sweep meets thin triggers. A button in the floor
 // (Floor_Button) opens its door while a cube or the player stands on it.
-// The scene and the prefab of the player are written by tools/demo_content.
 
 PORTAL_SIZE :: [2]f32{1.3,2.2} // m, of the opening
 PORTAL_LIFT :: f32(0.02)        // m the opening stands off its wall
@@ -33,7 +33,6 @@ THROW_CUBE_SPEED :: f32(9)      // m/s
 FALL_LIMIT :: f32(-30)          // m: a cube below this height goes back to where it started
 
 Portal_Color :: enum u8 {Blue,Orange}
-PORTAL_GLOW :: [Portal_Color][3]f32{.Blue={0.1,0.4,1},.Orange={1,0.3,0.02}}
 
 @(component,description="The portal gun of the player: it opens the two portals and carries a cube.")
 Portal_Gun :: struct {
@@ -56,7 +55,6 @@ Portal_Surface :: struct {}
 @(component,description="A cube of the chamber. It goes back to where it started when it passes a grill or falls out of the chamber.")
 Portal_Cube :: struct {
     home:[3]f32 `mirai:"transient"`,
-    homed:bool `mirai:"transient"`,
 }
 
 @(component,description="A grill of light: who walks through it loses the portals, and a cube that goes through it goes back to where it started.")
@@ -197,7 +195,7 @@ portal_gun :: proc(
     rims:core.Read(portals.Portal_Rim),openings:core.Read(portals.Portal),
     colliders:core.Read(phys.Collider),inputs:core.Read(inp.Move_Input),drivables:core.Read(inp.Drivable),actions:inp.Input_Of(Action),worlds:core.Read(core.World_Transform),
     transforms:^core.Table(core.Transform),physics:core.Ref(phys.Physics_State),bodies:^phys.Body_Requests,
-    characters:core.Read(core.Motion),passes:^Grill_Passes,
+    characters:core.Read(core.Motion),passes:core.Ref(Grill_Passes),
 ) {
     // A player that went through a grill loses the portals and what it carries; a cube that did is let go.
     for passed in passes.queue.items {
@@ -210,7 +208,6 @@ portal_gun :: proc(
             }
         }
     }
-    core.queue_clear(&passes.queue)
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
         gun:=core.at(guns,row)
@@ -291,14 +288,14 @@ portal_gun :: proc(
     }
 }
 
-// Who went through a grill in the last tick: the gun of a player loses its portals, a cube goes home.
-@(storage,queue)
-Grill_Passes :: struct {queue:core.Queue(core.Entity)}
+// Who went through a grill: the gun of a player loses its portals, a cube goes home.
+@(storage)
+Grill_Passes :: struct {queue:core.Events(core.Entity)}
 
 // Each opening leads to the other once both are placed, cut into the wall it is on; the film of a mouth
 // shows while it leads nowhere, and a mouth not placed is not drawn.
 @(step="fixed",after="portal_gun")
-portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals.Portal),shows:^Show_Requests) {
+portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals.Portal),hidden:^core.Table(render.Hidden)) {
     opening_of :: proc(mouths:core.Read(Portal_Mouth),color:Portal_Color) -> (core.Entity,bool) {
         for row in 0..<core.count(mouths) {
             mouth:=core.at(mouths,row)
@@ -315,8 +312,8 @@ portal_links :: proc(mouths:core.Read(Portal_Mouth),openings:^core.Table(portals
             written:=core.edit(openings,mouth.opening)
             written.exit,written.wall=exit,wall
         }
-        ask_hidden(shows,core.entity_at(mouths,row),!mouth.placed)
-        ask_hidden(shows,mouth.film,exit!=core.NONE)
+        render.set_hidden(hidden,core.entity_at(mouths,row),!mouth.placed)
+        render.set_hidden(hidden,mouth.film,exit!=core.NONE)
     }
 }
 
@@ -336,9 +333,8 @@ portal_chamber :: proc(
         e:=core.entity_at(cubes,row)
         placed,has:=core.get(worlds,e)
         if !has {continue}
-        if !core.at(cubes,row).homed {
-            cube:=core.edit_at(cubes,row)
-            cube.home,cube.homed=placed.position,true
+        if core.added(cubes,row) {
+            core.edit_at(cubes,row).home=placed.position
         } else if placed.position.y<FALL_LIMIT {
             home(cubes,placer,e)
         }

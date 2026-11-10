@@ -17,7 +17,7 @@ import "mirai:std/serial"
 
 // Whether the editor plays this asset to be heard now.
 sound_heard :: proc(s:^Session,id:base.Asset_Id) -> bool {
-    return s.heard_sound.sound==id && eaudio.playing(s.app.mixer,s.heard)
+    return s.heard_sound.sound==id && s.app.mixer!=nil && mixer.voice_valid(s.app.mixer,s.heard)
 }
 
 // Plays an asset to be heard, at its own volume and pitch on the master bus,
@@ -26,13 +26,16 @@ sound_hear :: proc(s:^Session,id:base.Asset_Id,volume:f32=1,pitch:f32=1) -> bool
     return sound_hear_source(s,{sound=id,bus=eaudio.BUS_MASTER,volume=volume,pitch=pitch})
 }
 
-// Plays the sound of a source as it is set (eaudio.play_source), with the
-// buses as the settings of the project say.
+// Plays the sound of a source as it is set, in no place, with the buses as
+// the settings of the project say.
 sound_hear_source :: proc(s:^Session,source:eaudio.Audio_Source) -> bool {
     sound_hear_stop(s)
+    if s.app.mixer==nil {return false}
     content_used(s,source.sound)
     eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
-    s.heard=eaudio.play_source(s.app,{},source)
+    heard:=source
+    heard.spatial=false
+    s.heard,_=eaudio.voice_start(s.app.mixer,s.app,heard,core.NONE,nil)
     if s.heard=={} {return false}
     s.heard_sound=source
     return true
@@ -45,12 +48,17 @@ sound_hear_tune :: proc(s:^Session,source:eaudio.Audio_Source) {
         sound_hear_source(s,source)
         return
     }
-    eaudio.source_tune(s.app.mixer,s.heard,source)
+    m:=s.app.mixer
+    mixer.voice_set_volume(m,s.heard,source.volume)
+    mixer.voice_set_pitch(m,s.heard,source.pitch>0?source.pitch:1)
+    mixer.voice_set_pan(m,s.heard,source.pan)
+    mixer.voice_set_loop(m,s.heard,source.loop)
+    mixer.voice_set_reverb(m,s.heard,source.reverb)
     s.heard_sound=source
 }
 
 sound_hear_stop :: proc(s:^Session) {
-    if s.heard!={} {eaudio.stop(s.app.mixer,s.heard)}
+    if s.heard!={} && s.app.mixer!=nil {mixer.voice_stop(s.app.mixer,s.heard)}
     s.heard,s.heard_sound={},{}
 }
 

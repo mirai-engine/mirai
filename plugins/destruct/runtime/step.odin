@@ -61,10 +61,6 @@ destruct_step :: proc(
     elsewhere:^core.Table(render.Drawn_Elsewhere),transforms:^core.Table(core.Transform),ids:^core.Table(core.Id),
     colliders:core.Read(physics.Collider),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,
 ) {
-    core.queue_clear(&events.fractured)
-    core.queue_clear(&events.applied)
-    core.queue_clear(&events.replayed)
-    core.queue_clear(&events.grouped)
     if cache==nil || !state.ready || !time.playing || time.dt<=0 {return}
     room:=physics.breakable_room(core.ref(state))
     if !cache_make(cache,room) {
