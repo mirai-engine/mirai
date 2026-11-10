@@ -164,12 +164,12 @@ History and recording:
   **Play from here**, among the strip controls when it went back (`play.pause` with `here`),
   continues from the frame it is at, edited or not, and discards the later ones.
 - The right button on the ruler of any time strip (`timeline_strip`: Play, assets that play,
-  cinematics) sets an end of its range at that frame (the other end stays while start stays before
-  end; otherwise, or without a range, it goes to the head or to the edge). Where the document
-  describes its range (`Ai_Range`), Copy range puts a few lines on the clipboard, paths relative
-  to the assets and never absolute: the ticks, the run (`Run.id`) and the scene of a Play; the
-  frames, the asset and its clip; or the ticks, the cinematic and its scene. With a range, the AI
-  button of the strip attaches the same to the next message of the chat
+  the Tracks tool) sets an end of its range at that frame (the other end stays while start stays
+  before end; otherwise, or without a range, it goes to the head or to the edge). Where the
+  document describes its range (`Ai_Range`), Copy range puts a few lines on the clipboard, paths
+  relative to the assets and never absolute: the ticks, the run (`Run.id`) and the scene of a Play;
+  the frames, the asset and its clip; or the ticks, the entity whose clip it is and its scene. With
+  a range, the AI button of the strip attaches the same to the next message of the chat
   ([ranges of a message](ai-tasks.md#assets-of-a-message)).
 - Stop keeps the user's Play that has a history, with its World and voices stopped
   (`Session.replay`), until the next Play, a change of document or a reload of code: `play.history`

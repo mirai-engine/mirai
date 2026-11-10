@@ -52,6 +52,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [skeletons](references/animation-authoring.md#skeletons-sockets-and-profiles),
   [graphs](references/animation-authoring.md#motion-matching-graphs-and-additive-spaces) and
   [per-instance control](references/animation-authoring.md#per-instance-control-and-preview).
+- Placing, moving and easing keys by hand in the editor, keying from the gizmo, a track for a
+  field of an entity: [Tracks tool](references/animation-authoring.md#tracks-tool).
 - `animation.*`, `skeleton.*` and `pose.profile.*` methods and their common errors:
   [methods](references/animation-api.md#animation-api-methods) and
   [common errors](references/animation-api.md#common-errors).
@@ -194,6 +196,8 @@ Adapt the source's data to these features instead of rebuilding its runtime:
 - The API expresses intent with names and defaults: it resolves handles and indices inside the
   plugin, separates targets from influence and activation, and publishes solver details only through
   optional inspection.
+- The Tracks tool is the one editor of the keys of every clip and keeps only its view; each of its
+  gestures is a call of an `animation.*` method.
 - Asset edits go through the editor's file history: one step per call, attributed to the AI turn,
   which `history.undo` and `history.redo` undo and redo. They stay in memory unsaved like the other
   assets: the disk does not change until saved and a created asset exists only in the registry.

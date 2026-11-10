@@ -136,6 +136,44 @@ field_entity :: proc "contextless" (state:^Playing,node:u64) -> core.Entity {
     return core.NONE
 }
 
+Field_Problem :: enum u8 {None,Component,Path,Type}
+
+// Where the field a "@field" track names is in a row of its component, and how a number of the
+// track goes in: what makes it unwritable otherwise. The editor reads with it what a key takes.
+field_resolve :: proc(world:core.World_Ref,schema:^serial.Schema,component,path:string,property:lib.Property) -> (bound:Field_Bound,problem:Field_Problem,error:serial.Path_Error) {
+    _,table:=core.world_table_named(world,component)
+    if table==nil {return bound,.Component,.None}
+    type,added:=serial.schema_add_type_info(schema,table.info)
+    target:serial.Path_Target
+    target,error,_=serial.path_resolve(schema,type,path)
+    if !added || error!=.None {return bound,.Path,error}
+    bound={property=property,table=table,offset=u32(target.offset),count=1}
+    part:=schema.types[target.type]
+    valid:=!target.text
+    if target.bit>=0 {
+        bound.kind,bound.bit,bound.size=.Bit,u8(target.bit&7),1
+        bound.offset+=u32(target.bit>>3)
+    } else {
+        if part.kind==.Array && part.count>=2 && part.count<=4 {
+            bound.count=u8(part.count)
+            part=schema.types[part.elem]
+            valid&&=part.kind==.Float
+        }
+        // An enum or a bit set is an integer with names: a curve does not write it whole.
+        valid&&=part.named==.None
+        #partial switch part.kind {
+        case .Float: bound.kind=.Float;valid&&=part.size==4 || part.size==8
+        case .Bool: bound.kind=.Bool;valid&&=part.size==1
+        case .Int: bound.kind=.Signed;valid&&=part.size<=8
+        case .Uint: bound.kind=.Unsigned;valid&&=part.size<=8
+        case: valid=false
+        }
+        bound.size=u8(min(part.size,8))
+    }
+    valid&&=(bound.count==1)==(property==.Float)
+    return bound,.None if valid else .Type,.None
+}
+
 // Finds the component and the field each "@field" curve of what plays writes. What cannot be
 // written is a problem of the animated entity and is left out.
 @(private)
@@ -153,49 +191,42 @@ fields_bind :: proc(fields:^Field_Playback,world:core.World_Ref,playback:^Playba
                 core.report(problems,state.entity,"animation.field_target","a track of its clip writes %s.%s of an entity this one does not animate: none below it has the name of the track, and none names it in Animation_Target.animation; name the entity as the track does, or give it an Animation_Target with this entity and that name",component,path)
                 continue
             }
-            _,table:=core.world_table_named(world,component)
-            if table==nil {
+            bound,problem,error:=field_resolve(world,&schema,component,path,field.property)
+            switch problem {
+            case .None:
+            case .Component:
                 core.report(problems,state.entity,"animation.field_component","a track of its clip writes %s.%s, and the game has no component %s; name a component of the game in the target of the track, as @field/Point_Light.intensity",component,path,component)
                 continue
-            }
-            type,added:=serial.schema_add_type_info(&schema,table.info)
-            target,error,_:=serial.path_resolve(&schema,type,path)
-            if !added || error!=.None {
+            case .Path:
                 core.report(problems,state.entity,"animation.field_path","a track of its clip writes %s.%s, which is not a field of %s (%v); name one of its fields, with a dot for a field inside another and [n] for an element",component,path,component,error)
                 continue
-            }
-            bound:=Field_Bound{player=state.entity,entity=e,curve=field.curve,property=field.property,slot=field.slot,table=table,offset=u32(target.offset),count=1}
-            part:=schema.types[target.type]
-            valid:=!target.text
-            if target.bit>=0 {
-                bound.kind,bound.bit,bound.size=.Bit,u8(target.bit&7),1
-                bound.offset+=u32(target.bit>>3)
-            } else {
-                if part.kind==.Array && part.count>=2 && part.count<=4 {
-                    bound.count=u8(part.count)
-                    part=schema.types[part.elem]
-                    valid&&=part.kind==.Float
-                }
-                // An enum or a bit set is an integer with names: a curve does not write it whole.
-                valid&&=part.named==.None
-                #partial switch part.kind {
-                case .Float: bound.kind=.Float;valid&&=part.size==4 || part.size==8
-                case .Bool: bound.kind=.Bool;valid&&=part.size==1
-                case .Int: bound.kind=.Signed;valid&&=part.size<=8
-                case .Uint: bound.kind=.Unsigned;valid&&=part.size<=8
-                case: valid=false
-                }
-                bound.size=u8(min(part.size,8))
-            }
-            valid&&=(bound.count==1)==(field.property==.Float)
-            if !valid {
+            case .Type:
                 core.report(problems,state.entity,"animation.field_type","a track of its clip writes %s.%s, which a %v track cannot write; a Float track writes a number, a flag or a member of a bit set, and a Vector track a vector or a color of 2 to 4 numbers",component,path,field.property)
                 continue
             }
+            bound.player,bound.entity,bound.curve,bound.slot=state.entity,e,field.curve,field.slot
             if append(&fields.fields,bound)!=1 {return false}
         }
     }
     return true
+}
+
+// The value a field holds as its track would key it: what field_write writes, read back.
+field_read :: proc "contextless" (bound:Field_Bound,data:[^]u8) -> (value:mm.Vec4) {
+    for i in 0..<int(bound.count) {
+        at:=data[int(bound.offset)+i*int(bound.size):]
+        switch bound.kind {
+        case .Float: value[i]=intrinsics.unaligned_load((^f32)(at)) if bound.size==4 else f32(intrinsics.unaligned_load((^f64)(at)))
+        case .Bool: value[i]=1 if at[0]!=0 else 0
+        case .Bit: value[i]=1 if at[0]&(u8(1)<<bound.bit)!=0 else 0
+        case .Signed,.Unsigned:
+            number:u64
+            intrinsics.mem_copy_non_overlapping(&number,at,int(bound.size))
+            shift:=64-uint(bound.size)*8
+            value[i]=f32(i64(number<<shift)>>shift) if bound.kind==.Signed else f32(number)
+        }
+    }
+    return
 }
 
 @(private)
