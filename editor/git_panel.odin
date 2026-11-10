@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
+import "mirai:editor/git"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:ui"
@@ -61,7 +62,7 @@ git_init_build :: proc(s:^Session) {
         ui.checkbox(ctx,ui.id(ctx,"git_lfs"),&g.lfs)
         ui.label(ctx,"Use Git LFS for textures, meshes and sounds",th.font_small,th.text_label)
     }
-    if ui.button(ctx,ui.id(ctx,"git_init"),{label="Initialize repository",style=.Accent,width=-1,center=true,disabled=git_working(g)}).clicked {
+    if ui.button(ctx,ui.id(ctx,"git_init"),{label="Initialize repository",style=.Accent,width=-1,center=true,disabled=git.working(g)}).clicked {
         if message:=git_init(s);message!="" {notify(s,message)}
     }
 }
@@ -69,7 +70,7 @@ git_init_build :: proc(s:^Session) {
 @(private)
 git_changes_build :: proc(s:^Session,width,room:f32) {
     g:=s.git;ctx:=s.gui.ctx;th:=&ctx.theme
-    busy:=git_working(g)
+    busy:=git.working(g)
     has_remote:=base.text_get(g.remote[:])!=""
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=6,align_y=.Center}) {
         ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),th.text_muted,14)
@@ -80,7 +81,7 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
             if message:=git_pull(s);message!="" {notify(s,message)}
         }
         if ui.button(ctx,ui.id(ctx,"git_push"),{label="Push",icon=ui.icon_user(u8(User_Icon.Up)),icon_size=13,detail=g.ahead>0?fmt.bprintf(ahead[:],"↑%d",g.ahead):"",style=.Field,disabled=busy || !has_remote || g.upstream && g.ahead==0}).clicked {
-            if message:=git_push(s);message!="" {notify(s,message)}
+            if message:=git.push(s.git,s.app.platform,git_roots(s));message!="" {notify(s,message)}
         }
     }
     if documents_dirty(s) || len(assets_unsaved(s))>0 {
@@ -115,7 +116,7 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
             if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center,padding={4,0,12,0},fill=ai_pointer_on(ctx,row)?th.chip:{},radius=th.radius_control}) {
                 included:=!change.left_out
                 if ui.checkbox(ctx,ui.id(ctx,"include"),&included,busy) {change.left_out=!included}
-                path:=git_change_path(g,&change)
+                path:=git.change_path(g,&change)
                 slash:=strings.last_index_byte(path,'/')
                 icon,color:=git_change_icon(s,registry,path)
                 ui.icon(ctx,icon,color,14)
@@ -214,7 +215,7 @@ git_discard_modal :: proc(s:^Session) {
     closed:=false
     defer if closed {modal_close(gui)}
     if ui.modal(ctx,shell_id(gui,"git_discard"),{width=400,padding=16,gap=12,close=&closed}) {
-        files:=make([dynamic]^Git_Change,context.temp_allocator)
+        files:=make([dynamic]^git.Change,context.temp_allocator)
         for &change in g.changes {
             if change.status!='U' && (path=="" || base.text_get(change.path[:])==path) {append(&files,&change)}
         }
@@ -222,7 +223,7 @@ git_discard_modal :: proc(s:^Session) {
         registry:=files_registry(s)
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
             for change in files[:min(len(files),GIT_DISCARD_ROWS)] {
-                file:=git_change_path(g,change)
+                file:=git.change_path(g,change)
                 icon,color:=git_change_icon(s,registry,file)
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(26),gap=8,padding={8,0,8,0},align_y=.Center,fill=th.field,radius=4}) {
                     ui.icon(ctx,icon,color,14)

@@ -232,8 +232,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 ## Verification
 
 - `mirai check editor` and the `editor/` of the affected plugin; `mirai test editor <names>` with
-  the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`. The editor's
-  tests need more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
+  the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; git commands
+  and what they print: `mirai test editor/git`. The editor's tests need more memory than the
+  default limit (`MIRAI_COMPILER_MEMORY=14`).
 - AI panel: the line diff, `mirai test editor/diff`; the thread as Markdown and multi-line messages,
   `ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills`; the steps of the
   agent's tools,

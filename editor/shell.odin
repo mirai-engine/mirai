@@ -7,6 +7,7 @@ import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/git"
 import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
@@ -149,7 +150,7 @@ Editor_Ui :: struct {
     save_then:bool, // a Save As asked by the question about unsaved changes goes on with what waits
     confirm_assets:[dynamic]string, // the unsaved assets the question lists, by their path in the registry
     delete_asset:base.Asset_Id,     // what Modal.Delete_Asset asks about
-    discard_path:[GIT_PATH_BYTES]u8, // what Modal.Git_Discard asks about; empty: every change
+    discard_path:[git.PATH_BYTES]u8, // what Modal.Git_Discard asks about; empty: every change
     unsaved_uses:[dynamic]Unsaved_Use,
     drag:Drag,
     placement:Placement,

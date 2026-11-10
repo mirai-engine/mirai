@@ -686,7 +686,7 @@ delivery_add :: proc(s:^Store,conversation:u64,kind,text:string) -> string {
 }
 
 // What waits to reach a conversation, the oldest first.
-deliveries :: proc(s:^Store,conversation:u64,allocator:=context.temp_allocator) -> (deliveries:[]Delivery,message:string) {
+deliveries :: proc(s:^Store,conversation:u64,allocator:=context.temp_allocator) -> (waiting:[]Delivery,message:string) {
     if s.db==nil {return nil,fail(s,NOT_OPEN)}
     statement,ok:=db_prepare(s,"SELECT id,conversation,kind,text,created_at FROM deliveries WHERE conversation=?1 ORDER BY id",i64(conversation))
     if !ok {return nil,db_fail(s,"Could not read the deliveries")}
@@ -718,7 +718,7 @@ pin_add :: proc(s:^Store,kind,ref,label:string) -> string {
     return db_write(s,"Could not save the pin","INSERT INTO pins(kind,ref,label,created_at) VALUES(?1,?2,?3,?4)",kind,ref,label,now())
 }
 
-pins :: proc(s:^Store,allocator:=context.temp_allocator) -> (pins:[]Pin,message:string) {
+pins :: proc(s:^Store,allocator:=context.temp_allocator) -> (pinned:[]Pin,message:string) {
     if s.db==nil {return nil,fail(s,NOT_OPEN)}
     statement,ok:=db_prepare(s,"SELECT id,kind,ref,label,created_at FROM pins ORDER BY id")
     if !ok {return nil,db_fail(s,"Could not read the pins")}
@@ -742,7 +742,7 @@ annotation_add :: proc(s:^Store,group_name,document:string,entity:u64,x,y,z:f64,
         group_name,document,i64(entity),x,y,z,text,now())
 }
 
-annotations :: proc(s:^Store,document:string,allocator:=context.temp_allocator) -> (annotations:[]Annotation,message:string) {
+annotations :: proc(s:^Store,document:string,allocator:=context.temp_allocator) -> (notes:[]Annotation,message:string) {
     if s.db==nil {return nil,fail(s,NOT_OPEN)}
     statement,ok:=db_prepare(s,"SELECT id,group_name,document,entity,x,y,z,text,created_at FROM annotations WHERE document=?1 ORDER BY id",document)
     if !ok {return nil,db_fail(s,"Could not read the annotations")}

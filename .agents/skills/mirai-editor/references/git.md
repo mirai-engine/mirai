@@ -1,8 +1,9 @@
 # Git in the editor
 
 Version control with the installed `git`, without branches: the Git tab of the left panel
-(`editor/git_panel.odin`), the state and operations (`editor/git.odin`) and the `git.*` methods of
-the API (`editor/api_git.odin`). Which assets git merges and diffs through `mirai`, the
+(`editor/git_panel.odin`), the commands and what they print (package `editor/git`, which knows
+nothing of the session), what the operations need of the session (`editor/git.odin`) and the
+`git.*` methods of the API (`editor/api_git.odin`). Which assets git merges and diffs through `mirai`, the
 `.gitattributes` and the drivers of a clone:
 [git and assets](../../mirai-assets/references/cli.md#git).
 

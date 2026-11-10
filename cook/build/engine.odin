@@ -45,7 +45,7 @@ ENGINE_RUNTIME_PACKAGES :: [?]string{
 ENGINE_EDITOR_PACKAGES :: [?]string{
     "cook/workspace","cook/cache","cook/compressor/bc7split","cook/compressor/texture/common","cook/compressor/texture/bc67","cook/compressor/texture/bc1",
     "cook/compressor/texture/bc4","cook/compressor/texture/bc6","cook/compressor/texture/bc7","cook/compressor/texture","cook/textures","cook/image","cook/movie","cook/rig","cook/import","cook/import/obj","cook/import/gltf","cook/import/usd","third_party/ufbx","cook/import/fbx","cook/shaders","cook/prefab",
-    "cook/import/sources","cook/author","cook/install","cook/build","third_party/sqlite","editor/api","editor/acp","editor/diff","editor/ai_store","editor",
+    "cook/import/sources","cook/author","cook/install","cook/build","third_party/sqlite","editor/api","editor/acp","editor/diff","editor/ai_store","editor/git","editor",
 }
 
 // How many packages have declarations: the stamp counts them, those of the runtime first.
