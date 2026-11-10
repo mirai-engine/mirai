@@ -2319,6 +2319,10 @@ defaults_check :: proc(g:^Generator) {
             if elem!="Action_Bindings" {continue}
             enum_name:=ident_name(array.len)
             if selector,is_selector:=array.len.derived.(^ast.Selector_Expr);is_selector {enum_name=selector.field.name}
+            // Indexed by an enum @(actions): its defaults. By anything else: bindings held as data.
+            of_actions:=false
+            for a in g.action_enums {of_actions||=a.name==enum_name}
+            if !of_actions {continue}
             buffer:[512]u8
             constant,maker,_:=core.default_names(enum_name,buffer[:])
             append(&g.errors,fmt.aprintf("%s(%d): %s carries the defaults of the actions of %s, and a struct carries no defaults of actions: declare them beside the enum as %s :: proc() -> [%s]Action_Bindings (or a constant %sS), and remove the field",file.fullpath,f.pos.line,name,enum_name,fmt.tprintf("%ss",maker),enum_name,constant))

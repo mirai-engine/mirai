@@ -99,4 +99,8 @@ the_actions_enums_are_checked :: proc(t:^testing.T) {
         for message in errors {found||=strings.contains(message,c.says)}
         testing.expectf(t,found,"no error says %q: %v",c.says,errors)
     }
+    // Bindings held as data, by a number and not by an enum @(actions), are no defaults.
+    p,ok:=actions_project(t,folder,ACTIONS_CORE,"package game\nimport \"mirai:core\"\n@(storage) Game_Bindings :: struct {held:[8]core.Action_Bindings}\n")
+    if !ok {return}
+    for message in world_generate(&p,context.temp_allocator).errors {testing.expectf(t,!strings.contains(message,"carries the defaults"),"%s",message)}
 }

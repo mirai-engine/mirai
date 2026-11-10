@@ -51,10 +51,11 @@ input_settings_load :: proc(s:^Session) {
     st.loaded,st.unsaved,st.listen=true,false,{}
 }
 
-// Input_Settings of the project, as the dialog edits it; nil without it.
+// Input_Settings of the edited World; nil without it.
 @(private)
 input_settings_of :: proc(s:^Session) -> ^input.Input_Settings {
-    return cast(^input.Input_Settings)setting_value(s,input.Input_Settings)
+    if s.info==nil || s.edit_world==nil {return nil}
+    return core.world_storage_of(edited_world(s),input.Input_Settings)
 }
 
 // What drives an action: its entry in Input_Settings, or the default of the code.
