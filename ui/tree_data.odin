@@ -35,8 +35,7 @@ Tree_Node :: struct {
     kind:Node_Kind,
     parent:i32, // row of the Box that holds it; -1: a root. Rows go in pre-order
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
-    text:Tree_String, // Localized: in the language the interface is written in
-    text_id:u64, // Localized: its text among the translations of the file; unique in the project
+    text:Tree_String, // Localized: its key in the .strings of the game
     fields:[TREE_TEXT_FIELDS]Tree_Text_Field, // what the names in braces of its text show
     layout:Layout,
     layout_own:Style_Keys, // what of its layout is its own: the rest comes from its style when that gives it
@@ -78,19 +77,12 @@ Tree_Node :: struct {
     order:i16,
 }
 // A name in braces of the text of a node, "{coins}" or "{time:mm:ss}", and
-// the path of the game it shows: translations name it as the text does.
+// the path of the game it shows: the text names it the same in every language.
 Tree_Text_Field :: struct {
     name:[TREE_FIELD_NAME_CAPACITY]u8 `mirai:"text"`,
     path:[TREE_PATH_CAPACITY]u8 `mirai:"text"`,
 }
 TREE_FIELD_NAME_CAPACITY :: 32
-
-// The text of a localized node in a language other than the one it is written in.
-Tree_Translation :: struct {
-    id:u64, // the text_id of the node
-    language:[16]u8 `mirai:"text"`, // its code: "es", "pt-BR"
-    text:Tree_String,
-}
 
 // The nodes a named style is for: a node is offered the styles of its family.
 Style_Family :: enum u8 {Box, Text, Control}
@@ -173,9 +165,8 @@ Tree_Data :: struct {
     anim_sets:[]Anim_Set,
     fonts:[]Tree_Font,
     style_infos:[]Tree_Style_Info, // by row of styles; fewer rows: the rest have none
-    translations:[]Tree_Translation,
     grid_tracks:[]Grid_Tracks, // the columns a Grid names by Layout.tracks
-    text:[]u8, // the texts of nodes and translations
+    text:[]u8, // the texts of nodes
     tokens:[]Tree_Token,         // values by name that styles and other files take
     token_uses:[]Tree_Token_Use, // which values of styles name them
     params:[]Tree_Param,         // of the widget of this file
@@ -289,15 +280,11 @@ tree_load :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources,allo
         for &f in node.fields {strings+=len(serial.text_field(f.path[:]))}
         if parent:=int(node.parent);parent>=0 && parent<len(data.nodes) && data.nodes[parent].kind==.Tabs {strings+=len(serial.text_field(node.name[:]))}
     }
-    for &t in data.translations {
-        if u64(t.text.offset)+u64(t.text.length)>u64(len(data.text)) || len(serial.text_field(t.language[:]))>=len(t.language) {return false}
-        strings+=int(t.text.length)
-    }
     groups:=0
     for a in data.anims {if a.kind!=.Clip {groups+=1}}
     desc:=Widget_Tree_Desc{
         allocator=allocator,max_nodes=max(len(data.nodes),1),max_styles=max(len(data.styles),1),max_images=max(len(data.images),1),
-        max_anim_sets=max(len(data.anim_sets),1),max_strings=max(strings,1),max_variants=max(len(data.variants),1),max_translations=max(len(data.translations),1),max_grid_tracks=max(len(data.grid_tracks),1),
+        max_anim_sets=max(len(data.anim_sets),1),max_strings=max(strings,1),max_variants=max(len(data.variants),1),max_grid_tracks=max(len(data.grid_tracks),1),
         anims={max_keys=max(len(data.keys),1),max_tracks=max(len(data.tracks),1),max_anims=max(len(data.anims),1),max_children=max(len(data.parts),1)},
     }
     if !tree_init(tree,desc) {return false}
@@ -383,7 +370,7 @@ tree_fill :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources) -> 
         if !tree_finite(node.hold,node.range[0],node.range[1],node.range[2],node.delay) || node.hold<0 || node.delay<0 {return false}
         added:=tree_node(tree,node.parent,{
             kind=node.kind,name=serial.text_field(node.name[:]),layout=node.layout,float=node.float,clip=node.clip,block=node.block,
-            style=node.style,image=node.image,anims=node.anims,text=tree_string(data.text,node.text),text_id=node.text_id,fields=tree_text_fields(&node),layer=node.layer,variant=serial.text_field(node.variant[:]),selected=node.selected,disabled=node.disabled,
+            style=node.style,image=node.image,anims=node.anims,text=tree_string(data.text,node.text),fields=tree_text_fields(&node),layer=node.layer,variant=serial.text_field(node.variant[:]),selected=node.selected,disabled=node.disabled,
             bind_text=serial.text_field(node.bind_text[:]),bind_value=serial.text_field(node.bind_value[:]),bind_visible=serial.text_field(node.bind_visible[:]),bind_selected=serial.text_field(node.bind_selected[:]),bind_disabled=serial.text_field(node.bind_disabled[:]),
             bind_items=serial.text_field(node.bind_items[:]),bind_image=serial.text_field(node.bind_image[:]),bind_tint=serial.text_field(node.bind_tint[:]),bind_variant=serial.text_field(node.bind_variant[:]),
             index=node.index,count=node.count,choice=node.choice,limit=node.limit,delay=node.delay,particle=node.particle,
@@ -392,9 +379,6 @@ tree_fill :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources) -> 
             nav={serial.text_field(node.nav[0][:]),serial.text_field(node.nav[1][:]),serial.text_field(node.nav[2][:]),serial.text_field(node.nav[3][:])},
         })
         if int(added)!=i {return false}
-    }
-    for &t in data.translations {
-        if !tree_translation_add(tree,t.id,base.name_hash(serial.text_field(t.language[:])),tree_string(data.text,t.text)) {return false}
     }
     for tracks in data.grid_tracks {
         if int(tracks.count)>GRID_TRACKS {return false}
@@ -446,7 +430,7 @@ tree_layers :: proc "contextless" (tree:^Widget_Tree) -> (low,high:i16) {
 tree_node_record :: proc(text:^[dynamic]u8,parent:i32,desc:Node_Desc) -> (node:Tree_Node) {
     node={kind=desc.kind,parent=parent,layout=desc.layout,float=desc.float,clip=desc.clip,block=desc.block,style=desc.style,image=desc.image,anims=desc.anims,layer=desc.layer,selected=desc.selected,disabled=desc.disabled,component=desc.component,component_fields=desc.component_fields,
         index=desc.index,count=desc.count,choice=desc.choice,limit=desc.limit,delay=desc.delay,particle=desc.particle,
-        flags=desc.flags,hold=desc.hold,range=desc.range,order=desc.order,text_id=desc.text_id}
+        flags=desc.flags,hold=desc.hold,range=desc.range,order=desc.order}
     node.text=tree_string_add(text,desc.text)
     tree_text_set(node.tag[:],desc.tag);tree_text_set(node.accepts[:],desc.accepts);tree_text_set(node.ghost[:],desc.ghost);tree_text_set(node.draw[:],desc.draw)
     for f,i in desc.fields {tree_text_set(node.fields[i].name[:],f.name);tree_text_set(node.fields[i].path[:],f.path)}

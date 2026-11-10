@@ -711,19 +711,6 @@ records_api_import_rows :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Recor
     return updated,added,out[:]
 }
 
-records_api_csv_cell :: proc(b:^strings.Builder,cell:string) {
-    if !strings.contains_any(cell,",\"\r\n") {
-        strings.write_string(b,cell)
-        return
-    }
-    strings.write_byte(b,'"')
-    for i in 0..<len(cell) {
-        if cell[i]=='"' {strings.write_byte(b,'"')}
-        strings.write_byte(b,cell[i])
-    }
-    strings.write_byte(b,'"')
-}
-
 // The languages of the translations of a table, in order.
 records_api_languages :: proc(e:^records.Edit) -> []string {
     out:=make([dynamic]string,context.temp_allocator)
@@ -746,33 +733,33 @@ records_api_csv :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf) -> (te
     columns=1
     for leaf in leaves {
         strings.write_byte(&b,',')
-        records_api_csv_cell(&b,leaf.path)
+        importer.csv_cell(&b,leaf.path)
         columns+=1
         if leaf.kind!=.Text {continue}
         for language in languages {
             strings.write_byte(&b,',')
-            records_api_csv_cell(&b,fmt.tprintf("%s@%s",leaf.path,language))
+            importer.csv_cell(&b,fmt.tprintf("%s@%s",leaf.path,language))
             columns+=1
         }
     }
     strings.write_byte(&b,'\n')
     for row in 0..<records.row_count(e) {
         bytes:=records.row_bytes(e,row)
-        records_api_csv_cell(&b,records.row_name(e,row))
+        importer.csv_cell(&b,records.row_name(e,row))
         for &leaf in leaves {
             strings.write_byte(&b,',')
             if leaf.kind!=.Text {
-                records_api_csv_cell(&b,records_api_cell_text(c,&leaf,bytes))
+                importer.csv_cell(&b,records_api_cell_text(c,&leaf,bytes))
                 continue
             }
             id:=(cast(^core.Text)&bytes[leaf.offset]).id
             source,_:=records.text_get(e,id,"")
-            if id!=0 {records_api_csv_cell(&b,source)}
+            if id!=0 {importer.csv_cell(&b,source)}
             for language in languages {
                 strings.write_byte(&b,',')
                 if id==0 {continue}
                 translated,_:=records.text_get(e,id,language)
-                records_api_csv_cell(&b,translated)
+                importer.csv_cell(&b,translated)
             }
         }
         strings.write_byte(&b,'\n')

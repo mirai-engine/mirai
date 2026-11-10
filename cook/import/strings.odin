@@ -80,6 +80,20 @@ csv_records :: proc(text:string,allocator:=context.allocator) -> (records:[][]st
     return list[:],starts[:],""
 }
 
+// A field of a CSV, in quotes when it holds a comma, a quote or a line break.
+csv_cell :: proc(b:^strings.Builder,cell:string) {
+    if !strings.contains_any(cell,",\"\r\n") {
+        strings.write_string(b,cell)
+        return
+    }
+    strings.write_byte(b,'"')
+    for i in 0..<len(cell) {
+        if cell[i]=='"' {strings.write_byte(b,'"')}
+        strings.write_byte(b,cell[i])
+    }
+    strings.write_byte(b,'"')
+}
+
 // The table of a CSV text of texts. message says what is wrong, naming the
 // line; it lives in allocator, as the table does.
 strings_table :: proc(text:string,allocator:=context.allocator) -> (table:Strings_Table,message:string) {

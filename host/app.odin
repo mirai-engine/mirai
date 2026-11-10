@@ -214,6 +214,7 @@ App :: struct {
     shaders:App_Shaders,
     content:^Content,
     records:App_Records, // the rows of the record types of the world, read once a function asks for them
+    texts:App_Texts,     // every .strings of the assets, read once something asks for a text
 
     launch:Launch,
     script_input:core.Input,
@@ -341,6 +342,7 @@ app_destroy :: proc(app:^App) {
     }
     app_content_destroy(app)
     app_records_destroy(app)
+    app_texts_destroy(app)
     assets_marks_free(&app.asset_marks)
     app_assets_destroy(app)
     app_gpu_destroy(app)

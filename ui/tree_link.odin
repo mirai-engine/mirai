@@ -35,7 +35,6 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
     keys:=make([dynamic]Keyframe,allocator)
     parts:=make([dynamic]Anim,allocator)
     anim_sets:=make([dynamic]Anim_Set,allocator)
-    translations:=make([dynamic]Tree_Translation,allocator)
     grid_tracks:=make([dynamic]Grid_Tracks,allocator)
     text:=make([dynamic]u8,allocator)
     grow :: proc(list:^[dynamic]$T,rows:[]T) -> bool {
@@ -43,7 +42,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         return error==nil
     }
     ok=grow(&components,data.components) && grow(&component_nodes,data.component_nodes) && grow(&styles,data.styles) && grow(&variants,data.variants) &&
-        grow(&images,data.images) && grow(&fonts,data.fonts) && grow(&anims,data.anims) && grow(&tracks,data.tracks) && grow(&keys,data.keys) && grow(&parts,data.parts) && grow(&anim_sets,data.anim_sets) && grow(&translations,data.translations) &&
+        grow(&images,data.images) && grow(&fonts,data.fonts) && grow(&anims,data.anims) && grow(&tracks,data.tracks) && grow(&keys,data.keys) && grow(&parts,data.parts) && grow(&anim_sets,data.anim_sets) &&
         grow(&grid_tracks,data.grid_tracks) && grow(&text,data.text)
     if !ok {return}
     // Style 0 of a tree is what its nodes without a style use: a tree without
@@ -59,7 +58,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
         tracks:u16,
     }
     joined:=make([dynamic]Joined,allocator)
-    join :: proc(file:^Tree_Data,id:base.Asset_Id,joined:^[dynamic]Joined,styles:^[dynamic]Node_Style,variants:^[dynamic]Tree_Style_Variant,images:^[dynamic]Tree_Image,fonts:^[dynamic]Tree_Font,anims:^[dynamic]Tree_Anim,tracks:^[dynamic]Tree_Track,keys:^[dynamic]Keyframe,parts:^[dynamic]Anim,anim_sets:^[dynamic]Anim_Set,translations:^[dynamic]Tree_Translation,grid_tracks:^[dynamic]Grid_Tracks,text:^[dynamic]u8) -> (at:Joined,ok:bool) {
+    join :: proc(file:^Tree_Data,id:base.Asset_Id,joined:^[dynamic]Joined,styles:^[dynamic]Node_Style,variants:^[dynamic]Tree_Style_Variant,images:^[dynamic]Tree_Image,fonts:^[dynamic]Tree_Font,anims:^[dynamic]Tree_Anim,tracks:^[dynamic]Tree_Track,keys:^[dynamic]Keyframe,parts:^[dynamic]Anim,anim_sets:^[dynamic]Anim_Set,grid_tracks:^[dynamic]Grid_Tracks,text:^[dynamic]u8) -> (at:Joined,ok:bool) {
         for &j in joined {if j.id==id {return j,true}}
         at={id=id,style=u16(len(styles)),image=u16(len(images)),set=u16(len(anim_sets)),font=u8(len(fonts)),anim=Anim(len(anims)),track=u32(len(tracks)),key=u32(len(keys)),part=u32(len(parts)),text=u32(len(text)),tracks=u16(len(grid_tracks))}
         grow :: proc(list:^[dynamic]$T,rows:[]T) -> bool {
@@ -67,14 +66,8 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
             return error==nil
         }
         if len(styles)+max(len(file.styles),1)>int(max(u16)) || len(images)+len(file.images)>int(max(u16)) || len(anim_sets)+len(file.anim_sets)>int(max(u16)) || len(anims)+len(file.anims)>=int(max(u16)) || FONT_TREE+len(fonts)+len(file.fonts)>int(max(u8)) {return}
-        // The texts of a widget keep their ids: every instance of it shows the same translations.
         ok=grow(styles,file.styles) && grow(images,file.images) && grow(fonts,file.fonts) && grow(keys,file.keys) && grow(text,file.text) && grow(grid_tracks,file.grid_tracks)
         if !ok || len(text)>int(max(u32)) || len(grid_tracks)>int(max(u16)) {return {},false}
-        for t in file.translations {
-            moved:=t
-            moved.text.offset+=at.text
-            _,error:=append(translations,moved);ok&=error==nil
-        }
         if len(file.styles)==0 {_,error:=append(styles,Node_Style{});ok&=error==nil}
         // The fonts of the file are rows after those already joined.
         for &style in styles[min(int(at.style),len(styles)):] {if style.text.font>=FONT_TREE {style.text.font+=at.font}}
@@ -111,7 +104,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
     for &component,row in components {
         if component.widget=={} {continue}
         widget:=imports[row]
-        at,joined_ok:=join(&widget,component.widget,&joined,&styles,&variants,&images,&fonts,&anims,&tracks,&keys,&parts,&anim_sets,&translations,&grid_tracks,&text)
+        at,joined_ok:=join(&widget,component.widget,&joined,&styles,&variants,&images,&fonts,&anims,&tracks,&keys,&parts,&anim_sets,&grid_tracks,&text)
         if !joined_ok {return {},false}
         if !used[row] {
             component.widget={}
@@ -215,7 +208,7 @@ tree_link :: proc(data:Tree_Data,imports:[]Tree_Data,allocator:=context.temp_all
     linked.style_infos=style_infos[:]
     linked.components,linked.component_nodes,linked.styles,linked.variants=components[:],component_nodes[:],styles[:],variants[:]
     linked.images,linked.fonts,linked.anims,linked.tracks,linked.keys,linked.parts,linked.anim_sets=images[:],fonts[:],anims[:],tracks[:],keys[:],parts[:],anim_sets[:]
-    linked.translations,linked.grid_tracks,linked.text=translations[:],grid_tracks[:],text[:]
+    linked.grid_tracks,linked.text=grid_tracks[:],text[:]
     linked.tokens=tokens[:]
     return linked,true
 }
