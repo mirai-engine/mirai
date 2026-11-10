@@ -34,6 +34,11 @@ TEXTURE_CACHE :: "textures"    // in it: built textures, by image and settings
 MESH_CACHE :: "meshes"         // in it: built meshes, by geometry and settings
 ANIMATION_CACHE :: "animations" // in it: compressed .anim libraries, by asset and inputs
 THUMBNAIL_FOLDER :: "thumbs"   // beside it: the previews of the editor
+// Under the generated folder of a project or a plugin: what the imports of its
+// sources build that nobody edits (meshes, textures, sounds, fonts), each at
+// the path it has among the assets. Built again from the sources and their
+// sidecars wherever it is missing (cook/import/sources.sync).
+IMPORTED_FOLDER :: "imported"
 
 Plugin :: struct {
     manifest:Plugin_Manifest,
@@ -321,6 +326,11 @@ cache_path :: proc(root:string,parts:..string,allocator:=context.allocator) -> s
     return strings.to_string(b)
 }
 
+// The imported folder of the project or the plugin at root.
+imported_path :: proc(root:string,allocator:=context.allocator) -> string {
+    return path(folder_path(root,.Generated,context.temp_allocator),IMPORTED_FOLDER,allocator=allocator)
+}
+
 folder_path :: proc(root:string,folder:Folder,allocator:=context.allocator) -> string {
     names:=FOLDER_NAMES
     return path(root,names[folder],allocator=allocator)
@@ -376,7 +386,9 @@ path_absolute :: proc(location:string,allocator:=context.allocator) -> string {
 
 // A folder of assets of a project, and the path its files have among the
 // assets: "" for the ones of the project, plugins/<name> for those of a plugin.
-Asset_Folder :: struct {path,prefix:string}
+// imported: the imported folder that goes with it, whose files are assets at
+// the same paths. root: the project or the plugin the folder is of.
+Asset_Folder :: struct {path,prefix,imported,root:string}
 
 // The assets folder of the project, when it has one, and the one of each
 // active plugin that declares the part, in the order of p.active.
@@ -384,13 +396,15 @@ asset_folders :: proc(p:^Project,allocator:=context.allocator) -> []Asset_Folder
     folders:=make([dynamic]Asset_Folder,allocator)
     names:=FOLDER_NAMES
     parts:=PART_NAMES
-    if own:=folder_path(p.root,.Assets,allocator);os.is_dir(own) {append(&folders,Asset_Folder{own,""})}
+    if own:=folder_path(p.root,.Assets,allocator);os.is_dir(own) {append(&folders,Asset_Folder{own,"",imported_path(p.root,allocator),p.root})}
     for index in p.active {
         plugin:=&p.plugins[index]
         if .Assets not_in plugin.manifest.parts {continue}
         append(&folders,Asset_Folder{
             path(plugin.folder,parts[.Assets],allocator=allocator),
             path(names[.Plugins],base.text_get(plugin.manifest.name[:]),allocator=allocator),
+            imported_path(plugin.folder,allocator),
+            plugin.folder,
         })
     }
     return folders[:]

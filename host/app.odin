@@ -60,6 +60,7 @@ App_Desc :: struct {
     engine_root:string,          // the engine whose general settings lie under those of the project; empty: only the project's, as in a shipped game
     options:string,              // folder of the options the player chose (settings of the machine and input bindings) over those of the project; "": none, as in the editor
     assets_root:string,          // folder of cooked assets; its changes are reloaded
+    assets_imported:string,      // the imported folder that goes with assets_root, of a project that is not shipped; "": none
     assets_cache:string,         // file where the registry of assets_root keeps what it saw; "": none
     animation_cache:string,      // folder where the content keeps the .anim it compressed; "": none
     shaders_root:string,         // folder whose shader generation is loaded; "": the one that holds assets_root
@@ -311,7 +312,7 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
         }
     }
     if desc.assets_root!="" {
-        if error=app_assets_create(app,desc.assets_root,desc.assets_cache,desc.asset_mounts);error!=.None {
+        if error=app_assets_create(app,desc.assets_root,desc.assets_cache,desc.asset_mounts,desc.assets_imported);error!=.None {
             app_destroy(app)
             return nil,error
         }

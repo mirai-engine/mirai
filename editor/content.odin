@@ -91,8 +91,6 @@ asset_color :: proc "contextless" (kind:asset.Fourcc) -> ui.Color {
     case SHOWN_PREFAB:             return {63,126,255,255}  // Blueprint
     case asset.KIND_MESH:          return {0,255,255,255}   // Static Mesh
     case asset.KIND_SKELETON:      return {105,181,205,255} // Skeleton
-    case asset.KIND_FRACTURE:      return {180,120,110,255} // Geometry Collection
-    case asset.KIND_PHYSICS_CACHE: return {255,127,40,255}  // Chaos Cache Collection
     case asset.KIND_MATERIAL:      return {64,192,64,255}   // Material
     case asset.KIND_TEXTURE:       return {192,64,64,255}   // Texture
     case asset.KIND_ANIMATION:     return {80,123,72,255}   // Animation Sequence
@@ -135,8 +133,6 @@ asset_icon :: proc(s:^Session,kind:asset.Fourcc) -> (icon:ui.Icon,color:ui.Color
     case asset.KIND_SOUND,asset.KIND_SOUND_SET: icon=.Sound
     case asset.KIND_SKELETON:      icon=.Axis
     case asset.KIND_UI:            icon=.Layers
-    case asset.KIND_FRACTURE:      icon=.Collider
-    case asset.KIND_PHYSICS_CACHE: icon=.History
     case asset.KIND_FONT:          icon=.Edit
     case asset.KIND_STRINGS:       icon=.Split
     case asset.KIND_PROMPTS:       icon=.Target
@@ -164,8 +160,6 @@ asset_type_label :: proc(kind:asset.Fourcc) -> string {
     case asset.KIND_SOUND:         return "Sound"
     case asset.KIND_SOUND_SET:     return "Sound set"
     case asset.KIND_UI:            return "UI"
-    case asset.KIND_FRACTURE:      return "Fracture"
-    case asset.KIND_PHYSICS_CACHE: return "Physics cache"
     case asset.KIND_FONT:          return "Font"
     case asset.KIND_STRINGS:       return "Texts"
     case asset.KIND_PROMPTS:       return "Prompts"
@@ -178,7 +172,7 @@ asset_type_label :: proc(kind:asset.Fourcc) -> string {
 content_category :: proc "contextless" (kind:asset.Fourcc) -> (category:Content_Category,engine:bool) {
     switch kind {
     case SHOWN_PREFAB:        return .Prefab,true
-    case asset.KIND_MESH,asset.KIND_SKELETON,asset.KIND_FRACTURE,asset.KIND_PHYSICS_CACHE: return .Mesh,true
+    case asset.KIND_MESH,asset.KIND_SKELETON: return .Mesh,true
     case asset.KIND_MATERIAL: return .Material,true
     case asset.KIND_TEXTURE:  return .Texture,true
     case asset.KIND_ANIMATION:return .Animation,true

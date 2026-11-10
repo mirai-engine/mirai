@@ -99,7 +99,6 @@ fuzz_attempt :: proc(f:^Fuzz,data:[]u8) {
         if view,error:=scene_view(&a,f.types);error==.None {_=scene_view_check(view)}
     case KIND_ANIMATION: animation_view(&a,f.types)
     case KIND_SKELETON:  skeleton_view(&a,f.types)
-    case KIND_FRACTURE:  fracture_view(&a,f.types)
     case KIND_SOUND:     sound_view(&a,f.types)
     case KIND_SOUND_SET: sound_set_view(&a,f.types)
     case KIND_UI:        ui_check(&a,f.types)
@@ -174,9 +173,18 @@ fuzz_file :: proc(t:^testing.T,types:^Types,path:string,attempts:=2000) {
 @(test)
 damaged_interfaces_animations_and_sounds_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"showcase/hud.ui","showcase/sign.ui","showcase/lift.anim","showcase/hum.sound"}) {
+    for file in ([]string{"showcase/hud.ui","showcase/sign.ui","showcase/lift.anim"}) {
         fuzz_file(t,&types,strings.concatenate({DEMO,file},context.temp_allocator))
     }
+    // A sound is no file of the demo: its import builds it. The path outlives the temp allocator, which fuzz_file frees.
+    sound:=fmt.aprintf("%s/step.sound",base.test_folder(t,"fuzz-sound"));defer delete(sound)
+    lossless:=make([]u8,96);defer delete(lossless)
+    copy(lossless,"MLPC")
+    for &b,i in lossless[4:] {b=u8(i*37)}
+    source:Import_Info
+    text_set(source.source[:],"sounds/step.wav")
+    testing.expect_value(t,sound_save(sound,&types,{id={0x50,2},channels=2,sample_rate=48000,frames=480,lossless=lossless,source=&source}),Error.None)
+    fuzz_file(t,&types,sound)
 }
 
 @(test)
@@ -195,15 +203,9 @@ damaged_fonts_texts_and_prompts_go_through_every_command :: proc(t:^testing.T) {
 }
 
 @(test)
-damaged_authored_fractures_go_through_every_command :: proc(t:^testing.T) {
-    types:Types;types_init(&types);defer types_destroy(&types)
-    fuzz_file(t,&types,DEMO+"physics_gallery/hierarchy.fracture",1200)
-}
-
-@(test)
 damaged_meshes_textures_materials_scenes_and_prefabs_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"gallery/plant.gltf/Plant.mesh","gallery/plant.gltf/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","gallery/vase.obj/vase.scene"}) {
+    for file in ([]string{"blockout/column.mesh","gallery/plant.gltf/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","gallery/vase.obj/vase.scene"}) {
         fuzz_file(t,&types,strings.concatenate({DEMO,file},context.temp_allocator),1200)
     }
 }

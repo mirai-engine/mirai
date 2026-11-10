@@ -42,7 +42,6 @@ API_IMPORT_SECONDS :: 1800
 Import_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a table of texts (CSV) that becomes .strings; a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
     folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in (a model keeps a folder of its name inside); without it, the root of the assets. A source a plugin imports whole takes none"`,
-    into:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The import to update when its source was moved or renamed: the id of its prefab or texture or sound"`,
     profile:bool `mirai:"optional,label=Records where its time goes: the answer gives the seconds of each zone"`,
     seconds:int `mirai:"optional,min=1,max=7200,unit=s,label=How long it waits for the end of the import; past that it answers importing and the import goes on"`,
     rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing -Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,
@@ -89,7 +88,7 @@ Graphics_Status :: struct {
     render_scale:f32 `mirai:"label=The 3D image per point of the window; 0 follows the target of the preset"`,
     preset_height:u32 `mirai:"label=The lines the last preset aims for; 0 is one per point"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
-    options:[len(GRAPHICS_OPTION_LABELS)]Api_Graphics_Option `mirai:"label=Every option of the popup with its choices"`,
+    options:[GRAPHICS_ROWS_CAPACITY]Api_Graphics_Option `mirai:"trim,label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,
 }
 
@@ -136,7 +135,7 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         api_import_status_write(s,call.out)
         return
     }
-    path,into_text:=asset_import_source(s,base.text_get(params.path[:])),base.text_get(params.into[:])
+    path:=asset_import_source(s,base.text_get(params.path[:]))
     folder:=base.text_get(params.folder[:])
     if folder!="" {
         r:=files_registry(s)
@@ -147,14 +146,6 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         refusal:string
         if folder,refusal=asset_folder_clean(r,folder);refusal!="" {
             api.call_failf(call,api.INVALID_PARAMS,"folder: %s",refusal)
-            return
-        }
-    }
-    into:base.Asset_Id
-    if into_text!="" {
-        problem:string
-        if into,problem=asset_resolve(s,into_text,"");problem!="" {
-            api.call_failf(call,api.INVALID_PARAMS,"into: %s",problem)
             return
         }
     }
@@ -197,7 +188,7 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         }
         front=stated
     }
-    if !import_file(s,path,into,folder,params.profile,rig,image,skeleton,front) {
+    if !import_file(s,path,folder,params.profile,rig,image,skeleton,front) {
         api.call_fail(call,api.SERVER_ERROR,string(s.importer.message[:s.importer.message_length]))
         return
     }
@@ -257,17 +248,14 @@ api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
     base.text_set(result.antialiasing[:],base.text_get(technique[:]))
-    option_labels:=GRAPHICS_OPTION_LABELS
-    offered:=erender.antialiasing_offered(s.app.renderer)
-    choices:=graphics_choices(g^,offered)
-    at:=0
-    for option in Graphics_Option {
-        row:=&result.options[at]
-        at+=1
-        base.text_set(row.name[:],option_labels[option])
-        labels:=graphics_labels(option,offered)
-        if choice:=int(choices[option]);choice>=0 && choice<len(labels) {base.text_set(row.choice[:],labels[choice])}
-        for label,i in labels[:min(len(labels),len(row.choices))] {base.text_set(row.choices[i][:],label)}
+    rows:=graphics_rows_of(s,erender.antialiasing_offered(s.app.renderer))
+    for &each,at in rows[:min(len(rows),len(result.options))] {
+        option:=&result.options[at]
+        info:=&s.info.storages[each.storage]
+        data:=rawptr(g) if info.type==erender.Graphics_Settings else graphics_setting_of(s,info)
+        base.text_set(option.name[:],each.label)
+        if choice:=graphics_row_choice(&each,data);choice>=0 {base.text_set(option.choice[:],each.choices[choice])}
+        for label,i in each.choices[:min(len(each.choices),len(option.choices))] {base.text_set(option.choices[i][:],label)}
     }
     result.fps=s.app.stats.fps
     if s.app.renderer!=nil {

@@ -176,7 +176,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
     Test: `painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel`. API:
     [Paint](#paint).
 - **`terrain`** (`Runtime`, `Editor`, `Shaders`, `Assets`)
-  - Game: `Terrain{source, revision, solid}` and `terrain_update`. Heightfield, Mesh or Volume
+  - Game: `Terrain{source, revision, solid}` and `terrain_update`. Heightfield or Volume
     sources, derived chunks and immutable geometry replaced by region, material layers, levels of
     detail and holes. Contract in [terrain](../../mirai-world/references/terrain.md).
   - Editor: creation, sculpting, layer and hole painting with local preview, cancellation and

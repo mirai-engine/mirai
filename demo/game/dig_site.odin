@@ -67,7 +67,7 @@ dig_site :: proc(
         i:=f32(site.dug)
         center:=[3]f32{math.cos(i*1.9)*1.5,0.3-i*0.42,math.sin(i*1.9)*1.5}
         site_world,_:=core.get(worlds,site_entity)
-        terrain.dig(requests,{kind=.Subtract,shape=.Sphere,center=mm.transform_point(site_world.transform,center),radius=site.radius,amount=1,blend=0.3},site_entity)
+        terrain.dig(requests,{kind=.Carve,center=mm.transform_point(site_world.transform,center),radius=site.radius,amount=1,blend=0.3},site_entity)
         site.dug+=1
         site.next=core.deadline(time,site.interval)
     }
@@ -75,7 +75,7 @@ dig_site :: proc(
         e:=core.entity_at(players,row)
         origin,ahead,aimed:=inp.aim(drivables,worlds,e)
         if !aimed || !inp.pressed(actions,e,.Use) {continue}
-        terrain.dig(requests,{kind=.Subtract,shape=.Sphere,center=origin+ahead*DIG_REACH,radius=site.radius*0.8,amount=1,blend=0.2})
+        terrain.dig(requests,{kind=.Carve,center=origin+ahead*DIG_REACH,radius=site.radius*0.8,amount=1,blend=0.2})
     }
     for dig in digs.digs.items {
         for taken,i in dig.layers {if taken>0 {inventory.cubic_metres[inventory_slot(inventory,dig.materials[i])]+=taken}}

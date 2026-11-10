@@ -183,7 +183,7 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     created:=test_held(t,&assets,relative);defer delete(created)
     cave:=[3]f32{-8.5,-24.5,-8.5}
     deep:=[3]int{40,24,40}
-    unsaved_test_stroke(t,&s,&tool,ref,&world,owner,{kind=.Remove,center=cave,radius=20,amount=1})
+    unsaved_test_stroke(t,&s,&tool,ref,&world,owner,{kind=.Carve,center=cave,radius=20,amount=1})
     carved:=test_held(t,&assets,relative);defer delete(carved)
     unsaved_test_stroke(t,&s,&tool,ref,&world,owner,{kind=.Add,center=cave,radius=6,amount=1})
     filled:=test_held(t,&assets,relative);defer delete(filled)
@@ -198,7 +198,7 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     for &step in tool.steps {
         if step.source!=id {continue}
         steps+=1
-        testing.expect(t,!step.whole && !step.distances.whole && len(step.distances.pages)<len(head.distances.pages),"a step keeps the blocks its stroke changed")
+        testing.expect(t,!step.whole && !step.distances.whole && len(step.distances.pages)<head.distances.counts.x*head.distances.counts.y*head.distances.counts.z,"a step keeps the blocks its stroke changed")
         // The step to the filling keeps the carved revision, its block all air.
         if step.to==3 {for entry in step.distances.pages {if entry.index==block {carved_air=entry.page.values==nil}}}
     }

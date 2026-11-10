@@ -432,7 +432,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
 - Check types of each `runtime/` and `editor/`, generate and build the demo and open each scene in
   the editor without a window with validation (`--headless --validation --api-port`): zero
   validation errors in all of them.
-- The cards: `scene.add` (`preset` `decal`, `screen`, `portal` or `mirror`), `scene.set` to give
+- The cards: `scene.write` (`preset` `decal`, `screen`, `portal` or `mirror`), with `merge` to give
   the slot and `capture` with the entity selected.
 - What to look at per scene:
   - `decals/decals.scene`: decals on floor, wall, steps and a sphere; order between two
@@ -448,12 +448,12 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
   - `gallery/main.scene`: the gallery mirror from the front, from the side and with the camera
     moving: reflections with their reflections, sharp edges, no trail; with `ellipse`.
   - `church/church.scene`: the sun shafts of the stained glass windows cross the nave with their
-    colors and the candles have their halo. Hiding `Haze` (`scene.set` with `Hidden`) isolates its
-    cost.
+    colors and the candles have their halo. Hiding `Haze` (`scene.write` with `visible` false)
+    isolates its cost.
 - In Play, by API (`editor.input` with keys, one frame per tick): walk toward a door and capture
   the frames of the crossing, which must be continuous (the position continues on the other side,
   the gaze turns with the portal and the velocity is preserved); come back through the other one;
-  throw a cube through. Measure with the portal visible and hidden (`scene.set` with `visible`).
+  throw a cube through. Measure with the portal visible and hidden (`scene.write` with `visible`).
 - Lens, in a project that enables it: `mirai test plugins/lens/runtime` (who decides, the volume
   blend and the circle of confusion) and, in `lights/night.scene` with a `Lens_Volume`, a capture
   per effect against the same view without it (`--reference`) and `--repeat` (the image does not

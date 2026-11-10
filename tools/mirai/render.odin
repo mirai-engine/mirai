@@ -1042,10 +1042,13 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
     place :: proc(e:^Render_Editor,push:Render_Push,share:f64) -> bool {
         at:=make([]f64,3,context.temp_allocator)
         for i in 0..<3 {at[i]=push.from[i]+(push.to[i]-push.from[i])*share}
+        moved:=make(json.Object,context.temp_allocator)
+        moved["position"]=render_vector(at)
+        entities:=make(json.Array,1,context.temp_allocator)
+        entities[0]=moved
         params:=make(json.Object,context.temp_allocator)
-        params["entity"]=push.entity
-        params["position"]=render_vector(at)
-        _,ok:=render_call(e,"scene.set",params)
+        params["root"],params["merge"],params["entities"]=push.entity,true,entities
+        _,ok:=render_call(e,"scene.write",params)
         return ok
     }
     capture :: proc(e:^Render_Editor,folder,name:string,frames:int) -> (path:string,ok:bool) {
@@ -1061,7 +1064,7 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
     midway:=push.frames/2
     moving:string
     for k in 1..=push.frames {
-        if !place(e,push,f64(k)/f64(push.frames)) {return "scene.set failed during the push"}
+        if !place(e,push,f64(k)/f64(push.frames)) {return "scene.write failed during the push"}
         if k==midway {
             ok:bool
             if moving,ok=capture(e,folder,fmt.tprintf("%s-push-moving.png",view.name),1);!ok {return "capture failed during the push"}
@@ -1075,7 +1078,7 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
     }
     settled,settled_ok:=capture(e,folder,fmt.tprintf("%s-push-settled.png",view.name),plan.warmup)
     if !settled_ok {return "capture failed once the push settled"}
-    if !place(e,push,f64(midway)/f64(push.frames)) {return "scene.set failed going back midway"}
+    if !place(e,push,f64(midway)/f64(push.frames)) {return "scene.write failed going back midway"}
     moving_settled,moving_ok:=capture(e,folder,fmt.tprintf("%s-push-moving-settled.png",view.name),plan.warmup)
     if !moving_ok {return "capture failed midway settled"}
     _=place(e,push,0)

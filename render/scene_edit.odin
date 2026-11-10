@@ -114,6 +114,7 @@ mesh_remove :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 mesh_release :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 	s := &r.scene
 	if int(handle) >= len(s.meshes) || s.meshes[handle].vertex_count == 0 {return false}
+	mesh_ray_release(r, handle)
 	removed := s.meshes[handle]
 	freed := u64(removed.vertex_span + removed.index_span) * 4
 	for ray in removed.rays[:removed.ray_count] {

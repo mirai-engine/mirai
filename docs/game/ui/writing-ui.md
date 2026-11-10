@@ -84,17 +84,17 @@ before binding it. A path that starts with `@` is of a widget and is checked whe
 
 ## Without an editor
 
-`mirai ui` works on the same documents as files of text, with no editor: `source/<path>.ui.json`
-is the asset `assets/<path>.ui` ([text-sources.md](../assets/text-sources.md) has the loop):
+`mirai ui` reads and writes the same document as text, with no editor
+([text-sources.md](../assets/text-sources.md) has the loop):
 
 ```
-mirai ui read --sources
-mirai ui write source
+mirai ui read hud/hud.ui --out hud.json
+mirai ui write hud/hud.ui hud.json
 mirai ui check
 ```
 
-- `read --sources` writes the document of every `.ui`, and `read <asset>` prints one. `write`
-  takes files or a folder and makes each asset say its document, making those that do not exist.
+- `read <asset>` prints the document of a `.ui`, or writes it to `--out`. `write <asset> <file>`
+  makes the asset say the document of that file, making an asset that does not exist.
   `check` also reads `game/`: the literals `gui.clicked` and its like name are nodes of a `.ui`.
 - `write` refuses what `ui.write` refuses, with its message, and leaves the file as it was. Paths
   are checked against the built game: `mirai build editor . --dev` after its code changes.

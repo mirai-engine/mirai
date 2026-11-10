@@ -6,9 +6,9 @@ import "mirai:cook/build"
 import "mirai:cook/workspace"
 import "mirai:project"
 
-UI_USAGE :: "ui read <asset> [--out <file>] | read --sources | write <asset> <document> | write <file|folder>... | check [<asset>...] [--project P]"
+UI_USAGE :: "ui read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
 TEXTS_USAGE :: "texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--project P]"
-SCENE_USAGE :: "scene read <asset> [--out <file>] | read --sources | write <asset> <document> | write <file|folder>... | check [<asset>...] [--project P]"
+SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P]"
 
 // mirai ui, mirai scene and mirai texts: the documents of the interfaces and
 // the scenes of a project and the texts of its .strings, read, checked and

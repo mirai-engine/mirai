@@ -58,11 +58,11 @@ Texts_Count :: struct {
 
 @(private)
 texts_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="texts.list",summary="Every text a player reads, by key: what each key of the .strings of the project says in each language. A node of a .ui, a core.Text of a row and the code show a text by its key.",result=Texts_List,result_info=type_info_of(Texts_List),writes_result=true,flags={.Read_Only},run=api_texts_list})
-    api_register(s,st,{name="texts.set",summary="Makes a key say a text in a language: adds a text, or translates one. One step of history; its .strings waits for Save.",params=Texts_Set_Params,params_info=type_info_of(Texts_Set_Params),result=Texts_Count,result_info=type_info_of(Texts_Count),run=api_texts_set})
-    api_register(s,st,{name="texts.missing",summary="What the texts lack: who shows a key no .strings has, and the keys that say nothing in a language of the game.",result=Texts_Missing,result_info=type_info_of(Texts_Missing),writes_result=true,flags={.Read_Only},run=api_texts_missing})
-    api_register(s,st,{name="texts.export",summary="Writes every text of the project to a CSV for translators.",params=Texts_File_Params,params_info=type_info_of(Texts_File_Params),result=Texts_Count,result_info=type_info_of(Texts_Count),flags={.Read_Only},run=api_texts_export})
-    api_register(s,st,{name="texts.import",summary="Makes the keys of a CSV say its texts, as texts.export writes it. One step of history per .strings, which waits for Save.",params=Texts_File_Params,params_info=type_info_of(Texts_File_Params),result=Texts_Count,result_info=type_info_of(Texts_Count),run=api_texts_import})
+    api_register(s,st,{name="texts.list",summary="Every text a player reads, by key: what each key of the .strings of the project says in each language. A node of a .ui, a core.Text of a row and the code show a text by its key.",result=Texts_List,writes_result=true,flags={.Read_Only},run=api_texts_list})
+    api_register(s,st,{name="texts.set",summary="Makes a key say a text in a language: adds a text, or translates one. One step of history; its .strings waits for Save.",params=Texts_Set_Params,result=Texts_Count,run=api_texts_set})
+    api_register(s,st,{name="texts.missing",summary="What the texts lack: who shows a key no .strings has, and the keys that say nothing in a language of the game.",result=Texts_Missing,writes_result=true,flags={.Read_Only},run=api_texts_missing})
+    api_register(s,st,{name="texts.export",summary="Writes every text of the project to a CSV for translators.",params=Texts_File_Params,result=Texts_Count,flags={.Read_Only},run=api_texts_export})
+    api_register(s,st,{name="texts.import",summary="Makes the keys of a CSV say its texts, as texts.export writes it. One step of history per .strings, which waits for Save.",params=Texts_File_Params,result=Texts_Count,run=api_texts_import})
 }
 
 @(private="file")

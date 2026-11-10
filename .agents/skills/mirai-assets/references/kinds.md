@@ -6,8 +6,9 @@ Each type lives in its `asset/<type>.odin`: its tables and limits as constants, 
 
 ## Fracture
 
-`asset/fracture.odin` defines `.fracture`; the model that consumes it (hulls, hierarchy and limits)
-belongs to [destruction](../../mirai-physics/references/destruction.md).
+The `destruct` plugin defines `.fracture` (`plugins/destruct/runtime/fracture_asset.odin`); the
+model that consumes it (hulls, hierarchy and limits) belongs to
+[destruction](../../mirai-physics/references/destruction.md).
 
 - `Fracture_Info.source_mesh` can link it to the intact mesh; zero allows an independent source.
 - Each piece is a closed mesh with local indices; the vertex and index ranges of the pieces cover

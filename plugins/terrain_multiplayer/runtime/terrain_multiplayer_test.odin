@@ -68,7 +68,7 @@ fixture_init :: proc(t:^testing.T,f:^Fixture,name:string,kind:=terrain.Source_Ki
     asset.types_init(&f.types)
     s:terrain.Source
     defer terrain.source_destroy(&s)
-    if !terrain.source_make(&s,kind,{97,1,97},1,16) {return false}
+    if !terrain.source_make(&s,kind,kind==.Volume?[3]int{65,33,65}:[3]int{97,1,97},1,16) {return false}
     if raise!=0 {terrain.source_edit(&s,{kind=.Raise,center=terrain.source_origin(&s)+{20,0,20},radius=12,amount=raise,hardness=0.5})}
     if written && !testing.expect_value(t,terrain.source_save(&s,fmt.tprintf("%s/ground.terrain",f.folder),SOURCE,&f.types),asset.Error.None) {return false}
     if !host.assets_init(&f.assets,{root=f.folder,capacity=16}) {return false}
@@ -140,6 +140,7 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     f:=e.fixture
     e.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=e.tick,resimulating=resimulating}
+    e.outbox.replaying=resimulating // as a correction of the network leaves it
     terrain_net_follow(core.ref(&e.authority),&e.net,&e.net_state,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
         core.read(&e.seats),core.read(&e.drivables),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
     terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
@@ -188,9 +189,13 @@ round :: proc(f:^Fixture,server:^End,clients:..^End) {
 same_ground :: proc(a,b:^End) -> (same:bool,differ:int) {
     sa,sb:=terrain.terrain_source(core.ref(&a.data),SOURCE),terrain.terrain_source(core.ref(&b.data),SOURCE)
     if sa==nil || sb==nil {return}
-    for z in 0..<int(sa.samples.z) {for x in 0..<int(sa.samples.x) {
-        if terrain.source_value(sa,{x,0,z})!=terrain.source_value(sb,{x,0,z}) {differ+=1}
-    }}
+    if sa.kind!=sb.kind || sa.samples!=sb.samples {return}
+    // What no chunk shows left the memory of each end.
+    last:=[3]int{int(sa.samples.x)-1,int(sa.samples.y)-1,int(sa.samples.z)-1}
+    if !terrain.source_region_read(sa,{},last) || !terrain.source_region_read(sb,{},last) {return}
+    for z in 0..<int(sa.samples.z) {for y in 0..<int(sa.samples.y) {for x in 0..<int(sa.samples.x) {
+        if terrain.source_value(sa,{x,y,z})!=terrain.source_value(sb,{x,y,z}) {differ+=1}
+    }}}
     return differ==0,differ
 }
 
@@ -475,19 +480,6 @@ a_brush_travels_as_its_bytes_and_bytes_that_are_not_one_are_refused :: proc(t:^t
     #assert(size_of(Net_Terrain_Page)<=multiplayer.EVENT_BYTES)
 }
 
-// Whether two ends hold the same sections of a Mesh source.
-@(private="file")
-same_mesh :: proc(a,b:^End) -> (same:bool,differ:int) {
-    _,_,counts,ok:=terrain.terrain_sections(core.ref(&a.data),SOURCE,{},{-1,-1,-1})
-    if !ok {return}
-    ba,bb:[dynamic]u8
-    defer delete(ba);defer delete(bb)
-    for i in 0..<counts.x*counts.y*counts.z {
-        if !terrain.terrain_section_bytes(core.ref(&a.data),SOURCE,i,&ba) || !terrain.terrain_section_bytes(core.ref(&b.data),SOURCE,i,&bb) || string(ba[:])!=string(bb[:]) {differ+=1}
-    }
-    return differ==0,differ
-}
-
 // Whether two ends hold the same layers and weights.
 @(private="file")
 same_layers :: proc(a,b:^End) -> bool {
@@ -504,11 +496,14 @@ same_layers :: proc(a,b:^End) -> bool {
     return true
 }
 
+// A dig of a Volume travels as the same edit a Heightfield takes: a client
+// that holds other ground there gets the blocks of the server, and one that
+// comes late its base.
 @(test)
-a_mesh_edit_that_differs_on_a_client_comes_back_as_its_sections_and_a_late_client_gets_them :: proc(t:^testing.T) {
+a_volume_dig_that_differs_on_a_client_comes_back_as_its_blocks_and_a_late_client_gets_them :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     f:Fixture
-    if !testing.expect(t,fixture_init(t,&f,"mesh",.Mesh)) {return}
+    if !testing.expect(t,fixture_init(t,&f,"volume",.Volume)) {return}
     defer fixture_destroy(&f)
     s,a,c:End
     defer end_destroy(&s);defer end_destroy(&a);defer end_destroy(&c)
@@ -516,19 +511,26 @@ a_mesh_edit_that_differs_on_a_client_comes_back_as_its_sections_and_a_late_clien
     a.tick=s.tick
     // The base of the client as it loads the source comes and ends first.
     for _ in 0..<4 {round(&f,&s,&a)}
-    // Where the server edits, the client holds another mesh, as another architecture could leave it.
-    testing.expect_value(t,terrain.source_edit(terrain.terrain_source(core.ref(&a.data),SOURCE),brush_at(&a,.Raise,40,40,6,0.5)).error,terrain.Edit_Error.None)
-    terrain.dig(&s.terrain_requests,brush_at(&s,.Raise,40,40,6,1),s.owner)
+    // Where the server digs, the client holds other ground, as another architecture could leave it.
+    // The top of the ground of a new Volume is the middle of its box.
+    // A pocket beside the dig of the server, inside the box it changes and out of its ball.
+    other,dig:=brush_at(&a,.Carve,39,39,2,1),brush_at(&s,.Carve,32,32,6,1)
+    other.center.y,dig.center.y=-2,0
+    testing.expect(t,terrain.source_region_read(terrain.terrain_source(core.ref(&a.data),SOURCE),{32,8,32},{46,24,46}))
+    testing.expect_value(t,terrain.source_edit(terrain.terrain_source(core.ref(&a.data),SOURCE),other).error,terrain.Edit_Error.None)
+    testing.expect_value(t,terrain.dig(&s.terrain_requests,dig,s.owner),terrain.Edit_Error.None)
     for _ in 0..<60 {round(&f,&s,&a)}
-    testing.expect(t,a.net.stats.desyncs>0,"the edit of the server left another mesh on the client")
-    same,differ:=same_mesh(&a,&s)
-    testing.expectf(t,same,"the sections of the server repair the client: %d differ",differ)
-    // One that comes late gets the sections the server changed.
+    testing.expect(t,a.net.stats.desyncs>0,"the dig of the server left other ground on the client")
+    dug:=terrain.terrain_source(core.ref(&s.data),SOURCE)
+    testing.expect(t,terrain.source_value(dug,{32,14,32})>0 && terrain.source_value(dug,{32,8,32})<0,"the server dug a bowl under its surface")
+    same,differ:=same_ground(&a,&s)
+    testing.expectf(t,same,"the blocks of the server repair the client: %d samples differ",differ)
+    // One that comes late gets the blocks the server changed.
     if !end_init(t,&c,&f,.Client,3) {return}
     c.tick=s.tick
     for _ in 0..<60 {round(&f,&s,&a,&c)}
-    same,differ=same_mesh(&c,&s)
-    testing.expectf(t,same,"a client that came late holds the mesh of the server: %d sections differ",differ)
+    same,differ=same_ground(&c,&s)
+    testing.expectf(t,same,"a client that came late holds the ground of the server: %d samples differ",differ)
 }
 
 @(test)

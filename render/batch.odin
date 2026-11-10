@@ -115,7 +115,7 @@ Batch_State :: struct {
 	free:            [dynamic]u32,
 	drawn:           [dynamic]u32,               // the record of each batch drawn
 	rows:            [dynamic]Gpu_Instance,      // the row of each, after the instances of the instance table
-	boxes:           [dynamic]Bvh_Item,          // its box
+	boxes:           [dynamic]mm.Aabb,           // its box
 	traced:          [dynamic]u32,               // the batches drawn that rays meet with a tree, an item of the software TLAS each
 	hw:              [dynamic]Batch_Hw,          // the batches drawn that rays meet, whose instances a native TLAS holds
 	hw_count:        int,                        // those instances
@@ -151,7 +151,7 @@ batches_init :: proc(r: ^Renderer) {
 	b.free = make([dynamic]u32, a)
 	b.drawn = make([dynamic]u32, a)
 	b.rows = make([dynamic]Gpu_Instance, a)
-	b.boxes = make([dynamic]Bvh_Item, a)
+	b.boxes = make([dynamic]mm.Aabb, a)
 	b.traced = make([dynamic]u32, a)
 	b.hw = make([dynamic]Batch_Hw, a)
 	b.reflective = make([dynamic]Reflective_Instance, a)
@@ -238,14 +238,14 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	s := &r.scene
 	if record.count == 0 || record.tree_nodes > 0 || batch_classes(record.desc.flags, false) == 0 {return}
 	mesh := s.meshes[record.desc.mesh]
-	items, items_error := make([]Bvh_Item, record.count, r.allocator)
+	items, items_error := make([]mm.Aabb, record.count, r.allocator)
 	if items_error != nil {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	defer delete(items, r.allocator)
 	for &item, k in items {
 		words := s.indices[record.words + u32(k) * BATCH_WORDS:][:BATCH_WORDS]
 		instance := transmute(Batch_Instance)[BATCH_WORDS]u32{words[0], words[1], words[2], words[3], words[4]}
 		a, z := rows_bounds(batch_instance_rows(instance), mesh.bounds_min, mesh.bounds_max)
-		item = {bounds_min = a, bounds_max = z, center = (a + z) * 0.5}
+		item = {a, z}
 	}
 	nodes := make([dynamic]Gpu_Bvh_Node, 0, 0, r.allocator)
 	order := make([dynamic]u32, 0, 0, r.allocator)
@@ -489,7 +489,7 @@ batches_build :: proc(r: ^Renderer) {
 			emission = {0, 0, 0, desc.values.y},
 			slot_materials = slots,
 		})
-		append(&b.boxes, Bvh_Item{bounds_min = low, bounds_max = high, center = (low + high) * 0.5})
+		append(&b.boxes, mm.Aabb{low, high})
 		b.bounds_min, b.bounds_max = linalg.min(b.bounds_min, low), linalg.max(b.bounds_max, high)
 		if reflectance && !glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, layered})}
 		for _ in 0 ..< groups {append(&s.indices, drawn)}
@@ -526,7 +526,7 @@ bits :: #force_inline proc "contextless" (v: u32) -> f32 {return transmute(f32)v
 
 // The box of a reference of the software TLAS: an instance, or past them a batch drawn.
 @(private)
-tlas_item :: proc "contextless" (s: ^Scene_State, ref: u32) -> ^Bvh_Item {
+tlas_item :: proc "contextless" (s: ^Scene_State, ref: u32) -> ^mm.Aabb {
 	index := int(ref &~ TLAS_REF_GLASS)
 	if index < len(s.tlas_items) {return &s.tlas_items[index]}
 	return &s.batch.boxes[index - len(s.instances)]

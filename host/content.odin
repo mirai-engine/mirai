@@ -798,7 +798,7 @@ content_collect :: proc(app:^App) -> (unloaded:int) {
 project_asset_mounts :: proc(p:^project.Project,allocator:=context.allocator) -> []asset.Registry_Mount {
     mounts:=make([dynamic]asset.Registry_Mount,allocator)
     for folder in project.asset_folders(p,allocator) {
-        if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix})}
+        if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix,imported=folder.imported})}
     }
     return mounts[:]
 }

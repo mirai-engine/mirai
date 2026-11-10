@@ -254,12 +254,11 @@ the `World` (cancelling a drag leaves no trace):
   top) and then the nearest surface. Without `ghosts` it does not see what is hidden or off, so
   that nothing rests or is painted on a ghost; the selection click, the rectangle and the focus
   pass `ghosts_shown(s)`.
-- The ray first tests each mesh's box (the asset's, without reading the mesh) and enters only those
-  it crosses. `Picker` reads a mesh's triangles the first time something needs them and builds its
-  BVH when a ray reaches its box: a click costs what its ray reaches, not the scene. Rectangle,
-  focus and boxes use only the box.
-- A mesh leaves the cache only when its geometry changes: a generated one on being released (its
-  ids are immutable), a file one when size or date change in the registry.
+- The ray first tests each mesh's box (the asset's) and enters only those it crosses, through the
+  renderer ([`mesh_ray`](../../mirai-rendering/references/ui.md#offscreen-ui)): the mesh as it is
+  drawn, posed included, with the renderer's software tree or the one it makes the first time a
+  ray reaches the box under hardware tracing, kept until the mesh goes. The editor keeps no
+  triangles or trees of its own. Rectangle, focus and boxes use only the box.
 - A derived geometry without `Id` selects its first ancestor with `Id` (`entity_author`), with the
   real hit; likewise in rectangle, Select All and focus. The
   [AI context](ai-tasks.md#project-data) groups them by owner.
@@ -818,9 +817,13 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 ## Import
 
 `import_file(s, path)` converts a source file into project assets, only in `Edit`, with
-`sources.import_source` like `mirai import`. The source can be outside the project, and then it
-does not save its settings beside it (`no_save`): reimporting finds it by its path. What is
-written stays in the assets folder, in that of its type or in `folder` (`asset_folder_clean`).
+`sources.import_source` like `mirai import`. A source inside the project is versioned with its
+sidecar, and what it builds that nobody edits goes to the imported folder of the project; a source
+outside it keeps every asset in the assets folder, with its sidecar in `source/` of the project
+([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). It goes to the
+folder of its type or to `folder` (`asset_folder_clean`). The imported folder is brought up to
+date with the sources by the build that opens the editor
+([sync](../../mirai-imports/references/imports.md#sync)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
@@ -836,10 +839,9 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   imported before the formats and takes no folder.
 - An image is sRGB unless its settings or its name say it is data or a normal (`sources.image_use`,
   which `mirai import` applies too); `asset.import {image}` chooses it.
-- An import's settings stay beside the source (`<source>.import`); reimporting writes the same
-  assets with their ids where they are and keeps what did not change.
-  `import_file(s, path, into)` updates an import from a moved or renamed source
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). Textures with
+- The sidecar of a source (`<source>.import`) keeps its settings and the id of each asset;
+  reimporting writes the same assets with their ids where they are and keeps what did not change.
+  Textures with
   the same image and settings and meshes with the same geometry and settings come from their caches
   ([textures](../../mirai-imports/references/imports.md#texture-cache),
   [meshes](../../mirai-imports/references/imports.md#mesh-cache)).
@@ -850,7 +852,14 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   are parts of its prefab (`asset.Header.owner`,
   [rule](../../mirai-imports/references/imports.md#parts)). `asset_detach`
   (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an unsaved edit with
-  undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet. A
+  undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
+- **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
+  detaching or deleting a part on its own is refused, saying to duplicate it. Moving the root of
+  an import (`asset_move`) moves its source and sidecar under `source/`, and moving a folder moves
+  the folder of the same path under `source/` with it: the registry lists their assets there at
+  once, without an import. Deleting the root of an import
+  (its prefab, the texture of an image) gives the import up: its sidecar goes to the trash with
+  what only the import can build, and the source stays. A
   copy made outside the editor receives an id of its own on scanning
   ([repeated ids](../../mirai-assets/references/formats.md#registry)).
 
@@ -867,8 +876,11 @@ sections that fold like those of the settings dialog: Quality and Frame rate.
 - Antialiasing is not part of the presets: Off, TAA and the
   [techniques](../../mirai-rendering/references/views.md#antialiasing-techniques) of the active
   plugins; one that no plugin offers is shown as TAA, which is what is drawn.
-- A plugin adds rows with the fields of its machine setting that carry `graphics=Label` in the tag:
-  an enum or a bool.
+- A row is a field of a machine setting, of the engine or of a plugin, whose tag carries
+  `graphics=Label`: a bool or an enum (its values, named by `choices=A|B` or by their names), a
+  number with the values `choices` lists (`label:value`, or a label that is its value), or the text
+  of the antialiasing technique. The rows of the section `Frames` go to Frame rate. There is no
+  list of options apart from the tags.
 - A choice is applied instantly to the edited world and stored in the engine layer
   (`settings.mirai` in `project.machine_folder`: the main checkout's `.mirai`, which its worktrees
   share). A value the project fixes wins again on rereading. It does not touch the document or its
@@ -952,7 +964,7 @@ or compilation.
   compared as the field stores them; `{}`, all that have the component. With neither, the first
   entity that has the component.
 - A button (`name` unique in the panel, `sets` with up to 12 targets and its `value`) is a variant:
-  it puts each field at its value, with the JSON that `scene.set` and `settings.set` accept (up to
+  it puts each field at its value, with the JSON that `scene.write` and `settings.set` accept (up to
   159 bytes), without those fields having a row. The entities of a `where` are looked up when it is
   pressed, so it reaches those created after saving the panel. Buttons are pressed in any order: if
   one sets fields of a target (same component or setting, `entity` and `where`), it sets all those

@@ -199,15 +199,19 @@ an_entity_of_a_section_reads_only_on_every_path_with_an_error_that_names_the_sec
     history.selection_set(&f.selection,{f.c})
     testing.expect(t,selection_section_locked(s,w),"the gizmo is off")
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && len(f.edits.steps)==0)
-    // scene.set and scene.delete fail saying it is of a section.
+    // scene.write fails saying it is of a section, named as root or by id.
+    state:Api_State
+    surface:=Api{state=&state}
+    s.api=&surface
+    api_schema_build(s,&state)
+    defer {api_schema_free(&state);s.api=nil}
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
-    call:=api.Call{raw=fmt.tprintf(`{{"entity":"0x%016x","position":[1,2,3]}}`,u64(SECTIONS_TEST_LOCAL)),out=&out,allocator=context.temp_allocator}
-    a:Rpc_Args
-    rpc_init(&a,&call,call.raw)
-    _,applied:=api_set_apply(s,&a,w)
-    testing.expect(t,!applied && call.failed && strings.contains(call.error.message,"section Layer") && !strings.contains(call.error.message,"prefab"),call.error.message)
-    removal:=api.Call{out=&out,allocator=context.temp_allocator}
-    testing.expect(t,!api_delete_apply(s,&removal,w,api_entity(w,SECTIONS_TEST_LOCAL)) && strings.contains(removal.error.message,"section"),removal.error.message)
+    for document in ([]string{`{{"root":"0x%016x","merge":true,"entities":[{{"position":[1,2,3]}}]}}`,`{{"merge":true,"entities":[{{"id":"0x%016x","delete":true}}]}}`}) {
+        method:=api.Method{result_id=Api_Write_Result,writes_result=true}
+        call:=api.Call{method=&method,raw=fmt.tprintf(document,u64(SECTIONS_TEST_LOCAL)),out=&out,allocator=context.temp_allocator}
+        api_scene_write(s,&call)
+        testing.expect(t,call.failed && strings.contains(call.error.message,"section Layer") && !strings.contains(call.error.message,"prefab"),call.error.message)
+    }
     testing.expect_value(t,entity_local(w,f.c).position,[3]f32{1,0,0})
     // Edited in its world, the section is edited and the rest reads only; what is added goes inside it.
     section_edit_set(s,f.r)
