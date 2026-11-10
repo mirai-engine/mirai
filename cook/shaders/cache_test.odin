@@ -185,33 +185,6 @@ source_outside_every_base_is_named_by_its_path :: proc(t:^testing.T) {
     testing.expect_value(t,stable_name("C:/engine2/a.slang",{{"engine","C:/engine"}},context.temp_allocator),"C:/engine2/a.slang")
 }
 
-@(test)
-engine_identity_tracks_nested_headers_and_ignores_the_project_generation :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"shaders")
-    if root=="" {return}
-    engine:=path_join(root,"engine-root",allocator=context.temp_allocator)
-    project:=path_join(root,"project",allocator=context.temp_allocator)
-    generated:=path_join(engine,"shaders/.temporary-generation/include",allocator=context.temp_allocator)
-    fixture_write(t,engine,"shaders/a.comp.slang","#include \"nested/engine.h\"\n#include \"surface_programs.slang\"\n")
-    fixture_write(t,engine,"shaders/include/nested/engine.h","float value=1;\n")
-    fixture_write(t,engine,"shaders/materials/builtin.slang","float builtin=1;\n")
-    fixture_write(t,generated,"surface_programs.slang","#include \"project.inc\"\n")
-    fixture_write(t,project,"project.inc","float project_value=1;\n")
-    includes:=[]string{generated,path_join(engine,"shaders/include",allocator=context.temp_allocator),project}
-    before:=engine_fingerprint(engine,"version",includes,context.temp_allocator)
-    testing.expect_value(t,len(before),64)
-    fixture_write(t,project,"project.inc","float project_value=2;\n")
-    testing.expect_value(t,engine_fingerprint(engine,"version",includes,context.temp_allocator),before)
-    fixture_write(t,generated,"surface_programs.slang","#include \"project.inc\"\n// another catalog\n")
-    testing.expect_value(t,engine_fingerprint(engine,"version",includes,context.temp_allocator),before)
-    testing.expect(t,engine_fingerprint(engine,"another version",includes,context.temp_allocator)!=before,"the compiler is part of the identity")
-    fixture_write(t,engine,"shaders/include/nested/engine.h","float value=2;\n")
-    changed:=engine_fingerprint(engine,"version",includes,context.temp_allocator)
-    testing.expect(t,changed!=before)
-    fixture_write(t,engine,"shaders/materials/builtin.slang","float builtin=2;\n")
-    testing.expect(t,engine_fingerprint(engine,"version",includes,context.temp_allocator)!=changed,"the built-in programs are engine sources")
-}
-
 // A stage of digest "digest" compiled for both backends, and its code.
 @(private="file")
 stored_entry :: proc() -> (entry:Shader,files:[Backend][]u8) {

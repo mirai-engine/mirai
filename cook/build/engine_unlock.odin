@@ -53,6 +53,8 @@ engine_retired_sweep :: proc(retired:string) {
 // running program keeps from being written.
 @(private)
 engine_binary :: proc(name:string) -> bool {
+    // The copy a program loaded to take a library in place (host.engine_library_swap) is its own.
+    if strings.contains(name,"-live-") {return false}
     for extension in ([?]string{".dll",".exe",".pdb",".so",".dylib"}) {
         if strings.has_suffix(name,extension) {return true}
     }

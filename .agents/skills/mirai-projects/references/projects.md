@@ -325,9 +325,10 @@ Each mode has its folder: switching between them compiles nothing.
   of its package names it (a copied body or value, a default value of a declared procedure): no
   other package can call it, so changing one that is not named changes no declaration. Nothing
   of the engine is recompiled with what uses it. It writes only the files whose text changes.
-- **Currency by parts.** A library is recompiled by its sources (without `_test.odin`; the one
-  with `render`, also by `shaders/build/manifest.json`, which gives the hash of the code it
-  embeds) or by a change in the declarations of other libraries that its sources name; the
+- **Currency by parts.** A library is recompiled by its sources (without `_test.odin`; in release
+  the one with `render` also by `shaders/build/manifest.json`, the hash of the code it embeds; in
+  dev only by `render/shaders_gen.odin`, which says what the stages bind and not their code) or by
+  a change in the declarations of other libraries that its sources name; the
   programs, by the compiler, the flags or the declarations they name. A change in the body of a
   procedure compiles its library and nothing else; a new declaration, nothing that does not name
   it. The libraries whose sources changed are declared first, all of them, so what every part
@@ -355,11 +356,29 @@ Each mode has its folder: switching between them compiles nothing.
   `-extra-linker-flags`, because Odin does not allow repeating it. SDL3 is copied next to the
   programs.
 - **What each binary picks up.** `mirai edit`, `mirai play` and `mirai build editor` update the
-  engine binaries before compiling the project. An open editor is reopened with `mirai edit`; the
-  `mirai session` session of the project that runs the binaries to be replaced is closed and
-  reopened by the build, and another program that runs them stops it saying what to do
+  engine binaries before compiling the project. `mirai build editor` then hands the `mirai
+  session` session of the project what it built (`build.start` target `built`): the libraries, as
+  below, and the shader generation, which it loads as one it published; another program that runs
+  the binaries goes on with those it started with and is named
   ([sessions](../../mirai-agent-api/references/api.md#sessions)). A change in `game/`, the plugins
   or the project's `editor/` asks only for the project build.
+- **Taking a build in place (dev only).** Each export of a dev engine library calls its procedure
+  through a table of its package (`Declare_Desc.slots`, `project.LIBRARY_SLOTS`), filled when the
+  library loads. A running editor loads a rebuilt library beside the one it runs and stores the
+  new table over the old one, slot by slot (`host.engine_library_swap`): the next call into the
+  library from any other runs the new code. `build.engine_swap` decides from the stamps, and the
+  editor restarts with its documents, saying why in one line, when any library that changed:
+  declares otherwise (`Library_Declared.hash`, of its `DECLARED_NAMES`: a type layout, a constant,
+  a signature, a copied body, a declaration added or removed: what another library compiled in);
+  keeps what a second copy would not share (`pinned`: a C library linked into it, a package
+  variable, `@(thread_local)` included); or when the compiler or the flags changed. Release
+  libraries have no table and call directly. What the old copy holds survives because no copy is
+  ever unloaded: procedure values stored in data (allocators, callbacks, an SDL event watch, the
+  `frame` the program passed to `editor.launch` goes through the table) and threads it started
+  (job workers, the audio feeder, the pipeline thread) go on in the code they began with and reach
+  the new one at their next call into another library; the API methods are registered again; GPU
+  objects and every world stay where they are, since an unchanged declaration is an unchanged
+  layout; its read-only tables stay readable. An `@(init)` of the new copy runs in that copy.
 - **`mirai edit` without a project**, in a folder that is not one, opens the last project if the
   launcher asks for it (`project.Recent_Projects.open_last`) and the
   [launcher](../../mirai-editor/references/panels.md#projects) if not.
@@ -491,8 +510,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   builds do not wait for a measurement: they run with low priority while it lasts.
 - **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
   `mirai session stop`; after a change of project code, `build.start` loads it into the open
-  session; after a change of engine code, `mirai session restart` (or `mirai build editor`,
-  which restarts the session that holds the build); after a failure, `mirai rpc
+  session; after a change of engine code or shaders, `mirai build editor`, which hands the build
+  to the session (in place, or restarting it with the reason); after a failure, `mirai rpc
   engine.diagnostics`. With the project open in a window, `session start --copy` drives a copy.
 - **Search:** for the Odin code in `.deps`, pass its path to `rg` or `--no-ignore`. If `rg` is not
   there, `mirai setup rg` installs it pinned in `.deps` and in the PATH.
