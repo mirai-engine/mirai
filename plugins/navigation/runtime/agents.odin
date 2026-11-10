@@ -17,7 +17,8 @@ import phys "plugins:physics/runtime"
 // it crosses it: Jump and Drop by a ballistic launch that lands on its end,
 // Climb and Ladder along it; Door and the kinds of a game, and every kind an
 // agent leaves to the game, wait for nav_crossing_done. Paths are searched
-// in slices, within Navigation_Settings.path_iterations for all agents a tick.
+// in slices, within Navigation_Settings.path_iterations for all agents a tick;
+// several that follow one target share one search toward it (Follow_Tree).
 // An agent with a Fly takes a class of the air: it flies, heading for the
 // farthest portal of its corridor in sight, and steps aside in three axes.
 // One with a Swim takes a class of the water while it swims, and moves
@@ -35,8 +36,12 @@ import phys "plugins:physics/runtime"
 MODE_NAV_LINK :: phys.Locomotion_Mode(8)
 
 NAV_AGENT_HORIZON :: f32(1.5)  // s ahead that agents avoid each other
+NAV_AGENT_WALL_HORIZON :: f32(0.5) // s ahead that an agent that steps aside keeps from the edges of its mesh
 NAV_AGENT_CELL :: f32(2)       // m across a cell of the neighbor grid
+NAV_AGENT_REACH :: 32          // cells around its own, at most, an agent gathers neighbors from
 NAV_REPLAN_FOLLOW :: f32(0.5)  // s between plans while following a target that moves
+NAV_FOLLOW_TREES :: 4          // targets whose followers share a search at once
+NAV_FOLLOW_IDLE :: f32(2)      // s without a follower asking before the search toward a target is let go
 NAV_OFF_LEVEL :: f32(0.5)      // m beyond its climb that an agent may be above or below its corridor
 NAV_CROSS_SLACK :: f32(1.0)    // s a crossing may outlast its arc before it counts as failed
 NAV_FLY_AHEAD :: 6             // portals of its corridor a flying agent looks for ahead
@@ -138,6 +143,13 @@ Nav_Events :: struct {
     using queue:core.Queue(Nav_Event),
 }
 
+// How many agents cross a link: navigation_agents counts them and
+// navigation_crossing looks at the paths only while there are some.
+@(storage)
+Nav_Crossings :: struct {
+    count:u32,
+}
+
 // What the application keeps to move the agents of a world: the search under
 // way and the order of those that wait, and the scratch of the neighbors.
 @(storage,host,by_world,free="agents_free")
@@ -150,7 +162,10 @@ Navigation_Agents :: struct {
     searching_air:bool,    // in the volume query
     searching_medium:bool, // in the query over a mesh and a volume, for its agent of searching_class
     searching_class:i8,
+    searching_tree:u8,     // index+1 of the search toward a target it reads its path from; 0: its own
+    trees:[NAV_FOLLOW_TREES]Follow_Tree,
     uid:u64,               // of the Navigation the search is in
+    made:u32,              // and which of its meshes
     coarse:ai.Search,      // over the portals of a coarse graph
     route:[NAV_FAR_POINTS]mm.Vec3,
     far_sections:u64,      // the sections the far simulation last looked at
@@ -163,6 +178,27 @@ Navigation_Agents :: struct {
     neighbors:[dynamic]ai.Avoid_Agent(2),
     neighbors_air:[dynamic]ai.Avoid_Agent(3),
     near:[dynamic]Near,
+}
+
+// The search toward a target that its followers share: those of one class
+// that walk and cross the same. The first follower searches its own way and
+// only leaves its mark; a second one begins the search, from where the target
+// is on the mesh, and from then each follower expands it as far as its own
+// polygon and reads its path. It begins again when the target moved on, at
+// most every NAV_REPLAN_FOLLOW, or the mesh changed.
+@(private)
+Follow_Tree :: struct {
+    query:ai.Nav_Query,
+    target:core.Entity, // none: free
+    class:i8,
+    first:core.Entity,  // the only one that asked so far
+    built:bool,
+    filter:ai.Nav_Filter,
+    goal:mm.Vec3,       // where the target was when the search began
+    end:mm.Vec3,        // on the mesh
+    end_ref:ai.Nav_Ref,
+    revision:u64,       // of the mesh then
+    age,idle:f32,       // s since the search began, and since a follower last asked
 }
 
 @(private)
@@ -178,6 +214,7 @@ agents_free :: proc(a:^Navigation_Agents) {
     ai.nav_query_destroy(&a.query)
     ai.nav_volume_query_destroy(&a.volume_query)
     ai.nav_medium_query_destroy(&a.medium_query)
+    for &tree in a.trees {ai.nav_query_destroy(&tree.query)}
     ai.search_destroy(&a.coarse)
     delete(a.space_links)
     delete(a.waiting);delete(a.refs);delete(a.sorted);delete(a.scratch);delete(a.neighbors);delete(a.neighbors_air);delete(a.near)
@@ -230,7 +267,7 @@ navigation_agents :: proc(
     characters:core.Read(phys.Character),colliders:core.Read(phys.Collider),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),
     grounds:core.Read(phys.Character_State),motions:core.Read(core.Motion),worlds:core.Read(core.World_Transform),
     obstacles:core.Read(Nav_Obstacle),loco:^phys.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
-    roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,time:core.Time,problems:^core.Problems,
+    roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
 ) {
     core.queue_clear(&events.queue)
     layouts:=[2]u64{core.layout(agents),core.layout(paths)}
@@ -274,10 +311,11 @@ navigation_agents :: proc(
     // Without an agent, near or far, nothing searches, steps aside or steers: no memory for it and no look at the characters.
     if len(paths.entities)==0 {return}
     budget:=int(n.settings.path_iterations) if n.settings.path_iterations>0 else 2048
-    if a.uid!=n.uid {
-        // Another copy of the world: the search under way was in the other.
-        a.uid=n.uid
-        a.searching=core.NONE
+    if a.uid!=n.uid || a.made!=n.made {
+        // Another copy of the world, or its meshes made anew: the search under way was in the others.
+        a.uid,a.made=n.uid,n.made
+        a.searching,a.searching_tree=core.NONE,0
+        for &tree in a.trees {tree.target,tree.built=core.NONE,false}
         clear(&a.waiting)
         a.head=0
         for row in 0..<core.count(paths) {
@@ -352,8 +390,6 @@ navigation_agents :: proc(
         // A flier plans and steps aside by the center of its capsule; its feet are the origin of its entity.
         center:=pose.position+{0,height*0.5,0}
         append(&a.near,Near{entity=e,position=center,velocity=motion.linear,radius=radius,height=height,avoids=agent.avoidance,flies=flies || swims,excluded=agent_avoids(agent,can_swim)})
-        // Each agent jumps under the gravity of its place: a planet, a room without it.
-        gravity:=linalg.length(phys.gravity_of_entity(physics,e))
         if p.target!=core.NONE && p.state==.Failed {
             // A follower tries again: its target may come where it can go.
             p.time+=time.dt
@@ -379,7 +415,8 @@ navigation_agents :: proc(
             } else {
                 walk_row,_:=core.get(walks,e)
                 walk:=Walk_Like{walk_row.jump_height,walk_row.max_speed}
-                filter:=agent_filter(n.ptr,class,agent,walk,can_swim,gravity)
+                // Each agent jumps under the gravity of its place: a planet, a room without it.
+                filter:=agent_filter(n.ptr,class,agent,walk,can_swim,linalg.length(phys.gravity_of_entity(physics,e)))
                 agent_follow(n.ptr,p,e,agent,pose.position,&n.classes[class].mesh,&filter,walk,events,loco)
             }
         case .Crossing:
@@ -394,12 +431,12 @@ navigation_agents :: proc(
                     core.push(&events.queue,Nav_Event{kind=.Crossed,entity=e,link=p.kind,from=p.from,to=p.to})
                     p.medium,p.state,p.velocity=false,.Waiting,{}
                 } else {
-                    agent_medium_crossing(p,here,speed if speed>0 else 3)
+                    agent_medium_crossing(p,here,speed if speed>0 else 3,!flies && !swims)
                 }
             } else if !p.manual {
                 p.time+=time.dt
                 ground,_:=core.get(grounds,e)
-                agent_crossing(n.ptr,p,e,pose.position,ground,gravity,events,loco)
+                agent_crossing(n.ptr,p,e,pose.position,ground,linalg.length(phys.gravity_of_entity(physics,e)),events,loco)
             }
         }
     }
@@ -423,9 +460,9 @@ navigation_agents :: proc(
         append(&a.near,Near{entity=e,position=pose.position,velocity=motion.linear,radius=linalg.length(mm.Vec2{half.x,half.z}),height=half.y*2})
     }
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
-    agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,events,problems)
+    agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
     agents_avoid(n.ptr,a,paths,time.dt,problems)
-    agents_steer(n.ptr,agents,paths,inputs,drivables,characters,grounds,worlds,flights,swims,time.dt)
+    crossings.count=agents_steer(n.ptr,agents,paths,inputs,drivables,characters,grounds,worlds,walks,flights,swims,time.dt)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
 
@@ -513,10 +550,11 @@ agent_medium_begin :: proc(p:^Nav_Path,e:core.Entity,in_volume:bool,events:^Nav_
 
 // Heads for the other end of a crossing into the other space, until its
 // class changes with the mode the physics gives it; past the time it takes,
-// it plans again from where it is.
+// it plans again from where it is. One that walks heads for it over the ground.
 @(private)
-agent_medium_crossing :: proc(p:^Nav_Path,position:mm.Vec3,speed:f32) {
+agent_medium_crossing :: proc(p:^Nav_Path,position:mm.Vec3,speed:f32,walks:bool) {
     to:=p.to-position
+    if walks {to.y=0}
     distance:=linalg.length(to)
     if p.time>linalg.length(p.to-p.from)/max(speed*0.25,0.25)+NAV_CROSS_SLACK*2 {
         p.medium,p.state=false,.Waiting
@@ -575,7 +613,13 @@ jump_launch :: proc "contextless" (from,to:mm.Vec3,kind:Nav_Link_Kind,gravity:f3
 
 // Searches the paths of the agents that wait, in order, within the budget.
 @(private)
-agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,paths:^core.Table(Nav_Path),agents:core.Read(Nav_Agent),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),colliders:core.Read(phys.Collider),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),sections:^Nav_Sections,budget:int,events:^Nav_Events,problems:^core.Problems) {
+agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,paths:^core.Table(Nav_Path),agents:core.Read(Nav_Agent),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),colliders:core.Read(phys.Collider),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),sections:^Nav_Sections,budget:int,dt:f32,events:^Nav_Events,problems:^core.Problems) {
+    for &tree,i in a.trees {
+        if tree.target==core.NONE {continue}
+        tree.age+=dt
+        tree.idle+=dt
+        if tree.idle>NAV_FOLLOW_IDLE && int(a.searching_tree)!=i+1 {tree.target,tree.built=core.NONE,false}
+    }
     left:=budget
     deferred:=0
     for left>0 {
@@ -674,11 +718,47 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 continue
             }
             ai.nav_corridor_reset(&p.corridor,from,start)
+            if p.target!=core.NONE && !p.through {
+                if tree:=follow_tree(a,p,e,mesh,&filter,to,end);tree>=0 {
+                    // Toward the target as the shared search saw it.
+                    p.goal=a.trees[tree].goal
+                    a.searching,a.searching_air,a.searching_medium,a.searching_tree=e,false,false,u8(tree+1)
+                    continue
+                }
+            }
             ai.nav_path_begin(&a.query,mesh,from,to,start,end,&filter)
             a.searching,a.searching_air,a.searching_medium=e,false,false
         }
         e:=a.searching
         p:=core.get(paths,e)
+        if a.searching_tree!=0 {
+            tree:=&a.trees[a.searching_tree-1]
+            if p==nil || p.state!=.Waiting || !tree.built || p.class!=tree.class || p.target!=tree.target || int(p.class)>=n.count {
+                a.searching,a.searching_tree=core.NONE,0
+                continue
+            }
+            mesh:=&n.classes[p.class].mesh
+            from:=ai.nav_corridor_first(&p.corridor)
+            status:=ai.Search_Status.Invalid
+            if ai.nav_ref_valid(mesh,from) {
+                before:=tree.query.search.stats.expanded
+                status=ai.nav_toward_reach(&tree.query,from,left)
+                left-=max(tree.query.search.stats.expanded-before,1)
+                if status==.Running {return}
+            }
+            a.searching,a.searching_tree=core.NONE,0
+            count,found:=0,false
+            if status==.Found {count,found=ai.nav_toward_path(&tree.query,from,a.refs[:])}
+            if !found {
+                // Cut off from the target, or beyond what the shared search holds: its own says how near it gets.
+                if ai.nav_path_begin(&a.query,mesh,from,tree.end_ref,p.corridor.position,tree.end,&tree.filter)==.Invalid {agent_fail(p,e,events);continue}
+                a.searching,a.searching_air,a.searching_medium=e,false,false
+                continue
+            }
+            if !ai.nav_corridor_set(&p.corridor,mesh,&tree.filter,tree.end,a.refs[:count]) {agent_fail(p,e,events);continue}
+            p.partial,p.state,p.time=false,.Moving,0
+            continue
+        }
         if a.searching_medium {
             if p==nil || p.state!=.Waiting || p.class!=a.searching_class || p.partner<0 || int(p.partner)>=n.count {a.searching=core.NONE;continue}
             search:=&a.medium_query.search
@@ -735,6 +815,38 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
         p.state=.Moving
         p.time=0
     }
+}
+
+// The search toward its target that a follower reads its path from, begun, or
+// begun again when the target moved on or the mesh changed; -1 for the first
+// follower of a target, which leaves its mark and searches its own way, and
+// when no search is free.
+@(private)
+follow_tree :: proc(a:^Navigation_Agents,p:^Nav_Path,e:core.Entity,mesh:^ai.Nav_Mesh,filter:^ai.Nav_Filter,to:ai.Nav_Ref,end:mm.Vec3) -> int {
+    free:=-1
+    for &tree,i in a.trees {
+        if tree.target!=p.target || tree.class!=p.class || tree.filter!=filter^ {
+            // The first free one; else one nobody shares yet, or the one unused longest for a whole plan.
+            unused:=tree.target==core.NONE
+            if free>=0 && a.trees[free].target==core.NONE {continue}
+            if unused || !tree.built && (free<0 || a.trees[free].built || tree.idle>a.trees[free].idle) || tree.built && tree.idle>=NAV_REPLAN_FOLLOW && (free<0 || a.trees[free].built && tree.idle>a.trees[free].idle) {free=i}
+            continue
+        }
+        tree.idle=0
+        if !tree.built && tree.first==e {return -1}
+        moved:=tree.age>=NAV_REPLAN_FOLLOW && linalg.length(p.goal-tree.goal)>max(p.distance*0.5,0.5)
+        if !tree.built || moved || tree.revision!=mesh.revision || !ai.nav_ref_valid(mesh,tree.end_ref) {
+            if len(tree.query.points)==0 && !ai.nav_query_init(&tree.query,len(a.query.points)) {return -1}
+            if !ai.nav_toward_begin(&tree.query,mesh,to,end,filter) {tree.built=false;return -1}
+            tree.built,tree.goal,tree.end,tree.end_ref,tree.revision,tree.age=true,p.goal,end,to,mesh.revision,0
+        }
+        return i
+    }
+    if free>=0 {
+        tree:=&a.trees[free]
+        tree.target,tree.class,tree.first,tree.built,tree.filter,tree.idle=p.target,p.class,e,false,filter^,0
+    }
+    return -1
 }
 
 // The space links between the mesh of a class and the volume of another
@@ -856,9 +968,12 @@ agent_medium_path :: proc(n:^Navigation,a:^Navigation_Agents,p:^Nav_Path,e:core.
 }
 
 // Steps every avoiding agent aside from the others, each from its wanted
-// velocity, with ORCA over the neighbors of its cell and the eight around:
-// on the plane, among those at its height, for an agent that walks; in three
-// axes, every neighbor a sphere, for one that flies.
+// velocity, with ORCA: on the plane, among those at its height and within the
+// edges of its mesh near it, for an agent that walks; in three axes, every
+// neighbor a sphere, for one that flies. Its neighbors are those it may meet
+// within the horizon, gathered from the cells around its own in blocks that
+// grow until they hold that reach, or as many neighbors nearer than the block
+// as ORCA counts.
 @(private)
 agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),dt:f32,problems:^core.Problems) {
     count:=len(a.near)
@@ -867,13 +982,17 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
         core.report(problems,core.NONE,"navigation.memory","No memory for %d agents and obstacles to step aside from each other: they do not in this tick; free memory, or give fewer agents avoidance",count)
         return
     }
-    cell :: #force_inline proc "contextless" (p:mm.Vec3,dx,dz:i32) -> u64 {
-        x:=i32(math.floor(p.x/NAV_AGENT_CELL))+dx
-        z:=i32(math.floor(p.z/NAV_AGENT_CELL))+dz
-        return u64(u32(x))<<32|u64(u32(z))
-    }
+    // In the order of the cells: by x, then by z.
+    cell_key :: #force_inline proc "contextless" (x,z:i32) -> u64 {return u64(u32(x)~0x80000000)<<32|u64(u32(z)~0x80000000)}
+    cell_of :: #force_inline proc "contextless" (v:f32) -> i32 {return i32(math.floor(clamp(v,-1e9,1e9)/NAV_AGENT_CELL))}
     sphere :: #force_inline proc "contextless" (near:Near) -> f32 {return max(near.radius,near.height*0.5)}
-    for near,i in a.near {a.sorted[i]={cell(near.position,0,0),u32(i)}}
+    // The fastest and the widest: farther than those close within the horizon, nobody shapes a velocity.
+    fastest,widest:f32
+    for near,i in a.near {
+        a.sorted[i]={cell_key(cell_of(near.position.x),cell_of(near.position.z)),u32(i)}
+        if near.avoids {fastest=max(fastest,linalg.length(near.velocity))}
+        widest=max(widest,sphere(near))
+    }
     base.radix_sort64(a.sorted[:],a.scratch[:])
     sorted:=a.sorted[:]
     for near,i in a.near {
@@ -885,32 +1004,53 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
         speed:=linalg.length(p.velocity)
         // Farther than both can close within the horizon, a neighbor shapes no velocity it may choose.
         top:=max(speed,linalg.length(near.velocity))
-        for dz in i32(-1)..=1 {
-            for dx in i32(-1)..=1 {
-                key:=cell(near.position,dx,dz)
-                low,high:=0,count
-                for low<high {
-                    mid:=(low+high)/2
-                    if sorted[mid].key<key {low=mid+1} else {high=mid}
-                }
-                for k:=low;k<count && sorted[k].key==key;k+=1 {
-                    other:=a.near[sorted[k].index]
-                    if int(sorted[k].index)==i {continue}
-                    velocity:=other.velocity
-                    if !other.avoids {velocity={}}
-                    reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
-                    if near.flies {
-                        reach+=sphere(near)+sphere(other)
-                        if linalg.length2(other.position-near.position)>reach*reach {continue}
-                        append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=velocity,radius=sphere(other)})
-                        continue
+        far:=NAV_AGENT_HORIZON*(top+fastest)+sphere(near)+widest
+        cells:=i32(clamp(math.ceil(far/NAV_AGENT_CELL),1,NAV_AGENT_REACH))
+        cx,cz:=cell_of(near.position.x),cell_of(near.position.z)
+        gathered:=i32(-1) // the block of cells around its own already looked at
+        for block:=i32(1);;block=min(block*2,cells) {
+            for dx in -block..=block {
+                // Of a column of the block before, only the cells above and below it.
+                spans:=[2][2]i32{{cz-block,cz+block},{1,0}}
+                if abs(dx)<=gathered {spans={{cz-block,cz-gathered-1},{cz+gathered+1,cz+block}}}
+                for span in spans {
+                    if span[0]>span[1] {continue}
+                    first,last:=cell_key(cx+dx,span[0]),cell_key(cx+dx,span[1])
+                    low,high:=0,count
+                    for low<high {
+                        mid:=(low+high)/2
+                        if sorted[mid].key<first {low=mid+1} else {high=mid}
                     }
-                    if abs(other.position.y-near.position.y)>max(near.height,other.height) {continue}
-                    reach+=near.radius+other.radius
-                    if linalg.length2(mm.Vec2{other.position.x-near.position.x,other.position.z-near.position.z})>reach*reach {continue}
-                    append(&a.neighbors,ai.Avoid_Agent(2){position={other.position.x,other.position.z},velocity={velocity.x,velocity.z},radius=other.radius})
+                    for k:=low;k<count && sorted[k].key<=last;k+=1 {
+                        other:=a.near[sorted[k].index]
+                        if int(sorted[k].index)==i {continue}
+                        velocity:=other.velocity
+                        if !other.avoids {velocity={}}
+                        reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
+                        if near.flies {
+                            reach+=sphere(near)+sphere(other)
+                            if linalg.length2(other.position-near.position)>reach*reach {continue}
+                            append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=velocity,radius=sphere(other)})
+                            continue
+                        }
+                        if abs(other.position.y-near.position.y)>max(near.height,other.height) {continue}
+                        reach+=near.radius+other.radius
+                        if linalg.length2(mm.Vec2{other.position.x-near.position.x,other.position.z-near.position.z})>reach*reach {continue}
+                        append(&a.neighbors,ai.Avoid_Agent(2){position={other.position.x,other.position.z},velocity={velocity.x,velocity.z},radius=other.radius})
+                    }
                 }
             }
+            if block>=cells {break}
+            // Every neighbor nearer than the block reaches is in it: with as many of those as ORCA counts, the rest are farther.
+            held:=f32(block)*NAV_AGENT_CELL
+            within:=0
+            if near.flies {
+                for other in a.neighbors_air {if linalg.length2(other.position-near.position)<=held*held {within+=1}}
+            } else {
+                for other in a.neighbors {if linalg.length2(other.position-mm.Vec2{near.position.x,near.position.z})<=held*held {within+=1}}
+            }
+            if within>=ai.AVOID_MAX_NEIGHBORS {break}
+            gathered=block
         }
         if near.flies {
             if len(a.neighbors_air)==0 {continue}
@@ -920,39 +1060,37 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
         }
         if len(a.neighbors)==0 {continue}
         self:=ai.Avoid_Agent(2){position={near.position.x,near.position.z},velocity={near.velocity.x,near.velocity.z},radius=near.radius}
-        chosen:=ai.avoid_velocity(self,{p.velocity.x,p.velocity.z},max(speed,0.01),a.neighbors[:],NAV_AGENT_HORIZON,dt)
-        p.velocity=agent_on_mesh(n,p,{chosen.x,0,chosen.y},near.radius,near.excluded)
+        // The edges of its mesh it could reach are walls of the same program: a velocity that
+        // steps aside does not leave the mesh, off a ledge or into a wall where others crowd.
+        walls:[ai.AVOID_MAX_WALLS]ai.Avoid_Wall
+        wall_count:=0
+        if p.class>=0 && int(p.class)<n.count {
+            filter:=ai.Nav_Filter{excluded=u64(near.excluded)}
+            on:=p.corridor.position
+            wall_count=ai.nav_walls_near(&n.classes[p.class].mesh,ai.nav_corridor_first(&p.corridor),on,max(speed,0.01)*NAV_AGENT_WALL_HORIZON+ai.AVOID_WALL_TOUCH,&filter,walls[:])
+            // Seen from where it is on the mesh: its body may stand a little off it.
+            off:=[2]f32{near.position.x-on.x,near.position.z-on.z}
+            for &wall in walls[:wall_count] {wall.a+=off;wall.b+=off}
+        }
+        chosen:=ai.avoid_velocity(self,{p.velocity.x,p.velocity.z},max(speed,0.01),a.neighbors[:],NAV_AGENT_HORIZON,dt,walls[:wall_count],NAV_AGENT_WALL_HORIZON)
+        p.velocity={chosen.x,0,chosen.y}
     }
-}
-
-// A velocity that steps aside keeps to the mesh: toward an edge it slides
-// along it, so that no one is pushed off a ledge or into a wall where others
-// crowd, as at the start of a link.
-@(private)
-agent_on_mesh :: proc(n:^Navigation,p:^Nav_Path,velocity:mm.Vec3,radius:f32,excluded:Nav_Areas) -> mm.Vec3 {
-    speed:=linalg.length(velocity)
-    if speed<=1e-4 || p.class<0 || int(p.class)>=n.count {return velocity}
-    start:=p.corridor.position
-    filter:=ai.Nav_Filter{excluded=u64(excluded)}
-    visited:[ai.NAV_MOVE_NODES]ai.Nav_Ref
-    reached,count:=ai.nav_move_along_surface(&n.classes[p.class].mesh,ai.nav_corridor_first(&p.corridor),start,start+velocity/speed*max(radius,0.25),&filter,visited[:])
-    if count==0 {return velocity}
-    along:=mm.Vec3{reached.x-start.x,0,reached.z-start.z}
-    length:=linalg.length(along)
-    return along/length*speed if length>1e-3 else {}
 }
 
 // Writes the Move_Input of every agent no seat drives, and of a seated one
 // while it goes: toward its velocity, facing it, or what it looks at, turning
-// at the turn speed of its Character. One that flies or swims looks level and
-// climbs or dives with move.y, at the share of the speed of its Fly or its
-// Swim that its velocity asks. The seat of a seated one wrote its Move_Input
-// earlier in the tick, with its buttons and the turn of the ground.
+// at the turn speed of its Character, at the share of the speed of its Walk
+// that its velocity asks: the velocity that steps aside is the one it moves
+// at. One that flies or swims looks level and climbs or dives with move.y, at
+// the share of the speed of its Fly or its Swim. The seat of a seated one wrote its Move_Input
+// earlier in the tick, with its buttons and the turn of the ground. How many
+// agents cross a link.
 @(private)
-agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),dt:f32) {
+agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),dt:f32) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
         p:=core.at(paths,row)
+        if p.state==.Crossing {crossing+=1}
         driven:=false
         if d,ok:=core.get(drivables,e);ok && d.seat!=core.NONE {
             agent,_:=core.get(agents,e)
@@ -1007,9 +1145,11 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
             continue
         }
         if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={};continue}
-        top:=max(speed,1e-4)
+        walk,_:=core.get(walks,e)
+        top:=max(speed,walk.max_speed if walk.max_speed>0 else 3)
         mi.move={linalg.dot(flat,right)/top,0,-linalg.dot(flat,forward)/top}
     }
+    return
 }
 
 // Drives the characters that cross a link of the engine: the launch of a
@@ -1019,9 +1159,9 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
 navigation_crossing :: proc(
     paths:core.Read(Nav_Path),moves:^core.Table(phys.Character_Move),characters:core.Read(phys.Character),
     walks:core.Read(phys.Walk),motions:core.Read(core.Motion),worlds:core.Read(core.World_Transform),
-    physics:core.Ref(phys.Physics_State),time:core.Time,
+    physics:core.Ref(phys.Physics_State),crossings:core.Ref(Nav_Crossings),time:core.Time,
 ) {
-    if !time.playing || time.dt<=0 {return}
+    if !time.playing || time.dt<=0 || crossings.ptr==nil || crossings.count==0 {return}
     for row in 0..<core.count(paths) {
         p:=paths.table.values[row]
         if p.state!=.Crossing || p.manual || p.medium {continue}

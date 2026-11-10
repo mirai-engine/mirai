@@ -8,7 +8,7 @@ import "mirai:std/base"
 @(test)
 recent_projects_put_the_last_opened_first_and_read_back :: proc(t:^testing.T) {
     folder,_:=os.make_directory_temp("","mirai-recent",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     engine:=path(folder,"engine",allocator=context.temp_allocator)
     a,b:=path(folder,"a",allocator=context.temp_allocator),path(folder,"b",allocator=context.temp_allocator)
     recent:Recent_Projects

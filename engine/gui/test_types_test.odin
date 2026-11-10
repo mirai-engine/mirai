@@ -16,7 +16,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(World_Widget,default=proc(dst:^World_Widget) {dst^=WORLD_WIDGET_DEFAULT}),
         core.test_type(UI_Settings,default=proc(dst:^UI_Settings) {dst^=UI_SETTINGS_DEFAULT}),
         core.test_type(UI_Preferences,default=proc(dst:^UI_Preferences) {dst^=UI_PREFERENCES_DEFAULT}),
-        core.test_type(Menu_Actions,default=proc(dst:^Menu_Actions) {dst^=menu_actions_default()}),
         core.test_type(Gui,free=gui_free),
     )
 }

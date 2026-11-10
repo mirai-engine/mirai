@@ -32,6 +32,7 @@ Paint_Kind :: enum u8 {
     Checker,    // squares of fill and fill2, value units wide: what shows through transparency
     Replay,     // what a retained subtree drew, user_data says which (retain.odin)
     Arrow,      // a triangle of fill, size units wide, pointing left, right, up or down as value is 0 to 3
+    Draw,       // a Draw node: Game_Source.draw, with the colors of its style and the bytes it binds
 }
 
 // What a run of text adds to its glyphs. Bold is synthetic: the run drawn
@@ -426,6 +427,11 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         prompt_paint(ctx,r,p.prompt)
     case .Replay:
         retained_draw(ctx,p.user_data)
+    case .Draw:
+        if ctx.game.draw!=nil {
+            ctx.game.draw(ctx.game.user,ctx,{name=p.user_data,rect=r,fill=p.fill,stroke=p.stroke,track=p.fill2,knob=p.icon_color,mark=p.text_color,
+                text=p.style,radius=p.corners,stroke_width=p.stroke_width,data=transmute([]u8)p.text,item=i32(p.caret)})
+        }
     case .Arrow:
         // A chevron whose lines are an eighth of its size thick.
         c:=rect_center(r)

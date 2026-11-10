@@ -17,7 +17,6 @@ material_settings :: proc() -> Settings {
 	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
-	s.occlusion_culling = false
 	return s
 }
 
@@ -556,7 +555,6 @@ texture_table_has_a_budget :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := material_settings()
 	settings.texture_max_size = 4
-	settings.texture_compression = false
 	if !fixture_init(t, &f, 32, 32, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -1052,7 +1050,7 @@ material_selection_mask_respects_surface_alpha :: proc(t:^testing.T) {
     // independently of the scene lighting/history beneath the editor coat.
     renderer_resize(r,192,128,2,2)
     for scale in ([]f32{0.5,1}) {
-        settings.render_scale=scale;settings.taa=true
+        settings.resolution=Render_Scale(scale);settings.taa=true
         testing.expect(t,renderer_apply_settings(r,settings),r.error)
         solid_scaled:=screen_color(t,&f,camera,{-0.25,0,0})
         hole_scaled:=screen_color(t,&f,camera,{0.25,0,0})
@@ -1524,9 +1522,6 @@ block_textures_and_the_pool_bound_memory :: proc(t: ^testing.T) {
 	_, ok := texture_add(r, {pixels = image[:], width = 8, height = 8, srgb = true, name = "plain"})
 	testing.expect(t, ok, r.error)
 	testing.expect_value(t, rhi.texture_desc(f.device, r.textures.textures[4]).format, rhi.Format.RGBA8_Srgb)
-	settings.texture_compression = false
-	testing.expect(t, renderer_apply_settings(r, settings))
-	testing.expect(t, !texture_limits(r).blocks, "with the setting off a loader decodes blocks")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

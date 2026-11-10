@@ -8,25 +8,25 @@ import "core:crypto/x25519"
 import "core:encoding/endian"
 import "core:time"
 
-// Encrypted connections.
+// Every connection is sealed.
 //
-// The handshake carries an X25519 exchange between two keys made for that
-// connection alone. A client that knows the server's public key mixes it in,
-// so only the holder of the matching private key ends with the same session
-// keys. From then on every datagram of the connection is sealed with
-// ChaCha20-Poly1305: one key per direction, the sequence number of the
-// datagram as nonce, and a new key derived from the old one every
-// rekey_interval datagrams, long before a nonce could repeat.
+// The server answers a request with its lasting X25519 key next to the
+// cookie. The client mixes the exchange of a key made for that attempt with
+// the server's key (the one it pinned, or the one the answer brought) and the
+// key of the invitation into a proof key, and seals with it what it presents:
+// a server answers only a proof that opens, so a wrong invitation or a client
+// that expects another server gets no answer at all, and only who holds the
+// exchange can try invitations offline. The server then makes its own key for
+// the connection, and the session keys come from both exchanges and the
+// invitation. Every datagram after that is sealed with ChaCha20-Poly1305: one
+// key per direction, the sequence number of the datagram as nonce, and a new
+// key derived from the old one every rekey_interval datagrams, long before a
+// nonce could repeat.
 //
 // A server may also demand a connect token: a blob that the backend of the
 // game signs with Ed25519, naming the client, the servers it may join and
-// until when. The client sends it sealed for the server's public key, so
-// nobody on the path can read it and use it first.
-
-Security :: enum u8 {
-    None,      // a keyed checksum and nothing else: tests, local play
-    Encrypted,
-}
+// until when. It travels sealed with the proof key, which is why only a
+// client that pinned the server's key may send one.
 
 KEY_BYTES :: 32
 Key :: [KEY_BYTES]u8
@@ -37,12 +37,12 @@ TOKEN_BYTES :: TOKEN_SIGNED_BYTES+ed25519.SIGNATURE_SIZE
 @(private) TOKEN_FORMAT :: 1
 @(private) TAG_BYTES :: chacha20poly1305.TAG_SIZE
 @(private) REKEY_INTERVAL :: 1<<24
-@(private) LABEL_SESSION :: "mirai-net-1 session"
-@(private) LABEL_TOKEN :: "mirai-net-1 token"
-@(private) LABEL_REKEY :: "mirai-net-1 rekey"
+@(private) LABEL_SESSION :: "mirai-net-2 session"
+@(private) LABEL_PROOF :: "mirai-net-2 proof"
+@(private) LABEL_INVITE :: "mirai-net-2 invite"
+@(private) LABEL_REKEY :: "mirai-net-2 rekey"
 
 Security_Desc :: struct {
-    mode:Security,
     private_key:Key,           // server: its X25519 key. Zero makes one for this run, which no client can know beforehand
     token_key:Key,             // server: Ed25519 public key of whoever issues connect tokens. Zero: tokens are not looked at
     require_token:bool,        // server: refuse a client without a valid token
@@ -50,9 +50,9 @@ Security_Desc :: struct {
     handshakes_per_update:int, // server: key exchanges computed in one update, default 8
 }
 
-// What a client presents to an encrypted server.
+// What a client presents to a server.
 Credentials :: struct {
-    server_key:Key,        // X25519 public key of the server. Zero: whoever answers is accepted
+    server_key:Key,        // X25519 public key of the server. Zero: the one its answer brings, so any server with the invitation
     token:[TOKEN_BYTES]u8, // as token_issue made it
     has_token:bool,
 }
@@ -67,6 +67,7 @@ Token :: struct {
 @(private)
 Host_Secure :: struct {
     private,public:Key,
+    invite:Key, // what Host_Desc.invite gives: every key of a connection depends on it
     token_key:ed25519.Public_Key,
     has_token_key:bool,
     rekey_interval:u64,
@@ -80,9 +81,6 @@ Peer_Secure :: struct {
     refused:bool, // client: an answer came that the expected server could not have sent
     ephemeral:Key,  // client, until accepted: its secret
     public:Key,     // the public key this end made for the connection
-    server_key:Key, // client: the key it expects the server to hold
-    shared:Key,     // client: what its secret and server_key give
-    token:[TOKEN_BYTES+TAG_BYTES]u8, // client: sealed for the server
     accept,send,receive,receive_old:Key,
     send_epoch,receive_epoch:u64,
 }
@@ -152,9 +150,12 @@ secure_host_init :: proc(h:^Host) -> bool {
     s:=&h.back.secure
     d:=&h.desc.security
     s.rekey_interval=REKEY_INTERVAL
-    if d.mode!=.Encrypted {return true}
-    if !crypto.HAS_RAND_BYTES {return false}
     if d.handshakes_per_update<=0 {d.handshakes_per_update=8}
+    invite:[4]u8
+    endian.unchecked_put_u32le(invite[:],h.desc.invite)
+    info:[len(LABEL_INVITE)+4]u8
+    endian.unchecked_put_u32le(info[copy(info[:],LABEL_INVITE):],h.desc.protocol_id)
+    hkdf.extract_and_expand(.SHA256,nil,invite[:],info[:],s.invite[:])
     zero:Key
     if h.desc.mode==.Server {
         s.private=d.private_key
@@ -170,7 +171,7 @@ secure_host_init :: proc(h:^Host) -> bool {
     return true
 }
 
-// The public key of an encrypted server: what its clients put in Credentials.server_key.
+// The public key of a server: what its clients may put in Credentials.server_key.
 host_public_key :: proc(h:^Host) -> Key {return h.back.secure.public}
 
 // False when the other end sent a point that leaves nothing secret.
@@ -205,41 +206,43 @@ aead_open :: proc(key:^Key,counter:u64,aad,body,tag:[]u8) -> bool {
     return ok
 }
 
-// The key that seals the token of a connection attempt: only the client and the holder of server_key can make it.
+// What the keys of an attempt are bound to: the application, its version and
+// protocol, the attempt, the client's key and the server's lasting key.
 @(private)
-token_seal_key :: proc(h:^Host,key,shared,client_public,server_key:^Key,salt:u64) {
-    info:[len(LABEL_TOKEN)+12+KEY_BYTES*2]u8
-    at:=copy(info[:],LABEL_TOKEN)
-    endian.unchecked_put_u32le(info[at:],h.desc.protocol_id)
-    endian.unchecked_put_u64le(info[at+4:],salt)
-    copy(info[at+12:],client_public[:])
-    copy(info[at+12+KEY_BYTES:],server_key[:])
-    hkdf.extract_and_expand(.SHA256,nil,shared[:],info[:],key[:])
-}
-
-// The keys of a connection from what the two ends exchanged. static is what the
-// client's key and the server's lasting key give, when the client knows the latter.
-@(private)
-secure_session :: proc(h:^Host,s:^Peer_Secure,salt:u64,exchanged,static,client_public,server_public,server_key:^Key) {
-    material:[KEY_BYTES*2]u8
-    copy(material[:],exchanged[:])
-    used:=KEY_BYTES
-    if s.pinned {
-        copy(material[KEY_BYTES:],static[:])
-        used+=KEY_BYTES
-    }
-    info:[len(LABEL_SESSION)+25+KEY_BYTES*3]u8
-    at:=copy(info[:],LABEL_SESSION)
+secure_info :: proc(h:^Host,info:[]u8,label:string,salt:u64,client_public,server_key:^Key) -> int {
+    at:=copy(info,label)
     endian.unchecked_put_u32le(info[at:],h.desc.protocol_id)
     endian.unchecked_put_u32le(info[at+4:],h.desc.version)
     endian.unchecked_put_u64le(info[at+8:],host_protocol_hash(h))
     endian.unchecked_put_u64le(info[at+16:],salt)
-    info[at+24]=u8(s.pinned)
-    copy(info[at+25:],client_public[:])
-    copy(info[at+25+KEY_BYTES:],server_public[:])
-    if s.pinned {copy(info[at+25+KEY_BYTES*2:],server_key[:])}
+    at+=24
+    at+=copy(info[at:],client_public[:])
+    at+=copy(info[at:],server_key[:])
+    return at
+}
+
+// The key that seals what a client presents: only who holds the exchange of
+// the client's key with the server's lasting key, and the invitation, makes it.
+@(private)
+proof_key :: proc(h:^Host,key,shared,client_public,server_key:^Key,salt:u64,has_token:bool) {
+    info:[len(LABEL_PROOF)+25+KEY_BYTES*2]u8
+    at:=secure_info(h,info[:],LABEL_PROOF,salt,client_public,server_key)
+    info[at]=u8(has_token)
+    hkdf.extract_and_expand(.SHA256,h.back.secure.invite[:],shared[:],info[:],key[:])
+}
+
+// The keys of a connection: from the exchange of the two keys made for it,
+// that of the client's key with the server's lasting one, and the invitation.
+@(private)
+secure_session :: proc(h:^Host,s:^Peer_Secure,salt:u64,exchanged,static,client_public,server_public,server_key:^Key) {
+    material:[KEY_BYTES*2]u8
+    copy(material[:],exchanged[:])
+    copy(material[KEY_BYTES:],static[:])
+    info:[len(LABEL_SESSION)+24+KEY_BYTES*3]u8
+    at:=secure_info(h,info[:],LABEL_SESSION,salt,client_public,server_key)
+    copy(info[at:],server_public[:])
     keys:[KEY_BYTES*3]u8
-    hkdf.extract_and_expand(.SHA256,nil,material[:used],info[:],keys[:])
+    hkdf.extract_and_expand(.SHA256,h.back.secure.invite[:],material[:],info[:],keys[:])
     client:=h.desc.mode==.Client
     copy(s.accept[:],keys[:KEY_BYTES])
     copy(client?s.send[:]:s.receive[:],keys[KEY_BYTES:][:KEY_BYTES])
@@ -249,65 +252,72 @@ secure_session :: proc(h:^Host,s:^Peer_Secure,salt:u64,exchanged,static,client_p
     crypto.zero_explicit(&keys,size_of(keys))
 }
 
-// Client: makes the key of a connection attempt and seals the token for the server.
+// Client: makes the key of a connection attempt.
 @(private)
-secure_client_begin :: proc(h:^Host,p:^Peer,credentials:^Credentials) -> bool {
+secure_client_begin :: proc(p:^Peer,credentials:^Credentials) {
     s:=&p.secure
     s^={}
     zero:Key
     crypto.rand_bytes(s.ephemeral[:])
     x25519.scalarmult_basepoint(s.public[:],s.ephemeral[:])
     s.pinned,s.has_token=credentials.server_key!=zero,credentials.has_token
-    if !s.pinned {return !s.has_token}
-    s.server_key=credentials.server_key
-    if !secure_exchange(&s.shared,&s.ephemeral,&s.server_key) {return false}
-    if s.has_token {
-        key:Key
-        token_seal_key(h,&key,&s.shared,&s.public,&s.server_key,p.client_salt)
-        copy(s.token[:],credentials.token[:])
-        aead_seal(&key,0,s.public[:],s.token[:TOKEN_BYTES],s.token[TOKEN_BYTES:])
-        crypto.zero_explicit(&key,KEY_BYTES)
-    }
+}
+
+// Client: seals what it presents for a server that answered with server_key,
+// or for the one it pinned. False when that key leaves nothing secret.
+@(private)
+secure_client_prove :: proc(h:^Host,p:^Peer,c:^Challenger,server_key:^Key) -> bool {
+    s:=&p.secure
+    a:=&h.back.attempt
+    c.server_key=s.pinned?a.server_key:server_key^
+    if !secure_exchange(&c.shared,&s.ephemeral,&c.server_key) {return false}
+    key:Key
+    defer crypto.zero_explicit(&key,KEY_BYTES)
+    proof_key(h,&key,&c.shared,&s.public,&c.server_key,p.client_salt,s.has_token)
+    body:=c.proof[:s.has_token?TOKEN_BYTES:0]
+    copy(body,a.token[:])
+    aead_seal(&key,0,s.public[:],body,c.proof[len(body):][:TAG_BYTES])
     return true
 }
 
-// Client: the keys of the connection from the server's answer. False when the answer is not from who the client expects.
+// Client: the keys of the connection from the answer of the server it proved
+// itself to. False when the answer is not from who the client expects.
 @(private)
-secure_client_finish :: proc(h:^Host,p:^Peer,server_public:^Key,sealed:[]u8) -> bool {
+secure_client_finish :: proc(h:^Host,p:^Peer,c:^Challenger,server_public:^Key,sealed:[]u8) -> bool {
     s:=&p.secure
     exchanged:Key
     defer crypto.zero_explicit(&exchanged,KEY_BYTES)
     if !secure_exchange(&exchanged,&s.ephemeral,server_public) {return false}
-    secure_session(h,s,p.client_salt,&exchanged,&s.shared,&s.public,server_public,&s.server_key)
+    secure_session(h,s,p.client_salt,&exchanged,&c.shared,&s.public,server_public,&c.server_key)
     if !aead_open(&s.accept,0,server_public[:],sealed[:len(sealed)-TAG_BYTES],sealed[len(sealed)-TAG_BYTES:]) {return false}
     crypto.zero_explicit(&s.ephemeral,KEY_BYTES)
-    crypto.zero_explicit(&s.shared,KEY_BYTES)
     return true
 }
 
-// Server: checks what a client presented and makes the keys of its connection. None when it may come in.
+// Server: opens what a client presented, checks it and makes the keys of its
+// connection. Not proven: it gets no answer. Proven: None when it may come in,
+// or why not.
 @(private)
-secure_server_accept :: proc(h:^Host,s:^Peer_Secure,salt:u64,client_public:^Key,pinned,has_token:bool,sealed:[]u8) -> Disconnect_Reason {
+secure_server_accept :: proc(h:^Host,s:^Peer_Secure,salt:u64,client_public:^Key,has_token:bool,proof:[]u8) -> (reason:Disconnect_Reason,proven:bool) {
     hs:=&h.back.secure
     d:=&h.desc.security
-    s^={pinned=pinned,has_token=has_token}
-    if (has_token && !pinned) || (d.require_token && !has_token) {return .Denied_Token}
-    secret,exchanged,static:Key
+    s^={has_token=has_token}
+    secret,exchanged,static,key:Key
     defer {
         crypto.zero_explicit(&secret,KEY_BYTES)
         crypto.zero_explicit(&exchanged,KEY_BYTES)
         crypto.zero_explicit(&static,KEY_BYTES)
-    }
-    if pinned && !secure_exchange(&static,&hs.private,client_public) {return .Denied_Security}
-    if has_token && hs.has_token_key {
-        key:Key
-        token_seal_key(h,&key,&static,client_public,&hs.public,salt)
-        opened:=aead_open(&key,0,client_public[:],sealed[:TOKEN_BYTES],sealed[TOKEN_BYTES:])
         crypto.zero_explicit(&key,KEY_BYTES)
-        if !opened {return .Denied_Token}
-        token,valid:=token_verify(hs,sealed[:TOKEN_BYTES])
-        if !valid || token.protocol_id!=h.desc.protocol_id {return .Denied_Token}
-        if token.expires<=time.to_unix_seconds(time.now()) {return .Denied_Token_Expired}
+    }
+    if !secure_exchange(&static,&hs.private,client_public) {return}
+    proof_key(h,&key,&static,client_public,&hs.public,salt,has_token)
+    body:=proof[:has_token?TOKEN_BYTES:0]
+    if !aead_open(&key,0,client_public[:],body,proof[len(body):][:TAG_BYTES]) {return}
+    if d.require_token && !has_token {return .Denied_Token,true}
+    if has_token && hs.has_token_key {
+        token,valid:=token_verify(hs,body)
+        if !valid || token.protocol_id!=h.desc.protocol_id {return .Denied_Token,true}
+        if token.expires<=time.to_unix_seconds(time.now()) {return .Denied_Token_Expired,true}
         declared,named:=false,false
         for own in d.addresses {
             if own.kind==.None {continue}
@@ -316,14 +326,14 @@ secure_server_accept :: proc(h:^Host,s:^Peer_Secure,salt:u64,client_public:^Key,
                 if address==own {named=true}
             }
         }
-        if declared && !named {return .Denied_Token}
+        if declared && !named {return .Denied_Token,true}
         s.client_id=token.client_id
     }
     crypto.rand_bytes(secret[:])
     x25519.scalarmult_basepoint(s.public[:],secret[:])
-    if !secure_exchange(&exchanged,&secret,client_public) {return .Denied_Security}
+    if !secure_exchange(&exchanged,&secret,client_public) {return .Denied_Security,true}
     secure_session(h,s,salt,&exchanged,&static,client_public,&s.public,&hs.public)
-    return .None
+    return .None,true
 }
 
 @(private)

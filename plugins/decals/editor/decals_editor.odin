@@ -38,7 +38,7 @@ decal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 Decals_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // The box of each selected decal, and the way its image goes onto what is inside.
-@(step="frame",after="editor_tools")
+@(step="frame")
 decals_gizmo :: proc(s:^editor.Session,gizmo:^Decals_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,_:decals.Decal) {
         placed:=editor.entity_world(w,e)

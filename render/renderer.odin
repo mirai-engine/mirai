@@ -38,16 +38,24 @@ import "mirai:render/abi"
 
 Trace_Mode :: enum u8 {Auto, Software, Hardware}
 
+// What the views of the window draw the scene at: a scale of their points, or
+// a target of lines.
+Resolution :: union #no_nil {Render_Scale, Render_Lines}
+// Of the points of the window along each axis, 0.25 to 2.
+Render_Scale :: distinct f32
+// The lines the views of the window aim for together, as a fraction of the
+// lines they span, never above one pixel per point nor under the least
+// Render_Scale: the cost per pixel does not grow with the output.
+Render_Lines :: distinct u32
+
 // Every effect has an explicit budget so cost scales with settings, not scene
 // size alone.
 Settings :: struct {
 	gi_enabled:           bool,
 	gi_strength:          f32,
 	trace_mode:           Trace_Mode,
-	render_scale:         f32,    // internal 3D resolution relative to the window
-	render_height:        u32,    // the lines the views of the window aim for together; while it is over 0 it stands for render_scale, up to one pixel per point (0: render_scale)
+	resolution:           Resolution,
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
-	occlusion_culling:    bool,   // two-phase depth pyramid occlusion culling
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
 	batch_min_pixels:     f32,    // an instance of a batch whose box is fewer pixels across is not rasterized, and fades out from twice that; rays still meet it. 0: every one is drawn
 	probe_spacing:        f32,    // metres between the probes of the first cascade; each next one doubles it
@@ -59,7 +67,6 @@ Settings :: struct {
 	light_budget:         u32,    // shadow rays of a block of 2x2 pixels, each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
 	firefly_clamp:        f32,    // the brightest a ray of a traced reflection or of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
-	texture_compression:  bool,   // upload block compressed textures (BC1, BC3, BC5, BC7) as they are where the device samples them; off, they are decoded to RGBA8
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
 	page_pool_bytes:      u64,    // the slots of the vertex pool for the pages of streamed meshes out of their root, reserved when the first one loads (pages.odin); 0: they keep their root alone
 	reflections:          bool,   // trace the mirror ray of smooth surfaces (else every reflection comes from the probes)
@@ -97,11 +104,11 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 }
 
 DEFAULT_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 1, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = Render_Scale(1), taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8,
 	firefly_clamp = 20, texture_max_size = 2048,
-	texture_compression = true, texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
+	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	reflections = true, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 8,
 	reflection_detail_roughness = REFLECTION_SHARED_ROUGHNESS, glass_layers = 1,
 	sun_radius = SUN_RADIUS,
@@ -124,11 +131,11 @@ REFLECTION_SHARED_ROUGHNESS :: abi.REFLECTION_SHARED_ROUGHNESS
 
 // Conservative budgets for software rasterizers (lavapipe, SwiftShader).
 CPU_DEVICE_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, render_scale = 0.5, taa = true, occlusion_culling = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = Render_Scale(0.5), taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4,
 	firefly_clamp = 20, texture_max_size = 1024,
-	texture_compression = true, texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
+	texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
 	reflections = false, reflection_roughness = 0.4, reflection_half_resolution = true, reflection_light_budget = 4,
 	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
@@ -347,7 +354,6 @@ Targets :: struct {
 	reflect_shared:          rhi.Texture, // the same at half resolution: the rays that blocks of 2x2 pixels share
 	reflect_history:         [2]rhi.Texture,
 	reflect_valid:           bool,
-	hdr:                     [2]rhi.Texture,
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
 	taa:                     [2]rhi.Texture, // output-resolution history
 	taa_frames:              [2]rhi.Texture, // the frames the history of each of its pixels holds
@@ -1360,9 +1366,15 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 
 // Changes settings between frames. Returns false (and keeps the old settings)
 // when the request is invalid, or when the device does not make the pipelines
-// of the tracer it switches to: r.error says which.
+// of the tracer it switches to: r.error says which. A change starts again only
+// what was made with the fields that changed: histories, probes and targets
+// that do not depend on them stay.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
-	if settings.render_scale < 0.25 || settings.render_scale > 2 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
+	switch v in settings.resolution {
+	case Render_Scale: if !(v >= 0.25 && v <= 2) {return false}
+	case Render_Lines: if v == 0 {return false}
+	}
+	if settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if !(settings.reflection_detail_roughness >= 0 && settings.reflection_detail_roughness <= 1) {return false}
@@ -1370,59 +1382,57 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	hardware, made := tracer_settle(r, settings, retry = settings.trace_mode != r.settings.trace_mode)
 	if !made {return false}
 	old := r.settings
-	if old != settings {
-		destroy_view_targets(r)
-		for &view in r.texture_views {view_state_destroy(r, &view)}
-		scene_changed(&r.scene)
-		// What the worlds not shown kept was gathered with the settings before.
-		rhi.device_wait_idle(r.device)
-		world_light_destroy(r)
-	}
 	r.settings = settings
-	r.textures.residency.stale = true
-	if old.reference_lights != settings.reference_lights || old.sun_shadows != settings.sun_shadows {r.targets.shadow.valid = false}
-	if old.reference_gi != settings.reference_gi {r.targets.gi_reference_valid = false}
-	if old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflection_detail_roughness != settings.reflection_detail_roughness {
-		r.targets.reflect_valid, r.targets.gi_reference_valid, r.targets.taa_valid = false, false, false
-		r.targets.glass_valid = false
-		if old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows {ddgi_release(r)}
+	if old.texture_max_size != settings.texture_max_size || old.texture_pool_megabytes != settings.texture_pool_megabytes {r.textures.residency.stale = true}
+	// The probe volume: its layout, or what its rays see of the sun.
+	volume := old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget
+	volume ||= old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows
+	// The light the probes gather, in the volume they have.
+	gathered := old.gi_strength != settings.gi_strength || old.light_budget != settings.light_budget || old.sun_radius != settings.sun_radius
+	if volume {ddgi_release(r)} else if gathered {scene_changed(&r.scene)}
+	// The worlds not shown kept light gathered with the settings before.
+	if volume || gathered {world_light_destroy(r)}
+	shadows := old.reference_lights != settings.reference_lights || old.sun_shadows != settings.sun_shadows
+	reference := old.reference_gi != settings.reference_gi || old.sun_radius != settings.sun_radius
+	traced := old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflection_detail_roughness != settings.reflection_detail_roughness
+	layers := old.glass_layers != settings.glass_layers
+	resolution := old.resolution != settings.resolution
+	// Targets a frame in flight may still read.
+	if layers || resolution {rhi.device_wait_idle(r.device)}
+	for view in views_all(r) {
+		t := &view.targets
+		if shadows {t.shadow.valid = false}
+		if reference || traced {t.gi_reference_valid = false}
+		if traced {t.reflect_valid, t.taa_valid, t.glass_valid = false, false, false}
+		if layers {destroy_glass_targets(r, t)}
 	}
-	if old.glass_layers != settings.glass_layers {
-		rhi.device_wait_idle(r.device)
-		destroy_glass_targets(r, &r.main.targets)
-	}
-	was_hardware := r.hardware_rt
-	r.hardware_rt = hardware
-	// The poses refit only the structures the rays use: those of the others are as old as the switch.
-	// The tables of the batches list the instances of a native TLAS only while rays are traced by hardware.
-	if r.hardware_rt != was_hardware {
+	if hardware != r.hardware_rt {
+		r.hardware_rt = hardware
+		// The poses refit only the structures the rays use: those of the others are as old as the switch.
+		// The tables of the batches list the instances of a native TLAS only while rays are traced by hardware.
 		for handle in r.scene.skinned {if skin := r.scene.meshes[handle].skin; skin != nil {skin.dirty = true}}
 		r.scene.batch.built = false
 		r.scene.tlas_off, r.scene.tlas_stale = r.hardware_rt, true
 		r.scene.instances_dirty = true
-	}
-	// A mesh registered while rays were traced by hardware has no software trees yet.
-	if !r.hardware_rt {
-		for m, index in r.scene.meshes {
-			if m.rays[0].bvh_node_count == 0 && m.vertex_count > 0 && !mesh_rays_complete(r, u32(index)) {
-				set_error(r, "the software BVH of mesh %d", index)
-				return false
-			}
-		}
 		r.scene.geometry_dirty = true
-		batches_trees_build(r)
+		if r.hardware_rt {
+			// A mesh registered while rays were traced by software has no native structure yet: the next publication builds it.
+			r.scene.tlas_dirty, r.scene.instance_capacity = true, 0
+		} else {
+			// A mesh registered while rays were traced by hardware has no software trees yet.
+			for m, index in r.scene.meshes {
+				if m.rays[0].bvh_node_count == 0 && m.vertex_count > 0 && !mesh_rays_complete(r, u32(index)) {
+					set_error(r, "the software BVH of mesh %d", index)
+					return false
+				}
+			}
+			batches_trees_build(r)
+		}
 	}
-	// Software rays walk the tree of instances, which goes to the GPU only for them.
-	if !r.hardware_rt && was_hardware {r.scene.instances_dirty = true}
-	// A mesh registered while rays were traced by software has no native structure yet: the next publication builds it.
-	if r.hardware_rt {r.scene.geometry_dirty = true}
-	if r.hardware_rt {r.scene.tlas_dirty = true; r.scene.instance_capacity = 0}
-	if old.render_scale != settings.render_scale || old.render_height != settings.render_height {
+	// The views of several are made again at their next frame, at the scale it gives them.
+	if resolution {
 		destroy_targets(r, &r.main.targets)
 		if !create_targets(r, &r.main, r.window_width, r.window_height, window_render_scale(r, f32(r.window_height)), true) {return false}
-	}
-	if old.probe_spacing != settings.probe_spacing || old.probe_grid != settings.probe_grid || old.probe_cascades != settings.probe_cascades || old.probe_rays != settings.probe_rays || old.probe_budget != settings.probe_budget {
-		ddgi_release(r)
 	}
 	return true
 }
@@ -1469,7 +1479,7 @@ TARGET_TEXTURES :: 64
 targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	s := &t.shadow
 	fixed := [?]rhi.Texture{
-		t.depth, t.albedo, t.surface, t.layers, t.instance, t.post_hdr[0], t.post_hdr[1], t.post_ldr[0], t.post_ldr[1], t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.reflect_raw, t.reflect_shared, t.reflect_history[0], t.reflect_history[1], t.hdr[0], t.hdr[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
+		t.depth, t.albedo, t.surface, t.layers, t.instance, t.post_hdr[0], t.post_hdr[1], t.post_ldr[0], t.post_ldr[1], t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.reflect_raw, t.reflect_shared, t.reflect_history[0], t.reflect_history[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
 		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_reference,
 		t.reactive, t.nested_depth, t.aerial, t.contact[0], t.contact[1], t.ui_blur[0], t.ui_blur[1],
 		s.raw, s.light, s.geometry[0], s.geometry[1], s.history[0], s.history[1], s.widths[0], s.widths[1], s.filter[0], s.filter[1],
@@ -1609,17 +1619,19 @@ ui_layer_targets :: proc(r: ^Renderer, layers, blur: []rhi.Texture, width, heigh
 // device pixels the views span from top to bottom.
 @(private)
 window_render_scale :: proc(r: ^Renderer, height: f32) -> f32 {
-	return views_render_scale(r.settings.render_scale, r.settings.render_height, height, pixel_density(r))
+	return views_render_scale(r.settings.resolution, height, pixel_density(r))
 }
 
-// The render scale relative to window points; a target of lines replaces it,
-// as a fraction of height, never over one pixel per point nor under the
-// least render scale.
-views_render_scale :: proc "contextless" (render_scale: f32, render_height: u32, height, density: f32) -> f32 {
-	if render_height > 0 && height > 0 {
-		return min(max(f32(render_height) / height, 0.25 / density), 1 / density)
+// Of the device pixels of views that span `height` of them, what a resolution
+// draws the scene at.
+views_render_scale :: proc "contextless" (resolution: Resolution, height, density: f32) -> f32 {
+	switch v in resolution {
+	case Render_Lines:
+		if v > 0 && height > 0 {return min(max(f32(v) / height, 0.25 / density), 1 / density)}
+	case Render_Scale:
+		return clamp(f32(v), 0.25, 2) / density
 	}
-	return clamp(render_scale, 0.25, 2) / density
+	return 1 / density
 }
 
 @(private)
@@ -1652,7 +1664,6 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	t.motion = full(d, t, .RGBA16_Float, attachment, "gbuffer motion")
 	t.linear_depth = full(d, t, .R32_Float, attachment, "gbuffer depth")
 	t.direct = full(d, t, .RGBA16_Float, {.Sampled, .Storage}, "direct light")
-	for i in 0 ..< 2 {t.hdr[i] = full(d, t, .RGBA16_Float, HISTORY_USAGE, "hdr")}
 	t.display = full(d, t, .RGBA16_Float, HISTORY_USAGE, "display")
 	for i in 0 ..< 2 {t.taa[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .RGBA16_Float, usage = HISTORY_USAGE, name = "taa history"})}
 	for i in 0 ..< 2 {t.taa_frames[i] = rhi.texture_create(d, {width = t.output_width, height = t.output_height, format = .R16_Float, usage = HISTORY_USAGE, name = "taa frames"})}
@@ -1669,7 +1680,7 @@ create_targets :: proc(r: ^Renderer, v: ^View_State, width, height: u32, scale: 
 	t.reactive = full(d, t, .R8_Unorm, attachment, "blended coverage")
 	t.needs_clear = true
 	v.has_previous = false
-	all := []rhi.Texture{t.depth, t.albedo, t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.hdr[0], t.hdr[1], t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.reactive}
+	all := []rhi.Texture{t.depth, t.albedo, t.normal, t.emission, t.motion, t.linear_depth, t.direct, t.display, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.reactive}
 	for tex in all {if tex == 0 {set_error(r, "render targets: %s", rhi.device_error(d)); return false}}
 	return true
 }

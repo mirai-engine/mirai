@@ -211,7 +211,7 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     testing.expect(t,third.engine!=first.engine,"the include is an engine source")
 
     // The output was lost: the shared cache gives the stages back without compiling.
-    os.remove_all(mini.output)
+    base.remove_all(mini.output)
     fourth:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,fourth.error,"")
     testing.expect_value(t,fourth.compiled,0)
@@ -451,7 +451,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     options.backends={.Metal}
     options.output=path_join(mini.root,"metal-only",allocator=context.temp_allocator)
     options.cache=path_join(mini.root,"metal-cache",allocator=context.temp_allocator)
-    os.remove_all(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
+    base.remove_all(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
     alone:=mini_generate(t,&mini,options)
     testing.expect_value(t,alone.error,"")
     testing.expect_value(t,alone.compiled,7+surfaces)
@@ -861,7 +861,7 @@ first_stages_go_out_alone_before_the_others :: proc(t:^testing.T) {
     testing.expect_value(t,len(shaders),6)
 
     // Without changes nothing is compiled and nothing is written there.
-    os.remove_all(first)
+    base.remove_all(first)
     again:Progress
     options.progress=&again
     same:=mini_generate(t,&mini,options)
@@ -912,7 +912,7 @@ stages_in_use_go_out_before_the_idle_ones :: proc(t:^testing.T) {
     testing.expect(t,mini_read(&mini,"active/catalog.json")==mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/catalog.json"},context.temp_allocator)))
 
     // Without an idle stage the whole generation is the one in use: nothing is written there.
-    os.remove_all(active)
+    base.remove_all(active)
     fixture_write(t,project,"shaders/tint.slang",tint_program("0.25"))
     whole:Progress
     options.idle={}

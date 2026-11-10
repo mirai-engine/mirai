@@ -9,17 +9,14 @@ import mm "mirai:std/math"
 @(component)
 Spinner :: struct {speed:f32 `mirai:"unit=rad/s"`}
 
-// The actions of the game, bound by Game_Actions.
+// The actions of the game.
 @(actions)
 Action :: enum u8 {Reverse}
 
-// The bindings of the actions of the game. The editor (Project Settings > Input), input.set and the
-// player write in an input.mirai only what they change of these.
-@(storage,host)
-Game_Actions :: struct {defaults:[Action]inp.Action_Default}
-
-game_actions_default :: proc "contextless" () -> Game_Actions {
-    return {defaults={.Reverse=inp.action_default(.Button,inp.binding_key(.R),inp.binding_gamepad_button(.East))}}
+// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
+// input.mirai only what they change of these.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+    return {.Reverse=inp.action_default(.Button,inp.binding_key(.R),inp.binding_gamepad_button(.East))}
 }
 
 @(step="fixed")

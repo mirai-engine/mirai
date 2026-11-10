@@ -368,6 +368,11 @@ an_action_clicks_its_button_and_a_hold_waits_for_it :: proc(t:^testing.T) {
     input:=test_input()
     test_frame(&ctx,&input,test_game_build,&s)
     testing.expect_value(t,s.instance.bar_count,2)
+    // The bar shows what the last build found: a build that finds other
+    // buttons, or their texts in another language, asks for the frame that shows them.
+    testing.expect(t,s.result.animating,"The build that found the buttons asks for the next frame")
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,!s.result.animating && test_paint(&ctx,"Use")!=nil)
     s.held,s.pressed=true,true
     test_frame(&ctx,&input,test_game_build,&s)
     _,used:=test_game_events(&s,.Clicked,"use")

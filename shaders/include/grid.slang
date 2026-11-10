@@ -1,5 +1,5 @@
 // Display-only reference plane. Shared by composition and TAA reprojection;
-// it never enters scene geometry, ray tracing or the radiance history.
+// it never enters scene geometry or ray tracing.
 #ifndef MIRAI_GRID_SLANG
 #define MIRAI_GRID_SLANG
 

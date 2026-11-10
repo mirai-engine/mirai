@@ -45,6 +45,7 @@ Corner_Result :: struct {
 
 @(private)
 api_register :: proc(s:^editor.Session) {
+    editor.tool_entry(s,TOOL,"Shapes",.Prism,{key=.K,set=true})
     defaults:=Stamp_Params{size=SETTINGS_DEFAULT.size}
     editor.api_method_register(s,{name="shapes.stamp",summary="Sweeps a stamp (square, circle, star, heart...) along world points over the outline shapes of a plane, as the Stamp mode of the Shapes tool: adding joins the area to the first shape it touches at the first point or makes one, cutting takes it out of every outline shape of the plane, splitting it into shapes or deleting it. One step of undo.",params=Stamp_Params,params_info=type_info_of(Stamp_Params),result=Stamp_Result,result_info=type_info_of(Stamp_Result),defaults=&defaults,run=api_stamp})
     editor.api_method_register(s,{name="shapes.corner",summary="Moves, inserts or removes a corner of an outline shape at world points, as the Corners mode of the Shapes tool. A change that would make edges cross is refused. One step of undo.",params=Corner_Params,params_info=type_info_of(Corner_Params),result=Corner_Result,result_info=type_info_of(Corner_Result),run=api_corner})

@@ -6,7 +6,7 @@ import "mirai:rhi"
 
 @(test)
 overlays_gpu_order_depth_coverage_and_single_ray_instance :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.occlusion_culling=false;settings.reflections=false
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.reflections=false
     f:Fixture
     if !fixture_init(t,&f,32,32,settings) {return}
     defer fixture_destroy(&f)

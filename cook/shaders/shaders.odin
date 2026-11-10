@@ -25,6 +25,7 @@ import "core:thread"
 import "core:time"
 import "mirai:cook/workspace"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
@@ -519,7 +520,7 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
     temporary,temporary_error:=os.make_directory_temp("","mirai-shader-*",context.temp_allocator)
     if temporary_error!=nil {job_fail(job,allocator,"%s: could not create a temporary folder",name);return}
     temporary=path_clean(temporary,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
     reflection:=path_join(temporary,"reflection.json",allocator=context.temp_allocator)
     metal_spv:=path_join(temporary,"metal.spv",allocator=context.temp_allocator)
     optimized:=path_join(temporary,"metal.optimized.spv",allocator=context.temp_allocator)
@@ -956,7 +957,7 @@ worker_run :: proc(worker:^Worker) {
 @(private)
 early_write :: proc(g:^Generation,folder:string,written:^bool,active:bool) {
     if runner_cancelled(g.runner) {return}
-    if os.exists(folder) && os.remove_all(folder)!=nil {return}
+    if os.exists(folder) && base.remove_all(folder)!=nil {return}
     if os.make_directory_all(folder)!=nil {return}
     entries:[3][dynamic]Shader
     for jobs,i in ([3][]Job{g.shader_jobs,g.program_jobs,g.extension_jobs}) {
@@ -1038,9 +1039,7 @@ publish :: proc(replacements:[]Publication,move:Publish_Move=nil,user_data:rawpt
     recovered=true
     for i:=len(replacements)-1;i>=0;i-=1 {
         replacement:=&replacements[i]
-        // POSIX remove_all opens the path as a directory: a table is a file.
-        remove:=os.remove_all if os.is_dir(replacement.target) else os.remove
-        if replacement.installed && remove(replacement.target)!=nil {recovered=false;continue}
+        if replacement.installed && base.remove_all(replacement.target)!=nil {recovered=false;continue}
         if replacement.saved && os.rename(replacement.backup,replacement.target)!=nil {recovered=false}
     }
     return false,recovered
@@ -1167,7 +1166,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     staging=path_clean(staging,scratch)
     g.staging=staging
     cleanup:=true
-    defer if cleanup {os.remove_all(staging)}
+    defer if cleanup {base.remove_all(staging)}
 
     copies:=make([dynamic]Base,scratch)
     programs_folder:=path_join(staging,"include/programs",allocator=scratch)
@@ -1319,7 +1318,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     outputs:=make([dynamic]string,scratch)
     replacements:=make([dynamic]Publication,scratch)
     tables_folder:string
-    defer if cleanup && tables_folder!="" {os.remove_all(tables_folder)}
+    defer if cleanup && tables_folder!="" {base.remove_all(tables_folder)}
     shipped:=false
     if odin {
         assertions:=strings.builder_make(scratch)

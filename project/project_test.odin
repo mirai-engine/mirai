@@ -561,10 +561,10 @@ a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
     testing.expect_value(t,error.code,Error_Code.Folder_Mismatch)
     testing.expect_value(t,base.text_get(error.plugin[:]),"moved")
     testing.expect_value(t,base.text_get(error.subject[:]),"renamed")
-    testing.expect(t,os.remove_all(path(plugins,"moved",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(path(plugins,"moved",allocator=context.temp_allocator))==nil)
 
     test_plugin(t,plugins,"partial",{},{.Runtime,.Editor})
-    testing.expect(t,os.remove_all(path(plugins,"partial","editor",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(path(plugins,"partial","editor",allocator=context.temp_allocator))==nil)
     _,error=open(root)
     testing.expect_value(t,error.code,Error_Code.Part_Missing)
     testing.expect_value(t,base.text_get(error.plugin[:]),"partial")
@@ -575,7 +575,7 @@ a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
     _,error=open(root)
     testing.expect_value(t,error.code,Error_Code.Part_Undeclared)
     testing.expect_value(t,base.text_get(error.subject[:]),"shaders")
-    testing.expect(t,os.remove_all(path(plugins,"partial",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(path(plugins,"partial",allocator=context.temp_allocator))==nil)
 
     test_write(t,plugins,"broken",PLUGIN_FILE,text="{\n  \"name\": \"broken\",\n  \"version\": 1\n}")
     _,error=open(root)
@@ -674,7 +674,7 @@ plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
     }
 
     folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(path(engine,".mirai",allocator=context.temp_allocator))==nil)
     testing.expect(t,os.write_entire_file(settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Sample": {"count": 2, "inner": {"level": 3}}}`)==nil)

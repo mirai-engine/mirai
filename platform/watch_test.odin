@@ -267,7 +267,7 @@ watch_survives_the_loss_of_its_folder :: proc(t:^testing.T) {
     testing.expect_value(t,stats(p).watches_exhausted,u64(1))
     lines,_:=pass(t,p,watch)
     expect_lines(t,lines)
-    testing.expect(t,os.remove_all(inner)==nil)
+    testing.expect(t,base.remove_all(inner)==nil)
     lines,_=pass(t,p,watch)
     expect_lines(t,lines,"Removed a.txt","Removed b.txt")
     lines,_=pass(t,p,watch)
