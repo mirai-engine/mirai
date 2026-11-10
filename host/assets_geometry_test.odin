@@ -2,7 +2,6 @@ package host
 
 import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:asset"
@@ -50,12 +49,9 @@ geometry_generated_colors_are_owned_and_missing_colors_are_white :: proc(t:^test
 
 @(test)
 geometry_file_preserves_packed_colors_normals_uvs_materials_and_slots :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-geometry-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"host-geometry")
+    if root=="" {return}
     path:=fmt.tprintf("%s/colored.mesh",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root)
-    defer os.remove(path)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     vertices:=[3]asset.Vertex{
         {position={0,0,0},normal=mm.normal_pack({0,1,0}),uv={0.1,0.2},uv1={0.7,0.8},color=0x80604020},
@@ -120,11 +116,9 @@ geometry_reservation_failure_preserves_existing_values_and_lengths :: proc(t:^te
 // where they lie, and hulls of triangles for a Mesh collider.
 @(test)
 stored_boxes_spheres_and_capsules_are_the_convex_pieces_of_a_collider_of_their_mesh :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-shapes-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"host-shapes")
+    if root=="" {return}
     path:=fmt.tprintf("%s/shapes.mesh",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     vertices:=[3]asset.Vertex{{position={0,0,0}},{position={1,0,0}},{position={0,0,1}}}
     order:=[3]u32{0,2,1}

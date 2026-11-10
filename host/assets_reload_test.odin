@@ -1,7 +1,6 @@
 package host
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:std/base"
@@ -11,11 +10,8 @@ import "mirai:std/base"
 // is whole again the reload takes it and the error goes.
 @(test)
 a_reload_of_a_damaged_file_keeps_what_loaded_and_says_why_until_it_is_whole :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-reload",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
-    os.make_directory_all(root)
+    root:=base.test_folder(t,"host-reload")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     stone:=base.Asset_Id{1,1}
     info:=asset.MATERIAL_DEFAULTS
@@ -60,12 +56,8 @@ a_reload_of_a_damaged_file_keeps_what_loaded_and_says_why_until_it_is_whole :: p
 // unmounted what loaded from it stays while it is in use.
 @(test)
 a_folder_mounted_in_a_shipped_game_is_refreshed_alone_and_keeps_what_loaded :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-%d-mount",directory,os.get_pid())
-    guest:=fmt.tprintf("%s/mirai-host-%d-mount-user",directory,os.get_pid())
-    os.remove_all(root);os.remove_all(guest)
-    defer {os.remove_all(root);os.remove_all(guest)}
-    os.make_directory_all(root);os.make_directory_all(guest)
+    root,guest:=base.test_folder(t,"host-mount"),base.test_folder(t,"host-mount-user")
+    if root=="" || guest=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     stone,moss,late,unseen:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3},base.Asset_Id{4,4}
     info:=asset.MATERIAL_DEFAULTS

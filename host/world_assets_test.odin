@@ -1,7 +1,6 @@
 package host
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -17,9 +16,8 @@ import mm "mirai:std/math"
 // all of it.
 @(test)
 what_no_world_names_unloads_at_the_next_mark :: proc(t:^testing.T) {
-    root:=fmt.tprintf("%s/mirai-marks-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"marks")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
     meshes:=[3]base.Asset_Id{{0x6d61726b,1},{0x6d61726b,2},{0x6d61726b,3}}

@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file") @(storage,setting="machine")
 Layered :: struct {code,engine,both:i32}
@@ -22,8 +23,8 @@ layered_types :: proc(types:^[dynamic]core.Test_Type) {
 // project over both. The file of the engine does not set the others.
 @(test)
 a_world_reads_the_settings_of_the_engine_under_those_of_the_project :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-host-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"host-settings")
+    if folder=="" {return}
     root,engine:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Layered": {"engine": 2, "both": 2}, "Rule": {"value": 5}}`)==nil)
@@ -47,8 +48,8 @@ a_world_reads_the_settings_of_the_engine_under_those_of_the_project :: proc(t:^t
 // differs from the layers under them.
 @(test)
 the_options_of_the_player_are_the_layer_on_top :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-host-options",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"host-options")
+    if folder=="" {return}
     root,engine,player:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator),project.path(folder,"player",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(project.path(engine,".mirai",allocator=context.temp_allocator))==nil && os.make_directory_all(player)==nil)
     testing.expect(t,os.write_entire_file(project.settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Layered": {"engine": 2}}`)==nil)

@@ -32,10 +32,9 @@ Animation_Fixture :: struct {
 // that keeps its compressions in a cache folder; with `threads`, it compresses in jobs.
 @(private="file")
 animation_fixture :: proc(t:^testing.T,f:^Animation_Fixture,name:string,threads:=0) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.root=fmt.aprintf("%s/mirai-host-%d-%s",directory,os.get_pid(),name)
+    f.root=base.test_folder(t,name)
+    if f.root=="" {return false}
     f.cache=fmt.aprintf("%s/cache",f.root)
-    os.remove_all(f.root)
     os.make_directory_all(fmt.tprintf("%s/assets",f.root))
     asset.types_init(&f.types)
     animation_fixture_write(t,f,1) or_return
@@ -56,8 +55,7 @@ animation_fixture_destroy :: proc(f:^Animation_Fixture) {
     assets_destroy(&f.assets)
     asset.types_destroy(&f.types)
     mem.tracking_allocator_destroy(&f.tracking)
-    os.remove_all(f.root)
-    delete(f.root);delete(f.cache)
+    delete(f.cache)
 }
 
 // Two clips of a hip that turns and a leg that swings, at `speed`.
