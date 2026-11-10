@@ -664,6 +664,15 @@ tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:T
     if desc.passive {ctx.unfocusable+=1}
     for index:=0;index<tree.node_count; {index=tree_build_node(ctx,&b,index,raw_data(instance.values),0,-1)}
     if desc.passive {ctx.unfocusable-=1}
+    // An Action_Bar showed the buttons the last build found: when this one
+    // found others, or other texts (another language), the next frame shows them.
+    bar_changed:=instance.bar_next_count!=instance.bar_count
+    for i in 0..<instance.bar_next_count {
+        if bar_changed {break}
+        was,found:=&instance.bar[i],&instance.bar_next[i]
+        bar_changed=was.action!=found.action || string(was.text[:was.length])!=string(found.text[:found.length])
+    }
+    if bar_changed {b.animating=true}
     instance.bar,instance.bar_count=instance.bar_next,instance.bar_next_count
     if ctx.drag.id!=0 && ctx.drag.owner==ctx.owner {b.animating=true}
     return {count=b.count,dropped=b.dropped,present=b.built>0,animating=b.animating}

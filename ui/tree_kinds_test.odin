@@ -537,3 +537,64 @@ a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: pro
     testing.expect_value(t,seen.calls,calls)
     testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"map")),placed)
 }
+
+// A Button that binds a value writes its choice there when it is clicked, as
+// a Radio does: the page of a menu changes without code. It reports Clicked
+// and then Changed with what it wrote, which a host that commits writes into
+// the game; one that binds nothing only clicks.
+@(test)
+a_button_that_binds_a_value_writes_its_choice_when_clicked :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    ctx.theme.activate_on_press=false
+    s:Test_Kinds
+    serial.schema_init(&s.schema)
+    defer serial.schema_destroy(&s.schema)
+    ok:bool
+    s.type,ok=serial.schema_add(&s.schema,Test_Bag)
+    testing.expect(t,ok)
+    testing.expect(t,tree_init(&s.tree))
+    defer tree_destroy(&s.tree)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}},fill={40,40,40,255}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={width=fixed(300),height=fixed(200),direction=.Column,gap=4}})
+    tree_node(&s.tree,root,{kind=.Button,name="to_playing",style=style,text="Play",bind_value="Test.screen",choice=u16(Test_Screen.Playing),layout={width=fixed(120),height=fixed(24)}})
+    tree_node(&s.tree,root,{kind=.Button,name="next_page",style=style,text="Next",bind_value="Test.page",choice=3,layout={width=fixed(120),height=fixed(24)}})
+    tree_node(&s.tree,root,{kind=.Button,name="plain",style=style,text="Plain",layout={width=fixed(120),height=fixed(24)}})
+    host:=test_host(&s.host,&s.schema,s.type,&s.values)
+    host.source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
+        if name!=base.name_hash("Test") {return}
+        return (^Test_Host)(user).type,true,true
+    }
+    host.commits=proc(user:rawptr,name:u64) -> bool {return name==base.name_hash("Test")}
+    testing.expect(t,tree_instance_init(&s.instance,&s.tree,host))
+    defer tree_instance_destroy(&s.instance)
+    input:=test_input()
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    click :: proc(t:^testing.T,ctx:^Context,input:^Input,s:^Test_Kinds,name:string) -> []Tree_Event {
+        test_point(input,test_rect(t,ctx,tree_element_id(ctx,name)))
+        test_frame(ctx,input,test_kinds_build,s)
+        test_press(input)
+        test_frame(ctx,input,test_kinds_build,s)
+        test_release(input)
+        test_frame(ctx,input,test_kinds_build,s)
+        return s.events[:s.event_count]
+    }
+    Case :: struct {name:string,writes:bool,value:f64}
+    cases:=[]Case{{"to_playing",true,f64(Test_Screen.Playing)},{"next_page",true,3},{"plain",false,0}}
+    for c in cases {
+        clicked,changed:=-1,-1
+        events:=click(t,&ctx,&input,&s,c.name)
+        for event,i in events {
+            if event.name!=base.name_hash(c.name) {continue}
+            if event.kind==.Clicked {clicked=i}
+            if event.kind==.Changed {
+                changed=i
+                testing.expectf(t,event.value==c.value,"%s wrote %v",c.name,event.value)
+                testing.expect(t,tree_commit_event(&s.instance,event,host))
+            }
+        }
+        testing.expectf(t,clicked>=0 && (changed>clicked)==c.writes && (changed>=0)==c.writes,"%s: clicked %d, changed %d",c.name,clicked,changed)
+    }
+    testing.expect(t,s.values.screen==.Playing && s.values.page==3,"What the buttons wrote reached the game")
+}
