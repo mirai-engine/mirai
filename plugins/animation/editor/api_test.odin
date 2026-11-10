@@ -72,7 +72,7 @@ animation_api_refuses_non_finite_configuration_before_touching_the_world :: proc
     call:=api.Call{method=&method,params=&params,allocator=context.temp_allocator}
     play(&s,&call)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
-    params=Play_Params{speed=1,weight=invalid}
+    params=Play_Params{speed=1,fade=invalid}
     call.failed=false
     play(&s,&call)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)

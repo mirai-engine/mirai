@@ -85,9 +85,9 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     time:=core.Time{dt=1.0/60,playing=true}
     for i in 0..<16 {time.tick=u64(i);animation_input_physics(&f,time)}
     core.get(&f.inputs,controlled).move={.2,0,0}
-    anim.animation_play(core.get(&f.animations,motor),"advance",fade=0,loop=false)
+    anim.animation_clip(core.get(&f.animations,motor),"advance",fade=0,loop=false)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
-    anim.animation_sample(core.read(&f.animations),&progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&f.animations),&progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     delta,present:=anim.animation_root_delta(&f.playback,motor)
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5 && abs(f.playback.states[0].local[1].position.x-time.dt)<1e-5)
     before_control,_:=core.get(core.read(&f.transforms),controlled);before_motor,_:=core.get(core.read(&f.transforms),motor)

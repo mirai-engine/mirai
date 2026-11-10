@@ -42,6 +42,7 @@ Rig_World :: struct {
     grounding:Grounding_Runtime,
     modifiers:Modifier_Runtime,
     modifier_requests:Modifier_Requests,
+    actions:Action_Runtime,
 }
 
 // A Rig_World with what the application holds for it. The World goes first:
@@ -50,6 +51,7 @@ Rig_World :: struct {
 Rig_Test :: struct {
     using w:Rig_World,
     cache:Skeleton_Assets,
+    action_sets:Actions_Assets,
     problems:core.Problems,
 }
 
@@ -59,7 +61,7 @@ rig_test_init :: proc(t:^testing.T,f:^Rig_Test) -> bool {return core.test_world_
 @(private="file")
 rig_test_destroy :: proc(f:^Rig_Test) {
     core.test_world_destroy(&f.w)
-    skeleton_assets_free(&f.cache)
+    skeleton_assets_free(&f.cache);actions_assets_free(&f.action_sets)
 }
 
 @(private="file")
@@ -71,7 +73,7 @@ rig_test_settle :: proc(f:^Rig_Test) {
 @(private="file")
 rig_test_advance :: proc(f:^Rig_Test,app:^host.App,time:core.Time,frame:core.Frame_Time={}) {
     if app.assets!=nil {rigs_update(&f.playback,core.read(&f.meshes),core.read(&f.skins),app.assets)}
-    animation_tick(core.read(&f.animations),&f.transforms,core.read(&f.parents),{},core.read(&f.labels),&f.requests,&f.events,core.read(&f.targets),{},&f.playback,app,time,frame,&f.cache,&f.problems)
+    animation_tick(core.read(&f.animations),&f.transforms,core.read(&f.parents),{},core.read(&f.labels),&f.requests,&f.events,core.read(&f.targets),{},&f.playback,app,time,frame,&f.cache,&f.problems,actions=&f.actions,action_assets=&f.action_sets)
     m:=&f.modifiers
     inputs:=Constraint_Inputs{core.read(&m.ik),core.read(&m.look),core.read(&m.limits),core.read(&m.feet),core.read(&m.sockets),core.read(&m.retargets),{},core.read(&f.worlds),0,&f.cache,&f.problems}
     ground_inputs:=Grounding_Inputs{core.read(&m.grounding),{},core.read(&f.transforms),core.read(&f.parents),0,&f.problems,{}}
@@ -245,7 +247,7 @@ preview_plays_the_clip_in_the_editor_and_returns_to_its_start_when_it_stops :: p
     rig:=core.create(&w.entities)
     core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.add(&w.meshes,rig,{mesh=mesh_id})
     animation:=ANIMATION_DEFAULT;animation.asset=clips_id
-    testing.expect(t,animation_play(&animation,"lift",fade=0,loop=false))
+    testing.expect(t,animation_clip(&animation,"lift",fade=0,loop=false))
     core.add(&w.animations,rig,animation)
     rig_test_settle(&w)
     editor,preview:=core.Time{},core.Frame_Time{dt=0.25,alpha=1}
@@ -300,7 +302,7 @@ frames_played_again_while_a_clip_compressed_progress_as_they_did :: proc(t:^test
         core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY)
         core.add(&w.meshes,rig,{mesh=mesh})
         animation:=ANIMATION_DEFAULT;animation.asset=clips
-        animation_play(&animation,"lift",fade=0,loop=false)
+        animation_clip(&animation,"lift",fade=0,loop=false)
         core.add(&w.animations,rig,animation)
         rig_test_settle(w)
         return rig,true
@@ -352,7 +354,7 @@ shared_profiles_accept_multiple_goals_at_the_origin_and_evaluate_without_stable_
     core.add(&w.configs,rig,{profile=id,weight=1,enabled=true});rig_test_settle(&w)
     cache:Pose_Assets;defer pose_assets_free(&cache)
     step :: proc(w:^Rig_Test,app:^host.App,cache:^Pose_Assets) {
-        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.configs),core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.configs),core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
         animation_advance(core.read(&w.configs),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},&w.requests,{},&w.problems,nil,nil,{},{},core.CLOCK_DEFAULT)
     }
     modifier_goal(&w.modifier_requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=1,enabled=true})
@@ -648,14 +650,18 @@ skeleton_bone_find_takes_a_path_a_unique_name_or_a_part_of_the_body :: proc(t:^t
 layers_play_over_a_region_of_the_body_without_stable_allocations :: proc(t:^testing.T) {
     directory:=base.test_folder(t,"body-layer")
     mesh_id,clips_id,bones,saved:=figure_assets(t,directory,true);if !saved {return}
+    set:=base.Asset_Id{0x5e7,0x1}
+    {
+        types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+        if !test_action_set_save(t,directory,"figure",&types,set,clips_id,{test_stack_layer("raise",over="@arm_l")}) {return}
+    }
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     defer host.app_content_destroy(&app)
     w:Rig_Test;if !rig_test_init(t,&w) {return};defer rig_test_destroy(&w)
     rig:=core.create(&w.entities)
-    animation:=ANIMATION_DEFAULT;animation.asset=clips_id
-    testing.expect(t,animation_play(&animation,"still",fade=0))
-    testing.expect(t,animation_play(&animation,"raise",fade=0,layer=1,over="@arm_l"))
+    animation:=ANIMATION_DEFAULT;animation.asset,animation.actions=clips_id,set
+    testing.expect(t,animation_clip(&animation,"still",fade=0))
     core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.add(&w.meshes,rig,{mesh=mesh_id});core.add(&w.animations,rig,animation);rig_test_settle(&w)
     left,right:=figure_bone(bones,"upperarm_l"),figure_bone(bones,"upperarm_r")
     for iteration in 0..<3 {
@@ -664,7 +670,7 @@ layers_play_over_a_region_of_the_body_without_stable_allocations :: proc(t:^test
         previous_allocator:=app.allocator
         if iteration>1 {context.allocator={runtime_failure_allocator,&failure};context.temp_allocator=context.allocator;app.allocator=context.allocator}
         rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
-        context=previous_context;app.allocator=previous_allocator;w.cache.allocator=previous_allocator
+        context=previous_context;app.allocator=previous_allocator;w.cache.allocator,w.action_sets.allocator,w.actions.allocator=previous_allocator,previous_allocator,previous_allocator
         if iteration>1 {testing.expect_value(t,failure.calls,0)}
         if !testing.expect_value(t,len(w.playback.states),1) {return}
         state:=&w.playback.states[0]
@@ -706,6 +712,7 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
     _,mesh_id,_,saved:=rig_assets(t,directory)
     if !saved {return}
     moves:=base.Asset_Id{0x533,0x227}
+    sets:=[3]base.Asset_Id{{0x5e7,1},{0x5e7,2},{0x5e7,3}}
     {
         types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
         turns:[4][2]lib.Keyframe
@@ -717,6 +724,10 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
             {name="sway",tracks={{target="upper",property=.Position,keys=slides[1][:]},{target="upper/lower/foot",property=.Rotation,keys=turns[3][:]},{target="upper",property=.Rotation,keys=turns[2][:]}}},
         }
         if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/moves.anim",directory),&types,{id=moves,clips=clips[:]}),asset.Error.None) {return}
+        // The layers a rig has: a kick over its lower bone, a sway added over the lift, or both.
+        kick:=test_stack_layer("kick",over="lower",weight=.6)
+        sway:=test_stack_layer("sway",weight=.5,mode=.Additive,reference=.25,reference_clip="lift")
+        if !test_action_set_save(t,directory,"kick",&types,sets[0],moves,{kick}) || !test_action_set_save(t,directory,"sway",&types,sets[1],moves,{sway}) || !test_action_set_save(t,directory,"both",&types,sets[2],moves,{kick,sway}) {return}
     }
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return}
@@ -738,22 +749,21 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
             core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY)
             core.add(&w.meshes,rig,{mesh=mesh_id})
             animation:=ANIMATION_DEFAULT;animation.asset=moves;animation.weight=1-f32(i%4)*.2
-            animation_play(&animation,names[i%3],fade=.1,speed=.5+f32(i)*.2)
-            if i%2==0 {animation_play(&animation,"kick",layer=1,over="lower",weight=.6,fade=0)}
-            if i%5!=0 {animation_play(&animation,"sway",layer=2,weight=.5,fade=0,mode=.Additive,reference=.25,reference_clip="lift")}
+            animation_clip(&animation,names[i%3],fade=.1,speed=.5+f32(i)*.2)
+            if i%2==0 && i%5!=0 {animation.actions=sets[2]} else if i%2==0 {animation.actions=sets[0]} else if i%5!=0 {animation.actions=sets[1]}
             core.add(&w.animations,rig,animation)
         }
         rig_test_settle(&w)
     }
     step :: proc(w:^Rig_Test,app:^host.App,cache:^Pose_Assets,budget:Animation_Budget_Config) {
-        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.configs),core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,budget)
+        animation_sample(core.read(&w.animations),&w.progress,core.read(&w.configs),core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.meshes),core.read(&w.skins),&w.requests,&w.events,&w.modifier_requests,&w.modifiers,&w.playback,cache,&w.cache,app,{dt=1.0/60,playing=true},{},&w.problems,nil,nil,&w.actions,&w.action_sets,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,budget)
         animation_advance(core.read(&w.configs),&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.modifier_requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},{dt=1.0/60,playing=true},&w.requests,{},&w.problems,nil,nil,{},{},core.CLOCK_DEFAULT)
     }
     same,moved:=true,false
     for tick in 0..<10 {
         saved:=context
         // The clip of some changes at the fourth tick, so they cross-fade; the last ticks are stable.
-        if tick==4 {for &w in worlds {for rig,i in rigs {if i%4==1 {animation_play(core.get(&w.animations,rig),names[(i+1)%3],fade=.1,speed=1)}}}}
+        if tick==4 {for &w in worlds {for rig,i in rigs {if i%4==1 {animation_clip(core.get(&w.animations,rig),names[(i+1)%3],fade=.1,speed=1)}}}}
         if tick>=8 {context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()}
         for &w,k in worlds {step(&w,&app,&caches[k],budgets[k])}
         context=saved

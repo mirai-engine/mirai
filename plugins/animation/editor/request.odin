@@ -15,19 +15,6 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-// A clip of the library of the .match played at once (match_play), as the clip of mode, until
-// phase of it or its marker; matching goes on from there. The options are Match_Play_Options.
-Request_Play :: struct {
-    clip:[64]u8 `mirai:"text,label=A clip of the library of the .match"`,
-    mode:[32]u8 `mirai:"text,optional,label=The Locomotion_Mode it plays in; the body leaving it gives the rig back to matching. Empty: the one the rig is in"`,
-    fade:f32 `mirai:"optional,min=0,unit=s,label=Of the inertial blend into it"`,
-    entry:anim.Match_Entry `mirai:"optional,label=Start; Keep_Time: at the time of the clip playing; Match_Phase: at the phase of its markers"`,
-    phase:f32 `mirai:"optional,min=0,max=1,label=Of its duration where matching takes over again"`,
-    marker:[64]u8 `mirai:"text,optional,label=A marker of the clip where matching takes over, instead of phase"`,
-    priority:i16 `mirai:"optional,label=A play of lower priority than the one playing is refused"`,
-    wait:bool `mirai:"optional,label=Starts when the blend that runs ends"`,
-    tick:u32 `mirai:"optional,max=3600,label=In animation.preview and animation.pose.bake: the tick it is asked at"`,
-}
 Request_Motion :: struct {
     name:[32]u8 `mirai:"text,label=A warp window of the motion profile"`,
     target:Spatial_Target_Params `mirai:"optional,label=Where the window ends: a point (World), an entity, or a bone or socket of a rig"`,
@@ -70,9 +57,8 @@ Request_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     stop:bool `mirai:"optional,label=Stops playback where it is"`,
     seek:f32 `mirai:"optional,min=0,unit=s,label=Plays from this time on the next evaluation"`,
-    parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter `mirai:"optional"`,
-    plays:[16]Request_Play `mirai:"optional,label=Clips of the .match to play now (a vault, a hit), in order"`,
-    actions:[REQUEST_ROWS]Preview_Action `mirai:"optional"`,
+    parameters:[anim.STACK_PARAMETERS]Preview_Parameter `mirai:"optional,label=Parameters of its action set: the weight of a layer by its name; or an axis of the space of one (an aim yaw)"`,
+    actions:[REQUEST_ROWS]Preview_Action `mirai:"optional,label=Actions of its action set to play or stop; in order"`,
     goals:[REQUEST_ROWS]Preview_Goal `mirai:"optional"`,
     controls:[REQUEST_ROWS]Preview_Control `mirai:"optional"`,
     motion:[16]Request_Motion `mirai:"optional,label=Targets of warp windows"`,
@@ -94,7 +80,6 @@ request_defaults :: proc() -> ^Request_Params {
 }
 // Defaults of the request rows a params struct has.
 request_rows_defaults :: proc(p:^$T) {
-    for &play in p.plays {play.fade,play.phase=anim.MATCH_PLAY_OPTIONS_DEFAULT.fade,anim.MATCH_PLAY_OPTIONS_DEFAULT.phase}
     for &control in p.controls {control.weight,control.enabled=1,true}
     for &goal in p.goals {goal.contact,goal.grounded,goal.normal=1,true,{0,1,0};goal.target=SPATIAL_TARGET_PARAMS_DEFAULT}
     for &motion in p.motion {motion.target=SPATIAL_TARGET_PARAMS_DEFAULT;motion.enabled=true}
@@ -108,13 +93,13 @@ request_rows_defaults :: proc(p:^$T) {
 @(private)
 request_register :: proc(s:^editor.Session) {
     defaults:=request_defaults();if defaults==nil {return}
-    authoring_method_register(s,{name="animation.request",summary="Asks an animated entity what to do, from playback, graph parameters and clips of its .match to intents. Edit takes only stop, parameters and sequence play, pause and speed; the rest needs Play or Simulation.",params=Request_Params,params_info=type_info_of(Request_Params),defaults=defaults,run=request},Request_Result,type_info_of(Request_Result))
+    authoring_method_register(s,{name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its action set to intents. Edit takes only stop and sequence play, pause and speed; the rest needs Play or Simulation.",params=Request_Params,params_info=type_info_of(Request_Params),defaults=defaults,run=request},Request_Result,type_info_of(Request_Result))
 }
 
 // Fields of a request that change the document in Edit; the rest change only a running world.
 @(private)
 request_runtime_field :: proc(call:^api.Call) -> string {
-    for field in ([?]string{"seek","plays","actions","goals","controls","motion","locomotion","distance","locomote","look","gesture","reach"}) {
+    for field in ([?]string{"seek","parameters","actions","goals","controls","motion","locomotion","distance","locomote","look","gesture","reach"}) {
         if authoring_field_present(call,field) {return field}
     }
     if authoring_field_present(call,"sequence") {
@@ -170,25 +155,27 @@ request_note :: proc(applied:^[dynamic]Request_Applied,kind,name:string,value:f3
 request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,p:^$T,ticks:u32,applied:^[dynamic]Request_Applied) -> bool {
     count,_:=api.params_array_count(call,"parameters")
     controls,_:=api.params_array_count(call,"controls")
-    plays,_:=api.params_array_count(call,"plays")
     goals,_:=api.params_array_count(call,"goals")
     actions,_:=api.params_array_count(call,"actions")
     motions,_:=api.params_array_count(call,"motion")
     reaches,_:=api.params_array_count(call,"reach")
     animation,present:=editor.entity_get(world,entity,anim.Animation)
-    needs:=count>0 || plays>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"distance") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
+    needs:=count>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"distance") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
     if needs && !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
     changed:=false
     when intrinsics.type_has_field(T,"stop") {
         if authoring_field_present(call,"stop") && p.stop {animation.playing=false;changed=true;request_note(applied,"Stop","")}
     }
+    if changed {core.add(core.world_table_of(world,anim.Animation),entity,animation);core.world_settle(world)}
     for &parameter in p.parameters[:count] {
         name:=base.text_get(parameter.name[:])
         if !program_parameter_check(s,call,animation,name,parameter.value) {return false}
-        if !anim.animation_parameter(&animation,name,parameter.value) {authoring_failure(call,"parameters","Capacity",fmt.tprintf("at most %d parameters set",anim.GRAPH_PARAMETERS),name,"The parameter could not be set");return false}
-        changed=true;request_note(applied,"Parameter",name,parameter.value)
+        requested:=core.world_storage_of(world,anim.Animation_Requests)
+        waiting:=len(requested.values.items)
+        anim.set(requested,entity,name,parameter.value)
+        if len(requested.values.items)==waiting {authoring_failure(call,"parameters","Capacity","space in the parameter queue","full or unavailable","The parameter could not be queued",api.SERVER_ERROR);return false}
+        request_note(applied,"Parameter",name,parameter.value)
     }
-    if changed {core.add(core.world_table_of(world,anim.Animation),entity,animation);core.world_settle(world)}
     when intrinsics.type_has_field(T,"seek") {
         if authoring_field_present(call,"seek") {
             requested:=core.world_storage_of(world,anim.Animation_Requests)
@@ -198,16 +185,15 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             request_note(applied,"Seek","",p.seek)
         }
     }
-    if plays>0 && !request_plays_check(s,call,world,entity,animation,p.plays[:plays],ticks) {return false}
     if actions>0 || authoring_field_present(call,"gesture") {
-        if animation.actions=={} {authoring_failure(call,"actions" if actions>0 else "gesture","Missing_Profile","Animation.actions assigned","none","The entity has no action profile",fix="Create gestures with animation.character.setup, or assign an .action to Animation.actions");return false}
+        if animation.actions=={} {authoring_failure(call,"actions" if actions>0 else "gesture","Missing_Profile","Animation.actions assigned","none","The entity has no action set",fix="Create gestures with animation.character.setup, or make a set with animation.action.set and assign it to Animation.actions");return false}
         file:Authoring_File;defer asset.asset_close(&file.file);profile,ok:=action_authoring_open(s,call,animation.actions,&file);if !ok {return false}
         for &action,i in p.actions[:actions] {
             if action.tick>ticks {authoring_failure(call,fmt.tprintf("actions[%d].tick",i),"Out_Of_Range",fmt.tprintf("0 to %d",ticks),fmt.tprintf("%d",action.tick),"An action tick cannot exceed the ticks that run",fix="Ticks schedule actions in animation.preview; a request queues them now");return false}
             index:=action_named_index(profile.actions,action.name)
             if index<0 {authoring_failure(call,fmt.tprintf("actions[%d].name",i),"Missing_Reference","an action name",base.text_get(action.name[:]),"The action does not exist",fix=request_action_names(profile.actions));return false}
-            if action.kind==.Fire && !action_control_policy(call,profile.actions[index],animation,fmt.tprintf("actions[%d].name",i)) {return false}
-            if action.kind==.Section || action.section!=([64]u8{}) {
+            if !action.stop && !action_control_policy(call,profile.actions[index],animation,fmt.tprintf("actions[%d].name",i)) {return false}
+            if action.section!=([64]u8{}) {
                 found:=false;for section in profile.sections {if int(section.action)==index && section.name==action.section {found=true;break}}
                 if !found {authoring_failure(call,fmt.tprintf("actions[%d].section",i),"Missing_Reference","a section of the requested action",base.text_get(action.section[:]),"The action section does not exist");return false}
             }
@@ -218,12 +204,11 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             index:=-1
             for &action,i in profile.actions {if base.text_get(action.name[:])==name {index=i;break}}
             if index<0 {authoring_failure(call,"gesture.clip","Missing_Reference","a gesture of the action profile",name,"The character has no such gesture",fix=request_action_names(profile.actions));return false}
-            kind:=anim.Action_Request_Kind.Cancel if p.gesture.stop else .Fire
-            if kind==.Fire && !action_control_policy(call,profile.actions[index],animation,"gesture.clip") {return false}
-            requested:=core.world_storage_of(world,anim.Action_Requests)
-            waiting:=len(requested.queue.items)
-            anim.action_request(requested,entity,kind,name,"")
-            if len(requested.queue.items)==waiting {authoring_failure(call,"gesture","Capacity","space in the action queue","full or unavailable","The gesture could not be queued",api.SERVER_ERROR);return false}
+            if !p.gesture.stop && !action_control_policy(call,profile.actions[index],animation,"gesture.clip") {return false}
+            requested:=core.world_storage_of(world,anim.Animation_Requests)
+            waiting:=len(requested.plays.items)
+            if p.gesture.stop {anim.stop(requested,entity,name)} else {anim.play(requested,entity,name)}
+            if len(requested.plays.items)==waiting {authoring_failure(call,"gesture","Capacity","space in the action queue","full or unavailable","The gesture could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Gesture",name)
         }
     }
@@ -352,65 +337,17 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     return request_tick(call,world,entity,p,0,applied)
 }
 
-// Checks the plays of a request: the rig plays a .match whose library has their clips and markers,
-// with options in range and modes of the project.
-@(private)
-request_plays_check :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,animation:anim.Animation,plays:[]Request_Play,ticks:u32) -> bool {
-    record,found:=asset.registry_find(&s.app.assets.registry,animation.asset)
-    if !found || record.kind!=anim.MATCH_KIND {authoring_failure(call,"plays","Not_Matching","an Animation.asset that is a .match","another asset" if found else "none","The entity plays no motion matching",fix="Make one with animation.character.setup, or assign a .match with animation.play");return false}
-    source,ok:=program_source(s,call,animation.asset,animation.library);if !ok {return false}
-    file:Authoring_File;defer asset.asset_close(&file.file)
-    view,opened:=program_animation_open(s,call,source,&file);if !opened {return false}
-    modes:=locomotion_modes(world.info)
-    for &play,i in plays {
-        path:=fmt.tprintf("plays[%d]",i)
-        if play.tick>ticks {authoring_failure(call,fmt.tprintf("%s.tick",path),"Out_Of_Range",fmt.tprintf("0 to %d",ticks),fmt.tprintf("%d",play.tick),"A play tick cannot exceed the ticks that run",fix="Ticks schedule plays in animation.preview; a request plays them now");return false}
-        clip:=-1;for &value,c in view.clips {if base.text_get(value.name[:])==base.text_get(play.clip[:]) {clip=c;break}}
-        if clip<0 {authoring_failure(call,fmt.tprintf("%s.clip",path),"Missing_Clip","a clip of the library of the .match",base.text_get(play.clip[:]),"The library of the .match has no such clip",fix=request_clip_names(view));return false}
-        if marker:=base.text_get(play.marker[:]);marker!="" {
-            known:=false;for &value in view.markers[view.clips[clip].first_marker:][:view.clips[clip].marker_count] {if base.text_get(value.name[:])==marker {known=true;break}}
-            if !known {authoring_failure(call,fmt.tprintf("%s.marker",path),"Missing_Marker","a marker of the clip",marker,"The clip has no such marker",fix="List its markers with animation.asset.inspect and the clip");return false}
-        }
-        if !finite(play.fade) || play.fade<0 {authoring_failure(call,fmt.tprintf("%s.fade",path),"Invalid_Value","finite seconds, zero or more",fmt.tprintf("%v",play.fade),"The fade is invalid");return false}
-        if !finite(play.phase) || play.phase<0 || play.phase>1 {authoring_failure(call,fmt.tprintf("%s.phase",path),"Out_Of_Range","0 to 1",fmt.tprintf("%v",play.phase),"The phase is a share of the duration of the clip");return false}
-        if name:=base.text_get(play.mode[:]);name!="" {
-            if len(modes)==0 {locomotion_modes_failure(call,fmt.tprintf("%s.mode",path));return false}
-            if _,known:=locomotion_mode_value(modes,name);!known {authoring_failure(call,fmt.tprintf("%s.mode",path),"Unknown_Mode","a Locomotion_Mode of the project",name,"The project has no such locomotion mode",fix=locomotion_mode_names(modes));return false}
-        }
-    }
-    return true
-}
-
-@(private)
-request_clip_names :: proc(view:asset.Animation_View) -> string {
-    names:=make([dynamic]string,context.temp_allocator)
-    for &clip in view.clips[:min(len(view.clips),16)] {append(&names,base.text_get(clip.name[:]))}
-    return fmt.tprintf("Clips: %s",strings.join(names[:],", ",context.temp_allocator))
-}
-
-// Queues the plays and actions of a tick.
+// Queues the actions of a tick.
 @(private)
 request_tick :: proc(call:^api.Call,world:core.World_Ref,entity:core.Entity,p:^$T,tick:u32,applied:^[dynamic]Request_Applied=nil) -> bool {
-    plays,_:=api.params_array_count(call,"plays")
-    for &play in p.plays[:plays] {
-        if play.tick!=tick {continue}
-        mode,known:=locomotion_mode_value(locomotion_modes(world.info),base.text_get(play.mode[:]))
-        if !known {if value,matching:=anim.animation_match(core.world_storage_of(world,anim.Playback),entity);matching {mode=value.mode}}
-        options:=anim.Match_Play_Options{fade=play.fade,entry=play.entry,phase=play.phase,marker=base.text_get(play.marker[:]),priority=play.priority,wait=play.wait}
-        requested:=core.world_storage_of(world,anim.Animation_Requests)
-        waiting:=len(requested.match_plays.items)
-        anim.match_play(requested,entity,base.text_get(play.clip[:]),mode,options)
-        if len(requested.match_plays.items)==waiting {authoring_failure(call,"plays","Capacity","an available play queue","full or unavailable queue","The play could not be queued",api.SERVER_ERROR);return false}
-        request_note(applied,"Play",base.text_get(play.clip[:]),play.fade)
-    }
     actions,_:=api.params_array_count(call,"actions")
     for &action in p.actions[:actions] {
         if action.tick!=tick {continue}
-        requested:=core.world_storage_of(world,anim.Action_Requests)
-        waiting:=len(requested.queue.items)
-        anim.action_request(requested,entity,action.kind,base.text_get(action.name[:]),base.text_get(action.section[:]))
-        if len(requested.queue.items)==waiting {authoring_failure(call,"actions","Capacity","space in the action queue","full or unavailable","The action could not be queued",api.SERVER_ERROR);return false}
-        request_note(applied,fmt.tprintf("%v",action.kind),base.text_get(action.name[:]))
+        requested:=core.world_storage_of(world,anim.Animation_Requests)
+        waiting:=len(requested.plays.items)
+        if action.stop {anim.stop(requested,entity,base.text_get(action.name[:]))} else {anim.play(requested,entity,base.text_get(action.name[:]),base.text_get(action.section[:]))}
+        if len(requested.plays.items)==waiting {authoring_failure(call,"actions","Capacity","space in the action queue","full or unavailable","The action could not be queued",api.SERVER_ERROR);return false}
+        request_note(applied,"Stop" if action.stop else "Play",base.text_get(action.name[:]))
     }
     return true
 }

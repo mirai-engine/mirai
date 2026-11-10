@@ -21,13 +21,12 @@ Animation_Kinds :: struct {provider:editor.Asset_Kind_Provider}
 ANIMATION_KINDS_DEFAULT :: Animation_Kinds{provider={
     kinds={
         0={kind=anim.MATCH_KIND,label="Matching",color={72,160,190,255},icon=.Move,extension=".match"},
-        1={kind=anim.GRAPH_KIND,label="Anim graph",color={200,116,0,255},icon=ui.Icon(u8(ui.Icon.User)+u8(editor.User_Icon.Tree)),extension=".agraph"},
-        2={kind=anim.BLEND_KIND,label="Blend space",color={255,168,111,255},icon=.Gauge,extension=".blend"},
-        3={kind=anim.MOTION_KIND,label="Motion profile",color={120,180,90,255},icon=.Relative,extension=".motion"},
-        4={kind=anim.POSE_KIND,label="Pose profile",color={210,90,150,255},icon=.Focus,extension=".pose"},
-        5={kind=anim.ACTION_KIND,label="Actions",color={230,190,60,255},icon=.Lightning,extension=".action"},
+        1={kind=anim.BLEND_KIND,label="Blend space",color={255,168,111,255},icon=.Gauge,extension=".blend"},
+        2={kind=anim.MOTION_KIND,label="Motion profile",color={120,180,90,255},icon=.Relative,extension=".motion"},
+        3={kind=anim.POSE_KIND,label="Pose profile",color={210,90,150,255},icon=.Focus,extension=".pose"},
+        4={kind=anim.ACTION_KIND,label="Action set",color={230,190,60,255},icon=.Lightning,extension=".action"},
     },
-    count=6,
+    count=5,
 }}
 
 @(storage)

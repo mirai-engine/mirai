@@ -123,7 +123,7 @@ Owner of everything it contains; `asset/document.odin` builds by tables, columns
 `asset.KINDS` gives extension, fourcc, name and version of each engine type; their tables are in
 their `asset/<type>.odin` and `mirai asset info` shows them. Contract of each: [kinds.md](kinds.md);
 scenes and prefabs: [scenes.md](scenes.md). The plugins' types are declared and validated by their
-plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
+plugin without adding them to the core: `.pose`, `.blend` and `.action`
 ([animation](../../mirai-animation/references/animation.md)),
 [`.foliage`](../../mirai-world/references/foliage.md#format),
 [`.terrain`](../../mirai-world/references/terrain.md) and
@@ -151,8 +151,8 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
   `grounding`, `retarget`.
 - **`.blend`** (`BLND`): `blend` (`Blend_Info`), `samples` (`Blend_Sample`), `segments`,
   `triangles`; defined and validated by the animation plugin.
-- **`.agraph`** (`AGRF`): `graph` (`Graph_Info`), `parameters`, `events`, `nodes`, `states`,
-  `transitions`; defined and validated by the animation plugin.
+- **`.action`**: `info` (`Action_Info`), `layers` (`Stack_Layer`), `actions`, `sections`,
+  `windows`; defined and validated by the animation plugin.
 - **`.sound`** (`SND `): `sound` (`Sound_Info`) and one of two bulk tables: `samples` (`i16`) or
   `file` (`u8`).
 - **`.sound_set`** (`SSET`): `sound_set` (`Sound_Set_Info`).

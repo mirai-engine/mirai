@@ -80,7 +80,7 @@ project world. Layout, manifests and build:
 - `abilities` (attacks, combos, dashes and reactions as rows of game data: sheets with timeline
   windows, cancel rules, statuses, attributes and effects; `abilities.*`):
   [abilities skill](../mirai-abilities/SKILL.md)
-- `animation` (clips, graphs, rigs, morphs, actions, authoring and its API):
+- `animation` (clips, motion matching, rigs, morphs, actions, authoring and its API):
   [animation skill](../mirai-animation/SKILL.md)
 - `lens` (depth of field, motion blur, bloom, vignette, distortion and aberration; settings per
   camera and per volume, consistent with exposure): [lens](references/render-plugins.md#lens)
