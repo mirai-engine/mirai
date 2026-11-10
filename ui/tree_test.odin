@@ -218,7 +218,7 @@ nodes_report_events_and_write_their_bound_fields :: proc(t:^testing.T) {
     test_frame(&ctx,&input,test_hud_build,&s)
     testing.expect_value(t,test_paint(&ctx,"Resume").style.color,Color{255,255,255,255})
     hovered:^Paint
-    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Rect && p.fill==(Color{90,90,90,255}) {hovered=&p}}
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Box && p.fill==(Color{90,90,90,255}) {hovered=&p}}
     testing.expect(t,hovered!=nil && hovered.corners==4,"The button shows the fill of its state")
     test_press(&input)
     test_frame(&ctx,&input,test_hud_build,&s)

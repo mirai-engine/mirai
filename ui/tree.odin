@@ -1199,7 +1199,8 @@ tree_build_tabs :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:in
             if label=="" {label=tree_node_text(ctx,b,c,child,int(instance.slots[child])+copy,values)}
             if label=="" {label=string(tree.strings[c.tab.offset:][:c.tab.length])}
             if label=="" {label=number_text(ctx,f64(at+1),0)}
-            if styled_button(ctx,tab,label,base_style,tree.variants[:tree.variant_count],node.style,variant,{padding=TREE_TAB_PADDING},at==chosen).clicked {picked=at}
+            look:=style_resolve(&ctx.theme,base_style,tree.variants[:tree.variant_count],node.style,variant,widget_states(ctx,tab,at==chosen))
+            if button(ctx,tab,{label=label,look=&look,layout=&Layout{padding=TREE_TAB_PADDING},block=true}).clicked {picked=at}
             if ctx.focus==tab && ctx.focus_moved {picked=at}
             child+=int(c.subtree)+1
         }

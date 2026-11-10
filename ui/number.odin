@@ -5,10 +5,10 @@ import "core:math"
 import "core:strconv"
 import "core:strings"
 
-// Number fields: a drag scrubs the value, a click types it with all of it
-// selected and a double click puts the caret where it lands. While it is typed
-// a drag selects part of it. Vectors and colors are rows of them with a
-// colored mark per axis.
+// Number fields and sliders, of the editor and of a game. In a field a drag
+// scrubs the value, a click types it with all of it selected and a double
+// click puts the caret where it lands; while it is typed a drag selects part
+// of it. Vectors and colors are rows of fields with a colored mark per axis.
 
 @(private)
 Scrub :: struct {
@@ -38,6 +38,15 @@ Number_Field :: struct {
     typed_only:bool, // a press types; dragging does nothing
     bare:bool,       // a slider: its track alone, without the field that types the value
     disabled:bool,
+    step:f64,        // the value snaps to it, from min when it has one; 0: any
+    // Two arrows at its ends step it by step (one without it), as left and
+    // right do while it has the focus; a press on its text types it.
+    stepper:bool,
+    // What it is drawn with, resolved for the state it is in: fill, stroke,
+    // corners and text, its mark for the selection and the arrows. nil: the
+    // theme. With a look it is ten sizes of its text wide and a line with its
+    // room tall, and the press that types it places the caret.
+    look:^Node_Style,
 }
 Number_Result :: struct {
     changed:bool,   // value^ changed this frame
@@ -69,6 +78,10 @@ number_format :: proc(buffer:[]u8,value:f64,decimals:int=3) -> string {
 @(private)
 number_limit :: proc(field:Number_Field,value:f64) -> f64 {
     v:=value
+    if field.step>0 {
+        base:=field.min if field.has_min else 0
+        v=base+math.round((v-base)/field.step)*field.step
+    }
     if field.integer {v=math.round(v)}
     if field.has_min {v=max(v,field.min)}
     if field.has_max {v=min(v,field.max)}
@@ -78,6 +91,7 @@ number_limit :: proc(field:Number_Field,value:f64) -> f64 {
 number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (result:Number_Result) {
     field:=field
     field.disabled|=ctx.disabled_depth>0
+    field.typed_only|=field.stepper
     th:=&ctx.theme
     e:=&ctx.edit
     s:=&ctx.scrub
@@ -85,12 +99,31 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
         if e.id==id && id!=0 {e^={};result.ended,result.cancelled=true,true}
         if s.id==id && id!=0 {s^={};result.ended,result.cancelled=true,true}
     }
+    look:=field.look
     size:=field.size if field.size>0 else th.font_small
+    width:=field.width if field.width!={} else GROW
+    height:=field.height if field.height>0 else th.row
+    em:=th.font
+    font:u8
+    pad:f32
+    if look!=nil {
+        em=control_em(ctx,look)
+        if look.text.size>0 {size=look.text.size}
+        font=look.text.font
+        if field.width=={} {width=fixed(em*GAME_WIDTH)}
+        if field.height<=0 {height=em*TEXT_LINE+2*em*GAME_PAD}
+        pad=em*GAME_PAD
+    }
+    side:f32
+    if field.stepper {
+        side=control_height(ctx,id,fixed(height),height)
+        pad=side
+    }
     decimals:=0 if field.integer else (field.decimals if field.decimals>0 else 3)
-    it:=interact(ctx,id,{.Focusable}+({.Disabled} if field.disabled else {}))
+    it:=interact(ctx,id,{.Focusable}+({.Disabled} if field.disabled else {})+({.Adjusts} if field.stepper else {}))
     begin_edit:=false
     if e.id==id && id!=0 {
-        event,tab:=field_edit_update(ctx,id,it,size,field.label,false,field.strip[3]>0,icon=field.icon)
+        event,tab:=field_edit_update(ctx,id,it,size,field.label,false,field.strip[3]>0,pad,font,field.icon)
         #partial switch event {
         case .Commit:
             text:=strings.trim_space(text_edit_value(e))
@@ -137,7 +170,11 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
         }
         if begin_edit {
             buffer:[48]u8
-            field_edit_begin(ctx,id,number_format(buffer[:],value^,0 if field.integer else NUMBER_EDIT_DECIMALS),.Number,TEXT_EDIT_CAPACITY,true)
+            field_edit_begin(ctx,id,number_format(buffer[:],value^,0 if field.integer else NUMBER_EDIT_DECIMALS),.Number,TEXT_EDIT_CAPACITY,look==nil)
+            e.font=font
+            if look!=nil && it.pressed {
+                if rect,found:=widget_rect(ctx,id);found {text_edit_press(ctx,e,size,field_text_area(ctx,rect,field.label,size,false,field.strip[3]>0,pad,field.icon))}
+            }
             result.began=true
         }
         if it.hot || s.id==id {ctx.cursor=.Text if e.id==id || field.typed_only else .Resize_Horizontal}
@@ -146,62 +183,146 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
     result.scrubbing=s.id==id && s.moved && id!=0
     text:="Multiple" if field.mixed else number_text(ctx,value^,decimals)
     paint:=field_paint(ctx,id,it,text,size,field.label,field.strip,"",s.id==id && id!=0,field.disabled,field.icon)
-    if paint!=nil {paint.detail=field.unit}
-    element_leaf(ctx,{id=id,layout={width=(field.width if field.width!={} else GROW),height=fixed(field.height if field.height>0 else th.row)},custom=paint})
+    if paint!=nil {
+        paint.detail=field.unit
+        paint.padding=pad
+        paint.style.font=font
+        if look!=nil {field_paint_look(paint,look)}
+    }
+    element:=Element{id=id,layout={width=width,height=fixed(height)},custom=paint}
+    if !field.stepper {
+        element_leaf(ctx,element)
+        return
+    }
+    by:=field.step if field.step>0 else 1
+    next:=value^
+    mark:=look.mark if look!=nil else th.text_muted
+    element.layout.direction,element.layout.align_y=.Row,.Center
+    if element_open(ctx,element) {
+        if control_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,mark,field.disabled) {next-=by}
+        element_leaf(ctx,{layout={width=GROW,height=GROW}})
+        if control_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,mark,field.disabled) {next+=by}
+    }
+    element_close(ctx)
+    if !field.disabled && e.id!=id {next+=f64(control_step(ctx,ctx.focus==id))*by}
+    if next!=value^ {
+        if limited:=number_limit(field,next);limited!=value^ {value^=limited;result.changed=true}
+    }
     return
 }
 
+// A field of a game takes its fill, stroke, corners and text from its look,
+// its selection from the mark (or its text at a quarter) and its placeholder
+// from its text at half.
+@(private)
+field_paint_look :: proc "contextless" (paint:^Paint,look:^Node_Style) {
+    text:=look.text.color
+    paint.fill,paint.stroke,paint.stroke_width,paint.corners,paint.text_color=look.fill,look.stroke,look.stroke_width,look.radius,text
+    paint.fill2=look.mark if look.mark[3]>0 else color_alpha(text,text[3]/4)
+    paint.faint=color_alpha(text,text[3]/2)
+}
+
+Slider :: struct {
+    min,max:f64,       // with max not over min it spans one from min
+    step:f64,          // the value snaps to it from min; 0: any
+    integer:bool,      // whole values
+    key_step:f64,      // what left and right move it by; 0: its step, or a twentieth of its range
+    width,height:Size, // unset: what is left wide and the row of the theme tall, or as its look says
+    // Its track, the part of it up to the value (mark) and its knob, resolved
+    // for the state it is in: the knob is as tall as the slider, over a track
+    // a third of that, and without a size it is ten sizes of its text wide and
+    // a line with its room tall. nil: the slider of the theme.
+    look:^Node_Style,
+    disabled:bool,
+}
+SLIDER_KNOB :: f32(12) // of a slider of the theme: the diameter of its knob
+SLIDER_TRACK :: f32(4) // and the thickness of its track
+
+// A slider: the pointer drags its knob, and Escape puts back the value the
+// drag began with; left and right step it while it has the focus. The value
+// changes only then.
+slider :: proc(ctx:^Context,id:Id,value:^f64,sl:Slider) -> (result:Number_Result) {
+    lo,hi:=sl.min,sl.max
+    if hi<=lo {hi=lo+1}
+    disabled:=sl.disabled || ctx.disabled_depth>0
+    s:=&ctx.scrub
+    if disabled && s.id==id && id!=0 {
+        s^={}
+        result.ended,result.cancelled=true,true
+    }
+    it:=interact(ctx,id,{.Focusable,.Adjusts}+({.Disabled} if disabled else {}))
+    themed:Node_Style
+    look:=sl.look
+    width,height:=sl.width,sl.height
+    knob,track:=SLIDER_KNOB,SLIDER_TRACK
+    if look==nil {
+        th:=&ctx.theme
+        themed.track,themed.mark,themed.knob=th.rule,th.accent_soft if disabled else th.accent,th.text_faint if disabled else th.text
+        look=&themed
+        if width=={} {width=GROW}
+        if height=={} {height=fixed(th.row)}
+    } else {
+        line:f32
+        width,height,line=control_size(ctx,width,height,look,GAME_WIDTH)
+        knob=control_height(ctx,id,height,line)
+        track=knob/3
+    }
+    next:=value^
+    moved,keyed:=false,false
+    if it.pressed {
+        s^={id=id,origin=value^,moved=true}
+        result.began=true
+    }
+    if s.id==id && id!=0 {
+        result.scrubbing=true
+        if r,found:=widget_rect(ctx,id);found && r.w>knob {
+            next=lo+f64(clamp((ctx.pointer.x-r.x-knob*0.5)/(r.w-knob),0,1))*(hi-lo)
+            moved=true
+        }
+        if .Escape in ctx.input.keys_pressed {
+            if value^!=s.origin {value^=s.origin;result.changed=true}
+            result.cancelled,result.ended=true,true
+            s^={}
+            ctx.escape_used=true
+            if ctx.active==id {ctx.active=0}
+            moved=false
+        } else if it.released || !it.active {
+            result.ended=true
+            s^={}
+        }
+    } else if direction:=control_step(ctx,it.focused);direction!=0 && ctx.edit.id==0 {
+        amount:=sl.key_step if sl.key_step>0 else (sl.step if sl.step>0 else (hi-lo)/20)
+        if sl.step<=0 && .Shift in ctx.input.modifiers {amount*=0.1}
+        if sl.integer {amount=max(amount,1)}
+        next+=f64(direction)*amount
+        moved,keyed=true,true
+    }
+    if moved {
+        if sl.step>0 {next=lo+math.round((next-lo)/sl.step)*sl.step}
+        if sl.integer {next=math.round(next)}
+        next=clamp(next,lo,hi)
+        if next!=value^ {
+            value^=next
+            result.changed=true
+            if keyed {result.began,result.ended=true,true}
+        }
+    }
+    paint:=Paint{kind=.Slider,value=f32(clamp((value^-lo)/(hi-lo),0,1)),fill=look.track,fill2=look.mark,stroke=look.knob,radius=knob*0.5,stroke_width=track,corners=look.radius}
+    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,paint)})
+    return
+}
+
+// A slider of the editor followed by the field that types its value. Without
+// a finite range it is the field alone.
 slider_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (result:Number_Result) {
     span:=field.max-field.min
     if !field.has_min || !field.has_max || field.max<=field.min || math.is_nan(span) || math.is_inf(span) || math.is_nan(value^) || math.is_inf(value^) {
         return number_field(ctx,id,value,field)
     }
     th:=&ctx.theme
-    disabled:=field.disabled || ctx.disabled_depth>0
-    track:=id_derive(ctx,id,"track")
-    s:=&ctx.scrub
-    if disabled && s.id==track {
-        s^={}
-        result.ended,result.cancelled=true,true
-    }
-    if box(ctx,{width=field.width if field.width!={} else GROW,height=fixed(field.height if field.height>0 else th.row),gap=5,align_y=.Center}) {
-        it:=interact(ctx,track,{.Focusable}+({.Disabled} if disabled else {}))
-        if it.pressed && !disabled {
-            s^={id=track,origin=value^,moved=true}
-            result.began=true
-        }
-        if s.id==track && !disabled {
-            if r,found:=widget_rect(ctx,track);found && r.w>12 {
-                fraction:=clamp(f64((ctx.pointer.x-r.x-6)/(r.w-12)),0,1)
-                next:=number_limit(field,field.min+fraction*span)
-                if next!=value^ {value^=next;result.changed=true}
-            }
-            result.scrubbing=true
-            if .Escape in ctx.input.keys_pressed {
-                if value^!=s.origin {value^=s.origin;result.changed=true}
-                result.cancelled,result.ended=true,true
-                s^={}
-                ctx.escape_used=true
-                if ctx.active==track {ctx.active=0}
-            } else if it.released || !it.active {
-                result.ended=true
-                s^={}
-            }
-        } else if !disabled && it.focused && ctx.edit.id==0 {
-            direction:=0
-            if .Left in ctx.input.keys_repeated {direction=-1}
-            if .Right in ctx.input.keys_repeated {direction=1}
-            if direction!=0 {
-                step:=field.speed if field.speed>0 else span/100
-                if .Shift in ctx.input.modifiers {step*=0.1}
-                if field.integer {step=max(step,1)}
-                next:=number_limit(field,value^+f64(direction)*step)
-                if next!=value^ {value^=next;result.changed=true;result.began=true;result.ended=true}
-            }
-        }
-        color:=th.text_faint if disabled else th.text
-        paint:=paint_add(ctx,{kind=.Slider,fill=th.rule,fill2=th.accent_soft if disabled else th.accent,stroke=color,value=f32(clamp((value^-field.min)/span,0,1)),center=it.hot || it.active})
-        element_leaf(ctx,{id=track,layout={width=GROW,height=fixed(field.height if field.height>0 else th.row)},custom=paint})
+    height:=fixed(field.height if field.height>0 else th.row)
+    if box(ctx,{width=field.width if field.width!={} else GROW,height=height,gap=5,align_y=.Center}) {
+        result=slider(ctx,id_derive(ctx,id,"track"),value,{min=field.min,max=field.max,integer=field.integer,key_step=field.speed if field.speed>0 else span/100,height=height,disabled=field.disabled})
         if !field.bare {
             number:=field
             number.width,number.typed_only=fixed(46+(text_width(&ctx.font,field.unit,FIELD_UNIT)+4 if field.unit!="" else 0)),true

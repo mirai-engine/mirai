@@ -653,8 +653,8 @@ asset_box :: proc(s:^Session,name:string,index:int,label:string,quad:ui.Quad,ope
     appearance:=ui.Node_Style{radius=th.radius_control,text={size=th.font_small,color=th.text}}
     if ui.box(ctx,{id=box,width=ui.GROW,height=ui.fixed(MATERIAL_ROW),align_y=.Center,fill=fill,stroke=stroke,radius=th.radius_control,track=true,layer={enabled=faded,opacity=0.45}}) {
         ui.id_push(ctx,box)
-        clicked=ui.button(ctx,ui.id(ctx,"pick"),{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,use_appearance=true,appearance=appearance}).clicked
-        clicked|=ui.button(ctx,ui.id(ctx,"arrow"),{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,use_appearance=true,appearance=appearance}).clicked
+        clicked=ui.button(ctx,ui.id(ctx,"pick"),{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,look=&appearance}).clicked
+        clicked|=ui.button(ctx,ui.id(ctx,"arrow"),{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,look=&appearance}).clicked
         if revert!=nil {revert^=ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,style=.Ghost,width=22,height=22}).clicked}
         ui.id_pop(ctx)
     }

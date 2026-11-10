@@ -8,8 +8,8 @@ import "mirai:std/base"
 
 // What each kind of node of a tree builds when it holds no other nodes, how
 // a node takes part in navigation and how it is dragged and dropped. The
-// controls are those of a game (game.odin), in the parts of the style the
-// node resolves to.
+// controls are those of the package, with the style the node resolves to as
+// their look.
 
 // A Text: what its style fills, strokes or shades goes behind it as on a Box, a
 // box of the size of the node with its padding around the text.
@@ -74,7 +74,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         tree_button(ctx,b,node,index,slot,node_id,item,base_style,style,image_ref,content,selected,disabled)
     case .Checkbox:
         value:=bound.value.bound && current!=0
-        if game_checkbox(ctx,node_id,&value,control) {
+        if checkbox(ctx,node_id,&value,disabled,style,node.layout.width,node.layout.height) {
             bound_write(values,bound.value,1 if value else 0)
             changed(ctx,b,node,index,item,base_style,1 if value else 0,value)
         }
@@ -87,7 +87,13 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         if !bound.value.bound && hi>lo {current=lo}
         value:=f64(anim.value) if anim!=nil && .Value in anim.set else current
         moved:bool
-        if node.kind==.Slider {moved=game_slider(ctx,node_id,&value,{lo,hi,step},control)} else {moved=game_number(ctx,node_id,&value,{lo,hi,step},control)}
+        if node.kind==.Slider {
+            moved=slider(ctx,node_id,&value,{min=lo,max=hi,step=step,width=node.layout.width,height=node.layout.height,look=style,disabled=disabled}).changed
+        } else {
+            height:=node.layout.height
+            moved=number_field(ctx,node_id,&value,{width=node.layout.width,height=height.value if height.kind==.Fixed else 0,decimals=number_decimals(step),
+                min=lo,max=hi,has_min=hi>lo,has_max=hi>lo,step=step,stepper=true,look=style,disabled=disabled}).changed
+        }
         if bound.value.kind==.Int || bound.value.kind==.Uint {value=math.round(value)}
         if moved && value!=current {
             bound_write(values,bound.value,value)
@@ -181,7 +187,7 @@ tree_own_text :: proc(b:^Tree_Build,node:^Node,index:int) -> string {
 tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
     instance:=b.instance
     state:=&instance.slot[slot]
-    it:=styled_button(ctx,node_id,content,style^,layout=node.layout,selected=selected,disabled=disabled,image_ref=image_ref)
+    it:=button(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,block=true,disabled=disabled})
     takes:=node.action!=0 && !b.desc.passive && !disabled
     down,pressed:bool
     if takes && ctx.game.action!=nil {down,pressed=ctx.game.action(ctx.game.user,node.action)}
@@ -200,7 +206,7 @@ tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id
         }
         if state.held>0 && !state.latched {
             if r,found:=widget_rect(ctx,node_id);found {
-                bar:=max(game_em(ctx,style)*0.2,1)
+                bar:=max(control_em(ctx,style)*0.2,1)
                 element_leaf(ctx,{layout={width=fixed(r.w*clamp(state.held/node.hold,0,1)),height=fixed(bar)},float={to=.Surface,offset={r.x,r.y+r.h-bar},layer=ctx.layer+1},custom=paint_add(ctx,{kind=.Rect,fill=style.mark})})
             }
         }

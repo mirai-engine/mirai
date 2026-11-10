@@ -284,8 +284,12 @@ All take the context, an id and their state by parameter.
 
 - `number_field`: a click without dragging writes the value; dragging traverses it from the initial
   value and Escape returns it. `began` and `ended` delimit the edit for undo.
-- `slider_field` needs a finite range (otherwise it uses the common field). `vector_field` builds a
-  field per component with the strip of its axis color, without a letter.
+- `slider` is the slider of the editor and of a game: a drag moves it and Escape returns the value
+  the drag began with; left and right step it with the focus. `slider_field` is one followed by the
+  field that types its value and needs a finite range (otherwise it is the field alone).
+  `vector_field` builds a field per component with the strip of its axis color, without a letter.
+- A `stepper` number has two arrows that step it, as left and right do with the focus, and what is
+  typed in it snaps to its `step`.
 
 ### Popups and scroll
 
@@ -331,9 +335,9 @@ boxes, violet only for what is active and primary. Each layer is one step lighte
 behind it (bar, document canvas, `panel`, `card`, `raised`) and a field (`well`) is darker than its
 card, so that a panel stands out from what is behind it and a card from its panel without depending
 on the border. `row` is the height of a property row and `control` that of a bar button, a menu row
-and a search box; `use_appearance` remains for what carries the color of a datum (that of an
-agent). The package's shapes, layers, styles and components do not change the layout or the controls
-of the editor panels:
+and a search box; a `look` of its own on a button remains for what carries the color of a datum
+(that of an agent). The package's shapes, layers, styles and components do not change the layout
+or the controls of the editor panels:
 [editor interface](../../mirai-editor/references/panels.md#layout).
 
 ## Game interfaces
@@ -342,10 +346,13 @@ of the editor panels:
   in texels of the part; `image_frame` gives the frame of a sprite sheet. `text` has its own style
   and `reveal` draws a part of its characters where the whole text places them, so it does not
   reflow while it appears. `anchored` hangs a container from a screen point inside the safe area and
-  `skin_button` uses images or colors per state.
-- **Game controls** (`game.odin`): one algorithm per control, used by the tree and by code. Every
-  color and corner comes from the `Node_Style` resolved for its state and a transparent part is not
-  drawn: neither the theme nor constants. `fill`, `stroke`, the corners and the text are the box;
+  `skin_look` gives a button images or colors per state.
+- **Game controls**: one algorithm per control, used by the tree and by code. A button, a checkbox,
+  a slider and a number are those of the editor with a `look`; a radio, a selector, a field and a
+  dropdown are in `game.odin`. Every color and corner comes from the `Node_Style` resolved for its
+  state (`widget_states` gives the states of a widget before it is built) and a transparent part is
+  not drawn: neither the theme nor constants. A disabled button without a tooltip lets the pointer
+  through. `fill`, `stroke`, the corners and the text are the box;
   `track` the track of a slider and the row under the pointer in a dropdown's list; `knob` the knob;
   `mark` the dot of a radio, the tick of a checkbox, the arrows and the chosen option.
   - Without a size, a control measures its text plus `GAME_PAD` and `GAME_WIDTH` sizes of width.
