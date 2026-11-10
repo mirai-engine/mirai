@@ -24,8 +24,8 @@ a_character_says_whether_it_stands_and_its_measures_and_another_body_says_nothin
     if !described {return}
     defer core.test_info_destroy(&info)
     world:Bodies_Test_World
-    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
-    defer info.destroy[.World](&world)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     walker,jumper,crate:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.states,walker,phys.Character_State{standing=true,height=3})
     giant,stride:=phys.character_default(),phys.WALK_DEFAULT

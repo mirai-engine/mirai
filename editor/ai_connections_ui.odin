@@ -219,7 +219,7 @@ ai_connections_overview :: proc(s:^Session) {
         labels:=AI_CONNECTION_RUNTIME_LABELS
         runtimes:=[5]string{labels[.Automatic],labels[.Bun],labels[.Node],labels[.Pnpm],labels[.Bundled]}
         selected:=int(m.default_runtime)
-        if ui.dropdown(ctx,ui.id(ctx,"runtime"),runtimes[:],&selected,{width=186,height=30,disabled=state.busy}) {
+        if ui.dropdown(ctx,ui.id(ctx,"runtime"),{list=runtimes[:]},&selected,{width=186,height=30,disabled=state.busy}) {
             previous:=m.default_runtime;m.default_runtime=Ai_Runtime(selected);state.runtime=m.default_runtime
             if !ai_settings_save(s) {m.default_runtime=previous;ai_connections_error(s,"The connection settings could not be saved")}
         }

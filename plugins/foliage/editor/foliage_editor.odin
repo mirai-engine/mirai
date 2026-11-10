@@ -371,7 +371,7 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
             }
             for type in sel.types {if len(sel.types)>0 && type!=sel.types[0] {chosen=-1;break}}
             if ui.property(ctx,"Type") {
-                if has_place && ui.dropdown(ctx,ui.id(ctx,"instance_type"),names,&chosen,{width=-1}) {selected_retype(s,tool,world,assets,ground,placed.transform,source.types[chosen].id)}
+                if has_place && ui.dropdown(ctx,ui.id(ctx,"instance_type"),{list=names},&chosen,{width=-1}) {selected_retype(s,tool,world,assets,ground,placed.transform,source.types[chosen].id)}
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
                 if ui.button(ctx,ui.id(ctx,"ground"),{label="Stand on ground",detail="End",style=.Field,width=-1,center=true}).clicked && has_place {selected_ground(s,tool,world,assets,ground,placed.transform)}

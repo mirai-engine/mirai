@@ -25,7 +25,7 @@ test_controls_build :: proc(ctx:^Context,user:rawptr) {
         number_field(ctx,id(ctx,"count"),&s.count,{min=0,max=10,has_min=true,has_max=true,step=2,stepper=true,look=&s.style})
         game_field(ctx,id(ctx,"name"),s.name[:],&s.name_length,{control=c,placeholder="Name",limit=4})
         game_field(ctx,id(ctx,"secret"),s.secret[:],&s.secret_length,{control=c,password=true})
-        game_dropdown(ctx,id(ctx,"pick"),{joined=TEST_CONTROL_OPTIONS},&s.picked,c)
+        dropdown(ctx,id(ctx,"pick"),{joined=TEST_CONTROL_OPTIONS},&s.picked,{look=&s.style})
     }
 }
 TEST_CONTROL_STYLE :: Node_Style{
@@ -145,13 +145,11 @@ game_controls_step_type_and_choose_by_pointer_and_keys :: proc(t:^testing.T) {
     test_click(&ctx,&input,build,&s,third)
     testing.expect_value(t,s.picked,2)
     testing.expect(t,!popup_is_open(&ctx,list))
-    // Opened by the keys, the focus goes to the row chosen; the keys move it and Enter takes it.
+    // Opened by the keys, the current row is the chosen one; the keys move it and Enter takes it.
     ctx.focus,ctx.focus_ring=pick,true
     test_key(&input,.Enter)
     test_frame(&ctx,&input,build,&s)
     test_frame(&ctx,&input,build,&s)
-    test_frame(&ctx,&input,build,&s)
-    testing.expect_value(t,ctx.focus,third)
     test_key(&input,.Up)
     test_frame(&ctx,&input,build,&s)
     test_key(&input,.Enter)

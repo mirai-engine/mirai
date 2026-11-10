@@ -493,7 +493,8 @@ frame and the current one:
 What an extension needs **inside** the engine stages is composed when generating the project
 shaders, with lines `//! mirai frame`, `needs nested_views`, `needs instance_ids` and
 `hook ray|lights|probes|vertex` in its Slang sources; the comment in
-`cook/shaders/extensions.odin` lists them. Rules:
+`cook/shaders/extensions.odin` lists them, with `constant`, the line that shares a
+[constant of its Odin code](shaders.md#compilation) with its shaders. Rules:
 
 - A `frame` source is included before `Frame_Data` and uses no engine declarations;
   `pass_extension_data(pass, "<name>")` returns its bytes, zero until the extension writes them. A

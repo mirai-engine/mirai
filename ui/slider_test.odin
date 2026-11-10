@@ -86,7 +86,7 @@ dropdown_search_test_build :: proc(ctx:^Context,user:rawptr) {
 }
 
 dropdown_search_test_choice :: proc(ctx:^Context,s:^Dropdown_Search_Test) {
-    if dropdown(ctx,id(ctx,"kind"),{"Box","Sphere","Spot light","Directional light"},&s.selected,{width=-1,searchable=true}) {s.changes+=1}
+    if dropdown(ctx,id(ctx,"kind"),{list={"Box","Sphere","Spot light","Directional light"}},&s.selected,{width=-1,searchable=true}) {s.changes+=1}
 }
 
 @(test)

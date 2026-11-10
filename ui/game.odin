@@ -7,9 +7,9 @@ import "mirai:std/serial"
 
 // What game interfaces add to the widgets of the editor: images, text with a
 // style of its own, elements placed from the edges of the screen and the
-// controls only a game has. A button, a checkbox, a slider and a number are
-// those of the editor (button, checkbox, slider, number_field) with a look:
-// the Node_Style resolved for the state they are in.
+// controls only a game has. A button, a checkbox, a slider, a number and a
+// dropdown are those of the editor (button, checkbox, slider, number_field,
+// dropdown) with a look: the Node_Style resolved for the state they are in.
 
 // The scale that fits a layout designed for `reference` into `size`, keeping
 // its proportions: pass it in Input.scale.
@@ -327,63 +327,6 @@ game_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,f:Game_Field={}) -
         placeholder=f.placeholder,limit=f.limit,multiline=f.multiline,rows=3 if f.multiline else 1,password=f.password,disabled=f.disabled})
 }
 
-// A dropdown of a game: the option chosen and an arrow of mark in a box of
-// its style. A click or Enter opens the list of the options under it, in a
-// box of the same fill, stroke and corners, where the row under the pointer
-// or the focus takes track and the chosen one is written in mark. Opened by
-// the keys, the focus goes to the chosen row.
-game_dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,c:Game_Control={}) -> (changed:bool) {
-    none:Node_Style
-    style:=c.style if c.style!=nil else &none
-    count:=options_count(options)
-    disabled:=c.disabled || ctx.disabled_depth>0
-    list:=id_derive(ctx,id,"list")
-    it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
-    em:=control_em(ctx,style)
-    pad:=em*GAME_PAD
-    width,height,line:=control_size(ctx,c.width,c.height,style,GAME_WIDTH)
-    text_style:=style.text
-    text_style.align_y=.Center
-    if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center,padding={pad,0,0,0}},custom=paint_add(ctx,game_background(style))}) {
-        shown:=option(options,selected^) if selected^>=0 && selected^<count else ""
-        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=shown,style=text_style})})
-        element_leaf(ctx,{layout={width=fixed(line),height=GROW},custom=paint_add(ctx,{kind=.Arrow,fill=style.mark,size=em*GAME_ARROW,value=3})})
-    }
-    element_close(ctx)
-    if it.clicked && !popup_is_open(ctx,list) {
-        anchor,_:=widget_rect(ctx,id)
-        popup_open(ctx,list,anchor)
-        if ctx.activate==id {ctx.focus,ctx.focus_ring=id_derive(ctx,list,"row",max(selected^,0)+1),true}
-    }
-    entry:=popup_find(ctx,list)
-    if entry==nil {return}
-    choice:=-1
-    if popup(ctx,list,{min_width=entry.anchor.w,padding=pad*0.5,style=style}) {
-        offset:=[2]f32{0,entry.scroll}
-        defer entry.scroll=offset.y
-        if scroll_area(ctx,id_derive(ctx,list,"rows"),&offset,{width=GROW,height=FIT,max_height=surface_size(ctx).y*0.5}) {
-            for i in 0..<count {
-                row:=id_derive(ctx,list,"row",i+1)
-                row_it:=interact(ctx,row,{.Focusable})
-                lit:=row_it.hot || row_it.focused && ctx.focus_ring
-                row_style:=text_style
-                if i==selected^ && style.mark[3]>0 {row_style.color=style.mark}
-                if element_open(ctx,{id=row,layout={width=GROW,height=fixed(line),padding={pad,0,pad,0}},custom=paint_add(ctx,{kind=.Rect,fill=style.track if lit else {},corners=style.radius})}) {
-                    element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=option(options,i),style=row_style})})
-                }
-                element_close(ctx)
-                if row_it.clicked {choice=i}
-            }
-        }
-    }
-    if choice>=0 {
-        popup_close(ctx,list)
-        ctx.focus=id
-        if choice!=selected^ {selected^,changed=choice,true}
-    }
-    return
-}
-
 // The options of a selector or a dropdown: given one by one (list), as a
 // text that separates them with '|' (joined), or as the elements of an array:
 // count texts of stride bytes that end at a zero or at their room, without
@@ -444,6 +387,24 @@ option :: proc(o:Options,index:int) -> string {
         if bar<0 {return ""}
         rest=rest[bar+1:]
     }
+}
+// The options in order, each read once, a joined text included: `walk:=options_walk(o)`,
+// then `for text,index in option_next(&walk)`.
+@(private)
+Options_Walk :: struct {options:Options,count,index:int,rest:string}
+@(private)
+options_walk :: proc(o:Options) -> Options_Walk {return {options=o,count=options_count(o),rest=o.joined}}
+@(private)
+option_next :: proc(w:^Options_Walk) -> (text:string,index:int,ok:bool) {
+    if w.index>=w.count {return}
+    index,ok=w.index,true
+    w.index+=1
+    if w.options.list!=nil || w.options.array!=nil {return option(w.options,index),index,true}
+    bar:=strings.index_byte(w.rest,'|')
+    text=w.rest if bar<0 else w.rest[:bar]
+    w.rest=w.rest[bar+1:] if bar>=0 else ""
+    if equal:=strings.index_byte(text,'=');equal>=0 {text=strings.trim_space(text[:equal])}
+    return
 }
 // The value of the option at index of a text "Label=Value|...": empty without one.
 option_value :: proc(text:string,index:int) -> string {

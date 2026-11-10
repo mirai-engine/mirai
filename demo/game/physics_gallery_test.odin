@@ -17,6 +17,14 @@ import mm "mirai:std/math"
 import cache "plugins:physics_cache/runtime"
 import fields "plugins:physics_fields/runtime"
 
+// A simulation of the settings given, made as the physics plugin makes it for a world.
+gallery_physics_make :: proc(state:^phys.Physics_State,settings:phys.Physics_Settings) -> bool {
+    settings:=settings
+    job_system:jobs.Job_System
+    problems:core.Problems
+    return phys.state_make(state,&settings,&job_system,&problems)
+}
+
 @(test)
 gallery_geometry_actions_restart_once_per_trigger_alternating_forward_and_reverse :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
@@ -70,7 +78,7 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
     fractures:destruct.Fracture_State;defer destruct.fracture_state_destroy(&fractures)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=16}
-    if !testing.expect(t,phys.test_state_make(&physics,settings)) {return}
+    if !testing.expect(t,gallery_physics_make(&physics,settings)) {return}
     fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,16,32
     fractures.ready=fr.fracture_init(&fractures.fracture,fd);f:=&fractures.fracture
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
@@ -133,7 +141,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     testing.expect_value(t,core.get(&stations,station).activations,u32(0));testing.expect_value(t,len(requests.queue.items),0)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=32}
     fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,32,64
-    testing.expect(t,phys.test_state_make(&physics,settings))
+    testing.expect(t,gallery_physics_make(&physics,settings))
     fractures.ready=fr.fracture_init(&fractures.fracture,fd);f:=&fractures.fracture
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
     sites:=[2][3]f32{{-.25,0,0},{.25,0,0}}
@@ -204,7 +212,7 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
     fractures:destruct.Fracture_State;defer destruct.fracture_state_destroy(&fractures)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=16}
-    if !testing.expect(t,phys.test_state_make(&physics,settings)) {return}
+    if !testing.expect(t,gallery_physics_make(&physics,settings)) {return}
     fd:=fr.desc_default();fd.bodies,fd.destructibles,fd.pieces,fd.connections=int(settings.bodies),1,16,32
     fractures.ready=fr.fracture_init(&fractures.fracture,fd);f:=&fractures.fracture
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)

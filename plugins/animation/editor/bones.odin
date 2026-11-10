@@ -80,7 +80,7 @@ clip_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
     if current!="" && names[selected]!=current {names[count]=fmt.tprintf("Missing: %s",current);selected=count;count+=1}
     ctx:=s.gui.ctx
     if ui.property(ctx,label) {
-        if ui.dropdown(ctx,ui.id(ctx,"clip",int(offset)+1),names[:count],&selected,{width=-1}) && selected<len(content.names) {
+        if ui.dropdown(ctx,ui.id(ctx,"clip",int(offset)+1),{list=names[:count]},&selected,{width=-1}) && selected<len(content.names) {
             chosen:=content.names[selected]
             editor.field_write(s,c.table,c.entities,int(offset),mem.ptr_to_bytes(&chosen))
         }
@@ -124,7 +124,7 @@ bone_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
     if path!="" && selected==0 {names[count]=fmt.tprintf("Missing: %s",path);selected=count;count+=1}
     ctx:=s.gui.ctx
     if ui.property(ctx,label) {
-        if ui.dropdown(ctx,ui.id(ctx,"bone",int(offset)+1),names[:count],&selected,{width=-1}) && selected<known {
+        if ui.dropdown(ctx,ui.id(ctx,"bone",int(offset)+1),{list=names[:count]},&selected,{width=-1}) && selected<known {
             chosen:=choices[selected]
             editor.field_write(s,c.table,c.entities,int(offset),mem.ptr_to_bytes(&chosen))
         }

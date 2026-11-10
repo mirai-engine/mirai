@@ -94,6 +94,19 @@ options_come_from_an_array_of_texts_or_of_enums :: proc(t:^testing.T) {
     s.values.picked=2
     test_frame(&ctx,&input,test_shop_build,&s)
     testing.expect(t,test_paint(&ctx,"Staff")!=nil)
+    // The keys open a Dropdown on the chosen option, move its current row and
+    // choose it, and the focus stays on the node.
+    weapon:=tree_element_id(&ctx,"weapon")
+    ctx.focus,ctx.focus_ring=weapon,true
+    test_key(&input,.Enter)
+    test_frame(&ctx,&input,test_shop_build,&s)
+    test_frame(&ctx,&input,test_shop_build,&s)
+    test_key(&input,.Up)
+    test_frame(&ctx,&input,test_shop_build,&s)
+    test_key(&input,.Enter)
+    test_frame(&ctx,&input,test_shop_build,&s)
+    event,count=test_shop_events(&s,.Changed,"weapon")
+    testing.expect(t,count==1 && event.value==1 && ctx.focus==weapon)
     // Options bound to what is not an array of texts or of enums make no instance.
     other:Tree_Instance
     tree_node(&s.tree,root,{kind=.Selector,name="bad",bind_items="Test.coins"})

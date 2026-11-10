@@ -165,7 +165,7 @@ grounding_fixture_init :: proc(f:^Grounding_Fixture,t:^testing.T,angle:f32=0.2) 
         config.legs[i].pole_offset={0,0,-1}
     }
     core.add(&f.configs,f.rig,config);core.table_settle(&f.configs,&f.entities)
-    testing.expect(t,phys.test_state_make(&f.physics,{bodies=8,shapes=8,contacts=32}))
+    testing.expect(t,gallery_physics_make(&f.physics,{bodies=8,shapes=8,contacts=32}))
     rotation:=mm.quat_axis_angle({0,0,1},angle)
     f.platform=grounding_box(&f.physics,t,-mm.quat_rotate(rotation,{0,0.5,0}),{5,0.5,5},rotation)
     testing.expect(t,lib.skeleton_world(anim.playing_skeleton(&f.state),f.state.local[:],f.state.world[:]))

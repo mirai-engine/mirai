@@ -109,7 +109,7 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         chosen:=tree_option_chosen(values,bound.value,spec) if valued else int(current) if bound.value.bound else int(instance.slot[slot].held)
         next:=chosen
         if node.kind==.Selector {game_selector(ctx,node_id,options,&next,control)} else {
-            game_dropdown(ctx,node_id,options,&next,control)
+            dropdown(ctx,node_id,options,&next,{look=style,layout=&node.layout,disabled=disabled})
             if popup_is_open(ctx,id_derive(ctx,node_id,"list")) {b.animating=true}
         }
         if next!=chosen {

@@ -124,7 +124,7 @@ test_editor_build :: proc(ctx:^Context,user:rawptr) {
             }
             if collapsible(ctx,id(ctx,"light"),"Light",&e.light_open,{width=inner,removable=true}).open {
                 if box(ctx,{width=GROW,height=fixed(24),gap=4,align_y=.Center}) {
-                    dropdown(ctx,id(ctx,"kind"),{"Point","Spot","Sun"},&e.kind,{width=-1,height=24})
+                    dropdown(ctx,id(ctx,"kind"),{list={"Point","Spot","Sun"}},&e.kind,{width=-1,height=24})
                 }
                 if property(ctx,"Color") {color_swatch(ctx,id(ctx,"color"),e.color)}
                 if property(ctx,"Intensity") {number_field(ctx,id(ctx,"intensity"),&e.intensity,{speed=0.05,decimals=2,min=0,has_min=true})}

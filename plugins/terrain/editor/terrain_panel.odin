@@ -227,7 +227,7 @@ alpha_fields :: proc(s:^editor.Session,tool:^Terrain_Tool) {
     names[0]="Disc"
     copy(names[1:],tool.alphas.names[:])
     chosen:=clamp(int(b.alpha),0,len(names)-1)
-    if ui.property(ctx,"Shape") {if ui.dropdown(ctx,ui.id(ctx,"alpha"),names,&chosen,{width=-1}) {b.alpha=u8(chosen)}}
+    if ui.property(ctx,"Shape") {if ui.dropdown(ctx,ui.id(ctx,"alpha"),{list=names},&chosen,{width=-1}) {b.alpha=u8(chosen)}}
     a:=alpha_of(tool,b)
     if a==nil {return}
     side:=editor.tool_panel_inner(s.gui)-SCROLL_GUTTER

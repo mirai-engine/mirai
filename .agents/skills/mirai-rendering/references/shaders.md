@@ -56,10 +56,18 @@
   `cook/shaders/schema.odin`, which lists them). Those of the renderer live in `render/abi`, which
   `render` uses under the same names; those of a format or of the RHI, in `asset` and `rhi`. No
   `.slang` source defines one (`no_shader_source_defines_a_constant_the_generation_writes`). A
-  plugin's shaders take them from the engine includes; a constant between a plugin's own Odin and
-  its own shaders is not generated.
+  plugin's shaders take them from the engine includes.
 - Both includes are part of every fingerprint and of the stamp of a generation: changing one of
   those constants compiles the stages again.
+- **Constants of a plugin.** A constant between the Odin code of a plugin, or of the project, and
+  its own shaders is also declared once, in that Odin code, with its number (`NAME :: 8`). A
+  `//! mirai constant <NAME> <int|uint|float> <file.odin>` line in a source of its `shaders/`
+  names it, the type of its Slang literal and the Odin source, from the folder of the line's
+  source; the generation writes them into `include/constants/plugins/<name>.slang` (named
+  `project` instead of `plugins/<name>` for the project), which those shaders include
+  (`owned_constants` of `cook/shaders/extensions.odin`). Only the stages that include it follow
+  it, and the stamp follows the Odin source. The same test forbids a plugin's `.slang` from
+  defining a name its Odin declares.
 - The resources of a stage stay within the `rhi` limits. `//! variant <name> <DEFINE>...` adds
   another compilation of a stage.
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software
