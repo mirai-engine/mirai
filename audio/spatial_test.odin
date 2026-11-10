@@ -308,7 +308,7 @@ binaural_output_does_not_depend_on_how_the_render_is_cut :: proc(t:^testing.T) {
 // plays what the convolution still holds.
 @(test)
 binaural_voice_plays_its_tail_when_it_stops :: proc(t:^testing.T) {
-    m:=test_mixer(t)
+    m:=test_mixer(t,{output=.Headphones})
     defer mixer_destroy(m)
     noise:=test_mono(t,m,RATE,test_noise)
     desc:=VOICE_DEFAULT
@@ -491,16 +491,16 @@ doppler_changes_the_speed_of_a_spatial_voice :: proc(t:^testing.T) {
     testing.expect(t,voice_valid(m,away))
 }
 
-// One noise voice two meters away, turned to a new direction between renders
+// One noise voice ten meters away (its EQ on), turned to a new direction between renders
 // of uneven sizes: the binaural output the per-voice path of Steam Audio's
 // overlap-add gave, which the mix in frequency must reproduce.
 @(private)
 binaural_one_voice :: proc(t:^testing.T) -> []f32 {
-    m:=test_mixer(t)
+    m:=test_mixer(t,{output=.Headphones})
     defer mixer_destroy(m)
     noise:=test_mono(t,m,RATE,test_noise)
     desc:=VOICE_DEFAULT
-    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-2},{model=.None}
+    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-10},{model=.None}
     desc.volume=BINAURAL_ONE_VOICE_LEVEL
     voice:=voice_play(m,noise,desc)
     FRAMES :: 4096
@@ -513,7 +513,7 @@ binaural_one_voice :: proc(t:^testing.T) -> []f32 {
         done+=n
         turn+=1
         angle,elevation:=f32(turn)*0.9,f32(turn%3-1)*0.4
-        voice_set_position(m,voice,{2*math.sin(angle)*math.cos(elevation),2*math.sin(elevation),-2*math.cos(angle)*math.cos(elevation)})
+        voice_set_position(m,voice,{10*math.sin(angle)*math.cos(elevation),10*math.sin(elevation),-10*math.cos(angle)*math.cos(elevation)})
     }
     return out
 }
@@ -531,10 +531,11 @@ binaural_mix_in_frequency_keeps_the_output_of_a_voice :: proc(t:^testing.T) {
     recorded:=BINAURAL_ONE_VOICE
     got:=binaural_one_voice(t)
     if !testing.expect_value(t,len(recorded),len(got)*4) {return}
+    // The EQ of a voice comes in over its first chunk.
     worst:=f32(0)
-    for x,i in got {
+    for i in CHUNK_FRAMES*4..<len(got) {
         want:=transmute(f32)([4]u8{recorded[i*4],recorded[i*4+1],recorded[i*4+2],recorded[i*4+3]})
-        worst=max(worst,abs(x/BINAURAL_ONE_VOICE_LEVEL-want))
+        worst=max(worst,abs(got[i]/BINAURAL_ONE_VOICE_LEVEL-want))
     }
     testing.expectf(t,worst<1e-5,"the voice differs from its own overlap-add by %v",worst)
 }
@@ -543,7 +544,7 @@ binaural_mix_in_frequency_keeps_the_output_of_a_voice :: proc(t:^testing.T) {
 // filters; one that turns more gets new ones.
 @(test)
 a_slowly_turning_source_keeps_its_filters :: proc(t:^testing.T) {
-    m:=test_mixer(t)
+    m:=test_mixer(t,{output=.Headphones})
     defer mixer_destroy(m)
     step:=math.acos(m.hrtf.reblend_cos)*math.DEG_PER_RAD
     testing.expectf(t,step>0.5 && step<3,"filters are kept within %v degrees",step)
@@ -565,4 +566,29 @@ a_slowly_turning_source_keeps_its_filters :: proc(t:^testing.T) {
     voice_set_position(m,voice,{2*math.sin(turn),0,-2*math.cos(turn)})
     test_render(m,CHUNK_FRAMES)
     testing.expect(t,m.voices[index].binaural_direction!=first,"two steps blend new ones")
+}
+
+// A near voice in sight skips its EQ, a far or hidden one runs it, and a
+// binaural voice too far to be heard skips its transform.
+@(test)
+a_spatial_voice_runs_only_what_its_place_needs :: proc(t:^testing.T) {
+    for output in Output_Kind {
+        m:=test_mixer(t,{output=output})
+        defer mixer_destroy(m)
+        noise:=test_mono(t,m,RATE,test_noise)
+        desc:=VOICE_DEFAULT
+        desc.loop,desc.spatial=true,true
+        cases:=[?]struct{position:[3]f32,occlusion:f32,eq:bool}{{{0,0,-2},0,false},{{0,0,-40},0,true},{{0,0,-2},1,true}}
+        for c in cases {
+            d:=desc
+            d.position,d.occlusion=c.position,c.occlusion
+            voice_play(m,noise,d)
+        }
+        d:=desc
+        d.position,d.attenuation={0,0,-30},{model=.Linear,min_distance=1,max_distance=10,rolloff=1}
+        voice_play(m,noise,d)
+        test_render(m,CHUNK_FRAMES*2)
+        for c,i in cases {testing.expectf(t,m.voices[i].eq_on==c.eq,"%v: voice %d runs its EQ: %v",output,i,m.voices[i].eq_on)}
+        testing.expect(t,!m.voices[len(cases)].binaural_live,"a voice beyond its curve adds no transform")
+    }
 }

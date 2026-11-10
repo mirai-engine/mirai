@@ -54,6 +54,19 @@ schema_of_a_struct_has_ranges_required_fields_and_defaults :: proc(t:^testing.T)
         `{"type":"object","properties":{"count":{"type":"integer","minimum":1,"maximum":9,"description":"Count"},"ratio":{"type":"number","minimum":0,"maximum":1,"x-unit":"m","default":0.5}},"required":["count"],"additionalProperties":false}`)
 }
 
+// The type of a method comes with its information when another library
+// declares it: the table of types of this one does not have it, and what it
+// would find instead is not that type. The method is refused, saying what to pass.
+@(test)
+a_type_whose_information_is_of_another_type_is_refused :: proc(t:^testing.T) {
+    s,ok:=test_server(t);if !ok {return}
+    defer server_destroy(&s)
+    testing.expect_value(t,method_register(&s,{name="small",params=Small,params_info=type_info_of(Listed),handler=noop}),Register_Error.Invalid_Type)
+    testing.expect(t,strings.contains(s.schema.error,"params_info"),s.schema.error)
+    testing.expect_value(t,method_register(&s,{name="small",params=Small,params_info=type_info_of(Small),handler=noop}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="smaller",params=Small,handler=noop}),Register_Error.None)
+}
+
 Listed :: struct {
     scale:[3]f32 `mirai:"optional"`,
     rotation:[4]f32 `mirai:"optional"`,

@@ -580,3 +580,39 @@ a_voice_is_given_its_source_by_what_its_set_drew :: proc(t:^testing.T) {
     volume,pitch=voice_entry_given(entry^)
     testing.expect(t,abs(volume-0.4*entry.pick[0])<1e-5 && abs(pitch-0.5*entry.pick[1])<1e-5)
 }
+
+// A placed request is the voice of a source there: on speakers, near and in
+// sight, both come out sample for sample alike, through the same cheap path.
+@(test)
+a_placed_request_plays_as_a_source_at_its_place :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    testing.expect_value(t,mixer.mixer_output(m),Output_Kind.Speakers)
+    at:=[3]f32{0.5,0,-1}
+    heard :: proc(m:^Mixer) -> []f32 {
+        out:=make([]f32,mixer.CHUNK_FRAMES*4*2,context.temp_allocator)
+        mixer.mixer_render(m,out)
+        return out
+    }
+    sounds:Sound_Requests
+    defer core.value_free(&sounds,type_info_of(Sound_Requests))
+    play(&sounds,HUM,at=at)
+    audio_requests(&sounds,core.Time{},&f.app,nil)
+    requested:=heard(m)
+    listener:Mixer_Listener
+    source:=AUDIO_SOURCE_DEFAULT;source.sound,source.spatial=HUM,true
+    w:Heard_World
+    _,made:=world_init(t,&w,source,at);defer world_destroy(&w)
+    if !made {return}
+    w.view.position,w.view.rotation={},1 // where the mixer hears the request from
+    // The request, a tenth of a second long, ends before the source starts.
+    for _ in 0..<6 {_=heard(m)}
+    mixer.mixer_update(m)
+    world_run(&w,&listener,&f.app)
+    sourced:=heard(m)
+    worst:=f32(0)
+    for x,i in requested {worst=max(worst,abs(x-sourced[i]))}
+    testing.expectf(t,worst==0 && requested[len(requested)-2]!=0,"a request and a source at one place differ by %v",worst)
+}

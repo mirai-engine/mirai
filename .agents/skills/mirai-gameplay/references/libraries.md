@@ -468,19 +468,19 @@ the reverb of the room where the listener is and what covers each source.
     until it continues; one-shots are not.
 - **One-shots.** `audio.play(sounds, path_or_id, at, bus, volume, pitch)` pushes to
   `Sound_Requests`, from any step and from the interface sounds of `gui` (on `BUS_UI`). Each is
-  an `Audio_Source` of `AUDIO_SOURCE_DEFAULT` with those values (placed, it sends all of it to the
-  room) and starts through the same `voice_start` as a source, without a handle. `audio_requests`
-  (`fixed` and `late`, stage `end`) takes the queue: at the end of the tick that asked, a tick that
-  runs again (`time.resimulating`) drops what it asks, since it played the first time, and the
-  copies of the world for a rollback are made between ticks, after the take; what frame steps and
-  the interface push plays at the end of the frame's `late`.
+  an `Audio_Source` of `AUDIO_SOURCE_DEFAULT` with those values and starts through the same
+  `voice_start` as a source, so the mixer takes the same path for both, without a handle.
+  `audio_requests` (`fixed` and `late`, stage `end`) takes the queue: at the end of the tick that
+  asked, a tick that runs again (`time.resimulating`) drops what it asks, since it played the first
+  time, and the copies of the world for a rollback are made between ticks, after the take; what
+  frame steps and the interface push plays at the end of the frame's `late`.
 - **Reverb.** The mixer has [only one](../../mirai-platform/references/audio.md#reverb): that of
   the room where the listener is. `Audio_Reverb` is a value of [volume](#volume): without a
   `Volume`, the level's; without any, nothing reverberates. `audio_reverb` (`late`) takes the blend
   at the listener and moves toward it over some `REVERB_FADE` seconds; it only sends while it
   changes. It returns in `Audio_Settings.reverb_bus`.
   - `Audio_Source.reverb` is the part of the source that it sends to the room; a one-shot sends
-    all when placed and none when not.
+    none, as `AUDIO_SOURCE_DEFAULT`.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
   under: a low-pass and a reverb with their weight. A single plugin writes it
   ([water](../../mirai-world/references/water.md#sound)) before `audio_reverb` and
@@ -521,7 +521,7 @@ the reverb of the room where the listener is and what covers each source.
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
     it changes, without losing its voices, and only if the application has an open output. A name
     the system does not list sounds through the system's and is the problem `audio.output`. Its
-    `kind` (headphones by default, or speakers) is given to every mixer, open output or not.
+    `kind` (speakers by default, or headphones) is given to every mixer, open output or not.
   - `audio_buses` (`late`) compares each bus of the mixer with its entry and its volume and sends
     only what differs; a bus without an entry returns to 0 dB, without filter or ducking. The
     master's mute belongs to the host (the player without focus), not to the settings.

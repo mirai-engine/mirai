@@ -39,7 +39,7 @@ crash_sound :: proc(sounds:^audio.Sound_Requests, broken:core.Ref(destruct.Destr
 }
 ```
 
-- A path or an id; `at` places it (sent to the room), else it is not placed. `bus` (default
+- A path or an id; `at` places it, else it is not placed. `bus` (default
   `BUS_EFFECTS`), `volume`, `pitch`; the rest as `AUDIO_SOURCE_DEFAULT`. It plays once, even when a
   rollback runs the tick again; no handle: what stops, loops or follows is an `Audio_Source`.
 
@@ -61,7 +61,7 @@ Project Settings, with `settings.set` (`settings.get` shows the shape) or
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
 options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing. So is
-`Audio_Output.kind`: `.Headphones` (default: ahead, behind, above) or `.Speakers` (panned).
+`Audio_Output.kind`: `.Speakers` (default: panned) or `.Headphones` (ahead, behind, above).
 
 ## Rooms and occlusion
 - `Audio_Reverb` on an entity with a `Volume` (`engine/volume`) is the room where the listener

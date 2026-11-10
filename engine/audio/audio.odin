@@ -391,7 +391,7 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
 @(step="late",stage="end",loops="game editor")
 audio_output :: proc(output:Audio_Output,applied:^Mixer_Output,app:^host.App,problems:^core.Problems) {
     if app.mixer==nil {return}
-    kind:=output.kind if output.kind<=max(Output_Kind) else .Headphones
+    kind:=output.kind if output.kind<=max(Output_Kind) else .Speakers
     if mixer.mixer_output(app.mixer)!=kind {mixer.mixer_set_output(app.mixer,kind)}
     if !platform.audio_device_is_open(app.platform) || applied.set && applied.device==output.device {return}
     first:=!applied.set
@@ -740,7 +740,7 @@ Sound_Request :: struct {
     sound:base.Asset_Id,
     path:[SOUND_PATH_CAPACITY]u8 `mirai:"text"`,
     at:[3]f32,
-    placed:bool, // spatial at `at`, sending all of it to the room; else not placed
+    placed:bool, // spatial at `at`; else not placed
     bus:Audio_Bus,
     volume,pitch:f32,
 }
@@ -782,7 +782,7 @@ audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,app:^host.App,probl
             continue
         }
         source:=AUDIO_SOURCE_DEFAULT
-        source.sound,source.bus,source.volume,source.pitch,source.spatial,source.reverb=r.sound,r.bus,r.volume,r.pitch,r.placed,r.placed?1:0
+        source.sound,source.bus,source.volume,source.pitch,source.spatial=r.sound,r.bus,r.volume,r.pitch,r.placed
         if r.sound=={} {
             path:=base.text_get(r.path[:])
             if source.sound,_=host.assets_id(app.assets,path);source.sound=={} {
