@@ -169,12 +169,33 @@ peer_from :: proc(h:^Host,connection:Connection) -> ^Peer {
     p:=&h.back.peers[index]
     return p.state==.Connected && p.generation==base.handle_generation(base.Handle(connection))?p:nil
 }
+// The key of an address in Back.by_address: under the secret of the host, so
+// a sender cannot choose where its datagrams look.
+@(private)
+address_key :: proc(b:^Back,address:Address) -> u64 {
+    message:[19]u8
+    address:=address
+    message[0],message[1],message[2]=u8(address.kind),u8(address.port),u8(address.port>>8)
+    copy(message[3:],address.ip[:])
+    return siphash.sum_2_4(message[:],b.secret[:])
+}
 @(private)
 peer_find :: proc(b:^Back,address:Address) -> ^Peer {
-    for &p in b.peers {
-        if p.state!=.Free && p.address==address {return &p}
-    }
-    return nil
+    index,listed:=base.hash_map_get(&b.by_address,address_key(b,address))
+    if !listed {return nil}
+    p:=&b.peers[index]
+    return p if p.state!=.Free && p.address==address else nil
+}
+// A peer is listed under its address from when it leaves Free until it is
+// Free again, and around a change of its address.
+@(private)
+peer_list :: proc(b:^Back,p:^Peer) {
+    base.hash_map_set(&b.by_address,address_key(b,p.address),p.index)
+}
+@(private)
+peer_unlist :: proc(b:^Back,p:^Peer) {
+    key:=address_key(b,p.address)
+    if index,listed:=base.hash_map_get(&b.by_address,key);listed && index==p.index {base.hash_map_remove(&b.by_address,key)}
 }
 
 @(private)
@@ -206,12 +227,14 @@ peer_connect :: proc(h:^Host,address:Address,credentials:^Credentials) {
     peer_reset(h,p,address)
     p.client_salt=base.splitmix_next(&h.back.rng)
     p.state=.Requesting
+    peer_list(&h.back,p)
     if h.desc.security.mode==.Encrypted && !secure_client_begin(h,p,credentials) {peer_drop(h,p,.Denied_Security,false)}
 }
 
 @(private)
 peer_established :: proc(h:^Host,p:^Peer,history:int) {
     p.key=base.hash_combine(h.back.key,p.client_salt~p.server_salt)
+    if p.state==.Free {peer_list(&h.back,p)}
     p.state=.Connected
     p.last_receive=h.back.now
     command_push(h,{kind=.Connected,connection=peer_handle(h,p),client_id=p.secure.client_id,tick=u32(history)})
@@ -225,6 +248,7 @@ peer_drop :: proc(h:^Host,p:^Peer,reason:Disconnect_Reason,notify:bool) {
     if notify && p.state==.Connected {peer_notice(h,p,reason)}
     if p.state==.Connected {repl_peer_disconnected(h,p)}
     command_push(h,{kind=.Disconnected,connection=peer_handle(h,p),reason=reason})
+    peer_unlist(&h.back,p)
     p.state=.Free
     p.generation+=1
     p.secure={}
@@ -491,7 +515,9 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     if p==nil && !server && (type==.Challenge || type==.Accepted || type==.Denied) {
         for &candidate in b.peers {
             if candidate.state!=.Free && candidate.state!=.Connected && candidate.client_salt==salt {
+                peer_unlist(b,&candidate)
                 candidate.address=from
+                peer_list(b,&candidate)
                 p=&candidate
                 b.stats.readdressed+=1
                 break

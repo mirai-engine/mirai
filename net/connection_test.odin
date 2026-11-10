@@ -207,12 +207,24 @@ disconnects_and_timeouts_reach_both_ends_with_their_reason :: proc(t:^testing.T)
     a_on_server,_:=test_connect(&w,server,a)
     b_on_server,_:=test_connect(&w,server,b)
     testing.expect(t,a_on_server!=0 && b_on_server!=0)
+    // Every connection is found by its address, and only while it lasts.
+    listed :: proc(h:^Host,expected:int) -> bool {
+        count:=0
+        for &p in h.back.peers {
+            if p.state==.Free {continue}
+            count+=1
+            if peer_find(&h.back,p.address)!=&p {return false}
+        }
+        return count==expected && h.back.by_address.count==expected
+    }
+    testing.expect(t,listed(server,2) && listed(a,1))
     host_disconnect(server,a_on_server,.Kicked)
     test_step(&w,4)
     kicked:=host_poll(a)
     testing.expect(t,len(kicked)==1 && kicked[0].kind==.Disconnected && kicked[0].reason==.Kicked)
     told:=host_poll(server)
     testing.expect(t,len(told)==1 && told[0].connection==a_on_server && told[0].reason==.Kicked)
+    testing.expect(t,listed(server,1) && listed(a,0))
 
     // b goes silent: only the server keeps running.
     silent:=w.hosts[2]
@@ -224,11 +236,11 @@ disconnects_and_timeouts_reach_both_ends_with_their_reason :: proc(t:^testing.T)
             seen=command.kind==.Disconnected && command.connection==b_on_server && command.reason==.Timeout
         }
     }
-    testing.expect(t,seen)
+    testing.expect(t,seen && listed(server,0))
     w.count=3
     testing.expect(t,silent==b)
     _,again:=test_connect(&w,server,a)
-    testing.expect(t,again!=0)
+    testing.expect(t,again!=0 && listed(server,1) && listed(a,1))
 }
 
 @(test)
