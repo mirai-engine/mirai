@@ -503,8 +503,8 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   builds do not wait for a measurement: they run with low priority while it lasts.
 - **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
   `mirai session stop`; after a change of project code, `build.start` loads it into the open
-  session; after a change of engine code, `mirai session restart` (or `mirai build editor`,
-  which restarts the session that holds the build); after a failure, `mirai rpc
+  session; after a change of engine code or shaders, `mirai build editor`, which hands the build
+  to the session (in place, or restarting it with the reason); after a failure, `mirai rpc
   engine.diagnostics`. With the project open in a window, `session start --copy` drives a copy.
 - **Search:** for the Odin code in `.deps`, pass its path to `rg` or `--no-ignore`. If `rg` is not
   there, `mirai setup rg` installs it pinned in `.deps` and in the PATH.

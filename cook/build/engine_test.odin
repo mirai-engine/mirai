@@ -227,6 +227,22 @@ declare_says_whether_a_declaration_changed :: proc(t:^testing.T) {
     testing.expect(t,changed.stage && changed.decl,"a file taken out of the package goes")
     testing.expect(t,!os.exists(project.path(folder,"out","decl","core","more.odin")))
     testing.expect(t,!os.exists(project.path(folder,"out","stage","core","more.odin")))
+
+    // Built to be taken in place: a body declares the same, another signature names its
+    // declaration, and a package variable keeps the package from being taken.
+    desc.names,desc.slots=true,true
+    write(t,source,"package core\n\nvalue :: proc(x:int) -> int {return x+1}\n")
+    _,first:=declare(desc)
+    testing.expect(t,os.exists(project.path(folder,"out","stage","core","mirai__slots.odin")),"a package that exports has its table")
+    write(t,source,"package core\n\nvalue :: proc(x:int) -> int {return x+2}\n")
+    _,changed=declare(desc)
+    testing.expect(t,changed.declared==first.declared && changed.moved=="" && changed.pinned=="","a body declares the same")
+    write(t,source,"package core\n\nvalue :: proc(x,y:int) -> int {return x+y}\n")
+    _,changed=declare(desc)
+    testing.expectf(t,changed.declared!=first.declared && changed.moved=="core.value","another signature is named: %q",changed.moved)
+    write(t,source,"package core\n\nvalue :: proc(x,y:int) -> int {return x+y}\n\n@(private)\ncounter:int\n")
+    _,changed=declare(desc)
+    testing.expect_value(t,changed.pinned,"variable:core.counter")
 }
 
 // A private procedure is declared, and exported, only when the declarations
@@ -493,18 +509,16 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
     testing.expect(t,!stamped,"a stamp of another shape is not read")
 
     libraries:=engine_libraries(.Dev,context.temp_allocator)
-    written:=Engine_Stamp{programs=0x123,programs_against=0x321,declares=DECLARE_VERSION,libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)}
-    for &library,which in written.libraries {library={sources=0xabc+u64(which),tools=0x456+u64(which),against=0xfed+u64(which)}}
+    written:=stamp_fixture(libraries)
     testing.expect(t,engine_stamp_write(file,written,libraries)==nil)
     read,ok:=engine_stamp_read(file,libraries)
     testing.expect(t,ok,"the stamp a build writes is read")
-    testing.expect(t,read.programs==written.programs && read.programs_against==written.programs_against && read.declares==written.declares && slice.equal(read.libraries,written.libraries),"as it was written")
-    line:=engine_stamp_of(root,context.temp_allocator)
-    testing.expect(t,!strings.contains(line,"\n"),"what a program keeps of the stamp is one line")
-    // A library built again moves that line, whichever it is.
+    testing.expect(t,read.programs==written.programs && read.programs_against==written.programs_against && read.declares==written.declares && slice.equal(read.libraries,written.libraries) && slice.equal(read.declared,written.declared),"as it was written")
+    kept:=engine_stamp_of(root,context.temp_allocator)
+    // A library built again moves what a program keeps of the stamp, whichever it is.
     written.libraries[len(libraries)-1].against+=1
     testing.expect(t,engine_stamp_write(file,written,libraries)==nil)
-    testing.expect(t,engine_stamp_of(root,context.temp_allocator)!=line,"the line follows every library")
+    testing.expect(t,engine_stamp_of(root,context.temp_allocator)!=kept,"it follows every library")
     _,stamped=engine_stamp_read(file,engine_libraries(.Release,context.temp_allocator))
     testing.expect(t,!stamped,"the stamp of other libraries is not read")
 
@@ -528,6 +542,65 @@ a_stamp_that_is_not_the_one_of_a_build_is_not_read :: proc(t:^testing.T) {
         _,stamped=engine_stamp_read(file,libraries)
         testing.expectf(t,!stamped,"%s is not read",c.what)
     }
+}
+
+@(private="file")
+stamp_fixture :: proc(libraries:[]Engine_Library) -> Engine_Stamp {
+    stamp:=Engine_Stamp{programs=0x123,programs_against=0x321,declares=DECLARE_VERSION,libraries=make([]Library_Stamp,len(libraries),context.temp_allocator),declared=make([]Library_Declared,len(libraries),context.temp_allocator)}
+    for &library,which in stamp.libraries {library={sources=0xabc+u64(which),tools=0x456+u64(which),against=0xfed+u64(which)}}
+    for &declared,which in stamp.declared {declared.hash=0x777+u64(which)}
+    return stamp
+}
+
+// A program takes in place the dev libraries built again that declare what
+// they did, and none other: what another library compiled in of them, what a
+// second copy would not share, other programs or a release build restart it,
+// saying why.
+@(test)
+a_library_built_again_is_taken_in_place_while_what_it_declares_stands :: proc(t:^testing.T) {
+    libraries:=engine_libraries(.Dev,context.temp_allocator)
+    root:=base.test_folder(t,"engine-swap")
+    if root=="" {return}
+    text :: proc(t:^testing.T,root:string,stamp:Engine_Stamp,libraries:[]Engine_Library) -> string {
+        testing.expect(t,engine_stamp_write(project.path(root,ENGINE_STAMP,allocator=context.temp_allocator),stamp,libraries)==nil)
+        return engine_stamp_of(root,context.temp_allocator)
+    }
+    copy_of :: proc(stamp:Engine_Stamp) -> Engine_Stamp {
+        next:=stamp
+        next.libraries=slice.clone(stamp.libraries,context.temp_allocator)
+        next.declared=slice.clone(stamp.declared,context.temp_allocator)
+        return next
+    }
+    running:=stamp_fixture(libraries)
+    last:=len(libraries)-1
+    body:=copy_of(running)
+    body.libraries[0].sources+=1
+    body.libraries[last].sources+=1
+    declared:=copy_of(body)
+    declared.declared[last]={hash=1,moved="editor.Session"}
+    pinned:=copy_of(body)
+    pinned.declared[0].pinned="variable:std.base.counter"
+    programs:=copy_of(body)
+    programs.programs+=1
+    unbuilt:=copy_of(body)
+    unbuilt.libraries[last].sources=0
+    cases:=[]struct{what:string,now:Engine_Stamp,swapped:int,restart:string}{
+        {"the same build",running,0,""},
+        {"bodies of two libraries",body,2,""},
+        {"a declaration",declared,0,"the declaration editor.Session changed"},
+        {"a package variable",pinned,0,"keeps what a newer one would not have (variable:std.base.counter)"},
+        {"other programs",programs,0,"the compiler or the flags of the build changed"},
+        {"a library that did not build",unbuilt,0,"did not build"},
+    }
+    was:=text(t,root,running,libraries)
+    for c in cases {
+        swapped,restart:=engine_swap(.Dev,was,text(t,root,c.now,libraries),context.temp_allocator)
+        testing.expectf(t,len(swapped)==c.swapped && strings.contains(restart,c.restart) && (c.restart=="")==(restart==""),"%s: %d libraries, %q",c.what,len(swapped),restart)
+    }
+    _,restart:=engine_swap(.Release,was,text(t,root,body,libraries),context.temp_allocator)
+    testing.expect(t,restart!="","a release build is never taken in place")
+    _,restart=engine_swap(.Dev,"not a stamp",was,context.temp_allocator)
+    testing.expect(t,restart!="","nor what no stamp says")
 }
 
 // A library links against the libraries its imports reach before it, directly
