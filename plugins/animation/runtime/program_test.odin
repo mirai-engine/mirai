@@ -60,7 +60,7 @@ animation_programs_blend_weighted_poses_curves_root_motion_and_masked_layers_wit
     playback:Playback;defer playback_free(&playback)
     append(&playback.states,program_test_content(t,&content));state:=&playback.states[0]
     resize(&playback.rows,2);playback.rows[1]=1
-    testing.expect(t,lib.pose_init(&playback.pose,64))
+    testing.expect(t,tracks_bind(&playback,state,&content))
     events:Animation_Events;defer delete(events.items)
     nodes:=program_test_graph();profile:=Graph_Profile{info={animation={1,2},output=4},nodes=nodes[:]}
     if !testing.expect(t,graph_check(profile)) {return}
@@ -100,7 +100,7 @@ animation_programs_blend_weighted_poses_curves_root_motion_and_masked_layers_wit
     }
     context=saved
     testing.expect(t,steady && state.program.players[0].player.time==before)
-    testing.expect(t,abs(state.local[1].position.x-.875)<1e-5 && playback.pose.failed==0 && problems.count==0)
+    testing.expect(t,abs(state.local[1].position.x-.875)<1e-5 && problems.count==0)
 }
 
 @(test)
@@ -141,7 +141,7 @@ synchronized_program_players_preserve_marker_phase_when_new_samples_take_the_lea
     program_test_sync_markers(&content)
     playback:Playback;defer playback_free(&playback)
     events:Animation_Events;defer delete(events.items)
-    testing.expect(t,lib.pose_init(&playback.pose,64))
+    testing.expect(t,tracks_bind(&playback,&state,&content))
     walk:=Program_Leaf{key=0,weight=1,speed=1,loop=true,sync=true};walk.clip=base.name_hash("walk")
     run:=Program_Leaf{key=256,weight=.9,speed=1,loop=true,sync=true};run.clip=base.name_hash("run")
     output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
@@ -180,7 +180,7 @@ synchronized_program_players_preserve_marker_phase_when_new_samples_take_the_lea
     context=saved
     testing.expect(t,valid && exclusive_handoff && preserved && no_repeated_events && root_at_handoff==0)
     testing.expect(t,existing_leader_continuity && retired_leader && reentry)
-    testing.expect(t,playback.pose.failed==0 && problems.count==0)
+    testing.expect(t,problems.count==0)
 }
 
 @(test)

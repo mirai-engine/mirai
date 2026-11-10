@@ -67,7 +67,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
 distance_program_advances_only_its_selected_clock_and_keeps_independent_sources_at_physical_dt :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=program_test_content(t,&content);defer {program_test_content_free(&content);playing_free(&state)}
     playback:Playback;events:Animation_Events;defer {playback_free(&playback);delete(events.items)}
-    testing.expect(t,lib.pose_init(&playback.pose,64))
+    testing.expect(t,tracks_bind(&playback,&state,&content))
     nodes:=program_test_graph();nodes[3].weight=.25
     output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract

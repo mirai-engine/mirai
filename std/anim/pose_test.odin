@@ -1,5 +1,6 @@
 package mirai_anim
 
+import "core:math/linalg"
 import "core:testing"
 import math "mirai:std/math"
 
@@ -197,4 +198,114 @@ pose_drives_a_whole_clip_through_a_player :: proc(t:^testing.T) {
     testing.expect(t,near_vec(position,math.Vec3{2,0,0}) && near(math.quat_angle(math.QUAT_IDENTITY,rotation),math.PI/4,1e-3))
     pose_blend(&pose,&lib,player_make(99))
     testing.expect_value(t,pose.count,2)
+}
+
+// A clip of the bones test: each track takes its two keys from its place, so every one differs.
+@(private="file")
+BONE_TEST_TRACKS :: 7
+@(private="file")
+bones_test_clip :: proc(lib:^Library,name:u64,tracks:[]Track_Desc,keys:^[BONE_TEST_TRACKS][2]Keyframe) -> Clip {
+    for &track,i in tracks {
+        for &key,k in keys[i] {
+            seed:=f32(name)*.37+f32(i)*1.3+f32(k)*.9
+            key.time=f32(k)
+            #partial switch track.property {
+            case .Rotation:
+                key.value=quat_vec4(math.quat_axis_angle(linalg.normalize(math.Vec3{1,seed,.5}),seed))
+                if (i+k)%2==1 {key.value=-key.value}
+            case: key.value={seed,seed*.5-1,2-seed,0}
+            }
+        }
+        track.keys=keys[i][:]
+    }
+    clip,_:=clip_add(lib,{name=name,loop=.Loop,tracks=tracks})
+    return clip
+}
+
+// Clips that list their tracks in other orders, lack some, repeat a target under another slot and
+// move what the rig does not have, blended through faders, a lock and additive layers.
+@(test)
+bones_blend_what_a_pose_blends_for_their_targets :: proc(t:^testing.T) {
+    LEG :: u64(33)
+    HEAD :: u64(44)
+    lib:=make_library(t,keys=64,tracks=24,clips=4)
+    defer library_destroy(&lib)
+    keys:[3][BONE_TEST_TRACKS][2]Keyframe
+    walk_tracks:=[?]Track_Desc{{target=HIP,property=.Position},{target=HIP,property=.Rotation},{target=ARM,property=.Rotation},{target=LEG,property=.Position},{target=LEG,property=.Scale},{target=HEAD,property=.Rotation}}
+    wave_tracks:=[?]Track_Desc{{target=HEAD,property=.Rotation},{target=ARM,property=.Rotation},{target=ARM,property=.Position},{target=99,property=.Position},{target=HIP,property=.Rotation},{target=HIP,property=.Float},{target=HIP,property=.Position,slot=1}}
+    lean_tracks:=[?]Track_Desc{{target=LEG,property=.Scale},{target=HIP,property=.Position},{target=ARM,property=.Rotation}}
+    walk:=bones_test_clip(&lib,1,walk_tracks[:],&keys[0])
+    wave:=bones_test_clip(&lib,2,wave_tracks[:],&keys[1])
+    lean:=bones_test_clip(&lib,3,lean_tracks[:],&keys[2])
+    if !testing.expect(t,walk!=0 && wave!=0 && lean!=0) {return}
+
+    // The last bone is one no clip moves.
+    targets:=[?]u64{HIP,ARM,LEG,HEAD,55}
+    rest:[len(targets)]math.Transform
+    for &value,b in rest {value={position={f32(b),1,-2},rotation=math.quat_axis_angle({0,0,1},.2*f32(b+1)),scale={1,2,.5}}}
+    track_bones:[24]i32
+    for track,i in lib.tracks[:lib.track_count] {
+        track_bones[i]=-1
+        if track.slot!=0 || track.property>.Scale {continue}
+        for target,b in targets {if target==track.target {track_bones[i]=i32(b)}}
+    }
+    pose:Pose
+    testing.expect(t,pose_init(&pose,32))
+    defer pose_destroy(&pose)
+    bones:[len(targets)]Bone_Blend
+    references:[len(targets)*3]i32
+
+    blended :: proc(t:^testing.T,pose:^Pose,bones:[]Bone_Blend,targets:[]u64,rest:[]math.Transform,what:string) {
+        for target,b in targets {
+            expected,expected_weights,expected_properties:=pose_bone(pose,target,rest[b])
+            got,weights,properties:=bone_transform(bones[b],rest[b])
+            testing.expectf(t,properties==expected_properties && near_vec(weights,expected_weights,1e-6) && near_vec(got.position,expected.position,1e-5) && near_vec(got.scale,expected.scale,1e-5) && math.quat_angle(got.rotation,expected.rotation)<1e-4,"%s, bone %d: %v, by name %v",what,b,got,expected)
+        }
+    }
+    added :: proc(t:^testing.T,pose:^Pose,bones:[]Bone_Blend,targets:[]u64,what:string) {
+        for target,b in targets {
+            position,_,has_position:=pose_position(pose,target)
+            rotation,_,has_rotation:=pose_rotation(pose,target)
+            scale,_,has_scale:=pose_scale(pose,target)
+            moved,moves:=bone_added_position(bones[b])
+            turned,turns:=bone_added_rotation(bones[b])
+            grown,grows:=bone_added_scale(bones[b])
+            testing.expectf(t,moves==has_position && turns==has_rotation && grows==has_scale,"%s, bone %d: channels",what,b)
+            testing.expectf(t,(!moves || near_vec(moved,position,1e-5)) && (!turns || math.quat_angle(turned,rotation)<1e-4) && (!grows || near_vec(grown,scale,1e-5)),"%s, bone %d: %v %v %v, by name %v %v %v",what,b,moved,turned,grown,position,rotation,scale)
+        }
+    }
+
+    f:Fader
+    fader_play(&f,walk)
+    fader_advance(&lib,&f,.3,nil)
+    fader_play(&f,wave,1,.5)
+    fader_advance(&lib,&f,.2,nil)
+    fader_play(&f,lean,1,.4,.Quad_Out)
+    fader_advance(&lib,&f,.1,nil)
+    testing.expect_value(t,f.outgoing_count,2)
+    testing.expect(t,fader_blend(&pose,&lib,f))
+    bones_fader_blend(bones[:],track_bones[:],&lib,f)
+    blended(t,&pose,bones[:],targets[:],rest[:],"three clips fading")
+
+    lock:=Pose_Lock{target=HIP,position=true,rotation=true,value=rest[0]}
+    first,second:=player_make(walk,1,.7),player_make(wave,1,.6)
+    first.time,second.time=.4,.8
+    pose_clear(&pose);bones={}
+    pose_blend(&pose,&lib,first,.5,lock);pose_blend(&pose,&lib,second)
+    bones_blend(bones[:],track_bones[:],&lib,first,.5,lock);bones_blend(bones[:],track_bones[:],&lib,second)
+    blended(t,&pose,bones[:],targets[:],rest[:],"a locked root under its weight")
+
+    for from in ([?]Clip{0,walk,lean}) {
+        pose_clear(&pose);bones={}
+        pose_blend_additive(&pose,&lib,second,.25,1,from);pose_blend_additive(&pose,&lib,first,.25,.5,from)
+        testing.expect(t,bones_blend_additive(bones[:],track_bones[:],&lib,second,.25,1,from,references[:]) && bones_blend_additive(bones[:],track_bones[:],&lib,first,.25,.5,from,references[:]))
+        added(t,&pose,bones[:],targets[:],"additives over a reference clip" if from!=0 else "additives over their own pose")
+    }
+
+    // Without room to pair the reference clip nothing is added; tracks paired outside the bones are left out.
+    bones={}
+    testing.expect(t,!bones_blend_additive(bones[:],track_bones[:],&lib,second,.25,1,walk,references[:3]) && bones==([len(targets)]Bone_Blend{}))
+    for &bone,i in track_bones {bone=i32(i*7-20)}
+    bones_blend(bones[:2],track_bones[:5],&lib,first)
+    testing.expect(t,bones_blend_additive(bones[:2],track_bones[:],&lib,second,.25,1,walk,references[:]))
 }

@@ -370,6 +370,10 @@ its definition or `library`.
 - `Playback` (world storage): clocks, fades, program and dense pose buffers; curves and root delta
   per player. It is derived: clearing the world (loading a scene or a save) starts it over, like the
   other animation storages.
+- A state knows which of its bindings each track of its content moves (`Track_Map`), paired when
+  its bindings are built and shared by the states bound alike to that content: clips and layers
+  blend by bone ([by bone](../../mirai-std/references/anim.md#blending-poseodin)), never by the
+  name of a target, for rigs and for the entities an `Animation` moves by name alike.
 - `Animation_Progress` is written only by `animation_sample` while the game runs: a stored save
   keeps the time of the clip and, when loaded, an entity without state in `Playback` asks for
   `animation_seek` there.
@@ -382,7 +386,9 @@ its definition or `library`.
 Order in `fixed`:
 
 - `animation_sample` (`apply`): prepares profiles and requests, samples programs, clips, actions,
-  layers and overrides, and extracts and adapts root motion, before physics (`simulate`).
+  layers and overrides, and extracts and adapts root motion, before physics (`simulate`). It
+  advances the clocks of every entity in order, then blends their poses
+  ([in jobs](animation-budget.md#parallel-execution)), then takes what follows each pose in order.
 - Between the two, `animation_physics` turns root motion into layered moves of the `Character`: the
   root delta of a climb and the body motion of the actions with
   [`body_move`](animation-actions.md#root-and-movement); another controller reads
@@ -509,8 +515,7 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
 - A rig that cannot follow its leader (`follow_rig`, `follow_bones`, `follow_pose`), curve poses
   of bones its skeleton lacks or with curves that are not finite (`curve_pose_bone`,
   `curve_pose_value`) and curve materials past the capacity of the override (`curve_material`).
-- Lost markers or events (`markers_lost`, `play_events`, `action_events`), values that do not fit in
-  the pose (`animation.pose_full`, with what `std/anim` counted in `Pose.failed`) and lack of memory
+- Lost markers or events (`markers_lost`, `play_events`, `action_events`) and lack of memory
   (`animation.memory`: the entity keeps its last pose and retries).
 - `Playback.stats.skipped` counts writes skipped because another component owns the transform: it is
   a statistic, not a failure.

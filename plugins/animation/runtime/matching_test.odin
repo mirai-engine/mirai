@@ -97,7 +97,7 @@ mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,
     match:=match_content(graphs,app.assets,app.allocator,id);if match==nil {return}
     content:=host.content_animation(app,match.profile.info.animation)
     definition:=skeleton_content(skeletons,app.assets,app.allocator,skeleton)
-    if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&w.transforms) || !lib.pose_init(&playback.pose,max(POSE_CAPACITY,content.lib.track_count)) {return}
+    if content==nil || definition==nil || !skeleton_bind(&playback,&state,definition,content,&w.transforms) {return}
     toes:=[2]int{bone_resolve(&state,bone_ref("LeftToeBase")),bone_resolve(&state,bone_ref("RightToeBase"))}
     if toes[0]<0 || toes[1]<0 {return}
     n:=len(state.local)
@@ -274,7 +274,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     info.left_foot,info.right_foot,info.hips=bone_ref("foot_l"),bone_ref("foot_r"),bone_ref("hips")
     profile:=Match_Profile{info=info,clips=clips}
     append(&f.graphs.matches,Match_Content{id=MATCH_TEST_ID,checked=assets_stamp(f.app.assets),revision=1,valid=true,profile=profile})
-    if !testing.expect(t,match_check(profile) && lib.pose_init(&f.playback.pose,64)) {return false}
+    if !testing.expect(t,match_check(profile)) {return false}
     f.state=state_get(&f.playback,f.rig)
     f.animation=ANIMATION_DEFAULT;f.animation.asset=MATCH_TEST_ID
     return f.state!=nil && skeleton_bind(&f.playback,f.state,&f.definition,&f.content,&f.transforms)
