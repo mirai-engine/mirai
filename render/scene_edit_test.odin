@@ -740,3 +740,78 @@ the_scene_answers_what_an_instance_shows_and_where_it_is :: proc(t:^testing.T) {
         testing.expect(t,!shown && !placed)
     }
 }
+
+// The values an instance gives over the rows of its materials are words of
+// its own in the index pool: another value touches that instance alone, no
+// row of the material table, and what goes gives its words back.
+@(test)
+the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^testing.T) {
+    r:=new(Renderer);defer free(r)
+    r.allocator=context.allocator
+    scene_init(r)
+    defer scene_destroy(r)
+    vertices,indices:=edit_grid(4,2)
+    defer delete(vertices);defer delete(indices)
+    handle,_:=edit_add(r,vertices[:],indices[:],{0,1})
+    materials_set(r,{DEFAULT_MATERIAL,DEFAULT_MATERIAL})
+    s:=&r.scene
+    COUNT :: 1000
+    descs:=make([]Instance_Desc,COUNT,context.temp_allocator)
+    for &desc,i in descs {
+        desc={object_id=u64(i+1),mesh=handle,transform=Mat4(1),tint={1,1,1}}
+        testing.expect(t,instance_material_values_put(&desc.material_values,instance_material_value_standard(1,.Roughness,{f32(i)/COUNT,0,0,0})))
+    }
+    rows,words:=len(s.materials),len(s.indices)
+    if !testing.expect(t,scene_set(r,descs,nil,{},{})) {return}
+    // What a thousand entities with a roughness of their own cost: before, a row of the table each.
+    held:=(len(s.indices)-words)*size_of(u32)
+    testing.expect_value(t,len(s.materials),rows)
+    testing.expect_value(t,held,COUNT*(1+INSTANCE_VALUE_WORDS)*size_of(u32))
+    testing.expect(t,held*20<COUNT*size_of(Gpu_Material_Row),"a value is far smaller than the row it was")
+    block:=instance_material_values_words(s,s.instances[s.desc_instance[7]].material_values)
+    if testing.expect_value(t,len(block),INSTANCE_VALUE_WORDS) {
+        testing.expect(t,block[0]==1 && block[1]&0xff==u32(Instance_Material_Value_Target.Roughness) && transmute(f32)block[2]==7.0/COUNT)
+    }
+
+    // Another value of one instance: its words alone go to the GPU, and no light changes around it.
+    for &ranges in s.pool_dirty {clear(&ranges)}
+    for &word in s.touched {word=0}
+    s.touched_count=0
+    s.changes={}
+    version:=s.material_versions[1] if len(s.material_versions)>1 else 0
+    next:=descs[7].material_values
+    next.entries[0]=instance_material_value_standard(1,.Roughness,{0.5,0,0,0})
+    changed:int
+    testing.expect(t,scene_material_values(r,{7,8},{next,descs[8].material_values},&changed))
+    testing.expect_value(t,changed,1)
+    testing.expect(t,len(s.pool_dirty[.Index])==1 && s.pool_dirty[.Index][0].count==INSTANCE_VALUE_WORDS,"the words of that value alone")
+    testing.expect_value(t,s.touched_count,1)
+    testing.expect_value(t,len(s.materials),rows)
+    testing.expect_value(t,s.material_versions[1] if len(s.material_versions)>1 else 0,version)
+    testing.expect_value(t,transmute(f32)instance_material_values_words(s,s.instances[s.desc_instance[7]].material_values)[2],f32(0.5))
+    // An emission is light: it changes around the instance that gives it.
+    glow:=next
+    testing.expect(t,instance_material_values_put(&glow,instance_material_value_standard(1,.Emission,{4,4,4,0})))
+    testing.expect(t,scene_material_values(r,{7},{glow}) && (s.changes.all || s.changes.count>0))
+    testing.expect(t,!scene_material_values(r,{COUNT},{next}) && !scene_material_values(r,{1},{}),"a descriptor the scene does not have, lists that differ")
+
+    // The scene set again keeps the words of what stays, and what goes gives its own back.
+    testing.expect(t,scene_material_values(r,{7},{descs[7].material_values}))
+    for &ranges in s.pool_dirty {clear(&ranges)}
+    kept:=s.instances[s.desc_instance[3]].material_values
+    testing.expect(t,scene_set(r,descs[:COUNT/2],nil,{},{}))
+    testing.expect_value(t,s.instances[s.desc_instance[3]].material_values,kept)
+    testing.expect_value(t,len(s.pool_dirty[.Index]),0)
+    testing.expect(t,scene_update(r,0,nil,true))
+    testing.expect(t,scene_set(r,nil,nil,{},{}))
+    testing.expect_value(t,len(s.indices),words)
+    // Values an instance cannot hold are not there: no words past its own.
+    full:=Instance_Material_Values{}
+    for i in 0..<INSTANCE_VALUES_MAX {testing.expect(t,instance_material_values_put(&full,{row=1,target=u32(i)|1<<8}))}
+    testing.expect(t,!instance_material_values_put(&full,{row=1,target=60|1<<8}) && instance_material_values_put(&full,{row=1,target=3|1<<8,words={9,0,0,0}}))
+    testing.expect_value(t,full.entries[3].words[0],u32(9))
+    full.count=max(u32)
+    only:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1},material_values=full}
+    testing.expect(t,scene_set(r,{only},nil,{},{}))
+    testing.expect_value(t,len(s.indices)-words,1+INSTANCE_VALUES_MAX*INSTANCE_VALUE_WORDS)
+}
