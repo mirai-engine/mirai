@@ -64,7 +64,9 @@ Waits :: struct {
 
 // Makes a table of a World say what it has pending in es.pending[index]:
 // entities_tables gave it room.
-table_follow :: proc "contextless" (t:^Table($T),es:^Entities,index:int) {
+table_follow :: proc "contextless" (t:^Table($T),es:^Entities,index:int) {raw_follow(raw(t),es,index)}
+
+raw_follow :: proc "contextless" (t:^Raw_Table,es:^Entities,index:int) {
     t.waits={int(uintptr(es))-int(uintptr(t)),index}
 }
 
@@ -109,26 +111,34 @@ Lock :: struct {
 Read :: struct($T:typeid) {table:^Table(T)}
 
 // False without memory.
-table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) -> bool {
+table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) -> bool {return raw_init(raw(t),name,allocator)}
+
+raw_init :: proc(t:^Raw_Table,name:string,allocator:=context.allocator) -> bool {
     gone,error:=make([dynamic]Entity,0,GONE_CAPACITY,allocator) // settle never allocates for it: without it, readers read the table whole
     if error!=nil {return false}
-    t.values=make([dynamic]T,allocator)
+    t.values={allocator=allocator}
     t.entities=make([dynamic]Entity,allocator)
     t.stamps=make([dynamic]u64,allocator)
     t.off=make([dynamic]bool,allocator)
     t.turns=make([dynamic]u64,allocator)
     t.rows=make([dynamic]i32,allocator)
     t.pending=make([dynamic]Pending,allocator)
-    t.added=make([dynamic]T,allocator)
+    t.added={allocator=allocator}
     t.gone=gone
     t.owners=make([dynamic]Row_Owner,allocator)
     t.name=name
     return true
 }
 
-table_destroy :: proc(t:^Table($T)) {
-    delete(t.values);delete(t.entities);delete(t.stamps);delete(t.off);delete(t.turns);delete(t.rows)
-    delete(t.pending);delete(t.added);delete(t.gone);delete(t.owners)
+table_destroy :: proc(t:^Table($T)) {raw_destroy(raw(t),size_of(T))}
+
+// size: of a value of the table.
+raw_destroy :: proc(t:^Raw_Table,size:int) {
+    for values in ([2]runtime.Raw_Dynamic_Array{t.values,t.added}) {
+        if values.data!=nil {_=mem.free_with_size(values.data,values.cap*size,values.allocator)}
+    }
+    delete(t.entities);delete(t.stamps);delete(t.off);delete(t.turns);delete(t.rows)
+    delete(t.pending);delete(t.gone);delete(t.owners)
     t^={}
 }
 
@@ -327,10 +337,13 @@ table_changed :: #force_inline proc "contextless" (t:^Table($T),c:Changes,row:in
 read_changed :: #force_inline proc "contextless" (r:Read($T),c:Changes,row:int) -> bool {return c.all || r.table.stamps[row]>c.since}
 changed :: proc{table_changed,read_changed}
 
-table_clear :: proc(t:^Table($T)) {
-    for e in t.entities[:t.on] {locks_release(raw(t),e)}
-    clear(&t.values);clear(&t.entities);clear(&t.stamps);clear(&t.off);clear(&t.turns);clear(&t.pending);clear(&t.added)
-    gone_reset(raw(t))
+table_clear :: proc(t:^Table($T)) {raw_clear(raw(t))}
+
+raw_clear :: proc(t:^Raw_Table) {
+    for e in t.entities[:t.on] {locks_release(t,e)}
+    t.values.len,t.added.len=0,0
+    clear(&t.entities);clear(&t.stamps);clear(&t.off);clear(&t.turns);clear(&t.pending)
+    gone_reset(t)
     for &row in t.rows {row=0}
     t.on=0
     t.version+=1
@@ -608,17 +621,21 @@ gone_reset :: proc "contextless" (t:^Raw_Table) {
     clear(&t.gone)
 }
 
-table_copy :: proc(dst,src:^Table($T)) -> bool {
+table_copy :: proc(dst,src:^Table($T)) -> bool {return raw_copy(raw(dst),raw(src),type_info_of([dynamic]T))}
+
+// values: the type of the dynamic array of the values of the table.
+raw_copy :: proc(dst,src:^Raw_Table,values:^runtime.Type_Info) -> bool {
     if dst==src {return true}
     dst.on=0
-    if !value_copy(&dst.values,&src.values,type_info_of([dynamic]T)) ||
+    if !value_copy(&dst.values,&src.values,values) ||
        !value_copy(&dst.entities,&src.entities,type_info_of([dynamic]Entity)) ||
        !value_copy(&dst.stamps,&src.stamps,type_info_of([dynamic]u64)) ||
        !value_copy(&dst.off,&src.off,type_info_of([dynamic]bool)) ||
        !value_copy(&dst.turns,&src.turns,type_info_of([dynamic]u64)) ||
        !value_copy(&dst.rows,&src.rows,type_info_of([dynamic]i32)) ||
        !value_copy(&dst.owners,&src.owners,type_info_of([dynamic]Row_Owner)) {return false}
-    clear(&dst.pending);clear(&dst.added)
+    clear(&dst.pending)
+    dst.added.len=0
     first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
     clear(&dst.gone)
     dst.gone_first=first
@@ -643,27 +660,32 @@ Copy_Mark :: struct {
 // copy mark says; the rows whose stamps differ when both have the same rows;
 // all of it otherwise. To the readers of dst it is a copy like table_copy.
 table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
+    return #force_inline raw_copy_changed(raw(dst),raw(src),type_info_of(T),type_info_of([dynamic]T),size_of(T),mark)
+}
+
+// info and size: of a value of the table; values: as raw_copy takes it.
+raw_copy_changed :: proc(dst,src:^Raw_Table,info,values:^runtime.Type_Info,size:int,mark:^Copy_Mark) -> bool {
     if dst==src {return true}
     if mark.valid && mark.version==src.version && mark.layout==src.layout {return true}
     mark.valid=false
     same:=dst.on==src.on && len(dst.entities)==len(src.entities) && slice.equal(dst.entities[:],src.entities[:]) && slice.equal(dst.off[:],src.off[:])
     if !same {
-        if !table_copy(dst,src) {return false}
+        if !raw_copy(dst,src,values) {return false}
         mark^={src.version,src.layout,true}
         return true
     }
-    info:=type_info_of(T)
     flat:=-1
     for stamp,row in src.stamps {
         if dst.stamps[row]==stamp {continue}
         if flat<0 {flat=int(value_flat(info))}
-        if flat==1 {dst.values[row]=src.values[row]} else if !value_copy(&dst.values[row],&src.values[row],info) {return false}
+        if flat==1 {mem.copy_non_overlapping(raw_at(dst,size,row),raw_at(src,size,row),size)} else if !value_copy(raw_at(dst,size,row),raw_at(src,size,row),info) {return false}
         dst.stamps[row]=stamp
     }
     if !slice.equal(dst.turns[:],src.turns[:]) && !value_copy(&dst.turns,&src.turns,type_info_of([dynamic]u64)) {return false}
     if !slice.equal(dst.rows[:],src.rows[:]) && !value_copy(&dst.rows,&src.rows,type_info_of([dynamic]i32)) {return false}
     if !slice.equal(dst.owners[:],src.owners[:]) && !value_copy(&dst.owners,&src.owners,type_info_of([dynamic]Row_Owner)) {return false}
-    clear(&dst.pending);clear(&dst.added)
+    clear(&dst.pending)
+    dst.added.len=0
     first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
     clear(&dst.gone)
     dst.gone_first=first
@@ -673,7 +695,9 @@ table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
     return true
 }
 
-table_swap :: proc(a,b:^Table($T)) {
+table_swap :: proc(a,b:^Table($T)) {raw_swap(raw(a),raw(b))}
+
+raw_swap :: proc(a,b:^Raw_Table) {
     if a==b {return}
     version:=max(a.version,b.version)+1
     layout:=max(a.layout,b.layout)+1
@@ -688,8 +712,8 @@ table_swap :: proc(a,b:^Table($T)) {
     a.pending,b.pending=b.pending,a.pending
     a.added,b.added=b.added,a.added
     a.on,b.on=b.on,a.on
-    table_waits(raw(a),len(a.pending)>0)
-    table_waits(raw(b),len(b.pending)>0)
+    table_waits(a,len(a.pending)>0)
+    table_waits(b,len(b.pending)>0)
     clear(&a.gone);clear(&b.gone)
     a.gone_first,b.gone_first=first,first
     a.version,b.version=version,version

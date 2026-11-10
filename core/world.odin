@@ -268,20 +268,28 @@ by_world_get :: #force_inline proc "contextless" (b:^By_World($T),id:World_Id) -
 // Gives a World its value, starting at value. False without memory.
 by_world_attach :: proc(b:^By_World($T),id:World_Id,value:T,allocator:runtime.Allocator) -> bool {
     if id.generation==0 {return true}
+    room:=cast(^T)by_world_room(cast(^By_World(u8))b,id,size_of(T),align_of(T),allocator)
+    if room==nil {return false}
+    room^=value
+    return true
+}
+
+// The room of the value of a World in a By_World of values of a size, made
+// when it has none; nil without memory.
+by_world_room :: proc(b:^By_World(u8),id:World_Id,size,align:int,allocator:runtime.Allocator) -> rawptr {
     if b.allocator.procedure==nil {b.allocator=allocator}
     if int(id.index)>=len(b.entries) {
         b.entries.allocator=b.allocator
-        if resize(&b.entries,int(id.index)+1)!=nil {return false}
+        if resize(&b.entries,int(id.index)+1)!=nil {return nil}
     }
     entry:=&b.entries[id.index]
     if entry.value==nil {
-        made,error:=new(T,b.allocator)
-        if error!=nil {return false}
-        entry.value=made
+        made,error:=mem.alloc(max(size,1),align,b.allocator)
+        if error!=nil || made==nil {return nil}
+        entry.value=cast(^u8)made
     }
-    entry.value^=value
     entry.world=id
-    return true
+    return entry.value
 }
 
 // Takes the value of a World out: the caller frees what it holds, then

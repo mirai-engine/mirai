@@ -7,32 +7,17 @@ import mm "mirai:std/math"
 
 @(private="file")
 Tree_World :: struct {
-    es:Entities,
+    using world:Test_World,
+    disabled:Table(Disabled),
     parents:Table(Parent),
     locals:Table(Transform),
     hierarchy:Hierarchy,
 }
 
 @(private="file")
-tree_init :: proc(w:^Tree_World) {
-    entities_init(&w.es)
-    table_init(&w.parents,"Parent");table_init(&w.locals,"Transform")
-}
-
-@(private="file")
-tree_destroy :: proc(w:^Tree_World) {
-    table_destroy(&w.parents);table_destroy(&w.locals)
-    value_free(&w.hierarchy,type_info_of(Hierarchy))
-    entities_destroy(&w.es)
-}
-
-// What the generated settle does for these tables.
-@(private="file")
 tree_settle :: proc(t:^testing.T,w:^Tree_World) {
-    table_settle(&w.parents,&w.es)
-    testing.expect(t,hierarchy_settle(&w.hierarchy,read(&w.parents),&w.es))
-    table_settle(&w.locals,&w.es)
-    entities_settle(&w.es)
+    test_world_settle(w)
+    testing.expect(t,hierarchy_settle(&w.hierarchy,read(&w.parents),&w.entities))
 }
 
 @(private="file")
@@ -45,10 +30,10 @@ same :: proc(a,b:[]Entity) -> bool {
 @(test)
 children_follow_their_parent_rows_in_order :: proc(t:^testing.T) {
     w:Tree_World
-    tree_init(&w)
-    defer tree_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     h:=ref(&w.hierarchy)
-    root,a,b,c:=create(&w.es),create(&w.es),create(&w.es),create(&w.es)
+    root,a,b,c:=create(&w.entities),create(&w.entities),create(&w.entities),create(&w.entities)
     add(&w.parents,a,Parent{root,2});add(&w.parents,b,Parent{root,0});add(&w.parents,c,Parent{root,1})
     tree_settle(t,&w)
     testing.expect(t,same(children(h,root),{b,c,a}))
@@ -71,10 +56,10 @@ children_follow_their_parent_rows_in_order :: proc(t:^testing.T) {
     testing.expect(t,same(children(h,root),{a}) && same(children(h,a),{c}) && parent_of(h,b)==NONE)
 
     // A destroyed parent leaves its children as roots, and the entity that reuses its index has none.
-    destroy(&w.es,a)
+    destroy(&w.entities,a)
     tree_settle(t,&w)
     testing.expect(t,parent_of(h,c)==NONE && len(children(h,root))==0)
-    reused:=create(&w.es)
+    reused:=create(&w.entities)
     testing.expect_value(t,entity_index(reused),entity_index(a))
     tree_settle(t,&w)
     testing.expect(t,first_child(h,reused)==NONE)
@@ -89,17 +74,17 @@ children_follow_their_parent_rows_in_order :: proc(t:^testing.T) {
     other:Hierarchy
     defer value_free(&other,type_info_of(Hierarchy))
     testing.expect(t,value_copy(&other,&w.hierarchy,type_info_of(Hierarchy)))
-    testing.expect(t,hierarchy_settle(&other,read(&copied),&w.es))
+    testing.expect(t,hierarchy_settle(&other,read(&copied),&w.entities))
     testing.expect(t,same(children(ref(&other),root),{c,b}))
 }
 
 @(test)
 a_parent_that_closes_a_cycle_waits_out_of_the_tree :: proc(t:^testing.T) {
     w:Tree_World
-    tree_init(&w)
-    defer tree_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     h:=ref(&w.hierarchy)
-    a,b,c:=create(&w.es),create(&w.es),create(&w.es)
+    a,b,c:=create(&w.entities),create(&w.entities),create(&w.entities)
     add(&w.parents,b,Parent{a,0});add(&w.parents,c,Parent{b,0})
     tree_settle(t,&w)
     add(&w.parents,a,Parent{c,0})
@@ -108,7 +93,7 @@ a_parent_that_closes_a_cycle_waits_out_of_the_tree :: proc(t:^testing.T) {
     walked:=0
     for at:=a;at!=NONE;at=subtree_next(h,a,at) {walked+=1}
     testing.expect_value(t,walked,3)
-    self:=create(&w.es)
+    self:=create(&w.entities)
     add(&w.parents,self,Parent{self,0})
     tree_settle(t,&w)
     testing.expect(t,parent_of(h,self)==NONE && first_child(h,self)==NONE)
@@ -123,10 +108,10 @@ a_parent_that_closes_a_cycle_waits_out_of_the_tree :: proc(t:^testing.T) {
 @(test)
 a_subtree_is_walked_parents_first_and_destroyed_whole :: proc(t:^testing.T) {
     w:Tree_World
-    tree_init(&w)
-    defer tree_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     h:=ref(&w.hierarchy)
-    root,a,a1,a2,b,b1,outside:=create(&w.es),create(&w.es),create(&w.es),create(&w.es),create(&w.es),create(&w.es),create(&w.es)
+    root,a,a1,a2,b,b1,outside:=create(&w.entities),create(&w.entities),create(&w.entities),create(&w.entities),create(&w.entities),create(&w.entities),create(&w.entities)
     add(&w.parents,a,Parent{root,0});add(&w.parents,b,Parent{root,1})
     add(&w.parents,a1,Parent{a,0});add(&w.parents,a2,Parent{a,1});add(&w.parents,b1,Parent{b,0})
     tree_settle(t,&w)
@@ -141,9 +126,9 @@ a_subtree_is_walked_parents_first_and_destroyed_whole :: proc(t:^testing.T) {
     for at:=a;at!=NONE;at=subtree_next(h,a,at) {append(&walk,at)}
     testing.expect(t,same(walk[:],{a,a1,a2}))
 
-    destroy_tree(&w.es,h,a)
-    testing.expect(t,!alive(&w.es,a) && !alive(&w.es,a1) && !alive(&w.es,a2))
-    testing.expect(t,alive(&w.es,root) && alive(&w.es,b) && alive(&w.es,b1) && alive(&w.es,outside))
+    destroy_tree(&w.entities,h,a)
+    testing.expect(t,!alive(&w.entities,a) && !alive(&w.entities,a1) && !alive(&w.entities,a2))
+    testing.expect(t,alive(&w.entities,root) && alive(&w.entities,b) && alive(&w.entities,b1) && alive(&w.entities,outside))
     tree_settle(t,&w)
     testing.expect(t,same(children(h,root),{b}))
 }
@@ -151,16 +136,16 @@ a_subtree_is_walked_parents_first_and_destroyed_whole :: proc(t:^testing.T) {
 @(test)
 ancestors_are_found_through_parent :: proc(t:^testing.T) {
     w:Tree_World
-    tree_init(&w)
-    defer tree_destroy(&w)
-    root,mid,leaf,loose:=create(&w.es),create(&w.es),create(&w.es),create(&w.es)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    root,mid,leaf,loose:=create(&w.entities),create(&w.entities),create(&w.entities),create(&w.entities)
     add(&w.parents,mid,Parent{root,0});add(&w.parents,leaf,Parent{mid,0})
     marked:Table(Name)
     table_init(&marked,"Name")
     defer table_destroy(&marked)
     add(&marked,root,{})
     tree_settle(t,&w)
-    table_settle(&marked,&w.es)
+    table_settle(&marked,&w.entities)
     parents:=read(&w.parents)
     testing.expect(t,ancestor_with(parents,read(&marked),leaf)==root && ancestor_with(parents,read(&marked),root)==root)
     testing.expect(t,ancestor_with(parents,read(&marked),loose)==NONE)
@@ -178,9 +163,9 @@ ancestors_are_found_through_parent :: proc(t:^testing.T) {
 @(test)
 a_world_pose_is_written_under_the_parent :: proc(t:^testing.T) {
     w:Tree_World
-    tree_init(&w)
-    defer tree_destroy(&w)
-    holder,held:=create(&w.es),create(&w.es)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    holder,held:=create(&w.entities),create(&w.entities)
     add(&w.locals,holder,Transform{{3,0,0},mm.quat_axis_angle({0,1,0},math.PI/2),{2,1,1}})
     add(&w.locals,held,Transform{{0,0,0},1,{1,3,1}})
     add(&w.parents,held,Parent{holder,0})
@@ -203,12 +188,12 @@ a_world_pose_is_written_under_the_parent :: proc(t:^testing.T) {
 @(test)
 the_world_of_a_deep_chain_composes_every_link :: proc(t:^testing.T) {
     w:Tree_World
-    tree_init(&w)
-    defer tree_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     above:=NONE
     leaf:Entity
     for _ in 0..<150 {
-        leaf=create(&w.es)
+        leaf=create(&w.entities)
         add(&w.locals,leaf,Transform{{1,0,0},1,{1,1,1}})
         if above!=NONE {add(&w.parents,leaf,Parent{above,0})}
         above=leaf
