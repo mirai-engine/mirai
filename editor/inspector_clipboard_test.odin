@@ -74,7 +74,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     }
     clipboard :: proc(b:^Clipboard_Test_Board) -> string {return string(b.text[:b.length])}
     put :: proc(b:^Clipboard_Test_Board,text:string) {b.length=copy(b.text[:],text)}
-    lamp :: proc(w:^Clipboard_Test_World,e:core.Entity) -> Clipboard_Test_Lamp {value,_:=core.get(core.read(&w.lamps),e);return value}
+    lamp :: proc(w:^Clipboard_Test_World,e:core.Entity) -> Clipboard_Test_Lamp {value,_:=core.get(&w.lamps,e);return value}
     component:=Value_Menu{kind=.Component,table=LAMP}
     color:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,color)),info=type_info_of([3]f32)}
     intensity:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,intensity)),info=type_info_of(f32)}
@@ -141,7 +141,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     history.selection_set(&selection,{c})
     put(&board,`{"Clipboard_Test_Lamp":{"intensity":5}}`)
     testing.expect_value(t,paste(&s,{kind=.Components}),"")
-    testing.expect(t,core.has(core.read(&world.lamps),c) && lamp(&world,c).intensity==5)
+    testing.expect(t,core.has(&world.lamps,c) && lamp(&world,c).intensity==5)
     put(&board,`{"Unknown":{}}`)
     testing.expect(t,paste(&s,{kind=.Components})!="")
 }

@@ -71,7 +71,7 @@ stroke_begin :: proc(stroke:^Stroke,w:core.World_Ref,plane:Plane,first:core.Enti
         shapes.shape_edit_piece(&stroke.edit,e,editor.entity_world(w,e),shape^)
     }
     if first!=core.NONE {
-        if shape:=core.get(table,first);shape!=nil {take(stroke,w,first,shape)}
+        if shape:=core.edit(table,first);shape!=nil {take(stroke,w,first,shape)}
     }
     for &shape,row in table.values {
         if e:=table.entities[row];e!=first {take(stroke,w,e,&shape)}

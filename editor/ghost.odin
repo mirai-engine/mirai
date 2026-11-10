@@ -91,7 +91,7 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
         if error!=.None {return p}
         core.world_settle(w)
         if transforms:=core.world_table_of(w,core.Transform);transforms!=nil {
-            if root:=core.get(transforms,report.root);root!=nil {root.position,root.rotation={},1}
+            if root:=core.edit(transforms,report.root);root!=nil {root.position,root.rotation={},1}
         }
         if meshes:=core.world_table_of(w,erender.Mesh_Renderer);meshes!=nil {
             for mesh,i in meshes.values[:core.count(meshes)] {
@@ -157,7 +157,7 @@ hidden_ghosts_draw :: proc(s:^Session,w:core.World_Ref) {
     key:=[8]u64{
         u64(uintptr(w.data)),worlds!=nil?worlds.layout+worlds.version:0,meshes!=nil?meshes.layout+meshes.version:0,
         hidden!=nil?hidden.layout+hidden.version:0,parents!=nil?parents.layout+parents.version:0,
-        core.world_entities(w).activity,v.levels_serial,a.revision+a.structure,
+        core.world_entities(w).activity.version+core.world_entities(w).activity_tree,v.levels_serial,a.revision+a.structure,
     }
     if key!=v.ghosts_key {
         v.ghosts_key=key

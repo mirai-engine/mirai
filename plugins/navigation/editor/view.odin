@@ -111,7 +111,7 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,extras:^host.Fram
     if len(view.agents)==0 {resize(&view.agents,2*NAV_VIEW_AGENT_LINES)}
     agent_lines:=erender.debug_lines_make(view.agents[:],depth_test=false)
     for e in s.selection.entities {
-        p,found:=core.get(core.read(paths),e)
+        p,found:=core.get(paths,e)
         if !found || p.class<0 || int(p.class)>=n.count {continue}
         if nav.class_in_volume(n,int(p.class)) {draw_flier(&agent_lines,&n.classes[p.class].volume,p)} else {draw_agent(&agent_lines,&n.classes[p.class].mesh,p)}
     }

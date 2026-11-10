@@ -238,7 +238,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     if values.data!=nil {values_convert(m,from.info,to.info,to.default,(cast([^]u8)values.data)[:size*count],(cast([^]u8)old.data)[:from.info.size*count],count)}
     if values.data==nil && count>0 {
         // The rows cannot stay without values: they go, as with a table that is gone.
-        clear(&t.entities);clear(&t.stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
+        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
         rows_zero(t)
         t.on=0
         t.layout+=1

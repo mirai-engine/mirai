@@ -35,7 +35,7 @@ environment_triggers :: proc(
     at,placed:=core.get(worlds,body)
     for row in 0..<core.count(triggers) {
         e:=core.entity_at(triggers,row)
-        trigger:=core.at(core.read(triggers),row)
+        trigger:=core.at(triggers,row)
         zone,pose,rules:=volume.placed(volumes,worlds,e)
         inside:=trigger.inside
         if placed && rules {
@@ -45,7 +45,7 @@ environment_triggers :: proc(
             inside=false
         }
         if inside==trigger.inside {continue}
-        core.get(triggers,e).inside=inside
+        core.edit(triggers,e).inside=inside
         if inside {render.activate(requests,trigger.sky,trigger.sun,trigger.seconds)}
     }
 }

@@ -182,7 +182,7 @@ client_inputs :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
             }
         }
         if moves!=nil && driver.has_move {
-            old,has:=core.get(core.read(moves),r.entity)
+            old,has:=core.get(moves,r.entity)
             if !has || old!=driver.move {core.add(moves,r.entity,driver.move)}
         }
     }
