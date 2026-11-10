@@ -332,7 +332,9 @@ qa_violation_add :: proc(q:^Run_Qa,v:Qa_Violation,repeats:bool) {
 }
 
 // How long the body has asked to move and stayed where it was, in seconds of
-// the game; 0 when it moved or does not ask to. The one measure of stuck of a run.
+// the game; 0 when it moved or does not ask to. The one measure of stuck of a
+// run: the monitors, play.observe and the bot of play.explore read it, each
+// against its own time.
 @(private)
 stuck_watch :: proc(watch:^Stuck_Watch,w:core.World_Ref,body:core.Entity,at:[3]f32,seconds:f64) -> f64 {
     if body==core.NONE || !play_moving(w,body) || !watch.anchored || linalg.length(at-watch.anchor)>=QA_STUCK_DISTANCE {

@@ -222,7 +222,9 @@ demo enables. How an `editor/` adds steps, panels and tools:
     ([prompts](../../mirai-imports/references/imports.md#prompts)).
 - **`playtest`** (`Editor`, development): `play.observe`, the monitors of `play.qa.*` with their
   repros and the bot of `play.explore`, over the ticks the API runs
-  ([`Run_Provider`](../../mirai-editor/references/extensions.md#runs-the-api-drives)). The game
+  ([`Run_Provider`](../../mirai-editor/references/extensions.md#runs-the-api-drives)). The bot
+  only picks where to go: the drive of the editor walks it there. Whether a body is stuck is
+  measured once (`stuck_watch`), for the monitors, `play.observe` and the bot. The game
   template enables it; none of its tools are listed by MCP by default, which the playtester
   agent reaches through `call`.
 - **`profiler`** (`Editor`, development) and **`tracy`** (`Runtime`, development): captures panel

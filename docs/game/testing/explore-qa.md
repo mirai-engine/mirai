@@ -17,9 +17,10 @@ mirai rpc --project . play.stop
 ```
 
 - `mirai rpc --project . describe play.explore` lists its params and the results.
-- `mode` `World`: the seat walks and jumps with its actions toward the cells of the world it
-  has been in the least. `Ui`: it presses every button it sees with the pointer, goes back with
-  Escape and follows the pages it reaches. `seed` varies the walk.
+- `mode` `World`: the seat goes with its actions to the cells of the world it has been in the
+  least, each as a [drive](scenario.md#drive) goes to a position: along the navigation meshes,
+  over gaps and around what blocks it. `Ui`: it presses every button it sees with the pointer,
+  goes back with Escape and follows the pages it reaches. `seed` varies the walk.
 - `World` finds the action that moves (an `Axis2` bound to keys or the left stick) and the one
   that jumps (`Space` or the south button); name them with `move` and `jump` when it cannot.
   `input.get` lists the actions.
