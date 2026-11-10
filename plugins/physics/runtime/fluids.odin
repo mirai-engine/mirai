@@ -28,41 +28,28 @@ waves_reach :: proc "contextless" (waves:Surface_Waves) -> f32 {
 }
 
 // Water, or another fluid, that bodies float in by their density and
-// characters swim in; with density zero, the air of a box that takes the
-// fluid of lower priority out of where it is: a base under the sea, a room
-// that floods as the floor of its air rises. A plane is everything under the
-// height of its entity, a box its volume, with the top as the surface; the
-// yaw of the entity turns a box and its current. Fluids do not overlap each
-// other, nor dry boxes each other.
-@(component,replicated,description="Water or another fluid: bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
-Fluid_Volume :: struct {
-    shape:Fluid_Shape,
-    size:[3]f32 `mirai:"min=0,unit=m"`,     // half extents of a box, by the world scale of the entity; a plane ignores it
-    density:f32 `mirai:"min=0,unit=kg/m3"`, // 1000 fresh water, 1025 the sea; 0: dry, only a box
+// characters swim in, where the Volume of its entity says: a Plane is
+// everything under the height of the entity, a Box its volume, with the top
+// as the surface; the yaw of the entity turns a box and its current. With
+// density zero, the air of a box that takes the fluid of lower priority
+// (Volume.priority) out of where it is: a base under the sea, a room that
+// floods as the floor of its air rises. Where two fluids meet, or two dry
+// boxes, the one of higher priority decides. A fluid ends at its border: the
+// blend and the mode of its Volume do nothing to it.
+@(component,replicated,description="Water or another fluid in the Volume of its entity, a Plane (a sea) or a Box (a pool): bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
+Fluid :: struct {
+    density:f32 `mirai:"min=0,unit=kg/m3"`, // 1000 fresh water, 1025 the sea; 0: dry, only in a box
     current:[3]f32 `mirai:"unit=m/s"`,      // in the frame of the entity
-    priority:i32,                           // a dry box takes out the fluids of lower priority
 }
 
-FLUID_VOLUME_DEFAULT :: Fluid_Volume{shape=.Box,size={5,2,5},density=1000}
+FLUID_DEFAULT :: Fluid{density=1000}
 
-// The sea: everything under the height of the entity.
-fluid_volume_sea :: proc "contextless" (density:f32=1025,current:=[3]f32{}) -> Fluid_Volume {
-    return {shape=.Plane,density=density,current=current}
-}
-fluid_volume_box :: proc "contextless" (half_extents:[3]f32,density:f32=1000,current:=[3]f32{}) -> Fluid_Volume {
-    return {shape=.Box,size=half_extents,density=density,current=current}
-}
-// The air of a box over fluids of lower priority.
-fluid_volume_dry :: proc "contextless" (half_extents:[3]f32,priority:i32=1) -> Fluid_Volume {
-    return {shape=.Box,size=half_extents,priority=priority}
-}
-
-// The waves on the surface of a plane of a Fluid_Volume, waves of Gerstner:
-// those the Wind of the world raises where the volume is, as a sea that has
-// felt it long (Pierson-Moskowitz), and its own, as a swell from far away.
-// Bodies float on them, characters swim in them and the water draws them,
-// all from the one surface of the simulation. A box holds still water.
-@(component,replicated,description="The waves of the Fluid_Volume plane of this entity: those the Wind of the world raises where it is, and its own. Bodies float on them, characters swim in them and the water draws them.")
+// The waves on the surface of a Fluid whose Volume is a Plane, waves of
+// Gerstner: those the Wind of the world raises where the volume is, as a sea
+// that has felt it long (Pierson-Moskowitz), and its own, as a swell from far
+// away. Bodies float on them, characters swim in them and the water draws
+// them, all from the one surface of the simulation. A box holds still water.
+@(component,replicated,description="The waves of the Fluid of this entity, when its Volume is a Plane: those the Wind of the world raises where it is, and its own. Bodies float on them, characters swim in them and the water draws them.")
 Fluid_Waves :: struct {
     wind:f32 `mirai:"min=0,max=2"`,      // of the height of the sea the Wind where the volume is raises when it has blown long, the share it has; 0: no waves of the wind
     spread:f32 `mirai:"min=0,max=1"`,    // how far the waves of the wind stray from where it blows: 0 all along it, 1 up to across it
@@ -127,7 +114,7 @@ fluid_waves_of :: proc "contextless" (waves:Fluid_Waves,yaw:f32,wind:[2]f32) -> 
     return
 }
 
-// What the simulation made for a Fluid_Volume and the description it was made from.
+// What the simulation made for a Fluid and the description it was made from.
 @(private)
 Fluid_Link :: struct {
     fluid:sim.Fluid_Handle,
@@ -215,52 +202,59 @@ fluid_bodies :: proc(physics:core.Ref(Physics_State),out:[]Fluid_Body) -> int {
     return count
 }
 
-// Keeps the fluids of the simulation equal to the Fluid_Volume rows, where their entities are. Runs in both
-// loops, before the step; does nothing while no row nor pose changed. Whoever steps the physics by hand
-// without fluids can leave volumes zero.
+// Keeps the fluids of the simulation equal to the Fluid rows, in the Volume of their entities and where they
+// are. Runs in both loops, before the step; does nothing while no row nor pose changed. Whoever steps the
+// physics by hand without fluids can leave fluids zero.
 @(private)
 fluids_sync :: proc(
-    state:^Physics_State,volumes:core.Read(Fluid_Volume),locals:core.Read(core.Transform),parents:core.Read(core.Parent),problems:^core.Problems,
-    waves:core.Read(Fluid_Waves)={},winds:core.Read(volume.Wind)={},wind_volumes:core.Read(volume.Volume)={},worlds:core.Read(core.World_Transform)={},
+    state:^Physics_State,fluids:core.Read(Fluid),volumes:core.Read(volume.Volume),locals:core.Read(core.Transform),parents:core.Read(core.Parent),problems:^core.Problems,
+    waves:core.Read(Fluid_Waves)={},winds:core.Read(volume.Wind)={},worlds:core.Read(core.World_Transform)={},
 ) {
-    if volumes.table==nil {return}
-    seen:=core.version(volumes)+core.layout(volumes)+core.version(locals)+core.layout(locals)+core.version(parents)+core.layout(parents)+u64(state.epoch)
-    // The wind changes only the volumes with waves.
+    if fluids.table==nil {return}
+    seen:=core.version(fluids)+core.layout(fluids)+core.version(locals)+core.layout(locals)+core.version(parents)+core.layout(parents)+u64(state.epoch)
+    if volumes.table!=nil {seen+=core.version(volumes)+core.layout(volumes)}
+    // The wind changes only the fluids with waves.
     if waves.table!=nil {
         seen+=core.version(waves)+core.layout(waves)
-        if core.count(waves)>0 && winds.table!=nil && wind_volumes.table!=nil && worlds.table!=nil {
-            seen+=core.version(winds)+core.layout(winds)+core.version(wind_volumes)+core.layout(wind_volumes)+core.version(worlds)+core.layout(worlds)
+        if core.count(waves)>0 && winds.table!=nil && volumes.table!=nil && worlds.table!=nil {
+            seen+=core.version(winds)+core.layout(winds)+core.version(worlds)+core.layout(worlds)
         }
     }
     if seen==state.fluids_synced {return}
     w:=&state.world
     #reverse for &link,at in state.fluids.values {
-        if core.has(volumes,state.fluids.entities[at]) {continue}
+        if core.has(fluids,state.fluids.entities[at]) {continue}
         sim.fluid_destroy(w,link.fluid)
         core.entity_map_remove_at(&state.fluids,at)
     }
     most:=0
-    for row in 0..<core.count(volumes) {most=max(most,core.entity_index(core.entity_at(volumes,row)))}
-    if !core.entity_map_reserve(&state.fluids,len(state.fluids.values)+core.count(volumes),most+1) {
+    for row in 0..<core.count(fluids) {most=max(most,core.entity_index(core.entity_at(fluids,row)))}
+    if !core.entity_map_reserve(&state.fluids,len(state.fluids.values)+core.count(fluids),most+1) {
         memory_problem(problems,core.NONE,"the links from entities to the fluids of the simulation, so no fluid changes in this tick")
         return
     }
     changed:=false
-    for row in 0..<core.count(volumes) {
-        e:=core.entity_at(volumes,row)
-        volume:=core.at(volumes,row)
+    for row in 0..<core.count(fluids) {
+        e:=core.entity_at(fluids,row)
+        fluid:=core.at(fluids,row)
+        region:volume.Volume
+        has_region:=false
+        if volumes.table!=nil {region,has_region=core.get(volumes,e)}
+        // The simulation has a sea and a pool: the fluid of a region of another shape is not made.
+        shaped:=has_region && (region.shape==.Plane || region.shape==.Box)
         world,_:=core.world_of(locals,parents,e)
         desc:=sim.Fluid_Desc{
-            shape=volume.shape,position=world.position,yaw=yaw_of(world.rotation),half_extents=volume.size*linalg.abs(world.scale),
-            density=volume.density,current=volume.current,priority=volume.priority,user_data=u64(e),
+            shape=region.shape==.Plane?.Plane:.Box,position=world.position,yaw=yaw_of(world.rotation),
+            density=fluid.density,current=fluid.current,priority=region.priority,user_data=u64(e),
         }
+        if shaped && region.shape==.Box {desc.half_extents=region.extents*linalg.abs(world.scale)}
         raised:Fluid_Waves
         has_waves:=false
         if waves.table!=nil {raised,has_waves=core.get(waves,e)}
-        if has_waves && volume.shape==.Plane {
-            desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,wind_volumes,worlds,world.position))
-        } else if has_waves {
-            core.report(problems,e,"physics.fluid_waves","its Fluid_Waves makes no waves: a Box holds still water; make its Fluid_Volume a Plane, or remove the Fluid_Waves")
+        if has_waves && shaped && region.shape==.Plane {
+            desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,volumes,worlds,world.position))
+        } else if has_waves && shaped {
+            core.report(problems,e,"physics.fluid_waves","its Fluid_Waves makes no waves: a Box holds still water; make its Volume a Plane, or remove the Fluid_Waves")
         }
         l:=core.entity_map_get(&state.fluids,e)
         if l==nil {
@@ -286,10 +280,12 @@ fluids_sync :: proc(
         l.refused=l.fluid=={}
         changed=true
         if !l.refused {continue}
-        if volume.shape==.Plane && volume.density<=0 || volume.shape==.Box && (desc.half_extents.x<=0 || desc.half_extents.y<=0 || desc.half_extents.z<=0) {
-            core.report(problems,e,"physics.fluid","its Fluid_Volume is not made: %s; give it %s",volume.shape==.Plane?"a plane of density 0 would be dry everywhere":"a box needs a size above 0 on every axis","a density above 0, or the shape Box for a dry volume" if volume.shape==.Plane else "a size")
+        if !shaped {
+            core.report(problems,e,"physics.fluid","its Fluid is not made: a fluid fills a Volume of shape Plane (a sea: everything under its entity) or Box (a pool); add that Volume to its entity (volume.plane, volume.box)")
+        } else if region.shape==.Plane && fluid.density<=0 || region.shape==.Box && (desc.half_extents.x<=0 || desc.half_extents.y<=0 || desc.half_extents.z<=0) {
+            core.report(problems,e,"physics.fluid","its Fluid is not made: %s; give it %s",region.shape==.Plane?"a plane of density 0 would be dry everywhere":"a box needs extents above 0 on every axis","a density above 0, or a Volume of shape Box for a dry volume" if region.shape==.Plane else "extents")
         } else {
-            core.report(problems,e,"physics.fluids","its Fluid_Volume is not made: the %d fluids of Physics_Settings.fluids are in use, or its values are not finite; raise fluids",len(w.fluids))
+            core.report(problems,e,"physics.fluids","its Fluid is not made: the %d fluids of Physics_Settings.fluids are in use, or its values are not finite; raise fluids",len(w.fluids))
         }
     }
     if changed {fluids_overlaps_report(state,problems)}
@@ -304,8 +300,8 @@ volume_wind :: proc(winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume
     return {blowing.x,blowing.z}
 }
 
-// Fluids that overlap fluids, or dry boxes that overlap dry boxes: the simulation lets the one of higher
-// priority decide for a whole body.
+// Fluids that meet fluids, or dry boxes that meet dry boxes, at the same priority: nothing says which of
+// the two decides where they meet.
 @(private)
 fluids_overlaps_report :: proc(state:^Physics_State,problems:^core.Problems) {
     w:=&state.world
@@ -313,10 +309,10 @@ fluids_overlaps_report :: proc(state:^Physics_State,problems:^core.Problems) {
     for &a,i in links {
         if !sim.fluid_valid(w,a.fluid) {continue}
         for &b in links[i+1:] {
-            if !sim.fluid_valid(w,b.fluid) || (a.desc.density>0)!=(b.desc.density>0) {continue}
+            if !sim.fluid_valid(w,b.fluid) || (a.desc.density>0)!=(b.desc.density>0) || a.desc.priority!=b.desc.priority {continue}
             if !mm.aabb_overlaps(sim.fluid_bounds(w,a.fluid),sim.fluid_bounds(w,b.fluid)) {continue}
             kind:=a.desc.density>0?"fluid":"dry box"
-            core.report(problems,core.Entity(b.desc.user_data),"physics.fluid_overlap","its Fluid_Volume overlaps another %s (%v): where they meet the one of higher priority decides for a whole body; move them apart, or make a smaller one",kind,core.Entity(a.desc.user_data))
+            core.report(problems,core.Entity(b.desc.user_data),"physics.fluid_overlap","its Fluid meets another %s (%v) of the same priority, so either may decide where they meet; give the Volume of the one that decides a higher priority, or move them apart",kind,core.Entity(a.desc.user_data))
         }
     }
 }
