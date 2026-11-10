@@ -167,7 +167,7 @@ mesh_remove_preserves_other_ranges_and_instances_and_reuses_the_freed_space :: p
 	testing.expect(t,len(s.pool_dirty[.Vertex])==0 && len(s.pool_dirty[.Index])==0)
 	testing.expect_value(t, s.triangle_total, triangles - u64(middle.triangle_count))
 	testing.expect(t,s.geometry_dirty && len(s.instances)==3)
-	testing.expect(t,!s.instances_dirty && len(s.touched)==1,"only the retired instance is staged")
+	testing.expect(t,!s.instances_dirty && s.touched_count==1 && instance_touched(s,1),"only the retired instance is staged")
 	testing.expect_value(t,s.instances[2],kept_instance)
 	testing.expect(t,s.instances[1].meta.w&INSTANCE_FLAG_HIDDEN!=0)
 	vertices, indices := edit_grid(2, 1)
@@ -289,7 +289,7 @@ scene_set_changes_the_light_only_around_what_comes_goes_or_changes :: proc(t:^te
     moved.transform=at(-25)
     scene_set(r,{a,moved},nil,{},{})
     testing.expect(t,!s.changes.all && s.changes.count==2,"one that moves, around where it was and where it is")
-    testing.expect(t,s.motion_pending,"and it has its motion")
+    testing.expect(t,s.touched_count==1 && instance_touched(s,1),"and it has its motion")
     s.changes={}
     small:=Instance_Desc{object_id=4,mesh=handle,transform=at(40)*Mat4{0.1,0,0,0,0,0.1,0,0,0,0,0.1,0,0,0,0,1},tint={1,1,1}}
     scene_set(r,{a,moved,small},nil,{},{})
@@ -617,4 +617,73 @@ material_program_roughness_keeps_reflections_active :: proc(t:^testing.T) {
     material.program_id=0;material.roughness=.3
     materials_set(r,{material})
     testing.expect_value(t,r.scene.smoothest,f32(.3))
+}
+
+@(private)
+instance_touched :: proc(s:^Scene_State,index:u32) -> bool {return s.touched[index>>6]&(u64(1)<<(index&63))!=0}
+
+// The instances that changed go to the GPU alone, in runs of the table,
+// however many they are: the others are neither sent nor walked. What moved
+// is drawn in motion by the frame that sends it and goes once more, at rest.
+@(test)
+touched_instances_go_in_runs_of_the_table_however_many_they_are :: proc(t:^testing.T) {
+    r:=new(Renderer);defer free(r)
+    r.allocator=context.allocator
+    scene_init(r)
+    defer scene_destroy(r)
+    vertices,indices:=edit_grid(1,1)
+    defer delete(vertices);defer delete(indices)
+    handle,_:=edit_add(r,vertices[:],indices[:],{0,0})
+    at :: proc(i:int,y:f32=0) -> Mat4 {m:=Mat4(1);m[0,3],m[1,3],m[2,3]=f32(i%40)*2,y,f32(i/40)*2;return m}
+    descs:=make([]Instance_Desc,1000);defer delete(descs)
+    for &desc,i in descs {desc={object_id=u64(i+1),mesh=handle,transform=at(i),tint={1,1,1}}}
+    testing.expect(t,scene_set(r,descs,nil,{},{}))
+    s:=&r.scene
+    testing.expect_value(t,s.touched_count,0)
+    s.instances_dirty=false
+    rest:=make([]Gpu_Instance,len(s.instances));defer delete(rest)
+    copy(rest,s.instances[:])
+
+    // 300 move: a run of 250 that crosses words of the set, and 50 apart from each other.
+    moved:=make([dynamic]u32);defer delete(moved)
+    places:=make([dynamic]Mat4);defer delete(places)
+    for i in 100..<350 {append(&moved,u32(i));append(&places,at(i,1))}
+    for i in 0..<50 {append(&moved,u32(500+i*3));append(&places,at(500+i*3,1))}
+    testing.expect(t,scene_move(r,moved[:],places[:]))
+    // Moved again before the frame, each still goes once.
+    testing.expect(t,scene_move(r,moved[:10],places[:10]))
+    testing.expect(t,!s.instances_dirty,"the table does not go whole")
+    testing.expect_value(t,s.touched_count,300)
+    runs,rows:=0,0
+    for range,ok:=touched_range(s,0);ok;range,ok=touched_range(s,range.first+range.count) {
+        if runs==0 {testing.expect_value(t,range,Pool_Range{100,250})}
+        else {testing.expect_value(t,range,Pool_Range{u32(500+(runs-1)*3),1})}
+        runs+=1
+        rows+=int(range.count)
+    }
+    testing.expect_value(t,runs,51)
+    testing.expect_value(t,rows,300)
+
+    // The frame that sends them draws their motion: they go once more, at rest, and then no more.
+    touched_settle(s)
+    testing.expect_value(t,s.touched_count,300)
+    for index in moved {testing.expect(t,s.instances[index].prev_world==s.instances[index].world)}
+    touched_settle(s)
+    testing.expect_value(t,s.touched_count,0)
+    _,any:=touched_range(s,0)
+    testing.expect(t,!any)
+    still:=true
+    for inst,i in s.instances {if i<100 || i>=350 && (i<500 || i>=650 || (i-500)%3!=0) {still&&=inst==rest[i]}}
+    testing.expect(t,still,"what did not move was not written")
+
+    // A set that moves some marks those alone to go again at rest.
+    for index,i in moved {descs[index].transform=places[i]}
+    descs[7].transform,descs[64].transform,descs[999].transform=at(7,2),at(64,2),at(999,2)
+    testing.expect(t,scene_set(r,descs,nil,{},{}))
+    testing.expect(t,s.touched_count==3 && instance_touched(s,7) && instance_touched(s,64) && instance_touched(s,999))
+    // An instance the table no longer has is touched no more.
+    testing.expect(t,scene_update(r,900,nil,true))
+    testing.expect(t,s.touched_count==2 && len(s.instances)==900)
+    testing.expect(t,scene_tint(r,{899},{{1,0,0}},{{}}))
+    testing.expect(t,s.touched_count==3 && instance_touched(s,899))
 }

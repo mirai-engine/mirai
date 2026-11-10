@@ -187,10 +187,11 @@ the whole tables: it is used when what is drawn changes. For the rest:
     `LIGHT_CHANGE_REACH`, and each light rectangle that shows its emission. Past
     `MATERIAL_LIT_ROWS` rows, or `LIGHT_CHANGES_MAX` marks, it changes across the whole scene.
   - A row beyond the table enlarges it with the default material.
-- **Upload.** The instances touched by `scene_move` or `scene_tint` are uploaded one by one
-  (`Scene_State.touched`, up to `SCENE_TOUCHED_MAX` = 256); with more, the whole table. Tracing in
-  software, after a movement the tree nodes are uploaded, and the references only if it was
-  built again; with hardware RT the tree is not uploaded.
+- **Upload.** The instances a partial change touches go alone, in runs of the table, however many
+  they are (`Scene_State.touched`, a bit per instance); the whole table goes with `scene_set`, a
+  change of the instance count and what rewrites every row. What moved goes once more, at rest,
+  with the frame after. Tracing in software, after a movement the tree nodes are uploaded, and
+  the references only if it was built again; with hardware RT the tree is not uploaded.
 
 ## Visual instances
 

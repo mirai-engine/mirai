@@ -103,7 +103,7 @@ ray_cuts_update :: proc(r: ^Renderer, eye: Vec3) {
 		if cut == inst.meta.x >> INSTANCE_RAY_SHIFT {continue}
 		inst.meta.x = mesh | cut << INSTANCE_RAY_SHIFT
 		if abs(m.rays[cut].error - m.rays[was].error) * scale > probe_spacing_at(r.settings, distance) * 0.5 {scene_changed_box(s, low, high)}
-		if len(s.touched) < cap(s.touched) {append(&s.touched, u32(index))} else {s.instances_dirty = true}
+		instance_touch(s, u32(index))
 		s.tlas_dirty = true
 	}
 	if !r.hardware_rt {return}
