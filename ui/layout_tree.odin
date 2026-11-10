@@ -329,7 +329,11 @@ layout_close :: proc(t:^Layout_Tree) {
 @(private)
 layout_text_begin :: proc(t:^Layout_Tree,desc:Layout_Text_Desc) -> bool {
     if t.text_count>=len(t.texts) {return false}
-    t.texts[t.text_count]={desc=desc,node=-1,spans_first=i32(t.span_count)}
+    text:=&t.texts[t.text_count]
+    text^={desc=desc,node=-1,spans_first=i32(t.span_count)}
+    // A size or a line that is no number is none.
+    if !(text.size>0) {text.size=0}
+    if !(text.line>0) {text.line=0}
     return true
 }
 // A span of the text begun, measured once for what it says. False when the
@@ -339,6 +343,11 @@ layout_text_span :: proc(t:^Layout_Tree,font:^Font,span:Layout_Span) -> bool {
     if t.span_count>=len(t.spans) {return false}
     s:=&t.spans[t.span_count]
     s^=span
+    if !(s.size>0) {s.size=0}
+    if !(s.width>0) {s.width=0}
+    if !(s.pad>0) {s.pad=0}
+    if !(s.gap>0) {s.gap=0}
+    if !(s.height>0) {s.height=0}
     if !s.box && s.text!="" {
         s.measure=layout_measure(t,font,s.text,s.size,s.face)
         s.width=s.measure.width+s.pad
@@ -675,7 +684,7 @@ layout_line_end :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,first:int,wi
         s:=&t.spans[p.span]
         switch {
         case s.box || s.pad>0: p.y=(high-(s.height if s.height>0 else s.size*TEXT_LINE))*0.5
-        case s.size==big.size && s.face==big.face: p.y=(high-s.size*TEXT_LINE)*0.5
+        case big==nil || s.size==big.size && s.face==big.face: p.y=(high-s.size*TEXT_LINE)*0.5
         case: p.y=baseline-face_ascent(font,s.face)*s.size
         }
     }
@@ -1455,7 +1464,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position:[2]f32) {
             columns,cell,tracked:=grid_widths(t,n,kids,&widths)
             // The heights of the rows are in a room a child placed would write over: every child gets its place first.
             heights:=grid_scratch(t.pending)
-            rows:=grid_rows(t,n,kids,heights,.Asked,true)
+            rows:=grid_rows(t,n,kids,heights,.Given,true)
             y:=position.y+l.padding[1]
             row:=0
             g:=Grid_Cells{kids=kids,columns=columns}
@@ -1569,6 +1578,12 @@ layout_place_text :: proc(t:^Layout_Tree,index:i32) {
 @(private)
 grid_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) -> ^Grid_Tracks {
     if l.tracks==0 || int(l.tracks)>t.track_count || t.tracks[l.tracks-1].count==0 {return nil}
+    return &t.tracks[l.tracks-1]
+}
+// The tracks of the rows of a Grid, when the row of tracks it names has rows.
+@(private)
+grid_row_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) -> ^Grid_Tracks {
+    if l.tracks==0 || int(l.tracks)>t.track_count || t.tracks[l.tracks-1].row_count==0 {return nil}
     return &t.tracks[l.tracks-1]
 }
 @(private)
@@ -1685,7 +1700,7 @@ grid_child_height :: #force_inline proc "contextless" (n:^Layout_Node,mode:Grid_
 grid_rows :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node,kids:[]i32,heights:[]f32,mode:Grid_Height,final:bool) -> (rows:int) {
     l:=&n.layout
     columns:=grid_columns(t,l)
-    tracks:=grid_tracks_of(t,l)
+    tracks:=grid_row_tracks_of(t,l)
     tracked:=0
     spans:=false
     g:=Grid_Cells{kids=kids,columns=columns}
