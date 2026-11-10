@@ -4,9 +4,54 @@ import "core:math"
 import "core:testing"
 
 // The paint of the last frame that shows this text.
+// The paint of what says text: a widget that draws it, or the text whose first span it is.
 test_paint :: proc(ctx:^Context,text:string) -> ^Paint {
     for &p in ctx.paints[:ctx.paint_count] {if p.text==text {return &p}}
+    for &p in test_text_pieces(ctx) {if p.text==text {return &p}}
     return nil
+}
+// Every piece of every line of the texts of the frame as the paint it would
+// be: what it says, its style, the fill behind it, and Box when it is a chip.
+test_text_pieces :: proc(ctx:^Context) -> []Paint {
+    t:=&ctx.layout
+    out:=make([dynamic]Paint,context.temp_allocator)
+    for &leaf in t.texts[:t.text_count] {
+        own:=cast(^Paint)t.nodes[leaf.node].custom
+        for &line in t.lines[leaf.lines_first:][:leaf.lines_len] {
+            for &piece in t.pieces[line.pieces_first:][:line.pieces_len] {
+                s:=&t.spans[piece.span]
+                if s.box {continue}
+                style,decoration,run:=text_piece_style(ctx,own,s)
+                p:=Paint{kind=.Box if s.pad>0 else .None,text=s.text[piece.start:][:piece.length],style=style,size=style.size,text_color=style.color,decoration=decoration}
+                if run!=nil {p.fill=run.back}
+                append(&out,p)
+            }
+        }
+    }
+    return out[:]
+}
+// The running text of the editor with lines line sizes apart; PARAGRAPH_LINE when 0.
+test_prose :: proc(ctx:^Context,line:f32) -> Text_Style {
+    style:=prose(ctx)
+    if line>0 {style.line_height=math.floor(style.size*line)/style.size}
+    return style
+}
+// Whether a paint is that of a text.
+test_paint_is_text :: proc(p:Paint) -> bool {return p.kind==.None && p.style.size>0}
+// The lines the layout broke the text of the element id into, as they are drawn.
+test_text_lines :: proc(ctx:^Context,id:Id,out:[]string) -> int {
+    t:=&ctx.layout
+    index:=layout_index(t,id)
+    if index==0 || t.nodes[index].text<0 {return 0}
+    leaf:=&t.texts[t.nodes[index].text]
+    for &line,i in t.lines[leaf.lines_first:][:leaf.lines_len] {
+        if i>=len(out) {break}
+        out[i]=""
+        if line.pieces_len==0 {continue}
+        first,last:=&t.pieces[line.pieces_first],&t.pieces[line.pieces_first+line.pieces_len-1]
+        if first.span==last.span {out[i]=t.spans[first.span].text[first.start:last.start+last.length]}
+    }
+    return int(leaf.lines_len)
 }
 
 Test_Buttons :: struct {
@@ -179,7 +224,12 @@ a_tooltip_follows_the_pointer_on_a_widget_with_a_tip :: proc(t:^testing.T) {
     // It shows once the pointer rested on the button long enough.
     for _ in 0..<int(TOOLTIP_DELAY*60)+2 {test_frame(&ctx,&input,test_buttons_build,&s)}
     tip:=test_paint(&ctx,"First")
-    testing.expect(t,tip!=nil && tip.kind==.Box && tip.fill==THEME_EDITOR.popup && tip.center)
+    box:^Paint
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Panel && p.fill==THEME_EDITOR.popup {box=&p}}
+    testing.expect(t,tip!=nil && tip.style.align_x==.Center && box!=nil)
+    // Under the pointer, in the frame that shows it.
+    placed,_:=layout_find(&ctx.layout,id(&ctx,"tooltip"))
+    testing.expectf(t,test_near(placed.x,100+12) && test_near(placed.y,40+20) && test_near(placed.h,26),"placed at %v",placed)
     // Away from the button it is gone.
     input.pointer={100,400}
     test_frame(&ctx,&input,test_buttons_build,&s)
@@ -365,7 +415,7 @@ paragraph_height_matches :: proc(t:^testing.T,desc:Context_Desc) {
         s:=cast(^Test_Paragraphs)user
         if panel(ctx,id(ctx,"panel"),{width=fixed(700),height=FIT,offset={0,0}}) {
             for c,i in s.cases {
-                if box(ctx,{id=id(ctx,"case",i+1),width=fixed(c.width),height=FIT,direction=.Column,track=true}) {paragraph(ctx,c.text,line=c.line)}
+                if box(ctx,{id=id(ctx,"case",i+1),width=fixed(c.width),height=FIT,direction=.Column,track=true}) {text(ctx,c.text,test_prose(ctx,c.line))}
             }
         }
     }
@@ -374,7 +424,7 @@ paragraph_height_matches :: proc(t:^testing.T,desc:Context_Desc) {
     test_frame(&ctx,&input,build,&s)
     for c,i in s.cases {
         laid:=test_rect(t,&ctx,id(&ctx,"case",i+1))
-        measured:=paragraph_height(&ctx,c.text,c.width,line=c.line)
+        measured:=text_height(&ctx,c.text,test_prose(&ctx,c.line),c.width)
         testing.expectf(t,test_near(laid.h,measured),"%d words, %q at %v, line %v: laid out %v, measured %v",desc.max_text_words,c.text,c.width,c.line,laid.h,measured)
         single:=math.floor(ctx.theme.font_small*(c.line if c.line>0 else PARAGRAPH_LINE))
         testing.expectf(t,test_near(f32(int(measured/single+0.5))*single,measured),"%q at %v: lines of %v",c.text,c.width,single)
@@ -426,12 +476,12 @@ text_breaks_into_the_same_lines_wherever_it_is_shown :: proc(t:^testing.T) {
     test_frame(&ctx,&input,build,&s)
     testing.expect_value(t,dropped_total(&ctx.stats),u32(0))
     for c,i in s.shown[:s.count] {
-        lines:=int(paragraph_height(&ctx,c.text,c.width,s.size)/paragraph_line(s.size,0)+0.5)
-        testing.expectf(t,text_line_count(&ctx.font,c.text,s.size,c.width,.Words)==lines,"%q at %v: a text takes %d lines, a paragraph %d",c.text,c.width,text_line_count(&ctx.font,c.text,s.size,c.width,.Words),lines)
+        line:=math.floor(s.size*PARAGRAPH_LINE)
+        lines:=int(text_height(&ctx,c.text,prose(&ctx,s.size),c.width)/line+0.5)
         rich:=int(test_rect(t,&ctx,id(&ctx,"rich",i+1)).h/(s.size*TEXT_LINE)+0.5)
         testing.expectf(t,rich==lines,"%q at %v: a rich text takes %d lines, a paragraph %d",c.text,c.width,rich,lines)
         if !cases[i/len(widths)].markdown {continue}
-        marked:=int(markdown_height(&ctx,c.text,c.width,{size=s.size})/paragraph_line(s.size,0)+0.5)
+        marked:=int(markdown_height(&ctx,c.text,c.width,{size=s.size})/line+0.5)
         testing.expectf(t,marked==lines,"%q at %v: Markdown takes %d lines, a paragraph %d",c.text,c.width,marked,lines)
     }
 }

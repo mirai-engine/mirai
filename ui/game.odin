@@ -92,37 +92,6 @@ progress :: proc(ctx:^Context,p:Progress) {
     element_leaf(ctx,{id=p.id,layout={width=p.width,height=p.height},custom=paint_add(ctx,paint)})
 }
 
-// Text with a style of its own inside a box of width by height. A FIT width
-// is the width of the text on one line; a FIT height holds the lines the
-// text takes when wrapped to a fixed width. reveal: the part of its
-// characters drawn, 0 to 1, each where the whole text puts it (a typewriter).
-text :: proc(ctx:^Context,content:string,style:Text_Style,width:Size=FIT,height:Size=FIT,id:Id=0,reveal:f32=1) {
-    w,h:=width,height
-    font:=&ctx.font
-    f:=int(style.font)
-    line_height:=style.size*(style.line_height if style.line_height>0 else TEXT_LINE)
-    if w.kind==.Fit {w=fixed(text_width(font,content,style.size,f)+1)}
-    if h.kind==.Fit {
-        lines:=1
-        if w.kind==.Fixed {lines=text_line_count(font,content,style.size,w.value,style.wrap,f)} else {
-            for c in content {if c=='\n' {lines+=1}}
-        }
-        h=fixed(f32(lines)*line_height+2)
-    }
-    paint:=paint_add(ctx,{kind=.Text_Block,text=content,style=style,revealed=text_revealed(content,reveal)})
-    widget_add(ctx,id,{.Passive})
-    element_leaf(ctx,{id=id,layout={width=w,height=h},custom=paint})
-}
-
-// Paint.revealed for the part reveal (0 to 1) of the characters of a text.
-@(private)
-text_revealed :: proc "contextless" (content:string,reveal:f32) -> i32 {
-    if reveal>=1 {return 0}
-    count:=0
-    for _ in content {count+=1}
-    return i32(math.round(f32(count)*max(reveal,0)))+1
-}
-
 // A container placed from a point of the screen instead of the flow of its
 // parent: the corner of a HUD, a centered menu.
 @(deferred_in=anchored_end)
@@ -283,7 +252,7 @@ game_selector :: proc(ctx:^Context,id:Id,options:Options,current:^int,c:Game_Con
     if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center},custom=paint_add(ctx,game_background(style))}) {
         if control_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,style.mark,disabled) {next-=1}
         shown:=option(options,current^) if count>0 && current^>=0 else ""
-        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=shown,style=text_style})})
+        text(ctx,shown,text_style,GROW,GROW)
         if control_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,style.mark,disabled) {next+=1}
     }
     element_close(ctx)

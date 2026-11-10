@@ -98,9 +98,7 @@ a_list_builds_its_node_for_each_element_and_a_switcher_one_child :: proc(t:^test
     test_frame(&ctx,&input,test_kinds_build,&s)
     test_frame(&ctx,&input,test_kinds_build,&s)
     testing.expect(t,test_paint(&ctx,"Sword")!=nil && test_paint(&ctx,"Potion")!=nil)
-    found_count:=false
-    for &p in ctx.paints[:ctx.paint_count] {found_count|=p.text=="3"}
-    testing.expect(t,found_count,"Each element shows its own fields")
+    testing.expect(t,test_paint(&ctx,"3")!=nil,"Each element shows its own fields")
     testing.expect(t,test_paint(&ctx,"Nothing here")==nil)
     // The second element sits in the second column of the grid, the third under the first.
     element :: proc(t:^testing.T,ctx:^Context,item:int) -> Rect {
