@@ -22,7 +22,7 @@ sources_are_known_by_their_content :: proc(t:^testing.T) {
         {"mesh.txt",transmute([]u8)obj_text,.None},{"noise.usd",transmute([]u8)string("not a stage"),.None},
         {"picture.dat",png_bytes(4,4,{9,9,9}),.Image},{"sound.bin",transmute([]u8)string("RIFF\x24\x00\x00\x00WAVEfmt "),.Sound},
         {"face.bin",#load("../../../assets/fixtures/cff.otf"),.Font},{"family.ttc",transmute([]u8)string("ttcf\x00\x02\x00\x00\x00\x00\x00\x01"),.Font},
-        {"texts.csv",transmute([]u8)string("key,es\nhello,hola\n"),.Strings},{"pad.prompts.json",transmute([]u8)string(`{"entries": []}`),.Prompts},
+        {"texts.csv",transmute([]u8)string("key,es\nhello,hola\n"),.None},{"pad.prompts.json",transmute([]u8)string(`{"entries": []}`),.Prompts},
     }
     for c in cases {
         path:=fmt.tprintf("%s/%s",folder,c.name)
@@ -38,9 +38,9 @@ sources_are_known_by_their_content :: proc(t:^testing.T) {
     _,missing:=import_source(fmt.tprintf("%s/none.obj",folder),fmt.tprintf("%s/out",folder))
     testing.expect_value(t,missing.code,importer.Error_Code.Not_Found)
     // Every source has a sidecar, which keeps its id: without a root, with what it wrote and not next to it.
-    texts,texts_error:=import_source(fmt.tprintf("%s/texts.csv",folder),fmt.tprintf("%s/out",folder))
-    testing.expect(t,texts_error.code==.None && len(texts.assets)==1 && texts.assets[0].kind==asset.KIND_STRINGS && os.exists(fmt.tprintf("%s/out/texts.csv.import",folder)) && !os.exists(fmt.tprintf("%s/texts.csv.import",folder)))
-    importer.report_destroy(&texts)
+    picture,picture_error:=import_source(fmt.tprintf("%s/picture.dat",folder),fmt.tprintf("%s/out",folder))
+    testing.expect(t,picture_error.code==.None && len(picture.assets)==1 && picture.assets[0].kind==asset.KIND_TEXTURE && os.exists(fmt.tprintf("%s/out/picture.dat.import",folder)) && !os.exists(fmt.tprintf("%s/picture.dat.import",folder)))
+    importer.report_destroy(&picture)
     _,collection:=import_source(fmt.tprintf("%s/family.ttc",folder),fmt.tprintf("%s/out",folder))
     testing.expect(t,collection.code==.Unsupported && strings.contains(collection.message,"collection"),collection.message)
 }

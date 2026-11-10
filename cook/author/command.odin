@@ -182,6 +182,7 @@ Written :: struct {
     first:string, // a scene: the first thing that is, in the temporary allocator
     followed:int, // an interface: the files that use it as a widget and were written to follow its parameters
     made,removed:int,
+    stored:[]escene.Stored, // a scene: the components of the game the file stored with another layout, now written with the game's
 }
 
 // Makes the .ui a path names say what a document declares, as ui.write does
@@ -505,6 +506,10 @@ command_write :: proc(run:^Run,args:[]string) -> int {
     fmt.wprintf(run.output,"%s: %s, %d made and %d removed",written.path,state,written.made,written.removed)
     if written.followed>0 {fmt.wprintf(run.output,"; %d files that use it follow its parameters",written.followed)}
     fmt.wprintln(run.output)
+    for entry in written.stored {
+        text,_:=escene.stored_text(entry,written.path)
+        fmt.wprintln(run.output,text)
+    }
     return 0
 }
 

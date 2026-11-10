@@ -451,8 +451,15 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
     applied:Scene_Applied
     if applied,problem=scene_file_apply(&f,text);problem!="" {return}
     written={path=path,fresh=!exists,made=applied.made,removed=applied.removed}
-    // A file that says the same stays as it is, in the layout it was written with.
-    if exists && applied.made==0 && applied.removed==0 && !applied.changed {
+    relaid:=make([dynamic]escene.Stored,context.temp_allocator)
+    if exists {
+        for entry in scene_stored(p,path) {
+            if !entry.unknown {append(&relaid,entry)}
+        }
+    }
+    written.stored=relaid[:]
+    // A file that says the same and stores every component of the game as the game reads it stays as it is.
+    if exists && applied.made==0 && applied.removed==0 && !applied.changed && len(relaid)==0 {
         written.same=true
         return written,""
     }
