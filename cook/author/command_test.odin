@@ -124,7 +124,7 @@ a_path_the_game_lacks_is_refused_with_no_editor_as_ui_write_refuses_it :: proc(t
 }
 
 @(test)
-the_commands_read_write_and_check_the_documents_kept_under_source :: proc(t:^testing.T) {
+the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"command")
     if !copied {return}
     base_args:=[]string{"--project",root,"--engine",engine}
@@ -136,24 +136,24 @@ the_commands_read_write_and_check_the_documents_kept_under_source :: proc(t:^tes
     }
     misuse:=run(base_args,"ui","erase")
     testing.expect(t,misuse.code==2 && strings.contains(misuse.err,"read, write and check"),misuse.err)
-    read:=run(base_args,"ui","read","--sources")
+    // The document of an asset is read to a file anywhere: the asset stays the source.
+    hud:=project.path(root,"hud.json",allocator=context.temp_allocator)
+    read:=run(base_args,"ui","read","hud/hud.ui","--out",hud)
     testing.expectf(t,read.code==0 && strings.contains(read.out,"hud/hud.ui: read to "),"%d %s%s",read.code,read.out,read.err)
-    hud:=project.path(root,SOURCE_FOLDER,"hud/hud.ui.json",allocator=context.temp_allocator)
     text,error:=os.read_entire_file(hud,context.temp_allocator)
-    if !testing.expect(t,error==nil && strings.has_prefix(string(text),"{\n"),"the document is a file of text under source/") {return}
+    if !testing.expect(t,error==nil && strings.has_prefix(string(text),"{\n"),"the document is a file of text") {return}
+    testing.expect_value(t,run(base_args,"ui","read","--sources").code,2)
     // A project that was never built has no types to check against: nothing
     // is written or checked, of an interface or of a scene, and the failure
     // says what builds them.
-    source:=project.path(root,SOURCE_FOLDER,allocator=context.temp_allocator)
     before:=file_bytes_at(root,"assets/hud/hud.ui")
-    for args in ([][]string{{"ui","write",source},{"ui","check"},{"scene","read","arena/main.scene"},{"scene","write",source},{"scene","check"}}) {
+    for args in ([][]string{{"ui","write","hud/hud.ui",hud},{"ui","check"},{"scene","read","arena/main.scene"},{"scene","write","arena/main.scene",hud},{"scene","check"}}) {
         refused:=run(base_args,..args)
         testing.expectf(t,refused.code==1 && refused.out=="" && strings.contains(refused.err,"mirai build editor <project> --dev"),"%v: %d %s%s",args,refused.code,refused.out,refused.err)
     }
     testing.expect(t,slice.equal(file_bytes_at(root,"assets/hud/hud.ui"),before))
 
-    // With the types of the game: the folder of documents becomes the assets
-    // in one command, each named by its file.
+    // With the types of the game a document is written to the asset it names.
     info,described:=core.test_info(t,Game_World,erender.test_types)
     if !described {return}
     defer core.test_info_destroy(&info)
@@ -166,19 +166,22 @@ the_commands_read_write_and_check_the_documents_kept_under_source :: proc(t:^tes
         code:=project_run(p,kind,verb,args,strings.to_writer(&output),strings.to_writer(&errors))
         return {code,strings.to_string(output),strings.to_string(errors)}
     }
-    written:=on(&p,.Ui,"write",project.path(source,"hud",allocator=context.temp_allocator),project.path(source,"menu/theme.ui.json",allocator=context.temp_allocator))
-    testing.expectf(t,written.code==0 && strings.contains(written.out,"hud/hud.ui: ") && strings.contains(written.out,"menu/theme.ui: "),"%d %s%s",written.code,written.out,written.err)
+    written:=on(&p,.Ui,"write","hud/hud.ui",hud)
+    testing.expectf(t,written.code==0 && strings.contains(written.out,"hud/hud.ui: unchanged"),"%d %s%s",written.code,written.out,written.err)
+    testing.expect_value(t,on(&p,.Ui,"write",hud).code,2)
     // The shell binds what the game of this test does not declare: refused, and the exit code says so.
-    unbound:=on(&p,.Ui,"write",source)
+    shell:=project.path(root,"shell.json",allocator=context.temp_allocator)
+    testing.expect_value(t,on(&p,.Ui,"read","menu/shell.ui","--out",shell).code,0)
+    unbound:=on(&p,.Ui,"write","menu/shell.ui",shell)
     testing.expectf(t,unbound.code==1 && strings.contains(unbound.err,"mirai ui write: menu/shell.ui: ") && strings.contains(unbound.err,"the game has no component or storage 'Shell'"),"%d %s",unbound.code,unbound.err)
     // A new document makes its asset, and one that does not read is refused naming where.
-    fresh:=project.path(root,SOURCE_FOLDER,"hud/score.ui.json",allocator=context.temp_allocator)
+    fresh:=project.path(root,"score.json",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(fresh,`{"use":["menu/theme.ui"],"nodes":[{"name":"score","kind":"Text","style":"chip_value","text":"0"}]}`)==nil)
-    made:=on(&p,.Ui,"write",fresh)
+    made:=on(&p,.Ui,"write","hud/score.ui",fresh)
     testing.expectf(t,made.code==0 && strings.contains(made.out,"hud/score.ui: made"),"%d %s%s",made.code,made.out,made.err)
     testing.expect(t,os.is_file(project.path(root,"assets/hud/score.ui",allocator=context.temp_allocator)))
     testing.expect(t,os.write_entire_file(fresh,`{"nodes":[{"name":"score","kind":"Text","colour":"red"}]}`)==nil)
-    refused:=on(&p,.Ui,"write",fresh)
+    refused:=on(&p,.Ui,"write","hud/score.ui",fresh)
     testing.expectf(t,refused.code==1 && strings.contains(refused.err,"mirai ui write: hud/score.ui: nodes[0]") && strings.contains(refused.err,"colour"),"%d %s%s",refused.code,refused.out,refused.err)
     // A check reports what the game would not load and exits non-zero.
     testing.expect(t,os.remove(project.path(root,"assets/menu/theme.ui",allocator=context.temp_allocator))==nil)
