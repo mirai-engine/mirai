@@ -269,7 +269,7 @@ ray_release :: proc(gui:^Gui,renderer:^render.Renderer,at:int) {
 // they name: as the base color, lit, or as light. Whatever draws the mesh
 // shows them (render.values_show).
 @(step="render",before="render_sync")
-gui_meshes_render :: proc(gui:^Gui,renderer:^render.Renderer,sync:^render.Render_Sync,extras:^host.Frame_Extras) {
+gui_meshes_render :: proc(gui:^Gui,renderer:^render.Renderer,shows:^render.Frame_Values_Requests) {
     if gui==nil || renderer==nil {return}
     for &mesh in gui.meshes {
         if mesh.texture==0 || !mesh.drawn {continue}
@@ -282,6 +282,6 @@ gui_meshes_render :: proc(gui:^Gui,renderer:^render.Renderer,sync:^render.Render
             render.material_value(&values,"emission",mesh.emission,slot)
         }
         render.material_value(&values,"base_color",lit?0:1,slot)
-        if !render.values_show(sync,mesh.entity,values) {extras.dropped+=1}
+        render.values_show(shows,mesh.entity,values)
     }
 }

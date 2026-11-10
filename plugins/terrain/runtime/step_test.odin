@@ -105,7 +105,8 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.looks),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil)
+            shows:render.Frame_Values_Requests
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.looks),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil,&shows)
             host.app_frame_end(app)
         }
         if pass==4 {continue}

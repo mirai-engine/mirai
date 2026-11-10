@@ -21,7 +21,6 @@ MATERIAL_SLOTS :: 8
 POST_PROCESS_CAPACITY :: 8
 MATERIAL_VALUES_CAPACITY :: gpu.INSTANCE_VALUES_MAX // values among all the slots
 MATERIAL_VALUES_TEXTURES :: 8
-FRAME_VALUES_CAPACITY :: host.FRAME_MESH_SHOWN_CAPACITY
 HIGHLIGHT_LEVELS :: gpu.HIGHLIGHT_LEVELS
 OUTLINE_STYLES :: gpu.OUTLINE_STYLES
 
@@ -346,8 +345,6 @@ Render_Sync :: struct {
     tinted:[dynamic]u32, // instances whose Material_Values changed and that show the same rows: what they hold is given in place
     tinted_colors,tinted_emissions:[dynamic][3]f32,
     tinted_values:[dynamic]gpu.Instance_Material_Values,
-    frame_values:[FRAME_VALUES_CAPACITY]Frame_Values, // values_show: what entities show this frame alone
-    frame_count:int,
     lights:[dynamic]gpu.Light_Desc,     // those the renderer was given
     light_owners:[dynamic]Light_Owner,  // by light
     lit:[Light_Kind]core.Entity_Map(u32), // by entity with a light of the kind that shines: where it is in lights
@@ -380,17 +377,17 @@ Frame_Values :: struct {
     values:Material_Values,
 }
 
+@(storage,queue)
+Frame_Values_Requests :: struct {queue:core.Queue(Frame_Values)}
+
 // Gives an entity, for this frame alone, values and textures over its
 // Material_Values: what is only drawn and no table holds, as the texture a
 // panel of the interface is drawn into. Whatever draws the entity shows
 // them: its mesh of the world, or what replaces it, as a skinned copy; what
 // drew it is kept for the next frame (host.extras_mesh_shown). Before
-// render_sync; false without room for another one.
-values_show :: proc(sync:^Render_Sync,e:core.Entity,values:Material_Values) -> bool {
-    if sync.frame_count>=len(sync.frame_values) {return false}
-    sync.frame_values[sync.frame_count]={e,values}
-    sync.frame_count+=1
-    return true
+// render_sync, which takes them.
+values_show :: proc(r:^Frame_Values_Requests,e:core.Entity,values:Material_Values) {
+    core.offer(&r.queue,Frame_Values{e,values})
 }
 
 // What the sync keeps of the instance of an entity.
@@ -555,11 +552,14 @@ render_sync :: proc(
     suns:core.Read(Sun),points:core.Read(Point_Light),spots:core.Read(Spot_Light),rects:core.Read(Rect_Light),emissions:core.Read(Light_Emission),skies:core.Read(Sky),view_volumes:core.Read(View_Volume),volumes:core.Read(volume.Volume),
     highlights:core.Read(Highlight),outlines:core.Read(Outline),outline_styles:core.Ref(Outline_Styles),
     offsets:core.Read(Draw_Offset),layers:core.Read(Layers),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
-    locals:core.Read(core.Transform),cameras:core.Read(Camera),posed:^Posed_Meshes,
+    locals:core.Read(core.Transform),cameras:core.Read(Camera),posed:^Posed_Meshes,frame_values:^Frame_Values_Requests,
 ) {
     a:=app.assets
     r:=app.renderer
-    if a==nil || r==nil || app.ui_only {sync.frame_count=0;return}
+    shows:=core.take(&frame_values.queue)
+    app.extras.dropped+=u64(frame_values.queue.dropped)
+    frame_values.queue.dropped=0
+    if a==nil || r==nil || app.ui_only {return}
     t:=Sync_Tables{worlds,meshes,values,hidden,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{}}
     if bodies.ptr!=nil {t.owned=bodies.bodies}
     releases,local_assets:=host.assets_structure_changes(a,sync.assets_structure)
@@ -581,7 +581,7 @@ render_sync :: proc(
     }
     if shown || (whole || reloaded) && view.cut {gpu.scene_world(r,world_key(id),!shown)}
     sync.world,sync.synced=id,true
-    frame_values_apply(sync,&app.extras,a,t,frame)
+    frame_values_apply(shows,&app.extras,a,t,frame)
     // A visual instance of a mesh the renderer does not have is not drawn.
     #reverse for extra,i in app.extras.instances {
         if _,_,known:=gpu.mesh_bounds(r,extra.mesh);!known {unordered_remove(&app.extras.instances,i)}
@@ -1029,9 +1029,9 @@ values_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Ta
 // a copy of its mesh of the world that does. What drew each one is kept for
 // the next frame (host.extras_mesh_shown).
 @(private)
-frame_values_apply :: proc(sync:^Render_Sync,extras:^host.Frame_Extras,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
+frame_values_apply :: proc(shows:[]Frame_Values,extras:^host.Frame_Extras,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
     extras.meshes_shown_count=0
-    for &request in sync.frame_values[:sync.frame_count] {
+    for &request in shows {
         e:=request.entity
         static,has_mesh:=core.get(t.meshes,e)
         if !has_mesh {continue}
@@ -1065,7 +1065,6 @@ frame_values_apply :: proc(sync:^Render_Sync,extras:^host.Frame_Extras,a:^host.A
             extras.meshes_shown_count+=1
         }
     }
-    sync.frame_count=0
 }
 
 // What draws a mesh of the world with the values of a frame.
