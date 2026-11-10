@@ -19,8 +19,9 @@ import "mirai:ui"
 // holds unsaved) and its library (the world generated from the attributes of
 // its packages, its game and its plugins) are made without stopping the
 // editor. One that succeeds is loaded into the running editor, its worlds
-// migrated when their layout changed (reload.odin); one that fails leaves
-// this editor running and shows what the compiler said.
+// migrated when their layout changed (reload.odin), and so is what a build
+// outside the editor left, of the project or of the engine; one that fails
+// leaves this editor running and shows what the compiler said.
 // Play builds first when an Odin source of the project changed since the last
 // build that stood, and starts once the new code is loaded.
 // A build of the game (Target.Game) generates the shaders the game ships
@@ -194,9 +195,14 @@ build_poll :: proc(s:^Session) {
         b.phase=.Up_To_Date
         delete(b.output)
         b.output=strings.clone(result.output)
-        b.sources=b.started_sources
-        if !b.play.pending {notify(s,"The project is up to date")}
-        build_play_resume(s)
+        // What a build outside the editor left is loaded as one of its own.
+        if b.reload=library_stale(s);b.reload {
+            build_reload(s)
+        } else {
+            b.sources=b.started_sources
+            if !b.play.pending {notify(s,"The project is up to date")}
+            build_play_resume(s)
+        }
     case .Failed:
         b.phase=.Failed
         log.errorf("the build failed: %v",result.failure)

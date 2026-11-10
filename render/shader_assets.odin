@@ -1,6 +1,7 @@
 package mirai_render
 
 import "base:runtime"
+import "core:encoding/endian"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
@@ -39,38 +40,36 @@ shader_assets_destroy :: proc(assets:^Shader_Assets) {
     assets^={}
 }
 
-// A stage the executable embeds. Its code is size bytes of what
-// SHADERS_PACKED decodes to, after those of the stages before it in SHADERS
-// and then in PROGRAM_SHADERS.
-Embedded_Shader :: struct {
-    using code:rhi.Shader_Code, // without its code
-    size:int,
-}
-
 // Decodes the code the executable embeds into bytes, which the stages it fills
-// in codes (SHADERS) and programs (PROGRAM_SHADERS) point into. It allocates
-// bytes alone, and nothing when it fails.
+// in codes (SHADERS) and programs (PROGRAM_SHADERS) point into. What is
+// embedded (shaders_packed) says how many stages it holds and the size of the
+// code of each (u32, little endian), in the order of SHADERS and then of
+// PROGRAM_SHADERS, before their code packed: the tables say nothing of the
+// code. It allocates bytes alone, and nothing when it fails.
 embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len(PROGRAM_SHADERS)]rhi.Shader_Code,allocator:=context.allocator)->(bytes:[]u8,error:string) {
+    count:=len(Shader_Id)+len(PROGRAM_SHADERS)
+    packed:=shaders_packed()
+    if len(packed)<4*(count+1) || int(endian.unchecked_get_u32le(packed))!=count {return nil,"the embedded shaders are of other stages than this engine has: build the engine again"}
+    sizes:=packed[4:]
     total:=0
-    for shader in SHADERS {total+=shader.size}
-    for shader in PROGRAM_SHADERS {total+=shader.size}
+    for stage in 0..<count {total+=int(endian.unchecked_get_u32le(sizes[4*stage:]))}
     if total>0 {
         allocation_error:runtime.Allocator_Error
         if bytes,allocation_error=make([]u8,total,allocator);allocation_error!=nil {return nil,"out of memory for the embedded shaders"}
         decoder:compressor.Decoder
         if compressor.decoder_init(&decoder,allocator)!=.None {delete(bytes,allocator);return nil,"out of memory for the embedded shaders"}
-        unpack_error:=asset.unpack(&decoder,SHADERS_PACKED,bytes)
+        unpack_error:=asset.unpack(&decoder,sizes[4*count:],bytes)
         compressor.decoder_destroy(&decoder)
         if unpack_error!=.None {delete(bytes,allocator);return nil,"the embedded shaders do not decode: build the engine again"}
     }
     at:=0
-    place :: proc(code:^rhi.Shader_Code,shader:Embedded_Shader,bytes:[]u8,at:^int) {
-        code^=shader.code
-        rhi.shader_code_set(code,bytes[at^:][:shader.size],rhi.shader_code_entry(shader.code))
-        at^+=shader.size
+    place :: proc(code:^rhi.Shader_Code,shader:rhi.Shader_Code,bytes:[]u8,at:^int,size:u32) {
+        code^=shader
+        rhi.shader_code_set(code,bytes[at^:][:size],rhi.shader_code_entry(shader))
+        at^+=int(size)
     }
-    for &code,id in codes^ {place(&code,SHADERS[id],bytes,&at)}
-    for &code,i in programs^ {place(&code,PROGRAM_SHADERS[i],bytes,&at)}
+    for &code,id in codes^ {place(&code,SHADERS[id],bytes,&at,endian.unchecked_get_u32le(sizes[4*int(id):]))}
+    for &code,i in programs^ {place(&code,PROGRAM_SHADERS[i],bytes,&at,endian.unchecked_get_u32le(sizes[4*(len(Shader_Id)+i):]))}
     return
 }
 
@@ -172,10 +171,11 @@ shader_stages_match :: proc(next,current:[]rhi.Shader_Code)->bool {
     for code,i in next {if !shader_code_matches(code,current[i]) {return false}}
     return true
 }
-// Whether a folder of compiled shaders was built from the engine shader
-// sources this executable embeds. The structures both sides share, and the
-// passes that bind them, are those of one version of the sources: a
-// generation built for a project is used only while it is of the same one.
+// Whether the engine stages of a folder of compiled shaders share with the
+// engine what this executable was built with (SHADERS_INTERFACE): the
+// bindings and the constants of each stage and the structs both sides read.
+// Their code may be any: a generation whose engine shaders changed only in
+// code loads into the engine that runs.
 shader_generation_current :: proc(directory:string)->bool {
     path,_:=filepath.join({directory,"manifest.json"},context.temp_allocator)
     bytes,read_error:=os.read_entire_file(path,context.temp_allocator)
@@ -183,7 +183,7 @@ shader_generation_current :: proc(directory:string)->bool {
     value,parse_error:=json.parse(bytes,allocator=context.temp_allocator)
     root,ok:=value.(json.Object);if !ok || parse_error!=.None {return false}
     engine,named:=root["engine"].(json.String)
-    return named && engine==SHADERS_FINGERPRINT
+    return named && engine==SHADERS_INTERFACE
 }
 // On failure nothing is loaded: assets is empty and error is a message, in
 // context.temp_allocator when it names a file.
@@ -194,8 +194,8 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
     if read_error!=nil {return {},"shader manifest could not be read"}
     value,parse_error:=json.parse(bytes,allocator=context.temp_allocator)
     root,ok:=value.(json.Object);if !ok || parse_error!=.None {return {},"invalid shader manifest"}
-    if engine,named:=root["engine"].(json.String);!named || engine!=SHADERS_FINGERPRINT {
-        return {},"these shaders were compiled from other engine shader sources than this executable has: build the engine again"
+    if engine,named:=root["engine"].(json.String);!named || engine!=SHADERS_INTERFACE {
+        return {},"the engine stages of these shaders bind or lay out otherwise than this executable does: build the engine again"
     }
     shaders,is_array:=root["shaders"].(json.Array);if !is_array {return {},"manifest has no shader array"}
     text :: proc(v:json.Value)->string {return v.(json.String) or_else ""}

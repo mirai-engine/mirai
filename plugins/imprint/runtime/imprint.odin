@@ -115,11 +115,9 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worl
     dt:=time.dt if time.playing else frame.dt
     steps.tick+=1
     if !(dt>0) || core.count(stamps)==0 {return}
-    for row in 0..<core.count(stamps) {
-        e:=core.entity_at(stamps,row)
-        stamp:=core.at(stamps,row)
-        world,placed:=core.get(worlds,e)
-        if !placed || !(stamp.radius>0) || !(stamp.depth>0) {continue}
+    placed:=core.join(stamps,worlds)
+    for e,stamp,world in core.each_joined(&placed) {
+        if !(stamp.radius>0) || !(stamp.depth>0) {continue}
         bottom:=world.transform.position-{0,stamp.bottom,0}
         // From a little over its bottom, down to what it stands on.
         lift:=min(stamp.radius,0.25)
