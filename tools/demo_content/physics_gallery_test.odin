@@ -20,14 +20,14 @@ gallery_geometry_bake_records_two_cuts_new_interior_meshes_and_fragment_retireme
     o:=Out{root=root};asset.content_init(&o.content,PROJECT);defer asset.content_destroy(&o.content)
     if !testing.expect_value(t,os.make_directory_all(path(&o,"assets/physics_gallery")),nil) {return}
     defer base.remove_all(root)
-    sources:=physics_sources(&o)
+    physics_sources(&o)
     if !testing.expect(t,!o.content.failed) {return}
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&file,path(&o,"assets/physics_gallery/recorded.physics_cache")),asset.Error.None) {return}
     defer asset.asset_close(&file)
     view,error:=cache.cache_view(&file,&o.content.types)
     if !testing.expect_value(t,error,asset.Error.None) {return}
-    testing.expect_value(t,file.blob.header.id,sources.cache)
+    testing.expect_value(t,file.blob.header.id,asset.content_id(PROJECT,"physics_cache","recorded"))
     testing.expect_value(t,view.info.duration,f32(5))
     samples:[128]cache.Playback_Piece
     initial:=cache.cache_sample(view,0,samples[:])

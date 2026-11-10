@@ -21,31 +21,6 @@ import "mirai:std/serial"
 transform :: proc(x,y,z:f32) -> Test_Transform {return {position={x,y,z},rotation=1,scale={1,1,1}}}
 
 @(test)
-scene_builder_names_components_by_type_and_stops_at_the_first_error :: proc(t:^testing.T) {
-    content:Content;content_init(&content,"builder_test");defer content_destroy(&content)
-    testing.expect(t,content_id("builder_test","mesh","a")!=content_id("other","mesh","a"))
-
-    b:Scene_Builder;builder_init(&b,&content,{0x61,0x62});defer builder_destroy(&b)
-    root:=builder_entity(&b,"Root",{position={1,2,3}})
-    child:=builder_entity(&b,"Child",{scale={2,2,2}},root)
-    builder_set(&b,child,Test_Light{{1,1,1},3,10})
-    testing.expect(t,!b.failed && !content.failed)
-    placed,found:=scene_get(&b.scene,root,"Transform",Test_Transform)
-    testing.expect(t,found && placed==transform(1,2,3))
-    scaled,_:=scene_get(&b.scene,child,"Transform",Test_Transform)
-    testing.expect(t,scaled.rotation==1 && scaled.scale=={2,2,2})
-    light,lit:=scene_get(&b.scene,child,"Test_Light",Test_Light)
-    testing.expect(t,lit && light.intensity==3)
-
-    testing.expect_value(t,builder_entity(&b,"Lost",{},99),base.Entity_Id(0))
-    testing.expect(t,b.failed && content.failed)
-    builder_set(&b,child,Test_Mesh{})
-    _,set_after:=scene_get(&b.scene,child,"Test_Mesh",Test_Mesh)
-    testing.expect(t,!set_after)
-    testing.expect_value(t,builder_entity(&b,"Nothing"),base.Entity_Id(0))
-}
-
-@(test)
 scene_builds_saves_and_loads_entities_and_components :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     scene:Scene

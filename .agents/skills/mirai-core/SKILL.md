@@ -83,9 +83,9 @@ A game is a struct in memory and a list of functions that transform it
    it touches ([parameters](references/generator.md#parameters)). What is received together in
    several functions goes in a `@(params)` struct that the function receives by value and passes
    whole to its helpers ([groups](references/generator.md#parameter-groups)).
-5. A table that is not `@(component,shared)` has a single function that writes it, and a storage a
-   single library; the others send a request through a `@(storage,queue)` storage with
-   `core.Queue(T)` and read the `@(storage,events)`.
+5. A table that is not `@(component,shared)` and a storage have a single library that writes them,
+   its functions in the order of the loop; the others send a request through a `@(storage,queue)`
+   storage with `core.Queue(T)` and read what it reports in the `core.Events(T)` of its storages.
 6. Create entities with components of another library: `core.Commands`
    ([commands](references/core.md#creating-with-components-of-other-libraries)), or the service of
    that library (`scene.spawn`, `spawn.spawn`). What the function created is finished in it with
@@ -182,9 +182,17 @@ A game is a struct in memory and a list of functions that transform it
 - **The clock of a world is `core.Time`**, the only one: it is copied with it, so a Play and a
   rollback carry it with the copy, and a save stores its tick and its seconds. `core.time_advance`
   advances it after each tick; there is no other per-world clock in `host`.
-- **Outside `fixed` the input of the tick is stale, and frame events do not reach `fixed`.** In the
-  game loop `core.Input` and `Input_Of` outside `fixed`, and a `fixed` reader of an `events` storage
-  only other phases fill, are generator errors.
+- **Outside `fixed` the input of the tick is stale.** In the game loop `core.Input` and `Input_Of`
+  outside `fixed` are generator errors.
+- **State is read by change and occurrences by cursor, and there is no third way.** A table and a
+  storage say what was written (`changes`, `touched`, `added`; a storage with `core.Stamp(S)`);
+  what happened is pushed to a `core.Events(T)` its owner never clears, and each reader gets it
+  once at any cadence ([queues](references/core.md#queues-and-references)).
+- **`core.Commands` is the one parameter that creates or destroys entities**; a function that only
+  asks whether one is alive receives `core.Ref(core.Entities)`.
+- **A stateful object is the phase it is in and the tick it entered it.** What follows is derived
+  from `core.Time`, and what a row starts with is set when `core.added(t, row)` says it is new: no
+  field says that a row was set up ([new rows](references/core.md#tables)).
 - **What belongs to the frame is not simulation and is not copied.** `core.Frame_Time` and
   `core.Frame_Input` are `copy=false`: a Play, a correction and opening a document do not overwrite
   them, and nobody saves them or restores them by hand. A function reads `Time` to simulate and

@@ -67,8 +67,8 @@ the name of their type) and a world (handles and tables).
 - `save(world, app, path, previous)` captures and writes.
 - **Changing scene** is a request: `scene.request(&r, path_or_id)` in
   `Scene_Requests` (`queue`, `keep`). `scene_requests` (`input`, both loops) loads them one at a
-  time and leaves a `Scene_Result{scene, path, error}` in `Scene_Results` (`events`, `keep`) in the
-  frame in which the scene replaces the world, cleared in the next; `result_of` looks it up. One
+  time and pushes a `Scene_Result{scene, path, error}` to the log of `Scene_Results` (`keep`) in
+  the frame in which the scene replaces the world; `result_of` looks it up. One
   that fails is also the problem `scene.load` of the world, with the cause and the fix.
   `request_restart(&r)` loads again the scene the world is (`Scene_Root`).
 - **Phased load** (`loading.odin`): jobs read and decompress the scene in rounds: each one reads

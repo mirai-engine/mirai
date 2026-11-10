@@ -249,7 +249,8 @@ Rev_World :: struct {
 // A copy of what changed takes a storage again when a function received it
 // to write, when code outside the loop asked for it, when the settle moved
 // the Hierarchy or when the World was copied over, and no other: after each,
-// the copy holds what a whole copy does.
+// the copy holds what a whole copy does. A function that reads a storage by
+// change (core.Stamp, core.touched) is told by the same stamp, as of a table.
 @(test)
 a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: proc(t:^testing.T) {
     info,described:=test_info(t,Rev_World)
@@ -289,10 +290,17 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
             revisions_moved(w.storage_revisions[:3])
         },{true,true,true}},
     }
+    read:[3]Seen
+    reads :: proc(w:^Rev_World,read:^[3]Seen) -> (changed:[3]bool) {
+        for &seen,k in read {changed[k]=touched(Stamp(Rev_Count){&w.storage_revisions[k]},&seen)}
+        return
+    }
+    testing.expect_value(t,reads(&w,&read),[3]bool{true,true,true})
     for c,at in cases {
         // Half way, another copy is kept as the World is: a correction goes back to it below.
         if at==4 {testing.expect(t,world_copy_changed(&info,&older,&w,older_marks[:]))}
         c.act(&w,ref,root,child)
+        testing.expectf(t,reads(&w,&read)==c.copied,"%s: who reads the storages by change was told otherwise",c.what)
         before:=kept.storage_revisions
         testing.expect(t,world_copy_changed(&info,&kept,&w,marks[:]))
         for &storage,k in info.storages {
@@ -306,6 +314,8 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
     // A correction: the World is the older copy again. The copy it came from keeps its marks,
     // and the next copy into it takes nothing; the other takes what differs.
     testing.expect(t,world_copy(&info,&w,&older))
+    testing.expect_value(t,reads(&w,&read),[3]bool{true,true,true})
+    testing.expect(t,touched(Stamp(Rev_Count){},&read[0]),"a Stamp of no World always says it changed")
     copy_marks_follow(ref,older_marks[:],marks[:])
     copy_marks_follow(ref,older_marks[:],older_marks[:])
     before:=older.storage_revisions

@@ -33,6 +33,24 @@ Skin_World :: struct {
     playback:Playback,
 }
 
+// The instances the posed meshes of a world are drawn with, as render_sync
+// makes them, in the visual instances of the application: the mesh of each
+// entity where it is drawn (erender.instance_place, with the Draw_Offset of
+// what it hangs from), with its pose.
+@(private)
+skin_shown :: proc(app:^host.App,posed:^erender.Posed_Meshes,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),offsets:core.Read(erender.Draw_Offset),parents:core.Read(core.Parent),frame:core.Frame_Time) {
+    clear(&app.extras.instances)
+    for pose,i in posed.poses.values {
+        e:=posed.poses.entities[i]
+        static,_:=core.get(meshes,e)
+        world,_:=core.get(worlds,e)
+        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,{},{},e)
+        instance,_:=erender.mesh_instance(app.assets,static,transform,override=pose.materialed?pose.override:{})
+        instance.mesh,instance.object_id,instance.anchor=pose.mesh,u64(e),anchor
+        host.extras_instance_add(&app.extras,instance)
+    }
+}
+
 @(test)
 skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^testing.T) {
     problems:core.Problems
@@ -71,6 +89,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     defer host.extras_free(&app.extras)
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
+    posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
     w:Skin_World
     if !core.test_world_init(t,&w,test_types) {return}
@@ -98,11 +117,12 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         testing.expect_value(t,len(pose.local),3)
         testing.expect(t,pose.bindings[1].entity==core.NONE && pose.bindings[2].entity==core.NONE)
     }
-    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Skin_World,problems:^core.Problems,time:core.Time={},frame:=core.FRAME_TIME_DEFAULT) {
+    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Skin_World,problems:^core.Problems,posed:^erender.Posed_Meshes,time:core.Time={},frame:=core.FRAME_TIME_DEFAULT) {
         clear(&app.extras.instances)
-        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.tints),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.highlights),core.read(&w.outlines),core.read(&w.offsets),cache,state,app.assets,app.renderer,&app.extras,&app.jobs,app.allocator,time,frame,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},{})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,frame,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{})
+        skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),frame)
     }
-    tick(&app,&cache,&state,&w,&problems)
+    tick(&app,&cache,&state,&w,&problems,&posed)
     if !testing.expect_value(t,len(host.extras_instances(&app.extras)),2) {return}
     testing.expect_value(t,host.extras_instances(&app.extras)[0].transform[1,3],f32(2))
     testing.expect_value(t,len(cache.rigs),1)
@@ -131,7 +151,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         }
     }
     for alpha in ([4]f32{0,0.25,0.75,1}) {
-        tick(&app,&cache,&state,&w,&problems,{playing=true},{alpha=alpha})
+        tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=alpha})
         gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
         if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
         for instance,i in state.instances.values {
@@ -145,22 +165,22 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     // as they are, and only the mesh that moved makes its palette again.
     w.playback.frame+=1
     for &instance in state.instances.values {instance.palette[0]={}}
-    tick(&app,&cache,&state,&w,&problems,{playing=true},{alpha=0.5})
+    tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=0.5})
     for instance in state.instances.values {testing.expect_value(t,instance.palette[0],gpu.Mat4{})}
     moved:=core.edit(&w.worlds,draws[1]);moved.transform.position.x+=1;moved.previous=moved.transform
-    tick(&app,&cache,&state,&w,&problems,{playing=true},{alpha=0.5})
+    tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=0.5})
     testing.expect_value(t,state.instances.values[0].palette[0],gpu.Mat4{})
     testing.expect(t,state.instances.values[1].palette[0]!=gpu.Mat4{})
     testing.expect_value(t,problems.count,0)
     // Shown again in a tick whose pose changed, it is drawn with that pose even at alpha 0: the one
     // before is of a tick it was w.hidden in, as the rest pose of a weapon whose action starts as it shows.
     core.add(&w.hidden,draws[0],{});core.test_world_settle(&w)
-    tick(&app,&cache,&state,&w,&problems,{playing=true},{alpha=0.5})
+    tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=0.5})
     testing.expect(t,core.entity_map_get(&state.instances,draws[0])==nil)
     shown:=constraint_playing(&w.playback,roots[0]);shown.previous[2]=shown.local[2];shown.local[2].position.y+=1;shown.changed=w.playback.frame
     core.remove(&w.hidden,draws[0]);core.test_world_settle(&w)
     for alpha in ([2]f32{0,0.5}) {
-        tick(&app,&cache,&state,&w,&problems,{playing=true},{alpha=alpha})
+        tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=alpha})
         instance:=core.entity_map_get(&state.instances,draws[0])
         if !testing.expect(t,instance!=nil && instance.copied) {return}
         gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
@@ -171,7 +191,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     }
     testing.expect_value(t,problems.count,0)
     core.remove(&w.meshes,draws[0]);core.test_world_settle(&w)
-    tick(&app,&cache,&state,&w,&problems)
+    tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,len(host.extras_instances(&app.extras)),1)
     testing.expect(t,len(state.instances.values)==1 && core.entity_map_get(&state.instances,draws[0])==nil && core.entity_map_get(&state.instances,draws[1]).valid)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
@@ -218,6 +238,7 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     defer host.extras_free(&app.extras)
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
+    posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
     w:Skin_World
     if !core.test_world_init(t,&w,test_types) {return}
@@ -237,7 +258,8 @@ a_skin_part_collapses_the_vertices_of_its_bone_into_it :: proc(t:^testing.T) {
     if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
     pose.local[2].position={0.5,2,0}
     copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
-    animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.tints),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.highlights),core.read(&w.outlines),core.read(&w.offsets),&cache,&state,app.assets,app.renderer,&app.extras,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{},{})
+    animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),&cache,&state,app.assets,app.renderer,&posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},&problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{})
+    skin_shown(&app,&posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     testing.expect_value(t,problems.count,0)
     if !testing.expect_value(t,len(state.instances.values),1) {return}
     instance:=state.instances.values[0]
