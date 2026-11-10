@@ -1,7 +1,6 @@
-package fracture
+package mirai_physics
 
 import "core:testing"
-import sim "plugins:physics/runtime/sim"
 import "core:time"
 import "core:fmt"
 import "core:slice"
@@ -13,16 +12,17 @@ import "mirai:std/geom"
 
 @(private="file")
 bench_destruct_world :: proc(w:^World) -> bool {
-    desc:=sim.world_desc_default()
+    desc:=world_desc_default()
     desc.body_capacity,desc.shape_capacity,desc.contact_capacity=4096,4096,16384
     desc.hull_capacity=4096
     desc.sleep_disabled=true
-    return world_init(w,desc,{destructibles=4,pieces=4096,connections=8192})
+    desc.breakable_capacity,desc.piece_capacity,desc.bond_capacity=4,4096,8192
+    return world_init(w,desc)
 }
 
 // A slab of 16 x 4 x 16 cubes of 25 cm whose faces bond, in four clusters under one root when `hierarchy`.
 @(private="file")
-bench_slab :: proc(w:^World,position:Vec3,hierarchy:bool) -> (h:Destructible_Handle,error:Destructible_Error) {
+bench_slab :: proc(w:^World,position:Vec3,hierarchy:bool) -> (h:Breakable_Handle,error:Breakable_Error) {
     f:geom.Fracture;geom.fracture_init(&f);defer geom.fracture_destroy(&f)
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube)
     geom.cube_build(&cube)
@@ -45,17 +45,17 @@ bench_slab :: proc(w:^World,position:Vec3,hierarchy:bool) -> (h:Destructible_Han
         if z+1<BENCH_SIDE {append(&f.connections,geom.Fracture_Connection{index(x,y,z),index(x,y,z+1),area})}
     }}}
     clusters:=[5]Cluster_Desc{{parent=-1,strength=100},{parent=0,strength=50},{parent=0,strength=50},{parent=0,strength=50},{parent=0,strength=50}}
-    desc:=DESTRUCTIBLE_DESC_DEFAULT
+    desc:=BREAKABLE_DESC_DEFAULT
     desc.fracture,desc.position=&f,position
     desc.impact_damage=false
     if hierarchy {desc.clusters,desc.piece_clusters=clusters[:],membership[:]}
-    return destructible_create(&w.fracture,&w.sim,desc)
+    return breakable_create(w,desc)
 }
 
 // Making a slab of 1,024 pieces, splitting it, and stepping it whole on the ground.
 @(test)
 bench_destruct :: proc(t:^testing.T) {
-    if !FRACTURE_BENCH {return}
+    if !PHYSICS_BENCH {return}
     ROUNDS :: 5
     build,flat_build,root,split:f64
     shapes,contacts:int
@@ -70,16 +70,16 @@ bench_destruct :: proc(t:^testing.T) {
         if error!=.None {fmt.printfln("BENCH destruct: %v",error);world_destroy(w);free(w);return}
         other,other_error:=bench_slab(w,{20,0.5,0},true)
         mark=time.tick_now()
-        _,broke:=destructible_strain(&w.fracture,&w.sim,other,{20,0.5,0},100,1000)
+        _,broke:=breakable_strain(w,other,{20,0.5,0},100,1000)
         root+=time.duration_milliseconds(time.tick_since(mark))/ROUNDS
-        destructible_destroy(&w.fracture,&w.sim,other)
+        breakable_destroy(w,other)
         mark=time.tick_now()
         flat,flat_error:=bench_slab(w,{-20,0.5,0},false)
         flat_build+=time.duration_milliseconds(time.tick_since(mark))/ROUNDS
         mark=time.tick_now()
-        _,split_broke,_:=destructible_field_body(&w.fracture,&w.sim,flat,-1,{point={-20,0.5,0},half_extents={0.1,10,10},rotation=sim.QUAT_IDENTITY,falloff=.Constant},1e9)
+        _,split_broke,_:=breakable_strain_region(w,flat,-1,{point={-20,0.5,0},half_extents={0.1,10,10},rotation=QUAT_IDENTITY,falloff=.Constant},1e9)
         split+=time.duration_milliseconds(time.tick_since(mark))/ROUNDS
-        destructible_destroy(&w.fracture,&w.sim,flat)
+        breakable_destroy(w,flat)
         if other_error!=.None || flat_error!=.None || !broke || !split_broke {
             fmt.printfln("BENCH destruct: %v %v %v %v",other_error,flat_error,broke,split_broke)
             world_destroy(w);free(w);return
@@ -90,8 +90,8 @@ bench_destruct :: proc(t:^testing.T) {
             world_step(w,1.0/60)
             step+=time.duration_milliseconds(time.tick_since(mark))/(120*ROUNDS)
         }
-        shapes,contacts=sim.world_stats(&w.sim).shapes,sim.world_stats(&w.sim).active_contacts
-        if destructible_revision(&w.fracture,h)!=0 {fmt.printfln("BENCH destruct: the slab broke while it stood")}
+        shapes,contacts=world_stats(w).shapes,world_stats(w).active_contacts
+        if breakable_revision(w,h)!=0 {fmt.printfln("BENCH destruct: the slab broke while it stood")}
         world_destroy(w)
         free(w)
     }
@@ -102,7 +102,7 @@ bench_destruct :: proc(t:^testing.T) {
 // A wall of 128 pieces anchored to the ground, broken by a 520 kg ball at 40 m/s.
 @(test)
 bench_wall :: proc(t:^testing.T) {
-    if !FRACTURE_BENCH {return}
+    if !PHYSICS_BENCH {return}
     w:=new(World)
     defer free(w)
     if !bench_destruct_world(w) {return}
@@ -115,25 +115,25 @@ bench_wall :: proc(t:^testing.T) {
     sites:[128]Vec3
     geom.sites_generate(sites[:],{pattern=.Uniform,seed=11,lo={-4,-2,-0.25},hi={4,2,0.25}})
     anchors:=[1]Aabb{{{-4.1,-2.1,-0.4},{4.1,-1.95,0.4}}}
-    desc:=DESTRUCTIBLE_DESC_DEFAULT
+    desc:=BREAKABLE_DESC_DEFAULT
     desc.mesh,desc.sites,desc.anchors,desc.position=geom.mesh_buffer_view(&mesh),sites[:],anchors[:],{0,2,0}
     desc.damage_radius,desc.debris_volume=1.5,0.06
     mark:=time.tick_now()
-    wall,error:=destructible_create(&w.fracture,&w.sim,desc)
+    wall,error:=breakable_create(w,desc)
     build:=time.duration_milliseconds(time.tick_since(mark))
     if error!=.None {
         fmt.printfln("BENCH wall: %v",error)
         return
     }
     desc.position={30,2,0}
-    other,_:=destructible_create(&w.fracture,&w.sim,desc)
+    other,_:=breakable_create(w,desc)
     mark=time.tick_now()
-    _,broke:=destructible_damage(&w.fracture,&w.sim,other,{30,2,0.25},1.5,{0,0,-20000})
+    _,broke:=breakable_damage(w,other,{30,2,0.25},1.5,{0,0,-20000})
     damage:=time.duration_milliseconds(time.tick_since(mark))
-    freed:=sim.world_stats(&w.sim).bodies-3
-    destructible_destroy(&w.fracture,&w.sim,other)
-    pieces:=destructible_pieces(&w.fracture,&w.sim,wall,nil)
-    connections:=destructible_connections(&w.fracture,wall,nil)
+    freed:=world_stats(w).bodies-3
+    breakable_destroy(w,other)
+    pieces:=breakable_pieces(w,wall,nil)
+    connections:=breakable_bonds(w,wall,nil)
     for _ in 0..<30 {world_step(w,1.0/60)}
     intact:f64
     for _ in 0..<60 {
@@ -141,10 +141,10 @@ bench_wall :: proc(t:^testing.T) {
         world_step(w,1.0/60)
         intact+=time.duration_milliseconds(time.tick_since(mark))/60
     }
-    ball:=sim.body_create(&w.sim,{type=.Dynamic,position={0,2,4},rotation=sim.QUAT_IDENTITY,linear_velocity={0,0,-40},gravity_scale=1,bullet=true})
-    shape:=sim.SHAPE_DESC_DEFAULT
-    shape.geometry=sim.Sphere{0.5}
-    sim.shape_create(&w.sim,ball,shape)
+    ball:=body_create(w,{type=.Dynamic,position={0,2,4},rotation=QUAT_IDENTITY,linear_velocity={0,0,-40},gravity_scale=1,bullet=true})
+    shape:=SHAPE_DESC_DEFAULT
+    shape.geometry=Sphere{0.5}
+    shape_create(w,ball,shape)
     times:[120]f64
     breaking:f64
     events,most_contacts:=0,0
@@ -152,9 +152,9 @@ bench_wall :: proc(t:^testing.T) {
         mark=time.tick_now()
         world_step(w,1.0/60)
         ms=time.duration_milliseconds(time.tick_since(mark))
-        if events==0 && len(fracture_events(&w.fracture))>0 {breaking=ms}
-        events+=len(fracture_events(&w.fracture))
-        most_contacts=max(most_contacts,sim.world_stats(&w.sim).active_contacts)
+        if events==0 && len(world_events(w).breaks)>0 {breaking=ms}
+        events+=len(world_events(w).breaks)
+        most_contacts=max(most_contacts,world_stats(w).active_contacts)
     }
     worst,mean:f64
     for ms in times {worst,mean=max(worst,ms),mean+ms/len(times)}
@@ -162,16 +162,16 @@ bench_wall :: proc(t:^testing.T) {
     median:=times[len(times)/2]
     info:=make([]Piece_Info,pieces)
     defer delete(info)
-    destructible_pieces(&w.fracture,&w.sim,wall,info)
+    breakable_pieces(w,wall,info)
     loose,debris:=0,0
     for piece in info {
-        if piece.body!=destructible_body(&w.fracture,wall) {loose+=1}
+        if piece.body!=breakable_body(w,wall) {loose+=1}
         if .Debris in piece.flags {debris+=1}
     }
     mark=time.tick_now()
-    _,cut:=destructible_slice(&w.fracture,&w.sim,wall,{0,2.9,0},{0,1,0.2})
+    _,cut:=breakable_slice(w,wall,{0,2.9,0},{0,1,0.2})
     slice:=time.duration_milliseconds(time.tick_since(mark))
-    stats:=sim.world_stats(&w.sim)
+    stats:=world_stats(w)
     fmt.printfln("BENCH wall of %v pieces and %v connections: build %.2f ms, intact step %.4f ms, step that breaks it %.3f ms; 120 steps after: median %.3f ms, mean %.3f, worst %.3f; %v events, %v pieces loose (%v debris), at most %v contacts; damage call that frees %v groups %.3f ms (%v), slice call %.3f ms (%v); bodies %v contacts %v",
         pieces,connections,build,intact,breaking,median,mean,worst,events,loose,debris,most_contacts,freed,damage,broke,slice,cut,stats.bodies,stats.active_contacts)
 }

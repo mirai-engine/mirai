@@ -2,7 +2,6 @@ package physics_fields
 
 import "core:math/linalg"
 import "mirai:core"
-import destruct "plugins:destruct/runtime"
 import phys "plugins:physics/runtime"
 import mm "mirai:std/math"
 
@@ -32,8 +31,7 @@ PHYSICS_FIELD_DEFAULT :: Physics_Field{radius=3,half_extents={3,3,3},vector={0,1
 @(step="fixed",stage="simulate",before="physics_prepare")
 physics_fields_step :: proc(
     fields:core.Read(Physics_Field),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
-    destructibles:core.Read(destruct.Destructible),colliders:core.Read(phys.Collider),authority:core.Ref(core.Network),
-    bodies:^phys.Body_Requests,damage:^destruct.Destruct_Requests,time:core.Time,collision:core.Ref(phys.Collision_Settings),
+    authority:core.Ref(core.Network),bodies:^phys.Body_Requests,time:core.Time,
 ) {
     if !time.playing || !(time.dt>0) {return}
     for row in 0..<core.count(fields) {
@@ -59,14 +57,8 @@ physics_fields_step :: proc(
             }
         }
         if !(field.strain>0) || authority.role==.Client {continue}
-        region:=destruct.Destruct_Region{point=pose.position,radius=radius,rotation=pose.rotation,falloff=field.falloff}
+        region:=phys.Break_Region{point=pose.position,radius=radius,rotation=pose.rotation,falloff=field.falloff}
         if field.shape!=.Sphere {region.half_extents=half}
-        for target in 0..<core.count(destructibles) {
-            e:=core.entity_at(destructibles,target)
-            collider,_:=core.get(colliders,e)
-            pieces:=phys.collision_filter(collision.ptr,collider)
-            if phys.query_meets(field.filter,pieces)==.Ignore {continue}
-            destruct.field_strain(damage,e,region,field.strain*time.dt,weakening=field.weakening,ignore_body=field.filter.ignore_body)
-        }
+        phys.strain_region(bodies,region,field.strain*time.dt,weakening=field.weakening,filter=field.filter)
     }
 }

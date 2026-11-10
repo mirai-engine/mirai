@@ -12,6 +12,7 @@ import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 import cache "plugins:physics_cache/runtime"
+import capture "plugins:physics_cache_destruct/runtime"
 
 @(private)
 Physics_Bake :: struct {
@@ -62,7 +63,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     }
     info:=core.World_Info{entities=offset_of(Physics_Bake,entities),tables=tables[:]}
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
-    settings:=phys.Physics_Settings{bodies=128,shapes=256,contacts=1024,joints=1,hulls=128}
+    settings:=phys.Physics_Settings{bodies=128,shapes=256,contacts=1024,joints=1,hulls=128,breakables=1,pieces=128,bonds=512}
     problems:core.Problems
     defer core.value_free(&problems,type_info_of(core.Problems))
     if !phys.state_make(&physics,&settings,&app.jobs,&problems) {o.content.failed=true;return id}
@@ -70,8 +71,6 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     defer core.value_free(&bodies,type_info_of(phys.Body_Requests))
     // The pieces float for the cuts and fall from the strain on.
     gravity:[3]f32
-    fractures:destruct.Fracture_State;defer destruct.fracture_state_destroy(&fractures)
-    fracture_settings:=destruct.Destruct_Settings{destructibles=1,pieces=128,connections=512}
     geometry:destruct.Destruct_Cache;defer destruct.cache_destroy(app.assets,&app.jobs,&geometry)
     requests:destruct.Destruct_Requests;events:destruct.Destruct_Events
     alone:core.Network
@@ -89,13 +88,16 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
     record:cache.Cache_Recorder
     if error:=cache.record_init(&record,{frames=151,tracks=128,samples=151*128,vertices=32768,indices=65536,origin=mm.TRANSFORM_IDENTITY});error!=.None {o.content.failed=true;return id}
     defer cache.record_destroy(&record)
-    source:=[1]cache.Capture_Source{{entity=owner,object=1}}
+    scratch:capture.Capture
+    if error:=capture.capture_init(&scratch,128);error!=.None {o.content.failed=true;return id}
+    defer capture.capture_destroy(&scratch)
+    source:=[1]capture.Capture_Source{{entity=owner,object=1}}
     source[0].materials[0],source[0].materials[1]=game.material_asset("Bricks"),game.material_asset("Cobblestone")
     source[0].materials[2]=game.material_asset("Cobblestone")
     for frame in 0..=150 {
         if frame==15 || frame==30 {
             pieces:[128]destruct.Piece_Info
-            count:=destruct.pieces(destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&world.states),core.read(&world.groups)},owner,pieces[:])
+            count:=destruct.pieces(destruct.Destruct_View{core.ref(&physics),core.read(&world.states),core.read(&world.groups)},owner,pieces[:])
             for piece in pieces[:min(count,len(pieces))] {
                 if piece.body==0 {continue}
                 body,_:=phys.body_info(core.ref(&physics),piece.body)
@@ -113,11 +115,11 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
                 if e!=owner && destruct.remove(&requests,core.read(&world.groups),e)==.None {break}
             }
         }
-        destruct.destruct_step(&physics,&fractures,core.ref(&fracture_settings),&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),
+        destruct.destruct_step(&physics,&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),
             core.read(&world.configs),&world.meshes,&world.tints,core.read(&world.parents),&world.states,&world.groups,&world.elsewhere,&world.transforms,&world.ids,core.read(&world.colliders),{},nil)
         physics_bake_settle(&world,nil,nil)
         if frame==15 || frame==30 {phys.apply_radial_impulse(&bodies,{0,2.5,0},4,.6,.Constant,velocity_change=true)}
-        error:=cache.capture_destructible(&record,f32(frame)/30,source[:],destruct.Destruct_View{core.ref(&physics),core.ref(&fractures),core.read(&world.states),core.read(&world.groups)},core.ref(&geometry))
+        error:=capture.capture_destructible(&scratch,&record,f32(frame)/30,source[:],destruct.Destruct_View{core.ref(&physics),core.read(&world.states),core.read(&world.groups)},core.ref(&geometry))
         if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.content.failed=true;return id}
         if frame<150 && !phys.simulate(&physics,&bodies,&app.jobs,1.0/30,gravity,&problems) {o.content.failed=true;return id}
     }

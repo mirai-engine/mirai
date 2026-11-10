@@ -6,8 +6,6 @@ import "mirai:engine/scene"
 import destruct "plugins:destruct/runtime"
 import multiplayer "plugins:multiplayer/runtime"
 import physics "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
-import fr "plugins:destruct/runtime/fracture"
 import "mirai:std/base"
 
 // Destruction over the network. The server is the only one that damages:
@@ -46,7 +44,7 @@ NET_STATE_BUDGET :: 4096   // bytes of state a server starts sending per tick
 @(net_message,reliable)
 Net_Fracture :: struct {
     id:base.Entity_Id,
-    check:u32, // fr.destructible_check after it; zero: more events of the same tick follow
+    check:u32, // physics.breakable_check after it; zero: more events of the same tick follow
     using record:destruct.Fracture_Record,
 }
 
@@ -184,17 +182,16 @@ net_chunk :: proc(n:^Destruct_Net,chunk:Net_State,problems:^core.Problems) {
 // stands, and the events whose tick came, in order.
 @(step="fixed",stage="react",before="destruct_step")
 destruct_net_follow :: proc(
-    authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,requests:^destruct.Destruct_Requests,fractures:core.Ref(destruct.Fracture_State),
+    authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,requests:^destruct.Destruct_Requests,physics_state:core.Ref(physics.Physics_State),
     destructibles:core.Read(destruct.Destructible),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),root:core.Ref(scene.Scene_Root),
 ) {
     net_world(n,root)
-    if authority.role!=.Client || !fractures.ready {return}
-    f:=&fractures.fracture
+    if authority.role!=.Client || !physics_state.ready {return}
     for row in 0..<core.count(destructibles) {
         e:=core.entity_at(destructibles,row)
         st,made:=core.get(states,e)
         id:=core.id_of(ids,e)
-        if !made || id==0 || !fr.destructible_valid(f,st.handle) {continue}
+        if !made || id==0 || !physics.breakable_valid(physics_state,st.handle) {continue}
         l:=net_link(n,id,false)
         if l==nil {continue}
         sequence:=st.sequence
@@ -202,7 +199,7 @@ destruct_net_follow :: proc(
             // The state stands when it is ahead of what was replayed, and when it says the pieces here are not those of the server:
             // the first time it is looked at, and again at the tick it was first asked at.
             ahead:=l.state_sequence>sequence
-            differs:=l.state_sequence==sequence && l.state_check!=fr.destructible_check(f,st.handle)
+            differs:=l.state_sequence==sequence && l.state_check!=physics.breakable_check(physics_state,st.handle)
             due:=ahead || differs && (l.state_at==0?l.state_fresh:time.tick+1==l.state_at)
             if l.state_at!=0 && time.tick+1<l.state_at {due=false}
             l.state_fresh=false
@@ -238,15 +235,14 @@ destruct_net_follow :: proc(
 destruct_net_send :: proc(
     authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,adoptions:^multiplayer.Net_Adoptions,session:core.Ref(multiplayer.Net_Session),
     connections:core.Ref(multiplayer.Net_Connections),
-    events:core.Ref(destruct.Destruct_Events),physics_state:core.Ref(physics.Physics_State),fractures:core.Ref(destruct.Fracture_State),commands:core.Commands,
+    events:core.Ref(destruct.Destruct_Events),physics_state:core.Ref(physics.Physics_State),commands:core.Commands,
     states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),objects:core.Read(multiplayer.Replicate),entities:core.Ref(core.Entities),root:core.Ref(scene.Scene_Root),problems:^core.Problems,
 ) {
     net_world(n,root)
-    if authority.role==.Standalone || !physics_state.ready || !fractures.ready {return}
-    w,f:=&physics_state.world,&fractures.fracture
+    if authority.role==.Standalone || !physics_state.ready {return}
     if authority.role==.Server {
-        fractures_send(n,f,time,outbox,events,states,ids)
-        states_serve(n,f,w,time,outbox,connections,states,ids,problems)
+        fractures_send(n,physics_state,time,outbox,events,states,ids)
+        states_serve(n,physics_state,time,outbox,connections,states,ids,problems)
     } else {
         replays_verify(n,entities.ptr,time,outbox,session,events,states,ids)
     }
@@ -263,7 +259,7 @@ destruct_net_send :: proc(
 }
 
 @(private)
-fractures_send :: proc(n:^Destruct_Net,f:^fr.Fracture,time:core.Time,outbox:^multiplayer.Net_Outbox,events:core.Ref(destruct.Destruct_Events),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id)) {
+fractures_send :: proc(n:^Destruct_Net,physics_state:core.Ref(physics.Physics_State),time:core.Time,outbox:^multiplayer.Net_Outbox,events:core.Ref(destruct.Destruct_Events),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id)) {
     items:=events.applied.items
     for applied,at in items {
         id:=core.id_of(ids,applied.entity)
@@ -272,7 +268,7 @@ fractures_send :: proc(n:^Destruct_Net,f:^fr.Fracture,time:core.Time,outbox:^mul
         last:=true
         for later in items[at+1:] {last &&= later.entity!=applied.entity}
         if last {
-            if st,found:=core.get(states,applied.entity);found && fr.destructible_valid(f,st.handle) {fracture.check=fr.destructible_check(f,st.handle)}
+            if st,found:=core.get(states,applied.entity);found && physics.breakable_valid(physics_state,st.handle) {fracture.check=physics.breakable_check(physics_state,st.handle)}
         }
         if multiplayer.send(outbox,time,fracture) {n.stats.sent+=1}
     }
@@ -280,7 +276,7 @@ fractures_send :: proc(n:^Destruct_Net,f:^fr.Fracture,time:core.Time,outbox:^mul
 
 // The connections that entered the world and the clients that asked get the state of the broken destructibles.
 @(private)
-states_serve :: proc(n:^Destruct_Net,f:^fr.Fracture,w:^sim.World,time:core.Time,outbox:^multiplayer.Net_Outbox,connections:core.Ref(multiplayer.Net_Connections),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),problems:^core.Problems) {
+states_serve :: proc(n:^Destruct_Net,physics_state:core.Ref(physics.Physics_State),time:core.Time,outbox:^multiplayer.Net_Outbox,connections:core.Ref(multiplayer.Net_Connections),states:core.Read(destruct.Destructible_State),ids:core.Read(core.Id),problems:^core.Problems) {
     if connections.ptr!=nil {
         for event in connections.events.items {
             if event.kind!=.Entered {continue}
@@ -302,16 +298,16 @@ states_serve :: proc(n:^Destruct_Net,f:^fr.Fracture,w:^sim.World,time:core.Time,
                 break
             }
         }
-        if !found || !fr.destructible_valid(f,st.handle) {continue}
-        chunk:=Net_State{id=request.id,sequence=st.sequence,check=fr.destructible_check(f,st.handle)}
+        if !found || !physics.breakable_valid(physics_state,st.handle) {continue}
+        chunk:=Net_State{id=request.id,sequence=st.sequence,check=physics.breakable_check(physics_state,st.handle)}
         size:=0
-        if fr.destructible_revision(f,st.handle)!=0 || st.sequence!=0 {
-            if resize(&n.scratch,fr.destructible_state_size(f,st.handle))!=nil {
-                core.report(problems,core.entity_at(states,served),"destruct.net_memory","out of memory to send the state of this broken Destructible to a client; it is tried again in the next tick: free memory, or lower Destruct_Settings.pieces")
+        if physics.breakable_revision(physics_state,st.handle)!=0 || st.sequence!=0 {
+            if resize(&n.scratch,physics.breakable_state_size(physics_state,st.handle))!=nil {
+                core.report(problems,core.entity_at(states,served),"destruct.net_memory","out of memory to send the state of this broken Destructible to a client; it is tried again in the next tick: free memory, or lower Physics_Settings.pieces")
                 n.requested-=1
                 break
             }
-            size=fr.destructible_state_write(f,w,st.handle,n.scratch[:])
+            size=physics.breakable_state_write(physics_state,st.handle,n.scratch[:])
         }
         chunk.total=u32(size)
         for offset:=0;offset==0 || offset<size;offset+=NET_STATE_CHUNK {

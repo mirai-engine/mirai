@@ -31,6 +31,7 @@ World_Desc :: struct {
     hull_capacity,mesh_capacity,heightfield_capacity:int,
     character_capacity:int,
     fluid_capacity:int,
+    breakable_capacity,piece_capacity,bond_capacity:int, // their pools are made with the first breakable
     event_capacity:int, // per kind of event and step
     static_change_capacity:int, // boxes static_changes keeps for a reader that falls behind
     gravity:Vec3,
@@ -55,6 +56,7 @@ world_desc_default :: proc() -> World_Desc {
         body_capacity=4096,shape_capacity=4096,contact_capacity=16384,joint_capacity=1024,
         hull_capacity=256,mesh_capacity=1024,heightfield_capacity=1024,event_capacity=1024,
         character_capacity=256,fluid_capacity=64,static_change_capacity=1024,
+        breakable_capacity=64,piece_capacity=2048,bond_capacity=8192,
         gravity={0,-9.81,0},substeps=4,worker_count=1,
         contact_hertz=30,contact_damping_ratio=10,contact_speed=3,
         joint_hertz=60,joint_damping_ratio=2,
@@ -267,16 +269,20 @@ Manifold :: struct {normal:Vec3,count:i32,points:[MANIFOLD_MAX_POINTS]Manifold_P
 EXTRA_MANIFOLDS :: 3
 Manifold_Block :: struct {manifolds:[EXTRA_MANIFOLDS]Manifold_State,next_free:i32}
 
+// The user data of the bodies and of the shapes of an event when it was raised: what follows in the step, a
+// breakable that breaks, may end them before the event is read.
+Event_Users :: struct {body_a,body_b,shape_a,shape_b:u64}
 Contact_Begin_Event :: struct {
     shape_a,shape_b:Shape_Handle,
     body_a,body_b:Body_Handle,
     point,normal:Vec3, // normal from A to B
     impulse:f32,       // N s, normal impulse applied in the step
+    users:Event_Users,
 }
-Contact_End_Event :: struct {shape_a,shape_b:Shape_Handle,body_a,body_b:Body_Handle}
+Contact_End_Event :: struct {shape_a,shape_b:Shape_Handle,body_a,body_b:Body_Handle,users:Event_Users}
 // One for each shape of a pair that overlaps, as `shape`. `crossed`: a bullet went through the other
-// shape within the step, so the pair begins and ends in the same step.
-Overlap_Event :: struct {shape,other:Shape_Handle,body,other_body:Body_Handle,crossed:bool}
+// shape within the step, so the pair begins and ends in the same step. In users, A is `shape` and its body.
+Overlap_Event :: struct {shape,other:Shape_Handle,body,other_body:Body_Handle,crossed:bool,users:Event_Users}
 Joint_Break_Event :: struct {joint:Joint_Handle,body_a,body_b:Body_Handle,force,torque:f32}
 Body_Event :: struct {body:Body_Handle,user_data:u64}
 // A contact of a shape that raises hits, at the points that approached faster than World_Desc.hit_speed.
@@ -294,16 +300,21 @@ Events :: struct {
     joint_break:[]Joint_Break_Event,
     sleep,wake:[]Body_Event,
     hit:[]Contact_Hit_Event,
+    breaks:[]Break_Event, // what broke the breakables: the hits of the step, what expired and breakables_strain
 }
 
 Stats :: struct {
     bodies,shapes,contacts,joints,characters,fluids:int,
+    breakables,pieces:int,
     awake_bodies,active_contacts,constraints,islands:int,
     colors,overflow_constraints:int,
     // Requests refused because a capacity was exhausted, since the world was created.
     body_capacity_exhausted,shape_capacity_exhausted,contact_capacity_exhausted,joint_capacity_exhausted:int,
     manifold_capacity_exhausted,event_capacity_exhausted,geometry_capacity_exhausted:int,
     character_capacity_exhausted,fluid_capacity_exhausted:int,
+    // Breakables, breaks and cuts refused because a capacity of theirs or of the world ran out, and break
+    // events that did not fit in those of a step.
+    breakable_capacity_exhausted,break_events_dropped:int,
     // Shapes a bullet went through in a step beyond the CCD_OVERLAP_CAPACITY it keeps, without their overlap
     // events, since the world was created.
     ccd_overlaps_dropped:int,
@@ -316,5 +327,5 @@ Profile :: struct {
     prepare:f32,      // islands, colors and constraint setup
     solve:f32,
     finalize:f32,     // poses, boxes, bullets and the tree
-    sleep:f32,        // events, joint breaks and sleeping
+    sleep:f32,        // events, joint breaks, sleeping and breakables
 }

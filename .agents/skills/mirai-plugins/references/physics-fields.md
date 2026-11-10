@@ -1,10 +1,9 @@
 # Persistent physics fields
 
-`plugins/physics_fields` is optional, has Runtime and Editor and depends on `physics` and
-`destruct`. It declares `Physics_Field` and a fixed step that emits requests to
-[physics](../../mirai-physics/references/engine.md#requests) and
-[destruction](../../mirai-physics/references/engine-destruct.md#requests-and-movement). It does not
-import the low-level model nor has another implementation of falloff or queries.
+`plugins/physics_fields` is optional, has Runtime and Editor and depends on `physics` alone: a
+field breaks what is breakable without knowing `destruct`. It declares `Physics_Field` and a fixed
+step that emits requests to [physics](../../mirai-physics/references/engine.md#requests). It does
+not import the low-level model nor has another implementation of falloff or queries.
 
 ## Component
 
@@ -37,10 +36,10 @@ and can have a Parent: transforming the parent moves the region on later ticks.
 - The force is a continuous request per tick to the volume forces of physics, which detect the
   shapes, deduplicate bodies and evaluate the weight at their center of mass, without the shape
   limit of the overlap helpers.
-- The strain walks the `Destructible` roots whose fracture collider the filter sees
-  (`query_meets`) and requests `field_strain` with the same region and the excluded body;
-  destruction excludes only that handle, also when `ignore_body` is a detached fragment. Cosmetic
-  debris receives no strain, and it does not depend on the force impulse.
+- The strain is one `strain_region` request with the same region and filter: physics gives it,
+  after the step, to each body of the breakables whose pieces the filter sees, but
+  `ignore_body`, also when it is a detached fragment. Cosmetic debris receives no strain, and it
+  does not depend on the force impulse.
 - On a network client it emits no strain (the server decides it, by the role of `core.Network`);
   forces continue on clients for their prediction. The stable path reuses the request capacity once
   warmed up.
@@ -66,8 +65,8 @@ and can have a Parent: transforming the parent moves the region on later ticks.
   `selected_physics_fields_preview_world_regions_force_direction_and_parent_changes`,
   `physics_field_preview_reuses_vertices_without_allocations_and_omits_incomplete_regions`,
   `a_plane_field_preview_crosses_its_plane_face_and_points_along_its_normal`.
-- `plugins/destruct/runtime`:
-  `field_strain_excludes_one_body_while_other_groups_keep_receiving_damage_without_allocations`.
+- `plugins/physics/runtime/sim`:
+  `a_strain_over_a_region_reaches_each_body_of_the_breakables_its_filter_meets`.
 - Presentation: generate and build the demo world and verify by API and capture the selection of a
   field with graphics validation; the field stations of `physics.scene` enable them by input or
   API. The effects of the forces are verified in their owner package.

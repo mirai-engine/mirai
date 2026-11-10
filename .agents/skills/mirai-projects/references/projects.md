@@ -561,7 +561,7 @@ another in the order asked.
   animation, audio, frame and assets of the host, API protocol) run together with `mirai test core
   cook/build engine/scene engine/save engine/input std/input plugins/cinematics/runtime
   plugins/cinematics/editor plugins/physics/runtime plugins/physics/runtime/sim
-  plugins/destruct/runtime plugins/destruct/runtime/fracture engine/gui std/anim audio host
+  plugins/destruct/runtime engine/gui std/anim audio host
   editor/api`; `host` includes GPU tests and `editor/api` uses loopback sockets.
 - **CI.** `.github/workflows/checks.yml` runs on every pull request to `main`, on Windows without
   GPU (`MIRAI_ALLOW_GPU_SKIP=1`): `mirai check` of each folder with Odin sources outside

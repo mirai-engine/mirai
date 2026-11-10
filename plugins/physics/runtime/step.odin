@@ -189,7 +189,8 @@ physics_step :: proc(
         _=core.changes(s.locals,&state.transforms_seen)
     }
 
-    requests_apply(&s,core.take(&requests.queue))
+    asked:=core.take(&requests.queue)
+    requests_apply(&s,asked)
     if s.playing {joints_sync(&s,core.read(joints),joint_states)}
     joint_requests_apply(&s,joints,joint_states,joint_requests)
     if s.playing {
@@ -223,6 +224,7 @@ physics_step :: proc(
     if gravities.table!=nil {gravity_apply(state,gravities,gravity_volumes,worlds,problems)}
     sim.world_step(w,time.dt)
     w.desc.parallel_user=nil
+    strains_apply(w,asked)
     step_followed(state,characters)
 
     // What another owner places has to reach what touches it: its groups are kept while some entity has a target.
@@ -1005,6 +1007,7 @@ area_apply :: proc(s:^Sync,request:Body_Request) -> bool {
     case .Box_Radial_Force: _,ok=sim.world_apply_box_radial_force(w,request.position,request.half_extents,request.rotation,request.strength,request.falloff,request.filter,range,noise)
     case .Plane_Force: _,ok=sim.world_apply_plane_force(w,request.position,request.half_extents,request.rotation,request.linear,request.falloff,request.filter,range,noise)
     case .Radial_Force,.Radial_Impulse: _,ok=sim.world_apply_radial(w,request.position,request.radius,request.strength,request.falloff,request.kind==.Radial_Impulse,request.override,request.filter,range,noise)
+    case .Strain: return true // after the step, with its hits (strains_apply)
     case: return false
     }
     if !ok {area_problem(s,request)}
@@ -1047,7 +1050,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
             case .Impulse:          sim.character_launch(w,l.character,request.linear/max(l.config.mass,1e-3))
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
-            case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force:
+            case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force,.Strain:
             case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, give it a velocity or an impulse, or write its Character_Move")
             }
             continue
@@ -1075,7 +1078,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
         case .Force:
             if request.at_point {sim.body_apply_force_at(w,l.body,request.linear,request.point)} else {sim.body_apply_force(w,l.body,request.linear)}
             if request.angular!={} {sim.body_apply_torque(w,l.body,request.angular)}
-        case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force:
+        case .Radial_Force,.Radial_Impulse,.Box_Force,.Sphere_Force,.Box_Radial_Force,.Plane_Force,.Strain:
         case .Kinematic:
             if s.playing {
                 sim.body_set_kinematic_target(w,l.body,request.position,rotation,s.dt)
@@ -1258,20 +1261,18 @@ hold_pose :: proc "contextless" (h:Hold) -> sim.Transform {return .Target in h.b
 @(private)
 events_forward :: proc(s:^Sync,events:^Physics_Events,sent:^[6]int) {
     w:=&s.state.world
-    named :: proc(w:^sim.World,body:sim.Body_Handle) -> core.Entity {return core.Entity(sim.body_user_data(w,body))}
-    of :: proc(w:^sim.World,shape:sim.Shape_Handle) -> core.Entity {return core.Entity(sim.shape_user_data(w,shape))}
     list:=sim.world_events(w)
     lengths:=[6]int{len(list.contact_begin),len(list.contact_end),len(list.overlap_begin),len(list.overlap_end),len(list.sleep),len(list.wake)}
     for &count,i in sent {count=min(count,lengths[i])}
     for event in list.contact_begin[sent[0]:] {
         core.push(&events.contact_begin,Contact_Begin{
-            a=named(w,event.body_a),b=named(w,event.body_b),collider_a=of(w,event.shape_a),collider_b=of(w,event.shape_b),
+            a=core.Entity(event.users.body_a),b=core.Entity(event.users.body_b),collider_a=core.Entity(event.users.shape_a),collider_b=core.Entity(event.users.shape_b),
             point=event.point,normal=event.normal,impulse=event.impulse,
         })
     }
-    for event in list.contact_end[sent[1]:] {core.push(&events.contact_end,Contact_End{named(w,event.body_a),named(w,event.body_b),of(w,event.shape_a),of(w,event.shape_b)})}
-    for event in list.overlap_begin[sent[2]:] {core.push(&events.overlap_begin,Overlap_Event{named(w,event.body),named(w,event.other_body),of(w,event.shape),of(w,event.other),event.crossed})}
-    for event in list.overlap_end[sent[3]:] {core.push(&events.overlap_end,Overlap_Event{named(w,event.body),named(w,event.other_body),of(w,event.shape),of(w,event.other),event.crossed})}
+    for event in list.contact_end[sent[1]:] {core.push(&events.contact_end,Contact_End{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b)})}
+    for event in list.overlap_begin[sent[2]:] {core.push(&events.overlap_begin,Overlap_Event{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
+    for event in list.overlap_end[sent[3]:] {core.push(&events.overlap_end,Overlap_Event{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
     for event in list.sleep[sent[4]:] {core.push(&events.sleep,Body_Event{core.Entity(event.user_data)})}
     for event in list.wake[sent[5]:] {core.push(&events.wake,Body_Event{core.Entity(event.user_data)})}
     sent^=lengths

@@ -7,9 +7,10 @@ constants and parameters: `types.odin` and the comments of each file.
 ## World and memory
 
 - `world_init(&w,desc)` reserves everything according to `World_Desc`: capacities (bodies, shapes,
-  contacts, joints, hulls, meshes, heightfields, events, characters, fluids, destructibles, pieces,
-  connections, [static changes](#static-collision)), gravity, `substeps` (4 by default) and
-  stiffness parameters.
+  contacts, joints, hulls, meshes, heightfields, events, characters, fluids, breakables, pieces,
+  bonds, [static changes](#static-collision)), gravity, `substeps` (4 by default) and
+  stiffness parameters. The pools of [what breaks](destruction.md#with-the-world) wait for the
+  first breakable.
 - `world_desc_default()` gives the initial values; `world_destroy` frees; `world_step(&w,dt)`
   advances one tick.
 - `Body_Handle`, `Shape_Handle` and `Joint_Handle` are `distinct` generational handles. Zero is null
@@ -363,7 +364,7 @@ geometry.
 
 - `world_snapshot_size`, `world_snapshot_capacity`, `world_snapshot(&w,buffer)` and
   `world_restore(&w,buffer)` copy in blocks bodies, shapes, contacts, joints, joint axes, islands,
-  manifold blocks, characters, fluids, destructibles, pieces, connections and the two trees.
+  manifold blocks, characters, fluids, breakables, pieces, bonds and the two trees.
 - The block table is `snapshot_blocks`: a new state array is added there, with its counter in
   `World_State`, which also stores gravity and the push rules. `world_hash` hashes that same state.
 - Restoring and simulating again repeats the original trajectory bit for bit in the same binary. A
@@ -451,7 +452,9 @@ What whoever builds from the level needs, like the navmesh, without allocating.
 
 - `world_events` returns slices valid until the next step; `overlap_begin`/`overlap_end` go one per
   side, with `crossed` when a bullet crossed it in the step. Destroying shapes or bodies outside the
-  step emits no end events.
+  step emits no end events. A contact or overlap event carries in `users` the user data of its
+  bodies and shapes, which may be gone when it is read; `breaks` lists
+  [what broke](destruction.md#reading-and-replay).
 - `body_contacts` lists the contacts of an awake body, with the normal impulse of each point and the
   velocity with which they approached before solving it (`approach`). `world_stats` gives counts and
   exhausted capacities; `world_profile`, the time per stage.

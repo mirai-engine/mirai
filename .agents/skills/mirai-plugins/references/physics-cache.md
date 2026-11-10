@@ -18,9 +18,12 @@ geometry allocates. A rejected frame is not added.
 - `record_frame(&r,time,samples)` records the visible pieces, sorted by track, with strictly
   increasing times from zero and poses relative to the recording origin. An absent piece is not
   drawn in that frame and can come back.
-- `capture_destructible` uses the [public destruction queries][destruct]: it keeps each new
-  geometry (also the halves of a cut) and converts the world poses to the origin. With
-  `Geometry_Unavailable` the piece is not prepared yet and the caller retries off the stable path.
+- The automatic bridge `physics_cache_destruct`, there when a project has this plugin and
+  `destruct`, records destructibles: `capture_destructible`, with the scratch of its `Capture`,
+  uses the [public destruction queries][destruct], keeps each new geometry (also the halves of a
+  cut) and converts the world poses to the origin. With `Geometry_Unavailable` the piece is not
+  prepared yet and the caller retries off the stable path. The cache itself knows neither `destruct`
+  nor `physics`.
 - `cache_save` writes atomically (`cache_document` builds the document without a file); the heavy
   tables go in LZ and the materials generate the asset's dependencies. All ranges are validated
   on opening, without the `.fracture`, the handles or the world that produced the recording.
@@ -83,7 +86,8 @@ cache.rate(requests,e,0.5)
 
 - `mirai test plugins/physics_cache/runtime`: portable file, interpolation and reverse, topology
   changes, capacity, truncated files, asset reload and public controls.
-- `destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_destroyed`:
+- `mirai test plugins/physics_cache_destruct/runtime`:
+  `destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_destroyed`
   records a real destructible, cuts it, persists and plays it after destroying the source world.
 - The tests are CPU and do not verify the image. Build and run a gallery that enables the plugin
   in the player and in the editor's editing and Play: the editor draws with its editor loop, so a

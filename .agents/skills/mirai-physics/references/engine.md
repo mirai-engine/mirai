@@ -171,7 +171,7 @@ differs from its defaults:
   `physics.collision` and keeps its number; a push that does not apply, `physics.collision_push`.
 - `collision_filter` resolves preset, own collision and group into the bit `Filter` that the solver
   sees. A collision change (preset, sensor, masks, group or settings) re-filters the shape
-  (`shape_set_filter`, `character_set_filter`, `destructible_set_filter`), never rebuilds it.
+  (`shape_set_filter`, `character_set_filter`, `breakable_set_filter`), never rebuilds it.
 - `collision_off` leaves the collider colliding with nothing; queries pass through it. Over the
   network the `Collider` travels whole
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-another-library-simulates)).
@@ -197,7 +197,9 @@ Overlaps:
 - `Physics_Settings` (storage) sets the capacities when the simulation world is created; zero takes
   the value of the package. Gravity is a component ([gravity](#gravity)). `hulls`, `meshes` and
   `heightfields` budget the resident geometry (the defaults of `sim.world_desc_default` leave room
-  for a terrain of hundreds of chunks, one per slot); `events`, the events of each type per tick.
+  for a terrain of hundreds of chunks, one per slot); `events`, the events of each type per tick;
+  `breakables`, `pieces` and `bonds`, [what breaks](destruction.md#with-the-world), whose pools
+  are made with the first breakable.
 - `Physics_State` (storage with its own `copy`/`swap`/`free`) holds the `sim.World` and the
   entity → body and entity → joint links in two `core.Entity_Map`: dense, the size of what the
   simulation has and not of the entity indices. The link of another generation of an index is
@@ -334,6 +336,9 @@ zone; `gravity.odin` applies it to the simulation.
   (`apply_radial_*`, `apply_sphere_force`, `apply_box_*`, `apply_plane_force`) follow the model's
   [volume forces](physics.md#volume-forces) in world coordinates and also affect characters (a
   radial impulse is a `launch`) and proxies.
+- `strain_region` strains the [breakables](destruction.md#damage-and-fields) its filter meets in a
+  sphere or a box, once the step of the tick ran, with or without breaking them (`weakening`); what
+  it did is in `breakable_events` with the hits of the step.
 
 Manipulation:
 
@@ -605,7 +610,11 @@ cells, makes static bodies of its own in the simulation (`owned.odin`) instead o
   `owned_shape_destroy`): physics never makes, moves or ends an owned body.
 - `owned_body_of` and `owned_shape_user` say from the body and the shape of a `Hit` whose they are
   and which ones, without the owner searching its own lists.
-- `body_info` reads any body of the simulation: of an entity, of a hit, owned or of a fracture.
+- `body_info` reads any body of the simulation: of an entity, of a hit, owned or of a breakable.
+- What breaks is made with `breakable_create` and read, damaged, cut and ended with the other
+  `breakable_*` of `breakables.odin`, which are those of the [solver](destruction.md) on a
+  `Physics_State`: its state is the simulation's, so the library keeps only its handle in a table.
+  Its bodies name the entity it was made for until `breakable_body_name` gives them one.
 - A bake or a test that simulates without a world makes the simulation with `state_make` and
   advances it with `simulate`, which applies only the requests of areas.
 - A cache outside the world that keeps bodies asks `simulation_replaced` whether they are still
