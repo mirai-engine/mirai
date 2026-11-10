@@ -125,6 +125,7 @@ displaced_swap :: proc(r: ^Renderer, index: u32, mesh: Mesh_Handle) {
 	m.first_instance = i32(index)
 	inst.meta.x = u32(mesh) | u32(ray_cut_always(m^)) << INSTANCE_RAY_SHIFT
 	s.ray_cuts_stale = true
+	r.textures.residency.stale = true
 	if !pose_instance_box(s, index) {
 		instance_touch(s, index)
 	}

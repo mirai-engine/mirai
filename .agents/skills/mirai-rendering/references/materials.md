@@ -209,7 +209,12 @@ A texture of an asset resides with the levels that the distance of what shows it
   farthest ends up coarser. Those this holds back are counted in `textures_reduced`; those that do
   not have their levels yet, in `textures_pending`.
 - **When.** The estimate runs between frames (`textures_update`) only if a view or a source moved
-  `TEXTURE_VIEW_MOVE`, or instances, materials, batches or textures changed. `host`
+  `TEXTURE_VIEW_MOVE`, or what the scene shows changed: its instance table, the mesh or the
+  materials of an instance, a material, a batch or a texture. An instance that only moves, or is
+  hidden or shown, asks again alone when its row goes to the GPU (`textures_touched`): nearer, its
+  textures take the finer level at once; `TEXTURE_FAR_STEP` farther than where it last asked, or
+  hidden, the scene is estimated again only if a texture was at the level that instance asked.
+  A level is never coarser than the estimate of the whole scene gives. `host`
   (`app_textures_stream`, in `app_frame_begin`) reads up to `TEXTURE_READS` at a time in jobs,
   each decoding only the levels it gives (the smallest lie at the start of the `.tex` stream),
   first those that need more levels (those that free memory if the pool is exceeded) and those
@@ -534,8 +539,8 @@ The light that crosses glass is paid for with its detail only where it is seen:
 - `glass_mean.comp` writes it in `Gpu_Instance.glass`: the filter of each blend face averaged by
   area, evaluating the same material as the visible surface; the faces with a program, from their
   [points](#surface-programs-in-rays-and-raster). It runs in the first view of a frame that
-  uploaded instances, materials or geometry, before any ray, only with `colored_shadows` and glass
-  in the scene.
+  uploaded the instance table, an instance with blend faces, materials or geometry, before any
+  ray, only with `colored_shadows` and glass in the scene.
 - In the traversal (`BLEND_MEANS`), a blend-only instance multiplies the ray's filter by its mean
   without reading the triangle; a mixed one reads the triangle's material to know whether it is
   blend. No ray reads textures or evaluates programs for that; glass with a program is corrected

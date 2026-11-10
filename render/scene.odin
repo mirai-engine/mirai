@@ -1593,9 +1593,11 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         flags:u32
         given:Instance_Given
         before:Gpu_Instance
+        layers:Instance_Overlays
         if int(index)<old {
             inst:=s.instances[index]
             before=inst
+            layers=s.overlays[index]
             flags=inst.meta.w
             instance_changed_near(s,&s.instances[index])
             if s.instance_keys[index]==(Instance_Key{desc.object_id,desc.copy_owner,desc.copy_variant}) {
@@ -1612,6 +1614,10 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             spatial||=before.meta.x&INSTANCE_MESH_MASK!=mesh || before.world!=s.instances[index].world
             // A pose its instance no longer shows goes.
             if before.meta.x&INSTANCE_MESH_MASK!=mesh && mesh_displaced(s,before.meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
+            // Another mesh or other materials show other textures: their levels are estimated again (textures_touched).
+            if before.meta.x&INSTANCE_MESH_MASK!=mesh || before.meta.y!=s.instances[index].meta.y || before.slot_materials!=s.instances[index].slot_materials || layers!=s.overlays[index] {
+                r.textures.residency.stale=true
+            }
         }
         if int(index)>=old {before=INSTANCE_ABSENT}
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
@@ -2235,7 +2241,16 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	// What the frame's transient memory has no room for stays dirty and goes
 	// with the next frame: the GPU never falls behind the scene unnoticed.
 	ok := true
-	if s.instances_dirty || s.touched_count > 0 || s.materials_dirty || len(s.material_ranges) > 0 {r.glass_stale = true}
+	textures_touched(r)
+	if s.instances_dirty || s.materials_dirty || len(s.material_ranges) > 0 {r.glass_stale = true}
+	// The row of an instance with glass brings the mean the CPU holds, not the one glass_mean.comp gave it.
+	if !r.glass_stale && len(s.translucent) > 0 {
+		each: for range, more := touched_range(s, 0); more; range, more = touched_range(s, range.first + range.count) {
+			for &inst in s.instances[range.first:][:range.count] {
+				if inst.meta.w & INSTANCE_FLAG_TRANSLUCENT != 0 {r.glass_stale = true;break each}
+			}
+		}
+	}
 	if s.materials_dirty {
 		if upload_transient(r, cmd, s.materials[:], s.material_buffer) {
 			s.materials_dirty = false

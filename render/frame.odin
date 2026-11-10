@@ -478,7 +478,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
     s:=&r.scene
-    if s.instances_dirty || s.touched_count>0 || s.materials_dirty || len(s.material_ranges)>0 {r.textures.residency.stale=true}
     r.scene_uploads_change=s.instances_dirty || s.touched_count>0 || s.materials_dirty || len(s.material_ranges)>0 || s.lights_dirty || s.lights_changed
     s.lights_changed=false
     texture_uploads_record(r,cmd)
