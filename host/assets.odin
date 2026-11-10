@@ -40,6 +40,7 @@ ASSETS_MESH_NONE :: render.Mesh_Handle(max(u32))
 
 Assets_Desc :: struct {
     root:string,               // folder of the asset registry
+    imported:string,           // the imported folder that goes with root (asset.Registry); "" for none
     cache:string,              // file where the registry keeps what it scanned; "" for none
     renderer:^render.Renderer, // nil: nothing is uploaded
     allocator:mem.Allocator,   // context.allocator when unset
@@ -257,10 +258,10 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     capacity:=desc.capacity>0?desc.capacity:ASSETS_DEFAULT_CAPACITY
     a^={allocator=allocator,renderer=desc.renderer}
-    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator)
+    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator,desc.imported)
     // A copy of an asset made outside the editor gets an id of its own.
     a.registry.resolve_duplicates=true
-    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix)}
+    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.imported)}
     asset.types_init(&a.types,allocator)
     a.index=make(map[base.Asset_Id]Assets_Ref,allocator)
     a.derived=make(map[u64]u32,allocator)

@@ -35,6 +35,7 @@ Reader :: struct {
     animations:[dynamic]asset.Animation_Clip_Desc,
     warnings:[dynamic]string,
     programs:[dynamic]string, // the Surface programs it wrote to the shaders of the project, their files
+    files:[dynamic]string,    // the files a format read besides the source: a change of one imports the source again
     degenerate:int,       // faces without area the reader skipped
     // What the procedures of the reader keep.
     image_rows:map[Image_Key]int,
@@ -172,6 +173,7 @@ read_source :: proc(r:^Reader,path:string) -> (bytes:[]u8,ok:bool) {
     data,error:=serial.file_read(path,context.temp_allocator,limit=MAX_SOURCE_BYTES)
     #partial switch error {
     case .None:
+        if path!=r.path {append(&r.files,strings.clone(path,context.temp_allocator))}
         return data,true
     case .Not_Found:
         return nil,fail(r,.Not_Found,"%s does not exist",path)
