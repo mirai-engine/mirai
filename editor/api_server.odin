@@ -548,9 +548,13 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     }
     entry:=&st.entries[st.count]
     entry^={state=st,session=s,run=m.run}
+    // The types of the editor are known here: the library of the API has its own type table.
+    params_info,result_info:=m.params_info,m.result_info
+    if params_info==nil && m.params!=nil {params_info=type_info_of(m.params)}
+    if result_info==nil && m.result!=nil {result_info=type_info_of(m.result)}
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
-        params_info=m.params_info,result_info=m.result_info,
+        params_info=params_info,result_info=result_info,
         params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {

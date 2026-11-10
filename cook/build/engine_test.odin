@@ -149,6 +149,10 @@ declared :: proc(folder,package_path,file:string) -> string {
     return string(data)
 }
 
+// The date a test gives a file to tell whether it is written again, without waiting for the clock of the file system to tick.
+@(private="file")
+PAST :: time.Time{_nsec=1_500_000_000*1_000_000_000}
+
 // What a project's fingerprint reads of the declarations of the engine.
 @(private="file")
 modified :: proc(path:string) -> i64 {
@@ -388,12 +392,10 @@ a_declaration_with_nothing_to_write_leaves_the_times_of_its_files :: proc(t:^tes
     errors,_:=declaring(desc)
     if !declared_ok(t,errors) {return}
     stage,declaration:=of_folder(desc.stage,"thing","thing.odin"),of_folder(desc.decl,"thing","thing.odin")
+    // A time of long ago: a file written again would take the one of now.
+    for file in ([2]string{stage,declaration}) {testing.expect(t,os.change_times(file,PAST,PAST)==nil,file)}
     stage_before,declaration_before:=modified(stage),modified(declaration)
     if !testing.expect(t,stage_before>0 && declaration_before>0,"both are written") {return}
-
-    // The file times come from a clock that ticks every few milliseconds: two
-    // writes inside one tick would look like one.
-    time.sleep(20*time.Millisecond)
 
     quiet_errors,changed:=declaring(desc)
     if !declared_ok(t,quiet_errors) {return}
@@ -441,9 +443,9 @@ a_declaration_leaves_the_files_of_the_package_below_it :: proc(t:^testing.T) {
     if !declared_ok(t,errors) {return}
     nested_decl,nested_stage:=of_folder(desc.decl,"thing/nested","nested.odin"),of_folder(desc.stage,"thing/nested","nested.odin")
     testing.expect(t,os.is_file(nested_decl) && os.is_file(nested_stage),"the package below is declared")
+    testing.expect(t,os.change_times(nested_decl,PAST,PAST)==nil)
     nested_before:=modified(nested_decl)
 
-    time.sleep(20*time.Millisecond)
     alone_errors,changed:=declaring(describe(root,[]string{"thing"}))
     if !declared_ok(t,alone_errors) {return}
     testing.expect(t,!changed.stage && !changed.decl,"nothing of the package above changed")
@@ -574,6 +576,12 @@ a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^tes
             testing.expect(t,"render.frames" in reach.names[cook] && "asset.*" in reach.names[cook],"under the name it is imported with; all of a package named outside an import")
             testing.expect(t,"cook/build." in reach.names[editor] && "ui." in reach.names[editor])
             for name in reach.names[cook] {testing.expectf(t,!strings.has_prefix(name,"editor.") && !strings.has_prefix(name,"host."),"%s is of no import",name)}
+            // With no declaration moved only the libraries whose sources changed are read, and they link in order.
+            only:=make([]bool,len(libraries))
+            only[core],only[cook]=true,true
+            read:=engine_reach(root,engine_paths(root,mode),libraries,only)
+            testing.expect(t,"render.frames" in read.names[cook] && len(read.names[render])==0 && len(read.names[editor])==0,"the others name what they named")
+            testing.expect(t,read.needs[cook][core] && !read.needs[cook][render] && !slice.contains(read.needs[editor],true))
         } else {
             // In release render and core are one library: the first compiles the second from the stage.
             testing.expect(t,core!=render || len(reach.names[core])==0)

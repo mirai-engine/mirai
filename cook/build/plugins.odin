@@ -207,7 +207,9 @@ plugin_decl_of :: proc(lib:^Plugin_Library) -> string {
 // build of the engine keeps, each of a declaration and of what it reaches:
 // declared.odin), the compiler and the flags. A change of the engine that
 // declares the same builds no plugin again, and one of a declaration builds
-// again the parts that name it or something that reaches it. Nothing of it names the project: with the same
+// again the parts that name it or something that reaches it. The mode of the
+// engine counts: its libraries, which the part links against, are others in
+// each. Nothing of it names the project: with the same
 // flags, every project of an engine shares its libraries through the cache,
 // and those a package of the engine brings. It names the library
 // (plugin_library_name).
@@ -238,7 +240,7 @@ plugin_library_hash_of :: proc(p:^project.Project,lib:^Plugin_Library,compiler:s
 	names:=make(map[string]bool,context.temp_allocator)
 	own_followed:=declared_names_of(engine.decl,sources[:],nil,&names)
 	needed_followed:=declared_names_of(engine.decl,needed,nil,&names)
-	append(&hashed,fmt.tprintf("<%sdeclarations %x>",ENGINE_COLLECTION,declared_key(declared,names)))
+	append(&hashed,fmt.tprintf("<%sdeclarations %v %x>",ENGINE_COLLECTION,engine.mode,declared_key(declared,names)))
 	// Without the hash of something it names, every build of the engine builds it again.
 	if !declared.known || !own_followed || !needed_followed {append(&sources,engine.stamp)}
 	hash,_:=fingerprint(p.engine_root,compiler,hashed[:],sources[:])

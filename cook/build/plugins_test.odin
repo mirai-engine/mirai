@@ -552,6 +552,11 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
         }
         before=after
     }
+    // The libraries of the engine a part links against are others in each mode.
+    other:=engine
+    other.mode=.Dev if engine.mode==.Release else .Release
+    linked:=keys(&p,&libraries,other)
+    for part in Part {testing.expectf(t,linked[part]!=before[part],"%v against the libraries of another mode is another library",part)}
     // Without the index of the declarations, a library follows every build of the engine.
     testing.expect(t,os.remove(engine.declared)==nil)
     for build in ([2]string{"1","2"}) {

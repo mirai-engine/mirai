@@ -166,6 +166,7 @@ DECLARE_VERSION :: 10
 ENGINE_STAGE_COLLECTION :: "staged"
 
 Engine_Paths :: struct {
+    mode:Engine_Mode,                 // of the binaries there: the one asked for, but in an installed engine
     folder:string,
     decl:string,                      // the collection "mirai" of a project
     declared:string,                  // what each declaration is with what it reaches (declared.odin)
@@ -236,7 +237,8 @@ engine_mode_resolve :: proc(engine_root:string,mode:Engine_Mode) -> Engine_Mode 
 engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allocator) -> (paths:Engine_Paths) {
     context.allocator=allocator
     folders:=ENGINE_MODE_FOLDERS
-    paths.folder=project.path(engine_root,".mirai","engine",folders[engine_mode_resolve(engine_root,mode)])
+    paths.mode=engine_mode_resolve(engine_root,mode)
+    paths.folder=project.path(engine_root,".mirai","engine",folders[paths.mode])
     paths.decl=project.path(paths.folder,"decl")
     paths.declared=project.path(paths.folder,"engine.declared")
     paths.stage=project.path(paths.folder,"stage")
@@ -428,29 +430,36 @@ Engine_Reach :: struct {
     names:[]map[string]bool,
     followed:[]bool,  // false: it names declarations no hash follows
     needs:[][]bool,   // [library][library before it]
-    packages:[][ENGINE_PACKAGE_COUNT]bool, // [package]: the packages it reaches
 }
 
+// only: the libraries to read, when no declaration moved: the others name
+// what they named, and those read link one after another, which asks for no
+// more than the few of them there are. nil: every library.
 @(private)
-engine_reach :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Library) -> (reach:Engine_Reach) {
+engine_reach :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Library,only:[]bool=nil) -> (reach:Engine_Reach) {
     a:=context.temp_allocator
     reach.names=make([]map[string]bool,len(libraries),a)
     reach.followed=make([]bool,len(libraries),a)
     reach.needs=make([][]bool,len(libraries),a)
-    reach.packages=make([][ENGINE_PACKAGE_COUNT]bool,ENGINE_PACKAGE_COUNT,a)
+    packages:=make([][ENGINE_PACKAGE_COUNT]bool,ENGINE_PACKAGE_COUNT,a)
     owner:[ENGINE_PACKAGE_COUNT]int
     for library,which in libraries {
         reach.names[which]=make(map[string]bool,a)
         reach.followed[which]=true
         reach.needs[which]=make([]bool,len(libraries),a)
+        if only!=nil {
+            if !only[which] {continue}
+            for before in 0..<which {reach.needs[which][before]=only[before]}
+        }
         for path,at in library.packages {
             index:=library.first+at
             owner[index]=which
-            row:=&reach.packages[index]
+            row:=&packages[index]
             reach.followed[which]&&=declared_names_of(paths.decl,engine_sources(root,{path}),library.packages,&reach.names[which],row,index)
+            if only!=nil {continue}
             for other in 0..<index {
                 if !row[other] {continue}
-                for &to,beyond in row {to||=reach.packages[other][beyond]}
+                for &to,beyond in row {to||=packages[other][beyond]}
             }
             for reached,other in row {
                 if reached && owner[other]!=which {reach.needs[which][owner[other]]=true}
@@ -471,7 +480,9 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
     done.mode=desc.mode
     compiled:=make([dynamic]string,allocator)
     result=engine_build_parts(desc,&done,&compiled)
-    result.mode,result.shaders,result.restored,result.programs=done.mode,done.shaders,done.restored,done.programs
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    result.shaders=done.shaders
+    result.mode,result.restored,result.programs=done.mode,done.restored,done.programs
     result.compiled=compiled[:]
     result.seconds=time.duration_seconds(time.tick_since(tick))
     return
@@ -567,9 +578,17 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
 
     // What names a declaration that moved, or one that reaches it, compiles
     // again, unless another checkout built it from the same: it is copied.
-    reach:=engine_reach(root,paths,libraries)
+    // With no declaration moved, the libraries whose sources stand name what
+    // they named: only the others are read.
+    all:=declarations_moved || !declared.known || plan.previous.programs_against==0
+    for was,which in plan.previous.libraries {all||=!staged[which] && was.against==0}
+    reach:=engine_reach(root,paths,libraries,nil if all else staged)
     against:=make([]u64,len(libraries),context.temp_allocator)
     for library,which in libraries {
+        if !all && !staged[which] {
+            against[which]=plan.previous.libraries[which].against
+            continue
+        }
         if reach.followed[which] && declared.known {against[which]=declared_key(&declared,reach.names[which])}
         if against[which]!=0 && against[which]==plan.previous.libraries[which].against {continue}
         if !staged[which] {
@@ -587,11 +606,13 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         }
     }
     programs:=engine_program_sources(paths)
-    program_names:=make(map[string]bool,context.temp_allocator)
-    program_reach:[len(programs)][ENGINE_PACKAGE_COUNT]bool
-    programs_followed:=declared.known
-    for program,at in programs {programs_followed&&=declared_names(paths.decl,program.source,nil,&program_names,&program_reach[at])}
-    programs_against:=declared_key(&declared,program_names) if programs_followed else 0
+    programs_against:=plan.previous.programs_against
+    if all {
+        program_names:=make(map[string]bool,context.temp_allocator)
+        programs_followed:=declared.known
+        for program in programs {programs_followed&&=declared_names(paths.decl,program.source,nil,&program_names)}
+        programs_against=declared_key(&declared,program_names) if programs_followed else 0
+    }
     build_programs:=desc.force || stamp.programs!=plan.programs || programs_against==0 || stamp.programs_against!=programs_against
     for program in programs {
         folder:=project.path(paths.folder,"programs",program.package_name,allocator=context.temp_allocator)
@@ -618,21 +639,14 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         }
         append(&tasks,task)
     }
-    for program,at in programs {
-        task:=Engine_Task{name=program.name,stream=fmt.tprintf("program-%s",program.package_name),library=-1,state=.Done}
+    // A program links against the libraries its imports reach, most of them: it waits for them all.
+    every:=make([]bool,len(libraries),context.temp_allocator)
+    slice.fill(every,true)
+    for program in programs {
+        task:=Engine_Task{name=program.name,stream=fmt.tprintf("program-%s",program.package_name),library=-1,state=.Done,needs=every}
         if build_programs {
             task.state=.Pending
             task.command=engine_program_command(compiler,paths,program,plan.flags[:])
-            // A program links against every library its imports reach.
-            task.needs=make([]bool,len(libraries),context.temp_allocator)
-            for library,which in libraries {
-                for _,offset in library.packages {
-                    index:=library.first+offset
-                    for reached,from in program_reach[at] {
-                        task.needs[which]||=reached && (from==index || reach.packages[from][index])
-                    }
-                }
-            }
         }
         append(&tasks,task)
     }
@@ -724,7 +738,8 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,tasks:[]Engine_Task,data
                 stream,error:=os.open(file,{.Write,.Create,.Trunc})
                 if error!=nil {
                     if i>0 {os.close(opened[0])}
-                    failed,ok=engine_fail(.Write_Failed,task.name,""),false
+                    failed=engine_fail(.Write_Failed,task.name,"")
+                    ok=false
                     break start
                 }
                 opened[i]=stream
@@ -732,7 +747,8 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,tasks:[]Engine_Task,data
             process,error:=subprocess.start({command=task.command,env=child_environment(root,context.temp_allocator),stderr=opened[0],stdout=opened[1]},compiler_limits(root))
             os.close(opened[0]);os.close(opened[1])
             if error!=nil {
-                failed,ok=engine_fail(.Compiler_Failed,task.name,""),false
+                failed=engine_fail(.Compiler_Failed,task.name,"")
+                ok=false
                 break
             }
             task.process,task.state=process,.Running
@@ -747,7 +763,10 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,tasks:[]Engine_Task,data
             if !state.exited {
                 if general,is_general:=error.(os.General_Error);is_general && general==.Timeout {continue}
                 task.state=.Failed
-                if ok {failed,ok=engine_fail(.Compiler_Failed,task.name,""),false}
+                if ok {
+                    failed=engine_fail(.Compiler_Failed,task.name,"")
+                    ok=false
+                }
                 continue
             }
             files:=streams(paths,&task)
@@ -771,7 +790,8 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,tasks:[]Engine_Task,data
             if !ok {continue}
             text:=strings.trim_space(strings.concatenate({rest,"\n",said[1]},context.temp_allocator))
             if text=="" && len(diagnostics)==0 {text=compiler_silent_failure(state.exit_code,context.temp_allocator)}
-            failed,ok=engine_fail(.Out_Of_Memory if compiler_out_of_memory(text) else .Compile,task.name,text),false
+            failed=engine_fail(.Out_Of_Memory if compiler_out_of_memory(text) else .Compile,task.name,text)
+            ok=false
             // The diagnostics of a staged source point at the source.
             for &diagnostic in diagnostics {
                 if strings.has_prefix(diagnostic.file,paths.stage) {diagnostic.file=project.path(root,diagnostic.file[len(paths.stage):])}
