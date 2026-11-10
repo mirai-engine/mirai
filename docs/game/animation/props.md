@@ -29,21 +29,18 @@ The target of each track says what it drives, by text:
 ## Play and seek
 
 ```odin
-// animations:^core.Table(anim.Animation), requests:^anim.Animation_Requests
-if a:=core.edit(animations,door);a!=nil {
-    anim.animation_clip(a,"open",.2,loop=false)          // cross-fades from the clip it played
-    a.speed=-1                                           // backwards
-}
-anim.animation_command(requests,door,.Play)              // from its start, in the next tick
-anim.animation_command(requests,door,.Pause)             // .Resume goes on; .Stop rewinds
+// requests:^anim.Animation_Requests
+anim.animation_command(requests,door,.Play)              // opens: from its start, in the next tick
+anim.animation_command(requests,door,.Resume,speed=-1)   // closes from where it is
+anim.animation_command(requests,door,.Pause)             // .Stop rewinds and waits
 anim.animation_seek(requests,door,0.5)                   // jumps there, skipping markers
 ```
 
-- The commands are the same for a door, a lift and a cutscene, from any step: they need no
-  `^core.Table(anim.Animation)`. `Animation.playing` in the scene says whether it starts by itself,
-  and a command holds until your code changes that field: a step that owns the `Animation` writes
-  `a.playing` and seeks, and asks with commands only for entities it does not write;
-  `anim.animation_playing(playback.ptr,door)` says what the clip does now.
+- The commands are the same for a door, a lift and a cutscene, from any step. `Animation.playing`
+  and `speed` in the scene only say whether it starts by itself, and at what speed; once the world
+  plays, only commands change it. `anim.animation_playing(playback.ptr,door)` says what it does now.
+- Another clip of the same `.anim` is `anim.animation_clip(core.edit(animations,e),"close")`: it
+  cross-fades into it from its start and plays as the last command said.
 - What plays over the clip (a wave over the arm, a mix by a value, an action) is a layer or an
   action of a `.character` over that `.anim`, as for a character: [actions.md](actions.md).
 

@@ -174,8 +174,8 @@ The network and physics share only `core` tables, each with one writer:
 ([networked destruction](../../mirai-physics/references/engine-destruct.md#network)) and
 `terrain_multiplayer` terrain edits
 ([terrain](../../mirai-world/references/terrain.md#network)). The `behavior` minds decide only on
-the server, and clients see what each agent does in its replicated `Mind_Presentation`, without
-predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
+the server, and clients play what their actions play through the replicated `Animation_Played`,
+without predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
 
 ## Authority and players
 

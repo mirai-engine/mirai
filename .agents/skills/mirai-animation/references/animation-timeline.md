@@ -48,14 +48,16 @@ after the fields.
 
 ## Commands
 
-`Animation_Requests.timeline` is the one queue that plays, pauses, resumes, stops and seeks a clip:
-`animation_command(requests, entity, command, time)` and `animation_seek`. `animation_sample` takes
-them. `Play` starts from the start (the end, backwards); `Stop` returns there and waits; `Seek`
-jumps without firing the markers it skips.
+`Animation_Requests.timeline` is the one queue that plays, pauses, resumes, stops, reverses and
+seeks a clip: `animation_command(requests, entity, command, time, speed)` and `animation_seek`.
+`animation_sample` takes them. `Play` starts from the start (the end, backwards) at `speed`;
+`Resume` goes on at `speed` from where it is; `Stop` returns to the start and waits; `Seek` jumps
+without firing the markers it skips.
 
-- `Animation` is the game's, its one writer: what a command asks is kept in the playback of the
-  entity, in place of `Animation.playing`, until the game changes that field.
-  `animation_playing` says what the clip does, and `Animation_Progress` keeps it for a saved game.
+- `Animation.playing` and `speed` say only how the clip starts when its entity starts to play;
+  from then on its playback keeps whether it plays and at what speed, and only commands change
+  them. `animation_playing` says what the clip does, and `Animation_Progress` keeps time, speed and
+  whether it plays for a saved game, which `progress_resume` asks back with commands.
 - The editor, which does not play, takes only `Seek`: its previews seek.
 - A command for an entity that plays nothing is the problem `animation.command`.
 

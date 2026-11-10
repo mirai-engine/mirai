@@ -150,8 +150,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
    livelier turn or start asks for turn or start clips, not transitions.
 4. **Gameplay actions:** one request, `play`, by the name of an action of the set. What is added
    to the locomotion (waving, reloading, hitting with the torso) names a layer of the set; what
-   takes the whole body (vault, hit received, death, emote) names none, leaves the search by
-   inertialization and the matching resumes by itself. Each has its priority, cancellation, entry
+   takes the whole body (vault, hit received, death, emote) names none and fades in over the base
+   while the matching goes on under it. Each has its priority, cancellation, entry
    and exit; its sections and windows are spans of its clip. The game reacts to
    `Animation_Events`, not to a state.
 5. **On top of the pose:** the layers of the set, over the matched pose: an aim offset is an
@@ -195,14 +195,22 @@ Adapt the source's data to these features instead of rebuilding its runtime:
 - **One stack, one play, one queue.** What plays over the base is the one stack of layers of the
   set; a moment of the body is one `play` request with one priority rule, in a layer or
   over the whole body; what happens arrives in one `Animation_Events` queue. A game walks, aims,
-  acts and reacts with `play`, `stop`, `set`, `look` and that queue.
+  acts and reacts with `play`, `stop`, `set`, `look` and that queue. Everything a game asks of the
+  animation (goals, controls and warp targets too) goes in the one storage `Animation_Requests`.
+- **Root motion is a channel of the stack:** each layer gives the root delta of its clips by the
+  weight of its pose, over that of the base, and the layers of actions with `body_move` are the
+  share that moves the body. Every layer that moves the root moves the root bone of the base.
+- **What `play` starts replicates by itself:** the end that decides an entity records each action
+  it asks in `Animation_Played`, and the others play it from the tick it started.
+- `Animation.playing` and `speed` only start a clip by itself; once the world plays, commands play,
+  pause, stop, seek and reverse it.
 - The runtime does not allocate in a stable frame; the buffers of the program are reserved at load
   and released when it is retired. The database of a set is built at load, per library and
   skeleton, within its memory cap.
 - Physics is the only writer of the mode and the velocity of a character; animation reads them
   through `match_goal` on each tick and keeps no copy.
-- The transitions of the matching are inertial (its jumps, and a whole-body action entering and
-  leaving it); the crossfade is left for the layers and the actions in them.
+- The jumps of the matching are inertial; the layers and every action, also over the whole body,
+  crossfade over what is under them, the same over a matched base as over a clip.
 - The API and its preview evaluate the same runtime as the game. The `previews` panel samples clips
   on its own.
 - The API expresses intent with names and defaults: it resolves handles and indices inside the

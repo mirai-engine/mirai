@@ -45,7 +45,8 @@ Advance by distance:
 
 ## Requests and order
 
-- `motion_target` enqueues by window name a [spatial target](animation-rigs.md#spatial-targets)
+- `motion_target` enqueues in `Animation_Requests` by window name a
+  [spatial target](animation-rigs.md#spatial-targets)
   that `motion_resolve_targets` places every tick before the rigs sample: a bone or socket reads the
   pose of the previous tick. If what it names is missing, the target stops being used and its last
   position does not remain. `motion_locomotion` delivers the velocity reached in world space
