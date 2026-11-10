@@ -117,7 +117,7 @@ import_model :: proc(o:^Out,file:string) {
     for written in report.assets {
         switch {
         case written.kind==asset.KIND_MESH,written.kind==asset.KIND_MATERIAL: fmt.printfln("%s: %s",written.name,written.detail)
-        case written.kind==asset.KIND_PREFAB: fmt.printfln("wrote assets/%s/%s.prefab",folder,written.name)
+        case written.kind==asset.KIND_SCENE: fmt.printfln("wrote assets/%s/%s.scene",folder,written.name)
         }
     }
     for warning in report.warnings {fmt.printfln("%s: %s",source,warning)}

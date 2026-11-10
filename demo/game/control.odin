@@ -4,7 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import cam "mirai:engine/camera"
-import cine "plugins:cinematics/runtime"
+import anim "plugins:animation/runtime"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
@@ -26,7 +26,7 @@ DOG_BEHIND :: [3]f32{-1.2,0,1.5} // m from its person, in the frame of the perso
 OVERHEAD_BLEND :: cam.Camera_Blend{seconds=0.8,ease=.Cubic_In_Out}
 CAMERA_CYCLE :: [cam.Camera_Preset]cam.Camera_Preset{.Third_Person=.First_Person,.First_Person=.Isometric,.Isometric=.Top_Down,.Top_Down=.Side,.Side=.Third_Person,.Aim=.Third_Person}
 
-DOG_PREFAB :: "control/Dog.prefab"
+DOG_PREFAB :: "control/Dog.scene"
 
 // An AI that walks its body after the body of its leader while no seat drives it.
 @(component,description="An AI walks this body after the leader body while no player drives it.")
@@ -163,10 +163,10 @@ game_follow :: proc(
 // A bark counts when its seat presses bark or the intro asks for it, and flashes the nose for a moment.
 @(step="fixed",stage="react")
 game_barker :: proc(
-    barkers:^core.Table(Barker),actions:inp.Input_Of(Action),events:core.Ref(cine.Cinematic_Events),time:core.Time,
+    barkers:^core.Table(Barker),actions:inp.Input_Of(Action),events:core.Ref(anim.Animation_Events),time:core.Time,
 ) {
     intro_bark:=false
-    for event in events.items {intro_bark ||= event.id==base.name_hash("intro.bark")}
+    for event in events.items {intro_bark ||= event.marker==base.name_hash("intro.bark")}
     for row in 0..<core.count(barkers) {
         if intro_bark || inp.pressed(actions,core.entity_at(barkers,row),.Bark) {
             barker:=core.at(barkers,row)

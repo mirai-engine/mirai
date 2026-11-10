@@ -209,7 +209,7 @@ spawn_point :: proc(s:^asset.Scene_Builder,position:[3]f32) {
 
 write_scene :: proc(o:^Out,hud,sign,lift,hum:base.Asset_Id) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","showcase"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","showcase"))
     defer asset.builder_destroy(&s)
 
     environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.6)

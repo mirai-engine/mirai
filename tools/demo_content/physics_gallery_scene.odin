@@ -81,10 +81,10 @@ physics_burst :: proc(o:^Out) {
     dust.colors={{.9,.72,.42,.85},{1,.9,.65,.65}};dust.drag=1
     id:=asset.content_id(PROJECT,"particle","physics_dust")
     asset.content_check(&o.content,"physics dust",effect.particle_save(path(o,"assets/physics_gallery/physics_dust.particle"),&o.content.types,{id=id,info=dust}))
-    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_PREFAB,PHYSICS_GALLERY_BURST_ID);defer asset.builder_destroy(&s)
+    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,PHYSICS_GALLERY_BURST_ID);defer asset.builder_destroy(&s)
     e:=asset.builder_entity(&s,"Fracture dust")
     asset.builder_set(&s,e,vfx.Particle_Emitter{particle=id,active=true,destroy_when_done=true})
-    asset.builder_save(&s,path(o,"assets/physics_gallery/physics_burst.prefab"))
+    asset.builder_save(&s,path(o,"assets/physics_gallery/physics_burst.scene"))
 }
 
 @(private)
@@ -125,7 +125,7 @@ physics_gallery_primitive :: proc(s:^asset.Scene_Builder,name:string,position,si
 
 write_physics_gallery :: proc(o:^Out) {
     sources:=physics_sources(o);physics_burst(o)
-    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","physics"));defer asset.builder_destroy(&s)
+    s:asset.Scene_Builder;asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","physics"));defer asset.builder_destroy(&s)
     // The sun alone lights the gallery: a sun of 3 is noon.
     u:=daylight(3)
     // Two stops over the meter: the gallery as bright as the demo has it.

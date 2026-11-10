@@ -12,7 +12,7 @@ import "mirai:std/serial"
 // be, and the counter of Scene_Info at the highest of the three. Another kind
 // of document merges as document_merge does.
 scene_merge :: proc(m:^Merge,types:^Types,ours,origin,theirs:^Document) -> Error {
-    if ours.kind!=KIND_SCENE && ours.kind!=KIND_PREFAB {return document_merge(m,ours,origin,theirs)}
+    if ours.kind!=KIND_SCENE {return document_merge(m,ours,origin,theirs)}
     before:Scene_Records
     records_read(ours,types,&before) or_return
     defer records_destroy(&before)

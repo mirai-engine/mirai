@@ -6,7 +6,7 @@ import "mirai:rhi"
 @(test)
 gpu_geometry_thumbnail_evaluates_uv1_maps_and_custom_surface :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS) {return}
+    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS, programs = true) {return}
     defer fixture_destroy(&f)
     renderer,device:=f.renderer,f.device
     state:Thumbnail_GPU;defer thumbnail_destroy(device,&state)
@@ -51,7 +51,7 @@ gpu_geometry_thumbnail_evaluates_uv1_maps_and_custom_surface :: proc(t:^testing.
 @(test)
 gpu_material_capture_reads_what_a_material_gives_at_each_pixel :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS,hardware_rt=false) {return}
+    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS,hardware_rt=false, programs = true) {return}
     defer fixture_destroy(&f)
     renderer,device:=f.renderer,f.device
     state:Thumbnail_Values_GPU;defer thumbnail_values_destroy(device,&state)

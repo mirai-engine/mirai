@@ -138,7 +138,7 @@ write_interface_scene :: proc(o:^Out) {
     if o.content.failed {return}
 
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","interface"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","interface"))
     defer asset.builder_destroy(&s)
     environment,turn,to_sun,disc:=sky_of(o,.Day,render.SUN_DIRECTION,LAMPLIT,1.5)
     sky_set(&s,&environment,turn)

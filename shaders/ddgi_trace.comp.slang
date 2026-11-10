@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // The rays of the probes chosen this frame (ddgi_select.comp): each probe
 // traces the spherical Fibonacci set turned by the rotation of its cell, the
 // same every update. Hits trace their direct light and read the bounces of

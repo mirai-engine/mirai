@@ -20,8 +20,13 @@ Content_Categories :: bit_set[Content_Category;u16]
 CONTENT_STRIP_CATEGORIES :: [?]Content_Category{.Prefab,.Mesh,.Material,.Scene,.Plugin}
 CONTENT_MENU_CATEGORIES :: [?]Content_Category{.Texture,.Animation,.Sound,.Ui}
 CONTENT_CATEGORY_LABELS :: [Content_Category]string{.Prefab="Prefab",.Mesh="Model",.Material="Material",.Scene="Scene",.Plugin="Plugins",.Texture="Texture",.Animation="Animation",.Sound="Sound",.Ui="UI"}
+// What a prefab, a scene with one root (asset.registry_prefab), is shown as wherever the editor keys by
+// kind: color, icon, filter, the kinds a field takes and what a drag carries. No kind of file.
+SHOWN_PREFAB :: asset.Fourcc(u32('P')|u32('R')<<8|u32('F')<<16|u32('B')<<24)
+shown_kind :: proc "contextless" (file:^asset.Registry_File) -> asset.Fourcc {return asset.registry_prefab(file)?SHOWN_PREFAB:file.kind}
+
 // The kind whose color a filter carries; the Plugins filter has its own.
-CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=asset.KIND_PREFAB,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
+CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=SHOWN_PREFAB,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
 CONTENT_PLUGIN_COLOR :: ui.Color{214,107,255,255} // of every kind of a plugin
 
 CONTENT_ROW :: f32(28)        // a row of the list
@@ -83,7 +88,7 @@ CONTENT_USERS_GROUP :: u64(6)
 // line under its thumbnail, its filter and its fields in Details.
 asset_color :: proc "contextless" (kind:asset.Fourcc) -> ui.Color {
     switch kind {
-    case asset.KIND_PREFAB:        return {63,126,255,255}  // Blueprint
+    case SHOWN_PREFAB:             return {63,126,255,255}  // Blueprint
     case asset.KIND_MESH:          return {0,255,255,255}   // Static Mesh
     case asset.KIND_SKELETON:      return {105,181,205,255} // Skeleton
     case asset.KIND_FRACTURE:      return {180,120,110,255} // Geometry Collection
@@ -113,7 +118,7 @@ asset_kind_color :: proc(s:^Session,kind:asset.Fourcc) -> ui.Color {
 // Skeletal Mesh for a mesh on a skeleton.
 asset_file_color :: proc(s:^Session,file:^asset.Registry_File) -> ui.Color {
     if file.kind==asset.KIND_MESH && asset.registry_skeleton(&s.app.assets.registry,file)!={} {return {241,163,241,255}}
-    return asset_kind_color(s,file.kind)
+    return asset_kind_color(s,shown_kind(file))
 }
 
 // The icon of a kind of the engine or of a plugin, with its color.
@@ -121,7 +126,7 @@ asset_icon :: proc(s:^Session,kind:asset.Fourcc) -> (icon:ui.Icon,color:ui.Color
     color=asset_kind_color(s,kind)
     if declared:=asset_plugin_kind(s,kind);declared!=nil {return declared.icon,color}
     switch kind {
-    case asset.KIND_PREFAB:        icon=.Prefab
+    case SHOWN_PREFAB:             icon=.Prefab
     case asset.KIND_MESH:          icon=.Mesh
     case asset.KIND_MATERIAL:      icon=.Sphere
     case asset.KIND_TEXTURE:       icon=.Texture
@@ -149,7 +154,7 @@ asset_kind_label :: proc(s:^Session,kind:asset.Fourcc) -> string {
 
 asset_type_label :: proc(kind:asset.Fourcc) -> string {
     switch kind {
-    case asset.KIND_PREFAB:        return "Prefab"
+    case SHOWN_PREFAB:             return "Prefab"
     case asset.KIND_MESH:          return "Mesh"
     case asset.KIND_MATERIAL:      return "Material"
     case asset.KIND_TEXTURE:       return "Texture"
@@ -172,7 +177,7 @@ asset_type_label :: proc(kind:asset.Fourcc) -> string {
 // The family of a kind; engine is false for a kind of a plugin.
 content_category :: proc "contextless" (kind:asset.Fourcc) -> (category:Content_Category,engine:bool) {
     switch kind {
-    case asset.KIND_PREFAB:   return .Prefab,true
+    case SHOWN_PREFAB:        return .Prefab,true
     case asset.KIND_MESH,asset.KIND_SKELETON,asset.KIND_FRACTURE,asset.KIND_PHYSICS_CACHE: return .Mesh,true
     case asset.KIND_MATERIAL: return .Material,true
     case asset.KIND_TEXTURE:  return .Texture,true
@@ -582,7 +587,7 @@ content_cover_of :: proc(registry:^asset.Registry,prefix:string) -> i32 {
 // Whether the browser lists a file under the filters of kinds.
 @(private)
 content_listed :: proc(c:^Content,file:^asset.Registry_File,opened:[]asset.Fourcc) -> bool {
-    return content_shown(file,opened) && content_kind_taken(c,file.kind)
+    return content_shown(file,opened) && content_kind_taken(c,shown_kind(file))
 }
 
 // Whether a file is a part of an import: its header names an owner
@@ -694,10 +699,10 @@ content_owned :: proc(list:[]Content_Part,owner:base.Asset_Id) -> []Content_Part
 // prefab that needs another is read, once per change of the registry.
 @(private)
 content_variant_base :: proc(registry:^asset.Registry,types:^asset.Types,file:^asset.Registry_File) -> base.Asset_Id {
-    if types==nil || file.kind!=asset.KIND_PREFAB || file.state!=.Asset {return {}}
+    if types==nil || !asset.registry_prefab(file) {return {}}
     nests:=false
     for id in asset.registry_dependencies(registry,file) {
-        if dependency,found:=asset.registry_find(registry,id);found && dependency.kind==asset.KIND_PREFAB {nests=true;break}
+        if dependency,found:=asset.registry_find(registry,id);found && asset.registry_prefab(dependency) {nests=true;break}
     }
     if !nests {return {}}
     scene:asset.Scene
@@ -706,10 +711,10 @@ content_variant_base :: proc(registry:^asset.Registry,types:^asset.Types,file:^a
     return base_id
 }
 
-// Whether an asset is used by another. A scene is never unused: nothing holds it.
+// Whether an asset is used by another. A scene that is no prefab is never unused: nothing holds it.
 @(private)
 content_referenced :: proc(c:^Content,file:^asset.Registry_File) -> bool {
-    if file.kind==asset.KIND_SCENE {return true}
+    if file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {return true}
     _,found:=slice.binary_search_by(c.referenced[:],file.id,proc(a,b:base.Asset_Id) -> slice.Ordering {
         if a==b {return .Equal}
         return .Less if a[0]<b[0] || a[0]==b[0] && a[1]<b[1] else .Greater
@@ -779,7 +784,7 @@ content_matches :: proc(c:^Content,b:^Content_Build,file:^asset.Registry_File,ma
     if b.filter=="" {
         if marked || c.selection_only || c.view.show_parts || !content_part(b.registry,file) {return true}
         owner,_:=asset.registry_find(b.registry,file.owner)
-        return !content_kind_taken(c,owner.kind)
+        return !content_kind_taken(c,shown_kind(owner))
     }
     return content_score(c,file,b.filter)>=0
 }
@@ -800,7 +805,7 @@ content_cards_add :: proc(c:^Content,b:^Content_Build,files:[]i32) {
         append(&c.cards,Content_Card{file=index,name=asset_name(file.path)})
         open:=slice.contains(c.unfolded[:],file.id)
         // A prefab opens to its variants; the parts of its import show in their folders.
-        parts:=content_owned(c.variants[:],file.id) if file.kind==asset.KIND_PREFAB else content_parts_of(c,file.id)
+        parts:=content_owned(c.variants[:],file.id) if asset.registry_prefab(file) else content_parts_of(c,file.id)
         if len(parts)>0 {
             c.cards[at].holds,c.cards[at].open=true,open
             if open {
@@ -1168,7 +1173,7 @@ content_reveal_open :: proc(c:^Content,registry:^asset.Registry) {
     }
     if content_part(registry,file) && !c.view.show_parts {
         // A prefab opens to its variants, not its parts: they show in their folder.
-        if owner,_:=asset.registry_find(registry,file.owner);owner.kind==asset.KIND_PREFAB {
+        if owner,_:=asset.registry_find(registry,file.owner);asset.registry_prefab(owner) {
             c.view.show_parts=true
         } else {
             file=owner
@@ -1643,14 +1648,15 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
 @(private)
 // points: the side it is shown at. clip: of an animation, from 1; 0: the asset.
 content_preview :: proc(s:^Session,file:^asset.Registry_File,points:f32,clip:u32=0) -> (icon:ui.Icon,color:ui.Color,quad:ui.Quad) {
-    icon,color=asset_icon(s,file.kind)
+    kind:=shown_kind(file)
+    icon,color=asset_icon(s,kind)
     a:=s.app.assets
     if a.renderer==nil {return}
-    switch file.kind {
+    switch kind {
     case asset.KIND_MATERIAL:  quad=ui.quad_whole(host.UI_QUAD_MATERIAL_PREVIEW,host.assets_material_row(a,file.id))
     case asset.KIND_MESH:      quad=preview_geometry(s,.None,file.id,points)
     case asset.KIND_TEXTURE:   quad=texture_quad(s,file.id)
-    case asset.KIND_PREFAB:    quad=preview_document(s,file.id,points)
+    case SHOWN_PREFAB:         quad=preview_document(s,file.id,points)
     case asset.KIND_SCENE:     quad=preview_scene(s,file.id,points)
     case:                      quad=preview_provided(s,file,clip,points)
     }
@@ -1909,10 +1915,10 @@ content_item_tip :: proc(s:^Session,card:Content_Card,file:^asset.Registry_File)
     if card.clip>0 {return "Clip"}
     if content_part(registry,file) {
         owner,_:=asset.registry_find(registry,file.owner)
-        return fmt.tprintf("%s, in %s",asset_kind_label(s,file.kind),asset_name(owner.path))
+        return fmt.tprintf("%s, in %s",asset_kind_label(s,shown_kind(file)),asset_name(owner.path))
     }
-    if agent:=ai_asset_mark(s,file.path);agent!=nil {return fmt.tprintf("%s · %s",asset_kind_label(s,file.kind),ai_chat_title(base.text_get(agent.title[:])))}
-    return asset_kind_label(s,file.kind)
+    if agent:=ai_asset_mark(s,file.path);agent!=nil {return fmt.tprintf("%s · %s",asset_kind_label(s,shown_kind(file)),ai_chat_title(base.text_get(agent.title[:])))}
+    return asset_kind_label(s,shown_kind(file))
 }
 
 // The mark of an asset a unit changed and that waits for review, in the color of its agent.
@@ -2378,7 +2384,7 @@ content_crumbs_build :: proc(s:^Session,act:^Content_Actions) {
 @(private)
 content_arm :: proc(s:^Session,file:^asset.Registry_File,name:string) {
     g:=s.gui
-    d:=Drag{kind=.Asset,asset_id=file.id,asset_kind=file.kind}
+    d:=Drag{kind=.Asset,asset_id=file.id,asset_kind=shown_kind(file)}
     d.label_length=copy(d.label[:],name)
     if s.mode==.Play || !placement_subject(d) || play_viewed(s) || watching(s) || scene_covered(s) {return}
     tool_leave(s)
@@ -2398,7 +2404,7 @@ content_asset_action :: proc(s:^Session,w:core.World_Ref,card:Content_Card,it:ui
         // A clip of a library: it opens in the document of the library, and
         // what it is let go on plays it (asset_drop_take).
         if it.pressed {
-            d:=Drag{kind=.Asset,asset_id=file.id,asset_kind=file.kind}
+            d:=Drag{kind=.Asset,asset_id=file.id,asset_kind=shown_kind(file)}
             base.text_set(d.part[:],card.name)
             drag_begin(g,d,card.name)
         }
@@ -2421,7 +2427,7 @@ content_asset_action :: proc(s:^Session,w:core.World_Ref,card:Content_Card,it:ui
         }
         return ""
     }
-    if it.pressed {drag_begin(g,{kind=.Asset,asset_id=file.id,asset_kind=file.kind},card.name)}
+    if it.pressed {drag_begin(g,{kind=.Asset,asset_id=file.id,asset_kind=shown_kind(file)},card.name)}
     if it.clicked || it.right {content_place_set(c,content_folder_of(file.path))}
     if it.clicked {content_select(c,file.id,false)}
     if it.right {
@@ -2432,7 +2438,7 @@ content_asset_action :: proc(s:^Session,w:core.World_Ref,card:Content_Card,it:ui
     // While an asset document covers the scene, a click does nothing to it.
     scene:=!scene_covered(s)
     switch {
-    case it.double && s.mode!=.Play && file.kind!=asset.KIND_SCENE && file.kind!=asset.KIND_PREFAB && asset_document_opens(s,file.kind):
+    case it.double && s.mode!=.Play && file.kind!=asset.KIND_SCENE && asset_document_opens(s,file.kind):
         g.drag,g.placement={},{}
         content_used(s,file.id)
         asset_document_open(s,file.id)
@@ -2442,7 +2448,7 @@ content_asset_action :: proc(s:^Session,w:core.World_Ref,card:Content_Card,it:ui
             material_assign(s,w,meshes[:],file.id)
         }
     case it.clicked && s.mode!=.Play && scene && asset_kind_click(s,w,file):
-    case (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB) && it.double && s.mode==.Edit:
+    case file.kind==asset.KIND_SCENE && it.double && s.mode==.Edit:
         g.drag,g.placement={},{}
         content_used(s,file.id)
         return file.path
@@ -2484,9 +2490,9 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
     if ui.popup(ctx,popup,{min_width=200}) {
         ui.id_push(ctx,popup)
         defer ui.id_pop(ctx)
-        document:=file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB
+        document:=file.kind==asset.KIND_SCENE
         opens:=document?s.mode==.Edit:s.mode!=.Play && asset_document_opens(s,file.kind)
-        icon,_:=asset_icon(s,file.kind)
+        icon,_:=asset_icon(s,shown_kind(file))
         if ui.menu_item(ctx,ui.id(ctx,"open"),"Open",{icon=icon,disabled=!opens}) {
             g.drag,g.placement={},{}
             content_used(s,file.id)
@@ -2510,7 +2516,7 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
                 if heard {sound_hear_stop(s)} else {sound_hear(s,file.id)}
             }
         }
-        if file.kind==asset.KIND_PREFAB {
+        if asset.registry_prefab(file) {
             if ui.menu_item(ctx,ui.id(ctx,"variant"),"Create variant",{icon=.Prefab,disabled=s.mode!=.Edit || watching(s)}) {
                 path:=prefab_variant_path(s,file.id)
                 _,error:=prefab_variant_create(s,file.id,path)

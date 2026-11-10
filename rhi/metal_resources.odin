@@ -322,12 +322,16 @@ texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 // ---------------------------------------------------------------- pipelines
 
 // Identical source and entry bytes compile once while any pipeline uses them,
-// including an unchanged shader shared by active and candidate generations.
+// including an unchanged shader shared by active and candidate generations;
+// each set of constants a pipeline gives them is a function of that library
+// (MTLFunctionConstantValues: the function constants SPIRV-Cross emits for
+// the specialization constants of the SPIR-V).
 // Returns the entry point (+1) and a cache handle owned by the pipeline.
 @(private)
-mtl_function :: proc(d: ^Device, code: ^Shader_Code) -> (function:^MTL.Function,shader:base.Handle) {
+mtl_function :: proc(d: ^Device, code: ^Shader_Code, constants: Shader_Constants, pipeline: string) -> (function:^MTL.Function,shader:base.Handle) {
 	NS.scoped_autoreleasepool()
 	if len(code.msl) == 0 || code.msl_entry=="" {set_error(d, "shader %s needs MSL and its entry point", code.name); return}
+	if !shader_constants_valid(d, pipeline, code, constants) {return}
 	hash:sha2.Context_256
 	sha2.init_256(&hash)
 	source_size:=u64(len(code.msl))
@@ -336,39 +340,63 @@ mtl_function :: proc(d: ^Device, code: ^Shader_Code) -> (function:^MTL.Function,
 	sha2.update(&hash,transmute([]u8)code.msl_entry)
 	fingerprint:[32]u8
 	sha2.final(&hash,fingerprint[:])
-	if function,shader=mtl_function_cached(d,fingerprint);function!=nil {return}
-	source := mtl_string(code.msl)
-	defer mtl_release(source)
-	options := MTL.CompileOptions.alloc()->init()
-	defer mtl_release(options)
-	// cook/shaders emits MSL 2.4 (inline ray queries need it), and 3.1 for the
-	// stages with atomics on textures.
-	MTL.CompileOptions_setLanguageVersion(options, ._3_1)
-	library, err := MTL.Device_newLibraryWithSource(d.device, source, options)
-	if library == nil {mtl_set_ns_error(d, err, "shader %s does not compile", code.name); return}
+	library:^MTL.Library
+	if function,shader,library=mtl_function_cached(d,fingerprint,constants);function!=nil {return}
+	if library==nil {
+		source := mtl_string(code.msl)
+		defer mtl_release(source)
+		options := MTL.CompileOptions.alloc()->init()
+		defer mtl_release(options)
+		// cook/shaders emits MSL 2.4 (inline ray queries need it), and 3.1 for the
+		// stages with atomics on textures.
+		MTL.CompileOptions_setLanguageVersion(options, ._3_1)
+		err: ^NS.Error
+		library, err = MTL.Device_newLibraryWithSource(d.device, source, options)
+		if library == nil {mtl_set_ns_error(d, err, "shader %s does not compile", code.name); return}
+	}
 	entry := mtl_string(code.msl_entry)
 	defer mtl_release(entry)
-	function = MTL.Library_newFunctionWithName(library, entry)
-	if function == nil {mtl_release(library);set_error(d, "shader %s has no entry point %s", code.name, code.msl_entry);return}
+	specialize_error: ^NS.Error
+	if len(code.constants) == 0 {
+		function = MTL.Library_newFunctionWithName(library, entry)
+	} else {
+		values := MTL.FunctionConstantValues.alloc()->init()
+		defer mtl_release(values)
+		for id in 0 ..< len(code.constants) {
+			value := id in constants
+			MTL.FunctionConstantValues_setConstantValue_type_atIndex(values, &value, .Bool, NS.UInteger(id))
+		}
+		function, specialize_error = MTL.Library_newFunctionWithName_constantValues(library, entry, values)
+	}
+	if function == nil {
+		mtl_release(library)
+		mtl_set_ns_error(d, specialize_error, "shader %s has no entry point %s for pipeline %s", code.name, code.msl_entry, pipeline)
+		return nil, 0
+	}
 	// Another thread may have compiled the same code meanwhile: both entries serve.
 	sync.guard(&d.pipeline_lock)
 	if !device_room(d, &d.shaders, "shader functions") {mtl_release(function);mtl_release(library);return nil,0}
-	shader=pool_add(&d.shaders,Mtl_Shader{fingerprint=fingerprint,library=library,function=function,users=1})
+	shader=pool_add(&d.shaders,Mtl_Shader{fingerprint=fingerprint,constants=constants,library=library,function=function,users=1})
 	mtl_retain(function)
 	return
 }
 
-// The function of code compiled already, with one more user.
+// The function of code compiled already with those constants, with one more
+// user; without one, the library of the code when another function has it,
+// retained for the function to come.
 @(private)
-mtl_function_cached :: proc(d:^Device,fingerprint:[32]u8) -> (function:^MTL.Function,shader:base.Handle) {
+mtl_function_cached :: proc(d:^Device,fingerprint:[32]u8,constants:Shader_Constants) -> (function:^MTL.Function,shader:base.Handle,library:^MTL.Library) {
 	sync.guard(&d.pipeline_lock)
 	for &cached,i in d.shaders.items {
-		if d.shaders.alive[i] && cached.fingerprint==fingerprint {
+		if !d.shaders.alive[i] || cached.fingerprint!=fingerprint {continue}
+		if cached.constants==constants {
 			cached.users+=1
 			mtl_retain(cached.function)
-			return cached.function,pool_handle(&d.shaders,i)
+			return cached.function,pool_handle(&d.shaders,i),nil
 		}
+		library=cached.library
 	}
+	if library!=nil {mtl_retain(library)}
 	return
 }
 
@@ -426,7 +454,7 @@ pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipe
 	group := desc.shader.threadgroup
 	p.threadgroup = {NS.UInteger(max(group.x, 1)), NS.UInteger(max(group.y, 1)), NS.UInteger(max(group.z, 1))}
 	function:^MTL.Function
-	function,p.shaders[0] = mtl_function(d, desc.shader)
+	function,p.shaders[0] = mtl_function(d, desc.shader, desc.constants, desc.name)
 	if function == nil {return 0}
 	defer mtl_release(function)
 	state, err := MTL.Device_newComputePipelineStateWithFunction(d.device, function)
@@ -465,10 +493,10 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 	if desc.vertex == nil || desc.fragment == nil {set_error(d, "graphics pipeline %s needs vertex and fragment shaders", desc.name); return 0}
 	if !mtl_merge_bindings(d, &p, desc.vertex, desc.fragment) {return 0}
 	vertex:^MTL.Function
-	vertex,p.shaders[0] = mtl_function(d, desc.vertex)
+	vertex,p.shaders[0] = mtl_function(d, desc.vertex, desc.vertex_constants, desc.name)
 	defer mtl_release(vertex)
 	fragment:^MTL.Function
-	fragment,p.shaders[1] = mtl_function(d, desc.fragment)
+	fragment,p.shaders[1] = mtl_function(d, desc.fragment, desc.fragment_constants, desc.name)
 	defer mtl_release(fragment)
 	if vertex == nil || fragment == nil {return 0}
 

@@ -6,13 +6,13 @@
 // A shadow ray of the reference, whose filters carry `weight` times what they let through.
 float3 reference_ray(float3 origin, float3 direction, float reach, float3 weight) {
 #ifdef MIRAI_SHADOW_FILTER_POINTS
-    filters_begin();
-    float3 through = trace_transmission(origin, direction, reach);
-    filters_weigh(weight);
-    return through;
-#else
-    return trace_transmission(origin, direction, reach);
+    if (MIRAI_COLORED_SHADOWS) filters_begin();
 #endif
+    float3 through = trace_transmission(origin, direction, reach);
+#ifdef MIRAI_SHADOW_FILTER_POINTS
+    if (MIRAI_COLORED_SHADOWS) filters_weigh(weight);
+#endif
+    return through;
 }
 
 // What the sun and every local light send a point through rays of its own to
