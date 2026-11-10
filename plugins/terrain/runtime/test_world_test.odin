@@ -24,6 +24,7 @@ Test_Terrain :: struct {
     data:Terrain_Data,
     terrain_requests:Terrain_Requests,
     digs:Terrain_Digs,
+    ground_queries:core.Ground_Queries,
 }
 
 // What test_step runs with unless told: every chunk at level 0, so that a
@@ -37,7 +38,7 @@ test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resid
     terrain_update(
         commands,&g.terrains,&g.chunks,core.read(&g.transforms),core.read(&g.parents),core.read(&g.ids),&g.colliders,
         &g.statics,&g.tints,&g.overrides,&g.data,resident,&g.terrain_requests,&g.digs,settings,app,time,frame,
-        view,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},
+        view,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},&g.ground_queries,
     )
 }
 

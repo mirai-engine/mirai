@@ -34,13 +34,14 @@ Table_Info :: struct {
 }
 
 // Which ends of a network session receive the values of a component of the
-// entities it replicates: @(component,replicated), replicated="owner" or
-// replicated="others".
+// entities it replicates: @(component,replicated), replicated="owner",
+// replicated="others" or replicated="object".
 Replication :: enum u8 {
     None,
     All,    // every end that has the entity
     Owner,  // only the end that owns it
     Others, // every end but the owner
+    Object, // every end: an entity with it is replicated without saying so, by the server to every connection
 }
 
 // Who sends a message of the network: @(net_message), from="client" or from="owner".

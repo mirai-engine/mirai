@@ -3,8 +3,7 @@
 Plugin `foliage` (`Runtime`, `Editor`, `Shaders`; depends on `physics`). It shows the foliage of a
 scene without one entity per instance: it draws it with [instance batches][batches] and, far away,
 with [impostors](#far-impostor-and-crown), makes it collide with one static body per resident cell
-and stands it on a [ground](#ground) that another library writes. The automatic bridge
-`foliage_terrain` gives it that of the terrains.
+and stands it on the [ground](#ground) of the world.
 
 [batches]: ../../mirai-rendering/references/scene.md#instance-batches
 
@@ -92,38 +91,28 @@ to the overrides).
   (`Ground_Tile`, NaN where there is no ground) with its revision, and parallel to it the weights
   of the terrain layers at each sample (they add up to 255; all 0 where there is no ground or
   layers). Each grid has its samples per side; those of the same size share a `Ground_Pool`, from
-  which a grid that changes size leaves by giving its place to the last one. Foliage does not know
-  where it comes from: a single library writes it, which raises the revision of what changes.
+  which a grid that changes size leaves by giving its place to the last one. `foliage_ground`
+  writes it from [`core.Ground_Queries`](../../mirai-core/references/core.md#ground), without
+  knowing who gives the ground (terrain), and raises the revision of what changes.
   `Foliage_Ground_Requests` carries the cells that someone needs before having instances there
-  (the editor requests those of the brush).
-- **`foliage_terrain`** fills the cells that a terrain covers and those requested with the highest
-  terrain under each sample: a Heightfield aligned with the `Foliage` by its height and its holes;
-  Mesh, Volume or a rotated one, by a ray (`source_ray`).
-- **Fine near, coarse far**: the grid of a cell is fine (the samples per side follow the step of
-  the finest terrain, up to `SAMPLES_MAX`) near the [streaming sources][sources], with their
-  hysteresis, up to where the meshes of their types are drawn and no more than `GROUND_REACH`, and
-  where the editor requests it; far away it has `COARSE_SAMPLES` per side and a Heightfield gives
-  it from its coarse grid (`terrain.source_coarse_at`), in memory with the source, with its holes
-  where its page is. Without sources all are fine. Those that cross the limit are read again when
-  the sources move; a fine one over pages that are not in memory takes the coarse one there until
-  they arrive, because they mark their chunks.
-- The weights of a sample are those that this terrain shows there (`shown_weights`): the painted
-  ones with the automatic layers on top. In a Heightfield, as its chunks show them: in the
-  triangle of its cell, from those of its samples, each with the rule at its slope
-  (`LAYER_RULE_SAMPLES`) and its height; in Mesh and Volume, with the ray's normal.
-- It reads again only the cells over the chunks whose version changed (`Data_Source.versions`), or
-  all those of a terrain or a `Foliage` that moves, arrives or leaves. The cells to read wait in a
-  queue and are read `GROUND_TILES` per call, in jobs, each against the terrains whose box covers
-  it: a world that loads many terrains and `Foliage` at once keeps responding. A grid (heights and
-  weights) equal to the previous one does not raise its revision, and a frame without changes
-  reads nothing.
-- The preview of a terrain stroke does not change `Terrain_Data`: while the editor holds it
-  (`terrain.Terrain_Focus`, with the region that changed), the tiles under it are left without
-  ground, so what is generated there is not seen over the old ground, as Unreal leaves its grass
-  out during a stroke; when released they are read again and the foliage follows the confirmed
-  terrain.
-
-[sources]: ../../mirai-gameplay/references/libraries.md#sources-and-residency
+  (the editor requests those of the brush). Without a ground provider no grid is written and the
+  plane y = 0 of each `Foliage` is its ground.
+- Each sample asks the probe along the down of the `Foliage` for the highest ground: `Ground` is a
+  height and the weights of the layers there; `Empty` (a hole, a stroke the editor holds) and
+  `Unloaded` (far from every viewer) leave it without ground, NaN; a grid where no sample is
+  covered is removed. The layers of the first ground read name what the weights of the owner are of.
+- **Fine near, coarse far**: the grid of a cell is fine (the samples per side follow the spacing of
+  the ground, `Ground_Query.spacing`, up to `SAMPLES_MAX`) near the [streaming sources][sources],
+  with their hysteresis, up to where the meshes of their types are drawn and no more than
+  `GROUND_REACH`, and where the editor requests it; far away it has `COARSE_SAMPLES` per side,
+  asked `coarse`. Without sources all are fine. Those that cross the limit are read again when the
+  sources move.
+- It reads again only the cells under the boxes the ground announced since its revision
+  (`Ground_Query.changes`), or all those of a `Foliage` that moves or arrives, and all when the
+  ground no longer keeps that far back. The cells to read wait in a queue and are read
+  `GROUND_TILES` per call, in jobs: a world that loads much ground and many `Foliage` at once keeps
+  responding. A grid (heights and weights) equal to the previous one does not raise its revision,
+  and a frame without changes reads nothing.
 
 ## Drawing
 
@@ -274,11 +263,11 @@ is destroyed in a section (`removal.odin`).
   tables change; drawing, impostors, crowns and collision rebuild only the cells whose removed
   instances changed (`removed_cell`), and the shared crown of a cell distinguishes what was
   removed from each `Foliage`.
-- **Network** (automatic bridge `foliage_multiplayer`): the server gives each entity `Replicate`
-  with `Simulation.Server` and `Audience.Always`: one object per entity, not per instance, which
-  reaches all connections. Its component is a [fragment][fragments] whose entries
-  (`Removed_Instance` structs) have their own change bits: removing one more instance sends the
-  count and its entries, and a connection that arrives later receives the whole cell with the
+- **Network**: `Foliage_Removed` is `replicated="object"`, so the server replicates each entity with
+  `Simulation.Server` and `Audience.Always` without a `Replicate` of its own: one object per entity,
+  not per instance, which reaches all connections. Its component is a [fragment][fragments] whose
+  entries (`Removed_Instance` structs) have their own change bits: removing one more instance sends
+  the count and its entries, and a connection that arrives later receives the whole cell with the
   creation, in parts if it does not fit in a datagram; an array of loose ids would be a single
   field, which is resent whole. The client makes it with its component and its foliage leaves it
   out. Each `REMOVED_PAGE` instances of a cell occupy one object of `Net_Settings.max_objects`.
@@ -389,15 +378,10 @@ the registry's memory as a file of the undo step that creates it.
 - Instances removed (`plugins/foliage/runtime`):
   `instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out`,
   `thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities` and
-  `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited`; in
-  `plugins/foliage_multiplayer/runtime`,
-  `a_server_replicates_the_instances_taken_out_of_each_cell_to_every_connection_as_one_object` and
-  `an_instance_taken_out_later_sends_a_small_part_of_its_cell`.
-- `mirai test plugins/foliage_terrain/runtime`:
-  `the_ground_of_foliage_follows_the_chunks_of_the_terrain_that_change`,
-  `the_ground_of_foliage_carries_the_layers_the_terrain_shows_painted_and_by_their_rules`,
-  `the_ground_under_a_held_stroke_of_the_editor_goes_until_the_stroke_ends` and
-  `the_ground_far_from_the_sources_is_coarse_and_fine_near_them`.
+  `a_saved_game_takes_out_the_same_instance_after_its_source_is_edited` and
+  `an_instance_taken_out_later_sends_a_small_part_of_its_cell`; that they reach a client:
+  `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
+- Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`.
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:
   `foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved`,
   `a_move_of_an_imported_foliage_is_undone_back_to_revision_zero`,

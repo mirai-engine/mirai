@@ -107,6 +107,6 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
 // The source the registry holds for a terrain, unsaved or on disk.
 @(private="file")
 registry_source :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> (s:terrain.Source) {
-    testing.expect(t,terrain.terrain_read(&s,a,id,editable=false))
+    testing.expect(t,terrain.terrain_read(&s,a,id))
     return
 }
