@@ -140,7 +140,7 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     index:=slot.index
     chunk:=&source.chunks[index]
     s:=&entry.source
-    mesh,ok:=chunk_publish(resident.assets,s.kind,&slot.mesh,slot.key.collision,resident.picking)
+    mesh,ok:=chunk_publish(resident.assets,s.kind,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
     if !ok {
         name:[base.ASSET_ID_TEXT]u8
         core.report(problems,source_owner(terrains,entry.id),"terrain.chunk_mesh","the mesh of piece %v (depth %d) of terrain source %s could not be made: out of memory for the mesh or its collision; free memory, or give the source fewer cells per chunk",quad_place(&entry.source,&source.quad,index),quad_depth(&source.quad,index),host.assets_name(resident.assets,entry.id,&name))
@@ -152,9 +152,22 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     // A chunk that turns empty or stops being so gives or wants a collider (resident_colliders).
     if !chunk.shown || (chunk.mesh=={})!=(mesh=={}) {resident.marks+=1}
     chunk.mesh,chunk.revision,chunk.built,chunk.shown=mesh,slot.version,slot.key,true
+    // The blocks a node of a Volume read may leave now.
+    if piece_levels(s,&source.quad,index) {source.leave=true}
     if mesh!={} {resident.stats.meshes+=1}
     append(&source.changed,u32(index))
     resident.stats.built+=1
+}
+
+// A piece whose region holds no surface shows nothing, as one built empty.
+@(private)
+piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,index:int) {
+    chunk:=&source.chunks[index]
+    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1}
+    if !chunk.shown {resident.cut=true}
+    if !chunk.shown || chunk.mesh!={} {resident.marks+=1}
+    chunk.mesh,chunk.revision,chunk.built,chunk.shown={},data_version(entry,index),chunk.wanted,true
+    append(&source.changed,u32(index))
 }
 
 // Lets go of the mesh of a piece no owner wants or shows.
@@ -211,20 +224,20 @@ work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,
         switch slot.grid {
         case .Heights,.Distances:
             g:=source_samples_grid(s)
-            if !grid_absent(g,slot.index) || g.blocks[slot.index].hash!=slot.block.hash {return}
+            if !grid_absent(g,slot.index) || grid_block(g,slot.index).hash!=slot.block.hash {return}
             _,count:=grid_page_extent(g,slot.index)
             grid_page_install(g,slot.index,transmute([]f32)slot.page[:count])
             data.samples+=u32(count)
             first,last=grid_page_region(g,slot.index)
         case .Weights:
-            if !grid_absent(&s.weights,slot.index) || s.weights.blocks[slot.index].hash!=slot.block.hash {return}
+            if !grid_absent(&s.weights,slot.index) || grid_block(&s.weights,slot.index).hash!=slot.block.hash {return}
             _,count:=grid_page_extent(&s.weights,slot.index)
             grid_page_install(&s.weights,slot.index,transmute([]Weights)slot.page[:count])
             // The weights of a Volume count against the budget as its distances (source_cost).
             if s.kind==.Volume {data.samples+=u32(count)}
             first,last=grid_page_region(&s.weights,slot.index)
         case .Holes:
-            if !grid_absent(&s.holes,slot.index) || s.holes.blocks[slot.index].hash!=slot.block.hash {return}
+            if !grid_absent(&s.holes,slot.index) || grid_block(&s.holes,slot.index).hash!=slot.block.hash {return}
             _,count:=grid_page_extent(&s.holes,slot.index)
             grid_page_install(&s.holes,slot.index,slot.page[:count])
             first,last=grid_page_region(&s.holes,slot.index)
@@ -242,10 +255,10 @@ work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,
 pages_start :: proc(data:^Terrain_Data,entry:^Data_Source,low,high:[3]int,phase:core.Phase,problems:^core.Problems,e:core.Entity,a:^host.Assets) {
     s:=&entry.source
     start :: proc(data:^Terrain_Data,entry:^Data_Source,g:^Grid($T),grid:Grid_Kind,low,high:[3]int,phase:core.Phase,problems:^core.Problems,e:core.Entity,a:^host.Assets) -> bool {
-        if len(g.blocks)==0 {return true}
+        if !g.paged {return true}
         from,to:=grid_pages(g,low,high)
         for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {
-            i:=px+g.counts.x*(py+g.counts.y*pz)
+            i:=grid_page_id(g,{px,py,pz})
             if !grid_absent(g,i) || work_reading(data,&entry.source,grid,i) {continue}
             if (grid==.Heights || grid==.Distances) && int(data.samples)+PAGE_VALUES>int(data.settings.samples) {
                 name:[base.ASSET_ID_TEXT]u8
@@ -323,6 +336,8 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
     q:=&source.quad
     chunks:=q.first[1]
     write:=0
+    // The chunks before the nodes above them: what an edit changed near a viewer is built first.
+    slice.sort(source.pending[:])
     for index in source.pending {
         i:=int(index)
         chunk:=&source.chunks[i]
@@ -336,7 +351,16 @@ terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Da
             // A chunk near a viewer is wanted with its collider; a node where nothing shows, cheap from the coarse grid.
             urgent:=!chunk.shown && (chunk.urgent || i<chunks && (!stream || chunk.reach<=URGENT_REACH))
             border:^Piece_Border
-            if i<chunks {
+            if s.kind==.Volume {
+                // Where its directory holds no surface a piece is empty: nothing is read or built.
+                low,high:=node_pages_region(s,q,i)
+                if i<chunks {low,high,_=chunk_pages_region(s,i)}
+                if !volume_region_surface(s,low,high) && chunk.wanted.join==0 {
+                    piece_take_empty(resident,entry,source,i)
+                    break build
+                }
+                if !pages_ready(data,resident,entry,low,high,urgent,phase,problems,terrains) {keep=true;break build}
+            } else if i<chunks {
                 if low,high,ok:=chunk_pages_region(s,i);ok && !pages_ready(data,resident,entry,low,high,urgent,phase,problems,terrains) {keep=true;break build}
             } else if s.kind==.Heightfield {
                 border=&resident.border
@@ -379,19 +403,22 @@ pages_leave :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
     }
     if source==nil || !leave || !source_paged(s) || work_busy(data,s) {return}
     for &each in resident.sources {if each.id==entry.id {each.leave=false}}
-    if len(source.pages)!=len(source_samples_grid(s).pages) {
-        delete(source.pages)
-        pages,error:=make([]bool,len(source_samples_grid(s).pages),resident.assets.allocator)
-        if error!=nil {return}
-        source.pages=pages
-    }
-    for &value in source.pages {value=false}
     for &each in resident.sources {
         if each.id!=entry.id {continue}
-        for chunk,index in each.chunks[:each.quad.first[1]] {if chunk.resident || chunk.working {chunk_pages_mark(s,index,source.pages)}}
+        chunks:=each.quad.first[1]
+        for chunk,index in each.chunks {
+            switch {
+            case index<chunks: if chunk.resident || chunk.working {chunk_pages_mark(s,index)}
+            // A node of a Volume reads the blocks of its chunks until it is built.
+            case s.kind==.Volume: if chunk.working || chunk.resident && (!chunk.shown || chunk.revision!=data_version(entry,index)) {
+                low,high:=node_pages_region(s,&each.quad,index)
+                region_pages_mark(s,low,high)
+            }
+            }
+        }
     }
     before:=source_cost(s)
-    data.stats.pages_left+=u64(source_pages_leave(s,source.pages))
+    data.stats.pages_left+=u64(source_pages_leave(s))
     data.samples=u32(int(data.samples)-before+source_cost(s))
 }
 
@@ -544,12 +571,6 @@ dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:core.Read(Terrain),wor
         s:=&entry.source
         low:=source_origin(s)
         high:=low+[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*s.cell
-        if s.kind==.Mesh {
-            low,high=max(f32),min(f32)
-            for chunk in s.mesh_chunks {
-                for axis in 0..<3 {low[axis],high[axis]=min(low[axis],chunk.low[axis]),max(high[axis],chunk.high[axis])}
-            }
-        }
         outside:=linalg.max(low-local.center,local.center-high,[3]f32{})
         if s.kind==.Heightfield {outside.y=0}
         distance:=linalg.length(outside)
@@ -585,18 +606,14 @@ request_source :: proc(data:^Terrain_Data,terrains:core.Read(Terrain),owner:core
 edit_report :: proc(problems:^core.Problems,owner:core.Entity,a:^host.Assets,entry:^Data_Source,brush:Brush,error:Edit_Error) {
     name:[base.ASSET_ID_TEXT]u8
     source:=host.assets_name(a,entry.id,&name)
-    switch error {
+    #partial switch error {
     case .None:
-    case .Invalid:
-        core.report(problems,owner,"terrain.edit_invalid","a %v brush cannot edit %s, a %v source, or a value of it is not finite; heightfields take Raise, Lower, Smooth and Flatten; volumes Add, Remove, Smooth, Flatten and Grow; meshes Raise, Lower, Smooth, Flatten, Refine, Grow, Union and Subtract",brush.kind,source,entry.source.kind)
-    case .Not_Closed:
-        core.report(problems,owner,"terrain.edit_not_closed","a %v of mesh source %s was refused: the mesh is not closed, so it has no inside to add to or cut; close its holes in the modeling tool, or use a sculpt brush",brush.kind,source)
-    case .Topology:
-        core.report(problems,owner,"terrain.edit_topology","a %v of mesh source %s was refused: the result would not be a valid surface; use a smaller radius, or another place",brush.kind,source)
-    case .Budget:
-        core.report(problems,owner,"terrain.edit_budget","a %v of source %s was refused: the result would pass the triangles of a mesh source or the samples of Terrain_Settings; raise Terrain_Settings.samples, or use a smaller brush",brush.kind,source)
+    case .Kind:
+        core.report(problems,owner,"terrain.edit_kind","a %v brush changed nothing of %s, a %v: %s",brush.kind,source,entry.source.kind,edit_error_fix(error,brush.kind))
     case .Out_Of_Memory:
-        core.report(problems,owner,"terrain.memory","a %v of source %s ran out of memory and changed nothing; free memory, or use a smaller brush",brush.kind,source)
+        core.report(problems,owner,"terrain.memory","a %v of source %s changed nothing: %s",brush.kind,source,edit_error_fix(error,brush.kind))
+    case:
+        core.report(problems,owner,"terrain.edit_invalid","a %v brush changed nothing of %s: %s",brush.kind,source,edit_error_fix(error,brush.kind))
     }
 }
 
@@ -635,16 +652,16 @@ layer_report :: proc(problems:^core.Problems,owner:core.Entity,a:^host.Assets,en
 brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
     s:=&entry.source
     if !source_paged(s) {return true}
-    for value in ([?]f32{brush.center.x,brush.center.y,brush.center.z,brush.radius,brush.delta.x,brush.delta.y,brush.delta.z}) {if !distance_finite(value) {return true}}
+    if brush_check(brush)!=.None {return true}
     origin:=source_origin(s)
-    reach:=max(brush.radius,0)/s.cell+3
+    reach:=max(brush.radius,brush.extent.x,brush.extent.y,brush.extent.z,0)*1.75/s.cell+max(brush.blend,0)/s.cell+3
     if s.kind==.Volume {reach+=SDF_BAND_CELLS}
     limit:=f32(HEIGHT_SAMPLES_MAX)
     low,high:[3]int
     for axis in 0..<3 {
         if s.kind==.Heightfield && axis==1 {continue}
         center:=(brush.center[axis]-origin[axis])/s.cell
-        end:=center+(brush.kind==.Grow?brush.delta[axis]/s.cell:0)
+        end:=center+(brush.kind==.Ramp || brush.shape==.Capsule?brush.delta[axis]/s.cell:0)
         low[axis],high[axis]=int(clamp(min(center,end)-reach,-1,limit)),int(clamp(max(center,end)+reach,-1,limit))
         if high[axis]<0 {return true}
     }

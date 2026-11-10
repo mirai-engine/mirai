@@ -9,12 +9,13 @@ import "mirai:std/geom"
 @(private)
 prepare_authored :: proc(assets:^host.Assets,p:^Prepared,d:Destructible,static:render.Mesh_Renderer,scale:[3]f32,interior:u32) -> bool {
     file:asset.Asset
-    view,ok:=host.assets_fracture(assets,d.fracture,&file)
-    if !ok {return false}
+    if host.assets_file(assets,d.fracture,FRACTURE_KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
+    view,error:=fracture_view(&file,&assets.types)
+    if error!=.None {return false}
     if view.info.source_mesh!={} && view.info.source_mesh!=static.mesh {return false}
     f:=&p.fracture
-    if asset.fracture_geometry(view,f,scale)!=.None {return false}
+    if fracture_geometry(view,f,scale)!=.None {return false}
     for piece in view.pieces {
         append(&p.anchors,piece.anchor)
         append(&p.piece_clusters,piece.cluster)

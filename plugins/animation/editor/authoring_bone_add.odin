@@ -40,7 +40,7 @@ Skeleton_Bone_Add_Clip :: struct {
 @(private)
 authoring_bone_add_register :: proc(s:^editor.Session) {
     added:=Skeleton_Bone_Add_Params{bone={rotation={0,0,0,1},scale={1,1,1}}}
-    authoring_method_register(s,{name="skeleton.bone.add",summary="Adds a bone under a parent of a .skeleton, after the others so meshes and tracks keep theirs, and has the tracks of the clips given that animate a node of its name drive it.",params=Skeleton_Bone_Add_Params,params_info=type_info_of(Skeleton_Bone_Add_Params),defaults=&added,run=authoring_bone_add},Skeleton_Bone_Add_Result,type_info_of(Skeleton_Bone_Add_Result))
+    editor.api_method_register(s,Skeleton_Bone_Add_Params,Skeleton_Bone_Add_Result,{name="skeleton.bone.add",summary="Adds a bone under a parent of a .skeleton, after the others so meshes and tracks keep theirs, and has the tracks of the clips given that animate a node of its name drive it.",defaults=&added,run=authoring_bone_add,writes_result=true})
 }
 
 // The last segment of a canonical path, unescaped: the name of its node.

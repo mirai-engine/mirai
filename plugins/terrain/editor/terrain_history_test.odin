@@ -89,12 +89,45 @@ a_change_of_kind_keeps_the_whole_source_once :: proc(t:^testing.T) {
     head,edited:terrain.Source
     defer terrain.source_destroy(&head);defer terrain.source_destroy(&edited)
     testing.expect(t,terrain.source_make(&head,.Heightfield,{9,1,9},1,4))
-    testing.expect(t,terrain.source_make(&edited,.Heightfield,{9,1,9},1,4))
-    testing.expect(t,terrain.source_convert_heightfield(&edited,&edited,0))
+    testing.expect(t,terrain.source_make(&edited,.Volume,{9,9,9},1,4))
     step:=Step{source={1,1},from=1,to=2}
     defer step_destroy(&step)
     testing.expect(t,step_make(&step,&head,&edited,{},{},false))
-    testing.expect(t,step.whole && step.other.kind==.Heightfield && head.kind==.Mesh)
+    testing.expect(t,step.whole && step.other.kind==.Heightfield && head.kind==.Volume)
     step_apply(&step,&head)
-    testing.expect(t,head.kind==.Heightfield && step.other.kind==.Mesh,"undo trades the whole source back")
+    testing.expect(t,head.kind==.Heightfield && step.other.kind==.Volume,"undo trades the whole source back")
+}
+
+@(test)
+terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^testing.T) {
+    world:Create_Test_World
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
+    edits:history.Edits;defer history.edits_free(&edits)
+    selection:history.Selection;defer delete(selection.entities)
+    assets:host.Assets
+    app:=host.App{allocator=context.allocator,assets=&assets}
+    session:=editor.Session{app=&app,info=ref.info,edit_world=&world,selection=&selection,edits=&edits,id_state=42}
+    owner:=editor.entity_create(&session,{name="Terrain"})
+    core.add(&world.terrains,owner,{source={1,2},revision=1})
+    core.test_world_settle(&world)
+    history.edits_reset(&edits,ref)
+    initial:=history.edits_state(&edits)
+    core.edit(&world.terrains,owner).revision=7
+    tool:Terrain_Tool;defer terrain_tool_free(&tool)
+    terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
+    testing.expect_value(t,history.edits_state(&edits),initial)
+    testing.expect_value(t,len(edits.steps),0)
+    history.edits_begin(&edits,&selection,"Sculpt")
+    core.edit(&world.terrains,owner).revision=8
+    testing.expect(t,!history.edits_sync_initial(&edits,ref))
+    history.edits_end(&edits)
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(7))
+    testing.expect(t,!history.edits_sync_initial(&edits,ref))
+    testing.expect(t,history.redo(&edits,ref,&selection))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(8))
+    testing.expect(t,!history.edits_sync_initial(nil,{}))
 }

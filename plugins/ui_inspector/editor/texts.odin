@@ -197,10 +197,10 @@ Ui_Texts_Rejected :: struct {
 
 @(private)
 texts_api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="ui.texts",summary="The text of a node of a .ui in each language of the game: its own in the language interfaces are written in and its translation in each other.",params=Ui_Texts_Params,params_info=type_info_of(Ui_Texts_Params),result=Ui_Texts_Result,result_info=type_info_of(Ui_Texts_Result),writes_result=true,flags={.Read_Only},run=api_texts})
-    editor.api_method_register(s,{name="ui.text.set",summary="Sets the text of a node of a .ui in a language of the game; a translation makes the node localized. One step of history; the file waits for Save.",params=Ui_Text_Set_Params,params_info=type_info_of(Ui_Text_Set_Params),result=Ui_Ok,result_info=type_info_of(Ui_Ok),run=api_text_set})
-    editor.api_method_register(s,{name="ui.text.export",summary="Writes every localized text of the .ui of the project to a CSV for translators.",params=Ui_Texts_File_Params,params_info=type_info_of(Ui_Texts_File_Params),result=Ui_Texts_Exported,result_info=type_info_of(Ui_Texts_Exported),flags={.Read_Only},run=api_texts_export})
-    editor.api_method_register(s,{name="ui.text.import",summary="Sets the texts of the .ui of the project from a CSV as ui.text.export writes it. One step of history per file; the files wait for Save.",params=Ui_Texts_File_Params,params_info=type_info_of(Ui_Texts_File_Params),result=Ui_Texts_Imported,result_info=type_info_of(Ui_Texts_Imported),writes_result=true,run=api_texts_import})
+    editor.api_method_register(s,Ui_Texts_Params,Ui_Texts_Result,{name="ui.texts",summary="The text of a node of a .ui in each language of the game: its own in the language interfaces are written in and its translation in each other.",writes_result=true,flags={.Read_Only},run=api_texts})
+    editor.api_method_register(s,Ui_Text_Set_Params,Ui_Ok,{name="ui.text.set",summary="Sets the text of a node of a .ui in a language of the game; a translation makes the node localized. One step of history; the file waits for Save.",run=api_text_set})
+    editor.api_method_register(s,Ui_Texts_File_Params,Ui_Texts_Exported,{name="ui.text.export",summary="Writes every localized text of the .ui of the project to a CSV for translators.",flags={.Read_Only},run=api_texts_export})
+    editor.api_method_register(s,Ui_Texts_File_Params,Ui_Texts_Imported,{name="ui.text.import",summary="Sets the texts of the .ui of the project from a CSV as ui.text.export writes it. One step of history per file; the files wait for Save.",writes_result=true,run=api_texts_import})
 }
 
 @(private)

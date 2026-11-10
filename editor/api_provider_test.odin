@@ -19,14 +19,14 @@ api_test_provider_v2 :: proc(dst:rawptr) {(^Api_Test_Provider)(dst)^={provider={
 api_test_register_v1 :: proc(s:^Session) {
     defaults:=Api_Test_Params{value=7}
     // The method comes with its entry of the View menu and its key: a plugin gives one thing.
-    api_method_register(s,{
-        name="test.plugin",params=Api_Test_Params,params_info=type_info_of(Api_Test_Params),result=Api_Test_Result,result_info=type_info_of(Api_Test_Result),defaults=&defaults,run=api_test_run_v1,
+    api_method_register(s,Api_Test_Params,Api_Test_Result,{
+        name="test.plugin",defaults=&defaults,run=api_test_run_v1,
         entry={label="Test plugin",params=`{"value":3}`,shortcut={key=.F9,set=true},menu=.View},
     })
 }
 api_test_register_v2 :: proc(s:^Session) {
     defaults:=Api_Test_Params{value=9}
-    api_method_register(s,{name="test.plugin",params=Api_Test_Params,params_info=type_info_of(Api_Test_Params),result=Api_Test_Result,result_info=type_info_of(Api_Test_Result),defaults=&defaults,run=api_test_run_v2})
+    api_method_register(s,Api_Test_Params,Api_Test_Result,{name="test.plugin",defaults=&defaults,run=api_test_run_v2})
 }
 api_test_run_v1 :: proc(s:^Session,call:^api.Call) {
     value:=api.call_params(call,Api_Test_Params).value
@@ -35,12 +35,11 @@ api_test_run_v1 :: proc(s:^Session,call:^api.Call) {
 }
 api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Test_Result).value=2*api.call_params(call,Api_Test_Params).value}
 
-// The methods that still describe, read or write by hand what their structs
-// say: a result written into call.out (engine.describe writes the schemas
-// themselves; the scene methods are rewritten into scene.write), params read
-// from the text (what remains reads an object whose keys the world or a
-// program names). A file holds at most these; one that holds fewer lowers its
-// count here, and none is added.
+// The methods that still write their result into call.out or read their
+// params from the text: engine.describe writes the schemas themselves, and
+// what remains of rpc_init reads an object whose keys the world or a program
+// names. A file holds exactly these; one that holds fewer lowers its count
+// here, and none is added.
 @(private="file")
 API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api/rpc.odin","writes_result=true",1},
@@ -52,11 +51,25 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api_play_wait.odin","writes_result=true",2},
     {"editor/api_profile.odin","writes_result=true",8},
     {"editor/api_programs.odin","writes_result=true",4},
-    {"editor/api_scene.odin","writes_result=true",4},
-    {"editor/api_scene_write.odin","writes_result=true",1},
+    {"editor/api_scene.odin","writes_result=true",3},
     {"editor/api_viewport.odin","writes_result=true",2},
     {"editor/input_settings.odin","writes_result=true",2},
-    {"plugins/animation/editor/authoring_schema.odin","writes_result=true",1},
+    {"plugins/animation/editor/api.odin","writes_result=true",1},
+    {"plugins/animation/editor/authoring_actions.odin","writes_result=true",1},
+    {"plugins/animation/editor/authoring_bake.odin","writes_result=true",1},
+    {"plugins/animation/editor/authoring_bone_add.odin","writes_result=true",1},
+    {"plugins/animation/editor/authoring_clip.odin","writes_result=true",5},
+    {"plugins/animation/editor/authoring_motion.odin","writes_result=true",1},
+    {"plugins/animation/editor/authoring_pose_bake.odin","writes_result=true",1},
+    {"plugins/animation/editor/authoring_profile.odin","writes_result=true",3},
+    {"plugins/animation/editor/authoring_skeleton.odin","writes_result=true",3},
+    {"plugins/animation/editor/body_api.odin","writes_result=true",2},
+    {"plugins/animation/editor/clip_edit.odin","writes_result=true",2},
+    {"plugins/animation/editor/inspect.odin","writes_result=true",2},
+    {"plugins/animation/editor/program_api.odin","writes_result=true",2},
+    {"plugins/animation/editor/request.odin","writes_result=true",1},
+    {"plugins/animation/editor/setup.odin","writes_result=true",1},
+    {"plugins/animation/editor/tracks_api.odin","writes_result=true",1},
     {"plugins/playtest/editor/explore.odin","writes_result=true",1},
     {"plugins/playtest/editor/observe.odin","writes_result=true",1},
     {"plugins/playtest/editor/qa.odin","writes_result=true",1},
@@ -69,15 +82,13 @@ API_HAND_WRITTEN :: [?]struct{file,pattern:string,count:int}{
     {"editor/api_methods.odin","rpc_init(",1},
     {"editor/api_play_edit.odin","rpc_init(",1},
     {"editor/api_programs.odin","rpc_init(",1},
-    {"editor/api_scene.odin","rpc_init(",6},
-    {"editor/api_scene_write.odin","rpc_init(",4},
 }
 
 // No method is described, read or written by hand past the files above.
 @(test)
 methods_are_described_read_and_written_by_their_structs :: proc(t:^testing.T) {
     root,_:=filepath.join({#directory,".."},context.temp_allocator)
-    patterns:=[?]string{"writes_result=true","rpc_init(","result=serial.Json","params_schema=","result_schema="}
+    patterns:=[?]string{"writes_result=true","rpc_init(","result=serial.Json,","params_schema=","result_schema="}
     files:=make([dynamic]string,context.temp_allocator)
     walk :: proc(folder:string,files:^[dynamic]string) {
         entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)

@@ -157,11 +157,15 @@ runs `cook/author.command` in the engine's `mirai-author` program
 first when it is not current, as `mirai import` does. What a game-writing agent is told:
 [text sources](../../../../docs/game/assets/text-sources.md).
 
-- **Documents as files.** `source/<path>.ui.json` is the asset `assets/<path>.ui`, and so
-  `.scene.json` and `.scene.json`. `read <asset>` prints the document or writes it to `--out`;
-  `read --sources` writes one per asset of the project (not of its plugins); `write` takes those
-  files or a folder of them, or `<asset> <file>` for a file kept elsewhere, and tries again what
-  failed while a round writes something, so a file may use one the same run makes.
+- **The asset is the source.** `read <asset>` prints its document or writes it to `--out`, and
+  `write <asset> <file>` makes the asset say the document of a file; no copy of the text is kept
+  beside the assets.
+- **One writer of scenes.** `scene write` runs `scene_apply` (`cook/author/scene_document.odin`),
+  which `scene.write` of the editor runs too, on the file as its `Scene_Target`
+  (`cook/author/scene_file.odin`), and then writes the file as a save of the editor does: its
+  entities loaded into a world of the game and captured (`engine/scene.capture`), so the same
+  document gives the same bytes with and without an editor. The entities a document makes take
+  their ids from the sequence of whoever makes them.
 - **A write** is the one of the API method: what it refuses is refused with its message and the
   file stays as it was; a file that already says the document is not written. An asset that does
   not exist is made with an id that follows from its path. A `.ui` written with other `params`
@@ -205,7 +209,7 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
 - Params are `key=value` arguments or one JSON object (`{}` if missing; `-` from stdin).
   `key=value` needs no quoting in any shell: a value that parses as JSON is that JSON and any
   other is text, and dots in a key make objects inside
-  (`mirai rpc scene.set entity=Floor name=Ground position=[0,1,0]`); a number or a boolean goes as
+  (`mirai rpc camera.set position=[0,2,8] target=[0,1,0]`); a number or a boolean goes as
   its text to a field that takes only a string. A value that a shell would split or that needs a
   list of texts goes in the object form.
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
@@ -222,11 +226,10 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
   its log. Knowing the process needs a port file: with `--port` only that of the project at or
   above the current folder. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK`
   ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line, from a
-  file or from stdin (`-`), over one connection, so many calls cost one process; it prints a JSON
-  array with the result of each and stops at the first error, whose entry says its `line`. A value
-  of the params that is exactly `$N` or `$N.path` (the paths of
-  `--select`, as `$0.id` or `$1.entities[0].id`) stands for the result of the call N or that field
-  of it, and `$$` writes a literal `$`.
+  file or from stdin (`-`), and sends them as the calls of one
+  [`batch`](methods.md#scene), so many calls cost one process and one request; it prints what
+  `batch` answers, and at the first call that fails its error. `--timeout` bounds the whole
+  batch.
 - Output: the result on stdout and code 0; an error, on stderr as `{"error":{...}}` and code 1;
   invalid arguments, `Usage:` and code 2. From the client: `-32099` with no editor listening,
   `-32097` when `--timeout` runs out, `-32096` if it closed the connection without answering (it

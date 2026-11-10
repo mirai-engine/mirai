@@ -9,6 +9,7 @@ import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import aed "plugins:animation/editor"
 import anim "plugins:animation/runtime"
 import cine "plugins:cinematics/runtime"
 
@@ -18,7 +19,7 @@ CINEMATICS_API_DEFAULT :: Cinematics_Api{provider={register=register}}
 
 Inspect_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The timeline or one of its shots viewers or actors"`,
-    time:f32 `mirai:"optional,min=-1,unit=s,label=The time of the clip whose shot is given; -1: the head of the preview in Edit or where the clip is in Play"`,
+    time:f32 `mirai:"optional,min=-1,unit=s,label=The time of the clip whose shot is given; -1: the head of the Tracks tool in Edit or where the clip is in Play"`,
 }
 Inspect_Shot :: struct {id,camera:base.Entity_Id,camera_name:string,time,blend:f32 `mirai:"unit=s"`,ease:mm.Ease}
 Inspect_Actor :: struct {
@@ -42,7 +43,7 @@ Inspect_Result :: struct {
     actors:[]Inspect_Actor `mirai:"label=The entities out of the timeline that its clip moves by name"`,
     viewers:[]Inspect_Viewer,
     view:Inspect_View `mirai:"optional,label=What the viewers show at the time with the scene as it is; absent without a shot in force"`,
-    preview:Inspect_Preview `mirai:"label=The Cinematics tool of the editor"`,
+    preview:Inspect_Preview `mirai:"label=The Tracks tool of the editor on the clip, and the shot view of the Cinematics tool"`,
 }
 
 Control_View :: enum u8 {Keep,Shot,Editor}
@@ -50,11 +51,11 @@ Control_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity,label=The timeline or one of its parts"`,
     command:anim.Timeline_Command,
     time:f32 `mirai:"optional,min=0,unit=s,label=Where Seek puts the clip"`,
-    speed:f32 `mirai:"optional,min=0,max=4,label=Edit: the speed of the preview; 0 keeps it"`,
+    speed:f32 `mirai:"optional,min=0,max=4,label=Edit: the speed of the preview of the Tracks tool; 0 keeps it"`,
     view:Control_View `mirai:"optional,label=Edit: Shot looks through the shot at the head and Editor gives the viewport its view back"`,
 }
 Control_Result :: struct {
-    mode:[16]u8 `mirai:"text,label=Edit drives the preview of the editor; Play the running world"`,
+    mode:[16]u8 `mirai:"text,label=Edit drives the head of the Tracks tool; Play the running world"`,
     status:cine.Cinematic_Status,
     time:f32 `mirai:"unit=s"`,
     duration:f32 `mirai:"unit=s"`,
@@ -78,9 +79,9 @@ Add_Result :: struct {id:base.Entity_Id}
 register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Cinematics",.Play)
     inspect_defaults:=Inspect_Params{time=-1}
-    editor.api_method_register(s,{name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots, the actors its clip moves, its viewers, what the viewers show at a time, and the preview of the editor. The keys and markers are of the clip: animation.asset.inspect reads them.",params=Inspect_Params,params_info=type_info_of(Inspect_Params),result=Inspect_Result,result_info=type_info_of(Inspect_Result),defaults=&inspect_defaults,flags={.Read_Only},run=api_inspect})
-    editor.api_method_register(s,{name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the preview of the Cinematics tool, which seeks the clip in the scene without changing the document; in Play the running world, as anim.animation_command does.",params=Control_Params,params_info=type_info_of(Control_Params),result=Control_Result,result_info=type_info_of(Control_Result),run=api_control})
-    editor.api_method_register(s,{name="cinematics.add",summary="Adds a timeline (an entity with a Cinematic and the Animation that plays its clip), a shot under one, or an actor: an entity anywhere that the clip moves by a name. One step of undo.",params=Add_Params,params_info=type_info_of(Add_Params),result=Add_Result,result_info=type_info_of(Add_Result),run=api_add})
+    editor.api_method_register(s,Inspect_Params,Inspect_Result,{name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots, the actors its clip moves, its viewers, what the viewers show at a time, and the preview of the editor. The keys and markers are of the clip: animation.asset.inspect reads them.",defaults=&inspect_defaults,flags={.Read_Only},run=api_inspect})
+    editor.api_method_register(s,Control_Params,Control_Result,{name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the head of the Tracks tool in the Cinematics tool, which shows the scene there without changing the document (animation.tracks.show for any clip); in Play the running world, as anim.animation_command does.",run=api_control})
+    editor.api_method_register(s,Add_Params,Add_Result,{name="cinematics.add",summary="Adds a timeline (an entity with a Cinematic and the Animation that plays its clip), a shot under one, or an actor: an entity anywhere that the clip moves by a name. One step of undo.",run=api_add})
 }
 
 @(private)
@@ -108,17 +109,17 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     animation,_:=editor.entity_get(w,timeline,anim.Animation)
     at,duration,ended,clipped:=anim.animation_progress(core.world_storage_of(w,anim.Playback),timeline)
     c:=tool_state(s)
-    rate:=tick_rate(s)
-    previewed:=c!=nil && s.mode==.Edit && c.timeline==timeline && editor.tool_on(s,TOOL)
+    head,playing,previewed:=aed.tracks_head(s,timeline)
+    previewed&&=s.mode==.Edit
     time:=p.time
-    if time<0 {time=previewed?c.head/rate:at}
+    if time<0 {time=previewed?head:at}
     status:=value.status
     if s.mode==.Edit {status=clipped?cine.cinematic_status(false,ended,at):.Stopped}
     r:=api.call_result(call,Inspect_Result)
     r^={
         id=editor.api_entity_id(w,timeline),name=editor.entity_name(w,timeline),clip=animation.asset,clip_name=strings.clone(base.text_get(animation.clip[:]),call.allocator),
         duration=clipped?duration:0,loop=animation.loop,playing=animation.playing,status=status,time=time,
-        preview={previewed && c.previewing,previewed && c.playing,previewed && c.shot_view,previewed?c.head/rate:0},
+        preview={previewed,previewed && playing,previewed && c!=nil && c.shot_view && editor.tool_on(s,TOOL),previewed?head:0},
     }
     shots,shot_values:=parts_of(w,timeline,cine.Cinematic_Shot)
     r.shots=make([]Inspect_Shot,len(shot_values),call.allocator)
@@ -145,10 +146,10 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     w:=editor.shown_world(s)
     timeline:=timeline_find(call,w,p.entity[:],"entity")
     if timeline==core.NONE {return}
-    if !editor.entity_has(w,timeline,anim.Animation) {api.call_fail(call,api.INVALID_PARAMS,"the timeline has no Animation, so it has no clip to control: add one to its entity whose asset is the .anim of its clip (scene.set, or cinematics.add part Timeline with clip)");return}
+    if !editor.entity_has(w,timeline,anim.Animation) {api.call_fail(call,api.INVALID_PARAMS,"the timeline has no Animation, so it has no clip to control: add one to its entity whose asset is the .anim of its clip (scene.write, or cinematics.add part Timeline with clip)");return}
     value,_:=editor.entity_get(w,timeline,cine.Cinematic)
     out:=api.call_result(call,Control_Result)
-    out.duration=duration_of(w,timeline)
+    _,out.duration,_,_=anim.animation_progress(core.world_storage_of(w,anim.Playback),timeline)
     if s.mode!=.Edit {
         requests:=core.world_storage_of(w,anim.Animation_Requests)
         if requests==nil {api.call_fail(call,api.SERVER_ERROR,"the running world has no animation requests: the project does not use the animation plugin");return}
@@ -163,25 +164,16 @@ api_control :: proc(s:^editor.Session,call:^api.Call) {
     if c==nil {api.call_fail(call,api.SERVER_ERROR,"the Cinematics tool is not in this build of the editor");return}
     editor.tool_set(s,TOOL,true)
     if !editor.tool_on(s,TOOL) {api.call_fail(call,api.INVALID_PARAMS,"the Cinematics tool works on the scene: bring the scene to the front with editor.document first");return}
-    if c.timeline!=timeline {c.timeline,c.head,c.playing,c.strip=timeline,0,false,{}}
-    rate:=tick_rate(s)
-    switch p.command {
-    case .Play: c.head,c.playing,c.previewing=0,true,true
-    case .Pause: c.playing=false
-    case .Resume: c.playing,c.previewing=true,true
-    case .Stop: c.head,c.playing,c.previewing=0,false,false
-    case .Seek: c.head,c.playing,c.previewing=min(p.time,out.duration)*rate,false,true
-    }
-    c.shown=-1
-    if p.speed>0 {c.speed=p.speed}
+    c.timeline=timeline
+    head,playing,_:=aed.tracks_command(s,timeline,p.command,p.time,true,p.speed)
     switch p.view {
     case .Keep:
     case .Shot: c.shot_view=true
     case .Editor: c.shot_view=false
     }
     copy(out.mode[:],"Edit")
-    out.time=c.head/rate
-    out.status=c.playing?.Playing:(c.previewing?.Paused:.Stopped)
+    out.time=head
+    out.status=.Stopped if p.command==.Stop else (.Playing if playing else .Paused)
 }
 
 @(private)
@@ -199,6 +191,7 @@ api_add :: proc(s:^editor.Session,call:^api.Call) {
     e,problem:=part_add(s,w,desc)
     if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"the %v was not added: %s",p.part,problem)}
     if !editor.api_edit_end(s,call,e!=core.NONE) {return}
-    if c:=tool_state(s);c!=nil {c.shown=-1}
+    // A new actor takes its place at the head.
+    if p.part==.Actor {aed.tracks_command(s,desc.timeline,.Seek,0,false,0)}
     api.call_result(call,Add_Result).id=editor.api_entity_id(w,e)
 }

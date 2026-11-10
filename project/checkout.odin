@@ -42,6 +42,22 @@ machine_folder :: proc(engine_root:string,allocator:=context.allocator) -> strin
     return folder_path(shared_root(engine_root,context.temp_allocator),.Generated,allocator)
 }
 
+// A cache of what imports build, kept by content (TEXTURE_CACHE, MESH_CACHE):
+// what a file of it holds depends on what it was made from and on no project,
+// so every project of a checkout shares it, and so do the worktrees of the
+// repository: <main>/.mirai/cache/<name>, where main is the main checkout of
+// the repository root is in. A project outside any repository keeps its own.
+content_cache_path :: proc(root,name:string,allocator:=context.allocator) -> string {
+    folder:=path_absolute(root,context.temp_allocator)
+    for at:=folder;at!="";at=os.dir(at) {
+        if os.exists(path(at,".git",allocator=context.temp_allocator)) {
+            return cache_path(shared_root(at,context.temp_allocator),name,allocator=allocator)
+        }
+        if os.dir(at)==at {break}
+    }
+    return cache_path(root,name,allocator=allocator)
+}
+
 @(private="file")
 forward_slashes :: proc(text:string,allocator:=context.allocator) -> string {
     result,error:=strings.clone(text,allocator)

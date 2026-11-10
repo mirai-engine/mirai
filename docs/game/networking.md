@@ -14,7 +14,8 @@ a server or as a client; the server decides, a client predicts the body it drive
 
 - Run server and clients, make an entity or component travel, server-only rules: below.
 - Events between ends (an announcement, a purchase), arrivals: [messages](networking/messages.md).
-- Seats, bodies of players, who sees what: [players](networking/players.md).
+- Seats, bodies of players, who sees what, what a client predicts, predicted spawns, input delay:
+  [players](networking/players.md).
 - Shots and melee judged where the shooter aimed: [lag](networking/lag-compensation.md).
 - Prefabs and scenes carrying `Replicate` are written by [assets](assets.md).
 
@@ -37,7 +38,8 @@ opens, go in `settings.mirai`:
 
 Put the `multiplayer.Replicate` component (with a `Transform`) on the prefab: every entity made
 from it exists on the server and on the clients that see it. Its pose travels; so does the
-`Move_Input` of a driven body and every component declared `replicated`.
+`Move_Input` of a driven body and every component declared `replicated` that it has, also one it
+gains later (a status) or loses.
 
 ```odin
 @(component,replicated)                    // replicated="owner" or "others" narrows who gets it
@@ -62,7 +64,6 @@ Where one function runs on every end, ask before deciding: `network:core.Ref(cor
 
 ## Pitfalls that fail silently
 
-- A component added after an entity was first replicated does not travel: put it on the prefab.
 - State outside the world (package variables, host storages) is not rolled back on a correction;
   keep game state in components and storages.
 - A client's change to what the server simulates is overwritten; send a message for the server.

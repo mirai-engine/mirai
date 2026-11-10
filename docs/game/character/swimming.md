@@ -10,7 +10,7 @@ Add `Swim` to the character prefab beside `Walk`; it starts from `phys.SWIM_DEFA
 `acceleration`, `depth`, `surface_offset`):
 
 ```json
-{"method":"scene.set","params":{"entity":"Player","components":{"Swim":{}}}}
+{"method":"scene.write","params":{"root":"Player","merge":true,"entities":[{"components":{"Swim":{}}}]}}
 ```
 
 - Walking or falling, it starts swimming where the water over the ground exceeds `Swim.depth`

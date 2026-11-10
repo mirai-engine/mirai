@@ -8,8 +8,7 @@ import "core:time"
 
 // What copying the terrain of a World costs with an extensive source held in
 // memory: a Heightfield of 4097 samples a side with every page holding values
-// and its coarse grid, a Volume of 129³ as source_make leaves it, and a Mesh
-// made of a Heightfield of 257 samples a side in sections of 16 cells. Play: the first copy into an
+// and its coarse grid, and a Volume of 129³ as source_make leaves it. Play: the first copy into an
 // empty World. Rollback: a ring of SNAPSHOT_RING copies, one a tick after a
 // brush on the live World, for SNAPSHOT_TICKS ticks: the bytes the ring and
 // the edits retain past the live source, and what a warm copy takes.
@@ -21,7 +20,7 @@ import "core:time"
 bench_terrain_snapshots :: proc(t:^testing.T) {
     when !TERRAIN_BENCH {return} else {
         Case :: struct {name:string,kind:Source_Kind,samples:[3]int,chunk_cells:int}
-        cases:=[?]Case{{"Heightfield 4097x4097",.Heightfield,{4097,1,4097},128},{"Volume 129x129x129",.Volume,{129,129,129},16},{"Mesh of 257x257",.Mesh,{257,1,257},16}}
+        cases:=[?]Case{{"Heightfield 4097x4097",.Heightfield,{4097,1,4097},128},{"Volume 129x129x129",.Volume,{129,129,129},16}}
         for c in cases {
             tracking:mem.Tracking_Allocator
             mem.tracking_allocator_init(&tracking,context.allocator)
@@ -33,12 +32,7 @@ bench_terrain_snapshots :: proc(t:^testing.T) {
             entry:=&live.entries[0]
             entry.id={9,9}
             s:=&entry.source
-            if c.kind==.Mesh {
-                height:Source
-                testing.expect(t,source_make(&height,.Heightfield,c.samples,1,c.chunk_cells))
-                testing.expect(t,source_convert_heightfield(s,&height,4))
-                source_destroy(&height)
-            } else if !testing.expect(t,source_make(s,c.kind,c.samples,1,c.chunk_cells)) {return}
+            if !testing.expect(t,source_make(s,c.kind,c.samples,1,c.chunk_cells)) {return}
             if c.kind==.Heightfield {
                 last:=c.samples-1
                 testing.expect(t,grid_prepare(&s.heights,{},last,s.allocator))
@@ -63,8 +57,7 @@ bench_terrain_snapshots :: proc(t:^testing.T) {
             for tick in 0..<SNAPSHOT_TICKS {
                 at:=f32(tick)*3-90
                 brush:=Brush{kind=.Raise,center={at,0,at*0.5},radius=4,amount=0.25,falloff=.Smooth,hardness=0.5}
-                if c.kind==.Volume {brush=Brush{kind=.Remove,center={at*0.5,-20,0},radius=3,amount=1}}
-                if c.kind==.Mesh {brush=Brush{kind=.Raise,center={at*0.6,0,at*0.3},normal={0,1,0},radius=4,amount=0.25}}
+                if c.kind==.Volume {brush=Brush{kind=.Carve,center={at*0.5,-20,0},radius=3,amount=1}}
                 change:=source_edit(s,brush)
                 testing.expect(t,change.changed)
                 // As an edit of the World does: the coarse grid follows the samples.

@@ -105,6 +105,7 @@ Field :: struct {
     icons:string,       // the icons of the members of an enum, in their order, separated by spaces
     axes:string,        // the letters of the cells of a vector, one each
     graphics:string,    // the label of the field in the graphics popup of the viewport
+    choices:string,     // what the graphics popup offers: labels separated by |, each label:value or a label that is its value
 }
 
 // The texts a field owns in its schema.
@@ -558,7 +559,7 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // The options a tag takes, as an error names them.
-FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, section=, with=, icons=, axes=, graphics= and, last, label="
+FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, section=, with=, icons=, axes=, graphics=, choices= and, last, label="
 
 // What the tag of a field says: the only reader of `mirai:"..."`, for the
 // schema and for whoever walks the type information of a struct itself. The
@@ -636,6 +637,7 @@ field_tag :: proc(tag:string) -> (field:Field,problem:string) {
         case "icons":    field.icons=value
         case "axes":     field.axes=value
         case "graphics": field.graphics=value
+        case "choices":  field.choices=value
         case "requires": field.required_component=value!=""?base.name_hash(value):0
         case:
             return field,fmt.tprintf("%q is not a tag of a field: the tags are %s",key,FIELD_TAGS)

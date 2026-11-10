@@ -426,6 +426,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="build.test.status",summary="The last run of the tests build.test started: how long it has run while it runs, then each failed test and what it logged.",result=Api_Build_Test_Result,flags={.Read_Only},run=api_build_test_status})
     api_play_record_register(s,st)
     api_play_history_register(s,st)
+    api_register(s,st,{name="batch",flags={.Core},params=api.Batch_Params,params_info=type_info_of(api.Batch_Params),summary=api.BATCH_SUMMARY,result=api.Batch_Result,result_info=type_info_of(api.Batch_Result),run=proc(s:^Session,call:^api.Call) {api.batch(call)}})
     api_scene_register(s,st)
     api_names_register(s,st)
     api_simulation_register(s,st)

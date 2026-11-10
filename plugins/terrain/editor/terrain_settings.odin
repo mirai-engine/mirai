@@ -40,8 +40,6 @@ Terrain_Preferences :: struct {
     target:f32 `mirai:"min=0,max=1"`,
     ramp_sides:f32 `mirai:"min=0,unit=m"`,
     blend:f32 `mirai:"min=0,unit=m"`,
-    edge_length:f32 `mirai:"min=0.01,unit=m"`,
-    solid_depth:f32 `mirai:"min=0,unit=m"`,
     height_scale:f32 `mirai:"unit=m"`,
     height_offset:f32 `mirai:"unit=m"`,
     create_kind:terrain.Source_Kind,
@@ -53,8 +51,8 @@ BRUSH_DEFAULT :: Brush_Settings{radius=4,strength=0.5,slope={0,math.PI/4}}
 TERRAIN_PREFERENCES_DEFAULT :: Terrain_Preferences{
     brushes={.Sculpt=BRUSH_DEFAULT,.Holes=BRUSH_DEFAULT,.Shapes=BRUSH_DEFAULT,.Paint=BRUSH_DEFAULT},
     interval=2,riser=0.25,noise_scale=8,target=1,
-    ramp_sides=2,blend=0.5,edge_length=1,solid_depth=8,height_scale=32,
-    create_kind=.Mesh,samples=65,depth=17,chunk_cells=32,cell=1,
+    ramp_sides=2,blend=0.5,height_scale=32,
+    create_kind=.Heightfield,samples=65,depth=17,chunk_cells=32,cell=1,
 }
 
 @(storage)

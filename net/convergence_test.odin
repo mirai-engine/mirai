@@ -185,14 +185,14 @@ scope_follows_views_owners_filters_and_parents :: proc(t:^testing.T) {
         object,_=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Spatial,position={f32(i)*10,0,0}})
     }
     private,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Owner,owner=s.on_server[1]})
-    custom,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Custom})
+    custom,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.Always,visibility=0b10})
     hidden,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},filter=.None})
     child,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},parent=line[9]})
     grandchild,_:=object_create(s.server,{type=s.tp.prop,sources={0=&transform},parent=child,priority=50})
     _,bad_parent:=object_create(s.server,{type=s.tp.prop,parent=Object(12345)})
     testing.expect_value(t,bad_parent,Error.Invalid)
     connection_set_view(s.server,s.on_server[0],{0,0,0},25)
-    object_set_relevance(s.server,custom,s.on_server[0],true)
+    connection_set_visibility(s.server,s.on_server[0],0b110)
 
     Order :: struct {created:[2][64]int,next:[2]int,left,ended:[2]int}
     order:Order

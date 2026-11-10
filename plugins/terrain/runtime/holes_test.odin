@@ -35,9 +35,9 @@ holes_are_cut_and_filled_by_cells_and_round_trip_in_the_terrain_file :: proc(t:^
     testing.expect(t,source_clone(&cloned,&loaded))
     testing.expect(t,source_edit(&cloned,{kind=.Fill,center={0.5,0,0.5},radius=0.6}).changed)
     testing.expect(t,!source_hole(&cloned,8,8) && source_hole(&loaded,8,8))
-    mesh:Source;defer source_destroy(&mesh)
-    testing.expect(t,source_make(&mesh,.Mesh,{9,1,9},1,4))
-    testing.expect_value(t,source_edit(&mesh,{kind=.Hole,center={},radius=1}).error,Edit_Error.Invalid)
+    volume:Source;defer source_destroy(&volume)
+    testing.expect(t,source_make(&volume,.Volume,{9,9,9},1,4))
+    testing.expect_value(t,source_edit(&volume,{kind=.Hole,center={},radius=1}).error,Edit_Error.Kind)
     plain:Source;defer source_destroy(&plain)
     testing.expect(t,source_make(&plain,.Heightfield,{9,1,9},1,4))
     testing.expect_value(t,source_save(&plain,path,{9,9},&types),asset.Error.None)
@@ -71,13 +71,6 @@ holes_leave_no_triangles_picking_or_flat_edges_and_keep_the_collider_samples :: 
     testing.expect_value(t,len(mesh.holes),64)
     testing.expect(t,chunk_holed(&source,chunk_index(&source,{1,0,1})))
     testing.expect(t,!chunk_holed(&source,chunk_index(&source,{0,0,1})))
-    open,solid:Source
-    defer source_destroy(&open);defer source_destroy(&solid)
-    testing.expect(t,source_convert_heightfield(&open,&source,0))
-    triangles:=0
-    for &chunk in open.mesh_chunks {triangles+=len(chunk.geometry.indices)/3}
-    testing.expect_value(t,triangles,2*16*16-2)
-    testing.expect(t,!source_convert_heightfield(&solid,&source,4),"a hole would open the solid")
 }
 
 @(test)

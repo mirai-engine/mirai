@@ -479,8 +479,7 @@ def set_up_scene(task: dict, session: Session):
     if "scene" not in task:
         return
     document = json.loads((TASKS / "scenes" / f"{task['scene']}.json").read_text("utf-8"))
-    for entity in document["entities"]:
-        session.rpc(WRITE, {"entities": [entity]})
+    session.rpc(WRITE, {"merge": True, "entities": document["entities"]})
     session.rpc(SAVE, {"path": (session.project / ".mirai" / "tmp" / "task.scene").as_posix()})
 
 

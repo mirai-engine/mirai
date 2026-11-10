@@ -82,15 +82,16 @@ Session_Options :: struct {
 }
 
 // problem says what is wrong with args; "" when nothing is.
-session_options :: proc(args:[]string) -> (options:Session_Options,problem:string) {
+session_options :: proc(arguments:[]string) -> (options:Session_Options,problem:string) {
     options.timeout=180
+    args:[]string
+    modes_valid:bool
+    options.mode,args,modes_valid=build_mode_take(arguments)
+    if !modes_valid {return {},"--dev and --release do not go together"}
+    options.mode_asked=len(args)<len(arguments)
     editor_args:=make([dynamic]string,context.temp_allocator)
     for i:=0;i<len(args);i+=1 {
         switch args[i] {
-        case "--dev","--release":
-            mode:=args[i]=="--dev"?Build_Mode.Dev:Build_Mode.Release
-            if options.mode_asked && options.mode!=mode {return {},"--dev and --release do not go together"}
-            options.mode,options.mode_asked=mode,true
         case "--no-build": options.no_build=true
         case "--discard":  options.discard=true
         case "--orphans":  options.orphans=true

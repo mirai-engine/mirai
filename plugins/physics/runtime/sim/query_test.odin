@@ -66,6 +66,15 @@ rays_hit_every_kind_of_shape_where_geometry_says :: proc(t:^testing.T) {
     hit,ok=shape_ray_cast(&w,Shape_Handle(1<<32|1),{10,5,0},{0,-10,0})
     testing.expect(t,ok && hit.body==box)
     expect_near(t,hit.fraction,0.3)
+    // A body as if it were at another pose, where it was at another time: the ray misses where it is and hits where it was.
+    _,ok=body_ray_cast(&w,sphere,{{0,0,50},QUAT_IDENTITY},{0,5,0},{0,-10,0})
+    testing.expect(t,!ok)
+    hit,ok=body_ray_cast(&w,sphere,{{0,0,50},QUAT_IDENTITY},{0,5,50},{0,-10,0})
+    testing.expect(t,ok && hit.body==sphere)
+    expect_near(t,hit.fraction,0.4)
+    expect_near3(t,hit.point,{0,1,50})
+    _,ok=body_ray_cast(&w,Body_Handle(12345),TRANSFORM_IDENTITY,{0,5,0},{0,-10,0})
+    testing.expect(t,!ok)
 }
 
 @(test)
