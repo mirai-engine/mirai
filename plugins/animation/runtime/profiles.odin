@@ -70,7 +70,7 @@ Modifier_Kind :: enum u8 {IK,Look,Grounding,Limit,Chain_IK,Twist,Spring,Multi_IK
 MODIFIER_TARGETED :: bit_set[Modifier_Kind]{.IK,.Look,.Chain_IK,.Multi_IK,.Spline_IK,.Follow}
 
 // What gameplay gives an operation of a rig's profile, by slot or by name
-// (name, and effector_name for Multi IK, are found again when the profile is
+// (name, and effector_name for Multi IK, are found again when the .character is
 // read again). target: where IK, Look, Chain IK, a Multi IK effector, a Spline
 // IK control (effector) or Follow aim. position: the external force of Spring.
 Modifier_Goal :: struct {
@@ -313,7 +313,7 @@ modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,prob
         }
         index:=-1
         for known,i in runtime.goals {if known.rig==goal.rig && known.kind==goal.kind && known.slot==goal.slot && known.effector==goal.effector {index=i;break}}
-        if index>=0 {runtime.goals[index]=goal} else if append(&runtime.goals,goal)!=1 {memory_problem(problems,goal.rig,"a goal of its pose profile");continue}
+        if index>=0 {runtime.goals[index]=goal} else if append(&runtime.goals,goal)!=1 {memory_problem(problems,goal.rig,"a goal of its .character");continue}
         modifier_apply_goal(runtime,goal,problems)
     }
     modifier_controls_take(runtime,requests,problems,dt)

@@ -174,7 +174,7 @@ Playing :: struct {
     previewed:bool,            // played in the editor in the last tick
     layers:[STACK_SLOTS]Layer_Playing,
     asked:[STACK_SLOTS]Layer_Ask,           // what each slot plays in this tick
-    stack:u8,                               // slots its action set gives it; 0: none
+    stack:u8,                               // slots its .character gives it; 0: none
     parameters:[STACK_PARAMETERS]Stack_Parameter, // what set gave it; name 0: free
     program:Program_Playing,
     curves:[dynamic]Curve_Output,
@@ -1130,7 +1130,7 @@ ANIMATION_SETTINGS_DEFAULT :: Animation_Settings{requests=256,match_goals=4096}
 animation_requests_serve :: proc(requests:^Animation_Requests,motion:^Motion_Requests,modifiers:^Modifier_Requests,settings:Animation_Settings,problems:^core.Problems) {
     code,capacity,setting:="animation.requests",int(settings.requests),"Animation_Settings.requests"
     core.queue_serve(&requests.timeline,capacity,problems,code,"timeline commands",setting,"it names an entity, a command and a finite time")
-    core.queue_serve(&requests.distances,capacity,problems,code,"animation distance plays",setting,"it names an entity, a clip and a time of 0 or more, or a distance track of its motion profile")
+    core.queue_serve(&requests.distances,capacity,problems,code,"animation distance plays",setting,"it names an entity, a clip and a time of 0 or more, or a distance track of its .character")
     core.queue_serve(&requests.poses,capacity,problems,code,"bone poses",setting,"it names a rig and a bone, with a finite pose, a unit rotation and a weight from 0 to 1")
     core.queue_serve(&requests.final_poses,capacity,problems,code,"final bone poses",setting,"it names a rig and a bone, with a finite pose, a unit rotation and a weight from 0 to 1")
     core.queue_serve(&requests.match_goals,int(settings.match_goals),problems,code,"motion matching goals","Animation_Settings.match_goals","it names a rig and a mode up to 31, with finite values and rates of 0 or more")

@@ -181,17 +181,17 @@ constraint_world :: proc(transforms:core.Read(core.Transform),parents:core.Read(
     return mm.TRANSFORM_IDENTITY,false
 }
 
-// Reports a constraint of the pose profile of a rig that did nothing in a tick.
+// Reports a constraint of the .character of a rig that did nothing in a tick.
 @(private)
 constraint_problem :: proc(problems:^core.Problems,e:core.Entity,kind:Modifier_Kind,index:int,failure:Rig_Failure,bone:Bone_Ref={}) {
     bone:=bone
     switch failure {
     case .Bind:
-        core.report(problems,e,"animation.constraint_bone","%v %d of the pose profile of this rig names '%s', which its skeleton does not have; %s",kind,index,base.text_get(bone.path[:]),bone_fix(bone))
+        core.report(problems,e,"animation.constraint_bone","%v %d of the .character of this rig names '%s', which its skeleton does not have; %s",kind,index,base.text_get(bone.path[:]),bone_fix(bone))
     case .Target:
-        core.report(problems,e,"animation.constraint_target","%v %d of the pose profile of this rig has no target: its entity is gone or has no Transform, its rig is not animated in this tick, or its bone or socket is not in that skeleton; give it a target that exists",kind,index)
+        core.report(problems,e,"animation.constraint_target","%v %d of the .character of this rig has no target: its entity is gone or has no Transform, its rig is not animated in this tick, or its bone or socket is not in that skeleton; give it a target that exists",kind,index)
     case .Solve:
-        core.report(problems,e,"animation.constraint_solve","%v %d of the pose profile of this rig could not be solved: its bones are not a chain of the skeleton (root above joint above end), or a value of it or of its target is not finite; fix it in the pose profile",kind,index)
+        core.report(problems,e,"animation.constraint_solve","%v %d of the .character of this rig could not be solved: its bones are not a chain of the skeleton (root above joint above end), or a value of it or of its target is not finite; fix it in the .character",kind,index)
     case .Source:
     }
 }
@@ -203,7 +203,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
     rig:^Constraint_Rig
     if index<len(cache.rigs) && cache.rigs[index].entity==state.entity {rig=&cache.rigs[index]}
     problems:=inputs.problems
-    if rig!=nil && !constraints_bind(state,inputs,rig) {memory_problem(problems,state.entity,"the constraints of its pose profile");return}
+    if rig!=nil && !constraints_bind(state,inputs,rig) {memory_problem(problems,state.entity,"the constraints of its .character");return}
     // A rig that takes the sampled pose of another takes it through the chains of its set, or by
     // the names of their bones.
     chained:=rig_runtime!=nil && rigs_retarget(state,playback,rig_runtime,problems)
@@ -241,7 +241,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         if instance:=motion_instance(motion,state.entity);instance!=nil {
             actor,ok:=constraint_world(core.read(transforms),parents,inputs.worlds,state.entity)
             if !ok {
-                core.report(problems,state.entity,"animation.rig_parent","the motion profile of this rig cannot place it: it or one of its parents has no Transform; give them one")
+                core.report(problems,state.entity,"animation.rig_parent","the warping of the .character of this rig cannot place it: it or one of its parents has no Transform; give them one")
             } else {
                 motion_apply_pose(motion,state,instance.profile,actor,parent_world,characters,problems)
             }
@@ -283,7 +283,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         rotation:mm.Quat;valid:bool
         if config.use_up {rotation,valid=lib.aim_at(state.world[bone].rotation,config.forward,direction,config.up,config.world_up,config.max_angle,config.weight)} else {rotation,valid=lib.look_at(state.world[bone].rotation,config.forward,direction,config.max_angle,config.weight)}
         if !valid {
-            core.report(problems,state.entity,"animation.constraint_solve","Look %d of the pose profile of this rig cannot aim: its forward or up axis is zero or not finite, or its target is where the bone is; give it axes and a target apart from the bone",at)
+            core.report(problems,state.entity,"animation.constraint_solve","Look %d of the .character of this rig cannot aim: its forward or up axis is zero or not finite, or its target is where the bone is; give it axes and a target apart from the bone",at)
             continue
         }
         parent:=state.parents[bone]
@@ -307,7 +307,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         if ok {
             state.local[bone].rotation=mm.quat_slerp(state.local[bone].rotation,rotation,config.weight);limited=true
         } else {
-            core.report(problems,state.entity,"animation.constraint_solve","Limit %d of the pose profile of this rig cannot limit bone '%s': its axis is zero or not finite, or min_twist is above max_twist; fix it in the pose profile",at,base.text_get(config.bone.path[:]))
+            core.report(problems,state.entity,"animation.constraint_solve","Limit %d of the .character of this rig cannot limit bone '%s': its axis is zero or not finite, or min_twist is above max_twist; fix it in the .character",at,base.text_get(config.bone.path[:]))
         }
     }
     if limited && !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);return}

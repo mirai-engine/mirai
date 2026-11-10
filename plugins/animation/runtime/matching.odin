@@ -47,7 +47,7 @@ MATCH_INFO_DEFAULT :: Match_Info{
     reselect=.3,hold=.1,lag_half_life=.2,
     landing_marker={0='l',1='a',2='n',3='d'},landing_rates={.5,2},
 }
-// Clips a blended source mixes, and samples of blends a .match keeps.
+// Clips a blended source mixes, and samples of blends the locomotion of a .character keeps.
 MATCH_BLEND :: lib.MATCH_BLEND
 MATCH_SAMPLES :: 128
 
@@ -59,7 +59,7 @@ MATCH_SAMPLES :: 128
 // in phase (the same share of each is the same moment of the step), and each Match_Sample of it is
 // searched as a clip of its own, measured from their pose blended at its weights, and played as
 // those clips together at its weights. A blend loops, is no entry and takes its speeds per sample.
-// min_rate and max_rate, when positive, replace those of the .match for it and its samples: a set
+// min_rate and max_rate, when positive, replace those of the .character for it and its samples: a set
 // authored slower than the body moves in it (a crouch), or a jog kept from beating a sprint.
 Match_Source :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,modes:u32,loop,entry:bool,speed:f32 `mirai:"unit=m/s"`,blend:[MATCH_BLEND-1][64]u8 `mirai:"text"`,min_rate,max_rate:f32}
 // A point of a blended source (its index in clips): the weight of its clip, then of each clip of
@@ -114,17 +114,17 @@ match_check :: proc(profile:Match_Profile) -> bool {
 // of a source (member 0 and member) that last more than a row of the database apart.
 @(private)
 Match_Blend_Fault :: struct {kind:enum u8 {None,Missing,Duration},source,member:i32,durations:[2]f32}
-// What the body does and is asked to do in this tick, for a rig that plays a .match: mode is its
+// What the body does and is asked to do in this tick, for a rig that plays the locomotion of a .character: mode is its
 // locomotion mode; velocity, where it goes; desired, the velocity its walk heads to at
 // acceleration (braking toward zero); facing, where it turns to at turn_rate rad/s (0: at once);
 // wall, the normal of what blocks it, out of that (zero: nothing), which neither its trajectory
 // nor the root of its pose go into; time_to_land, the seconds until a body in the air lands (0:
-// none known), which the landing marker of the .match plays toward. World axes, m/s. The rig faces
+// none known), which the landing marker of the .character plays toward. World axes, m/s. The rig faces
 // -Z of its transform.
 Match_Goal :: struct {rig:core.Entity,mode:u16,velocity,desired,facing,wall:mm.Vec3,acceleration,braking,turn_rate,time_to_land:f32}
 
 // The whole-body action that plays on a rig instead of the search in this tick: clip, its name in
-// the library the .match plays; starting, it begins in this tick; fade_in and fade_out, the
+// the library the .character plays; starting, it begins in this tick; fade_in and fade_out, the
 // seconds of the inertial blends into it and back to the search; root, its root motion policy.
 @(private)
 Match_Inject :: struct {active,starting:bool,clip:u64,fade_in,fade_out:f32,root:Root_Motion_Policy}
@@ -156,7 +156,7 @@ travel_turn :: proc "contextless" (from,to:mm.Vec3,remaining:f32) -> mm.Vec3 {
     return linalg.normalize0(mm.quat_rotate(linalg.quaternion_angle_axis_f32(turn*(1-remaining),{0,1,0}),from))
 }
 
-// False for an entity that does not play a .match.
+// False for an entity that plays no locomotion of a .character.
 animation_match :: proc(playback:^Playback,entity:core.Entity) -> (value:Animation_Match,ok:bool) {
     state:=constraint_playing(playback,entity) if playback!=nil else nil
     if state==nil || !state.program.matched || !state.program.ready {return}
@@ -212,7 +212,7 @@ match_searched_candidates :: proc "contextless" (db:^lib.Match_Database,searched
 }
 MATCH_PLAYING_DEFAULT :: Match_Playing{range=-1,rate=1,since=max(f32)}
 
-// The matching of a rig whose Animation.library swaps the clips of its .match (a weapon's set): it
+// The matching of a rig whose Animation.library swaps the clips of its .character (a weapon's set): it
 // keeps the body it follows, its root lag and its mode, and the name of the clip it played, so the
 // next tick searches the new clips at once and enters the one it picks through an inertial
 // transition from the pose of the old one, as a jump does, instead of starting over from rest.
@@ -233,7 +233,7 @@ match_database_key :: proc(library:^host.Content_Animation,state:^Playing,source
 }
 
 // The database the matching of a rig searches, of library, what it plays: nil for a rig that
-// plays no .match, before its first tick or when its database could not be built.
+// plays no locomotion of a .character, before its first tick or when its database could not be built.
 animation_match_database :: proc(matches:^Character_Assets,library:^host.Content_Animation,state:^Playing) -> ^lib.Match_Database {
     if matches==nil || library==nil || state==nil || !state.program.matched || !state.program.ready {return nil}
     key:=match_database_key(library,state,state.program.library)

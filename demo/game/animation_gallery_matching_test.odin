@@ -11,7 +11,7 @@ import "mirai:host"
 import "mirai:std/base"
 import anim "plugins:animation/runtime"
 
-// The matching station of the gallery with Mirai (mirai_gallery.match): the
+// The matching station of the gallery with Mirai (mirai_gallery.character): the
 // speed the game asks picks idle, walk or jog, at a rate that follows it.
 @(test)
 gallery_mirai_matching_plays_idle_walk_and_jog_by_the_speed_it_is_asked :: proc(t:^testing.T) {

@@ -295,7 +295,7 @@ animation_skin :: proc(
         if !rigid && modifiers.ptr!=nil {
             fits:bool
             if fits,materialed=curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),&override);!fits {
-                core.report(problems,entity,"animation.curve_material","the curve materials of the pose profile of the rig of this entity, with its Material_Override, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_OVERRIDE_CAPACITY)
+                core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity, with its Material_Override, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_OVERRIDE_CAPACITY)
             }
         }
         bones:=len(pose.local) if !rigid else 0

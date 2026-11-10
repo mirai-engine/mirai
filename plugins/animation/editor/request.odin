@@ -16,7 +16,7 @@ import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Request_Motion :: struct {
-    name:[32]u8 `mirai:"text,label=A warp window of the motion profile"`,
+    name:[32]u8 `mirai:"text,label=A warp window of its .character"`,
     target:Spatial_Target_Params `mirai:"optional,label=Where the window ends: a point (World), an entity, or a bone or socket of a rig"`,
     enabled:bool `mirai:"optional"`,
 }
@@ -26,7 +26,7 @@ Request_Locomotion :: struct {
     weight:f32 `mirai:"optional,min=0,max=1"`,
     enabled:bool `mirai:"optional"`,
 }
-Request_Distance :: struct {name:[32]u8 `mirai:"text,label=A distance track of the motion profile"`,distance:f32 `mirai:"unit=m"`,seek:bool `mirai:"optional,label=Jumps to its time instead of advancing the clock with crossed events and root motion"`}
+Request_Distance :: struct {name:[32]u8 `mirai:"text,label=A distance track of its .character"`,distance:f32 `mirai:"unit=m"`,seek:bool `mirai:"optional,label=Jumps to its time instead of advancing the clock with crossed events and root motion"`}
 Hand_Side :: enum u8 {Left,Right}
 Gesture_Mask :: enum u8 {Upper_Body,Arm_L,Arm_R}
 Intent_Look :: struct {
@@ -47,7 +47,7 @@ Intent_Locomote :: struct {
     speed:f32 `mirai:"optional,min=0,unit=m/s,label=0 walks"`,
 }
 Intent_Gesture :: struct {
-    clip:[64]u8 `mirai:"text,label=A clip of the action profile"`,
+    clip:[64]u8 `mirai:"text,label=A clip of the .character"`,
     mask:Gesture_Mask `mirai:"optional"`,
     stop:bool `mirai:"optional"`,
 }
@@ -56,8 +56,8 @@ Request_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     stop:bool `mirai:"optional,label=Stops playback where it is"`,
     seek:f32 `mirai:"optional,min=0,unit=s,label=Plays from this time on the next evaluation"`,
-    parameters:[anim.STACK_PARAMETERS]Preview_Parameter `mirai:"optional,label=Parameters of its action set: the weight of a layer by its name; or an axis of the space of one (an aim yaw)"`,
-    actions:[REQUEST_ROWS]Preview_Action `mirai:"optional,label=Actions of its action set to play or stop; in order"`,
+    parameters:[anim.STACK_PARAMETERS]Preview_Parameter `mirai:"optional,label=Parameters of its .character: the weight of a layer by its name; or an axis of the space of one (an aim yaw)"`,
+    actions:[REQUEST_ROWS]Preview_Action `mirai:"optional,label=Actions of its .character to play or stop; in order"`,
     goals:[REQUEST_ROWS]Preview_Goal `mirai:"optional"`,
     controls:[REQUEST_ROWS]Preview_Control `mirai:"optional"`,
     motion:[16]Request_Motion `mirai:"optional,label=Targets of warp windows"`,
@@ -91,7 +91,7 @@ request_rows_defaults :: proc(p:^$T) {
 @(private)
 request_register :: proc(s:^editor.Session) {
     defaults:=request_defaults();if defaults==nil {return}
-    editor.api_method_register(s,Request_Params,Request_Result,{name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its action set to intents. Edit takes only stop; the rest needs Play or Simulation.",defaults=defaults,run=request,writes_result=true})
+    editor.api_method_register(s,Request_Params,Request_Result,{name="animation.request",summary="Asks an animated entity what to do, from playback, the parameters and actions of its .character to intents. Edit takes only stop; the rest needs Play or Simulation.",defaults=defaults,run=request,writes_result=true})
 }
 
 // Fields of a request that change the document in Edit; the rest change only a running world.
@@ -198,7 +198,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             if p.gesture.mask!=.Upper_Body {name=fmt.tprintf("%s %v",name,p.gesture.mask)}
             index:=-1
             for &action,i in profile.actions {if base.text_get(action.name[:])==name {index=i;break}}
-            if index<0 {authoring_failure(call,"gesture.clip","Missing_Reference","a gesture of the action profile",name,"The character has no such gesture",fix=request_action_names(profile.actions));return false}
+            if index<0 {authoring_failure(call,"gesture.clip","Missing_Reference","a gesture of the .character",name,"The character has no such gesture",fix=request_action_names(profile.actions));return false}
             requested:=core.world_storage_of(world,anim.Animation_Requests)
             waiting:=len(requested.plays.items)
             if p.gesture.stop {anim.stop(requested,entity,name)} else {anim.play(requested,entity,name)}
@@ -271,7 +271,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             if authoring_field_present(call,"distance") {
                 name:=base.text_get(p.distance.name[:])
                 time,clip,valid:=anim.motion_distance_time(profile,name,p.distance.distance)
-                if !valid {authoring_failure(call,"distance","Invalid_Distance","a distance track of the motion profile and a finite distance",name,"The distance track cannot be evaluated",fix="List the tracks with animation.asset.inspect section motion");return false}
+                if !valid {authoring_failure(call,"distance","Invalid_Distance","a distance track of its .character and a finite distance",name,"The distance track cannot be evaluated",fix="List the tracks with animation.asset.inspect section motion");return false}
                 state:^anim.Playing
                 if playback:=core.world_storage_of(world,anim.Playback);playback!=nil {for &value in playback.states {if value.entity==entity {state=&value;break}}}
                 if state!=nil {
@@ -282,7 +282,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 requested:=core.world_storage_of(world,anim.Animation_Requests)
                 waiting:=len(requested.distances.items)
                 anim.motion_play_distance(requested,entity,profile,name,p.distance.distance,p.distance.seek)
-                if len(requested.distances.items)==waiting {authoring_failure(call,"distance","Invalid_Distance","a distance track of the motion profile and a finite distance",name,"The distance playback could not be queued",fix="List the tracks with animation.asset.inspect section motion");return false}
+                if len(requested.distances.items)==waiting {authoring_failure(call,"distance","Invalid_Distance","a distance track of its .character and a finite distance",name,"The distance playback could not be queued",fix="List the tracks with animation.asset.inspect section motion");return false}
                 request_note(applied,"Distance",name,p.distance.distance)
             }
             if authoring_field_present(call,"locomote") {
@@ -359,7 +359,7 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
     if !off {
         goal:=Preview_Goal{kind=.Look if kind==.Look else .IK,name=definition.name,target=target}
         value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);if !valid {return false}
-        // Asking for it turns on an operation the profile keeps off until asked.
+        // Asking for it turns on an operation the .character keeps off until asked.
         value.enabled=true
         waiting:=len(requests.queue.items)
         anim.modifier_goal(requests,value)

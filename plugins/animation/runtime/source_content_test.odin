@@ -210,7 +210,7 @@ an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems ::
 
 // A weapon's set swapped into Animation.library while its .anim compresses in a job: until it is
 // ready the entity plays on what it played, with the action it plays, without a problem of its
-// own; then the set joins its sources. The actor has no feet to match by, so its .match plays its
+// own; then the set joins its sources. The actor has no feet to match by, so the locomotion of its .character plays its
 // first clip and says so.
 @(test)
 a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:^testing.T) {

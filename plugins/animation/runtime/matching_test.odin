@@ -80,7 +80,7 @@ Match_World :: struct {
     animations:core.Table(Animation),
 }
 
-// Walks a Mirai of the demo by matching (.match) through the program of the runtime, and
+// Walks a Mirai of the demo by the locomotion of its .character through the program of the runtime, and
 // measures what its pose does: how far a planted toe slides, the second difference of every bone
 // (a jump of the pose), and the ticks until the speed the pose walks at follows a change of the
 // stick. The jump and the landing are entry clips of their modes.
@@ -200,7 +200,7 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
 // Hips over two feet and a head, as the matching of std/anim: idle and walk on the ground, a fall
 // loop in the air and jump, the entry clip of the air, whose marker 'land' is at .8 s. With leap,
 // leap is another entry of the air that lands at .8 s and travels at 3 m/s. The others are not in
-// the .match; its action set plays them: vault, for two seconds over the whole body, with a
+// the locomotion of the .character; its .character plays them: vault, for two seconds over the whole body, with a
 // marker 'release' at .35 s; lunge, which takes the hips a metre along -Z in a second; kick, a foot
 // forward for a second with a marker 'hit' at .5 s, in the layer Leg over the left foot; and the
 // layer Aim, which adds over the head the offset its axis aim_yaw gives between aim_left and
@@ -824,8 +824,8 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     testing.expect(t,problem!=nil && strings.contains(core.problem_text(problem),"walk (1.000 s) with vault (2.000 s)"),"a blend of a clip of 1 s and one of 2 s is reported")
 }
 
-// A source with rates of its own follows the body between them, past those of the .match: the walk
-// of 1.5 m/s, let up to 1.5 times its speed, plays at 1.5 for a body at 2.25 m/s where the .match
+// A source with rates of its own follows the body between them, past those of the .character: the walk
+// of 1.5 m/s, let up to 1.5 times its speed, plays at 1.5 for a body at 2.25 m/s where the .character
 // stops the rest at their own speed; rates out of order are refused.
 @(test)
 a_source_with_rates_of_its_own_follows_the_body_between_them :: proc(t:^testing.T) {
@@ -952,7 +952,7 @@ match_step_with :: proc(f:^Match_Fixture,content:^host.Content_Animation,dt:f32,
     return match_step(f,dt,mode,velocity,velocity,content=content)
 }
 
-// A weapon's set: Animation.library swaps the clips of the .match for those of the same names in
+// A weapon's set: Animation.library swaps the clips of the .character for those of the same names in
 // another .anim, here a walk with the feet in the other phase. The rig goes on with the clip of
 // the new library that the search picks, entered through an inertial transition from the pose it
 // had, as a jump of matching does: the feet do not jump to the rest pose or the new walk at once.

@@ -133,7 +133,7 @@ action_profile_clone :: proc(source:Action_Profile,allocator:mem.Allocator) -> (
 Play_Request :: struct {entity:core.Entity,stop:bool,action,section:[64]u8 `mirai:"text"`}
 Value_Request :: struct {entity:core.Entity,name:u64,value:f32}
 
-// Plays the action named name of the action set of entity (Animation.actions), from section when
+// Plays the action named name of the .character of entity, from section when
 // one is given. An action that plays in the slot it takes gives way when name has at least its
 // priority and its cancel policy allows it; otherwise the request is refused with a problem of
 // the entity. Naming a section of the action while it plays moves it there instead. What happens
@@ -150,7 +150,7 @@ stop :: proc(requests:^Animation_Requests,entity:core.Entity,name:string) {
     if entity==core.NONE || name=="" || len(name)>=64 {core.refuse(&requests.plays);return}
     value:=Play_Request{entity=entity,stop=true};base.text_set(value.action[:],name);core.offer(&requests.plays,value)
 }
-// Sets the parameter named name of the action set of entity: the weight of the layer of that name,
+// Sets the parameter named name of the .character of entity: the weight of the layer of that name,
 // from 0 to 1, or the place on the axis of that name of the space of a layer (an aim yaw). It
 // stays until set again; a value past the range of its axis is the end of the range.
 set :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,value:f32) {
@@ -158,7 +158,7 @@ set :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,value:f3
     if entity==core.NONE || name=="" || len(name)>=64 || !finite(value) {core.refuse(&requests.values);return}
     core.offer(&requests.values,Value_Request{entity,base.name_hash(name),value})
 }
-// Turns the first Look row of the pose profile of entity toward target, by weight; 0 lets go.
+// Turns the first Look row of the .character of entity toward target, by weight; 0 lets go.
 look :: proc(requests:^Animation_Requests,entity:core.Entity,target:Spatial_Target,weight:f32=1) {
     if requests==nil {return}
     if entity==core.NONE || !finite(weight) || weight<0 || weight>1 || !spatial_target_valid(target) {core.refuse(&requests.looks);return}
@@ -200,7 +200,7 @@ action_state :: proc(runtime:^Action_Runtime,entity:core.Entity) -> ^Action_Stat
     if row<0 || row>=len(runtime.states) || runtime.states[row].entity!=entity {return nil}
     return &runtime.states[row]
 }
-// The plan of the action set of an entity; nil while it has none loaded.
+// The plan of the .character of an entity; nil while it has none loaded.
 @(private)
 action_plan :: proc(runtime:^Action_Runtime,entity:core.Entity) -> ^Action_Plan {
     state:=action_state(runtime,entity)
@@ -231,7 +231,7 @@ stack_slot_name :: proc(runtime:^Action_Runtime,entity:core.Entity,slot:int) -> 
     if slot<=0 || plan==nil || slot>len(plan.profile.layers) {return "the whole body"}
     return base.text_get(plan.profile.layers[slot-1].name[:])
 }
-// A parameter the action set of an entity declares, for a tool: the weight of a layer, or an axis
+// A parameter the .character of an entity declares, for a tool: the weight of a layer, or an axis
 // of the space of one with its range, at the value set gave it or the one it has by itself.
 Stack_Parameter_Info :: struct {name:[64]u8 `mirai:"text"`,value,min,max:f32,axis:bool}
 stack_parameters :: proc(runtime:^Action_Runtime,characters:^Character_Assets,playback:^Playback,entity:core.Entity,out:[]Stack_Parameter_Info) -> (count:int) {
@@ -490,7 +490,7 @@ stack_asks :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,co
     }
 }
 
-// The whole-body action that takes the rig of state from its .match in this tick.
+// The whole-body action that takes the rig of state from the locomotion of its .character in this tick.
 @(private)
 action_inject :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,content:^host.Content_Animation) -> (inject:Match_Inject) {
     active:=action_state(runtime,state.entity)
@@ -518,7 +518,7 @@ action_exit :: proc(content:^host.Content_Animation,handle:lib.Clip,definition:^
 
 // Advances the actions of an entity and asks their slots for their clips. dt is the entity's own
 // time; pace its seconds per second of the world, which a World action divides out; programmed,
-// its base is a .match, which plays a whole-body action as its own clip.
+// its base is the locomotion of its .character, which plays a whole-body action as its own clip.
 actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,dt:f32,problems:^core.Problems,content:^host.Content_Animation=nil,playback:^Playback=nil,events:^Animation_Events=nil,distance:^Animation_Distance_Request=nil,pace:f32=1,programmed:=false) {
     if runtime==nil || state==nil || !finite(dt) || dt<0 {return}
     state.action_root_mask=0
@@ -589,7 +589,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
                 slot.root={bone={metadata.bone},translation=metadata.translation,rotation=metadata.rotation,in_place=definition.root_motion==.In_Place}
                 rooted:=(metadata.translation || metadata.rotation) && metadata.bone!={}
                 if !rooted || bone_resolve(state,slot.root.bone)<0 {valid,cause=false,"it has root motion and its clip has none, or its root bone is not in this rig"}
-                // The program of a .match plays a whole-body action as its own clip, root motion too.
+                // The program of the locomotion plays a whole-body action as its own clip, root motion too.
                 slot.has_root=rooted && !injected
                 if slot.has_root {
                     if state.program.ready && state.program.has_root && (state.program.root.bone!=slot.root.bone || state.program.root.translation!=slot.root.translation || state.program.root.rotation!=slot.root.rotation) {valid,cause=false,"its root motion differs from the one the .match of the Animation plays"}
@@ -772,13 +772,13 @@ actions_apply_root :: proc(runtime:^Action_Runtime,state:^Playing,animation:Anim
         state.root_enabled=true;state.action_root=slot.root;state.has_action_root=true
     }
     if !(moving>0) {state.body_motion={}}
-    // A whole-body action over a .match moves the body by the root motion of the program.
+    // A whole-body action over locomotion moves the body by the root motion of the program.
     if action_body_injected(runtime,state) && !state.has_action_root {
         whole:=active.slots[0]
         state.body_motion={translation=state.motion.translation,move=whole.body,vertical=whole.body_vertical}
     }
 }
-// Whether the whole-body action of state plays as the clip of its .match in this tick, the one it
+// Whether the whole-body action of state plays as the clip of its locomotion in this tick, the one it
 // ends in too, and moves its body.
 @(private)
 action_body_injected :: proc(runtime:^Action_Runtime,state:^Playing) -> bool {

@@ -115,7 +115,7 @@ motion_inspect :: proc(runtime:^Motion_Runtime,entity:core.Entity) -> (Motion_In
     value:=motion_instance(runtime,entity);if value==nil {return {},false};return value^,true
 }
 
-// Reports why the motion profile of a rig did not apply in a tick.
+// Reports why the warping of the .character of a rig did not apply in a tick.
 motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error) {
     switch error {
     case .None,.Unsupported_Clock,.Missing_Profile:
@@ -128,7 +128,7 @@ motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error)
     case .Capacity:
         core.report(problems,e,"animation.motion_targets","a motion target was refused: this rig has %d targets with other names, as many as fit; reuse their names",MOTION_WINDOWS)
     case .Out_Of_Memory:
-        memory_problem(problems,e,"its motion profile")
+        memory_problem(problems,e,"the warping of its .character")
     }
 }
 
@@ -204,13 +204,13 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
         slot:=int(runtime.rows[index])-1 if index<len(runtime.rows) else -1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {added+=1}
     }
-    if !program_array_reserve(&runtime.instances,len(runtime.instances)+added) || !program_array_resize(&runtime.rows,rows) {memory_problem(problems,core.NONE,"the entities with a motion profile, so none applies");return false}
+    if !program_array_reserve(&runtime.instances,len(runtime.instances)+added) || !program_array_resize(&runtime.rows,rows) {memory_problem(problems,core.NONE,"the entities whose .character warps, so none applies");return false}
     for row in core.each_changed(animations,&c) {
         if animation_character(assets,animations.table.values[row])=={} {continue}
         entity:=core.entity_at(animations,row);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {
             slot=len(runtime.instances)
-            if append(&runtime.instances,Motion_Instance{entity=entity,window=-1})!=1 {memory_problem(problems,core.NONE,"the entities with a motion profile, so none applies");return false}
+            if append(&runtime.instances,Motion_Instance{entity=entity,window=-1})!=1 {memory_problem(problems,core.NONE,"the entities whose .character warps, so none applies");return false}
         } else if runtime.instances[slot].entity!=entity {
             // A new entity in the slot keeps the memory of its targets.
             reused:=&runtime.instances[slot];targets,bindings:=reused.targets,reused.bindings

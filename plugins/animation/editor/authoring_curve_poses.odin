@@ -124,7 +124,7 @@ authoring_profile_poses :: proc(s:^editor.Session,call:^api.Call) {
             path:=base.text_get(skeleton.bones[b].path[:])
             if path=="" {path=base.text_get(skeleton.bones[b].name[:])}
             row.bone=anim.bone_ref(path)
-            if len(rows)>=anim.POSE_CURVE_ROWS {authoring_failure(call,"poses","Capacity",fmt.tprintf("at most %d curve pose rows",anim.POSE_CURVE_ROWS),fmt.tprintf("%d and more",len(rows)),"The poses move more bones than a profile holds",fix="Make fewer poses, or raise tolerance");return}
+            if len(rows)>=anim.POSE_CURVE_ROWS {authoring_failure(call,"poses","Capacity",fmt.tprintf("at most %d curve pose rows",anim.POSE_CURVE_ROWS),fmt.tprintf("%d and more",len(rows)),"The poses move more bones than a .character holds",fix="Make fewer poses, or raise tolerance");return}
             append(&rows,row)
             result.rows+=1;moved=true
         }
@@ -138,14 +138,14 @@ authoring_profile_poses :: proc(s:^editor.Session,call:^api.Call) {
             drive:=anim.CURVE_DRIVE_DEFAULT
             drive.from,drive.scale=pose.curve,value
             base.text_set(drive.to[:],name)
-            if len(drives)>=anim.POSE_CURVE_ROWS {authoring_failure(call,"poses","Capacity",fmt.tprintf("at most %d curve drives",anim.POSE_CURVE_ROWS),fmt.tprintf("%d and more",len(drives)),"The curves of the poses are more than a profile holds",fix="Make fewer poses, or raise tolerance");return}
+            if len(drives)>=anim.POSE_CURVE_ROWS {authoring_failure(call,"poses","Capacity",fmt.tprintf("at most %d curve drives",anim.POSE_CURVE_ROWS),fmt.tprintf("%d and more",len(drives)),"The curves of the poses are more than a .character holds",fix="Make fewer poses, or raise tolerance");return}
             append(&drives,drive)
             result.drives+=1
         }
     }
     profile.curve_poses,profile.curve_drives=rows[:],drives[:]
     doc:aa.Document;defer aa.document_destroy(&doc)
-    if error:=anim.character_document(&doc,&s.app.assets.types,p.asset,set,s.app.allocator);error!=.None {authoring_failure(call,"profile","Out_Of_Memory" if error==.Out_Of_Memory else "Invalid_Definition","valid curve poses within the capacities of a .character",fmt.tprintf("%v",error),"The edit of the .character could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
+    if error:=anim.character_document(&doc,&s.app.assets.types,p.asset,set,s.app.allocator);error!=.None {authoring_failure(call,"asset","Out_Of_Memory" if error==.Out_Of_Memory else "Invalid_Definition","valid curve poses within the capacities of a .character",fmt.tprintf("%v",error),"The edit of the .character could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
     write :: proc(call:^api.Call,data:rawptr) {
         result:=(^Profile_Poses_Result)(data)
         api.write_uint(call.out,"poses",u64(result.poses));api.write_uint(call.out,"rows",u64(result.rows));api.write_uint(call.out,"still",u64(result.still));api.write_uint(call.out,"drives",u64(result.drives))

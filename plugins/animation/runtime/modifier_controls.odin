@@ -7,7 +7,7 @@ Modifier_Control :: struct {
     rig:core.Entity,
     kind:Modifier_Kind,
     slot:u16,
-    name:[256]u8, // the operation by name instead of slot: found again when the profile is read again
+    name:[256]u8, // the operation by name instead of slot: found again when the .character is read again
     weight:f32,
     enabled:bool,
     fade:f32,
@@ -135,14 +135,14 @@ modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requ
         }
         state:=modifier_control_state(runtime,control.rig,control.kind,control.slot)
         if state==nil {
-            core.report(problems,control.rig,"animation.modifier_slot","a control of %v %d was refused: the pose profile of this rig has no such operation; name one it has (animation.inspect lists them)",control.kind,control.slot)
+            core.report(problems,control.rig,"animation.modifier_slot","a control of %v %d was refused: the .character of this rig has no such operation; name one it has (animation.inspect lists them)",control.kind,control.slot)
             continue
         }
         target:=control.weight if control.enabled else f32(0)
         if state.target==target && state.enabled==control.enabled {continue}
         if control.fade>0 && state.weight!=target && state.fade_row==0 {
             row:=int((uintptr(state)-uintptr(raw_data(runtime.controls)))/size_of(Modifier_Control_State))
-            if append(&runtime.fades,u32(row))!=1 {memory_problem(problems,control.rig,"the fade of a control of its pose profile");continue}
+            if append(&runtime.fades,u32(row))!=1 {memory_problem(problems,control.rig,"the fade of a control of its .character");continue}
             state.fade_row=u32(len(runtime.fades))
         }
         state.start,state.target,state.enabled,state.duration,state.elapsed=state.weight,target,control.enabled,control.fade,0

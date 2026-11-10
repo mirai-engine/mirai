@@ -106,7 +106,7 @@ Asset_Space :: struct {info:anim.Blend_Info,samples:[1]Authoring_Page(anim.Blend
 Asset_Clip_Name :: struct {name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`}
 // entry: it starts its modes, searched from its start when the body enters one of them.
 Asset_Match_Clip :: struct {
-    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .match"`,modes:[1][32]u8 `mirai:"text,list"`,loop,entry:bool,
+    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .character"`,modes:[1][32]u8 `mirai:"text,list"`,loop,entry:bool,
     speed:f32 `mirai:"optional,unit=m/s,label=The speed it travels at, set by hand; omitted is measured"`,
     blend:[1][64]u8 `mirai:"text,list,optional,label=The clips it blends with in phase, at the weights of each sample"`,
     samples:[1]Asset_Match_Sample `mirai:"list,optional,label=A blend: its points the search picks"`,
@@ -207,9 +207,9 @@ Instance_Modifiers :: struct {
     code:[32]u8 `mirai:"text,optional"`,
     reason:[256]u8 `mirai:"text,optional"`,
     id:base.Entity_Id `mirai:"optional"`,
-    profile:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
+    character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     total:u32 `mirai:"optional"`,
-    last_request_error:anim.Modifier_Request_Error `mirai:"optional,label=Missing_Operation or Missing_Effector: a goal or control names what the profile lacks; Missing_Target: its target is not found"`,
+    last_request_error:anim.Modifier_Request_Error `mirai:"optional,label=Missing_Operation or Missing_Effector: a goal or control names what the .character lacks; Missing_Target: its target is not found"`,
     modifiers:[1]Instance_Modifier `mirai:"list,optional,label=A page of the operations"`,
 }
 Instance_Modifier :: struct {
@@ -228,7 +228,7 @@ Instance_Actions :: struct {
     code:[32]u8 `mirai:"text,optional"`,
     reason:[256]u8 `mirai:"text,optional"`,
     id:base.Entity_Id `mirai:"optional"`,
-    profile:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
+    character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     problems:[1]Problem_Result `mirai:"list,optional,label=What its actions reported; the most recent first"`,
     parameters:[1]anim.Stack_Parameter_Info `mirai:"list,optional,label=What animation.request parameters sets: the weight of each layer and the axes of their spaces"`,
     playing:[1]Action_Playing_Result `mirai:"list,optional,label=The actions playing with their effective weight"`,
@@ -239,7 +239,7 @@ Instance_Motion :: struct {
     code:[32]u8 `mirai:"text,optional"`,
     reason:[256]u8 `mirai:"text,optional"`,
     id:base.Entity_Id `mirai:"optional"`,
-    profile:base.Asset_Id `mirai:"optional"`,
+    character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     ready:bool `mirai:"optional"`,
     window:i32 `mirai:"optional,label=The window that warps now; -1 for none"`,
     error:anim.Motion_Error `mirai:"optional"`,

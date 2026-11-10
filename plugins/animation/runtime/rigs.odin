@@ -245,7 +245,7 @@ rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_In
     return valid && shaped && followed
 }
 
-// Why an operation of the pose profile of a rig did nothing in a tick.
+// Why an operation of the .character of a rig did nothing in a tick.
 @(private)
 Rig_Failure :: enum u8 {Bind,Target,Solve,Source}
 
@@ -254,7 +254,7 @@ rig_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,v
     name:=modifier_operation_name(value)
     switch failure {
     case .Bind:
-        core.report(problems,rig,"animation.rig_bind","%v '%s' of the pose profile of this rig cannot bind: its bones are not in this skeleton or not a chain from root to end, or its limits, amounts or samples do not match them; fix it in the pose profile",kind,name)
+        core.report(problems,rig,"animation.rig_bind","%v '%s' of the .character of this rig cannot bind: its bones are not in this skeleton or not a chain from root to end, or its limits, amounts or samples do not match them; fix it in the .character",kind,name)
     case .Target:
         core.report(problems,rig,"animation.rig_target","%v '%s' of this rig has no target: its entity is gone or has no Transform, its rig is not animated in this tick, or its bone or socket is not in that skeleton; give it a target that exists",kind,name)
     case .Solve:
@@ -274,7 +274,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
     if chain_first<chain_end && len(runtime.chain_states)!=len(runtime.chain_ik.values) && resize(&runtime.chain_states,len(runtime.chain_ik.values))!=nil ||
        twist_first<twist_end && len(runtime.twist_states)!=len(runtime.twist.values) && resize(&runtime.twist_states,len(runtime.twist.values))!=nil ||
        spring_first<spring_end && len(runtime.spring_states)!=len(runtime.springs.values) && resize(&runtime.spring_states,len(runtime.springs.values))!=nil ||
-       multi_first<multi_end && len(runtime.multi_states)!=len(runtime.multi_ik.values) && resize(&runtime.multi_states,len(runtime.multi_ik.values))!=nil {memory_problem(inputs.problems,state.entity,"the chain operations of its pose profile");return false}
+       multi_first<multi_end && len(runtime.multi_states)!=len(runtime.multi_ik.values) && resize(&runtime.multi_states,len(runtime.multi_ik.values))!=nil {memory_problem(inputs.problems,state.entity,"the chain operations of its .character");return false}
     skeleton:=playing_skeleton(state);valid:=true
     for &config,slot in runtime.chain_ik.values[chain_first:chain_end] {
         row:=chain_first+slot
@@ -309,7 +309,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
             }
             for effector,i in config.effectors[:config.effector_count] {bone:=bone_resolve(state,effector.bone);bound &&=bone>=0;binding.effectors[i].bone=i32(bone)}
             if !bound {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Bind);valid=false;continue}
-            if resize(&binding.backup,len(state.local))!=nil {memory_problem(inputs.problems,state.entity,"a Multi IK of its pose profile");valid=false;continue}
+            if resize(&binding.backup,len(state.local))!=nil {memory_problem(inputs.problems,state.entity,"a Multi IK of its .character");valid=false;continue}
             rig_binding_publish(binding,state,runtime.geometry,.Multi_IK,current_slot)
         }
         if !config.enabled || config.weight<=0 {continue}
@@ -384,7 +384,7 @@ rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtim
     if state==nil || playback==nil || runtime==nil {return false}
     first,end:=rig_rows(&runtime.retarget_chains,state.entity)
     if first==end {return false}
-    if len(runtime.retarget_chain_states)!=len(runtime.retarget_chains.values) && resize(&runtime.retarget_chain_states,len(runtime.retarget_chains.values))!=nil {memory_problem(problems,state.entity,"the chain retargets of its pose profile");return false}
+    if len(runtime.retarget_chain_states)!=len(runtime.retarget_chains.values) && resize(&runtime.retarget_chain_states,len(runtime.retarget_chains.values))!=nil {memory_problem(problems,state.entity,"the chain retargets of its .character");return false}
     for &config,slot in runtime.retarget_chains.values[first:end] {
         row:=first+slot
         binding:=&runtime.retarget_chain_states[row];current_slot:=u16(slot)

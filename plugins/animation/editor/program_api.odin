@@ -292,7 +292,7 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
     runtime:=core.world_storage_of(world,anim.Modifier_Runtime)
     total:=0;for kind in anim.Modifier_Kind {total+=program_modifier_count(profile,kind)}
     serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,editor.api_entity_id(world,entity))
-    api.write_key(call.out,"profile");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,id);serial.write_u8(call.out,'"')
+    api.write_key(call.out,"character");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,id);serial.write_u8(call.out,'"')
     api.write_uint(call.out,"total",u64(total));api.write_key(call.out,"last_request_error");request_error:=anim.modifier_request_error(runtime,entity);authoring_write_value(call,&request_error,type_info_of(anim.Modifier_Request_Error));api.write_key(call.out,"modifiers");serial.text_write_raw(call.out,"[")
     offset,written:=0,0
     for kind in anim.Modifier_Kind {
@@ -363,7 +363,7 @@ program_modifier_goal_value :: proc(s:^editor.Session,call:^api.Call,world:core.
     for number,i in p.position {if !finite(number) {authoring_failure(call,field_path(prefix,fmt.tprintf("position[%d]",i)),"Non_Finite","a finite number",fmt.tprintf("%g",number),"The modifier goal position is invalid");return {},false}}
     if supported && (!finite(p.contact) || p.contact<0 || p.contact>1) {authoring_failure(call,field_path(prefix,"contact"),"Range","a finite number in [0,1]",fmt.tprintf("%g",p.contact),"The contact strength is invalid");return {},false}
     goal:=anim.Modifier_Goal{rig=entity,kind=kind,slot=resolved,effector=effector,position=p.position}
-    // By name: the operation is found again if the profile is read again.
+    // By name: the operation is found again if the .character is read again.
     goal.name=p.name
     if kind==.Multi_IK {goal.effector_name=p.effector}
     if targeted {

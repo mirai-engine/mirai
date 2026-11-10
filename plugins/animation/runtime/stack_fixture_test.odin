@@ -7,8 +7,8 @@ import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-// What a slot of the stack of a state plays by itself in a test that poses the state without an
-// action set: the layer an action set would ask for, written where layers_advance reads it.
+// What a slot of the stack of a state plays by itself in a test that poses the state without a
+// .character: the layer a .character would ask for, written where layers_advance reads it.
 @(private)
 test_layer :: proc(state:^Playing,slot:int,clip:string,fade:f32=0,over:="",sync:=false,weight:f32=1,speed:f32=1,loop:=true,mode:Layer_Mode=.Override,reference:f32=0,curves:Curve_Blend=.Override,mesh_space:=false,reference_clip:="") -> bool {
     if state==nil || slot<1 || slot>=STACK_SLOTS {return false}
@@ -33,7 +33,7 @@ test_layer_stop :: proc(state:^Playing,slot:int,fade:f32) -> bool {
     return true
 }
 
-// A layer of an action set that plays clip by itself, named as its clip.
+// A layer of a .character that plays clip by itself, named as its clip.
 @(private)
 test_stack_layer :: proc(clip:string,over:="",weight:f32=1,fade:f32=0,sync:=false,speed:f32=1,loop:=true,mode:Layer_Mode=.Override,reference:f32=0,reference_clip:="",curves:Curve_Blend=.Override,mesh_space:=false,name:="") -> Stack_Layer {
     layer:=STACK_LAYER_DEFAULT
