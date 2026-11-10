@@ -15,8 +15,10 @@
 #define MIRAI_GROUP_Z 1
 
 // instances: of the scene and of the batches drawn; maps: drawn this frame;
-// rows: of the words of the lights.
-struct Params_Block { uint instances; uint maps; uint rows; uint pad0; };
+// rows: of the words of the lights; glass: 1 while the maps keep the tint of
+// glass, which takes the instances all of glass among those whose materials
+// say where.
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 // The clusters to draw: the instance, the cluster and the map.
@@ -24,6 +26,11 @@ struct Params_Block { uint instances; uint maps; uint rows; uint pad0; };
 // The draws of them (two Draw_Indirect), whose instances count them: those
 // that hide whole, then those whose materials say where.
 [[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> draw : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+
+bool glass_sheet(Instance inst) {
+    Mesh mesh = meshes[instance_mesh(inst)];
+    return (mesh.flags & MESH_FLAG_CLOSED) == 0u && material_solid(material_row(material_of(inst, 0u)));
+}
 
 // Whether a map takes cluster k of an instance: in the cut of the view and,
 // where its box is known (at rest, or posed by the skin this frame), reaching
@@ -56,7 +63,11 @@ void main(uint3 id : SV_DispatchThreadID) {
         reach = batch_reach(row);
     }
     Instance inst = scene_instance(instance);
-    if ((inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED)) != 0u) return;
+    if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u) return;
+    // Glass casts no shadow: it takes its place only in the tint of the maps,
+    // and not the surface of a body of a medium, an open sheet of a solid such
+    // as water, whose light the volume of the medium gives.
+    if ((inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u && (params.glass == 0u || glass_sheet(inst))) return;
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
     if (!shadow_map_reaches(m, inst.bounds_min.xyz - reach, inst.bounds_max.xyz + reach)) return;
     Mesh mesh = meshes[instance_mesh(inst)];
@@ -68,7 +79,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         if (cluster_taken(inst, scale, mesh, k, posed, m)) taken++;
     }
     if (taken == 0u) return;
-    bool tested = (inst.meta.w & INSTANCE_FLAG_ALPHA_TESTED) != 0u;
+    bool tested = (inst.meta.w & (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED)) != 0u;
     uint first;
     InterlockedAdd(draw[tested ? 5u : 1u], taken, first);
     uint room = tested ? SHADOW_TESTED_ENTRIES : SHADOW_ENTRIES - SHADOW_TESTED_ENTRIES;

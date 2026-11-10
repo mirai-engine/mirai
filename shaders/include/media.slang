@@ -58,7 +58,17 @@ float3 media_local_light(float3 position, float3 eye_ray, float g, float pick, i
     float reach = light_reach(light, distance);
     float3 through = float3(1.0);
     if (root == 0u) {
+#ifdef SHADOW_DATA_SLOT
+        // From its maps; where none holds the point the light has no shadow there.
+        Shadow_Map m;
+        float seen = light_shadow_seen(index, position, float3(0.0), light_extent(light));
+        if (seen >= 0.0) through = float3(seen);
+#ifdef SHADOW_TINT_SLOT
+        if (seen > 0.0 && light_map_of(index, position, m)) through *= shadow_tint(m, position);
+#endif
+#else
         through = trace_transmission(position, direction, reach);
+#endif
         changed = changed || occluder_changed(position, direction, reach, INVALID, FLT_MAX);
     }
     changed = changed || light_moved(index);
@@ -81,18 +91,18 @@ float3 media_ambient(float3 position, float3 to_eye_ray) {
 // What reaches a point of a medium from the sun through the scene, times
 // sun_kept, what the medium itself lets through, and the phase towards the
 // eye; none without a sun. A pass with the maps of the view (SUN_SHADOW_SLOT)
-// takes from them what stops the sun where a cascade holds the point, and
-// traces only the glass that colors it; elsewhere a ray tells. changed: as
-// for media_local_light.
+// takes from them what stops the sun and, from their tint (SHADOW_TINT_SLOT),
+// what the glass on its way lets through; past its cascades the sun has no
+// shadow there. changed: as for media_local_light.
 float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inout bool changed) {
     if (frame.sun_direction.w < 0.5) return float3(0.0);
     float reach = scene_reach(position, frame.sun_direction.xyz);
 #ifdef SUN_SHADOW_SLOT
     float known = sun_shadow_seen(position, float3(0.0));
-    float3 through = float3(max(known, 0.0));
-    if (known < 0.0) through = trace_transmission(position, frame.sun_direction.xyz, reach);
-#ifdef MIRAI_COLORED_SHADOWS
-    else if (known > 0.0) through *= trace_glass_filter(position, frame.sun_direction.xyz, reach);
+    float3 through = float3(known < 0.0 ? 1.0 : known);
+#ifdef SHADOW_TINT_SLOT
+    Shadow_Map m;
+    if (known > 0.0 && sun_map_of(position, m)) through *= shadow_tint(m, position);
 #endif
 #else
     float3 through = trace_transmission(position, frame.sun_direction.xyz, reach);

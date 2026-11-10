@@ -384,8 +384,16 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	draw_ok, _ := ensure_buffer(r, &b.draw, SHADOW_DRAWS * size_of(rhi.Draw_Indirect), {.Storage, .Indirect, .Transfer_Dst}, "shadow map draw")
 	table_ok, _ := ensure_buffer(r, &b.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
 	if !good || !entries_ok || !draw_ok || !table_ok {return}
-	Params :: struct {instances, maps, rows, pad: u32}
-	params := Params{instances = p.instance_count + p.batch_slots, maps = planned.maps, rows = planned.rows}
+	// While glass colors light: what the glass in front of the depth of each texel lets through, and the
+	// depth of the nearest glass (shadow_tint of shadow_maps.slang).
+	tinted := r.settings.colored_shadows && len(s.translucent) > 0
+	if tinted {
+		tint_ok := target(r, cmd, &t.shadow_tint, SHADOW_ATLAS, SHADOW_ATLAS, .RGBA8_Unorm, {.Color_Target, .Sampled}, "shadow tint")
+		glass_ok := target(r, cmd, &t.shadow_glass, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow glass")
+		tinted = tint_ok && glass_ok
+	}
+	Params :: struct {instances, maps, rows, glass: u32}
+	params := Params{instances = p.instance_count + p.batch_slots, maps = planned.maps, rows = planned.rows, glass = 1 if tinted else 0}
 	rhi.cmd_timestamp(cmd, "shadow cull")
 	for x in ([]rhi.Buffer{s.instance_buffer, s.vertex_buffer, s.index_buffer}) {rhi.cmd_barrier_buffer(cmd, x, .Shader_Read)}
 	start, start_at := rhi.frame_alloc_typed(r.device, rhi.Draw_Indirect, SHADOW_DRAWS)
@@ -405,6 +413,7 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	rhi.cmd_timestamp(cmd, "shadow atlas")
 	rhi.cmd_barrier_buffer(cmd, b.draw, .Indirect_Read)
 	rhi.cmd_barrier_buffer(cmd, b.entries, .Shader_Read)
+	params.glass = 0
 	pass := rhi.Render_Pass_Desc{name = "shadow atlas"}
 	pass.depth = {texture = t.shadow_atlas, load = .Clear, store = .Store, clear = 0}
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -416,25 +425,47 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 		rhi.cmd_draw_indirect(cmd, b.draw, u64(i) * size_of(rhi.Draw_Indirect), 1)
 	}
 	rhi.cmd_end_render_pass(cmd)
-	rhi.cmd_barrier_texture(cmd, t.shadow_atlas, .Depth_Read)
-	// The maps of the sun, for the passes after this one that take its shadow
-	// from them (sun_shadow_seen): the constants of the view are read when the
-	// frame runs.
-	if planned.sun != max(u32) {
-		first, count := int(planned.sun & 0xFFFF), min(int(planned.sun >> 16), len(SHADOW_SUN_CASCADES))
-		rows := ([^][4]u32)(b.data.ptr)[int(planned.rows) + first * SHADOW_MAP_ROWS:][:count * SHADOW_MAP_ROWS]
-		p.frame.sun_maps = {u32(count), 0, 0, 0}
-		copy(p.frame.sun_map_rows[:], rows)
-		constants := (^Gpu_Frame)(p.constants.ptr)
-		constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
+	if tinted {
+		rhi.cmd_timestamp(cmd, "shadow tint")
+		params.glass = 1
+		tint := rhi.Render_Pass_Desc{name = "shadow tint", color_count = 1}
+		tint.colors[0] = {texture = t.shadow_tint, load = .Clear, store = .Store, clear = {1, 1, 1, 1}}
+		tint.depth = {texture = t.shadow_atlas, load = .Load, store = .Store}
+		nearest := rhi.Render_Pass_Desc{name = "shadow glass"}
+		nearest.depth = {texture = t.shadow_glass, load = .Clear, store = .Store, clear = 0}
+		passes := [2]rhi.Render_Pass_Desc{tint, nearest}
+		for &desc, i in passes {
+			rhi.cmd_begin_render_pass(cmd, &desc)
+			rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Map_Tint if i == 0 else .Shadow_Map_Glass])
+			set_params(cmd, &params)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.entries)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.table)
+			rhi.cmd_draw_indirect(cmd, b.draw, size_of(rhi.Draw_Indirect), 1)
+			rhi.cmd_end_render_pass(cmd)
+		}
+		rhi.cmd_barrier_texture(cmd, t.shadow_tint, .Shader_Read)
+		rhi.cmd_barrier_texture(cmd, t.shadow_glass, .Depth_Read)
 	}
+	rhi.cmd_barrier_texture(cmd, t.shadow_atlas, .Depth_Read)
+	// What the passes after this one read of the maps (sun_shadow_seen, media.slang): the constants of
+	// the view are read when the frame runs.
+	count := 0
+	if planned.sun != max(u32) {
+		first := int(planned.sun & 0xFFFF)
+		count = min(int(planned.sun >> 16), len(SHADOW_SUN_CASCADES))
+		rows := ([^][4]u32)(b.data.ptr)[int(planned.rows) + first * SHADOW_MAP_ROWS:][:count * SHADOW_MAP_ROWS]
+		copy(p.frame.sun_map_rows[:], rows)
+	}
+	p.frame.sun_maps = {u32(count), planned.rows, 1, 1 if tinted else 0}
+	constants := (^Gpu_Frame)(p.constants.ptr)
+	constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
 	return planned
 }
 
 @(private)
 destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
-	if t.shadow_atlas != 0 {rhi.texture_destroy(r.device, t.shadow_atlas)}
+	for texture in ([3]rhi.Texture{t.shadow_atlas, t.shadow_tint, t.shadow_glass}) {if texture != 0 {rhi.texture_destroy(r.device, texture)}}
 	b := &t.shadow_buffers
 	for x in ([]rhi.Buffer{b.entries, b.draw, b.table}) {if x != 0 {rhi.buffer_destroy(r.device, x)}}
-	t.shadow_atlas, t.shadow_buffers = 0, {}
+	t.shadow_atlas, t.shadow_tint, t.shadow_glass, t.shadow_buffers = 0, 0, 0, {}
 }

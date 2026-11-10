@@ -11,8 +11,10 @@
 // The clusters to draw: the instance, the cluster and the map.
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> entries : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// rows: of the words of the lights in shadow_data.
-struct Params_Block { uint instances; uint maps; uint rows; uint pad0; };
+// rows: of the words of the lights in shadow_data; glass: 1 for the draws of
+// the tint and of the nearest glass, the only ones the instances all of glass
+// draw in.
+struct Params_Block { uint instances; uint maps; uint rows; uint glass; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 struct Shadow_Vertex {
@@ -25,6 +27,8 @@ struct Shadow_Vertex {
     [[vk::location(0)]] nointerpolation uint2 place : PLACE;
     [[vk::location(1)]] float2 bary : BARY;
     [[vk::location(2)]] nointerpolation float reach : REACH;
+    // From the point towards the light, as a shadow ray goes.
+    [[vk::location(3)]] float3 toward : TOWARD;
 #endif
 };
 
@@ -37,6 +41,7 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.place = uint2(0u);
     output.bary = float2(0.0);
     output.reach = 0.0;
+    output.toward = float3(0.0, 0.0, 1.0);
     if (instance_id >= SHADOW_TESTED_ENTRIES) return output;
     uint4 entry = entries[SHADOW_ENTRIES - 1u - instance_id];
 #else
@@ -44,12 +49,16 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     uint4 entry = entries[instance_id];
 #endif
     Instance inst = scene_instance(entry.x);
+#ifdef MIRAI_SHADOW_TESTED
+    if (params.glass == 0u && (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return output;
+#endif
     Mesh mesh = meshes[instance_mesh(inst)];
     Cluster c = mesh_cluster(mesh, entry.y);
     if (vertex_id >= cluster_triangle_count(c) * 3u) return output;
     Mesh_Point v = cluster_point_at(mesh, c, cluster_corner(mesh, c, vertex_id), mesh.posed_word);
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, entry.z);
-    float3 local = shadow_map_local(m, transform_point(inst.world, v.position));
+    float3 world = transform_point(inst.world, v.position);
+    float3 local = shadow_map_local(m, world);
     float4 clip = shadow_map_clip(m, local);
     output.clip[0] = clip.w + clip.x;
     output.clip[1] = clip.w - clip.x;
@@ -65,6 +74,7 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.place = uint2(entry.x, (entry.y << 7u) | (vertex_id / 3u));
     output.bary = float2(at == 1u ? 1.0 : 0.0, at == 2u ? 1.0 : 0.0);
     output.reach = shadow_map_texel(m, local.z) / SHADOW_TESTED_FOOTPRINT;
+    output.toward = shadow_map_orthographic(m) ? -m.forward : m.origin - world;
 #endif
     return output;
 }

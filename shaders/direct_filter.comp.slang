@@ -16,6 +16,7 @@
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SUN_SHADOW_SLOT SLOT_PASS8
+#define SHADOW_TINT_SLOT SLOT_PASS9
 #include "lighting.slang"
 #include "shadow_maps.slang"
 #include "gbuffer.slang"
@@ -64,7 +65,10 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
         if (luminance(radiance) > 0.0) {
             // Where no point of its surface tells, its map does, as it tells the points.
             float seen = sun.part < 0.0 ? sun_shadow_seen(pixel.position, normal, false) : sun.part;
-            light += radiance * sun.glass * (seen < 0.0 ? 1.0 : seen);
+            // The glass on its way: where a map holds the pixel, as its tint says there.
+            Shadow_Map held;
+            float3 glass = sun_map_of(pixel.position, held) ? shadow_tint(held, pixel.position) : sun.glass;
+            light += radiance * glass * (seen < 0.0 ? 1.0 : seen);
         }
     }
     float bias = view_bias(pixel.distance);

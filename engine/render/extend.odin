@@ -167,6 +167,7 @@ pass_nested_add :: gpu.pass_nested_add
 pass_mask_begin :: gpu.pass_mask_begin
 pass_surface_begin :: gpu.pass_surface_begin
 pass_surface_read :: gpu.pass_surface_read
+pass_shadow_data :: gpu.pass_shadow_data
 pass_image_bind :: gpu.pass_image_bind
 pass_image_write :: gpu.pass_image_write
 pass_texture :: gpu.pass_texture

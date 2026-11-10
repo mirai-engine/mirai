@@ -85,6 +85,7 @@ Gpu_Volume :: struct {
 @(private) CARVE_DRY :: 1
 @(private) CARVE_CARVED :: 2
 @(private) CARVE_SUN_ONLY :: 4
+@(private) CARVE_GLASS :: 8
 
 // The volumes of the frame for its shaders, whose places are relative to the
 // origin the renderer draws from: built in the world, they move by it. The
@@ -138,6 +139,7 @@ Medium :: struct {
     carved:bool,       // dry boxes of higher priority take it out
     sun_only:bool,     // the sun alone lights it, in shafts: the light around it is drawn by the plugin that adds it
     shade:f32,         // 1/m it takes of the light of the sun that crosses it: the medium and the surfaces in it are darker deeper
+    glass:bool,        // the glass of its surface takes what it stops of the view: it adds its light, dimmed on its way to the eye in it, and dims nothing behind it
 }
 
 // fog.slang Fog_Params.
@@ -265,7 +267,7 @@ medium_gpu :: proc(state:^Fog_Gpu,medium:Medium) -> bool {
         volume=volume.gpu_volume({shape=.Box,extents={0.5,0.5,0.5},mode=.Add},medium.box),
         medium={color.r*density,color.g*density,color.b*density,density},
         params={0,clamp(medium.anisotropy,-0.95,0.95),0,low},
-        carve={f32(medium.priority),f32((medium.dry?u32(CARVE_DRY):0)|(medium.carved?u32(CARVE_CARVED):0)|(medium.sun_only?u32(CARVE_SUN_ONLY):0)),medium.dry?0:max(medium.shade,0),0},
+        carve={f32(medium.priority),f32((medium.dry?u32(CARVE_DRY):0)|(medium.carved?u32(CARVE_CARVED):0)|(medium.sun_only?u32(CARVE_SUN_ONLY):0)|(medium.glass?u32(CARVE_GLASS):0)),medium.dry?0:max(medium.shade,0),0},
     }
     state.count+=1
     state.dry||=medium.dry
@@ -324,6 +326,9 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     params.kept=kept?1:0
     render.pass_timestamp(pass,"fog light")
     render.pass_surface_read(pass,5,.Shadow_Atlas)
+    render.pass_shadow_data(pass,6)
+    render.pass_surface_read(pass,7,.Shadow_Tint)
+    render.pass_surface_read(pass,8,.Shadow_Glass)
     render.pass_pipeline(pass,state.pipelines[2])
     volumes:=volumes_relative(state,pass.origin)
     if !render.pass_params(pass,&params,size_of(params)) || !render.pass_upload(pass,2,&volumes,state.count*size_of(Gpu_Volume)) {return}

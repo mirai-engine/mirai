@@ -159,8 +159,8 @@ bool sun_map_of(float3 position, out Shadow_Map m) {
 
 #ifdef SUN_SHADOW_SLOT
 // The atlas of the maps of the view (render.Surface_Source.Shadow_Atlas), for
-// a pass that takes the shadow of the sun from its cascades and not from a ray.
-[[vk::binding(SUN_SHADOW_SLOT, 0)]] Texture2D<float4> sun_shadow_atlas : register(MIRAI_REGISTER(t, SUN_SHADOW_SLOT), space0);
+// a pass that takes the shadows of the lights from it and not from rays.
+[[vk::binding(SUN_SHADOW_SLOT, 0)]] Texture2D<float4> view_shadow_atlas : register(MIRAI_REGISTER(t, SUN_SHADOW_SLOT), space0);
 
 // How much of the sun reaches a point past what the maps of the view hold;
 // -1 where no cascade holds the point, or the view drew none: a ray tells.
@@ -179,8 +179,8 @@ float sun_shadow_seen(float3 position, float3 n, bool blended = true) {
     float2 unit = shadow_map_unit(m, local);
     float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z);
     float bias = step * (1.0 + lean) + 0.001 * local.z;
-    if (blended) return shadow_hard_seen(sun_shadow_atlas, m, texel, local.z, bias, m.near);
-    return shadow_past(m, sun_shadow_atlas.Load(int3(int2(m.rect.xy) + int2(floor(texel)), 0)).r, m.near, local.z - bias);
+    if (blended) return shadow_hard_seen(view_shadow_atlas, m, texel, local.z, bias, m.near);
+    return shadow_past(m, view_shadow_atlas.Load(int3(int2(m.rect.xy) + int2(floor(texel)), 0)).r, m.near, local.z - bias);
 }
 #endif
 
@@ -191,4 +191,70 @@ uint shadow_face_of(float3 v) {
     if (a.y >= a.z) return v.y >= 0.0 ? 2u : 3u;
     return v.z >= 0.0 ? 4u : 5u;
 }
+
+#ifdef SHADOW_DATA_SLOT
+// The buffer of the maps of the view (render.pass_shadow_data): the words of
+// the lights, then the rows of the maps from Frame.sun_maps.y. With
+// SUN_SHADOW_SLOT.
+[[vk::binding(SHADOW_DATA_SLOT, 0)]] StructuredBuffer<uint4> view_shadow_data : register(MIRAI_REGISTER(t, SHADOW_DATA_SLOT), space0);
+
+// The map of local light `light` a point falls in; false where it has none on
+// that side.
+bool light_map_of(uint light, float3 position, out Shadow_Map m) {
+    m = (Shadow_Map)0;
+    if (frame.sun_maps.z == 0u) return false;
+    uint word = shadow_light_word(view_shadow_data, light);
+    if (word == 0u) return false;
+    uint faces = word >> SHADOW_LIGHT_FACES;
+    uint face = shadow_face_of(position - lights[light].position_range.xyz);
+    if ((faces & (1u << face)) == 0u) return false;
+    m = shadow_map_at(view_shadow_data, frame.sun_maps.y, (word & 0xFFFFu) - 1u + countbits(faces & ((1u << face) - 1u)));
+    return true;
+}
+
+#ifdef SUN_SHADOW_SLOT
+// How much of local light `light` reaches a point past what its map holds, as
+// sun_shadow_seen; -1 where no map of it holds the point. radius: of the
+// light, metres: about that near it lies its body, not what it shines past.
+float light_shadow_seen(uint light, float3 position, float3 n, float radius) {
+    Shadow_Map m;
+    if (!light_map_of(light, position, m)) return -1.0;
+    float c = dot(n, normalize(lights[light].position_range.xyz - position));
+    float lean = c > 0.0 ? min(sqrt(max(1.0 - c * c, 0.0)) / max(c, 1e-3), 8.0) : 0.0;
+    float step = shadow_map_texel(m, shadow_map_local(m, position).z);
+    float3 local = shadow_map_local(m, position + n * (1.5 * step));
+    float2 unit = shadow_map_unit(m, local);
+    if (any(abs(unit) >= 1.0) || local.z <= m.near) return -1.0;
+    float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z);
+    float bias = step * (1.0 + lean) + 0.001 * local.z;
+    return shadow_hard_seen(view_shadow_atlas, m, texel, local.z, bias, max(m.near, min(3.0 * radius, radius + 0.3)));
+}
+#endif
+#endif
+
+#ifdef SHADOW_TINT_SLOT
+// What the glass in front of the depth of each texel of the maps lets through
+// of their light (render.Surface_Source.Shadow_Tint, shadow_map.frag): all of
+// it lies between the light and a surface the maps light.
+[[vk::binding(SHADOW_TINT_SLOT, 0)]] Texture2D<float4> view_shadow_tint : register(MIRAI_REGISTER(t, SHADOW_TINT_SLOT), space0);
+#ifdef SHADOW_GLASS_SLOT
+// The depth of the nearest of that glass (Surface_Source.Shadow_Glass), for a
+// point that may lie in front of it: one of a medium.
+[[vk::binding(SHADOW_GLASS_SLOT, 0)]] Texture2D<float4> view_shadow_glass : register(MIRAI_REGISTER(t, SHADOW_GLASS_SLOT), space0);
+#endif
+
+// What the glass between the light of map m and a point lets through; 1 while
+// the maps keep no tint (Frame.sun_maps.w).
+float3 shadow_tint(Shadow_Map m, float3 position) {
+    if (frame.sun_maps.w == 0u) return float3(1.0);
+    float3 local = shadow_map_local(m, position);
+    float2 unit = shadow_map_unit(m, local);
+    float side = float(m.rect.z);
+    float2 texel = clamp(float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * side, float2(0.5), float2(side - 0.5));
+#ifdef SHADOW_GLASS_SLOT
+    if (!(shadow_map_distance(m, view_shadow_glass.Load(int3(int2(m.rect.xy) + int2(floor(texel)), 0)).r) < local.z)) return float3(1.0);
+#endif
+    return view_shadow_tint.SampleLevel(linear_sampler, (float2(m.rect.xy) + texel) / float(SHADOW_ATLAS), 0.0).rgb;
+}
+#endif
 #endif

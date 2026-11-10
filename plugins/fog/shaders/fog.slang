@@ -40,6 +40,8 @@ struct Fog_Volume {
 #define FOG_CARVE_DRY 1u
 #define FOG_CARVE_CARVED 2u
 #define FOG_CARVE_SUN_ONLY 4u
+// The glass of its surface takes what it stops of the view (fog.Medium.glass).
+#define FOG_CARVE_GLASS 8u
 bool fog_carve(Fog_Volume v, uint bit) { return (uint(v.carve.y) & bit) != 0u; }
 
 // The depth along the view where slice coordinate s of the grid lies: slices

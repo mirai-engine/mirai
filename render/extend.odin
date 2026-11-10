@@ -447,7 +447,9 @@ Surface_Targets :: bit_set[Surface_Target;u8]
 // Lit, the direct light the surfaces reflect, in the lit image already. Post
 // reads what the Output stage does (stage_contract): Linear_Depth, Motion,
 // Albedo, Normal and Emission, at the size of the targets of the view.
-Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Instance, Glass_Depth, Direct, Shadow_Atlas}
+// Shadow_Atlas: the depth of the maps of the view; Shadow_Tint and Shadow_Glass, what the glass in
+// front of it lets through and the depth of the nearest glass, while glass colors light.
+Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Instance, Glass_Depth, Direct, Shadow_Atlas, Shadow_Tint, Shadow_Glass}
 
 // Begins the pass in which an extension draws surfaces into the G-buffer of
 // the view, in the Gbuffer stage, with the depth buffer of the view: the
@@ -577,9 +579,19 @@ pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 	t := s.pass.t
 	instance := t.instance if t.instance != 0 && s.pass.r.frame_layout.instance_ids else s.pass.r.dummy_layers
 	glass := t.glass[0].depth if s.glass != .All && t.glass[0].depth != 0 else s.pass.r.dummy_texture
-	shadows := t.shadow_atlas if s.pass.frame.sun_maps.x != 0 else s.pass.r.dummy_texture
-	textures := [Surface_Source]rhi.Texture{.Linear_Depth = t.linear_depth, .Motion = t.motion, .Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission, .Instance = instance, .Glass_Depth = glass, .Direct = t.direct, .Shadow_Atlas = shadows}
+	maps, dummy := s.pass.frame.sun_maps, s.pass.r.dummy_texture
+	shadows := t.shadow_atlas if maps.z != 0 else dummy
+	tint := t.shadow_tint if maps.w != 0 else dummy
+	nearest := t.shadow_glass if maps.w != 0 else dummy
+	textures := [Surface_Source]rhi.Texture{.Linear_Depth = t.linear_depth, .Motion = t.motion, .Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission, .Instance = instance, .Glass_Depth = glass, .Direct = t.direct, .Shadow_Atlas = shadows, .Shadow_Tint = tint, .Shadow_Glass = nearest}
 	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_texture(s.pass.cmd, SLOT_PASS0 + slot, textures[source])}
+}
+
+// Binds the buffer of the maps of the view at SLOT_PASS0 + slot, from which a
+// pass of the Lit stage reads the maps of the local lights (media.slang).
+pass_shadow_data :: proc(s: ^Stage_Pass, slot: u32) {
+	data := s.pass.t.shadow_buffers.table if s.pass.frame.sun_maps.z != 0 else s.pass.r.dummy_buffer
+	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_buffer(s.pass.cmd, SLOT_PASS0 + slot, data)}
 }
 
 pass_end :: proc(s: ^Stage_Pass) {rhi.cmd_end_render_pass(s.pass.cmd)}

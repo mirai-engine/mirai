@@ -1354,6 +1354,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.shadow_tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	return true
 }

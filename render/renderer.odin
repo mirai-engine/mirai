@@ -284,7 +284,7 @@ Stats :: struct {
 Pipeline_Id :: enum {
 	Postprocess_Copy, Postprocess_Hdr, Postprocess_Ldr, Cull, Cull_Clusters, Cull_Clusters_Candidates, Cull_Programs, Tlas_Batches, Gbuffer, Light_Grid_Count, Light_Grid_Scan, Light_Grid_Fill, Light_Grid_Weights, Direct_Rays, Direct_Rays_Hw, Direct_Samples, Direct_Samples_Hw, Direct_Points, Direct_Spread, Direct_Filter, Direct_Filter_Hw, Ddgi_Trace, Ddgi_Trace_Hw, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Hw, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
-	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Map_Tested, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
+	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, Shadow_Maps, Reflect, Reflect_Hw, Translucent, Translucent_Hw, Reflect_Resolve,
 	Ddgi_Trace_Color, Ddgi_Trace_Color_Hw,
 	Reflect_Color, Reflect_Color_Hw, Translucent_Color, Translucent_Color_Hw,
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Hw, Glass_Color, Glass_Color_Hw, Reflect_Resolve_Glass, Glass_Mean,
@@ -347,6 +347,8 @@ Targets :: struct {
 	highlight:               rhi.Texture, // editor selection mask: level and depth of highlighted surfaces
 	highlight_depth:         rhi.Texture,
 	shadow_atlas:            rhi.Texture, // the depth from the lights of the shadow maps of the frame (shadow_maps_pass)
+	shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
+	shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
 	shadow_buffers:          Shadow_Buffers,
 	highlight_filtered:      rhi.Texture, // premultiplied editor coat, window-point resolution
 	highlight_width, highlight_height: u32,
@@ -981,6 +983,15 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Shadow_Map_Tested, {
 		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tested_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow maps of masked materials",
+	})
+	graphics(list, r, .Shadow_Map_Tint, {
+		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Tint_Frag],
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, blend = {0 = .Multiply},
+		depth_format = .D32_Float, depth_test = true, depth_write = false, depth_compare = .Greater, cull = .None, name = "shadow tint",
+	})
+	graphics(list, r, .Shadow_Map_Glass, {
+		vertex = &r.shader_codes[.Shadow_Map_Tested_Vert], fragment = &r.shader_codes[.Shadow_Map_Glass_Frag],
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow glass",
 	})
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
 	graphics(list, r, .Tonemap, {
