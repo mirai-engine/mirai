@@ -330,7 +330,7 @@ shape_ray_cast :: proc(w:^World,h:Shape_Handle,origin,translation:Vec3) -> (Ray_
 // Ray against the shapes of one body as if the body were at a pose, whatever their filter: where it was at
 // another time.
 body_ray_cast :: proc(w:^World,h:Body_Handle,at:Transform,origin,translation:Vec3) -> (best:Ray_Hit,found:bool) {
-    body,_:=body_get(w,h)
+    body,_:=body_read(w,h)
     if body==nil {return}
     best.fraction=1
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
