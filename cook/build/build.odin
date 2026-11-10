@@ -808,7 +808,7 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
 // What the compiler is given for a target besides where it writes: what
 // identifies the build next to its sources.
 @(private)
-target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Release,incremental:=false) -> []string {
+target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Dev,incremental:=false) -> []string {
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
     shipped:=shipped_engine_paths(p.root,context.temp_allocator)
@@ -852,7 +852,7 @@ Target_State :: enum u8 {
 
 // What job_start would find of a target, without writing anything: the game
 // is the one of the default folder. dev and engine as in Desc.
-target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Release) -> Target_State {
+target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,engine:=Engine_Mode.Dev) -> Target_State {
     temp:=context.temp_allocator
     published:=target_output(p,target,"",temp)
     if !os.is_file(published) {return .Missing}

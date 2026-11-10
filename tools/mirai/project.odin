@@ -19,14 +19,15 @@ GENERATE_USAGE :: "generate [project]"
 EDIT_USAGE :: "edit [project] [--dev|--release] [editor arguments]"
 PLAY_USAGE :: "play [project] [--dev|--release] [player arguments]"
 
-// How optimized the engine and a project are built. Release, what every
-// command builds unless --dev is asked for: the engine at -o:speed and the
-// project at the optimization of its manifest, for playing, measuring and
-// shipping. Dev: both at -o:minimal, for checking a change.
+// How optimized the engine and a project are built. Dev, what every command
+// builds unless --release is asked for: both at -o:minimal, for checking a
+// change. Release: the engine at -o:speed and the project at the optimization
+// of its manifest, for playing, measuring and shipping.
 // Each mode has binaries of its own.
 Build_Mode :: build.Engine_Mode
 
-// Takes --dev and --release out of args; false when both are there.
+// Takes --dev and --release out of args: the mode of every command that builds
+// or picks engine binaries, dev unless --release; false when both are there.
 build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string,ok:bool) {
     list:=make([dynamic]string)
     dev,release:=false,false
@@ -38,7 +39,7 @@ build_mode_take :: proc(args:[]string) -> (mode:Build_Mode,rest:[]string,ok:bool
         }
     }
     if dev && release {return}
-    return .Dev if dev else .Release,list[:],true
+    return .Release if release else .Dev,list[:],true
 }
 
 cmd_new :: proc(root:string,args:[]string) -> int {
@@ -151,8 +152,7 @@ cmd_generate :: proc(root:string,args:[]string) -> int {
 }
 
 // mirai edit [project] [--dev|--release] [arguments]: builds the library of
-// the project and opens it in the editor. A person runs it: --release unless
-// --dev is asked for. Without a project, in a folder that is none, it opens
+// the project and opens it in the editor. Without a project, in a folder that is none, it opens
 // the last project an editor opened when the launcher was told so, and the
 // launcher otherwise: the editor of the empty template with --launcher.
 cmd_edit :: proc(root:string,args:[]string) -> int {
@@ -189,8 +189,7 @@ edit_unnamed :: proc(root:string) -> (folder:string,extra:[]string) {
 }
 
 // mirai play [project] [--dev|--release] [arguments] (mirai play test: play_test.odin): builds the library of
-// the game of the project and plays it from the project, without cooking;
-// --release unless --dev is asked for.
+// the game of the project and plays it from the project, without cooking.
 cmd_play :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="test" {return cmd_play_test(root,args[1:])}
     mode,args,ok:=build_mode_take(args)
@@ -229,7 +228,7 @@ play_arguments :: proc(args:[]string) -> []string {
 
 // Builds a target of a project. shaders_failed: the generation of its shaders
 // failed and the library was built with the ones it had.
-build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode=.Release,server:=false) -> (code:int,output:string,shaders_failed:bool) {
+build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     folder,out:=".",""
     named:=false
     for i:=0;i<len(args);i+=1 {
