@@ -351,9 +351,18 @@ Functions and rules:
   table or a general asset invalidation. `Render_Sync` is one per application: it reflects the
   renderer's single scene, which another displayed world replaces entirely, and `render_release`
   empties it when the world it shows is released.
+  - It keeps no copy of the instances: only what the renderer cannot answer, the entity of each
+    one and what it was made from (`drawn`), and the visual instances of the application it was
+    last given (`extras`). The instances of the renderer are those of `drawn`, at the same index,
+    then those of `extras` (`instance_count`, `instance_object`); what an instance shows and where
+    it is are asked of the renderer (`instance_placed`).
   - A mesh that appears adds its instance at the end of the world's and one that goes away leaves
-    its place to the last. A row with changed appearance redoes its instance; moving only updates
-    transforms. Without memory the scene stays empty and is redone in the next frame.
+    its place to the last. A row with changed appearance redoes its instance; moving and tinting
+    give the renderer the rows written, and it leaves as they are those that say the same.
+    Without memory the scene stays empty and is redone in the next frame.
+  - A round of derived rows keeps those of the instances that derive theirs (`Drawn.derives`),
+    read from the renderer, of the visual instances and of the batches: the others show rows of
+    assets, which no round frees.
   - Hiding, showing, changing parent or `Draw_Offset` redoes the instances of the entity and of
     what hangs from it (through `core.Hierarchy`): a hidden instance stays in the scene with
     `hidden`.

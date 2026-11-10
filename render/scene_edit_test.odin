@@ -649,9 +649,12 @@ touched_instances_go_in_runs_of_the_table_however_many_they_are :: proc(t:^testi
     places:=make([dynamic]Mat4);defer delete(places)
     for i in 100..<350 {append(&moved,u32(i));append(&places,at(i,1))}
     for i in 0..<50 {append(&moved,u32(500+i*3));append(&places,at(500+i*3,1))}
-    testing.expect(t,scene_move(r,moved[:],places[:]))
-    // Moved again before the frame, each still goes once.
-    testing.expect(t,scene_move(r,moved[:10],places[:10]))
+    count:int
+    testing.expect(t,scene_move(r,moved[:],places[:],nil,&count))
+    testing.expect_value(t,count,300)
+    // Given the same places again, none moves and each still goes once.
+    testing.expect(t,scene_move(r,moved[:10],places[:10],nil,&count))
+    testing.expect_value(t,count,0)
     testing.expect(t,!s.instances_dirty,"the table does not go whole")
     testing.expect_value(t,s.touched_count,300)
     runs,rows:=0,0
@@ -684,6 +687,56 @@ touched_instances_go_in_runs_of_the_table_however_many_they_are :: proc(t:^testi
     // An instance the table no longer has is touched no more.
     testing.expect(t,scene_update(r,900,nil,true))
     testing.expect(t,s.touched_count==2 && len(s.instances)==900)
-    testing.expect(t,scene_tint(r,{899},{{1,0,0}},{{}}))
-    testing.expect(t,s.touched_count==3 && instance_touched(s,899))
+    testing.expect(t,scene_tint(r,{899,898},{{1,0,0},{1,1,1}},{{},{}},&count))
+    testing.expect(t,s.touched_count==3 && instance_touched(s,899) && count==1,"the tint it had touches nothing")
+    // A highlight of another level sends its instance alone, and the same levels none.
+    touched_settle(s);touched_settle(s)
+    s.instances_dirty=false
+    levels:=make([]u8,len(s.desc_instance));defer delete(levels)
+    levels[5]=2
+    testing.expect(t,scene_set_highlights(r,levels))
+    testing.expect(t,!s.instances_dirty && s.touched_count==1 && instance_touched(s,5) && s.highlighted==1)
+    touched_settle(s)
+    testing.expect(t,scene_set_highlights(r,levels))
+    testing.expect(t,!s.instances_dirty && s.touched_count==0 && s.highlighted==1)
+}
+
+// What the scene answers of an instance it was given: the rows of the
+// material table it shows, its mesh and where it is in the world, whatever
+// the origin of the renderer.
+@(test)
+the_scene_answers_what_an_instance_shows_and_where_it_is :: proc(t:^testing.T) {
+    r:=new(Renderer);defer free(r)
+    r.allocator=context.allocator
+    scene_init(r)
+    defer scene_destroy(r)
+    vertices,indices:=edit_grid(1,1)
+    defer delete(vertices);defer delete(indices)
+    handle,_:=edit_add(r,vertices[:],indices[:],{0,0})
+    materials_set(r,{DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL})
+    r.origin={2048,0,-4096}
+    desc:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),material=2,tint={1,1,1},overlays={count=1,entries={0={material=1,enabled=true}}}}
+    desc.transform[0,3],desc.transform[1,3],desc.transform[2,3]=2050.5,3,-4000.25
+    desc.slot_materials[0]=3
+    testing.expect(t,scene_set(r,{desc},nil,{},{}))
+    material,slots,overlays,shown:=scene_instance_materials(r,0)
+    testing.expect(t,shown && material==2 && slots[0]==3 && slots[1]==0 && overlays.count==1 && overlays.entries[0].material==1)
+    mesh,transform,placed:=scene_instance_placed(r,0)
+    testing.expect(t,placed && mesh==handle)
+    testing.expect_value(t,transform,desc.transform)
+    // Described again in another place of the list, it keeps the motion from where it was.
+    other:=desc
+    other.object_id=5
+    testing.expect(t,scene_update(r,1,{other}))
+    was:=r.scene.instances[1].world
+    other.transform[1,3]=4
+    testing.expect(t,scene_update(r,0,{other}) && scene_instance_was(r,0,1) && !scene_instance_was(r,0,9))
+    testing.expect(t,r.scene.instances[0].prev_world==was && r.scene.instances[0].world!=was)
+    // One the set skipped, and one it never had.
+    testing.expect(t,scene_set(r,{desc,Instance_Desc{object_id=2,mesh=Mesh_Handle(99),transform=Mat4(1)}},nil,{},{}))
+    for missing in ([2]u32{1,7}) {
+        _,_,_,shown=scene_instance_materials(r,missing)
+        _,_,placed=scene_instance_placed(r,missing)
+        testing.expect(t,!shown && !placed)
+    }
 }

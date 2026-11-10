@@ -1234,11 +1234,12 @@ tlas_refit :: proc(s: ^Scene_State) -> f32 {
 // boxes than scene_set would give them, so rays find the same surfaces. A
 // transform without an inverse hides the instance, and one with it shows it
 // again, as scene_update would (INSTANCE_FLAG_COLLAPSED). anchors: what each
-// transform is relative to (Instance_Desc.anchor), or none for the world. False,
-// with nothing changed, when the lists differ in length or name an instance
-// that the set did not have.
-scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Vec3 = nil) -> bool {
+// transform is relative to (Instance_Desc.anchor), or none for the world.
+// count takes how many were somewhere else. False, with nothing changed, when
+// the lists differ in length or name an instance that the set did not have.
+scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Vec3 = nil, count: ^int = nil) -> bool {
 	s := &r.scene
+	if count != nil {count^ = 0}
 	if len(descs) != len(transforms) || anchors != nil && len(anchors) != len(descs) {return false}
 	for desc in descs {
 		if int(desc) >= len(s.desc_instance) {return false}
@@ -1274,6 +1275,7 @@ scene_move :: proc(r: ^Renderer, descs: []u32, transforms: []Mat4, anchors: []Ve
 		s.hw_instances[index].transform = world if invertible else {}
 		instance_touch(s, u32(index))
 		moved = true
+		if count != nil {count^ += 1}
 	}
 	// What a hidden instance leaves out of the lists, a move that hides or shows one changes.
 	if collapsed {instances_classify(s)}
@@ -1388,11 +1390,12 @@ tlas_settle :: proc(s: ^Scene_State) {
 }
 
 // Gives instances of the last scene_set another tint and emission, and
-// nothing else: descs are positions in the list it was given. False, with
-// nothing changed, when the lists differ in length or name an instance that
-// the set did not have.
-scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3) -> bool {
+// nothing else: descs are positions in the list it was given. count takes how
+// many had another. False, with nothing changed, when the lists differ in
+// length or name an instance that the set did not have.
+scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, count: ^int = nil) -> bool {
 	s := &r.scene
+	if count != nil {count^ = 0}
 	if len(descs) != len(tints) || len(descs) != len(emissions) {return false}
 	for desc in descs {
 		if int(desc) >= len(s.desc_instance) {return false}
@@ -1408,8 +1411,52 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3) -> bool
 		inst.tint, inst.emission = tint, emission
 		instance_changed_near(s, inst, glowed)
 		instance_touch(s, u32(index))
+		if count != nil {count^ += 1}
 	}
 	return true
+}
+
+// An instance of the last scene_set described again at another place of the
+// list: `descriptor` is what `from` was, and takes where that one was drawn
+// as its previous transform, so the next frame draws its motion. For whoever
+// closes the gap an instance leaves with another, before it truncates the
+// scene. False for a descriptor the scene does not have.
+scene_instance_was :: proc(r: ^Renderer, descriptor, from: u32) -> bool {
+	s := &r.scene
+	if int(descriptor) >= len(s.desc_instance) || int(from) >= len(s.desc_instance) {return false}
+	to, was := s.desc_instance[descriptor], s.desc_instance[from]
+	if to < 0 || was < 0 {return true}
+	s.instances[to].prev_world = s.instances[was].world
+	instance_touch(s, u32(to))
+	return true
+}
+
+// The mesh an instance of the last scene_set shows, the one its description
+// named, and where it is: its transform into the world. False for a
+// descriptor the scene does not have or the set skipped.
+scene_instance_placed :: proc(r: ^Renderer, descriptor: u32) -> (mesh: Mesh_Handle, transform: Mat4, ok: bool) {
+	s := &r.scene
+	if int(descriptor) >= len(s.desc_instance) || s.desc_instance[descriptor] < 0 {return}
+	inst := &s.instances[s.desc_instance[descriptor]]
+	mesh = Mesh_Handle(inst.meta.x & INSTANCE_MESH_MASK)
+	// The pose of an instance whose programs move its vertices stands for the mesh it was given.
+	if int(mesh) < len(s.meshes) && s.meshes[mesh].skin != nil && s.meshes[mesh].skin.displaced {mesh = s.meshes[mesh].skin.source}
+	rows := origin_to_world(inst.world, -r.origin)
+	transform = 1
+	for row in 0 ..< 3 {for col in 0 ..< 4 {transform[row, col] = rows[row][col]}}
+	return mesh, transform, true
+}
+
+// The rows of the material table an instance of the last scene_set shows, as
+// its description named them: its material, those of its slots and its
+// layers. False for a descriptor the scene does not have or the set skipped.
+scene_instance_materials :: proc(r: ^Renderer, descriptor: u32) -> (material: Material_Handle, slots: [32]u32, overlays: Instance_Overlays, ok: bool) {
+	s := &r.scene
+	if int(descriptor) >= len(s.desc_instance) || s.desc_instance[descriptor] < 0 {return}
+	index := s.desc_instance[descriptor]
+	inst := &s.instances[index]
+	if inst.meta.y != GPU_NONE {material = Material_Handle(inst.meta.y)}
+	return material, inst.slot_materials, s.overlays[index], true
 }
 
 // Four numbers of each instance that extensions give it and read in their
@@ -2006,8 +2053,9 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
 highlight_flags :: proc "contextless" (level: u8) -> u32 {return (u32(level) << INSTANCE_HIGHLIGHT_SHIFT) & INSTANCE_HIGHLIGHT_MASK}
 
 // Restyles highlights without touching transforms, the TLAS, lights or the
-// temporal history. levels is indexed like the instances of the last
-// scene_set; a length mismatch is rejected.
+// temporal history: only the instances whose level is another go to the GPU.
+// levels is indexed like the instances of the last scene_set; a length
+// mismatch is rejected.
 scene_set_highlights :: proc(r: ^Renderer, levels: []u8) -> bool {
 	s := &r.scene
 	if len(levels) != len(s.desc_instance) {return false}
@@ -2016,10 +2064,12 @@ scene_set_highlights :: proc(r: ^Renderer, levels: []u8) -> bool {
 		index := s.desc_instance[i]
 		if index < 0 {continue}
 		inst := &s.instances[index]
-		inst.meta.w = (inst.meta.w & ~INSTANCE_HIGHLIGHT_MASK) | highlight_flags(level)
 		if level != 0 {s.highlighted += 1}
+		flags := (inst.meta.w & ~INSTANCE_HIGHLIGHT_MASK) | highlight_flags(level)
+		if flags == inst.meta.w {continue}
+		inst.meta.w = flags
+		instance_touch(s, u32(index))
 	}
-	s.instances_dirty = true
 	return true
 }
 

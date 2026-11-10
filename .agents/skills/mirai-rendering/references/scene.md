@@ -146,7 +146,10 @@ the whole tables: it is used when what is drawn changes. For the rest:
     times that of when freshly built. The rays find the same surfaces as after a `scene_set`.
   - It returns `false`, without changing anything, if the lists differ in length or name an
     instance that the set did not have.
-- **`scene_tint(r, descs, tints, emissions)`** changes only tint and emission.
+  - One that is where it is told stays as it is: whoever moves gives every candidate and reads
+    in `count` how many moved.
+- **`scene_tint(r, descs, tints, emissions)`** changes only tint and emission, of those that had
+  another.
 - **`scene_update(r, first_desc, instances, truncate=false)`** replaces a range of descriptors,
   can append at the end and, with `truncate`, remove the suffix that follows the range.
   - It keeps indices and rows of others. It updates geometry, materials, opaque/blend flags,
@@ -173,7 +176,12 @@ the whole tables: it is used when what is drawn changes. For the rest:
 - **`scene_set_lights(r, lights, sun, environment)`** replaces lights, sun and environment; it
   touches neither instances nor their tree. While each index names the same light it refits the
   light tree and uploads only what changed ([light tree](lights.md#light-tree)).
-- **`scene_set_highlights`** and **`scene_set_environment`** change highlights and environment.
+- **`scene_set_highlights`** and **`scene_set_environment`** change highlights and environment;
+  only the instances whose level is another go to the GPU.
+- **What the scene answers.** `scene_instance_materials` (the rows an instance shows) and
+  `scene_instance_placed` (its mesh and its transform into the world), by descriptor: whoever
+  gave the scene keeps no copy of it. `scene_instance_was(r, descriptor, from)` gives an
+  instance described again at another place of the list the motion from where it was.
 - **`materials_set(r, materials)`** replaces the material table and
   **`materials_update(r, materials, rows)`** changes only the rows `rows` (row `n` takes
   `materials[n - 1]`). Both compare row by row:

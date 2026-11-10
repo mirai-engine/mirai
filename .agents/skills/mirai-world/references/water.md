@@ -80,8 +80,9 @@ the surface while it is in the water and, on leaving, what it had falling until 
 `WET_SECONDS`. A body that physics no longer lists is out of the water or asleep; one asleep where
 the water found it does not dry. `water_wet_render` (`render`, after `render_sync`) gives that
 value with [`instance_wet_set`](../../mirai-rendering/references/views.md#extension-stages) to
-the instances of `Render_Sync.instances` of the body and of what hangs from it, which the
-materials apply ([wetness](../../mirai-rendering/references/materials.md#evaluation)). It rebuilds
+the instances of the renderer (`render.instance_object`) of the body and of what hangs from it,
+which the materials apply
+([wetness](../../mirai-rendering/references/materials.md#evaluation)). It rebuilds
 the list of those instances when the renderer's, the hierarchy or which bodies are wet change; in
 between it only sends those that moved one step of `WET_LEVELS`.
 

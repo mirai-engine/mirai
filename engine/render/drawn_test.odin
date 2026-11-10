@@ -49,36 +49,45 @@ memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
     return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
-// What the instances the renderer is given ask memory for, with the memory
-// ending at each request in turn: those of a frame that draws an instance in
-// place of a mesh are refused whole, and with memory enough they are made;
-// a frame that replaces no mesh asks for none.
+// The last instance of the world takes the place of the one that goes, as in
+// the renderer: the lists that name instances follow it, and the visual
+// instances of the application stay after those of the world.
 @(test)
-instances_shown_in_place_of_a_mesh_without_memory_are_refused :: proc(t:^testing.T) {
-    limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
-    context.allocator=runtime.Allocator{memory_limit_proc,&limit}
+an_instance_that_goes_gives_its_place_to_the_last_of_the_world :: proc(t:^testing.T) {
+    w:Render_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     sync:Render_Sync;defer sync_free(&sync)
-    for i in 0..<3 {append(&sync.instances,gpu.Instance_Desc{object_id=u64(i+1)})}
-    Row :: struct {extras:[]gpu.Instance_Desc,asks:bool}
-    rows:=[?]Row{
-        {nil,false},
-        {{{object_id=2}},false},
-        {{{object_id=0,replace_source=true}},false},
-        {{{object_id=2,replace_source=true}},true},
+    entities:[4]core.Entity
+    for &e,i in entities {
+        e=core.create(&w.entities)
+        _,kept:=core.entity_map_put(&sync.drawn,e,Drawn{derives=i==1 || i==3,lerp=i==0 || i==3})
+        testing.expect(t,kept)
+        if i==1 || i==3 {append(&sync.deriving,u32(i))}
+        if i==0 || i==3 {append(&sync.lerping,u32(i))}
     }
-    for row,at in rows {
-        done,refused:=false,false
-        for served in 0..<4 {
-            limit.remaining=served
-            composed,ok:=instances_composed(&sync,row.extras)
-            limit.remaining=max(int)
-            if done=ok;done {
-                testing.expectf(t,len(composed)==len(sync.instances),"row %d: %d instances of %d",at,len(composed),len(sync.instances))
-                break
-            }
-            refused=true
-            testing.expectf(t,composed==nil,"row %d with %d requests served gives no instance",at,served)
-        }
-        testing.expectf(t,done && refused==row.asks,"row %d: refused only when it asks for memory and has none",at)
-    }
+    append(&sync.extras,gpu.Instance_Desc{object_id=77},gpu.Instance_Desc{object_id=u64(entities[2]),replace_source=true})
+    testing.expect_value(t,instance_count(&sync),6)
+    testing.expect_value(t,instance_object(&sync,3),u64(entities[3]))
+    testing.expect_value(t,instance_object(&sync,4),u64(77))
+    testing.expect(t,instance_object(&sync,6)==0 && instance_object(&sync,-1)==0)
+    testing.expect(t,replaces(sync.extras[:],u64(entities[2])) && !replaces(sync.extras[:],77),"only what is drawn in place of a mesh replaces it")
+
+    instance_remove(&sync,1)
+    testing.expect_value(t,len(sync.drawn.entities),3)
+    testing.expect_value(t,instance_entity(&sync,1),entities[3])
+    testing.expect_value(t,instance_of(&sync,entities[3]),1)
+    testing.expect_value(t,instance_of(&sync,entities[1]),-1)
+    testing.expect(t,len(sync.deriving)==1 && sync.deriving[0]==1,"the one that took the place derives its rows there")
+    testing.expect(t,len(sync.lerping)==2 && sync.lerping[0]==0 && sync.lerping[1]==1)
+    testing.expect(t,len(sync.taken)==1 && sync.taken[0]==Taken{1,3},"the renderer gets what took the place, from where it has it")
+    testing.expect_value(t,instance_object(&sync,3),u64(77))
+    // The last one goes: no other takes a place.
+    instance_remove(&sync,2)
+    testing.expect(t,len(sync.taken)==1 && len(sync.deriving)==1 && len(sync.lerping)==2 && instance_count(&sync)==4)
+    // The one that took a place takes another: the renderer still has it where it was first.
+    instance_remove(&sync,0)
+    testing.expect_value(t,instance_entity(&sync,0),entities[3])
+    testing.expect(t,len(sync.taken)==1 && sync.taken[0]==Taken{0,3} && len(sync.drawn.entities)==1)
+    testing.expect(t,len(sync.deriving)==1 && sync.deriving[0]==0 && len(sync.lerping)==1 && sync.lerping[0]==0)
 }

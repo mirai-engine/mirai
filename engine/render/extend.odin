@@ -352,7 +352,14 @@ sun_radius :: proc(renderer:^Renderer) -> f32 {
     return renderer.settings.sun_radius
 }
 
-// Four numbers of an instance of sync.instances, by its index there, that
+// The mesh an instance of the renderer shows and where it draws it, a
+// transform into the world, by its index (instance_object). False for an
+// index the renderer does not have.
+instance_placed :: proc(renderer:^Renderer,index:int) -> (mesh:Mesh_Handle,transform:matrix[4,4]f32,ok:bool) {
+    if renderer==nil || index<0 {return}
+    return gpu.scene_instance_placed(renderer,u32(index))
+}
+// Four numbers of an instance of the renderer, by its index (instance_object), that
 // the shaders of the plugin read with instance_values (scene.slang): they
 // stay while the instance keeps its identity and change neither its light
 // nor its rays. False for an index the renderer does not have or a value that
@@ -360,7 +367,7 @@ sun_radius :: proc(renderer:^Renderer) -> f32 {
 instance_values_set :: proc(renderer:^Renderer,index:int,values:[4]f32) -> bool {
     return renderer!=nil && index>=0 && gpu.scene_set_instance_values(renderer,u32(index),values)
 }
-// How wet an instance of sync.instances is, by its index there: 0 dry to 1
+// How wet an instance of the renderer is, by its index (instance_object): 0 dry to 1
 // soaked. Every material darkens and smooths by it what is not metal, glass
 // or unlit, and a program reads it in Mirai_Surface_Context.wet. It stays
 // while the instance keeps its identity and changes neither its light nor
