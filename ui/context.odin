@@ -8,10 +8,10 @@ import "mirai:std/base"
 // Reads the clipboard into buffer and returns the bytes written.
 Clipboard_Get :: #type proc(user:rawptr,buffer:[]u8) -> int
 Clipboard_Set :: #type proc(user:rawptr,text:string)
-// Draws what the library does not know: a paint_user element (kind, data) or
-// an icon from Icon.User on (kind: its index). Only draw_* procedures may be
-// called from it.
-Draw_User :: #type proc(ctx:^Context,rect:Rect,kind:u32,data:u64,color:Color)
+// Draws what the library does not know, by node.name: a canvas, a Draw node of
+// a tree, or an icon from Icon.User on (its index). Only draw_* procedures may
+// be called from it.
+Draw_Proc :: #type proc(user:rawptr,ctx:^Context,node:Draw_Node)
 
 Context_Desc :: struct {
     allocator:runtime.Allocator, // context.allocator when unset
@@ -48,7 +48,8 @@ Context_Desc :: struct {
     clipboard_get:Clipboard_Get,
     clipboard_set:Clipboard_Set,
     clipboard_user:rawptr,
-    draw_user:Draw_User,
+    draw_user:Draw_Proc,
+    draw_user_data:rawptr, // what draw_user is called with
 }
 
 Widget_Flag :: enum u8 {
@@ -225,7 +226,8 @@ Context :: struct {
     clipboard_get:Clipboard_Get,
     clipboard_set:Clipboard_Set,
     clipboard_user:rawptr,
-    draw_user:Draw_User,
+    draw_user:Draw_Proc,
+    draw_user_data:rawptr, // what draw_user is called with
 }
 
 // What a frame leaves for the renderer and the host. The slices belong to the
@@ -247,7 +249,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     ctx.theme=desc.theme^ if desc.theme!=nil else THEME_EDITOR
     ctx.navigation=desc.navigation
     ctx.clipboard_get,ctx.clipboard_set,ctx.clipboard_user=desc.clipboard_get,desc.clipboard_set,desc.clipboard_user
-    ctx.draw_user=desc.draw_user
+    ctx.draw_user,ctx.draw_user_data=desc.draw_user,desc.draw_user_data
     ctx.max_elements=desc.max_elements if desc.max_elements>0 else 8192
     count :: proc(value,fallback:int) -> int {return value if value>0 else fallback}
     ok:=true

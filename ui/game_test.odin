@@ -323,18 +323,18 @@ a_skinned_button_changes_its_image_with_its_state :: proc(t:^testing.T) {
 }
 
 @(private="file")
-Canvas_Seen :: struct {rect:Rect,kind:u32,data:u64,calls:int}
+Canvas_Seen :: struct {rect:Rect,name:u64,calls:int}
 
 @(test)
 a_canvas_is_drawn_by_its_owner_inside_the_clip_of_its_container :: proc(t:^testing.T) {
     seen:Canvas_Seen
-    draw :: proc(ctx:^Context,rect:Rect,kind:u32,data:u64,color:Color) {
-        s:=(^Canvas_Seen)(uintptr(data))
-        s.rect,s.kind,s.calls=rect,kind,s.calls+1
-        draw_rect(ctx,{rect.x-50,rect.y,rect.w+100,rect.h},{255,255,255,255}) // wider than the clip
+    draw :: proc(user:rawptr,ctx:^Context,node:Draw_Node) {
+        s:=(^Canvas_Seen)(user)
+        s.rect,s.name,s.calls=node.rect,node.name,s.calls+1
+        draw_rect(ctx,{node.rect.x-50,node.rect.y,node.rect.w+100,node.rect.h},{255,255,255,255}) // wider than the clip
     }
     desc:=TEST_SMALL
-    desc.draw_user=draw
+    desc.draw_user,desc.draw_user_data=draw,&seen
     ctx:Context
     testing.expect(t,context_init(&ctx,desc));defer context_destroy(&ctx)
     input:=test_input()
@@ -343,12 +343,12 @@ a_canvas_is_drawn_by_its_owner_inside_the_clip_of_its_container :: proc(t:^testi
     build :: proc(ctx:^Context,user:rawptr) {
         b:=(^Build)(user)
         if box(ctx,{id=id(ctx,"area"),width=fixed(200),height=fixed(100),clip_x=true,clip_y=true}) {
-            b.it=canvas(ctx,id(ctx,"canvas"),GROW,GROW,7,u64(uintptr(b.seen)))
+            b.it=canvas(ctx,id(ctx,"canvas"),GROW,GROW,{name=7})
         }
     }
     test_frame(&ctx,&input,build,&b)
     frame:=test_frame(&ctx,&input,build,&b)
-    testing.expect_value(t,seen.kind,u32(7))
+    testing.expect_value(t,seen.name,u64(7))
     testing.expect(t,seen.calls==2 && test_rect_near(seen.rect,{0,0,200,100}),"the owner draws the area the layout gave it")
     clipped:=false
     for command in frame.commands {if command.count>0 && test_rect_near(command.scissor,{0,0,200,100}) {clipped=true}}

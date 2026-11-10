@@ -250,8 +250,8 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 
 All take the context, an id and their state by parameter.
 
-- **Canvas.** `canvas` is an area that its owner draws with `Context_Desc.draw_user`: the layout
-  places it, the container with clip clips it and the pointer over it is its interaction.
+- **Canvas.** `canvas` is an area that `Context.draw_user` draws as its `Draw_Node` says: the
+  layout places it, the container with clip clips it and the pointer over it is its interaction.
 - **Text and icons.** `label` is a line clipped to its box, which can fade out at its end, and
   `text` with `prose` is the running text ([text](#text)). The `Icon`s are drawn on a 16 vector
   grid.
@@ -429,7 +429,7 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   not those of a component, which the game writes and which show what was asked until it has had a
   tick to. A `Button` that binds a value writes its `choice` when clicked, as a `Radio` does, and
   emits `Changed` after `Clicked`.
-- **Draw.** A `Draw` node is a leaf whose paint (`Paint_Kind.Draw`) calls `Game_Source.draw` at
+- **Draw.** A `Draw` node is a leaf whose paint (`Paint_Kind.Draw`) calls `Context.draw_user` at
   `frame_end` with a `Draw_Node`: the rectangle, the colors and text of its style, and the bytes
   of the field its `bind_value` names, of any type (`Bound_Want.Data`, `draw_value`). `draw` names
   who draws it. It is replayed with its screen, so what it shows comes from what it binds. A

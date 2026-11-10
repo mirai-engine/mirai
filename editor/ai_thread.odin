@@ -571,7 +571,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
                     ui.text(ctx,ai_chat_paragraph_text(ctx,message,room,size),ui.prose(ctx,size,held?th.text_body:th.text))
                     if held {
                         if ui.box(ctx,{width=ui.fixed(bubble),height=ui.fixed(rows[index]-gap),float={to=.Parent}}) {
-                            ui.canvas(ctx,ui.id(ctx,"held",index),ui.GROW,ui.GROW,u32(User_Icon.Dashed_Box),u64(transmute(u32)th.well_stroke_hover),{.Passive})
+                            ui.canvas(ctx,ui.id(ctx,"held",index),ui.GROW,ui.GROW,{name=u64(User_Icon.Dashed_Box),fill=th.well_stroke_hover},{.Passive})
                         }
                     }
                 }

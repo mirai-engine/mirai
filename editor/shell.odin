@@ -168,7 +168,7 @@ Editor_Ui :: struct {
     viewport_menu:Viewport_Menu, // of the right click on the scene (play_here.odin)
 }
 
-// Kinds draw_user receives.
+// The names draw_user draws: an icon from ui.Icon.User on, or a canvas.
 User_Icon :: enum u8 {
     Minimize,Maximize,Close,Pause,Gear,Search,Folder,Up,List,Save,Undo,Redo,Share,Camera,Graphics,Component,Simulate,
     Scene,Copy,Trash,Hammer,Terminal,Tree,Command,Unlink,Variant,
@@ -253,15 +253,15 @@ shell_id :: proc(g:^Editor_Ui,name:string,index:int=0) -> ui.Id {return ui.id_de
 // The pointer on it is its interaction. Past DRAWING_CAPACITY in a frame the
 // area stays empty.
 drawing :: proc(g:^Editor_Ui,id:ui.Id,width,height:ui.Size,draw:Drawing_Proc,user:rawptr,flags:ui.Widget_Flags={}) -> ui.Interaction {
-    data:=u64(0)
+    data:[]u8
     if g.drawing_count<len(g.drawings) {
         g.drawings[g.drawing_count]={draw,user}
-        data=u64(uintptr(&g.drawings[g.drawing_count]))
+        data=([^]u8)(&g.drawings[g.drawing_count])[:size_of(Drawing)]
         g.drawing_count+=1
     } else {
         g.dropped+=1
     }
-    return ui.canvas(g.ctx,id,width,height,u32(User_Icon.Drawing),data,flags)
+    return ui.canvas(g.ctx,id,width,height,{name=u64(User_Icon.Drawing),data=data},flags)
 }
 
 // The layout of the panel of the active tool of a plugin, or of the shown
@@ -292,7 +292,9 @@ named_add :: proc(g:^Editor_Ui,id:ui.Id,kind:=platform.Window_Region_Kind.Client
 }
 
 @(private)
-draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color) {
+draw_user :: proc(user:rawptr,ctx:^ui.Context,node:ui.Draw_Node) {
+    if node.name>=u64(len(User_Icon)) {return}
+    rect,kind,color:=node.rect,u32(node.name),node.fill
     c:=ui.rect_center(rect)
     s:=min(rect.w,rect.h)/16
     switch User_Icon(kind) {
@@ -301,7 +303,7 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
          .Agent_Star_Ask,.Agent_Bolt_Ask,.Agent_Ghost_Ask,.Agent_Shield_Ask,.Agent_Leaf_Ask,.Agent_Butterfly_Ask,.Agent_Claude_Ask,.Agent_Codex_Ask:
         ai_agent_avatar_draw(ctx,rect,u8(kind-u32(User_Icon.Agent_Star)),color)
     case .Drawing:
-        if d:=(^Drawing)(uintptr(data));d!=nil && d.draw!=nil {d.draw(ctx,rect,d.user)}
+        if d,ok:=ui.draw_value(node,Drawing);ok && d.draw!=nil {d.draw(ctx,rect,d.user)}
     case .To_Start,.Step_Back,.Step_Forward,.To_End,.Loop,.Range,.Fit_Width,.Marker:
         timeline_icon_draw(ctx,User_Icon(kind),c,s,color)
     case .Mirai:
@@ -328,7 +330,7 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
             ui.draw_polyline(ctx,bend[:],1.4*s,color)
         }
     case .Dashed_Box:
-        ai_dashed_box_draw(ctx,rect,transmute(ui.Color)u32(data))
+        ai_dashed_box_draw(ctx,rect,color)
     case .Close:
         ui.draw_line(ctx,c+{-3.5,-3.5},c+{3.5,3.5},1.2,color)
         ui.draw_line(ctx,c+{3.5,-3.5},c+{-3.5,3.5},1.2,color)

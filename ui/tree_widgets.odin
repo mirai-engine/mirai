@@ -156,10 +156,10 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         data:[]u8
         if bound.value.bound && values!=nil {data=([^]u8)(rawptr(uintptr(values)+uintptr(bound.value.offset)))[:bound.value.size]}
         widget_add(ctx,node_id,{.Passive})
-        element_leaf(ctx,{id=node_id,layout={width=node.layout.width,height=node.layout.height},custom=paint_add(ctx,{
-            kind=.Draw,user_data=node.draw,fill=style.fill,stroke=style.stroke,fill2=style.track,icon_color=style.knob,text_color=style.mark,
-            style=style.text,corners=style.radius,stroke_width=style.stroke_width,text=transmute(string)data,caret=int(item),
-        })})
+        element_leaf(ctx,{id=node_id,layout={width=node.layout.width,height=node.layout.height},custom=paint_add(ctx,{kind=.Draw,draw={
+            name=node.draw,fill=style.fill,stroke=style.stroke,track=style.track,knob=style.knob,mark=style.mark,
+            text=style.text,radius=style.radius,stroke_width=style.stroke_width,data=data,item=i32(item),
+        }})})
     }
     tree_drop_target(ctx,b,node,index,node_id,item)
 }

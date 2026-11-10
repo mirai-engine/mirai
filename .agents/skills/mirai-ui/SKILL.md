@@ -129,8 +129,11 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **The override of a style by a node is an unnamed style with `extends`**: it says what differs
   and follows later changes of the style in the rest.
 - **A game has one route to an interface, the `.ui`.** What code draws is a `Draw` node, through
-  `Game_Source.draw`: its procedure reads only the node, so a screen is still skipped and replayed
+  `Context.draw_user`: its procedure reads only the node, so a screen is still skipped and replayed
   by what it binds.
+- **One custom-draw hook.** A canvas, a `Draw` node and an icon from `Icon.User` on are one
+  paint, `Paint_Kind.Draw`, handed as a `Draw_Node` to `Context.draw_user`, which draws by its
+  `name`.
 - **The first control of each page takes the focus** when it shows (a flag set the first time a
   tree is built by `tree_pages_focus`, not inside a `List`); a node can still ask with
   `Focus_First`.
