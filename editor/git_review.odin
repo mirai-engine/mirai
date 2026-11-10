@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/git"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -226,5 +227,5 @@ git_review_whole :: proc(s:^Session,index:int,width:f32) {
             }
         }
     }
-    if file.text && ui.button(ctx,ui.id(ctx,"git_ai"),{label="Resolve with AI",icon=.Sparkle,style=.Field,width=-1,center=true,disabled=git_working(g)}).clicked {git_merge_ai(s,index)}
+    if file.text && ui.button(ctx,ui.id(ctx,"git_ai"),{label="Resolve with AI",icon=.Sparkle,style=.Field,width=-1,center=true,disabled=git.working(g)}).clicked {git_merge_ai(s,index)}
 }

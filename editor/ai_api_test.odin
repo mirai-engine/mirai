@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/base"
@@ -41,11 +42,11 @@ ai_methods_write_the_results_they_declare :: proc(t:^testing.T) {
     root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-api-%d",os.get_pid()),context.temp_allocator)
     if !testing.expect(t,!os.exists(root)) {return}
     defer os.remove_all(root)
-    testing.expect_value(t,ai_store_open(&m.store,root),"");defer ai_store_close(&m.store)
-    saved:=Ai_Conversation{id=1,updated_at=200}
-    ai_conversation_set_text(saved.title[:],&saved.title_len,"Paint the cube")
-    testing.expect_value(t,ai_store_save(&m.store,&saved,&task.transcript),"")
-    testing.expect_value(t,ai_store_annotate(&m.store,1,0,"user","context","",`{"player":4}`),"")
+    testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
+    saved:=ai_store.Conversation{id=1,updated_at=200}
+    ai_store.conversation_set_text(saved.title[:],&saved.title_len,"Paint the cube")
+    testing.expect_value(t,ai_transcript_save(&m.store,&saved,&task.transcript),"")
+    testing.expect_value(t,ai_store.annotate(&m.store,1,0,"user","context","",`{"player":4}`),"")
     state:=new(Api_State);defer free(state)
     state.poll_temp=temporary
     if !testing.expect_value(t,api.server_init(&state.server,{port=0,max_methods=64,max_connections=1,max_request=16*1024,max_response=256*1024,scratch=512*1024}),api.Init_Error.None) {return}

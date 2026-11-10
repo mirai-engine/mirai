@@ -21,7 +21,7 @@ mtl_accel_new :: proc(d: ^Device, size: u64) -> (handle: ^MTL.AccelerationStruct
 		if empty >= len(d.accel_arena.blocks) || d.accel_arena.blocks[empty].size == 0 || d.accel_arena.blocks[empty].used > 0 {continue}
 		mtl_defer(d, d.accel_heaps[empty])
 		d.accel_heaps[empty] = nil
-		accel_arena_drop(&d.accel_arena, empty)
+		arena_drop(&d.accel_arena, empty)
 	}
 	clear(&d.accel_empty)
 	if d.accel_arena.allocator.procedure == nil {
@@ -33,7 +33,7 @@ mtl_accel_new :: proc(d: ^Device, size: u64) -> (handle: ^MTL.AccelerationStruct
 	align := max(u64(placed.align), ACCEL_ALIGNMENT)
 	taken = align_up(u64(placed.size), align)
 	ok: bool
-	block, offset, ok = accel_arena_take(&d.accel_arena, taken, align)
+	block, offset, ok = arena_take(&d.accel_arena, taken, align)
 	if !ok {
 		bytes := accel_block_size(taken)
 		descriptor := MTL.HeapDescriptor.alloc()->init()
@@ -45,14 +45,27 @@ mtl_accel_new :: proc(d: ^Device, size: u64) -> (handle: ^MTL.AccelerationStruct
 		heap := MTL.Device_newHeapWithDescriptor(d.device, descriptor)
 		if heap == nil {return}
 		mtl_set_label(heap, "acceleration structures")
-		at := accel_arena_add(&d.accel_arena, bytes)
-		for len(d.accel_heaps) <= at {append(&d.accel_heaps, nil)}
-		d.accel_heaps[at] = heap
-		block, offset, ok = accel_arena_take(&d.accel_arena, taken, align)
-		if !ok {return}
+		at, added := arena_add(&d.accel_arena, bytes)
+		if added && len(d.accel_heaps) <= at && resize(&d.accel_heaps, at + 1) != nil {
+			arena_drop(&d.accel_arena, at)
+			added = false
+		}
+		if added {
+			d.accel_heaps[at] = heap
+			block, offset, ok = arena_take(&d.accel_arena, taken, align)
+		}
+		if !ok {
+			if added {
+				d.accel_heaps[at] = nil
+				arena_drop(&d.accel_arena, at)
+			}
+			mtl_release(heap)
+			set_error(d, "out of memory for the blocks of the acceleration structures")
+			return
+		}
 	}
 	handle = MTL.Heap_newAccelerationStructureWithSize(d.accel_heaps[block], NS.UInteger(size), NS.UInteger(offset))
-	if handle == nil && accel_arena_give(&d.accel_arena, block, offset, taken) {append(&d.accel_empty, block)}
+	if handle == nil && arena_give(&d.accel_arena, block, offset, taken) {append(&d.accel_empty, block)}
 	return
 }
 

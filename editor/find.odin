@@ -1,6 +1,7 @@
 package editor
 
 import "mirai:core"
+import "mirai:std/base"
 import "mirai:ui"
 
 // Find object (Space): a list in the middle of the window of every entity by
@@ -49,7 +50,7 @@ finder_candidates :: proc(s:^Session,w:core.World_Ref) -> []core.Entity {
     result:=make([dynamic]core.Entity,0,names!=nil?core.count(names):0,context.temp_allocator)
     if names==nil {return result[:]}
     for e in names.entities {
-        if !entity_alive(w,e) || !contains_fold(entity_name(w,e),filter) {continue}
+        if !entity_alive(w,e) || !base.contains_fold(entity_name(w,e),filter) {continue}
         append(&result,e)
     }
     return result[:]

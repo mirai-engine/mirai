@@ -277,8 +277,8 @@ entities that have it:
 
 ## Build
 
-The engine is compiled into dynamic runtime and editor libraries, with declarations that allow
-compiling the project separately. The editor and the player load the project's world through
+The engine is compiled into dynamic libraries, one per group of layers, with declarations that
+allow compiling each library and the project separately. The editor and the player load the project's world through
 `World_Info`. The distributed game is compiled from source and excludes the engine-time packages.
 
 - Targets, collections, outputs and binary updates:

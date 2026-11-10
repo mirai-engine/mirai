@@ -1,7 +1,7 @@
 # AI chats and agents
 
-Code: `editor/ai*.odin`, `editor/acp/` and `tools/mirai/agent.odin`; the UI is in
-[AI panel](panels.md#ai-panel).
+Code: `editor/ai*.odin`, `editor/ai_store/`, `editor/acp/` and `tools/mirai/agent.odin`; the UI is
+in [AI panel](panels.md#ai-panel).
 
 - A project has **one continuous chat**, the main chat: the user only ever talks to it, there are
   no sessions to open or pick, and the word session does not appear in the UI. The main agent
@@ -377,11 +377,18 @@ The chat outlives any native context of its agent.
 
 ## Project data
 
-One SQLite database, `<project>/.mirai/ai/chat.db` (`editor/ai_store.odin`, WAL, without
-credentials), holds what Mirai queries and updates; several editors of the same project share it
-and a write waits for another one. The review of each conversation
+One SQLite database, `<project>/.mirai/ai/chat.db` (package `editor/ai_store`, WAL, without
+credentials), holds what Mirai queries and updates; several editors of the same project share it.
+The review of each conversation
 (`.mirai/ai/chats/<id>.review.json`, [review](ai-review.md#persistence-and-capacity)), the captures
 and the turn folders stay files.
+
+- **A frame never waits for the database.** A write that finds another editor writing is kept by
+  the store with a copy of what it binds, and the poll of the chats runs what was kept in the
+  order it was written (`ai_persist_poll`); closing the editor does wait, so nothing kept is lost.
+  What is read is what reached the database, and what shows its rows reads them again when a kept
+  write lands. A write whose result is needed at once (the id of a new chat or annotation) is
+  never kept: with the database busy it fails and says to try again.
 
 - **Conversations** have a kind: `Main` (the one chat), `Agent` (a subagent, with its `parent`) or
   `Archived` (the conversations of agents outside the editor). **Messages** are the lines of a
@@ -406,11 +413,12 @@ and the turn folders stay files.
   `claude-agent-acp` summarizes them from the start of the prompt, which is the editor's
   instructions, and although it announces renaming, a user's Claude Code 2.1 does not implement it
   (`rename_session`) and the turn would fail.
-- **Search** (`editor/ai_search.odin`): a query is words, each a quoted phrase so that no character
-  is syntax (an asset path or a method is the phrase of its parts), all in the line, `OR` between
-  two taking either; ranked by BM25, with a prefix option for a box being typed in. Every line is
-  indexed, prompts, answers and notes. The search of the clock looks in the main chat, and
-  `ai.history.search` in all the conversations; the memory topics have their own table and rules.
+- **Search** (`editor/ai_store/search.odin`): a query is words, each a quoted phrase so that no
+  character is syntax (an asset path or a method is the phrase of its parts), all in the line,
+  `OR` between two taking either; ranked by BM25, with a prefix option for a box being typed in.
+  Every line is indexed, prompts, answers and notes. The search of the clock looks in the main
+  chat, and `ai.history.search` in all the conversations; the memory topics have their own table
+  and rules.
 - Spend is what the adapter reports through ACP, without estimating it: tokens with the `usage` of
   the `session/prompt` response (unstable in ACP) and the context window and cost with
   `usage_update`. Codex reports no cost.

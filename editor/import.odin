@@ -555,7 +555,7 @@ import_frame :: proc(s:^Session) {
             path:=platform.input_dropped(p,int(drop.index))
             if path=="" {continue}
             // An image dropped on the chat is a reference for the next message, not an asset.
-            if s.ai!=nil && s.ai.chat_open && ui.rect_contains(s.ai.chat_rect,drop.position) && ai_reference_image(path) {
+            if ai_chat_holds(s.ai,drop.position) && ai_reference_image(path) {
                 ai_reference_add(s,path)
                 continue
             }

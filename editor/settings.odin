@@ -290,7 +290,7 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     d:=&s.settings_dialog
     needle:=string(d.search[:d.search_length])
     // The editor goes first in both layers: its preferences are of the machine.
-    if needle=="" || contains_fold("Editor Panels Floating Docked",needle) {
+    if needle=="" || base.contains_fold("Editor Panels Floating Docked",needle) {
         append(&list,Settings_Category{storage=SETTINGS_CATEGORY_EDITOR,name="Editor",group="Editor",sections=[]string{"Panels"}})
     }
     if s.settings_layer==.Project && s.has_project {
@@ -300,8 +300,8 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     }
     if s.settings_layer==.Project && s.settings_plugins.count>0 {
         plugins:=Settings_Category{storage=SETTINGS_CATEGORY_PLUGINS,name="Plugins",group="Project"}
-        found:=needle=="" || contains_fold("Plugins",needle) || contains_fold("Git",needle) || contains_fold("Catalog",needle)
-        for i in 0..<s.settings_plugins.count {found|=!s.settings_plugins.automatic[i] && contains_fold(base.text_get(s.settings_plugins.names[i][:]),needle)}
+        found:=needle=="" || base.contains_fold("Plugins",needle) || base.contains_fold("Git",needle) || base.contains_fold("Catalog",needle)
+        for i in 0..<s.settings_plugins.count {found|=!s.settings_plugins.automatic[i] && base.contains_fold(base.text_get(s.settings_plugins.names[i][:]),needle)}
         if found {append(&list,plugins)}
     }
     if s.settings_layer==.Project && s.has_project {
@@ -403,7 +403,7 @@ settings_sections :: proc(info:^runtime.Type_Info,name,needle:string) -> []strin
     titles:=make([dynamic]string,context.temp_allocator)
     v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if !is_struct {return titles[:]}
-    every:=needle=="" || contains_fold(name,needle)
+    every:=needle=="" || base.contains_fold(name,needle)
     current:=""
     found:=false
     for i in 0..<int(v.field_count) {
@@ -416,7 +416,7 @@ settings_sections :: proc(info:^runtime.Type_Info,name,needle:string) -> []strin
         if _,transient:=core.field_option(tag,"transient");transient {continue}
         label:=readable(v.names[i])
         if custom,labeled:=core.field_option(tag,"label");labeled && custom!="" {label=custom}
-        found|=every || contains_fold(current,needle) || contains_fold(label,needle)
+        found|=every || base.contains_fold(current,needle) || base.contains_fold(label,needle)
     }
     if found {append(&titles,current)}
     return titles[:]
@@ -435,7 +435,7 @@ settings_section_fields :: proc(info:^runtime.Type_Info,title,needle:string) -> 
         if current!=title || core_has(tag,"hidden") || core_has(tag,"transient") {continue}
         label:=readable(v.names[i])
         if custom,labeled:=core.field_option(tag,"label");labeled && custom!="" {label=custom}
-        if needle!="" && !contains_fold(label,needle) {continue}
+        if needle!="" && !base.contains_fold(label,needle) {continue}
         if core_has(tag,"advanced") {advanced=true} else {plain=true}
     }
     return
@@ -460,7 +460,7 @@ settings_plugins_rows :: proc(s:^Session,needle:string) {
         for i in 0..<list.count {
             name:=base.text_get(list.names[i][:])
             in_group:Group=list.origin[i]==.Engine?.Engine:list.from_git[i]?.Git:.Project
-            if in_group!=group || list.automatic[i] || needle!="" && !contains_fold(name,needle) && !contains_fold("Plugins",needle) {continue}
+            if in_group!=group || list.automatic[i] || needle!="" && !base.contains_fold(name,needle) && !base.contains_fold("Plugins",needle) {continue}
             if !titled {
                 open=fold_section(s,ui.id(ctx,"origin",int(group)+1),base.hash_combine(0x706c7567696e73,u64(group)),titles[group])
                 if open {fold_band_begin(s)}
@@ -482,7 +482,7 @@ settings_plugins_rows :: proc(s:^Session,needle:string) {
             }
         }
     }
-    if needle=="" || contains_fold("Plugins",needle) || contains_fold("Git",needle) || contains_fold("Catalog",needle) {settings_plugins_git(s)}
+    if needle=="" || base.contains_fold("Plugins",needle) || base.contains_fold("Git",needle) || base.contains_fold("Catalog",needle) {settings_plugins_git(s)}
 }
 
 // How the right panel sits: the mode of every document, and under it each
@@ -739,7 +739,7 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
         }
         if category.storage==SETTINGS_CATEGORY_PROJECT {
             for title,k in category.sections {
-                if section_card(s,settings_card_id(s,category.storage,k),title) {settings_project_card(s,title,needle,needle=="" || contains_fold(category.name,needle))}
+                if section_card(s,settings_card_id(s,category.storage,k),title) {settings_project_card(s,title,needle,needle=="" || base.contains_fold(category.name,needle))}
             }
             return
         }
@@ -753,13 +753,13 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
         for title,k in category.sections {
             storage:=category.storages[k]
             info:=&s.info.storages[storage]
-            every:=needle=="" || contains_fold(category.name,needle) || contains_fold(settings_storage_name(info),needle)
+            every:=needle=="" || base.contains_fold(category.name,needle) || base.contains_fold(settings_storage_name(info),needle)
             if section_card(s,settings_card_id(s,category.storage,k),settings_section_title(s,category,k) if grouped || title!="" else "") {
                 // The ids of the rows are those of their setting: two of a category do not share them.
                 ui.id_push(ctx,ui.id(ctx,info.name))
                 defer ui.id_pop(ctx)
                 c:=Inspect{s=s,w=w,index=SETTING_INDEX+storage,storage=storage+1,name=info.name,type=info.type,value=cast([^]u8)setting_data(s,storage),size=info.info.size,width=SETTINGS_SIZE.x-SETTINGS_NAV-60,sections=true,section=title,ruled=true}
-                if !every && !contains_fold(title,needle) {c.needle=needle}
+                if !every && !base.contains_fold(title,needle) {c.needle=needle}
                 defaults:[INSPECTOR_COMPONENT_BYTES]u8
                 c.defaults=settings_defaults(s,info,&defaults)
                 fields_rows(&c,info.info,0,0,"")
