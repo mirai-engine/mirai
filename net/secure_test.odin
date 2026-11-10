@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:time"
 
 @(private="file")
-SECURE_CHANNELS :: []Channel_Desc{{kind=.Reliable,max_message_bytes=4000,queue_bytes=64<<10},{kind=.Unreliable}}
+SECURE_CHANNELS :: []Channel_Desc{{kind=.Reliable,queue_bytes=64<<10},{kind=.Unreliable}}
 
 // A transport that keeps a copy of the last datagrams it delivered and can hold one back.
 @(private="file")

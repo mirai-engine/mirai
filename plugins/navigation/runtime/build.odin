@@ -11,6 +11,7 @@ import "mirai:std/ai"
 import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Builds the tiles of every class where their input changed: the static
@@ -930,7 +931,7 @@ gather :: proc(build:^Build,class:int,c:^Class_Mesh,b:^Navigation_Builds,physics
     // The deep ground under the water first: an area of a Nav_Area or an obstacle there wins.
     for water in b.water {
         if water.max.x<rect.min.x-margin || water.min.x>rect.max.x+margin || water.max.z<rect.min.z-margin || water.min.z>rect.max.z+margin {continue}
-        deep:=water.max.y-phys.SWIM_DEFAULT.depth
+        deep:=water.max.y-locomotion.SWIM_DEFAULT.depth
         if !(deep>water.min.y) {continue}
         volume:=ai.Nav_Area_Volume{count=4,area=u8(AREA_WATER),min_y=water.min.y,max_y=deep}
         volume.points[0],volume.points[1],volume.points[2],volume.points[3]={water.min.x,water.min.z},{water.max.x,water.min.z},{water.max.x,water.max.z},{water.min.x,water.max.z}

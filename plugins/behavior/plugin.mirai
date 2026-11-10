@@ -1,6 +1,6 @@
 {
   "name": "behavior",
   "version": "0.1.0",
-  "dependencies": ["physics", "navigation"],
+  "dependencies": ["physics", "locomotion", "navigation"],
   "parts": ["Runtime", "Editor"]
 }

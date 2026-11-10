@@ -119,6 +119,7 @@ Command :: struct {
     client_id:u64, // Connected, on a server: the id in the connect token of the client, or zero
     object:Object,
     ended:bool,   // Object_Destroyed: the object is gone on the server; false: it only left what this connection sees
+    more:bool,    // Message: a piece of a reliable message whose next bytes come in the next Message of the channel
     retyped:bool, // Object_Created: the replica of this object goes on, with the type and the whole state of the command
     mask:u64,     // fields that changed, one bit each as numbered by the object type
     data:[]u8,
@@ -175,8 +176,9 @@ Op :: struct {
 @(private)
 Connect_Request :: struct {candidates:[CANDIDATES]Address,count:int,credentials:Credentials}
 // Bytes of messages given to the game channels of one connection: 4 more than each one's data.
+// streaming: bytes of the message message_send streams on each channel that it has not queued yet.
 @(private)
-Queued_Bytes :: struct {connection:Connection,bytes:[MAX_CHANNELS]u64}
+Queued_Bytes :: struct {connection:Connection,bytes:[MAX_CHANNELS]u64,streaming:[MAX_CHANNELS]int}
 @(private)
 Frame :: struct {ops:[]Op,count:int,bytes:[]u8,used:int}
 @(private)
@@ -306,8 +308,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
         c:=channel
         if c.queue_bytes<=0 {c.queue_bytes=32<<10}
         if c.kind==.Reliable {
-            if c.max_message_bytes<=0 {c.max_message_bytes=16<<10}
-            if c.max_message_bytes+4>c.queue_bytes {return refuse(h,"channels.max_message_bytes","at most queue_bytes minus 4")}
+            c.max_message_bytes=max(int)
         } else {
             c.max_message_bytes=c.max_message_bytes<=0?MAX_UNRELIABLE_BYTES:min(c.max_message_bytes,MAX_UNRELIABLE_BYTES)
         }
@@ -353,7 +354,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     b.reserve_bytes=PACKET_BYTES*2
     b.reserve_count=PACKET_BYTES*8/15
     for i in 0..<MAX_CHANNELS {
-        if h.channels[i].kind==.Reliable {b.reserve_bytes+=CHUNK_WINDOW*CHUNK_BYTES+h.channels[i].max_message_bytes}
+        if h.channels[i].kind==.Reliable {b.reserve_bytes+=CHUNK_WINDOW*CHUNK_BYTES+PIECE_BYTES}
     }
     if d.replication.records<=0 {d.replication.records=d.protocol!=nil?4096:1024}
     if d.protocol!=nil && !h.failed {
@@ -463,13 +464,51 @@ host_disconnect :: proc(h:^Host,connection:Connection=0,reason:=Disconnect_Reaso
 // Queues a message on a channel of a connection. Zero sends it to every connection.
 // A reliable message that does not fit in the queue of a connection returns
 // Full and nothing is sent: the caller tries again after host_poll.
-message_send :: proc(h:^Host,connection:Connection,channel:int,data:[]u8) -> Error {
+//
+// With sent, a reliable message to one connection streams: sent bytes of it
+// are queued, and each call queues what the queue and the frame have room for
+// and adds it to sent, Full when it queued nothing; the message is sent when
+// sent reaches its size. Until then the channel of the connection takes no
+// other message.
+message_send :: proc(h:^Host,connection:Connection,channel:int,data:[]u8,sent:^int=nil) -> Error {
     if channel<0 || channel>=h.channel_count {return .Invalid}
-    if len(data)>h.channels[channel].max_message_bytes {return .Too_Large}
-    if h.channels[channel].kind==.Reliable && !queue_room(h,connection,channel,len(data)) {return .Full}
-    if !op_push(h,{kind=.Message,a=u8(channel),handle=u64(connection)},data) {return .Full}
+    reliable:=h.channels[channel].kind==.Reliable
+    if sent!=nil {return message_stream(h,connection,channel,data,sent)}
+    if reliable && len(data)+4>h.channels[channel].queue_bytes || len(data)>h.channels[channel].max_message_bytes {return .Too_Large}
+    if reliable && (streaming(h,connection,channel) || !queue_room(h,connection,channel,len(data))) {return .Full}
+    if !op_push(h,{kind=.Message,a=u8(channel),handle=u64(connection),c=max(u32)},data) {return .Full}
     queue_count(h,connection,channel,len(data))
     return .None
+}
+
+@(private)
+message_stream :: proc(h:^Host,connection:Connection,channel:int,data:[]u8,sent:^int) -> Error {
+    index:=int(base.handle_index(base.Handle(connection)))
+    if h.channels[channel].kind!=.Reliable || connection==0 || index>=len(h.connection_handles) || h.connection_handles[index]!=connection || sent^<0 || sent^>len(data) || len(data)>=int(max(u32)) {return .Invalid}
+    if len(data)==0 {return message_send(h,connection,channel,data)}
+    q:=&h.sent[index]
+    if q.connection!=connection {q^={connection=connection}}
+    first:=sent^==0
+    if first==(q.streaming[channel]!=0) || !first && q.streaming[channel]!=len(data)-sent^ {return .Full}
+    header:=first?4:0
+    free:=int(h.connection_stats[index].queue_free[channel])-int(queue_pending(h,index,channel))-header
+    room:=len(h.staging.bytes)-h.staging.used
+    size:=min(len(data)-sent^,free,room-room%8)
+    if size<=0 {return .Full}
+    if !op_push(h,{kind=.Message,a=u8(channel),handle=u64(connection),c=first?u32(len(data)):0},data[sent^:][:size]) {return .Full}
+    q.bytes[channel]+=u64(header+size)
+    sent^+=size
+    q.streaming[channel]=len(data)-sent^
+    return .None
+}
+
+// A message streams on the channel of the connection, or of any when it is zero.
+@(private)
+streaming :: proc(h:^Host,connection:Connection,channel:int) -> bool {
+    for q,i in h.sent {
+        if q.connection!=0 && q.connection==h.connection_handles[i] && (connection==0 || q.connection==connection) && q.streaming[channel]!=0 {return true}
+    }
+    return false
 }
 
 // A message of size bytes fits in the queue of the channel of the connection,
@@ -648,13 +687,15 @@ op_apply :: proc(h:^Host,frame:^Frame,op:^Op) {
             peer_drop(h,&peer,Disconnect_Reason(op.a),true)
         }
     case .Message:
+        // c: max for a whole message, else the size of a streamed one with its first bytes, 0 with the rest.
         data:=op_data(frame,op)
-        size:=u64(4+len(data))
+        total:=op.c==max(u32)?-1:int(op.c)
+        size:=u64(total==0?len(data):4+len(data))
         if op.handle==0 {b.applied_all[op.a]+=size}
         for &peer in b.peers {
             if peer.state!=.Connected || (op.handle!=0 && u64(peer_handle(h,&peer))!=op.handle) {continue}
             if op.handle!=0 {peer.channels[op.a].applied+=size}
-            channel_queue(h,&peer,int(op.a),data)
+            channel_queue(h,&peer,int(op.a),data,total)
         }
     case:
         repl_op(h,frame,op)

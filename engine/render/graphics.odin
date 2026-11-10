@@ -22,11 +22,6 @@ Light_Probes :: enum u8 {Low,Medium,High}
 Textures :: enum u8 {Low,Medium,High,Ultra}
 // How far meshes keep their detail: GRAPHICS_DETAIL_PIXELS.
 Detail :: enum u8 {Low,Medium,High,Ultra}
-Reflections :: enum u8 {
-    Off,      // the probe volume reflects
-    Traced,   // smooth surfaces trace their reflection
-    Detailed, // and sharp ones show the glass and the gloss of what they reflect
-}
 
 @(storage,shared,setting="machine")
 Graphics_Settings :: struct {
@@ -35,7 +30,7 @@ Graphics_Settings :: struct {
     antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text,graphics=Antialiasing"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
     indirect_light:Indirect_Light `mirai:"section=Lighting,graphics=Indirect light"`,
     light_probes:Light_Probes `mirai:"graphics=Light probes"`,
-    reflections:Reflections `mirai:"graphics=Reflections"`,
+    reflections:gpu.Reflections `mirai:"graphics=Reflections"`, // off unless chosen: no preset changes it
     sun_shadows:bool,                          // the sun casts shadows; off, no ray goes to it and it lights everything it faces
     shadowed_lights:u32 `mirai:"min=1,max=32,graphics=Shadowed lights,choices=2|4|8|16"`, // shadow rays of a place, each to a light that reaches it or to a group of far ones that stands for them
     glass_shadows:bool `mirai:"graphics=Glass shadows,choices=Off|Colored"`, // blended surfaces color the light that crosses them
@@ -52,7 +47,7 @@ Graphics_Settings :: struct {
 
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    preset_height=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
+    preset_height=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,
     sun_shadows=true,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
@@ -63,10 +58,10 @@ Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom}
 // Of each preset only the fields of the quality count: graphics_preset_apply.
 // The technique of antialiasing is not one of them: it is the same in all.
 GRAPHICS_PRESETS :: #partial [Graphics_Quality]Graphics_Settings{
-    .Low   ={preset_height=720,sun_shadows=true,indirect_light=.Probes,light_probes=.Low,reflections=.Off,shadowed_lights=4,glass_layers=1,textures=.Low,detail=.Low},
-    .Medium={preset_height=900,sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,shadowed_lights=8,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={preset_height=1080,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={preset_height=1440,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=16,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+    .Low   ={preset_height=720,sun_shadows=true,indirect_light=.Probes,light_probes=.Low,shadowed_lights=4,glass_layers=1,textures=.Low,detail=.Low},
+    .Medium={preset_height=900,sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,shadowed_lights=8,glass_layers=1,textures=.Medium,detail=.Medium},
+    .High  ={preset_height=1080,sun_shadows=true,indirect_light=.Probes,light_probes=.High,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={preset_height=1440,sun_shadows=true,indirect_light=.Probes,light_probes=.High,shadowed_lights=16,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's
@@ -94,7 +89,7 @@ graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Quality) {
     p:=presets[preset]
     g.render_scale,g.preset_height=0,p.preset_height
     g.sun_shadows=p.sun_shadows
-    g.indirect_light,g.light_probes,g.reflections=p.indirect_light,p.light_probes,p.reflections
+    g.indirect_light,g.light_probes=p.indirect_light,p.light_probes
     g.shadowed_lights,g.glass_shadows,g.glass_layers=p.shadowed_lights,p.glass_shadows,p.glass_layers
     g.textures,g.detail=p.textures,p.detail
     g.frame_generation=p.frame_generation
@@ -143,8 +138,7 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     s.probe_budget,s.probe_rays=probes[quality.light_probes][0],probes[quality.light_probes][1]
     // The finest cascade reaches 15 m from the eye: what changes where it hands over to the next is far.
     if quality.light_probes==.High {s.probe_grid=32}
-    s.reflections=quality.reflections!=.Off
-    s.reflection_detail_roughness=quality.reflections==.Detailed?gpu.REFLECTION_SHARED_ROUGHNESS:0
+    s.reflections=quality.reflections
     s.sun_shadows=quality.sun_shadows
     s.light_budget=clamp(quality.shadowed_lights,1,gpu.LIGHT_CUT_MAX)
     s.reflection_light_budget=min(s.light_budget,GRAPHICS_REFLECTION_LIGHTS)

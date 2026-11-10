@@ -161,7 +161,9 @@ test_fuzz_scene :: proc(w:^World,seed:u64) {
         if i>0 && rand.int_max(4,gen)==0 && body_type(w,body)==.Dynamic && body_type(w,previous)==.Dynamic {
             anchor:=0.5*(body_position(w,body)+body_position(w,previous))
             fa,fb:=joint_frames(w,previous,body,anchor,{0,0,1})
-            joint_create(w,{type=Joint_Type(rand.int_max(len(Joint_Type),gen)),body_a=previous,body_b=body,frame_a=fa,frame_b=fb,length=1})
+            desc:=rand.int_max(6,gen)==5?test_distance(previous,body,1,1):test_joint(w,Test_Joint(rand.int_max(len(Test_Joint),gen)),previous,body,anchor,{0,0,1})
+            desc.frame_a,desc.frame_b=fa,fb
+            joint_create(w,desc)
         }
         previous=body
     }
@@ -200,9 +202,9 @@ test_fuzz_edit :: proc(w:^World,seed:u64,tick:int) {
         case 7:
             for &joint,slot in w.joints[:w.joint_high] {
                 if joint.generation&1==0 {continue}
-                h:=joint_handle(w,i32(slot))
-                joint_set_limit(w,h,true,-0.5,0.5)
-                joint_set_motor(w,h,true,v.x,50)
+                linear,angular:=w.joint_axes[slot].linear_axes,w.joint_axes[slot].angular_axes
+                angular[0]={motion=.Limited,lower=-0.5,upper=0.5,drive={.Velocity},velocity=v.x,max_force=50}
+                joint_set_axes(w,joint_handle(w,i32(slot)),linear,angular)
                 break
             }
         case 8:
