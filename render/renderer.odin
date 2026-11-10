@@ -1115,11 +1115,11 @@ pipeline_desc :: proc(r: ^Renderer, item: Pipeline_Make, constants: rhi.Shader_C
 // The variants a scene may ask for of the stages of the tracer in use, asked
 // of the pipeline thread so that no frame waits for the driver: every set of
 // the constants of a stage that traces or computes, those of colored shadows
-// while the setting is on. Without the thread, a frame makes each one.
+// while the setting is on. Without the thread they are made here, off the
+// frames too.
 @(private)
 pipeline_variants_ask :: proc(r: ^Renderer) {
 	r.variants_wanted = false
-	if r.pipeline_thread == nil {return}
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	info := rhi.device_info(r.device)
 	list: Pipeline_List

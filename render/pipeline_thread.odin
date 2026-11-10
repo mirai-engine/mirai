@@ -131,11 +131,12 @@ pipelines_install :: proc(r: ^Renderer) {
 // at 0 asks again.
 @(private)
 pipelines_drop :: proc(r: ^Renderer) {
+	// The variants of the stages are asked for again, of the shaders in use then.
+	r.variants_wanted = true
 	t := r.pipeline_thread
 	if t == nil {return}
 	sync.mutex_lock(&t.mutex)
 	defer sync.mutex_unlock(&t.mutex)
-	r.variants_wanted = true
 	for {
 		making := false
 		for &job in t.jobs {
