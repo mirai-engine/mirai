@@ -9,7 +9,6 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 import physics "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 
 @(private="file")
 Removal_World :: struct {
@@ -131,21 +130,21 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     testing.expect_value(t,len(work.placed),generated_count-2)
     for p in work.placed {testing.expect(t,p.id!=generated && p.id!=other,"the cell leaves them out")}
     // Their collision goes with them: the manual tree's cell has no body, the generated one fewer shapes.
-    w_sim:sim.World
-    if !testing.expect(t,sim.world_init(&w_sim,sim.world_desc_default())) {return}
-    defer sim.world_destroy(&w_sim)
+    simulation:physics.Physics_State
+    if !testing.expect(t,physics.test_state_make(&simulation)) {return}
+    defer physics.state_destroy(&simulation)
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     collision:physics.Collision_Settings
-    {complete,enough:=physics_owner_build(&fp,&w_sim,&collision,wood,s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
-    shapes:=int(w_sim.shape_count)
-    {complete,enough:=physics_owner_build(&fp,&w_sim,&collision,wood,s,{scale={1,1,1},rotation=1},nil,false,nil,0,gone);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w_sim.shape_count),shapes-3)
+    {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1});testing.expect(t,complete && enough)}
+    shapes:=int(simulation.world.shape_count)
+    {complete,enough:=physics_owner_build(&fp,&simulation,&collision,wood,s,{scale={1,1,1},rotation=1},nil,false,nil,0,gone);testing.expect(t,complete && enough)}
+    testing.expect_value(t,int(simulation.world.shape_count),shapes-3)
     for cell in fp.cells {if cell.coord==coord {testing.expect(t,cell.body=={},"a cell without an instance that collides has no body")}}
     // A hit on a shape names the instance it is.
     for cell in fp.cells {
         if cell.body=={} || cell.count==0 {continue}
-        hit,found:=shape_instance(&fp,&w_sim,cell.body,fp.shapes[cell.first])
+        hit,found:=shape_instance(&simulation,cell.body,fp.shapes[cell.first])
         testing.expect(t,found && hit.foliage==wood && hit.coord==cell.coord && hit.instance!=generated && hit.instance!=other)
     }
     // Taking the entity of a cell away puts its instances back.

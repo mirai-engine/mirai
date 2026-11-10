@@ -212,6 +212,19 @@ world_events :: proc(w:^World) -> Events {
     }
 }
 
+// The slots of the bodies the last step integrated and of those it woke: every body whose pose, velocity or
+// sleep it changed, some of them twice. The slices belong to the world and last until the next step or restore.
+world_stepped :: proc(w:^World) -> (integrated,woken:[]i32) {
+    st:=&w.step
+    return st.awake[:st.awake_count],st.woken[:st.woken_count]
+}
+
+// The body in a slot world_stepped gave, and its user data; zero for a slot that is free.
+body_at :: proc(w:^World,index:i32) -> (handle:Body_Handle,user_data:u64) {
+    if index<0 || index>=w.body_high || w.bodies[index].generation&1==0 {return}
+    return body_handle(w,index),w.bodies[index].user_data
+}
+
 @(private)
 event_push :: proc(w:^World,buffer:[]$T,kind:int,event:T) {
     count:=w.events.counts[kind]

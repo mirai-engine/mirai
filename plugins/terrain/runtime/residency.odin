@@ -6,7 +6,6 @@ import "core:slice"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import phys "plugins:physics/runtime"
-import sim "plugins:physics/runtime/sim"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
@@ -515,9 +514,9 @@ resident_needed :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:c
 // that the colliders of other entities leave.
 @(private)
 collider_room :: proc(c:^Chunk_Tables,physics:phys.Physics_Settings) -> (room:[2]int,shapes:int) {
-    desc:=sim.world_desc_default()
-    room={physics.heightfields>0?int(physics.heightfields):desc.heightfield_capacity,physics.meshes>0?int(physics.meshes):desc.mesh_capacity}
-    shapes=physics.shapes>0?int(physics.shapes):desc.shape_capacity
+    made:=phys.settings_capacities(physics)
+    room={int(made.heightfields),int(made.meshes)}
+    shapes=int(made.shapes)
     for collider,row in c.colliders.values[:core.count(c.colliders)] {
         if core.has(core.read(c.chunks),c.colliders.entities[row]) {continue}
         shapes-=1

@@ -1,6 +1,7 @@
 package physics
 
 import "core:math/linalg"
+import "core:mem"
 import "core:slice"
 import "mirai:core"
 import "mirai:host"
@@ -146,6 +147,7 @@ physics_step :: proc(
         syncing:=host.load_phase_begin(app,.Physics,host.LOAD_NO_ZONE)
         defer host.load_phase_end(app,syncing,BODIES_PER_TICK-s.budget)
         collider_meshes_prune(meshes,app.assets)
+        state.touched_all=true
         #reverse for &link,at in state.links.values {
             e:=state.links.entities[at]
             if link.kind==.Proxy || core.has(rigids,e) || core.has(colliders,e) || core.has(characters,e) {continue}
@@ -172,8 +174,8 @@ physics_step :: proc(
             for row in 0..<core.count(colliders) {entity_sync(&s,core.entity_at(colliders,row))}
             for row in 0..<core.count(characters) {entity_sync(&s,core.entity_at(characters,row))}
             synced=!s.waiting
-            // Without it sealed_sync has no room and every tick looks at all the bodies.
-            if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters))!=nil {
+            // Without them sealed_sync and poses_write have no room and every tick looks at all the bodies.
+            if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters))!=nil || reserve(&state.touched,2*len(state.links.values))!=nil {
                 memory_problem(problems,core.NONE,"the bodies whose Transform changes, so every tick looks at all of them")
             }
         } else {memory_problem(problems,core.NONE,"the links from entities to the simulation, so no body changes in this tick")}
@@ -266,7 +268,7 @@ sync_seen :: proc(s:^Sync,structure:u64) -> u64 {return structure+core.version(s
 // Those versions but the values of Transform.
 @(private)
 sync_structure :: proc(s:^Sync) -> u64 {
-    seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.layout(s.characters)+characters_seen(s.characters)
+    seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.layout(s.characters)+characters_seen(s.state,s.characters)
     seen+=core.version(s.statics)+core.layout(s.statics)+core.version(s.parents)+core.layout(s.parents)+core.layout(s.transforms)
     return seen+u64(s.state.epoch)+(s.app.assets!=nil?s.app.assets.structure:0)
 }
@@ -340,21 +342,38 @@ sync_order :: proc(s:^Sync,e:core.Entity) -> (order:u64,body:bool) {
 }
 
 // The fields of the characters the simulation reads, which change seldom; the
-// locomotion writes the rest of their rows every tick.
+// locomotion writes the rest of their rows every tick. Taken again only when a row was written.
 @(private)
-characters_seen :: proc(characters:core.Read(Character)) -> (seen:u64) {
+characters_seen :: proc(state:^Physics_State,characters:core.Read(Character)) -> u64 {
+    at:=[2]u64{core.version(characters),core.layout(characters)}
+    if state.characters_at==at {return state.characters_hash}
+    seen:u64
     for c in characters.table.values[:core.count(characters)] {
         for field in ([9]f32{c.mass,c.max_slope,c.step_height,c.traction_force,c.adhesion_force,c.gravity_scale,c.push_force,c.density,c.up_speed}) {
             seen=base.hash_mix(seen,u64(transmute(u32)field))
         }
         seen=base.hash_mix(seen,u64(transmute(u8)c.locks))
     }
-    return
+    state.characters_at,state.characters_hash=at,seen
+    return seen
 }
 
 @(private)
 link_find :: proc(state:^Physics_State,e:core.Entity) -> ^Link {
     return state==nil?nil:core.entity_map_get(&state.links,e)
+}
+
+// Has the next step bring back the rows of a link the sync, a request or a pose target addressed: its body
+// may have changed without a step moving it, as one left at rest. poses_write looks only at these and at the
+// bodies the step moved; without room, at every link.
+@(private)
+link_touch :: proc(state:^Physics_State,l:^Link) {
+    if state.touched_all {return}
+    if len(state.touched)==cap(state.touched) {
+        state.touched_all=true
+        return
+    }
+    append(&state.touched,u32(mem.ptr_sub(l,&state.links.values[0])))
 }
 
 // The link of an entity; the one of another generation of its index is
@@ -447,6 +466,7 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
         s.budget-=1
     }
     l.pass=s.state.pass
+    link_touch(s.state,l)
     rigid,has_rigid:=core.get(s.rigids,e)
     collider,has_collider:=core.get(s.colliders,e)
     config,has_character:=core.get(s.characters,e)
@@ -1033,6 +1053,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             request_problem(s,e,request.kind,"physics.request_body","its body was not made","read the problems of the entity about its body and fix them")
             continue
         }
+        link_touch(state,l)
         switch request.kind {
         case .Teleport:
             was:=sim.body_transform(w,l.body)
@@ -1102,43 +1123,84 @@ area_problem :: proc(s:^Sync,request:Body_Request) {
     core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its radius or extents are not positive, its values are not finite, its falloff is not a Radial_Falloff, or its noise scale is negative; send a positive size, finite values and a falloff and noise of physics",request.kind)
 }
 
-// Brings the pose of what the step moved back into Transform, and the state of bodies and characters.
+// Brings back into the rows what the step left: the pose, the Motion and the state of the bodies it moved or
+// woke, of the links something else addressed since the last time (link_touch), of the proxies and of the
+// characters, in the order of the links. Every other body is asleep or static, as its rows already say.
 @(private)
 poses_write :: proc(s:^Sync) {
     state:=s.state
     w:=&state.world
-    for &l,at in state.links.values {
-        e:=state.links.entities[at]
-        switch l.kind {
-        case .None,.Compound:
-        case .Body,.Proxy:
-            if l.kind==.Body && (!l.has_rigid || l.rigid.type==.Static) && l.hold.by=={} || !sim.body_valid(w,l.body) {continue}
-            awake:=sim.body_is_awake(w,l.body)
-            if awake {pose_write(s,&l,e,sim.body_transform(w,l.body))}
-            if l.hold.release && l.hold.by=={.Manipulation} && !pose_differs(sim.body_transform(w,l.body),l.hold.pose[.Manipulation]) {
-                hold_end(w,&l,.Manipulation,l.hold.keep_velocity)
-                awake=sim.body_is_awake(w,l.body)
-            }
-            motion_write(s,e,l.body,awake,l.kind==.Proxy)
-        case .Character:
-            if !sim.character_valid(w,l.character) {continue}
-            if row:=core.row_of(s.character_states,e);row>=0 {
-                next:=character_state_of(sim.character_state(w,l.character))
-                next.height=sim.character_desc(w,l.character).height
-                next.velocity=sim.character_velocity(w,l.character)
-                next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
-                if s.character_states.values[row]!=next {core.at(s.character_states,row)^=next}
-            }
-            body:=sim.character_body(w,l.character)
-            motion_write(s,e,body,sim.body_is_awake(w,body),false)
-            pose_write(s,&l,e,sim.body_transform(w,body))
+    integrated,woken:=sim.world_stepped(w)
+    for slots in ([2][]i32{integrated,woken}) {
+        for slot in slots {
+            body,user:=sim.body_at(w,slot)
+            if l:=link_find(state,core.Entity(user));l!=nil && l.kind==.Body && l.body==body {link_touch(state,l)}
         }
     }
+    #reverse for e,at in state.proxies {
+        if l:=link_find(state,e);l!=nil && l.kind==.Proxy {link_touch(state,l)} else {unordered_remove(&state.proxies,at)}
+    }
+    for row in 0..<core.count(s.characters) {
+        if l:=link_find(state,core.entity_at(s.characters,row));l!=nil {link_touch(state,l)}
+    }
+    if state.touched_all {
+        clear(&state.touched)
+        state.touched_all=false
+        for &l,at in state.links.values {
+            if link_write(s,&l,state.links.entities[at]) {link_touch(state,&l)}
+        }
+        return
+    }
+    slice.sort(state.touched[:])
+    // A link to write again takes the place of one already written: what is left is the list of the next step.
+    again,last:=0,max(u32)
+    for at in state.touched {
+        if at==last || int(at)>=len(state.links.values) {continue}
+        last=at
+        if link_write(s,&state.links.values[at],state.links.entities[at]) {
+            state.touched[again]=at
+            again+=1
+        }
+    }
+    base.truncate(&state.touched,again)
+}
+
+// What the step left of one link. True when its rows change again without the step moving its body: one that
+// fell asleep keeps for this tick the group it moved in.
+@(private)
+link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
+    w:=&s.state.world
+    switch l.kind {
+    case .None,.Compound:
+    case .Body,.Proxy:
+        if l.kind==.Body && (!l.has_rigid || l.rigid.type==.Static) && l.hold.by=={} || !sim.body_valid(w,l.body) {return}
+        awake:=sim.body_is_awake(w,l.body)
+        if awake {pose_write(s,l,e,sim.body_transform(w,l.body))}
+        if l.hold.release && l.hold.by=={.Manipulation} && !pose_differs(sim.body_transform(w,l.body),l.hold.pose[.Manipulation]) {
+            hold_end(w,l,.Manipulation,l.hold.keep_velocity)
+            awake=sim.body_is_awake(w,l.body)
+        }
+        return motion_write(s,e,l.body,awake,l.kind==.Proxy)!=0 && !awake
+    case .Character:
+        if !sim.character_valid(w,l.character) {return}
+        if row:=core.row_of(s.character_states,e);row>=0 {
+            next:=character_state_of(sim.character_state(w,l.character))
+            next.height=sim.character_desc(w,l.character).height
+            next.velocity=sim.character_velocity(w,l.character)
+            next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
+            if s.character_states.values[row]!=next {core.at(s.character_states,row)^=next}
+        }
+        body:=sim.character_body(w,l.character)
+        motion_write(s,e,body,sim.body_is_awake(w,body),false)
+        pose_write(s,l,e,sim.body_transform(w,body))
+    }
+    return
 }
 
 // The core.Motion of what a body moves; a proxy gets its row here, the others when they are made.
+// Returns the group it wrote.
 @(private)
-motion_write :: proc(s:^Sync,e:core.Entity,body:sim.Body_Handle,awake,add:bool) {
+motion_write :: proc(s:^Sync,e:core.Entity,body:sim.Body_Handle,awake,add:bool) -> u32 {
     w:=&s.state.world
     _,center,_:=sim.body_mass_properties(w,body)
     next:=core.Motion{
@@ -1150,6 +1212,7 @@ motion_write :: proc(s:^Sync,e:core.Entity,body:sim.Body_Handle,awake,add:bool) 
     } else if add {
         core.add(s.motions,e,next)
     }
+    return next.island
 }
 
 // The rows of what the step leaves of a character.
