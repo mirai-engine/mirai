@@ -120,7 +120,7 @@ shake_sequence_fov :: proc "contextless" (s:Shake_Sequence,time:f32) -> f32 {
 shakes_take :: proc(follows:^core.Table(Camera_Follow),shakes:^Camera_Shakes,problems:^core.Problems) {
     if shakes==nil {return}
     for asked in core.take(&shakes.queue) {
-        follow:=core.get(follows,asked.camera)
+        follow:=core.edit(follows,asked.camera)
         if follow==nil {
             core.report(problems,asked.camera,"camera.shake","a camera shake was asked of an entity without a Camera_Follow; ask it of the camera that follows")
             continue

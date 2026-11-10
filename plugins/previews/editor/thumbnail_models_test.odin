@@ -56,9 +56,9 @@ test_animation :: proc(t:^testing.T,types:^asset.Types,path:string,id:base.Asset
 // A document whose entity 1 plays animation with a mesh, and whose entity 2,
 // under it, shows another.
 @(private="file")
-test_document :: proc(t:^testing.T,types:^asset.Types,path:string,kind:asset.Fourcc,id,animation,mesh,child_mesh:base.Asset_Id) {
+test_document :: proc(t:^testing.T,types:^asset.Types,path:string,id,animation,mesh,child_mesh:base.Asset_Id) {
     scene:asset.Scene
-    testing.expect_value(t,asset.scene_init(&scene,types,kind,id),asset.Error.None)
+    testing.expect_value(t,asset.scene_init(&scene,types,id),asset.Error.None)
     defer asset.scene_destroy(&scene)
     _,error:=asset.scene_entity_add(&scene,1,0,"Player")
     testing.expect_value(t,error,asset.Error.None)
@@ -101,8 +101,8 @@ thumbnails_show_the_model_an_animation_moves :: proc(t:^testing.T) {
     test_animation(t,&types,file(root,"blink.anim"),blink,{"Part/@morph/Blink"})
     test_animation(t,&types,file(root,"still.anim"),still,{"nobody"})
     level,jelly_prefab:=base.Asset_Id{10,1},base.Asset_Id{10,2}
-    test_document(t,&types,file(root,"level.scene"),asset.KIND_SCENE,level,stride,tall,{})
-    test_document(t,&types,file(root,"jelly.prefab"),asset.KIND_PREFAB,jelly_prefab,blink,{},jelly)
+    test_document(t,&types,file(root,"level.scene"),level,stride,tall,{})
+    test_document(t,&types,file(root,"jelly.scene"),jelly_prefab,blink,{},jelly)
 
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=16})) {return}
@@ -121,7 +121,7 @@ thumbnails_show_the_model_an_animation_moves :: proc(t:^testing.T) {
     testing.expect_value(t,thumbnail_animation_model(&m,&assets,blink),Thumbnail_Model{document=jelly_prefab,root=1})
 
     // The scene stops playing it: the bone match again, once the registry sees the change.
-    test_document(t,&types,file(root,"level.scene"),asset.KIND_SCENE,level,{},tall,{})
+    test_document(t,&types,file(root,"level.scene"),level,{},tall,{})
     testing.expect_value(t,thumbnail_animation_model(&m,&assets,stride),Thumbnail_Model{mesh=tall})
     if !testing.expect_value(t,asset.registry_scan(&assets.registry),asset.Error.None) {return}
     testing.expect_value(t,thumbnail_animation_model(&m,&assets,stride),Thumbnail_Model{mesh=robot})

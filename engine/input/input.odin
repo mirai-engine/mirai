@@ -82,8 +82,8 @@ look_action_defaults :: proc "contextless" () -> [Look_Action]Action_Default {
 }
 
 Action_Kind :: si.Action_Kind
-TAP_TICKS :: si.TAP_TICKS
-HOLD_TICKS :: si.HOLD_TICKS
+TAP_SECONDS :: si.TAP_SECONDS
+HOLD_SECONDS :: si.HOLD_SECONDS
 Action_State :: si.Action_State
 
 // The dead zone of a binding that leaves it at 0: an axis pressed as a
@@ -155,7 +155,7 @@ Input_Map :: struct {
     bindings:[BINDING_CAPACITY]Input_Binding,
     declared:Action_Mask,
     binding_count:u32,
-    tap_ticks,hold_ticks:u32, // 0: TAP_TICKS and HOLD_TICKS
+    tap_seconds,hold_seconds:f32, // 0: TAP_SECONDS and HOLD_SECONDS
     built:bool,               // from the defaults of the code and input.mirai
 }
 
@@ -269,15 +269,15 @@ input_map_build :: proc(bindings:^Input_Map,app:^host.App,problems:^core.Problem
 
 // The actions of the machine, in the contexts of the focused seat.
 @(step="fixed",stage="input")
-input_actions_update :: proc(bindings:^Input_Map,actions:^Actions,input:core.Input,state:core.Ref(Seats),seats:core.Read(Seat)) {
+input_actions_update :: proc(bindings:^Input_Map,actions:^Actions,input:core.Input,state:core.Ref(Seats),seats:core.Read(Seat),time:core.Time) {
     input:=input
-    actions_update(actions,bindings,&input,focused_contexts(state.ptr,seats))
+    actions_update(actions,bindings,&input,time.dt,focused_contexts(state.ptr,seats))
 }
 
 @(step="input",stage="end")
-input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:core.Read(Seat)) {
+input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:core.Read(Seat),frame:core.Frame_Time) {
     input:=input.input
-    actions_update(&actions.actions,bindings.ptr,&input,focused_contexts(state.ptr,seats))
+    actions_update(&actions.actions,bindings.ptr,&input,frame.dt,focused_contexts(state.ptr,seats))
 }
 
 binding_key :: proc "contextless" (key:core.Key) -> Input_Binding {
@@ -462,7 +462,7 @@ input_report :: proc(problems:^core.Problems,code,format:string,args:..any) {
 // How to fix a file with that error.
 input_map_error_fix :: proc(error:Input_Map_Error) -> string {
     #partial switch error {
-    case .Syntax:        return `write {"actions":[{"name":...,"kind":...,"bindings":[...]}]} in JSON`
+    case .Syntax:        return `write {"tap_seconds":...,"hold_seconds":...,"actions":[{"name":...,"kind":...,"bindings":[...]}]} in JSON`
     case .Unknown_Context: return "name a constant of input.Input_Context in its context, or leave it out for the base one"
     case .Unknown_Kind:  return "its kind is Button, Axis or Axis2"
     case .Unknown_Input: return "name keys, buttons, axes and sticks as the enums of core and input name them"
@@ -588,7 +588,7 @@ inputs_taken :: proc "contextless" (taken:^Taken,binding:^Input_Binding,level:u8
 // the base one), and a binding does not when a higher layer reads one of its
 // inputs, or a modal one is above it. A hold drives its action as one more
 // binding, in the same contexts. It allocates nothing.
-actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:^Context_Stack=nil,holds:[]Action_Hold=nil) {
+actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,contexts:^Context_Stack=nil,holds:[]Action_Hold=nil) {
     // The layer of each context the seat is in, plus one; 0: not in it.
     layers:[CONTEXT_CAPACITY]u8
     layers[CONTEXT_BASE]=1
@@ -614,7 +614,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:
     count:=action_end(m)
     if count==0 || !si.input_init(&state,{
         max_actions=count,max_bindings=max(int(m.binding_count),1),code_count=ACTION_CODES,axis_count=ACTION_AXES,
-        tap_ticks=m.tap_ticks,hold_ticks=m.hold_ticks,allocator=mem.arena_allocator(&arena),
+        tap=m.tap_seconds,hold=m.hold_seconds,allocator=mem.arena_allocator(&arena),
     }) {
         actions^={}
         return
@@ -691,7 +691,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,contexts:
         si.input_feed_action(&state,si.Action(a+1),hold.value.x!=0,hold.value.x,hold.value)
     }
 
-    si.input_update(&state)
+    si.input_update(&state,dt)
     copy(actions.states[:count],state.states[:count])
     for i in count..<int(actions.count) {actions.states[i]={}}
     actions.count=u32(count)
@@ -708,7 +708,7 @@ action :: #force_inline proc "contextless" (actions:^Actions,a:Action) -> Action
 // actions the file does not name stay. On an error the map is left as it
 // was, and at is the name of the action where it was found.
 //
-//   {"tap_ticks":12,"hold_ticks":30,"actions":[
+//   {"tap_seconds":0.2,"hold_seconds":0.5,"actions":[
 //     {"name":"move","kind":"Axis2","bindings":[{"keys":["A","D","S","W"]},{"gamepad_stick":"Left"}]},
 //     {"name":"look","kind":"Axis2","bindings":[{"mouse":"Delta","scale":0.1}]},
 //     {"name":"jump","kind":"Button","bindings":[{"key":"Space"},{"gamepad_button":"South"}]}]}
@@ -730,8 +730,9 @@ input_map_parse :: proc(m:^Input_Map,info:^core.World_Info,text:string,skipped:^
     root,is_object:=value.(json.Object)
     if parse_error!=.None || !is_object {return .Syntax,""}
     result:=m^
-    if ticks,has:=input_number(root["tap_ticks"]);has {result.tap_ticks=u32(max(ticks,0))}
-    if ticks,has:=input_number(root["hold_ticks"]);has {result.hold_ticks=u32(max(ticks,0))}
+    for old in ([]string{"tap_ticks","hold_ticks"}) {if old in root {return .Syntax,old}}
+    if seconds,has:=input_number(root["tap_seconds"]);has {result.tap_seconds=f32(max(seconds,0))}
+    if seconds,has:=input_number(root["hold_seconds"]);has {result.hold_seconds=f32(max(seconds,0))}
     list,_:=root["actions"].(json.Array)
     for item in list {
         entry,is_action:=item.(json.Object)

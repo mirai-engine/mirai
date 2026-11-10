@@ -463,7 +463,7 @@ return.
   [attributes](#attributes); the consumers of the `World_Info` are updated in the same task.
 - What an attribute says of a component or a storage is read in `core.declared_read`, which the
   [test worlds](core.md#test-worlds) read too; what the generated world does with it (init, copy,
-  swap, clear) is done as well by the builder of `core/test_world_test.odin`.
+  swap, clear) is done as well by the builder of `core/test_world.odin`.
 - Error messages say what to do, not only what failed.
 - The generator does not run code of the project or of the engine: it reads syntax. Sizes and
   alignments are computed by the compiler when it compiles the written world.

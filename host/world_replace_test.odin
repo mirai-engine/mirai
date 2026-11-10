@@ -104,7 +104,7 @@ a_replacement_with_marks_brings_back_only_what_changed :: proc(t:^testing.T) {
         testing.expect(t,core.world_copy_changed(&info,kept,live,marks))
         seen:core.Seen
         _=core.changes(&live.still,&seen)
-        core.get(&live.changed,entities[1])^=77
+        core.edit(&live.changed,entities[1])^=77
         extra:=core.create(&live.entities)
         core.add(&live.changed,extra,5)
         core.settle(&info,live,nil)
@@ -118,7 +118,7 @@ a_replacement_with_marks_brings_back_only_what_changed :: proc(t:^testing.T) {
             testing.expect(t,core.count(&live.changed)==5 && core.version(&live.changed)==changed_version && live.count.value==9 && core.alive(&live.entities,extra))
         } else {
             succeeded=true
-            value,_:=core.get(core.read(&live.changed),entities[1])
+            value,_:=core.get(&live.changed,entities[1])
             testing.expect(t,core.count(&live.changed)==4 && value==1 && live.count.value==0 && !core.alive(&live.entities,extra),"what changed since the copy is what the copy holds")
             c:=core.changes(&live.still,&seen)
             testing.expect(t,core.version(&live.still)==still_version && raw_data(live.list)==list && len(live.list)==3 && !c.all && len(c.gone)==0,"what did not change stays where it is, and its readers see no change")

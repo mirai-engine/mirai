@@ -28,7 +28,7 @@ a_place_writes_a_free_transform_and_asks_the_owner_of_a_locked_one :: proc(t:^te
     p:=Placer{&transforms,read(&parents),&places,&jumps}
 
     testing.expect(t,place(p,free_one,{1,2,3},teleport=false))
-    value,_:=get(read(&transforms),free_one)
+    value,_:=get(&transforms,free_one)
     testing.expect(t,value.position==[3]f32{1,2,3},"a free Transform is written at once")
     testing.expect(t,len(places.queue.items)==0)
     testing.expect(t,len(jumps.queue.items)==0,"a place that is not a teleport is no jump")

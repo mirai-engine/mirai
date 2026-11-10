@@ -23,28 +23,11 @@ Text_Span :: struct {
     solid:bool,   // its text breaks at no space: in a text that cuts, where each line ends (code)
 }
 
-// What the layout does not know of a span: how it is drawn and what takes the
-// pointer over it.
-@(private)
-Text_Run :: struct {
-    using span:Text_Span,
-    paint:^Paint, // of a box: what draws it
-    widget:i32,   // the widget its pieces are, plus one; 0: the pointer goes through
-}
-
 // The text being built between text_begin and text_end.
 @(private)
 Text_Open :: struct {
     open,measure,hits:bool,
     style:Text_Style,
-}
-
-// The box of a line of a style: its size by its line height, TEXT_LINE when
-// it names none, in whole units when it is one within a thousandth.
-text_line_box :: proc "contextless" (style:Text_Style) -> f32 {
-    line:=style.size*(style.line_height if style.line_height>0 else TEXT_LINE)
-    if whole:=math.round(line);abs(line-whole)<1e-3 {return whole}
-    return line
 }
 
 // Starts a text of a style: the spans put until text_end are what it says.
@@ -66,7 +49,13 @@ text_begin :: proc(ctx:^Context,style:Text_Style,line:f32=0,cut:=false,measure:=
         }
         layout_start(ctx)
     }
-    desc:=Layout_Text_Desc{size=style.size,line=line if line>0 else text_line_box(style),wrap=style.wrap,cut=cut,ellipsis=style.ellipsis,align_x=style.align_x,align_y=style.align_y}
+    box:=line
+    if box<=0 {
+        // In whole units when it is one within a thousandth.
+        box=style.size*(style.line_height if style.line_height>0 else TEXT_LINE)
+        if whole:=math.round(box);abs(box-whole)<1e-3 {box=whole}
+    }
+    desc:=Layout_Text_Desc{size=style.size,line=box,wrap=style.wrap,cut=cut,ellipsis=style.ellipsis,align_x=style.align_x,align_y=style.align_y}
     if !layout_text_begin(t,desc) {
         ctx.stats.dropped_elements+=1
         return false
@@ -76,25 +65,17 @@ text_begin :: proc(ctx:^Context,style:Text_Style,line:f32=0,cut:=false,measure:=
 }
 
 @(private)
-text_put :: proc(ctx:^Context,s:Layout_Span,run:Text_Run,plain:bool) {
+text_put :: proc(ctx:^Context,s:Layout_Span) {
     o:=&ctx.text_open
     s:=s
-    s.user=-1
+    if s.size<=0 {s.font,s.size,s.color=o.style.font,o.style.size,o.style.color}
     t:=&ctx.layout
-    if !o.measure {
-        // Every span after the first takes the room of an element.
-        if t.texts[t.text_count].spans_len>0 {
-            if ctx.elements+ELEMENT_RESERVE>=ctx.max_elements {ctx.stats.dropped_elements+=1;return}
-            ctx.elements+=1
-        }
-        if !plain {
-            if ctx.run_count>=len(ctx.runs) {ctx.stats.dropped_paints+=1;return}
-            ctx.runs[ctx.run_count]=run
-            s.user=i32(ctx.run_count)
-            ctx.run_count+=1
-            o.hits||=run.widget!=0
-        }
+    // Every span after the first takes the room of an element.
+    if !o.measure && t.texts[t.text_count].spans_len>0 {
+        if ctx.elements+ELEMENT_RESERVE>=ctx.max_elements {ctx.stats.dropped_elements+=1;return}
+        ctx.elements+=1
     }
+    o.hits||=s.widget!=0
     if !layout_text_span(t,&ctx.font,s) {ctx.stats.dropped_elements+=1}
 }
 
@@ -126,18 +107,14 @@ text_span_widget :: proc(ctx:^Context,content:string,span:Text_Span,widget:i32) 
     o:=&ctx.text_open
     if !o.open || content=="" {return}
     stored:=content if o.measure else text_store(ctx,content)
-    if stored=="" {return}
-    size,font:=o.style.size,o.style.font
-    if span.size>0 {size,font=span.size,span.font}
-    plain:=span=={} && widget==0
-    text_put(ctx,{text=stored,size=size,face=font,pad=span.pad,height=span.height,solid=span.solid},{span=span,widget=widget},plain)
+    if stored!="" {text_put(ctx,{text=stored,look=span,widget=widget})}
 }
 // Room as wide as a space of the text begun, where a word ends: what joins two
 // lines of its source.
 text_space :: proc(ctx:^Context) {
     o:=&ctx.text_open
     if !o.open {return}
-    text_put(ctx,{width=text_width(&ctx.font," ",o.style.size,int(o.style.font)),size=o.style.size,face=o.style.font},{},true)
+    text_put(ctx,{width=text_width(&ctx.font," ",o.style.size,int(o.style.font))})
 }
 // A box in the line of the text begun, which does not break: an image, a
 // pill. gap: room after it. After interact(ctx,id), it takes the pointer as
@@ -145,18 +122,15 @@ text_space :: proc(ctx:^Context) {
 text_box :: proc(ctx:^Context,width,height:f32,paint:Paint,id:Id=0,gap:f32=0) {
     o:=&ctx.text_open
     if !o.open {return}
-    run:Text_Run
-    if !o.measure {
-        run.paint=paint_add(ctx,paint)
-        run.widget=text_widget(ctx,id)
-    }
-    text_put(ctx,{box=true,width=width,height=height,gap=gap,size=o.style.size,face=o.style.font},run,false)
+    s:=Layout_Span{box=true,width=width,gap=gap,look={height=height}}
+    if !o.measure {s.paint,s.widget=paint_add(ctx,paint),text_widget(ctx,id)}
+    text_put(ctx,s)
 }
 
 // Ends the text begun as an element of layout. reveal: the part of its
 // characters drawn, 0 to 1, each where the whole text puts it. fade: a line
 // wider than the element fades out at its end.
-text_end :: proc(ctx:^Context,layout:Layout={},id:Id=0,reveal:f32=1,fade:=false,decoration:Text_Decorations={}) {
+text_end :: proc(ctx:^Context,layout:Layout={},id:Id=0,reveal:f32=1,fade:=false) {
     o:=&ctx.text_open
     if !o.open {return}
     o.open=false
@@ -172,7 +146,7 @@ text_end :: proc(ctx:^Context,layout:Layout={},id:Id=0,reveal:f32=1,fade:=false,
         for &s in t.spans[text.spans_first:][:text.spans_len] {total+=1 if s.box else utf8.rune_count_in_string(s.text)}
         revealed=i32(math.round(f32(total)*max(reveal,0)))+1
     }
-    paint:=paint_add(ctx,{kind=.None,style=o.style,fade=fade,revealed=revealed,decoration=decoration})
+    paint:=paint_add(ctx,{kind=.None,style=o.style,fade=fade,revealed=revealed})
     if paint!=nil && text.spans_len==1 {paint.text=t.spans[text.spans_first].text}
     widget_add(ctx,id,{.Passive})
     text.hits=o.hits
@@ -190,8 +164,11 @@ text_end_height :: proc(ctx:^Context,width:f32) -> f32 {
     if !o.open {return 0}
     o.open=false
     t:=&ctx.layout
-    _,least:=layout_text_ask(t,&ctx.font,&t.texts[t.text_count])
-    return layout_text_height(t,&ctx.font,max(width,least))
+    text:=&t.texts[t.text_count]
+    _,least:=layout_text_ask(t,&ctx.font,text)
+    height:=layout_text_wrap(t,&ctx.font,text,max(width,least),false)
+    t.span_count=int(text.spans_first)
+    return height
 }
 
 // Text in a style inside a box of width by height. A FIT width is the width
@@ -235,13 +212,10 @@ text_chars_before :: proc(t:^Layout_Tree,text:^Layout_Text,piece:^Layout_Piece) 
 
 // The style a piece of a span is drawn in.
 @(private)
-text_piece_style :: #force_inline proc(ctx:^Context,p:^Paint,s:^Layout_Span) -> (style:Text_Style,decoration:Text_Decorations,run:^Text_Run) {
-    style,decoration=p.style,p.decoration
-    if s.user<0 {return}
-    run=&ctx.runs[s.user]
-    if run.size>0 {style.font,style.size,style.color=run.font,run.size,run.color}
-    decoration+=run.decoration
-    return
+text_piece_style :: #force_inline proc(p:^Paint,s:^Layout_Span) -> (style:Text_Style,decoration:Text_Decorations) {
+    style=p.style
+    style.font,style.size,style.color=s.font,s.size,s.color
+    return style,p.decoration+s.decoration
 }
 
 // Draws a line of a text where the layout placed it.
@@ -267,7 +241,7 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
     if line.cut {
         for &piece,i in pieces {
             s:=&t.spans[piece.span]
-            style,_,_:=text_piece_style(ctx,p,s)
+            style,_:=text_piece_style(p,s)
             dots:=text_width(font,ELLIPSIS,style.size,int(style.font))
             room:=r.w-dots-piece.x
             last:=i==len(pieces)-1
@@ -311,11 +285,11 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
             left=limit-text_chars_before(t,text,&piece)
             if left<=0 {return}
         }
-        style,decoration,run:=text_piece_style(ctx,p,s)
+        style,decoration:=text_piece_style(p,s)
         px,py:=x+piece.x,line.y+piece.y
         if s.box {
-            if (cut_piece!=i || cut_length>0) && run!=nil && run.paint!=nil {
-                paint_draw(ctx,{px,py,piece.width,s.height if s.height>0 else line.height},run.paint)
+            if (cut_piece!=i || cut_length>0) && s.paint!=nil {
+                paint_draw(ctx,{px,py,piece.width,s.height if s.height>0 else line.height},s.paint)
             }
             if cut_piece==i {
                 draw_text_decorated(ctx,ELLIPSIS,px+cut_width,line.y+text_leading(style.size,line.height),style,decoration)
@@ -323,9 +297,9 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
             }
             continue
         }
-        if run!=nil && run.back[3]>0 {
+        if s.back[3]>0 {
             high:=s.height if s.height>0 else line.height
-            draw_rounded(ctx,{px,line.y+(line.height-high)*0.5,piece.width,high},run.radius,run.back)
+            draw_rounded(ctx,{px,line.y+(line.height-high)*0.5,piece.width,high},s.radius,s.back)
         }
         end:=px+cut_width
         if s.pad>0 {
@@ -361,8 +335,8 @@ text_widgets_place :: proc(ctx:^Context) {
         for &line in t.lines[text.lines_first:][:text.shown] {
             for &piece in t.pieces[line.pieces_first:][:line.pieces_len] {
                 s:=&t.spans[piece.span]
-                if s.user<0 || ctx.runs[s.user].widget==0 {continue}
-                widget:=ctx.runs[s.user].widget
+                widget:=s.widget
+                if widget==0 {continue}
                 rect:=Rect{line.x+piece.x,line.y,piece.width,line.height}
                 w:=&ctx.widgets[widget-1]
                 if w.rect.h==0 {

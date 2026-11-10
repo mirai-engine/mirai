@@ -19,15 +19,16 @@ have.
 
 Procedures:
 
-- `scene_open(s, path)`: replaces the edited world with a scene or a prefab, by file or by path
-  under `assets/`. Stops a Play, starts a new history and deselects. It loads with
-  `scene.replace`, like the game: if reading, instantiating or copying fails, memory included, the
-  world stays as it was.
+- `scene_open(s, path)`: replaces the edited world with a scene, by file or by path under
+  `assets/`; one whose file has a single root is a
+  [prefab document](prefabs.md#prefab-document). Stops a Play, starts a new history and
+  deselects. It loads with `scene.replace`, like the game: if reading, instantiating or copying
+  fails, memory included, the world stays as it was.
 - `scene_new(s)`: a scene without a file with two entities, `Sky` (with `SKY_DEFAULT`) and `Sun`
   (the sun preset), without changes or history.
-- `scene_save(s, path="")`: writes to the document's file or to `path`. Without an extension it
-  adds `.prefab` to a prefab and `.scene` to a scene; a new file is another asset with its own id.
-  With neither, it opens the save dialog.
+- `scene_save(s, path="")`: writes to the document's file or to `path`, adding `.scene` when it
+  has no extension; a new file is another asset with its own id. With neither, it opens the save
+  dialog.
 - `document_write(s, file, as_document)`: writes the world; with `as_document` it becomes its file,
   except in copies (recovery, restart).
 - `file_new`: replaces the active document; asks if it has unsaved changes.
@@ -53,7 +54,7 @@ Procedures:
   per tab ([chats](ai-tasks.md)).
 - The generated storages contain only those of the active document; the swap happens between
   frames. Changing document stops the Play.
-- Save and undo act on the front tab: each scene or prefab has its `Edits`, with its selection
+- Save and undo act on the front tab: each scene, a prefab too, has its `Edits`, with its selection
   steps, and each asset document its history. Closing the last one leaves a new scene.
 - **Unsaved assets** ([files](#edits-and-undo)): the tab of a scene that uses any, also through
   dependencies (`world_unsaved_assets`), carries the changes mark even if the scene is saved. Save
@@ -156,9 +157,6 @@ double click in the content browser.
   look of the view (exposure, tint) from inside its box, where its unbounded volumes rule
   (`render.Environment_Preview`), only in the editor view: it is not an edit nor saved, and Play
   starts without it.
-- `asset.convert` changes a scene to a prefab (a single root, without references) or a prefab to a
-  scene, with the same id, with the document closed; it does not change a scene that an open
-  document has as a section.
 
 ### Section view
 

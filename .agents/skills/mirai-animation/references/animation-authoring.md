@@ -112,8 +112,8 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   it; its loops keep their phase and a
   body that does not move, also against a wall, plays the loops that do not travel), look-at and
   hands (off until
-  requested), feet (grounding: needs physics) and gestures (`.action` on the upper body and per arm,
-  in layers 1 to 3). The IK pole of each arm is a fixed point of the world: with the character
+  requested), feet (grounding: needs physics) and gestures (`.action` with a layer over the upper
+  body and one per arm). The IK pole of each arm is a fixed point of the world: with the character
   turned the elbows do not follow it. Idle and walk are enough: the locomotion is `Ready`, and
   beyond the walk velocity the warping stretches the stride.
 - It writes the assets and assigns `Animation` and `Pose_Modifiers` of the rig; existing files ask
@@ -174,12 +174,13 @@ selected entity; the strip at the bottom has a lane of keys per track in view.
 ## Inspection
 
 - `animation.asset.inspect` reads any definition (`.anim`, `.skeleton`, `.pose`, `.blend`,
-  `.agraph`, `.motion`, `.action`) by sections and paged tables.
-- `animation.inspect` reads an instance by parts (rig with the mirrored pair of each bone, graph,
-  modifiers, actions, motion and morphs; `diagnostics` adds solver and fades). A part that does not
-  apply answers `{available:false, code, reason}` without failing the call; a graph that does not
-  evaluate gives `Program_Error`. `entity` also takes, in Play or Simulate, the handle
-  `play.inspect` gives, the only name of an entity the game made.
+  `.match`, `.motion`, `.action`) by sections and paged tables.
+- `animation.inspect` reads an instance by parts (rig with the mirrored pair of each bone,
+  matching, modifiers, actions with the parameters of the set, motion and morphs; `diagnostics`
+  adds solver and fades). A part that does not apply answers `{available:false, code, reason}`
+  without failing the call; a `.match` that does not evaluate gives `Program_Error`. `entity`
+  also takes, in Play or Simulate, the handle `play.inspect` gives, the only name of an entity
+  the game made.
 - `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
   forced search with their costs per feature, then the best row of each clip it left out with its
   `reason`: why a jump or a start chose its clip, or never picks one, is read there. The tick keeps
@@ -222,7 +223,7 @@ selected entity; the strip at the bottom has a lane of keys per track in view.
 - `animation.retarget.bake` bakes a new `.anim` from animation, source and destination skeletons and
   profile ([bake](animation-rigs.md#bake)).
 
-## Motion matching, graphs and additive spaces
+## Motion matching and additive spaces
 
 - The `.match` is written by `animation.character.setup` ([character](#character));
   `animation.asset.inspect` describes it with its clips, the names of its modes and its entry, the
@@ -232,47 +233,36 @@ selected entity; the strip at the bottom has a lane of keys per track in view.
   additive from axes and samples; `sample` gives clips and weights at a position without advancing
   the world. Each clip exists in the `.anim` of its sample or of the blend space; two axes with the
   same name, duplicate positions and degenerate geometry are rejected. A `.blend` as the asset of
-  `animation.play` is `Additive_Space`.
-- `animation.graph.set` receives the whole graph with unique names per
-  table: nodes in any order (the editor orders dependencies), without indices, sentinels or
-  `*_count`, and its `output`. A `Blend_Space` that is not the `right` of an `Additive` is
-  `Additive_Only`, with where it ended up and how to fix it.
-- Only Clip/Blend_Space sources accept `sync_*` and `mirror` ([mirroring](animation.md#mirroring));
-  a source rejects Additive curves because it has no second input. A Clip node without `animation`
-  uses the library of the graph; a blend space, its own ([multiple
-  sources](animation.md#multiple-sources)).
-- `animation.graph.patch` changes the present fields of nodes and parameters in one transaction. It
-  validates the whole graph; a failure writes nothing.
-- Semantics and evaluation limits: [locomotion](animation.md#locomotion-by-motion-matching) and
-  [composition](animation.md#composition-graphs-and-additive-spaces).
+  `animation.play` is `Layer_Space`: it is named in the `space` of a layer with
+  `animation.action.set` ([actions](animation-actions.md#profile-and-authoring)).
+- Semantics and evaluation limits: [locomotion](animation.md#locomotion-by-motion-matching),
+  [additive spaces](animation.md#additive-spaces) and
+  [the layer stack](animation-actions.md#the-layer-stack).
 
 ## Per-instance control and preview
 
-`animation.play` assigns the playback (asset, clip, layers 1 to 3) and adds `Animation` if missing.
-An Additive layer takes `reference_clip`, a clip of the asset whose pose at `reference` its clip
-is added over ([layers](animation.md#playback-outputs-and-order)); on another layer or mode it is
-`Not_Additive`, and a clip the asset lacks `Missing_Clip`. Everything else that is asked of an
-instance is `animation.request`, with the fields of `animation.preview`:
+`animation.play` assigns the playback (asset and clip) and adds `Animation` if missing; a clip the
+asset lacks is `Missing_Clip`. Everything else that is asked of an instance is
+`animation.request`, with the fields of `animation.preview`:
 
-- Controls: stop and seek, parameters, `plays` (`match_play` with clip, mode and the options of
-  `Match_Play_Options`), actions, targets and controls of modifiers, targets of warping windows,
-  locomotion and distance.
+- Controls: stop and seek, parameters, `actions` (a play or a stop of an action of its set, with a
+  section), targets and controls of modifiers, targets of warping windows, locomotion and
+  distance.
 - Intents, which write to those same queues:
   - `locomote`: the forward velocity of the orientation and stride warping (asks for the `.motion`)
     and, with root motion, the target of the `locomote` window. It does not move the body, which
     belongs to its controller (root delta or `Move_Input`), nor does it plan paths.
   - `look` and `reach`: target and fade of the head's Look or of the IK that ends at the hand;
     requesting them turns the operation on even if the profile stores it off.
-  - `gesture`: fires or cancels the action of a gesture.
-- In Edit only `stop` and `parameters` are valid, as an undo step;
+  - `gesture`: plays or stops the action of a gesture.
+- In Edit only `stop` is valid, as an undo step;
   everything else asks for Play or Simulation and the `fix` proposes `animation.preview` with the
   same fields.
 - What an intent lacks (no Look in the profile, no gesture) fails with the method that creates it.
   The result lists what was applied.
-- A parameter is named as in the graph or in an axis of its blend spaces (case-sensitive): it is
-  valid only with an `.agraph`; those of a graph respect its range and those of an axis are
-  projected to the edge. `Animation.library` changes the library that `inspect` and `preview` also
-  use.
+- A parameter is the name of a layer of its action set (its weight, from 0 to 1) or of an axis of
+  the space of one, within its range (case-sensitive); another name fails with the ones the set
+  declares. `Animation.library` changes the library that `inspect` and `preview` also use.
 
 `goals` and `controls`:
 
@@ -326,14 +316,14 @@ The authoring tests invoke `api.method_execute` with real files and typed schema
 - `body_api_test.odin`, `clip_edit_test.odin`, `setup_test.odin`, `request_test.odin` and
   `inspect_test.odin`: body, verbs with metrics, character recipe, intents and inspectors, over a
   rig with mesh and body.
-- `program_api_test.odin`: graphs named without order, `dry_run`, revision and controls through
-  `animation.request`; `authoring_patch_test.odin`: fields and transitions with `feel`.
+- `program_api_test.odin`: blend spaces, and parameters, actions and controls through
+  `animation.request`.
 - `tracks_test.odin`: `animation.key.set` adds, moves, eases and deletes a key in one step each,
   undone and redone; `animation.key.capture` keys the tracks of an entity from its transform and
   fields; the Tools entry of the Tracks tool runs `editor.tool`, and the gizmo letting go of an
   entity of the clip keys it.
 - `authoring_actions_test.odin`, `authoring_constraints_test.odin`, `preview_trace_test.odin`,
-  `source_authoring_test.odin`, `pose_bake_test.odin` and `morph_api_test.odin`.
+  `pose_bake_test.odin` and `morph_api_test.odin`.
 - The file history is tested in the editor (`editor/edits_files_test.odin`).
 
 In an open build: `engine.describe`, create sources in a test folder, inspect them with

@@ -383,9 +383,12 @@ The review of each conversation
 (`.mirai/ai/chats/<id>.review.json`, [review](ai-review.md#persistence-and-capacity)), the captures
 and the turn folders stay files.
 
-- **A frame never waits for the database.** A write that finds another editor writing is kept by
-  the store with a copy of what it binds, and the poll of the chats runs what was kept in the
-  order it was written (`ai_persist_poll`); closing the editor does wait, so nothing kept is lost.
+- **A frame never waits for the database.** A chat is saved at its events (a message, a step of
+  its turn, the end, a review, a full transcript), never on a stable frame. A write that finds
+  another editor writing is kept by the store with a copy of what it binds, and the poll of the
+  chats runs what was kept in the order it was written (`ai_persist_poll`); closing the editor
+  does wait, so nothing kept is lost. Each save is a transaction in WAL mode: a crash loses only
+  what streamed since the last event and what was still kept.
   What is read is what reached the database, and what shows its rows reads them again when a kept
   write lands. A write whose result is needed at once (the id of a new chat or annotation) is
   never kept: with the database busy it fails and says to try again.

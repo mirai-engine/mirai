@@ -67,8 +67,8 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
     for &table in info.tables {
         t:=core.world_table_at(w,&table)
         rows:=len(t.entities)+256
-        runtime.__dynamic_array_reserve(&t.values,table.info.size,table.info.align,rows)
-        reserve(&t.entities,rows);reserve(&t.stamps,rows);reserve(&t.off,rows);reserve(&t.rows,len(world.entities.generation)+256)
+        core.raw_rows_reserve(t,table.info.size,table.info.align,rows)
+        reserve(&t.rows,len(world.entities.generation)+256)
         reserve(&t.pending,16);runtime.__dynamic_array_reserve(&t.added,table.info.size,table.info.align,16)
     }
     reserve(&world.entities.generation,len(world.entities.generation)+256)
@@ -87,7 +87,7 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         base:=tracking.current_memory_allocated
         for k in 0..<100 {
             history.edits_begin(&edits,&selection,"Move")
-            core.get(&world.transforms,world.transforms.entities[k*7]).position.y+=1
+            core.edit(&world.transforms,world.transforms.entities[k*7]).position.y+=1
             history.edits_end(&edits)
             history.edits_commit(&edits,w,&selection)
             history.edits_begin(&edits,&selection,"Add")
@@ -123,7 +123,7 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         collab_tables_build(&s,st)
         collab_journal_reset(&s,st)
         collab_bytes=tracking.current_memory_allocated-base
-        core.get(&world.transforms,world.transforms.entities[3]).position.z+=1
+        core.edit(&world.transforms,world.transforms.entities[3]).position.z+=1
         start=time.tick_now()
         collab_edits_send(&s,st)
         tick_ms=time.duration_milliseconds(time.tick_since(start))

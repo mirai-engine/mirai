@@ -340,6 +340,7 @@ program_catalog_names_the_programs_and_packs_their_parameters :: proc(t: ^testin
 	r:=new(Renderer);defer free(r)
 	r.allocator = context.allocator
 	defer program_catalog_destroy(&r.programs)
+	if !fixture_catalog(t, r) {return}
 	ocean := program_find(r, "Ocean", .Surface)
 	if !testing.expect(t, ocean != nil) {return}
 	testing.expect(t, ocean.id != 0 && ocean.domain == .Surface)

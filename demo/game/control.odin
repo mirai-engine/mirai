@@ -26,7 +26,7 @@ DOG_BEHIND :: [3]f32{-1.2,0,1.5} // m from its person, in the frame of the perso
 OVERHEAD_BLEND :: cam.Camera_Blend{seconds=0.8,ease=.Cubic_In_Out}
 CAMERA_CYCLE :: [cam.Camera_Preset]cam.Camera_Preset{.Third_Person=.First_Person,.First_Person=.Isometric,.Isometric=.Top_Down,.Top_Down=.Side,.Side=.Third_Person,.Aim=.Third_Person}
 
-DOG_PREFAB :: "control/Dog.prefab"
+DOG_PREFAB :: "control/Dog.scene"
 
 // An AI that walks its body after the body of its leader while no seat drives it.
 @(component,description="An AI walks this body after the leader body while no player drives it.")
@@ -74,7 +74,7 @@ game_seats :: proc(
 ) {
     if core.count(demos)==0 {return}
     for row in 0..<core.count(follows) {
-        if core.alive(es,core.at(core.read(follows),row).leader) {continue}
+        if core.alive(es,core.at(follows,row).leader) {continue}
         core.destroy_tree(es,hierarchy,core.entity_at(follows,row))
     }
     for row in 0..<core.count(seats) {
@@ -84,7 +84,7 @@ game_seats :: proc(
         if companion!=core.NONE && inp.seat_pressed(actions,seat,.Switch_Body) {
             // The seat drives the dog, and the person follows it.
             inp.drive(requests,seat,companion)
-            follow:=core.at(core.read(follows),core.row_of(follows,companion))
+            follow:=core.at(follows,core.row_of(follows,companion))
             follow.leader=companion
             core.remove(follows,companion)
             core.add(follows,body,follow)
@@ -146,7 +146,7 @@ game_follow :: proc(
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
         follow:=core.at(follows,row)
-        move:=core.get(moves,e)
+        move:=core.edit(moves,e)
         placed,here:=core.get(worlds,e)
         goal,there:=core.get(worlds,follow.leader)
         if move==nil || !here || !there || inp.seat_of(drivables,e)!=core.NONE || !core.owned(remotes,e) {continue}
@@ -166,10 +166,10 @@ game_barker :: proc(
     barkers:^core.Table(Barker),actions:inp.Input_Of(Action),events:core.Ref(anim.Animation_Events),time:core.Time,
 ) {
     intro_bark:=false
-    for event in events.items {intro_bark ||= event.marker==base.name_hash("intro.bark")}
+    for event in events.items {intro_bark ||= event.kind==.Marker && event.name==base.name_hash("intro.bark")}
     for row in 0..<core.count(barkers) {
         if intro_bark || inp.pressed(actions,core.entity_at(barkers,row),.Bark) {
-            barker:=core.at(barkers,row)
+            barker:=core.edit_at(barkers,row)
             barker.count+=1
             barker.flash_until=core.deadline(time,BARK_FLASH_SECONDS)
         }

@@ -189,7 +189,8 @@ physics_step :: proc(
         _=core.changes(s.locals,&state.transforms_seen)
     }
 
-    requests_apply(&s,core.take(&requests.queue))
+    asked:=core.take(&requests.queue)
+    requests_apply(&s,asked)
     if s.playing {joints_sync(&s,core.read(joints),joint_states)}
     joint_requests_apply(&s,joints,joint_states,joint_requests)
     if s.playing {
@@ -223,6 +224,7 @@ physics_step :: proc(
     if gravities.table!=nil {gravity_apply(state,gravities,volumes,worlds,problems)}
     sim.world_step(w,time.dt)
     w.desc.parallel_user=nil
+    strains_apply(w,asked)
     step_followed(state,characters)
 
     // What another owner places has to reach what touches it: its groups are kept while some entity has a target.
@@ -254,7 +256,7 @@ physics_verticals :: proc(state:core.Ref(Physics_State),characters:core.Read(Cha
         next:=core.Vertical{sim.character_state(&state.world,l.character).up_frame}
         if at:=core.row_of(verticals,e);at<0 {
             core.add(verticals,e,next)
-        } else if verticals.values[at]!=next {core.at(verticals,at)^=next}
+        } else if verticals.values[at]!=next {core.edit_at(verticals,at)^=next}
     }
     for row:=core.count(verticals)-1;row>=0;row-=1 {
         if e:=core.entity_at(verticals,row);!core.has(characters,e) {core.remove(verticals,e)}
@@ -300,10 +302,9 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
     c:=core.changes(s.locals,&seen)
     if c.all {return false}
     clear(&state.sealed)
-    for row in 0..<core.count(s.locals) {
-        if core.stamp(s.locals,row)<=c.since {continue}
+    for row in core.each_changed(s.locals,&c) {
         root:=core.entity_at(s.locals,row)
-        if sealed_above(s.locals,h,root,c.since) {continue}
+        if sealed_above(s.locals,h,root,c) {continue}
         for at:=root;at!=core.NONE;at=core.subtree_next(h,root,at) {
             order,body:=sync_order(s,at)
             if !body {continue}
@@ -320,9 +321,9 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
 
 // Whether something e hangs from has its Transform sealed since: its walk takes e.
 @(private)
-sealed_above :: proc(locals:core.Read(core.Transform),h:core.Ref(core.Hierarchy),e:core.Entity,since:u64) -> bool {
+sealed_above :: proc(locals:core.Read(core.Transform),h:core.Ref(core.Hierarchy),e:core.Entity,c:core.Changes) -> bool {
     for at:=core.parent_of(h,e);at!=core.NONE;at=core.parent_of(h,at) {
-        if row:=core.row_of(locals,at);row>=0 && core.stamp(locals,row)>since {return true}
+        if row:=core.row_of(locals,at);row>=0 && core.changed(locals,c,row) {return true}
     }
     return false
 }
@@ -430,7 +431,7 @@ pose_write :: proc(s:^Sync,l:^Link,e:core.Entity,pose:sim.Transform) {
     l.written_position,l.written_rotation=position,rotation
     local:=s.transforms.values[row]
     if local.position==position && local.rotation==rotation {return}
-    written:=core.at(s.transforms,row)
+    written:=core.edit_at(s.transforms,row)
     written.position,written.rotation=position,rotation
 }
 
@@ -841,7 +842,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
 @(private)
 made_velocity :: proc(s:^Sync,e:core.Entity) -> (linear,angular:[3]f32) {
     if target,on:=core.get(s.targets,e);on {return target.linear,target.angular}
-    if held:=core.get(s.motions,e);held!=nil {return held.linear,held.angular}
+    if held,ok:=core.get(s.motions,e);ok {return held.linear,held.angular}
     return
 }
 
@@ -1002,6 +1003,7 @@ Area_Place :: struct {
 // Applies a request of an area, which names no entity; false for any other request.
 @(private)
 area_apply :: proc(s:^Sync,request:Body_Request) -> bool {
+    if request.kind==.Area_Strain {return true}
     if request.kind!=.Area_Force && request.kind!=.Area_Impulse {return false}
     place:=Area_Place{request.area,{request.position,request.rotation==0?mm.QUAT_IDENTITY:request.rotation,request.scale=={}?[3]f32{1,1,1}:request.scale}}
     weight :: proc "contextless" (user:rawptr,point:[3]f32) -> f32 {
@@ -1058,7 +1060,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
             case .Impulse:          sim.character_launch(w,l.character,request.linear/max(l.config.mass,1e-3))
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
-            case .Area_Force,.Area_Impulse:
+            case .Area_Force,.Area_Impulse,.Area_Strain:
             case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, give it a velocity or an impulse, or write its Character_Move")
             }
             continue
@@ -1086,7 +1088,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
         case .Force:
             if request.at_point {sim.body_apply_force_at(w,l.body,request.linear,request.point)} else {sim.body_apply_force(w,l.body,request.linear)}
             if request.angular!={} {sim.body_apply_torque(w,l.body,request.angular)}
-        case .Area_Force,.Area_Impulse:
+        case .Area_Force,.Area_Impulse,.Area_Strain:
         case .Kinematic:
             if s.playing {
                 sim.body_set_kinematic_target(w,l.body,request.position,rotation,s.dt)
@@ -1202,7 +1204,7 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
             next.height=sim.character_desc(w,l.character).height
             next.velocity=sim.character_velocity(w,l.character)
             next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
-            if s.character_states.values[row]!=next {core.at(s.character_states,row)^=next}
+            if s.character_states.values[row]!=next {core.edit_at(s.character_states,row)^=next}
         }
         body:=sim.character_body(w,l.character)
         motion_write(s,e,body,sim.body_is_awake(w,body),false)
@@ -1222,7 +1224,7 @@ motion_write :: proc(s:^Sync,e:core.Entity,body:sim.Body_Handle,awake,add:bool) 
         center=center,island=s.grouped?sim.body_group(w,body):0,awake=awake,
     }
     if row:=core.row_of(s.motions,e);row>=0 {
-        if s.motions.values[row]!=next {core.at(s.motions,row)^=next}
+        if s.motions.values[row]!=next {core.edit_at(s.motions,row)^=next}
     } else if add {
         core.add(s.motions,e,next)
     }
@@ -1269,20 +1271,18 @@ hold_pose :: proc "contextless" (h:Hold) -> sim.Transform {return .Target in h.b
 @(private)
 events_forward :: proc(s:^Sync,events:^Physics_Events,sent:^[6]int) {
     w:=&s.state.world
-    named :: proc(w:^sim.World,body:sim.Body_Handle) -> core.Entity {return core.Entity(sim.body_user_data(w,body))}
-    of :: proc(w:^sim.World,shape:sim.Shape_Handle) -> core.Entity {return core.Entity(sim.shape_user_data(w,shape))}
     list:=sim.world_events(w)
     lengths:=[6]int{len(list.contact_begin),len(list.contact_end),len(list.overlap_begin),len(list.overlap_end),len(list.sleep),len(list.wake)}
     for &count,i in sent {count=min(count,lengths[i])}
     for event in list.contact_begin[sent[0]:] {
         core.push(&events.contact_begin,Contact_Begin{
-            a=named(w,event.body_a),b=named(w,event.body_b),collider_a=of(w,event.shape_a),collider_b=of(w,event.shape_b),
+            a=core.Entity(event.users.body_a),b=core.Entity(event.users.body_b),collider_a=core.Entity(event.users.shape_a),collider_b=core.Entity(event.users.shape_b),
             point=event.point,normal=event.normal,impulse=event.impulse,
         })
     }
-    for event in list.contact_end[sent[1]:] {core.push(&events.contact_end,Contact_End{named(w,event.body_a),named(w,event.body_b),of(w,event.shape_a),of(w,event.shape_b)})}
-    for event in list.overlap_begin[sent[2]:] {core.push(&events.overlap_begin,Overlap_Event{named(w,event.body),named(w,event.other_body),of(w,event.shape),of(w,event.other),event.crossed})}
-    for event in list.overlap_end[sent[3]:] {core.push(&events.overlap_end,Overlap_Event{named(w,event.body),named(w,event.other_body),of(w,event.shape),of(w,event.other),event.crossed})}
+    for event in list.contact_end[sent[1]:] {core.push(&events.contact_end,Contact_End{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b)})}
+    for event in list.overlap_begin[sent[2]:] {core.push(&events.overlap_begin,Overlap_Event{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
+    for event in list.overlap_end[sent[3]:] {core.push(&events.overlap_end,Overlap_Event{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
     for event in list.sleep[sent[4]:] {core.push(&events.sleep,Body_Event{core.Entity(event.user_data)})}
     for event in list.wake[sent[5]:] {core.push(&events.wake,Body_Event{core.Entity(event.user_data)})}
     sent^=lengths

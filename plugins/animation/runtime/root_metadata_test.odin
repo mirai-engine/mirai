@@ -80,10 +80,10 @@ selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_tab
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     for stage in 0..<5 {
         switch stage {
-        case 1: animation_play(core.get(&w.animations,actor),"run",fade=0,loop=false)
-        case 2: core.get(&w.animations,actor).root_motion=.None
-        case 3: value:=core.get(&w.animations,actor);value.root_motion=.In_Place;animation_play(value,"walk",fade=0,loop=false)
-        case 4: animation_play(core.get(&w.animations,actor),"wave",fade=1,loop=false)
+        case 1: animation_clip(core.edit(&w.animations,actor),"run",fade=0,loop=false)
+        case 2: core.edit(&w.animations,actor).root_motion=.None
+        case 3: value:=core.edit(&w.animations,actor);value.root_motion=.In_Place;animation_clip(value,"walk",fade=0,loop=false)
+        case 4: animation_clip(core.edit(&w.animations,actor),"wave",fade=1,loop=false)
         }
         animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,&app,{dt=.25,playing=true},{},&skeletons,&problems)
         state:=&w.playback.states[0]

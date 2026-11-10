@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_COLORED_SHADOWS=1
-//! variant color_hw MIRAI_COLORED_SHADOWS=1 MIRAI_HW_RT=1
+// color: colored shadows, whose rays take the filters of the glass they cross (trace.slang).
+//! constant color MIRAI_COLORED_SHADOWS
 // The medium and the light of each cell of the grid of the view
 // (fog.fog_record): the medium of the volumes at a point of the cell, the
 // same place in every frame, with the wisps of the variable ones as they are

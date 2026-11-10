@@ -88,7 +88,7 @@ near3 :: proc(a,b:[3]f32) -> bool {return linalg.length(a-b)<1e-3}
 
 @(private="file")
 spatial_y :: proc(f:^Spatial_Fixture,e:core.Entity) -> f32 {
-    value,_:=core.get(core.read(&f.w.transforms),e)
+    value,_:=core.get(&f.w.transforms,e)
     return value.position.y
 }
 
@@ -204,7 +204,7 @@ scene_ground_rests_entities_on_what_is_under_them_as_one_undo :: proc(t:^testing
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect(t,abs(spatial_y(f,f.crate)-3)<1e-3 && abs(spatial_y(f,f.lamp)-2)<1e-3,"one undo puts both back")
     // Buried: it rises to the surface, with the offset over it.
-    core.get(&f.w.transforms,f.crate).position.y=-0.2
+    core.edit(&f.w.transforms,f.crate).position.y=-0.2
     core.world_settle(w);history.edits_reset(&f.edits,w)
     params={offset=0.1}
     copy(params.entities[0][:],"Crate")
@@ -217,7 +217,7 @@ scene_ground_rests_entities_on_what_is_under_them_as_one_undo :: proc(t:^testing
     result={}
     call=spatial_call(f,api_scene_ground,&method,&params,&result,`{"entities":["Boulder"],"align":true}`)
     testing.expect(t,!call.failed,call.error.message)
-    turned,_:=core.get(core.read(&f.w.transforms),f.boulder)
+    turned,_:=core.get(&f.w.transforms,f.boulder)
     up:=mm.quat_rotate(turned.rotation,{0,1,0})
     testing.expect(t,linalg.dot(up,[3]f32{-0.5,math.sqrt_f32(3)*0.5,0})>0.999,"its up follows the ramp")
     testing.expect(t,abs(result.entities[0].rotation_deg.z-30)<0.1 && result.entities[0].moved<0)
@@ -229,7 +229,7 @@ scene_ground_fails_whole_and_says_which_entity :: proc(t:^testing.T) {
     if !spatial_open(t,f) {return}
     defer spatial_close(f)
     w:=edited_world(&f.s)
-    core.get(&f.w.transforms,f.lamp).position={50,2,0}
+    core.edit(&f.w.transforms,f.lamp).position={50,2,0}
     core.world_settle(w);history.edits_reset(&f.edits,w)
     method:=api.Method{params_id=Api_Ground_Params,result_id=Api_Ground_Result}
     params:Api_Ground_Params
@@ -298,7 +298,7 @@ entities_are_named_by_name_path_id_or_handle :: proc(t:^testing.T) {
     if !spatial_open(t,f) {return}
     defer spatial_close(f)
     w:=edited_world(&f.s)
-    core.get(&f.w.names,f.lid)^=core.name_make("Crate")
+    core.edit(&f.w.names,f.lid)^=core.name_make("Crate")
     cases:=[?]struct{text:string,want:core.Entity,says:string}{
         {"Lamp",f.lamp,""},
         {"Crate/Crate",f.lid,""},

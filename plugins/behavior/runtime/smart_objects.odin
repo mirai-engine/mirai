@@ -46,7 +46,7 @@ Smart_Object :: struct {
 @(component,description="How many times each offer of the smart object was used and when it is offered again.")
 Smart_State :: struct {
     used:[SMART_OFFERS]i32 `mirai:"readonly,transient"`,
-    ready:[SMART_OFFERS]f64 `mirai:"readonly,transient,unit=s"`, // seconds of the simulation
+    ready:[SMART_OFFERS]u64 `mirai:"readonly,transient"`, // the tick it is offered again at
 }
 
 // Who holds what: the attack tokens and the claims of the offers of the
@@ -84,7 +84,7 @@ smart_update :: proc(objects:core.Read(Smart_Object),states:^core.Table(Smart_St
         state:=core.staged(states,used.object)
         if !found || state==nil || int(used.offer)>=SMART_OFFERS {continue}
         state.used[used.offer]+=1
-        state.ready[used.offer]=time.seconds+f64(max(object.offers[used.offer].cooldown,0))
+        state.ready[used.offer]=core.deadline(time,object.offers[used.offer].cooldown)
     }
 }
 
@@ -94,8 +94,7 @@ Smart_View :: struct {
     states:core.Read(Smart_State),
     worlds:core.Read(core.World_Transform),
     claims:^Claims,
-    time:f64,
-    tick:u64,
+    time:core.Time,
 }
 
 // An offer an agent can take: the object, which offer, where to stand and
@@ -157,11 +156,11 @@ smart_claim :: proc(a:^ai.Act($A),found:Smart_Found) -> bool {
 smart_open :: proc(v:^Smart_View,object:core.Entity,i:int,offer:Smart_Offer,state:Smart_State,user:Smart_User) -> bool {
     if offer.use==USE_NONE {return false}
     if offer.uses>0 && state.used[i]>=offer.uses {return false}
-    if v.time<state.ready[i] {return false}
+    if !core.due(v.time,state.ready[i]) {return false}
     if offer.teams!=0 && u32(offer.teams)&(1<<u32(user.team))==0 {return false}
     if u32(offer.abilities)&~u32(user.abilities)!=0 {return false}
     if v.claims==nil || user.entity==core.NONE {return true}
-    return ai.reserve_open(&v.claims.reservations,{u64(object),u16(i+1)},u64(user.entity),max(int(offer.users),1),v.tick)
+    return ai.reserve_open(&v.claims.reservations,{u64(object),u16(i+1)},u64(user.entity),max(int(offer.users),1),v.time.tick)
 }
 
 // Crosses the link the agent waits at (Nav_Path.state Crossing, of a kind the

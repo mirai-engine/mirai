@@ -784,12 +784,12 @@ hostile_memories_and_places :: proc(t:^testing.T) {
             before:=m.count
             switch base.hostile_int(&h,4) {
             case 0,1:
-                change:=memory_perceive(&m,subject,hostile_vec3(&h,true),Sense(base.hostile_int(&h,3)),base.hostile_f32(&h),f64(base.hostile_f32(&h)))
+                change:=memory_perceive(&m,subject,hostile_vec3(&h,true),Sense(base.hostile_int(&h,3)),base.hostile_f32(&h),base.hostile_next(&h))
                 known:=memory_find(&m,subject)
                 testing.expect(t,forged || ((change==.None || known!=nil) && (change!=.New || m.count==before+1 || before==PERCEPTION_CAPACITY)),"A subject that was perceived is not remembered")
             case 2:
                 room:=gone[:base.hostile_int(&h,5)]
-                count:=memory_forget(&m,f64(base.hostile_f32(&h)),base.hostile_f32(&h),room)
+                count:=memory_forget(&m,base.hostile_next(&h),base.hostile_f32(&h),base.hostile_f32(&h),room)
                 testing.expect(t,forged || (count>=0 && int(m.count)==int(before)-count),"What a memory forgot is not what it lost")
                 for lost in room[:clamp(count,0,len(room))] {testing.expect(t,forged || memory_find(&m,lost)==nil,"A forgotten subject is remembered")}
             case 3:

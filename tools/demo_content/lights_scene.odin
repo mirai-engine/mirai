@@ -15,7 +15,7 @@ LIGHTS_SCENE_INTENSITY :: 16*LAMP
 // which the first 4, 16, 64 or 256 of them are spread evenly over the floor.
 write_lights_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","lights"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","lights"))
     floor:=asset.builder_entity(&s,"Receiver",{position={0,-0.15,0},scale={24,0.3,20}})
     asset.builder_set(&s,floor,render.Mesh_Renderer{shape=.Cube})
     tinted(&s,floor,{0.4,0.4,0.4})

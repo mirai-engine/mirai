@@ -23,6 +23,11 @@
   `.mirai/tmp/<plugin>-test-shaders`: those of the plugin and, as `<plugin>_test`, the programs of
   the package's `testdata/`. A test of a runtime package does not import `cook`: the shipped game
   also compiles the `*_test.odin` of its packages, and `cook` is not shipped.
+- A package of the engine with programs in its `testdata/` gets them the same way, in
+  `.mirai/tmp/<package>-test-shaders`. The Surface programs the tests of `render` draw (`Grid`,
+  `Ocean`, `Pieces`) are in `render/testdata/`: a test that draws one starts its renderer with that
+  generation (`fixture_init(programs = true)`, `fixture_catalog` without a device), the others with
+  the embedded one.
 - The math or synchronization tests check the result read back from the GPU.
 - While another session measures, `mirai test` runs at low priority and with the shared GPU a
   test can take ten times longer, or compile its pipelines cold for minutes: its time says nothing

@@ -355,12 +355,9 @@ color_field :: proc(ctx:^Context,id:Id,rgb:^[3]f32,open:bool=false) -> (result:N
 
 // The label of a row in the column of labels, the same width in every row
 // so the controls after it line up; one too long ends in an ellipsis.
-column_label :: proc(ctx:^Context,text:string,color:Color={}) {
+column_label :: proc(ctx:^Context,content:string,color:Color={}) {
     th:=&ctx.theme
-    ui_text:=Text_Style{size=th.font_small,color=color if color!={} else th.text_label,align_y=.Center,ellipsis=true}
-    if !text_begin(ctx,ui_text) {return}
-    text_span(ctx,text)
-    text_end(ctx,{width=fixed(th.label_width),height=fixed(th.font_small+6)})
+    text(ctx,content,{size=th.font_small,color=color if color!={} else th.text_label,align_y=.Center,ellipsis=true},fixed(th.label_width),fixed(th.font_small+6))
 }
 
 // A row with a label in the column of labels and controls after it.

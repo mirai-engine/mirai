@@ -102,7 +102,7 @@ joint_requests_apply :: proc(s:^Sync,joints:^core.Table(Joint),states:^core.Tabl
             continue
         }
         if next!=joints.values[row] {
-            core.at(joints,row)^=next
+            core.edit_at(joints,row)^=next
             if s.playing {joint_reconcile(s,states,request.entity,next)}
         }
     }

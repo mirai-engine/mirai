@@ -13,7 +13,7 @@ transform :: proc(x,y,z:f32) -> Test_Transform {return {position={x,y,z},rotatio
 // The scene every side starts from: A with a light, B and C under it.
 @(private="file")
 origin_scene :: proc(t:^testing.T,types:^Types,scene:^Scene) {
-    testing.expect_value(t,scene_init(scene,types,KIND_SCENE,{0x61,0x62}),Error.None)
+    testing.expect_value(t,scene_init(scene,types,{0x61,0x62}),Error.None)
     scene_entity_add(scene,A,0,"A")
     scene_entity_add(scene,B,A,"B")
     scene_entity_add(scene,C,A,"C")
@@ -190,7 +190,7 @@ merge_keeps_the_instances_each_side_placed_and_leaves_none_half_linked :: proc(t
     testing.expect_value(t,len(m.conflicts),0)
     testing.expect_value(t,len(scene_instance_roots(&merged)),3)
     shared,_:=scene_instance(&merged,A)
-    testing.expect(t,shared==Instance{{3,3},0},"an instance of two files is of none: the next load brings it up to date")
+    testing.expect(t,shared==Prefab_Instance{{3,3},0},"an instance of two files is of none: the next load brings it up to date")
     testing.expect(t,scene_entity_instance(&merged,R1)==R1 && scene_entity_instance(&merged,R2)==R2 && scene_entity_instance(&merged,B)==A)
 
     // Ours unlinks A while theirs gives it another member: no entity stays a member of what is not an instance.

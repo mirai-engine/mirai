@@ -28,9 +28,9 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     if !tool.stroke.active {
         terrains:=core.world_table_of(world,terrain.Terrain);worlds:=core.world_table_of(world,core.World_Transform)
         target:=history.selection_has(s.selection,tool.stroke.entity)?tool.stroke.entity:core.NONE
-        if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(core.read(terrains),selected_entity) {target=selected_entity}
+        if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(terrains,selected_entity) {target=selected_entity}
         tool.selection=selected_entity
-        if terrains!=nil && worlds!=nil && core.has(core.read(terrains),target) {
+        if terrains!=nil && worlds!=nil && core.has(terrains,target) {
             _=stroke_prepare(tool,app.assets,app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=target})
         } else if tool.stroke.id!={} {stroke_free(tool)}
     }
@@ -314,7 +314,7 @@ choice_grid :: proc(ctx:^ui.Context,id:ui.Id,names:[]string,selected,columns:int
 terrain_choose_panel :: proc(s:^editor.Session,world:core.World_Ref) {
     ctx:=s.gui.ctx
     terrains:=core.world_table_of(world,terrain.Terrain)
-    if terrains==nil || core.count(core.read(terrains))==0 {return}
+    if terrains==nil || core.count(terrains)==0 {return}
     ui.section(ctx,"Terrains","",80)
     table:=core.read(terrains)
     for i in 0..<core.count(table) {

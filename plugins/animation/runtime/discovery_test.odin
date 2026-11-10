@@ -32,7 +32,7 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     if !testing.expect(t,modifier_prepare(&modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)) {return}
     geometry:=modifiers.geometry;buffer:=raw_data(modifiers.look.values)
-    core.get(&w.animations,plain).weight=.4;core.get(&w.animations,target).parameters[0]=.7
+    core.edit(&w.animations,plain).weight=.4;core.edit(&w.animations,target).speed=.7
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=modifier_prepare(&modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&playback,app.assets,app.allocator,nil)
     host_assets.revision+=1

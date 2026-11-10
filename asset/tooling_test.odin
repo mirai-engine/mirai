@@ -237,7 +237,7 @@ document_text_reads_back_the_same_bytes_for_every_kind :: proc(t:^testing.T) {
     // A named integer keeps its names, and that it moves by them, through the text.
     types.schema.named=make(map[typeid]serial.Named,context.temp_allocator)
     types.schema.named[Test_Channel_Name]={choices={{"impacts",16}},by_name=true}
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{6,6});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{6,6});defer scene_destroy(&scene)
     for i in 1..=40 {
         id:=base.Entity_Id(i*3)
         scene_entity_add(&scene,id,i>1?base.Entity_Id(3):0,i%2==0?"even":"ödd ☃")

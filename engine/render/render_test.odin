@@ -66,7 +66,7 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
             }
             core.test_world_settle(&w)
         } else if pass==2 || pass==4 {
-            for e,i in chunks {core.get(&w.meshes,e).mesh=source[i%4]}
+            for e,i in chunks {core.edit(&w.meshes,e).mesh=source[i%4]}
         }
         for frame in 0..<3 {
             host.app_frame_begin(app)
@@ -80,8 +80,8 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
                 }
                 for index in ([2]int{0,4}) {
                     e:=chunks[index]
-                    world,_:=core.get(core.read(&w.worlds),e)
-                    tint,_:=core.get(core.read(&w.tints),e)
+                    world,_:=core.get(&w.worlds,e)
+                    tint,_:=core.get(&w.tints,e)
                     instance,usable:=mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true
@@ -256,7 +256,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             previous:=source
             source,made=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&cube),options={no_lods=true})
             testing.expect(t,made)
-            core.get(&w.meshes,e).mesh=source
+            core.edit(&w.meshes,e).mesh=source
             if previous!={} {testing.expect(t,host.assets_mesh_release(app.assets,previous))}
         }
         if pass==2 {

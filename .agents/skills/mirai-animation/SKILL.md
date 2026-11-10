@@ -3,15 +3,15 @@ name: mirai-animation
 description: Mirai animation - the `animation` plugin (`plugins/animation/runtime` and
   `plugins/animation/editor`) and the `animation_physics` bridge (its math library is in
   `mirai-std`), with `.anim` clips, skeletons, skinning, locomotion by motion matching (`.match`,
-  `match_goal`, `match_play`) with inertialization, layered actions, composition graphs (`.agraph`),
-  aim offsets and additives (`.blend`), root motion, retarget, mirroring, rigs and IK, morph
-  targets, motion profiles and warping, grounding, budget, clips that move props and fields,
-  authoring by intent and by API, and the auto-rig of an uploaded or generated character without a
-  skeleton. Use
-  when animating characters or objects, building the locomotion or the actions of a character,
-  porting a character's or a weapon's motion and events from another engine's data, looking for a
-  state machine or a locomotion blend space (they do not exist; see the workflow), touching those
-  packages or their assets, or diagnosing a pose, a skinning or a clip.
+  `match_goal`) with inertialization, the action set (`.action`, layers over the matched pose
+  and the actions of `play`, `stop`, `set`, `look`), aim offsets and additives (`.blend`), root
+  motion, retarget, mirroring, rigs and IK, morph targets, motion profiles and warping,
+  grounding, budget, clips that move props and fields, authoring by intent and by API, and the
+  auto-rig of a character with no skeleton. Use when animating characters or objects, building
+  the locomotion or the actions of a character, porting a character's or a weapon's motion and
+  events from another engine's data, looking for a state machine, an animation graph or a
+  locomotion blend space (they do not exist), touching those packages or their assets, or
+  diagnosing a pose, a skinning or a clip.
 ---
 
 # Mirai animation
@@ -29,12 +29,13 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 - Building a character (locomotion, jumps, actions) or replacing what used to be a state machine:
   [workflow](#character-workflow) and
   [what replaces the FSM](references/animation.md#what-replaces-the-state-machine).
-- Motion matching (`.match`, modes, entry clips, `match_goal`, `match_play` and its events):
+- Motion matching (`.match`, modes, entry clips, `match_goal`):
   [locomotion](references/animation.md#locomotion-by-motion-matching), a jump that lands on time
   by its marker: [landing](references/animation.md#landing); its search and features:
   [anim-motion](../mirai-std/references/anim-motion.md#motion-matching-matchingodin).
-- Composition graphs, layers, masks, additives and aim offsets (`.agraph`, `.blend`):
-  [composition](references/animation.md#composition-graphs-and-additive-spaces).
+- Layers over the base, masks, additives, parameters by name and aim offsets (`.action`,
+  `.blend`): [the layer stack](references/animation-actions.md#the-layer-stack) and
+  [additive spaces](references/animation.md#additive-spaces).
 - Components and shared data: [components](references/animation.md#components-and-shared-data);
   playback, outputs and order: [playback](references/animation.md#playback-outputs-and-order);
   [retarget](references/animation.md#offline-and-live-retarget) and
@@ -47,23 +48,23 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [clip verbs and metrics](references/animation-authoring.md#clips-verbs-and-metrics),
   [character](references/animation-authoring.md#character) and
   [inspection](references/animation-authoring.md#inspection).
-- Authoring by API (clips, skeletons, sockets, profiles, `.match`, graphs, control and
+- Authoring by API (clips, skeletons, sockets, profiles, `.match`, spaces, control and
   per-instance preview): [clips and timeline](references/animation-authoring.md#clips-and-timeline),
   [skeletons](references/animation-authoring.md#skeletons-sockets-and-profiles),
-  [graphs](references/animation-authoring.md#motion-matching-graphs-and-additive-spaces) and
+  [matching and spaces](references/animation-authoring.md#motion-matching-and-additive-spaces) and
   [per-instance control](references/animation-authoring.md#per-instance-control-and-preview).
 - Placing, moving and easing keys by hand in the editor, keying from the gizmo, a track for a
   field of an entity: [Tracks tool](references/animation-authoring.md#tracks-tool).
 - `animation.*`, `skeleton.*` and `pose.profile.*` methods and their common errors:
   [methods](references/animation-api.md#animation-api-methods) and
   [common errors](references/animation-api.md#common-errors).
-- Actions (layers, sections, windows, priority, cancellation):
+- Actions (`play`, `stop`, sections, windows, priority, cancellation, the event queue):
   [profile and authoring](references/animation-actions.md#profile-and-authoring) and
   [requests and lifecycle](references/animation-actions.md#requests-and-lifecycle); motion
   profiles and warping: [definitions](references/animation-motion.md#definitions-and-state),
   [requests and order](references/animation-motion.md#requests-and-order) and
   [authoring and control API](references/animation-motion.md#authoring-and-control-api).
-- An action whose root motion moves its `Character` (a lunge, a slam: `body_move`, not game code):
+- An action whose root motion moves its `Character` (a lunge, a vault: `body_move`, not game code):
   [root and movement](references/animation-actions.md#root-and-movement).
 - Rigs, spatial targets and chain modifiers:
   [spatial targets](references/animation-rigs.md#spatial-targets),
@@ -145,16 +146,18 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
    `Animation.motion` stretches the stride to that of the body. A mode without clips of its own
    keeps the clip that is playing; a jump or landing is an `entry` clip of its mode, not a state. A
    livelier turn or start asks for turn or start clips, not transitions.
-3. **Gameplay actions:** what is added to the locomotion (waving, reloading, hitting with the torso)
-   is an action in a layer (`action_fire`, with sections, windows, priority and cancellation); what
-   takes the whole body (vault, hit received, death, emote) is `match_play` with its mode, its exit
-   at a phase or a marker, its entry and its priority, and the matching resumes by itself. The game
-   reacts to the events of the actions and of `Animation_Events.plays`, not to a state.
-4. **On top of the pose:** aim offsets and additives in an `.agraph` (a `.blend` under an
-   `Additive`), IK, look-at and grounding in the `.pose` profile.
+3. **Gameplay actions:** one request, `play`, by the name of an action of the set
+   (`Animation.actions`). What is added to the locomotion (waving, reloading, hitting with the
+   torso) names a layer of the set; what takes the whole body (vault, hit received, death, emote)
+   names none, leaves the search by inertialization and the matching resumes by itself. Each has
+   its priority, cancellation, entry, exit, sections and windows. The game reacts to
+   `Animation_Events`, not to a state.
+4. **On top of the pose:** the layers of the set, over the matched pose: an aim offset is an
+   Additive layer whose space is a `.blend`, moved with `set` by the name of its axis; `look`, IK
+   and grounding are in the `.pose` profile.
 5. **No FSM is needed:** the mode is decided by physics, the clip is chosen by the search, actions
-   and `match_play` bring their own priority, exit and events, and the game logic lives in its data
-   and functions. If a task seems to ask for animation states, the table
+   bring their own priority, exit and events, and the game logic lives in its data and functions.
+   If a task seems to ask for animation states or a graph, the table
    [what replaces the FSM](references/animation.md#what-replaces-the-state-machine) says what
    to use; a state machine is not added to the engine or to the game.
 
@@ -174,23 +177,25 @@ Adapt the source's data to these features instead of rebuilding its runtime:
    root motion moves the body.
 4. **What the source's animation graph does at run time** (a bone locked to another while a curve
    is on, layered arms, an additive composed of several) is baked into the clips when it only
-   depends on the clip; a layer or an action of a `.action` when it depends on the game.
+   depends on the clip; a layer or an action of an `.action` when it depends on the game.
 5. Values come from the source's data; where its runtime decides something its data does not
    keep, say so next to the value the game takes.
 
 ## Invariants
 
 - **Locomotion is motion matching, without a state machine.** The `.match` is chosen by the mode
-  that physics writes; what a character does on top are layered actions and `match_play` clips. The
-  `.agraph` only composes poses and the `.blend` stays for aim offsets and additives: there is no
-  state machine or locomotion blend space.
+  that physics writes; there is no state machine, animation graph or locomotion blend space.
+- **One stack, one play, one queue.** What plays over the base is the one stack of layers of the
+  action set; a moment of the body is one `play` request with one priority rule, in a layer or
+  over the whole body; what happens arrives in one `Animation_Events` queue. A game walks, aims,
+  acts and reacts with `play`, `stop`, `set`, `look` and that queue.
 - The runtime does not allocate in a stable frame; the buffers of the program are reserved at load
   and released when it is retired. The database of a `.match` is built at load, per library and
   skeleton, within its memory cap.
 - Physics is the only writer of the mode and the velocity of a character; animation reads them
   through `match_goal` on each tick and keeps no copy.
-- The transitions of a program are inertial (matching jumps and `match_play`); the crossfade is left
-  for the live layers (component layers and actions).
+- The transitions of a `.match` are inertial (its jumps, and a whole-body action entering and
+  leaving it); the crossfade is left for the layers and the actions in them.
 - The API and its preview evaluate the same runtime as the game. The `previews` panel samples clips
   on its own.
 - The API expresses intent with names and defaults: it resolves handles and indices inside the

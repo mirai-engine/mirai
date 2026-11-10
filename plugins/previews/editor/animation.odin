@@ -58,6 +58,8 @@ Subject :: struct {
     short:bool, // parts or triangles were left out
     fit:[2][3]f32,
     fit_key:u64,
+    clip:anim.Clip, // the one last sampled, at time; 0: at rest
+    time:f32,
 }
 
 // What a clip of the asset is.
@@ -113,7 +115,6 @@ Animation :: struct {
     lib:anim.Library,
     clips:[]Clip_Info,
     markers:[]asset.Animation_Marker,
-    pose:anim.Pose,
     subject:Subject,
 }
 
@@ -156,10 +157,9 @@ animation_destroy :: proc(p:^Animation,allocator:runtime.Allocator) {
 @(private)
 animation_unload :: proc(p:^Animation,allocator:runtime.Allocator) {
     if p.lib.clips!=nil {anim.library_destroy(&p.lib)}
-    if p.pose.entries!=nil {anim.pose_destroy(&p.pose)}
     delete(p.clips,allocator)
     delete(p.markers,allocator)
-    p.lib,p.pose,p.clips,p.markers={},{},nil,nil
+    p.lib,p.clips,p.markers={},nil,nil
     p.loaded,p.stamp={},{}
 }
 
@@ -182,7 +182,7 @@ animation_load :: proc(a:^host.Assets,allocator:runtime.Allocator,p:^Animation) 
     desc:=asset.animation_library_desc(view)
     desc.allocator=allocator
     if !anim.library_init(&p.lib,desc) {return}
-    if len(view.clips)>0 && asset.animation_clips_add(view,&p.lib)==0 || !anim.pose_init(&p.pose,max(len(view.tracks),1),allocator) {
+    if len(view.clips)>0 && asset.animation_clips_add(view,&p.lib)==0 {
         animation_unload(p,allocator)
         p.loaded,p.stamp=p.chosen,stamp
         return
@@ -208,30 +208,39 @@ animation_clip :: proc(p:^Animation) -> anim.Clip {
     return 1
 }
 
+// A clip of a library at a time of it; clip 0 is none.
+Clip_Time :: struct {lib:^anim.Library,clip:anim.Clip,time:f32}
+
+// What the tracks of a clip give a target at its time, over local.
 @(private)
-pose_put :: proc(pose:^anim.Pose,target:u64,local:^mm.Transform) {
-    if value,_,ok:=anim.pose_position(pose,target);ok {local.position=value}
-    if value,_,ok:=anim.pose_rotation(pose,target);ok {local.rotation=value}
-    if value,_,ok:=anim.pose_scale(pose,target);ok {local.scale=value}
+clip_put :: proc(at:Clip_Time,target:u64,local:^mm.Transform) {
+    if at.lib==nil || !anim.clip_valid(at.lib,at.clip) {return}
+    player:=anim.player_make(at.clip);player.time=at.time
+    time:=anim.player_time(at.lib,player)
+    for track in anim.clip_tracks(at.lib,at.clip) {
+        if track.target!=target || track.slot!=0 {continue}
+        value:=anim.clip_evaluate(at.lib,track,time)
+        #partial switch track.property {
+        case .Position: local.position=value.xyz
+        case .Rotation: local.rotation=linalg.normalize0(anim.vec4_quat(value))
+        case .Scale: local.scale=value.xyz
+        }
+    }
 }
 
 // The transforms of the parts at a time of a clip; at rest without one.
 @(private)
 subject_pose :: proc(p:^Animation,clip:anim.Clip,time:f32) {
     sub:=&p.subject
-    sampled:=clip!=0 && p.pose.entries!=nil
-    if p.pose.entries!=nil {anim.pose_clear(&p.pose)}
-    if sampled {
-        player:=anim.player_make(clip)
-        player.time=time
-        anim.pose_blend(&p.pose,&p.lib,player)
-    }
+    sampled:=clip!=0 && p.lib.clips!=nil
+    sub.clip,sub.time=clip if sampled else 0,time
+    at:=Clip_Time{&p.lib,sub.clip,time}
     for i in 0..<sub.part_count {
         part:=&sub.parts[i]
         local:=part.local
         if sampled {
-            if i==0 {pose_put(&p.pose,0,&local)}
-            if part.target!=0 {pose_put(&p.pose,part.target,&local)}
+            if i==0 {clip_put(at,0,&local)}
+            if part.target!=0 {clip_put(at,part.target,&local)}
         }
         sub.worlds[i]=part.parent<0?local:mm.transform_compose(sub.worlds[part.parent],local)
     }
@@ -314,29 +323,29 @@ part_add :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,parent:i3
     sub.part_count+=1
     part^={entity=e,parent=parent,local=mm.TRANSFORM_IDENTITY,first=u32(len(sub.locals))}
     if scene.transforms!=nil {
-        if t,ok:=core.get(core.read(scene.transforms),e);ok {part.local=core.to_math(t)}
+        if t,ok:=core.get(scene.transforms,e);ok {part.local=core.to_math(t)}
     }
     if scene.targets!=nil {
-        if target,ok:=core.get(core.read(scene.targets),e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
+        if target,ok:=core.get(scene.targets,e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
     }
     if part.target==0 && scene.names!=nil {
         if text:=core.name_get(core.read(scene.names),e);text!="" {part.target=base.name_hash(text)}
     }
     if scene.meshes==nil {return}
-    mesh,has_mesh:=core.get(core.read(scene.meshes),e)
+    mesh,has_mesh:=core.get(scene.meshes,e)
     if !has_mesh || scene.hidden!=nil && core.has(scene.hidden,e) {return}
     tint:=erender.TINT_DEFAULT
     if scene.tints!=nil {
-        if value,ok:=core.get(core.read(scene.tints),e);ok {tint=value}
+        if value,ok:=core.get(scene.tints,e);ok {tint=value}
     }
     overridden:erender.Material_Override
     override:^erender.Material_Override
     if scene.overrides!=nil {
-        if value,ok:=core.get(core.read(scene.overrides),e);ok {overridden,override=value,&overridden}
+        if value,ok:=core.get(scene.overrides,e);ok {overridden,override=value,&overridden}
     }
     rig:=e
     if scene.skins!=nil {
-        if skin,found:=core.get(core.read(scene.skins),e);found {rig=skin.rig}
+        if skin,found:=core.get(scene.skins,e);found {rig=skin.rig}
     }
     part_mesh_add(a,sub,part,mesh,tint,override,rig)
 }
