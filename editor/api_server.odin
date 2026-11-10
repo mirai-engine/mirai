@@ -75,7 +75,8 @@ Api_State :: struct {
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
     commands:Commands, // the entries of menus, shortcuts and buttons that call the methods (commands.odin)
     person:bool,       // the call that runs is a gesture of the person at the editor (api_person)
-    joined:bool,       // its edit records into the gesture of the person that is open (api_edit_begin)
+    transaction:bool,  // a batch holds one edit open, which the edits of its calls record into
+    joined:bool,       // its edit records into the gesture that is open: of the person, or of a batch (api_edit_begin)
     left_going:bool,   // that call left what it started going, which a call of an agent waits for
 }
 
@@ -152,7 +153,7 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> Api_Open_Error
         return .Methods
     }
     st.library_generation=s.library_generation
-    st.server.pause,st.server.user=api_server_pause,s
+    st.server.pause,st.server.transaction,st.server.user=api_server_pause,api_server_transaction,s
     api_disk_baseline(s)
     if listen {api_port_file_write(s,st.port)}
     return .None
@@ -447,7 +448,7 @@ api_trampoline :: proc(call:^api.Call) {
     turn:=task if task!=nil else external
     // What the user left pending is a step of the user before the call edits.
     edits:=entry.session.edits
-    if edits!=nil && api_call_edits(call) {
+    if edits!=nil && api_call_edits(call) && !st.transaction {
         if turn!=nil || edits.open || edits.commit || edits.preview {tools_release(entry.session)}
         history.edits_commit(edits,edited_world(entry.session),entry.session.selection)
     }
@@ -476,7 +477,7 @@ api_trampoline :: proc(call:^api.Call) {
         }
         // What the call selected is a step of its author.
         history.edits_select(edits,edited_world(entry.session),document_selection(entry.session))
-        edits.author=st.person?author_before:history.EDIT_AUTHOR_USER
+        edits.author=st.person || st.in_call>1?author_before:history.EDIT_AUTHOR_USER
     }
     files_settle(entry.session)
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
@@ -627,6 +628,7 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
 // runs: the game keeps its own copy and the user sees the changes when the
 // run stops.
 api_guard :: proc(s:^Session,call:^api.Call) -> bool {
+    if st:=api_state(s);st!=nil && st.transaction {return true}
     tools_release(s)
     history.edits_cancel(s.edits,edited_world(s))
     if s.edits.open || s.edits.commit || s.edits.preview {
@@ -636,11 +638,25 @@ api_guard :: proc(s:^Session,call:^api.Call) -> bool {
     return true
 }
 
+// The one step the calls of a batch edit in: the edits of each join it.
+@(private)
+api_server_transaction :: proc(server:^api.Server,call:^api.Call,open:bool) -> bool {
+    s:=(^Session)(server.user)
+    st:=api_state(s)
+    if open {
+        if st.transaction {api.call_fail(call,api.INVALID_PARAMS,"a batch that is one step runs inside another: list its calls in the outer one");return false}
+        st.transaction=api_edit_begin(s,call,"Batch")
+        return st.transaction
+    }
+    st.transaction=false
+    return api_edit_end(s,call,!call.failed)
+}
+
 // Opens the transaction of an edit. False, with the call failed, when the scene cannot be edited now.
-// A gesture of the person that is open takes the edit of a method the person runs: it records into
-// that step, which the gesture closes.
+// A gesture of the person that is open takes the edit of a method the person runs, and a batch
+// that is one step those of its calls: it records into that step, which they close.
 api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
-    if st:=api_state(s);st!=nil && st.person && s.edits.open && !s.edits.preview {
+    if st:=api_state(s);st!=nil && (st.transaction || st.person && s.edits.open && !s.edits.preview) {
         st.joined=true
         return true
     }
@@ -801,17 +817,6 @@ rpc_unsigned :: proc(a:^Rpc_Args,what:string) -> (value:u64,ok:bool) {
     negative,magnitude,read:=serial.text_integer(&a.r)
     if !read || negative {return 0,rpc_fail_type(a,"%s must be a non negative integer",what)}
     return magnitude,true
-}
-
-// The id a document read by hand holds; null is none.
-rpc_id :: proc(a:^Rpc_Args,what:string) -> (id:base.Entity_Id,ok:bool) {
-    if a.failed {return}
-    if serial.text_keyword(&a.r,"null") {return 0,true}
-    text,read:=serial.text_string(&a.r)
-    if !read {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
-    value,parsed:=serial.text_parse_hex(text)
-    if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
-    return base.Entity_Id(value),true
 }
 
 rpc_text :: proc(a:^Rpc_Args,what:string,out:[]u8) -> (text:string,ok:bool) {

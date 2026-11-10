@@ -136,7 +136,7 @@ ai_call_target :: proc(s:^Session,raw:string,buffer:[]u8) -> string {
         e:=history.change_entity(w,id)
         return entity_name(w,e) if e!=core.NONE else ""
     }
-    for key in ([]string{"name","path","asset","material","file","preset"}) {
+    for key in ([]string{"name","root","path","asset","material","file","preset"}) {
         text,is_text:=object[key].(json.String)
         if !is_text || text=="" {continue}
         if slash:=strings.last_index_byte(text,'/');slash>=0 && slash<len(text)-1 {text=text[slash+1:]}
@@ -145,10 +145,10 @@ ai_call_target :: proc(s:^Session,raw:string,buffer:[]u8) -> string {
     for key in ([]string{"id","entity"}) {
         if found:=named(s,object[key]);found!="" {return fmt.bprintf(buffer,"%s",ai_utf8_cut(found,64))}
     }
-    for key in ([]string{"ids","entities","operations"}) {
+    for key in ([]string{"ids","entities","calls"}) {
         list,is_list:=object[key].(json.Array)
         if !is_list || len(list)==0 {continue}
-        if key=="operations" {return fmt.bprintf(buffer,"%d operations",len(list))}
+        if key=="calls" {return fmt.bprintf(buffer,"%d calls",len(list))}
         if len(list)==1 {
             if found:=named(s,list[0]);found!="" {return fmt.bprintf(buffer,"%s",ai_utf8_cut(found,64))}
         }

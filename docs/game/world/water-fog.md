@@ -9,11 +9,12 @@ and is invisible.
 
 ```sh
 P="mirai rpc --project ."
-$P scene.add '{"name":"Sea","position":[0,2,0],"components":{
-  "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}}'
-$P scene.add '{"name":"Breeze","components":{"Wind":{"speed":6,"gusts":0.5}}}'
-$P scene.add '{"name":"Pond","position":[30,0,10],"components":{
-  "Volume":{"shape":"Box","extents":[6,1.5,4]},"Fluid":{"density":1000},"Water":{}}}'
+$P scene.write '{"merge":true,"entities":[
+  {"name":"Sea","position":[0,2,0],"components":{
+    "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}},
+  {"name":"Breeze","components":{"Wind":{"speed":6,"gusts":0.5}}},
+  {"name":"Pond","position":[30,0,10],"components":{
+    "Volume":{"shape":"Box","extents":[6,1.5,4]},"Fluid":{"density":1000},"Water":{}}}]}'
 ```
 
 - A `Plane` volume is every point below the height of its entity: put the entity at the water
@@ -39,9 +40,9 @@ For a clear day leave fog out; for haze near the ground give it a `Volume` with 
 below.
 
 ```sh
-$P scene.add '{"name":"Valley mist","position":[0,0,0],"components":{
+$P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,0],"components":{
   "Volume":{"shape":"Box","extents":[100,8,100]},"Fog_Volume":{"density":0.03,"falloff":0.2,
-  "variable":true,"wisp_size":20,"drift":[0.5,0,0.2]}}}'
+  "variable":true,"wisp_size":20,"drift":[0.5,0,0.2]}}}]}'
 ```
 
 - `density` is per metre, about the share of light stopped by each metre; the starting value is a

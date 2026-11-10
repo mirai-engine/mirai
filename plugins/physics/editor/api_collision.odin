@@ -180,7 +180,7 @@ api_collision_component :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     }
     switch len(found) {
     case 0:
-        api.call_failf(call,api.INVALID_PARAMS,"entity %q has no collision component: give it a Collider with scene.set",base.text_get(request.entity[:]))
+        api.call_failf(call,api.INVALID_PARAMS,"entity %q has no collision component: give it a Collider with scene.write",base.text_get(request.entity[:]))
         return false
     case 1:
         base.text_set(request.component[:],found[0])

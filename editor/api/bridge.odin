@@ -24,7 +24,7 @@ bridge_handle :: proc(port,timeout_ms:int,message:string,allocator:runtime.Alloc
     }
     // A call with a token takes its progress as a stream.
     wants:=events.handle!=nil && json_member(json_member(values[2],"_meta"),"progressToken")!=""
-    status,body,post_error:=client_post(port,"/mcp",message,timeout_ms,allocator,task,plugins,client,watch,nil,wants?events:{})
+    status,body,post_error:=client_post(port,"/mcp",message,timeout_ms,allocator,task,plugins,client,watch,wants?events:{})
     if post_error.code!=0 {return "",false,post_error}
     if status==202 {return "",false,{}}
     if status==200 {return json_single_line(string(body),allocator),true,{}}

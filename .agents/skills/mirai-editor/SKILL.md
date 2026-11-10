@@ -272,7 +272,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `editor/assets`); in `editor/acp`, the optional smoke test `editor/acp/smoke_test.odin` (real
   account, `-define:ACP_SMOKE=true` and `MIRAI_ACP_SMOKE_ADAPTER`, `_BUN`, `_CWD`, `_CODEX`).
 - Sections: `editor/sections_test.odin` (the view without edits and its returned rule, the lock by
-  each path and by `scene.set`, traveling, saving what changed and staying unsaved if one is not
+  each path and by `scene.write`, traveling, saving what changed and staying unsaved if one is not
   written, the reference a step makes and what hangs from one that left, the map and its API); its
   panel, `capture` with the UI in the World tab.
 - Picking: `editor/pick_test.odin`; a click builds only what its ray reaches and the cache stays
