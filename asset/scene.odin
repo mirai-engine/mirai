@@ -18,9 +18,7 @@ import "mirai:std/serial"
 //                it, every component is on
 //
 // What a scene shows and obeys as a whole (its sky, its sun, its rules) is
-// components of its entities. A table of one row and one column value is a
-// setting of a version of the format before that: nothing reads it, and
-// saving the document drops it.
+// components of its entities.
 //
 // Whatever is saved refers to an entity by its Entity_Id: parents,
 // overrides, and the Entity and Entity_Id fields of components. Only the

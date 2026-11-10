@@ -3,26 +3,35 @@ package main
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/build"
 import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:std/subprocess"
 
 // mirai asset: reads and edits binary assets of any kind through the schema
 // each file carries. Results go to stdout in forms meant to be parsed; what
 // went wrong goes to stderr as "mirai asset <subcommand>: <file>: <reason>".
 // Exit codes: 0 done, 1 failed or found differences or problems, 2 misuse.
+//
+// A scene and a .ui are documents a person or an agent writes as the text of
+// mirai scene and mirai ui: dump prints that document, which the author
+// program of the engine reads against the project the file is of, and verify
+// adds what mirai scene check says of a scene. Neither is unpacked to tables.
 
-Asset_Command :: struct {name,usage,summary:string,run:proc(args:[]string)->int}
+Asset_Command :: struct {name,usage,summary:string,run:proc(root:string,args:[]string)->int}
 
 ASSET_COMMANDS :: [?]Asset_Command{
     {"info","info <file>","Header, chunks and tables",asset_info},
     {"ls","ls <folder> [--cache <file>]","Assets of a folder: id, kind, bytes, dependencies and path",asset_ls},
     {"deps","deps <file> [--root <folder>] [--all|--users]","Dependencies of an asset, or the assets that depend on it",asset_deps},
-    {"verify","verify <file>...","Checks the container, hash, tables and the rules of the kind",asset_verify},
-    {"dump","dump <file> [--schema|--textconv]","The whole asset as JSON, or as the text git diffs",asset_dump},
+    {"verify","verify <file>...","Checks the container, hash, tables and the rules of the kind; of a scene, what mirai scene check says",asset_verify},
+    {"dump","dump <file> [--schema|--textconv]","The whole asset as JSON, a scene or a .ui as its document, or as the text git diffs",asset_dump},
     {"get","get <file> <path>","A table, a row or a value as JSON",asset_get},
     {"set","set <file> <path>=<value>...","Changes values and rewrites the file",asset_set},
     {"diff","diff <a> <b>","Differences by row key and field path",asset_diff},
@@ -34,7 +43,7 @@ ASSET_COMMANDS :: [?]Asset_Command{
 cmd_asset :: proc(root:string,args:[]string) -> int {
     if len(args)>0 {
         for command in ASSET_COMMANDS {
-            if command.name==args[0] {return command.run(args[1:])}
+            if command.name==args[0] {return command.run(root,args[1:])}
         }
         fmt.eprintfln("mirai asset: unknown subcommand '%s'",args[0])
     }
@@ -180,7 +189,7 @@ write_kind :: proc(w:^serial.Writer,kind:asset.Fourcc) {
     serial.text_write_raw(w,asset.fourcc_text(kind,&buffer))
 }
 
-asset_info :: proc(args:[]string) -> int {
+asset_info :: proc(_:string,args:[]string) -> int {
     if code:=positionals("info",args);code!=0 {return code}
     if len(args)!=1 {return misuse("info")}
     a:asset.Asset
@@ -227,7 +236,7 @@ asset_info :: proc(args:[]string) -> int {
     return 0
 }
 
-asset_ls :: proc(args:[]string) -> int {
+asset_ls :: proc(_:string,args:[]string) -> int {
     folder,cache:="",""
     for i:=0;i<len(args);i+=1 {
         switch {
@@ -269,7 +278,7 @@ asset_ls :: proc(args:[]string) -> int {
     return problems==0?0:1
 }
 
-asset_deps :: proc(args:[]string) -> int {
+asset_deps :: proc(_:string,args:[]string) -> int {
     file,folder:="",""
     all,users:=false,false
     for i:=0;i<len(args);i+=1 {
@@ -403,27 +412,85 @@ schema_limits :: proc(s:^serial.Schema,type:serial.Type_Index) -> bool {
     return true
 }
 
-asset_verify :: proc(args:[]string) -> int {
+// The scenes that pass are then checked by mirai scene check against the game
+// of their project: whether their documents write them back, and the
+// components they store otherwise than the game reads them.
+asset_verify :: proc(root:string,args:[]string) -> int {
     if code:=positionals("verify",args);code!=0 {return code}
     if len(args)==0 {return misuse("verify")}
     types:asset.Types
     asset.types_init(&types)
     bad:=0
+    scenes:=make([dynamic]string,context.temp_allocator)
     for path in args {
         if reason:=verify(path,&types);reason!="" {
             bad+=1
             fmt.printfln("FAIL %s: %s",path,reason)
         } else {
             fmt.printfln("ok %s",path)
+            if strings.has_suffix(path,".scene") {append(&scenes,path)}
+        }
+    }
+    if len(scenes)>0 {
+        code,out,errors,problem:=author_files(root,"scene","check",scenes[:],true)
+        if problem!="" {
+            fmt.printfln("note: the components of the scenes were not checked against a game: %s",problem)
+        } else {
+            fmt.print(out)
+            fmt.eprint(errors)
+            if code!=0 {bad+=1}
         }
     }
     return bad==0?0:1
 }
 
+// The projects a file may be of, the likeliest first: the one it is in, the
+// one the current folder is in and, when neither is, those of the folders
+// under the current one (a checkout of the engine holds several).
+@(private="file")
+file_projects :: proc(file:string) -> []string {
+    found:=make([dynamic]string,context.temp_allocator)
+    add :: proc(found:^[dynamic]string,folder:string) {
+        if folder!="" && !slice.contains(found[:],folder) {append(found,folder)}
+    }
+    add(&found,project_of(os.dir(project.path_absolute(file,context.temp_allocator))))
+    here,_:=os.get_working_directory(context.temp_allocator)
+    add(&found,project_of(here))
+    if len(found)>0 {return found[:]}
+    for pattern in ([]string{"*/"+project.PROJECT_FILE,"*/*/"+project.PROJECT_FILE}) {
+        matches,_:=filepath.glob(join(here,pattern),context.temp_allocator)
+        for match in matches {add(&found,project.path_absolute(os.dir(match),context.temp_allocator))}
+    }
+    return found[:]
+}
+
+// Runs the author program of the engine on files of a kind of document
+// ("scene" or "ui") against the projects they may be of, and gives what it
+// printed. Without build the engine is never built: git does not wait on a
+// build to show a diff. problem: why the program did not run.
+@(private="file")
+author_files :: proc(root,kind,verb:string,files:[]string,build_engine:bool) -> (code:int,out,errors,problem:string) {
+    projects:=file_projects(files[0])
+    if len(projects)==0 {return 1,"","",fmt.tprintf("%s is in no project, and the current folder has none in it or above it: run it from the folder of the project",files[0])}
+    mode:=build.engine_mode_resolve(root,.Dev)
+    if build_engine && author_engine(root,"asset",mode)!=0 {return 1,"","","the engine did not build"}
+    program:=build.engine_paths(root,mode,context.temp_allocator).author_program
+    if !os.is_file(program) {return 1,"","",fmt.tprintf("the engine is not built, and its author program reads %s documents: mirai build engine builds it",kind)}
+    command:=make([dynamic]string,context.temp_allocator)
+    append(&command,program)
+    for folder in projects {append(&command,"--project",folder)}
+    append(&command,"--engine",root,kind,verb)
+    append(&command,..files)
+    state,stdout,stderr,error:=subprocess.exec({command=command[:]},context.temp_allocator)
+    if error!=nil {return 1,"","",fmt.tprintf("%s could not run",program)}
+    return state.exit_code,string(stdout),string(stderr),""
+}
+
 // --textconv is what git diffs through diff.mirai.textconv: the text of
-// Text_Options.diff, and of a file this build does not read, one line that
-// says why, so that a diff or a log that reaches one goes on.
-asset_dump :: proc(args:[]string) -> int {
+// Text_Options.diff, a scene and a .ui as their documents, and of a file this
+// build does not read, one line that says why, so that a diff or a log that
+// reaches one goes on.
+asset_dump :: proc(root:string,args:[]string) -> int {
     file:=""
     options:asset.Text_Options
     for arg in args {
@@ -443,13 +510,31 @@ asset_dump :: proc(args:[]string) -> int {
             return 0
         }
     } else if !load("dump",file,&doc) {return 1}
+    if kind,authored:=authored_kind(doc.kind);authored {
+        if options.schema {return failed("dump",file,"a %s is dumped as its document, which has no schema: mirai asset info lists its tables",kind)}
+        code,out,errors,problem:=author_files(root,kind,"read",{file},!options.diff)
+        switch {
+        case problem=="" && code==0:
+            fmt.print(out)
+            return 0
+        case options.diff:
+            line:=problem!=""?problem:strings.trim_space(errors)
+            if cut:=strings.index_byte(line,'\n');cut>=0 {line=line[:cut]}
+            fmt.printfln("mirai asset dump: %s",line)
+            return 0
+        case problem!="":
+            return failed("dump",file,problem)
+        }
+        fmt.eprint(errors)
+        return 1
+    }
     w:serial.Writer;serial.writer_init(&w)
     if error:=asset.document_text_write(&doc,&w,options);error!=.None {return failed("dump",file,error_text(error))}
     print(&w)
     return 0
 }
 
-asset_get :: proc(args:[]string) -> int {
+asset_get :: proc(_:string,args:[]string) -> int {
     if code:=positionals("get",args);code!=0 {return code}
     if len(args)!=2 {return misuse("get")}
     doc:asset.Document
@@ -484,7 +569,7 @@ value_json :: proc(doc:^asset.Document,location:asset.Location,value:string) -> 
     return string(serial.writer_bytes(&w))
 }
 
-asset_set :: proc(args:[]string) -> int {
+asset_set :: proc(_:string,args:[]string) -> int {
     if code:=positionals("set",args);code!=0 {return code}
     if len(args)<2 {return misuse("set")}
     doc:asset.Document
@@ -514,7 +599,7 @@ asset_set :: proc(args:[]string) -> int {
     return 0
 }
 
-asset_diff :: proc(args:[]string) -> int {
+asset_diff :: proc(_:string,args:[]string) -> int {
     if code:=positionals("diff",args);code!=0 {return code}
     if len(args)!=2 {return misuse("diff")}
     a,b:asset.Document
@@ -531,7 +616,7 @@ asset_diff :: proc(args:[]string) -> int {
 // a file both sides added. Exit 1 with conflicts, whose values the merge left
 // as ours had them; 2 when a file is not an asset or the result is not valid
 // (as mirai asset verify says, when ours was), and then ours stays as it was.
-asset_merge :: proc(args:[]string) -> int {
+asset_merge :: proc(_:string,args:[]string) -> int {
     files:=make([dynamic]string,context.temp_allocator)
     out:=""
     for i:=0;i<len(args);i+=1 {
@@ -582,13 +667,30 @@ asset_merge :: proc(args:[]string) -> int {
     return len(m.conflicts)==0?0:1
 }
 
+// The kinds whose text is the document of mirai scene and mirai ui, by the
+// name of that command.
+@(private="file")
+authored_kind :: proc(kind:asset.Fourcc) -> (name:string,authored:bool) {
+    switch kind {
+    case asset.KIND_SCENE: return "scene",true
+    case asset.KIND_UI:    return "ui",true
+    }
+    return "",false
+}
+
+@(private="file")
+authored_refusal :: proc(kind:string) -> string {
+    return fmt.tprintf("a %s is not edited as tables: mirai %s read <asset> --out <file> gives its document, and mirai %s write <asset> <file> writes it back",kind,kind,kind)
+}
+
 MANIFEST :: "asset.json"
 
-asset_unpack :: proc(args:[]string) -> int {
+asset_unpack :: proc(_:string,args:[]string) -> int {
     if code:=positionals("unpack",args);code!=0 {return code}
     if len(args)!=2 {return misuse("unpack")}
     doc:asset.Document
     if !load("unpack",args[0],&doc) {return 1}
+    if kind,authored:=authored_kind(doc.kind);authored {return failed("unpack",args[0],authored_refusal(kind))}
     if os.make_directory_all(args[1])!=nil && !os.is_dir(args[1]) {return failed("unpack",args[1],"the folder could not be created")}
     w:serial.Writer;serial.writer_init(&w)
     if error:=asset.document_text_write(&doc,&w,{schema=true,bulk=.Files});error!=.None {return failed("unpack",args[0],error_text(error))}
@@ -603,7 +705,7 @@ asset_unpack :: proc(args:[]string) -> int {
     return 0
 }
 
-asset_pack :: proc(args:[]string) -> int {
+asset_pack :: proc(_:string,args:[]string) -> int {
     if code:=positionals("pack",args);code!=0 {return code}
     if len(args)!=2 {return misuse("pack")}
     manifest:=join(args[0],MANIFEST)
@@ -624,6 +726,7 @@ asset_pack :: proc(args:[]string) -> int {
         fmt.eprintfln("mirai asset pack: %s:%d:%d: %s",manifest,line,column,reason)
         return 1
     }
+    if kind,authored:=authored_kind(doc.kind);authored {return failed("pack",manifest,authored_refusal(kind))}
     if error:=asset.document_save(&doc,args[1]);error!=.None {return failed("pack",args[1],error_text(error))}
     return 0
 }
