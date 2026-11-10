@@ -605,3 +605,48 @@ a_row_is_added_until_its_writer_writes_it :: proc(t:^testing.T) {
     row,found:=each_changed(&names,&c)
     testing.expect(t,found && row==0 && !added(&names,0))
 }
+
+// A join goes through the rows on of its first table whose entity has the
+// others on, whatever the access to each, and gives their values and the row
+// of the first: reading stamps nothing, and edit_at of that row writes it.
+@(test)
+a_join_gives_the_entities_that_have_every_table_on :: proc(t:^testing.T) {
+    es:Entities
+    testing.expect(t,entities_init(&es))
+    defer entities_destroy(&es)
+    a,b:Table(i32)
+    c:Table(f32)
+    table_init(&a,"a");table_init(&b,"b");table_init(&c,"c")
+    defer {table_destroy(&a);table_destroy(&b);table_destroy(&c)}
+    all:[8]Entity
+    for &e,i in all {
+        e=create(&es)
+        add(&a,e,i32(i))
+        if i%2==0 {add(&b,e,i32(10*i))}
+        if i%3!=2 {add(&c,e,f32(i))}
+    }
+    table_settle(&a,&es);table_settle(&b,&es);table_settle(&c,&es)
+    disable(&b,all[4]);table_settle(&b,&es)
+    version:=a.version
+    j:=join(&a,read(&b),read(&c))
+    seen:[dynamic]Entity
+    defer delete(seen)
+    for e,x,y,z in each_joined(&j) {
+        testing.expect(t,entity_at(&a,j.row)==e && x==at(&a,j.row) && y==10*x && z==f32(x))
+        append(&seen,e)
+        edit_at(&a,j.row)^+=100
+    }
+    testing.expect(t,len(seen)==2 && seen[0]==all[0] && seen[1]==all[6] && a.version>version,"the entities with all three on, written through the row of the first")
+    pairs:=join(read(&c),&b)
+    n:=0
+    for e,z,y in each_joined(&pairs) {
+        testing.expect(t,has(&b,e) && y==10*i32(z))
+        n+=1
+    }
+    testing.expect_value(t,n,2)
+    empty:Table(i32)
+    table_init(&empty,"empty")
+    defer table_destroy(&empty)
+    none:=join(read(&empty),&b,read(&c))
+    for _ in each_joined(&none) {testing.fail(t)}
+}
