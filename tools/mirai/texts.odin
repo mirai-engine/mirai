@@ -17,6 +17,7 @@ cmd_texts :: proc(root:string,args:[]string) -> int {
         fmt.eprintfln("Usage: mirai %s",TEXTS_USAGE)
         return 2
     }
+    if !positional(connection.rest[1]) {return argument_unknown("texts",connection.rest[1])}
     path,_:=strings.replace_all(project.path_absolute(connection.rest[1],context.temp_allocator),"\\","/",context.temp_allocator)
     escaped,_:=strings.replace_all(path,`"`,`\"`,context.temp_allocator)
     params:=fmt.tprintf(`{"path":"%s"}`,escaped)

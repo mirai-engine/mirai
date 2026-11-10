@@ -210,7 +210,10 @@ Render_Alone :: struct {
 
 cmd_render :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="check" {return render_check(root,args[1:])}
-    if len(args)==3 && args[0]=="compare" {return render_compare_files(args[1],args[2])}
+    if len(args)==3 && args[0]=="compare" {
+        if code:=positionals_only("render compare",args[1:]);code!=0 {return code}
+        return render_compare_files(args[1],args[2])
+    }
     fmt.eprintfln("Usage: mirai %s",RENDER_USAGE)
     return 2
 }

@@ -123,6 +123,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
     packages,versions:=AGENT_PACKAGES,AGENT_VERSIONS
     if len(args)<2 {fmt.eprintfln("Usage: mirai %s",AGENT_USAGE);return 2}
     operation,name:=args[0],args[1]
+    if code:=positionals_only("agent",args[:2]);code!=0 {return code}
     index:=-1
     for known,i in AGENT_NAMES {if name==known {index=i;break}}
     if index<0 && !(name=="all"&&operation=="updates") && !(name=="bun"&&operation=="runtime") {fmt.eprintln("Unknown agent");return 2}
@@ -136,7 +137,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         case "--cancel-file": i+=1;if i>=len(args) {return 2};operation_state.cancel_file=args[i]
         case "--home": i+=1;if i>=len(args) {return 2};home=args[i]
         case "--claude-code": claude_code=true
-        case:return 2
+        case: return argument_unknown("agent",args[i])
         }
     }
     if claude_code && name!="claude" {fmt.eprintln("--claude-code installs only with claude");return 2}

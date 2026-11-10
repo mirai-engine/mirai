@@ -28,7 +28,7 @@ cmd_play_test :: proc(root:string,args:[]string) -> int {
     folder:="."
     names:=make([dynamic]string,context.temp_allocator)
     for arg,i in rest {
-        if strings.has_prefix(arg,"-") {return usage()}
+        if !positional(arg) {return argument_unknown("play test",arg)}
         if i==0 && os.is_file(project.path(arg,project.PROJECT_FILE,allocator=context.temp_allocator)) {folder=arg;continue}
         append(&names,arg)
     }

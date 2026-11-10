@@ -29,6 +29,7 @@ cmd_plugin :: proc(root:string,args:[]string) -> int {
         case "--refresh":
             refresh=true
         case:
+            if !positional(args[i]) {return argument_unknown("plugin",args[i])}
             append(&rest,args[i])
         }
     }

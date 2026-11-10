@@ -56,10 +56,12 @@ cmd_new :: proc(root:string,args:[]string) -> int {
         } else if value,matched,ok=option_value(args,&i,"--template");matched {
             if !ok || value=="" {fmt.eprintln("mirai new: --template needs a name; mirai new --list shows them");return 2}
             template=value
+        } else if !positional(args[i]) {
+            return argument_unknown("new",args[i])
         } else if folder=="" {
             folder=args[i]
         } else {
-            fmt.eprintfln("Usage: mirai %s",NEW_USAGE);return 2
+            return argument_unknown("new",args[i])
         }
     }
     if folder=="" {fmt.eprintfln("Usage: mirai %s",NEW_USAGE);return 2}
@@ -83,13 +85,6 @@ cmd_new :: proc(root:string,args:[]string) -> int {
 cmd_build_project :: proc(root:string,args:[]string) -> int {
     mode,rest,ok:=build_mode_take(args[1:])
     if !ok {fmt.eprintfln("mirai build: --dev and --release do not go together. Usage: mirai %s",BUILD_PROJECT_USAGE);return 2}
-    for i:=0;i<len(rest);i+=1 {
-        if rest[i]=="--out" {i+=1;continue}
-        if strings.has_prefix(rest[i],"--") {
-            fmt.eprintfln("mirai build: %s is not an option: the mode is --dev or --release, and --out is the folder of the game. Usage: mirai %s",rest[i],BUILD_PROJECT_USAGE)
-            return 2
-        }
-    }
     code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server")
     return code!=0?code:shaders_failed?1:0
 }
@@ -100,8 +95,8 @@ cmd_build_engine :: proc(root:string,args:[]string) -> int {
     mode,rest,ok:=build_mode_take(args)
     force:=false
     for arg in rest {
-        if arg=="--force" {force=true;continue}
-        ok=false
+        if arg!="--force" {return argument_unknown("build engine",arg)}
+        force=true
     }
     if !ok {fmt.eprintfln("Usage: mirai %s",BUILD_ENGINE_USAGE);return 2}
     mode=build.engine_mode_resolve(root,mode)
@@ -139,6 +134,8 @@ engine_report :: proc(result:build.Engine_Result,root:string,out:=os.stdout) -> 
 
 // mirai generate [project]: writes the generated packages and says what the attributes have wrong.
 cmd_generate :: proc(root:string,args:[]string) -> int {
+    if code:=positionals_only("generate",args);code!=0 {return code}
+    if len(args)>1 {return argument_unknown("generate",args[1])}
     folder:=len(args)>0?args[0]:"."
     p,error:=project.open(folder,root)
     if error.code!=.None {
@@ -239,12 +236,15 @@ play_arguments :: proc(args:[]string) -> []string {
 // failed and the library was built with the ones it had.
 build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode=.Keep,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     folder,out:=".",""
+    named:=false
     for i:=0;i<len(args);i+=1 {
         if value,matched,ok:=option_value(args,&i,"--out");matched {
             if !ok || value=="" || target!=.Game {fmt.eprintfln("Usage: mirai %s",BUILD_PROJECT_USAGE);return 2,"",false}
             out=value
+        } else if !positional(args[i]) || named {
+            return argument_unknown("build",args[i]),"",false
         } else {
-            folder=args[i]
+            folder,named=args[i],true
         }
     }
     // The plugins from git at the commits the project names: a fresh clone has none.

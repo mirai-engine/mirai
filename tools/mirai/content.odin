@@ -2,7 +2,6 @@ package main
 
 import "core:fmt"
 import "core:os"
-import "core:strings"
 import "mirai:project"
 
 CONTENT_USAGE :: "content [project] [-- arguments of the tool]"
@@ -35,10 +34,8 @@ cmd_content :: proc(root:string,args:[]string) -> int {
     for arg,i in args {
         if arg=="--" {given,arguments=args[:i],args[i+1:];break}
     }
-    if len(given)>1 || len(given)==1 && strings.has_prefix(given[0],"-") {
-        fmt.eprintfln("Usage: mirai %s",CONTENT_USAGE)
-        return 2
-    }
+    if code:=positionals_only("content",given);code!=0 {return code}
+    if len(given)>1 {return argument_unknown("content",given[1])}
     folder:=len(given)==1?given[0]:"."
     owner:=project_of(folder)
     if owner=="" {

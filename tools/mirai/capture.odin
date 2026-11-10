@@ -89,7 +89,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         case "--dev":  mode=.Dev
         case "--release": mode=.Release
         case:
-            if strings.has_prefix(args[i],"-") || folder!="." {return usage()}
+            if !positional(args[i]) || folder!="." {return argument_unknown("capture",args[i])}
             folder=args[i]
         }
         if !ok {return usage()}
