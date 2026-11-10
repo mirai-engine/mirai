@@ -57,9 +57,13 @@ bench_options_take_the_defaults_and_say_what_is_wrong :: proc(t:^testing.T) {
     testing.expect_value(t,o.warmup,0)
     testing.expect_value(t,o.out,"bin/x")
 
+    release,_:=bench_options({"--release"})
+    dev,_:=bench_options({"--release","--dev"})
+    testing.expect(t,!o.release && release.release && !dev.release,"both builds are at --dev unless --release says otherwise")
+
     wrong:=[?][]string{
         {"demo","other"},{"--pairs","1"},{"--frames","10"},{"--pairs","x"},{"--camera","1,2,3"},
-        {"--camera","0,0,0,1,1,1,200"},{"--size","10x10"},{"--dev"},{"--base"},
+        {"--camera","0,0,0,1,1,1,200"},{"--size","10x10"},{"--fast"},{"--base"},
     }
     for args in wrong {
         _,error=bench_options(args)
@@ -170,8 +174,11 @@ bench_conditions_warn_when_the_builds_were_measured_apart :: proc(t:^testing.T) 
     testing.expect_value(t,report.device,"GPU")
     joined:=strings.join(report.warnings[:],"\n")
     testing.expect(t,strings.contains(joined,"preset"),joined)
-    testing.expect(t,strings.contains(joined,"base is not built at --release"),joined)
+    testing.expect(t,strings.contains(joined,"optimization"),joined)
     testing.expect(t,strings.contains(joined,"base measured with the validation"),joined)
     testing.expect(t,!strings.contains(joined,"entities"),joined)
-    testing.expect(t,!strings.contains(joined,"head is not"),joined)
+    two_dev:Bench_Report
+    two_dev.runs={{name="head"},{name="base"}}
+    bench_conditions(&two_dev,{parse(`{"optimization":"Minimal","validation":false}`),parse(`{"optimization":"Minimal","validation":false}`)})
+    testing.expect_value(t,len(two_dev.warnings),0)
 }

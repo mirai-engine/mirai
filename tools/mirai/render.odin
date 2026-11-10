@@ -731,7 +731,7 @@ render_size_parse :: proc(text:string) -> (size:[2]int,ok:bool) {
 }
 
 // What selects the mode of a build on the command line.
-@(private="file")
+@(private)
 render_mode_flag :: proc(release:bool) -> string {return "--release" if release else "--dev"}
 
 // The editor a checkout built in that mode: --release also where builds

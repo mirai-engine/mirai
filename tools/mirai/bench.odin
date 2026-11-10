@@ -15,10 +15,10 @@ import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/subprocess"
 
-BENCH_USAGE :: "bench compare [project] [--base main|<ref>|<checkout>] [--scene S] [--camera x,y,z,tx,ty,tz[,fov]] [--size WxH] [--pairs N] [--frames N] [--warmup N] [--out folder]"
+BENCH_USAGE :: "bench compare [project] [--base main|<ref>|<checkout>] [--scene S] [--camera x,y,z,tx,ty,tz[,fov]] [--size WxH] [--pairs N] [--frames N] [--warmup N] [--dev|--release] [--out folder]"
 
 // mirai bench compare: the cost of the frames of a project in this checkout
-// against --base, both built --release and measured alone among the checkouts
+// against --base, both built alike (--dev unless --release) and measured alone among the checkouts
 // in headless editors, which pace nothing and validate nothing. The two
 // editors stay open and take turns, head, base, base, head..., so that what
 // drifts while they measure (clocks, heat, the rest of the machine) falls on
@@ -41,6 +41,7 @@ Bench_Options :: struct {
     camera:[]f64, // position and target, and the vertical fov in degrees when there is a seventh
     size:[2]int,
     pairs,frames,warmup:int,
+    release:bool, // both builds at --release; --dev otherwise, as a render check
 }
 
 Bench_Section :: enum u8 {Frame,Parts,Passes,Zones}
@@ -92,6 +93,7 @@ Bench_Capture :: struct {
 
 Bench_Report :: struct {
     project,date,device:string,
+    release:bool,
     runs:[2]Bench_Build, // head and base
     scene:string,
     camera:[]f64,
@@ -119,6 +121,7 @@ bench_options :: proc(args:[]string) -> (o:Bench_Options,error:string) {
             o.folder,folder_given=option,true
             continue
         }
+        if option=="--release" || option=="--dev" {o.release=option=="--release";continue}
         switch option {
         case "--base","--scene","--out","--camera","--size","--pairs","--frames","--warmup":
         case: return o,fmt.tprintf("there is no option %s",option)
@@ -203,21 +206,22 @@ bench_compare :: proc(root:string,args:[]string) -> int {
     })
     defer workspace.lock_release(&lock)
 
-    report:=Bench_Report{project=relative,date=render_stamp(false),scene=o.scene,camera=o.camera,size=o.size,pairs=o.pairs,frames=o.frames,warmup=o.warmup}
+    mode:=Build_Mode.Release if o.release else Build_Mode.Dev
+    report:=Bench_Report{release=o.release,project=relative,date=render_stamp(false),scene=o.scene,camera=o.camera,size=o.size,pairs=o.pairs,frames=o.frames,warmup=o.warmup}
     head:=Bench_Build{name="head",checkout=root,project=folder}
-    if code,_,_:=build_project(root,.Editor,{folder},.Release);code!=0 {return code}
-    head.editor=build.engine_paths(root,.Release).editor_program
+    if code,_,_:=build_project(root,.Editor,{folder},mode);code!=0 {return code}
+    head.editor=build.engine_paths(root,mode).editor_program
     base:Bench_Build
     if os.is_dir(o.base) {
         base={name="base",checkout=project.path_absolute(o.base)}
         base.project=join(base.checkout,relative)
-        base.editor=build.engine_paths(base.checkout,.Release).editor_program
+        base.editor=build.engine_paths(base.checkout,mode).editor_program
         if !os.is_file(base.editor) {
-            fmt.eprintfln("mirai bench: %s has no editor built at --release; build it there (mirai build editor %s --release)",base.checkout,relative)
+            fmt.eprintfln("mirai bench: %s has no editor built at %s; build it there (mirai build editor %s %s)",base.checkout,render_mode_flag(o.release),relative,render_mode_flag(o.release))
             return 1
         }
     } else {
-        target,ok,same:=render_base_prepare(root,o.base,relative)
+        target,ok,same:=render_base_prepare(root,o.base,relative,o.release)
         if !ok {return 1}
         if same {fmt.eprintfln("mirai bench: this checkout has the sources of %s: there is nothing to compare",o.base);return 1}
         base={name="base",checkout=target.checkout,project=target.project,editor=target.editor}
@@ -319,7 +323,8 @@ bench_capture :: proc(e:^Headless_Editor,o:Bench_Options,label:string) -> (text:
 
 // What tells the two runs apart besides the code: the conditions of their
 // first captures but the entities, which the code may change, and the
-// threads; a build that is not at Speed or that validates.
+// threads; a build that validates. Two builds of different modes differ in
+// their optimization, which is one of the conditions.
 bench_conditions :: proc(report:^Bench_Report,conditions:[2]json.Value) {
     head,_:=conditions[0].(json.Object)
     base,_:=conditions[1].(json.Object)
@@ -336,9 +341,6 @@ bench_conditions :: proc(report:^Bench_Report,conditions:[2]json.Value) {
     }
     for run,i in ([2]json.Object{head,base}) {
         name:=report.runs[i].name
-        if optimization,_:=run["optimization"].(json.String);optimization!="" && optimization!="Speed" && optimization!="Aggressive" {
-            append(&report.warnings,fmt.aprintf("%s is not built at --release (%s): the times are not those of a release",name,optimization))
-        }
         if validation,_:=run["validation"].(json.Boolean);validation {append(&report.warnings,fmt.aprintf("%s measured with the validation of the graphics API: the times are inflated",name))}
     }
 }
@@ -483,7 +485,7 @@ bench_markdown :: proc(r:Bench_Report) -> string {
         camera=fmt.tprintf("camera `%s`",strings.join(numbers,",",context.temp_allocator))
     }
     device:=r.device!=""?r.device:"an unnamed GPU"
-    bench_wrap(&b,fmt.tprintf("`mirai bench compare` of %s on %s: %d alternating pairs (head, base, base, head…) of %d frames at %dx%d, %s and %s, after %d frames of warmup. Headless editors built at `--release`, without VSync, frame limit or validation. Each cell is the median of the captures ± the median of their distances to it; Δ is the median of the head - base differences of each pair, and the last column, the smallest and the largest: if they cross 0, the pairs do not agree on the sign.",r.date,device,r.pairs,r.frames,r.size.x,r.size.y,scene,camera,r.warmup),BENCH_LINE)
+    bench_wrap(&b,fmt.tprintf("`mirai bench compare` of %s on %s: %d alternating pairs (head, base, base, head…) of %d frames at %dx%d, %s and %s, after %d frames of warmup. Headless editors built at `%s`, without VSync, frame limit or validation. Each cell is the median of the captures ± the median of their distances to it; Δ is the median of the head - base differences of each pair, and the last column, the smallest and the largest: if they cross 0, the pairs do not agree on the sign.",r.date,device,r.pairs,r.frames,r.size.x,r.size.y,scene,camera,r.warmup,render_mode_flag(r.release)),BENCH_LINE)
     titles:=BENCH_TITLES
     for section in Bench_Section {
         first:=true
