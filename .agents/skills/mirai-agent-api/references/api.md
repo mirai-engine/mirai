@@ -430,5 +430,5 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - During Play or Simulate, scene edits, history, saving, prefabs and asset authoring **work on the
   document and the assets**: the game runs on its copy and sees an asset that changes when it is
   read again, as with any write on disk. What opens a view over the viewport (a section, a material
-  document) or simulates on the document (`placement.drop`) waits for Edit; `simulation.apply`
+  document) or simulates on the document (`physics.settle`) waits for Edit; `simulation.apply`
   commits transforms into the document with one undo ([methods](methods.md#simulation)).

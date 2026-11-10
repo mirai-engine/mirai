@@ -65,7 +65,7 @@ difference with the catalog, it rules.
   [editor and viewport](references/methods.md#editor-and-viewport),
   [collision](references/methods.md#collision), [cinematics](references/methods.md#cinematics),
   [ragdoll](references/methods.md#ragdoll), [interfaces](references/methods.md#interfaces),
-  [painting and placement](references/methods.md#painting-and-placement),
+  [painting and shapes](references/methods.md#painting-and-shapes),
   [profiling](references/methods.md#profiling), [history](references/methods.md#history),
   [scene](references/methods.md#scene), [spatial queries](references/methods.md#spatial-queries),
   [editor documents](references/methods.md#editor-documents), [Play](references/methods.md#play),
