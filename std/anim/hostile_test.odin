@@ -373,68 +373,12 @@ hostile_huge_spans_through_the_root_motion :: proc(t:^testing.T) {
 }
 
 @(test)
-hostile_weights_through_the_pose :: proc(t:^testing.T) {
-    memory:base.Hostile_Memory
-    context.allocator=base.hostile_memory_begin(&memory)
-    defer {
-        leaked,bad_frees:=base.hostile_memory_end(&memory)
-        testing.expectf(t,leaked==0 && bad_frees==0,"%d allocations were left and %d frees were of nothing",leaked,bad_frees)
-    }
-    h:=base.Hostile{10}
-    for _ in 0..<HOSTILE_ROUNDS {
-        pose:Pose
-        capacity:=hostile_size(&h)
-        made:=pose_init(&pose,capacity)
-        testing.expect(t,made==(capacity>0 && capacity<=61) && (made || len(pose.entries)==0),"The pose takes the capacities it can hold and has nothing on the others")
-        if made {
-            lib:Library
-            hostile_library(&h,&lib)
-            for _ in 0..<30 {
-                target:=u64(base.hostile_int(&h,4))
-                switch base.hostile_int(&h,8) {
-                case 0,1: _=pose_add(&pose,target,hostile_property(&h),u8(base.hostile_int(&h,3)),hostile_vec4(&h),base.hostile_f32(&h))
-                case 2: _=pose_add_additive(&pose,target,hostile_property(&h),u8(base.hostile_int(&h,3)),hostile_vec4(&h),base.hostile_f32(&h))
-                case 3:
-                    p:=player_make(Clip(base.hostile_int(&h,lib.clip_count+2)),1,base.hostile_f32(&h))
-                    p.time=hostile_time(&h)
-                    pose_blend(&pose,&lib,p,base.hostile_f32(&h))
-                case 4:
-                    p:=player_make(Clip(base.hostile_int(&h,lib.clip_count+2)),1,base.hostile_f32(&h))
-                    p.time=hostile_time(&h)
-                    pose_blend_additive(&pose,&lib,p,hostile_time(&h),base.hostile_f32(&h))
-                case 5:
-                    property,slot:=hostile_property(&h),u8(base.hostile_int(&h,3))
-                    _,_,found:=pose_find(&pose,target,property,slot)
-                    held:=false
-                    for entry in pose.entries[:pose.count] {held||=entry.target==target && entry.property==property && entry.slot==slot}
-                    testing.expect(t,found==held,"The pose finds exactly the entries it holds")
-                    _,_,_=pose_position(&pose,target);_,_,_=pose_scale(&pose,target);_,_,_=pose_rotation(&pose,target);_,_,_=pose_float(&pose,target,u8(base.hostile_int(&h,3)))
-                case 6: for entry in pose.entries[:pose.count] {_=pose_entry_value(entry)}
-                case 7: if base.hostile_int(&h,8)==0 {pose_clear(&pose)}
-                }
-                if !testing.expect(t,pose.count>=0 && pose.count<=capacity,"The pose holds more entries than its capacity") {break}
-            }
-            library_destroy(&lib)
-            pose_destroy(&pose)
-        }
-        pose_destroy(&pose)
-        zero:Pose
-        _,_,found:=pose_find(&zero,1,.Float)
-        testing.expect(t,!pose_add(&zero,1,.Float,0,{},1) && !pose_add_additive(&zero,1,.Float,0,{},1) && !found,"A zeroed pose holds nothing")
-        pose_clear(&zero)
-        pose_destroy(&zero)
-    }
-}
-
-@(test)
 hostile_fades_through_the_fader :: proc(t:^testing.T) {
     h:=base.Hostile{11}
     events:[8]Event
     for _ in 0..<HOSTILE_ROUNDS {
         lib:Library
         if !hostile_library(&h,&lib) {continue}
-        pose:Pose
-        if !pose_init(&pose,16) {library_destroy(&lib);continue}
         fader:Fader
         for _ in 0..<20 {
             switch base.hostile_int(&h,5) {
@@ -443,7 +387,7 @@ hostile_fades_through_the_fader :: proc(t:^testing.T) {
                 room:=events[:base.hostile_int(&h,9)]
                 written,dropped:=fader_advance(&lib,&fader,hostile_time(&h),room)
                 testing.expect(t,written>=0 && written<=len(room) && dropped>=0,"A fader writes more events than fit")
-            case 4: pose_clear(&pose);fader_blend(&pose,&lib,fader)
+            case 4:
                 bones:[4]Bone_Blend;track_bones,references:[12]i32
                 for &bone in track_bones {bone=i32(base.hostile_int(&h,8))-2}
                 bones_fader_blend(bones[:base.hostile_int(&h,5)],track_bones[:base.hostile_int(&h,13)],&lib,fader)
@@ -459,7 +403,6 @@ hostile_fades_through_the_fader :: proc(t:^testing.T) {
                 testing.expect(t,!numbers(o.duration,o.elapsed,o.weight) || !hostile_ease_bounded(o.ease) || !(o.weight>=0 && o.weight<=1) || (weight>=0 && weight<=1),"The weight of a clip that fades out left 0..1")
             }
         }
-        pose_destroy(&pose)
         library_destroy(&lib)
     }
 }
@@ -492,9 +435,6 @@ hostile_skeletons_and_solvers_reject_invalid_inputs :: proc(t:^testing.T) {
         testing.expect(t,!applied || !(outside(chain[0]) || outside(chain[1]) || outside(chain[2])),"A solved chain with a bone out of range was applied")
         masked:=base.hostile_int(&h,7)-2
         testing.expect(t,!outside(masked) || !pose_mask_branch(skeleton,masked,base.hostile_f32(&h),mask[:]),"A mask from a bone out of range was written")
-        testing.expect(t,!pose_layer(rest[:],rest[:2],mask[:],base.hostile_f32(&h),out[:]) && !pose_additive(rest[:],rest[:],rest[:],mask[:1+base.hostile_int(&h,2)],base.hostile_f32(&h),out[:]),"Poses of other lengths were layered")
-        _=pose_layer(rest[:],rest[:],mask[:],base.hostile_f32(&h),out[:])
-        _=pose_additive(rest[:],rest[:],rest[:],mask[:],base.hostile_f32(&h),out[:])
         solved,reaches:=two_bone_ik(rest[0],rest[1],rest[2],hostile_vec4(&h).xyz,hostile_vec4(&h).xyz,base.hostile_f32(&h))
         for joint in ([3]math.Transform{solved.root,solved.joint,solved.end}) {
             testing.expect(t,!reaches || (numbers(joint.position.x,joint.position.y,joint.position.z) && numbers(abs(joint.rotation))),"A solved chain is not of numbers")
