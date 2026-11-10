@@ -23,8 +23,6 @@ KIND_SKELETON :: Fourcc(u32('S')|u32('K')<<8|u32('E')<<16|u32('L')<<24)
 KIND_SOUND :: Fourcc(u32('S')|u32('N')<<8|u32('D')<<16|u32(' ')<<24)
 KIND_SOUND_SET :: Fourcc(u32('S')|u32('S')<<8|u32('E')<<16|u32('T')<<24)
 KIND_UI :: Fourcc(u32('U')|u32('I')<<8|u32(' ')<<16|u32(' ')<<24)
-KIND_FRACTURE :: Fourcc(u32('F')|u32('R')<<8|u32('A')<<16|u32('C')<<24)
-KIND_PHYSICS_CACHE :: Fourcc(u32('P')|u32('C')<<8|u32('A')<<16|u32('C')<<24)
 KIND_FONT :: Fourcc(u32('F')|u32('O')<<8|u32('N')<<16|u32('T')<<24)
 KIND_STRINGS :: Fourcc(u32('S')|u32('T')<<8|u32('R')<<16|u32('G')<<24)
 KIND_PROMPTS :: Fourcc(u32('P')|u32('R')<<8|u32('M')<<16|u32('T')<<24)
@@ -34,7 +32,7 @@ Kind_Info :: struct {
     kind:Fourcc,
     extension:string,
     name:string,
-    version:u16, // the kind_version this build writes and reads (kind_check); 0 for a kind whose plugin keeps it
+    version:u16, // the kind_version this build writes and reads (kind_check)
     presentation:bool, // only shown or heard: a dedicated server, which has neither renderer nor mixer, ships none
     merged:bool,       // a document of rows that are edited: git merges it row by row and diffs its values (mirai asset merge, dump); false: bulk an import, a bake or a recording makes, which git keeps whole
 }
@@ -50,8 +48,6 @@ KINDS :: [?]Kind_Info{
     {KIND_SOUND,".sound","sound",SOUND_VERSION,true,false},
     {KIND_SOUND_SET,".sound_set","sound set",SOUND_SET_VERSION,true,true},
     {KIND_UI,".ui","ui",UI_VERSION,true,true},
-    {KIND_FRACTURE,".fracture","fracture",FRACTURE_VERSION,false,false},
-    {KIND_PHYSICS_CACHE,".physics_cache","physics cache",0,false,false},
     {KIND_FONT,".font","font",FONT_VERSION,true,false},
     {KIND_STRINGS,".strings","strings",STRINGS_VERSION,false,true},
     {KIND_PROMPTS,".prompts","prompts",PROMPTS_VERSION,true,true},
@@ -219,7 +215,7 @@ text_set :: proc(field:[]u8,text:string) {
     copy(field,text[:count])
 }
 
-@(private)
+// Whether every value is a number: neither NaN nor infinite.
 finite :: proc "contextless" (values:..f32) -> bool {
     for value in values {
         if value-value!=0 {return false}

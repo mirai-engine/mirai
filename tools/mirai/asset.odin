@@ -377,8 +377,6 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
         if _,error:=asset.sound_view(a,types);error!=.None {return "sound: inconsistent channels, sample rate, lossless data or file"}
     case asset.KIND_UI:
         if !asset.ui_check(a,types) {return "interface: nodes out of preorder or without a box, or a style, image, animation, track or key that does not exist"}
-    case asset.KIND_FRACTURE:
-        if _,error:=asset.fracture_view(a,types);error!=.None {return "fracture: invalid pieces, geometry, connections, hierarchy or cluster hulls"}
     case asset.KIND_FONT:
         if _,error:=asset.font_view(a,types);error!=.None {return "font: the file is not a TrueType or OpenType font with the outlines it declares"}
     case asset.KIND_STRINGS:

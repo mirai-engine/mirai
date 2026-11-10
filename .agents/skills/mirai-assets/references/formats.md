@@ -162,8 +162,8 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
   ([records](kinds.md#records)).
 - **`.particle`** (`PART`, of the [`vfx`](../../mirai-world/references/vfx.md#format) plugin):
   `particle` (`Particle_Info`), `parameters` (`Particle_Parameter`), `hidden` (`Particle_Field`).
-- **`.fracture`** (`FRAC`): `fracture` (`Fracture_Info`), `pieces`, `connections`, `clusters`,
-  `vertices` (`Vertex`) and `indices` local to each piece.
+- **`.fracture`** (`FRAC`, of the `destruct` plugin): `fracture` (`Fracture_Info`), `pieces`,
+  `connections`, `clusters`, `vertices` (`Vertex`) and `indices` local to each piece.
 - **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and LZ bulk `manual`
   and `overrides`; defined and validated by the
   [foliage](../../mirai-world/references/foliage.md#format) plugin.
