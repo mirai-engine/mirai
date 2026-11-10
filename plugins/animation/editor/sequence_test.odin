@@ -38,7 +38,7 @@ sequence_capture_converts_parent_space_and_is_one_undoable_api_transaction :: pr
         {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Sequence_Test_World,transforms)},
         {name="Keyframe_Path",type=anim.Keyframe_Path,info=type_info_of(anim.Keyframe_Path),offset=offset_of(Sequence_Test_World,sequences)},
     }
-    info:=core.World_Info{tables=tables[:],settle=sequence_test_settle}
+    info:=core.World_Info{tables=tables[:]}
     root,owner,source:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,root,{1});core.add(&w.ids,owner,{2});core.add(&w.ids,source,{3})
     pose:=core.TRANSFORM_IDENTITY;pose.position.x=10;core.add(&w.transforms,root,pose)

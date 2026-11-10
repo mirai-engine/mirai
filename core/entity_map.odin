@@ -72,6 +72,17 @@ entity_map_reserve :: proc(m:^Entity_Map($T),count:int,indices:=0) -> bool {
     return true
 }
 
+// Makes dst hold what src holds, for plain values: a copy of their bytes,
+// which allocates only when dst lacks the room. False without memory.
+entity_map_copy :: proc(dst,src:^Entity_Map($T)) -> bool {
+    if dst==src {return true}
+    if non_zero_resize(&dst.values,len(src.values))!=nil || non_zero_resize(&dst.entities,len(src.entities))!=nil || non_zero_resize(&dst.rows,len(src.rows))!=nil {return false}
+    copy(dst.values[:],src.values[:])
+    copy(dst.entities[:],src.entities[:])
+    copy(dst.rows[:],src.rows[:])
+    return true
+}
+
 // Takes out the value at an index of values: the last one takes its place.
 entity_map_remove_at :: proc(m:^Entity_Map($T),at:int) {
     m.rows[entity_index(m.entities[at])]=0

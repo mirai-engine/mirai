@@ -21,15 +21,6 @@ Shapes_Test_World :: struct {
     shapes:core.Table(shapes.Shape),
 }
 
-@(private)
-shapes_test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Shapes_Test_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.shapes,&w.entities);core.table_settle(&w.brushes,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
 // A scene with the tables a shape entity uses, edited by a session of its own.
 @(private)
 Shapes_Test :: struct {
@@ -62,7 +53,7 @@ shapes_test_open :: proc(f:^Shapes_Test) {
         {name="Shape",type=shapes.Shape,info=type_info_of(shapes.Shape),offset=offset_of(Shapes_Test_World,shapes)},
         {name="Shape_Brush",type=shapes.Shape_Brush,info=type_info_of(shapes.Shape_Brush),offset=offset_of(Shapes_Test_World,brushes)},
     }
-    f.info=core.World_Info{entities=offset_of(Shapes_Test_World,entities),tables=f.tables[:],settle=shapes_test_settle}
+    f.info=core.World_Info{entities=offset_of(Shapes_Test_World,entities),tables=f.tables[:]}
     f.ref=core.world_ref(&f.world,&f.info)
     f.app={allocator=context.allocator}
     f.document={previous=&f.previous}

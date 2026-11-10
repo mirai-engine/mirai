@@ -21,20 +21,10 @@ Ai_Review_Test_World :: struct {
     disabled:core.Table(core.Disabled),
     lamps:core.Table(Ai_Review_Test_Lamp),
     hierarchy:core.Hierarchy,
+    storages:[1]core.Storage_Info, // of its World_Info
 }
 
 Ai_Review_Test_Lamp :: struct {intensity:f32}
-
-@(private="file")
-ai_review_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Ai_Review_Test_World)data
-    core.table_settle(&w.disabled,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_activity(&w.entities,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.lamps,&w.entities)
-    core.entities_settle(&w.entities)
-}
 
 @(private="file")
 ai_review_test_open :: proc(w:^Ai_Review_Test_World,info:^core.World_Info,tables:[]core.Table_Info,edits:^Edits) {
@@ -49,7 +39,8 @@ ai_review_test_open :: proc(w:^Ai_Review_Test_World,info:^core.World_Info,tables
     tables[3]={name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Ai_Review_Test_World,parents)}
     tables[4]={name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Ai_Review_Test_World,disabled)}
     tables[5]={name="Lamp",type=Ai_Review_Test_Lamp,info=type_info_of(Ai_Review_Test_Lamp),offset=offset_of(Ai_Review_Test_World,lamps)}
-    info^={entities=offset_of(Ai_Review_Test_World,entities),tables=tables,settle=ai_review_test_settle}
+    w.storages={{name="Hierarchy",type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Ai_Review_Test_World,hierarchy)}}
+    info^={entities=offset_of(Ai_Review_Test_World,entities),tables=tables,storages=w.storages[:]}
     edits_reset(edits,{data=w,info=info})
 }
 

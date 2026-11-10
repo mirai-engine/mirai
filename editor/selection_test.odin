@@ -20,7 +20,7 @@ copy_and_paste_duplicate_the_copied_roots_as_one_step :: proc(t:^testing.T) {
         {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Simulation_Test_World,ids)},
         {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Simulation_Test_World,transforms)},
     }
-    info:=core.World_Info{entities=offset_of(Simulation_Test_World,entities),tables=tables[:],settle=simulation_test_settle}
+    info:=core.World_Info{entities=offset_of(Simulation_Test_World,entities),tables=tables[:]}
     original:=core.create(&world.entities)
     core.add(&world.ids,original,core.Id{1})
     core.add(&world.transforms,original,core.Transform{{1,0,0},1,{1,1,1}})

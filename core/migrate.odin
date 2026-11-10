@@ -135,7 +135,10 @@ world_migration_keeps_indices :: proc(m:^World_Migration) -> bool {
 place_migrate :: proc(m:^World_Migration,place:Place,data,fresh:rawptr,allocator:runtime.Allocator) {
     context.allocator=allocator
     if place==.World {
-        slice.ptr_swap_non_overlapping(rawptr(uintptr(data)+m.from.entities),rawptr(uintptr(fresh)+m.to.entities),size_of(Entities))
+        from,to:=cast(^Entities)(uintptr(data)+m.from.entities),cast(^Entities)(uintptr(fresh)+m.to.entities)
+        slice.ptr_swap_non_overlapping(from,to,size_of(Entities))
+        // What says which tables wait is by table of each World_Info: it stays with its World.
+        from.pending,to.pending=to.pending,from.pending
     }
     locks_from,locks_to:=lock_names(m.from,place,data),lock_names(m.to,place,fresh)
     for &t,i in m.to.tables {
@@ -204,16 +207,18 @@ Raw_By_World_Entry :: struct {
 #assert(size_of(Raw_By_World_Entry)==size_of(By_World_Entry(u8)))
 
 // The rows of src go to dst; dst keeps what makes it a table of its library
-// (its name, its locks, whether it is base or single) and src takes the
+// (its name, its locks, whether it is base or single, where it says that it waits) and src takes the
 // empty rows dst had.
 @(private="file")
 table_take :: proc(dst,src:^Raw_Table) {
-    name,locks,is_base,single:=dst.name,dst.locks,dst.base,dst.single
-    old_name,old_locks,old_base,old_single:=src.name,src.locks,src.base,src.single
+    name,locks,is_base,single,waits:=dst.name,dst.locks,dst.base,dst.single,dst.waits
+    old_name,old_locks,old_base,old_single,old_waits:=src.name,src.locks,src.base,src.single,src.waits
     // Through memory: a multiple assignment of values over 64 bytes (odin-lang/Odin#7937, ODIN_WORKAROUNDS).
     slice.ptr_swap_non_overlapping(dst,src,size_of(Raw_Table))
-    dst.name,dst.locks,dst.base,dst.single=name,locks,is_base,single
-    src.name,src.locks,src.base,src.single=old_name,old_locks,old_base,old_single
+    dst.name,dst.locks,dst.base,dst.single,dst.waits=name,locks,is_base,single,waits
+    src.name,src.locks,src.base,src.single,src.waits=old_name,old_locks,old_base,old_single,old_waits
+    table_waits(dst,len(dst.pending)>0)
+    table_waits(src,len(src.pending)>0)
 }
 
 // The values of the rows dst took, converted to its type. Those of another

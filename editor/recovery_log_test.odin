@@ -22,7 +22,7 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Prefab_Test_World,parents)},
     }
     storages:=[2]core.Storage_Info{{type=Prefabs,place=.Editor},{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Prefab_Test_World,hierarchy)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],settle=prefab_test_settle,clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
+    info:=core.World_Info{tables=tables[:],storages=storages[:],clear=prefab_test_clear,copy=prefab_test_copy,swap=prefab_test_swap,
         sizes={.World=size_of(Prefab_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Prefab_Test_World),.Shared=1,.Editor=1},
         init={.World=prefab_test_init,.Shared=nil,.Editor=nil},destroy={.World=prefab_test_destroy,.Shared=nil,.Editor=nil}}
     root:=project.path_absolute(fmt.tprintf(".mirai/test-recovery-log-%d",os.get_pid()),context.temp_allocator)

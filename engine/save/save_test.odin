@@ -114,7 +114,7 @@ save_test_init :: proc(t:^testing.T,f:^Save_Test) -> bool {
         {type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Save_Test_World,hierarchy)},
         {type=scene.Scene_Root,info=type_info_of(scene.Scene_Root),offset=offset_of(Save_Test_World,root),keep=true},
     }
-    f.info={entities=offset_of(Save_Test_World,entities),tables=f.tables[:],storages=f.storages[:],settle=save_test_settle,clear=save_test_clear,copy=save_test_copy,swap=save_test_swap}
+    f.info={entities=offset_of(Save_Test_World,entities),tables=f.tables[:],storages=f.storages[:],clear=save_test_clear,copy=save_test_copy,swap=save_test_swap}
     f.info.sizes[.World],f.info.aligns[.World]=size_of(Save_Test_World),align_of(Save_Test_World)
     f.info.init[.World],f.info.destroy[.World]=save_test_world_init,save_test_world_destroy
     f.app={info=&f.info,allocator=context.allocator}

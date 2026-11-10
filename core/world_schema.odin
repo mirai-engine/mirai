@@ -35,6 +35,7 @@ Value_Schema :: struct {
 // them, made by hand, is searched through its lists and has no schema.
 world_info_index :: proc(info:^World_Info,allocator:=context.allocator) {
     info.schema=world_schema_make(info,allocator)
+    info.settles=settle_info(info)
     wanted:=0
     for s in info.storages {if !s.by_world {wanted+=1}}
     tables,tables_error:=make_map_cap(map[typeid]int,len(info.tables),allocator)

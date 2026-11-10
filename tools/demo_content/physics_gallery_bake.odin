@@ -61,7 +61,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) -> base.Asset_Id 
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Physics_Bake,parents)},
         {name="Tint",type=render.Tint,info=type_info_of(render.Tint),offset=offset_of(Physics_Bake,tints)},
     }
-    info:=core.World_Info{entities=offset_of(Physics_Bake,entities),tables=tables[:],settle=physics_bake_settle}
+    info:=core.World_Info{entities=offset_of(Physics_Bake,entities),tables=tables[:]}
     physics:phys.Physics_State;wd:=sim.world_desc_default()
     wd.body_capacity,wd.shape_capacity,wd.contact_capacity,wd.joint_capacity=128,256,1024,1
     wd.hull_capacity=128

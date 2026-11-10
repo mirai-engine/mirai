@@ -173,13 +173,14 @@ NAV_LINK_DEFAULT :: Nav_Link{end={0,0,2},kind=LINK_JUMP,area=AREA_WALKABLE}
 LINK_OWNER_GENERATED :: u64(1)<<63
 
 // The navigation meshes of a world, one per class of the settings.
-@(storage,copy="navigation_copy",free="navigation_free",reset="navigation_free")
+@(storage,copy="navigation_copy",copy_kept="navigation_copy_kept",free="navigation_free",reset="navigation_free")
 Navigation :: struct {
     classes:[NAV_CLASS_CAPACITY]Class_Mesh,
     count:int,
     settings:Navigation_Settings, // those the meshes were made with
     uid:u64,                      // of this copy, for the builds that write to it; 0 until a build looks
     revision:u64,                 // any tile or link of any class changed
+    kept:[3]u64,                  // of a copy: the uid and the revision of the Navigation its meshes were built in, and its own revision when it took them (meshes_of)
     stats:Build_Stats,
     ready:bool,
 }
@@ -270,25 +271,73 @@ mark_remove :: proc(c:^Class_Mesh,key:u64) {
 }
 
 navigation_copy :: proc(dst,src:^Navigation) -> bool {
+    of:=meshes_of(src)
     navigation_free(dst)
     dst^=src^
-    dst.uid=0
+    dst.uid,dst.kept=0,of[0]!=0?{of[0],of[1],src.revision}:{}
     for &c in dst.classes {c={}}
     for i in 0..<src.count {
         from,to:=&src.classes[i],&dst.classes[i]
-        to.class,to.filter,to.config,to.volume_config=from.class,from.filter,from.config,from.volume_config
-        if !ai.nav_mesh_copy(&to.mesh,&from.mesh) || !ai.nav_volume_copy(&to.volume,&from.volume) || !ai.nav_coarse_copy(&to.coarse,&from.coarse) {navigation_free(dst);return false}
-        if len(from.marks.keys)>0 {
-            if !base.hash_map_init(&to.marks,from.marks.capacity) {navigation_free(dst);return false}
-            it:=base.hash_map_iterator(&from.marks)
-            for key,mark in base.hash_map_iterate(&it) {
-                copied:=mark^
-                copied.building=false
-                copied.dirty|=mark.building
-                base.hash_map_set(&to.marks,key,copied)
-                mark_tally(to,copied,1)
-            }
+        if !ai.nav_mesh_copy(&to.mesh,&from.mesh) || !ai.nav_volume_copy(&to.volume,&from.volume) || !ai.nav_coarse_copy(&to.coarse,&from.coarse) || !class_copy(to,from) {
+            navigation_free(dst)
+            return false
         }
+    }
+    return true
+}
+
+// Whose meshes a Navigation holds: the uid and the revision of the one they
+// were built in. Every change of a mesh, a volume or a coarse graph moves the
+// revision, and a Navigation gets from the builds that first look at it a uid
+// no other one of its world had, so no two different sets of meshes share
+// the pair. A copy holds those of what it was copied from until its own
+// revision moves. {0,0}: of none yet, as before any build looked at it.
+@(private)
+meshes_of :: proc "contextless" (n:^Navigation) -> [2]u64 {
+    if n.kept[0]!=0 && n.kept[2]==n.revision {return {n.kept[0],n.kept[1]}}
+    return n.uid!=0?{n.uid,n.revision}:{}
+}
+
+// The copy a history keeps. The meshes, the volumes and the coarse graphs
+// are copied again only when dst holds those of another Navigation or of
+// another revision (meshes_of): also after the world went back to a copy and
+// built nothing since. What the looks change without a build (the marks of
+// the tiles, the settings, the counts) is copied every time.
+navigation_copy_kept :: proc(dst,src:^Navigation) -> bool {
+    if dst==src {return true}
+    of:=meshes_of(src)
+    if of[0]==0 || meshes_of(dst)!=of || dst.count!=src.count {return navigation_copy(dst,src)}
+    dst.settings,dst.stats,dst.ready,dst.revision=src.settings,src.stats,src.ready,src.revision
+    dst.kept[2]=src.revision
+    for i in 0..<src.count {
+        if !class_copy(&dst.classes[i],&src.classes[i]) {
+            navigation_free(dst)
+            return false
+        }
+    }
+    return true
+}
+
+// What a class is made for and the marks of its tiles, as a copy has them:
+// no build of the copy is on its way, so what was building waits to build.
+@(private)
+class_copy :: proc(to,from:^Class_Mesh) -> bool {
+    to.class,to.filter,to.config,to.volume_config=from.class,from.filter,from.config,from.volume_config
+    to.pending,to.ready,to.loading,to.linking=0,0,0,0
+    if len(to.marks.keys)!=len(from.marks.keys) {
+        base.hash_map_destroy(&to.marks)
+        if len(from.marks.keys)==0 {return true}
+        if !base.hash_map_init(&to.marks,from.marks.capacity) {return false}
+    }
+    if len(from.marks.keys)==0 {return true}
+    copy(to.marks.keys,from.marks.keys)
+    copy(to.marks.values,from.marks.values)
+    to.marks.has_zero,to.marks.usage=from.marks.has_zero,from.marks.usage
+    it:=base.hash_map_iterator(&to.marks)
+    for _,mark in base.hash_map_iterate(&it) {
+        mark.dirty|=mark.building
+        mark.building=false
+        mark_tally(to,mark^,1)
     }
     return true
 }

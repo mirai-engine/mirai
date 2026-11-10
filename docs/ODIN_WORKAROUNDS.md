@@ -26,6 +26,16 @@ Defects of Odin `dev-2026-11` (`nightly:e28f5d1`).
     characters.
   - To test: the reproducer builds, and `mirai build editor` of a project with `fog` under a root
     of 200 characters gets past the link.
+- **`delete_key` on a `map[typeid]T` never finishes compiling at `-o:speed`** (no issue;
+  publishing it requires the user's confirmation). Seen with `nightly:9a69916`.
+  - Defect: `odin build` of a package that calls `delete_key(&m, id)` with `m: map[typeid]u32`
+    stops after about a second of CPU, with every thread waiting, at `-o:speed` and `-o:size`;
+    `-o:none` and `-o:minimal` build it. Reproducer: a `main` that puts `typeid_of(int)` in such
+    a map and takes it out with `delete_key`.
+  - Workaround: `schema_push` (`std/serial/schema.odin`) appends the type before it puts its
+    `typeid` in `Schema.lookup` and pops it when the map has no room, so it never takes a key
+    back out. No other map by `typeid` loses keys.
+  - To test: the reproducer builds with `-o:speed`.
 - **`for in` over an array-backed `bit_set`** (odin-lang/Odin#8047).
   - Defect: with an enum of more than 128 values the `bit_set` needs a backing array, and
     `for e in S` over a `bit_set[E; [4]u64]` constant makes the backend fail

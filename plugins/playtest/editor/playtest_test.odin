@@ -194,7 +194,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
         {name="View",type=core.View,info=type_info_of(core.View),offset=offset_of(Probe_World,view)},
     }
     f.names={{type=input.Action,value=i64(PROBE_MOVE),name="move"},{type=input.Action,value=i64(PROBE_JUMP),name="jump"}}
-    f.info={tables=f.tables[:],storages=f.storages[:],names=f.names[:],copy=probe_copy,swap=probe_swap,settle=probe_settle,entities=offset_of(Probe_World,entities)}
+    f.info={tables=f.tables[:],storages=f.storages[:],names=f.names[:],copy=probe_copy,swap=probe_swap,entities=offset_of(Probe_World,entities)}
     f.info.sizes[.World],f.info.aligns[.World]=size_of(Probe_World),align_of(Probe_World)
     f.info.init[.World],f.info.destroy[.World]=probe_init,probe_free
     f.info.loops[.Game][.Fixed]=probe_tick

@@ -14,16 +14,6 @@ Disable_Test_World :: struct {
     points:core.Table(erender.Point_Light),
 }
 
-@(private="file")
-disable_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Disable_Test_World)data
-    core.table_settle(&w.disabled,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    core.entities_activity(&w.entities,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.points,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
 // Turning a component off and disabling an entity are steps of undo, and the
 // values stay.
 @(test)
@@ -40,7 +30,8 @@ turning_off_and_disabling_are_undone_and_keep_the_values :: proc(t:^testing.T) {
         {name="Disabled",type=core.Disabled,info=type_info_of(core.Disabled),offset=offset_of(Disable_Test_World,disabled)},
         {name="Point_Light",type=erender.Point_Light,info=type_info_of(erender.Point_Light),offset=offset_of(Disable_Test_World,points)},
     }
-    info:=core.World_Info{entities=offset_of(Disable_Test_World,entities),tables=tables[:],settle=disable_test_settle}
+    storages:=[1]core.Storage_Info{{name="Hierarchy",type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Disable_Test_World,hierarchy)}}
+    info:=core.World_Info{entities=offset_of(Disable_Test_World,entities),tables=tables[:],storages=storages[:]}
     ref:=core.world_ref(&w,&info)
     lamp,bulb:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,lamp,core.Id{1});core.add(&w.ids,bulb,core.Id{2})

@@ -116,6 +116,7 @@ World_Info :: struct {
     sizes:[Place]int,
     aligns:[Place]int,
     entities:uintptr, // offset of the Entities in World
+    revisions:uintptr, // offset in World of a u64 for each storage, as storages lists them: it grows when a function receives the storage to write, when code outside the loop asks for it (world_storage) and when the World is copied over, swapped or cleared. 0: a World made by hand, which has none and whose storages a copy always takes
     tables:[]Table_Info,
     storages:[]Storage_Info,
     messages:[]Message_Info,
@@ -128,9 +129,9 @@ World_Info :: struct {
     init:[Place]proc(data:rawptr,allocator:runtime.Allocator) -> bool,
     destroy:[Place]proc(data:rawptr),
     copy:proc(dst,src:rawptr) -> bool, // failure leaves a destructible, partial destination
-    copy_changed:proc(dst,src:rawptr,marks:[]Copy_Mark) -> bool, // copy that copies again only the tables that changed (table_copy_changed), for a dst a history keeps as a copy of src, with a mark per table, by its index in tables, that it updates; dst is only copied back with copy, as the storages that say copy_kept hold only what that needs
+    copy_changed:proc(dst,src:rawptr,marks:[]Copy_Mark) -> bool, // copy that copies again only the tables that changed (table_copy_changed) and the storages whose revision moved, for a dst a history keeps as a copy of src, with the copy_marks_count marks it updates: one per table, by its index in tables, then one per storage; dst is only copied back with copy, as the storages that say copy_kept hold only what that needs
     swap:proc(a,b:rawptr), // publishes a prepared World without allocating; local storages stay
-    settle:proc(world,shared,editor:rawptr), // applies what the functions and the editor added and removed
+    settles:Settle_Info, // what settle looks for in tables and storages
     clear:proc(world:rawptr) -> bool, // every entity and row of a World, and the storages derived from them back to their start; settings and those that say keep stay. False without memory: the World as it was
     attach:proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool, // the values of the by_world storages of a World with its id; false without memory
     detach:proc(world,shared:rawptr), // frees them, after the release phase of the World
@@ -152,6 +153,65 @@ copy_marks_follow :: proc(w:World_Ref,restored,marks:[]Copy_Mark) {
         if info.place!=w.place || i>=len(marks) || i>=len(restored) || !restored[i].valid || marks[i]!=restored[i] {continue}
         t:=world_table_at(w,&info)
         marks[i]={t.version,t.layout,true}
+    }
+    first:=len(w.info.tables)
+    for revision,i in world_revisions(w) {
+        at:=first+i
+        if at>=len(marks) || at>=len(restored) || !restored[at].valid || marks[at]!=restored[at] {continue}
+        marks[at]={revision,0,true}
+    }
+}
+
+// The marks a copy of what changed takes: one per table, then one per storage.
+copy_marks_count :: proc "contextless" (info:^World_Info) -> int {return len(info.tables)+len(info.storages)}
+
+// The revisions of the storages of a World, as its World_Info lists them;
+// none in a World made by hand.
+world_revisions :: proc "contextless" (w:World_Ref) -> []u64 {
+    if w.data==nil || w.info.revisions==0 || w.place!=.World {return nil}
+    return ([^]u64)(uintptr(w.data)+w.info.revisions)[:len(w.info.storages)]
+}
+
+// Whether a storage has to be copied again into the copy a mark is of: its
+// revision is not the one the copy was made at.
+storage_changed :: #force_inline proc "contextless" (mark:^Copy_Mark,revision:u64) -> bool {
+    if mark.valid && mark.version==revision {return false}
+    mark.valid=false
+    return true
+}
+
+// A storage was copied over: the one written is another, and the mark says
+// what the source was.
+storage_copied :: #force_inline proc "contextless" (mark:^Copy_Mark,dst:^u64,revision:u64) {
+    dst^=max(dst^,revision)+1
+    mark^={revision,0,true}
+}
+
+// Every storage of dst was copied from src: none of dst is what it was, nor
+// what a mark of another copy says.
+revisions_copied :: proc "contextless" (dst,src:[]u64) {
+    for &revision,i in dst {revision=max(revision,src[i])+1}
+}
+
+revisions_swapped :: proc "contextless" (a,b:[]u64) {
+    for &revision,i in a {
+        revision=max(revision,b[i])+1
+        b[i]=revision
+    }
+}
+
+// Every storage was written, as when the World is cleared.
+revisions_moved :: proc "contextless" (revisions:[]u64) {
+    for &revision in revisions {revision+=1}
+}
+
+// With -define:MIRAI_CHECK_WRITES=true, a storage a copy of what changed
+// left alone is compared with its copy: one written through a core.Ref, or
+// through a pointer kept from an earlier function, differs without its
+// revision having moved, and a rollback would bring back the older value.
+storage_check :: proc(dst,src:rawptr,info:^runtime.Type_Info,name:string) {
+    if !value_equal(dst,src,info) {
+        fail("the storage %s changed without a function receiving it to write (^%s) or code outside the loop asking for it (core.world_storage): a copy of what changed left it as it was",name,name)
     }
 }
 
@@ -177,7 +237,7 @@ world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,lib
         kept_frame=frame^
         frame^={accumulator=kept_frame.accumulator,dt=time.dt,alpha=1,phase=phase}
     }
-    w.info.settle(w.data,shared,editor)
+    settle(w.info,w.data,editor)
     for index in w.info.order[loop][phase] {
         s:=&w.info.steps[index]
         for library in libraries {
@@ -292,16 +352,25 @@ world_table_at :: proc "contextless" (w:World_Ref,t:^Table_Info) -> ^Raw_Table {
     return cast(^Raw_Table)(uintptr(w.data)+t.offset)
 }
 
+// A storage of a World, to read or to write: its revision moves, so the next
+// copy of what changed takes it again.
 world_storage :: proc(w:World_Ref,type:typeid) -> rawptr {
     if w.info.storages_by_type!=nil {
         at,found:=w.info.storages_by_type[type]
         if !found || w.info.storages[at].place!=w.place {return nil}
-        return rawptr(uintptr(w.data)+w.info.storages[at].offset)
+        return world_storage_at(w,at)
     }
-    for s in w.info.storages {
-        if s.type==type && s.place==w.place && !s.by_world {return rawptr(uintptr(w.data)+s.offset)}
+    for s,at in w.info.storages {
+        if s.type==type && s.place==w.place && !s.by_world {return world_storage_at(w,at)}
     }
     return nil
+}
+
+// The storage at an index of info.storages, of the place of w, as
+// world_storage gives it.
+world_storage_at :: proc "contextless" (w:World_Ref,index:int) -> rawptr {
+    if w.info.revisions!=0 && w.place==.World {([^]u64)(uintptr(w.data)+w.info.revisions)[index]+=1}
+    return rawptr(uintptr(w.data)+w.info.storages[index].offset)
 }
 
 world_storage_of :: proc(w:World_Ref,$T:typeid) -> ^T {return cast(^T)world_storage(w,T)}
@@ -313,7 +382,7 @@ world_table_of :: proc(w:World_Ref,$T:typeid) -> ^Table(T) {
 
 // For code outside the loop: the World of a reference.
 world_settle :: proc(w:World_Ref) {
-    if w.place==.World {w.info.settle(w.data,nil,nil)}
+    if w.place==.World {settle(w.info,w.data,nil)}
 }
 
 // The components an entity has, by table.
@@ -336,9 +405,9 @@ world_destroy_tree :: proc(w:World_Ref,e:Entity) {
 // it replaces (a scene loaded in a job). An Entity they hold named an entity
 // of src, and names none in dst. False without memory.
 world_run_copy :: proc(dst,src:World_Ref) -> bool {
-    for &storage in dst.info.storages {
+    for &storage,index in dst.info.storages {
         if storage.place!=.World || !storage.keep && storage.setting==.None {continue}
-        to,from:=rawptr(uintptr(dst.data)+storage.offset),rawptr(uintptr(src.data)+storage.offset)
+        to,from:=world_storage_at(dst,index),rawptr(uintptr(src.data)+storage.offset)
         value_free(to,storage.info)
         if !value_copy(to,from,storage.info) {return false}
         value_entities_clear(to,storage.info)

@@ -49,7 +49,7 @@ journal_init :: proc(f:^Journal_Fixture,count:int) {
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Journal_World,parents)},
         {name="Lamp",type=Journal_Lamp,info=type_info_of(Journal_Lamp),offset=offset_of(Journal_World,lamps)},
     }
-    f.info={entities=offset_of(Journal_World,entities),tables=f.tables[:],settle=journal_settle}
+    f.info={entities=offset_of(Journal_World,entities),tables=f.tables[:]}
     for i in 0..<count {
         e:=core.create(&w.entities)
         if i%10!=9 {core.add(&w.ids,e,{value=base.Entity_Id(i+1)})}

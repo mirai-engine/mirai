@@ -145,7 +145,7 @@ setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
         {name="Ragdoll",type=rag.Ragdoll,info=type_info_of(rag.Ragdoll),offset=offset_of(Setup_Test_World,configs)},
         {name="Ragdoll_Bone",type=rag.Ragdoll_Bone,info=type_info_of(rag.Ragdoll_Bone),offset=offset_of(Setup_Test_World,bones)},
     }
-    f.info=core.World_Info{entities=offset_of(Setup_Test_World,entities),tables=f.tables[:],settle=setup_test_settle}
+    f.info=core.World_Info{entities=offset_of(Setup_Test_World,entities),tables=f.tables[:]}
     f.document=new(editor.Document)
     f.session=editor.Session{app=&f.app,assets_root=f.root,mode=.Edit,headless=true,info=&f.info,edit_world=&f.world,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=f.document,id_state=977}
     editor.edits_reset(&f.edits,core.world_ref(&f.world,&f.info))

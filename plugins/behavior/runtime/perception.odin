@@ -110,7 +110,7 @@ Perceiving :: struct {
 perception_update :: proc(
     perceivers:core.Read(Perceiver),perceptions:^core.Table(Perception),perceivables:core.Read(Perceivable),
     worlds:core.Read(core.World_Transform),settings:core.Ref(Behavior_Settings),turns:^Perceiving,
-    noises:^Noises,events:^Perception_Events,physics:core.Ref(phys.Physics_State),fars:core.Read(nav.Nav_Far),entities:^core.Entities,time:core.Time,
+    noises:^Noises,events:^Perception_Events,physics:core.Ref(phys.Physics_State),fars:core.Read(nav.Nav_Far),entities:core.Ref(core.Entities),time:core.Time,
 ) {
     core.queue_clear(&events.queue)
     layouts:=[2]u64{core.layout(perceivers),core.layout(perceptions)}
@@ -124,7 +124,7 @@ perception_update :: proc(
     heard:=core.take(&noises.queue)
     if !time.playing || time.dt<=0 {return}
     now:=time.seconds
-    if nav.nav_far_decide(time) {perceive_far(perceivers,perceptions,perceivables,worlds,fars,heard,events,entities,now)}
+    if nav.nav_far_decide(time) {perceive_far(perceivers,perceptions,perceivables,worlds,fars,heard,events,entities.ptr,now)}
     count:=core.count(perceivers)
     if count==0 {return}
     rays:=int(settings.rays) if settings.ptr!=nil else 256
@@ -164,7 +164,7 @@ perception_update :: proc(
         }
         if turn && sighted && rays<=0 && k+1<count {turns.next=u32((row+1)%count)}
         hear(&mine.memory,e,p,pose.position,heard,events,now)
-        if turn {forget(&mine.memory,e,p,events,entities,now)}
+        if turn {forget(&mine.memory,e,p,events,entities.ptr,now)}
     }
 }
 

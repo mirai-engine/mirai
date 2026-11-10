@@ -466,7 +466,7 @@ net_test_info :: proc(follows:=false) -> core.World_Info {
         messages[3]={name="Net_Section",library="multiplayer",type=Net_Section,info=type_info_of(Net_Section),from=.Client,reliable=true}
         messages[4]={name="Net_Gone",library="multiplayer",type=Net_Gone,info=type_info_of(Net_Gone),from=.Server,reliable=true}
     }
-    info:=core.World_Info{sizes={.World=size_of(Net_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Net_Test_World),.Shared=1,.Editor=1},entities=offset_of(Net_Test_World,es),tables=tables,storages=storages,messages=messages,copy=net_test_copy,copy_changed=net_test_copy_changed,swap=net_test_swap,settle=net_test_settle}
+    info:=core.World_Info{sizes={.World=size_of(Net_Test_World),.Shared=0,.Editor=0},aligns={.World=align_of(Net_Test_World),.Shared=1,.Editor=1},entities=offset_of(Net_Test_World,es),tables=tables,storages=storages,messages=messages,copy=net_test_copy,copy_changed=net_test_copy_changed,swap=net_test_swap}
     info.init[.World],info.destroy[.World]=net_test_init,net_test_destroy
     info.loops[.Game][.Fixed]=net_test_fixed
     return info

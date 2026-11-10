@@ -132,7 +132,7 @@ pose_bake_test_init :: proc(f:^Pose_Bake_Test,t:^testing.T,name:string) -> bool 
     steps[3]={name="transforms_propagate",library="core",call=pose_bake_test_propagate}
     order:=make([]i32,4,context.temp_allocator)
     for &index,i in order {index=i32(i)}
-    f.info={tables=tables,storages=storages,steps=steps,settle=pose_bake_test_settle}
+    f.info={tables=tables,storages=storages,steps=steps}
     f.info.order[.Editor][.Fixed]=order
     f.info.sizes[.World],f.info.aligns[.World]=size_of(Pose_Bake_Test_World),align_of(Pose_Bake_Test_World)
     f.info.init[.World]=proc(data:rawptr,allocator:runtime.Allocator) -> bool {world:=(^Pose_Bake_Test_World)(data);world^={};core.entities_init(&world.entities,allocator);return len(world.entities.generation)>0}

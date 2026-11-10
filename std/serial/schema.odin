@@ -313,10 +313,12 @@ schema_fail :: proc(s:^Schema,path:string,info:^runtime.Type_Info) -> (Type_Inde
 @(private)
 schema_push :: proc(s:^Schema,id:typeid,type:Type) -> (Type_Index,bool) {
     index:=Type_Index(len(s.types))
-    s.lookup[id]=index
-    if id in s.lookup {
-        if _,error:=append(&s.types,type);error==nil {return index,true}
-        delete_key(&s.lookup,id)
+    // The type goes in first and comes out when the map has no room for it:
+    // delete_key on a map[typeid] keeps odin -o:speed from ending (ODIN_WORKAROUNDS).
+    if _,error:=append(&s.types,type);error==nil {
+        s.lookup[id]=index
+        if id in s.lookup {return index,true}
+        pop(&s.types)
     }
     schema_type_drop(s,type)
     return TYPE_NONE,false

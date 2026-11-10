@@ -65,7 +65,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
         {name="Clipboard_Test_Lamp",type=Clipboard_Test_Lamp,info=type_info_of(Clipboard_Test_Lamp),offset=offset_of(Clipboard_Test_World,lamps)},
     }
     LAMP :: 3
-    info:=core.World_Info{entities=offset_of(Clipboard_Test_World,entities),tables=tables[:],settle=clipboard_test_settle}
+    info:=core.World_Info{entities=offset_of(Clipboard_Test_World,entities),tables=tables[:]}
     a,b,c:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     for e,i in ([3]core.Entity{a,b,c}) {
         core.add(&world.ids,e,core.Id{base.Entity_Id(i+1)})

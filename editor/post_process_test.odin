@@ -89,7 +89,7 @@ the_fade_of_a_layer_is_edited_under_its_row_as_one_undo_step :: proc(t:^testing.
 		{name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Post_Process_Test_World,parents)},
 		{name="View_Volume",type=erender.View_Volume,info=type_info_of(erender.View_Volume),offset=offset_of(Post_Process_Test_World,volumes)},
 	}
-	info:=core.World_Info{entities=offset_of(Post_Process_Test_World,entities),tables=tables[:],settle=post_process_test_settle}
+	info:=core.World_Info{entities=offset_of(Post_Process_Test_World,entities),tables=tables[:]}
 	e:=core.create(&world.entities)
 	core.add(&world.ids,e,core.Id{1})
 	core.add(&world.transforms,e,core.TRANSFORM_IDENTITY)

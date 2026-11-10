@@ -63,7 +63,7 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_without_pose_
     play:Program_Test_World;core.entities_init(&play.entities);defer program_test_destroy(&play)
     tables:=[3]core.Table_Info{{type=core.Id,info=type_info_of(core.Id),offset=offset_of(Program_Test_World,ids)},{type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Program_Test_World,animations)},{type=anim.Pose_Modifiers,info=type_info_of(anim.Pose_Modifiers),offset=offset_of(Program_Test_World,modifiers)}}
     storages:=[3]core.Storage_Info{{type=anim.Animation_Requests,info=type_info_of(anim.Animation_Requests),offset=offset_of(Program_Test_World,animation_requests)},{type=anim.Modifier_Requests,info=type_info_of(anim.Modifier_Requests),offset=offset_of(Program_Test_World,modifier_requests)},{type=anim.Modifier_Runtime,info=type_info_of(anim.Modifier_Runtime),offset=offset_of(Program_Test_World,modifier_runtime)}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:],settle=program_test_settle}
+    info:=core.World_Info{tables=tables[:],storages=storages[:]}
     first,second:=core.create(&play.entities),core.create(&play.entities)
     core.add(&play.ids,first,{value=17});core.add(&play.ids,second,{value=18})
     core.add(&play.modifiers,first,{profile=pose_id,weight=.8,enabled=true})

@@ -6,39 +6,138 @@ import "core:testing"
 Probe :: struct {value:i32}
 
 @(private="file")
+Probe_Tag :: struct {}
+
+// A World as the generator makes it: its tables say what they have pending.
+@(private="file")
 World_Of_Probes :: struct {
     es:Entities,
     disabled:Table(Disabled),
     parents:Table(Parent),
     names:Table(Name),
     probes:Table(Probe),
+    tags:Table(Probe_Tag),
     hierarchy:Hierarchy,
+    tables:[5]Table_Info,
+    storages:[1]Storage_Info,
+    info:World_Info,
 }
 
 @(private="file")
-probes_init :: proc(w:^World_Of_Probes) {
+probes_init :: proc(w:^World_Of_Probes,linked:=true) {
     entities_init(&w.es)
-    table_init(&w.disabled,"Disabled");table_init(&w.parents,"Parent");table_init(&w.names,"Name");table_init(&w.probes,"Probe")
+    table_init(&w.disabled,"Disabled");table_init(&w.parents,"Parent");table_init(&w.names,"Name");table_init(&w.probes,"Probe");table_init(&w.tags,"Probe_Tag")
     w.disabled.base,w.parents.base,w.names.base=true,true,true
+    w.tables={
+        {name="Disabled",type=Disabled,info=type_info_of(Disabled),offset=offset_of(World_Of_Probes,disabled)},
+        {name="Parent",type=Parent,info=type_info_of(Parent),offset=offset_of(World_Of_Probes,parents)},
+        {name="Name",type=Name,info=type_info_of(Name),offset=offset_of(World_Of_Probes,names)},
+        {name="Probe",type=Probe,info=type_info_of(Probe),offset=offset_of(World_Of_Probes,probes)},
+        {name="Probe_Tag",type=Probe_Tag,info=type_info_of(Probe_Tag),offset=offset_of(World_Of_Probes,tags)},
+    }
+    w.storages={{name="Hierarchy",type=Hierarchy,info=type_info_of(Hierarchy),offset=offset_of(World_Of_Probes,hierarchy)}}
+    w.info={entities=offset_of(World_Of_Probes,es),tables=w.tables[:],storages=w.storages[:]}
+    if !linked {return}
+    entities_tables(&w.es,len(w.tables))
+    table_follow(&w.disabled,&w.es,0);table_follow(&w.parents,&w.es,1);table_follow(&w.names,&w.es,2)
+    table_follow(&w.probes,&w.es,3);table_follow(&w.tags,&w.es,4)
 }
 
 @(private="file")
 probes_destroy :: proc(w:^World_Of_Probes) {
-    table_destroy(&w.disabled);table_destroy(&w.parents);table_destroy(&w.names);table_destroy(&w.probes)
+    table_destroy(&w.disabled);table_destroy(&w.parents);table_destroy(&w.names);table_destroy(&w.probes);table_destroy(&w.tags)
     value_free(&w.hierarchy,type_info_of(Hierarchy))
     entities_destroy(&w.es)
 }
 
-// What the generated settle does.
+// How many tables the settle came to.
 @(private="file")
-probes_settle :: proc(w:^World_Of_Probes) {
-    table_settle(&w.disabled,&w.es)
-    table_settle(&w.parents,&w.es)
-    hierarchy_settle(&w.hierarchy,read(&w.parents),&w.es)
-    entities_activity(&w.es,read(&w.disabled),ref(&w.hierarchy))
-    table_settle(&w.names,&w.es)
-    table_settle(&w.probes,&w.es)
-    entities_settle(&w.es)
+probes_settle :: proc(w:^World_Of_Probes) -> int {return settle(&w.info,w,nil)}
+
+// The settle of a World comes to the tables with something pending and to
+// those that hold an entity destroyed or turned, and to no other.
+@(test)
+the_settle_of_a_world_comes_only_to_the_tables_that_wait :: proc(t:^testing.T) {
+    w:World_Of_Probes
+    probes_init(&w)
+    defer probes_destroy(&w)
+    root,child,other:=create(&w.es),create(&w.es),create(&w.es)
+    add(&w.parents,child,Parent{root,0})
+    for e in ([]Entity{root,child,other}) {add(&w.names,e,name_make("e"))}
+    add(&w.probes,child,Probe{1});add(&w.probes,other,Probe{2});add(&w.tags,other,Probe_Tag{})
+    testing.expect_value(t,probes_settle(&w),4)
+    Case :: struct {
+        what:string,
+        act:proc(w:^World_Of_Probes,root,child,other:Entity),
+        tables:int,
+        check:proc(w:^World_Of_Probes,root,child,other:Entity) -> bool,
+    }
+    cases:=[]Case{
+        {"nothing waits",proc(w:^World_Of_Probes,root,child,other:Entity) {},0,nil},
+        {"a row written in place",proc(w:^World_Of_Probes,root,child,other:Entity) {get(&w.probes,child).value=5},0,nil},
+        {"an add to one table",proc(w:^World_Of_Probes,root,child,other:Entity) {add(&w.probes,root,Probe{3})},1,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return has(&w.probes,root)}},
+        {"a remove by reflection",proc(w:^World_Of_Probes,root,child,other:Entity) {raw_remove(raw(&w.probes),root)},1,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return !has(&w.probes,root)}},
+        {"a component turned off",proc(w:^World_Of_Probes,root,child,other:Entity) {disable(&w.tags,other)},1,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return !has(&w.tags,other)}},
+        {"a component turned on",proc(w:^World_Of_Probes,root,child,other:Entity) {enable(&w.tags,other)},1,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return has(&w.tags,other)}},
+        // Disabled itself, and the one table that holds a row of what turned and is not of its base.
+        {"an entity turned off",proc(w:^World_Of_Probes,root,child,other:Entity) {add(&w.disabled,root,Disabled{})},2,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return !has(&w.probes,child) && has(&w.probes,other) && has(&w.names,child)}},
+        {"an entity turned on",proc(w:^World_Of_Probes,root,child,other:Entity) {remove(&w.disabled,root)},2,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return has(&w.probes,child)}},
+        // Name, Probe and Probe_Tag hold it; Disabled and Parent do not.
+        {"an entity destroyed",proc(w:^World_Of_Probes,root,child,other:Entity) {destroy(&w.es,other)},3,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {
+                return raw_row(raw(&w.names),other)<0 && raw_row(raw(&w.probes),other)<0 && raw_row(raw(&w.tags),other)<0 && raw_count(raw(&w.names))==2
+            }},
+        {"an add to an entity destroyed in the same function",proc(w:^World_Of_Probes,root,child,other:Entity) {
+            e:=create(&w.es)
+            add(&w.tags,e,Probe_Tag{})
+            destroy(&w.es,e)
+        },1,proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return raw_count(raw(&w.tags))==0}},
+    }
+    for c in cases {
+        c.act(&w,root,child,other)
+        versions:=[5]u64{w.disabled.version,w.parents.version,w.names.version,w.probes.version,w.tags.version}
+        testing.expectf(t,probes_settle(&w)==c.tables,"%s: the settle came to other tables than the %d that wait",c.what,c.tables)
+        if c.check!=nil {testing.expectf(t,c.check(&w,root,child,other),"%s: the settle did not apply it",c.what)}
+        if c.tables==0 {testing.expectf(t,versions==[5]u64{w.disabled.version,w.parents.version,w.names.version,w.probes.version,w.tags.version},"%s: a table changed",c.what)}
+        testing.expectf(t,probes_settle(&w)==0,"%s: a table still waits after its settle",c.what)
+    }
+
+    // A World made by hand says nothing: its settle looks at every table, once.
+    plain:World_Of_Probes
+    probes_init(&plain,false)
+    defer probes_destroy(&plain)
+    e:=create(&plain.es)
+    add(&plain.probes,e,Probe{9})
+    testing.expect_value(t,probes_settle(&plain),len(plain.tables))
+    testing.expect(t,has(&plain.probes,e))
+}
+
+// What a swap brings waits in the table it came to.
+@(test)
+tables_swapped_and_copied_keep_saying_what_waits :: proc(t:^testing.T) {
+    a,b:World_Of_Probes
+    probes_init(&a);probes_init(&b)
+    defer probes_destroy(&a);defer probes_destroy(&b)
+    e:=create(&a.es)
+    create(&b.es)
+    add(&a.probes,e,Probe{4})
+    table_swap(&a.probes,&b.probes)
+    testing.expect_value(t,probes_settle(&a),0)
+    testing.expect_value(t,probes_settle(&b),1)
+    testing.expect(t,has(&b.probes,e))
+    // A copy leaves nothing waiting in the destination, whatever the source says.
+    add(&a.tags,e,Probe_Tag{})
+    testing.expect(t,entities_copy(&b.es,&a.es) && table_copy(&b.tags,&a.tags))
+    probes_settle(&b)
+    testing.expect(t,!has(&b.tags,e))
+    testing.expect_value(t,probes_settle(&a),1)
+    testing.expect(t,has(&a.tags,e))
 }
 
 @(test)

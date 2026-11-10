@@ -118,7 +118,7 @@ keyframe_path_progress :: proc(playback:^Keyframe_Path_Playback,entity:core.Enti
 }
 
 @(step="fixed",stage="apply",before="animation_sample")
-keyframe_path_advance :: proc(animations:^core.Table(Keyframe_Path),playback:^Keyframe_Path_Playback,transforms:^core.Table(core.Transform),requests:^Keyframe_Path_Requests,time:core.Time,paces:core.Read(core.Own_Pace),clock:core.Clock,entities:^core.Entities) {
+keyframe_path_advance :: proc(animations:^core.Table(Keyframe_Path),playback:^Keyframe_Path_Playback,transforms:^core.Table(core.Transform),requests:^Keyframe_Path_Requests,time:core.Time,paces:core.Read(core.Own_Pace),clock:core.Clock,entities:core.Ref(core.Entities)) {
     keyframe_path_evaluate(animations,&playback.states,transforms,requests,time,paces,clock)
-    core.table_settle(&playback.states,entities)
+    core.table_settle(&playback.states,entities.ptr)
 }

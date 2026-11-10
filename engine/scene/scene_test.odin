@@ -142,7 +142,7 @@ scene_test_project_open :: proc(t:^testing.T,p:^Scene_Test_Project,name:string) 
         {name="Scene_Test_Block",type=Scene_Test_Block,info=type_info_of(Scene_Test_Block),offset=offset_of(Scene_Test,blocks)},
     }
     p.storages={{name="Unresolved_References",type=Unresolved_References,info=type_info_of(Unresolved_References),offset=offset_of(Scene_Test,unresolved)}}
-    p.info={entities=offset_of(Scene_Test,entities),tables=p.tables[:],storages=p.storages[:],copy=scene_test_copy,swap=scene_test_swap,settle=scene_test_settle_lamps,clear=scene_test_clear_lamps}
+    p.info={entities=offset_of(Scene_Test,entities),tables=p.tables[:],storages=p.storages[:],copy=scene_test_copy,swap=scene_test_swap,clear=scene_test_clear_lamps}
     p.info.sizes[.World],p.info.aligns[.World]=size_of(Scene_Test),align_of(Scene_Test)
     p.info.init[.World],p.info.destroy[.World]=scene_test_init,scene_test_destroy
     core.world_info_index(&p.info)
@@ -506,7 +506,7 @@ scene_fixture_init :: proc(s:^Scene_Test_Fixture) -> core.World_Ref {
         {name="Hierarchy",type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Scene_Test_World,hierarchy)},
     }
     s.steps={{name="transforms_propagate",library="core",call=scene_test_propagate}}
-    s.info={entities=offset_of(Scene_Test_World,entities),tables=s.tables[:],storages=s.storages[:],steps=s.steps[:],settle=scene_test_settle,clear=scene_test_clear}
+    s.info={entities=offset_of(Scene_Test_World,entities),tables=s.tables[:],storages=s.storages[:],steps=s.steps[:],clear=scene_test_clear}
     s.info.order[.Game][.Late]=s.order[:]
     return core.world_ref(w,&s.info)
 }
@@ -715,14 +715,6 @@ Sky_World :: struct {
     skies:core.Table(Scene_Test_Sky),
 }
 
-@(private="file")
-sky_world_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Sky_World)data
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities);core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities);core.table_settle(&w.skies,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
 // A prefab placed in a scene document loads with it as rows of the root, and
 // its sky comes off as that of a section or of a prefab placed while playing,
 // before the sky of the root in the document too: the root's rules. Turned on,
@@ -746,7 +738,7 @@ the_sky_of_a_prefab_in_a_scene_document_loads_off :: proc(t:^testing.T) {
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Sky_World,parents)},
         {name="Scene_Test_Sky",type=Scene_Test_Sky,info=type_info_of(Scene_Test_Sky),offset=offset_of(Sky_World,skies),single=true},
     }
-    info:=core.World_Info{entities=offset_of(Sky_World,entities),tables=tables[:],settle=sky_world_settle}
+    info:=core.World_Info{entities=offset_of(Sky_World,entities),tables=tables[:]}
     ref:=core.world_ref(&w,&info)
 
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)

@@ -103,7 +103,7 @@ collision_inspector_init :: proc(f:^Collision_Inspector) -> bool {
     }
     f.storages={{name="Collision_Settings",type=phys.Collision_Settings,info=type_info_of(phys.Collision_Settings),offset=offset_of(Collision_Inspector_World,settings),setting=.Project},{}}
     f.storages[1]=physics_editor_test_storages()[0]
-    f.info={entities=offset_of(Collision_Inspector_World,entities),tables=f.tables[:],storages=f.storages[:],settle=collision_inspector_settle,names=f.names[:],named_types=f.named_types[:],name_bits=f.name_bits[:]}
+    f.info={entities=offset_of(Collision_Inspector_World,entities),tables=f.tables[:],storages=f.storages[:],names=f.names[:],named_types=f.named_types[:],name_bits=f.name_bits[:]}
     if !ui.context_init(&f.ctx,{}) {return false}
     f.gui={ctx=&f.ctx}
     f.session={info=&f.info,edit_world=&f.world,editor_world=&f.editor_world,gui=&f.gui,selection=&f.selection,inspector=&f.inspector,document=&f.document,viewport=&f.viewport,edits=&f.edits}

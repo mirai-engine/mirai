@@ -70,7 +70,7 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Bench_World,parents)},
         {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Bench_World,meshes)},
     }
-    info:=core.World_Info{entities=offset_of(Bench_World,entities),tables=tables,settle=bench_settle}
+    info:=core.World_Info{entities=offset_of(Bench_World,entities),tables=tables}
     w:=core.world_ref(world,&info)
     // Groups of ten cubes under the first, and a derived cube in each group.
     group:=core.NONE

@@ -105,7 +105,7 @@ loading_open :: proc(t:^testing.T,p:^Loading_Project,name:string,threads:int) ->
         {name="Loading_Model",type=Loading_Model,info=type_info_of(Loading_Model),offset=offset_of(Loading_World,models)},
         {name="Scene_Reference",type=Scene_Reference,info=type_info_of(Scene_Reference),offset=offset_of(Loading_World,references)},
     }
-    p.info={entities=offset_of(Loading_World,entities),tables=p.tables[:],copy=loading_copy,swap=loading_swap,settle=loading_settle,clear=loading_clear}
+    p.info={entities=offset_of(Loading_World,entities),tables=p.tables[:],copy=loading_copy,swap=loading_swap,clear=loading_clear}
     p.info.sizes[.World],p.info.aligns[.World]=size_of(Loading_World),align_of(Loading_World)
     p.info.init[.World],p.info.destroy[.World]=loading_init,loading_destroy
     core.world_info_index(&p.info)

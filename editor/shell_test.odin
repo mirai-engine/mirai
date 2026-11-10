@@ -59,7 +59,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Shell_Test_World,parents)},
     }
     storages:=[1]core.Storage_Info{{type=erender.Graphics_Settings,offset=offset_of(Shell_Test_World,graphics)}}
-    info:=core.World_Info{entities=offset_of(Shell_Test_World,entities),tables=tables[:],storages=storages[:],settle=shell_test_settle}
+    info:=core.World_Info{entities=offset_of(Shell_Test_World,entities),tables=tables[:],storages=storages[:]}
     selected:=core.create(&world.entities)
     core.add(&world.names,selected,core.name_make("Object"))
     core.add(&world.transforms,selected,core.TRANSFORM_IDENTITY)

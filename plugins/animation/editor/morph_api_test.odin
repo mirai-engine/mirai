@@ -63,7 +63,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
         {type=anim.Morph_Playback,info=type_info_of(anim.Morph_Playback),offset=offset_of(Morph_Api_Test_World,morphs)},
         {type=anim.Skin_Runtime,info=type_info_of(anim.Skin_Runtime),offset=offset_of(Morph_Api_Test_Shared,skin),place=.Shared},
     }
-    info:=core.World_Info{tables=tables[:],storages=storages[:],settle=morph_api_test_settle}
+    info:=core.World_Info{tables=tables[:],storages=storages[:]}
     for world in ([2]^Morph_Api_Test_World{&document,&play}) {
         core.entities_init(&world.entities)
         source,mesh:=core.create(&world.entities),core.create(&world.entities)

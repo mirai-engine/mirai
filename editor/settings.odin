@@ -1068,9 +1068,9 @@ settings_runs_take :: proc(s:^Session,keep:[]bool) {
         if r.world==nil {continue}
         for setting,i in list {
             if !keep[i] {continue}
-            for info in s.info.storages {
+            for info,index in s.info.storages {
                 if info.name==setting.name && info.setting!=.None && info.place==.World {
-                    mem.copy(rawptr(uintptr(r.world)+info.offset),rawptr(uintptr(s.edit_world)+info.offset),info.info.size)
+                    mem.copy(core.world_storage_at(core.world_ref(r.world,s.info),index),rawptr(uintptr(s.edit_world)+info.offset),info.info.size)
                 }
             }
         }

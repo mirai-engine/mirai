@@ -8,7 +8,6 @@ Run_World :: struct {
     time:Time,
     frame:Frame_Time,
     seen:[4]f32, // the dt each step saw, by step
-    settled:int,
 }
 
 @(private="file")
@@ -19,13 +18,16 @@ run_step :: proc(world,shared,editor,app:rawptr,index:int) {
 @(private="file") run_first :: proc(world,shared,editor,app:rawptr,worker:int) {run_step(world,shared,editor,app,0)}
 @(private="file") run_second :: proc(world,shared,editor,app:rawptr,worker:int) {run_step(world,shared,editor,app,1)}
 @(private="file") run_other :: proc(world,shared,editor,app:rawptr,worker:int) {run_step(world,shared,editor,app,2)}
-@(private="file") run_settle :: proc(world,shared,editor:rawptr) {(cast(^Run_World)world).settled+=1}
 
 // A tool runs the functions of some libraries of a phase as the loop would:
-// in its order, with the Time it gives, which the World gets back after.
+// in its order, with the Time it gives, which the World gets back after, and
+// with what waited settled first.
 @(test)
 world_run_calls_the_functions_of_the_libraries_asked_in_the_order_of_the_loop :: proc(t:^testing.T) {
     w:Run_World
+    testing.expect(t,entities_init(&w.entities))
+    defer entities_destroy(&w.entities)
+    destroy(&w.entities,create(&w.entities))
     w.time={dt=0.5,tick=7}
     steps:=[3]Step_Info{
         {name="first",library="anim",call=run_first},
@@ -40,12 +42,12 @@ world_run_calls_the_functions_of_the_libraries_asked_in_the_order_of_the_loop ::
     w.frame={accumulator=0.125,phase=.Render}
     info:World_Info
     info.entities=offset_of(Run_World,entities)
-    info.steps,info.storages,info.settle=steps[:],storages[:],run_settle
+    info.steps,info.storages=steps[:],storages[:]
     info.order[.Editor][.Fixed]=order[:]
     app:u8
     testing.expect(t,world_run(world_ref(&w,&info),nil,nil,&app,.Editor,.Fixed,{"anim","core"},{dt=0.25}))
     testing.expect_value(t,w.seen,[4]f32{100.25,100.25,0,0})
-    testing.expect_value(t,w.settled,1)
+    testing.expect_value(t,len(w.entities.doomed),0)
     testing.expect(t,w.time.dt==0.5 && w.time.tick==7)
     testing.expect(t,w.frame.phase==.Render && w.frame.accumulator==0.125)
     testing.expect(t,!world_run(world_ref(&w,&info),nil,nil,nil,.Editor,.Fixed,{"anim"},{}))

@@ -212,9 +212,10 @@ filters_same :: proc "contextless" (n:^Navigation,collision:^phys.Collision_Sett
 // (nil: the defaults). False without memory.
 @(private)
 navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^phys.Collision_Settings,problems:^core.Problems) -> bool {
-    uid:=n.uid
+    // The revision goes on from where it was: with the uid it says whose meshes a copy holds (navigation_copy_kept).
+    uid,revision:=n.uid,n.revision
     navigation_free(n)
-    n.uid=uid
+    n.uid,n.revision=uid,revision
     n.settings=settings^
     tiles:=int(settings.max_tiles) if settings.max_tiles>0 else 1024
     links:=int(settings.max_links) if settings.max_links>=0 else 0
@@ -235,7 +236,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
             c.volume_config=volume_config(class)
             if !ai.nav_volume_init(&c.volume,{voxel=c.volume_config.voxel,layers=c.volume_config.layers,max_zones=min(tiles,ai.NAV_VOLUME_SLOT_MAX)}) || !base.hash_map_init(&c.marks,tiles) {
                 navigation_free(n)
-                n.uid=uid
+                n.uid,n.revision=uid,revision+1
                 return false
             }
             n.count+=1
@@ -251,7 +252,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
         width:=f32(c.config.tile_size)*c.config.cell_size
         if !ai.nav_mesh_init(&c.mesh,{tile_width=width,climb=class.climb,max_tiles=tiles,max_links=links}) || !base.hash_map_init(&c.marks,tiles) {
             navigation_free(n)
-            n.uid=uid
+            n.uid,n.revision=uid,revision+1
             return false
         }
         n.count+=1

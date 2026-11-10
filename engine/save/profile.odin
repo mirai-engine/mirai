@@ -206,7 +206,7 @@ profile_read :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,problems:^
         }
         table,found:=asset.asset_table(&a,profile_table(storage))
         if !found {continue}
-        at:=rawptr(uintptr(w.data)+storage.offset)
+        at:=core.world_storage_at(w,i)
         current:=mem.byte_slice(at,storage.info.size)
         value:=make([]u8,storage.info.size,context.temp_allocator)
         if asset.asset_column_read(&a,table,0,&ws.schema,ws.storages[i].type,value,current)!=.None {

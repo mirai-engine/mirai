@@ -103,7 +103,7 @@ import "mirai:core"
         "panel_in_game runs in the game and receives Panel, which is of the editor",
         "panel_fixed runs in fixed, which a rollback runs again, and receives Panel of the editor",
         "hud_scores runs only in ui or render and writes Score_Row, which is replicated",
-        "hud_spawns runs only in ui or render and creates or destroys entities",
+        "hud_spawns runs only in ui or render and receives ^core.Entities, which creates and destroys entities, as a dedicated server would not: create them in input, fixed, frame or late; to ask only whether an entity is alive or off, receive core.Ref(core.Entities)",
         "hud_commands runs only in ui or render and creates or destroys entities",
         "hud_rules is server and runs only in ui or render",
         "glow_reader reads Glow, which only hud_glow writes, in ui or render",
