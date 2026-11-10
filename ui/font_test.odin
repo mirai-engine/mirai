@@ -243,6 +243,8 @@ text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
 text_is_cut_for_an_ellipsis_and_indexed_by_position :: proc(t:^testing.T) {
     font:Font
     testing.expect_value(t,text_width(&font,"abcd",10),f32(20))
+    testing.expect_value(t,text_cut(&font,"abcdefgh",10,25),"abcd")
+    testing.expect_value(t,text_cut(&font,"abcdefgh",10,400),"abcdefgh")
     testing.expect_value(t,text_index_at(&font,"abcd",10,-5),0)
     testing.expect_value(t,text_index_at(&font,"abcd",10,2),0)
     testing.expect_value(t,text_index_at(&font,"abcd",10,3),1)

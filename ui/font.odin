@@ -819,6 +819,13 @@ text_lines_next :: proc "contextless" (it:^Text_Lines) -> (start,end:int,ok:bool
 
 ELLIPSIS :: "…"
 
+// The longest prefix of one line of text that leaves room for the ellipsis
+// inside width.
+text_cut :: proc "contextless" (font:^Font,text:string,size,width:f32,f:int=0) -> string {
+    cut,_:=text_prefix(font,text,size,width-text_width(font,ELLIPSIS,size,f),f)
+    return text[:cut]
+}
+
 // The longest start of one line of text no wider than width: its bytes and its width.
 text_prefix :: proc "contextless" (font:^Font,text:string,size,width:f32,f:int=0) -> (cut:int,cut_width:f32) {
     pen:=text_pen(font,size,f)
