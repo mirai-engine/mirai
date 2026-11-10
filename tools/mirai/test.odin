@@ -204,7 +204,7 @@ test_measure_end :: proc(lock:^workspace.Lock,measuring:bool) {
 @(private="file")
 test_execute :: proc(root,path:string,b:^build.Test_Build,options:build.Test_Options) -> (ok:bool,failed:[]string) {
     r:build.Test_Run
-    if !build.test_run_start(&r,b,path,root,options) {
+    if !build.test_run_start(&r,b,path,options) {
         test_lines_show(&r)
         return
     }

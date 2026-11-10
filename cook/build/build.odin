@@ -626,7 +626,7 @@ job_test_advance :: proc(job:^Job,wait:bool) {
         }
         job.result.tests.compiled=true
         environment:=child_environment(job.engine_root,context.temp_allocator,{job.engine_folder,plugins_libraries_folder(job.root,context.temp_allocator)})
-        if !test_run_start(&job.test_run,b,job.test_package,job.root,job.test,environment,a) {
+        if !test_run_start(&job.test_run,b,job.test_package,job.test,environment,a) {
             job.result.text=strings.join(job.test_run.lines[:],"\n",a)
             job_fail(job,.Tests)
         }

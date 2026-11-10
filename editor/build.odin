@@ -1,10 +1,13 @@
 package editor
 
+import "base:intrinsics"
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:thread"
 import "core:time"
 import "mirai:cook/build"
 import "mirai:cook/install"
@@ -57,7 +60,7 @@ Build_State :: struct {
     play_error:[256]u8, // why the Play that waited for the build did not start; empty when it did
     shader_sources:u64, // shaders_fingerprint of what was last published or seen on disk
     reload:bool,        // the library built waits to be loaded (build_reload)
-    probing:bool,       // a check or a run of the tests (code_probe)
+    probe:^Code_Probe,       // the last check or run of the tests (code_probe_start), kept until the next one
 }
 
 // A Play that waits for the build of the code that changed.
@@ -73,7 +76,7 @@ Build_Play :: struct {
 build_start :: proc(s:^Session,target:=build.Target.Editor,folder:="") -> bool {
     b:=s.build
     if b.phase==.Running || b.reload {return false}
-    if b.probing {
+    if probe_running(b) {
         notify(s,"The code is being checked or tested; wait for it")
         return false
     }
@@ -124,6 +127,7 @@ build_poll :: proc(s:^Session) {
     programs_poll(s)
     build_reload(s)
     player_launch_poll(s)
+    probe_poll(s)
     if b.phase!=.Running {return}
     if b.shaders!=nil && !build.shaders_poll(b.shaders) {return}
     if b.target==.Game && b.job==nil && b.shaders!=nil && b.shaders.result.status!=.Failed {
@@ -336,35 +340,112 @@ build_play_resume :: proc(s:^Session) {
     }
 }
 
-// Checks the code of the project or runs its tests, to the end or for
-// seconds at most, without loading anything: the editor draws frames
-// meanwhile. The job is the caller's to destroy.
-code_probe :: proc(s:^Session,action:build.Action,test_package:string,test_names:[]string,seconds:f64) -> (job:^build.Job,error:string) {
-    b:=s.build
-    if b.phase==.Running || b.probing {return nil,"A build is running; build.status says when it ends"}
-    if player_building(s) {return nil,"The player of the project is being built; wait for it"}
-    if !s.has_project || s.engine_root=="" {return nil,"It needs a project and the root of the engine"}
-    opened,open_error:=project.open(s.project_root,s.engine_root)
-    if open_error.code!=.None {return nil,"The project could not be opened"}
-    defer project.close(&opened)
-    b.probing=true
-    defer b.probing=false
-    job=build.job_start({project=&opened,target=.Editor,action=action,test_package=test_package,test={names=test_names,quiet=true}})
-    started:=time.tick_now()
-    for !build.job_poll(job) {
-        if time.duration_seconds(time.tick_since(started))>seconds || api_stop_asked(s) || api_frames(s,1,0)==0 {
-            build.job_cancel(job)
-            break
-        }
-    }
-    return job,""
+// A check of the code or a run of the tests in a thread of its own: opening
+// the project, generating its world, hashing its plugin libraries and the
+// test executable take seconds that no frame waits for. The editor reads job
+// only once done is set and the thread joined (probe_poll).
+Code_Probe :: struct {
+    thread:^thread.Thread,
+    project_root,engine_root,test_package:string,
+    names:[]string,
+    action:build.Action,
+    seconds:f64,       // how long it may run before it is stopped
+    started:time.Tick,
+    job:^build.Job,    // nil when the project could not be opened
+    done,cancel:bool,  // atomic
 }
 
+// Starts checking the code of the project or running the tests of one of its
+// packages, against the libraries this editor builds and loads, without
+// loading anything, and returns at once. The last one stays in
+// Build_State.probe, its result readable until the next one starts. "" when
+// it started.
+code_probe_start :: proc(s:^Session,action:build.Action,test_package:string,test_names:[]string,seconds:f64) -> string {
+    b:=s.build
+    if b.phase==.Running || probe_running(b) {return "A build or a check or a run of the tests is running; build.status and build.test.status say when it ends"}
+    if player_building(s) {return "The player of the project is being built; wait for it"}
+    if !s.has_project || s.engine_root=="" {return "It needs a project and the root of the engine"}
+    probe_free(b)
+    a:=runtime.heap_allocator()
+    p:=new(Code_Probe,a)
+    p.project_root,p.engine_root,p.test_package=strings.clone(s.project_root,a),strings.clone(s.engine_root,a),strings.clone(test_package,a)
+    p.names=make([]string,len(test_names),a)
+    for name,i in test_names {p.names[i]=strings.clone(name,a)}
+    p.action,p.seconds,p.started=action,seconds,time.tick_now()
+    b.probe=p
+    p.thread=thread.create_and_start_with_poly_data(p,probe_run)
+    if p.thread==nil {
+        probe_free(b)
+        return "No thread could be started for it"
+    }
+    return ""
+}
+
+// The job of a probe, in its thread, polled until it ends or is stopped.
+@(private)
+probe_run :: proc(p:^Code_Probe) {
+    context.allocator=runtime.heap_allocator()
+    defer intrinsics.atomic_store(&p.done,true)
+    opened,error:=project.open(p.project_root,p.engine_root)
+    if error.code!=.None {return}
+    p.job=build.job_start({project=&opened,target=.Editor,action=p.action,test_package=p.test_package,test={names=p.names,quiet=true},dev=build.ENGINE_MODE_HERE==.Dev})
+    project.close(&opened)
+    for !build.job_poll(p.job) {
+        if intrinsics.atomic_load(&p.cancel) || time.duration_seconds(time.tick_since(p.started))>p.seconds {
+            build.job_cancel(p.job)
+            break
+        }
+        free_all(context.temp_allocator)
+        time.sleep(10*time.Millisecond)
+    }
+}
+
+// Whether a check or a run of the tests runs.
+probe_running :: proc(b:^Build_State) -> bool {
+    return b.probe!=nil && !intrinsics.atomic_load(&b.probe.done)
+}
+
+// Joins the thread of a probe that ended; between frames.
+@(private)
+probe_poll :: proc(s:^Session) {
+    p:=s.build.probe
+    if p==nil || p.thread==nil || !intrinsics.atomic_load(&p.done) {return}
+    thread.join(p.thread)
+    thread.destroy(p.thread)
+    p.thread=nil
+}
+
+// The job of the probe that ended, once its thread is joined; nil while it
+// runs or when the project could not be opened.
+probe_job :: proc(b:^Build_State) -> ^build.Job {
+    if b.probe==nil || b.probe.thread!=nil {return nil}
+    return b.probe.job
+}
+
+// Stops the probe and frees it.
+@(private)
+probe_free :: proc(b:^Build_State) {
+    p:=b.probe
+    if p==nil {return}
+    b.probe=nil
+    if p.thread!=nil {
+        intrinsics.atomic_store(&p.cancel,true)
+        thread.join(p.thread)
+        thread.destroy(p.thread)
+    }
+    a:=runtime.heap_allocator()
+    if p.job!=nil {build.job_destroy(p.job)}
+    for name in p.names {delete(name,a)}
+    delete(p.names,a)
+    delete(p.project_root,a);delete(p.engine_root,a);delete(p.test_package,a)
+    free(p,a)
+}
 // Stops what runs: when the editor ends.
 build_cancel :: proc(s:^Session) {
     b:=s.build
     programs_cancel(s)
     if b.job!=nil {build.job_destroy(b.job)}
+    probe_free(b)
     if b.shaders!=nil {build.shaders_destroy(b.shaders)}
     if b.project!=nil {
         project.close(b.project)

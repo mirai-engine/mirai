@@ -535,6 +535,8 @@ then runs them one after another in the order asked.
   into `bin/tests/`. A package of a project (a `project.mirai` above it) is a `Test` job of its
   editor, in its turn: it compiles against the libraries the editor links, after the engine
   binaries when their sources changed, into `<project>/.mirai/build/tests/`.
+- Every test executable runs in the root of the engine, also one of a project package: a relative
+  path in a test is relative to the engine root (`demo/assets/...`).
 - An executable compiles again only when the [fingerprint](build.md#fingerprint) of what its last
   build read changed, the `_test.odin` of every folder it read included, or its flags or the
   compiler: a date that moves or a checkout that restores the text compiles nothing. The last

@@ -1,6 +1,7 @@
 package build
 
 import "core:encoding/json"
+import "core:log"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -60,6 +61,54 @@ a_test_executable_is_current_by_the_content_of_what_its_build_read :: proc(t:^te
     testing.expect(t,current(root,compiler,executable,flags),"the text put back")
     testing.expect(t,os.remove(executable)==nil)
     testing.expect(t,!current(root,compiler,executable,flags),"the executable is gone")
+}
+
+// A test executable builds, runs in the root it was planned with whatever
+// package it tests (a relative path in a test is relative to the engine), runs
+// the tests asked and says which failed with what they logged.
+@(test)
+a_test_executable_runs_in_the_root_and_reports_its_tests :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    compiler,found:=compiler_find("")
+    if !found {
+        log.warn("no Odin compiler: MIRAI_ODIN names it under mirai test")
+        return
+    }
+    root:=base.test_folder(t,"test-run")
+    if root=="" {return}
+    folder:=project.path(root,"project","game")
+    if !testing.expect(t,os.make_directory_all(folder)==nil) {return}
+    if !testing.expect(t,os.write_entire_file(project.path(root,"marker.txt"),"here")==nil) {return}
+    source:=`package game
+
+import "core:os"
+import "core:testing"
+
+@(test)
+sees_the_root :: proc(t:^testing.T) {testing.expect(t,os.is_file("marker.txt"),"not run in the root")}
+
+@(test)
+fails_on_purpose :: proc(t:^testing.T) {testing.expect(t,false,"on purpose")}
+
+@(test)
+not_asked :: proc(t:^testing.T) {testing.expect(t,false,"ran without being asked")}
+`
+    if !testing.expect(t,os.write_entire_file(project.path(folder,"game_test.odin"),source)==nil) {return}
+    b:=test_build_plan(root,compiler,folder,test_executable(project.path(root,"tests"),root,folder),{"-o:minimal"})
+    if !testing.expect(t,test_build_start(&b),b.said) {return}
+    for !test_build_poll(&b,50*time.Millisecond) {}
+    if !testing.expectf(t,!b.failed,"%s %v",b.said,b.diagnostics) {return}
+    r:Test_Run
+    if !testing.expect(t,test_run_start(&r,&b,"project/game",{names={"sees_the_root","fails_on_purpose"},timeout=TEST_TIMEOUT,quiet=true})) {return}
+    for !test_run_poll(&r,50*time.Millisecond) {}
+    report,ok:=test_run_report(&r)
+    testing.expect(t,!ok)
+    testing.expect_value(t,report.total,2)
+    testing.expect_value(t,report.passed,1)
+    if testing.expectf(t,len(report.failed)==1,"%v",report.failed) {
+        testing.expect_value(t,report.failed[0].name,"fails_on_purpose")
+        testing.expectf(t,len(report.failed[0].messages)==1 && strings.contains(report.failed[0].messages[0],"on purpose"),"%v",report.failed[0].messages)
+    }
 }
 
 // The output of the runner: which tests run and which failed with what they

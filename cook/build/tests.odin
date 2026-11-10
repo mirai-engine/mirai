@@ -275,10 +275,12 @@ test_build_publish :: proc(b:^Test_Build) -> bool {
     return true
 }
 
-// Starts the executable b left, with the tests of options, in working_dir and
-// environment (nil: those of this process). path names the package in the
-// notes of the runner. false, with why in lines, when it does not start.
-test_run_start :: proc(r:^Test_Run,b:^Test_Build,path,working_dir:string,options:Test_Options,environment:[]string=nil,allocator:=context.allocator) -> bool {
+// Starts the executable b left, with the tests of options and environment (nil:
+// that of this process). It runs in the root of the engine b was planned with,
+// whatever package it tests, so a relative path in a test is relative to the
+// engine. path names the package in the notes of the runner. false, with why
+// in lines, when it does not start.
+test_run_start :: proc(r:^Test_Run,b:^Test_Build,path:string,options:Test_Options,environment:[]string=nil,allocator:=context.allocator) -> bool {
     r^={allocator=allocator,exit_code=-1}
     context.allocator=allocator
     r.path=strings.clone(path)
@@ -292,7 +294,7 @@ test_run_start :: proc(r:^Test_Run,b:^Test_Build,path,working_dir:string,options
         append(&r.lines,fmt.aprintf("%s: could not create a pipe: %v",r.path,pipe_error))
         return false
     }
-    process,error:=subprocess.start({working_dir=working_dir,command=command[:],env=environment,stdout=writer,stderr=writer},{priority=options.priority})
+    process,error:=subprocess.start({working_dir=b.root,command=command[:],env=environment,stdout=writer,stderr=writer},{priority=options.priority})
     os.close(writer)
     if error!=nil {
         os.close(reader)
