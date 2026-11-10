@@ -78,7 +78,8 @@ Server :: struct {
     ancestry:Ancestry,
     boxes:core.Seen,         // what of Scene_Reference the sections of each object were looked at for,
     places:u64,              // and the stamps of the World_Transform of its rows
-    section_boxes:[dynamic]Section_Box, // the boxes of the sections as of boxes
+    section_boxes:scene.Section_Boxes, // the boxes of the sections as of boxes
+    section_holding:[dynamic]scene.Section_Box, // those that hold an object, while it is looked at
     scene:base.Asset_Id,     // the scene the world is, and the number of that change (scene.Scene_Root)
     changes:u32,
     clock:core.Clock,        // the one the clients were told
@@ -97,15 +98,6 @@ Server :: struct {
 Ancestry :: struct {
     hierarchy:u64,
     objects,references:core.Shape,
-}
-
-// The box of a section where it is, and the box of the world around it.
-@(private)
-Section_Box :: struct {
-    entity:core.Entity,
-    reference:scene.Scene_Reference,
-    pose:mm.Transform,
-    bounds:mm.Aabb,
 }
 
 // What went from a section, for a connection that has it loaded (none: every one).
@@ -151,7 +143,7 @@ server_init :: proc(s:^Net_Session,allocator:runtime.Allocator) -> bool {
     if s.server.layouts,error=make([]core.Shape,len(s.fragments),allocator);error!=nil {return false}
     if s.server.changed,error=make([]bool,len(s.fragments),allocator);error!=nil {return false}
     if s.server.loaded,error=make([]u64,wire.MAX_CONNECTIONS*loaded_words(&s.server),allocator);error!=nil {return false}
-    s.server.section_boxes=make([dynamic]Section_Box,allocator)
+    s.server.section_holding=make([dynamic]scene.Section_Box,allocator)
     s.server.groups=make([dynamic]Group_Change,allocator)
     s.server.gone=make([dynamic]Gone_Due,allocator)
     s.server.notices=make([dynamic]Gone_Notice,allocator)
@@ -167,7 +159,8 @@ server_destroy :: proc(s:^Net_Session) {
     delete(s.server.layouts,s.allocator)
     delete(s.server.changed,s.allocator)
     delete(s.server.loaded,s.allocator)
-    delete(s.server.section_boxes)
+    scene.section_boxes_destroy(&s.server.section_boxes)
+    delete(s.server.section_holding)
     delete(s.server.groups)
     delete(s.server.gone)
     delete(s.server.notices)
@@ -573,7 +566,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     }
     // What a section that moved, loaded or changed its box holds is looked at again.
     if sections_moved(server,references,worlds) {
-        section_boxes(&server.section_boxes,references,worlds)
+        if !scene.section_boxes_build(&server.section_boxes,core.read(references),core.read(worlds)) {core.report(s.problems,core.NONE,"net.memory","out of memory to find the boxes of the sections: objects stay in the section they hang from; free memory")}
         for &slot in server.objects {slot.placed={}}
     }
 
@@ -607,7 +600,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         if slot.priority!=config.priority && wire.object_set_priority(h,object,config.priority)==.None {slot.priority=config.priority}
         // In other sections, its pose says so again, and the host puts it in their groups.
         if row_changed(core.raw(worlds),e,&slot.placed[0],&slot.placed[1]) {
-            if sections:=sections_of(s,server.section_boxes[:],worlds,hierarchy,e,slot.sections[0]);sections!=slot.sections {
+            if sections:=sections_of(s,&server.section_boxes,&server.section_holding,worlds,hierarchy,e,slot.sections[0]);sections!=slot.sections {
                 slot.sections,slot.told=sections,false
                 slot.stamps[0],slot.layouts[0]=0,0
             }
@@ -727,15 +720,17 @@ section_of :: proc(hierarchy:core.Ref(core.Hierarchy),references:^core.Table(sce
 // it already. In more than an object has groups for, it is in home alone,
 // and that is the problem net.sections.
 @(private)
-sections_of :: proc(s:^Net_Session,boxes:[]Section_Box,worlds:^core.Table(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),e,home:core.Entity) -> (sections:[wire.OBJECT_GROUPS]core.Entity) {
+sections_of :: proc(s:^Net_Session,boxes:^scene.Section_Boxes,holding:^[dynamic]scene.Section_Box,worlds:^core.Table(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),e,home:core.Entity) -> (sections:[wire.OBJECT_GROUPS]core.Entity) {
     sections[0]=home
-    if home==core.NONE || len(boxes)==0 {return}
+    if home==core.NONE || len(boxes.boxes)==0 {return}
     place,placed:=core.get(worlds,e)
     if !placed {return}
     count:=1
-    rows: for &box in boxes {
+    clear(holding)
+    scene.section_boxes_at(boxes,place.position,holding)
+    rows: for box in holding {
         r:=box.entity
-        if r==home || !mm.aabb_contains_point(box.bounds,place.position) || !scene.section_holds(box.reference,box.pose,place.position) {continue}
+        if r==home {continue}
         for at:=core.parent_of(hierarchy,home);at!=core.NONE;at=core.parent_of(hierarchy,at) {
             if at==r {continue rows}
         }
@@ -747,24 +742,6 @@ sections_of :: proc(s:^Net_Session,boxes:[]Section_Box,worlds:^core.Table(core.W
         count+=1
     }
     return
-}
-
-// The boxes of the sections, where they are, for sections_of: made again when
-// sections_seen changes, so an object that moves reads them in a row and
-// looks closer only at those whose box of the world holds it.
-@(private)
-section_boxes :: proc(out:^[dynamic]Section_Box,references:^core.Table(scene.Scene_Reference),worlds:^core.Table(core.World_Transform)) {
-    clear(out)
-    if references==nil {return}
-    for row in 0..<core.count(references) {
-        r:=core.entity_at(references,row)
-        reference:=core.at(references,row)
-        pose,has:=core.get(worlds,r)
-        if !has || reference.extents=={} {continue}
-        half:=reference.extents*mm.Vec3{abs(pose.scale.x),abs(pose.scale.y),abs(pose.scale.z)}
-        bounds:=mm.aabb_transform({-half,half},mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}))
-        append(out,Section_Box{r,reference,pose.transform,bounds})
-    }
 }
 
 // Whether what the sections of the objects follow changed: the references, or where one of them is.
@@ -863,7 +840,7 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
     ids:=core.world_table_of(w,core.Id)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     references,worlds:=core.world_table_of(w,scene.Scene_Reference),core.world_table_of(w,core.World_Transform)
-    sections:=sections_of(s,s.server.section_boxes[:],worlds,hierarchy,e,section_of(hierarchy,references,e))
+    sections:=sections_of(s,&s.server.section_boxes,&s.server.section_holding,worlds,hierarchy,e,section_of(hierarchy,references,e))
     pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t),predict=config.predict}
     position:=local.position
     if world,has:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e);has {position=world.position}

@@ -54,6 +54,7 @@ Instantiate_Desc :: struct {
     scope_extents:[3]f32,
     saved:bool,             // a saved game: what hangs from its references came with it, loaded as it was
     only:base.Entity_Id,    // when given, only the entity whose Id in the world (id_in with salt) is this and what hangs from it, a root; its references stay unloaded
+    root:core.Entity,       // when given, the entity of the first root of the document, which keeps what it has: a spawned copy
 }
 
 Capture_Desc :: struct {
@@ -100,7 +101,11 @@ Spawner :: struct {
 // Places a copy of a prefab, a scene of the assets with one root, by its path
 // ("pets/Dog.scene") or its id, and gives back its root, whose rows wait for
 // the end of the function. NONE when it did not spawn, which is the problem
-// scene.spawn that says why.
+// scene.spawn that says why. A prefab that is not loaded, or that takes
+// something that is not, is read in jobs: its root comes at once, off, with
+// its Transform, Parent, Id and Prefab_Pending, and takes the rest of the
+// prefab once it is read (scene_spawns), turning on; what was given to it
+// meanwhile stays, and its own value of a component wins over the prefab's.
 spawn :: proc{spawn_path,spawn_id}
 
 spawn_path :: proc(s:Spawner,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
@@ -243,29 +248,37 @@ propagate :: proc(w:core.World_Ref,app:^host.App) {
 // What spawn runs, for the editor method that answers with the report and the
 // error: games and plugins call spawn. Its entities exist at once and their
 // rows wait for the end of the function: whoever spawned it reads and finishes
-// them with core.added.
+// them with core.added. A prefab that waits for jobs gives its root alone
+// (spawn).
 spawn_prefab :: proc(c:core.Commands,assets:^host.Assets,s:Spawn) -> (report:Report,error:Error) {
     return spawn_placed(c,assets,s,core.world_storage_of(core.world_ref(c.data,c.info),Prefab_Forms))
 }
 
-// spawn_prefab with the forms the prefab is prepared in; none: it is read now.
+// spawn_prefab with the forms the prefab is prepared in; none: it is made now.
 @(private)
 spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_Forms) -> (report:Report,error:Error) {
     if assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(assets,s.prefab)
-    if file==nil {return {},.Not_Found}
+    file,found:=asset.registry_find(&assets.registry,s.prefab)
+    if !found || file.state!=.Asset || file.kind!=asset.KIND_SCENE {return {},.Not_Found}
+    if !asset.registry_prefab(file) {return {},.Not_One_Root}
     if s.parent!=core.NONE && !core.alive(c.entities,s.parent) {return {},.Invalid}
-    if !asset.asset_prefab(file) {return {},.Not_One_Root}
     w:=core.world_ref(c.data,c.info)
-    form,entities:=prefab_form(forms,w,assets,s.prefab,file) or_return
-    report,error=form_place(w,form,&assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient,documents=assets_documents(assets)},entities)
-    if error!=.None {return}
-    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {
-        root^=s.transform
-        if root.rotation==0 {root.rotation=1}
-        if root.scale=={} {root.scale={1,1,1}}
+    form,entities,loaded:=prefab_form(forms,w,assets,s.prefab) or_return
+    root:=core.create(c)
+    transform:=s.transform
+    if transform.rotation==0 {transform.rotation=1}
+    if transform.scale=={} {transform.scale={1,1,1}}
+    core.commands_add(c,root,transform)
+    if s.parent!=core.NONE {core.commands_add(c,root,core.Parent{s.parent,0})}
+    if !s.transient {core.commands_add(c,root,core.Id{core.id_next(c.entities)})}
+    core.commands_add(c,root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
+    if !loaded {
+        core.commands_add(c,root,Prefab_Pending{s.prefab})
+        core.commands_add(c,root,core.Disabled{})
+        return {root=root,entities=1},.None
     }
-    core.commands_add(c,report.root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
+    report,error=form_place(w,form,&assets.types,{transient=s.transient,fresh=!s.transient,documents=assets_documents(assets),root=root},entities)
+    if error!=.None {core.destroy(c,root)}
     return
 }
 

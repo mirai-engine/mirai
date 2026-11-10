@@ -1488,8 +1488,9 @@ assets_limits :: proc(a:^Assets,tail:=false) -> Assets_Limits {
     return {true,render.texture_limits(a.renderer),tail,!render.hardware_ray_tracing_active(a.renderer)}
 }
 
-// A mesh, a texture or a material a job read, checked and decoded
-// (assets_prepare), for assets_take to give to the renderer. Its failure is
+// A mesh, a texture, a material or the document of a scene a job read,
+// checked and decoded (assets_prepare), for assets_take to give to the
+// renderer or keep open. Its failure is
 // kept: taking it records it as loading would.
 Assets_Prepared :: struct {
     source:Assets_Source,
@@ -1524,6 +1525,7 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
     case asset.KIND_MESH:     prepared.kind=.Mesh
     case asset.KIND_TEXTURE:  prepared.kind=.Texture
     case asset.KIND_MATERIAL: prepared.kind=.Material
+    case asset.KIND_SCENE:    prepared.kind=.Scene
     case:
         prepared.problem,prepared.detail=.Wrong_Kind,.Invalid
         return
@@ -1535,6 +1537,8 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
     prepared.opened=true
     prepared.renderer=limits.renderer
     #partial switch prepared.kind {
+    case .Scene:
+        prepared.ok=true
     case .Mesh:
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         mesh,problem,detail,ok:=assets_mesh_view(&prepared.file,types)
@@ -1632,6 +1636,21 @@ assets_take :: proc(a:^Assets,prepared:^Assets_Prepared,over_frames:=false) -> A
         if entry==nil {return .Taken}
         if ok {problem,detail,ok=assets_material_install(a,prepared.material,entry)}
         assets_material_loaded(a,entry,problem,detail,ok)
+    case .Scene:
+        at,room:=assets_slot(&a.scenes,&a.free_scenes,&a.regions[3])
+        if !room {
+            assets_fail(a,id,.Scene,.Capacity)
+            return .Taken
+        }
+        a.index[id]={.Scene,at}
+        a.stats.scenes+=1
+        a.scenes[at]={kind=asset.KIND_SCENE,failed=!ok}
+        if ok {
+            a.scenes[at].file=prepared.file
+            prepared.file,prepared.opened={},false
+        } else {
+            assets_fail(a,id,.Scene,problem,detail)
+        }
     }
     return taken
 }

@@ -24,6 +24,8 @@ Spawn_Test_World :: struct {
     links:core.Table(Spawn_Test_Link),
     instances:core.Table(Prefab_Instance),
     members:core.Table(Prefab_Member),
+    pendings:core.Table(Prefab_Pending),
+    disabled:core.Table(core.Disabled),
     forms:Prefab_Forms,
 }
 
@@ -157,6 +159,8 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     asset.scene_destroy(&bulb)
     asset.scene_destroy(&lamp)
     testing.expect(t,host.assets_scan(&p.assets))
+    // Loaded, as a scene that names them loads them: a spawn places them in the call.
+    testing.expect(t,host.assets_scene(&p.assets,SPAWN_BULB)!=nil && host.assets_scene(&p.assets,SPAWN_LAMP)!=nil)
 
     counted:=Spawn_Test_Count{backing=context.allocator}
     counted_temp:=Spawn_Test_Count{backing=context.temp_allocator}
@@ -246,6 +250,7 @@ the_forms_a_world_keeps_are_bounded_and_the_one_spawned_longest_ago_goes :: proc
         asset.scene_destroy(&crate)
     }
     testing.expect(t,host.assets_scan(&p.assets))
+    for at in 0..=PREFAB_FORMS {testing.expect(t,host.assets_scene(&p.assets,{0x5c,u64(at)+1})!=nil)}
     c:=core.commands_of(host.app_world_ref(&p.app,p.kept))
     forms:=&p.kept.forms
     for at in 0..=PREFAB_FORMS {

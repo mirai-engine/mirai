@@ -28,6 +28,7 @@ Section_World :: struct {
     keeps:core.Table(core.Keep),
     references:core.Table(Scene_Reference),
     placed:core.Table(Prefab_Instance),
+    pendings:core.Table(Prefab_Pending),
     members:core.Table(Section_Member),
     held:core.Table(Section_Held),
     dormants:core.Table(Dormant),
@@ -756,6 +757,7 @@ a_scene_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^testi
     empty:asset.Scene;asset.scene_init(&empty,&f.types,{0x6a,10})
     section_save(t,&f,&empty,"empty.scene")
     testing.expect(t,host.assets_scan(&f.assets))
+    for id in ([]base.Asset_Id{SECTION_CELLAR,SECTION_HOUSE}) {testing.expect(t,host.assets_scene(&f.assets,id)!=nil)}
     w:=section_ref(&f)
     s:=Spawner{core.commands_of(w),&f.assets,f.problems}
 

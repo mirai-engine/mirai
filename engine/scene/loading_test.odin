@@ -23,6 +23,10 @@ Loading_World :: struct {
     parents:core.Table(core.Parent),
     models:core.Table(Loading_Model),
     references:core.Table(Scene_Reference),
+    instances:core.Table(Prefab_Instance),
+    pendings:core.Table(Prefab_Pending),
+    disabled:core.Table(core.Disabled),
+    forms:Prefab_Forms,
 }
 
 // A project in a temporary folder of assets, with job threads or without,
@@ -392,12 +396,12 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     testing.expect_value(t,item.loading.phase,Load_Phase.Reading)
     testing.expect_value(t,item.loading.scene,ROOM)
     testing.expect(t,item.loading.done==1 && item.loading.total==2,"read one of the two documents found")
-    // The prefab, and the first mesh: the second does not fit in the frame.
+    // The prefab, for what spawns it, and the first mesh: the second does not fit in the frame.
     step(&p,world,&requests,&loads,&loading,&problems)
     if !testing.expect_value(t,loading.count,1) {return}
     item=loading.items[0]
     testing.expect_value(t,item.loading.phase,Load_Phase.Warming)
-    testing.expect(t,item.loading.done==1 && item.loading.total==2,"one of its two meshes")
+    testing.expect(t,item.loading.done==2 && item.loading.total==3,"the prefab and one of its two meshes")
     step(&p,world,&requests,&loads,&loading,&problems)
     testing.expect_value(t,loading.count,0)
     reference,_:=core.get(&w.references,e)
@@ -425,4 +429,67 @@ a_load_waits_while_a_library_names_what_it_names :: proc(t:^testing.T) {
     named:=make([dynamic]base.Asset_Id,context.temp_allocator)
     loads_waiting(&loads,&named)
     testing.expect_value(t,len(named),1)
+}
+
+// A spawn of a prefab that is not loaded reads nothing in the call: its root
+// comes at once, off, where it was asked, and jobs read the prefab and the
+// mesh it names; within frames the root takes them, keeps what it was given
+// meanwhile, and turns on. A scene load reads the prefabs its fields name,
+// with what they take: a spawn after it is whole in the call.
+@(test)
+a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^testing.T) {
+    p:Loading_Project
+    if !loading_open(t,&p,"spawn",2) {return}
+    defer loading_close(&p)
+    MESH :: base.Asset_Id{0x5a,1}
+    PREFAB :: base.Asset_Id{0x5a,2}
+    LEVEL :: base.Asset_Id{0x5a,3}
+    loading_mesh(t,&p,MESH,host.LOAD_FRAME_BYTES/8)
+    loading_scene(t,&p,PREFAB,{MESH})
+    loading_scene(t,&p,LEVEL,{PREFAB})
+    host.assets_scan(&p.assets)
+    w:=host.app_world_ref(&p.app,p.world)
+    warms:Prefab_Warms
+    defer prefab_warms_free(&warms)
+
+    report,error:=spawn_prefab(core.commands_of(w),&p.assets,{prefab=PREFAB,transform={position={1,2,3}}})
+    root:=report.root
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,p.assets.stats.loads==0 && !host.assets_loaded(&p.assets,PREFAB),"the call reads nothing")
+    core.add(&p.world.models,root,Loading_Model{LEVEL})
+    core.world_settle(w)
+    pose,_:=core.get(&p.world.transforms,root)
+    testing.expect(t,core.raw_row(core.raw(&p.world.pendings),root)>=0 && core.raw_row(core.raw(&p.world.disabled),root)>=0 && pose.position==[3]f32{1,2,3},"its root, off, where it was asked")
+    started:=time.tick_now()
+    for frame:=0;core.raw_row(core.raw(&p.world.pendings),root)>=0;frame+=1 {
+        p.app.stats.frames+=1
+        spawns_fill(w,&p.app,&warms,nil)
+        core.world_settle(w)
+        if !testing.expect(t,time.duration_seconds(time.tick_since(started))<60,"the spawn is filled") {return}
+        thread.yield()
+    }
+    testing.expect_value(t,len(warms.items),0)
+    testing.expect(t,host.assets_loaded(&p.assets,PREFAB) && host.assets_loaded(&p.assets,MESH) && p.assets.stats.loads==2,"jobs read the prefab and its mesh")
+    model,_:=core.get(&p.world.models,root)
+    name,_:=core.get(&p.world.names,root)
+    testing.expect(t,core.has(&p.world.models,root) && model.mesh==LEVEL && base.text_get(name.text[:])=="Model","it keeps what it was given, on, with the rest of its prefab")
+    pose,_=core.get(&p.world.transforms,root)
+    testing.expect_value(t,pose.position,[3]f32{1,2,3})
+
+    // A scene whose field names the prefab reads it with what it takes: the next spawn is whole at once.
+    other:=PREFAB
+    other[1]=4
+    loading_scene(t,&p,other,{MESH})
+    loading_scene(t,&p,LEVEL,{other})
+    host.assets_scan(&p.assets)
+    job,begun:=load_begin(&p.app,LEVEL)
+    if !testing.expect_value(t,begun,Error.None) {return}
+    frames:=make([dynamic]Loading_Frame,context.temp_allocator)
+    if !loading_frames(t,&p,{job},&frames) {return}
+    testing.expect(t,host.assets_loaded(&p.assets,other),"the load read the prefab its field names")
+    _,error=load_end(job,w)
+    testing.expect_value(t,error,Error.None)
+    report,error=spawn_prefab(core.commands_of(w),&p.assets,{prefab=other})
+    core.world_settle(w)
+    testing.expect(t,error==.None && core.has(&p.world.models,report.root) && core.raw_row(core.raw(&p.world.pendings),report.root)<0,"whole in the call")
 }
