@@ -193,7 +193,8 @@ copy_visit :: proc(visitor:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
                 }
                 continue
             }
-            copy_indices(visitor,lhs)
+            // Its indices are read; the local under them is no use of it whole.
+            if !bare {ast.walk(visitor,lhs)}
             copy_event(s,v,true,lhs)
         }
         pop(&s.open)
@@ -273,14 +274,19 @@ copy_absent :: proc(s:^Copy_Scan,cond:^ast.Expr) -> ^Copy_Var {
     if !negated || negation.op.kind!=.Not || negation.expr==nil {return nil}
     flag,named:=negation.expr.derived.(^ast.Ident)
     if !named {return nil}
-    floor:=0
-    #reverse for scope in s.scopes {
-        if scope.procedure {floor=scope.names;break}
-    }
-    for i:=len(s.names)-1;i>=floor;i-=1 {
-        if s.names[i].copy && s.names[i].found==flag.name {return s.names[i]}
+    #reverse for v in s.names[copy_floor(s):] {
+        if v.copy && v.found==flag.name {return v}
     }
     return nil
+}
+
+// Where the names of the procedure being read begin.
+@(private="file")
+copy_floor :: proc(s:^Copy_Scan) -> int {
+    #reverse for scope in s.scopes {
+        if scope.procedure {return scope.names}
+    }
+    return 0
 }
 
 // Whether what a node holds is an argument of a call.
@@ -311,32 +317,6 @@ copy_root :: proc(expr:^ast.Expr) -> (root:^ast.Ident,bare:bool) {
         }
     }
     return nil,false
-}
-
-// What an assignment reads to find where it writes: its indices.
-@(private="file")
-copy_indices :: proc(visitor:^ast.Visitor,expr:^ast.Expr) {
-    at:=expr
-    for at!=nil {
-        #partial switch e in at.derived {
-        case ^ast.Paren_Expr:    at=e.expr
-        case ^ast.Selector_Expr: at=e.expr
-        case ^ast.Deref_Expr:    at=e.expr
-        case ^ast.Index_Expr:
-            if e.index!=nil {ast.walk(visitor,e.index)}
-            at=e.expr
-        case ^ast.Slice_Expr:
-            if e.low!=nil {ast.walk(visitor,e.low)}
-            if e.high!=nil {ast.walk(visitor,e.high)}
-            at=e.expr
-        case ^ast.Matrix_Index_Expr:
-            if e.row_index!=nil {ast.walk(visitor,e.row_index)}
-            if e.column_index!=nil {ast.walk(visitor,e.column_index)}
-            at=e.expr
-        case:
-            return
-        }
-    }
 }
 
 // Whether a name stands for its value whole: not the name of a field, a
@@ -374,12 +354,8 @@ copy_declare :: proc(s:^Copy_Scan,name:string,copy:bool) -> ^Copy_Var {
 // The local a name is in the procedure being read; nil for any other name.
 @(private="file")
 copy_resolve :: proc(s:^Copy_Scan,name:string) -> ^Copy_Var {
-    floor:=0
-    #reverse for scope in s.scopes {
-        if scope.procedure {floor=scope.names;break}
-    }
-    for i:=len(s.names)-1;i>=floor;i-=1 {
-        if s.names[i].name==name {return s.names[i]}
+    #reverse for v in s.names[copy_floor(s):] {
+        if v.name==name {return v}
     }
     return nil
 }

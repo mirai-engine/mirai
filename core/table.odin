@@ -24,10 +24,6 @@ import "core:slice"
 // touched. layout grows whenever the rows are others. Both only grow, also in
 // a table copied over.
 //
-// The rows come in pages of STAMP_PAGE: page_stamps keeps for each a stamp no
-// row of it is above, the newest one written in it, so whoever looks for what
-// changed skips whole the pages written before it looked.
-//
 // A single table (@(component,single)) keeps on one row: of the rows that
 // were turned on and whose entity is on, the one turned on last. Turning one
 // on (enable) turns off the one that was on, which waits behind it; turning
@@ -168,7 +164,6 @@ raw_indices :: #force_inline proc "contextless" (t:^Raw_Table) -> int {return le
 STAMP_PAGE_BITS :: 8
 STAMP_PAGE :: 1<<STAMP_PAGE_BITS
 
-// The pages rows rows take.
 @(private)
 stamp_pages :: #force_inline proc "contextless" (rows:int) -> int {return (rows+STAMP_PAGE-1)>>STAMP_PAGE_BITS}
 
@@ -186,13 +181,6 @@ stamp_push :: #force_inline proc(t:^Raw_Table,stamp:u64) {
     pages:=cast(^runtime.Raw_Dynamic_Array)&t.page_stamps
     pages.len=stamp_pages(len(t.stamps))
     t.page_stamps[pages.len-1]=stamp
-}
-
-// The last row went.
-@(private)
-stamp_pop :: #force_inline proc(t:^Raw_Table) {
-    pop(&t.stamps)
-    if len(t.page_stamps)>stamp_pages(len(t.stamps)) {pop(&t.page_stamps)}
 }
 
 // A row took the stamp of another: its page is not below it.
@@ -502,13 +490,9 @@ table_changes :: #force_inline proc "contextless" (t:^Table($T),seen:^Seen) -> C
 read_changes :: #force_inline proc "contextless" (r:Read($T),seen:^Seen) -> Changes {return raw_changes(raw(r.table),seen)}
 changes :: proc{table_changes,read_changes}
 
-// The rows among the changes, one at a time and in order: every row with
-// all, and otherwise those stamped since, skipping whole the pages written
-// before. The one walk of what changed:
-//
-//   c:=core.changes(lights,&state.seen)
-//   for e in c.gone {...}
-//   for row in core.each_changed(lights,&c) {...}
+// The rows among the changes, one at a time and in order, for a `for`: every
+// row with all, and otherwise those stamped since, skipping whole the pages
+// written before.
 raw_each_changed :: #force_inline proc "contextless" (t:^Raw_Table,c:^Changes) -> (row:int,ok:bool) {
     row=c.row
     rows:=min(c.rows,len(t.stamps))
@@ -543,9 +527,8 @@ table_changed :: #force_inline proc "contextless" (t:^Table($T),c:Changes,row:in
 read_changed :: #force_inline proc "contextless" (r:Read($T),c:Changes,row:int) -> bool {return c.all || r.table.stamps[row]>c.since}
 changed :: proc{table_changed,read_changed}
 
-// Whether anything changed in a table since seen, which it moves to now: a
-// row written, added, turned or gone, or its rows replaced whole. What a
-// reader asks that makes again whole what it derives from the table.
+// Whether anything changed in a table since seen, which it moves to now:
+// what a reader asks that makes again whole what it derives from the table.
 raw_touched :: proc "contextless" (t:^Raw_Table,seen:^Seen) -> bool {
     now:=Seen{t.version,t.gone_first+u64(len(t.gone))}
     if seen^==now {return false}
@@ -560,9 +543,8 @@ touched :: proc{table_touched,read_touched}
 Shape :: distinct u64
 
 // Whether the rows of a table are others since a reader looked, which it
-// moves to now: rows added, removed, turned on or off, or replaced whole,
-// whatever was written in them. What a reader asks that orders or indexes
-// the rows of a table whose values are written every tick.
+// moves to now, whatever was written in them: what orders or indexes the
+// rows of a table written every tick asks.
 raw_reshaped :: proc "contextless" (t:^Raw_Table,shape:^Shape) -> bool {
     if shape^==Shape(t.layout) {return false}
     shape^=Shape(t.layout)
@@ -799,7 +781,8 @@ raw_drop_index :: proc(t:^Raw_Table,size,i:int) -> bool {
     if row!=last {table_move_row(t,size,last,row)}
     t.values.len-=1
     pop(&t.entities)
-    stamp_pop(t)
+    pop(&t.stamps)
+    (cast(^runtime.Raw_Dynamic_Array)&t.page_stamps).len=stamp_pages(len(t.stamps))
     pop(&t.off)
     if t.single {pop(&t.turns)}
     rows_set(t,i,0)
