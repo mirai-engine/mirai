@@ -45,6 +45,7 @@ registry_memory_remove :: proc(r:^Registry,path:string) -> Error {
 // file when there is none. Not dropped when memory held nothing for it;
 // Out_Of_Memory when it is dropped and the records had none to follow.
 registry_memory_drop :: proc(r:^Registry,path:string) -> (dropped:bool,error:Error) {
+    path:=strings.clone(path,context.temp_allocator) // it may be the one memory holds, which forgetting frees
     if !registry_memory_forget(r,path) {return false,.None}
     if registry_outside(path) {
         r.revision+=1

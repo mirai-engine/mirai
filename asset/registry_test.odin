@@ -538,6 +538,8 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
         testing.expect_value(t,registry_refresh(&r,{"user/levels/late.tex","user/levels/fake.tex"}),Error.None)
         _,seen:=registry_find(&r,late)
         testing.expect(t,seen && len(r.refused)==1)
+        testing.expect_value(t,registry_refresh(&r,r.refused[:]),Error.None)
+        testing.expectf(t,len(r.refused)==1 && r.refused[0]=="user/levels/fake.tex","%v: the refused paths themselves are refused again, not %q",mode,r.refused[:])
         if mode==.Scanned {
             testing.expect_value(t,registry_scan(&r),Error.None)
             _,kept:=registry_find(&r,own)
