@@ -275,8 +275,8 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     // Conditions, as assertions.
     error,text=probe_call(f,"play.check",`{"conditions":[{"storage":"Probe_Score","field":"points","compare":"At_Least","number":7},{"entity":"Hero","field":"Probe_Health.points","compare":"Below","number":3},{"entity":"Hero","field":"world_position.1","compare":"Equal","number":5},{"storage":"Probe_Score","field":"state","compare":"Equal","text":"Waiting"},{"entity":"Nobody","compare":"Gone"}]}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.has_prefix(text,`{"passed":false`),text)
-    testing.expect(t,strings.contains(text,`"results":[{"passed":true,"value":7},{"passed":false,"value":3},{"passed":true,"value":5},{"passed":true,"value":"Waiting"},{"passed":true,"value":null}]`),text)
+    testing.expect(t,strings.has_prefix(api.json_compact(text),`{"passed":false`),text)
+    testing.expect(t,strings.contains(api.json_compact(text),`"results":[{"passed":true,"value":7},{"passed":false,"value":3},{"passed":true,"value":5},{"passed":true,"value":"Waiting"},{"passed":true,"value":null}]`),text)
     error,_=probe_call(f,"play.check",`{"conditions":[{"storage":"Probe_Score","field":"lives","compare":"Equal","number":1}]}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expect(t,strings.contains(error.message,"points") && strings.contains(error.message,"state"),error.message)
@@ -374,10 +374,10 @@ play_get_reads_one_value_of_an_entity_as_play_inspect_and_play_check_name_it :: 
     }
     for c in read {
         error,text=probe_call(f,"play.get",c.params)
-        testing.expectf(t,error.code==0 && strings.contains(text,c.value),"%s: %v %s",c.params,error,text)
+        testing.expectf(t,error.code==0 && strings.contains(api.json_compact(text),c.value),"%s: %v %s",c.params,error,text)
     }
     error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","field":"Transform.position.0","compare":"Equal","number":1},{"entity":"Hero","field":"Transform.position[0]","compare":"Equal","number":1},{"entity":"Foe","field":"Probe_Health.points","compare":"Gone"}]}`)
-    testing.expectf(t,error.code==0 && strings.contains(text,`"passed":true`),"%v %s",error,text)
+    testing.expectf(t,error.code==0 && strings.contains(api.json_compact(text),`"passed":true`),"%v %s",error,text)
     refused:=[?]struct{params,says:string}{
         {`{"entity":"Hero","field":"components.Probe_Health.points"}`,"named by itself"},
         {`{"entity":"Foe","field":"Probe_Health.points"}`,"no Probe_Health"},
@@ -1122,7 +1122,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
         testing.expect(t,!misses.passed && misses.steps==3 && len(misses.ran)==2 && misses.ran[0].passed && !misses.ran[1].passed,text)
         testing.expect(t,strings.contains(misses.failure,"steps[1] play.check: did not hold"),misses.failure)
     }
-    testing.expect(t,strings.contains(text,`"result":{"passed":false,"tick":0,"results":[{"passed":false,"value":0}]}`),text)
+    testing.expect(t,strings.contains(api.json_compact(text),`"result":{"passed":false,"tick":0,"results":[{"passed":false,"value":0}]}`),text)
     testing.expect(t,run_find(&f.s,0)==nil,"the game stops after each scenario")
     // A step that fails, an until that runs out and files the methods would not take.
     cases:=[?]struct{text,says:string}{
