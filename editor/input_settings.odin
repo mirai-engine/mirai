@@ -205,7 +205,7 @@ input_settings_cards :: proc(s:^Session,needle:string) {
     ui.id_push(ctx,ui.id(ctx,"input"))
     defer ui.id_pop(ctx)
     if problem:=base.text_get(st.problem[:]);problem!="" {
-        if section_card(s,settings_card_id(s,SETTINGS_CATEGORY_INPUT,0),"") {ui.paragraph(ctx,problem,th.font_small,th.text_muted)}
+        if section_card(s,settings_card_id(s,SETTINGS_CATEGORY_INPUT,0),"") {ui.text(ctx,problem,ui.prose(ctx,th.font_small,th.text_muted))}
         return
     }
     for card,k in input_cards(s,needle) {

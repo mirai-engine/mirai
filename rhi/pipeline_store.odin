@@ -360,7 +360,8 @@ pipeline_store_save :: proc(s: ^Pipeline_Store, path: string) -> bool {
 
 // The keys of pipelines: what the driver compiles of them, never their names.
 pipeline_key_compute :: proc(desc: Compute_Pipeline_Desc) -> u64 {
-	return base.hash64(shader_code_bytes(desc.shader^), u64(Shader_Stage.Compute) + 1)
+	constants := desc.constants
+	return base.hash64(([^]u8)(&constants)[:size_of(constants)], base.hash64(shader_code_bytes(desc.shader^), u64(Shader_Stage.Compute) + 1))
 }
 
 pipeline_key_graphics :: proc(desc: Graphics_Pipeline_Desc) -> u64 {
@@ -373,8 +374,10 @@ pipeline_key_graphics :: proc(desc: Graphics_Pipeline_Desc) -> u64 {
 		depth_compare:              Compare,
 		cull:                       Cull_Mode,
 		topology:                   Topology,
+		constants:                  [2]Shader_Constants,
 	}
-	state := State{depth_format = desc.depth_format, depth_test = desc.depth_test, depth_write = desc.depth_write, cull = desc.cull, topology = desc.topology}
+	state := State{depth_format = desc.depth_format, depth_test = desc.depth_test, depth_write = desc.depth_write, cull = desc.cull, topology = desc.topology,
+		constants = {desc.vertex_constants, desc.fragment_constants}}
 	if desc.depth_test {state.depth_compare = desc.depth_compare}
 	count := clamp(desc.color_count, 0, MAX_COLOR_TARGETS)
 	state.count = u8(count)

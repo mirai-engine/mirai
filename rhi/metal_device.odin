@@ -55,7 +55,8 @@ Mtl_Pipeline :: struct {
 
 Mtl_Shader :: struct {
 	fingerprint: [32]u8, // source and entry bytes; Shader_Code can be released after creation
-	library: ^MTL.Library,
+	constants: Shader_Constants, // what the function was specialized with
+	library: ^MTL.Library, // of the source: the functions of its other constants share it
 	function: ^MTL.Function,
 	users: u32,
 }

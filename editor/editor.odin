@@ -781,7 +781,7 @@ open_run :: proc(s:^Session) {
     scene:=document_scene_tab(s)
     // Another scene takes the place of the one open: who would lose what
     // they do, or what is unsaved, is asked about first.
-    replaces:=scene>=0 && !path_is_prefab(path) && !document_holds_file(s,path)
+    replaces:=scene>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
     if replaces && !s.open_confirmed {
         asset_document_activate(s,-1)
         document_activate(s,scene)

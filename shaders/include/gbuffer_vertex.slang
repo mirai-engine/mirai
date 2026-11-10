@@ -36,10 +36,9 @@ void gbuffer_vertex_place(inout Gbuffer_Vertex output, float3 world, float3 prev
 #endif
     output.out_clip = view_clip_unjittered(world);
     output.out_prev_clip = view_clip_previous(prev_world);
-#ifdef MIRAI_EDITOR_HIGHLIGHT
-    output.position = output.out_clip;
-#else
     output.position = view_clip(world);
+#ifdef MIRAI_EDITOR_HIGHLIGHT
+    if (MIRAI_EDITOR_HIGHLIGHT) output.position = output.out_clip;
 #endif
 }
 #endif

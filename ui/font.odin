@@ -817,18 +817,6 @@ text_lines_next :: proc "contextless" (it:^Text_Lines) -> (start,end:int,ok:bool
     return start,end,true
 }
 
-// Lines text takes when wrapped to width.
-text_line_count :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> int {
-    count:=0
-    rest:=text
-    for {
-        _,rest,_=text_line(font,rest,size,width,wrap,f)
-        count+=1
-        if rest=="" {break}
-    }
-    return count
-}
-
 ELLIPSIS :: "…"
 
 // The longest prefix of one line of text that leaves room for the ellipsis

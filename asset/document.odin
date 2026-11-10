@@ -383,7 +383,9 @@ document_write :: proc(doc:^Document,w:^serial.Writer,p:=PACK_EDIT,worker:=jobs.
     chunks[3].data=serial.writer_bytes(&directory)
     if names.overflow!=0 || schema.overflow!=0 || directory.overflow!=0 {return .Out_Of_Memory}
     scratch:=make([dynamic]u8,allocator);defer delete(scratch)
-    return blob_build(w,doc.kind,doc.kind_version,doc.id,doc.owner,doc.flags,chunks[:],&scratch,p,worker)
+    flags:=doc.flags-{.One_Root}
+    if doc.kind==KIND_SCENE && document_one_root(doc) {flags+={.One_Root}}
+    return blob_build(w,doc.kind,doc.kind_version,doc.id,doc.owner,flags,chunks[:],&scratch,p,worker)
 }
 
 // Writes the document to a file, whole or not at all.

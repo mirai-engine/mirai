@@ -213,7 +213,7 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   fixed step is a single one, and each library that moves an entity through time compensates:
   - the locomotion of its `Character` and the turn of the seat
     ([locomotion](../../mirai-physics/references/engine.md#own-pace));
-  - its animation, its pose modifiers and its `Keyframe_Path` advance `dt * pace_of`.
+  - its animation and its pose modifiers advance `dt * pace_of`.
   - The camera that follows it already runs with the `dt` of the frame (`late`), which does not
     scale.
   - What it throws or fires follows the world clock unless the game gives it its own `Own_Pace`; a
@@ -524,7 +524,8 @@ A test that needs a world declares a struct and lets `core` describe it
 destroy, settle, copy and swap of its tables.
 
 - The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
-  component or the value of a storage. What the attributes of `T` say is read from the source that
+  component, an array of them (a table per element, named `<T>_<index>`) or the value of a
+  storage. What the attributes of `T` say is read from the source that
   declares it, through the `core.declared_read` the generator uses: a test world cannot say
   something else of a type than a generated one. A type a test file declares may have no attribute,
   and takes the default its test gives it.

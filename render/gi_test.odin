@@ -35,14 +35,14 @@ gi_reference_gives_the_light_of_a_white_furnace :: proc(t: ^testing.T) {
 		settings := DEFAULT_SETTINGS
 		settings.reflections, settings.taa, settings.reference_gi, settings.trace_mode = false, false, true, mode
 		f: Fixture
-		if !fixture_init(t, &f, 48, 48, settings) {return}
+		if !fixture_init(t, &f, 48, 48, settings, programs = true) {return}
 		defer fixture_destroy(&f)
 		r, device := f.renderer, f.device
 		if mode == .Hardware && !r.hardware_rt {continue}
 		cube, added := gi_cube(r)
 		if !testing.expect(t, added) {return}
 		grid := program_find(r, "Grid", .Surface)
-		if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
+		if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
 		// A metal of base color 0.5 reflects 0.5 as a diffuse reflector, whatever its dielectric layer.
 		metal := DEFAULT_MATERIAL
 		metal.base_color, metal.metallic = {0.5, 0.5, 0.5}, 1

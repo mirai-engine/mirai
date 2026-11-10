@@ -44,10 +44,6 @@ Section_Shown :: enum u8 {Unloaded,Loading,Loaded,Active}
 
 // Places a reference to the scene id at point and loads what it holds under it.
 section_place :: proc(s:^Session,id:base.Asset_Id,point:[3]f32,name:string) -> core.Entity {
-    if document_is_prefab(s) {
-        notify(s,"A prefab cannot hold a scene: place the scene in a scene, or the prefab in this one")
-        return core.NONE
-    }
     a:=s.app.assets
     if a==nil || s.document==nil {return core.NONE}
     if id==s.document.id {
@@ -281,7 +277,7 @@ container_kind :: proc(w:core.World_Ref,e:core.Entity) -> Container_Kind {
 
 container_color :: proc(s:^Session,kind:Container_Kind) -> (icon,text:ui.Color) {
     switch kind {
-    case .Prefab:  return asset_kind_color(s,asset.KIND_PREFAB),PREFAB_TEXT
+    case .Prefab:  return asset_kind_color(s,SHOWN_PREFAB),PREFAB_TEXT
     case .Section: return SECTION_COLOR,SECTION_TEXT
     case .None:
     }
@@ -491,7 +487,6 @@ selection_section_locked :: proc(s:^Session,w:core.World_Ref) -> bool {
 // Edits the section of reference in its world, or stops with none. What the
 // one left keeps unsaved, Save still writes.
 section_edit_set :: proc(s:^Session,reference:core.Entity) {
-    if reference!=core.NONE && document_is_prefab(s) {return}
     w:=edited_world(s)
     d:=&s.document.sections
     if left:=section_editing(s);left!=core.NONE && left!=reference && section_unsaved(s,w,left) {
@@ -540,7 +535,7 @@ section_capture :: proc(s:^Session,w:core.World_Ref,reference:core.Entity,captur
     previous:asset.Scene
     had:=asset.scene_load(&previous,&a.types,path)==.None
     defer if had {asset.scene_destroy(&previous)}
-    if _,error:=scene.capture(w,captured,&a.types,{section=reference,previous=had?&previous:nil,kind=asset.KIND_SCENE,id=r.scene});error!=.None {
+    if _,error:=scene.capture(w,captured,&a.types,{section=reference,previous=had?&previous:nil,id=r.scene});error!=.None {
         return "",false,fmt.tprintf("it could not be captured: %s",scene.error_text(error))
     }
     if prefab_overrides_put(s,captured,had?previous.overrides[:]:nil)!=.None {
@@ -638,8 +633,8 @@ Api_Section_Edit_Params :: struct {
 api_section_edit :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Section_Edit_Params)
     w:=edited_world(s)
-    if s.mode!=.Edit || document_is_prefab(s) {
-        api.call_fail(call,api.INVALID_PARAMS,"A section is edited in its world in Edit, in a scene: stop Play or Simulate, or open the scene")
+    if s.mode!=.Edit {
+        api.call_fail(call,api.INVALID_PARAMS,"A section is edited in its world in Edit: stop Play or Simulate")
         return
     }
     e:=core.NONE

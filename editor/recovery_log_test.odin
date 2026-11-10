@@ -131,13 +131,13 @@ every_tab_with_changes_keeps_its_chain_and_a_start_recovers_them_all :: proc(t:^
     prefab_fixture_step(f)
     recovery_update(s)
 
-    if !testing.expect_value(t,document_open_tab(s,"kept.prefab"),Document_Error.None) {return}
+    if !testing.expect_value(t,document_open_tab(s,"kept.scene"),Document_Error.None) {return}
     defer documents_free(s)
     recovery_update(s)
     prefab_slot:=s.recovery.slot
     testing.expect(t,prefab_slot!=0 && prefab_slot!=scene_slot)
     prefab_world:=edited_world(s)
-    prefab_root:=document_root(s,prefab_world)
+    prefab_root:=test_only_root(prefab_world)
     root_id:=api_entity_id(prefab_world,prefab_root)
     entity_rename(s,prefab_root,"Changed in the prefab")
     prefab_fixture_step(f)
