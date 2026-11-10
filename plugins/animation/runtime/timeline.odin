@@ -68,10 +68,12 @@ timeline_transport :: proc(state:^Playing,animation:^Animation,commands:[]Animat
         state.transport=.Play if command==.Play || command==.Resume else .Pause
         if command==.Play || command==.Stop {asked={state.entity,0,.Seek}}
     }
-    switch state.transport {
-    case .Component:
-    case .Play: animation.playing=true
-    case .Pause: animation.playing=false
+    if running {
+        switch state.transport {
+        case .Component:
+        case .Play: animation.playing=true
+        case .Pause: animation.playing=false
+        }
     }
     state.playing=animation.playing
 }
