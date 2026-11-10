@@ -77,7 +77,7 @@ PLAYER_MEMORY_TEXT :: "mirai: out of memory to start the game"
 @(private)
 PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--no-gpu] [--dedicated] [--frames <n>] [--capture <png>]
      [--validation] [--input <script>] [--players <n>] [--show-window] [--window <x>,<y>,<width>,<height>]
-     [--surface <width>,<height>,<density>] [--attached] [--library play|editor] [arguments of the project's plugins]
+     [--surface <width>,<height>,<density>] [--attached] [arguments of the project's plugins]
   --scene       start scene, relative to the project's assets folder, or the absolute path of a .scene file
   --headless    no window: draws offscreen with 1/60 s steps; what --frames, --input and --capture imply
   --no-gpu      no window or renderer: only simulates
@@ -95,9 +95,7 @@ PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] 
                 or --capture also give --show-window
   --surface     no window: draws into shared textures shown by the process that opened it,
                 which sends it input through stdin (used by the editor)
-  --attached    exits when its stdin closes: when the process that opened it is gone (used by the editor)
-  --library     the library of the project mirai-player loads: play, the default, or editor, the one
-                the editor loaded, of which it runs only the game (used by the editor)`
+  --attached    exits when its stdin closes: when the process that opened it is gone (used by the editor)`
 
 @(private)
 player_options :: proc(args:[]string) -> (options:Player_Options,ok:bool) {
@@ -124,7 +122,6 @@ player_options :: proc(args:[]string) -> (options:Player_Options,ok:bool) {
         case "--validation": options.validation=true
         case "--input":      options.input=value(args,&i) or_return
         case "--attached":    options.attached=true
-        case "--library":    _=value(args,&i) or_return // host.launch loads it
         case "--players":
             text:=value(args,&i) or_return
             options.players=strconv.parse_int(text,10) or_return

@@ -38,6 +38,7 @@ Declare_Desc :: struct {
     decl:string,       // the declarations
     staged:string,     // the collection the stage is compiled as, through which its packages import each other while every other package is its declarations. "": they import each other as written
     names:bool,        // each package writes DECLARED_NAMES
+    definition:string, // Windows: the module definition it writes, with the library and what it exports, which its import library is made from before it compiles. "": none
 }
 
 // What the call wrote: of each folder, whether any file was written, or
@@ -53,6 +54,7 @@ Declare :: struct {
     desc:Declare_Desc,
     changed:Declare_Changed,
     errors:[dynamic]string,
+    exports:map[string]bool, // the link names the stage exports, in every branch of a when
 }
 
 @(private="file")
@@ -110,7 +112,20 @@ Private_Proc :: struct {
 declare :: proc(desc:Declare_Desc) -> (errors:[]string,changed:Declare_Changed) {
     d:Declare
     d.desc=desc
+    d.exports=make(map[string]bool,context.temp_allocator)
     for path in desc.packages {declare_package(&d,path)}
+    when ODIN_OS==.Windows {
+        if desc.definition!="" {
+            // What another branch of a when exports only puts in the import library a name nothing that compiles here calls.
+            links,_:=slice.map_keys(d.exports,context.temp_allocator)
+            slice.sort(links)
+            text:=strings.builder_make(context.temp_allocator)
+            fmt.sbprintfln(&text,"LIBRARY %q\nEXPORTS",strings.concatenate({filepath.stem(desc.library),".dll"},context.temp_allocator))
+            for link in links {fmt.sbprintfln(&text,"    %q",link)}
+            changed:bool
+            write(&d,desc.definition,strings.to_string(text),&changed)
+        }
+    }
     return d.errors[:],d.changed
 }
 
@@ -566,6 +581,7 @@ proc_declare :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_De
     if type.results!=nil && !type.diverging {call=fmt.tprintf("return %s",call)}
     fmt.sbprintfln(&out.exports,"%s@(export,link_name=%q%s) __mirai_export_%s :: %s {{%s}}",indent,link,private_file?",private=\"file\"":"",name,wrapper,call)
     out.export_count+=1
+    d.exports[strings.clone(link,context.temp_allocator)]=true
 }
 
 // A procedure type among what a foreign block declares takes "cdecl" and not

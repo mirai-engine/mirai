@@ -184,7 +184,7 @@ engine_library_files :: proc(paths:Engine_Paths,library:Engine_Library,allocator
 
 // What a library of the engine leaves. On Windows the import library is a file
 // of its own: without it the projects and the programs do not link, and the
-// only build that makes it is the one that compiles the library. Elsewhere it
+// only build that makes it is the one that declares the library. Elsewhere it
 // is the library itself, and this is the same check twice.
 @(private)
 library_present :: proc(library,linked_against:string) -> bool {
@@ -391,11 +391,17 @@ main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to
 @(private)
 engine_library_stage :: proc(root:string,paths:Engine_Paths,library:Engine_Library) -> (errors:[]string,changed:Declare_Changed,ok:bool) {
     _,linked:=engine_library_files(paths,library,context.temp_allocator)
-    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=ENGINE_STAGE_COLLECTION,names=true})
+    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=ENGINE_STAGE_COLLECTION,names=true,definition=engine_definition(paths,library)})
     if len(errors)>0 {return errors,changed,true}
     entry,written:=entry_write(paths.stage,engine_library_entry(library,context.temp_allocator),entry_imports(ENGINE_STAGE_COLLECTION,library.packages)[:])
     changed.stage||=entry
     return nil,changed,written
+}
+
+// The module definition its import library is made from (import_libraries_make).
+@(private)
+engine_definition :: proc(paths:Engine_Paths,library:Engine_Library) -> string {
+    return project.path(paths.stage,strings.concatenate({library.file,".def"},context.temp_allocator),allocator=context.temp_allocator)
 }
 
 // The package a library is built from (entry_write): its name, as a package can be named.
@@ -575,6 +581,14 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         }
         compile[which]=true
     }
+    // What links against a library it compiles links against an import library made now.
+    made:=make([dynamic][2]string,context.temp_allocator)
+    for library,which in libraries {
+        if !compile[which] {continue}
+        _,linked:=engine_library_files(paths,library,context.temp_allocator)
+        append(&made,[2]string{engine_definition(paths,library),linked})
+    }
+    if failed:=import_libraries_make(compiler,made[:]);failed!="" {return engine_fail(.Write_Failed,failed,"it could not be made from its module definition")}
     entries:=make([]string,len(libraries),context.temp_allocator)
     for library,which in libraries {
         if !compile[which] {continue}
@@ -627,6 +641,8 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     }
     for &task in tasks {
         if task.library>=0 {task.needs=reach.needs[task.library]}
+        // What they link against was made ahead: they all compile at once.
+        if IMPORT_LIBRARIES_AHEAD {task.needs=nil}
     }
     built:=make([]Library_Stamp,len(libraries),context.temp_allocator)
     for &library,which in built {library={plan.libraries[which].sources,plan.libraries[which].tools,against[which]}}
@@ -657,8 +673,8 @@ Engine_Task :: struct {
 }
 
 // Runs the pending tasks, as many at once as compilers_at_once, each once the
-// libraries it links against stand: on Windows it links against their import
-// libraries. A library that ends well is stamped as built, named in compiled
+// libraries it needs stand (none where what it links against was made ahead,
+// IMPORT_LIBRARIES_AHEAD). A library that ends well is stamped as built, named in compiled
 // and kept in its entry of the shared cache. The first task that fails ends
 // the build once the ones running end.
 @(private)
@@ -767,7 +783,8 @@ engine_library_command :: proc(compiler:string,paths:Engine_Paths,library:Engine
     append(&command,"-json-errors")
     // A library finds the ones it links beside it, whatever loads it. The many
     // of dev keep each its own runtime, as those of plugins do (LIBRARY_OWN_RUNTIME).
-    when ODIN_OS==.Linux || ODIN_OS==.Darwin {
+    when ODIN_OS==.Windows {linker_flags_append(&command,"/NOIMPLIB",context.temp_allocator)}
+    else {
         own:=LIBRARY_OWN_RUNTIME if mode==.Dev else ""
         file:=project.library_file(library.file,context.temp_allocator)
         when ODIN_OS==.Linux {linker_flags_append(&command,fmt.tprintf("-Wl,-soname,%s%s %s",file,links_libraries?" -Wl,-rpath,$ORIGIN":"",own),context.temp_allocator)}
@@ -850,16 +867,14 @@ engine_cache_entry :: proc(root:string,library:Engine_Library,mode:Engine_Mode,b
     return project.path(workspace.cache_folder(root,ENGINE_CACHE,context.temp_allocator),fmt.tprintf("%s-%v-%x",library.file,mode,key),allocator=context.temp_allocator)
 }
 
-// The files a library leaves in the folder of the engine: itself, what links
-// against it on Windows and its debug information there.
+// The files a library leaves in the folder of the engine: itself and its
+// debug information on Windows. What links against it there is made from its
+// declarations (import_libraries_make).
 @(private)
-engine_cache_files :: proc(library:Engine_Library) -> [3]string {
-    files:[3]string
+engine_cache_files :: proc(library:Engine_Library) -> [2]string {
+    files:[2]string
     files[0]=project.library_file(library.file,context.temp_allocator)
-    when ODIN_OS==.Windows {
-        files[1]=library_import_file(library.file,context.temp_allocator)
-        files[2]=strings.concatenate({library.file,".pdb"},context.temp_allocator)
-    }
+    when ODIN_OS==.Windows {files[1]=strings.concatenate({library.file,".pdb"},context.temp_allocator)}
     return files
 }
 
@@ -872,7 +887,7 @@ engine_cache_take :: proc(entry:string,paths:Engine_Paths,library:Engine_Library
         if name=="" {continue}
         from:=project.path(entry,name,allocator=context.temp_allocator)
         // The debug information is there only when the library was built with it.
-        if at==2 && !os.is_file(from) {continue}
+        if at==1 && !os.is_file(from) {continue}
         if os.copy_file(project.path(paths.folder,name,allocator=context.temp_allocator),from)!=nil {return false}
     }
     cache_entry_used(entry)
@@ -888,7 +903,7 @@ engine_cache_store :: proc(entry:string,paths:Engine_Paths,library:Engine_Librar
     for name,at in engine_cache_files(library) {
         if name=="" {continue}
         from:=project.path(paths.folder,name,allocator=context.temp_allocator)
-        if at==2 && !os.is_file(from) {continue}
+        if at==1 && !os.is_file(from) {continue}
         if os.copy_file(project.path(staging,name,allocator=context.temp_allocator),from)!=nil {_=base.remove_all(staging);return}
     }
     cache_entry_commit(entry,staging)

@@ -233,8 +233,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   joins as a network client of the game the host serves (Join game, `play.join`) with their seat
   and `multiplayer` prediction, and leaves whenever they want.
 - Online players run the editor's library: the player processes the editor opens for a networked
-  Play load the `editor` library the editor already loaded (`--library editor`) and run only the
-  game's world, so a networked Play compiles nothing and server and clients run the same code.
+  Play load the `editor` library the editor already loaded and run only the game's world, so a
+  networked Play compiles nothing and server and clients run the same code.
 
 ## Verification
 
