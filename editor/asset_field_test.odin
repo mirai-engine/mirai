@@ -9,7 +9,7 @@ import "mirai:std/base"
 Asset_Field_Test :: struct {
     any:base.Asset_Id,
     sound:base.Asset_Id,
-    source:base.Asset_Id `mirai:"section=Clip,kind=.anim .match .graph"`,
+    source:base.Asset_Id `mirai:"section=Clip,kind=.anim .character .graph"`,
     unknown:base.Asset_Id `mirai:"kind=.graph"`,
 }
 
