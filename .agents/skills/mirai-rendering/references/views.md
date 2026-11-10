@@ -107,7 +107,7 @@ Rules:
   `Gpu_Frame.layers`, `own_hidden`. The renderer does not know what a head is: it decides by
   layers. The body still gives shadow and reflection and is seen whole in nested views (which set
   `own` to 0). `engine/render` marks the instances from `View_Bodies`, and a replacement of an
-  entity's mesh (`replace_source`, like the skinned copy) takes its `Layers` and its owner.
+  entity's mesh (`replace_source`) takes its `Layers` and its owner.
 - **The part of a skinned mesh.** A pose with a part has another copy of its vertices, deformed
   with the palette that collapses the part into its bone, in the layers of its mesh. A view that
   does not draw those layers rasterizes that copy; the rays use the whole pose

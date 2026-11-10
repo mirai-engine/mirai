@@ -155,8 +155,9 @@ entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:core.
     rig:=bone_rig(&sync.rigs,assets,shown.mesh)
     if rig==nil {return {}}
     if drawn!=nil && drawn.world==id {
-        for &extra in drawn.extras {
-            if extra.replace_source && extra.object_id==u64(e) {return bones_of(sync,renderer,rig,extra.mesh,extra.transform,true)}
+        // The mesh its instance shows is its skin, when a library poses it.
+        if at:=core.entity_map_index(&drawn.drawn,e);at>=0 {
+            if mesh,transform,held:=erender.instance_placed(renderer,at);held {return bones_of(sync,renderer,rig,mesh,transform,true)}
         }
     }
     world,placed:=core.get(worlds,e)
