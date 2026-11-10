@@ -9,7 +9,7 @@ import mm "mirai:std/math"
 @(private = "file")
 edit_fixture :: proc(t: ^testing.T, f: ^Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	// Images are compared pixel by pixel: every pixel traces its own rays.
 	settings.reference_lights = true
 	return fixture_init(t, f, 160, 120, settings, hardware_rt = false, loc = loc)

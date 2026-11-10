@@ -28,7 +28,7 @@ pools_grid :: proc(r: ^Renderer, cells: int) -> (Mesh_Handle, bool) {
 
 @(test)
 a_small_pool_growth_keeps_its_data_with_aligned_copies :: proc(t: ^testing.T) {
-	settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+	settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
 	f: Fixture
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -54,7 +54,7 @@ a_small_pool_growth_keeps_its_data_with_aligned_copies :: proc(t: ^testing.T) {
 @(test)
 a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	f: Fixture
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -110,7 +110,7 @@ a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testi
 @(test)
 blas_of_a_mesh_at_rest_is_compacted :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.reflections, settings.taa = false, false
+	settings.taa = false
 	f: Fixture
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
