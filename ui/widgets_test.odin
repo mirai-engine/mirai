@@ -6,8 +6,8 @@ import "core:testing"
 // The paint of the last frame that shows this text.
 // The paint of what says text: a widget that draws it, or the text whose first span it is.
 test_paint :: proc(ctx:^Context,text:string) -> ^Paint {
-    for &p in ctx.paints[:ctx.paint_count] {if p.text==text {return &p}}
     for &p in test_text_pieces(ctx) {if p.text==text {return &p}}
+    for &p in ctx.paints[:ctx.paint_count] {if p.text==text {return &p}}
     return nil
 }
 // Every piece of every line of the texts of the frame as the paint it would

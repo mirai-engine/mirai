@@ -102,8 +102,8 @@ test_markdown_build :: proc(ctx:^Context,user:rawptr) {
 }
 @(private="file")
 test_markdown_paint :: proc(ctx:^Context,text:string) -> ^Paint {
-    for &p in ctx.paints[:ctx.paint_count] {if strings.trim_right(p.text," ")==text {return &p}}
     for &p in test_text_pieces(ctx) {if strings.trim_right(p.text," ")==text {return &p}}
+    for &p in ctx.paints[:ctx.paint_count] {if strings.trim_right(p.text," ")==text {return &p}}
     return nil
 }
 

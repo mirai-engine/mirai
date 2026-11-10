@@ -54,9 +54,9 @@ each screen that did not change this way.
     child occupies `span` columns and moves to the next row if it does not fit in what is left of
     its own. A child of `row_span` rows keeps its columns in the rows under it and the children
     after it flow around them. A row is as high as its highest child of one row, or what the row
-    tracks of `grid_tracks_add` say with the same kinds of `Size`; a child of several rows that
-    needs more gives the rest to its last one. The track rows that the frame cannot store are
-    counted in `Stats.dropped_tracks` and their Grid is left with equal columns.
+    tracks of `grid_rows_add` say with the same kinds of `Size`; a child of several rows that
+    needs more gives the rest to its last one. The tracks that the frame cannot store are counted
+    in `Stats.dropped_tracks` and their Grid is left with equal columns, or rows of their children.
   - `Wrap` continues on another row where the next child does not fit; `Stack` overlaps the
     children.
   - `self_x`/`self_y` align a child in its place; `Stretch` stretches it like a `GROW` (what is
@@ -587,4 +587,4 @@ a camera.
   with `rows_begin`.
 - The text of a `markdown` link does not take bold or code from inside.
 - A `.ui` document names the `columns` of a Grid, not its tracks nor the spans of its children:
-  those are set from code.
+  those are set from code, and the rows of a `.ui` hold neither `row_span` nor row tracks.

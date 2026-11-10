@@ -31,14 +31,17 @@ Align :: enum u8 {Start,Center,End,Baseline}
 // cell or the stack: as its parent aligns its children, or on its own.
 Self_Align :: enum u8 {Parent,Start,Center,End,Stretch}
 
-// The widths of the columns of a Grid and the heights of its first rows:
-// Fixed, Percent, Fit or Grow, whose value is its weight (0 is 1). The rows
-// after row_count are as high as their highest child.
+// The widths of the columns of a Grid: Fixed, Percent, Fit or Grow, whose
+// value is its weight (0 is 1).
 GRID_TRACKS :: 12
 Grid_Tracks :: struct {
     count:u8,
     columns:[GRID_TRACKS]Size,
-    row_count:u8,
+}
+// The heights of the first rows of a Grid, of the same kinds. The rows after
+// count are as high as their highest child.
+Grid_Rows :: struct {
+    count:u8,
     rows:[GRID_TRACKS]Size,
 }
 
@@ -71,7 +74,6 @@ Layout :: struct {
     columns:u16,           // of a Grid; 0 is 1
     tracks:u16,            // of a Grid: row plus one of Context.grid_tracks with the width of each column; 0: all the same
     span:u8,               // columns of a Grid it takes; 0 is 1
-    row_span:u8,           // rows of a Grid it takes; 0 is 1
     self_x,self_y:Self_Align,
     aspect:f32,            // width over height it keeps, the axis that fits giving the other; 0: none
 }
@@ -79,6 +81,8 @@ Layout :: struct {
 Box :: struct {
     id:Id,
     using layout:Layout,
+    row_span:u8,     // rows of a Grid it takes; 0 is 1
+    row_tracks:u16,  // of a Grid: row plus one of Context.grid_rows with the height of its rows; 0: each as high as its highest child
     float:Float,
     contain:bool,    // floating: it stays inside its surface, on the other side of what it hangs from when it does not fit
     inset:[4]f32,    // contained: how far inside its surface it stays (left, top, right, bottom)
@@ -132,7 +136,7 @@ box_scope_end :: proc(ctx:^Context,b:Box) {box_end(ctx,b)}
 box_begin :: proc(ctx:^Context,b:Box) {
     identifier:=b.id
     if b.layer.enabled && identifier==0 {identifier=id(ctx,"composition",ctx.elements+1)}
-    element:=Element{id=identifier,layout=b.layout,float=b.float,contain=b.contain,inset=b.inset,from=b.from}
+    element:=Element{id=identifier,layout=b.layout,row_span=b.row_span,row_tracks=b.row_tracks,float=b.float,contain=b.contain,inset=b.inset,from=b.from}
     if b.float.to!=.None {layer_push(ctx,float_layer(b.float,ctx.layer))}
     paint:Paint
     if b.image.kind!=.Solid {

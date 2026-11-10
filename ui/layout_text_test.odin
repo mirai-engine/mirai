@@ -120,12 +120,13 @@ text_built_out_of_order_or_from_numbers_that_are_none_ends_no_frame :: proc(t:^t
             text_end(ctx,{width=fixed(40)},reveal=nan)
         }
         // A grid whose children ask for more rows than it has children, and tracks that say more than they hold.
-        tracks:=grid_tracks_add(ctx,{count=255,row_count=255,rows={0={kind=.Grow,value=nan},1=percent(nan)}})
-        if box(ctx,{width=fixed(100),height=fixed(nan),direction=.Grid,tracks=tracks}) {
-            for _ in 0..<5 {element_leaf(ctx,{layout={width=GROW,height=GROW,row_span=255,span=255}})}
+        tracks:=grid_tracks_add(ctx,{count=255})
+        rows:=grid_rows_add(ctx,{count=255,rows={0={kind=.Grow,value=nan},1=percent(nan)}})
+        if box(ctx,{width=fixed(100),height=fixed(nan),direction=.Grid,tracks=tracks,row_tracks=rows}) {
+            for _ in 0..<5 {element_leaf(ctx,{layout={width=GROW,height=GROW,span=255},row_span=255})}
         }
-        if box(ctx,{width=FIT,height=FIT,direction=.Grid,columns=3,align_y=.Baseline}) {
-            for i in 0..<7 {element_leaf(ctx,{layout={width=fixed(10),height=fixed(nan if i==3 else 10),row_span=u8(i*40)}})}
+        if box(ctx,{width=FIT,height=FIT,direction=.Grid,columns=3,align_y=.Baseline,row_tracks=9999}) {
+            for i in 0..<7 {element_leaf(ctx,{layout={width=fixed(10),height=fixed(nan if i==3 else 10)},row_span=u8(i*40)})}
         }
         if box(ctx,{width=FIT,height=FIT,align_y=.Baseline}) {
             if box(ctx,{width=FIT,height=FIT,align_y=.Baseline}) {}
@@ -195,17 +196,17 @@ a_grid_takes_the_heights_of_its_row_tracks_and_children_span_rows :: proc(t:^tes
     build :: proc(ctx:^Context,user:rawptr) {
         // A child of two rows keeps its column in the row under it, and the children after it flow around it.
         if box(ctx,{id=id(ctx,"spans"),width=fixed(320),height=FIT,direction=.Grid,columns=3,gap=10,align_x=.Start,align_y=.Start,track=true}) {
-            test_leaf(ctx,"tall",0,{width=GROW,height=fixed(50),row_span=2})
+            if box(ctx,{id=id(ctx,"tall"),width=GROW,height=fixed(50),row_span=2,track=true}) {}
             test_leaf(ctx,"b",0,{width=GROW,height=fixed(10)})
             test_leaf(ctx,"c",0,{width=GROW,height=fixed(12)})
             test_leaf(ctx,"wide",0,{width=GROW,height=fixed(10),span=2})
             test_leaf(ctx,"next",0,{width=GROW,height=fixed(10)})
-            test_leaf(ctx,"filled",0,{width=GROW,height=GROW,row_span=2,span=2})
+            if box(ctx,{id=id(ctx,"filled"),width=GROW,height=GROW,row_span=2,span=2,track=true}) {}
             test_leaf(ctx,"last",0,{width=GROW,height=fixed(20)})
         }
         // Rows of a fixed height, of the height of their children and of what is left by their weights.
-        tracks:=grid_tracks_add(ctx,{row_count=4,rows={0=fixed(30),1=FIT,2=GROW,3={kind=.Grow,value=3}}})
-        if box(ctx,{id=id(ctx,"rows"),width=fixed(100),height=fixed(200),direction=.Grid,columns=1,tracks=tracks,gap=10,track=true,float={to=.Surface,offset={400,0}}}) {
+        rows:=grid_rows_add(ctx,{count=4,rows={0=fixed(30),1=FIT,2=GROW,3={kind=.Grow,value=3}}})
+        if box(ctx,{id=id(ctx,"rows"),width=fixed(100),height=fixed(200),direction=.Grid,columns=1,row_tracks=rows,gap=10,track=true,float={to=.Surface,offset={400,0}}}) {
             test_leaf(ctx,"fixed",0,{width=GROW,height=GROW})
             test_leaf(ctx,"fit",0,{width=GROW,height=fixed(20)})
             test_leaf(ctx,"one",0,{width=GROW,height=GROW})

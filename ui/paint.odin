@@ -64,7 +64,7 @@ Paint :: struct {
     effect_clip:u16,
     clip_data:Clip,
     shadow:bool,
-    text,detail:string,      // detail is right aligned (shortcuts, counts)
+    text,detail:string,      // detail is right aligned (shortcuts, counts); of a text of one span: what it says
     text_color,detail_color:Color,
     size:f32,
     center:bool,

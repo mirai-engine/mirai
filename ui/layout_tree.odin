@@ -39,6 +39,8 @@ Layout_Node :: struct {
     clip_floats:bool,   // the roots that float inside it are cut by it
     clip_outer:i32,     // of one that does: the one it is inside that does too; 0: none
     border:u16,
+    row_span:u8,        // rows of a Grid it takes; 0 is 1
+    row_tracks:u16,     // of a Grid: row plus one of row_tracks; 0: none
 }
 // What a run measures to in one line: its width, the width of its widest word
 // and of a space, and the words it is cut into. A word carries the space that
@@ -176,6 +178,7 @@ Layout_Tree :: struct {
     measured,reused:int, // runs measured anew and found measured, until frame_end reads them
     overflow:bool, // a line or a command did not fit this frame
     tracks:[]Grid_Tracks,track_count:int, // the widths of the columns of the grids of the frame (grid_tracks_add)
+    row_tracks:[]Grid_Rows,row_track_count:int, // and the heights of their rows (grid_rows_add)
     aspects:bool,  // an element of the frame keeps an aspect
     allocator:mem.Allocator,
 }
@@ -202,6 +205,7 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
     t.lines=alloc(Layout_Line,max_elements*4,a,&ok)
     t.commands=alloc(Layout_Command,max_elements*4,a,&ok)
     t.tracks=alloc(Grid_Tracks,max_tracks,a,&ok)
+    t.row_tracks=alloc(Grid_Rows,max_tracks,a,&ok)
     if !id_table_init(&t.ids,max_elements,a) {ok=false}
     // A frame has fewer runs than elements.
     slots:=16
@@ -228,7 +232,7 @@ layout_init :: proc(t:^Layout_Tree,allocator:mem.Allocator,max_elements,max_word
 layout_destroy :: proc(t:^Layout_Tree) {
     a:=t.allocator
     delete(t.nodes,a);delete(t.texts,a);delete(t.spans,a);delete(t.pieces,a);delete(t.kids,a);delete(t.pending,a);delete(t.scratch,a)
-    delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a)
+    delete(t.roots,a);delete(t.lines,a);delete(t.commands,a);delete(t.tracks,a);delete(t.row_tracks,a)
     id_table_destroy(&t.ids,a)
     for g in t.measures {
         delete(g.keys,a);delete(g.entries,a);delete(g.generations,a);delete(g.words,a);delete(g.chars,a)
@@ -282,6 +286,7 @@ layout_open :: proc(t:^Layout_Tree,e:Element,f:Layout_Float) -> bool {
     n.clip_floats=e.clip.floats
     n.floating=f.to!=.None
     n.border=e.border
+    n.row_span,n.row_tracks=e.row_span,e.row_tracks
     t.node_count+=1
     t.aspects||=e.layout.aspect>0
     layout_id_put(t,e.id,index)
@@ -374,6 +379,7 @@ layout_text_end :: proc(t:^Layout_Tree,font:^Font,e:Element) -> bool {
     n.text=i32(t.text_count)
     n.clip_x,n.clip_y,n.floating,n.clip_floats,n.clip_outer=false,false,false,false,0
     n.border=0
+    n.row_span,n.row_tracks=e.row_span,0
     t.text_count+=1
     t.node_count+=1
     layout_id_put(t,e.id,index)
@@ -777,9 +783,9 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
     return max(y,text.line)
 }
 
-FLOW_PIECES :: 64 // pieces of one line of runs; a line that holds more goes on in the next
+FLOW_PIECES :: 64 // pieces of one line of spans; a line that holds more goes on in the next
 
-// A piece of a line of runs: the words of one run that are on it, or a box.
+// A piece of a line of spans: the words of one span that are on it, or a box.
 @(private)
 Flow_Piece :: struct($Run:typeid) {
     text:string,
@@ -791,11 +797,11 @@ Flow_Piece :: struct($Run:typeid) {
     box:bool,    // it does not break: a pill, an image
     run:Run,     // what its owner draws it with
 }
-// A line being filled with the words of runs of different styles, as rich text
-// and Markdown lay theirs out. Words come from layout_walk and break as the
-// layout breaks a paragraph; pieces that no space parts stay on one line. When
-// flow_put refuses a piece the line is full: its owner builds what flow_line
-// gives, calls flow_next and puts the piece again.
+// A line being filled with the words of spans of different styles: how a text
+// of several spans breaks. Words come from layout_walk and break as a text of
+// one span does; pieces that no space parts stay on one line. When flow_put
+// refuses a piece the line is full: its owner keeps what flow_line gives,
+// calls flow_next and puts the piece again.
 @(private)
 Flow :: struct($Run:typeid) {
     pieces:[FLOW_PIECES]Flow_Piece(Run),
@@ -1574,11 +1580,11 @@ grid_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) ->
     if l.tracks==0 || int(l.tracks)>t.track_count || t.tracks[l.tracks-1].count==0 {return nil}
     return &t.tracks[l.tracks-1]
 }
-// The tracks of the rows of a Grid, when the row of tracks it names has rows.
+// The tracks of the rows of a Grid, when it names a row of those of the frame that has rows.
 @(private)
-grid_row_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) -> ^Grid_Tracks {
-    if l.tracks==0 || int(l.tracks)>t.track_count || t.tracks[l.tracks-1].row_count==0 {return nil}
-    return &t.tracks[l.tracks-1]
+grid_row_tracks_of :: #force_inline proc "contextless" (t:^Layout_Tree,n:^Layout_Node) -> ^Grid_Rows {
+    if n.row_tracks==0 || int(n.row_tracks)>t.row_track_count || t.row_tracks[n.row_tracks-1].count==0 {return nil}
+    return &t.row_tracks[n.row_tracks-1]
 }
 @(private)
 grid_columns :: #force_inline proc "contextless" (t:^Layout_Tree,l:^Layout) -> int {
@@ -1635,7 +1641,7 @@ grid_cell_next :: proc "contextless" (t:^Layout_Tree,g:^Grid_Cells) -> (cell:Gri
         }
         break
     }
-    rows:=max(int(child.layout.row_span),1)
+    rows:=max(int(child.row_span),1)
     if g.column+span>len(held) {rows=1}
     if rows>1 {
         for c in g.column..<g.column+span {held[c]=u16(rows)}
@@ -1694,7 +1700,7 @@ grid_child_height :: #force_inline proc "contextless" (n:^Layout_Node,mode:Grid_
 grid_rows :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node,kids:[]i32,heights:[]f32,mode:Grid_Height,final:bool) -> (rows:int) {
     l:=&n.layout
     columns:=grid_columns(t,l)
-    tracks:=grid_row_tracks_of(t,l)
+    tracks:=grid_row_tracks_of(t,n)
     tracked:=0
     spans:=false
     g:=Grid_Cells{kids=kids,columns=columns}
@@ -1706,7 +1712,7 @@ grid_rows :: proc "contextless" (t:^Layout_Tree,n:^Layout_Node,kids:[]i32,height
     }
     inner:=max(n.dim.y-l.padding[1]-l.padding[3]-f32(max(rows-1,0))*l.gap,0)
     if tracks!=nil {
-        tracked=min(rows,int(tracks.row_count),GRID_TRACKS)
+        tracked=min(rows,int(tracks.count),GRID_TRACKS)
         for track,r in tracks.rows[:tracked] {
             switch track.kind {
             case .Fixed:    heights[r]=track.value

@@ -5,6 +5,8 @@ package ui
 Element :: struct {
     id:Id,
     layout:Layout,
+    row_span:u8,      // Box.row_span
+    row_tracks:u16,   // Box.row_tracks
     float:Float,
     contain:bool,     // floating: kept inside its surface (Box.contain)
     inset:[4]f32,     // Box.inset

@@ -172,6 +172,7 @@ text_end :: proc(ctx:^Context,layout:Layout={},id:Id=0,reveal:f32=1,fade:=false,
         revealed=i32(math.round(f32(total)*max(reveal,0)))+1
     }
     paint:=paint_add(ctx,{kind=.None,style=o.style,fade=fade,revealed=revealed,decoration=decoration})
+    if paint!=nil && text.spans_len==1 {paint.text=t.spans[text.spans_first].text}
     widget_add(ctx,id,{.Passive})
     text.hits=o.hits
     if paint==nil || !layout_text_end(t,&ctx.font,{id=id,layout=layout,custom=paint}) {
@@ -257,23 +258,30 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
     if limit==0 {return}
     paint_select(ctx,p.surface,p.scope)
     x:=line.x
-    // A line that is cut ends in an ellipsis, in the style of the piece it is cut in.
+    // A line that is cut ends in an ellipsis, in the style of the piece it is
+    // cut in: after as much of its text as leaves it room (cut_length), or in
+    // the place of a box that does not.
     cut_piece,cut_length:=-1,0
     cut_width:f32
     if line.cut {
         for &piece,i in pieces {
             s:=&t.spans[piece.span]
             style,_,_:=text_piece_style(ctx,p,s)
-            room:=r.w-text_width(font,ELLIPSIS,style.size,int(style.font))-piece.x
+            dots:=text_width(font,ELLIPSIS,style.size,int(style.font))
+            room:=r.w-dots-piece.x
+            last:=i==len(pieces)-1
             cut_piece=i
-            if s.box || s.pad>0 {
-                if piece.width>room || i==len(pieces)-1 {break}
+            if s.box {
+                fits:=piece.width<=room
+                cut_length,cut_width=1 if fits else 0,piece.width if fits else 0
+                if !fits || last {break}
                 continue
             }
             shown:=s.text[piece.start:][:piece.length]
-            cut_length,cut_width=text_prefix(font,shown,style.size,room,int(style.font))
-            if cut_length<len(shown) || i==len(pieces)-1 {
-                x=r.x+align_offset(text.align_x,r.w-(piece.x+cut_width+text_width(font,ELLIPSIS,style.size,int(style.font))))
+            cut_length,cut_width=text_prefix(font,shown,style.size,room-s.pad,int(style.font))
+            cut_width+=s.pad
+            if cut_length<len(shown) || last {
+                x=r.x+align_offset(text.align_x,r.w-(piece.x+cut_width+dots))
                 break
             }
         }
@@ -305,17 +313,20 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
         style,decoration,run:=text_piece_style(ctx,p,s)
         px,py:=x+piece.x,line.y+piece.y
         if s.box {
+            if (cut_piece!=i || cut_length>0) && run!=nil && run.paint!=nil {
+                paint_draw(ctx,{px,py,piece.width,s.height if s.height>0 else line.height},run.paint)
+            }
             if cut_piece==i {
-                draw_text_decorated(ctx,ELLIPSIS,px,line.y+text_leading(style.size,line.height),style,decoration)
+                draw_text_decorated(ctx,ELLIPSIS,px+cut_width,line.y+text_leading(style.size,line.height),style,decoration)
                 return
             }
-            if run!=nil && run.paint!=nil {paint_draw(ctx,{px,py,piece.width,s.height if s.height>0 else line.height},run.paint)}
             continue
         }
         if run!=nil && run.back[3]>0 {
             high:=s.height if s.height>0 else line.height
             draw_rounded(ctx,{px,line.y+(line.height-high)*0.5,piece.width,high},run.radius,run.back)
         }
+        end:=px+cut_width
         if s.pad>0 {
             px+=s.pad*0.5
             py+=text_leading(style.size,s.height if s.height>0 else style.size*TEXT_LINE)
@@ -332,7 +343,7 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
         }
         draw_text_decorated(ctx,shown,px,py,style,decoration)
         if cut_piece==i {
-            if whole {draw_text_decorated(ctx,ELLIPSIS,px+cut_width,py,style,decoration)}
+            if whole {draw_text_decorated(ctx,ELLIPSIS,end,py,style,decoration)}
             return
         }
     }
