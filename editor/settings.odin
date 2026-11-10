@@ -99,7 +99,8 @@ settings_all :: proc(s:^Session) -> []project.Setting {
 
 // Opens Project Settings, as the File menu does, on the setting of the world named name.
 settings_open :: proc(s:^Session,name:string) {
-    if !action_run(s,.Settings) || s.info==nil {return}
+    if command_state(s,"settings").disabled || s.info==nil {return}
+    settings_show(s)
     d:=&s.settings_dialog
     for c in settings_categories(s) {
         for storage,k in c.storages {
@@ -683,7 +684,7 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
             // What it undoes cannot be got back: it asks first.
             if ui.popup(ctx,confirm,{width=280,padding=12,gap=8}) {
                 ui.label(ctx,"Reset to default?",th.font,th.text,font=ui.FONT_SEMIBOLD)
-                ui.paragraph(ctx,"Every setting of the project goes back to those of the engine and the code.",th.font_small,th.text_muted)
+                ui.text(ctx,"Every setting of the project goes back to those of the engine and the code.",ui.prose(ctx,th.font_small,th.text_muted))
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=8,align_x=.End,align_y=.Center}) {
                     if ui.button(ctx,shell_id(g,"settings_reset_cancel"),{label="Cancel",style=.Field,width=84,height=th.control,center=true}).clicked {ui.popup_close(ctx,confirm)}
                     if ui.button(ctx,shell_id(g,"settings_reset_yes"),{label="Reset",style=.Accent,width=84,height=th.control,center=true}).clicked {

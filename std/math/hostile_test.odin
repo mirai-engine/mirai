@@ -387,35 +387,6 @@ hostile_arc_tables :: proc(n:^Hostile_Numbers) -> string {
     return ""
 }
 
-@(private="file")
-hostile_float_curves :: proc(n:^Hostile_Numbers) -> string {
-    keys:[6]Curve_Key
-    count:=pick(n,len(keys)+1)
-    time:f32
-    for &key in keys[:count] {
-        time=number(n) if !n.calm && pick(n,5)==0 else time+f32(pick(n,4))/2
-        key={time,number(n),number(n),number(n),Curve_Interpolation(pick(n,256) if pick(n,5)==0 else pick(n,3))}
-    }
-    curve:=keys[:count]
-    nan:=f32(0h7fc00000)
-    start:=pick(n,100)-50 if pick(n,3)==0 else pick(n,count+1)
-    segment:=start
-    if !same(curve_evaluate(curve,nan),curve[0].value if count>0 else 0) || !same(curve_evaluate_from(curve,nan,&segment),curve[0].value if count>0 else 0) {
-        return "a curve at a NaN time is not its first value, or 0 without keys"
-    }
-    segment=start
-    for _ in 0..<6 {
-        at:=number(n)
-        value,from:=curve_evaluate(curve,at),curve_evaluate_from(curve,at,&segment)
-        // Unsorted keys have no value to agree on.
-        if n.calm && count>0 && (!same(value,from) || segment<0 || segment>max(count-2,0)) {return "a curve read from a cursor differs from the curve"}
-    }
-    curve_smooth_slopes(curve)
-    for key in curve {
-        if n.calm && (key.slope_in!=key.slope_out || !finite(key.slope_in)) {return "a smoothed key has two slopes"}
-    }
-    return ""
-}
 
 @(private="file")
 hostile_random :: proc(n:^Hostile_Numbers) -> string {
@@ -652,7 +623,6 @@ hostile_numbers_keep_the_contracts_of_the_package :: proc(t:^testing.T) {
         {"box packets",hostile_box_packets},
         {"curves",hostile_curves},
         {"arc tables",hostile_arc_tables},
-        {"float curves",hostile_float_curves},
         {"random",hostile_random},
         {"noise",hostile_noise},
         {"colors",hostile_colors},

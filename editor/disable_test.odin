@@ -34,7 +34,7 @@ turning_off_and_disabling_are_undone_and_keep_the_values :: proc(t:^testing.T) {
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect(t,!core.has(&w.points,bulb) && core.has(&w.points,lamp))
     testing.expect(t,history.undo(&edits,ref,&selection))
-    value,on:=core.get(core.read(&w.points),bulb)
+    value,on:=core.get(&w.points,bulb)
     testing.expect(t,on && value.intensity==20)
     testing.expect(t,history.redo(&edits,ref,&selection))
     testing.expect(t,!core.has(&w.points,bulb))
@@ -59,6 +59,6 @@ turning_off_and_disabling_are_undone_and_keep_the_values :: proc(t:^testing.T) {
     testing.expect(t,turned_off,"the bulb is off by itself again")
     core.remove(&w.disabled,lamp)
     core.world_settle(ref)
-    lamp_value,lamp_on:=core.get(core.read(&w.points),lamp)
+    lamp_value,lamp_on:=core.get(&w.points,lamp)
     testing.expect(t,lamp_on && lamp_value.intensity==10 && !core.has(&w.points,bulb))
 }

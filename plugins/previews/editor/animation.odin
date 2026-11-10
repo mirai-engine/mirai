@@ -313,24 +313,24 @@ part_add :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,parent:i3
     sub.part_count+=1
     part^={entity=e,parent=parent,local=mm.TRANSFORM_IDENTITY,first=u32(len(sub.locals))}
     if scene.transforms!=nil {
-        if t,ok:=core.get(core.read(scene.transforms),e);ok {part.local=core.to_math(t)}
+        if t,ok:=core.get(scene.transforms,e);ok {part.local=core.to_math(t)}
     }
     if scene.targets!=nil {
-        if target,ok:=core.get(core.read(scene.targets),e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
+        if target,ok:=core.get(scene.targets,e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
     }
     if part.target==0 && scene.names!=nil {
         if text:=core.name_get(core.read(scene.names),e);text!="" {part.target=base.name_hash(text)}
     }
     if scene.meshes==nil {return}
-    mesh,has_mesh:=core.get(core.read(scene.meshes),e)
+    mesh,has_mesh:=core.get(scene.meshes,e)
     if !has_mesh || scene.hidden!=nil && core.has(scene.hidden,e) {return}
     tint:=erender.MATERIAL_VALUES_DEFAULT
     if scene.tints!=nil {
-        if value,ok:=core.get(core.read(scene.tints),e);ok {tint=value}
+        if value,ok:=core.get(scene.tints,e);ok {tint=value}
     }
     rig:=e
     if scene.skins!=nil {
-        if skin,found:=core.get(core.read(scene.skins),e);found {rig=skin.rig}
+        if skin,found:=core.get(scene.skins,e);found {rig=skin.rig}
     }
     part_mesh_add(a,sub,part,mesh,tint,rig)
 }

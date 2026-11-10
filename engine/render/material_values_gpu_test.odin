@@ -68,7 +68,7 @@ values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:
 
     // Another value: given in place, the instance is not made again and no row is.
     sets,updates,given:=sync.stats.scene_sets,sync.stats.instance_updates,sync.stats.tints
-    testing.expect(t,material_value(core.get(&w.values,entities[0]),"base_color",{0,0,1,0}) && material_value(core.get(&w.values,entities[0]),"emission",{0,0,3,0}))
+    testing.expect(t,material_value(core.edit(&w.values,entities[0]),"base_color",{0,0,1,0}) && material_value(core.edit(&w.values,entities[0]),"emission",{0,0,3,0}))
     draw(&sync,app,&w)
     testing.expect(t,sync.stats.scene_sets==sets && sync.stats.instance_updates==updates && sync.stats.tints==given+1)
     testing.expect(t,len(app.assets.material_descs)==rows && app.assets.stats.derived==0)
@@ -76,7 +76,7 @@ values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:
     testing.expectf(t,shown.r==0 && shown.g>100 && shown.b>100,"the value given in place shows: %v",shown)
 
     // A value that changes how the surface is drawn makes the entity show a row of its own.
-    testing.expect(t,material_value(core.get(&w.values,entities[1]),"unlit",1))
+    testing.expect(t,material_value(core.edit(&w.values,entities[1]),"unlit",1))
     draw(&sync,app,&w)
     testing.expect(t,sync.stats.scene_sets==sets && sync.stats.instance_updates==updates+1)
     testing.expect_value(t,app.assets.stats.derived,1)

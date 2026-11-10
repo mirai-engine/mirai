@@ -164,6 +164,7 @@ Init_Error :: enum u8 {
 // Zero fields take the default.
 Server_Desc :: struct {
     port:int,                    // 0: the system picks one
+    local:bool,                  // it listens on no port: only whoever owns it runs its methods (method_execute)
     name,version,instructions:string,
     docs_root:string,            // the engine whose game documentation the MCP tool docs reads; "": no such tool
     max_methods:int,             // 256

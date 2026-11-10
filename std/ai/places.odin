@@ -6,8 +6,8 @@ import math "mirai:std/math"
 
 // Queries of places: candidates generated around a point, each scored by
 // considerations over inputs the caller measures for it (a distance, an
-// angle, whether it is seen, the length of the way there), as utility scores
-// an action; the best few are kept. Who measures is the caller's: these
+// angle, whether it is seen, the length of the way there)
+// (score_considerations); the best few are kept. Who measures is the caller's: these
 // procedures only lay out candidates and keep the best.
 
 // Points on rings around a center, on the XZ plane at its height: `rings`
@@ -95,7 +95,7 @@ Place_Score :: struct {
 }
 
 // Scores the candidates whose inputs are laid one after another in `inputs`
-// (`stride` each), with the considerations and the scoring of utility, and
+// (`stride` each), with the considerations (score_considerations), and
 // keeps in `best` the highest, best first (the first wins ties). A candidate
 // that scores 0 is never kept. How many were kept.
 places_best :: proc "contextless" (considerations:[]Consideration,inputs:[]f32,stride:int,best:[]Place_Score) -> int {

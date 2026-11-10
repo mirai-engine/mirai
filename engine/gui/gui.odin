@@ -17,9 +17,9 @@ import "mirai:ui"
 // or over the part of a local player, and a World_Widget on a panel at its
 // entity or on its mesh; both build their tree in a UI context of the world
 // inside the ui phase, read the components and storages their paths name,
-// and report what their widgets did as UI_Event. A game that draws its own
-// widgets does it in a ui step with gui_context, between gui_frame_begin and
-// gui_frame_end.
+// and report what their widgets did as UI_Event. That is how a game shows
+// its interfaces; what only code can draw is a Draw node of the .ui, drawn by
+// a procedure the game declares with @(draw="name").
 
 VARIANT_CAPACITY :: 64
 SCREEN_CAPACITY :: 32  // screens drawn in one frame; the lowest order is left out
@@ -43,7 +43,8 @@ UI_Input :: enum u8 {
 
 // A .ui drawn over the screen. Its paths name a component of entity or a
 // storage of the world, and then its fields; what a widget asks for arrives
-// as a UI_Event, and the game writes it. A
+// as a UI_Event: a control writes the field of a storage it binds, and the
+// game writes one of a component. A
 // screen whose entity is Hidden, or under one, plays what its nodes play as
 // they hide and then goes.
 @(component)
@@ -53,7 +54,7 @@ UI_Screen :: struct {
     entity:core.Entity,  // whose components the paths of the interface name first; none: its own
     input:UI_Input,
     input_context:inp.Input_Context, // while it takes input, the seats it covers are in it: its actions, over those of the game; a Modal one leaves the rest nothing instead of blocking every action
-    player:u8 `mirai:"max=4"`, // 0: the window; n: the part of local player n
+    player:u8 `mirai:"max=4"`, // 0: the part of the local player its entity is of (a seat, a body a seat drives or what hangs from them), the window for any other entity; n: the part of local player n
     variant:[VARIANT_CAPACITY]u8 `mirai:"text"`, // of the styles of its nodes that choose none
     back:bool,           // Escape, or East of a gamepad, reports Back while it is on top
     pause:bool,          // Modal: while it shows, the clock of the world stops, unless the game plays in a network session
@@ -96,16 +97,15 @@ World_Widget :: struct {
 
 WORLD_WIDGET_DEFAULT :: World_Widget{size={200,100},scale=0.01,facing=.Billboard,pivot=.Center,depth_test=true,preview=true}
 
-// The languages a game can be in, as the stores list them. Those that are
-// typed through an IME (Chinese, Japanese, Korean) are not typed in the
-// editor yet, and their glyphs are not in the font of the editor.
-Language :: enum u8 {English,Simplified_Chinese,Russian,Spanish,Latam_Spanish,German,French,Japanese,Portuguese,Korean,Italian}
+// The languages a game can be in, as the stores list them: those the fonts
+// of the engine have the glyphs of (ui.FONT_RANGES).
+Language :: enum u8 {English,Russian,Spanish,Latam_Spanish,German,French,Portuguese,Italian}
 Languages :: bit_set[Language;u16]
 
 // The code of each language: what a translation of a .ui names.
 LANGUAGE_CODES :: [Language]string{
-    .English="en",.Simplified_Chinese="zh-Hans",.Russian="ru",.Spanish="es",.Latam_Spanish="es-419",
-    .German="de",.French="fr",.Japanese="ja",.Portuguese="pt-BR",.Korean="ko",.Italian="it",
+    .English="en",.Russian="ru",.Spanish="es",.Latam_Spanish="es-419",
+    .German="de",.French="fr",.Portuguese="pt-BR",.Italian="it",
 }
 
 // How the interfaces of the game are sized and what they read their texts from.
@@ -162,7 +162,7 @@ ui_language :: proc(settings:^UI_Settings,preferences:^UI_Preferences) -> u64 {
 // The first kinds are those of ui.Tree_Event_Kind.
 UI_Event_Kind :: enum u8 {
     Clicked,   // a button, by the pointer, the navigation or its action
-    Changed,   // a checkbox, slider, field, selector, dropdown or radio: on, value or text is what it asks for, which the game writes
+    Changed,   // a checkbox, slider, field, selector, dropdown or radio, or a button that binds a value: on, value or text is what it wrote to the storage it binds, or asks the game to write to the component
     Submitted, // Enter in a field
     Hovered,
     Unhovered,
@@ -297,15 +297,15 @@ Bound_Source :: struct {
     info:^runtime.Type_Info,
     index:serial.Type_Index,
     storage:bool,
-    setting:bool, // a setting (@(storage,setting)): a control bound to it writes it
 }
 
 Action_Name :: struct {hash:u64,action:inp.Action}
 
 // The UI contexts of a world and what its interfaces are showing: each world
 // keeps its own, never copied, so that two worlds built in one frame keep
-// their widgets and their events apart. Shared: a game draws its own widgets
-// in the context of the window between gui_frame_begin and gui_frame_end.
+// their widgets and their events apart. Shared: the editor part of a plugin
+// may draw in the context of the window between gui_frame_begin and
+// gui_frame_end.
 @(storage,host,by_world,free="gui_free",shared)
 Gui :: struct {
     surfaces:[CONTEXT_CAPACITY]Surface, // 0: the window; n: local player n
@@ -353,9 +353,11 @@ Gui :: struct {
     dropped_widgets:u64,       // World_Widgets in sight left out for WIDGET_CAPACITY or MESH_CAPACITY
 }
 
-// The context of the window while its frame is open, for a ui step that
-// builds its own widgets. nil outside the ui phase; the first call asks for
-// the frame, which then exists from the next one.
+// The context of the window while its frame is open, for a ui step of the
+// engine, the editor or the editor part of a plugin that builds widgets over
+// the game. nil outside the ui phase; the first call asks for the frame,
+// which then exists from the next one, and a window asked for is built every
+// frame. A game has no ui steps: it shows .ui documents.
 gui_context :: proc(gui:^Gui) -> ^ui.Context {
     if gui==nil {return nil}
     gui.asked=true
@@ -555,11 +557,11 @@ gui_events_frame :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
 gui_frame_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
+    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
     device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
     requests:^UI_Requests,effects:^UI_Effects,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,gui,app,problems,false)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,gui,app,problems,false)
 }
 
 // The preview of the editor's world, while it does not play: the
@@ -569,19 +571,19 @@ gui_frame_begin :: proc(
 gui_preview_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
+    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
     device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
     requests:^UI_Requests,effects:^UI_Effects,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
     if time.playing {return}
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,gui,app,problems,true)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,gui,app,problems,true)
 }
 
 @(private)
 frame_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
-    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
+    seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
     device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
     requests:^UI_Requests,effects:^UI_Effects,gui:^Gui,app:^host.App,problems:^core.Problems,preview:bool,
 ) {
@@ -604,7 +606,7 @@ frame_begin :: proc(
     if gui.surfaces[0].ctx==nil && !surface_create(gui,app,0) {return}
     count:=max(seat_state.local_count,1)
     views_update(gui,app,count,seat_state.focus)
-    if !preview {plan_screens(gui,app,world,screens,hidden,parents,time,seat_state.local_count,problems)}
+    if !preview {plan_screens(gui,app,world,screens,hidden,parents,seats,drivables,time,seat_state.local_count,problems)}
     plan_widgets(gui,app,world,widgets,worlds,meshes,hidden,parents,time,count,problems,preview)
     for &entry in gui.plan {
         for request in gui.requests {
@@ -655,7 +657,7 @@ gui_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.P
     widgets_build(world,gui,app,problems)
 }
 
-@(step="ui",loops="editor",after="gui_preview_begin")
+@(step="ui",loops="editor")
 gui_preview_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
     if time.playing {return}
     widgets_build(world,gui,app,problems)

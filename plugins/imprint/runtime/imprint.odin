@@ -110,7 +110,7 @@ stride_print :: proc "contextless" (stride:^Stride,stamp:Imprint_Stamp,at,forwar
 // one near the ground under it presses as far as stamp_press says, a rut
 // swept from where it was the tick before or, with a stride, a print each
 // stride it goes.
-@(step="fixed",loops="game editor",stage="end",after="transforms_propagate")
+@(step="fixed",loops="game editor",stage="end")
 imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),channels:^vfx.Particle_Channels,time:core.Time,frame:core.Frame_Time) {
     dt:=time.dt if time.playing else frame.dt
     steps.tick+=1

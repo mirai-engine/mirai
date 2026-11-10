@@ -360,7 +360,11 @@ Render_Sync :: struct {
     coming:[dynamic]core.Entity, // scratch: the entities whose meshes start being drawn this frame
     taken:[dynamic]Taken, // scratch: the places of instances that went which another took this frame (instances_taken_publish)
     shown:[dynamic]gpu.Instance_Desc, // scratch: the instances a frame gives the renderer at once, those of a scene it sets or those that came, and those of the application after them
-    worlds_version,highlights_seen,lights_seen:u64,
+    lights_seen:[8]core.Seen, // suns, points, spots, rects, worlds, hidden, parents and emissions when the lights were last looked at
+    lights_preview:core.Entity,
+    lights_stale:bool, // what the lights derive from changed and they were not made again yet
+    highlights_seen:[2]core.Seen,
+    highlights_stale:bool,
     extras:[dynamic]gpu.Instance_Desc, // the visual instances of the application the renderer has, after those of drawn
     assets_structure,assets_appearance:u64,
     environment:gpu.Environment,
@@ -451,7 +455,7 @@ View_Bodies :: struct {
 }
 
 // The camera of the game becomes its view.
-@(step="late",loops="game",stage="end",after="transforms_propagate")
+@(step="late",loops="game",stage="end")
 camera_view :: proc(
     cameras:core.Read(Camera),exposures:core.Read(Exposure),worlds:core.Read(core.World_Transform),chosen:core.Ref(View_Camera),view:^core.View,app:^host.App,
 ) {
@@ -558,30 +562,20 @@ render_sync :: proc(
         structure,kept:=false,true
         for e in c.meshes.gone {instance_drop(sync,t,e,&structure)}
         for e in c.worlds.gone {instance_drop(sync,t,e,&structure)}
-        if core.version(elsewhere)>c.elsewhere.since {
-            for row in 0..<core.count(elsewhere) {
-                if core.changed(elsewhere,c.elsewhere,row) {instance_drop(sync,t,core.entity_at(elsewhere,row),&structure)}
-            }
-        }
+        for row in core.each_changed(elsewhere,&c.elsewhere) {instance_drop(sync,t,core.entity_at(elsewhere,row),&structure)}
         if structure {kept=instances_taken_publish(sync,a,r,t,frame,extras)}
         rebuild=!kept
         // What starts being drawn: a mesh added or turned on, placed, or no longer drawn elsewhere.
         clear(&sync.coming)
         if !rebuild {
-            if core.version(meshes)>c.meshes.since {
-                for row in 0..<core.count(meshes) {
-                    if !core.changed(meshes,c.meshes,row) {continue}
-                    e:=core.entity_at(meshes,row)
-                    if at:=instance_of(sync,e);at>=0 {
-                        if sync.drawn.values[at].shown!=core.at(meshes,row) {instance_changed(sync,u32(at))}
-                    } else if instance_wanted(t,e) {append(&sync.coming,e)}
-                }
+            for row in core.each_changed(meshes,&c.meshes) {
+                e:=core.entity_at(meshes,row)
+                if at:=instance_of(sync,e);at>=0 {
+                    if sync.drawn.values[at].shown!=core.at(meshes,row) {instance_changed(sync,u32(at))}
+                } else if instance_wanted(t,e) {append(&sync.coming,e)}
             }
-            if core.version(worlds)>c.worlds.since {
-                for row in 0..<core.count(worlds) {
-                    if !core.changed(worlds,c.worlds,row) {continue}
-                    if e:=core.entity_at(worlds,row);instance_of(sync,e)<0 && instance_wanted(t,e) {append(&sync.coming,e)}
-                }
+            for row in core.each_changed(worlds,&c.worlds) {
+                if e:=core.entity_at(worlds,row);instance_of(sync,e)<0 && instance_wanted(t,e) {append(&sync.coming,e)}
             }
             for e in c.elsewhere.gone {if instance_of(sync,e)<0 && instance_wanted(t,e) {append(&sync.coming,e)}}
             for change in releases {
@@ -656,9 +650,12 @@ render_sync :: proc(
     }
     // .ptr spelled out: a field reached through using in a ternary is loaded before its nil check (see ODIN_WORKAROUNDS).
     lights:=Lights{suns,points,spots,rects,preview.ptr!=nil?preview.ptr.sun:core.NONE}
-    lights_seen:=u64(lights.preview)+lights_version(lights)+core.version(worlds)+core.layout(worlds)+core.version(hidden)+core.layout(hidden)+core.version(parents)+core.layout(parents)+core.version(emissions)+core.layout(emissions)
+    sync.lights_stale|=lights.preview!=sync.lights_preview
+    sync.lights_stale|=core.touched(suns,&sync.lights_seen[0]) | core.touched(points,&sync.lights_seen[1]) | core.touched(spots,&sync.lights_seen[2]) | core.touched(rects,&sync.lights_seen[3])
+    sync.lights_stale|=core.touched(worlds,&sync.lights_seen[4]) | core.touched(hidden,&sync.lights_seen[5]) | core.touched(parents,&sync.lights_seen[6]) | core.touched(emissions,&sync.lights_seen[7])
+    sync.lights_preview=lights.preview
     // The material a screen shows may change with what is drawn over its mesh.
-    if core.count(emissions)>0 && (extras_changed || local_changes) {lights_seen=~sync.lights_seen}
+    if core.count(emissions)>0 && (extras_changed || local_changes) {sync.lights_stale=true}
     sky_entity,sky,sky_found:=sky_previewed(skies,preview)
     if !sky_found {sky_entity,sky,sky_found=sky_active(skies,hidden,parents)}
     _,_,sunlit:=sun_on(worlds,lights,hidden,parents)
@@ -702,7 +699,7 @@ render_sync :: proc(
         batches_retain(a,r)
         for instance in extras {instance_materials_retain(a,instance.material,instance.slot_materials,instance.overlays)}
         lit:=lights_build(sync,a,worlds,lights,emissions,meshes,hidden,parents,extras,view.position.y,r,sync.shown[:])
-        sync.lights_seen=lights_seen
+        sync.lights_stale=false
         host.assets_appearance_end(a)
         host.assets_commit(a)
         sync.assets_structure,sync.assets_appearance=a.structure,a.appearance
@@ -715,7 +712,8 @@ render_sync :: proc(
         delete(sync.shown)
         sync.shown=nil
         sync.environment=environment
-        sync.highlights_seen=outlines_seen(t)
+        _=outlines_touched(sync,t)
+        sync.highlights_stale=false
         sync.stats.scene_sets+=1
     } else {
         if local_changes {
@@ -733,7 +731,7 @@ render_sync :: proc(
             host.assets_appearance_end(a);host.assets_commit(a)
             sync.assets_structure,sync.assets_appearance=a.structure,a.appearance
         } else {sync.assets_structure=a.structure}
-        instances_moved(sync,t,frame)
+        instances_moved(sync,t,c.worlds,frame)
         for instance,i in extras {
             if sync.extras[i].transform==instance.transform && sync.extras[i].anchor==instance.anchor {continue}
             sync.extras[i]=instance
@@ -750,8 +748,8 @@ render_sync :: proc(
             gpu.scene_tint(r,sync.tinted[:],sync.tinted_colors[:],sync.tinted_emissions[:],&tinted,sync.tinted_values[:])
             if tinted>0 {sync.stats.tints+=1}
         }
-        if lights_seen!=sync.lights_seen {
-            sync.lights_seen=lights_seen
+        if sync.lights_stale {
+            sync.lights_stale=false
             previous_sun:=sync.sun
             // Without memory to keep the lights of before, they are set as if they had changed.
             compared:=resize(&sync.previous_lights,len(sync.lights))==nil
@@ -772,8 +770,9 @@ render_sync :: proc(
             }
         }
         // Without memory for the levels a later frame gives them.
-        if seen:=outlines_seen(t);seen!=sync.highlights_seen && resize(&sync.highlights,len(sync.drawn.entities)+len(sync.extras))==nil {
-            sync.highlights_seen=seen
+        sync.highlights_stale|=outlines_touched(sync,t)
+        if sync.highlights_stale && resize(&sync.highlights,len(sync.drawn.entities)+len(sync.extras))==nil {
+            sync.highlights_stale=false
             for e,at in sync.drawn.entities {sync.highlights[at]=is_hidden(hidden,parents,e)?0:instance_outline(highlights,outlines,e)}
             for instance,i in sync.extras {sync.highlights[len(sync.drawn.entities)+i]=instance.highlight}
             gpu.scene_set_highlights(r,sync.highlights[:])
@@ -803,7 +802,6 @@ render_sync :: proc(
         sync.postprocess=stack
         sync.stats.postprocess_sets+=1
     }
-    sync.worlds_version=core.version(worlds)
     sync.world=id
     sync.synced=true
 }
@@ -828,7 +826,7 @@ Sync_Tables :: struct {
 
 // What the tables of the outlines are: when it changes, the levels of the instances are read again.
 @(private)
-outlines_seen :: proc(t:Sync_Tables) -> u64 {return core.version(t.highlights)+core.layout(t.highlights)+core.version(t.outlines)+core.layout(t.outlines)}
+outlines_touched :: proc(sync:^Render_Sync,t:Sync_Tables) -> bool {return core.touched(t.highlights,&sync.highlights_seen[0]) | core.touched(t.outlines,&sync.highlights_seen[1])}
 
 // The renderer's outline of the game's styles. Values out of range are
 // brought into it.
@@ -863,11 +861,9 @@ changes_mark :: proc(sync:^Render_Sync,h:core.Ref(core.Hierarchy),table:core.Rea
         if below {subtree_changed(sync,h,e)}
         else if at:=instance_of(sync,e);at>=0 {instance_changed(sync,u32(at))}
     }
+    c:=c
     for e in c.gone {mark(sync,h,e,below)}
-    if core.version(table)<=c.since {return}
-    for row in 0..<core.count(table) {
-        if core.changed(table,c,row) {mark(sync,h,core.entity_at(table,row),below)}
-    }
+    for row in core.each_changed(table,&c) {mark(sync,h,core.entity_at(table,row),below)}
 }
 
 // The instances of e and of what hangs from it are made again.
@@ -1291,10 +1287,6 @@ Lights :: struct {
     preview:core.Entity, // the sun drawn instead of the one on (Environment_Preview)
 }
 
-// Changes when a row of a table of lights or its layout changes.
-lights_version :: proc(l:Lights) -> u64 {
-    return core.version(l.suns)+core.layout(l.suns)+core.version(l.points)+core.layout(l.points)+core.version(l.spots)+core.layout(l.spots)+core.version(l.rects)+core.layout(l.rects)
-}
 
 // The sun that lights the world: the one previewed, or else the first not hidden.
 @(private)
@@ -1445,25 +1437,24 @@ batches_retain :: proc(a:^host.Assets,r:^gpu.Renderer) {
 // are, and those between two places, which move with the time of the frame:
 // gpu.scene_move leaves where it is what did not move.
 @(private)
-instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,frame:core.Frame_Time) {
+instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,c:core.Changes,frame:core.Frame_Time) {
+    c:=c
+    c.row=0
     clear(&sync.moved);clear(&sync.moved_transforms);clear(&sync.moved_anchors)
     worlds:=t.worlds
     place :: proc(sync:^Render_Sync,t:Sync_Tables,world:core.World_Transform,at:int,frame:core.Frame_Time) {
         anchor,m:=instance_place(world,frame,t.offsets,t.parents,t.worlds,t.locals,t.cameras,sync.drawn.entities[at])
         append(&sync.moved,u32(at));append(&sync.moved_transforms,m);append(&sync.moved_anchors,anchor)
     }
-    if core.version(worlds)!=sync.worlds_version {
-        for row in 0..<core.count(worlds) {
-            if core.stamp(worlds,row)<=sync.worlds_version {continue}
-            at:=instance_of(sync,core.entity_at(worlds,row))
-            if at<0 {continue}
-            world:=core.at(worlds,row)
-            lerp:=world.previous!=world.transform
-            drawn:=&sync.drawn.values[at]
-            if lerp && !drawn.lerp {append(&sync.lerping,u32(at))}
-            drawn.lerp=lerp
-            place(sync,t,world,at,frame)
-        }
+    for row in core.each_changed(worlds,&c) {
+        at:=instance_of(sync,core.entity_at(worlds,row))
+        if at<0 {continue}
+        world:=core.at(worlds,row)
+        lerp:=world.previous!=world.transform
+        drawn:=&sync.drawn.values[at]
+        if lerp && !drawn.lerp {append(&sync.lerping,u32(at))}
+        drawn.lerp=lerp
+        place(sync,t,world,at,frame)
     }
     for i:=len(sync.lerping)-1;i>=0;i-=1 {
         at:=int(sync.lerping[i])

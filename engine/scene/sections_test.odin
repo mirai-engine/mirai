@@ -27,6 +27,7 @@ Section_World :: struct {
     disabled:core.Table(core.Disabled),
     keeps:core.Table(core.Keep),
     references:core.Table(Scene_Reference),
+    placed:core.Table(Prefab_Instance),
     members:core.Table(Section_Member),
     held:core.Table(Section_Held),
     dormants:core.Table(Dormant),
@@ -34,7 +35,6 @@ Section_World :: struct {
     roaming:core.Table(Roaming),
     lamps:core.Table(Section_Test_Lamp),
     links:core.Table(Section_Test_Link),
-    sources:core.Table(Prefab_Source),
     grounds:core.Table(Section_Test_Ground),
     kept:core.Table(Far_Kept),
     hierarchy:core.Hierarchy,
@@ -127,14 +127,14 @@ section_ids :: proc(f:^Section_Fixture,id:base.Entity_Id) -> (count:int) {
 @(private="file")
 section_level_write :: proc(t:^testing.T,f:^Section_Fixture) {
     at :: proc(x,y:f32) -> core.Transform {return {position={x,y,0},rotation=1,scale={1,1,1}}}
-    root:asset.Scene;asset.scene_init(&root,&f.types,asset.KIND_SCENE,SECTION_ROOT)
+    root:asset.Scene;asset.scene_init(&root,&f.types,SECTION_ROOT)
     asset.scene_entity_add(&root,1,0,"Room")
     asset.scene_set(&root,1,"Transform",&core.Transform{position={10,0,0},rotation=1,scale={1,1,1}})
     asset.scene_set(&root,1,"Scene_Reference",&Scene_Reference{scene=SECTION_ROOM,rule=.Spatial,extents={20,20,20}})
     asset.scene_entity_add(&root,2,0,"Switch")
     asset.scene_set(&root,2,"Section_Test_Link",&Section_Test_Link{core.Entity(id_in(1,10))})
     section_save(t,f,&root,"root.scene")
-    room:asset.Scene;asset.scene_init(&room,&f.types,asset.KIND_SCENE,SECTION_ROOM)
+    room:asset.Scene;asset.scene_init(&room,&f.types,SECTION_ROOM)
     Thing :: struct {id,parent:base.Entity_Id,name:string,x,y,range:f32}
     things:=[]Thing{{10,0,"Lamp",1,0,1},{11,0,"Chest",0,0,2},{16,11,"Lid",0,1,6},{12,0,"Crate",0,0,3},{13,0,"Shelf",5,0,0},{14,13,"Book",0,1,4},{15,0,"Wanderer",2,0,0}}
     for thing in things {
@@ -168,13 +168,13 @@ a_streamed_section_holds_and_comes_back_as_it_was_left :: proc(t:^testing.T) {
     section_frame(&f)
     links_before:=core.version(&f.world.links)
     section_frame(&f)
-    reference,_:=core.get(core.read(&f.world.references),room)
+    reference,_:=core.get(&f.world.references,room)
     testing.expect_value(t,reference.state,Section_State.Active)
     testing.expect_value(t,section_state(reference),Section_State.Loaded)
     testing.expect(t,reference.loaded==SECTION_ROOM && reference.held,"it joins off")
     lamp:=section_entity(&f,id_in(1,10))
     testing.expect(t,core.alive(&f.world.entities,lamp) && row_has(&f.world.held,lamp) && row_has(&f.world.disabled,lamp),"what it loaded is held")
-    link,_:=core.get(core.read(&f.world.links),switch_)
+    link,_:=core.get(&f.world.links,switch_)
     testing.expect_value(t,link.target,lamp)
     testing.expect(t,core.version(&f.world.links)>links_before,"the field resolved is stamped")
     testing.expect(t,len(f.world.unresolved.resolved)==1 && f.world.unresolved.resolved[0].entity==switch_,"and said to be the load's, not an edit")
@@ -186,15 +186,15 @@ a_streamed_section_holds_and_comes_back_as_it_was_left :: proc(t:^testing.T) {
     // A view of the editor shows it off over what streams, and lets go of it as it was.
     section_view(&f.views,room,.Loaded)
     section_frame(&f)
-    reference,_=core.get(core.read(&f.world.references),room)
+    reference,_=core.get(&f.world.references,room)
     testing.expect(t,reference.held && reference.streamed==.Active && row_has(&f.world.held,lamp),"the view holds it; what streams stays")
     section_view(&f.views,room,{},false)
     section_frame(&f)
     testing.expect(t,!row_has(&f.world.held,lamp),"without the view it is on again")
 
     chest,crate,book,wanderer:=section_entity(&f,id_in(1,11)),section_entity(&f,id_in(1,12)),section_entity(&f,id_in(1,14)),section_entity(&f,id_in(1,15))
-    core.get(&f.world.lamps,chest).range=9
-    core.get(&f.world.lamps,book).range=8
+    core.edit(&f.world.lamps,chest).range=9
+    core.edit(&f.world.lamps,book).range=8
     core.destroy(&f.world.entities,crate)
     core.add(&f.world.roaming,wanderer,Roaming{})
     coin:=core.create(&f.world.entities)
@@ -211,23 +211,23 @@ a_streamed_section_holds_and_comes_back_as_it_was_left :: proc(t:^testing.T) {
         testing.expect(t,row_has(&f.world.dormants,x) && row_has(&f.world.disabled,x) && row_has(&f.world.held,x),"what changed sleeps, off because of its section")
     }
     testing.expect(t,!core.alive(&f.world.entities,section_entity(&f,id_in(1,16))),"the lid, as it was, goes")
-    parent,_:=core.get(core.read(&f.world.parents),book)
-    pose,_:=core.get(core.read(&f.world.transforms),book)
+    parent,_:=core.get(&f.world.parents,book)
+    pose,_:=core.get(&f.world.transforms,book)
     testing.expect_value(t,parent.entity,room)
     testing.expect_value(t,pose.position,[3]f32{5,1,0})
     testing.expect(t,core.alive(&f.world.entities,wanderer) && !row_has(&f.world.parents,wanderer) && !row_has(&f.world.dormants,wanderer),"what roams hangs from the root")
-    pose,_=core.get(core.read(&f.world.transforms),wanderer)
+    pose,_=core.get(&f.world.transforms,wanderer)
     testing.expect_value(t,pose.position,[3]f32{12,0,0})
     buried:=map[base.Entity_Id]bool{}
     defer delete(buried)
     for row in 0..<core.raw_count(core.raw(&f.world.tombstones)) {buried[(^Tombstone)(core.raw_value(core.raw(&f.world.tombstones),type_info_of(Tombstone),row)).id]=true}
     testing.expect(t,buried[id_in(1,12)] && buried[id_in(1,15)] && len(buried)==2,"the crate and the wanderer leave tombstones")
-    link,_=core.get(core.read(&f.world.links),switch_)
+    link,_=core.get(&f.world.links,switch_)
     testing.expect_value(t,link.target,core.NONE)
     testing.expect_value(t,unresolved_target(&f.world.unresolved,switch_,LINK,0),id_in(1,10))
     testing.expect(t,len(f.world.unresolved.resolved)==1 && f.world.unresolved.resolved[0].entity==switch_,"the none the drop wrote is said to be the drop's, not an edit")
     saved:asset.Scene
-    if _,error:=capture(w,&saved,&f.types,{kind=asset.KIND_SCENE,id=SECTION_ROOT});testing.expect_value(t,error,Error.None) {
+    if _,error:=capture(w,&saved,&f.types,{id=SECTION_ROOT});testing.expect_value(t,error,Error.None) {
         named,_:=asset.scene_get(&saved,2,"Section_Test_Link",Section_Test_Link)
         testing.expect_value(t,named.target,core.Entity(id_in(1,10)))
         asset.scene_destroy(&saved)
@@ -239,22 +239,22 @@ a_streamed_section_holds_and_comes_back_as_it_was_left :: proc(t:^testing.T) {
     section_frame(&f)
     chest=section_entity(&f,id_in(1,11))
     testing.expect_value(t,section_ids(&f,id_in(1,11)),1)
-    opened,_:=core.get(core.read(&f.world.lamps),chest)
+    opened,_:=core.get(&f.world.lamps,chest)
     testing.expect_value(t,opened.range,9)
     lid:=section_entity(&f,id_in(1,16))
-    parent,_=core.get(core.read(&f.world.parents),lid)
+    parent,_=core.get(&f.world.parents,lid)
     testing.expect_value(t,parent.entity,chest)
     testing.expect_value(t,section_ids(&f,id_in(1,12)),0)
     testing.expect_value(t,section_ids(&f,id_in(1,15)),1)
     book=section_entity(&f,id_in(1,14))
-    parent,_=core.get(core.read(&f.world.parents),book)
-    pose,_=core.get(core.read(&f.world.transforms),book)
+    parent,_=core.get(&f.world.parents,book)
+    pose,_=core.get(&f.world.transforms,book)
     testing.expect(t,parent.entity==room && pose.position==[3]f32{5,1,0},"the book is where it was left")
     testing.expect(t,core.alive(&f.world.entities,coin) && !row_has(&f.world.dormants,coin) && !row_has(&f.world.disabled,coin),"what was added turns on")
     testing.expect_value(t,core.raw_count(core.raw(&f.world.dormants)),0)
     testing.expect_value(t,core.raw_count(core.raw(&f.world.tombstones)),0)
     lamp=section_entity(&f,id_in(1,10))
-    link,_=core.get(core.read(&f.world.links),switch_)
+    link,_=core.get(&f.world.links,switch_)
     testing.expect(t,link.target==lamp && lamp!=core.NONE,"the switch names the lamp that came")
 
     // What it took from what slept stays changed: dropped again, it sleeps again.
@@ -316,7 +316,7 @@ a_scene_that_replaces_the_world_takes_the_sections_loading :: proc(t:^testing.T)
     defer section_fixture_close(&f)
     section_level_write(t,&f)
     MENU :: base.Asset_Id{0x6a,9}
-    menu:asset.Scene;asset.scene_init(&menu,&f.types,asset.KIND_SCENE,MENU)
+    menu:asset.Scene;asset.scene_init(&menu,&f.types,MENU)
     asset.scene_entity_add(&menu,1,0,"Title")
     asset.scene_entity_add(&menu,2,0,"Button")
     section_save(t,&f,&menu,"menu.scene")
@@ -350,11 +350,11 @@ a_section_inside_its_own_scene_names_the_scenes_around_it :: proc(t:^testing.T) 
     f:Section_Fixture
     if !section_fixture_open(t,&f,"cycle") {return}
     defer section_fixture_close(&f)
-    a:asset.Scene;asset.scene_init(&a,&f.types,asset.KIND_SCENE,SECTION_A)
+    a:asset.Scene;asset.scene_init(&a,&f.types,SECTION_A)
     asset.scene_entity_add(&a,1,0,"B")
     asset.scene_set(&a,1,"Scene_Reference",&Scene_Reference{scene=SECTION_B,rule=.Manual,state=.Unloaded})
     section_save(t,&f,&a,"a.scene")
-    b:asset.Scene;asset.scene_init(&b,&f.types,asset.KIND_SCENE,SECTION_B)
+    b:asset.Scene;asset.scene_init(&b,&f.types,SECTION_B)
     asset.scene_entity_add(&b,5,0,"A again")
     asset.scene_set(&b,5,"Scene_Reference",&Scene_Reference{scene=SECTION_A,rule=.Manual,state=.Unloaded})
     section_save(t,&f,&b,"b.scene")
@@ -372,7 +372,7 @@ a_section_inside_its_own_scene_names_the_scenes_around_it :: proc(t:^testing.T) 
         text:=base.text_get(problem.text[:])
         testing.expect(t,strings.contains(text,"a.scene > b.scene > a.scene"),text)
     }
-    reference,_:=core.get(core.read(&f.world.references),inner)
+    reference,_:=core.get(&f.world.references,inner)
     testing.expect_value(t,reference.failed,SECTION_A)
     for l in f.loads.items {testing.expect(t,l.job==nil)}
 }
@@ -387,10 +387,10 @@ what_is_kept_across_scenes_keeps_the_fields_it_waits_for :: proc(t:^testing.T) {
     f:Section_Fixture
     if !section_fixture_open(t,&f,"keep") {return}
     defer section_fixture_close(&f)
-    first:asset.Scene;asset.scene_init(&first,&f.types,asset.KIND_SCENE,SECTION_FIRST)
+    first:asset.Scene;asset.scene_init(&first,&f.types,SECTION_FIRST)
     asset.scene_entity_add(&first,1,0,"Seat")
     section_save(t,&f,&first,"first.scene")
-    second:asset.Scene;asset.scene_init(&second,&f.types,asset.KIND_SCENE,SECTION_SECOND)
+    second:asset.Scene;asset.scene_init(&second,&f.types,SECTION_SECOND)
     asset.scene_entity_add(&second,40,0,"Body")
     section_save(t,&f,&second,"second.scene")
     w:=section_ref(&f)
@@ -407,7 +407,7 @@ what_is_kept_across_scenes_keeps_the_fields_it_waits_for :: proc(t:^testing.T) {
     testing.expect_value(t,error,Error.None)
     references_resolve(w)
     seat=section_entity(&f,1)
-    link,kept:=core.get(core.read(&f.world.links),seat)
+    link,kept:=core.get(&f.world.links,seat)
     testing.expect(t,kept,"the seat passed")
     testing.expect(t,link.target==section_entity(&f,40) && link.target!=core.NONE,"it names the body of the scene that came")
 }
@@ -424,17 +424,17 @@ a_section_inside_a_dropped_one_keeps_what_changed_in_it :: proc(t:^testing.T) {
     f:Section_Fixture
     if !section_fixture_open(t,&f,"nested") {return}
     defer section_fixture_close(&f)
-    outer:asset.Scene;asset.scene_init(&outer,&f.types,asset.KIND_SCENE,SECTION_OUTER)
+    outer:asset.Scene;asset.scene_init(&outer,&f.types,SECTION_OUTER)
     asset.scene_entity_add(&outer,1,0,"Hall")
     asset.scene_set(&outer,1,"Scene_Reference",&Scene_Reference{scene=SECTION_HALL,rule=.Manual})
     section_save(t,&f,&outer,"outer.scene")
-    hall:asset.Scene;asset.scene_init(&hall,&f.types,asset.KIND_SCENE,SECTION_HALL)
+    hall:asset.Scene;asset.scene_init(&hall,&f.types,SECTION_HALL)
     asset.scene_entity_add(&hall,20,0,"Door")
     asset.scene_set(&hall,20,"Section_Test_Lamp",&Section_Test_Lamp{1})
     asset.scene_entity_add(&hall,21,0,"Vault")
     asset.scene_set(&hall,21,"Scene_Reference",&Scene_Reference{scene=SECTION_VAULT,rule=.Manual})
     section_save(t,&f,&hall,"hall.scene")
-    vault:asset.Scene;asset.scene_init(&vault,&f.types,asset.KIND_SCENE,SECTION_VAULT)
+    vault:asset.Scene;asset.scene_init(&vault,&f.types,SECTION_VAULT)
     asset.scene_entity_add(&vault,30,0,"Gold")
     asset.scene_set(&vault,30,"Section_Test_Lamp",&Section_Test_Lamp{5})
     asset.scene_entity_add(&vault,31,0,"Dust")
@@ -446,7 +446,7 @@ a_section_inside_a_dropped_one_keeps_what_changed_in_it :: proc(t:^testing.T) {
     VAULT_ID:=id_in(1,21)
     gold:=section_entity(&f,id_in(VAULT_ID,30))
     if !testing.expect(t,gold!=core.NONE,"the hall and its vault loaded") {return}
-    core.get(&f.world.lamps,gold).range=50
+    core.edit(&f.world.lamps,gold).range=50
 
     hall_entity:=section_entity(&f,1)
     section_request(&f.requests,hall_entity,.Unloaded)
@@ -454,7 +454,7 @@ a_section_inside_a_dropped_one_keeps_what_changed_in_it :: proc(t:^testing.T) {
     reference:=section_entity(&f,VAULT_ID)
     testing.expect(t,row_has(&f.world.dormants,reference),"the vault holds what changed in it: its reference stays")
     testing.expect(t,row_has(&f.world.dormants,gold),"the gold sleeps")
-    parent,_:=core.get(core.read(&f.world.parents),gold)
+    parent,_:=core.get(&f.world.parents,gold)
     testing.expect_value(t,parent.entity,reference)
     testing.expect_value(t,section_ids(&f,id_in(VAULT_ID,31)),0)
     testing.expect_value(t,section_ids(&f,id_in(1,20)),0)
@@ -463,7 +463,7 @@ a_section_inside_a_dropped_one_keeps_what_changed_in_it :: proc(t:^testing.T) {
     for _ in 0..<4 {section_frame(&f)}
     gold=section_entity(&f,id_in(VAULT_ID,30))
     testing.expect_value(t,section_ids(&f,id_in(VAULT_ID,30)),1)
-    value,_:=core.get(core.read(&f.world.lamps),gold)
+    value,_:=core.get(&f.world.lamps,gold)
     testing.expect_value(t,value.range,50)
     testing.expect_value(t,section_ids(&f,id_in(VAULT_ID,31)),1)
     testing.expect_value(t,core.raw_count(core.raw(&f.world.dormants)),0)
@@ -484,13 +484,13 @@ what_draws_a_far_form_of_its_own_stays_on_while_its_section_is_not_loaded :: pro
     if !section_fixture_open(t,&f,"far") {return}
     defer section_fixture_close(&f)
     at :: proc(x,y:f32) -> core.Transform {return {position={x,y,0},rotation=1,scale={1,1,1}}}
-    root:asset.Scene;asset.scene_init(&root,&f.types,asset.KIND_SCENE,SECTION_FIELD_ROOT)
+    root:asset.Scene;asset.scene_init(&root,&f.types,SECTION_FIELD_ROOT)
     asset.scene_entity_add(&root,1,0,"Field")
     pose:=at(10,0)
     asset.scene_set(&root,1,"Transform",&pose)
     asset.scene_set(&root,1,"Scene_Reference",&Scene_Reference{scene=SECTION_FIELD,rule=.Spatial,extents={20,20,20}})
     section_save(t,&f,&root,"root.scene")
-    field:asset.Scene;asset.scene_init(&field,&f.types,asset.KIND_SCENE,SECTION_FIELD)
+    field:asset.Scene;asset.scene_init(&field,&f.types,SECTION_FIELD)
     Thing :: struct {id,parent:base.Entity_Id,name:string,x:f32}
     for thing in ([]Thing{{1,0,"Shelf",5},{2,1,"Ground",1},{3,2,"Patch",1},{4,0,"Lamp",2}}) {
         asset.scene_entity_add(&field,thing.id,thing.parent,thing.name)
@@ -516,25 +516,25 @@ what_draws_a_far_form_of_its_own_stays_on_while_its_section_is_not_loaded :: pro
     // Dropped: the ground stays on, with its patch, from the reference, where it was.
     section_stream(&f.requests,reference_entity,.Unloaded)
     section_frame(&f)
-    reference,_:=core.get(core.read(&f.world.references),reference_entity)
+    reference,_:=core.get(&f.world.references,reference_entity)
     testing.expect(t,reference.loaded=={},"it dropped")
     testing.expect(t,!core.alive(&f.world.entities,lamp) && !core.alive(&f.world.entities,shelf),"what did not change goes")
     testing.expect(t,core.alive(&f.world.entities,ground) && core.alive(&f.world.entities,patch),"the ground stays, with what hangs from it")
     testing.expect(t,row_has(&f.world.kept,ground) && !row_has(&f.world.dormants,ground) && !row_has(&f.world.disabled,ground) && !core.entity_off(&f.world.entities,ground),"on")
-    above,_:=core.get(core.read(&f.world.parents),ground)
+    above,_:=core.get(&f.world.parents,ground)
     testing.expect_value(t,above.entity,reference_entity)
-    local,_:=core.get(core.read(&f.world.transforms),ground)
+    local,_:=core.get(&f.world.transforms,ground)
     testing.expect_value(t,local.position,[3]f32{6,0,0})
-    below,_:=core.get(core.read(&f.world.parents),patch)
+    below,_:=core.get(&f.world.parents,patch)
     testing.expect_value(t,below.entity,ground)
-    height,_:=core.get(core.read(&f.world.grounds),ground)
+    height,_:=core.get(&f.world.grounds,ground)
     testing.expect_value(t,height.height,f32(3))
 
     // Loaded again and on: the ground is the field's again, under the new shelf.
     section_stream(&f.requests,reference_entity,.Active)
     section_frame(&f)
     section_frame(&f)
-    reference,_=core.get(core.read(&f.world.references),reference_entity)
+    reference,_=core.get(&f.world.references,reference_entity)
     testing.expect(t,reference.loaded==SECTION_FIELD,"it loaded")
     testing.expect_value(t,section_entity(&f,id_in(1,2)),ground)
     testing.expect_value(t,section_entity(&f,id_in(1,3)),patch)
@@ -542,11 +542,11 @@ what_draws_a_far_form_of_its_own_stays_on_while_its_section_is_not_loaded :: pro
     testing.expect_value(t,core.raw_count(core.raw(&f.world.grounds)),1)
     testing.expect(t,!row_has(&f.world.kept,ground) && !core.entity_off(&f.world.entities,ground),"it is not kept any more, and on")
     shelf=section_entity(&f,id_in(1,1))
-    above,_=core.get(core.read(&f.world.parents),ground)
+    above,_=core.get(&f.world.parents,ground)
     testing.expect_value(t,above.entity,shelf)
-    local,_=core.get(core.read(&f.world.transforms),ground)
+    local,_=core.get(&f.world.transforms,ground)
     testing.expect_value(t,local.position,[3]f32{1,0,0})
-    below,_=core.get(core.read(&f.world.parents),patch)
+    below,_=core.get(&f.world.parents,patch)
     testing.expect_value(t,below.entity,ground)
     lamp=section_entity(&f,id_in(1,4))
     testing.expect(t,core.alive(&f.world.entities,lamp) && !core.entity_off(&f.world.entities,lamp))
@@ -561,13 +561,13 @@ a_section_that_never_loaded_shows_what_draws_a_far_form_of_its_own :: proc(t:^te
     if !section_fixture_open(t,&f,"far_never") {return}
     defer section_fixture_close(&f)
     at :: proc(x,y:f32) -> core.Transform {return {position={x,y,0},rotation=1,scale={1,1,1}}}
-    root:asset.Scene;asset.scene_init(&root,&f.types,asset.KIND_SCENE,SECTION_FIELD_ROOT)
+    root:asset.Scene;asset.scene_init(&root,&f.types,SECTION_FIELD_ROOT)
     asset.scene_entity_add(&root,1,0,"Field")
     pose:=at(10,0)
     asset.scene_set(&root,1,"Transform",&pose)
     asset.scene_set(&root,1,"Scene_Reference",&Scene_Reference{scene=SECTION_FIELD,rule=.Spatial,extents={20,20,20}})
     section_save(t,&f,&root,"root.scene")
-    field:asset.Scene;asset.scene_init(&field,&f.types,asset.KIND_SCENE,SECTION_FIELD)
+    field:asset.Scene;asset.scene_init(&field,&f.types,SECTION_FIELD)
     Thing :: struct {id,parent:base.Entity_Id,name:string,x:f32}
     for thing in ([]Thing{{1,0,"Shelf",5},{2,1,"Ground",1},{3,2,"Patch",1},{4,0,"Lamp",2}}) {
         asset.scene_entity_add(&field,thing.id,thing.parent,thing.name)
@@ -583,16 +583,16 @@ a_section_that_never_loaded_shows_what_draws_a_far_form_of_its_own :: proc(t:^te
 
     section_stream(&f.requests,reference_entity,.Unloaded)
     section_frame(&f)
-    reference,_:=core.get(core.read(&f.world.references),reference_entity)
+    reference,_:=core.get(&f.world.references,reference_entity)
     testing.expect(t,reference.loaded=={} && reference.far==SECTION_FIELD,"it did not load; its far forms are of its scene")
     ground:=section_entity(&f,id_in(1,2))
     testing.expect(t,core.alive(&f.world.entities,ground) && row_has(&f.world.kept,ground) && !core.entity_off(&f.world.entities,ground),"its ground shows")
     for id in ([]base.Entity_Id{1,3,4}) {testing.expectf(t,section_ids(&f,id_in(1,id))==0,"entity %d of the field is not there",id)}
-    above,_:=core.get(core.read(&f.world.parents),ground)
+    above,_:=core.get(&f.world.parents,ground)
     testing.expect_value(t,above.entity,reference_entity)
-    local,_:=core.get(core.read(&f.world.transforms),ground)
+    local,_:=core.get(&f.world.transforms,ground)
     testing.expect_value(t,local.position,[3]f32{6,0,0})
-    height,_:=core.get(core.read(&f.world.grounds),ground)
+    height,_:=core.get(&f.world.grounds,ground)
     testing.expect_value(t,height.height,f32(3))
     // Another frame reads nothing again.
     section_frame(&f)
@@ -601,17 +601,17 @@ a_section_that_never_loaded_shows_what_draws_a_far_form_of_its_own :: proc(t:^te
     section_stream(&f.requests,reference_entity,.Active)
     section_frame(&f)
     section_frame(&f)
-    reference,_=core.get(core.read(&f.world.references),reference_entity)
+    reference,_=core.get(&f.world.references,reference_entity)
     testing.expect(t,reference.loaded==SECTION_FIELD,"it loaded")
     testing.expect_value(t,section_entity(&f,id_in(1,2)),ground)
     for id in 1..=4 {testing.expectf(t,section_ids(&f,id_in(1,base.Entity_Id(id)))==1,"entity %d is there once",id)}
     testing.expect(t,!row_has(&f.world.kept,ground),"the field took it back")
     shelf,patch:=section_entity(&f,id_in(1,1)),section_entity(&f,id_in(1,3))
-    above,_=core.get(core.read(&f.world.parents),ground)
+    above,_=core.get(&f.world.parents,ground)
     testing.expect_value(t,above.entity,shelf)
-    below,_:=core.get(core.read(&f.world.parents),patch)
+    below,_:=core.get(&f.world.parents,patch)
     testing.expect_value(t,below.entity,ground)
-    local,_=core.get(core.read(&f.world.transforms),ground)
+    local,_=core.get(&f.world.transforms,ground)
     testing.expect_value(t,local.position,[3]f32{1,0,0})
 
     // Loaded and off, then dropped: the ground stays on, kept, never held.
@@ -646,10 +646,10 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     core.world_settle(w)
     testing.expect_value(t,report.entities,2)
     chest:=report.root
-    pose,_:=core.get(core.read(&f.world.transforms),chest)
+    pose,_:=core.get(&f.world.transforms,chest)
     testing.expect_value(t,pose.position,[3]f32{3,4,5})
     testing.expect(t,!core.has(&f.world.parents,chest) && !core.has(&f.world.ids,chest) && !core.has(&f.world.members,chest),"a root without Ids")
-    lamp,_:=core.get(core.read(&f.world.lamps),chest)
+    lamp,_:=core.get(&f.world.lamps,chest)
     testing.expect_value(t,lamp.range,2)
     testing.expect_value(t,core.raw_count(core.raw(&f.world.lamps)),before+2)
     _,error=spawn_member(core.commands_of(w),f.app.assets,SECTION_ROOM,1,id_in(1,99),at)
@@ -722,3 +722,87 @@ a_record_without_memory_to_look_waits_for_the_next_look :: proc(t:^testing.T) {
     }
 }
 
+@(private="file") SECTION_HOUSE :: base.Asset_Id{0x6a,7}
+@(private="file") SECTION_YARD :: base.Asset_Id{0x6a,8}
+@(private="file") SECTION_CELLAR :: base.Asset_Id{0x6a,9}
+
+// One kind of scene, placed as its use asks. A scene with one root spawns as
+// a copy, whose root says the scene it is of, and hangs as a section in the
+// same world; one with several roots hangs as a section and does not spawn,
+// and the problem says what to do with it. The sections a copy holds load
+// with it under the Id its reference has in the world: two copies repeat no
+// Id, and a copy without Ids brings its sections without them.
+@(test)
+a_scene_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^testing.T) {
+    f:Section_Fixture
+    if !section_fixture_open(t,&f,"both-ways") {return}
+    defer section_fixture_close(&f)
+    cellar:asset.Scene;asset.scene_init(&cellar,&f.types,SECTION_CELLAR)
+    asset.scene_entity_add(&cellar,1,0,"Cellar")
+    asset.scene_entity_add(&cellar,2,1,"Lamp")
+    asset.scene_set(&cellar,2,"Section_Test_Lamp",&Section_Test_Lamp{3})
+    section_save(t,&f,&cellar,"cellar.scene")
+    yard:asset.Scene;asset.scene_init(&yard,&f.types,SECTION_YARD)
+    asset.scene_entity_add(&yard,1,0,"Tree")
+    asset.scene_entity_add(&yard,2,0,"Well")
+    section_save(t,&f,&yard,"yard.scene")
+    house:asset.Scene;asset.scene_init(&house,&f.types,SECTION_HOUSE)
+    asset.scene_entity_add(&house,1,0,"House")
+    asset.scene_entity_add(&house,2,1,"Below")
+    asset.scene_set(&house,2,"Scene_Reference",&Scene_Reference{scene=SECTION_CELLAR})
+    asset.scene_entity_add(&house,3,1,"Outside")
+    asset.scene_set(&house,3,"Scene_Reference",&Scene_Reference{scene=SECTION_YARD,rule=.Manual})
+    section_save(t,&f,&house,"house.scene")
+    empty:asset.Scene;asset.scene_init(&empty,&f.types,{0x6a,10})
+    section_save(t,&f,&empty,"empty.scene")
+    testing.expect(t,host.assets_scan(&f.assets))
+    w:=section_ref(&f)
+    s:=Spawner{core.commands_of(w),&f.assets,f.problems}
+
+    lone:=spawn(s,"cellar.scene")
+    testing.expect(t,lone!=core.NONE && f.problems.count==0)
+    testing.expect_value(t,spawn(s,"yard.scene"),core.NONE)
+    testing.expect_value(t,spawn(s,"empty.scene"),core.NONE)
+    if testing.expect_value(t,f.problems.count,1) {
+        said:=base.text_get(f.problems.entries[0].text[:])
+        testing.expectf(t,strings.contains(said,"exactly one root") && strings.contains(said,"Scene_Reference"),"it says why and what to do: %s",said)
+    }
+    _,cycle:=spawn_prefab(s.commands,s.assets,{prefab=SECTION_YARD})
+    testing.expect_value(t,cycle,Error.Not_One_Root)
+
+    first:=spawn(s,"house.scene")
+    second:=spawn(s,SECTION_HOUSE)
+    ghost:=spawn(s,SECTION_HOUSE,transient=true)
+    testing.expect(t,first!=core.NONE && second!=core.NONE && ghost!=core.NONE)
+    core.world_settle(w)
+    // The cellar four times: the copy, and a section of each house; the yard waits to be asked.
+    testing.expect_value(t,core.count(&f.world.lamps),4)
+    testing.expect_value(t,f.world.entities.alive,2+3*(3+2)+2)
+    seen:=make(map[base.Entity_Id]bool,context.temp_allocator)
+    ids:=core.raw(&f.world.ids)
+    for row in 0..<core.raw_count(ids) {
+        id:=(^core.Id)(core.raw_value(ids,type_info_of(core.Id),row)).value
+        testing.expect(t,id!=0 && !seen[id],"no Id twice")
+        seen[id]=true
+    }
+    testing.expect_value(t,len(seen),2+2*(3+2))
+    placed,of_scene:=prefab_instance(w,first)
+    testing.expect(t,of_scene && placed.prefab==SECTION_HOUSE && placed.stamp==0)
+    testing.expect_value(t,core.count(&f.world.placed),4)
+    loaded,waiting:=0,0
+    for row in 0..<core.count(&f.world.references) {
+        reference:=core.at(core.read(&f.world.references),row)
+        if reference.scene==SECTION_CELLAR && reference.loaded==SECTION_CELLAR {loaded+=1}
+        if reference.scene==SECTION_YARD && reference.loaded=={} && reference.rule==.Manual {waiting+=1}
+        // A copy without Ids has none to ask its yard by later: it came with it.
+        if reference.scene==SECTION_YARD && reference.loaded==SECTION_YARD && reference.rule==.With_Document {loaded+=1}
+    }
+    testing.expect(t,loaded==4 && waiting==2,"the sections of each copy")
+    // No document holds the root of a copy as an instance: nothing would bring it up to date.
+    captured:asset.Scene
+    _,error:=capture(w,&captured,&f.types,{id={0x6a,11}})
+    if testing.expect_value(t,error,Error.None) {
+        testing.expect_value(t,len(asset.scene_instance_roots(&captured)),0)
+        asset.scene_destroy(&captured)
+    }
+}

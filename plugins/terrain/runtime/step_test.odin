@@ -94,8 +94,8 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
                 for marker,row in w.chunks.values {
                     if marker.coord!=([3]i32{}) {continue}
                     e:=w.chunks.entities[row]
-                    world,_:=core.get(core.read(&poses[current]),e)
-                    tint,_:=core.get(core.read(&w.looks),e)
+                    world,_:=core.get(&poses[current],e)
+                    tint,_:=core.get(&w.looks,e)
                     instance,usable:=render.mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true
@@ -220,17 +220,17 @@ restored_entity_handles_do_not_turn_authors_into_cached_terrain_chunks :: proc(t
     testing.expect_value(t,len(resident.sources),keep_original?2:1)
     testing.expect_value(t,resident.stats.built,u64(8))
     for author in ([2]core.Entity{owner,duplicate}) {
-        static,_:=core.get(core.read(&w.statics),author)
+        static,_:=core.get(&w.statics,author)
         testing.expect(t,core.alive(&w.entities,author),"retiring a cached owner does not destroy a new author that reused its chunk handle")
         testing.expect(t,static.mesh=={} && !core.has(&w.chunks,author),"an author keeps its recipe when a previous derived handle aliases it")
         count:=0
         for chunk,row in w.chunks.values {
             if chunk.owner!=author {continue}
             e:=w.chunks.entities[row]
-            parent,_:=core.get(core.read(&w.parents),e)
+            parent,_:=core.get(&w.parents,e)
             testing.expect(t,!core.has(&w.ids,e) && parent.entity==author)
             if chunk.coord==([3]i32{}) {
-                shown,_:=core.get(core.read(&w.statics),e)
+                shown,_:=core.get(&w.statics,e)
                 testing.expect_value(t,shown.mesh,resident_source_find(&resident,id,author).chunks[0].mesh)
             }
             count+=1
@@ -277,17 +277,17 @@ changing_the_source_retires_only_previous_chunks_before_publishing_the_new_shape
     if !testing.expect(t,len(w.chunks.values)==(preloaded?8:4) && len(resident.owners)==(preloaded?3:1)) {return}
     if preloaded {
         for e in shared {
-            marker,_:=core.get(core.read(&w.terrains),e)
+            marker,_:=core.get(&w.terrains,e)
             testing.expect(t,marker.revision==7,"cold load aligns all owners to the canonical file revision")
         }
     }
     previous:[4]core.Entity
     copy(previous[:],resident.owners[0].chunks)
     retired:[4]base.Asset_Id
-    bound,_:=core.get(core.read(&w.terrains),owner)
+    bound,_:=core.get(&w.terrains,owner)
     mine:=resident_source_find(&resident,bound.source,owner)
     for chunk,index in mine.chunks[:mine.quad.first[1]] {retired[index]=chunk.mesh}
-    core.get(&w.terrains,owner).source=ids[1]
+    core.edit(&w.terrains,owner).source=ids[1]
     terrain_test_update(&w,&resident,&app)
     for e in previous {testing.expect(t,!core.alive(&w.entities,e),"previous chunks retire before the new source publishes")}
     for id in retired {testing.expect(t,!host.assets_mesh_generated(&assets,id),"the unused source releases its immutable geometry")}
@@ -295,15 +295,15 @@ changing_the_source_retires_only_previous_chunks_before_publishing_the_new_shape
     // Each terrain has its own pieces.
     if !testing.expect(t,len(resident.owners)==(preloaded?3:1) && len(resident.sources)==(preloaded?3:1) && len(w.chunks.values)==(preloaded?6:2)) {return}
     for value in resident.owners {if value.entity==owner {copy(current[:],value.chunks)}}
-    marker,_:=core.get(core.read(&w.terrains),owner)
+    marker,_:=core.get(&w.terrains,owner)
     testing.expect(t,marker.revision==7,"binding another source does not retain the previous source revision")
-    static,_:=core.get(core.read(&w.statics),owner)
+    static,_:=core.get(&w.statics,owner)
     testing.expect(t,static.mesh=={} && !core.has(&w.chunks,owner))
     testing.expect_value(t,len(w.colliders.values),preloaded?6:2)
     for e in current {
-        chunk,_:=core.get(core.read(&w.chunks),e)
-        parent,_:=core.get(core.read(&w.parents),e)
-        shown,_:=core.get(core.read(&w.statics),e)
+        chunk,_:=core.get(&w.chunks,e)
+        parent,_:=core.get(&w.parents,e)
+        shown,_:=core.get(&w.statics,e)
         testing.expect(t,core.alive(&w.entities,e) && !core.has(&w.ids,e) && chunk.owner==owner && parent.entity==owner && host.assets_mesh_generated(&assets,shown.mesh))
     }
     built,structure,version,loads,markers_version:=resident.stats.built,assets.structure,w.statics.version,w.data.stats.loads,w.terrains.version
@@ -493,7 +493,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     core.test_world_settle(&w.w)
     terrain_test_update(w,&resident,&app)
     if !testing.expectf(t,len(w.data.entries)>0,"source load failed: files %v, problems %v, root %s",assets.registry.files[:],core.problems_list(&w.problems),root) {return}
-    marker,_:=core.get(core.read(&w.terrains),owner)
+    marker,_:=core.get(&w.terrains,owner)
     testing.expect_value(t,marker.revision,u32(1))
     testing.expect_value(t,len(w.chunks.values),16)
     testing.expect_value(t,len(w.colliders.values),16)
@@ -615,7 +615,7 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     middle:=[3]int{4,0,4}
     source_set(&source,middle,3);source.revision=2
     terrain_test_write(t,&assets,"source.terrain",&source,id)
-    core.get(&w.terrains,owner).revision=2
+    core.edit(&w.terrains,owner).revision=2
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(2))
     testing.expect_value(t,source_value(&w.data.entries[0].source,middle),f32(3))
@@ -637,7 +637,7 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     if !testing.expect(t,entry!=nil) {return}
     testing.expect_value(t,source_value(&entry.source,middle),f32(0))
     testing.expect_value(t,entry.source.revision,u32(1))
-    testing.expect_value(t,core.get(&w.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&w.terrains,core.row_of(&w.terrains,owner)).revision,u32(2))
     testing.expect_value(t,w.problems.count,0)
 }
 

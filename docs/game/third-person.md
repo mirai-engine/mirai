@@ -20,12 +20,12 @@ are a clear day, auto exposure meters it.
 
 ## 2. The player
 
-`assets/player/Player.prefab` is the source of the player, as the scene and each `.ui` are: change
+`assets/player/Player.scene` is the source of the player, as the scene and each `.ui` are: change
 it through the API or the editor, and nothing writes over it. With the session open:
 
 ```sh
 P="mirai rpc --project ."
-$P scene.open '{"path":"player/Player.prefab"}'
+$P scene.open '{"path":"player/Player.scene"}'
 $P scene.set '{"entity":"Player","components":{
   "Character":{"move_relative_to":"Camera","turn_speed":12},
   "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
@@ -54,7 +54,7 @@ height ([water-fog.md](world/water-fog.md)):
 ```sh
 $P scene.open '{"path":"arena/main.scene"}'
 $P scene.add '{"name":"Sea","position":[0,-1,0],"components":{
-  "Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}'
+  "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}}'
 $P scene.save '{}'
 ```
 

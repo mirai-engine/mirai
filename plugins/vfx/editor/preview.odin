@@ -77,7 +77,9 @@ preview_draw :: proc(s:^editor.Session,p:^Effect_Preview,id:base.Asset_Id,info:^
         emitters,overrides,parameters:=core.world_table_of(w,vfx.Particle_Emitter),core.world_table_of(w,vfx.Particle_Override),core.world_table_of(w,vfx.Particle_Parameters)
         requests,settings,view:=core.world_storage_of(w,vfx.Particle_Requests),core.world_storage_of(w,vfx.Particle_Settings),core.world_storage_of(w,core.View)
         if emitters==nil || overrides==nil || parameters==nil || requests==nil || settings==nil || view==nil {return false}
-        core.add(emitters,p.emitter,vfx.Particle_Emitter{particle=id,active=true})
+        emitter:=vfx.PARTICLE_EMITTER_DEFAULT
+        emitter.particle,emitter.active=id,true
+        core.add(emitters,p.emitter,emitter)
         if override!=nil && override.count>0 {core.add(overrides,p.emitter,override^)} else if core.has(overrides,p.emitter) {core.remove(overrides,p.emitter)}
         if given!=nil && given.count>0 {core.add(parameters,p.emitter,given^)} else if core.has(parameters,p.emitter) {core.remove(parameters,p.emitter)}
         settings.capacity=max(PREVIEW_CAPACITY,2*info.max_particles)

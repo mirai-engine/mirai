@@ -77,14 +77,14 @@ terrain_pieces_far_from_the_render_origin_cover_their_region_on_both_sides :: pr
         start:=places[i]+source_origin(s)
         low_expected,high_expected:=[2]f64{f64(start.x),f64(start.z)}-{f64(origin.x),f64(origin.z)},[2]f64{f64(start.x+SIDE),f64(start.z+SIDE)}-{f64(origin.x),f64(origin.z)}
         area,drawn:=0.0,0
-        world,_:=core.get(core.read(&w.worlds),owner)
+        world,_:=core.get(&w.worlds,owner)
         for node,index in o.nodes {
             if !node.visible {continue}
             e:=o.chunks[index]
             mesh:=source.chunks[index].mesh
             if !testing.expectf(t,e!=core.NONE && mesh!={},"terrain %d: piece %d is shown with its entity and mesh",i,index) {continue}
-            local,placed:=core.get(core.read(&w.transforms),e)
-            parent,parented:=core.get(core.read(&w.parents),e)
+            local,placed:=core.get(&w.transforms,e)
+            parent,parented:=core.get(&w.parents,e)
             testing.expect(t,placed && parented && parent.entity==owner)
             m:=render.origin_matrix(mm.transform_matrix(mm.transform_compose(world.transform,core.to_math(local))),origin)
             ref,known:=assets.index[mesh]

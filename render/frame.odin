@@ -349,7 +349,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, depth)
-	if glass {rhi.cmd_bind_buffer(cmd, SLOT_PASS4, p.view.glass_seen)}
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, p.view.glass_seen if glass else r.dummy_buffer)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, history_previous)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, history_current)
@@ -609,7 +609,7 @@ histories_rescale :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	for view in views_all(r) {
 		t := &view.targets
 		for i in 0 ..< 2 {
-			for texture in ([?]rhi.Texture{t.taa[i], t.hdr[i], t.reflect_history[i], t.glass_history[i]}) {scale(r, cmd, texture)}
+			for texture in ([?]rhi.Texture{t.taa[i], t.reflect_history[i], t.glass_history[i]}) {scale(r, cmd, texture)}
 		}
 	}
 }
@@ -826,7 +826,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	rhi.cmd_timestamp(cmd, "upload")
 	frame_exposure_copy(p, p.constants)
 	if t.needs_clear {
-		clear_textures(cmd, t.hdr[0], t.hdr[1], t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.reactive, r.dummy_texture, r.dummy_layers)
+		clear_textures(cmd, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.reactive, r.dummy_texture, r.dummy_layers)
 		t.needs_clear = false
 	}
 	if t.glass_needs_clear {
@@ -1028,7 +1028,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	s := &r.scene
 	settings := &r.settings
 	threads := p.instance_count + p.batch_slots
-	occlusion := settings.occlusion_culling && threads > 0
+	occlusion := threads > 0
 	keep_depth := p.draw_translucent || p.draw_overlays || p.blend || stage_asked(r, .Gbuffer) || r.pass_count > 0 && .Nested in p.plan.stages
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), groups(t.half_width, 8), groups(t.half_height, 8)}
 	rhi.cmd_timestamp(cmd, "cull")
@@ -1502,7 +1502,7 @@ pass_gi_reference :: proc(p: ^Pass) -> bool {
 	return true
 }
 
-// The lit image of the opaque scene, in t.hdr and t.display, where the mode
+// The lit image of the opaque scene, in t.display, where the mode
 // of inspection of the view replaces it.
 @(private)
 pass_composite :: proc(p: ^Pass) {
@@ -1518,8 +1518,7 @@ pass_composite :: proc(p: ^Pass) {
 	// Without an atmosphere the composite reads no aerial perspective: any volume stands for it.
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.aerial if t.aerial != 0 else r.display_lut)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, texture_or_dummy(r, p.reflections))
-	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.hdr[p.current])
-	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.display)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.display)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	p.shown = t.display
 	debug_views_pass(p)

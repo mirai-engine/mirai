@@ -34,12 +34,12 @@ write_raft_player :: proc(o:^Out) {
     asset.builder_set(&s,eyes,audio.Audio_Listener{})
     first_person:=cam.Camera_Follow{mode=.Eyes,offset={0,EYE_HEIGHT,0}}
     asset.builder_set(&s,eyes,first_person)
-    prefab_save(o,&s,"assets/raft/Swimmer.prefab")
+    prefab_save(o,&s,"assets/raft/Swimmer.scene")
 }
 
 write_raft_scene :: proc(o:^Out) {
     s:asset.Scene_Builder
-    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","raft"))
+    asset.builder_init(&s,&o.content,asset.content_id(PROJECT,"scene","raft"))
     // The sun alone lights the sea: a sun of 3 is noon.
     u:=daylight(3)
     environment:=render.SKY_DEFAULT
@@ -52,8 +52,8 @@ write_raft_scene :: proc(o:^Out) {
     asset.builder_set(&s,sun,render.Sun{color={1,0.95,0.86},illuminance=lux(u,3)})
 
     sea:=asset.builder_entity(&s,"Sea")
-    volume:=phys.fluid_volume_sea(1025)
-    asset.builder_set(&s,sea,volume)
+    asset.builder_set(&s,sea,phys.Fluid{density=1025})
+    asset.builder_set(&s,sea,zone.plane())
     look:=water.WATER_DEFAULT
     asset.builder_set(&s,sea,look)
     // A sea the breeze raises over a long, low swell.
@@ -111,8 +111,8 @@ write_raft_scene :: proc(o:^Out) {
     // A room open to the sky that stands in the sea: its air takes the sea out down to its floor.
     base_at:=mm.Vec3{-16,0,8}
     room:=asset.builder_entity(&s,"Dry room",{position=base_at+{0,0.5,0}})
-    air:=phys.fluid_volume_dry({2.5,2,2.5})
-    asset.builder_set(&s,room,air)
+    asset.builder_set(&s,room,phys.Fluid{})
+    asset.builder_set(&s,room,zone.box({2.5,2,2.5},priority=1))
     concrete:=mm.Vec4{0.55,0.55,0.53,1}
     gallery_cube(&s,"Dry room floor",base_at+{0,-1.65,0},{5.6,0.3,5.6},concrete,true)
     gallery_cube(&s,"Dry room wall east",base_at+{2.65,0.35,0},{0.3,4.3,5.6},concrete,true)

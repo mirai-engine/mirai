@@ -204,7 +204,7 @@ mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections 
     core.test_world_settle(&w.w);terrain_test_update(w,&resident,&app)
     testing.expect(t,source_convert_heightfield(&source,&height,6));source.revision=2
     terrain_test_write(t,&assets,"source.terrain",&source,id)
-    core.get(&w.terrains,owner).revision=2
+    core.edit(&w.terrains,owner).revision=2
     terrain_test_update(w,&resident,&app)
     testing.expect_value(t,w.data.entries[0].source.kind,Source_Kind.Mesh)
     testing.expect_value(t,len(w.chunks.values),16)
@@ -234,13 +234,13 @@ mesh_terrain_runtime_converts_reloads_copies_and_rebuilds_only_changed_sections 
     testing.expect(t,hit_ok && abs(hit.point.y-2)<1e-4)
     terrain_test_update(w,&resident,&app)
     height.revision=1;terrain_test_write(t,&assets,"source.terrain",&height,id)
-    core.get(&w.terrains,owner).revision=1
+    core.edit(&w.terrains,owner).revision=1
     terrain_test_update(w,&resident,&app)
     testing.expect_value(t,w.data.entries[0].source.kind,Source_Kind.Heightfield)
     for collider in w.colliders.values {testing.expect_value(t,collider.kind,phys.Collider_Kind.Heightfield)}
     testing.expect(t,source_make(&height,.Heightfield,{9,1,9},1,4));height.revision=4
     terrain_test_write(t,&assets,"source.terrain",&height,id)
-    core.get(&w.terrains,owner).revision=4
+    core.edit(&w.terrains,owner).revision=4
     terrain_test_update(w,&resident,&app)
     testing.expect_value(t,len(w.chunks.values),4)
     testing.expect_value(t,w.entities.alive,5)
@@ -293,7 +293,7 @@ mesh_terrain_reload_updates_collision_halo_across_a_hard_normal_seam :: proc(t:^
     testing.expect(t,source.mesh_changed[1])
     source.revision=2
     terrain_test_write(t,&assets,"source.terrain",&source,id)
-    core.get(&w.terrains,owner).revision=2
+    core.edit(&w.terrains,owner).revision=2
     terrain_test_update(&w,&resident,&app)
     replacement:=resident.sources[0].chunks[1].mesh
     testing.expect(t,replacement!=original)

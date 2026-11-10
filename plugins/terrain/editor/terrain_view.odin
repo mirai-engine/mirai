@@ -154,7 +154,7 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
         if tool.stroke.active && owner.source==tool.stroke.id && chunk.depth==0 {
             if at:=preview_find(&tool.stroke,chunk.coord);at>=0 && tool.stroke.previews[at].ready {continue}
         }
-        static,has_static:=core.get(core.read(statics),e)
+        static,has_static:=core.get(statics,e)
         if !has_static || static.mesh=={} {continue}
         static.materials[0]=WEIGHTS_MATERIAL
         look:=erender.MATERIAL_VALUES_DEFAULT

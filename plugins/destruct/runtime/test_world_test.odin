@@ -44,6 +44,7 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
     phys.test_types(types)
     append(types,
         core.test_type(Destructible,default=proc(dst:^Destructible) {dst^=destructible_default()}),
+        core.test_type(Strain_Field,default=proc(dst:^Strain_Field) {dst^=STRAIN_FIELD_DEFAULT}),
         core.test_type(Fracture_State,copy=fracture_state_copy,swap=fracture_state_swap,free=fracture_state_destroy,reset=fracture_state_reset),
         core.test_type(Destruct_Cache,free=cache_free),
     )

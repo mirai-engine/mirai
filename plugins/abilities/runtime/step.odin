@@ -78,7 +78,7 @@ abilities_tick :: proc(users:^core.Table(Ability_User),abilities:core.Records(Ab
         e:=core.entity_at(users,row)
         u:=users.values[row]
         if core.owned(w.remotes,e) {user_tick(&t,e,&u)} else {replica_tick(&t,e,&u)}
-        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.at(users,row)^=u}
+        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.edit_at(users,row)^=u}
     }
 }
 
@@ -88,18 +88,18 @@ request_apply :: proc(t:^Tick,r:Ability_Request) {
     switch r.kind {
     case .Use:
         // As if its input fired: it waits as its sheet says.
-        if u:=core.get(t.users,r.entity);u!=nil {
+        if u:=core.edit(t.users,r.entity);u!=nil {
             a:=ability_sheet(t.abilities,r.ability)
             buffer_add(u,r.ability,t.tick,a!=nil && a.input.wait==.Running)
         }
     case .Cancel:
-        u:=core.get(t.users,r.entity)
+        u:=core.edit(t.users,r.entity)
         if u==nil || u.ability=={} {return}
         ability_end(t,r.entity,u,ability_sheet(t.abilities,u.ability),time_of(t,u),.Canceled,nil)
     case .Effect:
         effect_apply(t,r.entity,r.source,r.effect)
     case .Kit:
-        if u:=core.get(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
+        if u:=core.edit(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
     }
 }
 
@@ -109,11 +109,11 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         core.report(t.w.problems,target,"abilities.effect","an effect asked for it %s",text)
         return
     }
-    u:=core.get(t.users,target)
+    u:=core.edit(t.users,target)
     if u!=nil && u.statuses&effect.blocked_by!=0 {return}
     amount:=effect.amount
     if effect.scale_by!=ATTRIBUTE_NONE && amount!=0 {
-        from,found:=core.get(core.read(t.users),source)
+        from,found:=core.get(t.users,source)
         scale,has:=ability_value(from,effect.scale_by)
         if !found || !has {core.report(t.w.problems,target,"abilities.effect","an effect scaled by an attribute its source does not have hit it: give the source that attribute, or clear scale_by")}
         amount*=scale
@@ -131,7 +131,7 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         }
         lasting:=effect.statuses!=0 || effect.modify.attribute!=ATTRIBUTE_NONE || effect.period>0 || effect.cue!=CUE_NONE || effect.tags!=0
         if effect.seconds>0 && lasting {
-            timer:=Ability_Timer{tags=effect.tags,statuses=effect.statuses,modify=effect.modify,cue=effect.cue,stacks=1,start=t.tick,until=t.tick+max(ticks_of(effect.seconds,t.dt),1)}
+            timer:=Ability_Timer{tags=effect.tags,statuses=effect.statuses,modify=effect.modify,cue=effect.cue,stacks=1,start=t.tick,until=core.deadline(t.w.time,effect.seconds)}
             if effect.period>0 {timer.attribute,timer.amount,timer.period=effect.attribute,amount,u32(max(ticks_of(effect.period,t.dt),1))}
             slot:=-1
             if effect.tags!=0 {
@@ -201,10 +201,7 @@ buffer_add :: proc "contextless" (u:^Ability_User,ability:core.Record(Ability),t
 }
 
 @(private)
-ticks_of :: #force_inline proc "contextless" (seconds,dt:f32) -> u64 {
-    if !(seconds>0) || !(dt>0) {return 0}
-    return u64(math.round(f64(seconds)/f64(dt)))
-}
+ticks_of :: #force_inline proc "contextless" (seconds,dt:f32) -> u64 {return core.ticks_of(core.Time{dt=dt},seconds)}
 
 // The ticks of a window from the start of its ability, on its clock: open while from<=time<to.
 @(private)
@@ -257,9 +254,9 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Ability_User) {
                 if entry.attribute==timer.attribute {base_add(t,e,&entry,timer.amount*f32(max(timer.stacks,1)))}
             }
         }
-        if timer.until<=t.tick {timer_end(t,e,&timer)}
+        if core.due(t.w.time,timer.until) {timer_end(t,e,&timer)}
     }
-    for &c in u.cooldowns {if c.until!=0 && c.until<=t.tick {c={}}}
+    for &c in u.cooldowns {if c.until!=0 && core.due(t.w.time,c.until) {c={}}}
     // An entry leaves after the kit's buffer or, when it waits for the run it came in, once that
     // run is over too.
     buffer:=ticks_of(kit.buffer,t.dt) if kit!=nil else 0
@@ -457,7 +454,7 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Ability_User,ref:core.Record(Abil
             if c.ability==ref || c.until==0 {slot=i;break}
             if c.until<u.cooldowns[slot].until {slot=i}
         }
-        u.cooldowns[slot]={ref,t.tick+max(ticks_of(a.cooldown,t.dt),1)}
+        u.cooldowns[slot]={ref,core.deadline(t.w.time,a.cooldown)}
     }
     for &b in u.buffer {if b.ability==ref {b={}}}
     u.ability,u.start,u.own,u.hits,u.hit_count=ref,t.tick,0,{},0

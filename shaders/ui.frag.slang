@@ -1,25 +1,23 @@
 #include "native.slang"
 #define MIRAI_NO_INSTANCES
 //! per surface program
-//! variant world MIRAI_UI_WORLD=1
+// world: a panel placed in the scene, which the scene may hide.
+//! constant world MIRAI_UI_WORLD
 
 #include "material_raster.slang"
 #include "display.slang"
 #include "studio.slang"
 #include "ui_shape.slang"
 #include <ui_programs.slang>
-#ifdef MIRAI_UI_WORLD
 #include "overlay.slang"
-[[vk::binding(SLOT_PASS3, 0)]] Texture2D<float4> scene_depth : register(MIRAI_REGISTER(t, SLOT_PASS3), space0); // linear depth of the visible surface
- #endif
+[[vk::binding(SLOT_PASS3, 0)]] Texture2D<float4> scene_depth : register(MIRAI_REGISTER(t, SLOT_PASS3), space0); // of a panel in the world: linear depth of the visible surface
 struct Params_Block {
     float2 viewport; // of the panel pass: the output, in pixels
     uint shape_base, shape_count;
-#ifdef MIRAI_UI_WORLD
+    // Of a panel in the world.
     float4 origin;   // w = 1 to hide the panel behind the scene
     float4 right;
     float4 down;
-#endif
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<Ui_Shape> ui_shapes : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
@@ -92,10 +90,8 @@ struct Stage_Input {
     [[vk::location(0)]] float4 in_color : TEXCOORD0;
     [[vk::location(1)]] float2 in_uv : TEXCOORD1;
     [[vk::location(2)]] nointerpolation uint in_material : TEXCOORD2;
-#ifdef MIRAI_UI_WORLD
-    [[vk::location(3)]] float in_depth : TEXCOORD3;
+    [[vk::location(3)]] float in_depth : TEXCOORD3; // of a panel in the world
     float4 pixel : SV_Position;
-#endif
 };
 struct Stage_Output {
     [[vk::location(0)]] float4 out_color : SV_Target0;
@@ -103,9 +99,7 @@ struct Stage_Output {
 [shader("fragment")]
 Stage_Output main(Stage_Input input) {
     Stage_Output output;
-#ifdef MIRAI_UI_WORLD
-    if (params.origin.w > 0.5 && overlay_occluded(scene_depth, input.pixel.xy / params.viewport, input.in_depth)) discard;
-#endif
+    if (MIRAI_UI_WORLD && params.origin.w > 0.5 && overlay_occluded(scene_depth, input.pixel.xy / params.viewport, input.in_depth)) discard;
     if ((input.in_material & 0x20000000u) != 0u && (input.in_material & 0xc0000000u) == 0u) {
         uint index = input.in_material & 0x1fffffffu;
         output.out_color = index < params.shape_count ? ui_shape_color(input.in_uv, ui_shapes[params.shape_base + index]) * input.in_color : float4(0.0);

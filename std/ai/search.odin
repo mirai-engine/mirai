@@ -1,16 +1,15 @@
 package ai
 
 import "base:runtime"
-import "core:math"
 
 // A*. The open set is an indexed binary heap of fixed capacity: a node is in
 // it at most once and improving its cost moves it, so the capacity needed is
 // the number of nodes that are open at once, never the number of relaxations.
-// The same loop searches grids, navigation meshes, planning states and graphs
-// given by callbacks.
+// The same loop searches every space: navigation meshes, volumes, the coarse
+// graph of portals.
 //
 // Nodes are named by u64 keys. A dense search takes the key as the slot of the
-// node, below its capacity (cells of a grid). A keyed search gives the first
+// node, below its capacity (the portals of a coarse graph). A keyed search gives the first
 // keys a search reaches a slot each through a hash table, so the keys may be
 // sparse (polygons of a tiled navmesh, hashed planning states) and the
 // capacity bounds the nodes one search reaches.
@@ -375,29 +374,3 @@ search_reached :: #force_inline proc "contextless" (s:^Search,slot:u32) -> bool 
     if search_keyed(s) {return int(slot)<s.used}
     return int(slot)<len(s.stamp) && s.stamp[slot]==s.generation
 }
-
-// A graph given by callbacks: `neighbors` writes the edges of a node into the
-// list, `heuristic` estimates the cost from a node to the goal (nil: none).
-// Node ids are dense, below the nodes of the Search, unless it is keyed.
-Graph :: struct {
-    user:rawptr,
-    neighbors:proc(user:rawptr,node:u64,edges:^Edge_List),
-    heuristic:proc(user:rawptr,node,goal:u64) -> f32,
-}
-
-// Finds the cheapest path from start to goal and writes its nodes to `out`.
-graph_find_path :: proc(s:^Search,graph:Graph,start,goal:u64,out:[]u64) -> (count:int,status:Search_Status) {
-    if graph.neighbors==nil {return 0,.Invalid}
-    status=search_run(s,start,goal,graph,graph_neighbors,graph_heuristic)
-    if status!=.Found {return 0,status}
-    return search_path(s,out)
-}
-@(private)
-graph_neighbors :: proc(graph:Graph,node:u64,edges:^Edge_List) {graph.neighbors(graph.user,node,edges)}
-@(private)
-graph_heuristic :: proc(graph:Graph,node,goal:u64) -> f32 {
-    if graph.heuristic==nil {return 0}
-    return graph.heuristic(graph.user,node,goal)
-}
-
-SQRT2 :: math.SQRT_TWO

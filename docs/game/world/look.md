@@ -9,7 +9,7 @@ import "mirai:engine/render"
 
 // Heats an entity: redder, glowing, and rougher in its first material.
 heat :: proc(looks:^core.Table(render.Material_Values),e:core.Entity,amount:f32) {
-    values,has:=core.get(core.read(looks),e)
+    values,has:=core.get(looks,e)
     if !has {values=render.MATERIAL_VALUES_DEFAULT}
     values.color={1,1-0.5*amount,1-0.5*amount,1}
     values.emission={40*amount,4*amount,0}
@@ -30,7 +30,7 @@ heat :: proc(looks:^core.Table(render.Material_Values),e:core.Entity,amount:f32)
 - Start from what the entity has or from `render.MATERIAL_VALUES_DEFAULT`, never from `{}`: a
   zero color is black and its zero alpha hides the entity.
 - An entity that already has the component is changed in place:
-  `render.material_value(core.get(looks,e),"dissolve",t)`, in a function that writes the table.
+  `render.material_value(core.edit(looks,e),"dissolve",t)`, in a function that writes the table.
 
 ## What it costs
 

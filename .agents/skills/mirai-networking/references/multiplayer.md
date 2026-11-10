@@ -25,7 +25,7 @@ Usually its prefab carries it: everything that appears from that prefab is repli
 
 - What travels is what the entity has when it is first replicated:
   - its pose (position to 1 mm, rotation of 15 bits per component, scale), preceded by the
-    entity's persistent `Id`, the prefab it came from (`scene.Prefab_Source`) and the
+    entity's persistent `Id`, the prefab it came from (`scene.Prefab_Instance`) and the
     [section](#sections) it hangs from;
   - its motion (`Motion_State`, linear and angular velocity to 1 mm/s) if a simulation moves it
     (it has `core.Motion`);
@@ -197,9 +197,6 @@ predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
     are different players. Accounts of a platform are not there.
   - A connection presents one player, and one that is somebody: an empty secret or a second
     `Net_Player` closes it with `Denied_Player`.
-  - **Known limit:** the session does not encrypt the transport (`net` can, with `Security_Desc`,
-    but the session does not use it): the secret travels in the clear and whoever reads the traffic
-    can present it.
   - When the connection leaves, the seat waits for its player disabled (`core.Disabled` and
     `Seat_Absent`) for `absent_seconds`, and then leaves with what hangs from it; the same player
     who connects recovers it, like Unreal's inactive PlayerState, enabled if the network disabled
@@ -267,7 +264,8 @@ reason, and with `--until-empty` a server that emptied ends normally.
   delayed `latency`: the ping is double.
 - The editor's Play serves the game from its own world and opens its online players this way
   ([networked Play](#networked-play)).
-- `invite_code(session)` gives the invitation code of a server, when the router answered.
+- `invite_code(session)` gives the invitation code of a server, when the router answered: one
+  code from the internet, its network and its machine (a client with a code asks nearby too).
 - A server saves and loads its world with `save`; a client does not (`Unavailable`). Loading with
   clients is a [scene change](#scene-change).
 
@@ -621,7 +619,7 @@ melee swing) where that player aimed.
   this end is the owner: `core.owned(remotes, e)`. Without network always; on the server, what no
   connection owns; on a client, what it owns, what it has lent and what is not replicated.
   `destruct` damages only on the server (by role), seats change only bodies this end owns and
-  cinematics are controlled only where one owns the timeline.
+  the clip of a cinematic follows the end that owns the timeline.
 - The game tells its role with `core.Network` (`Standalone`, `Server`, `Client`), or with
   `is_server` and `is_client` where it already has the session.
 - A client does not save games: `save` answers `Unavailable` on a client.

@@ -14,7 +14,7 @@ import "mirai:std/serial"
 
 // The commands mirai ui and mirai scene, which the author program of the
 // engine runs: a project reads, checks and writes the documents of its
-// interfaces, scenes and prefabs with no editor.
+// interfaces and scenes with no editor.
 //
 //   read <asset> [--out <file>]   the document of the asset, as ui.inspect or
 //                                 scene.inspect with root give it
@@ -25,7 +25,7 @@ import "mirai:std/serial"
 //                                 exist yet is made
 //   write <file|folder>...        the same for each document under source/:
 //                                 source/<path>.ui.json is assets/<path>.ui,
-//                                 and so for .scene.json and .prefab.json
+//                                 and so for .scene.json
 //   check [<asset>...]            what the assets, all without one, would fail
 //                                 with in the game
 //
@@ -45,20 +45,16 @@ COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>] | read --sou
 // The folder of a project its documents are kept in as text.
 SOURCE_FOLDER :: "source"
 
-// What a command reads and writes: the interfaces, or the scenes and prefabs.
+// What a command reads and writes: the interfaces, or the scenes.
 Document_Kind :: enum u8 {Ui,Scene}
 
-// The extensions of the assets of each kind.
-KIND_EXTENSIONS :: [Document_Kind][2]string{.Ui={".ui",""},.Scene={".scene",".prefab"}}
+// The extension of the assets of each kind.
+KIND_EXTENSIONS :: [Document_Kind]string{.Ui=".ui",.Scene=".scene"}
 
 @(private="file")
-kind_extensions :: proc(kind:Document_Kind) -> []string {
+kind_extension :: proc(kind:Document_Kind) -> string {
     extensions:=KIND_EXTENSIONS
-    list:=make([dynamic]string,context.temp_allocator)
-    for extension in extensions[kind] {
-        if extension!="" {append(&list,extension)}
-    }
-    return list[:]
+    return extensions[kind]
 }
 
 @(private="file")
@@ -145,9 +141,7 @@ source_asset :: proc(p:^Project,file:string,kind:Document_Kind) -> (path:string,
     folder:=strings.concatenate({project.path(p.root,SOURCE_FOLDER,allocator=context.temp_allocator),"/"},context.temp_allocator)
     if len(absolute)<=len(folder) || !strings.equal_fold(absolute[:len(folder)],folder) || !strings.has_suffix(absolute,".json") {return}
     path=absolute[len(folder):len(absolute)-len(".json")]
-    for extension in kind_extensions(kind) {
-        if strings.has_suffix(path,extension) {return path,true}
-    }
+    if strings.has_suffix(path,kind_extension(kind)) {return path,true}
     return "",false
 }
 
@@ -248,13 +242,15 @@ file_put :: proc(p:^Project,file,path:string,bytes:[]u8,written:^Written) -> (pr
 }
 
 // Checks the .ui of the project, or those of ids, against the types of the
-// game: what does not load, the names that resolve to nothing and the paths
-// they bind that it lacks.
+// game: what does not load, the names that resolve to nothing, the paths
+// they bind that it lacks and the procedures their Draw nodes name; checking
+// all of them, also the node names the code of the game asks them for.
 ui_check :: proc(p:^Project,ids:[]base.Asset_Id,problems:^[dynamic]Bind_Problem) {
     types:Bind_Types
     defer bind_types_free(&types)
     if len(ids)==0 {
         bind_check_all(problems,&types,context.allocator,p.assets,p.info)
+        code_names_check(problems,p.assets,{project.folder_path(p.root,.Game,context.temp_allocator)})
     } else {
         for id in ids {bind_check_file(problems,&types,context.allocator,p.assets,p.info,id)}
     }
@@ -385,7 +381,7 @@ command_read :: proc(run:^Run,args:[]string) -> int {
         fmt.wprintfln(run.output,"%s: read to %s",path,to)
         count+=1
     }
-    if count==0 && !run.failed {fmt.wprintfln(run.output,"the project has no %s",strings.join(kind_extensions(run.kind)," or ",context.temp_allocator))}
+    if count==0 && !run.failed {fmt.wprintfln(run.output,"the project has no %s",kind_extension(run.kind))}
     return 0
 }
 
@@ -399,10 +395,7 @@ text_put :: proc(file,text:string) -> bool {
 
 @(private="file")
 path_of_kind :: proc(path:string,kind:Document_Kind) -> bool {
-    for extension in kind_extensions(kind) {
-        if strings.has_suffix(path,extension) {return true}
-    }
-    return false
+    return strings.has_suffix(path,kind_extension(kind))
 }
 
 // Whether a path of the registry is of a folder mounted beside the assets of
@@ -446,12 +439,12 @@ command_write :: proc(run:^Run,args:[]string) -> int {
                 before:=len(targets)
                 targets_under(run,arg,&targets)
                 if len(targets)==before {
-                    run_fail(run,arg,fmt.tprintf("the folder has no document of this kind under %s/ of the project: %s/<path>%s.json is the asset <path>%s",SOURCE_FOLDER,SOURCE_FOLDER,kind_extensions(run.kind)[0],kind_extensions(run.kind)[0]))
+                    run_fail(run,arg,fmt.tprintf("the folder has no document of this kind under %s/ of the project: %s/<path>%s.json is the asset <path>%s",SOURCE_FOLDER,SOURCE_FOLDER,kind_extension(run.kind),kind_extension(run.kind)))
                 }
             case os.is_file(arg):
                 path,ok:=source_asset(run.p,arg,run.kind)
                 if !ok {
-                    run_fail(run,arg,fmt.tprintf("the file does not say which asset it is: %s/<path>%s.json of the project is the asset <path>%s; for a file elsewhere name the asset first, mirai %s write <asset> <file>",SOURCE_FOLDER,kind_extensions(run.kind)[0],kind_extensions(run.kind)[0],kind_name(run.kind)))
+                    run_fail(run,arg,fmt.tprintf("the file does not say which asset it is: %s/<path>%s.json of the project is the asset <path>%s; for a file elsewhere name the asset first, mirai %s write <asset> <file>",SOURCE_FOLDER,kind_extension(run.kind),kind_extension(run.kind),kind_name(run.kind)))
                     continue
                 }
                 append(&targets,Target{path,arg})
@@ -529,7 +522,7 @@ command_check :: proc(run:^Run,args:[]string) -> int {
     return 0
 }
 
-// Checks the scenes and prefabs args name, all without one: each reads as its
+// Checks the scenes args name, all without one: each reads as its
 // document and that document writes it back. How many do not.
 @(private="file")
 scene_check :: proc(run:^Run,args:[]string) -> (count:int) {

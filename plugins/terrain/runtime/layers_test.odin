@@ -218,7 +218,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
         if e==owner {continue}
         shown:=w.statics.values[row]
         testing.expect_value(t,shown.materials[0],LAYERS_MATERIAL)
-        override,_:=core.get(core.read(&w.looks),e)
+        override,_:=core.get(&w.looks,e)
         testing.expect_value(t,override.values[3].x,f32(8))
     }
     before:[16]base.Asset_Id

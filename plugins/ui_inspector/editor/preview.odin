@@ -490,7 +490,8 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
     preview_input(u,app)
     language:u64
     if settings!=nil {
-        shown:=gui.UI_Preferences{language=stage.language if stage.chosen else settings.source}
+        shown:=gui.UI_PREFERENCES_DEFAULT
+        shown.language=stage.language if stage.chosen else settings.source
         language=gui.ui_language(settings,&shown)
     }
     return {

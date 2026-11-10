@@ -153,7 +153,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     for body in previous {
         for at,depth:=rig,0;at!=core.NONE && depth<1024;depth+=1 {
             if at==body {failure(call,{"entity","Invalid_Replace","bodies apart from the rig","a body that holds the rig","A body of the ragdoll holds the rig, and replacing it would remove the rig","Take the rig out of that body, or remove its Ragdoll_Bone"});return}
-            parent,placed:=core.get(core.read(parents),at)
+            parent,placed:=core.get(parents,at)
             at=parent.entity if placed else core.NONE
         }
     }

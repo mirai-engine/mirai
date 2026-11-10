@@ -54,7 +54,7 @@ terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
     terrain_convert(&session,&tool,ref,app.assets,app.allocator)
     testing.expect(t,!edits.open && !edits.commit)
     testing.expect_value(t,edits.cursor,0)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(1))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(1))
     testing.expect_value(t,tool.stroke.source.kind,terrain.Source_Kind.Heightfield)
     testing.expect_value(t,len(tool.steps),0)
     testing.expect_value(t,history.selection_active(&selection),other)
@@ -66,7 +66,7 @@ terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
     terrain_convert(&session,&tool,ref,app.assets,app.allocator)
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect_value(t,tool.stroke.source.kind,terrain.Source_Kind.Mesh)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(2))
     _,unsaved:=asset.registry_memory_find(&assets.registry,"heightfield.terrain")
     testing.expect(t,unsaved)
     testing.expect(t,history.undo(&edits,ref,&selection))
@@ -207,21 +207,21 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
             testing.expect(t,has_operand && has_original)
         } else {testing.expect_value(t,len(loaded.slots),0)}
         if shared_overrides {
-            testing.expect_value(t,core.get(&world.overrides,shared)^,shared_override)
-            testing.expect_value(t,core.get(&world.terrains,shared).revision,u32(2))
+            testing.expect_value(t,core.at(&world.overrides,core.row_of(&world.overrides,shared)),shared_override)
+            testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,shared)).revision,u32(2))
         }
         committed:=test_held(t,&assets,"solid.terrain")
         defer delete(committed)
         testing.expect(t,history.undo(&edits,ref,&selection))
         terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         testing.expect(t,core.alive(&world.entities,operand))
-        testing.expect_value(t,core.get(&world.meshes,operand)^,operand_static)
-        testing.expect_value(t,core.get(&world.transforms,operand)^,core.Transform(operand_pose))
+        testing.expect_value(t,core.at(&world.meshes,core.row_of(&world.meshes,operand)),operand_static)
+        testing.expect_value(t,core.at(&world.transforms,core.row_of(&world.transforms,operand)),core.Transform(operand_pose))
         testing.expect_value(t,len(selection.entities),2)
         testing.expect_value(t,history.selection_active(&selection),operand)
         if shared_overrides {
-            testing.expect_value(t,core.get(&world.overrides,shared)^,shared_override)
-            testing.expect_value(t,core.get(&world.terrains,shared).revision,u32(1))
+            testing.expect_value(t,core.at(&world.overrides,core.row_of(&world.overrides,shared)),shared_override)
+            testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,shared)).revision,u32(1))
         }
         undone:=test_held(t,&assets,"solid.terrain")
         defer delete(undone)
@@ -231,8 +231,8 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         testing.expect(t,!core.alive(&world.entities,operand))
         if shared_overrides {
-            testing.expect_value(t,core.get(&world.overrides,shared)^,shared_override)
-            testing.expect_value(t,core.get(&world.terrains,shared).revision,u32(2))
+            testing.expect_value(t,core.at(&world.overrides,core.row_of(&world.overrides,shared)),shared_override)
+            testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,shared)).revision,u32(2))
         }
         redone:=test_held(t,&assets,"solid.terrain")
         defer delete(redone)

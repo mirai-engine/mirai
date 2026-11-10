@@ -70,7 +70,7 @@ gpu_skin_preview_reuses_compute_and_buffers_without_mutating_the_scene :: proc(t
 }
 
 @(private)
-skin_fixture :: proc(t:^testing.T,f:^Fixture,hardware:bool,allocator:=context.allocator,loc:=#caller_location)->bool {
+skin_fixture :: proc(t:^testing.T,f:^Fixture,hardware:bool,allocator:=context.allocator,programs:=false,loc:=#caller_location)->bool {
     settings:=DEFAULT_SETTINGS
     settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     // Images are compared pixel by pixel: every pixel traces its own rays,
@@ -78,7 +78,7 @@ skin_fixture :: proc(t:^testing.T,f:^Fixture,hardware:bool,allocator:=context.al
     settings.reference_lights=true
     settings.sun_radius=0
     settings.trace_mode=.Hardware if hardware else .Software
-    return fixture_init(t,f,160,120,settings,desc={allocator=allocator},loc=loc)
+    return fixture_init(t,f,160,120,settings,desc={allocator=allocator},programs=programs,loc=loc)
 }
 
 @(private)
@@ -452,11 +452,11 @@ test_centroid :: proc(rest:[]Mesh_Vertex,origins:[]u32,influences:[]Skin_Influen
 @(test)
 gpu_a_program_moves_a_skin_after_its_skin_now_and_before :: proc(t:^testing.T) {
     f:Fixture
-    if !skin_fixture(t,&f,false) {return}
+    if !skin_fixture(t,&f,false,programs=true) {return}
     defer fixture_destroy(&f)
     r,device:=f.renderer,f.device
     pieces:=program_find(r,"Pieces",.Surface)
-    if !testing.expect(t,pieces!=nil,"the engine has the Pieces program") {return}
+    if !testing.expect(t,pieces!=nil,"the tests have the Pieces program") {return}
     moving:=DEFAULT_MATERIAL
     moving.program_id=pieces.id
     moving.custom_params=program_defaults(pieces)

@@ -14,7 +14,6 @@ glass_settings :: proc() -> Settings {
 	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
-	s.occlusion_culling = false
 	s.reflections = false
 	return s
 }
@@ -317,11 +316,11 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 	settings := glass_settings()
 	settings.gi_enabled = true
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !fixture_init(t, &f, 96, 64, settings, programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
-	if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
+	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
 	plain, painted := glass_material({1, 0.2, 0.2}, 1, 0.05), glass_material({0.2, 0.2, 1}, 1, 0.05)
 	painted.program_id = grid.id
 	painted.custom_params = program_defaults(grid)
@@ -596,7 +595,6 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := glass_settings()
-	settings.occlusion_culling = true
 	if !fixture_init(t, &f, 96, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer

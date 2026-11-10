@@ -39,9 +39,9 @@ COARSE_SAMPLES :: 5 // per side of a coarse tile: a step of 8 m, that of the coa
 // What the ground was last written from.
 @(storage)
 Foliage_Terrain :: struct {
-    terrain:[4]u64, // Terrain_Data: epoch, loads, change, and the version of the Terrain table
-    foliage:[3]u64, // Foliage_Data: entries made and loads, and the version of the Foliage table
-    worlds:u64,     // the version of World_Transform
+    terrain:[3]u64, // Terrain_Data: epoch, loads and change
+    foliage:[2]u64, // Foliage_Data: entries made and loads
+    seen:[3]core.Seen, // the tables of Terrain, Foliage and World_Transform
     streamed:u64,   // the revision of the streaming sources
     sources:[dynamic]Seen_Source,
     terrains:[dynamic]Seen_Terrain,
@@ -276,7 +276,7 @@ region_add :: proc(state:^Foliage_Terrain,m:mm.Mat4,low,high:[3]f32) {
 // Writes the ground of the foliage where the terrains under it changed, the
 // cells a Foliage gains and those asked for. A frame where none of them
 // changed reads nothing.
-@(step="fixed frame",loops="game editor",stage="simulate",after="terrain_update foliage_load",before="physics_prepare")
+@(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 foliage_terrain_ground :: proc(
     state:^Foliage_Terrain,ground:^foliage.Foliage_Ground,requests:^foliage.Foliage_Ground_Requests,
     data:core.Ref(foliage.Foliage_Data),foliages:core.Read(foliage.Foliage),
@@ -289,9 +289,9 @@ foliage_terrain_ground :: proc(
     ground_hide(state,ground,foliages,terrains,worlds,focus)
     td:=terrain_data.ptr
     // The versions of the tables: an entity can show another source that is already loaded.
-    terrain_now:=[4]u64{u64(td.epoch),td.stats.loads,terrain.terrain_data_change(terrain_data),core.version(terrains)}
-    foliage_now:=[3]u64{data.made,data.stats.loads,core.version(foliages)}
-    moved:=core.version(worlds)!=state.worlds
+    terrain_now:=[3]u64{u64(td.epoch),td.stats.loads,terrain.terrain_data_change(terrain_data)}
+    foliage_now:=[2]u64{data.made,data.stats.loads}
+    moved:=core.touched(terrains,&state.seen[0]) | core.touched(foliages,&state.seen[1]) | core.touched(worlds,&state.seen[2])
     streamed:=sources.ptr!=nil?sources.ptr.revision:0
     sources_moved:=streamed!=state.streamed
     state.streamed=streamed
@@ -300,8 +300,8 @@ foliage_terrain_ground :: proc(
         return
     }
     rebuilt:=terrain_now.x!=state.terrain.x
-    sources_changed:=terrain_now.xyz!=state.terrain.xyz
-    state.terrain,state.foliage,state.worlds=terrain_now,foliage_now,core.version(worlds)
+    sources_changed:=terrain_now!=state.terrain
+    state.terrain,state.foliage=terrain_now,foliage_now
     clear(&state.regions)
     ground_views(state,terrains,terrain_data,worlds)
     // A terrain that comes, goes, moves or shows another source: all it covered and covers.
@@ -373,7 +373,7 @@ foliage_terrain_ground :: proc(
         if fresh && enough {_,error:=append(&ground.owners,foliage.Ground_Owner{entity=e});enough=error==nil}
         if !enough {
             // The next step looks at every Foliage again.
-            state.foliage={}
+            state.foliage,state.seen[1]={},{}
             core.report(problems,e,"foliage_terrain.memory","out of memory for the ground under this Foliage; it is looked at again in the next frame: free memory")
             continue
         }

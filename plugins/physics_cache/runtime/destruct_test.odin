@@ -47,7 +47,7 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     core.add(&world.configs,owner,destruct.destructible(pieces=4,seed=55));core.add(&world.colliders,owner,destruct.collider_fracture())
     core.test_world_settle(&world)
     for tick in 0..<4 {cache_test_step(&world,&h,u64(tick))}
-    state,has:=core.get(core.read(&world.states),owner)
+    state,has:=core.get(&world.states,owner)
     if !testing.expect(t,has && fr.destructible_valid(&world.fractures.fracture,state.handle)) {return}
     testing.expect_value(t,phys.body_of(core.ref(&world.physics),owner),state.body)
     record:Cache_Recorder

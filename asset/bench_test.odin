@@ -58,7 +58,7 @@ world_delete :: proc(world:^Bench_World) {
 // Groups of ten: the first of each is the parent of the other nine.
 @(private)
 bench_scene :: proc(scene:^Scene,types:^Types,count:int) {
-    scene_init(scene,types,KIND_SCENE,{0xbe,0xbe})
+    scene_init(scene,types,{0xbe,0xbe})
     rows:[4][dynamic]u32
     transforms:[dynamic]Bench_Transform
     meshes:[dynamic]Bench_Mesh
@@ -192,7 +192,7 @@ scene_file_against_a_file_per_entity :: proc(t:^testing.T) {
             start:=time.tick_now()
             for i in 0..<count {
                 one:Scene
-                scene_init(&one,&types,KIND_SCENE,{0xbe,u64(i)})
+                scene_init(&one,&types,{0xbe,u64(i)})
                 scene_entity_add(&one,ids[i],0,serial.text_field(names[i][:]),int(orders[i]))
                 scene_parents(&one)[0]=parents[i]
                 value:=bench_transform(i)
@@ -238,7 +238,7 @@ scene_file_against_a_file_per_entity :: proc(t:^testing.T) {
             }
             fmt.printfln("%d entities, file per entity: save %.2f ms, load warm %.2f ms, load uncached %.2f ms, %d bytes (%d in 4 KiB clusters)",count,save_many*1000,load_many*1000,cold_many*1000,many_bytes,many_clusters)
             fmt.printfln("%d entities, file per entity / one file: save %.0fx, load warm %.0fx, load uncached %.0fx, size %.1fx",count,save_many/save_single,load_many/load_single,cold_many/cold_single,f64(many_bytes)/f64(single_bytes))
-            os.remove_all(folder)
+            base.remove_all(folder)
             free_all(context.temp_allocator)
         }
     }

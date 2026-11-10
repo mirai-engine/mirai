@@ -125,7 +125,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         pose.previous[0]=pose.local[0]
         pose.local[2].position.y+=1
         for entity in ([2]core.Entity{root,draws[i]}) {
-            placed:=core.get(&w.worlds,entity)
+            placed:=core.edit(&w.worlds,entity)
             placed.transform,placed.previous=pose.local[0],pose.local[0]
         }
     }
@@ -146,7 +146,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     for &instance in state.instances.values {instance.palette[0]={}}
     tick(&app,&cache,&state,&w,&problems,{playing=true},{alpha=0.5})
     for instance in state.instances.values {testing.expect_value(t,instance.palette[0],gpu.Mat4{})}
-    moved:=core.get(&w.worlds,draws[1]);moved.transform.position.x+=1;moved.previous=moved.transform
+    moved:=core.edit(&w.worlds,draws[1]);moved.transform.position.x+=1;moved.previous=moved.transform
     tick(&app,&cache,&state,&w,&problems,{playing=true},{alpha=0.5})
     testing.expect_value(t,state.instances.values[0].palette[0],gpu.Mat4{})
     testing.expect(t,state.instances.values[1].palette[0]!=gpu.Mat4{})

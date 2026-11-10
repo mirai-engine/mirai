@@ -880,7 +880,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             beyond_reach = light.beyond_reach;
         }
 #ifdef MIRAI_SHADOW_FILTER_POINTS
-        filters_begin();
+        if (MIRAI_COLORED_SHADOWS) filters_begin();
 #endif
         float3 through = float3(1.0);
         for (uint segment = 0u; segment < 2u; segment++) {
@@ -894,12 +894,12 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         else
 #else
 #ifdef MIRAI_SHADOW_FILTER_POINTS
-        filters_begin();
+        if (MIRAI_COLORED_SHADOWS) filters_begin();
 #endif
         float3 through = trace_transmission(origin, direction, reach);
 #endif
 #ifdef MIRAI_SHADOW_FILTER_POINTS
-        filters_weigh(radiance);
+        if (MIRAI_COLORED_SHADOWS) filters_weigh(radiance);
 #endif
         if (item == 0u) sun = radiance * through;
         else local += radiance * through;
