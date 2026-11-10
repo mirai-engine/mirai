@@ -1,5 +1,7 @@
 package ui
 
+import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 Test_Menus :: struct {
@@ -29,7 +31,7 @@ test_menus_build :: proc(ctx:^Context,user:rawptr) {
     }
     if panel(ctx,id(ctx,"panel"),{width=fixed(300),height=FIT,padding=padding_all(10),gap=10,offset={0,38}}) {
         if button(ctx,id(ctx,"under"),{label="Under",style=.Field,width=-1}).clicked {s.under+=1}
-        if dropdown(ctx,id(ctx,"kind"),{"Point","Spot","Sun"},&s.selected,{width=96}) {s.changed+=1}
+        if dropdown(ctx,id(ctx,"kind"),{list={"Point","Spot","Sun"}},&s.selected,{width=96}) {s.changed+=1}
         spacer(ctx,-1,200)
         if button(ctx,id(ctx,"below"),{label="Below",style=.Field,width=-1}).clicked {s.under+=1}
     }
@@ -241,6 +243,90 @@ a_dropdown_lists_its_options_under_its_button :: proc(t:^testing.T) {
     test_menus_frame(&ctx,&input,&s)
     testing.expect(t,s.changed==2 && !popup_is_open(&ctx,list))
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
+}
+
+@(test)
+a_dropdown_moves_one_current_row_the_same_with_any_look :: proc(t:^testing.T) {
+    Picker :: struct {options:Options,look:^Node_Style,selected,changes:int}
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Picker)user
+        if panel(ctx,id(ctx,"panel"),{width=fixed(240),height=FIT,padding=padding_all(8)}) {
+            if dropdown(ctx,id(ctx,"pick"),s.options,&s.selected,{width=-1,look=s.look}) {s.changes+=1}
+        }
+    }
+    names:[40]string
+    for &name,i in names {name=fmt.tprintf("Option %d",i)}
+    style:=TEST_CONTROL_STYLE
+    // The editor's texts and a game's joined text go through the same list.
+    for c in ([]Picker{{options={list=names[:]}},{options={joined=strings.join(names[:],"|",context.temp_allocator)},look=&style}}) {
+        ctx:Context
+        owned,ambient,scratch:Test_Counter
+        desc:=TEST_SMALL
+        desc.navigation=true
+        desc.allocator=test_counter(&owned,context.allocator)
+        testing.expect(t,context_init(&ctx,desc))
+        defer context_destroy(&ctx)
+        ctx.theme.activate_on_press=false
+        s:=c
+        s.selected=20
+        input:=test_input()
+        test_frame(&ctx,&input,build,&s)
+        pick:=id(&ctx,"pick")
+        list:=id_derive(&ctx,pick,"list")
+        row_id :: proc(ctx:^Context,list:Id,index:int) -> Id {return id_derive(ctx,list,"row",index+1)}
+        current :: proc(ctx:^Context,list:Id) -> int {
+            entry:=popup_find(ctx,list)
+            return entry.cursor if entry!=nil else -2
+        }
+        // Opened by the keys, the current row is the chosen option, in sight,
+        // and only the rows in sight are built, without allocating.
+        ctx.focus,ctx.focus_ring=pick,true
+        test_key(&input,.Enter)
+        test_frame(&ctx,&input,build,&s)
+        owned.requests=0
+        {
+            context.allocator=test_counter(&ambient,context.allocator)
+            context.temp_allocator=test_counter(&scratch,context.temp_allocator)
+            for _ in 0..<3 {test_frame(&ctx,&input,build,&s)}
+        }
+        testing.expect(t,owned.requests==0 && ambient.requests==0 && scratch.requests==0,"An open list does not allocate")
+        testing.expect_value(t,current(&ctx,list),20)
+        built:=0
+        for i in 0..<len(names) {if _,found:=widget_rect(&ctx,row_id(&ctx,list,i));found {built+=1}}
+        _,shown:=widget_rect(&ctx,row_id(&ctx,list,20))
+        testing.expectf(t,shown && built>0 && built<=12,"%d rows built of %d",built,len(names))
+        // The keys move it, Enter chooses it and the focus is on the dropdown.
+        test_key(&input,.Down)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect_value(t,current(&ctx,list),21)
+        test_key(&input,.Enter)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect(t,s.selected==21 && s.changes==1 && !popup_is_open(&ctx,list) && ctx.focus==pick)
+        // The pointer moving onto a row makes it current, the d-pad goes on
+        // from there and accept chooses it.
+        test_click(&ctx,&input,build,&s,pick)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect_value(t,current(&ctx,list),21)
+        test_point(&input,test_rect(t,&ctx,row_id(&ctx,list,15)))
+        test_frame(&ctx,&input,build,&s)
+        testing.expect_value(t,current(&ctx,list),15)
+        input.pad={.Down}
+        test_frame(&ctx,&input,build,&s)
+        testing.expect_value(t,current(&ctx,list),16)
+        input.pad={.Accept}
+        test_frame(&ctx,&input,build,&s)
+        testing.expect(t,s.selected==16 && s.changes==2 && !popup_is_open(&ctx,list) && ctx.focus==pick)
+        // A click on a row chooses it, and Escape closes the list with the focus where it was.
+        test_click(&ctx,&input,build,&s,pick)
+        test_frame(&ctx,&input,build,&s)
+        test_click(&ctx,&input,build,&s,row_id(&ctx,list,12))
+        testing.expect(t,s.selected==12 && ctx.focus==pick)
+        test_click(&ctx,&input,build,&s,pick)
+        test_key(&input,.Escape)
+        test_frame(&ctx,&input,build,&s)
+        testing.expect(t,s.selected==12 && !popup_is_open(&ctx,list) && ctx.focus==pick)
+        testing.expect_value(t,ctx.stats.layout_errors,u32(0))
+    }
 }
 
 @(test)

@@ -218,7 +218,7 @@ look_head :: proc(p:^Pane,n:^ui.Tree_Node) {
                     style_changed(p,"Rename variant",true)
                 }
                 if result.committed || result.cancelled {u.variant_rename=false}
-            } else if ui.dropdown(ctx,ui.id(ctx,"variant"),choices[:],&chosen,{width=-1}) {
+            } else if ui.dropdown(ctx,ui.id(ctx,"variant"),{list=choices[:]},&chosen,{width=-1}) {
                 ui.tree_text_set(n.variant[:],choices[chosen] if chosen>0 else "")
                 changed(u,"Variant")
             }

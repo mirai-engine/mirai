@@ -176,7 +176,7 @@ timeline_strip :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_
                 labels:=TIMELINE_SPEED_LABELS
                 selected:=2
                 for speed,i in speeds {if speed==c.speed {selected=i}}
-                if ui.dropdown(ctx,ui.id(ctx,"speed"),labels[:],&selected,{width=58}) {r.speed=speeds[selected]}
+                if ui.dropdown(ctx,ui.id(ctx,"speed"),{list=labels[:]},&selected,{width=58}) {r.speed=speeds[selected]}
             }
             if c.here {
                 timeline_divider(ctx)

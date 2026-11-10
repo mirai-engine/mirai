@@ -409,7 +409,7 @@ Row :: struct {
     checked:bool,    // shows a check before the label
     check_room:bool, // unchecked rows leave the room of the check
     accent:bool,     // under the pointer it fills with the accent, as menu items do
-    quiet:bool,      // the pointer does not tint it: its list moves the selection instead
+    quiet:bool,      // its list moves the current row instead: the pointer neither tints it nor gives it the focus
     disabled:bool,
     height:f32,
     depth:int,       // indentation of a row of a tree
@@ -418,7 +418,7 @@ Row :: struct {
 // A row of a list, a menu or a tree.
 row :: proc(ctx:^Context,id:Id,r:Row) -> Interaction {
     th:=&ctx.theme
-    it:=interact(ctx,id,{.Focusable} if !r.disabled else {.Passive})
+    it:=interact(ctx,id,{.Passive} if r.disabled else ({} if r.quiet else {.Focusable}))
     if r.disabled {it={}}
     // In a popup the keys move over: the row of its cursor shows as pointed at, and Enter takes it.
     keyed:=false

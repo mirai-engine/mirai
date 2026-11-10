@@ -305,6 +305,10 @@ All take the context, an id and their state by parameter.
     anchor.
   - `Popup.search` puts on top the only popup search box, which takes the keyboard on opening;
     `dropdown` and the inspector's asset lists use it.
+  - **A `dropdown` list has one current row** (`Popup_Entry.cursor`), editor and game alike: the
+    pointer moving onto a row makes it current, Up and Down (the d-pad, the stick) move it from
+    there and Enter (accept) takes it; it opens on the chosen option, in sight, and only the rows in
+    sight are built. Rows take no focus: it stays on the dropdown, which gets it back on choosing.
   - **Choosing a value is a single component:** `menu_button`, a `Ghost` button with an arrow that
     opens its menu; the chosen option goes with `checked`, the groups with `menu_header` and the
     destructive with `Menu_Item.danger`.
@@ -347,16 +351,16 @@ or the controls of the editor panels:
   and `reveal` draws a part of its characters where the whole text places them, so it does not
   reflow while it appears. `anchored` hangs a container from a screen point inside the safe area and
   `skin_look` gives a button images or colors per state.
-- **Game controls**: a button, a checkbox, a slider and a number are the editor's with a `look`; a
-  radio, a selector, a field and a dropdown are in `game.odin`. Every color and corner comes from
+- **Game controls**: a button, a checkbox, a slider, a number and a dropdown are the editor's with
+  a `look`; a radio, a selector and a field are in `game.odin`. Every color and corner comes from
   the `Node_Style` resolved for its state (`widget_states`): neither the theme nor constants.
-  `fill`, `stroke`, corners and text are the box; `track` the track of a slider and the lit row of
-  a dropdown; `knob` the knob; `mark` the dot, the tick, the arrows and the chosen option.
+  `fill`, `stroke`, corners and text are the box (and the list of a dropdown); `track` the track of
+  a slider and the current row of a dropdown; `knob` the knob; `mark` the dot, the tick, the arrows
+  and the chosen option.
   - Without a size, a control measures its text plus `GAME_PAD` and `GAME_WIDTH` sizes of width.
   - Left and right change a slider, a selector and a number with the focus; the slider writes only
     when the pointer or the keys move it, and what is written in a number is adjusted to the step
-    and the range. The dropdown opens its list in a popup of the same style; opened with the keys,
-    the focus goes to the chosen row.
+    and the range.
   - `Options` gives the options of a selector or a dropdown: one by one, a text separated by `|` or
     an array of texts or enums (by their name or by a text `Name=Text|...`), without a cap.
 

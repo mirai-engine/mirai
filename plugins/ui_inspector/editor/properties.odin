@@ -487,7 +487,7 @@ ghost_row :: proc(p:^Pane,n:^ui.Tree_Node) -> (changed:bool) {
     }
     if current!="" && chosen==0 {chosen=len(names);append(&names,current)}
     if row(p,"Under pointer","What shows under the pointer while it is dragged: a copy of it, or another node of the interface, by its name") {
-        if ui.dropdown(ctx,ui.id(ctx,"ghost"),names[:],&chosen,{width=-1}) {
+        if ui.dropdown(ctx,ui.id(ctx,"ghost"),{list=names[:]},&chosen,{width=-1}) {
             ui.tree_text_set(n.ghost[:],names[chosen] if chosen>0 else "")
             changed=true
         }
@@ -708,7 +708,7 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
                 changed(u,"Rename style")
             }
             if result.committed || result.cancelled {u.style_rename=false}
-        } else if ui.dropdown(ctx,ui.id(ctx,"style"),names[:],&selected,{width=-1}) {
+        } else if ui.dropdown(ctx,ui.id(ctx,"style"),{list=names[:]},&selected,{width=-1}) {
             old:=int(n.style)
             to:=rows[selected]
             // None keeps the look the node has, as its own.
@@ -925,7 +925,7 @@ text_rows :: proc(p:^Pane) {
     chosen:=0
     for value,i in values {if value==t.font {chosen=i}}
     if row(p,"Font","A font of the editor, or one of the fonts of the file") {
-        if ui.dropdown(ctx,ui.id(ctx,"font"),fonts[:],&chosen,{width=-1}) {t.font=values[chosen];look_changed(p,"Text",.Text_Font,true)}
+        if ui.dropdown(ctx,ui.id(ctx,"font"),{list=fonts[:]},&chosen,{width=-1}) {t.font=values[chosen];look_changed(p,"Text",.Text_Font,true)}
     }
     look_changed(p,"Text",.Text_Size,value_row(p,"Size",Positive_Value,&t.size,d.size))
     look_color(p,"Color",.Text_Color,&t.color,d.color,group="Text")
@@ -955,7 +955,7 @@ style_advanced :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         }
     }
     if row(p,"Program","A ui program of the shaders of the project that colors the fill instead, as the shader says") {
-        if ui.dropdown(ctx,ui.id(ctx,"program"),programs[:],&chosen,{width=-1}) {
+        if ui.dropdown(ctx,ui.id(ctx,"program"),{list=programs[:]},&chosen,{width=-1}) {
             name:=programs[chosen] if chosen>0 else ""
             ui.tree_text_set(st.program[:],name)
             st.program_values={}
@@ -1229,7 +1229,7 @@ action_row :: proc(p:^Pane,label:string,field:[]u8) -> (changed:bool) {
         append(&names,fmt.tprintf("%s (missing)",current))
     }
     if row(p,label,"An input action of the game, as input.mirai binds it; one marked missing the game does not declare, and does nothing") {
-        if ui.dropdown(ctx,ui.id(ctx,label),names[:],&selected,{width=-1}) && !(missing && selected==len(names)-1) {
+        if ui.dropdown(ctx,ui.id(ctx,label),{list=names[:]},&selected,{width=-1}) && !(missing && selected==len(names)-1) {
             for &b in field {b=0}
             if selected>0 {copy(field[:len(field)-1],names[selected])}
             changed=true
@@ -1248,7 +1248,7 @@ size_row :: proc(p:^Pane,label:string,size:^ui.Size,default:ui.Size,about:="Fit:
         ui.id_push(ctx,ui.id(ctx,label))
         defer ui.id_pop(ctx)
         kind:=int(size.kind)
-        if ui.dropdown(ctx,ui.id(ctx,"kind"),{"Fit","Grow","Fixed","Percent"},&kind,{width=84}) {
+        if ui.dropdown(ctx,ui.id(ctx,"kind"),{list={"Fit","Grow","Fixed","Percent"}},&kind,{width=84}) {
             size.kind=ui.Size_Kind(kind)
             if size.kind==.Percent && size.value>1 {size.value=1}
             changed=true
@@ -1282,7 +1282,7 @@ list_row :: proc(p:^Pane,label:string,value:^$E,names:[]string) -> (changed:bool
     ctx:=p.s.gui.ctx
     if row(p,label) {
         selected:=int(value^)
-        if ui.dropdown(ctx,ui.id(ctx,label),names,&selected,{width=-1}) {value^=E(selected);changed=true}
+        if ui.dropdown(ctx,ui.id(ctx,label),{list=names},&selected,{width=-1}) {value^=E(selected);changed=true}
     }
     return
 }

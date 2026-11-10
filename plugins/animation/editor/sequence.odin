@@ -149,7 +149,7 @@ sequence_entity_choice :: proc(s:^editor.Session,w:core.World_Ref,label:string,v
     }
     ctx:=s.gui.ctx
     if ui.property(ctx,label) {
-        if ui.dropdown(ctx,ui.id(ctx,label),names,&selected,{width=-1}) {value^=selected==0?core.NONE:table.entities[selected-1]}
+        if ui.dropdown(ctx,ui.id(ctx,label),{list=names},&selected,{width=-1}) {value^=selected==0?core.NONE:table.entities[selected-1]}
     }
 }
 
@@ -176,7 +176,7 @@ sequence_inspector :: proc(c:editor.Inspector_Context) -> bool {
     ctx:=s.gui.ctx
     names:[anim.KEYFRAME_PATH_FRAMES]string
     for i in 0..<count {names[i]=fmt.tprintf("Frame %d",i+1)}
-    if ui.property(ctx,"Frame") {ui.dropdown(ctx,ui.id(ctx,"frame"),names[:count],&state.frame,{width=-1})}
+    if ui.property(ctx,"Frame") {ui.dropdown(ctx,ui.id(ctx,"frame"),{list=names[:count]},&state.frame,{width=-1})}
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
         if ui.button(ctx,ui.id(ctx,"append"),{label="Add",style=.Field,width=-1,disabled=count>=anim.KEYFRAME_PATH_FRAMES}).clicked {
             value.frames[count]=value.frames[state.frame];value.count=u8(count+1);state.frame=count;sequence_write(c,value)

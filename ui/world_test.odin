@@ -382,7 +382,7 @@ a_popup_opened_in_a_world_panel_belongs_to_its_surface :: proc(t:^testing.T) {
     build :: proc(ctx:^Context,user:rawptr) {
         s:=cast(^State)user
         if world_panel(ctx,id(ctx,"panel"),{position={0,2,0},size={200,160},unit=0.01,pivot=.Center,padding=padding_all(10)}) {
-            dropdown(ctx,id(ctx,"kind"),{"Point","Spot","Sun"},&s.selected,{width=96})
+            dropdown(ctx,id(ctx,"kind"),{list={"Point","Spot","Sun"}},&s.selected,{width=96})
         }
     }
     input:=test_input(1000,1000)

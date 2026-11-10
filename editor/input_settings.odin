@@ -235,7 +235,7 @@ input_action_rows :: proc(s:^Session,action:input.Action) {
     row_begin(ctx,"Kind")
     kind:=int(m.kinds[action])
     kinds:=INPUT_KINDS
-    if ui.dropdown(ctx,ui.id(ctx,"kind"),kinds[:],&kind,{width=-1,height=th.row}) && input.Action_Kind(kind)!=m.kinds[action] {
+    if ui.dropdown(ctx,ui.id(ctx,"kind"),{list=kinds[:]},&kind,{width=-1,height=th.row}) && input.Action_Kind(kind)!=m.kinds[action] {
         st.listen={}
         input.input_map_action(m,action,input.Action_Kind(kind))
         input_settings_commit(s)
@@ -358,7 +358,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (chan
         row_begin(ctx,"Gamepad")
         pads:=INPUT_GAMEPADS
         chosen:=b.gamepad==input.GAMEPAD_ANY?0:int(b.gamepad)+1
-        if ui.dropdown(ctx,ui.id(ctx,"gamepad"),pads[:],&chosen,{width=-1,height=th.row}) {
+        if ui.dropdown(ctx,ui.id(ctx,"gamepad"),{list=pads[:]},&chosen,{width=-1,height=th.row}) {
             b.gamepad=chosen==0?input.GAMEPAD_ANY:u8(chosen-1)
             input_settings_commit(s)
         }
