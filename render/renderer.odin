@@ -612,7 +612,8 @@ Renderer :: struct {
 	points:               Material_Points, // where the passes of a frame need a material program evaluated (points.odin)
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
-	pipeline_thread:      ^Pipeline_Thread, // makes the pipelines of programs; nil: they are made where they are asked for
+	pipeline_thread:      ^Pipeline_Thread, // makes the variants of the stages, and the pipelines of programs with pipelines_async; nil: where they are asked for
+	pipelines_async:      bool, // Renderer_Desc.pipeline_thread
 	stats_readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	ui_offscreen:    Ui_Offscreen_State,
 	using main:      View_State, // the view of a frame that has one
@@ -678,7 +679,8 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.allocator = desc.allocator if desc.allocator.procedure != nil else context.allocator
 	scene_ready := scene_init(r)
 	r.scene.pages.jobs = desc.jobs
-	if desc.pipeline_thread {pipeline_thread_start(r)}
+	pipeline_thread_start(r)
+	r.pipelines_async = desc.pipeline_thread
 	textures_init(r)
 	if !scene_ready {set_error(r, "scene tables: out of memory");return false}
 	if assets!=nil && assets.owned {
@@ -1115,8 +1117,7 @@ pipeline_desc :: proc(r: ^Renderer, item: Pipeline_Make, constants: rhi.Shader_C
 // The variants a scene may ask for of the stages of the tracer in use, asked
 // of the pipeline thread so that no frame waits for the driver: every set of
 // the constants of a stage that traces or computes, those of colored shadows
-// while the setting is on. Without the thread they are made here, off the
-// frames too.
+// last, so that turning the setting on finds them made.
 @(private)
 pipeline_variants_ask :: proc(r: ^Renderer) {
 	r.variants_wanted = false
@@ -1124,17 +1125,19 @@ pipeline_variants_ask :: proc(r: ^Renderer) {
 	info := rhi.device_info(r.device)
 	list: Pipeline_List
 	pipelines_list(r, &list)
-	for item in list.items[:list.count] {
-		if item.lazy || item.target == nil || item.rays != .Any && item.rays != tracer || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
-		code := &r.shader_codes[item.shaders[1]]
-		color, colored := rhi.shader_constant(code, "color")
-		for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
-			constants := transmute(rhi.Shader_Constants)bits
-			if colored && color <= constants && !r.settings.colored_shadows {continue}
-			target := pipeline_slot(r, item.id, .Any if item.target == &r.pipelines[item.id] else item.rays, constants)
-			if target == nil || target^ != 0 || pipeline_asked(r, target) {continue}
-			graphics, compute := pipeline_desc(r, item, constants)
-			pipeline_make(r, target, graphics, compute)
+	for colored_last in ([2]bool{false, true}) {
+		for item in list.items[:list.count] {
+			if item.lazy || item.target == nil || item.rays != .Any && item.rays != tracer || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
+			code := &r.shader_codes[item.shaders[1]]
+			color, colored := rhi.shader_constant(code, "color")
+			for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
+				constants := transmute(rhi.Shader_Constants)bits
+				if (colored && color <= constants) != colored_last {continue}
+				target := pipeline_slot(r, item.id, .Any if item.target == &r.pipelines[item.id] else item.rays, constants)
+				if target == nil || target^ != 0 || pipeline_asked(r, target) {continue}
+				graphics, compute := pipeline_desc(r, item, constants)
+				pipeline_make(r, target, graphics, compute, background = true)
+			}
 		}
 	}
 }

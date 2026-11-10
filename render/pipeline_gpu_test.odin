@@ -187,24 +187,17 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(device), rhi.device_validation_message(device))
 }
 
-// With the pipeline thread the variants a scene may ask for are made off the
-// frame, from the start: those of colored shadows only with the setting, and
-// turning it on asks for them.
+// The variants a scene may ask for are made on the pipeline thread from the
+// start, those of colored shadows too: turning them on waits for none.
 @(test)
 variants_a_scene_may_ask_for_are_made_off_the_frame :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 48, DEFAULT_SETTINGS, desc = {pipeline_thread = true}) {return}
+	if !fixture_init(t, &f, 64, 48, DEFAULT_SETTINGS) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_pipelines_wait(r)
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
-	testing.expect(t, pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "without layers, made before a frame")
-	shadow := pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})
-	testing.expect(t, shadow^ == 0, "colored shadows are off: none of theirs")
-	settings := r.settings
-	settings.colored_shadows = true
-	testing.expect(t, renderer_apply_settings(r, settings), r.error)
-	renderer_pipelines_wait(r)
-	testing.expect(t, shadow^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "turned on, theirs are made off the frame")
+	testing.expect(t, pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "without layers")
+	testing.expect(t, pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "with colored shadows, while they are off")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
