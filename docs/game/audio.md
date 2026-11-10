@@ -72,9 +72,8 @@ options: a slider bound to `Audio_Volumes.music` writes it itself; the game writ
   mids and highs get through; without one, as a wall.
 
 ## Pitfalls
-- A non-looping source that ended stays `ended`; `plays += 1` plays it again from its start (also
-  while it sounds). Changing `sound`, `bus` or the curve restarts the voice; the other fields tune
-  it live. Zero
+- An ended one-shot stays `ended`; `plays += 1` plays it again (also while it sounds). `sound`,
+  `bus` or the curve restart the voice; the other fields tune it live. Zero
   `pitch` means 1.
 - A source that cannot sound is a problem of its entity, a request one of no entity: see
   `engine.diagnostics` (`audio.*`). Headless, nothing plays and nothing is said.
