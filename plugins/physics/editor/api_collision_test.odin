@@ -13,7 +13,7 @@ import "mirai:std/serial"
 @(private="file") Collision_Test_Nested :: struct {region:Collision_Test_Filter}
 @(private="file") Collision_Test_Wrong :: struct {layers,mask:u32}
 @(private="file") Collision_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     colliders:core.Table(phys.Collider),
     filters:core.Table(Collision_Test_Filter),
@@ -22,21 +22,16 @@ import "mirai:std/serial"
     settings:phys.Collision_Settings,
 }
 
-@(private="file")
-collision_test_settle :: proc(data,shared,ed:rawptr) {
-    world:=cast(^Collision_Test_World)data
-    core.table_settle(&world.ids,&world.entities);core.table_settle(&world.colliders,&world.entities)
-    core.table_settle(&world.filters,&world.entities);core.table_settle(&world.nested,&world.entities);core.table_settle(&world.wrong,&world.entities)
-    core.entities_settle(&world.entities)
-}
+@(private="file") Collision_Test_Editor :: struct {api:editor.Api}
 
 @(test)
 collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step :: proc(t:^testing.T) {
+    info,described:=core.test_info(t,Collision_Test_World,core.Test_None,Collision_Test_Editor,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Collision_Test_World
-    core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids);defer core.table_destroy(&world.colliders)
-    defer core.table_destroy(&world.filters);defer core.table_destroy(&world.nested);defer core.table_destroy(&world.wrong)
-    world.settings=phys.COLLISION_SETTINGS_DEFAULT
+    if !testing.expect(t,info.init[.World](&world,context.allocator)) {return}
+    defer info.destroy[.World](&world)
     world.settings.presets[4]={preset=9,belongs=1,collides=2}
     names:=[7]core.Name_Info{
         {type=phys.Collision_Category,value=0,name="default"},{type=phys.Collision_Category,value=1,name="player"},
@@ -45,29 +40,19 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
         {type=phys.Collision_Preset,value=255,name="custom"},
     }
     named_types:=[2]core.Named_Type_Info{{type=phys.Collision_Category,name="Collision_Category",prefix="CATEGORY_",limit=32},{type=phys.Collision_Preset,name="Collision_Preset",prefix="PRESET_",limit=256}}
-    tables:=[5]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Collision_Test_World,ids)},
-        {name="Collider",type=phys.Collider,info=type_info_of(phys.Collider),offset=offset_of(Collision_Test_World,colliders)},
-        {name="Collision_Test_Filter",type=Collision_Test_Filter,info=type_info_of(Collision_Test_Filter),offset=offset_of(Collision_Test_World,filters)},
-        {name="Collision_Test_Nested",type=Collision_Test_Nested,info=type_info_of(Collision_Test_Nested),offset=offset_of(Collision_Test_World,nested)},
-        {name="Collision_Test_Wrong",type=Collision_Test_Wrong,info=type_info_of(Collision_Test_Wrong),offset=offset_of(Collision_Test_World,wrong)},
-    }
-    storages:=[2]core.Storage_Info{
-        {type=editor.Api,info=type_info_of(editor.Api),place=.Editor},
-        {type=phys.Collision_Settings,info=type_info_of(phys.Collision_Settings),offset=offset_of(Collision_Test_World,settings)},
-    }
-    info:=core.World_Info{entities=offset_of(Collision_Test_World,entities),tables=tables[:],storages=storages[:],names=names[:],named_types=named_types[:]}
+    info.names,info.named_types=names[:],named_types[:]
+    core.test_info_index(&info)
     entity,held:=core.create(&world.entities),core.create(&world.entities)
     alone:=core.create(&world.entities)
     collider:=phys.COLLIDER_DEFAULT;collider.group=held;collider.friction=.8
     config:=Collision_Test_Filter{filter=phys.QUERY_FILTER_DEFAULT,unchanged=93};config.filter.debris=true
     core.add(&world.ids,entity,{value=7});core.add(&world.ids,held,{value=9});core.add(&world.ids,alone,{value=11});core.add(&world.colliders,entity,collider);core.add(&world.colliders,alone,phys.COLLIDER_DEFAULT)
     core.add(&world.filters,entity,config);core.add(&world.nested,entity,{region=config});core.add(&world.wrong,entity,{1,2})
-    collision_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     selection:editor.Selection;defer delete(selection.entities)
     viewport:editor.Viewport;gui:editor.Editor_Ui;edits:editor.Edits;defer editor.edits_free(&edits)
-    api_storage:editor.Api
-    session:=editor.Session{info=&info,edit_world=&world,editor_world=&api_storage,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits}
+    tools:Collision_Test_Editor
+    session:=editor.Session{info=&info,edit_world=&world,editor_world=&tools,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits}
     editor.edits_reset(&edits,editor.edited_world(&session))
     if !testing.expect_value(t,editor.api_open(&session,0,true),editor.Api_Open_Error.None) {return};defer editor.api_close(&session)
     state:=editor.api_state(&session);state.poll_temp=context.temp_allocator

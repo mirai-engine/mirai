@@ -3,7 +3,6 @@ package streaming
 import "base:runtime"
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -53,11 +52,8 @@ far_test_sheet :: proc(t:^testing.T,types:^asset.Types,path:string,side:int) -> 
 // read, each with its hash.
 @(test)
 a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_references :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-far-%d",directory,os.get_pid())
-    os.remove_all(folder)
-    if !testing.expect(t,os.make_directory_all(folder)==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"far")
+    if folder=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     File :: struct {id:base.Asset_Id,kind:asset.Fourcc,path:string}
     files:=[4]File{

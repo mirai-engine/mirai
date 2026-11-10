@@ -25,18 +25,13 @@ Project :: struct {
 
 @(private="file")
 project_init :: proc(t:^testing.T,p:^Project,name:string) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    p.root=fmt.aprintf("%s/mirai-ui-inspector-%d-%s",directory,os.get_pid(),name)
-    os.remove_all(p.root)
-    os.make_directory_all(p.root)
-    return testing.expect(t,host.assets_init(&p.assets,{root=p.root,capacity=8}))
+    p.root=base.test_folder(t,fmt.tprintf("ui-inspector-%s",name))
+    return p.root!="" && testing.expect(t,host.assets_init(&p.assets,{root=p.root,capacity=8}))
 }
 
 @(private="file")
 project_destroy :: proc(p:^Project) {
     host.assets_destroy(&p.assets)
-    os.remove_all(p.root)
-    delete(p.root)
 }
 
 // Writes records to path as the .ui id; imports as host.ui_tree_imports reads them.
@@ -500,6 +495,13 @@ what_make_widget_declares_and_what_a_person_changes :: proc(t:^testing.T) {
 @(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8,slots:[3]Game_Slot}
 @(private="file") Game_Hotbar :: struct {slots:[3]Game_Slot,chosen:i32}
 @(private="file") Game_Enemy :: struct {label:[16]u8,health:f32}
+@(private="file")
+Game_World :: struct {
+    using world:core.Test_World,
+    status:core.Table(Game_Status) `mirai:"game,name=Status"`,
+    enemies:core.Table(Game_Enemy) `mirai:"game,name=Enemy"`,
+    hotbar:Game_Hotbar `mirai:"game,name=Hotbar"`,
+}
 
 @(private="file") STAT_ID :: base.Asset_Id{0x57a7,1}
 @(private="file") HUD_ID :: base.Asset_Id{0x4d,1}
@@ -527,12 +529,9 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
     p:Project
     if !project_init(t,&p,"paths") {return}
     defer project_destroy(&p)
-    tables:=[2]core.Table_Info{
-        {name="Status",library="game",info=type_info_of(Game_Status),place=.World,game=true},
-        {name="Enemy",library="game",info=type_info_of(Game_Enemy),place=.World,game=true},
-    }
-    storages:=[1]core.Storage_Info{{name="Hotbar",library="game",info=type_info_of(Game_Hotbar),place=.World,game=true}}
-    info:=core.World_Info{tables=tables[:],storages=storages[:]}
+    info,described:=core.test_info(t,Game_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     app:=host.App{allocator=context.allocator,assets=&p.assets,info=&info}
     s:=editor.Session{app=&app,assets_root=p.root,headless=true}
     write :: proc(s:^editor.Session,file,node,document:string) -> (message:string,ok:bool) {
