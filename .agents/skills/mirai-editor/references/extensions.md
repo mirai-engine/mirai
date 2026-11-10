@@ -62,7 +62,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
 7. **Show.** Guides with `host.extras_debug_lines_add`; a ring of constant width on screen, with
    `viewport_screen` and `ui.draw_line` or `ui.draw_polyline`. The panel, only with the tool
    active: `if ui.panel(ctx, id, editor.tool_panel(g, id)) { controls }`. The result, with
-   `editor.notify`. What a component draws over the selection (a mirror's face, a decal's box) goes
+   `editor.notify`. What a component draws over the selection (a portal's face, a decal's box) goes
    through `editor.selection_gizmo`; `gizmo_face` is the outline of a face of side 1, ellipse or
    rectangle, with the arrow of its front.
 8. **Brushes.** `editor/brush.odin` is what the tools' brushes share (terrain and foliage):
@@ -282,8 +282,8 @@ or without names): `editor.asset_cards(s, width)` gives the columns and the side
 
 An Editor storage whose only field is `editor.Card_Provider` adds cards to Create: its default
 fills `cards` and `count`, up to `CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64
-with the presets. `decals`, `monitors`, `portals` and `vfx` add Decal, Screen, Portal and Particles
-this way.
+with the presets. `decals`, `monitors`, `portals` and `vfx` add Decal, Screen, Portal and Mirror,
+and Particles this way.
 
 Fields of `Card`:
 
