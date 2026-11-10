@@ -805,19 +805,16 @@ engine_release :: proc(root,folder:string,mode:Build_Mode,command:string) {
 SESSION_TAKE_S :: 180
 
 // The session mirai session opened for the project takes what the builds
-// since it loaded its binaries left, and the command ends once it runs them.
-// The libraries of the engine built again whose declarations stand go in
-// place, with its documents, its Play and its history as they are
-// (build.engine_swap); otherwise it starts again with its documents. Says
-// which in a line, with what keeps it from going on. goes_on: that session
-// runs the build and is the process it was.
-session_take :: proc(root,folder:string,mode:Build_Mode) -> (file:api.Port_File,goes_on:bool) {
-    alive:bool
-    file,alive=session_find(folder)
+// since it loaded its binaries left, and the command ends once it runs them:
+// the libraries and the shaders. The libraries of the engine built again
+// whose declarations stand go in place, with its documents, its Play and its
+// history as they are (build.engine_swap); otherwise it starts again with its
+// documents. Says which in a line, with what keeps it from going on.
+session_take :: proc(root,folder:string,mode:Build_Mode) {
+    file,alive:=session_find(folder)
     paths:=build.engine_paths(root,mode,context.temp_allocator)
     if !alive || !file.manual || !project.path_same(file.engine,paths.folder) {return}
     now:=build.engine_stamp_of(paths.folder,context.temp_allocator)
-    if file.stamp==now && file.library==build.target_stamp_of(folder,.Editor,context.temp_allocator) {return file,true}
     libraries,restart:=build.engine_swap(mode,file.stamp,now,context.temp_allocator)
     started:=time.tick_now()
     result,err,called:=api.rpc_call(file.port,"build.start",`{"target":"built"}`,1,SESSION_TAKE_S*1000,context.temp_allocator)
@@ -830,7 +827,7 @@ session_take :: proc(root,folder:string,mode:Build_Mode) -> (file:api.Port_File,
         names:=make([dynamic]string,context.temp_allocator)
         for library in libraries {append(&names,library.file)}
         fmt.printfln("Session of %s (pid %d) runs this build after %.1f s, without starting again%s%s.",folder,file.pid,time.duration_seconds(time.tick_since(started)),len(names)>0?": it took in place ":"",strings.join(names[:],", ",context.temp_allocator))
-        return file,true
+        return
     }
     for time.duration_seconds(time.tick_since(started))<SESSION_TAKE_S {
         if next,answers:=session_find(folder);answers && next.pid!=file.pid && session_answers(next.port) {
@@ -840,5 +837,4 @@ session_take :: proc(root,folder:string,mode:Build_Mode) -> (file:api.Port_File,
         time.sleep(250*time.Millisecond)
     }
     fmt.eprintfln("mirai build: the session of %s did not answer %d s after starting again; mirai session status says what runs",folder,SESSION_TAKE_S)
-    return
 }

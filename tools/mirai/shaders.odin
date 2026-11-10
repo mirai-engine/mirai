@@ -80,6 +80,7 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
 // The open editor of the project publishes its shaders, the stages its
 // viewport runs first, and the command ends once it draws with them: the
 // others go on compiling in the editor. --whole generates them all here.
+@(private="file")
 shaders_publish_editor :: proc(folder:string,port:int) -> int {
     result,err,called:=api.rpc_call(port,"build.start",`{"target":"shaders"}`,1,SHADERS_EDITOR_MS,context.temp_allocator)
     if !called || err.code!=0 {

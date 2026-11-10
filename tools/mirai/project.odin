@@ -268,31 +268,26 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
         return 0,output,false
     }
     if !engine_current {engine_release(root,p.root,engine,"build")}
-    published:bool
-    code,output,shaders_failed,published=build_project_run(root,&p,target,out,mode,engine,engine_current,server)
-    if code==0 && target!=.Game {
-        // A session that goes on draws with the shaders the build published before the command ends, as after mirai shaders.
-        if file,goes_on:=session_take(root,p.root,engine);goes_on && published {shaders_publish_editor(p.root,file.port)}
-    }
+    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,engine,engine_current,server)
+    if code==0 && target!=.Game {session_take(root,p.root,engine)}
     return
 }
 
-// What build_project does once it has to compile, in its turn. published:
-// it left another generation of the shaders of the project.
+// What build_project does once it has to compile, in its turn.
 @(private="file")
-build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed,published:bool) {
+build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
-    if !ensure_runtime_dependencies(root) {return 1,"",false,false}
+    if !ensure_runtime_dependencies(root) {return 1,"",false}
     // The libraries of a project are built against the binaries of the engine;
     // the game, against its sources.
     if target!=.Game && engine_current {
         _=engine_report({status=.Up_To_Date,mode=engine},root)
     } else if target!=.Game {
-        if code:=engine_report(build.engine_build({engine_root=root,mode=engine}),root);code!=0 {return code,"",false,false}
+        if code:=engine_report(build.engine_build({engine_root=root,mode=engine}),root);code!=0 {return code,"",false}
     } else if !engine_shaders(root,turn_held=true) {
-        return 1,"",false,false
+        return 1,"",false
     }
     // The generation first: a game ships the one that is published, and a dedicated server none.
     if !server {
@@ -301,13 +296,11 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         switch generation.result.status {
         case .Running,.None,.Cancelled:
         case .Up_To_Date: fmt.printfln("%s unchanged.",generation.result.output)
-        case .Built:
-            published=true
-            fmt.printfln("%s ready (%.1f s): %d material programs, %d stages compiled and %d reused.",generation.result.output,generation.result.seconds,generation.result.programs,generation.result.compiled,generation.result.reused)
+        case .Built:      fmt.printfln("%s ready (%.1f s): %d material programs, %d stages compiled and %d reused.",generation.result.output,generation.result.seconds,generation.result.programs,generation.result.compiled,generation.result.reused)
         case .Failed:
             shaders_failed=true
             fmt.eprintfln("mirai build: could not generate the shaders of the project: %s",generation.result.message)
-            if target==.Game {return 1,"",true,false}
+            if target==.Game {return 1,"",true}
         }
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
@@ -348,12 +341,12 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
                 for folder in result.engine_time {fmt.eprintfln("  %s",folder)}
             }
             if result.failure==.Compile {fmt.eprintfln("mirai build: could not build %s",result.output)}
-            return 1,"",shaders_failed,published
+            return 1,"",shaders_failed
         }
-        if target==.Game && !shipped_report(job) {return 1,"",shaders_failed,published}
+        if target==.Game && !shipped_report(job) {return 1,"",shaders_failed}
         output=strings.clone(result.output)
     }
-    return 0,output,shaders_failed,published
+    return 0,output,shaders_failed
 }
 
 // Why the compiler stopped at the memory it may use, and how to go on.

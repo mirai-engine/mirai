@@ -148,6 +148,12 @@ app_shaders_reload :: proc(app:^App) -> u64 {
     return app_shaders_load(app,folder)
 }
 
+// Whether the generation published for the project is not the one last read.
+app_shaders_behind :: proc(app:^App) -> bool {
+    sh:=&app.shaders
+    return sh.root!="" && shaders_stamp(project.shader_generation_find(sh.root,context.temp_allocator))!=sh.stamp
+}
+
 // Loads the generation in a folder other than the one of the project, as
 // app_shaders_reload does; the watch goes on comparing the manifest of the
 // project. The ticket of the load; 0 when it is refused at once.

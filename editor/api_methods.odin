@@ -225,7 +225,7 @@ Api_Play_Step_Params :: struct {
 }
 
 Api_Build_Params :: struct {
-    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets; shaders: the shaders of the project published again, answering once the viewport draws with them; built: what a build outside the editor left (mirai build editor), loaded without building"`,
+    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets; shaders: the shaders of the project published again, answering once the viewport draws with them; built: what a build outside the editor left (mirai build editor): its libraries and its shaders, loaded without building"`,
     out:[512]u8 `mirai:"optional,text,label=For the game: the folder it is built into; empty: .mirai/game of the project"`,
     seconds:int `mirai:"optional,min=1,max=3600,unit=s,label=How long it waits for the end of the build; past that it answers building and the build goes on"`,
 }
@@ -1550,7 +1550,10 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         if s.build.phase==.Running {break}
         s.build.started_sources=code_fingerprint(s.project_root)
         s.build.reload=library_stale(s)
-        api_wait(s,f64(params.seconds),nil,build_running,"loading")
+        // The shaders it published load as those the editor publishes, and it answers once the viewport draws with them.
+        shaders:u64
+        if s.app.renderer!=nil && host.app_shaders_behind(s.app) {shaders=host.app_shaders_reload(s.app)}
+        api_wait(s,f64(params.seconds),&shaders,built_loading,"loading")
         api_build_result(s,call)
         return
     case:
@@ -1585,6 +1588,14 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
 
 @(private="file")
 build_running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
+
+@(private="file")
+built_loading :: proc(s:^Session,user:rawptr) -> bool {
+    if build_running(s,nil) {return true}
+    if s.app.renderer==nil {return false}
+    host.app_shaders_poll(s.app)
+    return host.app_shaders_loading(s.app,(^u64)(user)^) || gpu.renderer_pipelines_pending(s.app.renderer)
+}
 
 @(private)
 api_build_status :: proc(s:^Session,call:^api.Call) {api_build_result(s,call)}
