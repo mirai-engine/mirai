@@ -25,8 +25,7 @@ mind_net_types :: proc(types:^[dynamic]core.Test_Type) {
 
 @(private)
 Mind_Net_Tick :: struct {
-    w:behavior.Act_World,
-    tick:u64,
+    world:behavior.Mind_World,
 }
 
 @(private)
@@ -47,11 +46,11 @@ mind_net_step :: proc(a:^ai.Act(Net_Act)) -> ai.Status {
     c:=(^Mind_Net_Tick)(a.user)
     switch a.phase {
     case .Enter:
-        a.memory[0]=c.tick
-        if a.action==.Look {behavior.present_animation(&c.w,7)}
+        a.memory[0]=c.world.time.tick
+        if a.action==.Look {behavior.present_animation(a,7)}
         return .Running
     case .Update:
-        return .Success if c.tick-a.memory[0]>=20 else .Running
+        return .Success if c.world.time.tick-a.memory[0]>=20 else .Running
     case .Exit:
     }
     return .Success
@@ -63,10 +62,8 @@ MIND_NET_ACTS := [Net_Act]proc(a:^ai.Act(Net_Act)) -> ai.Status{.Round=mind_net_
 // What the mind of the server's agent did in a tick.
 @(private)
 mind_net_decide :: proc(w:^Mind_Net_World,info:^core.World_Info,minds:^behavior.Minds,tick:u64) {
-    c:=Mind_Net_Tick{w={presentations=&w.shows},tick=tick}
-    ctx:=ai.Mind_Context{user=&c}
-    problems:core.Problems
-    behavior.minds_tick(minds,&w.agents,"walker",&MIND_NET_ACTS,mind_net_think,&ctx,&c.w,{tick=tick,dt=1.0/60,seconds=f64(tick)/60,playing=true},&problems)
+    c:=Mind_Net_Tick{world={minds=minds,agents=&w.agents,presentations=&w.shows,time={tick=tick,dt=1.0/60,seconds=f64(tick)/60,playing=true}}}
+    behavior.minds_tick(&c.world,"walker",&MIND_NET_ACTS,mind_net_think)
     core.settle(info,w,nil)
 }
 

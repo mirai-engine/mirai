@@ -83,55 +83,39 @@ sight_world_destroy :: proc(f:^Sight_World) {
 @(private="file")
 Count_Act :: enum u8 {Count}
 
+// The context of a mind, as the generated step of a mind makes it: Mind_World first.
 @(private="file")
 Counting :: struct {
-    w:Act_World,
+    world:Mind_World,
     near,far,entered:int,
 }
 
 @(private="file")
 counting_think :: proc(t:^ai.Think(Count_Act)) {ai.propose(t,.Count,1)}
 
-// Counts its entries, near and far, asks to look and for an animation, and
-// ends on its first Update.
+// Counts its entries, near and far (what it claims lasts longer), asks to
+// look and for an animation, and ends on its first Update.
 @(private="file")
 counting_act :: proc(a:^ai.Act(Count_Act)) -> ai.Status {
     c:=(^Counting)(a.user)
     if a.phase!=.Enter {return .Success}
     c.entered+=1
-    if c.w.far {c.far+=1} else {c.near+=1}
-    present_look(&c.w,core.NONE,{1,2,3})
-    present_animation(&c.w,9)
+    if a.lease>1 {c.far+=1} else {c.near+=1}
+    present_look(a,core.NONE,{1,2,3})
+    present_animation(a,9)
     return .Running
 }
 
 @(private="file")
 COUNTING_ACTS := [Count_Act]proc(a:^ai.Act(Count_Act)) -> ai.Status{.Count=counting_act}
 
-// A mind registers by name when its agents tick, after its check: every
-// action has a procedure and there is a think procedure; one that does not
-// is a problem that says what to fix, and so are agents of a name nobody
-// ticks.
+// A mind registers by name when its agents tick; a name it cannot hold
+// registers nothing, and the agents of a name no mind declares are a problem
+// that says what to fix.
 @(test)
-minds_register_by_name_check_and_tick_their_agents :: proc(t:^testing.T) {
+minds_register_by_name_and_tick_their_agents :: proc(t:^testing.T) {
     minds:=new(Minds)
     defer free(minds)
-    missing:=[Count_Act]proc(a:^ai.Act(Count_Act)) -> ai.Status{}
-    Case :: struct{name:string,acts:^[Count_Act]proc(a:^ai.Act(Count_Act)) -> ai.Status,think:proc(t:^ai.Think(Count_Act)),problem:Mind_Problem}
-    cases:=[?]Case{
-        {"counter",&COUNTING_ACTS,counting_think,.None},
-        {"counter",&COUNTING_ACTS,counting_think,.None},
-        {"",&COUNTING_ACTS,counting_think,.Name},
-        {"a name far too long for a mind",&COUNTING_ACTS,counting_think,.Name},
-        {"broken",&missing,counting_think,.Missing_Action},
-        {"thoughtless",&COUNTING_ACTS,nil,.No_Think},
-    }
-    for c in cases {
-        problem,_:=mind_register(minds,c.name,c.acts,c.think)
-        testing.expectf(t,problem==c.problem,"%q: %v, expected %v",c.name,problem,c.problem)
-        testing.expect(t,c.problem==.None || mind_problem_text(c.problem)!="")
-    }
-    testing.expect(t,minds.count==1 && mind_of(minds,mind_name("counter")).actions==Count_Act && mind_of(minds,mind_name("other"))==nil)
     world:Behavior_World
     if !core.test_world_init(t,&world,test_types) {return}
     defer core.test_world_destroy(&world)
@@ -140,20 +124,19 @@ minds_register_by_name_check_and_tick_their_agents :: proc(t:^testing.T) {
     core.add(&world.mind_agents,b,Mind_Agent{mind=mind_name("counter")})
     core.add(&world.mind_agents,lost,Mind_Agent{mind=mind_name("nobody")})
     core.test_world_settle(&world)
-    c:Counting
-    ctx:=ai.Mind_Context{user=&c}
+    c:=Counting{world={minds=minds,agents=&world.mind_agents,time={tick=1,dt=1.0/60,playing=true}}}
+    minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
+    testing.expect_value(t,c.entered,2)
+    for name in ([]string{"counter","","a name far too long for a mind"}) {mind_register(minds,name,Count_Act)}
+    testing.expect(t,minds.count==1 && mind_of(minds,mind_name("counter")).actions==Count_Act && mind_of(minds,mind_name("other"))==nil)
     problems:core.Problems
-    minds_tick(minds,&world.mind_agents,"counter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=1,dt=1.0/60,playing=true},&problems)
-    testing.expect(t,c.entered==2 && c.w.entity==b && ctx.holder==u64(b))
-    minds_tick(minds,&world.mind_agents,"broken",&missing,counting_think,&ctx,&c.w,{tick=1,dt=1.0/60,playing=true},&problems)
-    testing.expect(t,core.problem_find(&problems,core.NONE,"behavior.mind")!=nil)
-    minds_unknown(minds,&world.mind_agents,&problems)
+    minds_unknown(core.ref(minds),core.read(&world.mind_agents),c.world.time,&problems)
     testing.expect(t,core.problem_find(&problems,lost,"behavior.mind")!=nil && core.problem_find(&problems,a,"behavior.mind")==nil)
 }
 
 // What a mind does shows in the Mind_Presentation of its agent, which it
 // gets before its first tick and whose row is written only when it changes;
-// a tick that runs again decides nothing.
+// a world that does not play, or a tick that runs again, decides nothing.
 @(test)
 the_mind_of_an_agent_presents_what_it_does_and_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T) {
     minds:=new(Minds)
@@ -164,33 +147,33 @@ the_mind_of_an_agent_presents_what_it_does_and_does_not_tick_again_in_a_resimula
     e:=core.create(&world.entities)
     core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("hunter")})
     core.test_world_settle(&world)
-    c:Counting
-    c.w.presentations=&world.presentations
-    ctx:=ai.Mind_Context{user=&c}
-    problems:core.Problems
-    minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=1,dt=1.0/60,playing=true},&problems)
+    c:=Counting{world={minds=minds,agents=&world.mind_agents,presentations=&world.presentations,time={tick=1,dt=1.0/60,playing=true}}}
+    minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
     core.test_world_settle(&world)
     shown,found:=core.get(&world.presentations,e)
     testing.expect(t,found && c.entered==1)
     testing.expect(t,shown.action==u16(Count_Act.Count) && shown.step==ai.MIND_NONE)
     testing.expect(t,shown.look==core.NONE && shown.look_point=={1,2,3} && shown.animation==9 && shown.animations==1)
     // It ends and enters again: the same action, a new animation asked.
-    minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=2,dt=1.0/60,playing=true},&problems)
+    c.world.time.tick=2
+    minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
     core.test_world_settle(&world)
     shown,_=core.get(&world.presentations,e)
     testing.expect(t,c.entered==2 && shown.animations==2)
     version:=core.version(&world.presentations)
     ticks:=world.mind_agents.values[0].state.ticks
-    // A tick that runs again (a rollback) neither ticks nor presents.
-    minds_tick(minds,&world.mind_agents,"hunter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=3,dt=1.0/60,playing=true,resimulating=true},&problems)
-    testing.expect_value(t,world.mind_agents.values[0].state.ticks,ticks)
-    testing.expect_value(t,core.version(&world.presentations),version)
-    c.w.entity=e
-    present_look(&c.w,e)
+    for time in ([]core.Time{{tick=3,dt=1.0/60,playing=true,resimulating=true},{tick=3,dt=1.0/60}}) {
+        c.world.time=time
+        minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
+        testing.expect_value(t,world.mind_agents.values[0].state.ticks,ticks)
+        testing.expect_value(t,core.version(&world.presentations),version)
+    }
+    ctx:=ai.Mind_Context{user=&c.world,holder=u64(e)}
+    a:=ai.Act(Count_Act){ctx=&ctx}
+    present_look(&a,e)
     core.test_world_settle(&world)
     shown,_=core.get(&world.presentations,e)
     testing.expect(t,shown.look==e && shown.look_point=={})
-    testing.expect_value(t,problems.count,0)
 }
 
 // An agent far from the players is off with its rows, and its mind decides
@@ -214,30 +197,26 @@ the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T)
     for e in ([2]core.Entity{far,dormant}) {core.disable(&world.mind_agents,e);core.disable(&world.paths,e)}
     core.disable(&world.fars,far)
     core.test_world_settle(&world)
-    c:Counting
-    c.w.paths,c.w.fars=core.read(&world.paths),core.read(&world.fars)
-    ctx:=ai.Mind_Context{user=&c,reservations=&world.claims.reservations}
-    problems:core.Problems
+    c:=Counting{world={minds=minds,agents=&world.mind_agents,paths=core.read(&world.paths),fars=core.read(&world.fars),claims=&world.claims}}
     calls:=0
     for tick in u64(0)..<60 {
         // Its ticks after the first, which registers the mind, do not allocate.
         saved:=context.allocator
         if tick>0 {context.allocator=refusing_allocator(&calls)}
-        minds_tick(minds,&world.mind_agents,"counter",&COUNTING_ACTS,counting_think,&ctx,&c.w,{tick=tick,dt=1.0/60,seconds=f64(tick)/60,playing=true},&problems)
+        c.world.time={tick=tick,dt=1.0/60,seconds=f64(tick)/60,playing=true}
+        minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
         context.allocator=saved
     }
     testing.expect_value(t,calls,0)
     testing.expect_value(t,c.near,60)
     testing.expect_value(t,c.far,2)
-    testing.expect(t,!c.w.far && ctx.lease==1)
     // Its actions read its path, off as it is: navigation says it arrived.
-    c.w.entity,c.w.far=far,true
-    testing.expect_value(t,path_status(&c.w),ai.Status.Success)
+    ctx:=ai.Mind_Context{user=&c.world,holder=u64(far),reservations=&world.claims.reservations}
+    testing.expect_value(t,path_status(&ctx),ai.Status.Success)
     testing.expect_value(t,world.mind_agents.values[core.raw_row(core.raw(&world.mind_agents),dormant)].state.ticks,0)
-    testing.expect_value(t,problems.count,0)
     // What a far agent claims lasts until its next decision, half a second later.
     a:=ai.Act(Count_Act){ctx=&ctx,frame=&world.mind_agents.values[0].state.main}
-    ctx.tick,ctx.holder,ctx.lease=100,u64(far),31
+    ctx.tick,ctx.lease=100,31
     testing.expect(t,ai.claim(&a,7,1,1))
     testing.expect(t,!ai.reserve_open(&world.claims.reservations,{7,1},u64(near),1,130) && ai.reserve_open(&world.claims.reservations,{7,1},u64(near),1,132))
 }
@@ -245,30 +224,49 @@ the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T)
 @(private="file")
 Move_Act :: enum u8 {Move}
 
+// Walking and chasing ask navigation, read where the agent got and stop it
+// when they end; a chase follows the new target when it changes.
 @(test)
 move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
     world:Behavior_World
     if !core.test_world_init(t,&world,test_types) {return}
     defer core.test_world_destroy(&world)
-    e:=core.create(&world.entities)
+    e,prey,other:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.paths,e,nav.Nav_Path{state=.Waiting})
     core.test_world_settle(&world)
-    w:=Act_World{entity=e,requests=&world.moves,paths=core.read(&world.paths)}
-    a:=ai.Act(Move_Act){phase=.Enter}
-    testing.expect_value(t,move_act(&w,&a,{1,2,3}),ai.Status.Running)
-    testing.expect(t,len(world.moves.queue.items)==1 && world.moves.queue.items[0].kind==.Move_To && world.moves.queue.items[0].point=={1,2,3})
+    w:=Mind_World{requests=&world.moves,paths=core.read(&world.paths)}
+    ctx:=ai.Mind_Context{user=&w,holder=u64(e)}
+    memory:[ai.MIND_WORDS]u64
+    a:=ai.Act(Move_Act){ctx=&ctx,phase=.Enter,memory=memory[:]}
+    last :: proc(world:^Behavior_World) -> nav.Nav_Request {return world.moves.queue.items[len(world.moves.queue.items)-1]}
+    testing.expect_value(t,move_act(&a,{1,2,3}),ai.Status.Running)
+    testing.expect(t,len(world.moves.queue.items)==1 && last(&world).kind==.Move_To && last(&world).point=={1,2,3})
     a.phase=.Update
-    testing.expect_value(t,move_act(&w,&a,{}),ai.Status.Running)
+    testing.expect_value(t,move_act(&a,{}),ai.Status.Running)
     core.edit(&world.paths,e).state=.Arrived
-    testing.expect_value(t,move_act(&w,&a,{}),ai.Status.Success)
+    testing.expect_value(t,move_act(&a,{}),ai.Status.Success)
     core.edit(&world.paths,e).partial=true
-    testing.expect_value(t,path_status(&w),ai.Status.Failure)
+    testing.expect_value(t,path_status(&a),ai.Status.Failure)
     a.phase,a.cause=.Exit,.Aborted
-    move_act(&w,&a,{})
-    testing.expect(t,world.moves.queue.items[len(world.moves.queue.items)-1].kind==.Stop)
+    move_act(&a,{})
+    testing.expect(t,last(&world).kind==.Stop)
+    // A chase follows its target, and the other one when the target changes.
+    core.edit(&world.paths,e)^={state=.Moving}
+    Chase :: struct {phase:ai.Phase,target:core.Entity,status:ai.Status,asks:bool,kind:nav.Nav_Request_Kind,of:core.Entity}
+    asked:=len(world.moves.queue.items)
+    for c in ([]Chase{{.Enter,prey,.Running,true,.Follow,prey},{.Update,prey,.Running,false,{},{}},{.Update,other,.Running,true,.Follow,other},{.Update,core.NONE,.Failure,false,{},{}},{.Exit,other,.Success,true,.Stop,{}}}) {
+        a.phase=c.phase
+        testing.expect_value(t,chase_act(&a,c.target,1),c.status)
+        if !c.asks {
+            testing.expect_value(t,len(world.moves.queue.items),asked)
+            continue
+        }
+        asked=len(world.moves.queue.items)
+        testing.expect(t,last(&world).kind==c.kind && (c.of==core.NONE || last(&world).target==c.of))
+    }
     core.edit(&world.paths,e).state=.Failed
     a.phase=.Update
-    testing.expect_value(t,follow_act(&w,&a,e,1),ai.Status.Failure)
+    testing.expect_value(t,chase_act(&a,other,1),ai.Status.Failure)
 }
 
 // The clock at `seconds` of a run at hz ticks a second.
@@ -432,20 +430,20 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     q.querier=b
     place_query(&world.requests,q)
     problems:core.Problems
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
     core.test_world_settle(&world)
     first,_:=core.get(&world.results,a)
     second,_:=core.get(&world.results,b)
     testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
     testing.expect(t,second.status==.Waiting && second.request==2)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
     second,_=core.get(&world.results,b)
     testing.expect(t,second.status==.Found && linalg.distance(second.points[0],mm.Vec3{6,0,0})<1e-4)
     // Of two queries of one querier, the last one is answered and the first does not take its place.
     q.querier=a
     place_query(&world.requests,q)
     place_query(&world.requests,q)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},nil,{},{},&problems)
+    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
     first,_=core.get(&world.results,a)
     testing.expect(t,first.status==.Found && first.request==4)
 }
@@ -481,7 +479,7 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     orphan:=Place_Query{querier=gone,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
     run :: proc(f:^Places_Test) {
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),{},core.read(&f.paths),
-            core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),core.read(&f.objects),core.read(&f.states),&f.claims,{},{},&f.problems)
+            core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
         core.test_world_settle(&f.w)
     }
     place_query(&f.requests,around)
@@ -596,7 +594,7 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     run :: proc(f:^Places_Test,q:Place_Query) -> Place_Result {
         place_query(&f.requests,q)
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceivables),core.read(&f.paths),
-            core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),core.read(&f.objects),core.read(&f.states),&f.claims,{},{},&f.problems)
+            core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
         core.test_world_settle(&f.w)
         result,_:=core.get(&f.results,q.querier)
         return result
@@ -668,20 +666,21 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     core.test_world_settle(&world)
     smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=0})
     core.test_world_settle(&world)
-    v:=Smart_View{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,time=clock_at(60,1.0/60)}
+    v:=Mind_World{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,time=clock_at(60,1.0/60)}
+    looks:=ai.Mind_Context{user=&v}
     red:=Smart_User{entity=a,team=1}
     blue:=Smart_User{entity=b,team=2}
-    found,ok:=smart_offer(&v,crate,USE_AMMO,red)
+    found,ok:=smart_offer(&looks,crate,USE_AMMO,red)
     testing.expect(t,ok && found.offer==0 && found.users==1 && found.at=={0,0,1})
-    _,ok=smart_offer(&v,crate,USE_AMMO,blue)
+    _,ok=smart_offer(&looks,crate,USE_AMMO,blue)
     testing.expect(t,!ok,"of another team")
-    _,ok=smart_offer(&v,turret,USE_TURRET,red)
+    _,ok=smart_offer(&looks,turret,USE_TURRET,red)
     testing.expect(t,!ok,"without the ability")
-    _,ok=smart_offer(&v,turret,USE_TURRET,{entity=a,abilities=nav.Nav_Abilities(1<<u32(nav.ABILITY_CLIMB))})
+    _,ok=smart_offer(&looks,turret,USE_TURRET,{entity=a,abilities=nav.Nav_Abilities(1<<u32(nav.ABILITY_CLIMB))})
     testing.expect(t,ok)
-    nearest,near_ok:=smart_nearest(&v,USE_AMMO,{12,0,0},20,red)
+    nearest,near_ok:=smart_nearest(&looks,USE_AMMO,{12,0,0},20,red)
     testing.expect(t,near_ok && nearest.object==far_crate)
-    _,near_ok=smart_nearest(&v,USE_AMMO,{30,0,0},5,red)
+    _,near_ok=smart_nearest(&looks,USE_AMMO,{30,0,0},5,red)
     testing.expect(t,!near_ok,"none within the radius")
     // Claimed by one, closed to the other until the holder exits.
     m:ai.Mind
@@ -689,12 +688,12 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     act:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main}
     testing.expect(t,smart_claim(&act,found))
     other:=Smart_User{entity=core.create(&world.entities),team=1}
-    _,ok=smart_offer(&v,crate,USE_AMMO,other)
+    _,ok=smart_offer(&looks,crate,USE_AMMO,other)
     testing.expect(t,!ok,"claimed")
-    _,ok=smart_offer(&v,crate,USE_AMMO,red)
+    _,ok=smart_offer(&looks,crate,USE_AMMO,red)
     testing.expect(t,ok,"its own")
     ai.reserve_release(&world.claims.reservations,m.main.reserved,u64(a))
-    _,ok=smart_offer(&v,crate,USE_AMMO,other)
+    _,ok=smart_offer(&looks,crate,USE_AMMO,other)
     testing.expect(t,ok)
     // Used: closed until its cooldown passes, as long at 60 as at 120 Hz; spent after its uses.
     for hz in ([]f64{60,120}) {
@@ -703,17 +702,17 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
         smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(hz,1))
         core.test_world_settle(&world)
         v.time=clock_at(hz,5.95)
-        _,ok=smart_offer(&v,crate,USE_AMMO,red)
+        _,ok=smart_offer(&looks,crate,USE_AMMO,red)
         testing.expectf(t,!ok,"cooling down at %v Hz",hz)
         v.time=clock_at(hz,6)
-        _,ok=smart_offer(&v,crate,USE_AMMO,red)
+        _,ok=smart_offer(&looks,crate,USE_AMMO,red)
         testing.expectf(t,ok,"cooled down at %v Hz",hz)
     }
     smart_used(&world.uses,found)
     smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(60,6))
     core.test_world_settle(&world)
     v.time=clock_at(60,100)
-    _,ok=smart_offer(&v,crate,USE_AMMO,red)
+    _,ok=smart_offer(&looks,crate,USE_AMMO,red)
     testing.expect(t,!ok,"spent")
 }
 
@@ -873,7 +872,7 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
 
     // No request and none waiting: no table is looked at, the results least of all.
     places:Places
-    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},nil,{},{},nil)
+    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},nil)
 
     // The objects get their state when they come; a tick after, with the tables as they were, none is gone through.
     box:=placed(&f,{})

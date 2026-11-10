@@ -8,33 +8,33 @@ reservations) belongs to
 
 ## Minds
 
-- A mind is an enum of actions, an array with the procedure of each one
-  (`[Enum]proc(^ai.Act(Enum)) -> ai.Status`) and a `think` that proposes them. The game runs
-  those of its agents in a loop function of its own, `server`, with `minds_tick(minds, agents,
-  "name", &ACTS, think, &ctx, &w, time, problems)`: it registers the mind by name the first time
-  and checks it, and runs each `Mind_Agent` of that name. A repeated tick (`Time.resimulating`)
-  does not decide.
-- Registering (`mind_register`) rejects an empty or long name, an enum action without a
-  procedure, a null `think` and a full registry, with the `behavior.mind` problem and how to fix
-  it (`mind_problem_text`). `minds_unknown` reports, once per tick, the agents of a name that
-  nobody runs. `Minds` (application storage, shared) stores the action names as bytes, for the
-  editor, which does not know the game's enum.
+- A mind is an enum of actions, a procedure per value and a `think` that proposes them. The game
+  marks its `think` with `@(mind="name")` and each action with `@(act="Value ...")`: the
+  generator makes a `fixed`, `server` step named after the `think` that ticks every `Mind_Agent`
+  of that name with `minds_tick` ([generator](../../mirai-core/references/generator.md#minds)).
+  What a procedure receives after its `ai.Think` or `ai.Act` is bound as for a step; the step
+  holds each datum once, after `Mind_World`. A world that does not play and a repeated tick
+  (`Time.resimulating`) do not decide.
+- The generator checks a mind when it builds (every value has one action, the shapes, the name
+  and how many minds fit in `Minds`); `minds_tick` registers it by name in `Minds` (application
+  storage, shared), which keeps the action names as bytes for the editor, which does not know the
+  game's enum. `minds_unknown` (`fixed`, `apply`, `server`) reports the agents of a name no mind
+  declares with the `behavior.mind` problem.
 - `Mind_Agent` carries the name and the `ai.Mind` of the agent, which is copied with the world. It
-  is shared: each library that runs minds writes those of its agents.
-- Before each tick, `w.entity` is the agent and `ctx.holder` too, owner of what it reserves.
-  `Act_World` is the start of the actions' context (the game puts `Mind_Tick`, which holds it and
-  what minds read, first with `using`, from the `Mind_World` params of its loop function):
-  `move_act`, `follow_act`, `path_status` and `agent_path` request paths from `navigation` and
-  read `Nav_Path`.
+  is shared: the step of each mind writes those of its agents.
+- `Mind_World` is what every mind reads (its agents, paths, smart objects, claims, time); the
+  procedures of a mind reach it through `ai.Mind_Context.user`, and `ctx.holder` is the agent
+  (`agent(a)`). So the helpers take only the action or the think: `move_act`, `chase_act` (follows
+  its target and the new one when it changes), `path_status`, `agent_path`, `smart_offer`,
+  `smart_nearest`, `offer_act`, `cross_act`, `present_look` and `present_animation`.
 - What those actions request goes on when the agent's section unloads
   ([the far field](navigation.md#the-far-field)): `minds_tick` also runs the agents with
-  `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), with `Act_World.far`, and
-  what they reserve lasts until their next decision (`ctx.lease`). Their movement actions read
-  their disabled `Nav_Path`; the rest of the agent is disabled and the game actions that read it
-  look at `far`. One asleep in a section that sleeps does not decide.
+  `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), and what they reserve lasts
+  until their next decision (`ctx.lease`). Their movement actions read their disabled `Nav_Path`;
+  the rest of the agent is disabled. One asleep in a section that sleeps does not decide.
 - **Over the network**: the minds decide only on the server and the clients do not predict their
   actions. What they see is `Mind_Presentation`, replicated, which `minds_tick` writes when it
-  changes if the table is in `Act_World.presentations`: the action and step they run, and what
+  changes: the action and step they run, and what
   their actions request with `present_look` and `present_animation`. An agent without it receives
   it before its first tick; it travels if it has it when it is first replicated, so its prefab
   carries it with the `Mind_Agent`.
@@ -47,12 +47,12 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 - **Patrol, chase and attack** (zombie, guard): `Patrol` or `Wander` always with a low score,
   `Chase` with a higher one if it remembers someone (`ai.memory_best` of its `Perception`) and
-  `Attack` with the highest if it is close. Walking is `move_act`; following, `follow_act`;
+  `Attack` with the highest if it is close. Walking is `move_act`; chasing, `chase_act`;
   attacking, `ai.after`. The patrol stores its point in a component and moves to the next one on
   arrival.
 - **Hordes with tokens:** the attack takes a token of the target on entering (`ai.token_take(a,
   target, N)`) and `think` proposes it only if there is room (`ai.reserve_free`); the others
-  propose surrounding it (`follow_act` at a greater distance) until one is released. The token is
+  propose surrounding it (`chase_act` at a greater distance) until one is released. The token is
   released by itself on exit.
 - **Phased bosses with combos:** the phase is data (the health) that changes what is proposed;
   each attack does `ai.commit` on entering so that it finishes; the next phase's combo is an
@@ -84,8 +84,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   the closest, reserves it, walks and waits; whoever spends it says so with `smart_used`, and
   `smart_update` (`fixed`, `react`, `server`), sole writer of `Smart_State`, counts the use and
   starts the cooldown.
-- `Claims` belongs to the world and is written by the functions that run minds
-  (`ctx.reservations`).
+- `Claims` belongs to the world and is written by the steps of the minds (`ctx.reservations`);
+  the place queries read it through `Smart_View`.
 - A link that the game crosses (a kind of its own or one of `Nav_Agent.manual`) with an offer on
   its entity: the agent waits at its start in `Crossing`; `cross_act` reserves the offer, waits
   its turn, puts it on the other side (`core.place`) and notifies navigation, and finishes when
@@ -164,9 +164,10 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 ## Verification
 
-- `mirai test plugins/behavior/runtime`: registration and checking by name, agent tick without
-  allocating, the presentation and that it does not decide when resimulating, far agents and their
-  lease, movement actions, sight by cone and team, noise, forgetting, a remembered subject that is
+- `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick
+  without allocating, the presentation and that it does not decide when resimulating or stopped,
+  far agents and their lease, movement and chase actions, sight by cone and team, noise,
+  forgetting, a remembered subject that is
   destroyed, ray turns, random crowds that remember by the grid whom they would among every
   perceivable, a tick with nothing to do that goes through no row, places by budget, from the
   navmesh, from entities and from offers, a place
@@ -174,7 +175,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   influence maps without allocating.
   `mirai test plugins/multiplayer/runtime
   a_mind_decides_on_the_server_and_the_client_sees_its_presentation`: a mind in a session, its
-  presentation on the client and the snapshot of the server world.
+  presentation on the client and the snapshot of the server world. The wiring of `@(mind)` and its
+  errors: `mirai test cook/build` (`minds_test.odin`).
 - In the demo, the [AI arenas](../../mirai-gameplay/references/demo.md#ai-arenas) in Play, with
   `behavior.minds`, `behavior.inspect`, `behavior.offers`, `behavior.influence`, `nav.agent` and
   `engine.diagnostics`.

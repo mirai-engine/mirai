@@ -3,7 +3,9 @@
 `demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that
 the player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
 on each side of the walkway. The scene is authored; `tools/demo_content --animation-only` writes
-its clips, programs, profiles, rigs and meshes ([generated content](demo.md#generated-content)).
+its clips, `.character` sets, rigs and meshes ([generated content](demo.md#generated-content)).
+Each station's actor plays its own `.character` (`Animation.asset`) over the gallery's clips: the
+sets of the stations show one feature each.
 
 ## Invariants
 
@@ -25,12 +27,12 @@ its clips, programs, profiles, rigs and meshes ([generated content](demo.md#gene
   turns each hand around its bind instead of around its mean. Regenerating them never edits the
   glTF.
 - The physical Mirais (the player, the slope and the jump stations) walk by motion matching over
-  `mirai_matching.match` and the game has no locomotion code: `animation_physics` gives them the
+  `mirai_matching.character` and the game has no locomotion code: `animation_physics` gives them the
   mode, velocity and request of their `Character`. The matching station has no `Character`: the
-  game asks it for the velocity with `match_goal` over `mirai_gallery.match`.
-- The tall Mirai is stretched upward with its skeleton, so the same paths retarget with scaled
-  translations; its clips are baked when generating the content ([plugin
-  retarget](../../mirai-animation/references/animation.md#offline-and-live-retarget)).
+  game asks it for the velocity with `match_goal` over `mirai_gallery.character`.
+- The tall Mirai is stretched upward with its skeleton, so each bone retargets by the bone of its
+  name, keeping the lengths of the tall skeleton; its clips are baked when generating the content
+  ([plugin retarget](../../mirai-animation/references/animation.md#offline-and-live-retarget)).
 - The warp station walks between goals on either side of its origin and is never put back: it
   turns in place toward the next goal with its motor off, then strides by root motion warped to
   end there. Each goal is a share of what its stride covers unwarped (`stride` of its
@@ -102,7 +104,7 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
 
 - `mirai test demo/game`: `animation_gallery_controls_test.odin`
   (manual and automatic stations, bounded queue), `animation_gallery_matching_test.odin` (the speed
-  asked picks idle, walk or jog of `mirai_gallery.match`), `mirai_matching_test.odin`,
+  asked picks idle, walk or jog of `mirai_gallery.character`), `mirai_matching_test.odin`,
   `mirai_character_test.odin`, `grounding_physics_test.odin` and `animation_motor_test.odin`.
 - New assets: `mirai asset verify`.
 - Generate and build the demo editor and walk the gallery in Play with graphics validation: E at a
