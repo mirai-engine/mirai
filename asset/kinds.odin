@@ -17,7 +17,6 @@ KIND_MESH :: Fourcc(u32('M')|u32('E')<<8|u32('S')<<16|u32('H')<<24)
 KIND_TEXTURE :: Fourcc(u32('T')|u32('E')<<8|u32('X')<<16|u32(' ')<<24)
 KIND_MATERIAL :: Fourcc(u32('M')|u32('A')<<8|u32('T')<<16|u32(' ')<<24)
 KIND_SCENE :: Fourcc(u32('S')|u32('C')<<8|u32('E')<<16|u32('N')<<24)
-KIND_PREFAB :: Fourcc(u32('P')|u32('R')<<8|u32('F')<<16|u32('B')<<24)
 KIND_ANIMATION :: Fourcc(u32('A')|u32('N')<<8|u32('I')<<16|u32('M')<<24)
 KIND_SKELETON :: Fourcc(u32('S')|u32('K')<<8|u32('E')<<16|u32('L')<<24)
 KIND_SOUND :: Fourcc(u32('S')|u32('N')<<8|u32('D')<<16|u32(' ')<<24)
@@ -42,7 +41,6 @@ KINDS :: [?]Kind_Info{
     {KIND_TEXTURE,".tex","texture",TEXTURE_VERSION,true,false},
     {KIND_MATERIAL,".mat","material",MATERIAL_VERSION,false,true},
     {KIND_SCENE,".scene","scene",SCENE_VERSION,false,true},
-    {KIND_PREFAB,".prefab","prefab",SCENE_VERSION,false,true},
     {KIND_ANIMATION,".anim","animation",ANIMATION_VERSION,false,false},
     {KIND_SKELETON,".skeleton","skeleton",SKELETON_VERSION,false,true},
     {KIND_SOUND,".sound","sound",SOUND_VERSION,true,false},

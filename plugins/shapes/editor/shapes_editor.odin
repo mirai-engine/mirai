@@ -88,7 +88,7 @@ shapes_pointer :: proc(s:^editor.Session,tool:^Shapes_Tool,input:core.Input) {
     tool.active,tool.over,tool.begin=editor.tool_pointer(s,TOOL,input)
 }
 
-@(step="frame",after="editor_tools")
+@(step="frame")
 shapes_frame :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input) {
     erender.debug_lines_clear(&tool.lines)
     defer if tool.lines.count>0 {host.extras_debug_lines_add(extras,tool.lines)}
@@ -421,9 +421,6 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
     tool_ready(tool)
     ctx:=g.ctx
     keys_free:=ctx.edit.id==0 && ctx.input.modifiers=={} && g.modal==.None && ctx.popup.count==0
-    if core.key_pressed(input,.K) && keys_free {editor.tool_set(s,TOOL,!tool.active)}
-    tool.active=editor.tool_on(s,TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,PANEL_SCOPE,"tool"),.Prism,"Shapes","K",tool.active) {editor.tool_set(s,TOOL,!tool.active)}
     tool.active=editor.tool_on(s,TOOL)
     if !tool.active || s.viewport.pick.active {return}
     if keys_free && !tool_busy(tool) {

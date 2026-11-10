@@ -83,8 +83,8 @@ loading_mesh :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,bytes:int,
 
 // A scene with an entity for each mesh, and the references given.
 @(private)
-loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]base.Asset_Id,references:[]Scene_Reference=nil,kind:=asset.KIND_SCENE) {
-    document:asset.Scene;asset.scene_init(&document,&p.types,kind,id);defer asset.scene_destroy(&document)
+loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]base.Asset_Id,references:[]Scene_Reference=nil) {
+    document:asset.Scene;asset.scene_init(&document,&p.types,id);defer asset.scene_destroy(&document)
     for mesh,i in meshes {
         asset.scene_entity_add(&document,base.Entity_Id(i+1),0,"Model")
         asset.scene_set(&document,base.Entity_Id(i+1),"Loading_Model",&Loading_Model{mesh})
@@ -93,9 +93,7 @@ loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]
         asset.scene_entity_add(&document,base.Entity_Id(100+i),0,"Section")
         asset.scene_set(&document,base.Entity_Id(100+i),"Scene_Reference",&reference)
     }
-    if kind==asset.KIND_PREFAB && len(meshes)>0 {document.info.root=1}
-    extension:=kind==asset.KIND_PREFAB?"prefab":"scene"
-    testing.expect_value(t,asset.scene_save(&document,fmt.tprintf("%s/%x-%x.%s",p.folder,id[0],id[1],extension)),asset.Error.None)
+    testing.expect_value(t,asset.scene_save(&document,fmt.tprintf("%s/%x-%x.scene",p.folder,id[0],id[1])),asset.Error.None)
 }
 
 // Steps loads frame after frame, each at most until it is done, waiting for
@@ -251,7 +249,7 @@ a_load_waits_for_the_animations_its_world_can_play :: proc(t:^testing.T) {
     tracks:=[1]asset.Animation_Track_Desc{{target="hips",property=.Position,keys=keys[:]}}
     clips:=[1]asset.Animation_Clip_Desc{{name="walk",tracks=tracks[:]}}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/walk.anim",p.folder),&p.types,{id=CLIPS,clips=clips[:]}),asset.Error.None)
-    loading_scene(t,&p,PREFAB,{CLIPS},kind=asset.KIND_PREFAB)
+    loading_scene(t,&p,PREFAB,{CLIPS})
     loading_scene(t,&p,LEVEL,{PREFAB})
     host.assets_scan(&p.assets)
 
@@ -352,15 +350,15 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     LAMP :: base.Asset_Id{0x5ec,2}
     meshes:=[2]base.Asset_Id{{0x5ec,3},{0x5ec,4}}
     for mesh in meshes {loading_mesh(t,&p,mesh,host.LOAD_FRAME_BYTES*6/10)}
-    loading_scene(t,&p,LAMP,meshes[1:],kind=asset.KIND_PREFAB)
+    loading_scene(t,&p,LAMP,meshes[1:])
     {
         lamp:asset.Scene
         file:asset.Asset
-        if !testing.expect_value(t,asset.asset_load(&file,fmt.tprintf("%s/%x-%x.prefab",p.folder,LAMP[0],LAMP[1])),asset.Error.None) {return}
+        if !testing.expect_value(t,asset.asset_load(&file,fmt.tprintf("%s/%x-%x.scene",p.folder,LAMP[0],LAMP[1])),asset.Error.None) {return}
         defer asset.asset_close(&file)
         testing.expect_value(t,asset.scene_from_asset(&lamp,&p.types,&file),asset.Error.None)
         defer asset.scene_destroy(&lamp)
-        room:asset.Scene;asset.scene_init(&room,&p.types,asset.KIND_SCENE,ROOM);defer asset.scene_destroy(&room)
+        room:asset.Scene;asset.scene_init(&room,&p.types,ROOM);defer asset.scene_destroy(&room)
         asset.scene_entity_add(&room,1,0,"Model")
         asset.scene_set(&room,1,"Loading_Model",&Loading_Model{meshes[0]})
         _,placed:=asset.scene_instantiate(&room,&lamp,LAMP,0)

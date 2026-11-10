@@ -1,12 +1,12 @@
 * text=auto eol=lf
 *.cmd text eol=crlf
+*.hrtf binary
 # The asset kinds of the engine (asset.KINDS) and of its plugins (asset_kinds of each plugin.mirai)
 # follow: `./mirai setup git` writes them and sets the drivers of the clone.
 *.mesh binary
 *.tex binary
 *.mat merge=mirai diff=mirai -text
 *.scene merge=mirai diff=mirai -text
-*.prefab merge=mirai diff=mirai -text
 *.anim binary
 *.skeleton merge=mirai diff=mirai -text
 *.sound binary

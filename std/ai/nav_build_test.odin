@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:mem"
 import "core:slice"
 import "core:testing"
+import "mirai:std/base"
 import math "mirai:std/math"
 
 @(private="file")
@@ -656,4 +657,127 @@ zero_scratch_and_tile_data_are_safe :: proc(t:^testing.T) {
         if built {break}
     }
     testing.expect(t,built && refused)
+}
+
+// A tile built again from the field its build kept, with other volumes (none,
+// an obstacle that settles, an area under an obstacle, a volume over all of
+// it), is byte for byte the tile its triangles give with those volumes. A
+// field that no build of the grid kept is refused, and one whose bytes were
+// damaged builds a tile that holds, or none.
+@(test)
+a_tile_built_again_from_its_field_is_the_one_its_triangles_give :: proc(t:^testing.T) {
+    m:Test_Mesh
+    defer test_mesh_destroy(&m)
+    test_scene(&m)
+    config:=test_config()
+    scratch:Nav_Build_Scratch
+    nav_build_scratch_init(&scratch)
+    defer nav_build_scratch_destroy(&scratch)
+    first:Nav_Tile_Data
+    field:Nav_Tile_Field
+    testing.expect_value(t,nav_build_tile(config,{},test_input(&m),&scratch,&first,field=&field),Nav_Build_Status.Built)
+    defer {nav_tile_data_free(&first);nav_tile_field_free(&field)}
+    testing.expect(t,len(field.spans)>0 && field.side>config.tile_size)
+    box :: proc(x0,z0,x1,z1:f32,area:u8,min_y:f32=-1,max_y:f32=1) -> Nav_Area_Volume {
+        return {points={{x0,z0},{x1,z0},{x1,z1},{x0,z1},{},{},{},{}},count=4,area=area,min_y=min_y,max_y=max_y}
+    }
+    sets:=[?][]Nav_Area_Volume{
+        {},
+        {box(3,3,4,4,NAV_AREA_BLOCKED)},
+        {box(2,2,5,5,9),box(3,3,4,4,NAV_AREA_BLOCKED),box(1,4.5,4,7,5,0.2,3)},
+        {box(-0.4,6,0.6,7.3,NAV_AREA_BLOCKED),box(7.2,7.5,8.5,8.4,NAV_AREA_BLOCKED)},
+        {box(-10,-10,20,20,NAV_AREA_BLOCKED,-5,5)},
+    }
+    for volumes,i in sets {
+        whole,again:Nav_Tile_Data
+        status:=nav_build_tile(config,{},test_input(&m,volumes),&scratch,&whole)
+        status_again:=nav_build_tile_again(config,{},&field,volumes,&scratch,&again)
+        testing.expectf(t,status==status_again && (status==.Built || i==len(sets)-1) && slice.equal(whole.block,again.block),"volumes %d: %v from the triangles, %v from the field, the same bytes %v",i,status,status_again,slice.equal(whole.block,again.block))
+        if i==0 {testing.expect(t,slice.equal(first.block,again.block))}
+        nav_tile_data_free(&whole)
+        nav_tile_data_free(&again)
+    }
+    // A copy is as good, and a second build from it grows no scratch.
+    copied,cloned:=nav_tile_field_clone(&field)
+    defer nav_tile_field_free(&copied)
+    testing.expect(t,cloned && slice.equal(copied.block,field.block) && raw_data(copied.block)!=raw_data(field.block))
+    tracking:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracking)
+    {
+        counted:Nav_Build_Scratch
+        nav_build_scratch_init(&counted,mem.tracking_allocator(&tracking))
+        defer nav_build_scratch_destroy(&counted)
+        for round in 0..<2 {
+            before:=tracking.total_allocation_count
+            again:Nav_Tile_Data
+            testing.expect_value(t,nav_build_tile_again(config,{},&copied,sets[2],&counted,&again),Nav_Build_Status.Built)
+            nav_tile_data_free(&again)
+            if round==1 {testing.expect_value(t,tracking.total_allocation_count,before)}
+        }
+    }
+    // What is not a field of this grid.
+    out:Nav_Tile_Data
+    other:=config
+    other.agent_radius=1.5
+    testing.expect_value(t,nav_build_tile_again(other,{},&field,nil,&scratch,&out),Nav_Build_Status.Invalid)
+    testing.expect_value(t,nav_build_tile_again(config,{},nil,nil,&scratch,&out),Nav_Build_Status.Invalid)
+    testing.expect_value(t,nav_build_tile_again(config,{},&field,nil,nil,&out),Nav_Build_Status.Invalid)
+    testing.expect_value(t,nav_build_tile_again(config,{},&field,nil,&scratch,nil),Nav_Build_Status.Invalid)
+    zero:Nav_Tile_Field
+    testing.expect_value(t,nav_build_tile_again(config,{},&zero,nil,&scratch,&out),Nav_Build_Status.Invalid)
+    _,cloned=nav_tile_field_clone(&zero)
+    testing.expect(t,!cloned)
+    nav_tile_field_free(&zero)
+    nav_tile_field_free(nil)
+    bad:=[?]Nav_Area_Volume{{count=9}}
+    testing.expect_value(t,nav_build_tile_again(config,{},&field,bad[:],&scratch,&out),Nav_Build_Status.Invalid)
+    forge :: proc(t:^testing.T,config:Nav_Build_Config,field:^Nav_Tile_Field,scratch:^Nav_Build_Scratch,what:string,change:proc(f:^Nav_Tile_Field)) {
+        forged,ok:=nav_tile_field_clone(field)
+        if !testing.expect(t,ok) {return}
+        defer nav_tile_field_free(&forged)
+        change(&forged)
+        out:Nav_Tile_Data
+        testing.expectf(t,nav_build_tile_again(config,{},&forged,nil,scratch,&out)==.Invalid && len(out.polys)==0,"A field with %s was built from",what)
+        nav_tile_data_free(&out)
+    }
+    forge(t,config,&field,&scratch,"another side",proc(f:^Nav_Tile_Field) {f.side-=1})
+    forge(t,config,&field,&scratch,"a height that is no number",proc(f:^Nav_Tile_Field) {f.base=transmute(f64)u64(0x7ff8000000000000)})
+    forge(t,config,&field,&scratch,"fewer spans than its columns count",proc(f:^Nav_Tile_Field) {f.spans=f.spans[:len(f.spans)-1];f.areas=f.areas[:len(f.areas)-1]})
+    forge(t,config,&field,&scratch,"columns out of order",proc(f:^Nav_Tile_Field) {
+        for &c,i in f.cells {if i>0 && c>f.cells[i-1] {c=f.cells[i-1]-1 if f.cells[i-1]>0 else max(u32);break}}
+    })
+    forge(t,config,&field,&scratch,"a column past its spans",proc(f:^Nav_Tile_Field) {f.cells[len(f.cells)/2]=u32(len(f.spans))+7})
+    forge(t,config,&field,&scratch,"an area that is none",proc(f:^Nav_Tile_Field) {f.areas[len(f.areas)/2]=NAV_AREA_MAX+1})
+    forge(t,config,&field,&scratch,"a span inside the one under it",proc(f:^Nav_Tile_Field) {
+        for c in 0..<len(f.cells)-1 {
+            if f.cells[c+1]-f.cells[c]>=2 {f.spans[f.cells[c]+1].y=f.spans[f.cells[c]].y;return}
+        }
+        // No column of two spans in this scene: one more span than its columns count.
+        f.cells[len(f.cells)-1]+=1
+    })
+    // Damaged bytes: whatever is built holds.
+    h:=base.Hostile{77}
+    for _ in 0..<160 {
+        damaged,ok:=nav_tile_field_clone(&field)
+        if !testing.expect(t,ok) {return}
+        for _ in 0..<1+base.hostile_int(&h,12) {
+            switch base.hostile_int(&h,4) {
+            case 0: damaged.spans[base.hostile_int(&h,len(damaged.spans))]={con=u32(base.hostile_next(&h)),y=u16(base.hostile_next(&h)),h=u16(base.hostile_next(&h))}
+            case 1: damaged.areas[base.hostile_int(&h,len(damaged.areas))]=u8(base.hostile_int(&h,int(NAV_AREA_MAX)+1))
+            case 2: damaged.spans[base.hostile_int(&h,len(damaged.spans))].h=u16(base.hostile_int(&h,40))
+            case 3: damaged.base=f64(base.hostile_f32(&h))
+            }
+        }
+        failing:=runtime.nil_allocator() if base.hostile_int(&h,8)==0 else context.allocator
+        status:=nav_build_tile_again(config,{},&damaged,sets[base.hostile_int(&h,len(sets))],&scratch,&out,failing)
+        if status==.Built {
+            testing.expect(t,failing.procedure!=runtime.nil_allocator().procedure,"A tile was built without memory")
+            test_check_tile(t,&out)
+        } else {
+            testing.expect(t,len(out.polys)==0 && len(out.vertices)==0,"A tile that was not built has polygons")
+        }
+        nav_tile_data_free(&out)
+        nav_tile_field_free(&damaged)
+    }
 }

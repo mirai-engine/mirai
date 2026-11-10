@@ -120,7 +120,7 @@ ai_task_finish :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> bool {
     task.review.skipped=skipped
     task.review_finished,task.declined=true,false
     task.question=.None
-    ai_task_dirty(task)
+    ai_task_dirty(task);ai_task_persist(s,task)
     m.scene_serial+=1
     m.deliveries_due=true
     return true
@@ -141,7 +141,7 @@ ai_task_revert :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     task.review.pending=false
     task.question=.None
     ai_transcript_add(&task.transcript,AI_DECLINED_NOTE,.Note)
-    ai_task_dirty(task)
+    ai_task_dirty(task);ai_task_persist(s,task)
     m.scene_serial+=1
     m.deliveries_due=true
     return ""
@@ -454,7 +454,7 @@ ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     case:
         return
     }
-    ai_task_dirty(task)
+    ai_task_dirty(task);ai_task_persist(s,task)
     m.scene_serial+=1
 }
 
@@ -850,7 +850,7 @@ ai_review_settle :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     }
     review.pending=ai_review_waiting(review)>0
     m.scene_serial+=1
-    ai_task_dirty(task)
+    ai_task_dirty(task);ai_task_persist(s,task)
     // Nothing left to keep or put back: the turn is done, as Accept all leaves it.
     if !review.pending && (task.context_count==0 || ai_review_count(task)==0) && ai_task_finished(task) {ai_task_finish(s,m,task)}
 }

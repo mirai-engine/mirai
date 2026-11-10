@@ -93,8 +93,9 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     say "unchanged" without waiting; if not, they take the lock and each step checks again.
     `build game` always takes it.
   - `mirai test` and `mirai check` generate the engine shaders under the lock only if there are
-    stages to compile; `mirai test` compiles the executables of all its packages under one lock
-    and runs them outside it.
+    stages to compile; `mirai test` compiles the executables of all its packages of the engine
+    under one lock and runs them outside it; a package of a project holds it until its executable
+    runs.
   - `workspace.builds_since` says whether someone compiled since a moment, so that whoever measures
     knows whether builds happened during the measurement. The editor's builds neither take the lock
     nor are annotated.
@@ -163,6 +164,8 @@ successful build and `<target>.stamp` stores their fingerprint (`fingerprint`,
 package changes the dates), the flags except `-thread-count:N`, the name and **content** of the
 `.odin` files of each folder the build read a source from, **except the `*_test.odin`** (a test
 invalidates no build, not even the self-refresh of `bin/mirai`), and what is loaded with `#load`.
+A test executable counts the `*_test.odin` too: a build of tests reads those of every package it
+imports ([checks and tests](projects.md#checks-and-tests)).
 
 - The content is read without carriage returns and paths count relative to the engine root: the
   same content in another checkout, or after a checkout or merge that leaves the files the same,
@@ -229,7 +232,7 @@ Settings > Input changed, and SDL3, which the executable links.
 job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
 texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
 
-- **Roots.** Every `.scene`, `.prefab` (code reaches one only by instantiating it) and `.records`
+- **Roots.** Every `.scene` (code reaches a prefab only by instantiating it) and `.records`
   of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
   material chosen by name).
 
@@ -268,7 +271,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   cook with `Source_Failed` and says how to fix it.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
-- **Prefab instances.** A scene or a prefab with a stale instance is written with its instances up
+- **Prefab instances.** A scene with a stale instance is written with its instances up
   to date, by an `asset.Prefab_Resolver` of the project prefabs
   ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
   shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.
@@ -293,7 +296,7 @@ publish. A new engine-time folder of the engine is added there.
 
 The compiler also reads the `_test.odin` files of every package the game imports, with their
 imports: a test of a runtime package does not import an engine-time one. A GPU test of a plugin
-loads the shaders that `mirai test` generates for it (`plugin_test_shaders`) instead of generating
+loads the shaders that `mirai test` generates for it (`package_test_shaders`) instead of generating
 them with `cook/shaders`.
 
 ## Known limits

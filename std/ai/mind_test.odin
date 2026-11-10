@@ -137,7 +137,7 @@ zombie_script :: proc(w:^Zombie_World,tick:int) {
 }
 
 // It wanders, chases what it sees and bites again once 0.8 s passed while
-// it is near (24 or 25 ticks, by the rounding of the seconds); a chase that fails wanders in the same tick and chases again on the
+// it is near (24 ticks, as many at any tick rate); a chase that fails wanders in the same tick and chases again on the
 // next, and what stops being proposed stops at once.
 @(test)
 the_zombie_chases_bites_and_wanders :: proc(t:^testing.T) {
@@ -146,12 +146,12 @@ the_zombie_chases_bites_and_wanders :: proc(t:^testing.T) {
     ctx:=Mind_Context{user=&w,keep=0.05}
     for tick in 0..<9*MIND_HZ {
         zombie_script(&w,tick)
-        ctx.time=w.time
+        ctx.tick,ctx.dt=u64(w.tick),1.0/MIND_HZ
         mind_tick(&mind,&ZOMBIE_ACTS,zombie_think,&ctx)
     }
     mind_stop(&mind,&ZOMBIE_ACTS,&ctx)
     W,C,B:=u16(Zombie_Act.Wander),u16(Zombie_Act.Chase),u16(Zombie_Act.Bite)
-    expect_enters(t,&w,0,{{0,W},{60,C},{90,B},{115,B},{139,B},{150,C},{180,W},{181,C},{210,W}})
+    expect_enters(t,&w,0,{{0,W},{60,C},{90,B},{114,B},{138,B},{150,C},{180,W},{181,C},{210,W}})
     testing.expect_value(t,w.bites,3)
     testing.expect_value(t,w.nav,0)
     testing.expect(t,mind_balanced(&w))
@@ -189,7 +189,7 @@ boss_think :: proc(t:^Think(Boss_Act)) {
     if first {
         propose(t,.Slam,0.1+0.9*near)
         propose(t,.Charge,1-0.9*near)
-        if mind_ready(t.mind,Boss_Act.Summon,t.time,6) {propose(t,.Summon,0.6*(1-f32(w.summoned)/3))}
+        if mind_ready(t.mind,Boss_Act.Summon,t.tick,t.dt,6) {propose(t,.Summon,0.6*(1-f32(w.summoned)/3))}
     }
 }
 
@@ -261,7 +261,7 @@ the_boss_commits_to_attacks_and_reacts_at_once :: proc(t:^testing.T) {
     stunned_at,raged_at,dead_at,risen_at:=-1,-1,-1,-1
     for tick in 0..<18*MIND_HZ {
         boss_script(&w,tick)
-        ctx.time=w.time
+        ctx.tick,ctx.dt=u64(w.tick),1.0/MIND_HZ
         action,_,running,_:=mind_doing(&mind,Boss_Act)
         doing,_:=mind_tick(&mind,&BOSS_ACTS,boss_think,&ctx)
         if doing==.Stunned && stunned_at<0 {stunned_at=tick}
@@ -418,7 +418,7 @@ bot_run :: proc(w:^Bot_World,minds:^[2]Mind,from,to:int,handover:^int=nil) {
         bot_script(w,tick)
         for k in 0..<2 {
             w.agent=u8(k)
-            ctx.time,ctx.tick,ctx.holder=w.time,w.tick64,u64(k)+1
+            ctx.tick,ctx.dt,ctx.holder=w.tick64,1.0/MIND_HZ,u64(k)+1
             before:=w.count
             mind_tick(&minds[k],&BOT_ACTS,bot_think,&ctx)
             if handover==nil {continue}
@@ -490,7 +490,7 @@ the_trace_says_why_a_mind_changed :: proc(t:^testing.T) {
     ctx:=Mind_Context{user=&w,keep=0.05}
     for tick in 0..=60 {
         zombie_script(&w,tick)
-        ctx.time=w.time
+        ctx.tick,ctx.dt=u64(w.tick),1.0/MIND_HZ
         mind_tick(&mind,&ZOMBIE_ACTS,zombie_think,&ctx)
     }
     testing.expect(t,mind.proposals[0]==Mind_Proposal{u16(Zombie_Act.Chase),0.5} && mind.proposals[1]==Mind_Proposal{u16(Zombie_Act.Wander),0.1} && mind.proposals[2].score==0)
@@ -582,16 +582,16 @@ a_mind_survives_scribbled_state_and_wild_proposals :: proc(t:^testing.T) {
         scribble(w,([^]u8)(&w.bots)[:size_of(w.bots)])
         w.agent=u8(next(w)%2)
         w.count=0
-        ctx:=Mind_Context{user=w,time=f64(wild_f32(w)),tick=next(w),keep=wild_f32(w),holder=next(w)%3,reservations=&w.reservations,lease=u32(next(w))}
+        ctx:=Mind_Context{user=w,dt=wild_f32(w),tick=next(w),keep=wild_f32(w),holder=next(w)%3,reservations=&w.reservations,lease=u32(next(w))}
         for _ in 0..<8 {
             mind_tick(&m,&BOT_ACTS,think,&ctx)
-            ctx.time+=f64(wild_f32(w))
+            ctx.dt=wild_f32(w)
             ctx.tick+=1
         }
         _,_,_,_=mind_doing(&m,Bot_Act)
         _,_=mind_running(&m)
         _,_=mind_exit_trace(&m,int(next(w)%8)-2)
-        _=mind_ready(&m,Bot_Act(next(w)%16),ctx.time,f64(wild_f32(w)))
+        _=mind_ready(&m,Bot_Act(next(w)%16),ctx.tick,ctx.dt,f64(wild_f32(w)))
         key:=Reservation_Key{next(w)%4,u16(next(w)%3)}
         _=reserve_count(&w.reservations,key,ctx.tick)
         _=reserve_open(&w.reservations,key,next(w)%4,int(next(w)%6)-1,ctx.tick)

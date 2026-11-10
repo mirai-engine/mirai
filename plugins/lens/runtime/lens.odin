@@ -106,7 +106,7 @@ Gpu_Params :: struct {
 
 // The lens of the view of the frame and of each local view, and the passes
 // that draw them.
-@(step="render",loops="game editor",after="render_sync")
+@(step="render",loops="game editor")
 lens_render :: proc(
     state:^Lens_Gpu,lenses:core.Read(Lens),zones:core.Read(Lens_Volume),places:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
     exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,

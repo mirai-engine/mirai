@@ -61,8 +61,9 @@ Bind_Host :: struct {
     // far apart they start, and a stamp that moves when any of them changes
     // or rows come and go (0: they are compared). nil data: no rows.
     rows:proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u64),
-    // Whether a control bound to a field of this storage writes it itself,
-    // instead of asking the game with a Changed event. nil: none does.
+    // Whether a control bound to a field of this storage writes it itself:
+    // its Changed event then says what it wrote instead of asking the game.
+    // nil: none does.
     commits:proc(user:rawptr,name:u64) -> bool,
 }
 
@@ -280,7 +281,7 @@ bind_resolve :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string) -> (r
 // A field a node shows or reads. want: what it must hold; Option, what a
 // Selector or a Dropdown binds: a number, or an enum or text its options name.
 @(private)
-Bound_Want :: enum u8 {Shown,Number,Option,Asset,Color,Name,Entity}
+Bound_Want :: enum u8 {Shown,Number,Option,Asset,Color,Name,Entity,Data}
 @(private)
 tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,want:Bound_Want) -> (bound:Bound,ok:bool) {
     if path=="" {return {},true}
@@ -288,6 +289,12 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     region,offset,field_type:=bind_resolve(instance,scope,path) or_return
     t:=serial.schema_type(schema,field_type)
     bound={offset=offset,size=t.size,region=region,kind=t.kind,bound=true}
+    // What a Draw hands its procedure: the bytes of the field, whatever it holds.
+    if want==.Data {
+        if t.size==0 {return {},false}
+        bind_want(instance,region,offset,t.size) or_return
+        return bound,true
+    }
     #partial switch t.kind {
     case .Bool,.Int,.Uint,.Float,.Enum:
         if t.kind==.Float && t.size!=4 && t.size!=8 {return {},false}
@@ -353,8 +360,8 @@ tree_option_chosen :: proc(values:rawptr,b:Bound,options:string) -> int {
 }
 
 // Writes what a Changed event of a control asks for into the game, for a node
-// bound to a field of a storage the host writes this way (Bind_Host.commits):
-// the settings of the game. False: the event is for the game to answer.
+// bound to a field of a storage the host writes this way (Bind_Host.commits).
+// False: the event is for the game to answer.
 tree_commit_event :: proc(instance:^Tree_Instance,event:Tree_Event,host:^Bind_Host) -> bool {
     if host==nil || host.commits==nil || event.kind!=.Changed || event.node<0 || int(event.node)>=len(instance.bounds) {return false}
     bound:=instance.bounds[event.node].value
@@ -940,20 +947,16 @@ Plural_Rule :: enum u8 {
     One,         // one: 1, whole
     Zero_Or_One, // one: up to 1
     Slavic,      // one: 1, 21; few: 2 to 4, 22; many: 0, 5 to 20; other: fractions
-    Other,       // every number is other
 }
 @(private)
 NUMBER_LOCALES :: [?]Number_Locale{
     {"en",",",".",1,.One,false},
-    {"zh-Hans",",",".",1,.Other,false},
     {"ru","\u00a0",",",1,.Slavic,false},
     {"es",".",",",2,.One,true},
     {"es-419",",",".",1,.One,true},
     {"de",".",",",1,.One,false},
     {"fr","\u00a0",",",1,.Zero_Or_One,true},
-    {"ja",",",".",1,.Other,false},
     {"pt-BR",".",",",1,.Zero_Or_One,true},
-    {"ko",",",".",1,.Other,false},
     {"it",".",",",1,.One,true},
 }
 @(private)
@@ -983,7 +986,6 @@ plural_of :: proc(locale:Number_Locale,value:f64) -> Plural {
         if k%10==1 && k%100!=11 {return .One}
         if k%10>=2 && k%10<=4 && (k%100<12 || k%100>14) {return .Few}
         return .Many
-    case .Other:
     }
     if locale.millions && whole && i!=0 && math.mod(i,1e6)==0 {return .Many}
     return .Other

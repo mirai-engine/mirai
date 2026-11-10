@@ -32,7 +32,6 @@ import "mirai:std/serial"
 // added under its members. A member that is not the root is not deleted nor
 // moved by an edit of the scene: turning it off leaves it out of the instance.
 
-PREFAB_EXTENSION :: ".prefab"
 
 Prefab_Error :: enum u8 {
     None,
@@ -63,7 +62,7 @@ prefab_error_text :: proc(error:Prefab_Error) -> string {
     case .No_Id:          return "the entity has no id: it is not an entity of the scene"
     case .Member_Locked:  return "the entity is inside an instance of a prefab: use the root of the instance, or unlink it"
     case .Not_Instance:   return "the entity is not part of an instance of a prefab"
-    case .Not_Found:      return "no prefab has that path or id"
+    case .Not_Found:      return "no prefab, a scene with exactly one root, has that path or id; a scene with several hangs whole from a Scene_Reference"
     case .Exists:         return "a file with that path exists already"
     case .Outside_Assets: return "a prefab is written inside the assets folder"
     case .Write_Failed:   return "the file could not be written"
@@ -293,7 +292,7 @@ prefab_file :: proc(s:^Session,id:base.Asset_Id) -> (file:^asset.Registry_File,p
     if a==nil {return}
     found:bool
     file,found=asset.registry_find(&a.registry,id)
-    if !found || file.kind!=asset.KIND_PREFAB {return}
+    if !found || !asset.registry_prefab(file) {return}
     return file,asset.registry_file_path(&a.registry,file.path,context.temp_allocator),true
 }
 
@@ -535,7 +534,7 @@ prefab_work_begin :: proc(s:^Session,root:core.Entity) -> (work:Prefab_Work,erro
     placed:bool
     if work.instance,placed=scene.prefab_instance(w,root);!placed {return {},.Not_Instance}
     work.root,work.root_id=root,api_entity_id(w,root)
-    if _,failed:=scene.capture(w,&work.doc,&a.types,{root=root,outside=true,kind=asset.KIND_SCENE,id=s.document.id});failed!=.None {
+    if _,failed:=scene.capture(w,&work.doc,&a.types,{root=root,outside=true,id=s.document.id});failed!=.None {
         return {},failed==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
     }
     work.scope=slice.clone(asset.scene_ids(&work.doc),context.temp_allocator)
@@ -720,7 +719,7 @@ prefab_overrides_put :: proc(s:^Session,captured:^asset.Scene,kept:[]asset.Overr
     State :: struct {s:^Session,unknown:map[base.Entity_Id]bool}
     state:=State{s=s}
     state.unknown=make(map[base.Entity_Id]bool,context.temp_allocator)
-    from :: proc(data:rawptr,root:base.Entity_Id,instance:asset.Instance) -> ^asset.Scene {
+    from :: proc(data:rawptr,root:base.Entity_Id,instance:asset.Prefab_Instance) -> ^asset.Scene {
         state:=(^State)(data)
         found:=prefab_base_of(state.s,{prefab=instance.prefab,stamp=instance.stamp})
         if found==nil {state.unknown[root]=true}
@@ -867,7 +866,7 @@ prefab_entity_id :: proc(s:^Session,e:core.Entity) -> (id:base.Entity_Id,error:P
 @(private)
 prefab_new_file :: proc(s:^Session,path:string) -> (file:string,error:Prefab_Error) {
     file=scene_file(s,path)
-    if !strings.has_suffix(file,PREFAB_EXTENSION) {file=strings.concatenate({file,PREFAB_EXTENSION},context.temp_allocator)}
+    if !strings.has_suffix(file,SCENE_EXTENSION) {file=strings.concatenate({file,SCENE_EXTENSION},context.temp_allocator)}
     inside:=strings.has_prefix(strings.to_lower(file,context.temp_allocator),strings.to_lower(s.assets_root,context.temp_allocator))
     if !inside {return "",.Outside_Assets}
     if file_exists(s,file) {return "",.Exists}
@@ -928,10 +927,10 @@ prefab_create_in :: proc(s:^Session,roots:[]core.Entity,file,label:string) -> (i
     w:=edited_world(s)
     root:=roots[0]
     if len(roots)>1 {
-        history.selection_set(s.selection,roots)
-        selection_group(s,w)
+        root=entities_group(s,w,roots)
+        if root==core.NONE {return {},.Rejected}
         core.world_settle(w)
-        root=history.selection_active(s.selection)
+        history.selection_set(s.selection,{root})
         for e in roots {
             if entity_parent(w,e)!=root {return {},.Rejected}
         }
@@ -939,7 +938,7 @@ prefab_create_in :: proc(s:^Session,roots:[]core.Entity,file,label:string) -> (i
     root_id:=api_entity_id(w,root)
     sub:asset.Scene
     id=asset_id_new(s)
-    if _,failed:=scene.capture(w,&sub,&a.types,{root=root,kind=asset.KIND_PREFAB,id=id});failed!=.None {return {},.Capture_Failed}
+    if _,failed:=scene.capture(w,&sub,&a.types,{root=root,id=id});failed!=.None {return {},.Capture_Failed}
     defer asset.scene_destroy(&sub)
     // The root stands at the origin, upright, with its scale.
     if placed,has:=asset.scene_get(&sub,root_id,"Transform",core.Transform);has {
@@ -978,11 +977,10 @@ prefab_variant_create :: proc(s:^Session,base_id:base.Asset_Id,path:string) -> (
     defer prefab_scene_free(loaded)
     variant:asset.Scene
     id=asset_id_new(s)
-    if asset.scene_init(&variant,&a.types,asset.KIND_PREFAB,id)!=.None {return {},.Out_Of_Memory}
+    if asset.scene_init(&variant,&a.types,id)!=.None {return {},.Out_Of_Memory}
     defer asset.scene_destroy(&variant)
     root,placed:=asset.scene_instantiate(&variant,loaded,base_id,0)
     if placed!=.None {return {},prefab_place_error(placed)}
-    variant.info.root=root
     if local,has:=asset.scene_get(&variant,root,asset.INSTANCE_PLACEMENT,core.Transform);has {
         local.position,local.rotation=0,1
         asset.scene_set(&variant,root,asset.INSTANCE_PLACEMENT,&local)
@@ -997,10 +995,10 @@ prefab_variant_create :: proc(s:^Session,base_id:base.Asset_Id,path:string) -> (
 prefab_variant_path :: proc(s:^Session,base_id:base.Asset_Id) -> string {
     file,_,found:=prefab_file(s,base_id)
     if !found {return "Variant"}
-    stem:=file.path[:len(file.path)-len(PREFAB_EXTENSION)] if strings.has_suffix(file.path,PREFAB_EXTENSION) else file.path
+    stem:=file.path[:len(file.path)-len(SCENE_EXTENSION)] if strings.has_suffix(file.path,SCENE_EXTENSION) else file.path
     for n in 1..<10000 {
         path:=n==1?fmt.tprintf("%s_variant",stem):fmt.tprintf("%s_variant_%d",stem,n)
-        if !file_exists(s,scene_file(s,strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator))) {return path}
+        if !file_exists(s,scene_file(s,strings.concatenate({path,SCENE_EXTENSION},context.temp_allocator))) {return path}
     }
     return fmt.tprintf("%s_variant",stem)
 }
@@ -1026,7 +1024,7 @@ prefab_variant_chain :: proc(s:^Session,id:base.Asset_Id,allocator:=context.temp
 // Zero when it is not a variant or its base is not known.
 prefab_variant_of :: proc(s:^Session,w:core.World_Ref,link:Prefab_Link) -> base.Asset_Id {
     if !link.root {return {}}
-    if document_is_prefab(s) && document_root(s,w)==link.instance {return link.asset}
+    if document_is_prefab(s) && entity_parent(w,link.instance)==core.NONE {return link.asset}
     from:=prefab_link_base(s,w,link)
     if from==nil {return {}}
     variant_base,_:=asset.prefab_variant_base(from)
@@ -1052,21 +1050,18 @@ prefab_instantiate :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_P
     a:=s.app.assets
     if a==nil {return 0,.No_Assets}
     w:=edited_world(s)
-    placement:=placement
-    automatic:=placement.parent==core.NONE?document_root(s,w):core.NONE
-    if automatic!=core.NONE {placement.parent=automatic}
     if _,_,located:=prefab_file(s,prefab_id);!located {return 0,.Not_Found}
     if placement.parent!=core.NONE {_=prefab_entity_id(s,placement.parent) or_return}
     if s.document.id==prefab_id || document_is_prefab(s) && prefab_contains(s,prefab_id,s.document.id) {return 0,.Cycle}
     g:=prefab_gesture_begin(s,"Instantiate prefab",joined) or_return
     placed:core.Entity
-    placed,error=prefab_instantiate_in(s,prefab_id,placement,automatic)
+    placed,error=prefab_instantiate_in(s,prefab_id,placement)
     if error=prefab_gesture_end(&g,error);error!=.None {return 0,error}
     return api_entity_id(w,placed),.None
 }
 
 @(private)
-prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_Placement,automatic:core.Entity) -> (root:core.Entity,error:Prefab_Error) {
+prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefab_Placement) -> (root:core.Entity,error:Prefab_Error) {
     a:=s.app.assets
     w:=edited_world(s)
     instances,members,transforms:=core.world_table_of(w,scene.Prefab_Instance),core.world_table_of(w,scene.Prefab_Member),core.world_table_of(w,core.Transform)
@@ -1084,7 +1079,7 @@ prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefa
     view,viewed:=asset.scene_view(&file,&a.types)
     if viewed!=.None {return core.NONE,.Rejected}
     entities:=make([]core.Entity,len(view.ids),context.temp_allocator)
-    report,failed:=scene.instantiate(w,&file,&a.types,{parent=placement.parent,fresh=true,entities=entities})
+    report,failed:=scene.instantiate(w,&file,&a.types,{parent=placement.parent,fresh=true,entities=entities,documents=scene.assets_documents(a)})
     core.world_settle(w)
     if failed!=.None {return core.NONE,failed==.Out_Of_Memory?.Out_Of_Memory:.Rejected}
     root=report.root
@@ -1095,11 +1090,6 @@ prefab_instantiate_in :: proc(s:^Session,prefab_id:base.Asset_Id,placement:Prefa
             if placement.rotation!={} {local.rotation=quaternion(x=placement.rotation.x,y=placement.rotation.y,z=placement.rotation.z,w=placement.rotation.w)} else {local.rotation=1}
             local.position=placement.position
             if placement.scale_multiplier!={} {local.scale*=placement.scale_multiplier}
-            if automatic!=core.NONE {
-                relative,ok:=mm.transform_relative(core.to_math(local^),entity_world(w,automatic))
-                if !ok {return core.NONE,.Rejected}
-                local^=core.from_math(relative)
-            }
         }
     }
     core.world_settle(w)
@@ -1291,7 +1281,7 @@ prefab_propagate :: proc(s:^Session,changed:base.Asset_Id,done:^[dynamic]base.As
     placers:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for index in asset.registry_dependents(registry,changed) {
         file:=&registry.files[index]
-        if file.state==.Asset && file.kind==asset.KIND_PREFAB && !slice.contains(done[:],file.id) {append(&placers,file.id)}
+        if asset.registry_prefab(file) && !slice.contains(done[:],file.id) {append(&placers,file.id)}
     }
     for id in placers {
         _,path,located:=prefab_file(s,id)
@@ -1324,12 +1314,13 @@ prefab_target :: proc(s:^Session) -> core.Entity {
     return history.selection_active(s.selection)
 }
 
-// Whether a prefab action cannot run now.
+// Whether an entry of the prefabs (prefab_create, prefab_apply,
+// prefab_apply_base, prefab_revert, prefab_unlink) cannot run on what is selected now.
 @(private)
-prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
-    if s.mode!=.Edit || s.app.assets==nil {return true}
+prefab_entry_disabled :: proc(s:^Session,entry:string) -> bool {
+    if s.mode!=.Edit || s.app==nil || s.app.assets==nil {return true}
     w:=edited_world(s)
-    if action==.Prefab_Create {
+    if entry=="prefab_create" {
         roots:=history.selection_roots(s.selection,w)
         if len(roots)==0 {return true}
         for e in roots {
@@ -1343,10 +1334,10 @@ prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
     id:=api_entity_id(w,e)
     if id==0 {return true}
     link,linked:=prefab_link_of(w,e)
-    #partial switch action {
-    case .Prefab_Apply,.Prefab_Revert,.Prefab_Apply_Base:
+    switch entry {
+    case "prefab_apply","prefab_revert","prefab_apply_base":
         // A member with overrides, or an entity an instance added; to a base, the root of an instance of a variant.
-        if action==.Prefab_Apply_Base && prefab_variant_of(s,w,link)=={} {return true}
+        if entry=="prefab_apply_base" && prefab_variant_of(s,w,link)=={} {return true}
         root:=prefab_instance_for(w,e)
         if root==core.NONE {return true}
         overrides,_:=prefab_overrides_of(s,root)
@@ -1354,7 +1345,7 @@ prefab_action_disabled :: proc(s:^Session,action:Action) -> bool {
             if linked && link.root || override.entity==id {return false}
         }
         return true
-    case .Prefab_Unlink: return !linked
+    case "prefab_unlink": return !linked
     }
     return true
 }
@@ -1379,39 +1370,8 @@ prefab_name_free :: proc(s:^Session,folder,name:string) -> string {
     }
     for n in 1..<10000 {
         path:=n==1?fmt.tprintf("%s%s",prefix,string(cleaned)):fmt.tprintf("%s%s_%d",prefix,string(cleaned),n)
-        if !file_exists(s,scene_file(s,strings.concatenate({path,PREFAB_EXTENSION},context.temp_allocator))) {return path}
+        if !file_exists(s,scene_file(s,strings.concatenate({path,SCENE_EXTENSION},context.temp_allocator))) {return path}
     }
     return fmt.tprintf("%sPrefab",prefix)
 }
 
-@(private)
-prefab_action_run :: proc(s:^Session,action:Action) {
-    e:=prefab_target(s)
-    w:=edited_world(s)
-    error:=Prefab_Error.None
-    message:string
-    link,_:=prefab_link_of(w,e)
-    #partial switch action {
-    case .Prefab_Create:
-        path:=prefab_name_free(s,prefab_folder(s),entity_name(w,e))
-        _,error=prefab_create_entities(s,s.selection.entities[:],path)
-        message=fmt.tprintf("Prefab %s created",path)
-    case .Prefab_Apply:
-        count:int
-        count,error=prefab_apply(s,e,nil,link.root)
-        message=fmt.tprintf("%d overrides applied",count)
-    case .Prefab_Apply_Base:
-        count:int
-        count,error=prefab_apply(s,e,nil,true,.Base)
-        message=fmt.tprintf("%d overrides applied to the base",count)
-    case .Prefab_Revert:
-        count:int
-        count,error=prefab_revert(s,e,nil,link.root)
-        message=fmt.tprintf("%d overrides reverted",count)
-    case .Prefab_Unlink:
-        error=prefab_unlink(s,e,false)
-        message="Prefab unlinked"
-    }
-    if error!=.None {message=fmt.tprintf("%s",prefab_error_text(error))}
-    notify(s,message)
-}

@@ -1,7 +1,6 @@
 package build
 
 import "base:runtime"
-import "core:encoding/json"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
@@ -58,19 +57,7 @@ Failure :: enum u8 {
 Action :: enum u8 {
     Build,
     Check, // the types of the target with its plugins as declared: nothing is compiled, and only generated sources are written
-    Test,  // runs the @(test) procedures of a package of the project, compiled against the libraries the target links
-}
-
-// What the tests of a Test job did.
-Test_Report :: struct {
-    compiled:bool,
-    total,passed:int,
-    failed:[]Test_Failure,
-}
-
-Test_Failure :: struct {
-    package_name,name:string,
-    messages:[]string, // what the test logged at error level and above, with where
+    Test,  // runs the @(test) procedures of a package of the project, compiled against the libraries the target links (tests.odin)
 }
 
 Desc :: struct {
@@ -86,7 +73,7 @@ Desc :: struct {
     engine:Engine_Mode,          // the binaries of the engine a library is built against. Keep: ENGINE_MODE_HERE
     action:Action,               // Check and Test: of the Editor or Play target
     test_package:string,         // Test: the folder of the package, absolute
-    test_names:[]string,         // Test: the tests to run, by name; empty: all of them
+    test:Test_Options,           // Test: how its executable runs
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
 }
 
@@ -115,8 +102,11 @@ Job :: struct {
     target:Target,
     action:Action,
     test_package:string,
-    test_names:[]string,
-    test_report:string,         // Test: the JSON the runner writes
+    test:Test_Options,
+    test_build:Test_Build,
+    test_run:Test_Run,
+    testing:bool,               // Test: its executable builds or runs; the plugin libraries stand
+    engine_folder:string,       // Test: the binaries of the engine its executable loads
     root,engine_root:string,
     compiler:string,
     flags:[]string,             // what identifies the build besides its sources
@@ -206,15 +196,15 @@ job_start :: proc(desc:Desc) -> ^Job {
     job.target=desc.target
     job.action=desc.action
     job.test_package=strings.clone(desc.test_package,a)
-    job.test_names=make([]string,len(desc.test_names),a)
-    for name,i in desc.test_names {job.test_names[i]=strings.clone(name,a)}
+    job.test=desc.test
+    job.test.names=make([]string,len(desc.test.names),a)
+    for name,i in desc.test.names {job.test.names[i]=strings.clone(name,a)}
     job.tick=time.tick_now()
     job.root,job.engine_root=strings.clone(p.root,a),strings.clone(p.engine_root,a)
     names:=TARGET_NAMES
     name:=names[desc.target]
     job.work=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"build",allocator=a)
     job.prefix=fmt.aprintf("%s-%x-%d",name,u64(time.to_unix_nanoseconds(time.now())),os.get_pid(),allocator=a)
-    job.test_report=project.path(job.work,fmt.tprintf("%s.tests.json",job.prefix),allocator=a)
     job.sources_file=project.path(job.work,fmt.tprintf("%s.sources.json",name),allocator=a)
     job.stamp_file=project.path(job.work,fmt.tprintf("%s.stamp",name),allocator=a)
     job.sources_staged=project.path(job.work,fmt.tprintf("%s.sources.json",job.prefix),allocator=a)
@@ -271,6 +261,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine,desc.incremental)
+    if desc.action==.Test {job.engine_folder=engine_paths(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,a).folder}
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
@@ -581,38 +572,77 @@ job_project_start :: proc(job:^Job) -> ^Job {
     return job
 }
 
-// The compiler that checks the target, or that builds and runs the tests of
-// a package against what the target links.
+// The compiler that checks the target, or the test executable of a package
+// built against what the target links.
 @(private)
 job_probe_start :: proc(job:^Job) -> ^Job {
     if os.make_directory_all(job.work)!=nil && !os.is_dir(job.work) {return job_fail(job,.Write_Failed)}
+    if job.action==.Test {return job_test_start(job)}
     command:=make([dynamic]string,context.temp_allocator)
-    append(&command,job.compiler)
-    environment:[]string
-    if job.action==.Check {
-        append(&command,"check",job.flags[1])
-        // What only a build reads, odin check refuses.
-        for flag in job.flags[2:] {
-            if flag=="-build-mode:dll" || flag=="-use-separate-modules" || strings.has_prefix(flag,"-o:") {continue}
-            append(&command,flag)
-        }
-        // The library has no main of its own.
-        append(&command,"-no-entry-point","-json-errors")
-    } else {
-        append(&command,"test",job.test_package)
-        for flag in job.flags[2:] {
-            if flag=="-build-mode:dll" {continue}
-            append(&command,flag)
-        }
-        _=os.remove(job.test_report)
-        append(&command,fmt.tprintf("-out:%s",job.staged),"-json-errors",fmt.tprintf("-define:ODIN_TEST_JSON_REPORT=%s",job.test_report),"-define:ODIN_TEST_FANCY=false")
-        if len(job.test_names)>0 {append(&command,fmt.tprintf("-define:ODIN_TEST_NAMES=%s",strings.join(job.test_names,",",context.temp_allocator)))}
-        engine:=engine_paths(job.engine_root,.Keep,context.temp_allocator)
-        environment=child_environment(job.engine_root,context.temp_allocator,{engine.folder,plugins_libraries_folder(job.root,context.temp_allocator)})
+    append(&command,job.compiler,"check",job.flags[1])
+    // What only a build reads, odin check refuses.
+    for flag in job.flags[2:] {
+        if flag=="-build-mode:dll" || flag=="-use-separate-modules" || strings.has_prefix(flag,"-o:") {continue}
+        append(&command,flag)
     }
+    // The library has no main of its own.
+    append(&command,"-no-entry-point","-json-errors")
     job.started=time.now()
-    job_spawn(job,{library=-1,staged=job.staged,streams=job.stream_files},command[:],environment=environment)
+    job_spawn(job,{library=-1,staged=job.staged,streams=job.stream_files},command[:])
     return job
+}
+
+// Plans the test executable of the package with the flags of the target, in
+// <project>/.mirai/build/tests, and starts its compiler unless it stands.
+@(private)
+job_test_start :: proc(job:^Job) -> ^Job {
+    a:=virtual.arena_allocator(&job.arena)
+    flags:=make([dynamic]string,context.temp_allocator)
+    for flag in job.flags[2:] {
+        if flag!="-build-mode:dll" {append(&flags,flag)}
+    }
+    executable:=test_executable(project_tests_folder(job.root,context.temp_allocator),job.root,job.test_package,a)
+    job.test_build=test_build_plan(job.engine_root,job.compiler,job.test_package,executable,flags[:],a)
+    job.started=time.now()
+    job.testing=true
+    if !test_build_start(&job.test_build,child_environment(job.engine_root,context.temp_allocator)) {
+        job.result.text=job.test_build.said
+        return job_fail(job,.Compiler_Failed)
+    }
+    return job
+}
+
+// Follows the compiler of the test executable and then its run.
+@(private)
+job_test_advance :: proc(job:^Job,wait:bool) {
+    a:=virtual.arena_allocator(&job.arena)
+    b:=&job.test_build
+    if !job.test_run.running && !job.test_run.exited {
+        if !test_build_poll(b,WAIT_STEP if wait else 0) {return}
+        job.result.diagnostics,job.result.text=b.diagnostics,b.said
+        if b.failed {
+            job_compile_fail(job,b.code)
+            return
+        }
+        job.result.tests.compiled=true
+        environment:=child_environment(job.engine_root,context.temp_allocator,{job.engine_folder,plugins_libraries_folder(job.root,context.temp_allocator)})
+        if !test_run_start(&job.test_run,b,job.test_package,job.test,environment,a) {
+            job.result.text=strings.join(job.test_run.lines[:],"\n",a)
+            job_fail(job,.Tests)
+        }
+        return
+    }
+    if !test_run_poll(&job.test_run,WAIT_STEP if wait else 0) {return}
+    ok:bool
+    job.result.tests,ok=test_run_report(&job.test_run,a)
+    job.result.text=strings.join(job.test_run.lines[:],"\n",a)
+    if !ok {
+        job_fail(job,.Tests)
+        return
+    }
+    job.result.status=.Built
+    job_files_remove(job)
+    job_done(job)
 }
 
 // What a compiler left in the files of its streams: job.result.diagnostics,
@@ -643,28 +673,9 @@ job_compile_fail :: proc(job:^Job,exit_code:int) {
     job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
 }
 
-// Takes what the compiler of a check or of the tests left.
+// Takes what the compiler of a check left.
 @(private)
 job_probe_finish :: proc(job:^Job,exit_code:int) {
-    a:=virtual.arena_allocator(&job.arena)
-    streams:[2]string
-    for file,i in job.stream_files {
-        data,_:=os.read_entire_file(file,context.temp_allocator)
-        streams[i]=string(data)
-    }
-    report:=&job.result.tests
-    report.compiled=job.action==.Test && os.is_file(job.staged)
-    if report.compiled {
-        job.result.text=strings.trim_space(strings.concatenate({streams[0],streams[0]!=""?"\n":"",streams[1]},a))
-        if !tests_report_read(job.test_report,job.result.text,report,a) || report.passed<report.total {
-            job_fail(job,.Tests)
-            return
-        }
-        job.result.status=.Built
-        job_files_remove(job)
-        job_done(job)
-        return
-    }
     errors:bool
     job.result.text,errors,_=job_compile_read(job,job.stream_files)
     if errors || exit_code!=0 {
@@ -674,36 +685,6 @@ job_probe_finish :: proc(job:^Job,exit_code:int) {
     job.result.status=.Built
     job_files_remove(job)
     job_done(job)
-}
-
-// Reads what the runner of core:testing wrote of every test and, for those
-// that failed, the lines of its log at error level or above that name them.
-// False when it wrote nothing: the tests did not finish.
-@(private)
-tests_report_read :: proc(path,log:string,report:^Test_Report,allocator:runtime.Allocator) -> bool {
-    Test :: struct {name:string,success:bool}
-    Written :: struct {packages:map[string][dynamic]Test,total,success:int}
-    data,error:=os.read_entire_file(path,context.temp_allocator)
-    if error!=nil {return false}
-    written:Written
-    if json.unmarshal(data,&written,allocator=context.temp_allocator)!=nil {return false}
-    report.total,report.passed=written.total,written.success
-    failed:=make([dynamic]Test_Failure,allocator)
-    for package_name,tests in written.packages {
-        for test in tests {
-            if test.success {continue}
-            messages:=make([dynamic]string,allocator)
-            needle:=fmt.tprintf(":%s()]",test.name)
-            rest:=log
-            for line in strings.split_lines_iterator(&rest) {
-                if !strings.contains(line,needle) || !(strings.contains(line,"[ERROR]") || strings.contains(line,"[FATAL]")) {continue}
-                append(&messages,strings.clone(strings.trim_space(line),allocator))
-            }
-            append(&failed,Test_Failure{strings.clone(package_name,allocator),strings.clone(test.name,allocator),messages[:]})
-        }
-    }
-    report.failed=failed[:]
-    return true
 }
 
 // Takes what the compile of a plugin library left: its diagnostics, pointed
@@ -762,6 +743,10 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
 @(private)
 job_advance :: proc(job:^Job,wait:bool) -> bool {
     if job.result.status!=.Running {return true}
+    if job.testing {
+        job_test_advance(job,wait)
+        return job.result.status!=.Running
+    }
     timeout:time.Duration
     if wait {timeout=len(job.compiles)==1?os.TIMEOUT_INFINITE:WAIT_STEP}
     for i:=0;i<len(job.compiles) && job.result.status==.Running; {
@@ -915,6 +900,8 @@ job_fail :: proc(job:^Job,failure:Failure) -> ^Job {
         _,_=os.process_wait(compile.process)
     }
     clear(&job.compiles)
+    test_build_cancel(&job.test_build)
+    test_run_cancel(&job.test_run)
     job_files_remove(job)
     return job_done(job)
 }
@@ -943,7 +930,7 @@ job_files_remove :: proc(job:^Job) {
             remove=strings.has_suffix(entry.name,".old") || stale && (debug || !subprocess.process_alive(job_file_pid(entry.name[len(target):])))
         }
         if !remove {continue}
-        if entry.type==.Directory {_=os.remove_all(entry.fullpath)}
+        if entry.type==.Directory {_=base.remove_all(entry.fullpath)}
         else {_=os.remove(entry.fullpath)}
     }
 }

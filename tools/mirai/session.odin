@@ -13,6 +13,7 @@ import "mirai:editor/api"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
+import "mirai:std/base"
 
 SESSION_USAGE :: "session start|restart|stop|status|sync [project] [paths of sync] [--dev|--release] [--no-build] [--copy] [--discard] [--orphans] [--timeout S] [editor arguments]"
 
@@ -450,7 +451,7 @@ session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:
     if copies_locked {workspace.lock_release(&copies)}
     if error!=nil {return "",{},fmt.tprintf("could not create a copy in %s (%v); check that it is writable",temporary,error)}
     if problem!="" {
-        _=os.remove_all(copy)
+        _=base.remove_all(copy)
         return "",{},problem
     }
     walker:=os.walker_create(folder)
@@ -477,7 +478,7 @@ session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:
     }
     if problem!="" {
         workspace.lock_release(&lock)
-        _=os.remove_all(copy)
+        _=base.remove_all(copy)
         return "",{},fmt.tprintf("%s; free the disk or close what holds the file, and start again",problem)
     }
     return copy,lock,""
@@ -499,7 +500,7 @@ session_copies_sweep :: proc(folder:string) -> (swept,kept:int) {
         if entry.type!=.Directory || !strings.has_prefix(entry.name,SESSION_COPY_PREFIX) {continue}
         copy:=project.path_absolute(entry.fullpath)
         if session_copy_live(copy) {continue}
-        if os.remove_all(copy)!=nil {kept+=1;continue}
+        if base.remove_all(copy)!=nil {kept+=1;continue}
         swept+=1
     }
     return
@@ -549,7 +550,7 @@ session_copied :: proc(folder:string) -> bool {
 
 // Deletes a copy whose editor ended; false after saying why it could not.
 session_copy_remove :: proc(copy,command:string) -> bool {
-    if error:=os.remove_all(copy);error!=nil {
+    if error:=base.remove_all(copy);error!=nil {
         fmt.eprintfln("mirai %s: could not delete the copy %s (%v); delete the folder once no process holds its files",command,copy,error)
         return false
     }

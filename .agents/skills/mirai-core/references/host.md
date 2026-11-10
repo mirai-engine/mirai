@@ -295,7 +295,7 @@ player is heard. The end of stdin terminates it.
 ## Loaded assets
 
 `Assets` (a function receives it as `^host.Assets`; `host/assets.odin`) loads by `base.Asset_Id`
-meshes, textures, materials, scenes and prefabs, and the primitives (`Shape`). An asset is loaded
+meshes, textures, materials and scenes, and the primitives (`Shape`). An asset is loaded
 the first time it is asked for, as a transaction between frames; asking again is a lookup. Id zero
 is "none". The tables of each type reserve address space for `Assets_Desc.capacity` (by default, a
 million) and take memory as loads fill them: the quantity a world asks for (a terrain of thousands
@@ -306,7 +306,7 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
 - `assets_texture(a, id)`: `^Assets_Texture`.
 - `assets_material(a, id)`, `assets_material_row(a, id)`: `^Assets_Material` or its row in the
   renderer's material table.
-- `assets_scene(a, id)`: the open `^asset.Asset` of a `.scene` or `.prefab`.
+- `assets_scene(a, id)`: the open `^asset.Asset` of a `.scene`.
 - `assets_mesh_generate(a, geom.Mesh, slots, uv1s, options)`, `assets_mesh_release`: a mesh made at
   run time, with its own id and no file ([generated meshes](#generated-meshes)).
 - `assets_mesh_generated`, `assets_heightfield`, `assets_mesh_disabled_edges`: whether a generated

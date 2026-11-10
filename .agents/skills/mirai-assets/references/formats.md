@@ -122,8 +122,8 @@ Owner of everything it contains; `asset/document.odin` builds by tables, columns
 
 `asset.KINDS` gives extension, fourcc, name and version of each engine type; their tables are in
 their `asset/<type>.odin` and `mirai asset info` shows them. Contract of each: [kinds.md](kinds.md);
-scenes and prefabs: [scenes.md](scenes.md). The plugins' types are declared and validated by their
-plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
+scenes and their prefab instances: [scenes.md](scenes.md). The plugins' types are declared and
+validated by their plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
 ([animation](../../mirai-animation/references/animation.md)),
 [`.foliage`](../../mirai-world/references/foliage.md#format),
 [`.terrain`](../../mirai-world/references/terrain.md) and
@@ -141,8 +141,9 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
   (`Texture_Mip`, with all the layers of each level), `texels` bulk.
 - **`.mat`** (`MAT `): `material` (`Material_Info`), `imported` (`Material_Info`, of an imported
   material: what the source gave), `parameters`, `overlays`, `hidden`.
-- **`.scene`, `.prefab`** (`SCEN`, `PRFB`): `entities`, a table per component, `scene`,
-  `instances`, `members`, `overrides` and `off` (turned-off components).
+- **`.scene`** (`SCEN`): `entities`, a table per component (those of prefab instances among
+  them), `scene`, `overrides` and `off` (turned-off components). With one root it is a
+  [prefab](scenes.md#prefab).
 - **`.anim`** (`ANIM`): `clips` (`Animation_Clip`), `tracks` (`Animation_Track`), `keys`
   (`anim.Keyframe`), `markers` (`Animation_Marker`) and the bulk `streams`, empty but in a cooked
   `.anim`.
@@ -223,6 +224,8 @@ scan opens every file and writes it again.
 - With a cache, `Registry.removed` gathers the ids that no file is anymore, also those deleted with
   the program closed. Whoever keeps something per asset (the
   [previews](../../mirai-editor/references/panels.md#previews)) reads them and empties it.
+- `Registry_File.flags` are those of the header: `registry_prefab` reads from them whether a scene
+  has one root ([prefab](scenes.md#prefab)).
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in

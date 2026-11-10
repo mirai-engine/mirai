@@ -439,7 +439,7 @@ far_update :: proc(far:^Streaming_Far,app:^host.App,error:f32,problems:^core.Pro
 // Each section that is not loaded and on shows the far mesh of its scene,
 // beside its reference: under its parent, where it is. A proxy goes with its
 // reference, when the section is on, and when its scene has no far mesh.
-@(step="frame",loops="game editor",after="scene_sections")
+@(step="frame",loops="game editor")
 streaming_far :: proc(
     world:core.World_Ref,app:^host.App,references:core.Read(scene.Scene_Reference),views:core.Ref(scene.Section_Views),settings:core.Ref(Streaming_Settings),
     transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),proxies:core.Read(scene.Section_Proxy),renderers:core.Read(render.Mesh_Renderer),far:^Streaming_Far,problems:^core.Problems,

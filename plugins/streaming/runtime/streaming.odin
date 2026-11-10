@@ -39,7 +39,7 @@ section_distance :: proc "contextless" (reference:scene.Scene_Reference,pose:mm.
     return linalg.length(outside)
 }
 
-@(step="frame",loops="game editor",before="scene_sections")
+@(step="frame",loops="game editor")
 streaming_sections :: proc(sources:core.Ref(scene.Streaming_Sources),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),settings:core.Ref(Streaming_Settings),seen:^Streaming_Seen,requests:^scene.Section_Requests) {
     s:=settings.ptr!=nil?settings.ptr^:STREAMING_SETTINGS_DEFAULT
     if sources.ptr==nil || s.load<=0 {return}

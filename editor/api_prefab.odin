@@ -167,7 +167,7 @@ api_prefab_list :: proc(s:^Session,call:^api.Call) {
     if a!=nil {
         assets_rescan(s)
         for &file in a.registry.files {
-            if file.state!=.Asset || file.kind!=asset.KIND_PREFAB || !asset.registry_listed(&file) {continue}
+            if !asset.registry_prefab(&file) || !asset.registry_listed(&file) {continue}
             if !first {serial.write_u8(w,',')}
             first=false
             serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,file.path)
@@ -235,7 +235,7 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
         serial.write_u8(w,'}')
         return
     }
-    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     loaded,ok:=prefab_scene_load(s,id)
     if !ok {
@@ -270,19 +270,30 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(w,"]}")
 }
 
+// The entry of a menu on the root of an instance takes the overrides of every
+// member of it; a call names the entity whose overrides it takes.
+@(private)
+api_prefab_whole :: proc(s:^Session,e:core.Entity) -> bool {
+    link,linked:=prefab_link_of(edited_world(s),e)
+    return api_person(s) && linked && link.root
+}
+
 @(private)
 api_prefab_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Create_Params)
     if !api_guard(s,call) {return}
-    e,found:=api_call_entity(call,edited_world(s),params.entity[:])
+    // Several selected entities become one prefab.
+    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
     if !found {return}
+    e:=targets[0]
     path:=base.text_get(params.path[:])
     if path=="" {path=prefab_name_free(s,prefab_folder(s),entity_name(edited_world(s),e))}
-    id,error:=prefab_create(s,e,path)
+    id,error:=prefab_create_entities(s,targets,path)
     if error!=.None {
         api_prefab_fail(call,error)
         return
     }
+    if api_person(s) {notify(s,fmt.tprintf("Prefab %s created",path))}
     result:=api.call_result(call,Api_Prefab_Created_Result)
     result.id,result.asset=api_entity_id(edited_world(s),e),id
     if file,_,ok:=prefab_file(s,id);ok {base.text_set(result.path[:],file.path)}
@@ -292,7 +303,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
 api_prefab_instantiate :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Instantiate_Params)
     if !api_guard(s,call) {return}
-    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     placement:=Prefab_Placement{position=params.position,scale_multiplier=params.scale_multiplier}
     if params.parent[0]!=0 {
@@ -329,13 +340,15 @@ api_paths_split :: proc(text:string,allocator:=context.temp_allocator) -> []stri
 api_prefab_apply :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Apply_Params)
     if !api_guard(s,call) {return}
-    e,found:=api_call_entity(call,edited_world(s),params.entity[:])
+    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
     if !found {return}
-    count,error:=prefab_apply(s,e,api_paths_split(base.text_get(params.paths[:])),false,params.target)
+    e:=targets[0]
+    count,error:=prefab_apply(s,e,api_paths_split(base.text_get(params.paths[:])),api_prefab_whole(s,e),params.target)
     if error!=.None {
         api_prefab_fail(call,error)
         return
     }
+    if api_person(s) {notify(s,fmt.tprintf(params.target==.Base?"%d overrides applied to the base":"%d overrides applied",count))}
     api.call_result(call,Api_Prefab_Count_Result)^={api_entity_id(edited_world(s),e),count}
 }
 
@@ -343,7 +356,7 @@ api_prefab_apply :: proc(s:^Session,call:^api.Call) {
 api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Variant_Params)
     if !api_guard(s,call) {return}
-    base_id,located:=asset_named(s,call,base.text_get(params.prefab[:]),asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+    base_id,located:=asset_named(s,call,base.text_get(params.prefab[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
     if !located {return}
     path:=base.text_get(params.path[:])
     if path=="" {
@@ -364,13 +377,15 @@ api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
 api_prefab_revert :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Entity_Params)
     if !api_guard(s,call) {return}
-    e,found:=api_call_entity(call,edited_world(s),params.entity[:])
+    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
     if !found {return}
-    count,error:=prefab_revert(s,e,api_paths_split(base.text_get(params.paths[:])))
+    e:=targets[0]
+    count,error:=prefab_revert(s,e,api_paths_split(base.text_get(params.paths[:])),api_prefab_whole(s,e))
     if error!=.None {
         api_prefab_fail(call,error)
         return
     }
+    if api_person(s) {notify(s,fmt.tprintf("%d overrides reverted",count))}
     api.call_result(call,Api_Prefab_Count_Result)^={api_entity_id(edited_world(s),e),count}
 }
 
@@ -380,7 +395,7 @@ api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
     if !api_guard(s,call) {return}
     id:base.Asset_Id
     if named:=base.text_get(params.asset[:]);named!="" {
-        located,found:=asset_named(s,call,named,asset.KIND_PREFAB,PREFAB_EXTENSION,"a prefab")
+        located,found:=asset_named(s,call,named,asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
         if !found {return}
         id=located
     }
@@ -396,11 +411,13 @@ api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
 api_prefab_unlink :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Unlink_Params)
     if !api_guard(s,call) {return}
-    e,found:=api_call_entity(call,edited_world(s),params.entity[:])
+    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
     if !found {return}
+    e:=targets[0]
     if error:=prefab_unlink(s,e,params.recursive);error!=.None {
         api_prefab_fail(call,error)
         return
     }
+    if api_person(s) {notify(s,"Prefab unlinked")}
     api.call_result(call,Api_Edit_Result).id=api_entity_id(edited_world(s),e)
 }

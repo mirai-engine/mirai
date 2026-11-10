@@ -24,7 +24,6 @@ Spawn_Test_World :: struct {
     links:core.Table(Spawn_Test_Link),
     instances:core.Table(Prefab_Instance),
     members:core.Table(Prefab_Member),
-    sources:core.Table(Prefab_Source),
     forms:Prefab_Forms,
 }
 
@@ -71,10 +70,9 @@ spawn_test_close :: proc(p:^Spawn_Test) {
 // A bulb whose glass names it.
 @(private="file")
 spawn_test_bulb :: proc(bulb:^asset.Scene,types:^asset.Types,range:f32) {
-    asset.scene_init(bulb,types,asset.KIND_PREFAB,SPAWN_BULB)
+    asset.scene_init(bulb,types,SPAWN_BULB)
     asset.scene_entity_add(bulb,1,0,"Bulb")
     asset.scene_entity_add(bulb,2,1,"Glass")
-    bulb.info.root=1
     light:=Spawn_Test_Light{range,1}
     asset.scene_set(bulb,1,SPAWN_LIGHT,&light)
     link:=Spawn_Test_Link{core.Entity(1)}
@@ -84,9 +82,8 @@ spawn_test_bulb :: proc(bulb:^asset.Scene,types:^asset.Types,range:f32) {
 // A lamp that places a bulb, sets its intensity and names it.
 @(private="file")
 spawn_test_lamp :: proc(t:^testing.T,lamp:^asset.Scene,types:^asset.Types,bulb:^asset.Scene) {
-    asset.scene_init(lamp,types,asset.KIND_PREFAB,SPAWN_LAMP)
+    asset.scene_init(lamp,types,SPAWN_LAMP)
     asset.scene_entity_add(lamp,1,0,"Lamp")
-    lamp.info.root=1
     inner,placed:=asset.scene_instantiate(lamp,bulb,SPAWN_BULB,1)
     testing.expect_value(t,placed,asset.Error.None)
     light,_:=asset.scene_get(lamp,inner,SPAWN_LIGHT,Spawn_Test_Light)
@@ -154,9 +151,9 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     defer spawn_test_close(&p)
     bulb,lamp:asset.Scene
     spawn_test_bulb(&bulb,&p.types,1)
-    testing.expect_value(t,asset.scene_save(&bulb,fmt.tprintf("%s/bulb.prefab",p.folder)),asset.Error.None)
+    testing.expect_value(t,asset.scene_save(&bulb,fmt.tprintf("%s/bulb.scene",p.folder)),asset.Error.None)
     spawn_test_lamp(t,&lamp,&p.types,&bulb)
-    testing.expect_value(t,asset.scene_save(&lamp,fmt.tprintf("%s/lamp.prefab",p.folder)),asset.Error.None)
+    testing.expect_value(t,asset.scene_save(&lamp,fmt.tprintf("%s/lamp.scene",p.folder)),asset.Error.None)
     asset.scene_destroy(&bulb)
     asset.scene_destroy(&lamp)
     testing.expect(t,host.assets_scan(&p.assets))
@@ -187,20 +184,23 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     testing.expect_value(t,counted.count+counted_temp.count-before,0)
     spawn_test_same(t,&p)
 
-    // The copy is no instance and holds what the prefab does: the bulb at its intensity, named by the lamp and by its glass.
+    // The copy is no instance of a document and holds what the prefab does: the bulb at its intensity, named by the lamp
+    // and by its glass. Its root alone says the prefab it is of; the bulb the lamp places is of no prefab here.
     w:=p.kept
-    testing.expect_value(t,core.count(&w.instances)+core.count(&w.members),0)
+    testing.expect_value(t,core.count(&w.members),0)
     lit,found:=core.get(core.read(&w.links),first)
     light,has_light:=core.get(core.read(&w.lights),lit.target)
     testing.expect(t,found && has_light && light.range==1 && light.intensity==4)
-    source,has_source:=core.get(core.read(&w.sources),first)
-    testing.expect(t,has_source && source.prefab==SPAWN_LAMP)
+    placed,of_prefab:=prefab_instance(host.app_world_ref(&p.app,p.kept),first)
+    testing.expect(t,of_prefab && placed.prefab==SPAWN_LAMP && placed.stamp==0)
+    _,inner_placed:=prefab_instance(host.app_world_ref(&p.app,p.kept),lit.target)
+    testing.expect(t,!inner_placed)
 
     // The bulb changes in memory, as an editor holds it unsaved: the lamp is read again, once.
     spawn_test_bulb(&bulb,&p.types,5)
     data,encoded:=asset.scene_bytes(&bulb)
     testing.expect_value(t,encoded,asset.Error.None)
-    testing.expect_value(t,asset.registry_memory_set(&p.assets.registry,"bulb.prefab",data),asset.Error.None)
+    testing.expect_value(t,asset.registry_memory_set(&p.assets.registry,"bulb.scene",data),asset.Error.None)
     delete(data)
     asset.scene_destroy(&bulb)
     testing.expect(t,host.assets_reload(&p.assets,SPAWN_BULB))
@@ -240,10 +240,9 @@ the_forms_a_world_keeps_are_bounded_and_the_one_spawned_longest_ago_goes :: proc
     defer spawn_test_close(&p)
     for at in 0..=PREFAB_FORMS {
         crate:asset.Scene
-        asset.scene_init(&crate,&p.types,asset.KIND_PREFAB,{0x5c,u64(at)+1})
+        asset.scene_init(&crate,&p.types,{0x5c,u64(at)+1})
         asset.scene_entity_add(&crate,1,0,"Crate")
-        crate.info.root=1
-        testing.expect_value(t,asset.scene_save(&crate,fmt.tprintf("%s/crate%d.prefab",p.folder,at)),asset.Error.None)
+        testing.expect_value(t,asset.scene_save(&crate,fmt.tprintf("%s/crate%d.scene",p.folder,at)),asset.Error.None)
         asset.scene_destroy(&crate)
     }
     testing.expect(t,host.assets_scan(&p.assets))

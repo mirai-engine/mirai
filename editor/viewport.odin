@@ -36,7 +36,7 @@ VIEW_FOV_MAX :: f32(170)
 // prefab, whose sun preview_sun turns on, and in a scene while the viewport
 // asks for it (studio_light), without its ground, which the grid of the editor
 // shows. Nothing of the world changes; turned off, the scene gets back its own.
-@(step="render",after="render_sync")
+@(step="render")
 studio_lighting :: proc(s:^Session,app:^host.App,sync:core.Ref(erender.Render_Sync)) {
     r:=app.renderer
     if r==nil || app.ui_only {return}
@@ -731,7 +731,7 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     }
     point:=placement_point(s,d,hit)
     if d.kind==.Asset {content_used(s,d.asset_id)}
-    if d.kind==.Asset && d.asset_kind==asset.KIND_PREFAB {
+    if d.kind==.Asset && d.asset_kind==SHOWN_PREFAB {
         root:=prefab_place_linked(s,d.asset_id,point)
         if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
@@ -968,6 +968,7 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
 REACH_LIGHT :: ui.Color{255,205,90,255}
 REACH_SOUND :: ui.Color{176,160,255,255}
 REACH_VOLUME :: ui.Color{120,220,200,255}
+REACH_PLANE :: f32(4) // m, half the side of the patch that shows a plane volume
 REACH_FAINT :: u8(150)  // alpha of the outer shape of a reach
 REACH_WIDTH :: f32(2)   // points
 REACH_SEGMENTS :: 64    // of a circle
@@ -1052,6 +1053,11 @@ reach_draw :: proc(s:^Session,w:core.World_Ref) {
             stroke_sphere(ctx,v,world.position,zone.extents.x*max(scale.x,scale.y,scale.z),REACH_VOLUME)
         } else if ok && zone.shape==.Box {
             stroke_box(ctx,v,world,zone.extents,REACH_VOLUME)
+        } else if ok && zone.shape==.Plane {
+            // A patch of the plane, and under it, where it rules.
+            flat:=mm.Transform{world.position,world.rotation,{1,1,1}}
+            stroke_box(ctx,v,flat,{REACH_PLANE,0,REACH_PLANE},REACH_VOLUME)
+            stroke_line(ctx,v,world.position,world.position-mm.quat_rotate(world.rotation,[3]f32{0,REACH_PLANE*0.5,0}),REACH_VOLUME)
         }
         if entity_has(w,e,erender.Mesh_Renderer) {continue}
         if point,ok:=entity_get(w,e,erender.Point_Light);ok && point.range>0 {stroke_sphere(ctx,v,world.position,point.range,REACH_LIGHT)}
