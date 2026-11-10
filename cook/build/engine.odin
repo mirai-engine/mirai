@@ -191,14 +191,14 @@ library_present :: proc(library,linked_against:string) -> bool {
     return os.is_file(library) && os.is_file(linked_against)
 }
 
-// Release unless --dev is asked for: no command takes its mode from what was built before.
+// Dev unless --release is asked for: no command takes its mode from what was built before.
 Engine_Mode :: enum u8 {
-    Release, // -o:speed: to play, measure and ship
     Dev,     // -o:minimal: for whoever changes the engine
+    Release, // -o:speed: to play, measure and ship
 }
 
 @(private)
-ENGINE_MODE_FOLDERS :: [Engine_Mode]string{.Release="release",.Dev="dev"}
+ENGINE_MODE_FOLDERS :: [Engine_Mode]string{.Dev="dev",.Release="release"}
 
 // The mode of the binaries this code is compiled into. The editor builds the
 // libraries of a project against the declarations of its own mode.
