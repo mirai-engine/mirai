@@ -54,7 +54,14 @@ tool_find :: proc(s:^Server,name:string) -> ^Method {
 // tags of their fields.
 schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (index:serial.Type_Index,ok:bool) {
     if id==nil {return serial.TYPE_NONE,true}
+    // Without its information the type is of this binary. One of another, with
+    // its own type table, is not in the table of this one.
     root:=info!=nil?info:type_info_of(id)
+    if root.id!=id {
+        delete(s.schema.error,s.schema.allocator)
+        s.schema.error=format_text(s.schema.allocator,"a type of another library without its information: pass type_info_of of it (params_info, result_info)")
+        return serial.TYPE_NONE,false
+    }
     first_type:=len(s.schema.types)
     index=serial.schema_add_type_info(&s.schema,root) or_return
     infos:=make(map[typeid]^runtime.Type_Info,context.temp_allocator)
@@ -69,7 +76,9 @@ schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (ind
             s.schema.error=format_text(s.schema.allocator,"%v has more than %d fields",type_id,MAX_STRUCT_FIELDS)
             return serial.TYPE_NONE,false
         }
-        info,is_struct:=runtime.type_info_base(infos[type_id] or_else type_info_of(type_id)).variant.(runtime.Type_Info_Struct)
+        found:=infos[type_id] or_else type_info_of(type_id)
+        if found.id!=type_id {continue}
+        info,is_struct:=runtime.type_info_base(found).variant.(runtime.Type_Info_Struct)
         if !is_struct {continue}
         at:=int(type.first)
         field_tags_record(s,info,&at)
