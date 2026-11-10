@@ -142,14 +142,16 @@ binaural and panning effects.
   (low shelf, peak, high shelf at 800 Hz and 8 kHz): air absorption over the distance, and
   `occlusion` blending each band toward `transmission`. The EQ is normalized to a peak of 1 with a
   floor of 24 dB, so distance and occlusion take highs first and never raise a band. A change of
-  gains crossfades the old and the new cascade over the chunk.
+  gains crossfades the old and the new cascade over the chunk. While every band is within 0.5 dB of
+  unity (near and in sight) the EQ is left out, and on speakers the voice mixes into its bus as a
+  panned voice; coming in or out, the EQ crossfades with the dry signal.
 - **Output.** `Output_Kind` is one per mixer: on headphones each voice is convolved with the HRTF of
-  its direction (bilinear blend of log magnitude and unwrapped phase of the four measurements
-  around it), in blocks cut at the chunks whose shared samples crossfade a change of direction.
-  Every voice is transformed once and its products with the HRTF add up per bus, which goes back
-  to time once per chunk into one ring per bus; the output is `BINAURAL_OVERLAP` samples late
-  whatever size the render has. A source that turned less than a quarter of the finest spacing of
-  the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
+  its direction (bilinear blend of log magnitude and unwrapped phase of the four measurements around
+  it), in blocks cut at the chunks whose shared samples crossfade a change of direction. Every voice
+  is transformed once (none once it is silent) and its products with the HRTF add up per bus, which
+  goes back to time once per chunk into one ring per bus; the output is `BINAURAL_OVERLAP` samples
+  late whatever size the render has. A source that turned less than a quarter of the finest spacing
+  of the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
   pans with constant power; a mono output plays it centered.
 - The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), so the mixer
   only runs at the rates it was measured at. It is loaded and transformed when the mixer is
