@@ -46,9 +46,9 @@ app_settings_load :: proc(app:^App,data:rawptr,place:core.Place) {
 }
 
 // A file of the options of the player; "" without them.
-app_options_file :: proc(app:^App,name:string,allocator:=context.temp_allocator) -> string {
+app_options_file :: proc(app:^App,name:string) -> string {
     if app.options=="" {return ""}
-    return strings.concatenate({app.options,"/",name},allocator)
+    return strings.concatenate({app.options,"/",name},context.temp_allocator)
 }
 
 // Writes the settings of the machine of the application and of a world, as

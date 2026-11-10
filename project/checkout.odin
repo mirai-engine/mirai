@@ -38,14 +38,18 @@ shared_root :: proc(root:string,allocator:=context.allocator) -> string {
 // The folder of the files of the engine on this machine: the .mirai of its
 // main checkout. "" when the engine is not known.
 machine_folder :: proc(engine_root:string,allocator:=context.allocator) -> string {
-    if engine_root=="" {return strings.clone("",allocator)}
+    if engine_root=="" {return ""}
     return folder_path(shared_root(engine_root,context.temp_allocator),.Generated,allocator)
 }
 
 @(private="file")
 forward_slashes :: proc(text:string,allocator:=context.allocator) -> string {
-    result,_:=strings.replace_all(text,"\\","/",allocator)
-    return strings.clone(result,allocator) if raw_data(result)==raw_data(text) else result
+    result,error:=strings.clone(text,allocator)
+    if error!=nil {return ""}
+    for &c in transmute([]u8)result {
+        if c=='\\' {c='/'}
+    }
+    return result
 }
 
 // The folder of the agents of the editor for the user of this machine,
@@ -55,11 +59,11 @@ forward_slashes :: proc(text:string,allocator:=context.allocator) -> string {
 AGENTS_FOLDER :: "Editor agents"
 agents_folder :: proc(allocator:=context.allocator) -> string {
     data,error:=os.user_data_dir(context.temp_allocator)
-    if error!=nil {return strings.clone("",allocator)}
+    if error!=nil {return ""}
     folder:=forward_slashes(path(data,"Mirai",AGENTS_FOLDER,allocator=context.temp_allocator),allocator)
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {
         delete(folder,allocator)
-        return strings.clone("",allocator)
+        return ""
     }
     return folder
 }

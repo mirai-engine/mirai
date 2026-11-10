@@ -214,12 +214,14 @@ source_valid :: proc(source:Cluster_Source) -> Cluster_Error {
 // in allocator). The triangles of each range are clusters of its submesh; a
 // vertex used by two ranges of different submeshes is Invalid_Mesh, since a
 // simplified triangle takes the submesh of its vertices. Equal input gives
-// an identical DAG. Scratch memory comes from context.temp_allocator.
-cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=context.allocator) -> Cluster_Error #no_bounds_check {
+// an identical DAG. Scratch memory comes from context.temp_allocator. An
+// error leaves the DAG empty.
+cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=context.allocator) -> (error:Cluster_Error) #no_bounds_check {
     cluster_dag_destroy(dag)
     dag.clusters=make([dynamic]Cluster,allocator)
     dag.vertices=make([dynamic]u32,allocator)
     dag.triangles=make([dynamic]u8,allocator)
+    defer if error!=.None {dag_empty(dag)}
     if failed:=source_valid(source);failed!=.None {return failed}
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD(ignore=temp_is(allocator))
     scratch:=context.temp_allocator
@@ -299,9 +301,12 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
         context.temp_allocator=runtime.arena_allocator(&work)
         // The groups of this level, as runs of sorted.
         group_count:=1
-        resize(&group_of,len(clusters))
+        if resize(&group_of,len(clusters))!=nil {return .Out_Of_Memory}
         if len(clusters)>CLUSTER_GROUP_SIZE {
-            clear(&partition_indices);resize(&counts,len(clusters));resize(&generators,len(clusters))
+            clear(&partition_indices)
+            corners:=0
+            for c in clusters {corners+=int(c.index_count)}
+            if resize(&counts,len(clusters))!=nil || resize(&generators,len(clusters))!=nil || reserve(&partition_indices,corners)!=nil {return .Out_Of_Memory}
             for c,i in clusters {
                 for index in cluster_indices[c.index_offset:][:c.index_count] {append(&partition_indices,remap[index])}
                 counts[i]=c.index_count
@@ -318,8 +323,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
         if offsets==nil {return .Out_Of_Memory}
         for g in group_of {offsets[g+1]+=1}
         for g in 0..<group_count {offsets[g+1]+=offsets[g]}
-        resize(&sorted,len(clusters))
-        resize(&order,group_count)
+        if resize(&sorted,len(clusters))!=nil || resize(&order,group_count)!=nil {return .Out_Of_Memory}
         copy(order[:],offsets[:group_count])
         for c,i in clusters {
             sorted[order[group_of[i]]]=c
@@ -355,11 +359,13 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
             defer runtime.arena_temp_end(group_temp)
             group:=sorted[offsets[g]:offsets[g+1]]
             clear(&merged)
+            corners:=0
+            for c in group {corners+=int(c.index_count)}
+            if reserve(&merged,corners)!=nil {return .Out_Of_Memory}
             for c in group {append(&merged,..cluster_indices[c.index_offset:][:c.index_count])}
             target:=int(f32(len(merged)/3)*CLUSTER_SIMPLIFY_RATIO)*3
             bounds,bounded:=lod_merge(group,context.temp_allocator)
-            if !bounded {return .Out_Of_Memory}
-            resize(&simplified,len(merged))
+            if !bounded || resize(&simplified,len(merged))!=nil {return .Out_Of_Memory}
             options:=Simplify_Options{.Sparse,.Error_Absolute}
             result,failed:=simplify(simplified[:],merged[:],source.positions,target,max(f32),options,source.attributes,source.attribute_weights,locks)
             if failed==.None && result.index_count>target {
@@ -386,7 +392,7 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
             if !written {return .Out_Of_Memory}
             // The triangles that remain, by submesh, each split in clusters of the next level.
             kept:=simplified[:result.index_count]
-            resize(&by_submesh,len(kept))
+            if resize(&by_submesh,len(kept))!=nil {return .Out_Of_Memory}
             first:=0
             for first<len(kept) {
                 submesh:=submesh_of[kept[first]]
@@ -417,6 +423,13 @@ cluster_dag_build :: proc(dag:^Cluster_Dag,source:Cluster_Source,allocator:=cont
     return .None
 }
 
+// Nothing of a DAG that did not end stays: its last group would be cut short.
+@(private="file")
+dag_empty :: proc(dag:^Cluster_Dag) {
+    clear(&dag.clusters);clear(&dag.vertices);clear(&dag.triangles)
+    dag.groups,dag.levels=0,0
+}
+
 // A discrete level of a mesh: its submeshes are ranges[first_range:][:range_count].
 Cluster_Level :: struct {first_range,range_count:u32,error:f32}
 
@@ -425,12 +438,13 @@ Cluster_Level :: struct {first_range,range_count:u32,error:f32}
 // of the mesh (level 0) as own and parent sphere, with the error of level k
 // as own and that of level k+1 as parent (max(f32) for the last). Errors
 // below that of the level before are raised to it. The cut of the DAG then
-// draws one whole level.
-cluster_levels_build :: proc(dag:^Cluster_Dag,positions:[]Vec3,indices:[]u32,ranges:[]Cluster_Range,levels:[]Cluster_Level,allocator:=context.allocator) -> Cluster_Error #no_bounds_check {
+// draws one whole level. An error leaves the DAG empty.
+cluster_levels_build :: proc(dag:^Cluster_Dag,positions:[]Vec3,indices:[]u32,ranges:[]Cluster_Range,levels:[]Cluster_Level,allocator:=context.allocator) -> (result:Cluster_Error) #no_bounds_check {
     cluster_dag_destroy(dag)
     dag.clusters=make([dynamic]Cluster,allocator)
     dag.vertices=make([dynamic]u32,allocator)
     dag.triangles=make([dynamic]u8,allocator)
+    defer if result!=.None {dag_empty(dag)}
     if failed:=source_valid({positions=positions,indices=indices,ranges=ranges});failed!=.None {return failed}
     for level in levels {
         if int(level.first_range)+int(level.range_count)>len(ranges) || !(level.error>=0) {return .Invalid_Mesh}

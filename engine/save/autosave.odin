@@ -41,7 +41,7 @@ Save_Game :: struct {
 }
 
 // The name of autosave n, from 1.
-autosave_name :: proc(n:int,allocator:=context.temp_allocator) -> string {return fmt.aprintf("%s %d",AUTOSAVE,n,allocator=allocator)}
+autosave_name :: proc(n:int) -> string {return fmt.tprintf("%s %d",AUTOSAVE,n)}
 
 // The autosave to write: the first of the count that is not there, else the
 // oldest. What waits to be written is the newest.

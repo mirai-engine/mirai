@@ -113,22 +113,26 @@ records_drop :: proc(r:^Section_Records,e:core.Entity) {
 }
 
 // A record of the section of e, which its scene brought locals to, for the
-// next look; the one it had goes.
+// next look; the one it had goes. Not ok, with no record, without memory for it.
 @(private)
-records_add :: proc(w:core.World_Ref,e:core.Entity,locals:[]base.Entity_Id) -> ^Section_Record {
+records_add :: proc(w:core.World_Ref,e:core.Entity,locals:[]base.Entity_Id) -> (record:^Section_Record,ok:bool) {
     r:=core.world_storage_of(w,Section_Records)
-    if r==nil || e==core.NONE {return nil}
+    if r==nil || e==core.NONE {return nil,true}
     records_drop(r,e)
     // Those of sections that went go now: a section dropped takes its own.
     es:=core.world_entities(w)
     for i:=len(r.items)-1;i>=0;i-=1 {
         if !core.alive(es,r.items[i].reference) {records_drop(r,r.items[i].reference)}
     }
-    sorted:=slice.clone(locals)
+    sorted,no_sorted:=slice.clone(locals)
+    if no_sorted!=nil {return nil,false}
     slice.sort(sorted)
-    append(&r.items,Section_Record{reference=e,locals=sorted,look=true})
+    if _,no_room:=append(&r.items,Section_Record{reference=e,locals=sorted,look=true});no_room!=nil {
+        delete(sorted)
+        return nil,false
+    }
     r.looks+=1
-    return &r.items[len(r.items)-1]
+    return &r.items[len(r.items)-1],true
 }
 
 // Every record waiting for a look sees each table as it is, past the rows the

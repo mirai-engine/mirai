@@ -453,18 +453,16 @@ particle_values_visit :: proc(visit:Particle_Value_Visitor,user:rawptr) -> bool 
     return walk(type_info_of(Particle_Info),0,"",{},path[:],0,visit,user)
 }
 
-particle_fields :: proc(allocator:=context.temp_allocator) -> []Particle_Value {
-    Collect :: struct {list:^[dynamic]Particle_Value,allocator:runtime.Allocator}
-    list:=make([dynamic]Particle_Value,allocator)
-    collect:=Collect{&list,allocator}
+// In the temporary allocator.
+particle_fields :: proc() -> []Particle_Value {
+    list:=make([dynamic]Particle_Value,context.temp_allocator)
     add :: proc(value:Particle_Value,user:rawptr) -> bool {
-        c:=cast(^Collect)user
         kept:=value
-        kept.path=strings.clone(value.path,c.allocator)
-        append(c.list,kept)
+        kept.path=strings.clone(value.path,context.temp_allocator)
+        append(cast(^[dynamic]Particle_Value)user,kept)
         return true
     }
-    particle_values_visit(add,&collect)
+    particle_values_visit(add,&list)
     return list[:]
 }
 

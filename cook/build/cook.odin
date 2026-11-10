@@ -605,7 +605,7 @@ scene_cook :: proc(resolver:^asset.Prefab_Resolver,types:^asset.Types,data:[]u8)
     file:asset.Asset
     if asset.asset_open(&file,data,context.temp_allocator)!=.None {return nil,false}
     defer asset.asset_close(&file)
-    if !asset.resolver_stale(resolver,&file) {return nil,true}
+    if !asset.resolver_stale(resolver,&file) {return nil,resolver.error==.None}
     scene:asset.Scene
     if asset.scene_from_asset(&scene,types,&file,context.temp_allocator)!=.None {return nil,false}
     defer asset.scene_destroy(&scene)

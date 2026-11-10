@@ -56,8 +56,7 @@ registry_memory_drop :: proc(r:^Registry,path:string) -> (dropped:bool,error:Err
     if info,stat_error:=os.stat(full,context.temp_allocator);stat_error==nil && info.type==.Regular {
         file:=Registry_File{size=info.size,time=time.time_to_unix_nano(info.modification_time),first_dependency=u32(len(r.dependencies))}
         error=registry_probe(r,full,&file,&r.dependencies)
-        file.path=strings.clone(path,r.allocator)
-        append(&r.files,file)
+        if added:=registry_file_add(r,file,path);added!=.None {error=added}
     }
     r.revision+=1
     if indexed:=registry_index(r);indexed!=.None {error=indexed}
@@ -148,8 +147,7 @@ registry_memory_record :: proc(r:^Registry,held:^Registry_Memory) -> (error:Erro
     if held.removed {return}
     file:=Registry_File{size=i64(len(held.data)),time=r.memory_time,first_dependency=u32(len(r.dependencies))}
     error=registry_probe(r,"",&file,&r.dependencies,held.data)
-    file.path=strings.clone(held.path,r.allocator)
-    append(&r.files,file)
+    if added:=registry_file_add(r,file,held.path);added!=.None {error=added}
     return
 }
 
@@ -170,7 +168,9 @@ registry_memory_free_data :: proc(r:^Registry,held:^Registry_Memory) {
 @(private="file")
 registry_memory_take :: proc(r:^Registry,path:string) -> (held:^Registry_Memory,error:Error) {
     if found,known:=registry_memory_find(r,path);known {return found,.None}
-    entry:=Registry_Memory{path=strings.clone(path,r.allocator)}
+    entry:Registry_Memory
+    no_path:mem.Allocator_Error
+    if entry.path,no_path=strings.clone(path,r.allocator);no_path!=nil {return nil,.Out_Of_Memory}
     if _,appended:=append(&r.memory,entry);appended!=nil {
         delete(entry.path,r.allocator)
         return nil,.Out_Of_Memory

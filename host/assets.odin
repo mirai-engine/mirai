@@ -257,15 +257,15 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     capacity:=desc.capacity>0?desc.capacity:ASSETS_DEFAULT_CAPACITY
     a^={allocator=allocator,renderer=desc.renderer}
-    asset.registry_init(&a.registry,desc.root,desc.cache,allocator)
+    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator)
     // A copy of an asset made outside the editor gets an id of its own.
     a.registry.resolve_duplicates=true
-    for mount in desc.mounts {asset.registry_mount(&a.registry,mount.folder,mount.prefix)}
+    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix)}
     asset.types_init(&a.types,allocator)
     a.index=make(map[base.Asset_Id]Assets_Ref,allocator)
     a.derived=make(map[u64]u32,allocator)
     start:=min(capacity,ASSETS_START)
-    ok:=reserve(&a.index,start*4)==nil && reserve(&a.derived,start)==nil
+    ok:=listed && reserve(&a.index,start*4)==nil && reserve(&a.derived,start)==nil
     made:[7]bool
     a.meshes,made[0]=base.region_dynamic(&a.regions[0],Assets_Mesh,capacity)
     a.textures,made[1]=base.region_dynamic(&a.regions[1],Assets_Texture,capacity)
@@ -290,8 +290,9 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     ok=ok && cap(a.material_descs)==capacity*2 && cap(a.row_marks)==capacity*2 && cap(a.row_hashes)==capacity*2 && cap(a.free_rows)==start && cap(a.free_meshes)==start && cap(a.rows_dirty)==ASSETS_ROWS_DIRTY
     ok=ok && cap(a.free_textures)==start && cap(a.free_materials)==start && cap(a.free_scenes)==start
     if ok {
-        index:=strings.concatenate({desc.root,"/",asset.REGISTRY_INDEX},allocator)
-        a.indexed=asset.registry_load(&a.registry,index)==.None
+        index,no_index:=strings.concatenate({desc.root,"/",asset.REGISTRY_INDEX},allocator)
+        ok=no_index==nil
+        a.indexed=ok && asset.registry_load(&a.registry,index)==.None
         delete(index,allocator)
     }
     if !ok || (!a.indexed && asset.registry_scan(&a.registry)!=.None) {

@@ -1,5 +1,6 @@
 package host
 
+import "base:runtime"
 import "core:log"
 import "core:os"
 import "core:path/filepath"
@@ -107,20 +108,21 @@ app_shaders_read :: proc(app:^App,folder:string,assets:^render.Shader_Assets) ->
 
 // The generation the renderer starts with, or nil for the embedded shaders.
 // The project is the folder desc.shaders_root names, or the one that holds
-// the assets.
+// the assets. Not ok without memory for the name of that folder.
 @(private)
-app_shaders_open :: proc(app:^App,desc:App_Desc,assets:^render.Shader_Assets) -> ^render.Shader_Assets {
+app_shaders_open :: proc(app:^App,desc:App_Desc,assets:^render.Shader_Assets) -> (shaders:^render.Shader_Assets,ok:bool) {
     app.shaders.loads=make([dynamic]^Shaders_Load,app.allocator)
     root:=desc.shaders_root
     if root=="" && desc.assets_root!="" {root=filepath.dir(strings.trim_right(desc.assets_root,"/\\"))}
-    if root=="" {return nil}
-    app.shaders.root=strings.clone(root,app.allocator)
+    if root=="" {return nil,true}
+    no_root:runtime.Allocator_Error
+    if app.shaders.root,no_root=strings.clone(root,app.allocator);no_root!=nil {return nil,false}
     folder:=project.shader_generation_find(root,context.temp_allocator)
     app.shaders.stamp=shaders_stamp(folder)
-    if folder=="" || !app_shaders_read(app,folder,assets) {return nil}
+    if folder=="" || !app_shaders_read(app,folder,assets) {return nil,true}
     app.shaders.state=.Loaded
     app.shaders.identity=shaders_identity(folder)
-    return assets
+    return assets,true
 }
 
 // Waits for the pipeline the driver compiles of each load.
@@ -167,7 +169,10 @@ app_shaders_load :: proc(app:^App,folder:string) -> u64 {
         return 0
     }
     load,error:=new(Shaders_Load,app.allocator)
-    if error!=nil {
+    kept,no_folder:=strings.clone(folder,app.allocator)
+    if error!=nil || no_folder!=nil {
+        free(load,app.allocator)
+        delete(kept,app.allocator)
         render.shader_assets_destroy(&assets)
         render.program_catalog_destroy(&catalog)
         sh.state=.Failed
@@ -175,7 +180,7 @@ app_shaders_load :: proc(app:^App,folder:string) -> u64 {
         return 0
     }
     sh.requested+=1
-    load.ticket,load.folder,load.stamp,load.identity=sh.requested,strings.clone(folder,app.allocator),stamp,shaders_identity(folder)
+    load.ticket,load.folder,load.stamp,load.identity=sh.requested,kept,stamp,shaders_identity(folder)
     load.asked=time.tick_now()
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     load.assets=assets

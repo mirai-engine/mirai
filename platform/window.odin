@@ -290,7 +290,12 @@ display_names :: proc(p:^Platform,allocator:=context.allocator) -> []string {
     defer sdl.free(displays)
     names,error:=make([]string,int(count),allocator)
     if error!=nil {return nil}
-    for &name,i in names {name=strings.clone_from_cstring(sdl.GetDisplayName(displays[i]),allocator)}
+    for &name,i in names {
+        if name,error=strings.clone_from_cstring(sdl.GetDisplayName(displays[i]),allocator);error==nil {continue}
+        for taken in names[:i] {delete(taken,allocator)}
+        delete(names,allocator)
+        return nil
+    }
     return names
 }
 
@@ -491,16 +496,17 @@ clipboard_set :: proc(p:^Platform,text:string) -> bool {
     }
     return sdl.SetClipboardText(strings.clone_to_cstring(text,context.temp_allocator))
 }
-clipboard_get :: proc(p:^Platform,allocator:=context.temp_allocator) -> (text:string,ok:bool) {
+// The text of the clipboard, in the temporary allocator.
+clipboard_get :: proc(p:^Platform) -> (text:string,ok:bool) {
     if p.headless {
         if p.clipboard_length==0 {return "",false}
-        return strings.clone(string(p.clipboard[:p.clipboard_length]),allocator),true
+        return strings.clone(string(p.clipboard[:p.clipboard_length]),context.temp_allocator),true
     }
     if !sdl.HasClipboardText() {return "",false}
     raw:=sdl.GetClipboardText()
     if raw==nil {return "",false}
     defer sdl.free(raw)
-    return strings.clone(string(cstring(raw)),allocator),true
+    return strings.clone(string(cstring(raw)),context.temp_allocator),true
 }
 
 // The ^sdl.Window, nil when headless.

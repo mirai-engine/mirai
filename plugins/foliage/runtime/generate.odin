@@ -30,13 +30,22 @@ scatter_key :: proc "contextless" (seed:u32,coord:[2]i32,type:u32) -> u64 {
     return base.hash_u64(u64(seed)<<32 ~ u64(type)) ~ base.hash_u64(u64(u32(coord.x)) | u64(u32(coord.y))<<32)
 }
 
-// The points of one type in a cell, appended to out.
-scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) {
+// Room for more elements past the end, grown by doubling. False without memory.
+@(private)
+room :: proc(array:^[dynamic]$T,more:int) -> bool {
+    needed:=len(array)+more
+    return needed<=cap(array) || reserve(array,max(needed,2*cap(array)))==nil
+}
+
+// The points of one type in a cell, appended to out. False, with none
+// appended, without memory for them.
+scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) -> bool {
     key:=scatter_key(seed,coord,t.id)
     counter:=mm.rng_make(key)
     expected:=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)
     count:=u32(expected)
     if f64(mm.random_f32(&counter))<expected-f64(count) {count+=1}
+    if !room(out,int(count)) {return false}
     for point in 0..<count {
         r:=mm.rng_make(key,u64(point)+1)
         g:=Generated{type=t.id,point=point}
@@ -50,6 +59,7 @@ scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated) {
         g.offset=t.offset.x+(t.offset.y-t.offset.x)*mm.random_f32(&r)
         append(out,g)
     }
+    return true
 }
 
 // The ground under a cell, in the space of its entity (Foliage_Ground):
@@ -185,16 +195,21 @@ placed_grounded :: proc "contextless" (s:^Source,coord:[2]i32,b:Foliage_Instance
 // and point, as the points of a type are: each type walks its own range of
 // them once. The ids in removed (in order: those taken out in play,
 // Foliage_Removed) are not there; one that names nothing of the cell takes
-// nothing out.
+// nothing out. False, with nothing appended, without memory: each part
+// takes the room of all it appends before it writes.
 cell_expand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,out:^[dynamic]Placed,orphans:^[dynamic]int,scratch:^Expand_Scratch,removed:[]u64={}) -> bool {
     first:=len(out)
-    for b in cell.manual {append(out,placed_grounded(s,cell.coord,b,b.type,MANUAL | u64(b.id),ground))}
     clear(&scratch.matched)
-    if resize(&scratch.matched,len(cell.overrides))!=nil {base.truncate(out,first);return false}
+    if !room(out,len(cell.manual)) || !room(orphans,len(cell.overrides)) || resize(&scratch.matched,len(cell.overrides))!=nil {return false}
+    for b in cell.manual {append(out,placed_grounded(s,cell.coord,b,b.type,MANUAL | u64(b.id),ground))}
     if cell.generate {
         for t in s.types {
             clear(&scratch.points)
-            scatter(s.info.seed,cell.coord,t,&scratch.points)
+            // A point gives one instance at most.
+            if !scatter(s.info.seed,cell.coord,t,&scratch.points) || !room(out,len(scratch.points)) {
+                base.truncate(out,first)
+                return false
+            }
             at:=override_lower(cell,t.id,0)
             for g in scratch.points {
                 for at<len(cell.overrides) && cell.overrides[at].type==t.id && cell.overrides[at].point<g.point {at+=1}

@@ -853,7 +853,7 @@ prefab_entities_an_instance_adds_go_into_the_prefab_and_come_back_out :: proc(t:
 Test_Files :: struct {assets:map[base.Asset_Id]^Asset}
 
 @(private="file")
-test_files_open :: proc(data:rawptr,id:base.Asset_Id) -> ^Asset {return (^Test_Files)(data).assets[id] or_else nil}
+test_files_open :: proc(data:rawptr,id:base.Asset_Id) -> (^Asset,Error) {return (^Test_Files)(data).assets[id] or_else nil,.None}
 
 @(private="file")
 test_file_put :: proc(t:^testing.T,files:^Test_Files,scene:^Scene) {
@@ -971,7 +971,10 @@ scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     defer asset_close(&file)
     view,view_error:=scene_view(&file,&types)
     if !testing.expect_value(t,view_error,Error.None) {return}
-    Call :: enum {View_Check,Instantiate,Set,Remove,Diff,From_Asset}
+    // The prefab as a registry holds it in memory, for whoever resolves instances of it.
+    registry:Registry;registry_init(&registry,"");defer registry_destroy(&registry)
+    if !testing.expect_value(t,registry_memory_set(&registry,"lamp.prefab",serial.writer_bytes(&out)),Error.None) {return}
+    Call :: enum {View_Check,Instantiate,Set,Remove,Diff,From_Asset,Prefab_File}
     for call in Call {
         scene:Scene
         if !testing.expect_value(t,scene_init(&scene,&types,KIND_SCENE,{0xb,0xb},limited),Error.None) {return}
@@ -1000,6 +1003,14 @@ scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
             case .From_Asset:
                 doc:Document
                 if error=document_from_asset(&doc,&file,limited);error==.None {document_destroy(&doc)}
+            case .Prefab_File:
+                files:Registry_Prefabs;registry_prefabs_init(&files,&registry,limited)
+                r:Prefab_Resolver;resolver_init(&r,&types,registry_prefab_files(&files),limited)
+                found:^Scene
+                found,error=resolver_prefab(&r,prefab.doc.id)
+                // A prefab that is there does not read as missing for lack of memory.
+                if error==.None && found==nil {error=.Not_Found}
+                resolver_destroy(&r);registry_prefabs_destroy(&files)
             }
             failure.remaining=max(int)
             if done=error==.None;done {break}
