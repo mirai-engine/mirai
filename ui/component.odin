@@ -5,15 +5,6 @@ import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-Node_Field :: enum u8 {
-    Text, Style, Layout, Float, Image, Animations, Bindings, Visibility, Variant, Layer, Clip, Block,
-    Values, // index, count, choice, range, limit, delay and particle
-    Action, // action and hold
-    Focus,  // nav, order and flags
-    Drag,   // tag, accepts and ghost
-}
-Node_Fields :: bit_set[Node_Field; u32]
-NODE_FIELDS_UNKNOWN :: ~u32(1<<len(Node_Field)-1) // bits of Node_Fields that name no field
 Tree_Component :: struct {
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
     first,count:u32, // the range of component_nodes tree_link expanded it into; 0 in a file
