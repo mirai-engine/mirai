@@ -5,7 +5,6 @@ import "mirai:editor/api"
 import "mirai:asset"
 import "mirai:editor/history"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 Api_Document_Params :: struct {
     action:enum u8 {Open,Activate,Close,Preview_Sun} `mirai:"label=Open takes a scene or a prefab or an asset that opens as a document (a material or a kind a plugin declares); Preview_Sun turns the preview sun of a prefab on or off"`,

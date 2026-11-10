@@ -3,7 +3,6 @@ package ui_inspector_editor
 import "base:runtime"
 import "core:fmt"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"

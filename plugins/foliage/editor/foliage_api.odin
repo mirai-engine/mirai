@@ -10,7 +10,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import foliage "plugins:foliage/runtime"
 
 // The methods of the foliage for agents and scripts: what the panel does,

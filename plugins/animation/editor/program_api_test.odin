@@ -1,8 +1,6 @@
 package animation_editor
 
 import "core:fmt"
-import "core:mem"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -11,7 +9,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
-import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 

@@ -14,7 +14,6 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 // What the tools of the editor do each frame besides drawing: the atlas of
 // previews the renderer is given, the files that arrive to be imported, and the popups and panels that float over

@@ -7,7 +7,6 @@ import "mirai:core"
 import "mirai:editor/api"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 result_shape_mismatch :: proc($T:typeid,text:string) -> string {return api.result_mismatch(T,text)}

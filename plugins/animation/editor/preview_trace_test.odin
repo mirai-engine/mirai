@@ -1,14 +1,12 @@
 package animation_editor
 
 import "core:fmt"
-import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
-import "mirai:std/serial"
 import lib "mirai:std/anim"
 import anim "plugins:animation/runtime"
 

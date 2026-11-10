@@ -9,7 +9,6 @@ import "mirai:editor/api"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // Deleting an asset from the content browser or the API: the file goes to the

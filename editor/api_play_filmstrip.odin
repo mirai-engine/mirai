@@ -8,7 +8,6 @@ import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
-import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 

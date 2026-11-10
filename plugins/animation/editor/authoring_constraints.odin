@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:mem"
 import "mirai:editor/api"
 import lib "mirai:std/anim"
-import "mirai:std/serial"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 

@@ -9,7 +9,6 @@ import "mirai:editor/api"
 import scene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
 
 // Keeps the .navmesh of each Navigation_Bake of the edited world as its

@@ -5,7 +5,6 @@ import aa "mirai:asset"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 import mm "mirai:std/math"
 
 Authoring_Bone :: struct {

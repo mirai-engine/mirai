@@ -5,7 +5,6 @@ import "mirai:asset"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Profile_Table :: enum u8 {IK,Look,Limit,Contact,Grounding,Retarget,Chain_IK,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Corrective,Follow,Curve_Pose,Curve_Drive,Curve_Material}

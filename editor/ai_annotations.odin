@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // The pins a user drops on the scene for the agent: a tool of the viewport

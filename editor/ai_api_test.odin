@@ -1,7 +1,5 @@
 package editor
 
-import "core:encoding/json"
-import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/ai_store"

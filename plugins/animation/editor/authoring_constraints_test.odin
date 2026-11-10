@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
-import "mirai:editor"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 

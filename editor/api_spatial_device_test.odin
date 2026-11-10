@@ -1,6 +1,5 @@
 package editor
 
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:strings"
@@ -8,8 +7,6 @@ import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
-import erender "mirai:engine/render"
-import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"

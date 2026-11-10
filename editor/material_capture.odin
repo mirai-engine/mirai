@@ -10,7 +10,6 @@ import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 // material.preview.capture: a material on the sphere of the studio, the one
 // of its previews, as an image and as what it gives at each pixel. Each view

@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 // A bone or socket asked, found on the skeleton: its bone, and for a socket its offset on it.

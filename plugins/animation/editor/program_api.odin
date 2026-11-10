@@ -7,11 +7,9 @@ import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
-import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Program_Blend_Sample :: struct {position:mm.Vec2 `mirai:"label=In the units of the axes"`,clip:[64]u8 `mirai:"text,label=A clip of its animation"`,speed:f32 `mirai:"optional"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of info"`}

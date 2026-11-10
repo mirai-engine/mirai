@@ -2,7 +2,6 @@ package editor
 
 import "mirai:asset"
 import "mirai:editor/api"
-import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
 

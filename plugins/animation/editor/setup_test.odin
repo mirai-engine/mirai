@@ -2,7 +2,6 @@ package animation_editor
 
 import "core:fmt"
 import cmath "core:math"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"

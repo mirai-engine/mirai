@@ -4,7 +4,6 @@ import "core:encoding/json"
 import "core:strings"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 Ai_Connect_Params :: struct {
     provider:[32]u8 `mirai:"text,label=Id of a connection of ai.connections"`,

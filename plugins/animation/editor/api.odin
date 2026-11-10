@@ -9,8 +9,6 @@ import erender "mirai:engine/render"
 import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
-import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 @(storage)

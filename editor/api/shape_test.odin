@@ -3,7 +3,6 @@ package api
 import "core:strings"
 import "core:fmt"
 import "core:testing"
-import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file")

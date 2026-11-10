@@ -9,7 +9,6 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 PREVIEW_TRACE_TOTAL :: 1024 // rows of leaves, events and curves of every traced tick

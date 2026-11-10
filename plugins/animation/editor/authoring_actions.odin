@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Action_Section_Params :: struct {action,name:[64]u8 `mirai:"text"`,start,end:f32 `mirai:"min=0,unit=s"`,next:[64]u8 `mirai:"text,optional,label=The section of the same action that follows in any row; empty completes the action"`}

@@ -1,6 +1,5 @@
 package editor
 
-import "core:fmt"
 import "core:math"
 import "core:slice"
 import "mirai:core"

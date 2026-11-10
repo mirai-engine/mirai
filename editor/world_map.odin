@@ -12,7 +12,6 @@ import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // The World tab: a map of the sections of the scene from above (Top) or

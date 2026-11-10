@@ -5,7 +5,6 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
-import "mirai:host"
 import "mirai:project"
 import "mirai:std/serial"
 

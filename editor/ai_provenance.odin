@@ -7,7 +7,6 @@ import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // Who last changed an entity or an asset, written where the review of a turn

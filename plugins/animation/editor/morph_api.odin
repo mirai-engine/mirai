@@ -7,7 +7,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
 import "mirai:std/base"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Morph_Set_Params :: struct {

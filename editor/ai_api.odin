@@ -5,7 +5,6 @@ import "core:strings"
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 Ai_Task_Params :: struct {

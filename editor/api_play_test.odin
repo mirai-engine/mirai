@@ -14,7 +14,6 @@ import "mirai:editor/history"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:platform"
-import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
 

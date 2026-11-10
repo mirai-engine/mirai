@@ -2,7 +2,6 @@ package editor
 
 import "core:fmt"
 import "core:log"
-import "core:math/linalg"
 import "core:os"
 import "core:path/filepath"
 import "core:strconv"
@@ -19,7 +18,6 @@ import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
-import mm "mirai:std/math"
 import "mirai:std/subprocess"
 import "mirai:ui"
 

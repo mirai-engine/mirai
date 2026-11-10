@@ -1,12 +1,9 @@
 package editor
 
-import "base:runtime"
-import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:cook/workspace"
@@ -61,105 +58,8 @@ Api_Profile_Export_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=JSON file to write; empty: .mirai/profiles/profile-<id>.json of the project"`,
 }
 
-// What the methods answer, as json.marshal writes it; the Api_Profile structs
-// after them describe the same keys for the schemas of the methods.
-
-Profile_Stat_Out :: struct {name:string,mean_ms,p95_ms,max_ms:f64}
-Profile_Bounds_Out :: struct {cpu,gpu,paced:int}
-Profile_Frame_Stats_Out :: struct {
-    count:int,
-    mean_ms,p50_ms,p95_ms,p99_ms,max_ms,min_ms:f64,
-    fps:f64,
-    cpu_ms,wait_ms,pacing_ms,between_ms,gpu_ms:f64,
-    bound:Profile_Bounds_Out,
-    spikes:int,
-    worst:[]int,
-}
-Profile_Zone_Out :: struct {
-    name,thread:string,
-    calls_per_frame:f64,
-    self_ms,total_ms:f64,
-    p95_ms,max_ms:f64,
-    share:f64,
-}
-Profile_Workers_Out :: struct {
-    threads:int,
-    busy_ms:f64,
-    jobs_per_frame:f64,
-    utilization:f64,
-}
-Profile_Presentation_Out :: struct {
-    generated_frames,images:int,
-    images_per_second:f64,
-    interval_mean_ms,interval_deviation_ms:f64,
-    latency_mean_ms,latency_p95_ms:f64,
-}
-Profile_Summary_Out :: struct {
-    id:int,
-    label,state:string,
-    frames_recorded,frames_requested:int,
-    conditions:Profile_Conditions,
-    comparable:bool,
-    frame:Profile_Frame_Stats_Out,
-    presentation:Profile_Presentation_Out,
-    parts:[]Profile_Stat_Out,
-    zones:[]Profile_Zone_Out,
-    gpu:[]Profile_Stat_Out,
-    workers:Profile_Workers_Out,
-    lost_zones:u64,
-    notes:[]string,
-}
-Profile_Recording_Out :: struct {id:int,label,state:string,frames_requested:int}
-
-Profile_Tree_Out :: struct {name:string,depth:int,start_ms,ms,self_ms:f64}
-Profile_Pass_Out :: struct {name:string,ms:f64}
-Profile_Frame_Out :: struct {
-    index:int,
-    ms,cpu_ms,wait_ms,pacing_ms,between_ms,gpu_ms:f64,
-    bound:string,
-    workers_busy_ms:f64,
-    jobs:int,
-    zones:[]Profile_Tree_Out,
-    hidden_zones:int,
-    gpu:[]Profile_Pass_Out,
-}
-Profile_Frames_Out :: struct {id:int,frames:[]Profile_Frame_Out}
-
-Profile_Spread_Out :: struct {mean_ms,p50_ms,p95_ms,max_ms:f64}
-Profile_Parent_Out :: struct {name:string,calls_per_frame:f64}
-Profile_Related_Out :: struct {name:string,calls_per_frame,total_ms:f64}
-Profile_Worst_Out :: struct {index:int,ms,frame_ms:f64}
-Profile_Zone_Detail_Out :: struct {
-    id:int,
-    name,thread:string,
-    frames_present,calls:int,
-    calls_per_frame:f64,
-    total,self:Profile_Spread_Out,
-    share:f64,
-    parents:[]Profile_Parent_Out,
-    children:[]Profile_Related_Out,
-    worst_frames:[]Profile_Worst_Out,
-}
-
-Profile_Delta_Out :: struct {base,id,delta,delta_pct:f64}
-Profile_Change_Out :: struct {name,thread:string,base_ms,id_ms,delta_ms,delta_pct:f64}
-Profile_Difference_Out :: struct {field,base,id:string,blocking:bool}
-Profile_Compare_Out :: struct {
-    base,id:int,
-    comparable:bool,
-    differences:[]Profile_Difference_Out,
-    mean_ms,p95_ms,cpu_ms,gpu_ms:Profile_Delta_Out,
-    zones:[]Profile_Change_Out,
-    gpu:[]Profile_Change_Out,
-    only_in_base,only_in_id:[]string,
-    notes:[]string,
-}
-
-Profile_List_Item :: struct {id:int,label,state:string,frames:int,mean_ms,p95_ms:f64,mode,optimization,preset,document:string}
-Profile_List_Out :: struct {recording,recorded,requested:int,captures:[]Profile_List_Item}
-
 Api_Profile_Stat :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
+    name:string,
     mean_ms,p95_ms,max_ms:f32,
 }
 Api_Profile_Bounds :: struct {cpu,gpu,paced:int}
@@ -178,8 +78,8 @@ Api_Profile_Frame_Stats :: struct {
     worst:[]int `mirai:"label=The slowest frames by index; the slowest first"`,
 }
 Api_Profile_Zone :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
-    thread:[8]u8 `mirai:"text,label=main or workers"`,
+    name:string,
+    thread:string `mirai:"label=main or workers"`,
     calls_per_frame:f32,
     self_ms:f32 `mirai:"label=Mean per frame without the zones inside"`,
     total_ms:f32 `mirai:"label=Mean per frame"`,
@@ -193,29 +93,6 @@ Api_Profile_Workers :: struct {
     jobs_per_frame:f32,
     utilization:f32 `mirai:"label=busy_ms over threads times the mean frame"`,
 }
-Api_Profile_Conditions :: struct {
-    optimization:runtime.Odin_Optimization_Mode `mirai:"label=Of the engine"`,
-    debug:bool,
-    write_checks:bool `mirai:"label=MIRAI_CHECK_WRITES: every function of the loops checks what it writes"`,
-    validation:bool `mirai:"label=Of the graphics API"`,
-    backend:[8]u8 `mirai:"text,label=Vulkan or Metal; empty without a GPU"`,
-    device:[256]u8 `mirai:"text,label=The name of the GPU"`,
-    device_type:[16]u8 `mirai:"text,label=Other Integrated Discrete Virtual or CPU; empty without a GPU"`,
-    mode:Mode,
-    headless:bool,
-    manual:bool `mirai:"label=Frames run only when the API asks for them"`,
-    window:[2]int `mirai:"label=Pixels of the drawable"`,
-    render:[2]int `mirai:"label=Pixels the scene is rendered at"`,
-    preset:[16]u8 `mirai:"text,label=Low Medium High Ultra or Custom when the settings match none; empty without graphics settings"`,
-    render_scale:f32,
-    preset_height:u32,
-    vsync:bool,
-    frame_limit:u32 `mirai:"label=Frames per second; 0 is unlimited"`,
-    refresh_hz:f32 `mirai:"label=Of the display the window is on; 0 when unknown"`,
-    document:[API_PATH_BYTES]u8 `mirai:"text,label=Path of the scene; empty for one never saved"`,
-    entities:int `mirai:"label=Alive in the world shown"`,
-    workers:int `mirai:"label=Threads of the job system besides the main one"`,
-}
 Api_Profile_Presentation :: struct {
     generated_frames:int `mirai:"label=Frames that drew an image shown before their own (frame generation)"`,
     images:int `mirai:"label=Given to the display"`,
@@ -227,11 +104,11 @@ Api_Profile_Presentation :: struct {
 }
 Api_Profile_Summary :: struct {
     id:int `mirai:"label=What the id of the other profile methods takes"`,
-    label:[32]u8 `mirai:"text"`,
+    label:string,
     state:Profile_State `mirai:"label=Stopped: ended by profile.stop. While Recording (profile.capture without advance) only id and label and state and frames_requested are given"`,
     frames_recorded:int `mirai:"optional"`,
     frames_requested:int,
-    conditions:Api_Profile_Conditions `mirai:"optional,label=How it was measured"`,
+    conditions:Profile_Conditions `mirai:"optional,label=How it was measured"`,
     comparable:bool `mirai:"optional,label=Measured without VSync or a frame limit or graphics validation: its frame time is the cost"`,
     frame:Api_Profile_Frame_Stats `mirai:"optional"`,
     presentation:Api_Profile_Presentation `mirai:"optional,label=The images given to the display, the generated ones included"`,
@@ -240,18 +117,18 @@ Api_Profile_Summary :: struct {
     gpu:[]Api_Profile_Stat `mirai:"optional,label=The GPU passes that cost the most"`,
     workers:Api_Profile_Workers `mirai:"optional"`,
     lost_zones:u64 `mirai:"optional,label=Zones the recorder had no room for"`,
-    notes:[][PROFILE_NOTE_BYTES]u8 `mirai:"text,optional,label=What to know before reading the numbers"`,
+    notes:[]string `mirai:"optional,label=What to know before reading the numbers"`,
 }
 
 Api_Profile_Tree :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
+    name:string,
     depth:int `mirai:"label=1 for a part of the frame"`,
     start_ms:f32 `mirai:"label=Since the frame began"`,
     ms:f32,
     self_ms:f32 `mirai:"label=Without the zones inside"`,
 }
 Api_Profile_Pass :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
+    name:string,
     ms:f32,
 }
 Api_Profile_Frame :: struct {
@@ -276,11 +153,11 @@ Api_Profile_Frames :: struct {
 
 Api_Profile_Spread :: struct {mean_ms,p50_ms,p95_ms,max_ms:f32}
 Api_Profile_Parent :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
+    name:string,
     calls_per_frame:f32,
 }
 Api_Profile_Related :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
+    name:string,
     calls_per_frame,total_ms:f32,
 }
 Api_Profile_Worst :: struct {
@@ -290,8 +167,8 @@ Api_Profile_Worst :: struct {
 }
 Api_Profile_Zone_Detail :: struct {
     id:int,
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
-    thread:[8]u8 `mirai:"text,label=main or workers"`,
+    name:string,
+    thread:string `mirai:"label=main or workers"`,
     frames_present:int `mirai:"label=Frames it ran in"`,
     calls:int,
     calls_per_frame:f32,
@@ -309,15 +186,15 @@ Api_Profile_Delta :: struct {
     delta_pct:f32 `mirai:"label=Of base; 0 when base is 0"`,
 }
 Api_Profile_Change :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
-    thread:[8]u8 `mirai:"text,label=main or workers; gpu for a pass"`,
+    name:string,
+    thread:string `mirai:"label=main or workers; gpu for a pass"`,
     base_ms,id_ms,delta_ms:f32,
     delta_pct:f32 `mirai:"label=Of base_ms; 0 when it is 0"`,
 }
 Api_Profile_Difference :: struct {
-    field:[24]u8 `mirai:"text,label=A key of conditions"`,
-    base:[API_PATH_BYTES]u8 `mirai:"text,label=Its value in base as text"`,
-    id:[API_PATH_BYTES]u8 `mirai:"text,label=Its value in id as text"`,
+    field:string `mirai:"label=A key of conditions"`,
+    base:string `mirai:"label=Its value in base as text"`,
+    id:string `mirai:"label=Its value in id as text"`,
     blocking:bool `mirai:"label=It changes the times by itself"`,
 }
 Api_Profile_Compare :: struct {
@@ -330,9 +207,9 @@ Api_Profile_Compare :: struct {
     gpu_ms:Api_Profile_Delta `mirai:"label=Mean of the GPU"`,
     zones:[]Api_Profile_Change `mirai:"label=Own time per frame of the zones both have; the largest change first"`,
     gpu:[]Api_Profile_Change `mirai:"label=The GPU passes both have; the largest change first"`,
-    only_in_base:[][PROFILE_NAME_BYTES]u8 `mirai:"text,label=Zones only base has"`,
-    only_in_id:[][PROFILE_NAME_BYTES]u8 `mirai:"text,label=Zones only id has"`,
-    notes:[][PROFILE_NOTE_BYTES]u8 `mirai:"text,label=What to know before reading the changes"`,
+    only_in_base:[]string `mirai:"label=Zones only base has"`,
+    only_in_id:[]string `mirai:"label=Zones only id has"`,
+    notes:[]string `mirai:"label=What to know before reading the changes"`,
 }
 
 Api_Profile_Export :: struct {
@@ -344,14 +221,11 @@ Api_Profile_Export :: struct {
 
 Api_Profile_List_Item :: struct {
     id:int,
-    label:[32]u8 `mirai:"text"`,
+    label:string,
     state:Profile_State,
     frames:int,
     mean_ms,p95_ms:f32,
-    mode:Mode,
-    optimization:runtime.Odin_Optimization_Mode,
-    preset:[16]u8 `mirai:"text"`,
-    document:[API_PATH_BYTES]u8 `mirai:"text"`,
+    mode,optimization,preset,document:string,
 }
 Api_Profile_List :: struct {
     recording:int `mirai:"label=The capture that records; 0: none"`,
@@ -366,55 +240,16 @@ profile_api_register :: proc(s:^Session,st:^Api_State) {
     id_default:=Api_Profile_Id_Params{top=12}
     frames_default:=Api_Profile_Frames_Params{worst=5,first=-1,count=1,depth=3,min_ms=0.02}
     compare_default:=Api_Profile_Compare_Params{top=12}
-    api_register(s,st,{name="profile.capture",summary="Records frames to see where their time goes: a zone per part of the frame, per function of the loops and per job, the waits of the renderer and the GPU passes.",params=type_info_of(Api_Profile_Capture_Params),result=type_info_of(Api_Profile_Summary),writes_result=true,defaults=&capture_default,run=api_profile_capture})
-    api_register(s,st,{name="profile.stop",summary="Ends the capture that is recording before its frames are done; it keeps those it recorded.",params=type_info_of(Api_Profile_Id_Params),result=type_info_of(Api_Profile_Summary),writes_result=true,defaults=&id_default,run=api_profile_stop})
-    api_register(s,st,{name="profile.list",summary="The captures kept in memory and the one that is recording.",result=type_info_of(Api_Profile_List),writes_result=true,flags={.Read_Only},run=api_profile_list})
-    api_register(s,st,{name="profile.summary",summary="What a capture says: where the time of its frames went and what bounds them, with notes on how to read it.",params=type_info_of(Api_Profile_Id_Params),result=type_info_of(Api_Profile_Summary),writes_result=true,defaults=&id_default,flags={.Read_Only},run=api_profile_summary})
-    api_register(s,st,{name="profile.frames",summary="The slowest frames of a capture, or a range of them, zone by zone with their GPU passes: where a spike went.",params=type_info_of(Api_Profile_Frames_Params),result=type_info_of(Api_Profile_Frames),writes_result=true,defaults=&frames_default,flags={.Read_Only},run=api_profile_frames})
-    api_register(s,st,{name="profile.zone",summary="One zone across a capture: how its time spreads with and without what runs inside it, the zones around and inside it and the frames where it took the longest.",params=type_info_of(Api_Profile_Zone_Params),result=type_info_of(Api_Profile_Zone_Detail),writes_result=true,flags={.Read_Only},run=api_profile_zone})
-    api_register(s,st,{name="profile.compare",summary="Two captures: whether they were measured alike and, zone by zone and pass by pass, what changed the most.",params=type_info_of(Api_Profile_Compare_Params),result=type_info_of(Api_Profile_Compare),writes_result=true,defaults=&compare_default,flags={.Read_Only},run=api_profile_compare})
+    api_register(s,st,{name="profile.capture",summary="Records frames to see where their time goes: a zone per part of the frame, per function of the loops and per job, the waits of the renderer and the GPU passes.",params=type_info_of(Api_Profile_Capture_Params),result=type_info_of(Api_Profile_Summary),defaults=&capture_default,run=api_profile_capture})
+    api_register(s,st,{name="profile.stop",summary="Ends the capture that is recording before its frames are done; it keeps those it recorded.",params=type_info_of(Api_Profile_Id_Params),result=type_info_of(Api_Profile_Summary),defaults=&id_default,run=api_profile_stop})
+    api_register(s,st,{name="profile.list",summary="The captures kept in memory and the one that is recording.",result=type_info_of(Api_Profile_List),flags={.Read_Only},run=api_profile_list})
+    api_register(s,st,{name="profile.summary",summary="What a capture says: where the time of its frames went and what bounds them, with notes on how to read it.",params=type_info_of(Api_Profile_Id_Params),result=type_info_of(Api_Profile_Summary),defaults=&id_default,flags={.Read_Only},run=api_profile_summary})
+    api_register(s,st,{name="profile.frames",summary="The slowest frames of a capture, or a range of them, zone by zone with their GPU passes: where a spike went.",params=type_info_of(Api_Profile_Frames_Params),result=type_info_of(Api_Profile_Frames),defaults=&frames_default,flags={.Read_Only},run=api_profile_frames})
+    api_register(s,st,{name="profile.zone",summary="One zone across a capture: how its time spreads with and without what runs inside it, the zones around and inside it and the frames where it took the longest.",params=type_info_of(Api_Profile_Zone_Params),result=type_info_of(Api_Profile_Zone_Detail),flags={.Read_Only},run=api_profile_zone})
+    api_register(s,st,{name="profile.compare",summary="Two captures: whether they were measured alike and, zone by zone and pass by pass, what changed the most.",params=type_info_of(Api_Profile_Compare_Params),result=type_info_of(Api_Profile_Compare),defaults=&compare_default,flags={.Read_Only},run=api_profile_compare})
     load_default:=Api_Profile_Load_Params{top=PROFILE_LOAD_TOP}
-    api_register(s,st,{name="profile.load",summary="Where the seconds of the last load of the document, of Play and of a section went: phase by phase, by kind of asset with the slowest, the loop functions meanwhile and what it waited for until a frame drew with all of it resident; Loading until then.",params=type_info_of(Api_Profile_Load_Params),result=type_info_of(Api_Profile_Loads),writes_result=true,defaults=&load_default,flags={.Read_Only},run=api_profile_load})
+    api_register(s,st,{name="profile.load",summary="Where the seconds of the last load of the document, of Play and of a section went: phase by phase, by kind of asset with the slowest, the loop functions meanwhile and what it waited for until a frame drew with all of it resident; Loading until then.",params=type_info_of(Api_Profile_Load_Params),result=type_info_of(Api_Profile_Loads),defaults=&load_default,flags={.Read_Only},run=api_profile_load})
     api_register(s,st,{name="profile.export",summary="Writes a capture as a Chrome trace (JSON) for Perfetto, chrome://tracing or Spall.",params=type_info_of(Api_Profile_Export_Params),result=type_info_of(Api_Profile_Export),run=api_profile_export})
-}
-
-@(private)
-api_profile_write :: proc(call:^api.Call,value:any) {
-    bytes,error:=json.marshal(value,{},call.allocator)
-    if error!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The answer could not be serialized");return}
-    serial.text_write_raw(call.out,json_numbers_short(string(bytes),call.allocator))
-}
-
-// The text with every fraction cut to the microsecond: json writes an f64
-// with all its digits, which costs the reader and says nothing.
-@(private)
-json_numbers_short :: proc(text:string,allocator:runtime.Allocator) -> string {
-    b:=strings.builder_make(0,len(text),allocator)
-    in_string,escaped:=false,false
-    for i:=0;i<len(text); {
-        c:=text[i]
-        switch {
-        case in_string:
-            if escaped {escaped=false} else if c=='\\' {escaped=true} else if c=='"' {in_string=false}
-        case c=='"':
-            in_string=true
-        case c=='-' || (c>='0' && c<='9'):
-            j:=i+1
-            for j<len(text) && strings.contains_rune("0123456789.eE+-",rune(text[j])) {j+=1}
-            number:=text[i:j]
-            if value,ok:=strconv.parse_f64(number);ok && strings.contains_rune(number,'.') {
-                short:=strings.trim_right(strings.trim_right(fmt.tprintf("%.3f",value),"0"),".")
-                strings.write_string(&b,short=="-0"?"0":short)
-            } else {
-                strings.write_string(&b,number)
-            }
-            i=j
-            continue
-        }
-        strings.write_byte(&b,c)
-        i+=1
-    }
-    return strings.to_string(b)
 }
 
 @(private)
@@ -464,13 +299,13 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
     if c==nil {api.call_fail(call,api.SERVER_ERROR,error);return}
     c.warmup,c.unsettled=warmup,!settled
     if !p.advance {
-        api_profile_write(call,Profile_Recording_Out{c.id,c.label,"Recording",p.frames})
+        api.call_result(call,Api_Profile_Summary)^={id=c.id,label=c.label,state=.Recording,frames_requested=p.frames}
         return
     }
     api_frames(s,p.frames,p.dt)
     host.profile_stop(s.app)
     profile_collect(s)
-    api_profile_write(call,profile_summary(c,p.top))
+    api.call_result(call,Api_Profile_Summary)^=profile_summary(c,p.top)
 }
 
 @(private)
@@ -479,41 +314,41 @@ api_profile_stop :: proc(s:^Session,call:^api.Call) {
     id:=s.profiles.recording
     if id==0 {api.call_fail(call,api.SERVER_ERROR,"Nothing is recording");return}
     host.profile_stop(s.app)
-    if c:=api_profile_get(s,call,id);c!=nil {api_profile_write(call,profile_summary(c,p.top))}
+    if c:=api_profile_get(s,call,id);c!=nil {api.call_result(call,Api_Profile_Summary)^=profile_summary(c,p.top)}
 }
 
 @(private)
 api_profile_list :: proc(s:^Session,call:^api.Call) {
     profile_collect(s)
-    out:Profile_List_Out
+    out:Api_Profile_List
     out.recording=s.profiles.recording
     if out.recording!=0 {
         out.recorded,out.requested=s.app.profiler.frame_count,s.app.profiler.wanted
     }
-    list:=make([dynamic]Profile_List_Item,call.allocator)
+    list:=make([dynamic]Api_Profile_List_Item,call.allocator)
     for &c in s.profiles.captures {
         if c.id==0 || c.state==.Recording {continue}
         totals:=make([]f64,len(c.frames),context.temp_allocator)
         for f,i in c.frames {totals[i]=profile_frame_ms(f)}
         spread:=profile_spread(totals)
-        append(&list,Profile_List_Item{c.id,c.label,fmt.tprint(c.state),len(c.frames),profile_ms(spread.mean),profile_ms(spread.p95),c.conditions.mode,c.conditions.optimization,c.conditions.preset,c.conditions.document})
+        append(&list,Api_Profile_List_Item{c.id,c.label,c.state,len(c.frames),profile_ms(spread.mean),profile_ms(spread.p95),c.conditions.mode,c.conditions.optimization,c.conditions.preset,c.conditions.document})
     }
-    slice.sort_by(list[:],proc(a,b:Profile_List_Item) -> bool {return a.id<b.id})
+    slice.sort_by(list[:],proc(a,b:Api_Profile_List_Item) -> bool {return a.id<b.id})
     out.captures=list[:]
-    api_profile_write(call,out)
+    api.call_result(call,Api_Profile_List)^=out
 }
 
 @(private)
 api_profile_summary :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Profile_Id_Params)
-    if c:=api_profile_get(s,call,p.id);c!=nil {api_profile_write(call,profile_summary(c,p.top))}
+    if c:=api_profile_get(s,call,p.id);c!=nil {api.call_result(call,Api_Profile_Summary)^=profile_summary(c,p.top)}
 }
 
 // ---------------------------------------------------------------- summary
 
-profile_summary :: proc(c:^Profile_Capture,top:int) -> (out:Profile_Summary_Out) {
+profile_summary :: proc(c:^Profile_Capture,top:int) -> (out:Api_Profile_Summary) {
     context.allocator=context.temp_allocator
-    out.id,out.label,out.state=c.id,c.label,fmt.tprint(c.state)
+    out.id,out.label,out.state=c.id,c.label,c.state
     out.frames_recorded,out.frames_requested=len(c.frames),c.requested
     out.conditions=c.conditions
     out.comparable=profile_limits(c.conditions)=={}
@@ -548,19 +383,19 @@ profile_summary :: proc(c:^Profile_Capture,top:int) -> (out:Profile_Summary_Out)
     out.presentation=profile_presentation(c,spread.mean*f64(n))
 
     aggregates:=profile_aggregate(c)
-    parts:=make([dynamic]Profile_Stat_Out)
-    zones:=make([dynamic]Profile_Zone_Out)
+    parts:=make([dynamic]Api_Profile_Stat)
+    zones:=make([dynamic]Api_Profile_Zone)
     covered:=make([]f64,n)
     for a in aggregates {
         name:=c.names[a.name]
         if !a.worker && profile_is_part(name) {
             for v,i in a.total {covered[i]+=v}
             total:=profile_spread(a.total)
-            append(&parts,Profile_Stat_Out{name,profile_ms(total.mean),profile_ms(total.p95),profile_ms(total.max)})
+            append(&parts,Api_Profile_Stat{name,profile_ms(total.mean),profile_ms(total.p95),profile_ms(total.max)})
             continue
         }
         total,own:=profile_spread(a.total),profile_spread(a.self)
-        append(&zones,Profile_Zone_Out{
+        append(&zones,Api_Profile_Zone{
             name=name,thread=a.worker?"workers":"main",calls_per_frame=profile_ms(f64(a.calls)/f64(n)),
             self_ms=profile_ms(own.mean),total_ms=profile_ms(total.mean),p95_ms=profile_ms(total.p95),max_ms=profile_ms(total.max),
             share=spread.mean>0?profile_ms(own.mean/spread.mean):0,
@@ -570,21 +405,21 @@ profile_summary :: proc(c:^Profile_Capture,top:int) -> (out:Profile_Summary_Out)
     other:=make([]f64,n)
     for f,i in c.frames {other[i]=max(f64(f.ns)/1e6-covered[i],0)}
     other_spread:=profile_spread(other)
-    append(&parts,Profile_Stat_Out{"other",profile_ms(other_spread.mean),profile_ms(other_spread.p95),profile_ms(other_spread.max)})
+    append(&parts,Api_Profile_Stat{"other",profile_ms(other_spread.mean),profile_ms(other_spread.p95),profile_ms(other_spread.max)})
     between_spread:=profile_spread(between)
-    append(&parts,Profile_Stat_Out{"between",profile_ms(between_spread.mean),profile_ms(between_spread.p95),profile_ms(between_spread.max)})
-    slice.sort_by(parts[:],proc(a,b:Profile_Stat_Out) -> bool {return a.mean_ms>b.mean_ms})
-    slice.sort_by(zones[:],proc(a,b:Profile_Zone_Out) -> bool {return a.self_ms>b.self_ms})
+    append(&parts,Api_Profile_Stat{"between",profile_ms(between_spread.mean),profile_ms(between_spread.p95),profile_ms(between_spread.max)})
+    slice.sort_by(parts[:],proc(a,b:Api_Profile_Stat) -> bool {return a.mean_ms>b.mean_ms})
+    slice.sort_by(zones[:],proc(a,b:Api_Profile_Zone) -> bool {return a.self_ms>b.self_ms})
     out.parts=parts[:]
     out.zones=zones[:min(len(zones),top)]
 
     passes:=profile_passes_by_name(c)
-    gpu_list:=make([dynamic]Profile_Stat_Out)
+    gpu_list:=make([dynamic]Api_Profile_Stat)
     for values,i in passes {
         pass:=profile_spread(values)
-        append(&gpu_list,Profile_Stat_Out{c.pass_names[i],profile_ms(pass.mean),profile_ms(pass.p95),profile_ms(pass.max)})
+        append(&gpu_list,Api_Profile_Stat{c.pass_names[i],profile_ms(pass.mean),profile_ms(pass.p95),profile_ms(pass.max)})
     }
-    slice.sort_by(gpu_list[:],proc(a,b:Profile_Stat_Out) -> bool {return a.mean_ms>b.mean_ms})
+    slice.sort_by(gpu_list[:],proc(a,b:Api_Profile_Stat) -> bool {return a.mean_ms>b.mean_ms})
     out.gpu=gpu_list[:min(len(gpu_list),top)]
 
     out.workers.threads=c.conditions.workers
@@ -625,7 +460,7 @@ Profile_Limits :: bit_set[Profile_Limit;u8]
 // waiting for the display or for a limit, or a graphics API that checks every
 // call. A window paces its frames as the graphics settings say; a headless
 // editor does not pace them.
-profile_presentation :: proc(c:^Profile_Capture,total_ms:f64) -> (out:Profile_Presentation_Out) {
+profile_presentation :: proc(c:^Profile_Capture,total_ms:f64) -> (out:Api_Profile_Presentation) {
     intervals:=0
     sum,square:f64
     latencies:=make([dynamic]f64,context.temp_allocator)
@@ -669,7 +504,7 @@ profile_refusal :: proc(limits:Profile_Limits) -> string {
 
 // What an agent should know before it reads the numbers.
 @(private)
-profile_notes :: proc(c:^Profile_Capture,out:Profile_Summary_Out) -> []string {
+profile_notes :: proc(c:^Profile_Capture,out:Api_Profile_Summary) -> []string {
     notes:=make([dynamic]string)
     k:=c.conditions
     n:=f64(out.frame.count)
@@ -717,28 +552,28 @@ api_profile_frames :: proc(s:^Session,call:^api.Call) {
     } else {
         indices=profile_worst(c,p.worst)
     }
-    out:=Profile_Frames_Out{id=c.id,frames=make([]Profile_Frame_Out,len(indices))}
+    out:=Api_Profile_Frames{id=c.id,frames=make([]Api_Profile_Frame,len(indices))}
     for index,k in indices {out.frames[k]=profile_frame_out(c,index,p.depth,f64(p.min_ms))}
-    api_profile_write(call,out)
+    api.call_result(call,Api_Profile_Frames)^=out
 }
 
-profile_frame_out :: proc(c:^Profile_Capture,index,depth:int,min_ms:f64) -> (out:Profile_Frame_Out) {
+profile_frame_out :: proc(c:^Profile_Capture,index,depth:int,min_ms:f64) -> (out:Api_Profile_Frame) {
     f:=c.frames[index]
     out.index=index
     out.ms,out.cpu_ms,out.wait_ms=profile_ms(profile_frame_ms(f)),profile_ms(profile_frame_cpu_ms(f)),profile_ms(f64(f.wait_ms))
     out.pacing_ms,out.between_ms,out.gpu_ms=profile_ms(f64(f.pacing_ns)/1e6),profile_ms(f64(f.between_ns)/1e6),profile_ms(f64(f.gpu_ms))
-    out.bound=fmt.tprint(profile_frame_bound(f))
+    out.bound=profile_frame_bound(f)
     out.workers_busy_ms,out.jobs=profile_ms(f64(f.worker_ns)/1e6),f.jobs
-    zones:=make([dynamic]Profile_Tree_Out)
+    zones:=make([dynamic]Api_Profile_Tree)
     for zone in c.zones[f.zone_first:][:f.zone_count] {
         ms:=f64(zone.ns)/1e6
         if zone.depth>depth || ms<min_ms || len(zones)>=PROFILE_TREE_ZONES {out.hidden_zones+=1;continue}
-        append(&zones,Profile_Tree_Out{c.names[zone.name],zone.depth,profile_ms(f64(zone.start_ns-f.start_ns)/1e6),profile_ms(ms),profile_ms(f64(zone.self_ns)/1e6)})
+        append(&zones,Api_Profile_Tree{c.names[zone.name],zone.depth,profile_ms(f64(zone.start_ns-f.start_ns)/1e6),profile_ms(ms),profile_ms(f64(zone.self_ns)/1e6)})
     }
     out.zones=zones[:]
-    passes:=make([dynamic]Profile_Pass_Out)
-    for pass in c.passes[f.pass_first:][:f.pass_count] {append(&passes,Profile_Pass_Out{c.pass_names[pass.name],profile_ms(f64(pass.ms))})}
-    slice.sort_by(passes[:],proc(a,b:Profile_Pass_Out) -> bool {return a.ms>b.ms})
+    passes:=make([dynamic]Api_Profile_Pass)
+    for pass in c.passes[f.pass_first:][:f.pass_count] {append(&passes,Api_Profile_Pass{c.pass_names[pass.name],profile_ms(f64(pass.ms))})}
+    slice.sort_by(passes[:],proc(a,b:Api_Profile_Pass) -> bool {return a.ms>b.ms})
     out.gpu=passes[:min(len(passes),8)]
     return
 }
@@ -752,10 +587,10 @@ api_profile_zone :: proc(s:^Session,call:^api.Call) {
     if c==nil {return}
     out,error:=profile_zone_detail(c,base.text_get(p.name[:]),base.text_get(p.thread[:]))
     if error!="" {api.call_fail(call,api.INVALID_PARAMS,error);return}
-    api_profile_write(call,out)
+    api.call_result(call,Api_Profile_Zone_Detail)^=out
 }
 
-profile_zone_detail :: proc(c:^Profile_Capture,name,thread:string) -> (out:Profile_Zone_Detail_Out,error:string) {
+profile_zone_detail :: proc(c:^Profile_Capture,name,thread:string) -> (out:Api_Profile_Zone_Detail,error:string) {
     context.allocator=context.temp_allocator
     if thread!="" && thread!="main" && thread!="workers" {return {},"thread is main or workers"}
     aggregates:=profile_aggregate(c)
@@ -803,19 +638,19 @@ profile_zone_detail :: proc(c:^Profile_Capture,name,thread:string) -> (out:Profi
                 }
             }
         }
-        around:=make([dynamic]Profile_Parent_Out)
-        for key,calls in parents {append(&around,Profile_Parent_Out{c.names[key],profile_ms(f64(calls)/n)})}
+        around:=make([dynamic]Api_Profile_Parent)
+        for key,calls in parents {append(&around,Api_Profile_Parent{c.names[key],profile_ms(f64(calls)/n)})}
         out.parents=around[:]
-        list:=make([dynamic]Profile_Related_Out)
-        for key,v in children {append(&list,Profile_Related_Out{c.names[key],profile_ms(v[0]/n),profile_ms(v[1]/n)})}
-        slice.sort_by(list[:],proc(a,b:Profile_Related_Out) -> bool {return a.total_ms>b.total_ms})
+        list:=make([dynamic]Api_Profile_Related)
+        for key,v in children {append(&list,Api_Profile_Related{c.names[key],profile_ms(v[0]/n),profile_ms(v[1]/n)})}
+        slice.sort_by(list[:],proc(a,b:Api_Profile_Related) -> bool {return a.total_ms>b.total_ms})
         out.children=list[:min(len(list),16)]
     }
     values:=found.total
-    worst:=make([dynamic]Profile_Worst_Out)
+    worst:=make([dynamic]Api_Profile_Worst)
     for index in profile_largest(values,5) {
         if values[index]<=0 {break}
-        append(&worst,Profile_Worst_Out{index,profile_ms(values[index]),profile_ms(profile_frame_ms(c.frames[index]))})
+        append(&worst,Api_Profile_Worst{index,profile_ms(values[index]),profile_ms(profile_frame_ms(c.frames[index]))})
     }
     out.worst_frames=worst[:]
     return
@@ -838,10 +673,10 @@ api_profile_compare :: proc(s:^Session,call:^api.Call) {
     a:=api_profile_get(s,call,base_id)
     if a==nil {return}
     if a==b {api.call_fail(call,api.INVALID_PARAMS,"base and id are the same capture");return}
-    api_profile_write(call,profile_compare(a,b,p.top))
+    api.call_result(call,Api_Profile_Compare)^=profile_compare(a,b,p.top)
 }
 
-profile_compare :: proc(a,b:^Profile_Capture,top:int) -> (out:Profile_Compare_Out) {
+profile_compare :: proc(a,b:^Profile_Capture,top:int) -> (out:Api_Profile_Compare) {
     context.allocator=context.temp_allocator
     out.base,out.id=a.id,b.id
     out.differences=profile_differences(a.conditions,b.conditions)
@@ -856,28 +691,28 @@ profile_compare :: proc(a,b:^Profile_Capture,top:int) -> (out:Profile_Compare_Ou
     out.gpu_ms=delta(profile_spread(frame_values(a,2)).mean,profile_spread(frame_values(b,2)).mean)
 
     ma,mb:=means(a),means(b)
-    changes:=make([dynamic]Profile_Change_Out)
+    changes:=make([dynamic]Api_Profile_Change)
     only_a,only_b:=make([dynamic]string),make([dynamic]string)
     for key,x in ma {
         y,found:=mb[key]
         if !found {append(&only_a,key.name);continue}
         d:=delta(x,y)
-        append(&changes,Profile_Change_Out{key.name,key.worker?"workers":"main",d.base,d.id,d.delta,d.delta_pct})
+        append(&changes,Api_Profile_Change{key.name,key.worker?"workers":"main",d.base,d.id,d.delta,d.delta_pct})
     }
     for key,_ in mb {if key not_in ma {append(&only_b,key.name)}}
-    slice.sort_by(changes[:],proc(x,y:Profile_Change_Out) -> bool {return abs(x.delta_ms)>abs(y.delta_ms)})
+    slice.sort_by(changes[:],proc(x,y:Api_Profile_Change) -> bool {return abs(x.delta_ms)>abs(y.delta_ms)})
     out.zones=changes[:min(len(changes),top)]
     out.only_in_base,out.only_in_id=only_a[:min(len(only_a),top)],only_b[:min(len(only_b),top)]
 
     pa,pb:=pass_means(a),pass_means(b)
-    gpu_changes:=make([dynamic]Profile_Change_Out)
+    gpu_changes:=make([dynamic]Api_Profile_Change)
     for name,x in pa {
         y,found:=pb[name]
         if !found {continue}
         d:=delta(x,y)
-        append(&gpu_changes,Profile_Change_Out{name,"gpu",d.base,d.id,d.delta,d.delta_pct})
+        append(&gpu_changes,Api_Profile_Change{name,"gpu",d.base,d.id,d.delta,d.delta_pct})
     }
-    slice.sort_by(gpu_changes[:],proc(x,y:Profile_Change_Out) -> bool {return abs(x.delta_ms)>abs(y.delta_ms)})
+    slice.sort_by(gpu_changes[:],proc(x,y:Api_Profile_Change) -> bool {return abs(x.delta_ms)>abs(y.delta_ms)})
     out.gpu=gpu_changes[:min(len(gpu_changes),top)]
 
     notes:=make([dynamic]string)
@@ -889,8 +724,8 @@ profile_compare :: proc(a,b:^Profile_Capture,top:int) -> (out:Profile_Compare_Ou
 }
 
 @(private="file")
-delta :: proc(x,y:f64) -> Profile_Delta_Out {
-    return {profile_ms(x),profile_ms(y),profile_ms(y-x),x>0?math.round((y-x)/x*1000)/10:0}
+delta :: proc(x,y:f64) -> Api_Profile_Delta {
+    return {profile_ms(x),profile_ms(y),profile_ms(y-x),f32(x>0?math.round((y-x)/x*1000)/10:0)}
 }
 
 @(private="file")
@@ -924,14 +759,14 @@ pass_means :: proc(c:^Profile_Capture) -> map[string]f64 {
 }
 
 @(private="file")
-difference_check :: proc(list:^[dynamic]Profile_Difference_Out,field:string,x,y:$T,blocking:bool) {
-    if x!=y {append(list,Profile_Difference_Out{field,fmt.tprint(x),fmt.tprint(y),blocking})}
+difference_check :: proc(list:^[dynamic]Api_Profile_Difference,field:string,x,y:$T,blocking:bool) {
+    if x!=y {append(list,Api_Profile_Difference{field,fmt.tprint(x),fmt.tprint(y),blocking})}
 }
 
 // How two captures were measured differently. A blocking difference changes
 // the times by itself: the build, the device, the graphics, the scene.
-profile_differences :: proc(a,b:Profile_Conditions) -> []Profile_Difference_Out {
-    list:=make([dynamic]Profile_Difference_Out)
+profile_differences :: proc(a,b:Profile_Conditions) -> []Api_Profile_Difference {
+    list:=make([dynamic]Api_Profile_Difference)
     difference_check(&list,"optimization",a.optimization,b.optimization,true)
     difference_check(&list,"debug",a.debug,b.debug,true)
     difference_check(&list,"write_checks",a.write_checks,b.write_checks,true)

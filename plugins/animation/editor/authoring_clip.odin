@@ -8,7 +8,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import lib "mirai:std/anim"
 import "mirai:std/base"
-import "mirai:std/serial"
 import mm "mirai:std/math"
 
 AUTHORING_KEYS :: 512

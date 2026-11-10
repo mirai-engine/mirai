@@ -16,25 +16,6 @@ Api_Profile_Load_Params :: struct {
     top:int `mirai:"optional,min=1,max=16,clamp,label=Slowest assets and loop functions of each load"`,
 }
 
-Profile_Load_Phase_Out :: struct {name:string,ms:f64,count:i64,summed:bool}
-Profile_Load_Assets_Out :: struct {kind:string,count,failed,after_ready:int,mb,ms:f64}
-Profile_Load_Asset_Out :: struct {asset,kind:string,mb,ms:f64,after_ready,in_job:bool}
-Profile_Load_Function_Out :: struct {name:string,ms:f64}
-Profile_Load_Wait_Out :: struct {what:string,until_ms:f64,frames:int}
-Profile_Load_Out :: struct {
-    kind,state,name,failure:string,
-    ready_ms,resident_ms,elapsed_ms:f64,
-    frames,entities:int,
-    waiting:[]string,
-    phases:[]Profile_Load_Phase_Out,
-    assets:[]Profile_Load_Assets_Out,
-    slowest:[]Profile_Load_Asset_Out,
-    functions:[]Profile_Load_Function_Out,
-    waits:[]Profile_Load_Wait_Out,
-    notes:[]string,
-}
-Profile_Loads_Out :: struct {loads:[]Profile_Load_Out}
-
 Api_Profile_Load_Phase :: struct {
     name:host.Load_Phase,
     ms:f32,
@@ -49,7 +30,7 @@ Api_Profile_Load_Assets :: struct {
     ms:f32 `mirai:"label=Their own time, on the main thread and in jobs"`,
 }
 Api_Profile_Load_Asset :: struct {
-    asset:[API_PATH_BYTES]u8 `mirai:"text"`,
+    asset:string,
     kind:host.Load_Asset,
     mb:f32,
     ms:f32 `mirai:"label=Its own time: read, decode and give to the renderer, without the assets it loaded inside"`,
@@ -57,7 +38,7 @@ Api_Profile_Load_Asset :: struct {
     in_job:bool `mirai:"label=Part of it was read or decoded or compressed in a job"`,
 }
 Api_Profile_Load_Function :: struct {
-    name:[PROFILE_NAME_BYTES]u8 `mirai:"text"`,
+    name:string,
     ms:f32 `mirai:"label=In all the frames while it loaded"`,
 }
 Api_Profile_Load_Wait :: struct {
@@ -68,20 +49,20 @@ Api_Profile_Load_Wait :: struct {
 Api_Profile_Load :: struct {
     kind:host.Load_Kind,
     state:host.Load_State `mirai:"label=Loading: not resident yet, ask again; Interrupted: another load began first"`,
-    name:[API_PATH_BYTES]u8 `mirai:"text,label=Path of the scene"`,
-    failure:[API_PATH_BYTES]u8 `mirai:"text,label=Why it failed"`,
+    name:string `mirai:"label=Path of the scene"`,
+    failure:string `mirai:"label=Why it failed"`,
     ready_ms:f32 `mirai:"label=Since it began, until it was the document or the world; 0 while not"`,
     resident_ms:f32 `mirai:"label=Since it began, until the end of the first frame after it was ready that drew with nothing busy"`,
     elapsed_ms:f32 `mirai:"label=Since it began, until it ended or now"`,
     frames:int `mirai:"label=Frames while it loaded"`,
     entities:int,
-    waiting:[]host.Load_Busy `mirai:"label=While Loading: what the last frame was busy with"`,
+    waiting:host.Load_Busy_Set `mirai:"label=While Loading: what the last frame was busy with"`,
     phases:[]Api_Profile_Load_Phase `mirai:"label=The costliest first; Collision is part of Physics; Physics Collision Nav_Bake and Nav_Tiles happen in the ticks, inside physics_step and navigation_build"`,
     assets:[]Api_Profile_Load_Assets `mirai:"label=By kind, the costliest first"`,
     slowest:[]Api_Profile_Load_Asset `mirai:"label=The slowest assets, the slowest first"`,
     functions:[]Api_Profile_Load_Function `mirai:"label=The loop functions that cost the most while it loaded; none for a section"`,
     waits:[]Api_Profile_Load_Wait `mirai:"label=What it waited for before it was resident, the one that ended last first"`,
-    notes:[][PROFILE_NOTE_BYTES]u8 `mirai:"text,label=How to read it and what to look at first"`,
+    notes:[]string `mirai:"label=How to read it and what to look at first"`,
 }
 Api_Profile_Loads :: struct {
     loads:[]Api_Profile_Load,
@@ -102,7 +83,7 @@ api_profile_load :: proc(s:^Session,call:^api.Call) {
     }
     api_settle(s,&asked,loading)
     context.allocator=context.temp_allocator
-    loads:=make([dynamic]Profile_Load_Out)
+    loads:=make([dynamic]Api_Profile_Load)
     manual:=false
     if st:=api_state(s);st!=nil {manual=st.manual}
     for kind in host.Load_Kind {
@@ -115,43 +96,31 @@ api_profile_load :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"No %sload yet: scene.open, play.start or a section that loads makes one",what)
         return
     }
-    api_profile_write(call,Profile_Loads_Out{loads[:]})
+    api.call_result(call,Api_Profile_Loads).loads=loads[:]
 }
 
 @(private)
-profile_load_out :: proc(s:^Session,l:host.Load_Summary,manual:bool) -> (out:Profile_Load_Out) {
-    out.kind,out.state=fmt.tprint(l.kind),fmt.tprint(l.state)
-    out.name,out.failure=strings.clone(l.name),strings.clone(l.failure)
-    out.ready_ms,out.resident_ms,out.elapsed_ms=profile_ms(l.ready_ms),profile_ms(l.resident_ms),profile_ms(l.elapsed_ms)
-    out.frames,out.entities=l.frames,l.entities
-    waiting:=make([dynamic]string)
-    for busy in l.waiting {append(&waiting,fmt.tprint(busy))}
-    out.waiting=waiting[:]
-    phases:=make([]Profile_Load_Phase_Out,len(l.phases))
-    for phase,i in l.phases {phases[i]={fmt.tprint(phase.phase),profile_ms(phase.ms),phase.count,phase.summed}}
-    out.phases=phases
-    assets:=make([]Profile_Load_Assets_Out,len(l.assets))
-    for k,i in l.assets {assets[i]={fmt.tprint(k.kind),k.count,k.failed,k.later,profile_mb(k.bytes),profile_ms(k.ms)}}
-    out.assets=assets
-    slowest:=make([]Profile_Load_Asset_Out,len(l.slowest))
+profile_load_out :: proc(s:^Session,l:host.Load_Summary,manual:bool) -> (out:Api_Profile_Load) {
+    out.kind,out.state,out.name,out.failure=l.kind,l.state,strings.clone(l.name),strings.clone(l.failure)
+    out.ready_ms,out.resident_ms,out.elapsed_ms=f32(l.ready_ms),f32(l.resident_ms),f32(l.elapsed_ms)
+    out.frames,out.entities,out.waiting=l.frames,l.entities,l.waiting
+    out.phases=make([]Api_Profile_Load_Phase,len(l.phases))
+    for phase,i in l.phases {out.phases[i]={phase.phase,f32(phase.ms),int(phase.count),phase.summed}}
+    out.assets=make([]Api_Profile_Load_Assets,len(l.assets))
+    for k,i in l.assets {out.assets[i]={k.kind,k.count,k.failed,k.later,f32(f64(k.bytes)/(1<<20)),f32(k.ms)}}
+    out.slowest=make([]Api_Profile_Load_Asset,len(l.slowest))
     for item,i in l.slowest {
         text:[base.ASSET_ID_TEXT]u8
-        name:=strings.clone(host.assets_name(s.app.assets,item.id,&text))
-        slowest[i]={name,fmt.tprint(item.kind),profile_mb(item.bytes),profile_ms(host.load_ms(item.ns)),item.later,item.job}
+        out.slowest[i]={strings.clone(host.assets_name(s.app.assets,item.id,&text)),item.kind,f32(f64(item.bytes)/(1<<20)),f32(host.load_ms(item.ns)),item.later,item.job}
     }
-    out.slowest=slowest
-    functions:=make([]Profile_Load_Function_Out,len(l.functions))
-    for f,i in l.functions {functions[i]={strings.clone(f.name),profile_ms(f.ms)}}
-    out.functions=functions
-    waits:=make([]Profile_Load_Wait_Out,len(l.waits))
-    for w,i in l.waits {waits[i]={fmt.tprint(w.busy),profile_ms(w.until_ms),w.frames}}
-    out.waits=waits
+    out.functions=make([]Api_Profile_Load_Function,len(l.functions))
+    for f,i in l.functions {out.functions[i]={strings.clone(f.name),f32(f.ms)}}
+    out.waits=make([]Api_Profile_Load_Wait,len(l.waits))
+    for w,i in l.waits {out.waits[i]={w.busy,f32(w.until_ms),w.frames}}
     out.notes=profile_load_notes(l,manual)
     return
 }
 
-@(private)
-profile_mb :: proc(bytes:i64) -> f64 {return profile_ms(f64(bytes)/(1<<20))}
 
 // What to know before reading a load, and where its time went.
 @(private)

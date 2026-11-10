@@ -1,6 +1,5 @@
 package editor
 
-import "core:fmt"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"

@@ -7,7 +7,6 @@ import "mirai:editor/api"
 import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
 import phys "plugins:physics/runtime"
 

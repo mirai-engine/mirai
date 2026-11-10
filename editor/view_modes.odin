@@ -6,7 +6,6 @@ import "mirai:editor/api"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // The modes of inspection of the viewport: what it shows instead of its lit

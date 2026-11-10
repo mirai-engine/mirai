@@ -8,7 +8,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
-import "mirai:std/serial"
 import vfx "plugins:vfx/runtime"
 import "plugins:vfx/runtime/gridfile"
 

@@ -5,7 +5,6 @@ import "core:path/filepath"
 import "mirai:asset"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 // Parts of assets. An import makes the meshes and skeletons of a model, and
 // the materials and textures surely of it alone, parts of its prefab: their
