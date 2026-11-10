@@ -281,8 +281,8 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_barrier_texture(cmd, first.surface, .Shader_Read)
 		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, first.surface)
 		glass_bind_layers(p, first)
-		// Glass reflects a few percent of what its ray finds: a ray per block
-		// of 2x2 pixels is enough at any roughness.
+		// Glass reflects a few percent of what its ray finds: Traced shares a
+		// ray per block of 2x2 pixels at any roughness.
 		reflect_pass(p, first.normal, first.depth, first.albedo, t.glass_history[previous], t.glass_history[current], t.glass_valid, true, 0, GLASS_CACHED_REFLECTANCE, true)
 		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, t.surface if t.surface != 0 else r.dummy_texture)
 	}
