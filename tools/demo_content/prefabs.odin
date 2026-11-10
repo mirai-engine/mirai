@@ -111,6 +111,7 @@ write_prefabs :: proc(o:^Out) {
     prefab_root(o,&s,PLAYER_PREFAB_ID,"Player")
     character,capsule,walk:=phys.character_default(),phys.collider_character(),game.player_walk()
     asset.builder_set(&s,1,character)
+    asset.builder_set(&s,1,phys.LOCOMOTION_DEFAULT)
     asset.builder_set(&s,1,walk)
     asset.builder_set(&s,1,capsule)
     asset.builder_set(&s,1,game.Player{})
@@ -128,8 +129,10 @@ write_prefabs :: proc(o:^Out) {
     person:asset.Scene_Builder
     prefab_root(o,&person,PERSON_PREFAB_ID,"Person")
     walker,walker_capsule:=phys.character_default(),phys.collider_character()
-    walker.move_relative_to=.View
+    seated:=phys.LOCOMOTION_DEFAULT
+    seated.move_relative_to=.View
     asset.builder_set(&person,1,walker)
+    asset.builder_set(&person,1,seated)
     asset.builder_set(&person,1,walk)
     asset.builder_set(&person,1,walker_capsule)
     asset.builder_set(&person,1,game.Player{})
@@ -143,8 +146,8 @@ write_prefabs :: proc(o:^Out) {
     dog:asset.Scene_Builder
     prefab_root(o,&dog,DOG_PREFAB_ID,"Dog")
     dog_body,dog_capsule,dog_walk:=game.dog_character(),game.dog_capsule(),game.dog_walk()
-    dog_body.move_relative_to=.View
     asset.builder_set(&dog,1,dog_body)
+    asset.builder_set(&dog,1,seated)
     asset.builder_set(&dog,1,dog_walk)
     asset.builder_set(&dog,1,dog_capsule)
     asset.builder_set(&dog,1,game.Barker{})

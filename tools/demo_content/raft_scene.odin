@@ -24,6 +24,7 @@ write_raft_player :: proc(o:^Out) {
     character,capsule,walk,swim:=phys.character_default(),phys.collider_character(),game.player_walk(),phys.SWIM_DEFAULT
     diver:=game.DIVER_DEFAULT
     asset.builder_set(&s,1,character)
+    asset.builder_set(&s,1,phys.LOCOMOTION_DEFAULT)
     asset.builder_set(&s,1,walk)
     asset.builder_set(&s,1,swim)
     asset.builder_set(&s,1,capsule)

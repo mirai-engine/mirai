@@ -17,19 +17,20 @@ import phys "plugins:physics/runtime"
 // the speed of the root of its pose. A game writes no code for locomotion; the clips and their
 // modes are in the .match.
 @(step="fixed")
-animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Read(phys.Character_State),animations:core.Read(anim.Animation),motions:core.Read(core.Motion),inputs:core.Read(inp.Move_Input),walk_actions:inp.Input_Of(phys.Walk_Action),walks:core.Read(phys.Walk),tacticals:core.Read(phys.Tactical_Sprint),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,warps:^anim.Motion_Requests,problems:^core.Problems) {
-    for row in 0..<core.count(characters) {
-        entity:=core.entity_at(characters,row)
+animation_locomotion :: proc(locomotions:core.Read(phys.Locomotion),states:core.Read(phys.Locomotion_State),found:core.Read(phys.Character_State),animations:core.Read(anim.Animation),motions:core.Read(core.Motion),inputs:core.Read(inp.Move_Input),walk_actions:inp.Input_Of(phys.Walk_Action),walks:core.Read(phys.Walk),tacticals:core.Read(phys.Tactical_Sprint),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,warps:^anim.Motion_Requests,problems:^core.Problems) {
+    for row in 0..<core.count(states) {
+        entity:=core.entity_at(states,row)
         animation,animated:=core.get(animations,entity)
         if !animated || animation.asset=={} {continue}
-        character:=core.at(characters,row)
+        character:=core.at(states,row)
+        authored,_:=core.get(locomotions,entity)
         going,_:=core.get(motions,entity)
         input,_:=core.get(inputs,entity)
         placed,_:=core.get(worlds,entity)
         wish:=phys.move_wish(input,mm.QUAT_IDENTITY)
-        facing:=mm.quat_forward(placed.rotation) if character.move_relative_to==.Look else wish
+        facing:=mm.quat_forward(placed.rotation) if authored.move_relative_to==.Look else wish
         state,_:=core.get(found,entity)
-        goal:=anim.Match_Goal{rig=entity,mode=u16(character.mode),velocity=going.linear,facing=facing,wall=state.wall_normal,turn_rate=character.turn_speed}
+        goal:=anim.Match_Goal{rig=entity,mode=u16(character.mode),velocity=going.linear,facing=facing,wall=state.wall_normal,turn_rate=authored.turn_speed}
         playing,matching:=anim.animation_match(playback.ptr,entity)
         if matching && character.mode==phys.MODE_FALLING && playing.landing_modes&(1<<u32(phys.MODE_FALLING))!=0 {
             if time,_,lands:=phys.character_landing(physics,entity);lands {goal.time_to_land=time}

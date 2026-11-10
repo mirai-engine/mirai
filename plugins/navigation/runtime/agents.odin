@@ -265,7 +265,7 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
 navigation_agents :: proc(
     n:core.Ref(Navigation),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),
     requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),
-    characters:core.Read(phys.Character),colliders:core.Read(phys.Collider),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),
+    characters:core.Read(phys.Character),locomotions:core.Read(phys.Locomotion),loco_states:core.Read(phys.Locomotion_State),colliders:core.Read(phys.Collider),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),
     grounds:core.Read(phys.Character_State),motions:core.Read(core.Motion),worlds:core.Read(core.World_Transform),
     obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),loco:^phys.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
     roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
@@ -356,8 +356,9 @@ navigation_agents :: proc(
         swim,can_swim:=core.get(swims,e)
         walker:=core.has(walks,e)
         // One that only flies or swims is always in the air or the water; one that also walks, while the physics has it fly or swim.
-        flies:=can_fly && (!walker || character.mode==phys.MODE_FLYING)
-        swims:=!flies && can_swim && (!walker || character.mode==phys.MODE_SWIMMING)
+        moving,_:=core.get(loco_states,e)
+        flies:=can_fly && (!walker || moving.mode==phys.MODE_FLYING)
+        swims:=!flies && can_swim && (!walker || moving.mode==phys.MODE_SWIMMING)
         space:=Nav_Space.Air if flies else (.Water if swims else .Surface)
         class,radius,height:=class_of(n.ptr,character,collider,pose.scale,space)
         // The other space it may cross into: the surface for one that walks, or the water or the air from it.
@@ -410,9 +411,9 @@ navigation_agents :: proc(
             if a.searching!=e && !p.queued {append(&a.waiting,e);p.queued=true}
         case .Moving:
             if flies {
-                agent_fly(p,e,agent,center,&n.classes[class].volume,fly.speed,fly.acceleration,true,character.mode,events,loco)
+                agent_fly(p,e,agent,center,&n.classes[class].volume,fly.speed,fly.acceleration,true,moving.mode,events,loco)
             } else if swims {
-                agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed,swim.acceleration,false,character.mode,events,loco)
+                agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed,swim.acceleration,false,moving.mode,events,loco)
             } else {
                 walk_row,_:=core.get(walks,e)
                 walk:=Walk_Like{walk_row.jump_height,walk_row.max_speed}
@@ -464,7 +465,7 @@ navigation_agents :: proc(
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
     agents_avoid(n.ptr,a,paths,time.dt,problems)
-    crossings.count=agents_steer(n.ptr,agents,paths,inputs,drivables,characters,grounds,worlds,walks,flights,swims,time.dt)
+    crossings.count=agents_steer(n.ptr,agents,paths,inputs,drivables,locomotions,grounds,worlds,walks,flights,swims,time.dt)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
 
@@ -1088,7 +1089,7 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
 // earlier in the tick, with its buttons and the turn of the ground. How many
 // agents cross a link.
 @(private)
-agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),characters:core.Read(phys.Character),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),dt:f32) -> (crossing:u32) {
+agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),drivables:core.Read(input.Drivable),locomotions:core.Read(phys.Locomotion),grounds:core.Read(phys.Character_State),worlds:core.Read(core.World_Transform),walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),dt:f32) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
         p:=core.edit_at(paths,row)
@@ -1110,7 +1111,7 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
             continue
         }
         p.halted=false
-        character,_:=core.get(characters,e)
+        character,_:=core.get(locomotions,e)
         ground,_:=core.get(grounds,e)
         pose,_:=core.get(worlds,e)
         yaw:=mi.look_yaw+(driven?0:ground.ground_turn)

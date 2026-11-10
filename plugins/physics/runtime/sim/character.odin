@@ -61,8 +61,9 @@ Character_Move :: struct {
     // adhesion and pushes scale by the square and its up turns by it; whoever moves it scales its drives
     // and launch by it. Zero: 1.
     pace:f32,
+    gravity_scale:f32, // times the gravity_scale of its desc, the one a game asks for a while; zero: 1
 }
-#assert(size_of(Character_Move)==60)
+#assert(size_of(Character_Move)==64)
 
 @(private)
 move_pace :: #force_inline proc "contextless" (m:Character_Move) -> f32 {return m.pace>0?m.pace:1}
@@ -591,7 +592,7 @@ characters_update :: proc(w:^World) {
         turned:=ch.state.up_frame!=cs.next.up_frame
         ch.state=cs.next
         pace:=move_pace(cs.move)
-        body.gravity_scale=.No_Gravity in cs.move.flags?0:ch.desc.gravity_scale*pace*pace
+        body.gravity_scale=.No_Gravity in cs.move.flags?0:ch.desc.gravity_scale*(cs.move.gravity_scale!=0?cs.move.gravity_scale:1)*pace*pace
         body.rotation=character_rotation(cs.next.up_frame,cs.move.yaw)
         body.linear_velocity=cs.velocity
         // A turning up turns the capsule about the feet.

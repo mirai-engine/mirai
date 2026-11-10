@@ -27,7 +27,7 @@ it through the API or the editor, and nothing writes over it. With the session o
 P="mirai rpc --project ."
 $P scene.open '{"path":"player/Player.scene"}'
 $P scene.set '{"entity":"Player","components":{
-  "Character":{"move_relative_to":"Camera","turn_speed":12},
+  "Locomotion":{"move_relative_to":"Camera","turn_speed":12},
   "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
           "jump_height":1.9,"jump_rise":0.11,"jump_cut":0.42}}}'
 $P scene.write '{"root":"Player view","entities":[{"name":"Player view","components":{

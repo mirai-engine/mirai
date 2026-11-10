@@ -15,7 +15,8 @@ import sim "plugins:physics/runtime/sim"
 Planet_Test :: struct {
     w:sim.World,
     ch:sim.Character_Handle,
-    loco:Character,
+    loco:Locomotion_State,
+    body:Character,
     walk:Walk,
     planet:volume.Gravity,
     field:f32, // m from the center within which the planet pulls; beyond, the level pulls down
@@ -35,7 +36,7 @@ planet_test_init :: proc(f:^Planet_Test,position:[3]f32,rotation:=mm.QUAT_IDENTI
     shape:=sim.SHAPE_DESC_DEFAULT
     shape.geometry=sim.Sphere{PLANET_RADIUS}
     sim.shape_create(&f.w,sim.body_create(&f.w,body),shape)
-    f.loco,f.walk=character_default(),WALK_DEFAULT
+    f.body,f.walk=character_default(),WALK_DEFAULT
     f.planet=volume.Gravity{pull=.Center,acceleration=9.81,radius=PLANET_RADIUS}
     f.field=max(f32)
     f.ch=sim.character_create(&f.w,sim.CHARACTER_DESC_DEFAULT,position,rotation)
@@ -55,7 +56,7 @@ planet_tick :: proc(f:^Planet_Test,move:[3]f32,jump:=false) {
     state:=sim.character_state(&f.w,f.ch)
     given:=input.Move_Input{move=move,buttons=jump?input.action_bit(TEST_JUMP):0}
     gravity:=sim.body_gravity(&f.w,sim.character_body(&f.w,f.ch))
-    m:=locomotion_move(&f.loco,f.walk,{},nil,{},character_state_of(state),state.up_frame,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.ch),gravity,1.0/60)
+    m:=locomotion_move(&f.loco,f.body,f.walk,{},nil,{},character_state_of(state),state.up_frame,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.ch),gravity,1.0/60)
     sim.character_set_move(&f.w,f.ch,m)
     sim.world_step(&f.w,1.0/60)
 }

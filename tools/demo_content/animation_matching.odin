@@ -37,7 +37,8 @@ gallery_mirai_matching :: proc(o:^Out,animation:base.Asset_Id) -> base.Asset_Id 
 gallery_mirai_physical :: proc(g:^Gallery_Build,name:string,position:mm.Vec3,matching,motion:base.Asset_Id,facing:mm.Quat=GALLERY_TOWARD_PLUS_Z) -> base.Entity_Id {
     s:=g.s
     root:=gallery_actor(g.o,s,g.model,g.source,name,position,facing,matching)
-    character:=phys.character_default();character.step_height=.3;character.move_relative_to=.Game
+    character:=phys.character_default();character.step_height=.3
+    locomotion:=phys.LOCOMOTION_DEFAULT;locomotion.move_relative_to=.Game;asset.builder_set(s,root,locomotion)
     walk:=phys.WALK_DEFAULT;walk.max_speed=game.MIRAI_WALK_SPEED;walk.acceleration=20.48;walk.braking=20;walk.air_control=.35;walk.jump_height=.9
     capsule:=phys.collider_character()
     asset.builder_set(s,root,character);asset.builder_set(s,root,walk);asset.builder_set(s,root,capsule)

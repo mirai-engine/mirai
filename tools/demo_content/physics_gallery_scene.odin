@@ -235,7 +235,7 @@ physics_gallery_extra :: proc(s:^asset.Scene_Builder,label:base.Asset_Id) {
     origin={4,1,-40}
     e:=asset.builder_entity(s,"Physical character",{position=origin-mm.Vec3{0,.8,0}})
     character,capsule,walk:=phys.character_default(),phys.collider_character(),phys.WALK_DEFAULT
-    asset.builder_set(s,e,character);asset.builder_set(s,e,walk);asset.builder_set(s,e,capsule)
+    asset.builder_set(s,e,character);asset.builder_set(s,e,phys.LOCOMOTION_DEFAULT);asset.builder_set(s,e,walk);asset.builder_set(s,e,capsule)
     visual:=asset.builder_entity(s,"Character capsule",{position={0,.9,0},scale={.6,1.5,.6}},e);asset.builder_set(s,visual,render.Mesh_Renderer{shape=.Capsule});asset.builder_set(s,visual,render.Tint{color={.2,.9,.7,1}})
     gallery_cube(s,"Character step",origin+mm.Vec3{1,-.6,0},{.6,.4,2},{.3,.5,.6,1},true)
     physics_gallery_item(s,label,21,"Physical character","Physical capsule shares solver contacts. E launches it with the public radial impulse API.",origin,e)

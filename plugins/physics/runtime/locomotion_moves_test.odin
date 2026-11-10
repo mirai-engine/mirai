@@ -14,7 +14,8 @@ import mm "mirai:std/math"
 Moves_Test :: struct {
     w:sim.World,
     ch:sim.Character_Handle,
-    loco:Character,
+    loco:Locomotion_State,
+    body:Character,
     walk:Walk,
     slide:Maybe(Slide),
     mantle:Maybe(Mantle),
@@ -30,7 +31,7 @@ moves_init :: proc(f:^Moves_Test,position:[3]f32,ground:=true) -> bool {
     desc.hull_capacity,desc.mesh_capacity,desc.heightfield_capacity,desc.event_capacity=1,1,1,64
     if !sim.world_init(&f.w,desc) {return false}
     if ground {moves_box(f,{50,1,50},{0,-1,0})}
-    f.loco,f.walk,f.asked=character_default(),WALK_DEFAULT,sim.CHARACTER_DESC_DEFAULT.height
+    f.body,f.walk,f.asked=character_default(),WALK_DEFAULT,sim.CHARACTER_DESC_DEFAULT.height
     f.ch=sim.character_create(&f.w,sim.CHARACTER_DESC_DEFAULT,position)
     return f.ch!={}
 }
@@ -63,11 +64,11 @@ moves_tick :: proc(f:^Moves_Test,move:[3]f32,ticks:=1,buttons:=input.Action_Mask
         }
         m:sim.Character_Move
         if f.loco.mode==MODE_MANTLING {
-            m=mantle_move(&f.loco,f.mantle.?,1,sim.character_position(&f.w,f.ch),given,TEST_JUMP,dt,overriding(&f.loco))
+            m=mantle_move(&f.loco,f.body,f.mantle.?,1,sim.character_position(&f.w,f.ch),given,TEST_JUMP,dt,overriding(&f.loco))
             spent:=m
-            layers_apply(&f.loco,&m if f.loco.mode==MODE_MANTLING else &spent,f.loco.traction_force)
+            layers_apply(&f.loco,&m if f.loco.mode==MODE_MANTLING else &spent,f.body.traction_force)
         } else {
-            m=locomotion_move(&f.loco,f.walk,{},nil,{slide=f.slide,tactical=f.tactical,ledge=f.ledge},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.ch),f.w.gravity,dt)
+            m=locomotion_move(&f.loco,f.body,f.walk,{},nil,{slide=f.slide,tactical=f.tactical,ledge=f.ledge},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.ch),f.w.gravity,dt)
         }
         f.asked=f.loco.crouched?f.walk.crouch_height:sim.CHARACTER_DESC_DEFAULT.height
         if abs(sim.character_desc(&f.w,f.ch).height-f.asked)>HEIGHT_EPSILON {_=sim.character_set_height(&f.w,f.ch,f.asked)}
@@ -301,7 +302,7 @@ a_tactical_sprint_ramps_up_spends_its_energy_and_recharges_after_its_delay :: pr
     f.tactical=tactical
     top:=f.walk.sprint_speed*tactical.speed_multiplier
     // Exponential over its ramp: halfway through, the square root of the multiplier.
-    halfway:=Character{sprint_active=true,sprint_time=tactical.speed_ramp/2}
+    halfway:=Locomotion_State{sprint_active=true,sprint_time=tactical.speed_ramp/2}
     boost,_:=tactical_boost(halfway,tactical)
     testing.expectf(t,abs(boost-cmath.sqrt(tactical.speed_multiplier))<1e-4,"halfway through its ramp: %v",boost)
     moves_tick(&f,{},20)

@@ -16,12 +16,12 @@ import phys "plugins:physics/runtime"
 BODY_ROOT_MOVE :: u32(0x41435452) // the id of its layered moves
 
 @(step="fixed",stage="apply")
-animation_body_move :: proc(characters:core.Read(phys.Character),worlds:core.Read(core.World_Transform),verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
+animation_body_move :: proc(characters:core.Read(phys.Character),states:core.Read(phys.Locomotion_State),worlds:core.Read(core.World_Transform),verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(characters) {
         character:=core.at(characters,row)
-        if character.mode==phys.MODE_MANTLING {continue}
         entity:=core.entity_at(characters,row)
+        if state,_:=core.get(states,entity);state.mode==phys.MODE_MANTLING {continue}
         body,moving:=anim.animation_body_motion(playback.ptr,entity)
         placed,ok:=core.get(worlds,entity)
         if !moving || !ok {continue}

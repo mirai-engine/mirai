@@ -87,7 +87,7 @@ RAFT_BAR_STEPS :: 300 // the steps the bar of the breath moves in
 
 @(step="frame")
 raft_hud :: proc(
-    huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),characters:core.Read(phys.Character),
+    huds:^core.Table(Raft_Hud),divers:core.Read(Diver),games:core.Read(Raft_Game),states:core.Read(phys.Character_State),locomotions:core.Read(phys.Locomotion_State),
     drivables:core.Read(inp.Drivable),time:core.Time,
 ) {
     shown:=core.read(huds)
@@ -96,7 +96,7 @@ raft_hud :: proc(
         next:Raft_Hud
         if diver,is_diver:=core.get(divers,body);is_diver && inp.seat_of(drivables,body)!=core.NONE && core.count(games)>0 {
             state,_:=core.get(states,body)
-            character,_:=core.get(characters,body)
+            character,_:=core.get(locomotions,body)
             switch {
             case character.mode==phys.MODE_SWIMMING && .Underwater in state.fluid: next.doing=.Under
             case character.mode==phys.MODE_SWIMMING:                               next.doing=.Surface

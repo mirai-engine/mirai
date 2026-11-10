@@ -70,7 +70,8 @@ gallery_spider :: proc(g:^Gallery_Build,place:Gallery_Place) -> base.Entity_Id {
     }
     gallery_profile(o,s,root,"characters/spider","spider_grounding",{grounding={grounding}})
     capsule:=phys.collider_character(.22,.8);asset.builder_set(s,root,capsule)
-    character:=phys.character_default();character.step_height=.22;character.move_relative_to=.Game
+    character:=phys.character_default();character.step_height=.22
+    locomotion:=phys.LOCOMOTION_DEFAULT;locomotion.move_relative_to=.Game;asset.builder_set(s,root,locomotion)
     walk:=phys.WALK_DEFAULT;walk.max_speed=1;walk.acceleration=6;walk.braking=8;walk.jump_height=.5
     asset.builder_set(s,root,character);asset.builder_set(s,root,walk)
     camera:=asset.builder_entity(s,"Spider camera")

@@ -12,7 +12,8 @@ import mm "mirai:std/math"
 @(private="file")
 Seat_World :: struct {
     using world:core.Test_World,
-    characters:core.Table(Character),
+    locomotions:core.Table(Locomotion),
+    loco_states:core.Table(Locomotion_State),
     moves:core.Table(input.Move_Input),
     states:core.Table(Character_State),
     drivables:core.Table(input.Drivable),
@@ -44,16 +45,17 @@ seat_test_settle :: proc(f:^Seat_Test) {core.test_world_settle(&f.w)}
 seat_test_run :: proc(f:^Seat_Test) {
     walk:=input.Input_Of(Walk_Action){seats=core.read(&f.seats),drivables=core.read(&f.drivables),base=TEST_WALK_BASE}
     look:=input.Input_Of(input.Look_Action){seats=core.read(&f.seats),drivables=core.read(&f.drivables)}
-    locomotion_seat(core.read(&f.characters),&f.moves,core.read(&f.states),core.read(&f.drivables),walk,look,core.ref(&f.bindings),core.read(&f.follows),core.ref(&f.shown),core.read(&f.cameras),core.read(&f.worlds),core.read(&f.remotes),{},{},{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&f.problems)
+    locomotion_seat(core.read(&f.locomotions),core.read(&f.loco_states),&f.moves,core.read(&f.states),core.read(&f.drivables),walk,look,core.ref(&f.bindings),core.read(&f.follows),core.ref(&f.shown),core.read(&f.cameras),core.read(&f.worlds),core.read(&f.remotes),{},{},{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&f.problems)
 }
 
 // A character facing -X (yaw π/2, as locomotion_step leaves the look of one that stands so) and its Move_Input.
 @(private="file")
 seat_test_body :: proc(f:^Seat_Test,relative:=Move_Relative.Look) -> core.Entity {
     e:=core.create(&f.entities)
-    c:=character_default()
-    c.move_relative_to,c.ready,c.turn_speed=relative,true,0
-    core.add(&f.characters,e,c)
+    c:=LOCOMOTION_DEFAULT
+    c.move_relative_to,c.turn_speed=relative,0
+    core.add(&f.locomotions,e,c)
+    core.add(&f.loco_states,e,Locomotion_State{ready=true})
     core.add(&f.moves,e,input.Move_Input{look_yaw=math.PI/2})
     return e
 }

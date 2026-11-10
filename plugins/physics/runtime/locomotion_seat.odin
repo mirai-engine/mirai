@@ -33,18 +33,19 @@ walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Defau
 // it (the game, an AI, the network).
 @(step="fixed",stage="input")
 locomotion_seat :: proc(
-    characters:core.Read(Character),moves:^core.Table(input.Move_Input),found:core.Read(Character_State),
+    locomotions:core.Read(Locomotion),states:core.Read(Locomotion_State),moves:^core.Table(input.Move_Input),found:core.Read(Character_State),
     drivables:core.Read(input.Drivable),walk_actions:input.Input_Of(Walk_Action),look_actions:input.Input_Of(input.Look_Action),bindings:core.Ref(input.Input_Map),
     follows:core.Read(cam.Camera_Follow),shown:core.Ref(cam.Cameras),cameras:core.Read(render.Camera),
     worlds:core.Read(core.World_Transform),remotes:core.Read(core.Remote),physics:core.Ref(Physics_State),paces:core.Read(core.Own_Pace),
     time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     walks:=input.input_map_has(bindings.ptr,input.action_of(walk_actions,.Move),.Axis2) && input.input_map_has(bindings.ptr,input.action_of(look_actions,.Look),.Axis2)
-    for row in 0..<core.count(characters) {
-        e:=core.entity_at(characters,row)
-        c:=&characters.table.values[row]
+    for row in 0..<core.count(locomotions) {
+        e:=core.entity_at(locomotions,row)
+        c:=&locomotions.table.values[row]
         seat:=input.seat_of(drivables,e)
-        if c.move_relative_to==.Game || !c.ready || seat==core.NONE || !core.owned(remotes,e) {continue}
+        state,started:=core.get(states,e)
+        if c.move_relative_to==.Game || !started || !state.ready || seat==core.NONE || !core.owned(remotes,e) {continue}
         move:=core.edit(moves,e)
         if move==nil {continue}
         if !walks {

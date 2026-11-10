@@ -22,7 +22,7 @@ Paced :: struct {
     using rows:Paced_World,
     walkers:[2]core.Entity,
     chars:[2]sim.Character_Handle,
-    locos:[2]Character,
+    locos:[2]Locomotion_State,
 }
 
 @(private="file")
@@ -43,7 +43,7 @@ paced_init :: proc(t:^testing.T,f:^Paced) -> bool {
     for i in 0..<2 {
         f.walkers[i]=core.create(&f.entities)
         f.chars[i]=sim.character_create(&f.w,sim.CHARACTER_DESC_DEFAULT,{f32(i)*4,0,0})
-        f.locos[i]=character_default()
+        f.locos[i]={}
     }
     core.add(&f.paces,f.walkers[0],core.OWN_PACE_DEFAULT)
     core.test_world_settle(&f.rows)
@@ -63,7 +63,7 @@ paced_ticks :: proc(f:^Paced,clock:core.Clock,ticks:int,move:[3]f32,buttons:=inp
             found:=character_state_of(sim.character_state(&f.w,f.chars[i]))
             given:=input.Move_Input{move=move,buttons=buttons}
             pace:=core.pace_of(clock,core.read(&f.paces),f.walkers[i])
-            m:=locomotion_move_paced(&f.locos[i],WALK_DEFAULT,{},nil,{},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.chars[i]),f.w.gravity,1.0/PACED_RATE,pace)
+            m:=locomotion_move_paced(&f.locos[i],character_default(),WALK_DEFAULT,{},nil,{},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,sim.character_velocity(&f.w,f.chars[i]),f.w.gravity,1.0/PACED_RATE,pace)
             sim.character_set_move(&f.w,f.chars[i],m)
         }
         sim.world_step(&f.w,1.0/PACED_RATE)
@@ -123,7 +123,7 @@ a_character_with_its_own_pace_jumps_as_high_and_as_long_in_slow_motion :: proc(t
 
 @(test)
 layered_moves_last_their_ticks_of_its_own_time :: proc(t:^testing.T) {
-    loco:=character_default()
+    loco:Locomotion_State
     loco.moves[0]={velocity={0,0,-10},ticks=8,mix=.Override}
     loco.move_count=1
     move:sim.Character_Move

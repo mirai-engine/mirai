@@ -270,7 +270,7 @@ sync_seen :: proc(s:^Sync,structure:u64) -> u64 {return structure+core.version(s
 // Those versions but the values of Transform.
 @(private)
 sync_structure :: proc(s:^Sync) -> u64 {
-    seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.layout(s.characters)+characters_seen(s.state,s.characters)
+    seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.version(s.characters)+core.layout(s.characters)
     seen+=core.version(s.statics)+core.layout(s.statics)+core.version(s.parents)+core.layout(s.parents)+core.layout(s.transforms)
     return seen+u64(s.state.epoch)+(s.app.assets!=nil?s.app.assets.structure:0)
 }
@@ -340,23 +340,6 @@ sync_order :: proc(s:^Sync,e:core.Entity) -> (order:u64,body:bool) {
     case character>=0:                                      return 4<<32|u64(character),true
     }
     return
-}
-
-// The fields of the characters the simulation reads, which change seldom; the
-// locomotion writes the rest of their rows every tick. Taken again only when a row was written.
-@(private)
-characters_seen :: proc(state:^Physics_State,characters:core.Read(Character)) -> u64 {
-    at:=[2]u64{core.version(characters),core.layout(characters)}
-    if state.characters_at==at {return state.characters_hash}
-    seen:u64
-    for c in characters.table.values[:core.count(characters)] {
-        for field in ([9]f32{c.mass,c.max_slope,c.step_height,c.traction_force,c.adhesion_force,c.gravity_scale,c.push_force,c.density,c.up_speed}) {
-            seen=base.hash_mix(seen,u64(transmute(u32)field))
-        }
-        seen=base.hash_mix(seen,u64(transmute(u8)c.locks))
-    }
-    state.characters_at,state.characters_hash=at,seen
-    return seen
 }
 
 @(private)
@@ -764,7 +747,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
     state:=s.state
     w:=&state.world
     if !has_capsule || capsule.kind!=.Capsule {
-        if !l.refused || !character_body_same(l.config,config) || l.collider!=capsule {
+        if !l.refused || l.config!=config || l.collider!=capsule {
             core.report(s.problems,e,"physics.character_capsule","its Character is not made: it moves as the Collider of kind Capsule of the entity, and it has %s; give it physics.collider_character() or a capsule of its own",has_capsule?"another kind":"none")
         }
         l.refused,l.config,l.collider=true,config,capsule
@@ -776,7 +759,7 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
     desc:=character_desc(config,capsule,scale,filter,e)
     local,has_local:=core.get(s.locals,e)
     if l.kind==.Character && sim.character_valid(w,l.character) && character_shape_same(l,config,capsule,scale) {
-        if !character_body_same(l.config,config) || l.collider.drag!=capsule.drag {sim.character_set_desc(w,l.character,desc)}
+        if l.config!=config || l.collider.drag!=capsule.drag {sim.character_set_desc(w,l.character,desc)}
         if l.config.locks!=config.locks {sim.character_set_locks(w,l.character,body_locks(config.locks))}
         if l.filter!=filter {sim.character_set_filter(w,l.character,filter)}
         if !collider_surface_same(l.collider,capsule) {surface_set(w,sim.character_shape(w,l.character),capsule)}

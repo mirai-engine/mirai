@@ -353,7 +353,7 @@ game with its own mode passes its setup. The editor offers them as recipes in Cr
 - Requesting the mode it already has does nothing: the game can request it every tick, also in one
   that is simulated again.
 - A mode that cannot be taken is a problem of the camera (`camera.mode_*`).
-- For the body to move well in any mode, its `Character` uses `move_relative_to` `View`
+- For the body to move well in any mode, its `Locomotion` uses `move_relative_to` `View`
   ([seat control](../../mirai-physics/references/engine.md#seat-control)).
 - Seeing a camera and passing to others without playing:
   [camera preview](../../mirai-editor/references/editor.md#camera-preview).

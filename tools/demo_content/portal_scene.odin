@@ -211,6 +211,7 @@ write_portal_player :: proc(o:^Out) {
     character,capsule,walk:=phys.character_default(),phys.collider_character(),game.player_walk()
     capsule.dominance=1
     asset.builder_set(&s,1,character)
+    asset.builder_set(&s,1,phys.LOCOMOTION_DEFAULT)
     asset.builder_set(&s,1,walk)
     asset.builder_set(&s,1,capsule)
     asset.builder_set(&s,1,game.Portal_Gun{})

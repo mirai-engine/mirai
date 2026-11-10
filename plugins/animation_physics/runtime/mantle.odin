@@ -15,11 +15,11 @@ MANTLE_WINDOW :: "mantle"
 MANTLE_ROOT_MOVE :: u32(0x4d4e544c) // the id of its layered moves
 
 @(step="fixed",stage="apply")
-animation_mantle :: proc(characters:core.Read(phys.Character),worlds:core.Read(core.World_Transform),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
+animation_mantle :: proc(states:core.Read(phys.Locomotion_State),worlds:core.Read(core.World_Transform),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^phys.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
-    for row in 0..<core.count(characters) {
-        if core.at(characters,row).mode!=phys.MODE_MANTLING {continue}
-        entity:=core.entity_at(characters,row)
+    for row in 0..<core.count(states) {
+        if core.at(states,row).mode!=phys.MODE_MANTLING {continue}
+        entity:=core.entity_at(states,row)
         delta,rooted:=anim.animation_root_delta(playback.ptr,entity)
         placed,ok:=core.get(worlds,entity)
         if !rooted || !ok {continue}
@@ -29,6 +29,6 @@ animation_mantle :: proc(characters:core.Read(phys.Character),worlds:core.Read(c
 }
 
 // The target of the warping of a climb: the feet where it ends, facing as the body faces.
-mantle_target :: proc "contextless" (character:phys.Character,facing:mm.Quat) -> anim.Spatial_Target {
+mantle_target :: proc "contextless" (character:phys.Locomotion_State,facing:mm.Quat) -> anim.Spatial_Target {
     return {kind=.World,position=character.mantle_to,rotation=facing,scale=1}
 }

@@ -124,11 +124,10 @@ collider_character :: proc "contextless" (radius:f32=0.3,height:f32=1.8) -> Coll
 // whose +Y is its up (core.Vertical) and which faces the yaw of its move, and
 // the capsule stands on the feet along that up. The up turns toward the
 // opposite of the gravity it feels, at up_speed. Its Character_Move drives it,
-// which its locomotion writes in the mode it is in (locomotion.odin). Its
-// size, mass and step_height take effect by making the character again; the
-// simulation reads only its fields up to locks, and the locomotion writes the
-// rest.
-@(component,replicated,locks="core.Transform",description="A physical character that stands on walkable ground, steps and pushes, moved by its Move_Input in the mode it is in, with the parameters of the component of that mode (Walk, Fly...).")
+// which its locomotion writes in the mode it is in (locomotion.odin). Only an
+// author writes it: its size, mass and step_height take effect by making the
+// character again, and what changes while it plays is in Locomotion_State.
+@(component,replicated,locks="core.Transform",description="A physical character that stands on walkable ground, steps and pushes, moved by its Character_Move.")
 Character :: struct {
     mass:f32 `mirai:"min=0,unit=kg"`, // 0: from the density of the capsule
     max_slope:f32 `mirai:"angle,min=0"`,
@@ -140,76 +139,28 @@ Character :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // of the body in a fluid, whose volume is its mass over this: 985 a person; 0: no buoyancy
     up_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its up turns toward the opposite of its gravity: around a planet; 0: it keeps its up
     locks:Body_Locks,                       // world axes the simulation never moves its feet along, as for a Rigid_Body; a place still does. Its move turns it: the angular ones do nothing
-    mode:Locomotion_Mode,                   // the one it starts in; then the one it is in
-    move_relative_to:Move_Relative,         // forward, for the seat that drives it
-    pitch_limit:f32 `mirai:"angle,min=0"`,  // of the look a seat gives it, up and down from level
-    turn_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // toward its move, moving relative to the camera or the world; 0: at once
-    jumped:bool `mirai:"transient,readonly,hidden"`,           // in the air by a jump: no coyote time
-    jump_held:bool `mirai:"transient,readonly,hidden"`,        // the jump button was down in the last tick
-    ready:bool `mirai:"transient,local,hidden"`,               // its look was taken from where it stands
-    coyote:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // left
-    added:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what additive layered moves put in the last drive
-    driven:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what the locomotion drove toward in the last tick without them, in the world
-    pace:f32 `mirai:"transient,readonly,hidden"`,       // of its last move (core.Own_Pace): its velocity is that of its own time by it; 0: 1
-    layer_time:f32 `mirai:"transient,readonly,hidden"`, // part of a tick of its own time its layered moves have not spent
-    move_count:u32 `mirai:"transient,readonly,hidden"`,
-    moves:[LAYERED_MOVE_CAPACITY]Layered_Move `mirai:"transient,readonly,hidden"`,
-    crouched:bool `mirai:"transient,readonly,hidden"`,    // it asks for the crouch_height of its Walk: crouching or sliding
-    crouch_held:bool `mirai:"transient,readonly,hidden"`, // the crouch button was down in the last tick
-    crouch_lock:bool `mirai:"transient,readonly,hidden"`, // a slide ended with it standing up: crouch held does nothing until it is let go
-    crouch_on:bool `mirai:"transient,readonly,hidden"`,   // it asks to crouch: crouch held, or toggled on with crouch_toggle
-    crouch_buffer:f32 `mirai:"transient,readonly,hidden,unit=s"`, // left of a crouch pressed in the air, which slides on landing
-    air_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,       // since it last stood
-    fall_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // going down in the air without a stop: what a long fall is
-    jump_speed:f32 `mirai:"transient,readonly,hidden,unit=m/s"`,   // up, of its last jump: a jump held keeps it (Walk.jump_rise)
-    jump_rise:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // left in which its jump held keeps jump_speed
-    slide_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // it has slid
-    slide_cooldown:f32 `mirai:"transient,readonly,hidden,unit=s"`, // left before crouch starts another slide
-    slide_course:[3]f32 `mirai:"transient,readonly,hidden"`,       // where it started sliding, across its up
-    slide_turn:f32 `mirai:"transient,readonly,hidden"`,            // radians its move turned the course from there, left about its up
-    mantle_from,mantle_to:[3]f32 `mirai:"transient,readonly,hidden,unit=m"`, // where its feet start and end a mantle, in the world
-    mantle_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // of the mantle it climbs
-    mantle_height:f32 `mirai:"transient,readonly,unit=m"`,          // of the ledge of its last mantle over its feet: the animation of the climb chooses by it
-    sprint_active:bool `mirai:"transient,readonly"`,                // in a tactical sprint (Tactical_Sprint): the camera and the animation choose by it
-    sprint_spent:f32 `mirai:"transient,readonly"`,                  // energy of its Tactical_Sprint used: 0 is full (tactical_energy)
-    sprint_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // in the tactical sprint: its ramp (tactical_boost)
-    sprint_rest:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // since energy was last spent
-    sprint_off:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // without sprinting in the tactical sprint
-    ledge_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // standing at the min_speed of its Ledge_Jump or more
-    ledge_ready:bool `mirai:"transient,readonly"`,                  // a jump now is a ledge jump: the prompt of a game
-    ledge_jumping:bool `mirai:"transient,readonly"`,                // in the air by a ledge jump, until it lands
 }
 
-PITCH_LIMIT_DEFAULT :: f32(85*mm.RAD_PER_DEG)
-
-// A human of 80 kg that looks where it walks: the values of sim.CHARACTER_DESC_DEFAULT. Its capsule is collider_character().
+// A human of 80 kg: the values of sim.CHARACTER_DESC_DEFAULT. Its capsule is collider_character().
 character_default :: proc "contextless" () -> Character {
     d:=sim.CHARACTER_DESC_DEFAULT
     return {
         mass=d.mass,max_slope=d.max_slope,step_height=d.step_height,traction_force=d.traction_force,
         adhesion_force=d.adhesion_force,gravity_scale=d.gravity_scale,push_force=d.push_force,density=d.density,up_speed=d.up_speed,
-        pitch_limit=PITCH_LIMIT_DEFAULT,turn_speed=500*mm.RAD_PER_DEG,
     }
-}
-
-// Whether two characters are the same body for the simulation: the fields it reads.
-character_body_same :: proc "contextless" (a,b:Character) -> bool {
-    return a.mass==b.mass && a.max_slope==b.max_slope && a.step_height==b.step_height && a.traction_force==b.traction_force &&
-        a.adhesion_force==b.adhesion_force && a.gravity_scale==b.gravity_scale && a.push_force==b.push_force && a.density==b.density &&
-        a.up_speed==b.up_speed && a.locks==b.locks
-
 }
 
 Drive :: sim.Drive
 Move_Flag :: sim.Move_Flag
 Move_Flags :: sim.Move_Flags
+Character_Drive :: sim.Character_Move
 
 // What drives a Character from the next step on: its locomotion writes it,
 // or a mode of the game under it, and the step hands it to the simulation.
 // The locomotion adds it while the character plays.
 @(component,shared,description="How the Character is driven: toward a velocity on the ground and another in the air, with a launch and the yaw it faces.")
 Character_Move :: struct {
-    value:sim.Character_Move `mirai:"transient,readonly"`,
+    value:Character_Drive `mirai:"transient,readonly"`,
     // m of the capsule from the feet to the top of the head it asks for: crouching. The step makes it
     // that tall before it moves it, and shorter only when what is over it lets it grow back (cramped in
     // its Character_State); 0, or taller than its Collider, is the height of its Collider.

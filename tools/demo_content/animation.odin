@@ -295,7 +295,8 @@ gallery_profile :: proc(o:^Out,s:^asset.Scene_Builder,root:base.Entity_Id,folder
 // A body that moves by the root motion of its clips instead of what it is asked.
 @(private)
 gallery_motor :: proc(s:^asset.Scene_Builder,entity:base.Entity_Id) {
-    character:=phys.character_default();character.move_relative_to=.Game
+    character:=phys.character_default()
+    locomotion:=phys.LOCOMOTION_DEFAULT;locomotion.move_relative_to=.Game;asset.builder_set(s,entity,locomotion)
     walk:=phys.WALK_DEFAULT;walk.max_speed=10;walk.acceleration=1000;walk.braking=1000
     capsule:=phys.collider_character()
     motor:=game.ANIMATION_MOTOR_DEFAULT;asset.builder_set(s,entity,character);asset.builder_set(s,entity,walk);asset.builder_set(s,entity,capsule);asset.builder_set(s,entity,motor)

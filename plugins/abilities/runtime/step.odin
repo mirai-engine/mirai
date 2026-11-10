@@ -15,6 +15,7 @@ Ability_World :: struct {
     seats:core.Read(inp.Seat),
     drivables:core.Read(inp.Drivable),
     characters:core.Read(phys.Character),
+    locomotions:core.Read(phys.Locomotion_State), // the modes the characters are in
     worlds:core.Read(core.World_Transform),
     remotes:core.Read(core.Remote),
     paces:core.Read(core.Own_Pace), // the windows on the Own clock count the user's own time
@@ -413,8 +414,8 @@ start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,u:^Ability_Us
     if u.statuses&a.requires!=a.requires {return .Status_Missing}
     if u.statuses&a.blocked_by!=0 {return .Status_Blocked}
     if a.modes!=0 {
-        if w.characters.table==nil {return .Mode}
-        c,found:=core.get(w.characters,e)
+        if w.locomotions.table==nil {return .Mode}
+        c,found:=core.get(w.locomotions,e)
         if !found || u32(c.mode)>=32 || a.modes&Ability_Modes(u32(1)<<u32(c.mode))==0 {return .Mode}
     }
     for c in a.conditions {

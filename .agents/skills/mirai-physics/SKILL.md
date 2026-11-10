@@ -45,7 +45,8 @@ networking ([networking](../mirai-networking/SKILL.md)).
   [damage and fields](references/destruction.md#damage-and-fields),
   [removal](references/destruction.md#removal), [cut](references/destruction.md#cut) and
   [reading and replay](references/destruction.md#reading-and-replay)
-- `Rigid_Body`, `Collider`, `Character`, `Joint`, requests, queries, pose targets, proxies →
+- `Rigid_Body`, `Collider`, `Character`, `Locomotion`, `Joint`, requests, queries, pose targets,
+  proxies →
   [components](references/engine.md#components),
   [collider fields](references/engine.md#collider-fields),
   [binding and world step](references/engine.md#binding-and-world-step),
@@ -147,6 +148,12 @@ networking ([networking](../mirai-networking/SKILL.md)).
 - A Character's body and its look both face -Z.
 - A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
   the step of that mode writes it first, to which locomotion only adds the layered movements.
+- `Character` and `Locomotion` are authored and never written while playing; what changes is in
+  `Locomotion_State`, all `transient`, so a scene saved after play holds no run-time field.
+- A joint is an entity of its own: `a` (by default its parent) and `b`, its frame its Transform, and
+  one six-axis record as its only description; the solver chooses its kernel from the axes.
+- The step walks the lists of the awake bodies and of the moved shapes, which are state; no stage
+  of a step walks every slot of a pool.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs
   physics uses `step_world`
   ([requests](references/engine.md#requests),
@@ -158,9 +165,10 @@ networking ([networking](../mirai-networking/SKILL.md)).
 - Proxies accept the same forces, manipulation and constraints; whoever owns the body removes it
   before destroying it.
 - Everything that influences a future step is in a table (`core.Motion`, `Character_State`,
-  `Character_Move`, `Character`, `Joint_State`, `Destructible_State`) or in the snapshot of
-  `Physics_State`: this allows copying the world for rollback and saves. The reflection of
-  destruction always comes from the simulation state, never from the event that changed it.
+  `Character_Move`, `Character`, `Locomotion_State`, `Joint_State`, `Destructible_State`) or in
+  the snapshot of `Physics_State`: this allows copying the world for rollback and saves. The
+  reflection of destruction always comes from the simulation state, never from the event that
+  changed it.
 - `physics_step` and `destruct_step` are simulation: they run in `fixed` and repeat in a network
   correction.
 - What the simulation rejects (a body, a shape, a joint, a destructible, a request) is a

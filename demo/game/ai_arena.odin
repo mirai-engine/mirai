@@ -793,6 +793,7 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
     core.commands_add_default(c,e,phys.Character)
+    core.commands_add_default(c,e,phys.Locomotion)
     core.commands_add(c,e,phys.collider_character())
     walk:=core.default(c,phys.Walk)
     walk.max_speed=speed
@@ -980,9 +981,10 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     e:=core.commands_create(c)
     core.commands_add(c,e,core.Id{core.id_next(c.entities)})
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
-    character:=core.default(c,phys.Character)
-    character.mode=phys.MODE_FLYING
-    core.commands_add(c,e,character)
+    core.commands_add_default(c,e,phys.Character)
+    locomotion:=core.default(c,phys.Locomotion)
+    locomotion.mode=phys.MODE_FLYING
+    core.commands_add(c,e,locomotion)
     core.commands_add(c,e,phys.collider_character(0.25,0.8))
     core.commands_add_default(c,e,phys.Walk)
     core.commands_add(c,e,phys.Fly{speed=5,acceleration=20})

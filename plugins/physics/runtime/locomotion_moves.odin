@@ -32,7 +32,7 @@ Slide :: struct {
 
 SLIDE_DEFAULT :: Slide{start_speed=4.5,land_speed=1.5,max_speed=12,min_speed=4,buffer=1.5,time=1.25,friction=0,downhill_angle=10*mm.RAD_PER_DEG,steer_angle=20*mm.RAD_PER_DEG,steer_speed=15*mm.RAD_PER_DEG,cooldown=0.5}
 
-@(component,replicated,description="The character can mantle (mode mantling of its Character): with jump, looking at a wall within reach whose top is between min_height and max_height over its feet, with room to stand there and on the way, it climbs onto it in time. Standing, a top lower than ground_height is jumped onto instead; in the air, jump held climbs once delay has passed since it left the ground. Its Character keeps the height of the ledge (mantle_height) for the animation of the climb. It needs a Walk.")
+@(component,replicated,description="The character can mantle (mode mantling of its Character): with jump, looking at a wall within reach whose top is between min_height and max_height over its feet, with room to stand there and on the way, it climbs onto it in time. Standing, a top lower than ground_height is jumped onto instead; in the air, jump held climbs once delay has passed since it left the ground. Its Locomotion_State keeps the height of the ledge (mantle_height) for the animation of the climb. It needs a Walk.")
 Mantle :: struct {
     reach:f32 `mirai:"min=0,unit=m"`,         // from its axis, ahead, where it looks for the wall
     min_height:f32 `mirai:"min=0,unit=m"`,
@@ -66,7 +66,7 @@ Tactical_Sprint :: struct {
 
 TACTICAL_SPRINT_DEFAULT :: Tactical_Sprint{speed_multiplier=1.4,acceleration_multiplier=3,jump_multiplier=1.2,speed_ramp=0.6224,jump_ramp=0.7265,energy=115,min_energy=10,cost_per_second=15,cost_jump=18,cost_slide=10,recharge=52,recharge_delay=2,fall_grace=0.5,grace=0.5,pause_falling=true}
 
-@(component,replicated,description="The character jumps off a ledge farther (ledge jump): standing at min_speed or faster for min_time, with nothing in the way for reach ahead along where it goes and no ground there within min_drop under its feet, it is ready (Character.ledge_ready) and a jump adds added_speed along where it goes, at most max_speed across its up, and up_speed up to the speed of its jump. It lasts until it lands (Character.ledge_jumping), and meanwhile air control steers it without slowing it. It needs a Walk.")
+@(component,replicated,description="The character jumps off a ledge farther (ledge jump): standing at min_speed or faster for min_time, with nothing in the way for reach ahead along where it goes and no ground there within min_drop under its feet, it is ready (Locomotion_State.ledge_ready) and a jump adds added_speed along where it goes, at most max_speed across its up, and up_speed up to the speed of its jump. It lasts until it lands (Locomotion_State.ledge_jumping), and meanwhile air control steers it without slowing it. It needs a Walk.")
 Ledge_Jump :: struct {
     min_speed:f32 `mirai:"min=0,unit=m/s"`, // across its up, relative to the ground
     min_time:f32 `mirai:"min=0,unit=s"`,    // standing at min_speed or more
@@ -82,7 +82,7 @@ LEDGE_JUMP_DEFAULT :: Ledge_Jump{min_speed=6,min_time=0.25,reach=1.5,min_drop=1.
 // The multipliers of speed and jump of a tactical sprint that has lasted sprint_time: each grows
 // by the same factor every instant from 1 to its whole value over its ramp. 1 outside a tactical
 // sprint.
-tactical_boost :: proc "contextless" (loco:Character,tactical:Tactical_Sprint) -> (speed,jump:f32) {
+tactical_boost :: proc "contextless" (loco:Locomotion_State,tactical:Tactical_Sprint) -> (speed,jump:f32) {
     if !loco.sprint_active {return 1,1}
     ramp :: proc "contextless" (whole,seconds,elapsed:f32) -> f32 {
         whole:=max(whole,1)
@@ -93,12 +93,12 @@ tactical_boost :: proc "contextless" (loco:Character,tactical:Tactical_Sprint) -
 }
 
 // The energy left of the tactical sprint of a character.
-tactical_energy :: proc "contextless" (loco:Character,tactical:Tactical_Sprint) -> f32 {
+tactical_energy :: proc "contextless" (loco:Locomotion_State,tactical:Tactical_Sprint) -> f32 {
     return clamp(tactical.energy-loco.sprint_spent,0,tactical.energy)
 }
 
 @(private)
-tactical_spend :: proc "contextless" (loco:^Character,tactical:Tactical_Sprint,amount:f32) {
+tactical_spend :: proc "contextless" (loco:^Locomotion_State,tactical:Tactical_Sprint,amount:f32) {
     if !(amount>0) {return}
     loco.sprint_spent=min(loco.sprint_spent+amount,tactical.energy)
     loco.sprint_rest=0
@@ -111,7 +111,7 @@ tactical_spend :: proc "contextless" (loco:^Character,tactical:Tactical_Sprint,a
 // ends without energy, falling past fall_grace, out of walking or falling, or past grace without
 // sprinting. Energy comes back once it has rested recharge_delay.
 @(private)
-tactical_update :: proc "contextless" (loco:^Character,tactical:Tactical_Sprint,sprinting,walking,standing:bool,dt:f32,held:=true) {
+tactical_update :: proc "contextless" (loco:^Locomotion_State,tactical:Tactical_Sprint,sprinting,walking,standing:bool,dt:f32,held:=true) {
     loco.sprint_rest+=dt
     if loco.sprint_active {
         loco.sprint_off=0 if sprinting else loco.sprint_off+dt
@@ -148,7 +148,7 @@ ledge_drop_ahead :: proc(w:^sim.World,h:sim.Character_Handle,direction:[3]f32,le
 
 // Whether a character with a Ledge_Jump is ready for one this tick: it has stood at min_speed for
 // min_time, it walks and the ground falls away ahead along its velocity over the ground.
-ledge_ready_update :: proc(loco:^Character,ledge:Ledge_Jump,ground:Character_State,velocity:[3]f32,w:^sim.World,h:sim.Character_Handle) {
+ledge_ready_update :: proc(loco:^Locomotion_State,ledge:Ledge_Jump,ground:Character_State,velocity:[3]f32,w:^sim.World,h:sim.Character_Handle) {
     loco.ledge_ready=false
     if loco.ledge_jumping || !ground.standing || loco.mode!=MODE_WALKING || loco.ledge_time<ledge.min_time || overriding(loco) {return}
     loco.ledge_ready=ledge_drop_ahead(w,h,velocity-ground.ground_velocity,ledge)
@@ -176,7 +176,7 @@ crouch_speed :: proc "contextless" (walk:Walk) -> f32 {return max(walk.crouch_sp
 // at most steer_angle from where it started at steer_speed. n is the normal of the ground, current
 // its velocity along it relative to the ground.
 @(private)
-slide_velocity :: proc(loco:^Character,slide:Slide,n,up,current,wish,gravity:[3]f32,dt:f32) -> (velocity:[3]f32,ended:bool) {
+slide_velocity :: proc(loco:^Locomotion_State,slide:Slide,n,up,current,wish,gravity:[3]f32,dt:f32) -> (velocity:[3]f32,ended:bool) {
     loco.slide_time+=dt
     if flat:=wish-up*linalg.dot(wish,up);linalg.dot(flat,flat)>1e-8 {
         start:=loco.slide_course
@@ -196,7 +196,7 @@ slide_velocity :: proc(loco:^Character,slide:Slide,n,up,current,wish,gravity:[3]
 }
 
 @(private)
-slide_start :: proc "contextless" (loco:^Character,current,up:[3]f32) {
+slide_start :: proc "contextless" (loco:^Locomotion_State,current,up:[3]f32) {
     course:=current-up*linalg.dot(current,up)
     if l:=linalg.length(course);l>1e-6 {course/=l}
     loco.slide_course,loco.slide_turn,loco.slide_time=course,0,0
@@ -204,7 +204,7 @@ slide_start :: proc "contextless" (loco:^Character,current,up:[3]f32) {
 
 // Whether a character asks to mantle this tick, before its locomotion takes the jump: jump pressed
 // while it stands (from_ground), or jump held once it has been delay in the air.
-mantle_wanted :: proc "contextless" (loco:^Character,mantle:Mantle,ground:Character_State,move_input:input.Move_Input,jump:input.Action) -> (wanted,from_ground:bool) {
+mantle_wanted :: proc "contextless" (loco:^Locomotion_State,mantle:Mantle,ground:Character_State,move_input:input.Move_Input,jump:input.Action) -> (wanted,from_ground:bool) {
     held:=move_input.buttons&input.action_bit(jump)!=0
     switch loco.mode {
     case MODE_WALKING,MODE_CROUCHING:
@@ -272,7 +272,7 @@ ledge_find :: proc(w:^sim.World,h:sim.Character_Handle,facing:[3]f32,mantle:Mant
 }
 
 // Starts a climb from where the feet are to the top a ledge_find gave.
-mantle_start :: proc "contextless" (loco:^Character,from,to:[3]f32,height:f32) {
+mantle_start :: proc "contextless" (loco:^Locomotion_State,from,to:[3]f32,height:f32) {
     loco.mode,loco.jumped,loco.coyote,loco.crouched=MODE_MANTLING,false,0,false
     loco.mantle_from,loco.mantle_to,loco.mantle_time,loco.mantle_height=from,to,0,height
 }
@@ -290,7 +290,7 @@ mantle_point :: proc "contextless" (from,to,up:[3]f32,u:f32) -> [3]f32 {
 // or when something holds it off the way, it falls (and stands on what it climbed). driven: an
 // Override layered move takes the climb this tick (the root motion of the animation of the climb,
 // warped onto the ledge), so it goes where that move takes it and only its time runs.
-mantle_move :: proc(loco:^Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,move_input:input.Move_Input,jump:input.Action,dt:f32,driven:=false) -> (move:sim.Character_Move) {
+mantle_move :: proc(loco:^Locomotion_State,body:Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,move_input:input.Move_Input,jump:input.Action,dt:f32,driven:=false) -> (move:Character_Drive) {
     up:=mm.quat_rotate(frame,{0,1,0})
     move.yaw=move_input.look_yaw
     loco.jump_held=move_input.buttons&input.action_bit(jump)!=0
@@ -301,13 +301,13 @@ mantle_move :: proc(loco:^Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,
     if loco.mantle_time>=length || !driven && linalg.dot(off,off)>MANTLE_TOLERANCE*MANTLE_TOLERANCE {
         // It stops where the climb left it, up and across, and falls from there.
         loco.mode,loco.air_time=MODE_FALLING,0
-        move.air={{},max(loco.traction_force,1)*MANTLE_FORCE}
+        move.air={{},max(body.traction_force,1)*MANTLE_FORCE}
         move.flags={.Airborne,.Drive_Vertical}
         return
     }
     loco.mantle_time+=dt
     next:=mantle_point(loco.mantle_from,loco.mantle_to,up,min(loco.mantle_time/length,1))
-    drive:=sim.Drive{(next-position)/dt,max(loco.traction_force,1)*MANTLE_FORCE}
+    drive:=sim.Drive{(next-position)/dt,max(body.traction_force,1)*MANTLE_FORCE}
     move.ground,move.air=drive,drive
     move.flags={.Airborne,.Drive_Vertical,.No_Gravity}
     return

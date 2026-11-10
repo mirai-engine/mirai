@@ -73,10 +73,18 @@ collider_lines_draw :: proc(s:^editor.Session,w:core.World_Ref) {
 // A Character takes its capsule from a Collider: one that comes without gets it.
 @(private)
 collider_companion :: proc(s:^editor.Session,e:core.Entity,t:^core.Table_Info) {
-    if t.type!=phys.Character {return}
-    collider:=phys.collider_character()
-    colliders:=editor.component_table(s,"Collider")
     w:=editor.shown_world(s)
-    if colliders==nil || core.raw_find(core.world_table_at(w,colliders),colliders.info,e)!=nil {return}
-    editor.component_add(s,e,colliders,&collider)
+    // A Character stands on a capsule, and the component of a mode moves it only with a Locomotion.
+    switch t.type {
+    case phys.Character:
+        collider:=phys.collider_character()
+        colliders:=editor.component_table(s,"Collider")
+        if colliders==nil || core.raw_find(core.world_table_at(w,colliders),colliders.info,e)!=nil {return}
+        editor.component_add(s,e,colliders,&collider)
+    case phys.Walk,phys.Fly,phys.Swim:
+        locomotion:=phys.LOCOMOTION_DEFAULT
+        locomotions:=editor.component_table(s,"Locomotion")
+        if locomotions==nil || core.raw_find(core.world_table_at(w,locomotions),locomotions.info,e)!=nil {return}
+        editor.component_add(s,e,locomotions,&locomotion)
+    }
 }

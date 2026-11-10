@@ -7,9 +7,10 @@ import input "mirai:engine/input"
 import mm "mirai:std/math"
 import sim "plugins:physics/runtime/sim"
 
-// How a Character moves by its Move_Input. The Character holds its mode and
-// the state between ticks; each mode has its parameters in a component of its
-// own, and an entity can use the modes whose components it has: Walk for
+// How a Character with a Locomotion moves by its Move_Input. Locomotion_State
+// holds its mode and what passes between ticks; each mode has its parameters
+// in a component of its own, and an entity can use the modes whose components
+// it has: Walk for
 // walking, falling and crouching, Slide for sliding, Mantle for mantling
 // (locomotion_moves.odin; Tactical_Sprint and Ledge_Jump change how it
 // sprints and jumps), Fly for flying, Swim for swimming, the component of
@@ -25,7 +26,8 @@ import sim "plugins:physics/runtime/sim"
 // one, every tick, over which this one adds the layered moves. Modes and layered moves are
 // asked through Locomotion_Requests. The components replicate: every end of a
 // network session runs the same locomotion from the same state. The
-// Move_Input and the Character_Move of a Character are added while it plays.
+// Move_Input, the Locomotion_State and the Character_Move of a Character are
+// added while it plays.
 
 @(names="MODE_")
 Locomotion_Mode :: distinct u16
@@ -106,11 +108,65 @@ Swim :: struct {
 
 SWIM_DEFAULT :: Swim{speed=2,acceleration=4,depth=1.2,surface_offset=0.25}
 
+// The Character of the entity moves by its locomotion: the mode it starts in and how a seat drives it.
+@(component,replicated,description="The Character moves by its Move_Input in the mode it is in, with the parameters of the component of that mode (Walk, Fly...).")
+Locomotion :: struct {
+    mode:Locomotion_Mode,                   // the one it starts in
+    move_relative_to:Move_Relative,         // forward, for the seat that drives it
+    pitch_limit:f32 `mirai:"angle,min=0"`,  // of the look a seat gives it, up and down from level
+    turn_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // toward its move, moving relative to the camera or the world; 0: at once
+}
+
+LOCOMOTION_DEFAULT :: Locomotion{pitch_limit=85*mm.RAD_PER_DEG,turn_speed=500*mm.RAD_PER_DEG}
+
+// What the locomotion of a character carries from one tick to the next: its
+// mode, its layered moves, the gravity it was asked for and the state of each
+// of its moves. Only locomotion_step writes it; it is added when it starts.
+@(component,replicated,description="The mode a locomotion is in and what it carries between ticks.")
+Locomotion_State :: struct {
+    mode:Locomotion_Mode `mirai:"transient,readonly"`,
+    gravity:f32 `mirai:"transient,readonly,hidden"`,           // times the gravity_scale of its Character, set_gravity_scale asked; 0: 1
+    jumped:bool `mirai:"transient,readonly,hidden"`,           // in the air by a jump: no coyote time
+    jump_held:bool `mirai:"transient,readonly,hidden"`,        // the jump button was down in the last tick
+    ready:bool `mirai:"transient,local,hidden"`,               // its look was taken from where it stands
+    coyote:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // left
+    added:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what additive layered moves put in the last drive
+    driven:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // what the locomotion drove toward in the last tick without them, in the world
+    pace:f32 `mirai:"transient,readonly,hidden"`,       // of its last move (core.Own_Pace): its velocity is that of its own time by it; 0: 1
+    layer_time:f32 `mirai:"transient,readonly,hidden"`, // part of a tick of its own time its layered moves have not spent
+    move_count:u32 `mirai:"transient,readonly,hidden"`,
+    moves:[LAYERED_MOVE_CAPACITY]Layered_Move `mirai:"transient,readonly,hidden"`,
+    crouched:bool `mirai:"transient,readonly,hidden"`,    // it asks for the crouch_height of its Walk: crouching or sliding
+    crouch_held:bool `mirai:"transient,readonly,hidden"`, // the crouch button was down in the last tick
+    crouch_lock:bool `mirai:"transient,readonly,hidden"`, // a slide ended with it standing up: crouch held does nothing until it is let go
+    crouch_on:bool `mirai:"transient,readonly,hidden"`,   // it asks to crouch: crouch held, or toggled on with crouch_toggle
+    crouch_buffer:f32 `mirai:"transient,readonly,hidden,unit=s"`, // left of a crouch pressed in the air, which slides on landing
+    air_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,       // since it last stood
+    fall_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // going down in the air without a stop: what a long fall is
+    jump_speed:f32 `mirai:"transient,readonly,hidden,unit=m/s"`,   // up, of its last jump: a jump held keeps it (Walk.jump_rise)
+    jump_rise:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // left in which its jump held keeps jump_speed
+    slide_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // it has slid
+    slide_cooldown:f32 `mirai:"transient,readonly,hidden,unit=s"`, // left before crouch starts another slide
+    slide_course:[3]f32 `mirai:"transient,readonly,hidden"`,       // where it started sliding, across its up
+    slide_turn:f32 `mirai:"transient,readonly,hidden"`,            // radians its move turned the course from there, left about its up
+    mantle_from,mantle_to:[3]f32 `mirai:"transient,readonly,hidden,unit=m"`, // where its feet start and end a mantle, in the world
+    mantle_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // of the mantle it climbs
+    mantle_height:f32 `mirai:"transient,readonly,unit=m"`,          // of the ledge of its last mantle over its feet: the animation of the climb chooses by it
+    sprint_active:bool `mirai:"transient,readonly"`,                // in a tactical sprint (Tactical_Sprint): the camera and the animation choose by it
+    sprint_spent:f32 `mirai:"transient,readonly"`,                  // energy of its Tactical_Sprint used: 0 is full (tactical_energy)
+    sprint_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // in the tactical sprint: its ramp (tactical_boost)
+    sprint_rest:f32 `mirai:"transient,readonly,hidden,unit=s"`,     // since energy was last spent
+    sprint_off:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // without sprinting in the tactical sprint
+    ledge_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,      // standing at the min_speed of its Ledge_Jump or more
+    ledge_ready:bool `mirai:"transient,readonly"`,                  // a jump now is a ledge jump: the prompt of a game
+    ledge_jumping:bool `mirai:"transient,readonly"`,                // in the air by a ledge jump, until it lands
+}
+
 Locomotion_Request_Kind :: enum u8 {
     Add_Move,
     Remove_Moves, // those of the id of the move
     Set_Mode,
-    Set_Gravity_Scale, // the gravity_scale of the Character until asked again: low gravity while charging a dash
+    Set_Gravity_Scale, // times the gravity_scale of its Character until asked again: low gravity while charging a dash
 }
 
 Locomotion_Request :: struct {
@@ -139,25 +195,25 @@ remove_moves :: proc(requests:^Locomotion_Requests,e:core.Entity,id:u32) {
 set_mode :: proc(requests:^Locomotion_Requests,e:core.Entity,mode:Locomotion_Mode) {
     core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Set_Mode,mode=mode})
 }
-// Scales the gravity of a Character until asked again (its authored gravity_scale is the one it
-// starts with): the locomotion is the only writer of the Character, so a game changes its gravity
-// for a while (low gravity while charging, a glide) through here.
+// Scales the gravity of a Character by scale times its gravity_scale until asked again: a game
+// changes it for a while (low gravity while charging, a glide) through here, and the authored
+// Character keeps its own.
 set_gravity_scale :: proc(requests:^Locomotion_Requests,e:core.Entity,scale:f32) {
     core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Set_Gravity_Scale,gravity_scale=scale})
 }
 
 @(step="fixed",stage="simulate",before="physics_prepare")
 locomotion_step :: proc(
-    characters:^core.Table(Character),moves:^core.Table(Character_Move),inputs:^core.Table(input.Move_Input),
+    locomotions:core.Read(Locomotion),states:^core.Table(Locomotion_State),characters:core.Read(Character),moves:^core.Table(Character_Move),inputs:^core.Table(input.Move_Input),
     walks:core.Read(Walk),flights:core.Read(Fly),swims:core.Read(Swim),slides:core.Read(Slide),mantles:core.Read(Mantle),tacticals:core.Read(Tactical_Sprint),ledges:core.Read(Ledge_Jump),
     found:core.Read(Character_State),motions:core.Read(core.Motion),
     locals:core.Read(core.Transform),parents:core.Read(core.Parent),remotes:core.Read(core.Remote),physics:core.Ref(Physics_State),
     paces:core.Read(core.Own_Pace),walk_actions:input.Input_Of(Walk_Action),requests:^Locomotion_Requests,time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     for asked in core.take(&requests.queue) {
-        c:=core.edit(characters,asked.entity)
+        c:=locomotion_state_of(states,locomotions,asked.entity)
         if c==nil {
-            core.report(problems,asked.entity,"locomotion.request","a layered move or a mode was asked for this entity, which has no Character; give it one")
+            core.report(problems,asked.entity,"locomotion.request","a layered move or a mode was asked for this entity, which has no Locomotion; give it one")
             continue
         }
         switch asked.kind {
@@ -181,13 +237,22 @@ locomotion_step :: proc(
                 core.report(problems,asked.entity,"locomotion.request","a gravity scale of %v was asked; ask for a finite one of at most %v either way",asked.gravity_scale,GRAVITY_SCALE_MAX)
                 continue
             }
-            c.gravity_scale=asked.gravity_scale
+            c.gravity=asked.gravity_scale
         }
     }
     if !time.playing || time.dt<=0 {return}
-    for row in 0..<core.count(characters) {
-        e:=core.entity_at(characters,row)
-        c:=core.edit_at(characters,row)
+    for row in 0..<core.count(locomotions) {
+        e:=core.entity_at(locomotions,row)
+        body,has_body:=core.get(characters,e)
+        if !has_body {
+            core.report(problems,e,"locomotion.character","it has a Locomotion and no Character, the body it moves; give it a Character")
+            continue
+        }
+        c:=locomotion_state_of(states,locomotions,e)
+        if c==nil {
+            memory_problem(problems,e,"the Locomotion_State")
+            continue
+        }
         frame:=up_frame_of(physics,e)
         move_input:=core.edit(inputs,e)
         if move_input==nil {
@@ -245,19 +310,20 @@ locomotion_step :: proc(
             next.value={}
         } else if c.mode==MODE_MANTLING {
             placed,_:=core.world_of(locals,parents,e)
-            next.value=mantle_move(c,mantle,frame,placed.position,given,jump,time.dt*pace,overriding(c))
+            next.value=mantle_move(c,body,mantle,frame,placed.position,given,jump,time.dt*pace,overriding(c))
             // The layered moves of the tick drive the climb; the tick it ends they are spent, so it
             // stops on what it climbed instead of carrying the last one on.
             spent:=next.value
-            layers_apply(c,&next.value if c.mode==MODE_MANTLING else &spent,c.traction_force,pace)
-            move_paced(&next.value,c,pace,motion.linear,ground,frame)
+            layers_apply(c,&next.value if c.mode==MODE_MANTLING else &spent,body.traction_force,pace)
+            move_paced(&next.value,c,body,pace,motion.linear,ground,frame)
         } else if c.mode>MODE_ENGINE_LAST {
             if written,has_written:=core.get(moves,e);has_written {next=written}
-            layers_apply(c,&next.value,c.traction_force,pace)
-            move_paced(&next.value,c,pace,motion.linear,ground,frame)
+            layers_apply(c,&next.value,body.traction_force,pace)
+            move_paced(&next.value,c,body,pace,motion.linear,ground,frame)
         } else {
-            next.value=locomotion_move_paced(c,walk,fly,swim,extra,ground,frame,given,jump,input.action_of(walk_actions,.Sprint),input.action_of(walk_actions,.Crouch),motion.linear,gravity_of_entity(physics,e)*c.gravity_scale,time.dt,pace)
+            next.value=locomotion_move_paced(c,body,walk,fly,swim,extra,ground,frame,given,jump,input.action_of(walk_actions,.Sprint),input.action_of(walk_actions,.Crouch),motion.linear,gravity_of_entity(physics,e)*body.gravity_scale*locomotion_gravity(c^),time.dt,pace)
         }
+        next.value.gravity_scale=c.gravity
         next.height=0
         if walking,ok:=walk.?;ok && c.crouched {next.height=walking.crouch_height}
         if row:=core.row_of(moves,e);row<0 {
@@ -265,6 +331,20 @@ locomotion_step :: proc(
         } else if moves.values[row]!=next {core.edit_at(moves,row)^=next}
     }
 }
+
+// The Locomotion_State of an entity with a Locomotion, added in the mode it starts in when it has none; nil
+// without one or without memory.
+@(private)
+locomotion_state_of :: proc(states:^core.Table(Locomotion_State),locomotions:core.Read(Locomotion),e:core.Entity) -> ^Locomotion_State {
+    if c:=core.staged(states,e);c!=nil {return c}
+    authored,has:=core.get(locomotions,e)
+    if !has {return nil}
+    core.add(states,e,Locomotion_State{mode=authored.mode})
+    return core.added(states,e)
+}
+
+// What set_gravity_scale asked to scale the gravity of a character by.
+locomotion_gravity :: proc "contextless" (loco:Locomotion_State) -> f32 {return loco.gravity!=0?loco.gravity:1}
 
 // Direction of the move of the input in the world, across the up of the frame
 // of the vertical, at most 1 long.
@@ -316,13 +396,13 @@ Walk_Moves :: struct {
 // time of the world (dt is that of its own time). walking and swim are nil
 // for a character that cannot walk or swim: one that only swims stays in the
 // mode out of the water; extra holds what else changes its walk.
-locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt:f32,pace:f32=1) -> (move:sim.Character_Move) {
+locomotion_move :: proc(loco:^Locomotion_State,body:Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt:f32,pace:f32=1) -> (move:Character_Drive) {
     up:=mm.quat_rotate(frame,{0,1,0})
     across :: proc "contextless" (v,up:[3]f32) -> [3]f32 {return v-up*linalg.dot(v,up)}
     look:=frame*mm.quat_axis_angle({0,1,0},move_input.look_yaw)*mm.quat_axis_angle({1,0,0},move_input.look_pitch)
     walk,walks:=walking.?
     move.yaw=move_input.look_yaw
-    traction:=loco.traction_force
+    traction:=body.traction_force
     held:=move_input.buttons&input.action_bit(jump)!=0
     pressed:=held && !loco.jump_held && walk.jump_height>0
     released:=!held && loco.jump_held
@@ -332,8 +412,8 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
     // Into the water and out of it by the depth of the water over the ground, the same both ways; never in
     // the middle of a move that overrides the locomotion, as climbing out.
     if swim,swims:=swim.?;swims && loco.mode!=MODE_FLYING && !overriding(loco) {
-        within:=ground.walkable && ground.ground_distance<=loco.step_height
-        deep:=water_depth(loco,ground)>swim.depth
+        within:=ground.walkable && ground.ground_distance<=body.step_height
+        deep:=water_depth(body,ground)>swim.depth
         if loco.mode==MODE_SWIMMING {
             if walks && .In_Fluid not_in ground.fluid {
                 loco.mode=MODE_FALLING
@@ -423,7 +503,7 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
         current:=relative-n*linalg.dot(relative,n)
         // A slide starts from a crouch at a run or a landing with crouch held, goes on along the
         // ground and ends standing, or crouched when crouch is held without a move.
-        slide_end :: proc "contextless" (loco:^Character,walk:Walk,slide:Slide,crouch_down,moving:bool) {
+        slide_end :: proc "contextless" (loco:^Locomotion_State,walk:Walk,slide:Slide,crouch_down,moving:bool) {
             loco.mode,loco.slide_cooldown=MODE_WALKING,slide.cooldown
             if !moving {return}
             if walk.crouch_toggle {loco.crouch_on=false} else if crouch_down {loco.crouch_lock,loco.crouch_on=true,false}
@@ -483,7 +563,7 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
             if loco.ledge_jumping {speed=max(speed,linalg.length(move.air.velocity))}
             move.air={mm.approach_point(move.air.velocity,wish*speed,walk.air_control*walk.acceleration*dt),walk.air_control*traction}
             // Ground too steep to walk is not climbed from the air either.
-            if ground.ground_normal!={} && !ground.walkable && ground.ground_distance<=loco.step_height {
+            if ground.ground_normal!={} && !ground.walkable && ground.ground_distance<=body.step_height {
                 flat:=across(ground.ground_normal,up)
                 if into:=linalg.dot(move.air.velocity,flat);into<0 && flat!={} {move.air.velocity-=flat*(into/linalg.dot(flat,flat))}
             }
@@ -534,7 +614,7 @@ additive_delivered :: proc "contextless" (velocity,added,driven:[3]f32) -> [3]f3
 // The layered moves of a locomotion on top of a move, each for pace more
 // ticks of its own time. locomotion_step applies them to the move of a mode of
 // the game.
-layers_apply :: proc(loco:^Character,move:^sim.Character_Move,traction:f32,pace:f32=1) {
+layers_apply :: proc(loco:^Locomotion_State,move:^Character_Drive,traction:f32,pace:f32=1) {
     added:[3]f32
     extra:f32 // the force the Additive ones add
     kept:u32
@@ -575,7 +655,7 @@ layers_apply :: proc(loco:^Character,move:^sim.Character_Move,traction:f32,pace:
 // velocities by it and forces by its square. When its pace changes, a launch
 // keeps the velocity it had in its own time (across its up while it stands,
 // relative to the ground).
-move_paced :: proc "contextless" (move:^sim.Character_Move,loco:^Character,pace:f32,velocity:[3]f32,ground:Character_State,frame:mm.Quat) {
+move_paced :: proc "contextless" (move:^Character_Drive,loco:^Locomotion_State,body:Character,pace:f32,velocity:[3]f32,ground:Character_State,frame:mm.Quat) {
     before:=loco.pace>0?loco.pace:1
     loco.pace=pace
     if pace==1 && before==1 {return}
@@ -599,18 +679,18 @@ move_paced :: proc "contextless" (move:^sim.Character_Move,loco:^Character,pace:
 // The Character_Move of one tick of the world for a character whose time runs
 // pace times it (core.pace_of): locomotion_move in its own time, from the
 // ground, the velocity and the dt of the world.
-locomotion_move_paced :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt,pace:f32) -> (move:sim.Character_Move) {
+locomotion_move_paced :: proc(loco:^Locomotion_State,body:Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt,pace:f32) -> (move:Character_Drive) {
     own:=ground
     own.ground_velocity/=pace
     own.fluid_velocity/=pace
-    move=locomotion_move(loco,walking,fly,swim,extra,own,frame,move_input,jump,sprint,crouch,velocity/(loco.pace>0?loco.pace:1),gravity,dt*pace,pace)
-    move_paced(&move,loco,pace,velocity,ground,frame)
+    move=locomotion_move(loco,body,walking,fly,swim,extra,own,frame,move_input,jump,sprint,crouch,velocity/(loco.pace>0?loco.pace:1),gravity,dt*pace,pace)
+    move_paced(&move,loco,body,pace,velocity,ground,frame)
     return
 }
 
 // Whether a layered move overrides the locomotion now.
 @(private)
-overriding :: proc "contextless" (loco:^Character) -> bool {
+overriding :: proc "contextless" (loco:^Locomotion_State) -> bool {
     for layered in loco.moves[:loco.move_count] {if layered.mix==.Override {return true}}
     return false
 }
@@ -676,8 +756,8 @@ landing_on_arc :: proc(w:^sim.World,h:sim.Character_Handle) -> (time,speed:f32,o
 
 // m of water over the walkable ground in reach of the feet, else over the feet.
 @(private)
-water_depth :: proc "contextless" (loco:^Character,ground:Character_State) -> f32 {
-    if ground.walkable && ground.ground_distance<=loco.step_height {return ground.depth+ground.ground_distance}
+water_depth :: proc "contextless" (body:Character,ground:Character_State) -> f32 {
+    if ground.walkable && ground.ground_distance<=body.step_height {return ground.depth+ground.ground_distance}
     return ground.depth
 }
 
@@ -713,7 +793,7 @@ mode_label :: proc(mode:Locomotion_Mode) -> string {
 }
 
 @(private)
-moves_remove :: proc(loco:^Character,id:u32) {
+moves_remove :: proc(loco:^Locomotion_State,id:u32) {
     kept:u32
     for i in 0..<loco.move_count {
         if loco.moves[i].id==id {continue}

@@ -711,8 +711,10 @@ agents_test_flier :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
     core.add(&f.transforms,e,core.Transform{feet,1,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character(0.25,0.8))
     character:=phys.character_default()
-    character.mode=phys.MODE_FLYING
     core.add(&f.characters,e,character)
+    locomotion:=phys.LOCOMOTION_DEFAULT
+    locomotion.mode=phys.MODE_FLYING
+    core.add(&f.locomotions,e,locomotion)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
     core.add(&f.walks,e,phys.WALK_DEFAULT)
@@ -734,11 +736,11 @@ agents_test_step :: proc(f:^Nav_Test) {
     }
     nav_test_settle(f)
     navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.unloaded),core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
-    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
+    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.locomotions),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
     navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
-    phys.locomotion_step(&f.characters,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
+    phys.locomotion_step(core.read(&f.locomotions),&f.loco_states,core.read(&f.characters),&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_step(
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,time,
@@ -828,9 +830,11 @@ agents_test_swimmer :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
     core.add(&f.transforms,e,core.Transform{feet,1,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character(0.25,0.8))
     character:=phys.character_default()
-    character.mode=phys.MODE_SWIMMING
     character.density=1000
     core.add(&f.characters,e,character)
+    locomotion:=phys.LOCOMOTION_DEFAULT
+    locomotion.mode=phys.MODE_SWIMMING
+    core.add(&f.locomotions,e,locomotion)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
     core.add(&f.swims,e,phys.Swim{speed=2,acceleration=8,depth=1.2,surface_offset=0.25})
@@ -1139,6 +1143,7 @@ agents_test_walker :: proc(f:^Nav_Test,feet:[3]f32) -> core.Entity {
     core.add(&f.transforms,e,core.Transform{feet,1,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character())
     core.add(&f.characters,e,phys.character_default())
+    core.add(&f.locomotions,e,phys.LOCOMOTION_DEFAULT)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
     core.add(&f.walks,e,phys.WALK_DEFAULT)
@@ -1365,6 +1370,7 @@ agents_test_amphibian :: proc(f:^Nav_Test,feet:[3]f32,flies:bool) -> core.Entity
     character:=phys.character_default()
     character.density=1000
     core.add(&f.characters,e,character)
+    core.add(&f.locomotions,e,phys.LOCOMOTION_DEFAULT)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
     core.add(&f.walks,e,phys.WALK_DEFAULT)
@@ -1380,7 +1386,7 @@ agents_test_travel :: proc(f:^Nav_Test,e:core.Entity,seconds:int) -> (arrived:bo
     crossed=make([dynamic]Nav_Link_Kind,context.temp_allocator)
     for _ in 0..<60*seconds {
         agents_test_step(f)
-        c,_:=core.get(&f.characters,e)
+        c,_:=core.get(&f.loco_states,e)
         if int(c.mode)<16 {modes+={int(c.mode)}}
         for event in f.nav_events.queue.items {if event.entity==e && event.kind==.Crossed {append(&crossed,event.link)}}
         p,_:=core.get(&f.paths,e)
@@ -1468,6 +1474,7 @@ an_agent_no_class_holds_fails_and_says_so_once :: proc(t:^testing.T) {
     core.add(&f.transforms,e,core.Transform{{2,0,2},1,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character(2,4))
     core.add(&f.characters,e,phys.character_default())
+    core.add(&f.locomotions,e,phys.LOCOMOTION_DEFAULT)
     core.add(&f.moves,e,phys.Character_Move{})
     core.add(&f.bodies,e,core.Motion{})
     core.add(&f.walks,e,phys.WALK_DEFAULT)

@@ -57,8 +57,6 @@ Physics_State :: struct {
     // (link_touch); with touched_all, every link.
     touched:[dynamic]u32,
     touched_all:bool,
-    characters_at:[2]u64, // the version and the layout of Character that characters_hash is of
-    characters_hash:u64,
     collision:Collision_Settings, // those the filters of the shapes were made with
     pushes_set:bool, // the simulation has the push rules of collision
     own_gravity:bool, // the bodies fall with the gravity of their place (gravity_apply)
