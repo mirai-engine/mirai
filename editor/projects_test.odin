@@ -27,8 +27,8 @@ projects_say_when_each_was_opened :: proc(t:^testing.T) {
 
 @(test)
 a_new_project_offers_every_plugin_but_the_automatic_ones :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-projects",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"projects")
+    if folder=="" {return}
     root:=project.path_absolute(folder,context.temp_allocator)
     engine:=project.path(root,"engine",allocator=context.temp_allocator)
     template:=project.path(root,"template",allocator=context.temp_allocator)
@@ -78,8 +78,8 @@ add_plugin_takes_a_git_address_and_searches_the_catalog_with_anything_else :: pr
 
 @(test)
 projects_read_the_branch_of_the_repository_they_are_in :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-projects",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"projects")
+    if folder=="" {return}
     root:=project.path_absolute(folder,context.temp_allocator)
     inner:=project.path(root,"games/racer",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(inner)==nil)
@@ -95,8 +95,8 @@ projects_read_the_branch_of_the_repository_they_are_in :: proc(t:^testing.T) {
 
 @(test)
 projects_show_their_thumbnail_or_the_view_of_their_start_scene :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-projects",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"projects")
+    if folder=="" {return}
     root:=project.path_absolute(folder,context.temp_allocator)
     file:Thumbnail_File
     image:[dynamic]u8
