@@ -562,12 +562,14 @@ vk_pipeline_cache_open :: proc(d: ^Device, key: u64) -> (cache: vk.PipelineCache
 	if d.store_path_len == 0 {return 0}
 	info := vk.PipelineCacheCreateInfo{sType = .PIPELINE_CACHE_CREATE_INFO}
 	sync.lock(&d.pipelines_kept.lock)
-	if blob := pipeline_store_find(&d.pipelines_kept, key); blob != nil {
+	blob := pipeline_store_find(&d.pipelines_kept, key, d.allocator)
+	sync.unlock(&d.pipelines_kept.lock)
+	if blob != nil {
 		info.initialDataSize, info.pInitialData = len(blob), raw_data(blob)
 		// The driver checks the header and ignores a blob it cannot use.
 		if d.dvk.CreatePipelineCache(d.handle, &info, nil, &cache) != .SUCCESS {cache = 0}
+		delete(blob, d.allocator)
 	}
-	sync.unlock(&d.pipelines_kept.lock)
 	if cache != 0 {return cache}
 	info.initialDataSize, info.pInitialData = 0, nil
 	if d.dvk.CreatePipelineCache(d.handle, &info, nil, &cache) != .SUCCESS {return 0}
@@ -586,6 +588,7 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	data, error := make([]u8, size, d.allocator)
 	if error != nil {return}
 	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, raw_data(data)) != .SUCCESS || size == 0 {delete(data, d.allocator); return}
+	defer delete(data, d.allocator)
 	sync.guard(&d.pipelines_kept.lock)
 	pipeline_store_put(&d.pipelines_kept, key, data[:size])
 }
