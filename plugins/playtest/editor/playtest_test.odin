@@ -1,6 +1,5 @@
 package playtest_editor
 
-import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
@@ -13,7 +12,6 @@ import "mirai:editor/api"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:platform"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -28,12 +26,12 @@ import "mirai:std/serial"
 // A game whose tick adds a point to its score, and what its pings push.
 @(private="file")
 Probe_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
-    health:core.Table(Probe_Health),
+    health:core.Table(Probe_Health) `mirai:"game"`,
     seats:core.Table(input.Seat),
     drivables:core.Table(input.Drivable),
     moves:core.Table(input.Move_Input),
@@ -47,73 +45,12 @@ Probe_World :: struct {
     jumps:core.Jumps,
     score:Probe_Score,
     pings:Probe_Pings,
-    problems:core.Problems,
+    id:core.World_Id,
     view:core.View,
     quit_at:int, // the points at which the game asks to quit; 0: never
 }
+@(private="file") Probe_Shared :: struct {problems:core.By_World(core.Problems)}
 @(private="file") Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener}
-@(private="file") probe_provider :: proc(dst:rawptr) {(^Playtest_Api)(dst)^=playtest_api_default()}
-@(private="file") probe_listener :: proc(dst:rawptr) {(^Playtest_Listener)(dst)^=playtest_listener_default()}
-
-@(private="file")
-probe_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Probe_World)data
-    w^={}
-    core.entities_init(&w.entities,allocator)
-    core.table_init(&w.ids,"Id",allocator);core.table_init(&w.names,"Name",allocator)
-    core.table_init(&w.transforms,"Transform",allocator);core.table_init(&w.parents,"Parent",allocator)
-    core.table_init(&w.health,"Probe_Health",allocator)
-    core.table_init(&w.seats,"Seat",allocator)
-    core.table_init(&w.drivables,"Drivable",allocator);core.table_init(&w.moves,"Move_Input",allocator)
-    w.holds.queue.items=make([dynamic]input.Hold_Request,allocator)
-    w.places.queue.items=make([dynamic]core.Place_Request,allocator)
-    w.jumps.queue.items=make([dynamic]core.Jump,allocator)
-    w.pings.queue.items=make([dynamic]Probe_Ping,allocator)
-    return true
-}
-
-@(private="file")
-probe_free :: proc(data:rawptr) {
-    w:=cast(^Probe_World)data
-    core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms)
-    core.table_destroy(&w.parents);core.table_destroy(&w.health);core.table_destroy(&w.seats)
-    core.table_destroy(&w.drivables);core.table_destroy(&w.moves)
-    delete(w.holds.queue.items)
-    delete(w.places.queue.items);delete(w.jumps.queue.items);delete(w.pings.queue.items)
-    core.entities_destroy(&w.entities)
-}
-
-@(private="file")
-probe_copy :: proc(dst,src:rawptr) -> bool {
-    d,s:=cast(^Probe_World)dst,cast(^Probe_World)src
-    if !core.entities_copy(&d.entities,&s.entities) || !core.table_copy(&d.ids,&s.ids) || !core.table_copy(&d.names,&s.names) || !core.table_copy(&d.transforms,&s.transforms) || !core.table_copy(&d.parents,&s.parents) || !core.table_copy(&d.health,&s.health) || !core.table_copy(&d.seats,&s.seats) || !core.table_copy(&d.drivables,&s.drivables) || !core.table_copy(&d.moves,&s.moves) {return false}
-    d.time,d.input,d.score=s.time,s.input,s.score
-    d.view,d.quit_at=s.view,s.quit_at
-    d.players,d.bindings=s.players,s.bindings
-    return true
-}
-
-@(private="file")
-probe_swap :: proc(a,b:rawptr) {
-    x,y:=cast(^Probe_World)a,cast(^Probe_World)b
-    x.entities,y.entities=y.entities,x.entities
-    core.table_swap(&x.ids,&y.ids);core.table_swap(&x.names,&y.names);core.table_swap(&x.transforms,&y.transforms)
-    core.table_swap(&x.parents,&y.parents);core.table_swap(&x.health,&y.health);core.table_swap(&x.seats,&y.seats)
-    core.table_swap(&x.drivables,&y.drivables);core.table_swap(&x.moves,&y.moves)
-    x.view,y.view=y.view,x.view;x.quit_at,y.quit_at=y.quit_at,x.quit_at
-    x.time,y.time=y.time,x.time;x.input,y.input=y.input,x.input;x.score,y.score=y.score,x.score
-    x.players,y.players=y.players,x.players;x.bindings,y.bindings=y.bindings,x.bindings
-}
-
-@(private="file")
-probe_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Probe_World)data
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.health,&w.entities);core.table_settle(&w.seats,&w.entities)
-    core.table_settle(&w.drivables,&w.entities);core.table_settle(&w.moves,&w.entities)
-    core.entities_settle(&w.entities)
-}
 
 // The seats take their holds and the devices of the tick, as engine/input runs them.
 @(private="file")
@@ -142,10 +79,9 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
 @(private="file")
 Probe :: struct {
     p:^platform.Platform,
-    tables:[8]core.Table_Info,
-    storages:[16]core.Storage_Info,
     names:[2]core.Name_Info,
     info:core.World_Info,
+    shared:Probe_Shared,
     app:host.App,
     data:rawptr,
     hero,foe,seat:core.Entity,
@@ -165,40 +101,12 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     error:platform.Error
     f.p,error=platform.create({headless=true,fixed_dt=0.1,pacing=platform.Frame_Pacing{}})
     if !testing.expect_value(t,error,platform.Error.None) || f.p==nil {return false}
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Probe_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Probe_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Probe_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Probe_World,parents)},
-        {name="Probe_Health",type=Probe_Health,info=type_info_of(Probe_Health),offset=offset_of(Probe_World,health),game=true},
-        {name="Seat",type=input.Seat,info=type_info_of(input.Seat),offset=offset_of(Probe_World,seats)},
-        {name="Drivable",type=input.Drivable,info=type_info_of(input.Drivable),offset=offset_of(Probe_World,drivables)},
-        {name="Move_Input",type=input.Move_Input,info=type_info_of(input.Move_Input),offset=offset_of(Probe_World,moves)},
-    }
-    f.storages={
-        {type=editor.Api,info=type_info_of(editor.Api),place=.Editor},
-        {type=Playtest,info=type_info_of(Playtest),place=.Editor,offset=offset_of(Probe_Editor,playtest)},
-        {type=Playtest_Api,info=type_info_of(Playtest_Api),place=.Editor,offset=offset_of(Probe_Editor,provider),default=probe_provider,plugin="playtest"},
-        {type=Playtest_Listener,info=type_info_of(Playtest_Listener),place=.Editor,offset=offset_of(Probe_Editor,listener),default=probe_listener,plugin="playtest"},
-        {name="Time",type=core.Time,info=type_info_of(core.Time),offset=offset_of(Probe_World,time)},
-        {name="Input",type=core.Input,info=type_info_of(core.Input),offset=offset_of(Probe_World,input)},
-        {name="Frame_Time",type=core.Frame_Time,info=type_info_of(core.Frame_Time),offset=offset_of(Probe_World,frame)},
-        {name="Places",type=core.Places,info=type_info_of(core.Places),offset=offset_of(Probe_World,places)},
-        {name="Jumps",type=core.Jumps,info=type_info_of(core.Jumps),offset=offset_of(Probe_World,jumps)},
-        {name="Probe_Score",type=Probe_Score,info=type_info_of(Probe_Score),offset=offset_of(Probe_World,score)},
-        {name="Probe_Pings",type=Probe_Pings,info=type_info_of(Probe_Pings),offset=offset_of(Probe_World,pings)},
-        {name="Seats",type=input.Seats,info=type_info_of(input.Seats),offset=offset_of(Probe_World,players)},
-        {name="Input_Map",type=input.Input_Map,info=type_info_of(input.Input_Map),offset=offset_of(Probe_World,bindings)},
-        {name="Hold_Requests",type=input.Hold_Requests,info=type_info_of(input.Hold_Requests),offset=offset_of(Probe_World,holds)},
-        {name="Problems",type=core.Problems,info=type_info_of(core.Problems),offset=offset_of(Probe_World,problems)},
-        {name="View",type=core.View,info=type_info_of(core.View),offset=offset_of(Probe_World,view)},
-    }
+    f.info=core.test_info(t,Probe_World,Probe_Shared,Probe_Editor,test_types) or_return
     f.names={{type=input.Action,value=i64(PROBE_MOVE),name="move"},{type=input.Action,value=i64(PROBE_JUMP),name="jump"}}
-    f.info={tables=f.tables[:],storages=f.storages[:],names=f.names[:],copy=probe_copy,swap=probe_swap,entities=offset_of(Probe_World,entities)}
-    f.info.sizes[.World],f.info.aligns[.World]=size_of(Probe_World),align_of(Probe_World)
-    f.info.init[.World],f.info.destroy[.World]=probe_init,probe_free
+    f.info.names=f.names[:]
+    core.test_info_index(&f.info)
     f.info.loops[.Game][.Fixed]=probe_tick
-    f.app={info=&f.info,platform=f.p,allocator=context.allocator,tick_dt=1.0/60,max_ticks=8}
+    f.app={info=&f.info,shared=&f.shared,platform=f.p,allocator=context.allocator,tick_dt=1.0/60,max_ticks=8}
     f.data=host.app_world_create(&f.app)
     world:=cast(^Probe_World)f.data
     f.hero,f.foe=core.create(&world.entities),core.create(&world.entities)
@@ -213,7 +121,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     input.input_map_action(&world.bindings,PROBE_MOVE,.Axis2)
     input.input_map_action(&world.bindings,PROBE_JUMP,.Button)
     input.input_map_bind(&world.bindings,PROBE_JUMP,input.binding_key(.Space))
-    probe_settle(f.data,nil,nil)
+    core.settle(&f.info,f.data,nil)
     f.viewport={orbit=editor.ORBIT_DEFAULT}
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.tools,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
@@ -236,6 +144,8 @@ probe_close :: proc(f:^Probe) {
     host.app_world_scratch_free(&f.app)
     host.app_world_free(&f.app,f.data)
     delete(f.app.worlds)
+    f.info.destroy[.Shared](&f.shared)
+    core.test_info_destroy(&f.info)
     platform.destroy(f.p)
 }
 
@@ -265,7 +175,7 @@ probe_drive :: proc(f:^Probe) {
         core.add(&world.drivables,f.hero,input.Drivable{seat=f.seat})
         core.add(&world.moves,f.hero,input.Move_Input{})
         world.view=core.View{rotation=1,fov=90*math.RAD_PER_DEG,near=0.1,size={800,600}}
-        probe_settle(world,nil,nil)
+        core.settle(&f.info,world,nil)
     }
     editor.edits_reset(&f.edits,editor.edited_world(&f.s))
     f.document.saved=editor.edits_state(&f.edits)
@@ -274,11 +184,6 @@ probe_drive :: proc(f:^Probe) {
 
 // Where a repro goes: the project is set only while it is written, as a
 // fixture without a project starts its games without a recovery copy.
-@(private="file")
-probe_root :: proc() -> string {
-    return project.path_absolute(fmt.tprintf(".mirai/test-qa-%d",os.get_pid()),context.temp_allocator)
-}
-
 @(private="file")
 probe_json :: proc(t:^testing.T,text:string) -> json.Object {
     value,error:=json.parse_string(text,allocator=context.temp_allocator)
@@ -313,7 +218,7 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
         testing.expect_value(t,foe["bearing"].(json.Float) or_else 0,90)
         testing.expect(t,!(foe["on_screen"].(json.Boolean) or_else true),text)
     }
-    core.report(&running.problems,f.hero,"test.broken","The hero is broken: fix it.")
+    core.report(host.app_world_storage(&f.app,running,core.Problems),f.hero,"test.broken","The hero is broken: fix it.")
     error,text=probe_call(f,"play.observe",`{"step":{"for":2},"targets":["Foe"]}`)
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect_value(t,api.result_mismatch(Api_Play_Observe,text),"")
@@ -400,8 +305,8 @@ repro_replay_case :: proc(t:^testing.T,late:bool) {
     if !probe_open(t,f) {return}
     defer probe_close(f)
     probe_drive(f)
-    root:=probe_root()
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"playtest-qa")
+    if root=="" {return}
     error:api.Error
     text:string
     if late {
@@ -475,8 +380,8 @@ the_bot_explores_the_same_with_the_same_seed_and_a_quit_does_not_end_it :: proc(
     if !probe_open(t,f) {return}
     defer probe_close(f)
     probe_drive(f)
-    root:=probe_root()
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"playtest-qa")
+    if root=="" {return}
     params:=`{"seed":7,"for":150,"move":"move","jump":"jump","cell":1}`
     play :: proc(t:^testing.T,f:^Probe,root,params:string) -> string {
         error,_:=probe_call(f,"play.stop",`{}`)

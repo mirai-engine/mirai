@@ -2,7 +2,6 @@ package destruct
 
 import "core:fmt"
 import "core:mem"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -18,88 +17,54 @@ import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 @(private="file")
-Destruct_Test :: struct {
-    entities:core.Entities,
-    configs:core.Table(Destructible),
-    colliders:core.Table(phys.Collider),
-    states:core.Table(Destructible_State),
-    groups:core.Table(Destructible_Group),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-    meshes:core.Table(render.Mesh_Renderer),
-    tints:core.Table(render.Tint),
-    elsewhere:core.Table(render.Drawn_Elsewhere),
-    ids:core.Table(core.Id),
-    physics:phys.Physics_State,
-    fractures:Fracture_State,
-    settings:Destruct_Settings,
-    assets:host.Assets,
-    app:host.App,
-    cache:Destruct_Cache,
-    problems:core.Problems,
-    requests:Destruct_Requests,
-    events:Destruct_Events,
-    authority:core.Network,
-    info:core.World_Info,
-    tables:[2]core.Table_Info,
-    tick:u64,
-    folder:string,
+Destruct_World :: struct {
+    using world:core.Test_World,
+    using rows:Test_Destruct,
 }
 
 @(private="file")
-destruct_test_init :: proc(f:^Destruct_Test,name:string,hulls:int=8,anchor_first:bool=true,pieces:int=2,events:int=0) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.folder=fmt.tprintf("%s/mirai-destruct-%s-%d",directory,name,os.get_pid())
-    if os.make_directory_all(f.folder)!=nil {return false}
+Destruct_Test :: struct {
+    using w:Destruct_World,
+    using application:Test_Destruct_Host,
+    tick:u64,
+}
+
+// folder: of base.test_folder, asked for before the test puts an allocator of its own in the context.
+@(private="file")
+destruct_test_init :: proc(t:^testing.T,f:^Destruct_Test,folder:string,hulls:int=8,anchor_first:bool=true,pieces:int=2,events:int=0) -> bool {
+    if folder=="" {return false}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     b:asset.Fracture_Builder;asset.fracture_builder_init(&b);defer asset.fracture_builder_destroy(&b)
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
     for part in 0..<pieces {asset.fracture_piece_add(&b,geom.mesh_buffer_view(&cube),{{f32(part)*1.02-f32(pieces-1)*.51,0,0},1,{1,1,1}},anchor=anchor_first && part==0)}
     if asset.fracture_connect_proximity(&b,.03,.5,10)!=.None {return false}
-    if asset.fracture_save(fmt.tprintf("%s/source.fracture",f.folder),&types,asset.fracture_builder_desc(&b,{1,2}))!=.None {return false}
-    core.entities_init(&f.entities)
+    if asset.fracture_save(fmt.tprintf("%s/source.fracture",folder),&types,asset.fracture_builder_desc(&b,{1,2}))!=.None {return false}
+    if !core.test_world_init(t,&f.w,test_types) {return false}
     f.app.assets,f.app.allocator=&f.assets,context.allocator
     if !jobs.system_init(&f.app.jobs,{threads=0}) {return false}
-    if !host.assets_init(&f.assets,{root=f.folder,capacity=32}) {return false}
+    if !host.assets_init(&f.assets,{root=folder,capacity=32}) {return false}
     desc:=sim.world_desc_default();desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=16,32,64,4
     desc.hull_capacity=hulls
     f.settings={destructibles=2,pieces=32,connections=64,events=i32(events)}
     desc.character_capacity,desc.mesh_capacity,desc.heightfield_capacity=0,0,0
     if !sim.world_init(&f.physics.world,desc) {return false}
     f.physics.ready=true
-    f.tables={
-        {type=core.Parent,offset=offset_of(Destruct_Test,parents)},
-        {type=render.Mesh_Renderer,offset=offset_of(Destruct_Test,meshes)},
-    }
-    f.info.tables=f.tables[:]
     return true
 }
 
 @(private="file")
 destruct_test_destroy :: proc(f:^Destruct_Test) {
-    cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs);fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
-    core.table_destroy(&f.configs);core.table_destroy(&f.colliders);core.table_destroy(&f.states);core.table_destroy(&f.groups)
-    core.table_destroy(&f.transforms);core.table_destroy(&f.parents);core.table_destroy(&f.meshes);core.table_destroy(&f.tints)
-    core.table_destroy(&f.elsewhere);core.table_destroy(&f.ids);core.entities_destroy(&f.entities)
-    core.value_free(&f.requests,type_info_of(Destruct_Requests));core.value_free(&f.events,type_info_of(Destruct_Events))
-    os.remove(fmt.tprintf("%s/source.fracture",f.folder));os.remove(f.folder)
-}
-
-@(private="file")
-destruct_test_settle :: proc(f:^Destruct_Test) {
-    core.table_settle(&f.configs,&f.entities);core.table_settle(&f.colliders,&f.entities);core.table_settle(&f.states,&f.entities);core.table_settle(&f.groups,&f.entities)
-    core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.parents,&f.entities);core.table_settle(&f.meshes,&f.entities)
-    core.table_settle(&f.tints,&f.entities);core.table_settle(&f.elsewhere,&f.entities);core.table_settle(&f.ids,&f.entities)
-    core.entities_settle(&f.entities)
+    cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs)
+    core.test_world_destroy(&f.w)
+    host.assets_destroy(&f.assets)
 }
 
 @(private="file")
 destruct_test_step :: proc(f:^Destruct_Test,resimulating:=false) {
-    destruct_test_settle(f)
+    core.test_world_settle(&f.w)
     f.tick+=1
-    destruct_step(&f.physics,&f.fractures,core.ref(&f.settings),&f.cache,&f.requests,&f.events,core.ref(&f.authority),f.app.assets,&f.app.jobs,{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating},core.commands(f,&f.info),
-        core.read(&f.configs),&f.meshes,&f.tints,core.read(&f.parents),&f.states,&f.groups,&f.elsewhere,&f.transforms,&f.ids,core.read(&f.colliders),{},&f.problems)
-    destruct_test_settle(f)
+    test_step(&f.rows,&f.application,core.commands_of(core.test_world_ref(&f.w)),{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating})
+    core.test_world_settle(&f.w)
 }
 
 @(private="file")
@@ -111,9 +76,8 @@ destruct_test_entity :: proc(f:^Destruct_Test,config:Destructible,pose:=core.TRA
 
 @(test)
 pieces_take_the_surface_and_collision_of_the_fracture_collider_and_a_new_preset_keeps_them :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"collision")) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-collision"))) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2}
     e:=destruct_test_entity(&f,config)
@@ -140,9 +104,8 @@ pieces_take_the_surface_and_collision_of_the_fracture_collider_and_a_new_preset_
 
 @(test)
 a_destructible_that_cannot_be_made_names_its_entity_and_the_fix :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"problems")) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-problems"))) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2}
     boxed:=destruct_test_entity(&f,config)
@@ -160,13 +123,13 @@ a_destructible_that_cannot_be_made_names_its_entity_and_the_fix :: proc(t:^testi
 
 @(test)
 field_strain_excludes_one_body_while_other_groups_keep_receiving_damage_without_allocations :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"destruct-field-filter")
     tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
     previous:=context.allocator;context.allocator=mem.tracking_allocator(&tracking);defer {context.allocator=previous}
-    defer free_all(context.temp_allocator)
     Filter_Case :: enum {Root,Fragment,None,Stale}
     for scenario in ([4]Filter_Case{.Root,.Fragment,.None,.Stale}) {
         f:Destruct_Test
-        if !testing.expect(t,destruct_test_init(&f,"field-filter",pieces=4)) {return}
+        if !testing.expect(t,destruct_test_init(t,&f,folder,pieces=4)) {return}
         defer destruct_test_destroy(&f)
         config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0
         e:=destruct_test_entity(&f,config)
@@ -229,10 +192,9 @@ field_strain_excludes_one_body_while_other_groups_keep_receiving_damage_without_
 
 @(test)
 impact_damage_configuration_keeps_passive_clients_intact_and_explicit_server_strain_enabled :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     for client in ([2]bool{false,true}) {
         f:Destruct_Test
-        if !testing.expect(t,destruct_test_init(&f,"impact-policy")) {return}
+        if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-impact-policy"))) {return}
         defer destruct_test_destroy(&f)
         config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0;config.damage_threshold=0
         testing.expect(t,config.impact_damage)
@@ -269,9 +231,8 @@ impact_damage_configuration_keeps_passive_clients_intact_and_explicit_server_str
 
 @(test)
 fragment_removal_validates_the_group_and_retires_its_physics_proxy :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"remove")) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-remove"))) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0;config.removal_lifetime=1
     e:=destruct_test_entity(&f,config)
@@ -305,11 +266,10 @@ fragment_removal_validates_the_group_and_retires_its_physics_proxy :: proc(t:^te
 
 @(test)
 the_fractures_one_end_applies_replay_alike_on_another_and_passive_ends_keep_deadlines :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     a,b:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&a,"remove-server")) {return}
+    if !testing.expect(t,destruct_test_init(t,&a,base.test_folder(t,"destruct-remove-server"))) {return}
     defer destruct_test_destroy(&a)
-    if !testing.expect(t,destruct_test_init(&b,"remove-client")) {return}
+    if !testing.expect(t,destruct_test_init(t,&b,base.test_folder(t,"destruct-remove-client"))) {return}
     defer destruct_test_destroy(&b)
     config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0;config.removal_lifetime=1
     first:=destruct_test_entity(&a,config);second:=destruct_test_entity(&b,config)
@@ -349,9 +309,8 @@ the_fractures_one_end_applies_replay_alike_on_another_and_passive_ends_keep_dead
 
 @(test)
 cosmetic_fragments_can_be_removed_locally_on_a_passive_client :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"remove-cosmetic")) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-remove-cosmetic"))) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2};config.debris_volume=2;config.gravity_scale=0
     e:=destruct_test_entity(&f,config)
@@ -375,9 +334,8 @@ cosmetic_fragments_can_be_removed_locally_on_a_passive_client :: proc(t:^testing
 
 @(test)
 authored_destruction_proxies_geometry_and_groups_survive_cache_recovery_offline :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"recover")) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-recover"))) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2};config.debris_volume=0;config.gravity_scale=0
     e:=destruct_test_entity(&f,config,core.Transform{{0,2,0},1,{1,1,1}})
@@ -415,8 +373,7 @@ authored_destruction_proxies_geometry_and_groups_survive_cache_recovery_offline 
 
 @(test)
 moving_destructible_anchors_follow_the_author_parent_with_public_kinematic_requests :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
-    f:Destruct_Test;if !testing.expect(t,destruct_test_init(&f,"parent")) {return};defer destruct_test_destroy(&f)
+    f:Destruct_Test;if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-parent"))) {return};defer destruct_test_destroy(&f)
     parent:=core.create(&f.entities);parent_pose:=core.Transform{{3,1,2},mm.quat_axis_angle({0,1,0},.4),{2,1,.5}}
     core.add(&f.transforms,parent,parent_pose)
     config:=destructible();config.fracture={1,2};config.follow_parent=true
@@ -435,8 +392,7 @@ moving_destructible_anchors_follow_the_author_parent_with_public_kinematic_reque
 
 @(test)
 rejected_authored_destruction_does_not_leave_root_or_fragment_proxies :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
-    f:Destruct_Test;if !testing.expect(t,destruct_test_init(&f,"budget",1)) {return};defer destruct_test_destroy(&f)
+    f:Destruct_Test;if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-budget"),1)) {return};defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2}
     e:=destruct_test_entity(&f,config)
     destruct_test_step(&f)
@@ -449,8 +405,7 @@ rejected_authored_destruction_does_not_leave_root_or_fragment_proxies :: proc(t:
 
 @(test)
 damage_requested_before_the_first_tick_waits_for_an_authored_body_then_applies_once :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
-    f:Destruct_Test;if !testing.expect(t,destruct_test_init(&f,"initial-intent")) {return};defer destruct_test_destroy(&f)
+    f:Destruct_Test;if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-initial-intent"))) {return};defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0
     e:=destruct_test_entity(&f,config)
     strain(&f.requests,e,{},4,1000)
@@ -467,9 +422,8 @@ damage_requested_before_the_first_tick_waits_for_an_authored_body_then_applies_o
 
 @(test)
 successive_cuts_keep_detached_proxies_and_all_live_fragment_meshes :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"repeated-cuts")) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-repeated-cuts"))) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0
     e:=destruct_test_entity(&f,config)
@@ -518,9 +472,8 @@ successive_cuts_keep_detached_proxies_and_all_live_fragment_meshes :: proc(t:^te
 
 @(test)
 root_slice_requests_preserve_previous_groups_meshes_and_volume_across_ticks :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"root-repeated-cuts",hulls=32,anchor_first=false)) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-root-repeated-cuts"),hulls=32,anchor_first=false)) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2};config.gravity_scale=0;config.debris_volume=0
     e:=destruct_test_entity(&f,config)
@@ -560,9 +513,8 @@ root_slice_requests_preserve_previous_groups_meshes_and_volume_across_ticks :: p
 
 @(test)
 a_cut_the_simulation_has_no_room_for_names_the_capacity_to_raise :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"cut-capacity",hulls=3)) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-cut-capacity"),hulls=3)) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2};config.gravity_scale=0
     e:=destruct_test_entity(&f,config)
@@ -577,9 +529,8 @@ a_cut_the_simulation_has_no_room_for_names_the_capacity_to_raise :: proc(t:^test
 
 @(test)
 impacts_lost_for_lack_of_events_name_the_setting_to_raise :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     f:Destruct_Test
-    if !testing.expect(t,destruct_test_init(&f,"lost-events",events=1)) {return}
+    if !testing.expect(t,destruct_test_init(t,&f,base.test_folder(t,"destruct-lost-events"),events=1)) {return}
     defer destruct_test_destroy(&f)
     config:=destructible();config.fracture={1,2}
     walls:[2]core.Entity
