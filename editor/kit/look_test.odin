@@ -111,8 +111,7 @@ test_editor_build :: proc(ctx:^ui.Context,user:rawptr) {
                 ui.spacer(ctx)
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=5,align_y=.Center}) {
-                preview:=ui.paint_add(ctx,{kind=.Box,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control"),center=true,icon=.Cube,icon_color={140,180,240,255},icon_size=18})
-                ui.element_leaf(ctx,{layout={width=ui.fixed(28),height=ui.fixed(28)},custom=preview})
+                if ui.box(ctx,{width=ui.fixed(28),height=ui.fixed(28),align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {ui.icon(ctx,.Cube,{140,180,240,255},18)}
                 ui.text_field(ctx,ui.id(ctx,"name"),e.name[:],&e.name_length,{height=28,size=ui.metric(ctx,"font"),bare=true})
                 if ui.button(ctx,ui.id(ctx,"visible"),{icon=.Eye if e.visible else .Eye_Off,icon_color=ui.tone(ctx,"text") if e.visible else ui.tone(ctx,"text_faint"),variant="ghost",width=24,height=24}).clicked {e.visible=!e.visible}
             }

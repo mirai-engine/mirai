@@ -207,6 +207,7 @@ world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -
         ids_moved(to,ids_of(info,dst,found.id),synced)
         ids_moved(held,ids_of(info,stage,found.id),false)
     }
+    if info.events_rewind!=nil {info.events_rewind(dst)}
     return true,true
 }
 
@@ -232,6 +233,7 @@ world_swap :: proc(info:^World_Info,a,b:rawptr) {
         ids_moved(ea,ids_of(info,a,found.id),b_synced)
         ids_moved(eb,ids_of(info,b,found.id),a_synced)
     }
+    if info.events_rewind!=nil {info.events_rewind(a);info.events_rewind(b)}
 }
 
 // Where two Worlds of one info differ, as the first storage that says diff=

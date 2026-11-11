@@ -75,9 +75,13 @@
   serves every combination: a constant adds no compilation of the stage. Its id is the order of its
   line, the manifest names it and `render/shaders_gen.odin` gives it as `<STAGE>_<NAME>`
   (`REFLECT_COMP_COLOR`). The renderer has one `Pipeline_Id` per stage: a pass asks
-  `pipeline_of` for the stage with its constants, and the pipeline of each set of constants, and of
-  the tracer in use for one that traces rays, is made the first time a frame asks for it; when
-  the renderer starts it makes those without constants of the tracer in use. The stage includes
+  `pipeline_of` for the stage with its constants. The renderer starts with the pipelines of the
+  tracer in use without constants and with the sets the settings select (`variants_listed`); the
+  other sets go to the pipeline thread behind what frames ask for. A frame does not wait for one
+  being made (unless the renderer has no `pipeline_thread`): it takes the stage without the
+  constants that only spare work or degrade (`optional`: `unlayered`, `color`), or skips the
+  pass, with `Stats.problem`. One the device refuses is not asked for again until the shaders
+  change and is reported once. The stage includes
   `native.slang`, which declares them; a source shared with stages that do not declare the
   constant asks `#ifdef DEFINE` before reading it. What the
   constants of a stage read is bound for every pipeline of it (a stand-in where it is off).

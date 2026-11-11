@@ -44,6 +44,7 @@ data_has_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
 import "mirai:core"
 @(step="fixed") game_push :: proc(requests:^core.Requests,board:^core.Board,reports:core.Ref(core.Reports)) {}
 @(step="fixed") game_watch :: proc(state:core.Stamp(core.State)) {}
+@(step="late") game_hear :: proc(reports:core.Ref(core.Reports)) {}
 `
     p,ok:=contracts_project(t,folder,core_source,game_source)
     if !ok {return}
@@ -59,6 +60,8 @@ import "mirai:core"
         // in each log, which the World copies with it for a step a rollback runs again.
         testing.expect(t,strings.contains(text,"    view_reports:=w.reports\n    p_core.events_read(&view_reports.log,&w.event_cursors.seen[0])\n    p_core.events_read(&view_reports.lost,&w.event_cursors.seen[1])\n"),text)
         testing.expect(t,strings.contains(text,"p_core.ref(&view_reports))") && strings.contains(text,"if ticked && p_core.events_age(&w.reports.log) {w.storage_revisions[") && strings.contains(text,"info.events_age=events_age"),text)
+        // One of the frame keeps its cursor in the World, which a World replaced under it rewinds.
+        testing.expect(t,strings.contains(text,"p_core.events_read(&view_reports.log,&w.frame_cursors[0])") && strings.contains(text,"w.frame_cursors[1]=min(w.frame_cursors[1],p_core.log_end(w.reports.lost.log))") && strings.contains(text,"info.events_rewind=events_rewind"),text)
         // The settle is one loop of core over the tables of the World: none is written for it.
         testing.expect(t,!strings.contains(text,"settle :: proc") && !strings.contains(text,"info.settle"),text)
         count:=strings.index(text,"p_core.things_count(")

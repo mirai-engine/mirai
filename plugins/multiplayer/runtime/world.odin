@@ -353,7 +353,7 @@ client_gone :: proc(s:^Net_Session,w:core.World_Ref,message:Net_Gone) {
         for &r in c.replicas[:c.replica_high] {
             if r.object!=0 && r.entity==e {continue ids}
         }
-        core.world_destroy_tree(w,e)
+        core.destroy(es,e)
     }
 }
 

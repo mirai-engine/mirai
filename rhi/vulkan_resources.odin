@@ -577,6 +577,13 @@ vk_release_pipeline :: proc(d: ^Device, p: ^Vk_Pipeline) {
 	if p.set_layout != 0 {d.dvk.DestroyDescriptorSetLayout(d.handle, p.set_layout, nil)}
 }
 
+// The name of a pipeline, kept with it.
+@(private)
+vk_pipeline_name :: proc(p: ^Vk_Pipeline) -> string {return string(p.name_bytes[:p.name_length])}
+
+@(private)
+vk_pipeline_named :: proc(p: ^Vk_Pipeline, name: string) {p.name_length = u8(copy(p.name_bytes[:], name))}
+
 // Holds a pipeline made on any thread; 0 when the pool is full.
 @(private)
 vk_pipeline_add :: proc(d: ^Device, p: ^Vk_Pipeline) -> Pipeline {
@@ -655,7 +662,8 @@ vk_specialization :: proc "contextless" (s: ^Vk_Specialization, code: ^Shader_Co
 
 pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipeline {
 	if !vk_pipeline_room(d) {return 0}
-	p := Vk_Pipeline{bind_point = .COMPUTE, name = desc.name}
+	p := Vk_Pipeline{bind_point = .COMPUTE}
+	vk_pipeline_named(&p, desc.name)
 	if desc.shader == nil || desc.shader.stage != .Compute {set_error(d, "compute pipeline %s needs a compute shader", desc.name); return 0}
 	if !shader_constants_valid(d, desc.name, desc.shader, desc.constants) {return 0}
 	if !vk_merge_bindings(d, &p, {.Compute}, desc.shader) {vk_release_pipeline(d, &p); return 0}
@@ -696,7 +704,8 @@ vk_compare :: proc "contextless" (c: Compare) -> vk.CompareOp {
 
 pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pipeline {
 	if !vk_pipeline_room(d) {return 0}
-	p := Vk_Pipeline{bind_point = .GRAPHICS, name = desc.name}
+	p := Vk_Pipeline{bind_point = .GRAPHICS}
+	vk_pipeline_named(&p, desc.name)
 	if desc.vertex == nil || desc.fragment == nil {set_error(d, "graphics pipeline %s needs vertex and fragment shaders", desc.name); return 0}
 	if !shader_constants_valid(d, desc.name, desc.vertex, desc.vertex_constants) || !shader_constants_valid(d, desc.name, desc.fragment, desc.fragment_constants) {return 0}
 	if !vk_merge_bindings(d, &p, {.Vertex, .Fragment}, desc.vertex, desc.fragment) {vk_release_pipeline(d, &p); return 0}

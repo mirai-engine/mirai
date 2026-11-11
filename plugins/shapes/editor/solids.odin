@@ -58,7 +58,7 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
         if solid!=core.NONE {
             // A solid takes its form from its brushes: none of the polygon of the default.
             shape:shapes.Shape
-            shape.uv_scale,shape.material=1,material
+            shape.uv_scale,shape.material={1,1},material
             editor.component_add(s,solid,shape_info,&shape)
         }
     }

@@ -240,7 +240,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_begin_render_pass(cmd, &pass)
 		Params :: struct {light_budget, pad0, pad1, pad2: u32}
 		params := Params{light_budget = settings.light_budget}
-		targets := [2]^rhi.Pipeline{&r.pipelines[.Glass_Filter], pipeline_of(r, .Translucent, {TRANSLUCENT_FRAG_COLOR} if shadows_colored(r) else {})}
+		targets := [2]^rhi.Pipeline{&r.pipelines[.Glass_Filter], pipeline_of(r, .Translucent, {TRANSLUCENT_FRAG_COLOR} if shadows_colored(r) else {}, {TRANSLUCENT_FRAG_COLOR})}
 		for entry in s.translucent {
 			for target in targets {
 				rhi.cmd_bind_pipeline(cmd, target^)
@@ -268,8 +268,8 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 
 	rhi.cmd_timestamp(cmd, "glass")
 	params := glass_params(p)
-	pipeline := pipeline_of(r, .Glass, {GLASS_COMP_COLOR} if shadows_colored(r) else {})^
-	light := pipeline_of(r, .Glass_Light, {GLASS_LIGHT_COMP_COLOR} if shadows_colored(r) else {})^
+	pipeline := pipeline_of(r, .Glass, {GLASS_COMP_COLOR} if shadows_colored(r) else {}, {GLASS_COMP_COLOR})^
+	light := pipeline_of(r, .Glass_Light, {GLASS_LIGHT_COMP_COLOR} if shadows_colored(r) else {}, {GLASS_LIGHT_COMP_COLOR})^
 	maps := p.frame.sun_maps.z != 0
 	for k := layers - 1; k >= 0; k -= 1 {
 		rhi.cmd_bind_pipeline(cmd, pipeline)
@@ -285,7 +285,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_bind_pipeline(cmd, light)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_atlas if maps else r.dummy_texture)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS8, t.shadow_buffers.table if maps else r.dummy_buffer)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.display)
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 		rhi.cmd_bind_pipeline(cmd, pipeline)
@@ -353,7 +353,7 @@ glass_inside :: proc(p: ^Pass) {
 	glass_layer_bind(p, 0)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.glass_scene)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.display)
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Glass_Inside, {GLASS_INSIDE_COMP_COLOR} if shadows_colored(r) else {})^)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Glass_Inside, {GLASS_INSIDE_COMP_COLOR} if shadows_colored(r) else {}, {GLASS_INSIDE_COMP_COLOR})^)
 	set_params(cmd, &params)
 	rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, t.layers if t.layers != 0 else r.dummy_layers)

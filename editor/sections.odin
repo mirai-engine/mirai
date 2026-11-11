@@ -97,7 +97,7 @@ sections_sync :: proc(s:^Session) {
         if !changed && !made {continue}
         for child:=core.first_child(core.ref(hierarchy),e);child!=core.NONE; {
             next:=core.next_sibling(core.ref(hierarchy),child)
-            core.world_destroy_tree(w,child)
+            core.destroy(core.world_entities(w),child)
             child=next
         }
         loaded:=core.edit_at(references,row)
@@ -138,7 +138,7 @@ section_reload :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     h:=entity_hierarchy(w)
     for child:=core.first_child(h,e);child!=core.NONE; {
         next:=core.next_sibling(h,child)
-        core.world_destroy_tree(w,child)
+        core.destroy(core.world_entities(w),child)
         child=next
     }
     core.world_settle(w)
@@ -786,7 +786,7 @@ sections_orphans_drop :: proc(s:^Session,watch:^Sections_Watch,world:core.World_
         append(&dropped,e)
         append(&dropped,..section_entities(world,e))
     }
-    for e in orphans {core.world_destroy_tree(world,e)}
+    for e in orphans {core.destroy(core.world_entities(world),e)}
     core.world_settle(world)
     journal_take_entities(s.edits,world,dropped[:])
 }

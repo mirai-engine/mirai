@@ -4,15 +4,12 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:os"
-import "core:strconv"
-import "core:strings"
 import "mirai:asset"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
 // The meshes of the scenes of the deformable meshes, the monitors and the
-// portals, fine enough for a deformer to bend them, and the boxes of their
-// blockout.
+// portals, fine enough for a deformer to bend them.
 
 @(private)
 Feature_Mesh :: struct {
@@ -111,26 +108,6 @@ mesh_post :: proc(m:^Feature_Mesh,half,height:f32,rings:int,color:u32) {
 }
 
 // What a builder of std/geom makes, placed.
-// A box around the origin whose faces have a unit of UV every `tile` metres, whatever its size.
-@(private)
-mesh_slab :: proc(m:^Feature_Mesh,size:[3]f32,tile:[2]f32,color:u32) {
-    faces:=[6][3][3]f32{
-        {{0,0,1},{1,0,0},{0,1,0}},{{0,0,-1},{-1,0,0},{0,1,0}},
-        {{1,0,0},{0,0,-1},{0,1,0}},{{-1,0,0},{0,0,1},{0,1,0}},
-        {{0,1,0},{1,0,0},{0,0,-1}},{{0,-1,0},{1,0,0},{0,0,1}},
-    }
-    for face in faces {
-        normal,across,up:=face[0],face[1],face[2]
-        width,height:=abs(linalg.dot(across,size)),abs(linalg.dot(up,size))
-        center:=normal*abs(linalg.dot(normal,size))*0.5
-        first:=u32(len(m.vertices))
-        for corner in ([4][2]f32{{-0.5,-0.5},{0.5,-0.5},{0.5,0.5},{-0.5,0.5}}) {
-            mesh_point(m,center+across*corner.x*width+up*corner.y*height,normal,{(corner.x+0.5)*width/tile.x,(0.5-corner.y)*height/tile.y},color)
-        }
-        append(&m.indices,first,first+1,first+2,first,first+2,first+3)
-    }
-}
-
 // The shaft of a column a unit wide and a unit tall around the origin, with flutes down its side.
 @(private)
 mesh_column :: proc(m:^Feature_Mesh,flutes,around:int,depth:f32,color:u32) {
@@ -243,30 +220,5 @@ write_feature_meshes :: proc(o:^Out) {
         mesh_stalk(&m,{0,0,0},0.13,0.13,3.4,24,96,white)
         mesh_write(o,"hose",&m)
     }
-    write_slabs(o)
 }
 
-// The boxes of the blockout of the scenes, which show their material at its true size on every
-// face: one mesh for each size and the metres a unit of its UV covers, both in centimetres in its
-// name, slab_<x>x<y>x<z>_<u>x<v>.mesh.
-@(private)
-write_slabs :: proc(o:^Out) {
-    entries,error:=os.read_all_directory_by_path(path(o,"assets/blockout"),context.temp_allocator)
-    if error!=nil {asset.content_check(&o.content,"assets/blockout",.IO);return}
-    for entry in entries {
-        name:=strings.trim_suffix(entry.name,".mesh")
-        if !strings.has_prefix(name,"slab_") || name==entry.name {continue}
-        parts:=strings.split_multi(name[len("slab_"):],{"x","_"},context.temp_allocator)
-        metres:[5]f32
-        valid:=len(parts)==len(metres)
-        for part,i in parts {
-            if !valid {break}
-            centimetres,parsed:=strconv.parse_int(part,10)
-            metres[i],valid=f32(centimetres)/100,parsed && centimetres>0
-        }
-        if !valid {asset.content_check(&o.content,entry.name,.Invalid);continue}
-        m:=Feature_Mesh{make([dynamic]asset.Vertex,context.temp_allocator),make([dynamic]u32,context.temp_allocator)}
-        mesh_slab(&m,{metres[0],metres[1],metres[2]},{metres[3],metres[4]},rgb(1,1,1))
-        mesh_write(o,name,&m)
-    }
-}

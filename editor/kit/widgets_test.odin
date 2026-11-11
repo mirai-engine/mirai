@@ -44,12 +44,12 @@ buttons_follow_the_pointer_and_activate_on_press_in_the_editor :: proc(t:^testin
     testing.expect(t,!frame.pointer_consumed,"The pointer is nowhere near the panel")
     a:=test_rect(t,&ctx,ui.id(&ctx,"a"))
     testing.expect(t,test_rect_near(a,{30,30,280,ui.metric(&ctx,"row")}))
-    testing.expect_value(t,test_paint(&ctx,"Alpha").fill,ui.tone(&ctx,"field"))
+    testing.expect_value(t,test_box(&ctx,"Alpha").fill,ui.tone(&ctx,"field"))
     // Over the button: hot from the next frame on, with the rectangles that were shown.
     test_point(&input,a)
     frame=test_frame(&ctx,&input,test_buttons_build,&s)
     testing.expect(t,s.last[0].hot && !s.last[0].clicked && frame.pointer_consumed)
-    testing.expect_value(t,test_paint(&ctx,"Alpha").fill,ui.tone(&ctx,"field_hover"))
+    testing.expect_value(t,test_box(&ctx,"Alpha").fill,ui.tone(&ctx,"field_hover"))
     testing.expect_value(t,ctx.hot,ui.id(&ctx,"a"))
     // The press activates it, once.
     test_press(&input)
@@ -148,15 +148,14 @@ disabled_buttons_show_their_state_and_do_nothing :: proc(t:^testing.T) {
     test_frame(&ctx,&input,test_buttons_build,&s)
     testing.expect_value(t,s.clicks[1],0)
     // An accent button keeps its fill and its text at 40 % of their opacity.
-    paint:=test_paint(&ctx,"Beta")
-    testing.expect_value(t,paint.fill,ui.color_faded(ui.tone(&ctx,"accent")))
-    testing.expect_value(t,paint.text_color,ui.color_faded(ui.tone(&ctx,"on_accent")))
+    testing.expect_value(t,test_box(&ctx,"Beta").fill,ui.color_faded(ui.tone(&ctx,"accent")))
+    testing.expect_value(t,test_paint(&ctx,"Beta").style.color,ui.color_faded(ui.tone(&ctx,"on_accent")))
     test_release(&input)
     s.disabled=false
     test_frame(&ctx,&input,test_buttons_build,&s)
     test_frame(&ctx,&input,test_buttons_build,&s)
-    testing.expect_value(t,test_paint(&ctx,"Beta").fill,ui.tone(&ctx,"accent_hover"))
-    testing.expect_value(t,test_paint(&ctx,"Beta").text_color,ui.tone(&ctx,"on_accent"))
+    testing.expect_value(t,test_box(&ctx,"Beta").fill,ui.tone(&ctx,"accent_hover"))
+    testing.expect_value(t,test_paint(&ctx,"Beta").style.color,ui.tone(&ctx,"on_accent"))
 }
 
 @(test)
@@ -183,14 +182,14 @@ checkboxes_toggles_tabs_and_sections_edit_the_state_they_are_given :: proc(t:^te
     testing.expect(t,!s.checked && s.changed==2)
     click(&ctx,&input,&s,ui.id(&ctx,"toggle"))
     testing.expect(t,s.toggled && s.changed==3)
-    testing.expect_value(t,test_paint(&ctx,"On").fill,ui.tone(&ctx,"accent"))
+    testing.expect_value(t,test_box(&ctx,"On").fill,ui.tone(&ctx,"accent"))
     // Tabs: clicking the selected one changes nothing.
     click(&ctx,&input,&s,ui.id_derive(&ctx,ui.id(&ctx,"tabs"),"tab",3))
     testing.expect(t,s.tab==2 && s.changed==4)
     click(&ctx,&input,&s,ui.id_derive(&ctx,ui.id(&ctx,"tabs"),"tab",3))
     testing.expect(t,s.tab==2 && s.changed==4)
-    testing.expect_value(t,test_paint(&ctx,"Three").fill,ui.tone(&ctx,"accent"))
-    testing.expect_value(t,test_paint(&ctx,"One").text_color,ui.tone(&ctx,"text_label"))
+    testing.expect_value(t,test_box(&ctx,"Three").fill,ui.tone(&ctx,"accent"))
+    testing.expect_value(t,test_paint(&ctx,"One").style.color,ui.tone(&ctx,"text_label"))
     // The title of a section folds it; its x reports without folding.
     testing.expect(t,test_paint(&ctx,"Inside")==nil)
     click(&ctx,&input,&s,ui.id(&ctx,"section"))
@@ -273,11 +272,13 @@ rows_and_swatches_draw_as_in_the_editor :: proc(t:^testing.T) {
     swatch:=&ctx.paints[0]
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Swatch {swatch=&p}}
     testing.expect(t,swatch.fill==ui.Color{255,128,0,255} && swatch.stroke==ui.tone(&ctx,"accent"),"An open swatch is outlined with the accent")
-    crate:=test_paint(&ctx,"Crate")
-    testing.expect(t,crate.fill==ui.tone(&ctx,"accent_soft") && crate.detail=="Mesh" && crate.padding==8 && crate.icon==.Mesh)
-    testing.expect(t,test_paint(&ctx,"Plain").padding==28,"Rows without a check leave its room")
-    checked:=test_paint(&ctx,"Checked")
-    testing.expect(t,checked.icon==.Check && checked.icon_color==ui.tone(&ctx,"accent") && checked.padding==8)
+    selected,mesh,check:=false,false,false
+    for &p in ctx.paints[:ctx.paint_count] {
+        selected||=p.kind==.Box && p.fill==ui.tone(&ctx,"accent_soft")
+        mesh||=p.kind==.Icon && p.icon==.Mesh
+        check||=p.kind==.Icon && p.icon==.Check && p.icon_color==ui.tone(&ctx,"accent")
+    }
+    testing.expect(t,selected && mesh && check && test_paint(&ctx,"Mesh")!=nil,"A row shows its icon, its label, its detail and its check")
     testing.expect(t,test_near(test_rect(t,&ctx,ui.id(&ctx,"leaf")).x,12+24),"Rows of a tree step in by their depth")
 }
 
