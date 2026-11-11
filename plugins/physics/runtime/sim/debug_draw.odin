@@ -85,7 +85,7 @@ world_debug_draw :: proc(w:^World,out:^Debug_Draw,flags:Debug_Draw_Flags,region:
             } else if f.shape==.Path {
                 debug_fluid_path(out,fluid_points(w,i32(i)))
             } else {
-                debug_fluid_box(out,&f,f.density>0?.Fluid:.Dry)
+                debug_fluid_prism(out,&f,fluid_points(w,i32(i)),f.density>0?.Fluid:.Dry)
             }
         }
     }
@@ -155,19 +155,16 @@ debug_fluid_path :: proc "contextless" (out:^Debug_Draw,points:[]Path_Point) {
 }
 
 @(private)
-debug_fluid_box :: proc "contextless" (out:^Debug_Draw,f:^Fluid,kind:Debug_Kind) {
-    s,c:=cmath.sincos(f.yaw)
-    x,z:=Vec3{c,0,-s}*f.half_extents.x,Vec3{s,0,c}*f.half_extents.z
-    y:=UP*f.half_extents.y
-    corner :: proc "contextless" (p,x,y,z:Vec3,i:int) -> Vec3 {
-        return p+(i&1!=0?x:-x)+(i&2!=0?y:-y)+(i&4!=0?z:-z)
-    }
-    for i in 0..<8 {
-        for bit in ([3]int{1,2,4}) {
-            if i&bit==0 {debug_line(out,corner(f.position,x,y,z,i),corner(f.position,x,y,z,i|bit),kind)}
-        }
+debug_fluid_prism :: proc "contextless" (out:^Debug_Draw,f:^Fluid,points:[]Path_Point,kind:Debug_Kind) {
+    top,floor:=f.position.y,f.position.y-f.depth
+    for a,i in points {
+        b:=points[(i+1)%len(points)]
+        debug_line(out,{a.position.x,top,a.position.z},{b.position.x,top,b.position.z},kind)
+        debug_line(out,{a.position.x,floor,a.position.z},{b.position.x,floor,b.position.z},kind)
+        debug_line(out,{a.position.x,floor,a.position.z},{a.position.x,top,a.position.z},kind)
     }
 }
+
 
 // A grid on the surface of a plane, each line in pieces that follow its height.
 @(private)

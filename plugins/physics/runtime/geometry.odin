@@ -5,6 +5,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import render "mirai:engine/render"
+import volume "mirai:engine/volume"
 import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -261,20 +262,26 @@ collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale
     return geometry,origin,failure
 }
 
-// Makes the hulls of a Hull collider whose mesh has several convex pieces: the first in l.hull, the others in
-// a run of Physics_State.pieces, each shared as a whole collider is. pieces is false when the mesh has fewer
-// than two: the collider is then one hull of all its points. On a failure the caller releases what was made.
+// Makes the hulls of a Hull collider whose mesh has several convex pieces, or of the sensor of an outline
+// (zone_collider): the first in l.hull, the others in a run of Physics_State.pieces, each of a mesh shared as
+// a whole collider is. pieces is false when the mesh has fewer than two: the collider is then one hull of all
+// its points. On a failure the caller releases what was made.
 @(private)
 collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f32) -> (pieces:bool,failure:Shape_Failure) {
-    static,has_mesh:=core.get(s.statics,e)
-    if !has_mesh {return}
     points:=make([dynamic]geom.Vec3,context.temp_allocator)
     sizes:=make([dynamic]u32,context.temp_allocator)
-    if !host.assets_collision_hulls(s.app.assets,static.mesh,static.shape,&points,&sizes) || len(sizes)<2 {return}
+    static,has_mesh:=core.get(s.statics,e)
+    source:Geometry_Source
+    shareable:=false
+    if zone,found:=core.get(s.volumes,e);found && zone.shape==.Outline && !core.has(s.colliders,e) {
+        if !zone_pieces(volume.spline_outline(s.splines,e),zone.extents.y,&points,&sizes) {return true,.Hull}
+    } else {
+        if !has_mesh || !host.assets_collision_hulls(s.app.assets,static.mesh,static.shape,&points,&sizes) || len(sizes)<2 {return}
+        source,shareable=geometry_source_of(s,.Hull,static,scale,round)
+    }
     run,taken:=pieces_take(s.state,len(sizes)-1)
     if !taken {return true,.Geometry_Budget}
     l.pieces=run
-    source,shareable:=geometry_source_of(s,.Hull,static,scale,round)
     from:=0
     for size,at in sizes {
         if int(size)>len(points)-from {return true,.Hull}
@@ -419,3 +426,25 @@ geometry_release :: proc(s:^Sync,l:^Link) {
 }
 
 
+
+// The convex pieces of the column over an outline (geom.polygon_convex_partition), each from half under the
+// loop to half over it, as the points of their hulls in the frame of the entity. False for a loop that
+// does not split.
+@(private)
+zone_pieces :: proc(outline:[]mm.Path_Point,half:f32,points:^[dynamic]geom.Vec3,sizes:^[dynamic]u32) -> bool {
+    loop:=make([]geom.Vec2,len(outline),context.temp_allocator)
+    for p,i in outline {loop[i]={p.position.x,p.position.z}}
+    indices:=make([dynamic]u32,context.temp_allocator)
+    counts:=make([dynamic]u32,context.temp_allocator)
+    if geom.polygon_convex_partition(loop,{len(loop)},&indices,&counts)<=0 {return false}
+    first:=0
+    for count in counts {
+        for index in indices[first:][:count] {
+            p:=loop[index]
+            append(points,geom.Vec3{p.x,-half,p.y},geom.Vec3{p.x,half,p.y})
+        }
+        append(sizes,2*count)
+        first+=int(count)
+    }
+    return true
+}

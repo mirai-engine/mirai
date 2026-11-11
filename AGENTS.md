@@ -202,8 +202,6 @@ load.
 - If a test fails, first tell a product defect apart from a wrong fixture. A test that already
   fails on `main` is stated in the report.
 - Preserve local changes. Report what was checked and in which environment.
-- Gestures (drag, drag and drop) in the native editor are tested by the user: ask for them with a
-  numbered list of concrete actions.
 - Against an open editor, work on a copy: `scene.save` only to `.mirai/tmp/`, never over a
   versioned asset.
 

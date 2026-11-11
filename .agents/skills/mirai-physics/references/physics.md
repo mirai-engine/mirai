@@ -290,20 +290,24 @@ Water is not simulated: it is an analytic volume with a queryable surface, deter
 the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws it.
 
 - `fluid_create`, `fluid_set` and `fluid_destroy` (`Fluid_Desc`): a `Plane` (everything below the
-  height of its position, an ocean), a `Box` rotated only in yaw whose top face is the surface (a
-  lake, a pool), or a `Path` (a river): the points of a curve (`math.path_at`) that `fluid_create`
-  and `fluid_set` copy (`World.fluid_paths`, beside the slots), each with its width, its height as
-  depth and its speed along, level across, ending at its ends. Each point is lowered to the one
-  before it, and the curve keeps y monotone between points: the surface never rises downstream.
-  Every query evaluates the curve, so its length does not cap its detail. Density, current (in the
-  frame of the box; of a path, across and up, with z zero) and priority. The integration makes a
-  `Fluid` with a `volume.Spline` on its entity a path: it lays the points of the spline on the
-  ground with the procedures of the `Spline`, and does it again when the spline or its place
-  changes, or when a box of `core.Ground_Queries.changed` overlaps its reach.
-  - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
+  height of its position, an ocean), a `Prism` (the column over the loop of its points seen from
+  above, straight from each to the next and back to the first, from its `depth` under the height
+  of its position up to it: a lake, a pool, the air of a room), or a `Path` (a river): the points
+  of a curve (`math.path_at`), each with its width, its height as depth and its speed along, level
+  across, ending at its ends. `fluid_create` and `fluid_set` copy the points of a prism or a path
+  (`World.fluid_paths`, beside the slots). Each point of a path is lowered to the one before it,
+  and the curve keeps y monotone between points: the surface never rises downstream. Every query
+  evaluates the curve, so its length does not cap its detail. Density, current (in the world; of a
+  path, across and up, with z zero) and priority. The integration makes a `Volume` `Box` a prism
+  of its four corners turned by the yaw of its entity, an `Outline` a prism of the points of the
+  entity's `volume.Spline`, and a `Fluid` with a `Spline` and no such `Volume` a path: it lays the
+  points of the spline on the ground with the procedures of the `Spline`, and does it again when
+  the spline or its place changes, or when a box of `core.Ground_Queries.changed` overlaps its
+  reach.
+  - With zero density it is a dry prism: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
-  - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one
-    with the highest priority decides for the whole body.
+  - A fluid does not overlap another one, nor a dry prism another dry prism; where they would, the
+    one with the highest priority decides for the whole body.
   - Creating, changing or removing a fluid wakes the bodies it reached and those it reaches.
   - Fluids are a block of the snapshot. The scratch of the step is reserved with the first fluid
     (or when restoring a world that has them): a world without fluids neither has it nor pays for
@@ -314,7 +318,7 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   it. Over a path it finds the nearest point of the curve (chords, then Newton); from the segment
   of the last query it looks at that one and its two neighbours, and at all when the nearest is at
   the edge of those.
-  - **Waves** (`Fluid_Desc.waves`, of a plane or a box): a sum of
+  - **Waves** (`Fluid_Desc.waves`, of a plane or a prism of water): a sum of
     Gerstner waves (`fluid_waves.odin`). The time is `world_time`, the seconds the world advanced,
     which go in the snapshot: a rollback returns to the same waves. `wave_terms` gives each wave at
     a time, with the phase reduced in f64 from a nearby origin (near the world center or far, early
@@ -323,8 +327,7 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     inclination (`steepness`) is clipped so that the sum of k·A does not pass `WAVE_FOLD`: the
     surface never folds and Newton converges. The water shaders evaluate their twin in Slang on the
     same terms.
-  - What the crests reach enters the box of the volume (`fluid_bounds`), and so does what the slope
-    of a box raises and lowers.
+  - What the crests reach enters the box of the volume (`fluid_bounds`).
   - `fluid_sample(w,point)` gives over it the height, the normal, the current and the density at the
     point: the surface over a wet point, the one below for a dry one, or the underside of the water
     (normal downward) for a point under all of it.
@@ -337,11 +340,12 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     `Fluid_Info.top` is the still surface and `desc.waves` its waves, which it evaluates with
     `wave_terms` at `fluid_time`) and whether a point is in it, without subtracting dry boxes, with
     `fluid_holds`: it does not repeat the shape or the priority rule.
-  - **`Fluid_Waves`** (integration, replicated) on the entity of a `Fluid` in a `Plane` describes
-    its waves: its own (amplitude, length and heading from the front of the entity) and those of the
+  - **`Fluid_Waves`** (integration, replicated) on the entity of a `Fluid` of a sea or a lake
+    describes its waves: its own
+ (amplitude, length and heading from the front of the entity) and those of the
     world's `Wind` where the volume is, a Pierson-Moskowitz sea in the waves that remain free, with
     its significant height from `wind`; `spread`, `steepness`, `speed` and `seed` are the artistic
-    options. Changing the wind or the component redoes the waves of the volume. On a box it is a
+    options. Changing the wind or the component redoes the waves of the volume. On a river it is a
     `physics.fluid_waves` problem.
 - **Bodies.** A body takes its water by the rule of `fluid_find` (the column that holds the point,
   then priority) at its center, the lowest point of its box and the corners of its bottom, among
@@ -354,7 +358,10 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   - The surface of a body in a step is the plane tangent to the waves over its center, at the start
     of the step: its waves lift it and tilt it.
   - Submerged volume and its center, exact per shape: boxes and hulls clipped by the planes of the
-    surface and of the walls of a box, with dry boxes subtracted; spheres, capsules and vertical
+    surface, the floor and the walls of a prism near the body (`prism_walls`: the edges within its
+    reach, but of two that meet where the loop turns in only the nearer, so the water on both sides
+    of a notch stays), with dry prisms subtracted; spheres, capsules and vertical
+
     cylinders in closed form between horizontal planes; a tilted capsule, as spheres on its axis; a
     sphere or a cylinder that cuts a wall, as a polyhedron of the same volume.
   - Buoyancy ρ V g at the submerged center, with the body's gravity: its gravity scale also scales

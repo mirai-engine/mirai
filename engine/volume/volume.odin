@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import gpu "mirai:render"
+import "mirai:render/abi"
 import mm "mirai:std/math"
 import "mirai:std/spatial"
 
@@ -41,9 +42,10 @@ Volume_Shape :: enum u8 {
     Box,       // extents: half its size along each axis
     Sphere,    // extents.x: its radius
     Plane,     // everything under the plane through the entity whose normal is its up (+Y): a sea, a pit
+    Outline,   // the column over the loop of the points of the Spline of its entity (their x and z in its frame), extents.y half its height: a lake, a valley
 }
 
-@(component,replicated,description="Where what its entity does happens: a zone value (Gravity, Wind, Audio_Reverb, View_Volume), a fluid, a force, a navigation area; with physics a box or a sphere also reports the bodies that go in and out. The whole world, a box or a sphere scaled by the entity, or everything under the plane of the entity.")
+@(component,replicated,description="Where what its entity does happens: a zone value (Gravity, Wind, Audio_Reverb, View_Volume), a fluid, a force, a navigation area; with physics a box or a sphere also reports the bodies that go in and out. The whole world, a box or a sphere scaled by the entity, everything under the plane of the entity, or the column over the loop of the points of its Spline (a lake, a valley).")
 Volume :: struct {
     shape:Volume_Shape,
     extents:[3]f32 `mirai:"min=0,unit=m"`,
@@ -70,27 +72,36 @@ sphere :: proc "contextless" (radius:f32) -> Volume {return {shape=.Sphere,exten
 plane :: proc "contextless" () -> Volume {return {shape=.Plane}}
 // The whole world; under a section, the box of its section.
 world :: proc "contextless" () -> Volume {return {shape=.Unbounded}}
+// The column over the loop of the points of the Spline of the entity, from
+// half under them to half over them, scaled by the entity.
+outline :: proc "contextless" (height:f32) -> Volume {return {shape=.Outline,extents={0,0.5*height,0}}}
 
-// The tables where a volume is: its shape, its pose and, unbounded under a
-// section, the box of that section.
+// The tables where a volume is: its shape, its pose, the points of its Spline
+// and, unbounded under a section, the box of that section.
 Where :: struct {
     volumes:^core.Table(Volume,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
     parents:^core.Table(core.Parent,.Read),
     sections:^core.Table(scene.Scene_Reference,.Read),
+    splines:^core.Table(Spline,.Read),
 }
 
-// When a table of volumes changes: an unbounded volume with extents was meant
-// to be a box, and without its shape it rules everywhere.
+// When a table of volumes or splines changes: an unbounded volume with
+// extents was meant to be a box, and without its shape it rules everywhere; an
+// outline without a loop of points holds nothing.
 @(storage)
-Volume_Check :: struct {seen:core.Seen `mirai:"transient,hidden"`}
+Volume_Check :: struct {seen:[2]core.Seen `mirai:"transient,hidden"`}
 
 @(step="frame")
-volumes_check :: proc(volumes:^core.Table(Volume,.Read),check:^Volume_Check,problems:^core.Problems) {
-    if !core.touched(volumes,&check.seen) {return}
+volumes_check :: proc(volumes:^core.Table(Volume,.Read),splines:^core.Table(Spline,.Read),check:^Volume_Check,problems:^core.Problems) {
+    if !core.touched(volumes,&check.seen[0]) & !core.touched(splines,&check.seen[1]) {return}
     for row in 0..<core.count(volumes) {
-        if v:=core.at(volumes,row);v.shape==.Unbounded && v.extents!={} {
-            core.report(problems,core.entity_at(volumes,row),"volume.unbounded_extents","this Volume has extents but its shape is Unbounded, so it rules the whole world: use volume.box or volume.sphere, or leave the extents at zero")
+        e:=core.entity_at(volumes,row)
+        v:=core.at(volumes,row)
+        if v.shape==.Unbounded && v.extents!={} {
+            core.report(problems,e,"volume.unbounded_extents","this Volume has extents but its shape is Unbounded, so it rules the whole world: use volume.box or volume.sphere, or leave the extents at zero")
+        } else if v.shape==.Outline && !valid(v,mm.TRANSFORM_IDENTITY,spline_outline(splines,e)) {
+            core.report(problems,e,"volume.outline","this Volume is an Outline but holds nothing: it needs a height (extents.y above 0) and a Spline on its entity with 3 to %d points that close a loop of some area; add or fix them",SPLINE_POINTS)
         }
     }
 }
@@ -114,8 +125,8 @@ Hits :: struct {
 
 // How far inside a volume placed at pose a point is, m: below 0 outside it;
 // max(f32) for an unbounded one. A size, a pose or a point that is not a
-// number is outside.
-depth :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32) -> f32 {
+// number is outside. outline: the points of an Outline (spline_outline).
+depth :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32,outline:[]mm.Path_Point=nil) -> f32 {
     d:=-max(f32)
     switch v.shape {
     case .Unbounded:
@@ -131,18 +142,24 @@ depth :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32) -> f32 {
         d=v.extents.x*max(scale.x,scale.y,scale.z)-linalg.length(point-pose.position)
     case .Plane:
         d=-linalg.dot(mm.quat_rotate(pose.rotation,[3]f32{0,1,0}),point-pose.position)
+    case .Outline:
+        local:=mm.quat_rotate(mm.quat_inverse(pose.rotation),point-pose.position)
+        scale:=linalg.abs(pose.scale)
+        d=min(mm.loop_depth(outline,local.x,local.z,scale.xz),v.extents.y*scale.y-abs(local.y))
     }
     return d==d?d:-max(f32)
 }
 
 // Whether a volume placed at pose holds a point; its border counts.
-holds :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32) -> bool {
-    return depth(v,pose,point)>=0
+holds :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32,outline:[]mm.Path_Point=nil) -> bool {
+    return depth(v,pose,point,outline)>=0
 }
 
 // Whether a volume placed at pose meets a box of the world; touching counts.
-// False for a box or a pose that is not finite.
-overlaps :: proc "contextless" (v:Volume,pose:mm.Transform,box:spatial.Aabb) -> bool {
+// False for a box or a pose that is not finite. An Outline takes the box
+// seen from its frame as the box around it there: wider than the box when
+// the volume is not turned by quarter turns about +Y.
+overlaps :: proc "contextless" (v:Volume,pose:mm.Transform,box:spatial.Aabb,outline:[]mm.Path_Point=nil) -> bool {
     if !spatial.aabb_valid(box) || !pose_finite(pose) {return false}
     scale:=linalg.abs(pose.scale)
     switch v.shape {
@@ -160,13 +177,42 @@ overlaps :: proc "contextless" (v:Volume,pose:mm.Transform,box:spatial.Aabb) -> 
         up:=mm.quat_rotate(pose.rotation,[3]f32{0,1,0})
         corner:=[3]f32{up.x>=0?box.min.x:box.max.x,up.y>=0?box.min.y:box.max.y,up.z>=0?box.min.z:box.max.z}
         return linalg.dot(up,corner-pose.position)<=0
+    case .Outline:
+        if !valid(v,pose,outline) {return false}
+        back:=mm.quat_inverse(pose.rotation)
+        low,high:=[3]f32{max(f32),max(f32),max(f32)},[3]f32{-max(f32),-max(f32),-max(f32)}
+        for corner in 0..<8 {
+            l:=mm.quat_rotate(back,[3]f32{corner&1!=0?box.max.x:box.min.x,corner&2!=0?box.max.y:box.min.y,corner&4!=0?box.max.z:box.min.z}-pose.position)
+            low,high=linalg.min(low,l),linalg.max(high,l)
+        }
+        if low.y>v.extents.y*scale.y || high.y< -v.extents.y*scale.y {return false}
+        // The loop holds the middle of the box, or one of its edges crosses the box.
+        middle:=0.5*(low+high)
+        if mm.loop_depth(outline,middle.x,middle.z,scale.xz)>=0 {return true}
+        a:=outline[len(outline)-1].position.xz*scale.xz
+        for p in outline {
+            b:=p.position.xz*scale.xz
+            from,to:=f32(0),f32(1)
+            for axis in 0..<2 {
+                lo,hi,d:=low[2*axis],high[2*axis],b[axis]-a[axis]
+                if abs(d)<1e-30 {
+                    if a[axis]<lo || a[axis]>hi {from=2}
+                    continue
+                }
+                t0,t1:=(lo-a[axis])/d,(hi-a[axis])/d
+                from,to=max(from,min(t0,t1)),min(to,max(t0,t1))
+            }
+            if from<=to {return true}
+            a=b
+        }
     }
     return false
 }
 
 // Whether a volume placed at pose can hold a point: a shape of Volume_Shape,
-// a pose that is finite, and a size above zero where its shape has one.
-valid :: proc "contextless" (v:Volume,pose:mm.Transform) -> bool {
+// a pose that is finite, and a size above zero where its shape has one; of an
+// Outline, 3 to SPLINE_POINTS finite points that close some area.
+valid :: proc "contextless" (v:Volume,pose:mm.Transform,outline:[]mm.Path_Point=nil) -> bool {
     if !pose_finite(pose) {return false}
     scale:=linalg.abs(pose.scale)
     switch v.shape {
@@ -178,6 +224,11 @@ valid :: proc "contextless" (v:Volume,pose:mm.Transform) -> bool {
     case .Sphere:
         radius:=v.extents.x*max(scale.x,scale.y,scale.z)
         return radius>0 && radius<=max(f32)
+    case .Outline:
+        if len(outline)<3 || len(outline)>SPLINE_POINTS {return false}
+        for p in outline {if !finite(p.position) {return false}}
+        h,area:=v.extents.y*scale.y,abs(mm.loop_area(outline)*scale.x*scale.z)
+        return h>0 && h<=max(f32) && area>0 && area<=max(f32)
     }
     return false
 }
@@ -195,16 +246,18 @@ finite :: proc "contextless" (v:[3]f32) -> bool {
 
 // How much a volume placed at pose holds a point: 1 inside, 0 outside, and
 // rising over the last blend metres inside its border.
-weight :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32,blend:f32=0) -> f32 {
-    d:=depth(v,pose,point)
+weight :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32,blend:f32=0,outline:[]mm.Path_Point=nil) -> f32 {
+    d:=depth(v,pose,point,outline)
     if !(d>=0) {return 0}
     if !(blend>0) {return 1}
     return min(d/blend,1)
 }
 
-size :: proc "contextless" (v:Volume,pose:mm.Transform) -> f32 {
+size :: proc "contextless" (v:Volume,pose:mm.Transform,outline:[]mm.Path_Point=nil) -> f32 {
     scale:=linalg.abs(pose.scale)
     switch v.shape {
+    case .Outline:
+        return abs(mm.loop_area(outline))*scale.x*scale.z*v.extents.y*scale.y
     case .Box:
         half:=v.extents*scale
         return 8*half.x*half.y*half.z
@@ -218,10 +271,18 @@ size :: proc "contextless" (v:Volume,pose:mm.Transform) -> f32 {
 
 // The box of the world a volume placed at pose is in: without end where the
 // volume has none, as a plane to its sides and under it.
-bounds :: proc "contextless" (v:Volume,pose:mm.Transform) -> spatial.Aabb {
+bounds :: proc "contextless" (v:Volume,pose:mm.Transform,outline:[]mm.Path_Point=nil) -> spatial.Aabb {
     scale:=linalg.abs(pose.scale)
     half:[3]f32
     switch v.shape {
+    case .Outline:
+        if len(outline)==0 {return {pose.position,pose.position}}
+        local:=spatial.Aabb{{max(f32),-v.extents.y,max(f32)},{-max(f32),v.extents.y,-max(f32)}}
+        for p in outline {
+            local.min.xz=linalg.min(local.min.xz,p.position.xz)
+            local.max.xz=linalg.max(local.max.xz,p.position.xz)
+        }
+        return mm.aabb_transform(local,mm.transform_matrix(pose))
     case .Box:
         h:=v.extents*scale
         half=linalg.abs(mm.quat_rotate(pose.rotation,{h.x,0,0}))+linalg.abs(mm.quat_rotate(pose.rotation,{0,h.y,0}))+linalg.abs(mm.quat_rotate(pose.rotation,{0,0,h.z}))
@@ -261,37 +322,47 @@ hits_add :: proc "contextless" (h:^Hits,hit:Hit) {
 }
 
 @(private)
-hit_of :: proc "contextless" (row:int,v:Volume,pose:mm.Transform,zone:Zone,weight:f32) -> Hit {
-    return {row=i32(row),weight=weight,add=zone.mode==.Add,priority=zone.priority,size=size(v,pose)}
+hit_of :: proc "contextless" (row:int,v:Volume,pose:mm.Transform,outline:[]mm.Path_Point,zone:Zone,weight:f32) -> Hit {
+    return {row=i32(row),weight=weight,add=zone.mode==.Add,priority=zone.priority,size=size(v,pose,outline)}
 }
 
-// Where the volume of e rules, as a shape at a pose: without a Volume, the
-// whole world; unbounded under a section, the box of that section. False
-// where it rules nowhere (no pose, or a section box without size).
-placed :: proc(at:Where,e:core.Entity) -> (v:Volume,pose:mm.Transform,ok:bool) {
+// The points of the Spline of e, which an Outline of e closes; none without one.
+spline_outline :: proc(splines:^core.Table(Spline,$A),e:core.Entity) -> []mm.Path_Point {
+    row:=splines!=nil?core.row_of(splines,e):-1
+    if row<0 {return nil}
+    s:=&splines.values[row]
+    return s.points[:min(int(s.count),SPLINE_POINTS)]
+}
+
+// Where the volume of e rules, as a shape at a pose with the points of its
+// outline: without a Volume, the whole world; unbounded under a section, the
+// box of that section. False where it rules nowhere (no pose, or a section box
+// without size).
+placed :: proc(at:Where,e:core.Entity) -> (v:Volume,pose:mm.Transform,outline:[]mm.Path_Point,ok:bool) {
     found:bool
     v,found=core.get(at.volumes,e)
-    if !found {return {},mm.TRANSFORM_IDENTITY,true}
+    if !found {return {},mm.TRANSFORM_IDENTITY,nil,true}
     if v.shape==.Unbounded {
         section:=at.sections!=nil?core.ancestor_with(at.parents,at.sections,e):core.NONE
-        if section==core.NONE {return v,mm.TRANSFORM_IDENTITY,true}
+        if section==core.NONE {return v,mm.TRANSFORM_IDENTITY,nil,true}
         reference,_:=core.get(at.sections,section)
         box,boxed:=core.get(at.worlds,section)
         if reference.extents=={} || !boxed {return}
-        return {shape=.Box,extents=reference.extents},box.transform,true
+        return {shape=.Box,extents=reference.extents},box.transform,nil,true
     }
     world,placed:=core.get(at.worlds,e)
-    return v,world.transform,placed
+    if v.shape==.Outline {outline=spline_outline(at.splines,e)}
+    return v,world.transform,outline,placed
 }
 
 // The volumes of the value of table that hold point, in the order they are
 // applied, in one pass over them.
 gather :: proc(at:Where,table:^core.Table($T,$A),point:[3]f32) -> (h:Hits) {
     for row in 0..<core.count(table) {
-        v,pose,ok:=placed(at,core.entity_at(table,row))
+        v,pose,outline,ok:=placed(at,core.entity_at(table,row))
         if !ok {continue}
         zone:=core.at(table,row).zone
-        if w:=weight(v,pose,point,zone.blend);w>0 {hits_add(&h,hit_of(row,v,pose,zone,w))}
+        if w:=weight(v,pose,point,zone.blend,outline);w>0 {hits_add(&h,hit_of(row,v,pose,outline,zone,w))}
     }
     return
 }
@@ -320,6 +391,7 @@ mix_linear :: proc(value:^$T,by:T,weight:f32,add:bool) {
 Place :: struct {
     volume:Volume,      // as it rules: unbounded under a section, the box of that section
     pose:mm.Transform,  // of that shape
+    outline:[]mm.Path_Point, // of an Outline, in the table of splines
     world:mm.Transform, // of the entity of the value, which turns a gravity or a wind; the identity without one
     zone:Zone,
     rules:bool,         // false: it rules nowhere
@@ -328,7 +400,7 @@ Place :: struct {
 // The volumes of a value for a library that asks at many points: made again
 // by index_update only when a volume, a value or a place changed.
 Index :: struct {
-    seen:[3]core.Seen,         // the volumes, the values and the sections it was made from
+    seen:[4]core.Seen,         // the volumes, the values, the sections and the splines it was made from
     placed:core.Seen,          // and the places it compared
     made:bool,
     places:[dynamic]Place,     // one per row of the value
@@ -353,7 +425,7 @@ index_destroy :: proc(ix:^Index) {
 @(private)
 place_of :: proc(at:Where,table:^core.Table($T,$A),row:int) -> (p:Place) {
     e:=core.entity_at(table,row)
-    p.volume,p.pose,p.rules=placed(at,e)
+    p.volume,p.pose,p.outline,p.rules=placed(at,e)
     p.world=mm.TRANSFORM_IDENTITY
     if world,found:=core.get(at.worlds,e);found {p.world=world.transform}
     p.zone=core.at(table,row).zone
@@ -365,7 +437,7 @@ place_of :: proc(at:Where,table:^core.Table($T,$A),row:int) -> (p:Place) {
 // combined from it is to be combined again. ok is false without memory: then
 // no volume holds any point until an update finds it.
 index_update :: proc(ix:^Index,at:Where,table:^core.Table($T,$A)) -> (changed,ok:bool) {
-    moved:=core.touched(at.volumes,&ix.seen[0]) | core.touched(at.sections,&ix.seen[2])
+    moved:=core.touched(at.volumes,&ix.seen[0]) | core.touched(at.sections,&ix.seen[2]) | core.touched(at.splines,&ix.seen[3])
     count:=0
     if table!=nil {
         moved|=core.touched(table,&ix.seen[1])
@@ -376,7 +448,9 @@ index_update :: proc(ix:^Index,at:Where,table:^core.Table($T,$A)) -> (changed,ok
         if !placed {return false,true}
         same:=true
         for p,row in ix.places {
-            if place_of(at,table,row)!=p {same=false;break}
+            // The points of an outline stay where they were while the splines do.
+            q:=place_of(at,table,row)
+            if q.volume!=p.volume || q.pose!=p.pose || q.world!=p.world || q.zone!=p.zone || q.rules!=p.rules {same=false;break}
         }
         if same {return false,true}
     }
@@ -392,9 +466,9 @@ index_update :: proc(ix:^Index,at:Where,table:^core.Table($T,$A)) -> (changed,ok
         append(&ix.places,p)
         if !p.rules {continue}
         switch p.volume.shape {
-        case .Unbounded:   hits_add(&ix.unbounded,hit_of(row,p.volume,p.pose,p.zone,1))
-        case .Plane:       planes+=1
-        case .Box,.Sphere: bounded+=1
+        case .Unbounded:            hits_add(&ix.unbounded,hit_of(row,p.volume,p.pose,nil,p.zone,1))
+        case .Plane:                planes+=1
+        case .Box,.Sphere,.Outline: bounded+=1
         }
     }
     if reserve(&ix.planes,planes)!=nil {
@@ -415,8 +489,8 @@ index_update :: proc(ix:^Index,at:Where,table:^core.Table($T,$A)) -> (changed,ok
         #partial switch p.volume.shape {
         case .Plane:
             append(&ix.planes,i32(row))
-        case .Box,.Sphere:
-            if box:=bounds(p.volume,p.pose);spatial.aabb_valid(box) {spatial.dynamic_tree_insert(&ix.tree,box,u64(row))}
+        case .Box,.Sphere,.Outline:
+            if box:=bounds(p.volume,p.pose,p.outline);spatial.aabb_valid(box) {spatial.dynamic_tree_insert(&ix.tree,box,u64(row))}
         }
     }
     ix.made=true
@@ -431,8 +505,8 @@ index_hits :: proc(ix:^Index,point:[3]f32) -> (h:Hits,bounded:bool) {
         q:=spatial.dynamic_tree_query(&ix.tree,{point,point})
         for _,user in spatial.tree_query_next(&q) {
             p:=ix.places[user]
-            if w:=weight(p.volume,p.pose,point,p.zone.blend);w>0 {
-                hits_add(&h,hit_of(int(user),p.volume,p.pose,p.zone,w))
+            if w:=weight(p.volume,p.pose,point,p.zone.blend,p.outline);w>0 {
+                hits_add(&h,hit_of(int(user),p.volume,p.pose,p.outline,p.zone,w))
                 bounded=true
             }
         }
@@ -440,7 +514,7 @@ index_hits :: proc(ix:^Index,point:[3]f32) -> (h:Hits,bounded:bool) {
     for row in ix.planes {
         p:=ix.places[row]
         if w:=weight(p.volume,p.pose,point,p.zone.blend);w>0 {
-            hits_add(&h,hit_of(int(row),p.volume,p.pose,p.zone,w))
+            hits_add(&h,hit_of(int(row),p.volume,p.pose,nil,p.zone,w))
             bounded=true
         }
     }
@@ -456,9 +530,9 @@ index_hits :: proc(ix:^Index,point:[3]f32) -> (h:Hits,bounded:bool) {
 ordered :: proc(at:Where,table:^core.Table($T,$A),rows:[]i32) -> int {
     h:Hits
     for row in 0..<core.count(table) {
-        v,pose,ok:=placed(at,core.entity_at(table,row))
+        v,pose,outline,ok:=placed(at,core.entity_at(table,row))
         if !ok {continue}
-        hits_add(&h,hit_of(row,v,pose,core.at(table,row).zone,1))
+        hits_add(&h,hit_of(row,v,pose,outline,core.at(table,row).zone,1))
     }
     n:=min(h.count,len(rows))
     for i in 0..<n {rows[i]=h.hits[h.count-n+i].row}
@@ -467,21 +541,48 @@ ordered :: proc(at:Where,table:^core.Table($T,$A),rows:[]i32) -> int {
 
 // volume.slang Gpu_Volume: where a volume is, for volume_weight on the GPU.
 Gpu_Volume :: struct {
-    to_local:[3][4]f32, // rows: from the world to the volume, turned and moved, not scaled
-    shape:[4]f32,       // xyz half its size along each axis, metres (x the radius of a sphere); w its blend
-    kind:[4]u32,        // x 0 unbounded, 1 box, 2 sphere, 3 plane; y 1 when it adds
+    to_local:[3][4]f32, // rows: from the world to the volume, turned and moved, not scaled; of an outline, to the middle of its box
+    shape:[4]f32,       // xyz half its size along each axis, metres (x the radius of a sphere; of an outline, of its box); w its blend
+    kind:[4]u32,        // x 0 unbounded, 1 box, 2 sphere, 3 plane, 4 outline, 5 an outline past the room of its table; y 1 when it adds; of an outline z its first point in its Gpu_Outlines, w how many
 }
 #assert(size_of(Gpu_Volume)==80)
 
-gpu_volume :: proc "contextless" (v:Volume,pose:mm.Transform,zone:Zone) -> (g:Gpu_Volume) {
+VOLUME_OUTLINE_POINTS :: abi.VOLUME_OUTLINE_POINTS // of the outlines of one table; past it an outline weighs 0
+
+// volume.slang Gpu_Outlines: the points of the outlines of the volumes of one block that a shader weighs.
+Gpu_Outlines :: struct {
+    count:[4]u32,                                // x points written
+    rows:[VOLUME_OUTLINE_POINTS/2][4]f32,        // x and z of two points each, metres from the middle of the box of their outline, scaled
+}
+
+// A volume for volume_weight on the GPU; the points of an outline go into outlines.
+gpu_volume :: proc "contextless" (v:Volume,pose:mm.Transform,zone:Zone,outline:[]mm.Path_Point=nil,outlines:^Gpu_Outlines=nil) -> (g:Gpu_Volume) {
     scale:=linalg.abs(pose.scale)
+    pose:=pose
+    g.kind={u32(v.shape),u32(zone.mode==.Add),0,0}
     switch v.shape {
     case .Unbounded,.Plane:
     case .Box:    g.shape.xyz=v.extents*scale
     case .Sphere: g.shape.x=v.extents.x*max(scale.x,scale.y,scale.z)
+    case .Outline:
+        first:=outlines!=nil?int(outlines.count.x):VOLUME_OUTLINE_POINTS
+        if !valid(v,pose,outline) || first+len(outline)>VOLUME_OUTLINE_POINTS {
+            g.kind.x=5
+            break
+        }
+        low,high:=[2]f32{max(f32),max(f32)},[2]f32{-max(f32),-max(f32)}
+        for p in outline {low,high=linalg.min(low,p.position.xz*scale.xz),linalg.max(high,p.position.xz*scale.xz)}
+        middle:=0.5*(low+high)
+        for p,i in outline {
+            at:=p.position.xz*scale.xz-middle
+            if (first+i)&1==0 {outlines.rows[(first+i)>>1].xy=at} else {outlines.rows[(first+i)>>1].zw=at}
+        }
+        outlines.count.x+=u32(len(outline))
+        g.shape.xyz={0.5*(high.x-low.x),v.extents.y*scale.y,0.5*(high.y-low.y)}
+        g.kind.zw={u32(first),u32(len(outline))}
+        pose.position+=mm.quat_rotate(pose.rotation,[3]f32{middle.x,0,middle.y})
     }
     g.shape.w=max(zone.blend,0)
-    g.kind={u32(v.shape),u32(zone.mode==.Add),0,0}
     back:=mm.quat_inverse(pose.rotation)
     x,y,z:=mm.quat_rotate(back,{1,0,0}),mm.quat_rotate(back,{0,1,0}),mm.quat_rotate(back,{0,0,1})
     // The columns of the inverse rotation: row i of the matrix is axis i of the world seen from the volume.

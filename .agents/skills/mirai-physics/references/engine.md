@@ -66,10 +66,11 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   While it is off it does not own the `Transform`.
 - `Fluid`: water or another fluid in the
   [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
-  ([fluids](physics.md#fluids)): a `Plane` (below the height of the entity) or a
-  `Box` (its extents times the scale), with density and current in the frame of the entity; with
-  zero density, a dry box over the fluids of lower `priority` (its own). The entity's yaw turns
-  the box and its current. It is
+  ([fluids](physics.md#fluids)): a `Plane` (below the height of the entity), a `Box` (its extents
+  times the scale) or an `Outline` (the loop of the points of its `Spline`, a lake), with density
+  and current in the frame of the entity; with zero density, a dry box over the fluids of lower
+  `priority` (its own). The entity's yaw turns the box, the loop and its current. It is
+
   `replicated`: a flood that the server decides reaches the clients.
 - `Force_Field`: a force that lasts on the bodies in the `Volume` of its entity (any shape; without
   one, the whole world), rising over its own `blend` inside the border. `force_fields_step`
@@ -565,9 +566,11 @@ read in a function of the `react` stage ([order](../../mirai-core/references/gen
 `a`, `b`, `entity` and `other` are the entities of the bodies; `collider_*`, those of the colliders
 that touched, which distinguish head, foot or weapon of the same body. `NONE` is a body without an
 entity; the detached ones of a destructible name their group entity, and the root group, the owner.
-A box or sphere [`Volume`](../../mirai-gameplay/references/libraries.md#volume) on an entity
-without a `Collider`, `Rigid_Body` or `Character` is a static sensor of preset `Trigger`, made by
-the sync from the volume (`zone_collider`): its overlaps are those of any sensor, with the volume's
+A box, sphere or outline [`Volume`](../../mirai-gameplay/references/libraries.md#volume) on an
+entity without a `Collider`, `Rigid_Body` or `Character` is a static sensor of preset `Trigger`,
+made by the sync from the volume (`zone_collider`; an outline, as the hulls of its convex pieces,
+`zone_pieces`, which the solver reports as one overlap per pair of shape users,
+`overlap_shared`): its overlaps are those of any sensor, with the volume's
 entity as `entity` and `collider`. A plane or an unbounded volume makes none: the solver holds no
 shape without an end. This is the one way a zone says what went in; there is no second test of
 "inside".
