@@ -38,13 +38,13 @@ Skin_World :: struct {
 // entity where it is drawn (erender.instance_place, with the Draw_Offset of
 // what it hangs from), with its pose.
 @(private)
-skin_shown :: proc(app:^host.App,posed:^erender.Posed_Meshes,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),offsets:core.Read(erender.Draw_Offset),parents:core.Read(core.Parent),frame:core.Frame_Time) {
+skin_shown :: proc(app:^host.App,posed:^erender.Posed_Meshes,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),offsets:^core.Table(erender.Draw_Offset,$C),parents:^core.Table(core.Parent,$D),frame:core.Frame_Time) {
     clear(&app.extras.instances)
     for pose,i in posed.poses.values {
         e:=posed.poses.entities[i]
         static,_:=core.get(meshes,e)
         world,_:=core.get(worlds,e)
-        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,{},{},e)
+        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,nil,nil,e)
         instance,_:=erender.mesh_instance(app.assets,static,transform,override=pose.materialed?pose.override:{})
         instance.mesh,instance.object_id,instance.anchor=pose.mesh,u64(e),anchor
         host.extras_instance_add(&app.extras,instance)

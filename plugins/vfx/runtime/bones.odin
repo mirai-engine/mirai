@@ -149,7 +149,7 @@ bones_pose :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,rig:^Bone_Rig,
 // skin; without the scene of its world in the renderer, its Mesh_Renderer
 // where it is, in its bind pose.
 @(private)
-entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
+entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
     shown,has_mesh:=core.get(meshes,e)
     if !has_mesh {return {}}
     rig:=bone_rig(&sync.rigs,assets,shown.mesh)

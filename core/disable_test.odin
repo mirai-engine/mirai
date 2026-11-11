@@ -52,7 +52,9 @@ the_settle_of_a_world_comes_only_to_the_tables_that_wait :: proc(t:^testing.T) {
     }
     cases:=[]Case{
         {"nothing waits",proc(w:^World_Of_Probes,root,child,other:Entity) {},0,nil},
-        {"a row written in place",proc(w:^World_Of_Probes,root,child,other:Entity) {edit(&w.probes,child).value=5},0,nil},
+        // Its table waits for the settle, which compares the row with what it held.
+        {"a row written in place",proc(w:^World_Of_Probes,root,child,other:Entity) {edit(&w.probes,child).value=5},1,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return at(&w.probes,row_of(&w.probes,child)).value==5}},
         {"an add to one table",proc(w:^World_Of_Probes,root,child,other:Entity) {add(&w.probes,root,Probe{3})},1,
             proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return has(&w.probes,root)}},
         {"a remove by reflection",proc(w:^World_Of_Probes,root,child,other:Entity) {raw_remove(raw(&w.probes),root)},1,

@@ -196,7 +196,7 @@ emission_key :: proc(particle:base.Asset_Id,a:^host.Assets,stamp:u64) -> u64 {
 // The stamp of the row of an entity, 0 without one: it moves when the row is
 // written, added or taken.
 @(private)
-row_stamp :: proc "contextless" (rows:core.Read($T),e:core.Entity) -> u64 {
+row_stamp :: proc "contextless" (rows:^core.Table($T,$A),e:core.Entity) -> u64 {
     at:=core.row_of(rows,e)
     return at>=0?core.stamp(rows,at):0
 }

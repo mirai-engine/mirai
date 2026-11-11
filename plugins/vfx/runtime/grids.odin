@@ -174,7 +174,7 @@ grid_cells :: proc "contextless" (cells:[3]u32) -> u32 {return cells.x*cells.y*c
 // place in the world buffer, which moves only when a grid comes, goes or
 // changes its cells or layers. A grid it does not take is a problem.
 @(private)
-grids_sync :: proc(g:^Grids,grids:core.Read(Particle_Grid),volumes:core.Read(Particle_Volume),textures:core.Read(Particle_World_Texture),worlds:core.Read(core.World_Transform),view:core.View,problems:^core.Problems) {
+grids_sync :: proc(g:^Grids,grids:^core.Table(Particle_Grid,$A),volumes:^core.Table(Particle_Volume,$B),textures:^core.Table(Particle_World_Texture,$C),worlds:^core.Table(core.World_Transform,$D),view:core.View,problems:^core.Problems) {
     kept,textured:=0,0
     count:=core.count(grids)
     layout:=u64(count)+1

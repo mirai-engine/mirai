@@ -10,7 +10,7 @@ Rig_Playground_Kind :: enum u8 {Spline,Stretch,Corrective}
 Rig_Playground :: struct {kind:Rig_Playground_Kind,origin:mm.Vec3}
 
 @(step="fixed")
-rig_playground_animate :: proc(items:core.Read(Rig_Playground),requests:^anim.Animation_Requests,time:core.Time) {
+rig_playground_animate :: proc(items:^core.Table(Rig_Playground,.Read),requests:^anim.Animation_Requests,time:core.Time) {
     phase:=f32(time.seconds)
     for row in 0..<core.count(items) {
         rig,item:=core.entity_at(items,row),core.at(items,row)

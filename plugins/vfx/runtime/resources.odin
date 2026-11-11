@@ -66,9 +66,9 @@ Gpu_Resource :: struct {
 @(private)
 emitter_resources :: proc(
     sync:^Particle_Sync,shown:^Emitter_Shown,info:^effect.Particle_Info,bindings:^Particle_Bindings,
-    e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
+    e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
-    of_entity :: proc(sync:^Particle_Sync,kind:Resource_Kind,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
+    of_entity :: proc(sync:^Particle_Sync,kind:Resource_Kind,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
         return entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,e) if kind==.Bones else entity_surface(extras,drawn,meshes,worlds,id,assets,renderer,e)
     }
     if info.shape==.Surface || info.shape==.Bones {
@@ -145,7 +145,7 @@ first_over :: proc "contextless" (needs:^Program_Needs) -> int {
 // it), where the renderer draws it. Without the scene of its world in the
 // renderer, its Mesh_Renderer where it is.
 @(private)
-entity_surface :: proc(extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
+entity_surface :: proc(extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
     if drawn!=nil && drawn.world==id {
         for &extra in extras {
             if extra.replace_source && extra.object_id==u64(e) {return surface_of(renderer,extra.mesh,extra.transform)}
