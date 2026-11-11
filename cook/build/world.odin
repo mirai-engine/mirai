@@ -288,11 +288,9 @@ Generated :: struct {
     machine_settings:[]string, // the names of the @(storage,setting="machine"): the sections the file of the engine gives a shipped game
 }
 
-// The source of the world packages and of the main packages. The world of
-// the game that ships is generated only when shipped is asked for.
-world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=false) -> (out:Generated) {
-    context.allocator=allocator
-    g:Generator
+// The packages of a project, read: what each declares, before anything is settled.
+@(private="file")
+generator_read :: proc(p:^project.Project) -> (g:Generator) {
     g.by_key=make(map[string]^Type)
     g.bundles=make(map[string]^Bundle)
     g.named_types=make(map[string]^Named_Type)
@@ -301,6 +299,14 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     g.engine_root,g.root=p.engine_root,p.root
     packages_find(&g,p)
     for pkg in g.packages {package_read(&g,pkg)}
+    return
+}
+
+// The source of the world packages and of the main packages. The world of
+// the game that ships is generated only when shipped is asked for.
+world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=false) -> (out:Generated) {
+    context.allocator=allocator
+    g:=generator_read(p)
     for pkg in g.packages {
         if pkg.plugin>=0 {plugin_imports_check(p.plugins,pkg.plugin,pkg.files,&g.errors)}
     }
@@ -340,15 +346,7 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
 // The game world of a project, for the world of the game that ships.
 @(private="file")
 world_generate_world :: proc(p:^project.Project) -> string {
-    g:Generator
-    g.by_key=make(map[string]^Type)
-    g.bundles=make(map[string]^Bundle)
-    g.named_types=make(map[string]^Named_Type)
-    g.action_by_key=make(map[string]^Action_Enum)
-    g.record_by_key=make(map[string]^Record_Type)
-    g.engine_root,g.root=p.engine_root,p.root
-    packages_find(&g,p)
-    for pkg in g.packages {package_read(&g,pkg)}
+    g:=generator_read(p)
     types_settle(&g)
     names_settle(&g)
     bundles_settle(&g)
@@ -370,15 +368,7 @@ library_entry :: proc(world_package:string) -> string {
 // with the names that data keeps (serial.Named, by_name).
 world_actions :: proc(p:^project.Project,allocator:=context.allocator) -> (actions:[]serial.Choice,errors:[]string) {
     context.allocator=allocator
-    g:Generator
-    g.by_key=make(map[string]^Type)
-    g.bundles=make(map[string]^Bundle)
-    g.named_types=make(map[string]^Named_Type)
-    g.action_by_key=make(map[string]^Action_Enum)
-    g.record_by_key=make(map[string]^Record_Type)
-    g.engine_root,g.root=p.engine_root,p.root
-    packages_find(&g,p)
-    for pkg in g.packages {package_read(&g,pkg)}
+    g:=generator_read(p)
     names_settle(&g)
     found:=make([dynamic]serial.Choice)
     for value in g.named_values {
