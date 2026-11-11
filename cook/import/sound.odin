@@ -67,7 +67,7 @@ sound_build :: proc(bytes:[]u8,options:Sound_Options={},allocator:=context.alloc
 
 // Imports a sound file as <name>.sound. The sound is the root of the import:
 // importing the file again writes the asset its sidecar lists (identity.odin).
-import_sound :: proc(path,folder:string,sound:Sound_Options={},options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
+import_sound :: proc(path:string,sound:Sound_Options={},options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
     mem.dynamic_arena_init(&scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
@@ -91,7 +91,7 @@ import_sound :: proc(path,folder:string,sound:Sound_Options={},options:Import_Op
     }
     report_init(&report,allocator)
     w:Writer
-    ok:=writer_init(&w,path,folder,options,&report,allocator)
+    ok:=writer_init(&w,path,"",options,&report,allocator)
     defer asset.types_destroy(&w.types)
     if ok {
         source:=w.source

@@ -82,7 +82,7 @@ Pass :: struct {
 	glass_layered: bool, // the layers of glass were drawn before the Lit stage, which runs on each side of them
 	glass_medium: u32, // instance plus one of the solid of glass the camera may be in (glass_layers), 0 none
 	reflections: rhi.Texture, // the filtered traced reflections, when the view traced any
-	gi:    rhi.Texture, // the contact occlusion of the probe volume, or the reference of the indirect light
+	gi:    rhi.Texture, // the contact occlusion of the probe volume, or what a custom pass writes as Gi
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
 	nested:       [NESTED_VIEW_CAPACITY]Nested_View,
 	nested_count: int,
@@ -463,7 +463,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
     s:=&r.scene
-    r.scene_uploads_change=s.instances_dirty || s.touched_count>0 || s.materials_dirty || len(s.material_ranges)>0 || s.lights_dirty || s.lights_changed
     s.lights_changed=false
     texture_uploads_record(r,cmd)
     recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && (frame.ui_only || air_frame(r,cmd))
@@ -785,7 +784,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		f.background = {backdrop.x, backdrop.y, backdrop.z, 1}
 	}
 	if p.use_gi {f.flags |= FRAME_FLAG_GI}
-	if p.use_gi && settings.reference_gi {f.flags |= FRAME_FLAG_GI_REFERENCE}
+	if p.use_gi && p.plan.gi_given {f.flags |= FRAME_FLAG_GI_GIVEN}
 	if r.hardware_rt {f.flags |= FRAME_FLAG_HW_RT}
 	if s.environment.ground_grid && !p.texture {f.flags |= FRAME_FLAG_GRID}
 	if len(s.translucent) > 0 {f.flags |= FRAME_FLAG_GLASS}
@@ -825,6 +824,10 @@ view_begin :: proc(p: ^Pass) -> bool {
 
 	// What the stages a pipeline may leave out give the ones after them.
 	p.reflections, p.gi = 0, r.dummy_texture
+	if p.plan.gi_given {
+		if !target(r, cmd, &t.gi_given, t.width, t.height, .RGBA32_Float, HISTORY_USAGE, "given gi", true) {return false}
+		p.gi = t.gi_given
+	}
 	p.instance_count = u32(len(s.instances))
 	p.batch_slots = s.batch.slots
 	p.draw = p.instance_count + p.batch_slots > 0 && s.index_buffer != 0
@@ -1279,7 +1282,7 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 	current := p.current
 	// The share of light of each 2x2 block, with the penumbra its casters ask for.
 	shadow_share := r.dummy_texture
-	blocks := mode == .Blocks && !settings.reference_lights
+	blocks := mode == .Blocks
 	if blocks {
 		if !ensure_shadow_targets(r, cmd, t, &t.shadow, 2) {return false}
 		pass_shadow_set(p, &t.shadow)
@@ -1308,8 +1311,8 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 	// blocks every pixel.
 	rhi.cmd_timestamp(cmd, "direct rays")
 	{
-		Params :: struct {light_budget, listed, reference: u32, sun_radius: f32, resume, pad0, pad1, pad2: u32}
-		params := Params{light_budget = settings.light_budget, listed = u32(blocks), reference = u32(settings.reference_lights), sun_radius = settings.sun_radius}
+		Params :: struct {light_budget, listed, pad0, pad1, resume, pad2, pad3, pad4: u32}
+		params := Params{light_budget = settings.light_budget, listed = u32(blocks)}
 		batch := shadows_colored(r) && points_begin(p, filters = true)
 		pipeline := pipeline_of(r, .Lighting_Traced, {LIGHTING_TRACED_COMP_COLOR} if shadows_colored(r) else {})^
 		rhi.cmd_bind_pipeline(cmd, pipeline)
@@ -1392,15 +1395,13 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 }
 
 // The light around each pixel beside the probe volume, which the composition
-// reads at each pixel: its contact occlusion, or with Settings.reference_gi the
-// reference in place of the volume.
+// reads at each pixel: its contact occlusion.
 @(private)
 pass_indirect :: proc(p: ^Pass) -> bool {
 	if !p.use_gi {
 		p.gi = p.r.dummy_texture
 		return true
 	}
-	if p.r.settings.reference_gi {return pass_gi_reference(p)}
 	return pass_contact(p)
 }
 
@@ -1428,39 +1429,6 @@ pass_contact :: proc(p: ^Pass) -> bool {
 		rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	}
 	p.gi = t.contact[1]
-	return true
-}
-
-// Paths of each pixel in a frame of Settings.reference_gi, and the most
-// surfaces each meets.
-GI_REFERENCE_PATHS :: u32(4)
-GI_REFERENCE_BOUNCES :: u32(32)
-
-// Settings.reference_gi in place of the probe volume: paths from every pixel,
-// averaged over the frames since the scene or the camera last changed.
-@(private)
-pass_gi_reference :: proc(p: ^Pass) -> bool {
-	r, cmd, t := p.r, p.cmd, p.t
-	pipeline := pipeline_of(r, .Gi_Reference)^
-	if pipeline == 0 {return false}
-	if !target(r, cmd, &t.gi_reference, t.width, t.height, .RGBA32_Float, HISTORY_USAGE, "gi reference", true) {return false}
-	restart := !t.gi_reference_valid || r.scene_uploads_change || t.gi_reference_view != p.frame.view_proj_unjittered || t.gi_reference_eye != p.camera.position
-	t.gi_reference_view, t.gi_reference_eye = p.frame.view_proj_unjittered, p.camera.position
-	rhi.cmd_timestamp(cmd, "gi reference")
-	Params :: struct {paths, bounces, reset: u32, sun_radius: f32, resume, pad0, pad1, pad2: u32}
-	params := Params{paths = GI_REFERENCE_PATHS, bounces = GI_REFERENCE_BOUNCES, reset = u32(restart), sun_radius = r.settings.sun_radius}
-	batch := points_begin(p)
-	rhi.cmd_bind_pipeline(cmd, pipeline)
-	set_params(cmd, &params)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.gi_reference)
-	points_bind(p)
-	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
-	// A pixel goes on from each surface with a program its paths meet: a round for each, at most.
-	points_rounds(p, batch, pipeline, &params, int(GI_REFERENCE_PATHS * GI_REFERENCE_BOUNCES))
-	p.gi = t.gi_reference
-	t.gi_reference_valid = true
 	return true
 }
 
@@ -1724,9 +1692,8 @@ update_stats :: proc(r: ^Renderer) {
 	s.probes_per_frame = r.ddgi.budget if r.ddgi.valid else 0
 	pixels := u64(t.width) * u64(t.height)
 	// A block of 2x2 pixels traces a ray to the sun and one to each light or
-	// group of its cut; the reference, every pixel to sixteen points of each light.
+	// group of its cut.
 	rays := u64(t.half_width) * u64(t.half_height) * u64(1 + min(s.lights, r.settings.light_budget))
-	if r.settings.reference_lights {rays = pixels * (1 + 16 * u64(s.lights))}
 	if r.settings.gi_enabled {
 		// A probe ray traces the sun and the lights of its cut where it hits.
 		rays += u64(s.probes_traced) * u64(r.ddgi.rays_per_probe) * u64(2 + min(s.lights, PROBE_LIGHT_BUDGET))
