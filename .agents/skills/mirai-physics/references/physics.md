@@ -173,6 +173,10 @@ inside.
     the broad phase runs again on the calling thread and what does not fit waits for the next step:
     which pairs are created does not depend on the workers.
   - A contact is destroyed when the fattened boxes stop overlapping.
+  - The static tree fills one insertion at a time; `world_rebuild_static`, which the integration
+    calls every tick before stepping, builds it whole again once the shapes inserted or moved in it
+    since its last build reach half of it: a load costs about two builds and a change now and then
+    its insertion. The count is tree state, so a copy repeats the same builds.
 - **Narrow phase.** One routine per unordered pair of types: closed forms between spheres,
   capsules and cylinder-sphere; 15-axis SAT for box-box; SAT with Gauss map pruning and axis cache
   for hulls and box-hull; GJK (plus SAT when the core penetrates) for sphere and capsule against
@@ -186,6 +190,10 @@ inside.
     need EPA, and points from clipping the support faces along the normal. Resting on a face that
     holds its lowest points, it takes that face without GJK; against a triangle, GJK sees only the
     part inside its box.
+- **Carried manifolds** (`Contact.relative`): a contact whose shape B barely moved and turned in
+  the frame of shape A since its last narrow phase keeps its manifolds, each point moved with B, as
+  Jolt's body pair cache does; `Stats.carried_contacts` counts them. Overlaps, one-way shapes,
+  characters, twins and cuts always collide.
 - **Axis cache** (`Contact.sat`): the axis of the last full search, reused if the hulls are still
   separated by it or if the face is still supported within `LINEAR_SLOP` of the depth of that
   search. The depth is not updated on a hit: a slow drift ends in another search.
@@ -218,6 +226,8 @@ inside.
   - A constraint that goes away only adds to `Island.removed`, and the island splits before
     sleeping: the candidates at once and, of the others, the one of the stillest body each step, so
     that what rests sleeps apart from what moves.
+  - The speed of a body for sleeping also counts half the speed of its displacement in the step:
+    the relaxation takes away the velocity of a push out of an overlap but not its move.
   - An island sleeps when all its bodies have been under their threshold for `TIME_TO_SLEEP`, and
     wakes whole: when an awake dynamic or a moving kinematic touches it, when neighboring joints,
     shapes or bodies change and through the functions that apply forces or velocities.
@@ -493,9 +503,10 @@ not fit, uncolored constraints, shared consequences) runs on the calling thread,
 
 - Boxes are `math.Aabb` of `std/math`; `std/spatial` adds area, center, rays and sweeps.
 - `Dynamic_Tree`: AABB tree with insertion by area cost and rotations, and iterators without
-  allocation. A proxy that is not a live leaf of the tree is ignored: reads give zero and changes do
-  nothing. Its nodes carry stamps by chunk (`std/base` `chunk_stamp`), and `dynamic_tree_copy`
-  takes the chunks whose stamps differ.
+  allocation. `dynamic_tree_rebuild` builds its internal nodes again with the binned surface area
+  split of `Bvh`, keeping every proxy. A proxy that is not a live leaf of the tree is ignored:
+  reads give zero and changes do nothing. Its nodes carry stamps by chunk (`std/base`
+  `chunk_stamp`), and `dynamic_tree_copy` takes the chunks whose stamps differ.
 - `Bvh`: static SAH BVH with bins and flat nodes; its queries deliver one leaf per call.
 
 ## Debug draw

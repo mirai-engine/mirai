@@ -188,7 +188,7 @@ world_hash :: proc(w:^World) -> u64 {
         hash=xxhash.XXH3_64_with_seed(a.bytes[:int(a.high)*a.size],hash)
     }
     for &tree in w.trees {
-        head:=[4]i32{tree.root,tree.free_list,tree.node_high,tree.proxy_count}
+        head:=[5]i32{tree.root,tree.free_list,tree.node_high,tree.proxy_count,tree.placed}
         hash=xxhash.XXH3_64_with_seed(mem.slice_to_bytes(head[:]),hash)
         if tree.node_high>0 {hash=xxhash.XXH3_64_with_seed(mem.slice_to_bytes(tree.nodes[:tree.node_high]),hash)}
     }

@@ -64,6 +64,15 @@ static_changes :: proc(w:^World,since:u64,out:[]Aabb) -> (next:u64,count:int,ove
     return since+u64(count),count,false
 }
 
+// Builds the tree of the static shapes again, whole, once the shapes inserted or moved in it since its last
+// build reach half of it: a load, whose shapes go in one at a time, costs about two builds, and a change now
+// and then only its insertion. Between steps: a transaction that may allocate when it builds. False, with the
+// tree as it was, without memory.
+world_rebuild_static :: proc(w:^World) -> bool {
+    tree:=&w.trees[STATIC_TREE]
+    return 2*tree.placed<tree.proxy_count || spatial.dynamic_tree_rebuild(tree)
+}
+
 // Writes into the caller buffers, without allocating, the world triangles of the shapes of static bodies
 // whose boxes overlap `box` and that block `filter`: what a query with it would be blocked by, never a
 // sensor (a shape that blocks no layer) nor a shape it only overlaps. Three indices per triangle into

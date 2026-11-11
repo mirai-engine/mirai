@@ -356,6 +356,30 @@ a_box_rests_on_the_ground_and_sleeps :: proc(t:^testing.T) {
     testing.expect_value(t,world_stats(&w).awake_bodies,0)
 }
 
+// A box made 15 cm into the ground is pushed out slowly, the velocity of the push taken away by the relaxation
+// each substep; with its rotation and sideways motion locked nothing else moves it. The move of that push keeps
+// it awake until it no longer overlaps.
+@(test)
+a_box_made_inside_the_ground_does_not_sleep_until_it_is_pushed_out :: proc(t:^testing.T) {
+    w:World
+    desc:=world_desc_default()
+    desc.body_capacity,desc.shape_capacity,desc.contact_capacity=8,8,64
+    desc.contact_speed=0.2
+    testing.expect(t,world_init(&w,desc))
+    defer world_destroy(&w)
+    test_ground(&w)
+    box:=test_body(&w,Box{{0.5,0.5,0.5}},{0,0.35,0})
+    body_set_locks(&w,box,{.Lock_Linear_X,.Lock_Linear_Z,.Lock_Angular_X,.Lock_Angular_Y,.Lock_Angular_Z})
+    for step in 0..<600 {
+        world_step(&w,1.0/60)
+        if body_is_awake(&w,box) {continue}
+        depth:=0.5-body_position(&w,box).y
+        testing.expectf(t,depth<0.005,"it fell asleep %v m inside the ground at step %v",depth,step)
+        return
+    }
+    testing.expect(t,false,"it never fell asleep")
+}
+
 @(private)
 test_stack_rests :: proc(t:^testing.T,w:^World,bodies:[]Body_Handle,positions:[]Vec3,seconds:f32) {
     steps:=int(seconds*60)
