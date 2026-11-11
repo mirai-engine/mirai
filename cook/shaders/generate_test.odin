@@ -5,6 +5,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
@@ -173,8 +174,18 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     testing.expect(t,os.is_file(path_join(mini.output,"catalog.json",allocator=context.temp_allocator)) && os.is_file(path_join(mini.output,"include",SURFACE_INCLUDE,allocator=context.temp_allocator)) && os.is_file(path_join(mini.output,"include",POSTPROCESS_INCLUDE,allocator=context.temp_allocator)))
     manifest:=mini_read(&mini,"shaders/build/manifest.json")
     testing.expect(t,strings.contains(manifest,first.engine),"the manifest names what its stages share with the engine")
-    testing.expect(t,strings.contains(manifest,"\"id\": \"Fill_Double_Comp\"") && strings.contains(manifest,"\"tests\": [\n    {\n      \"id\": \"Probe_Comp\""))
-    testing.expect(t,strings.contains(manifest,"\"bindings\": [\n        {\n          \"slot\": 0,\n          \"kind\": \"Uniform_Buffer\"\n        },\n        {\n          \"slot\": 1,\n          \"kind\": \"Storage_Buffer\"\n        },\n        {\n          \"slot\": 2,\n          \"kind\": \"Storage_Buffer_RW\"\n        }\n      ],\n      \"group\": [\n        64,\n        1,\n        1\n      ],"),"bindings and threadgroup are the reflected ones")
+    published:=manifest_read(mini.output,context.temp_allocator)
+    halves:=0
+    fill:Shader
+    for entry in published.shaders {
+        if entry.id=="Fill_Comp" {fill=entry}
+        for constant in entry.constants {halves+=int(constant=="half")}
+    }
+    for entry in published.tests {
+        for constant in entry.constants {halves+=int(constant=="half")}
+    }
+    testing.expect(t,len(published.shaders)==4 && len(published.tests)>0 && published.tests[0].id=="Probe_Comp")
+    testing.expect(t,slice.equal(fill.bindings,[]Binding{{0,"Uniform_Buffer"},{1,"Storage_Buffer"},{2,"Storage_Buffer_RW"}}) && fill.group=={64,1,1},"bindings and threadgroup are the reflected ones")
     table:=mini_read(&mini,"render/shaders_gen.odin")
     testing.expect(t,strings.contains(table,"\npackage mirai_render\n"))
     testing.expect(t,strings.contains(table,"Shader_Id :: enum u8 {\n\tColor_Frag,\n\tFill_Comp,\n\tFill_Double_Comp,\n\tPoint_Vert,\n}"),"stages in the order of their files, a variant after its source")
@@ -187,7 +198,7 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
         testing.expectf(t,code_has_constant(mini_read(&mini,strings.concatenate({name,HOST_CODE},context.temp_allocator))),"%s keeps its constant for the pipeline",name)
     }
     testing.expect(t,!code_has_constant(mini_read(&mini,strings.concatenate({"shaders/build/color.frag",HOST_CODE},context.temp_allocator))),"a stage without constants has none")
-    testing.expect_value(t,strings.count(manifest,"\"constants\": [\n        \"half\"\n      ]"),4)
+    testing.expect_value(t,halves,4)
     testing.expect_value(t,strings.count(table,"FILL_COMP_HALF :: 0\n"),1)
     testing.expect_value(t,strings.count(table,"constants = []string{\"half\"}"),2)
     leftovers,_:=os.read_all_directory_by_path(path_join(mini.root,"shaders",allocator=context.temp_allocator),context.temp_allocator)
@@ -863,12 +874,10 @@ first_stages_go_out_alone_before_the_others :: proc(t:^testing.T) {
     testing.expect(t,len(code(first,"shade__Tint.frag"))>0 && code(first,"shade__Tint.frag")==code(output,"shade__Tint.frag"),"the first stage is the one the generation published")
     testing.expect(t,code(first,"tone__Tint.frag")==tone && code(output,"tone__Tint.frag")!=tone,"another stage is as the output had it")
     testing.expect(t,code(first,"fill.comp")==code(output,"fill.comp"))
-    early,early_read:=read_json(path_join(first,"manifest.json",allocator=context.temp_allocator),context.temp_allocator)
-    whole,_:=read_json(path_join(output,"manifest.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,early_read && json_text(early["engine"])==edited.engine && json_text(early["catalog"])==json_text(whole["catalog"]),"it names the engine and the catalog of the generation")
+    early,whole:=manifest_read(first,context.temp_allocator),manifest_read(output,context.temp_allocator)
+    testing.expect(t,early.engine!="" && early.engine==edited.engine && early.catalog==whole.catalog,"it names the engine and the catalog of the generation")
     testing.expect(t,mini_read(&mini,"first/catalog.json")==mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/catalog.json"},context.temp_allocator)))
-    shaders,_:=early["shaders"].(json.Array)
-    testing.expect_value(t,len(shaders),6)
+    testing.expect_value(t,len(early.shaders),6)
 
     // Without changes nothing is compiled and nothing is written there.
     base.remove_all(first)

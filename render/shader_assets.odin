@@ -4,14 +4,15 @@ import "base:runtime"
 import "core:encoding/endian"
 import "core:encoding/json"
 import "core:fmt"
-import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:reflect"
 import "core:strings"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/compressor"
+import "mirai:std/serial"
 
 // A generation of the shaders loaded from disk; owned: its codes are memory of allocator.
 Shader_Assets :: struct {
@@ -177,96 +178,84 @@ shader_stages_match :: proc(next,current:[]rhi.Shader_Code)->bool {
 // Their code may be any: a generation whose engine shaders changed only in
 // code loads into the engine that runs.
 shader_generation_current :: proc(directory:string)->bool {
-    path,_:=filepath.join({directory,"manifest.json"},context.temp_allocator)
+    manifest,read:=shader_manifest_read(directory)
+    return read && manifest.engine==SHADERS_INTERFACE
+}
+@(private)
+shader_manifest_read :: proc(directory:string)->(manifest:abi.Shader_Manifest,ok:bool) {
+    path,_:=filepath.join({directory,abi.SHADER_MANIFEST},context.temp_allocator)
     bytes,read_error:=os.read_entire_file(path,context.temp_allocator)
-    if read_error!=nil {return false}
-    value,parse_error:=json.parse(bytes,allocator=context.temp_allocator)
-    root,ok:=value.(json.Object);if !ok || parse_error!=.None {return false}
-    engine,named:=root["engine"].(json.String)
-    return named && engine==SHADERS_INTERFACE
+    return manifest,read_error==nil && serial.text_decode(string(bytes),&manifest,context.temp_allocator)==""
 }
 // On failure nothing is loaded: assets is empty and error is a message, in
 // context.temp_allocator when it names a file.
 shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(assets:Shader_Assets,error:string) {
     assets.owned=true;assets.allocator=allocator
-    path,_:=filepath.join({directory,"manifest.json"},context.temp_allocator)
-    bytes,read_error:=os.read_entire_file(path,context.temp_allocator)
-    if read_error!=nil {return {},"shader manifest could not be read"}
-    value,parse_error:=json.parse(bytes,allocator=context.temp_allocator)
-    root,ok:=value.(json.Object);if !ok || parse_error!=.None {return {},"invalid shader manifest"}
-    if engine,named:=root["engine"].(json.String);!named || engine!=SHADERS_INTERFACE {
+    manifest,read:=shader_manifest_read(directory)
+    if !read {return {},"invalid shader manifest: it does not read as one"}
+    if manifest.engine!=SHADERS_INTERFACE {
         return {},"the engine stages of these shaders bind or lay out otherwise than this executable does: build the engine again"
     }
-    shaders,is_array:=root["shaders"].(json.Array);if !is_array {return {},"manifest has no shader array"}
-    text :: proc(v:json.Value)->string {return v.(json.String) or_else ""}
-    number :: proc(v:json.Value)->(u32,bool) {
-        n:f64
-        if value,ok:=v.(json.Integer);ok {n=f64(value)} else if value,ok:=v.(json.Float);ok {n=value} else {return 0,false}
-        if math.is_nan(n)||math.is_inf(n)||n<0||n>4294967295||math.floor(n)!=n {return 0,false}
-        return u32(n),true
-    }
-    extensions,_:=root["extensions"].(json.Array)
-    programs,_:=root["program_stages"].(json.Array)
     extensions_error,programs_error:runtime.Allocator_Error
-    assets.extensions,extensions_error=make([]rhi.Shader_Code,len(extensions),allocator)
-    assets.programs,programs_error=make([]rhi.Shader_Code,len(programs),allocator)
+    assets.extensions,extensions_error=make([]rhi.Shader_Code,len(manifest.extensions),allocator)
+    assets.programs,programs_error=make([]rhi.Shader_Code,len(manifest.program_stages),allocator)
     if extensions_error!=nil || programs_error!=nil {
         shader_assets_destroy(&assets)
         return assets,"out of memory for the shaders of the manifest"
     }
-    for at in 0..<len(shaders)+len(programs)+len(extensions) {
-        program:=at>=len(shaders) && at<len(shaders)+len(programs)
-        extension:=at>=len(shaders)+len(programs)
-        entry:=extensions[at-len(shaders)-len(programs)] if extension else programs[at-len(shaders)] if program else shaders[at]
-        item,is_object:=entry.(json.Object);if !is_object {error="invalid shader entry";break}
+    shaders,programs:=len(manifest.shaders),len(manifest.program_stages)
+    for at in 0..<shaders+programs+len(manifest.extensions) {
+        item:abi.Shader_Entry
         code:^rhi.Shader_Code
-        if extension {
-            code=&assets.extensions[at-len(shaders)-len(programs)]
-        } else if program {
-            code=&assets.programs[at-len(shaders)]
-        } else {
-            id,valid:=reflect.enum_from_name(Shader_Id,text(item["id"]));if !valid {error=fmt.tprintf("unknown shader %s",text(item["id"]));break}
+        switch {
+        case at>=shaders+programs:
+            item,code=manifest.extensions[at-shaders-programs],&assets.extensions[at-shaders-programs]
+        case at>=shaders:
+            item,code=manifest.program_stages[at-shaders],&assets.programs[at-shaders]
+        case:
+            item=manifest.shaders[at]
+            id,valid:=reflect.enum_from_name(Shader_Id,item.id);if !valid {error=fmt.tprintf("unknown shader %s",item.id);break}
             if assets.codes[id].name!="" {error="duplicate shader id";break}
             code=&assets.codes[id]
         }
+        if error!="" {break}
         no_name:runtime.Allocator_Error
-        if code.name,no_name=strings.clone(text(item["name"]),allocator);no_name!=nil {error="out of memory for the name of a shader";break}
-        stage,valid_stage:=reflect.enum_from_name(rhi.Shader_Stage,text(item["stage"]));if !valid_stage {error="invalid shader stage";break};code.stage=stage
+        if code.name,no_name=strings.clone(item.name,allocator);no_name!=nil {error="out of memory for the name of a shader";break}
+        code.stage=rhi.Shader_Stage(u8(item.stage)) // the same members in the same order
         // A stage of the rays traced by software has no Metal code.
-        if name:=text(item["msl" if rhi.SHADER_FORMAT==.Msl else "spv"]);name!="" || SOFTWARE_TRACER {
+        if name:=item.msl if rhi.SHADER_FORMAT==.Msl else item.spv;name!="" || SOFTWARE_TRACER {
             file,_:=filepath.join({directory,name},context.temp_allocator)
             data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
             rhi.shader_code_set(code,data,"")
             if rhi.SHADER_FORMAT==.Msl {
-                entry,no_entry:=strings.clone(text(item["entry"]),allocator)
+                entry,no_entry:=strings.clone(item.entry,allocator)
                 if no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
                 rhi.shader_code_set(code,data,entry)
                 if entry=="" {error="shader has no Metal entry point";break}
             }
         }
-        group:=item["group"].(json.Array) or_else nil
-        if len(group)!=3 {error="invalid workgroup";break}
-        for v,i in group {n,valid:=number(v);if !valid {error="invalid workgroup";break};code.threadgroup[i]=n}
-        bindings:=item["bindings"].(json.Array) or_else nil
-        bindings_error:runtime.Allocator_Error
-        code.bindings,bindings_error=make([]rhi.Binding_Info,len(bindings),allocator)
-        if bindings_error!=nil {error=fmt.tprintf("out of memory for the bindings of shader %s",code.name);break}
-        for binding,i in bindings {
-            b:=binding.(json.Object) or_else nil
-            kind,valid_kind:=reflect.enum_from_name(rhi.Binding_Kind,text(b["kind"]));if !valid_kind {error="invalid binding kind";break}
-            slot,valid_slot:=number(b["slot"]);if !valid_slot || !rhi.binding_slot_valid(slot,kind) {error="invalid binding slot";break}
-            code.bindings[i]={slot=slot,kind=kind,stages={stage}}
+        for n,i in item.group {
+            if n<0 || n>int(max(u32)) {error="invalid workgroup";break}
+            code.threadgroup[i]=u32(n)
         }
         if error!="" {break}
-        constants:=item["constants"].(json.Array) or_else nil
-        if len(constants)>rhi.MAX_SHADER_CONSTANTS {error=fmt.tprintf("shader %s declares more constants than a pipeline sets",code.name);break}
+        bindings_error:runtime.Allocator_Error
+        code.bindings,bindings_error=make([]rhi.Binding_Info,len(item.bindings),allocator)
+        if bindings_error!=nil {error=fmt.tprintf("out of memory for the bindings of shader %s",code.name);break}
+        for b,i in item.bindings {
+            kind,valid_kind:=reflect.enum_from_name(rhi.Binding_Kind,b.kind);if !valid_kind {error="invalid binding kind";break}
+            if b.slot<0 || b.slot>int(max(u32)) || !rhi.binding_slot_valid(u32(b.slot),kind) {error="invalid binding slot";break}
+            code.bindings[i]={slot=u32(b.slot),kind=kind,stages={code.stage}}
+        }
+        if error!="" {break}
+        if len(item.constants)>rhi.MAX_SHADER_CONSTANTS {error=fmt.tprintf("shader %s declares more constants than a pipeline sets",code.name);break}
         constants_error:runtime.Allocator_Error
-        code.constants,constants_error=make([]string,len(constants),allocator)
+        code.constants,constants_error=make([]string,len(item.constants),allocator)
         if constants_error!=nil {error=fmt.tprintf("out of memory for the constants of shader %s",code.name);break}
-        for constant,i in constants {
-            if text(constant)=="" {error="invalid shader constant";break}
+        for constant,i in item.constants {
+            if constant=="" {error="invalid shader constant";break}
             no_constant:runtime.Allocator_Error
-            if code.constants[i],no_constant=strings.clone(text(constant),allocator);no_constant!=nil {error=fmt.tprintf("out of memory for the constants of shader %s",code.name);break}
+            if code.constants[i],no_constant=strings.clone(constant,allocator);no_constant!=nil {error=fmt.tprintf("out of memory for the constants of shader %s",code.name);break}
         }
         if error!="" {break}
     }

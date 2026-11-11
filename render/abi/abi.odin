@@ -242,3 +242,32 @@ PARTICLE_ATTRIBUTE_BYTES :: 1024
 PROGRAM_RESOURCES        :: 16
 PROGRAM_STAGES           :: 32
 PROGRAM_DATA_WORDS       :: 32
+
+// What a generation of shaders publishes in its folder (SHADER_MANIFEST): its
+// stages with their bindings and the files of their code, which the renderer
+// loads and the next generation reuses.
+SHADER_MANIFEST :: "manifest.json"
+
+Shader_Manifest :: struct {
+    version:int,
+    compiler:string,
+    engine:string, // what the engine stages bind and lay out: the renderer loads only those of its own
+    catalog:string,
+    shaders,program_stages,extensions,tests:[]Shader_Entry,
+}
+
+Shader_Stage :: enum u8 {Vertex,Fragment,Compute}
+Shader_Binding :: struct {slot:int,kind:string}
+
+// A stage of a generation.
+Shader_Entry :: struct {
+    id,name:string,
+    stage:Shader_Stage,
+    spv,msl:string,     // file names in the folder of the generation
+    entry:string,       // the entry point SPIRV-Cross gave the Metal source
+    bindings:[]Shader_Binding,
+    constants:[]string, // the names of its constants, by id
+    group:[3]int,
+    fingerprint,spv_hash,msl_hash:string,
+    staged:bool `mirai:"transient"`, // of the generator: its files are in the staging folder, to be published
+}
