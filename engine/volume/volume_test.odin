@@ -356,7 +356,7 @@ a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) 
     bad_height.points[1].height=max(f32)
     too_many.count=SPLINE_POINTS+1
     for c in ([]Case{
-        {"two points",SPLINE_DEFAULT,true},{"none",{},false},{"one",{count=1,points={0={{0,0,0},1,0}}},false},
+        {"two points",SPLINE_DEFAULT,true},{"none",{},false},{"one",{count=1,points={0={{0,0,0},1,0,0}}},false},
         {"no width",bad_width,false},{"not a number",bad_point,false},{"too high",bad_height,false},{"too many",too_many,false},
     }) {
         s:=c.spline
@@ -366,7 +366,7 @@ a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) 
         testing.expectf(t,reaches==c.samples,"%s: its reach",c.name)
     }
     // Its reach holds every sample of its curve with its width, at any height.
-    curve:=Spline{count=4,points={0={{0,0,0},2,0},1={{6,0,-4},1,0},2={{0,0,-8},1,0},3={{6,0,-12},4,0}}}
+    curve:=Spline{count=4,points={0={{0,0,0},2,0,0},1={{6,0,-4},1,0,0},2={{0,0,-8},1,0,0},3={{6,0,-12},4,0,0}}}
     turned:=mm.Transform{{10,-3,5},mm.quat_axis_angle({0,1,0},0.7),{2,1,2}}
     reach,_:=spline_reach(&curve,turned)
     out:[256]mm.Path_Point
@@ -390,7 +390,7 @@ a_spline_finds_where_its_curve_passes_nearest_a_point :: proc(t:^testing.T) {
     nan:=f32(0);nan=nan/nan
     moved:=mm.Transform{{10,0,0},mm.QUAT_IDENTITY,{1,1,1}}
     turned:=mm.Transform{{10,-3,5},mm.quat_axis_angle({0,1,0},0.7),{2,1,2}}
-    curve:=Spline{count=4,points={0={{0,0,0},2,0},1={{6,0,-4},1,0},2={{0,0,-8},1,0},3={{6,0,-12},4,0}}}
+    curve:=Spline{count=4,points={0={position={0,0,0},width=2},1={position={6,0,-4},width=1},2={position={0,0,-8},width=1},3={position={6,0,-12},width=4}}}
     Case :: struct {name:string,spline:Spline,place:mm.Transform,point:[3]f32,key:f32,found:bool}
     for c in ([]Case{
         {"along",SPLINE_DEFAULT,moved,{10,5,-3},0.25,true},
@@ -398,7 +398,7 @@ a_spline_finds_where_its_curve_passes_nearest_a_point :: proc(t:^testing.T) {
         {"after the last",SPLINE_DEFAULT,moved,{9,0,-30},1,true},
         {"a point of a turned curve",curve,turned,mm.transform_point(turned,curve.points[2].position)+{0,2,0},2,true},
         {"the last of a turned curve",curve,turned,mm.transform_point(turned,curve.points[3].position),3,true},
-        {"one point",{count=1,points={0={{0,0,0},1,0}}},moved,{},0,false},
+        {"one point",{count=1,points={0={width=1}}},moved,{},0,false},
         {"too many",{count=SPLINE_POINTS+1},moved,{},0,false},
         {"a point not a number",SPLINE_DEFAULT,moved,{nan,0,0},0,false},
         {"a point too far",SPLINE_DEFAULT,moved,{max(f32),max(f32),0},0,false},

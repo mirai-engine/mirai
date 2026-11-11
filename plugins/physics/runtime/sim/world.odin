@@ -58,6 +58,7 @@ World :: struct {
     blocks:[]Manifold_Block,
     characters:[]Character,
     fluids:[]Fluid,
+    fluid_paths:[][FLUID_PATH_POINTS]Path_Point, // the points of the fluid of each slot that is a path
     breakables:[]Breakable, // nil, with their pieces and bonds, until the first one is made
     pieces:[]Piece,
     bonds:[]Bond,
@@ -162,6 +163,7 @@ world_init :: proc(w:^World,desc:World_Desc) -> bool {
     w.blocks=alloc(Manifold_Block,d.contact_capacity/4,a,&ok)
     w.characters=alloc(Character,d.character_capacity,a,&ok)
     w.fluids=alloc(Fluid,d.fluid_capacity,a,&ok)
+    w.fluid_paths=alloc([FLUID_PATH_POINTS]Path_Point,d.fluid_capacity,a,&ok)
     w.events.hit=alloc(Contact_Hit_Event,d.event_capacity,a,&ok)
     w.hulls=alloc(Hull_Slot,d.hull_capacity,a,&ok)
     w.meshes=alloc(Mesh_Slot,d.mesh_capacity,a,&ok)
@@ -206,7 +208,7 @@ world_destroy :: proc(w:^World) {
     }
     delete(w.bodies,a);delete(w.shapes,a);delete(w.contacts,a);delete(w.joints,a);delete(w.blocks,a)
     delete(w.joint_axes,a);delete(w.islands,a)
-    delete(w.hulls,a);delete(w.meshes,a);delete(w.heightfields,a);delete(w.characters,a);delete(w.fluids,a)
+    delete(w.hulls,a);delete(w.meshes,a);delete(w.heightfields,a);delete(w.characters,a);delete(w.fluids,a);delete(w.fluid_paths,a)
     delete(w.events.hit,a)
     delete(w.manifolds,a);delete(w.extra_manifolds,a)
     delete(w.events.contact_begin,a);delete(w.events.contact_end,a)

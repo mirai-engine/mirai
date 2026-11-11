@@ -737,14 +737,14 @@ character_fluid_keep :: proc(w:^World,ch:^Character,body:^Body) #no_bounds_check
     if !ok {return}
     state.head_depth=sample.normal.y>0?sample.height-head.y:head.y-sample.height
     state.depth=state.head_depth+d.height
-    fluid:=fluid_find(w,body.position)
+    fluid,spot:=fluid_find(w,body.position)
     if fluid<0 {return}
     column:[FLUID_COLUMN_DRY+1]Fluid_Interval
-    count:=fluid_column(w,fluid,body.position,&column)
+    count:=fluid_column(w,fluid,spot,body.position,&column)
     state.submersion=body_submersion(d,body.position.y,column[:count])
     if state.submersion>0 {
         state.fluid+={.In_Fluid}
-        state.fluid_velocity=fluid_current(&w.fluids[fluid],body.position)
+        state.fluid_velocity=spot.current
     }
     if state.head_depth>0 {state.fluid+={.Underwater}}
 }

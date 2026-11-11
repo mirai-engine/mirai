@@ -22,11 +22,12 @@ wave_terms :: sim.wave_terms
 wave_point :: sim.wave_point
 wave_surface :: sim.wave_surface
 Surface_Waves :: sim.Fluid_Waves
-FLUID_PATH_SAMPLES :: sim.FLUID_PATH_SAMPLES
+FLUID_PATH_POINTS :: sim.FLUID_PATH_POINTS
+#assert(FLUID_PATH_POINTS==volume.SPLINE_POINTS)
 
-// The samples of the path a fluid fills (Fluid_Info.fluid), which its surface follows from its first to
-// its last; zero for another fluid.
-fluid_path :: proc(physics:core.Ref(Physics_State),fluid:sim.Fluid_Handle,out:^[FLUID_PATH_SAMPLES]mm.Path_Point) -> int {
+// The points of the path a fluid fills (Fluid_Info.fluid), laid on the ground, whose curve its surface
+// follows (mm.path_at), each no higher than the one before; zero for another fluid.
+fluid_path :: proc(physics:core.Ref(Physics_State),fluid:sim.Fluid_Handle,out:^[FLUID_PATH_POINTS]mm.Path_Point) -> int {
     return physics.ptr!=nil && physics.ready?sim.fluid_path(&physics.world,fluid,out):0
 }
 
@@ -41,15 +42,17 @@ waves_reach :: proc "contextless" (waves:Surface_Waves) -> f32 {
 // everything under the height of the entity, a Box its volume, with the top
 // as the surface (a lake in its basin, a pool); the yaw of the entity turns a
 // box and its current. A volume.Spline on the entity makes it water along its
-// path instead (a river), as deep as the height of the spline, whose current is
-// in the frame of the path: -Z along it toward its end. With density zero, the air of a box that takes the fluid of lower priority
-// out of where it is: a base under the sea, a room that floods as the floor
-// of its air rises. Where two fluids meet, or two dry boxes, the one of
-// higher priority decides. A fluid ends at its border.
+// path instead (a river), as deep as the height of its points, flowing along it
+// at their speed and across and up by its current, whose z is zero; its
+// surface never rises from the first point to the last. With density zero, the
+// air of a box that takes the fluid of lower priority out of where it is: a
+// base under the sea, a room that floods as the floor of its air rises. Where
+// two fluids meet, or two dry boxes, the one of higher priority decides. A
+// fluid ends at its border.
 @(component,replicated,description="Water or another fluid in the Volume of its entity, a Plane (a sea) or a Box (a lake, a pool), or along the Spline of its entity (a river): bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
 Fluid :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // 1000 fresh water, 1025 the sea; 0: dry, only in a box
-    current:[3]f32 `mirai:"unit=m/s"`,      // in the frame of the entity
+    current:[3]f32 `mirai:"unit=m/s"`,      // in the frame of the entity; of a river, across it (+X to its right) and up, along it the speed of its points
     priority:i32,                           // where fluids or dry boxes meet, the higher decides
 }
 
@@ -130,7 +133,7 @@ fluid_waves_of :: proc "contextless" (waves:Fluid_Waves,yaw:f32,wind:[2]f32) -> 
 Fluid_Link :: struct {
     fluid:sim.Fluid_Handle,
     desc:sim.Fluid_Desc,
-    path_key:u64, // of the samples of its spline
+    path_key:u64, // of the points of its spline, laid
     refused:bool,
 }
 
@@ -252,7 +255,7 @@ fluids_sync :: proc(
         return
     }
     changed:=false
-    samples:[FLUID_PATH_SAMPLES]mm.Path_Point
+    laid:[FLUID_PATH_POINTS]mm.Path_Point
     for row in 0..<core.count(fluids) {
         e:=core.entity_at(fluids,row)
         world,_:=core.world_of(locals,parents,e)
@@ -273,7 +276,7 @@ fluids_sync :: proc(
         has_path:=false
         if splines!=nil {
             if row:=core.row_of(splines,e);row>=0 {
-                path=samples[:volume.spline_sample(&splines.values[row],1,samples[:])]
+                path=laid[:copy(laid[:],volume.spline_points(&splines.values[row]))]
                 for &p in path {p.position=volume.spline_lay(ground,world,p.position,p.height)}
                 path_key=base.hash64(slice.to_bytes(path))
                 has_path,shaped=true,true
@@ -314,7 +317,7 @@ fluids_sync :: proc(
         changed=true
         if !l.refused {continue}
         if has_path {
-            core.report(problems,e,"physics.fluid_path","its Fluid is not made along its path: water along a path needs a Fluid of density above 0, and from 2 to %d points of its Spline, each finite with width and height above 0 and apart from the next; fix its density or its points",volume.SPLINE_POINTS)
+            core.report(problems,e,"physics.fluid_path","its Fluid is not made along its path: water along a path needs a Fluid of density above 0 whose current along the path (z) is 0, since it flows along at the speed of its points, and from 2 to %d points of its Spline, each finite with width and height above 0 and apart from the next; fix its density, its current or its points",volume.SPLINE_POINTS)
         } else if !shaped {
             core.report(problems,e,"physics.fluid","its Fluid is not made: a fluid fills a Volume of shape Plane (a sea: everything under its entity) or Box (a lake, a pool), or follows the Spline of its entity (a river); add that Volume (volume.plane, volume.box) or make its entity a Spline")
         } else if region.shape==.Plane && fluid.density<=0 || region.shape==.Box && (desc.half_extents.x<=0 || desc.half_extents.y<=0 || desc.half_extents.z<=0) {
@@ -335,8 +338,8 @@ volume_wind :: proc(winds:^core.Table(volume.Wind,$A),zones:volume.Where,point:[
     return {blowing.x,blowing.z}
 }
 
-// Fluids that meet fluids, or dry boxes that meet dry boxes, at the same priority: nothing says which of
-// the two decides where they meet.
+// Fluids that meet fluids, or dry boxes that meet dry boxes, at the same priority (sim.fluids_meet): nothing
+// says which of the two decides where they meet.
 @(private)
 fluids_overlaps_report :: proc(state:^Physics_State,problems:^core.Problems) {
     w:=&state.world
@@ -345,7 +348,7 @@ fluids_overlaps_report :: proc(state:^Physics_State,problems:^core.Problems) {
         if !sim.fluid_valid(w,a.fluid) {continue}
         for &b in links[i+1:] {
             if !sim.fluid_valid(w,b.fluid) || (a.desc.density>0)!=(b.desc.density>0) || a.desc.priority!=b.desc.priority {continue}
-            if !mm.aabb_overlaps(sim.fluid_bounds(w,a.fluid),sim.fluid_bounds(w,b.fluid)) {continue}
+            if !sim.fluids_meet(w,a.fluid,b.fluid) {continue}
             kind:=a.desc.density>0?"fluid":"dry box"
             core.report(problems,core.Entity(b.desc.user_data),"physics.fluid_overlap","its Fluid meets another %s (%v) of the same priority, so either may decide where they meet; give the Fluid that decides a higher priority, or move them apart",kind,core.Entity(a.desc.user_data))
         }

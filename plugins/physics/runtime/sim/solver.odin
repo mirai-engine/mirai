@@ -496,7 +496,7 @@ integrate_velocities_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_
         if params.inv_mass==0 {continue}
         body:=&st.bodies[i]
         v,om:Vec3
-        if st.fluid_active && st.wet[i].fluid>=0 {
+        if st.fluid_active && st.wet[i].water_count>0 {
             // The fluid, with its drags implicit: v-u shrinks by 1+h k |v-u|, w by 1+h k_a |w| I^-1, each speed
             // the one at the start of the substep.
             linear,angular,k,angular_k:=fluid_forces(w,i,worker)
