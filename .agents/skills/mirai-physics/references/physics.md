@@ -227,7 +227,12 @@ inside.
 
 ### Bullets
 
-An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`).
+Every awake dynamic whose farthest point moves in the step more than `CCD_SAFETY` of its smallest
+extent is swept against static shapes and stops at the first impact; the contacts of the next step
+answer it with every shape that touches (Box2D's fast bodies). If its shapes start the sweep
+touching, a sphere of `CCD_CORE` of that extent at its center of mass is swept instead: a body in
+contact still cannot go through. The rest of this section is what an awake dynamic with `bullet`
+adds (`ccd.odin`).
 
 - Only what moved is swept: the awake ones enter with their swept box in a scratch tree; sleeping
   and static ones are met in the world trees. It uses the relative trajectory and the rotation of
@@ -256,9 +261,10 @@ An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`
 
 ### Bullets and overlaps
 
-The same sweep looks for the convex shapes that only overlap with the bullet and that it was not
-touching at the start of the step, up to `CCD_OVERLAP_CAPACITY` per bullet and step (those that do
-not fit add to `Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
+The same sweep looks for the convex shapes that only overlap with the swept body (static ones only,
+unless it is a bullet) and that it was not touching at the start of the step, up to
+`CCD_OVERLAP_CAPACITY` per body and step (those that do not fit add to
+`Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
 touching at the end emit `overlap_begin` and `overlap_end` in that step, on both sides and with
 `crossed`: a trigger thinner than what the bullet travels is not lost. If it ends inside, the next
 step reports the entry as usual.

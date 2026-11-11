@@ -260,7 +260,7 @@ Contact_Begin :: struct {
 }
 Contact_End :: struct {a,b,collider_a,collider_b:core.Entity}
 // One for each side of a pair that overlaps: entity is the body and collider the collider of that side.
-// crossed: a bullet went through the other collider within the tick, which begins and ends the pair at once.
+// crossed: a fast body went through the other collider within the tick, which begins and ends the pair at once.
 Overlap_Event :: struct {entity,other,collider,other_collider:core.Entity,crossed:bool}
 Body_Event :: struct {entity:core.Entity}
 Joint_Break :: struct {
