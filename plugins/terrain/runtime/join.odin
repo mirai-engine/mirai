@@ -51,7 +51,7 @@ cell_hole :: #force_inline proc "contextless" (s:^Source,cuts:[]Join_Cut,x,z:int
 
 // The cuts over the cells of a chunk of a Heightfield, as a key: 0 for none.
 join_cut_key :: proc "contextless" (s:^Source,cuts:[]Join_Cut,index:int) -> u64 {
-    if len(cuts)==0 || s.kind!=.Heightfield {return 0}
+    if len(cuts)==0 {return 0}
     low,high,valid:=chunk_region(s,chunk_coord(s,index))
     if !valid {return 0}
     key:=u64(0)

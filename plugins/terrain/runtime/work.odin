@@ -177,7 +177,7 @@ work_run :: proc(slot:^Work_Slot,worker:int) {
     switch slot.kind {
     case .None:
     case .Build:
-        if !slot.reads {chunk_render_prepare(.Volume,&slot.mesh,slot.limits,true);return}
+        if !slot.reads {chunk_render_prepare(&slot.mesh,slot.limits,true);return}
         s:=slot.source
         q:=quad_of(s)
         if slot.index<q.first[1] {
@@ -185,7 +185,7 @@ work_run :: proc(slot:^Work_Slot,worker:int) {
         } else {
             slot.ok=node_build(s,&q,slot.index,slot.key.lod,&slot.border,&slot.mesh,slot.join)
         }
-        if slot.ok && !slot.patient {chunk_render_prepare(s.kind,&slot.mesh,slot.limits)}
+        if slot.ok && !slot.patient {chunk_render_prepare(&slot.mesh,slot.limits)}
     case .Page:
         slot.ok=page_load(slot.block,slot.file,&slot.read,slot.page)
         if !slot.ok {break}

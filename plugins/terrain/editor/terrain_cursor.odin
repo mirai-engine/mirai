@@ -75,7 +75,7 @@ ring_draw :: proc(s:^editor.Session,stroke:^Stroke,source:^terrain.Source,center
     points:[RING_SEGMENTS][3]f32
     editor.brush_ring_points(center,normal,radius,points[:])
     for &point in points {
-        if source.kind==.Heightfield && !flat {point.y=terrain.source_height(source,point.x,point.z)}
+        if !flat {point,_=terrain.source_carry(source,point,normal,0)}
         point=(stroke.to_world*[4]f32{point.x,point.y,point.z,1}).xyz
     }
     editor.brush_ring_draw(s,points[:],color,width,dashed)

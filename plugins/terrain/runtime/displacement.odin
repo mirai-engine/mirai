@@ -172,8 +172,8 @@ terrain_displace :: proc(
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         item.params={}
         item.mesh,item.rest,item.copy,item.made,item.settle={},0,0,0,false
-        if !chunk_detail_build(&entry.source,item.coord,{},detail,item.want,&d.building) || !chunk_render_prepare(.Heightfield,&d.building,host.assets_limits(assets)) {continue}
-        mesh,ok:=chunk_publish(assets,.Heightfield,&d.building,false)
+        if !chunk_detail_build(&entry.source,item.coord,{},detail,item.want,&d.building) || !chunk_render_prepare(&d.building,host.assets_limits(assets)) {continue}
+        mesh,ok:=chunk_publish(assets,&d.building,false)
         if !ok {continue}
         item.mesh,item.change,item.detail,item.fine=mesh,entry.versions[index],detail,item.want
     }
