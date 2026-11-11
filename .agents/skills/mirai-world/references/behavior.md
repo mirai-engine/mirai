@@ -28,6 +28,13 @@ reservations) belongs to
   its target and the new one when it changes), `patrol_act`, `path_status`, `agent_path`,
   `smart_offer`, `smart_nearest`, `offer_act`, `cross_act`. An action shows what it does with
   `anim.play` and `anim.look`, taking `^anim.Animation_Requests` as any other parameter.
+- An agent thinks less often the farther it is from the
+  [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency) (the
+  bodies the seats drive, each `Streaming_Source`, never the view): once every
+  `ai.cadence_period` ticks by `Behavior_Settings.think_near`, up to `think_slowest`, on the ticks
+  of its own phase (`ai.cadence_due`). Only `think` is spaced: its running action runs every tick,
+  and it thinks too when that action ends, so a wait or an attack lasts what it says. Without
+  sources, or with `think_near` 0, every agent decides every tick.
 - What those actions request goes on when the agent's section unloads
   ([the far field](navigation.md#the-far-field)): `minds_tick` also runs the agents with
   `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), and what they reserve lasts
@@ -194,17 +201,15 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 ## Verification
 
-- `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick
-  without allocating, that it does not decide when resimulating or stopped,
-  far agents and their lease, movement, chase and patrol actions, sight by cone and team, noise,
-  forgetting, a remembered subject that is
-  destroyed, ray turns, random crowds that remember by the grid whom they would among every
-  perceivable, why a subject is seen or not (`sight_why_names_what_hides_a_subject`), a tick
-  with nothing to do that goes through no row, places by budget, from the
-  navmesh, from entities, from memory and from offers, rays only where they change the answer,
-  the explanation of each candidate
-  (`a_query_explains_each_candidate_and_the_test_that_vetoed_it`), a
-  place
+- `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick without
+  allocating, that it does not decide when resimulating or stopped, far agents and their lease, the
+  cadence of a mind by its distance to the sources, movement, chase and patrol actions, sight by
+  cone and team, noise, forgetting, a remembered subject that is destroyed, ray turns, random crowds
+  that remember by the grid whom they would among every perceivable, why a subject is seen or not
+  (`sight_why_names_what_hides_a_subject`), a tick with nothing to do that goes through no row,
+  places by budget, from the navmesh, from entities, from memory and from offers, rays only where
+  they change the answer, the explanation of each candidate
+  (`a_query_explains_each_candidate_and_the_test_that_vetoed_it`), a place
   target that is destroyed, the offers by team, ability, capacity, uses and cooldown, and the
   influence maps without allocating.
   `mirai test plugins/multiplayer/runtime

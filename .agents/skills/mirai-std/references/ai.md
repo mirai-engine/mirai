@@ -320,11 +320,19 @@ no GOAP. What those models gave is written this way, without implementing them o
   trip to an object, a jump. What must interrupt it proposes more (stun, die).
 - An action that ends asks for `think` again in the same tick, over what changed, and the best one
   enters; it may be itself again, unless it failed.
+- A tick without `decide` runs the running action without asking `think`, which is asked only when
+  that action ends; with nothing running it does nothing. What spaces out thinking passes it, so
+  actions keep their timing.
 - `Mind_Context` is what the caller gives: `user` (the context of the mind), `tick`, `dt`, `keep`,
   `holder` (the agent, owner of its reservations), `reservations` and `lease`.
   `behavior.minds_tick` fills all of it.
 - Deterministic within a configuration, without allocating: copying the minds and the world
   halfway gives the same future.
+- **Cadence** (`cadence.odin`): `cadence_period` gives the ticks between two runs of something by
+  its distance to the nearest viewer and `cadence_due` whether it runs in a tick, by a phase (the
+  index of the agent) that spreads one period over its ticks. No state: a world and its copy run
+  the same ticks. Whatever spaces out work by distance (the minds of `behavior`) uses this one
+  rule.
 
 ### Actions
 

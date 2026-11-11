@@ -124,8 +124,10 @@ Act :: struct($A:typeid) {
 // or its commit), and is interrupted when something does or when it is neither
 // proposed nor committed. An action that ends asks `think` again in the same
 // tick, over what it changed, and the best enters; it can be itself unless it
-// failed. Returns what runs after the tick.
-mind_tick :: proc(m:^Mind,acts:^[$A]$P,think:proc(t:^Think(A)),ctx:^Mind_Context) -> (doing:A,running:bool) {
+// failed. Without `decide` it does not think while an action runs: the
+// action runs its tick, and `think` is asked only when it ends, or never when
+// nothing runs. Returns what runs after the tick.
+mind_tick :: proc(m:^Mind,acts:^[$A]$P,think:proc(t:^Think(A)),ctx:^Mind_Context,decide:=true) -> (doing:A,running:bool) {
     #assert(intrinsics.type_is_enum(A) && int(min(A))>=0 && int(max(A))<MIND_ACTIONS)
     #assert(P==proc(a:^Act(A)) -> Status)
     if m==nil || acts==nil || think==nil || ctx==nil {return}
@@ -138,15 +140,18 @@ mind_tick :: proc(m:^Mind,acts:^[$A]$P,think:proc(t:^Think(A)),ctx:^Mind_Context
     current:=int(m.main.action)-1
     if current>=0 && !mind_valid(A,current) {current=-1;m.main={}}
     if m.step.action!=0 && (current<0 || !mind_valid(A,int(m.step.action)-1)) {m.step={}}
+    if current<0 && !decide {return}
     t:=Think(A){ctx=ctx,mind=m,best=-1,running=current,excluded=-1}
-    think(&t)
-    m.proposals=t.top
+    if decide {
+        think(&t)
+        m.proposals=t.top
+    }
     if current>=0 {
         standing:f32
         if t.standing>0 {standing=t.standing+(ctx.keep if ctx.keep>0 && ctx.keep<=max(f32) else 0)}
         if m.commit>standing {standing=m.commit}
-        if standing>0 && !(t.score>standing) {
-            m.score=standing
+        if !decide || standing>0 && !(t.score>standing) {
+            if decide {m.score=standing}
             r:=act_call(m,acts,ctx,&m.main,.Update,.Success)
             if r==.Running {return A(current),true}
             mind_exit(m,acts,ctx,exit_cause(r),MIND_NONE)

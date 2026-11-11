@@ -59,6 +59,7 @@ Nav_World :: struct {
     nav_requests:Nav_Requests,
     nav_events:Nav_Events,
     nav_crossings:Nav_Crossings,
+    sources:scene.Simulation_Sources,
     loco:locomotion.Locomotion_Requests,
 }
 
@@ -819,7 +820,7 @@ agents_test_step :: proc(f:^Nav_Test) {
     nav_test_settle(f)
     navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
     navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.seats),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
-        &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
+        &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,core.ref(&f.sources),time,&f.problems)
     nav_test_settle(f)
     navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
     locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
@@ -2115,27 +2116,32 @@ a_tile_that_an_area_or_an_obstacle_changes_is_built_again_from_its_heightfield :
 }
 
 // Two walkers that close head-on step aside from as far as they meet within
-// the horizon, cells of the neighbor grid apart; out of that reach, neither turns.
+// the horizon, cells of the neighbor grid apart; out of that reach, neither
+// turns. One out of the avoidance reach of the streaming sources does not step
+// aside, and the other steps aside from it as it goes.
 @(test)
 agents_step_aside_from_those_they_meet_within_the_horizon :: proc(t:^testing.T) {
     f:Nav_Test
     if !nav_test_init(t,&f) {return}
     defer nav_test_destroy(&f)
     a,b:=core.create(&f.entities),core.create(&f.entities)
-    apart:=[?]f32{9,40}
-    for distance,i in apart {
+    Case :: struct {apart:f32,reach:f32,a_turns,b_turns:bool}
+    // The source stands by a: b, 9 m away, is out of a reach of 5 m.
+    f.sources.items[0]={position={0,1,0}}
+    f.sources.count=1
+    for c in ([]Case{{9,0,true,true},{40,0,false,false},{9,20,true,true},{9,5,true,false}}) {
+        f.nav.settings.avoidance_reach=c.reach
         core.add(&f.paths,a,Nav_Path{state=.Moving,velocity={4,0,0},class=-1,partner=-1})
         core.add(&f.paths,b,Nav_Path{state=.Moving,velocity={-4,0,0},class=-1,partner=-1})
         nav_test_settle(&f)
         clear(&f.run.near)
         append(&f.run.near,Near{entity=a,position={0,1,0.05},velocity={4,0,0},radius=0.4,height=2,avoids=true})
-        append(&f.run.near,Near{entity=b,position={distance,1,0},velocity={-4,0,0},radius=0.4,height=2,avoids=true})
-        agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
+        append(&f.run.near,Near{entity=b,position={c.apart,1,0},velocity={-4,0,0},radius=0.4,height=2,avoids=true})
+        agents_avoid(&f.nav,&f.run,&f.paths,&f.sources,1.0/60,&f.problems)
         first,_:=core.get(&f.paths,a)
         second,_:=core.get(&f.paths,b)
-        turned:=first.velocity!=[3]f32{4,0,0} && second.velocity!=[3]f32{-4,0,0}
-        still:=first.velocity==[3]f32{4,0,0} && second.velocity==[3]f32{-4,0,0}
-        testing.expectf(t,turned if i==0 else still,"%v m apart they go at %v and %v",distance,first.velocity,second.velocity)
+        a_turns,b_turns:=first.velocity!=[3]f32{4,0,0},second.velocity!=[3]f32{-4,0,0}
+        testing.expectf(t,a_turns==c.a_turns && b_turns==c.b_turns,"%v: they go at %v and %v",c,first.velocity,second.velocity)
     }
     testing.expect_value(t,f.problems.count,0)
 }
@@ -2179,7 +2185,7 @@ agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
             walker(&f,{2,1,nan},{nan,0,0})
         }
         // Without a path that moves nobody steps aside: the tick only fills the grid.
-        agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
+        agents_avoid(&f.nav,&f.run,&f.paths,&f.sources,1.0/60,&f.problems)
         fastest,widest:f32
         for near in f.run.near {
             fastest=max(fastest,linalg.length(near.velocity))

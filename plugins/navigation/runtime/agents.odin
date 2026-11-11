@@ -279,7 +279,8 @@ navigation_agents :: proc(
     characters:^core.Table(phys.Character,.Read),loco_states:^core.Table(locomotion.Locomotion_State,.Read),colliders:^core.Table(phys.Collider,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),
     grounds:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
-    roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
+    roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,
+    sources:core.Ref(scene.Simulation_Sources),time:core.Time,problems:^core.Problems,
 ) {
     if core.reshaped(agents,&a.shapes[0]) | core.reshaped(paths,&a.shapes[1]) {
         for row in 0..<core.count(agents) {
@@ -479,7 +480,7 @@ navigation_agents :: proc(
     }
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
-    agents_avoid(n.ptr,a,paths,time.dt,problems)
+    agents_avoid(n.ptr,a,paths,sources.ptr,time.dt,problems)
     crossings.count=agents_steer(n.ptr,agents,paths,inputs,seats,grounds,worlds)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
@@ -1036,13 +1037,13 @@ agent_medium_path :: proc(n:^Navigation,a:^Navigation_Agents,p:^Nav_Path,e:core.
     p.time=0
 }
 
-// Steps every avoiding agent aside from the others, each from its wanted
+// Steps every avoiding agent near the sources aside from the others, each from its wanted
 // velocity, with ORCA: on the plane, among those at its height and within the
 // edges of its mesh near it, for an agent that walks; in three axes, every
 // neighbor a sphere, for one that flies. Its neighbors are those it may meet
 // within the horizon (agent_neighbors).
 @(private)
-agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),dt:f32,problems:^core.Problems) {
+agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),sources:^scene.Simulation_Sources,dt:f32,problems:^core.Problems) {
     count:=len(a.near)
     if count<2 {return}
     if count>len(a.grid.items) {
@@ -1055,14 +1056,16 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
         }
     }
     spatial.grid_clear(&a.grid)
+    reach:=n.settings.avoidance_reach if n!=nil else 0
     // The fastest and the widest: farther than those close within the horizon, nobody shapes a velocity.
     fastest,widest:f32
     for &near,i in a.near {
         spatial.grid_insert(&a.grid,ground_box(near.position,0),u64(i))
-        // Only those that step aside in this tick share the change: one idle or crossing a link does not.
+        // Only those that step aside in this tick share the change: one idle, crossing a link or
+        // out of the reach of the sources does not, and the others step aside from it as it goes.
         if near.avoids {
             p,_:=core.get(paths,near.entity)
-            near.avoids=agent_goes(p) && p.state!=.Crossing
+            near.avoids=agent_goes(p) && p.state!=.Crossing && !(reach>0 && scene.sources_distance(sources,near.position,near.position)>reach)
         }
         fastest=max(fastest,linalg.length(near.velocity))
         widest=max(widest,near_sphere(near))
