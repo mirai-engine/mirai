@@ -44,6 +44,7 @@ Pass_Command :: struct {
 Pass_Use :: struct {
 	texture: Texture,
 	buffer:  Buffer,
+	mip:     i32, // of the texture, or -1 for all
 	access:  bit_set[Access],
 }
 
@@ -122,7 +123,7 @@ vk_access_info :: proc(d: ^Device, a: Access) -> Access_Info {
 }
 
 @(private)
-vk_layout_for :: proc(t: ^Vk_Texture, a: Access) -> vk.ImageLayout {
+vk_layout_for :: proc(t: ^Vk_Texture, layout: vk.ImageLayout, a: Access) -> vk.ImageLayout {
 	#partial switch a {
 	case .Shader_Read, .Depth_Read:
 		return .GENERAL if .Storage in t.desc.usage else .SHADER_READ_ONLY_OPTIMAL
@@ -133,7 +134,7 @@ vk_layout_for :: proc(t: ^Vk_Texture, a: Access) -> vk.ImageLayout {
 	case .Transfer_Write: return .TRANSFER_DST_OPTIMAL
 	case .Present:        return .PRESENT_SRC_KHR
 	}
-	return t.layout
+	return layout
 }
 
 @(private)
@@ -180,26 +181,48 @@ vk_queue_memory_barrier :: proc(c: ^Command_List, src, dst: Access_Info) {
 	c.memory_barrier.dstAccessMask += dst.access
 }
 
-cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access) {
+// mip: the one mip the access reaches, or -1 for all of them.
+cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access, mip: i32 = -1) {
+	t := pool_get(&c.device.textures, base.Handle(texture))
+	if t == nil || mip >= i32(t.desc.mip_levels) {return}
+	if mip < 0 {vk_barrier_levels(c, t, access, 0, t.desc.mip_levels)} else {vk_barrier_levels(c, t, access, u32(mip), 1)}
+}
+
+// Brings mips [first, first + count) to an access with one barrier for each
+// run of mips in one state: a texture used whole takes one.
+@(private)
+vk_barrier_levels :: proc(c: ^Command_List, t: ^Vk_Texture, access: Access, first, count: u32) {
+	for at := first; at < first + count; {
+		run := at + 1
+		for run < first + count && t.levels[run] == t.levels[at] {run += 1}
+		level := vk_barrier_level(c, t, t.levels[at], access, at, run - at)
+		for &l in t.levels[at:run] {l = level}
+		at = run
+	}
+}
+
+// The barrier a run of mips in state `level` needs for an access, and their state after it.
+@(private)
+vk_barrier_level :: proc(c: ^Command_List, t: ^Vk_Texture, level: Vk_Level, access: Access, first, count: u32) -> Vk_Level {
+	level := level
 	d := c.device
-	t := pool_get(&d.textures, base.Handle(texture))
-	if t == nil {return}
-	new_layout := vk_layout_for(t, access)
-	layout_change := new_layout != t.layout
+	new_layout := vk_layout_for(t, level.layout, access)
+	layout_change := new_layout != level.layout
 	if !layout_change {
 		if access_is_write(access) {
-			if t.write == .None && t.reads == {} {t.write = access; return}
+			if level.write == .None && level.reads == {} {level.write = access; return level}
 		} else {
-			if access in t.reads || t.write == .None {t.reads += {access}; return}
+			if access in level.reads || level.write == .None {level.reads += {access}; return level}
 		}
 	}
 	assert(!c.in_render_pass, "rhi: texture transitions must be recorded outside render passes")
 	// Barriers of one batch are not ordered among themselves: a second one
-	// of the same image waits for the first in a batch of its own.
+	// of the same mips waits for the first in a batch of its own.
 	for pending in c.image_barriers[:c.image_count] {
-		if pending.image == t.image {vk_flush_barriers(c); break}
+		r := pending.subresourceRange
+		if pending.image == t.image && r.baseMipLevel < first + count && first < r.baseMipLevel + r.levelCount {vk_flush_barriers(c); break}
 	}
-	src := vk_source_info(d, t.write, t.reads if access_is_write(access) || layout_change else {})
+	src := vk_source_info(d, level.write, level.reads if access_is_write(access) || layout_change else {})
 	dst := vk_access_info(d, access)
 	if c.image_count == MAX_PENDING_IMAGE_BARRIERS {vk_flush_barriers(c)}
 	c.image_barriers[c.image_count] = {
@@ -210,26 +233,27 @@ cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access) 
 		srcAccessMask = src.access,
 		dstStageMask = dst.stages if dst.stages != {} else {.BOTTOM_OF_PIPE},
 		dstAccessMask = dst.access,
-		oldLayout = t.layout,
+		oldLayout = level.layout,
 		newLayout = new_layout,
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		image = t.image,
-		subresourceRange = {aspectMask = t.aspect, levelCount = t.desc.mip_levels, layerCount = max(t.desc.layers, 1)},
+		subresourceRange = {aspectMask = t.aspect, baseMipLevel = first, levelCount = count, layerCount = max(t.desc.layers, 1)},
 	}
 	c.image_count += 1
-	t.layout = new_layout
+	level.layout = new_layout
 	if access_is_write(access) {
-		t.write = access
-		t.reads = {}
+		level.write = access
+		level.reads = {}
 	} else if layout_change {
 		// The layout transition is a write made visible to this reader; later
 		// readers chain from this reader's stages.
-		t.write = access
-		t.reads = {access}
+		level.write = access
+		level.reads = {access}
 	} else {
-		t.reads += {access}
+		level.reads += {access}
 	}
+	return level
 }
 
 @(private)
@@ -263,16 +287,18 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	c.dirty = true
 	width, height: u32 = max(u32), max(u32)
 	for i in 0 ..< desc.color_count + 1 {
-		texture := desc.colors[i].texture if i < desc.color_count else desc.depth.texture
+		texture, mip, layer := vk_pass_target(desc, i)
 		if i == desc.color_count && texture == 0 {break}
-		t := pool_get(&d.textures, base.Handle(texture))
-		if t == nil {
-			set_error(d, "render pass %s has an invalid %s target", desc.name, "depth" if i == desc.color_count else "color")
+		size: [2]u32
+		inside: bool
+		if t := pool_get(&d.textures, base.Handle(texture)); t != nil {size, inside = attachment_extent(t.desc, mip, layer)}
+		if !inside {
+			set_error(d, "render pass %s: its %s target is not a texture or has no mip %d or layer %d", desc.name, "depth" if i == desc.color_count else "color", mip, layer)
 			c.pass_failed = true
 			return
 		}
-		width = min(width, t.desc.width)
-		height = min(height, t.desc.height)
+		width = min(width, size.x)
+		height = min(height, size.y)
 	}
 	if width == max(u32) {width, height = 1, 1}
 	c.pass_extent = {width, height}
@@ -289,8 +315,9 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 	for u in c.uses[:c.use_count] {
 		if u.texture != 0 {
 			for i in 0 ..< desc.color_count + 1 {
-				if u.texture == (desc.colors[i].texture if i < desc.color_count else desc.depth.texture) {
-					set_error(d, "render pass %s reads its own target %d in a shader; a pass reads what earlier passes wrote", desc.name, i)
+				texture, mip, _ := vk_pass_target(desc, i)
+				if u.texture == texture && (u.mip < 0 || u32(u.mip) == mip) {
+					set_error(d, "render pass %s reads in a shader mip %d of its target %d, which it draws into; a pass reads the other mips of a target or what earlier passes wrote", desc.name, mip, i)
 					c.pass_failed = true
 					return
 				}
@@ -299,21 +326,20 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 		// A resource the pass writes takes one barrier, which covers its reads
 		// in the pass and makes what it leaves visible to the readers after it.
 		if .Shader_Write in u.access {
-			if u.texture != 0 {cmd_barrier_texture(c, u.texture, .Shader_Write)} else {cmd_barrier_buffer(c, u.buffer, .Shader_Write)}
+			if u.texture != 0 {cmd_barrier_texture(c, u.texture, .Shader_Write, u.mip)} else {cmd_barrier_buffer(c, u.buffer, .Shader_Write)}
 			continue
 		}
 		for access in u.access {
-			if u.texture != 0 {cmd_barrier_texture(c, u.texture, access)} else {cmd_barrier_buffer(c, u.buffer, access)}
+			if u.texture != 0 {cmd_barrier_texture(c, u.texture, access, u.mip)} else {cmd_barrier_buffer(c, u.buffer, access)}
 		}
 	}
 	colors: [MAX_COLOR_TARGETS]vk.RenderingAttachmentInfo
 	for i in 0 ..< desc.color_count {
 		a := desc.colors[i]
-		cmd_barrier_texture(c, a.texture, .Color_Target)
+		cmd_barrier_texture(c, a.texture, .Color_Target, i32(a.mip))
 		t := pool_get(&d.textures, base.Handle(a.texture))
 		colors[i] = {
-			// An attachment is one level: that of a texture with mips is the first.
-			sType = .RENDERING_ATTACHMENT_INFO, imageView = t.mip_views[0] if t.desc.mip_levels > 1 else t.view, imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
+			sType = .RENDERING_ATTACHMENT_INFO, imageView = vk_target_view(t, a.mip, a.layer), imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
 			loadOp = .CLEAR if a.load == .Clear else (.LOAD if a.load == .Load else .DONT_CARE),
 			storeOp = .STORE if a.store == .Store else .DONT_CARE,
 		}
@@ -322,10 +348,10 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 	depth_info: vk.RenderingAttachmentInfo
 	has_depth := desc.depth.texture != 0
 	if has_depth {
-		cmd_barrier_texture(c, desc.depth.texture, .Depth_Target)
+		cmd_barrier_texture(c, desc.depth.texture, .Depth_Target, i32(desc.depth.mip))
 		t := pool_get(&d.textures, base.Handle(desc.depth.texture))
 		depth_info = {
-			sType = .RENDERING_ATTACHMENT_INFO, imageView = t.view, imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
+			sType = .RENDERING_ATTACHMENT_INFO, imageView = vk_target_view(t, desc.depth.mip, desc.depth.layer), imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
 			loadOp = .CLEAR if desc.depth.load == .Clear else (.LOAD if desc.depth.load == .Load else .DONT_CARE),
 			storeOp = .STORE if desc.depth.store == .Store else .DONT_CARE,
 		}
@@ -378,6 +404,20 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 	if desc.name != "" {vk_label_pop(c)}
 }
 
+// Target i of a pass: its colors, then its depth.
+@(private)
+vk_pass_target :: proc(desc: ^Render_Pass_Desc, i: int) -> (texture: Texture, mip, layer: u32) {
+	if i < desc.color_count {a := desc.colors[i]; return a.texture, a.mip, a.layer}
+	return desc.depth.texture, desc.depth.mip, desc.depth.layer
+}
+
+// The view of one mip of one layer that a pass draws into.
+@(private)
+vk_target_view :: proc(t: ^Vk_Texture, mip, layer: u32) -> vk.ImageView {
+	if t.layer_views != nil {return t.layer_views[mip * t.desc.layers + layer]}
+	return t.mip_views[mip] if t.desc.mip_levels > 1 else t.view
+}
+
 @(private)
 vk_pass_record :: proc(c: ^Command_List, command: Pass_Command) {
 	if c.pass_failed {return}
@@ -390,18 +430,23 @@ vk_pass_record :: proc(c: ^Command_List, command: Pass_Command) {
 	c.command_count += 1
 }
 
-// Adds an access of a resource to those of the pass being recorded.
+// Adds an access of a resource to those of the pass being recorded; two mips
+// of one texture count as all of them.
 @(private)
-vk_pass_use :: proc(c: ^Command_List, texture: Texture, buffer: Buffer, access: Access) {
+vk_pass_use :: proc(c: ^Command_List, texture: Texture, buffer: Buffer, access: Access, mip: i32 = -1) {
 	for &u in c.uses[:c.use_count] {
-		if u.texture == texture && u.buffer == buffer {u.access += {access}; return}
+		if u.texture == texture && u.buffer == buffer {
+			u.access += {access}
+			if u.mip != mip {u.mip = -1}
+			return
+		}
 	}
 	if c.use_count == PASS_RESOURCE_CAPACITY {
 		set_error(c.device, "render pass %s uses more than %d resources; split it into several passes", c.pass.name, PASS_RESOURCE_CAPACITY)
 		c.pass_failed = true
 		return
 	}
-	c.uses[c.use_count] = {texture, buffer, {access}}
+	c.uses[c.use_count] = {texture, buffer, mip, {access}}
 	c.use_count += 1
 }
 
@@ -422,8 +467,8 @@ vk_pass_draw :: proc(c: ^Command_List) -> bool {
 		switch slot.kind {
 		case .Uniform_Buffer, .Storage_Buffer: vk_pass_use(c, 0, s.buffer, .Shader_Read)
 		case .Storage_Buffer_RW:               vk_pass_use(c, 0, s.buffer, .Shader_Write)
-		case .Sampled_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Read)
-		case .Storage_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Write)
+		case .Sampled_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Read, s.mip)
+		case .Storage_Texture:                 vk_pass_use(c, s.texture, 0, .Shader_Write, s.mip)
 		case .Sampler, .Texture_Table:
 		case .Accel:
 			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {vk_pass_use(c, 0, a.buffer, .Accel_Read)}
@@ -546,8 +591,8 @@ vk_auto_transitions :: proc(c: ^Command_List) {
 		switch slot.kind {
 		case .Uniform_Buffer, .Storage_Buffer: cmd_barrier_buffer(c, s.buffer, .Shader_Read)
 		case .Storage_Buffer_RW:               cmd_barrier_buffer(c, s.buffer, .Shader_Write)
-		case .Sampled_Texture:                 cmd_barrier_texture(c, s.texture, .Shader_Read)
-		case .Storage_Texture:                 cmd_barrier_texture(c, s.texture, .Shader_Write)
+		case .Sampled_Texture:                 cmd_barrier_texture(c, s.texture, .Shader_Read, s.mip)
+		case .Storage_Texture:                 cmd_barrier_texture(c, s.texture, .Shader_Write, s.mip)
 		case .Sampler, .Texture_Table:
 		case .Accel:
 			if a := pool_get(&d.accels, base.Handle(s.accel)); a != nil {cmd_barrier_buffer(c, a.buffer, .Accel_Read)}
@@ -599,7 +644,7 @@ vk_flush_bindings :: proc(c: ^Command_List, bind_point: vk.PipelineBindPoint) ->
 			if t == nil {set_error(d, "pipeline %s: slot %d texture was destroyed", p.name, i); return false}
 			view := t.view
 			if s.mip >= 0 && t.desc.mip_levels > 1 {view = t.mip_views[s.mip]}
-			layout := t.layout
+			layout := t.levels[max(s.mip, 0)].layout
 			if slot.kind == .Storage_Texture {layout = .GENERAL}
 			if layout != .GENERAL && layout != .SHADER_READ_ONLY_OPTIMAL && layout != .DEPTH_READ_ONLY_OPTIMAL {
 				set_error(d, "pipeline %s: slot %d texture is not readable (missing barrier before the pass)", p.name, i)
@@ -714,11 +759,11 @@ cmd_copy_buffer_to_texture :: proc(c: ^Command_List, src: Buffer, src_offset: u6
 	d := c.device
 	b := pool_get(&d.buffers, base.Handle(src))
 	t := pool_get(&d.textures, base.Handle(dst))
-	if b == nil || t == nil {return}
+	if b == nil || t == nil || mip >= t.desc.mip_levels {return}
 	area, inside := texture_region_resolve(t.desc, mip, region)
 	if !inside {return}
 	cmd_barrier_buffer(c, src, .Transfer_Read)
-	cmd_barrier_texture(c, dst, .Transfer_Write)
+	vk_barrier_levels(c, t, .Transfer_Write, mip, 1)
 	vk_flush_barriers(c)
 	region := vk.BufferImageCopy{
 		bufferOffset = vk.DeviceSize(src_offset),
@@ -736,7 +781,7 @@ cmd_copy_texture_to_buffer :: proc(c: ^Command_List, src: Texture, dst: Buffer, 
 	t := pool_get(&d.textures, base.Handle(src))
 	b := pool_get(&d.buffers, base.Handle(dst))
 	if b == nil || t == nil {return}
-	cmd_barrier_texture(c, src, .Transfer_Read)
+	vk_barrier_levels(c, t, .Transfer_Read, 0, 1)
 	cmd_barrier_buffer(c, dst, .Transfer_Write)
 	vk_flush_barriers(c)
 	region := vk.BufferImageCopy{
@@ -759,8 +804,8 @@ cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture, src_mip: 
 	if s == nil || t == nil {return}
 	if src == dst || s.swapchain || t.swapchain {set_error(d, "cmd_copy_texture: it copies between two textures of the device, not the image of the swapchain"); return}
 	if problem := texture_copy_problem(s.desc, t.desc, src_mip, dst_mip, mips); problem != "" {set_error(d, "cmd_copy_texture: %s", problem); return}
-	cmd_barrier_texture(c, src, .Transfer_Read)
-	cmd_barrier_texture(c, dst, .Transfer_Write)
+	vk_barrier_levels(c, s, .Transfer_Read, src_mip, mips)
+	vk_barrier_levels(c, t, .Transfer_Write, dst_mip, mips)
 	vk_flush_barriers(c)
 	regions: [MAX_TEXTURE_MIPS]vk.ImageCopy
 	for &region, k in regions[:mips] {

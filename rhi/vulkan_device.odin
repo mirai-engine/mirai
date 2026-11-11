@@ -26,19 +26,25 @@ Vk_Buffer :: struct {
 	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
 }
 
+// The hazard state of a mip of a texture; its layers share it.
+Vk_Level :: struct {
+	layout: vk.ImageLayout,
+	write:  Access,
+	reads:  bit_set[Access],
+}
+
 Vk_Texture :: struct {
-	image:     vk.Image,
-	memory:    Vk_Memory,
-	view:      vk.ImageView,
-	mip_views: [MAX_TEXTURE_MIPS]vk.ImageView,
-	desc:      Texture_Desc,
-	vk_format: vk.Format,
-	aspect:    vk.ImageAspectFlags,
-	layout:    vk.ImageLayout,
-	write:     Access,
-	reads:     bit_set[Access],
-	swapchain: bool,
-	shared:    uintptr, // the handle a shared texture exports, held while it lives (a file descriptor plus one, or a HANDLE)
+	image:       vk.Image,
+	memory:      Vk_Memory,
+	view:        vk.ImageView,
+	mip_views:   [MAX_TEXTURE_MIPS]vk.ImageView,
+	layer_views: []vk.ImageView, // a target with layers: one per mip and layer, mip after mip
+	desc:        Texture_Desc,
+	vk_format:   vk.Format,
+	aspect:      vk.ImageAspectFlags,
+	levels:      [MAX_TEXTURE_MIPS]Vk_Level, // a run of mips in one state takes one barrier
+	swapchain:   bool,
+	shared:      uintptr, // the handle a shared texture exports, held while it lives (a file descriptor plus one, or a HANDLE)
 }
 
 Slot_Info :: struct {
@@ -85,6 +91,7 @@ Vk_Deferred :: struct {
 	memory:     Vk_Memory, // of the buffer or the image
 	image:      vk.Image,
 	views:      [MAX_TEXTURE_MIPS + 1]vk.ImageView,
+	layer_views: []vk.ImageView,
 	sampler:    vk.Sampler,
 	pipeline:   vk.Pipeline,
 	layout:     vk.PipelineLayout,
@@ -938,6 +945,7 @@ vk_release_deferred :: proc(d: ^Device, e: ^Vk_Deferred) {
 	if e.set_layout != 0 {d.dvk.DestroyDescriptorSetLayout(d.handle, e.set_layout, nil)}
 	if e.descriptor_pool != 0 {d.dvk.DestroyDescriptorPool(d.handle, e.descriptor_pool, nil)}
 	for view in e.views {if view != 0 {d.dvk.DestroyImageView(d.handle, view, nil)}}
+	vk_layer_views_release(d, e.layer_views)
 	if e.image != 0 {d.dvk.DestroyImage(d.handle, e.image, nil)}
 	if e.buffer != 0 {d.dvk.DestroyBuffer(d.handle, e.buffer, nil)}
 	vk_memory_unbind(d, e.memory)
@@ -1067,9 +1075,7 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 		if result == .SUBOPTIMAL_KHR {sc.stale = true}
 		f.acquired = true
 		texture := pool_get(&d.textures, base.Handle(sc.images[f.image_index]))
-		texture.layout = .UNDEFINED
-		texture.write = .None
-		texture.reads = {}
+		texture.levels = {}
 	}
 	d.dvk.ResetCommandPool(d.handle, f.pool, {})
 	begin := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}}
@@ -1352,7 +1358,7 @@ vk_recreate_swapchain :: proc(d: ^Device) -> bool {
 		view: vk.ImageView
 		d.dvk.CreateImageView(d.handle, &view_info, nil, &view)
 		t := Vk_Texture{
-			image = image, view = view, vk_format = chosen.format, aspect = {.COLOR}, layout = .UNDEFINED, swapchain = true,
+			image = image, view = view, vk_format = chosen.format, aspect = {.COLOR}, swapchain = true,
 			desc = {width = extent.width, height = extent.height, mip_levels = 1, format = sc.format, usage = {.Color_Target, .Transfer_Dst, .Transfer_Src}},
 		}
 		append(&sc.images, Texture(pool_add(&d.textures, t)))

@@ -421,8 +421,11 @@ access_is_write :: proc "contextless" (a: Access) -> bool {
 Load_Op :: enum u8 {Clear, Load, Dont_Care}
 Store_Op :: enum u8 {Store, Dont_Care}
 
+// A target is one mip of one layer (a face of a cube) of its texture.
 Color_Attachment :: struct {
 	texture: Texture,
+	mip:     u32,
+	layer:   u32,
 	load:    Load_Op,
 	store:   Store_Op,
 	clear:   [4]f32,
@@ -434,9 +437,18 @@ format_is_uint :: proc "contextless" (f: Format) -> bool {return f == .R32_Uint 
 
 Depth_Attachment :: struct {
 	texture: Texture,
+	mip:     u32,
+	layer:   u32,
 	load:    Load_Op,
 	store:   Store_Op,
 	clear:   f32,
+}
+
+// The size of the mip a target names; false when the texture lacks that mip or layer.
+@(private)
+attachment_extent :: proc "contextless" (desc: Texture_Desc, mip, layer: u32) -> (size: [2]u32, ok: bool) {
+	if mip >= max(desc.mip_levels, 1) || layer >= max(desc.layers, 1) {return}
+	return {max(desc.width >> mip, 1), max(desc.height >> mip, 1)}, true
 }
 
 Render_Pass_Desc :: struct {

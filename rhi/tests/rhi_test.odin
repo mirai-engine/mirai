@@ -258,6 +258,66 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// A pass draws into one mip of a texture while it samples another, and into
+// one layer of an array while the others keep what they had.
+@(test)
+rhi_a_pass_draws_into_one_mip_or_layer_of_a_texture :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	SIZE :: 8
+	chain := rhi.texture_create(d, {width = SIZE, height = SIZE, mip_levels = 2, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "chain"})
+	array := rhi.texture_create(d, {width = SIZE, height = SIZE, layers = 2, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "array"})
+	small := rhi.texture_create(d, {width = SIZE / 2, height = SIZE / 2, format = .RGBA8_Unorm, usage = {.Sampled, .Transfer_Src}, name = "second mip"})
+	sampler := rhi.sampler_create(d, {filter = .Nearest, name = "point"})
+	pipeline := rhi.pipeline_create_graphics(d, {
+		vertex = rhi.test_shader("triangle.vert"), fragment = rhi.test_shader("sample.frag"),
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "sample",
+	})
+	testing.expect(t, chain != 0 && array != 0 && small != 0 && pipeline != 0, rhi.device_error(d))
+	texels: [SIZE * SIZE * 4]u8
+	for i in 0 ..< SIZE * SIZE {texels[i * 4], texels[i * 4 + 1], texels[i * 4 + 2], texels[i * 4 + 3] = 200, 100, 50, 255}
+	testing.expect(t, rhi.texture_upload(d, chain, texels[:], SIZE * 4), rhi.device_error(d))
+	Vertex :: struct {position, color: [4]f32}
+	// One triangle over the target; the color is where it samples.
+	vertices := [3]Vertex{{{-1, -1, 0.5, 1}, {0.5, 0.5, 0, 1}}, {{3, -1, 0.5, 1}, {0.5, 0.5, 0, 1}}, {{-1, 3, 0.5, 1}, {0.5, 0.5, 0, 1}}}
+	buffer := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "vertices"})
+	rhi.buffer_upload_slice(d, buffer, 0, vertices[:])
+	cmd, ok := rhi.frame_begin(d)
+	testing.expect(t, ok)
+	if !ok {return}
+	Case :: struct {target: rhi.Texture, mip, layer: u32, draw: bool}
+	cases := [?]Case{{chain, 1, 0, true}, {array, 0, 0, false}, {array, 0, 1, true}}
+	for c in cases {
+		pass := rhi.Render_Pass_Desc{color_count = 1, name = "into one part"}
+		pass.colors[0] = {texture = c.target, mip = c.mip, layer = c.layer, load = .Clear, store = .Store, clear = {0, 0.25, 0, 1}}
+		rhi.cmd_begin_render_pass(cmd, &pass)
+		if c.draw {
+			rhi.cmd_bind_pipeline(cmd, pipeline)
+			rhi.cmd_bind_buffer(cmd, 0, buffer)
+			rhi.cmd_bind_texture(cmd, 1, chain, 0)
+			rhi.cmd_bind_sampler(cmd, 2, sampler)
+			rhi.cmd_draw(cmd, 3)
+		}
+		rhi.cmd_end_render_pass(cmd)
+	}
+	rhi.cmd_copy_texture(cmd, chain, small, src_mip = 1)
+	testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d))
+	rhi.device_wait_idle(d)
+	seen: [SIZE * SIZE * 4]u8
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	testing.expectf(t, mem.compare(seen[:SIZE * SIZE], texels[:SIZE * SIZE]) == 0, "the second mip holds what the first had: %v", seen[:4])
+	testing.expect(t, rhi.texture_read(d, chain, seen[:]), rhi.device_error(d))
+	testing.expectf(t, seen == texels, "the sampled mip keeps its texels: %v", seen[:4])
+	testing.expect(t, rhi.texture_read(d, array, seen[:]), rhi.device_error(d))
+	testing.expectf(t, [4]u8{seen[0], seen[1], seen[2], seen[3]} == {0, 64, 0, 255}, "the layer the pass did not draw into keeps its clear: %v", seen[:4])
+	rhi.buffer_destroy(d, buffer)
+	for texture in ([]rhi.Texture{chain, array, small}) {rhi.texture_destroy(d, texture)}
+	rhi.sampler_destroy(d, sampler)
+	rhi.pipeline_destroy(d, pipeline)
+	expect_clean(t, d)
+}
+
 @(test)
 rhi_storage_image_after_upload_and_frames :: proc(t: ^testing.T) {
 	d := test_device(t)

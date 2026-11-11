@@ -53,8 +53,7 @@ texture_open_shared :: proc(d: ^Device, desc: Texture_Desc, shared: Shared_Textu
 		return 0
 	}
 	// The one that draws leaves it ready to be sampled.
-	t.layout = .SHADER_READ_ONLY_OPTIMAL
-	t.reads = {.Shader_Read}
+	t.levels[0] = {layout = .SHADER_READ_ONLY_OPTIMAL, reads = {.Shader_Read}}
 	return vk_shared_finish(d, &t, desc)
 }
 
@@ -92,7 +91,6 @@ vk_shared_image :: proc(d: ^Device, desc: Texture_Desc) -> (t: Vk_Texture, ok: b
 		usage = usage, sharingMode = .EXCLUSIVE, initialLayout = .UNDEFINED,
 	}
 	if !vk_check(d, d.dvk.CreateImage(d.handle, &info, nil, &t.image), "vkCreateImage") {return}
-	t.layout = .UNDEFINED
 	return t, true
 }
 

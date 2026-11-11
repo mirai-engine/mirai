@@ -270,7 +270,20 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 			d.dvk.CreateImageView(d.handle, &view_info, nil, &t.mip_views[mip])
 		}
 	}
-	t.layout = .UNDEFINED
+	// A pass draws into one layer through a 2D view of it.
+	if layers > 1 && (.Color_Target in desc.usage || .Depth_Target in desc.usage) {
+		err: mem.Allocator_Error
+		t.layer_views, err = make([]vk.ImageView, t.desc.mip_levels * layers, d.allocator)
+		if err != nil {set_error(d, "texture %s: no memory for the views of its layers", desc.name); vk_release_texture(d, &t); return 0}
+		view_info.viewType = .D2
+		view_info.subresourceRange.levelCount = 1
+		view_info.subresourceRange.layerCount = 1
+		for &view, i in t.layer_views {
+			view_info.subresourceRange.baseMipLevel = u32(i) / layers
+			view_info.subresourceRange.baseArrayLayer = u32(i) % layers
+			d.dvk.CreateImageView(d.handle, &view_info, nil, &view)
+		}
+	}
 	vk_set_name(d, .IMAGE, u64(t.image), desc.name)
 	return Texture(pool_add(&d.textures, t))
 }
@@ -278,6 +291,7 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 @(private)
 vk_release_texture :: proc(d: ^Device, t: ^Vk_Texture) {
 	for v in t.mip_views {if v != 0 {d.dvk.DestroyImageView(d.handle, v, nil)}}
+	vk_layer_views_release(d, t.layer_views)
 	if t.view != 0 {d.dvk.DestroyImageView(d.handle, t.view, nil)}
 	if t.image != 0 {d.dvk.DestroyImage(d.handle, t.image, nil)}
 	vk_memory_unbind(d, t.memory)
@@ -288,10 +302,16 @@ texture_destroy :: proc(d: ^Device, texture: Texture) {
 	for entry, index in d.table_textures {if entry == texture {texture_table_set(d, u32(index), 0)}}
 	t, _ := pool_remove(&d.textures, base.Handle(texture))
 	if t.shared != 0 {vk_shared_close(t.shared)}
-	e := Vk_Deferred{image = t.image, memory = t.memory}
+	e := Vk_Deferred{image = t.image, memory = t.memory, layer_views = t.layer_views}
 	e.views[0] = t.view
 	for v, i in t.mip_views {e.views[i + 1] = v}
 	vk_defer(d, e)
+}
+
+@(private)
+vk_layer_views_release :: proc(d: ^Device, views: []vk.ImageView) {
+	for v in views {if v != 0 {d.dvk.DestroyImageView(d.handle, v, nil)}}
+	delete(views, d.allocator)
 }
 
 texture_desc :: proc(d: ^Device, texture: Texture) -> Texture_Desc {
@@ -420,7 +440,7 @@ texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 	}
 	shown := texture if texture != 0 else d.table_default
 	t := pool_get(&d.textures, base.Handle(shown))
-	if t == nil || t.desc.usage != {.Sampled} || t.layout != .SHADER_READ_ONLY_OPTIMAL {
+	if t == nil || t.desc.usage != {.Sampled} || t.levels[0].layout != .SHADER_READ_ONLY_OPTIMAL {
 		set_error(d, "texture table entry %d needs an uploaded texture with the Sampled usage alone", index)
 		return false
 	}
