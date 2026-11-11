@@ -205,7 +205,7 @@ locomotion_step :: proc(
     characters:^core.Table(phys.Character,.Read),states:^core.Table(Locomotion_State),moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),
     walks:^core.Table(Walk,.Read),flights:^core.Table(Fly,.Read),swims:^core.Table(Swim,.Read),slides:^core.Table(Slide,.Read),mantles:^core.Table(Mantle,.Read),tacticals:^core.Table(Tactical_Sprint,.Read),ledges:^core.Table(Ledge_Jump,.Read),
     found:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),
-    locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),remotes:^core.Table(core.Remote,.Read),physics:core.Ref(phys.Physics_State),
+    locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),remotes:^core.Table(core.Remote,.Read),physics:core.Ref(phys.Physics_State),places:core.Ref(core.Places),
     paces:^core.Table(core.Own_Pace,.Read),walk_actions:input.Input_Of(Walk_Action),requests:^Locomotion_Requests,time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     for asked in core.take(&requests.queue) {
@@ -261,16 +261,23 @@ locomotion_step :: proc(
             } else if core.owned(remotes,e) {move_input.look_yaw=c.yaw}
             c.ready=true
         }
+        ground,_:=core.get(found,e)
+        motion,_:=core.get(motions,e)
+        // Placed at rest (a respawn), it starts over where it is put: falling, at rest, facing there.
+        for placed in places.queue.items {
+            if placed.entity!=e || !placed.at_rest {continue}
+            c^={mode=start_mode(e,walks,flights,swims) or_else c.mode,ready=true,yaw=phys.look_yaw_of(frame,placed.rotation)}
+            if move_input!=nil && core.owned(remotes,e) {move_input.look_yaw=c.yaw}
+            ground,motion={},{}
+        }
         asked:input.Move_Input
         if move_input!=nil {asked=move_input^}
         pace:=core.pace_of(clock,paces,e)
-        ground,_:=core.get(found,e)
         c.yaw=mm.angle_wrap(c.yaw+ground.ground_turn)
         if body.turn_speed>0 {
             c.yaw=mm.angle_wrap(mm.angle_approach(c.yaw,asked.look_yaw,body.turn_speed*time.dt*pace))
         } else {c.yaw=asked.look_yaw}
         given:=move_facing(asked,c.yaw,frame)
-        motion,_:=core.get(motions,e)
         next:phys.Character_Move
         walk:Maybe(Walk)
         if found_walk,has:=core.get(walks,e);has {walk=found_walk}
@@ -335,15 +342,22 @@ locomotion_state_of :: proc(states:^core.Table(Locomotion_State),characters:^cor
     if c:=core.staged(states,e);c!=nil {return c}
     if !core.has(characters,e) {return nil}
     mode,given:=start.?
-    switch {
-    case given:
-    case core.has(walks,e):   mode=MODE_FALLING
-    case core.has(swims,e):   mode=MODE_SWIMMING
-    case core.has(flights,e): mode=MODE_FLYING
-    case: return nil
-    }
+    if !given {mode,given=start_mode(e,walks,flights,swims)}
+    if !given {return nil}
     core.add(states,e,Locomotion_State{mode=mode})
     return core.staged(states,e)
+}
+
+// The mode a character starts in by its components: falling (walking once it stands) with a Walk, else
+// swimming with a Swim, else flying with a Fly.
+@(private)
+start_mode :: proc(e:core.Entity,walks:^core.Table(Walk,$A),flights:^core.Table(Fly,$B),swims:^core.Table(Swim,$C)) -> (Locomotion_Mode,bool) {
+    switch {
+    case core.has(walks,e):   return MODE_FALLING,true
+    case core.has(swims,e):   return MODE_SWIMMING,true
+    case core.has(flights,e): return MODE_FLYING,true
+    }
+    return {},false
 }
 
 // What set_gravity_scale asked to scale the gravity of a character by.

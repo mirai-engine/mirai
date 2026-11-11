@@ -103,7 +103,7 @@ the_body_turns_toward_its_look_at_its_turn_speed :: proc(t:^testing.T) {
     locomotion_step(
         core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
         core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
-        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},core.CLOCK_DEFAULT,&f.problems,
+        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},core.CLOCK_DEFAULT,&f.problems,
     )
     testing.expectf(t,near(loco_state(&f).yaw,-cmath.PI*dt,1e-5),"a tick turns it pi*dt: %v",loco_state(&f).yaw)
     move,_:=core.get(&f.moves,f.e)
@@ -144,6 +144,28 @@ a_jump_reaches_the_height_of_the_locomotion_once_per_press :: proc(t:^testing.T)
         }
         testing.expectf(t,near(apex,want,0.05),"with jump_cut %v it rises to %v, want %v",cut,apex,want)
     }
+}
+
+// Placed at rest (a respawn) while it falls at 20 m/s, a walker stops where it is put and its
+// locomotion starts over: no fall carried on, so it lands as from a standstill.
+@(test)
+a_walker_placed_at_rest_stops_and_starts_its_locomotion_over :: proc(t:^testing.T) {
+    f:Loco_Test
+    if !loco_test_init(t,&f,{0,60,0}) {return}
+    defer loco_test_destroy(&f)
+    loco_test_tick(&f,{},60)
+    core.push(&f.requests.queue,phys.Body_Request{entity=f.e,kind=.Velocity,linear={0,-20,0}})
+    loco_test_tick(&f,{})
+    testing.expectf(t,loco_velocity(&f).y< -19.5 && loco_state(&f).fall_time>0.9,"it falls at %v for %v s",loco_velocity(&f).y,loco_state(&f).fall_time)
+    turned:=mm.quat_axis_angle({0,1,0},1)
+    core.push(&f.places.queue,core.Place_Request{f.e,{0,0,0},turned,true})
+    loco_test_tick(&f,{})
+    v:=loco_velocity(&f)
+    testing.expectf(t,abs(v.y)<0.2 && abs(v.x)<0.01 && abs(v.z)<0.01,"it stops where it is put: %v",v)
+    state:=loco_state(&f)
+    testing.expectf(t,state.fall_time==0 && state.air_time<0.02 && near(state.yaw,1,1e-4),"its locomotion starts over facing the place: %v",state)
+    loco_test_tick(&f,{},10)
+    testing.expect_value(t,loco_state(&f).mode,MODE_WALKING)
 }
 
 @(test)
