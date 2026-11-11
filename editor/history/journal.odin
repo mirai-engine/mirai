@@ -212,9 +212,19 @@ journal_diff :: proc(t:^core.Raw_Table,image:^Journal_Table,size:int,ranges:[][2
     seen:=image.seen
     d={table=t,image=image,size=size,ranges=ranges,c=core.raw_changes(t,&seen),authors=authors,only_authors=only_authors}
     if d.c.all {d.phase,d.at=2,len(image.entities)}
-    // Each entity once, however many times its row went.
-    if gone:=slice.clone(d.c.gone,context.temp_allocator);len(gone)>1 {slice.sort(gone);d.c.gone=slice.unique(gone)}
     return
+}
+
+// Each entity of a diff once, however many times its row went: what a step
+// records. The other diffs take a change that makes a later visit of the
+// same entity equal, and do not allocate. False without memory for it.
+journal_diff_once :: proc(d:^Journal_Diff) -> bool {
+    if len(d.c.gone)<2 {return true}
+    gone,error:=slice.clone(d.c.gone,context.temp_allocator)
+    if error!=nil {return false}
+    slice.sort(gone)
+    d.c.gone=slice.unique(gone)
+    return true
 }
 
 @(private)
@@ -224,9 +234,9 @@ journal_differ :: proc(d:^Journal_Diff,image_row,row:int) -> bool {
 }
 
 // The next row the World and the image disagree on: of the entities whose
-// row went or turned off, and of the rows stamped since; of every
-// row of both when the table holds rows the image did not see. Rows are
-// visited from the last, so a row dropped meanwhile does not hide another.
+// row went or turned off, once each after journal_diff_once, and of the rows
+// stamped since; of every row of both when the table holds rows the image did
+// not see. Rows are visited from the last, so a row dropped meanwhile does not hide another.
 journal_diff_next :: proc(d:^Journal_Diff) -> (r:Journal_Row,ok:bool) {
     t,image:=d.table,d.image
     for {
