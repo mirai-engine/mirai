@@ -264,7 +264,9 @@ scan opens every file and writes it again.
   from the one it had and from its path, so it is the same on each scan until saved; it stops being
   part of another asset and an output of an import. An unedited copy follows its file; one that was
   already in memory with the repeated id is an edit and keeps it. A tool that only reads
-  (`mirai asset ls`, cooking) does not activate it and sees the pair in `r.duplicates`.
+  (`mirai asset ls`, cooking) does not activate it and sees the pair in `r.duplicates`. The cook
+  refuses the pair (`Duplicate_Id`, naming both files): which one the editor takes depends on the
+  creation times of a machine, so a game ships neither until the copy is saved with its own id.
 
 ## Text
 

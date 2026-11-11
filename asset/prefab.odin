@@ -285,7 +285,9 @@ components_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]bas
     for at in 1..<len(prefab.doc.tables) {
         source:=&prefab.doc.tables[at]
         if len(source.columns)!=2 || source.columns[0].name!=COLUMN_ENTITY || source.columns[0].ref!=0 || source.columns[1].name!=COLUMN_VALUE || membership_hash(source.name_hash) {continue}
-        table:=scene_component_add(scene,source.name,&prefab.doc.schema,source.columns[1].type) or_return
+        table,twin:=scene_component_twin(scene,source.name,&prefab.doc.schema,source.columns[1].type)
+        if !twin {table=scene_component_add(scene,source.name,&prefab.doc.schema,source.columns[1].type) or_return}
+        hash:=scene.doc.tables[table].name_hash
         type:=scene.doc.tables[table].columns[1].type
         size:=scene.doc.tables[table].columns[1].size
         migration:serial.Migration
@@ -296,11 +298,11 @@ components_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]bas
         if !serial.refs_collect(&scene.doc.schema,type,&refs,MAX_REFS) {return .Invalid}
         if resize(&image,size)!=nil {return .Out_Of_Memory}
         ids:=scene_ids(prefab)
-        placement:=keep && source.name_hash==base.name_hash(INSTANCE_PLACEMENT)
+        placement:=keep && hash==base.name_hash(INSTANCE_PLACEMENT)
         for entity_row,row in mem_rows(source) {
             entity,present:=remap[ids[entity_row]]
             if !present || placement && entity==root {continue}
-            if keep && override_find(scene,entity,source.name_hash,.Removed) {continue}
+            if keep && override_find(scene,entity,hash,.Removed) {continue}
             serial.migration_apply(&migration,image[:],source.columns[1].data[row*source.columns[1].size:],1)
             for ref in refs {
                 if ref.kind==.Asset {continue}
@@ -313,14 +315,14 @@ components_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]bas
                 // What the instance holds on its own stays over what the prefab says.
                 if current,has:=scene_component_get(scene,table,entity);has {
                     for &override in scene.overrides {
-                        if override.entity!=entity || override.component!=source.name_hash || override.kind!=.Field {continue}
+                        if override.entity!=entity || override.component!=hash || override.kind!=.Field {continue}
                         override_keep(&scene.doc.schema,type,current,image[:],override_text(&override))
                     }
                 }
             }
             scene_component_set(scene,table,entity,image[:]) or_return
-            if !keep || !override_find(scene,entity,source.name_hash,.Turned) {
-                scene_component_turn(scene,entity,source.name_hash,scene_component_off(prefab,ids[entity_row],source.name_hash)) or_return
+            if !keep || !override_find(scene,entity,hash,.Turned) {
+                scene_component_turn(scene,entity,hash,scene_component_off(prefab,ids[entity_row],source.name_hash)) or_return
             }
         }
     }
@@ -428,9 +430,10 @@ scene_instantiate :: proc(scene:^Scene,prefab:^Scene,prefab_id:base.Asset_Id,par
 }
 
 // Brings an instance up to date with its prefab: members, hierarchy, names
-// and components follow the prefab, except what the instance overrides. A
-// member that leaves takes with it what the instance added under it.
-scene_instance_update :: proc(scene:^Scene,root:base.Entity_Id,prefab:^Scene) -> Error {
+// and components follow the prefab, except what the instance overrides. What
+// the instance added under a member that leaves hangs from the nearest member
+// left, the root at worst, and reparented counts it.
+scene_instance_update :: proc(scene:^Scene,root:base.Entity_Id,prefab:^Scene,reparented:^int=nil) -> Error {
     instance,placed:=scene_instance(scene,root)
     root_source,has_root:=prefab_root(prefab)
     if !placed || !has_root || scene==prefab {return .Invalid}
@@ -459,12 +462,19 @@ scene_instance_update :: proc(scene:^Scene,root:base.Entity_Id,prefab:^Scene) ->
             copy(scene_names(scene)[target][:ENTITY_NAME_BYTES-1],source.name)
         }
     }
+    // A component renamed since one of the two was written is one component (was=).
+    for &source,at in prefab.doc.tables {
+        if component_table(prefab,at) {_,_=scene_component_twin(scene,source.name,&prefab.doc.schema,source.columns[1].type)}
+    }
     // A component the prefab no longer has leaves with it, unless the instance added it.
     placement:=base.name_hash(INSTANCE_PLACEMENT)
     for table in 1..<len(scene.doc.tables) {
         target:=&scene.doc.tables[table]
         if _,is_component:=scene_component(scene,target.name);!is_component || membership_hash(target.name_hash) {continue}
         source,in_prefab:=scene_component_by_hash(prefab,target.name_hash)
+        for candidate,at in prefab.doc.tables {
+            if !in_prefab && component_table(prefab,at) && serial.names_hold(scene.doc.schema.types[target.columns[1].type].was,candidate.name) {source,in_prefab=at,true}
+        }
         for source_id,entity in remap {
             if entity==root && target.name_hash==placement {continue}
             if _,has:=scene_component_get(scene,table,entity);!has {continue}
@@ -475,8 +485,26 @@ scene_instance_update :: proc(scene:^Scene,root:base.Entity_Id,prefab:^Scene) ->
         }
     }
     components_copy(scene,prefab,&remap,true,root) or_return
-    // Every member hangs where the prefab puts it, so what is still under
-    // one that leaves is what the instance added there.
+    // Every member that stays hangs where the prefab puts it, so what is still under one that
+    // leaves is what the instance added there or a member that leaves too.
+    if len(vanished)>0 {
+        leaving:=make(map[base.Entity_Id]bool,len(vanished),context.temp_allocator)
+        for entity in vanished {leaving[entity]=true}
+        ids,parents,orders:=scene_ids(scene),scene_parents(scene),scene_orders(scene)
+        for id,row in ids {
+            if id in leaving || !(parents[row] in leaving) {continue}
+            parent:=parents[row]
+            for leaving[parent] {parent=parents[scene.index[parent]]}
+            if parent==0 {parent=root}
+            order:=u32(0)
+            for other,at in parents {
+                if other==parent {order=max(order,orders[at]+1)}
+            }
+            parents[row],orders[row]=parent,order
+            scene_override_add(scene,id,0,"",.Child) or_return
+            if reparented!=nil {reparented^+=1}
+        }
+    }
     _=scene_entities_remove(scene,vanished[:]) or_return
     instance.stamp=prefab.stamp
     return scene_instance_set(scene,root,instance)
@@ -743,6 +771,7 @@ Prefab_Resolver :: struct {
     // Why a prefab that is there was not opened, from then on: its instances
     // read as up to date, and resolver_prefab and scene_resolve answer it.
     error:Error,
+    reparented:int, // entities documents added under members their prefabs removed, now under the nearest member left
     allocator:runtime.Allocator,
 }
 
@@ -913,7 +942,7 @@ scene_resolve :: proc(r:^Prefab_Resolver,scene:^Scene) -> (changed:bool,error:Er
         if !placed {continue}
         prefab:=resolver_prefab(r,instance.prefab) or_return
         if prefab==nil || prefab==scene {continue}
-        scene_instance_update(scene,root,prefab) or_return
+        scene_instance_update(scene,root,prefab,&r.reparented) or_return
         changed=true
     }
     return

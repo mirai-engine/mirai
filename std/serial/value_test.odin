@@ -466,6 +466,23 @@ a_renamed_field_keeps_its_value_through_each_name_it_had :: proc(t:^testing.T) {
         testing.expect_value(t,m.added,0)
         testing.expect(t,slice.equal(m.removed[:],entry.removed),fmt.tprint(m.removed))
     }
+    // The names travel in the binary schema: a file of the newest layout goes into the oldest.
+    w:Writer;writer_init(&w);defer writer_destroy(&w)
+    schema_write(&w,&now)
+    r:=reader_init(writer_bytes(&w))
+    filed:Schema
+    testing.expect_value(t,schema_read(&r,&filed),Schema_Error.None)
+    defer schema_destroy(&filed)
+    third:=Lamp_V3{force=4,shape={2}}
+    m:Migration;migration_init(&m,&filed,now_type,&stored,v1);defer migration_destroy(&m)
+    old:Lamp_V1
+    value_read(&m,&old,bytes_of(&third),1)
+    testing.expect_value(t,old,Lamp_V1{power=4,shape={2,0}})
+    // A path written before the renames names the field by any name it had.
+    for name in ([]string{"force","strength","power"}) {
+        _,part,error:=value_slice(&filed,now_type,bytes_of(&third),name)
+        testing.expectf(t,error==.None && (^f32)(raw_data(part))^==4,"%s: %v",name,error)
+    }
     _,added:=schema_add(&now,Clash)
     testing.expect(t,!added && strings.contains(now.error,"was=power"),now.error)
 }
