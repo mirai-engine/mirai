@@ -12,10 +12,20 @@ f0_from_ior :: proc "contextless" (ior:f32) -> f32 {
     return ratio*ratio
 }
 
-// What a material can hold as its index of refraction: 0, a constant
-// reflector, or 1 and above.
+// What a material can hold as its index of refraction: 1 and above.
 ior_valid :: proc "contextless" (ior:f32) -> bool {
-    return ior-ior==0 && (ior==0 || ior>=1)
+    return ior-ior==0 && ior>=1
+}
+
+// A source whose index of refraction is 0, the specular-glossiness mode of
+// KHR_materials_ior, reflects its specular color at every angle: it is
+// converted as such a surface (specular_glossiness) and takes the index of a
+// common dielectric, without its specular maps. textured: it had one.
+ior_zero_convert :: proc(info:^asset.Material_Info,textured:bool) {
+    specular:=info.specular_color*info.specular_factor
+    specular_glossiness(info,{diffuse={info.base_color.r,info.base_color.g,info.base_color.b,info.opacity},specular=specular,glossiness=1-info.roughness,textured=textured})
+    info.ior,info.specular_factor,info.specular_color=DIELECTRIC_IOR,1,{1,1,1}
+    info.maps.specular,info.maps.specular_color=asset.MATERIAL_MAP_DEFAULT,asset.MATERIAL_MAP_DEFAULT
 }
 
 DIELECTRIC_IOR :: f32(1.5)

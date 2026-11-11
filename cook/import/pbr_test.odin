@@ -8,7 +8,25 @@ import "mirai:asset"
 specular_glossiness_becomes_metallic_roughness :: proc(t:^testing.T) {
     close :: proc(a,b:f32) -> bool {return abs(a-b)<1e-4}
     testing.expect(t,close(f0_from_ior(1.5),0.04) && close(f0_from_ior(1),0))
-    testing.expect(t,ior_valid(0) && ior_valid(1) && ior_valid(1.5) && !ior_valid(0.5) && !ior_valid(-1) && !ior_valid(math.nan_f32()))
+    testing.expect(t,!ior_valid(0) && ior_valid(1) && ior_valid(1.5) && !ior_valid(0.5) && !ior_valid(-1) && !ior_valid(math.nan_f32()))
+
+    // An index of refraction of 0 is no mode of a material: a surface that came with it is converted too.
+    Zero :: struct {base,specular:[3]f32,factor,roughness:f32,mapped:bool,metallic:f32,color:[3]f32}
+    zeros:=[?]Zero{
+        {base={1,1,1},specular={1,1,1},factor=1,roughness=0.25,metallic=1,color={1,1,1}},              // a mirror at every angle: a metal
+        {base={0.5,0.25,0.125},specular={1,1,1},factor=0.04,roughness=0.75,metallic=0,color={0.5,0.25,0.125}}, // the reflectance of a plastic
+        {base={0.5,0.5,0.5},specular={1,1,1},factor=1,roughness=0.5,mapped=true,metallic=0,color={0.5,0.5,0.5}},  // a specular map cannot be converted
+    }
+    for zero in zeros {
+        given:=asset.MATERIAL_DEFAULTS
+        given.ior,given.base_color,given.specular_color,given.specular_factor,given.roughness,given.opacity=0,zero.base,zero.specular,zero.factor,zero.roughness,0.5
+        if zero.mapped {given.maps.specular.texture={7,7}}
+        testing.expect(t,!asset.material_check({info=&given}),"a material does not hold an index of refraction of 0")
+        ior_zero_convert(&given,zero.mapped)
+        testing.expect(t,asset.material_check({info=&given}) && given.ior==DIELECTRIC_IOR && given.specular_factor==1 && given.specular_color==[3]f32{1,1,1} && given.maps.specular.texture=={})
+        testing.expectf(t,close(given.metallic,zero.metallic) && close(given.roughness,zero.roughness) && close(given.opacity,0.5),"%v",given.metallic)
+        testing.expectf(t,close(given.base_color.r,zero.color.r) && close(given.base_color.g,zero.color.g) && close(given.base_color.b,zero.color.b),"%v",given.base_color)
+    }
 
     // The defaults of the extension are a white mirror: a metal.
     info:=asset.MATERIAL_DEFAULTS

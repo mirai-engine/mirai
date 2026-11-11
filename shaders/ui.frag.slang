@@ -1,4 +1,5 @@
 #include "native.slang"
+#define MIRAI_NO_INSTANCES
 //! per surface program
 // world: a panel placed in the scene, which the scene may hide.
 //! constant world MIRAI_UI_WORLD

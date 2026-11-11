@@ -218,7 +218,7 @@ Terrain_Resident :: struct {
     pass:u32,
     gc_shapes:[4]core.Shape, // of the transforms, the chunks, the ids and the terrains at the last prune
     gc_parents:core.Seen,
-    shown:[3]core.Seen, // Terrain, Tint and Material_Override after the owners last showed their chunks
+    shown:[2]core.Seen, // Terrain and Material_Values after the owners last showed their chunks
     stats:Terrain_Resident_Stats,
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
     lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
@@ -263,7 +263,7 @@ Resident_Source :: struct {
     dirty:[]bool,            // by node: in pending
     pending:[dynamic]u32,    // nodes whose mesh may show something else than what is wanted
     leave:bool,              // a chunk was let go: pages may leave with it
-    override:render.Material_Override, // of its layers
+    override:render.Material_Values, // of its layers
     override_info:Source_Info,         // the layers it was made from
     override_assets:[2]u64,            // and the revision and structure of the assets
     join:Terrain_Join,
@@ -276,8 +276,8 @@ Resident_Owner :: struct {
     nodes:[]Owner_Node,   // by node: what this terrain wants and shows of it
     changed:[dynamic]u32, // nodes it began or stopped showing since it last published
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // its chunks show, chunk_materials
-    tint:render.Tint,
-    override:render.Material_Override,
+    tint:render.Material_Values,     // the color and the light of its entity, which its chunks take
+    override:render.Material_Values, // of its layers: what its chunks show over them
     solid:bool,
     far:bool,  // of a section that is not loaded (scene.Far_Kept): its far form alone, without colliders
     pass:u32,

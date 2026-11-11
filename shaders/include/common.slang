@@ -180,7 +180,8 @@ struct Instance {
     float4 glass;         // rgb: what a crossing of one of its blended faces leaves of light, the mean over them (glass_mean.comp writes it after every upload); a: their area
     uint slot_materials[32]; // row+1 by source slot; zero inherits
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
-    uint reserved[3];
+    uint material_values; // 1 + the word of the index pool where the values it gives over the rows of its materials start; 0: none
+    uint reserved[2];
 };
 uint instance_mesh(Instance inst) { return inst.meta.x & INSTANCE_MESH_MASK; }
 uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT) & 3u; }
@@ -245,7 +246,7 @@ struct Material {
     float3 specular_color;      // multiplies the dielectric F0 of its IOR
     float specular_factor;
     float transmission;         // share of the light that goes through instead of being diffused
-    float ior;                  // 0: a constant Fresnel
+    float ior;                  // 1 and above
     float thickness;            // 0: a sheet
     float attenuation_distance; // 0: the solid absorbs nothing
     float3 attenuation_color;   // what a solid leaves of white light that crosses attenuation_distance of it

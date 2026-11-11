@@ -27,7 +27,7 @@ thumbnail_subject :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,s
     case asset.KIND_ANIMATION:
         model:=thumbnail_animation_model(&p.models,a,file.id)
         switch {
-        case model.mesh!={}:     subject^={mesh={mesh=model.mesh},tint=erender.TINT_DEFAULT,provider=file.kind,pose=file.id,clip=max(clip,1)}
+        case model.mesh!={}:     subject^={mesh={mesh=model.mesh},tint=erender.MATERIAL_VALUES_DEFAULT,provider=file.kind,pose=file.id,clip=max(clip,1)}
         case model.document!={}: subject^={document=model.document,root=model.root}
         case:                    return false
         }
@@ -46,7 +46,7 @@ thumbnail_triangles :: proc(s:^editor.Session,subject:^editor.Thumbnail_Subject,
     a:=app.assets
     if a==nil || app.renderer==nil {return false}
     first:=len(vertices)
-    if editor.triangles_append(a,subject.mesh,subject.tint,nil,mm.TRANSFORM_IDENTITY,editor.THUMBNAIL_TRIANGLES*3-first,vertices,materials)!=.Added {return false}
+    if editor.triangles_append(a,subject.mesh,subject.tint,mm.TRANSFORM_IDENTITY,editor.THUMBNAIL_TRIANGLES*3-first,vertices,materials)!=.Added {return false}
     skin:Subject_Skin
     defer subject_skin_free(app.renderer,&skin)
     if !skin_geometry_read(&skin.geometry,a,subject.mesh.mesh) || !subject_skin_ready(app,core.world_ref(s.editor_world,s.info,.Editor),&skin) {return false}

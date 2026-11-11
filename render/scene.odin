@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:slice"
 import "mirai:asset"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -62,6 +63,7 @@ Instance_Desc :: struct {
 	material:  Material_Handle, // replaces the materials of the mesh's vertices; 0 keeps them
 	tint:      Vec3,            // multiplies the base color
 	emission:  Vec3,            // added to the emission of the material
+	material_values: Instance_Material_Values, // over the rows of its materials, where it shows them
 	hidden:    bool,
 	highlight: u8,              // outline level: 0 none, then the editor's and the game's (HIGHLIGHT_LEVELS)
 	copy_owner, copy_variant: u64, // distinguishes rendered copies; zero identifies the original
@@ -447,7 +449,7 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 			roughness = clamp(m.roughness, 0, 1), metallic = clamp(m.metallic, 0, 1),
 			occlusion_strength = clamp(m.occlusion_strength, 0, 1), alpha_cutoff = clamp(m.alpha_cutoff, 0, 1),
 			specular_color = linalg.clamp(m.specular_color, 0, 1), specular_factor = m.specular_factor,
-			transmission = transmission, ior = max(m.ior, 0), thickness = max(m.thickness, 0), attenuation_distance = max(m.attenuation_distance, 0),
+			transmission = transmission, ior = max(m.ior, 1), thickness = max(m.thickness, 0), attenuation_distance = max(m.attenuation_distance, 0),
 			attenuation_color = {clamp(m.attenuation_color.x, 0, 1), clamp(m.attenuation_color.y, 0, 1), clamp(m.attenuation_color.z, 0, 1)},
 			alpha_mode = u32(mode), emission_mode = u32(m.emission_mode), program_id = m.program_id,
 		},
@@ -464,32 +466,22 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 		}
 	}
 	result.layers = transmute(u32)layers
-	if .Coat in layers {
-		c := m.coat
-		result.coat = {color = linalg.clamp(c.color, 0, 1), weight = clamp(c.weight, 0, 1), roughness = clamp(c.roughness, 0, 1), ior = max(c.ior, 1), normal_scale = c.normal_scale}
-	}
-	if .Fuzz in layers {
-		f := m.fuzz
-		result.fuzz = {color = linalg.clamp(f.color, 0, 1), weight = clamp(f.weight, 0, 1), roughness = clamp(f.roughness, 0, 1)}
-	}
-	if .Anisotropy in layers {
-		result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
-	}
-	if .Diffuse_Transmission in layers {
-		d := m.diffuse_transmission
-		result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
-	}
+	// The blocks of the layers it does not hold too: those an instance gives a weight take the rest from them.
+	c, f, d := m.coat, m.fuzz, m.diffuse_transmission
+	result.coat = {color = linalg.clamp(c.color, 0, 1), weight = clamp(c.weight, 0, 1), roughness = clamp(c.roughness, 0, 1), ior = max(c.ior, 1), normal_scale = c.normal_scale}
+	result.fuzz = {color = linalg.clamp(f.color, 0, 1), weight = clamp(f.weight, 0, 1), roughness = clamp(f.roughness, 0, 1)}
+	result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
+	result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
 	maps := m.maps
 	placed := asset.material_maps(&maps)
 	for transform, kind in placed {
 		result.textures[kind] = texture_index(r, m.textures[kind])
-		// rotation * (scale_map * (scale * uv + offset)) + offset_map, as one matrix and one offset.
+		// rotation * (scale * uv) + offset, as one matrix and one offset.
 		sine, cosine := math.sin(transform.rotation), math.cos(transform.rotation)
-		scale := m.uv_scale * transform.scale
-		shift := m.uv_offset * transform.scale
+		scale := transform.scale
 		result.map_transforms[kind] = {
 			linear = {cosine * scale.x, -sine * scale.y, sine * scale.x, cosine * scale.y},
-			offset = {cosine * shift.x - sine * shift.y + transform.offset.x, sine * shift.x + cosine * shift.y + transform.offset.y},
+			offset = transform.offset,
 			uv_set = transform.uv_set,
 			ray_lod = 0.5 * math.log2(max(abs(scale.x * scale.y), 1e-12)),
 		}
@@ -739,7 +731,7 @@ instances_classify :: proc(s: ^Scene_State) {
 	clear(&s.reflective)
 	for &inst, i in s.instances {
 		if int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, s.meshes[inst.meta.x & INSTANCE_MESH_MASK], inst.meta.y, inst.slot_materials)
+		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, s.meshes[inst.meta.x & INSTANCE_MESH_MASK], inst.meta.y, inst.slot_materials, inst.material_values)
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(tested, blended, glass)
 		if reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), layered})}
 		if flags != inst.meta.w {
@@ -782,8 +774,9 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 @(private)
 // reflectance: one of its opaque materials reflects other than the default
 // dielectric, which the albedo and metallic of the G-buffer give by themselves.
-// glass_layered: one of its blended materials has layers.
-instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32) -> (tested, blended, glass, reflectance, layered, solid, glass_layered: bool) {
+// glass_layered: one of its blended materials has layers. given: the values
+// the instance gives its rows (instance_material_values_words).
+instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32, given: u32 = 0) -> (tested, blended, glass, reflectance, layered, solid, glass_layered: bool) {
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
     glass = mesh.slot_count > 0
@@ -793,10 +786,11 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         if int(row)<len(s.materials) {
             values:=&s.materials[row]
             m=asset.Alpha_Mode(values.alpha_mode)
-            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
+            given_specular,given_layers:=instance_values_class(s,given,row)
+            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior || given_specular
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
-            if card(lit)>0 {
+            if card(lit)>0 || given_layers {
                 if m == .Blend {glass_layered=true} else {layered=true}
             }
         }
@@ -1054,7 +1048,10 @@ GEOMETRY_STAGING_KEPT :: u64(64) << 20
 renderer_commit_geometry :: proc(r: ^Renderer, cmd: ^rhi.Command_List = nil, slot := 0) -> bool {
 	s := &r.scene
 	dirty := s.geometry_dirty
-	if !dirty && !geometry_uploads_left(s) {return true}
+	// Words written in place (the values of an instance) go without a BLAS or TLAS to build.
+	written := false
+	for ranges in s.pool_dirty {written ||= len(ranges) > 0}
+	if !dirty && !written && !geometry_uploads_left(s) {return true}
 	d := r.device
 	blas_inputs_release(r)
 	left := geometry_blas_inputs(r, cmd != nil)
@@ -1395,40 +1392,126 @@ tlas_settle :: proc(s: ^Scene_State) {
 	}
 }
 
-// Gives instances of the scene another tint and emission, and nothing else:
-// descs are their indices. False, with nothing changed, when the lists differ in
-// length or name an instance that the set did not have.
-scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3) -> bool {
+// Gives instances of the scene another tint and emission and, with values,
+// other values over the rows of their materials, and nothing else: descs are
+// their indices. It touches each instance alone: no row of the material
+// table, no texture, no other instance. False, with nothing changed, when the
+// lists differ in length or name an instance that the set did not have.
+// Values that change whether it reflects or has layers class every instance
+// again.
+scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values: []Instance_Material_Values = nil) -> bool {
 	s := &r.scene
-	if len(descs) != len(tints) || len(descs) != len(emissions) {return false}
+	if len(descs) != len(tints) || len(descs) != len(emissions) || values != nil && len(descs) != len(values) {return false}
 	for desc in descs {
 		if int(desc) >= len(s.instances) {return false}
 	}
+	classify := false
 	for index, at in descs {
 		inst := &s.instances[index]
 		tint := Vec4{tints[at].x, tints[at].y, tints[at].z, inst.tint.w}
 		emission := Vec4{emissions[at].x, emissions[at].y, emissions[at].z, inst.emission.w}
-		if inst.tint == tint && inst.emission == emission {continue}
-		glowed := inst.emission != emission
+		glowed := inst.emission != emission || instance_material_values_glow(s, inst.material_values)
+		changed := inst.tint != tint || inst.emission != emission
 		inst.tint, inst.emission = tint, emission
-		instance_changed_near(s, inst, glowed)
+		if values != nil {
+			given := values[at]
+			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
+			_, _, _, reflected, layered, _, glass_layered := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			changed ||= instance_material_values_give(r, inst, &given)
+			_, _, _, reflects, layers, _, glass_layers := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			classify ||= reflects != reflected || layers != layered || glass_layers != glass_layered
+		}
+		if !changed {continue}
+		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
 		instance_touch(s, u32(index))
 	}
+	if classify {instances_classify(s)}
 	return true
+}
+
+// The words of the values of an instance in the index pool (Gpu_Instance.values); none for 0.
+@(private)
+instance_material_values_words :: proc "contextless" (s: ^Scene_State, values: u32) -> []u32 {
+	if values == 0 || int(values) > len(s.indices) {return nil}
+	count := int(min(s.indices[values - 1], INSTANCE_VALUES_MAX))
+	if int(values) + count * INSTANCE_VALUE_WORDS > len(s.indices) {return nil}
+	return s.indices[values:][:count * INSTANCE_VALUE_WORDS]
+}
+
+// What the values an instance gives a row change of how it is drawn: a
+// specular of its own reflects, and a layer reaches the layers target.
+@(private = "file")
+instance_values_class :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (specular, layered: bool) {
+	words := instance_material_values_words(s, values)
+	for at := 0; at + INSTANCE_VALUE_WORDS <= len(words); at += INSTANCE_VALUE_WORDS {
+		if words[at] != row {continue}
+		#partial switch Instance_Material_Value_Target(words[at + 1] & 0xff) {
+		case .Specular: specular = true
+		case .Coat ..= .Anisotropy_Rotation, .Diffuse_Transmission, .Diffuse_Transmission_Color: layered = true
+		}
+	}
+	return
+}
+
+// Whether the values of an instance give it an emission: its glow reaches as far as that of a tint.
+@(private = "file")
+instance_material_values_glow :: proc "contextless" (s: ^Scene_State, values: u32) -> bool {
+	words := instance_material_values_words(s, values)
+	for at := 0; at + INSTANCE_VALUE_WORDS <= len(words); at += INSTANCE_VALUE_WORDS {
+		if words[at + 1] & 0xff == u32(Instance_Material_Value_Target.Emission) {return true}
+	}
+	return false
+}
+
+// Puts the values of an instance in the index pool in place of those it had:
+// over them when they are as many, else in room of their own. False when
+// they are those it had, or without room for them (stats.problem says what
+// is missing): the instance keeps what it had.
+@(private)
+instance_material_values_give :: proc(r: ^Renderer, inst: ^Gpu_Instance, given: ^Instance_Material_Values) -> (changed: bool) {
+	s := &r.scene
+	count := min(int(given.count), len(given.entries))
+	entries := slice.reinterpret([]u32, given.entries[:count])
+	held := instance_material_values_words(s, inst.material_values)
+	if slice.equal(held, entries) {return false}
+	if len(held) == len(entries) {
+		copy(held, entries)
+		range_add(&s.pool_dirty[.Index], {inst.material_values, u32(len(held))})
+		return true
+	}
+	stored: u32
+	if count > 0 {
+		if !pool_room(r, .Index, len(entries) + 1) || reserve(&s.indices, len(s.indices) + len(entries) + 1) != nil {return false}
+		first := u32(len(s.indices))
+		append(&s.indices, u32(count))
+		append(&s.indices, ..entries)
+		stored = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], first) + 1
+	}
+	instance_material_values_release(s, inst)
+	inst.material_values = stored
+	return true
+}
+
+// Gives back the words of the values of an instance, which has none after.
+@(private)
+instance_material_values_release :: proc(s: ^Scene_State, inst: ^Gpu_Instance) {
+	if words := instance_material_values_words(s, inst.material_values); inst.material_values != 0 {
+		pool_release(&s.indices, &s.pool_free[.Index], inst.material_values - 1, u32(len(words)) + 1)
+	}
+	inst.material_values = 0
 }
 
 // An instance of the scene described again at another index: `descriptor`
 // is what `from` was, and takes where that one was drawn as its previous
 // transform, so the next frame draws its motion, and what extensions gave it
-// (scene_set_instance_values, scene_set_instance_wet). For whoever
-// closes the gap an instance leaves with another, before it truncates the
-// scene. False for a descriptor the scene does not have.
+// (scene_set_instance_wet). For whoever closes the gap an instance leaves
+// with another, before it truncates the scene. False for a descriptor the
+// scene does not have.
 scene_instance_was :: proc(r: ^Renderer, descriptor, from: u32) -> bool {
 	s := &r.scene
 	if int(descriptor) >= len(s.instances) || int(from) >= len(s.instances) {return false}
 	was, inst := s.instances[from], &s.instances[descriptor]
 	inst.prev_world, inst.wet = was.world, was.wet
-	inst.tint.w, inst.emission.w, inst.bounds_min.w, inst.bounds_max.w = was.tint.w, was.emission.w, was.bounds_min.w, was.bounds_max.w
 	instance_touch(s, descriptor)
 	return true
 }
@@ -1461,30 +1544,10 @@ scene_instance_materials :: proc(r: ^Renderer, descriptor: u32) -> (material: Ma
 	return material, inst.slot_materials, s.overlays[index], true
 }
 
-// Four numbers of each instance that extensions give it and read in their
-// shaders (instance_values of scene.slang), by the descriptor of the
-// instance. They stay while the instance keeps its identity, and change
-// neither its light nor its rays. False for a descriptor the scene does not
-// have or a value that is not finite.
-scene_set_instance_values :: proc(r:^Renderer,descriptor:u32,values:Vec4) -> bool {
-    s:=&r.scene
-    if int(descriptor)>=len(s.instances) {return false}
-    for value in values {if value!=value || value-value!=0 {return false}}
-    index:=descriptor
-    inst:=&s.instances[index]
-    if instance_values(inst^)==values {return true}
-    inst.tint.w,inst.emission.w,inst.bounds_min.w,inst.bounds_max.w=values.x,values.y,values.z,values.w
-    instance_touch(s, u32(index))
-    return true
-}
-
-@(private)
-instance_values :: proc "contextless" (inst:Gpu_Instance) -> Vec4 {return {inst.tint.w,inst.emission.w,inst.bounds_min.w,inst.bounds_max.w}}
-
 // How wet an instance is, 0 dry to 1 soaked, by the descriptor of the
 // instance: the materials read it (Mirai_Surface_Context.wet) and the
 // renderer darkens and smooths by it what is not metal, glass or unlit. It
-// stays while the instance keeps its identity, as its values, and changes
+// stays while the instance keeps its identity, and changes
 // neither its light nor its rays. False for a descriptor the scene does not
 // have or a value that is not finite; others are clamped to 0..1.
 scene_set_instance_wet :: proc(r:^Renderer,descriptor:u32,wet:f32) -> bool {
@@ -1501,10 +1564,10 @@ scene_set_instance_wet :: proc(r:^Renderer,descriptor:u32,wet:f32) -> bool {
 
 // What extensions gave an instance, which it keeps with its identity.
 @(private)
-Instance_Given :: struct {values:Vec4,wet:f32}
+Instance_Given :: struct {wet:f32}
 
 @(private)
-instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {instance_values(inst),inst.wet}}
+instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {inst.wet}}
 
 // Room for count instances in every table that holds one of each, and in
 // those of what rays and glass need of them. False without memory.
@@ -1525,7 +1588,6 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
     desc:=desc
     // An instance whose material programs move its vertices shows its own pose of its mesh.
     desc.mesh=displaced_mesh(r,desc)
-    values:=given.values
     count:=int(index)+1
     if before:=len(s.instances);count>before {
         if resize(&s.instances,count)!=nil || resize(&s.instance_next,count)!=nil || resize(&s.instance_prev,count)!=nil || resize(&s.overlays,count)!=nil ||
@@ -1560,23 +1622,27 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		material := u32(desc.material) if desc.material != 0 && int(desc.material) < len(s.materials) else GPU_NONE
         slot_materials:=desc.slot_materials
         for &row in slot_materials {if row>u32(len(s.materials)) {row=0}}
-		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, mesh, material,slot_materials)
-		flags |= alpha_flags(tested, blended, glass)
 		flags |= instance_small(bmin, bmax)
-		if reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, layered})}
-		if blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = solid, layered = glass_layered})}
 		s.instances[index]=Gpu_Instance{
 			slot_materials=slot_materials,
 			world = rows_3x4(desc.transform),
 			world_inv = rows_3x4(inverse),
 			prev_world = rows_3x4(previous),
 			meta = {u32(desc.mesh) | cut, material, u32(desc.object_id), flags},
-			bounds_min = {bmin.x, bmin.y, bmin.z, values.z},
-			bounds_max = {bmax.x, bmax.y, bmax.z, values.w},
-			tint = {desc.tint.x, desc.tint.y, desc.tint.z, values.x},
-			emission = {desc.emission.x, desc.emission.y, desc.emission.z, values.y},
+			bounds_min = {bmin.x, bmin.y, bmin.z, 0},
+			bounds_max = {bmax.x, bmax.y, bmax.z, 0},
+			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
+			emission = {desc.emission.x, desc.emission.y, desc.emission.z, 0},
 			wet = given.wet,
 		}
+		// Without room for its values it shows its rows as they are (stats.problem says what is missing).
+		values_given := desc.material_values
+		if instance_material_values_give(r, &s.instances[index], &values_given) && instance_material_values_glow(s, s.instances[index].material_values) {instance_changed_near(s, &s.instances[index], true)}
+		tested, blended, glass, reflectance, layered, solid, glass_layered := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
+		flags |= alpha_flags(tested, blended, glass)
+		s.instances[index].meta.w = flags
+		if reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, layered})}
+		if blended && !hidden {append(&s.translucent, Translucent{instance = index, solid = solid, layered = glass_layered})}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1
 		if head>=0 {s.instance_prev[head]=i32(index)}
@@ -1611,6 +1677,7 @@ instance_unlink :: proc(s:^Scene_State,index:u32) {
     if inst.meta.w&(INSTANCE_FLAG_HIDDEN|INSTANCE_FLAG_TRANSLUCENT)==0 {
         for layer in s.overlays[index].entries[:s.overlays[index].count] {if layer.enabled {s.overlay_count-=1}}
     }
+    instance_material_values_release(s,&s.instances[index])
 }
 
 // Replaces a range of the instances, optionally appending or truncating its

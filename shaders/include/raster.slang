@@ -65,6 +65,15 @@ Mirai_Surface_Context fragment_instance(Mirai_Surface_Context ctx, Raster_Input 
 #endif
 }
 
+// The values the instance of a fragment gives over the rows of its materials.
+uint fragment_material_values(Raster_Input input) {
+#ifdef MIRAI_RASTER_STUDIO
+    return 0u;
+#else
+    return input.in_instance == INVALID ? 0u : scene_instance(input.in_instance).material_values;
+#endif
+}
+
 // Coverage for object masks. Opaque geometry needs no texture fetch; masked
 // surfaces use the same alpha/cutoff as the scene, and empty blend fragments
 // contribute no selection silhouette.
@@ -73,7 +82,7 @@ bool fragment_mask_covers(Raster_Input input, float mip_bias) {
     if (material.alpha_mode == ALPHA_OPAQUE) return true;
     float alpha;
     if (material.program_id == 0u) {
-        alpha = material_base_color(material, input.in_uv, input.in_uv1, float2(mip_bias), input.in_color, false).a;
+        alpha = material_base_color(material_instanced(material, fragment_material_values(input)), input.in_uv, input.in_uv1, float2(mip_bias), input.in_color, false).a;
     } else {
         float3 view = to_eye(input.in_world);
         float3 normal = fragment_surface_normal(input, material, view, mip_bias);

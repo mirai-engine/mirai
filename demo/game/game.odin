@@ -302,7 +302,7 @@ bob_height :: proc(bobs:^core.Table(Bob),row:int,y,seconds:f32) -> f32 {
 // Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks.
 @(step="fixed")
 game_glow :: proc(
-    tints:^core.Table(render.Tint),pulses:^core.Table(Pulse),doors:^core.Table(Door,.Read),buttons:^core.Table(Floor_Button,.Read),barkers:^core.Table(Barker,.Read),
+    tints:^core.Table(render.Material_Values),pulses:^core.Table(Pulse),doors:^core.Table(Door,.Read),buttons:^core.Table(Floor_Button,.Read),barkers:^core.Table(Barker,.Read),
     hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),time:core.Time,
 ) {
     seconds:=f32(time.seconds)

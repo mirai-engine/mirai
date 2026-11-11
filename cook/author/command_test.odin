@@ -53,7 +53,7 @@ Game_World :: struct {
     hidden:core.Table(erender.Hidden),
     disabled:core.Table(core.Disabled),
     meshes:core.Table(erender.Mesh_Renderer),
-    tints:core.Table(erender.Tint),
+    tints:core.Table(erender.Material_Values),
     point_lights:core.Table(erender.Point_Light),
     statuses:core.Table(Game_Status) `mirai:"game,name=Status"`,
     marks:core.Table(Game_Mark) `mirai:"game,name=Mark"`,
@@ -316,7 +316,7 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     if !testing.expect_value(t,asset.scene_load(&kept,&p.types,file,context.temp_allocator),asset.Error.None) {return}
     floor:=asset.scene_ids(&kept)[2]
     count:=asset.scene_entity_count(&kept)
-    document:=fmt.tprintf(`{{"entities":[{{"id":"0x%016x","name":"Ground","scale":[30,0.1,30],"components":{{"Mesh_Renderer":{{}},"Tint":{{"color":[1,0,0,1]}}}}}},{{"name":"Lamp","position":[2,3,0],"components":{{"Point_Light":{{"intensity":7}},"Mark":{{}}}},"off":["Point_Light"],"children":[{{"name":"Bulb","visible":false}}]}}]}}`,u64(floor))
+    document:=fmt.tprintf(`{{"entities":[{{"id":"0x%016x","name":"Ground","scale":[30,0.1,30],"components":{{"Mesh_Renderer":{{}},"Material_Values":{{"color":[1,0,0,1]}}}}}},{{"name":"Lamp","position":[2,3,0],"components":{{"Point_Light":{{"intensity":7}},"Mark":{{}}}},"off":["Point_Light"],"children":[{{"name":"Bulb","visible":false}}]}}]}}`,u64(floor))
     written,problem:=scene_write(&p,"arena/main.scene",document)
     if !testing.expect(t,problem=="",problem) {return}
     testing.expect(t,written.made==2 && written.removed==count-1 && !written.same,fmt.tprintf("%v",written))
@@ -367,7 +367,7 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
         {`{"entities":[{"name":"x","prefab":"arena/main.scene"}]}`,`entities[0].prefab: "arena/main.scene" is no prefab of the project`},
         {`{"entities":[{"name":"x","prefab":{"asset":"player/Player.scene","size":2}}]}`,"entities[0].prefab has no 'size'"},
         {`{"entities":[{"id":"0x00000000000000ff"}]}`,"entities[0].id: 0x00000000000000ff is no entity of the scene"},
-        {`{"entities":[{"name":"x","components":{"Tint":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Tint"},
+        {`{"entities":[{"name":"x","components":{"Material_Values":{"colour":[1,1,1,1]}}}]}`,"entities[0].components.Material_Values"},
         {`{"entities":[{"name":"x","sizes":3}]}`,"entities[0] has no 'sizes'; an entity has id, name"},
         {`{"entities":[{"name":"x","components":{"Prefab_Instance":{}}}]}`,"entities[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
     }

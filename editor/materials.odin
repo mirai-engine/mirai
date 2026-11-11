@@ -19,8 +19,8 @@ import "mirai:ui"
 // The material of a Mesh_Renderer in the inspector: a box with its preview and
 // its name, which opens the list it is chosen from, and an arrow that unfolds
 // what this entity shows of it: values, textures and the layers drawn over it.
-// Those live in the entity, as its Material_Override and its Tint: the
-// inspector never edits the material there. Apply to material writes them in
+// Those live in the entity, as its Material_Values: the inspector never
+// edits the material there. Apply to material writes them in
 // the file of the material, for every entity that shows it.
 
 MATERIAL_ROW :: f32(26)
@@ -38,13 +38,13 @@ ALPHA_MODE_NAMES :: [asset.Alpha_Mode]string{.Opaque="Opaque",.Mask="Mask",.Blen
 EMISSION_MODE_NAMES :: [asset.Emission_Mode]string{.Physical="Nits",.Relative="Exposure"}
 MATERIAL_LIST_ROWS :: 8
 
-// The values of the standard model an entity gives its material, in the order of erender.MATERIAL_VALUE_NAMES.
+// The values of the standard model an entity gives its material, in the order of erender.MATERIAL_VALUE_FIELDS.
 Material_Value :: enum u8 {
     Base_Color,Opacity,Metallic,Roughness,Emission,Specular,Ior,Transmission,Alpha_Mode,
     Coat,Coat_Roughness,Coat_Color,Coat_Ior,Fuzz,Fuzz_Color,Fuzz_Roughness,Anisotropy,Anisotropy_Rotation,Unlit,
     Emission_Mode,Diffuse_Transmission,Diffuse_Transmission_Color,
 }
-#assert(len(Material_Value)==len(erender.MATERIAL_VALUE_NAMES))
+#assert(len(Material_Value)==len(erender.MATERIAL_VALUE_FIELDS))
 
 Material_List_Kind :: enum u8 {None,Material,Overlay,Texture,Asset}
 
@@ -58,7 +58,7 @@ Material_List :: struct {
     offset:int,        // Material, Asset: of the field in the component; Overlay: the id of the layer, 0 for a new one; Texture: the index of its row
     owner:base.Asset_Id, // Overlay, Texture: the material that owns the layers or the slot
     entity:core.Entity,  // Overlay, Texture: the one that takes it
-    name:u64,            // Texture: as Material_Override names it
+    name:u64,            // Texture: as Material_Values names it
     slot:int,            // Texture: of the mesh whose material it is of
     scroll:f32,
 }
@@ -69,7 +69,7 @@ Material_Color :: struct {
     entity:core.Entity,
     slot:int,      // of the mesh whose material the value is of
     name:u64,      // of the value or the parameter
-    tint:bool,     // the Tint of the entity instead of its override
+    tint:bool,     // the color or the light of the entity instead of a value of a slot
     standard:bool, // base color or emission of the standard model
     emission:bool,
     alpha:f32,     // a fourth channel of a parameter is kept
@@ -131,43 +131,23 @@ Appearance :: struct {
     material:base.Asset_Id,      // 0: the default material
     row:u32,                     // of the material in the table of the renderer
     values:gpu.Material_Desc,    // of the material, with those of the entity over them
-    override:erender.Material_Override,
-    tint:erender.Tint,
+    override:erender.Material_Values, // of the entity; the default without them
     program:^gpu.Program,        // the Surface program of the material; nil: the standard model
     slots:int,                   // of its mesh
 }
 
 @(private)
 material_value_name :: proc(value:Material_Value) -> u64 {
-    names:=erender.MATERIAL_VALUE_NAMES
-    return base.name_hash(names[int(value)])
-}
-
-@(private)
-override_texture_put :: proc(o:^erender.Material_Override,slot:int,name:u64,texture:base.Asset_Id,put:bool) -> bool {
-    count:=min(int(o.texture_count),len(o.texture_names))
-    for i in 0..<count {
-        if o.texture_names[i]!=name || int(o.texture_slots[i])!=slot {continue}
-        if put {
-            o.textures[i]=texture
-        } else {
-            o.texture_slots[i],o.texture_names[i],o.textures[i]=o.texture_slots[count-1],o.texture_names[count-1],o.textures[count-1]
-            o.texture_slots[count-1],o.texture_names[count-1],o.textures[count-1]=0,0,{}
-            o.texture_count-=1
-        }
-        return true
-    }
-    if !put {return true}
-    if count>=len(o.texture_names) {return false}
-    o.texture_slots[count],o.texture_names[count],o.textures[count]=u8(slot),name,texture
-    o.texture_count+=1
-    return true
+    fields:=erender.MATERIAL_VALUE_FIELDS
+    return base.name_hash(fields[int(value)].name)
 }
 
 // What an entity changes of the material of one slot, its values and
 // textures and, for the first, the overlays drawn over it; and the rest.
 @(private)
-override_split :: proc "contextless" (o:^erender.Material_Override,slot:int) -> (given,rest:erender.Material_Override) {
+override_split :: proc "contextless" (o:^erender.Material_Values,slot:int) -> (given,rest:erender.Material_Values) {
+    given,rest=erender.MATERIAL_VALUES_DEFAULT,erender.MATERIAL_VALUES_DEFAULT
+    rest.color,rest.emission=o.color,o.emission
     for name,i in o.names[:min(int(o.count),len(o.names))] {
         to:=int(o.slots[i])==slot?&given:&rest
         to.slots[to.count],to.names[to.count],to.values[to.count]=o.slots[i],name,o.values[i]
@@ -175,7 +155,7 @@ override_split :: proc "contextless" (o:^erender.Material_Override,slot:int) -> 
     }
     for name,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
         to:=int(o.texture_slots[i])==slot?&given:&rest
-        to.texture_slots[to.texture_count],to.texture_names[to.texture_count],to.textures[to.texture_count]=o.texture_slots[i],name,o.textures[i]
+        to.texture_slots[to.texture_count],to.texture_names[to.texture_count],to.textures[to.texture_count],to.shown[to.texture_count]=o.texture_slots[i],name,o.textures[i],o.shown[i]
         to.texture_count+=1
     }
     to:=slot==0?&given:&rest
@@ -186,6 +166,12 @@ override_split :: proc "contextless" (o:^erender.Material_Override,slot:int) -> 
 @(private)
 value_key :: proc "contextless" (e:core.Entity,slot:int,name:u64,axis:int=0) -> u64 {
     return base.hash_combine(base.hash_combine(u64(e),name),u64(axis)<<1|u64(slot)<<8)|1
+}
+
+// What an entity shows of its materials: its Material_Values, the default without them.
+entity_material_values :: proc(w:core.World_Ref,e:core.Entity) -> erender.Material_Values {
+    if values,ok:=entity_get(w,e,erender.Material_Values);ok {return values}
+    return erender.MATERIAL_VALUES_DEFAULT
 }
 
 @(private)
@@ -204,10 +190,8 @@ appearance_read :: proc(s:^Session,w:core.World_Ref,e:core.Entity,mesh:erender.M
         a.values=host.assets_material_values(assets,a.row)
         a.program=erender.surface_program(assets,a.values.program_id)
     }
-    a.tint=erender.TINT_DEFAULT
-    if tint,ok:=entity_get(w,e,erender.Tint);ok {a.tint=tint}
-    if override,ok:=entity_get(w,e,erender.Material_Override);ok {a.override=override}
-    if assets!=nil {erender.material_override_apply(assets,&a.values,&a.override,slot)}
+    a.override=entity_material_values(w,e)
+    if assets!=nil {erender.material_values_apply(assets,&a.values,&a.override,slot)}
     return
 }
 
@@ -216,9 +200,9 @@ appearance_read :: proc(s:^Session,w:core.World_Ref,e:core.Entity,mesh:erender.M
 // Gives the entity a value of its own for the material of a slot.
 @(private)
 override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,value:[4]f32) -> bool {
-    next,_:=entity_get(editing_world(s),e,erender.Material_Override)
-    if !erender.material_override_value_set(&next,slot,name,value) {
-        notify(s,fmt.tprintf("An entity changes up to %d values of its material",erender.MATERIAL_OVERRIDE_CAPACITY))
+    next:=entity_material_values(editing_world(s),e)
+    if !erender.material_value(&next,name,value,slot) {
+        notify(s,fmt.tprintf("An entity changes up to %d values of its material",erender.MATERIAL_VALUES_CAPACITY))
         return false
     }
     return override_put(s,e,next,"Material")
@@ -226,15 +210,15 @@ override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,value:[4]f32) 
 
 // What an entity changes of its material, as one step: no component when it changes nothing.
 @(private)
-override_put :: proc(s:^Session,e:core.Entity,next:erender.Material_Override,label:string) -> bool {
+override_put :: proc(s:^Session,e:core.Entity,next:erender.Material_Values,label:string) -> bool {
     w:=editing_world(s)
-    table:=core.world_table_of(w,erender.Material_Override)
+    table:=core.world_table_of(w,erender.Material_Values)
     if table==nil || !entity_alive(w,e) {return false}
     opened,edit_ready:=edit_open(s,label)
     if !edit_ready {return false}
     defer edit_close(s,opened)
     next:=next
-    if erender.material_override_empty(&next) {
+    if erender.material_values_plain(&next) {
         if core.has(table,e) {core.remove(table,e)}
     } else {
         core.add(table,e,next)
@@ -246,22 +230,24 @@ override_put :: proc(s:^Session,e:core.Entity,next:erender.Material_Override,lab
 // of the material of a slot, or takes it away (put false).
 @(private)
 texture_override_store :: proc(s:^Session,e:core.Entity,slot:int,name:u64,texture:base.Asset_Id,put:=true) -> bool {
-    next,_:=entity_get(editing_world(s),e,erender.Material_Override)
-    if !override_texture_put(&next,slot,name,texture,put) {
-        notify(s,fmt.tprintf("An entity changes up to %d textures of its material",erender.MATERIAL_OVERRIDE_TEXTURES))
+    next:=entity_material_values(editing_world(s),e)
+    if !put {
+        erender.material_texture_drop(&next,name,slot)
+    } else if !erender.material_texture(&next,name,slot,texture) {
+        notify(s,fmt.tprintf("An entity changes up to %d textures of its material",erender.MATERIAL_VALUES_TEXTURES))
         return false
     }
     return override_put(s,e,next,"Material")
 }
 
-// Writes the color or the emission of the Tint of the entity.
+// Writes the color or the light of the entity over its materials.
 @(private)
 tint_store :: proc(s:^Session,e:core.Entity,emission:bool,value:[3]f32) -> bool {
     w:=editing_world(s)
-    table:=core.world_table_of(w,erender.Tint)
+    table:=core.world_table_of(w,erender.Material_Values)
     if table==nil || !entity_alive(w,e) {return false}
-    next:=erender.TINT_DEFAULT
-    if row,ok:=core.get(table,e);ok {next=row}
+    next:=erender.MATERIAL_VALUES_DEFAULT
+    if row,ok:=core.get(core.read(table),e);ok {next=row}
     if emission {next.emission=value} else {next.color.rgb=value}
     opened,edit_ready:=edit_open(s,"Color")
     if !edit_ready {return false}
@@ -279,7 +265,7 @@ material_color_store :: proc(s:^Session,e:core.Entity,slot:int,emission:bool,val
     if !edit_ready {return false}
     defer edit_close(s,opened)
     ok:=override_store(s,e,slot,material_value_name(emission?.Emission:.Base_Color),{value.x,value.y,value.z,0})
-    if tint,found:=entity_get(w,e,erender.Tint);ok && found {
+    if tint,found:=entity_get(w,e,erender.Material_Values);ok && found {
         neutral:=emission?tint.emission==[3]f32{}:tint.color.rgb==[3]f32{1,1,1}
         if !neutral {ok=tint_store(s,e,emission,emission?[3]f32{}:[3]f32{1,1,1})}
     }
@@ -289,38 +275,35 @@ material_color_store :: proc(s:^Session,e:core.Entity,slot:int,emission:bool,val
 // Gives back to the material of a slot every value the entity had for it.
 @(private)
 material_revert :: proc(s:^Session,e:core.Entity,slot:int) -> bool {
-    override,overridden:=entity_get(editing_world(s),e,erender.Material_Override)
+    override,overridden:=entity_get(editing_world(s),e,erender.Material_Values)
     if !overridden {return false}
     _,rest:=override_split(&override,slot)
     return override_put(s,e,rest,"Revert material")
 }
 
-// Writes in the file of the material of a slot what the entity changed of
-// it, which it stops changing: every entity that shows the material takes it,
-// but in what it changes itself. The file is saved at once, as a prefab takes
-// Apply. One step.
+// Writes in the material of a slot what the entity changed of it, which it
+// stops changing: every entity that shows the material takes it, but in what
+// it changes itself. The material changes in memory, as every edit does:
+// Save writes its file. One step.
 @(private)
 material_apply :: proc(s:^Session,e:core.Entity,slot:int) -> (material:base.Asset_Id,message:string) {
     w:=editing_world(s)
-    override,_:=entity_get(w,e,erender.Material_Override)
+    override:=entity_material_values(w,e)
     mesh,meshed:=entity_get(w,e,erender.Mesh_Renderer)
     if !meshed || s.app.assets==nil {return {},"The entity shows no mesh"}
     given,rest:=override_split(&override,slot)
-    if erender.material_override_empty(&given) {return {},"The entity changes nothing of the material of that slot"}
+    if erender.material_values_plain(&given) {return {},"The entity changes nothing of the material of that slot"}
     material=slot<erender.MATERIAL_SLOTS?mesh.materials[slot]:{}
     if material=={} && mesh.mesh!={} {
         if loaded:=host.assets_mesh(s.app.assets,mesh.mesh);loaded!=nil && slot<int(loaded.slot_count) {material=loaded.slot_materials[slot]}
     }
-    record,found:=asset.registry_find(&s.app.assets.registry,material)
-    if !found {return {},"The default material has no file: give the entity a material to apply to"}
-    relative:=strings.clone(record.path,context.temp_allocator)
+    if _,found:=asset.registry_find(&s.app.assets.registry,material);!found {return {},"The default material has no file: give the entity a material to apply to"}
     opened,edit_ready:=edit_open(s,"Apply to material")
     if !edit_ready {return {},history.edits_error_text(s.edits.error)}
     defer edit_close(s,opened)
     if !material_write(s,material,{kind=.Override,override=&given}) {return {},"The material could not be written"}
-    table:=core.world_table_of(w,erender.Material_Override)
-    if erender.material_override_empty(&rest) {core.remove(table,e)} else {core.add(table,e,rest)}
-    if _,saved:=assets_save(s,{relative});!saved {return material,fmt.tprintf("%s could not be saved; it stays unsaved",asset_name(relative))}
+    table:=core.world_table_of(w,erender.Material_Values)
+    if erender.material_values_plain(&rest) {core.remove(table,e)} else {core.add(table,e,rest)}
     return material,""
 }
 
@@ -424,7 +407,7 @@ texture_row :: proc(c:^Inspect,a:^Appearance,label:string,index:int,name:u64,mat
     s:=c.s
     ctx:=s.gui.ctx
     texture:=material_texture
-    if own,found:=erender.material_override_texture(&a.override,a.slot,name);found {texture=own}
+    if own,found:=erender.material_texture_of(&a.override,a.slot,name);found {texture=own}
     reference,inherited:=texture_reference(s,a.entity,a.slot,name,material_texture)
     shown:="None"
     if texture!={} {
@@ -543,12 +526,12 @@ number_fields :: proc(ctx:^ui.Context,id:ui.Id,values:[]f64,field:kit.Vector_Fie
     return
 }
 
-// The Tint of the entity, which tints every slot of its mesh and adds its emission.
+// The color and the light of the entity, which tint every slot of its mesh and add to its emission.
 @(private)
 tint_rows :: proc(s:^Session,a:^Appearance,color,emission:string) {
     tint_name:=base.name_hash("Tint")
-    appearance_swatch(s,color,1,a.tint.color.rgb,{key=value_key(a.entity,0,tint_name),entity=a.entity,tint=true})
-    appearance_swatch(s,emission,2,a.tint.emission,{key=value_key(a.entity,0,tint_name,1),entity=a.entity,tint=true,emission=true})
+    appearance_swatch(s,color,1,a.override.color.rgb,{key=value_key(a.entity,0,tint_name),entity=a.entity,tint=true})
+    appearance_swatch(s,emission,2,a.override.emission,{key=value_key(a.entity,0,tint_name,1),entity=a.entity,tint=true,emission=true})
 }
 
 // The values of the entity's instance of the material of a slot.
@@ -556,7 +539,7 @@ tint_rows :: proc(s:^Session,a:^Appearance,color,emission:string) {
 material_parameters :: proc(c:^Inspect,a:^Appearance) {
     s:=c.s
     values:=&a.values
-    // The slots of a model share the Tint, shown once over them; one slot shows it in its colors.
+    // The slots of a model share the color of the entity, shown once over them; one slot shows it in its colors.
     shared:=a.slots>1
     if a.program!=nil {
         // A program keeps its colors: the entity tints them and adds its emission.
@@ -569,7 +552,7 @@ material_parameters :: proc(c:^Inspect,a:^Appearance) {
         if material:=host.assets_material(s.app.assets,a.material);material!=nil && !material.failed {info=&material.info}
     }
     color,emission:=values.base_color,values.emission
-    if !shared {color,emission=color*a.tint.color.rgb,emission+a.tint.emission}
+    if !shared {color,emission=color*a.override.color.rgb,emission+a.override.emission}
     appearance_swatch(s,"Color",1,color,{key=value_key(a.entity,a.slot,material_value_name(.Base_Color)),entity=a.entity,slot=a.slot,name=material_value_name(.Base_Color),standard=!shared})
     map_row(c,a,info,.Base_Color)
     appearance_swatch(s,"Emission",2,emission,{key=value_key(a.entity,a.slot,material_value_name(.Emission)),entity=a.entity,slot=a.slot,name=material_value_name(.Emission),standard=!shared,emission=true})
@@ -722,7 +705,7 @@ material_rows :: proc(c:^Inspect) {
         if fold_band(s) {
             shown_slot:=slot==0?a:appearance_read(s,c.w,active,value,slot)
             material_parameters(c,&shown_slot)
-            if given,_:=override_split(&shown_slot.override,slot);!erender.material_override_empty(&given) {
+            if given,_:=override_split(&shown_slot.override,slot);!erender.material_values_plain(&given) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=4,align_y=.Center}) {
                     if ui.button(ctx,ui.id(ctx,"material_apply"),{label="Apply to material",icon=.Check,icon_size=13,variant="ghost",width=-1,height=24,size=ui.metric(ctx,"font_small")}).clicked {
                         if _,message:=material_apply(s,active,slot);message!="" {notify(s,message)}
@@ -748,17 +731,17 @@ material_slot_key :: proc(slot:int) -> u64 {
 // What a row of the inspector changes in the file of a material. Loaded: the
 // values and parameters the material holds in memory.
 Material_Change :: struct {
-    kind:enum u8 {Overlays,Map,Parameter,Values,Value,Loaded,Revert,Override},
+    kind:enum u8 {Overlays,Map,Parameter,Values,Value,Loaded,Revert,Override,Set},
     overlays:[]asset.Material_Overlay, // Overlays: all of them
     slot:int,              // Map: of MAP_LABELS
     name:string,           // Parameter: a texture of the program; Value: a number of it
     texture:base.Asset_Id, // Map, Parameter: 0 takes it away
-    info:asset.Material_Info, // Values: all of them
+    info:asset.Material_Info, // Values, Set: all of them
     value:[4]f64,          // Value: its components
     parameter:asset.Parameter_Kind,
     components:u8,
     paths:[]string,        // Revert: the fields that take what the source gave (asset.material_revert); none: all
-    override:^erender.Material_Override, // Override: what an entity changes of the material
+    override:^erender.Material_Values, // Override: what an entity changes of the material; Set: what a call gives it by name, over info
 }
 
 // The entities of the scene that show a material in some slot: theirs, or the one their mesh came with.
@@ -824,9 +807,14 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
     case .Overlays:
         overlays=change.overlays
         overlay_parameters_keep(&parameters,overlays)
-    case .Override:
+    case .Override,.Set:
         o:=change.override
         program:=erender.surface_program(a,host.assets_material_values(a,host.assets_material_row(a,owner)).program_id)
+        // The parameters are of the program the values of the call name.
+        if change.kind==.Set {
+            info=change.info
+            program=erender.program_find(a,base.text_get(info.program[:]),.Surface)
+        }
         values: for name,i in o.names[:min(int(o.count),len(o.names))] {
             if program!=nil {
                 for &parameter in program.parameters {
@@ -836,7 +824,7 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
                     continue values
                 }
             }
-            erender.material_standard_apply(&info,name,o.values[i])
+            erender.material_standard_value(&info,name,&o.values[i],true)
         }
         maps:=erender.MATERIAL_MAP_NAMES
         textures: for name,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
@@ -986,7 +974,7 @@ overlays_of :: proc(s:^Session,e:core.Entity) -> (layers:[asset.MATERIAL_MAX_OVE
     mesh,meshed:=entity_get(w,e,erender.Mesh_Renderer)
     if !meshed {return}
     owner=appearance_read(s,w,e,mesh).material
-    if override,found:=entity_get(w,e,erender.Material_Override);found && override.own_overlays {
+    if override,found:=entity_get(w,e,erender.Material_Values);found && override.own_overlays {
         return override.overlays,min(int(override.overlay_count),len(layers)),owner,true
     }
     if owner=={} || s.app.assets==nil {return {},0,owner,true}
@@ -998,7 +986,7 @@ overlays_of :: proc(s:^Session,e:core.Entity) -> (layers:[asset.MATERIAL_MAX_OVE
 // The layers of the entity in place of those of its material.
 @(private)
 overlays_store :: proc(s:^Session,e:core.Entity,layers:[]asset.Material_Overlay,own:=true) -> bool {
-    next,_:=entity_get(editing_world(s),e,erender.Material_Override)
+    next:=entity_material_values(editing_world(s),e)
     next.own_overlays,next.overlay_count,next.overlays=own,u32(len(layers)),{}
     copy(next.overlays[:],layers)
     return override_put(s,e,next,"Overlays")

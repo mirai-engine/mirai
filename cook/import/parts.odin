@@ -90,7 +90,7 @@ material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:in
                 at:[3]i32
                 for k in 0..<3 {
                     vertex:=mesh.vertices[mesh.indices[i+k]]
-                    uv[k]=map_uv(info,shown,vertex.uv1 if shown.uv_set==1 else vertex.uv)
+                    uv[k]=map_uv(shown,vertex.uv1 if shown.uv_set==1 else vertex.uv)
                     for c in uv[k] {
                         if !(c>=-PARTS_UV_SLACK && c<=1+PARTS_UV_SLACK) {return {false,"its UVs leave 0..1"}}
                     }
@@ -127,11 +127,11 @@ material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:in
 }
 
 // Where a UV of a mesh falls on the image of a map, as the renderer places it:
-// rotation * (map scale * (scale * uv + offset)) + map offset.
+// rotation * (map scale * uv) + map offset.
 @(private="file")
-map_uv :: proc(info:^asset.Material_Info,shown:asset.Material_Map,uv:[2]f32) -> [2]f32 {
+map_uv :: proc(shown:asset.Material_Map,uv:[2]f32) -> [2]f32 {
     sine,cosine:=math.sin(shown.rotation),math.cos(shown.rotation)
-    p:=(uv*info.uv_scale+info.uv_offset)*shown.scale
+    p:=uv*shown.scale
     return {cosine*p.x-sine*p.y,sine*p.x+cosine*p.y}+shown.offset
 }
 

@@ -262,18 +262,13 @@ material_texture_is_upright_and_keeps_its_colors :: proc(t: ^testing.T) {
 
 	// The tint and the factor multiply the texture; scale and offset move it.
 	material.base_color = {1, 0.5, 1}
-	material.uv_scale = {0.5, 0.5}
-	material.uv_offset = {0.5, 0}
+	material.maps.base_color.scale = {0.5, 0.5}
+	material.maps.base_color.offset = {0.5, 0}
 	materials_set(r, {material})
 	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 0}}}, nil, {}, {})
 	frames(t, &f, OVERHEAD, 2)
 	// The whole quad now shows the top right quadrant: green.
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {-0.25, 0, 0.25}), {0, 188, 0, metallic}, 3), "half of green: %v", read_albedo(t, &f, OVERHEAD, {-0.25, 0, 0.25}))
-	material.maps.base_color.scale = {2, 2}
-	material.maps.base_color.offset = {-1, 0}
-	materials_set(r, {material})
-	frames(t, &f, OVERHEAD, 2)
-	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {-0.25, 0, -0.25}), {255, 0, 0, metallic}, 3), "per-map placement cancels global UV: %v", read_albedo(t, &f, OVERHEAD, {-0.25, 0, -0.25}))
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -1663,19 +1658,16 @@ material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:
     testing.expectf(t,abs(specular.x-0.01)<0.001 && abs(specular.y-0.02)<0.001 && abs(specular.z-0.005)<0.001,"IOR, dielectric specular factor and color reach deferred lighting: %v",specular)
     material.maps.base_color.rotation=3.14159265359
     material.maps.base_color.offset={1,1}
-    material.ior=0;material.specular_factor=1;material.specular_color={1,1,1}
     materials_set(r,{material})
     frames(t, &f,OVERHEAD,2)
     testing.expectf(t,near_bytes(read_albedo(t,&f,OVERHEAD,at),{255,0,0,0},4),"Only the base map rotates by pi: %v",read_albedo(t,&f,OVERHEAD,at))
     emission=read_half_target(t,&f,r.targets.emission,at)
     testing.expect(t,emission.x>0.95 && emission.z<0.01,"Other map transforms remain unchanged")
-    specular=read_reflectance(t,f.device,r,r.targets.surface,target_pixel(r,OVERHEAD,at))
-    testing.expect(t,specular.x>0.99 && specular.y>0.99 && specular.z>0.99,"Special IOR zero preserves full reflectance")
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
 @(test)
-material_specular_conserves_diffuse_energy_and_ior_zero_is_angle_independent :: proc(t:^testing.T) {
+material_without_specular_keeps_the_whole_diffuse_lobe :: proc(t:^testing.T) {
     f:Fixture
     settings:=material_settings();settings.reflections=.Traced
     if !fixture_init(t,&f,64,64,settings) {return}
@@ -1697,45 +1689,6 @@ material_specular_conserves_diffuse_energy_and_ior_zero_is_angle_independent :: 
     }
     diffuse:=direct_at_origin(t,&f,OVERHEAD)
     testing.expectf(t,abs(diffuse.x-1)<0.015 && abs(diffuse.y-1)<0.015 && abs(diffuse.z-1)<0.015,"Specular factor zero leaves full Lambert diffuse: %v",diffuse)
-    material.ior=0;material.specular_factor=1
-    materials_set(r,{material})
-    mirror:=direct_at_origin(t,&f,OVERHEAD)
-    // Lambert would add one: what is left is the lobe, D*V*pi = 0.25 seen
-    // overhead, with the light its microfacets reflect between them.
-    testing.expectf(t,mirror.x>0.25 && mirror.x<0.9,"Full dielectric reflectance removes the diffuse lobe: %v",mirror)
-    material.specular_factor=0;materials_set(r,{material})
-    diffuse=direct_at_origin(t,&f,OVERHEAD)
-    testing.expectf(t,abs(diffuse.x-1)<0.015,"IOR zero with specular factor zero remains pure diffuse: %v",diffuse)
-    material.base_color={0,0,0};material.specular_factor=1;material.specular_color={0.2,0.4,0.8}
-    materials_set(r,{material})
-    normal:=direct_at_origin(t,&f,OVERHEAD)
-    oblique:=Camera{position={0,2,6},forward={0,-2,-6},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
-    grazing:=direct_at_origin(t,&f,oblique)
-    // The directional albedo of the lobe at roughness one, from the split-sum table.
-    table:=dfg_table(t,&f)
-    albedo :: proc(table:[]f16,nov:f32) -> f32 {sum:=dfg_sum(table,nov,1);return sum.x+sum.y}
-    color:=[3]f32{0.2,0.4,0.8}
-    // With roughness one, GGX's geometric term is proportional to 1/(1+NoV).
-    // Removing it and the light the microfacets reflect between them exposes
-    // the angle-independent, colored IOR-zero Fresnel.
-    for channel in 0..<3 {
-        a:=normal[channel]*2/(1+color[channel]*(1/albedo(table,1)-1))
-        b:=grazing[channel]*(1+f32(0.316227766))/(1+color[channel]*(1/albedo(table,0.316227766)-1))
-        testing.expectf(t,abs(a-b)<0.018,"IOR-zero colored reflectance is constant at normal and oblique views, channel %d: %f vs %f",channel,a,b)
-    }
-    material.alpha_mode=.Blend;material.opacity=0.5
-    materials_set(r,{material});frames(t, &f,OVERHEAD,2);rhi.device_wait_idle(f.device)
-    testing.expect(t,r.targets.glass[0].surface!=0,"Visible glass allocates its reflectance target")
-    if r.targets.glass[0].surface!=0 {
-        values:=make([]f16,int(r.targets.width*r.targets.height)*4,context.temp_allocator)
-        p:=target_pixel(r,OVERHEAD,{})
-        at:=(p.y*int(r.targets.width)+p.x)*4
-        specular:=read_reflectance(t,f.device,r,r.targets.glass[0].surface,p)
-        // Within a step of the 8 bits the target keeps of each channel.
-        testing.expectf(t,abs(specular.x-0.2)<0.004 && abs(specular.y-0.4)<0.004 && abs(specular.z-0.8)<0.004 && specular.w<0,"Glass layer preserves colored F0 and the IOR-zero marker: %v",specular)
-        testing.expect(t,golden_read_texture(f.device,r.targets.display,mem.slice_data_cast([]u8,values)),rhi.device_error(f.device))
-        for channel in 0..<3 {testing.expectf(t,abs(f32(values[at+channel])-normal[channel])<0.025,"Glass and opaque share the specular response independent of opacity, channel %d",channel)}
-    }
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
@@ -1748,7 +1701,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     r:=f.renderer
     plain,reflective:=DEFAULT_MATERIAL,DEFAULT_MATERIAL
     plain.roughness=.2
-    reflective.ior=0;reflective.specular_color={.2,.8,.4}
+    reflective.specular_color={.2,.8,.4}
     materials_set(r,{plain,reflective})
     mesh:=ground_quad(r)
     offscreen:=scale_matrix(4);offscreen[0,3]=20
@@ -1772,7 +1725,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     testing.expect(t,r.targets.surface!=0,"The stored reflectance target is allocated lazily")
     if r.targets.surface!=0 {
         value:=read_reflectance(t,f.device,r,r.targets.surface,{16,16})
-        testing.expectf(t,abs(value.x-.2)<.004 && abs(value.y-.8)<.004 && abs(value.z-.4)<.004 && value.w<0,"The visible surface retains its authored F0/IOR: %v",value)
+        testing.expectf(t,abs(value.x-.008)<.004 && abs(value.y-.032)<.004 && abs(value.z-.016)<.004 && value.w>.99,"The visible surface retains its authored F0 and F90: %v",value)
     }
     testing.expect(t,!camera_needs_reflectance(r,OVERHEAD),"Leaving the frustum restores the plain path while the target stays allocated")
     frames(t, &f,OVERHEAD,2)
@@ -1800,7 +1753,7 @@ material_gbuffer_stage_surfaces_ask_for_their_targets :: proc(t:^testing.T) {
     defer fixture_destroy(&f)
     r:=f.renderer
     plain,reflective,coated:=DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL
-    reflective.ior=0;reflective.specular_color={.2,.8,.4}
+    reflective.specular_color={.2,.8,.4}
     coated.coat.weight=1
     materials_set(r,{plain,reflective,coated})
     mesh:=ground_quad(r)
@@ -1833,8 +1786,7 @@ read_reflectance :: proc(t:^testing.T,device:^rhi.Device,r:^Renderer,target:rhi.
         v:=f32(b)/255
         return v/12.92 if v<=0.04045 else math.pow((v+0.055)/1.055,2.4)
     }
-    alpha:=f32(bytes[at+3])/255
-    return {linear(bytes[at]),linear(bytes[at+1]),linear(bytes[at+2]),-1 if alpha>254.5/255 else alpha*255/254}
+    return {linear(bytes[at]),linear(bytes[at+1]),linear(bytes[at+2]),f32(bytes[at+3])/255}
 }
 
 // ---------------------------------------------------------------- layers
