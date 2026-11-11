@@ -62,7 +62,7 @@ bench_job_overhead :: proc(t:^testing.T) {
         elapsed:=best_of(20,proc(data:rawptr) {
             js:=cast(^Job_System)data
             counter:Counter
-            for _ in 0..<JOBS {run(js,OWNER,nothing,nil,&counter)}
+            for _ in 0..<JOBS {run(js,OWNER,.Frame,nothing,nil,&counter)}
             wait(js,OWNER,&counter)
         },&js)
         log.infof("run+wait %d empty jobs, %d workers: %v (%.1f ns per job)",JOBS,threads+1,elapsed,f64(time.duration_nanoseconds(elapsed))/JOBS)

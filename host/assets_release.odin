@@ -103,7 +103,7 @@ app_assets_releases_step :: proc(app:^App) {
     if len(rel.queued)==0 && len(rel.calls)==0 || jobs.pending(&rel.counter) {return}
     rel.queued,rel.freeing=rel.freeing,rel.queued
     rel.calls,rel.calling=rel.calling,rel.calls
-    jobs.run(&app.jobs,jobs.OWNER,releases_free,rel,&rel.counter)
+    jobs.run(&app.jobs,jobs.OWNER,.Background,releases_free,rel,&rel.counter)
 }
 
 // Waits for the job and frees the rest here: before the renderer or the job

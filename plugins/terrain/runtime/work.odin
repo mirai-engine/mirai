@@ -113,7 +113,8 @@ work_slot :: proc(data:^Terrain_Data,urgent:bool) -> ^Work_Slot {
 @(private)
 work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
     if data.jobs==nil {work_run(slot,jobs.OWNER);return}
-    jobs.run(data.jobs,jobs.OWNER,work_run,slot,&slot.counter)
+    // A patient slot is taken once it ended; the others are waited for by the next call of their phase.
+    jobs.run(data.jobs,jobs.OWNER,.Background if slot.patient && !slot.urgent else .Frame,work_run,slot,&slot.counter)
 }
 
 // The build of a chunk or a node, from its source as it is now; a node of a
