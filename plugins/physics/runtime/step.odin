@@ -593,7 +593,7 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
         filter:=collision_of(s,e,collider,collider_changed)
         key:=shape_key(collider,scale,mm.TRANSFORM_IDENTITY,shown)
         changed:=created || l.made!=key
-        if changed && !created && shown.generated && !collider_changed && sim.shape_valid(w,l.shape) && collider_geometry_unchanged(s,l,e,collider,scale) {
+        if changed && !created && shown.generated && sim.shape_valid(w,l.shape) && (!collider_changed || shape_material_same(w,l.shape,collider)) && collider_geometry_unchanged(s,l,e,collider,scale) {
             l.made=key
             changed=false
         }
@@ -623,6 +623,14 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
         state.stats.teleports+=1
     }
     if s.playing && has_rigid && type!=.Static && !core.has(s.motions,e) {core.add(s.motions,e,core.Motion{})}
+}
+
+// Whether a shape keeps the friction, restitution and density of a collider, as the simulation clamps them:
+// with the same geometry where the collider puts it, a Collider taken again (a copy, a rollback) is the shape it has.
+@(private)
+shape_material_same :: proc(w:^sim.World,shape:sim.Shape_Handle,collider:Collider) -> bool {
+    friction,restitution:=sim.shape_material(w,shape)
+    return friction==max(collider.friction,0) && restitution==clamp(collider.restitution,0,1) && sim.shape_density(w,shape)==max(collider.density,0)
 }
 
 // What the shapes of a collider are made from, all but their filter and surface: where the entity is in the
@@ -700,7 +708,7 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     filter:=collision_of(s,e,collider,collider_changed)
     key:=shape_key(collider,scale,relative,shown)
     changed:=l.kind!=.Compound || l.made!=key || l.body!=holder.body
-    if changed && l.kind==.Compound && l.body==holder.body && shown.generated && !collider_changed && sim.shape_valid(w,l.shape) && collider_geometry_unchanged(s,l,e,collider,scale,relative) {
+    if changed && l.kind==.Compound && l.body==holder.body && shown.generated && sim.shape_valid(w,l.shape) && (!collider_changed || shape_material_same(w,l.shape,collider)) && collider_geometry_unchanged(s,l,e,collider,scale,relative) {
         l.made=key
         changed=false
     }

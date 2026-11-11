@@ -537,6 +537,11 @@ shape_drag :: proc(w:^World,h:Shape_Handle) -> f32 {
     return shape!=nil?shape.drag:0
 }
 
+shape_density :: proc(w:^World,h:Shape_Handle) -> f32 {
+    shape,_:=shape_read(w,h)
+    return shape!=nil?shape.density:0
+}
+
 shape_set_density :: proc(w:^World,h:Shape_Handle,density:f32) -> bool {
     if !finite(density) {return false}
     shape,_:=shape_get(w,h)
