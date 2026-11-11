@@ -142,6 +142,8 @@ feed_pump :: proc(m:^Mixer,f:^Feed) -> (busy:bool) {
 @(private)
 feeder_main :: proc(t:^thread.Thread) {
     m:=(^Mixer)(t.data)
+    // The thread is the mixer's: nothing to restore.
+    _=denormals_flush()
     for !sync.atomic_load_explicit(&m.feeder_quit,.Acquire) {
         wake:=sync.atomic_load_explicit((^u32)(&m.feeder_wake),.Acquire)
         pump_lock(m)

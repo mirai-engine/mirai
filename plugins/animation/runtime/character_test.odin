@@ -22,14 +22,14 @@ character_test_set :: proc() -> Character_Set {
     actions:=make([]Action_Definition,1);actions[0]=ACTION_DEFINITION_DEFAULT;base.text_set(actions[0].name[:],"Wave");base.text_set(actions[0].clip[:],"wave")
     sections:=make([]Action_Section,1);sections[0]={action=0,next=-1};base.text_set(sections[0].name[:],"Hello")
     windows:=make([]Motion_Window,1);windows[0]=MOTION_WINDOW_DEFAULT;base.text_set(windows[0].name[:],"Reach")
-    grounding:=make([]Foot_Grounding,1);grounding[0]=FOOT_GROUNDING_DEFAULT;grounding[0].count=2;grounding[0].legs[0],grounding[0].legs[1]=GROUNDED_LEG_DEFAULT,GROUNDED_LEG_DEFAULT
+    grounding:=FOOT_GROUNDING_DEFAULT;grounding.count=2;grounding.legs[0],grounding.legs[1]=GROUNDED_LEG_DEFAULT,GROUNDED_LEG_DEFAULT
     spaces:=make([]Blend_Info,1);spaces[0]=space
     return {info={animation={3,4}},match={info=MATCH_INFO_DEFAULT,clips=clips},actions={layers=layers,actions=actions,sections=sections},spaces=spaces,space_samples=samples,motion={warp=POSE_WARP_PROFILE_DEFAULT,windows=windows},pose={grounding=grounding}}
 }
 @(private)
 character_test_free :: proc(set:^Character_Set) {
     delete(set.match.clips);delete(set.actions.layers);delete(set.actions.actions);delete(set.actions.sections)
-    delete(set.spaces);delete(set.space_samples);delete(set.motion.windows);delete(set.pose.grounding)
+    delete(set.spaces);delete(set.space_samples);delete(set.motion.windows)
 }
 
 @(test)
@@ -51,7 +51,7 @@ character_roundtrips_every_part_and_rejects_invalid_references_and_ranges :: pro
     testing.expect(t,len(view.match.clips)==1 && view.match.clips[0]==set.match.clips[0])
     testing.expect(t,len(view.actions.layers)==1 && view.actions.layers[0]==set.actions.layers[0] && view.actions.sections[0]==set.actions.sections[0])
     testing.expect(t,len(view.spaces)==1 && view.spaces[0]==set.spaces[0] && len(view.space_samples)==4)
-    testing.expect(t,len(view.motion.windows)==1 && view.motion.windows[0]==set.motion.windows[0] && len(view.pose.grounding)==1)
+    testing.expect(t,len(view.motion.windows)==1 && view.motion.windows[0]==set.motion.windows[0] && view.pose.grounding==set.pose.grounding)
     Case :: struct {name:string,change:proc(set:^Character_Set)}
     cases:=[]Case{
         {"a layer that names a space the set lacks",proc(set:^Character_Set) {set.actions.layers[0].space={}; base.text_set(set.actions.layers[0].space[:],"missing")}},

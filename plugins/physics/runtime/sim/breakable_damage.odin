@@ -65,19 +65,13 @@ breakable_of :: proc(w:^World,body:Body_Handle) -> (h:Breakable_Handle,piece:i32
 }
 
 @(private)
-break_finite :: proc "contextless" (values:..f32) -> bool {
-    for value in values {if value-value!=0 {return false}}
-    return true
-}
-
-@(private)
 break_source_valid :: proc(desc:Breakable_Desc,source:^geom.Fracture) -> bool {
     count:=len(source.pieces)
     if len(desc.piece_anchors)!=0 && len(desc.piece_anchors)!=count || len(desc.piece_clusters)!=0 && len(desc.piece_clusters)!=count ||
        len(desc.bond_strength)!=0 && len(desc.bond_strength)!=len(source.connections) ||
        len(desc.clusters)>0 && len(desc.piece_clusters)!=count {return false}
     for cluster,at in desc.clusters {
-        if cluster.parent < -1 || int(cluster.parent)>=at || !(cluster.strength>0) || !break_finite(cluster.strength) {return false}
+        if cluster.parent < -1 || int(cluster.parent)>=at || !(cluster.strength>0) || !finite(cluster.strength) {return false}
         if u64(cluster.first_point)+u64(cluster.point_count)>u64(len(desc.cluster_points)) || cluster.point_count>0 && cluster.point_count<4 {return false}
         represented:=false
         for parent in desc.piece_clusters {
@@ -89,18 +83,18 @@ break_source_valid :: proc(desc:Breakable_Desc,source:^geom.Fracture) -> bool {
         if !represented {return false}
     }
     for cluster in desc.piece_clusters {if cluster < -1 || int(cluster)>=len(desc.clusters) {return false}}
-    for point in desc.cluster_points {if !break_finite(point.x,point.y,point.z) {return false}}
+    for point in desc.cluster_points {if !finite(point.x,point.y,point.z) {return false}}
     for piece in source.pieces {
         if u64(piece.first_vertex)+u64(piece.vertex_count)>u64(len(source.mesh.positions)) || u64(piece.first_index)+u64(piece.index_count)>u64(len(source.mesh.indices)) {return false}
         if u64(piece.first_index/3)+u64(piece.index_count/3)>u64(len(source.mesh.materials)) ||
            len(source.mesh.normals)>0 && u64(piece.first_vertex)+u64(piece.vertex_count)>u64(len(source.mesh.normals)) ||
            len(source.mesh.uvs)>0 && u64(piece.first_vertex)+u64(piece.vertex_count)>u64(len(source.mesh.uvs)) ||
            len(source.mesh.colors)>0 && u64(piece.first_vertex)+u64(piece.vertex_count)>u64(len(source.mesh.colors)) {return false}
-        for point in source.mesh.positions[piece.first_vertex:][:piece.vertex_count] {if !break_finite(point.x,point.y,point.z) {return false}}
+        for point in source.mesh.positions[piece.first_vertex:][:piece.vertex_count] {if !finite(point.x,point.y,point.z) {return false}}
         for index in source.mesh.indices[piece.first_index:][:piece.index_count] {if index>=piece.vertex_count {return false}}
     }
-    for bond in source.connections {if bond.a>=bond.b || int(bond.b)>=count || !(bond.area>0) || !break_finite(bond.area) {return false}}
-    for strength in desc.bond_strength {if strength<0 || !break_finite(strength) {return false}}
+    for bond in source.connections {if bond.a>=bond.b || int(bond.b)>=count || !(bond.area>0) || !finite(bond.area) {return false}}
+    for strength in desc.bond_strength {if strength<0 || !finite(strength) {return false}}
     return true
 }
 
