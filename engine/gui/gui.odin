@@ -98,23 +98,14 @@ World_Widget :: struct {
 
 WORLD_WIDGET_DEFAULT :: World_Widget{size={200,100},scale=0.01,facing=.Billboard,pivot=.Center,depth_test=true,preview=true}
 
-// The languages a game can be in, as the stores list them: those the fonts
-// of the engine have the glyphs of (ui.FONT_RANGES).
-Language :: enum u8 {English,Russian,Spanish,Latam_Spanish,German,French,Portuguese,Italian}
-Languages :: bit_set[Language;u16]
-
-// The code of each language: what a .strings names it by.
-LANGUAGE_CODES :: [Language]string{
-    .English="en",.Russian="ru",.Spanish="es",.Latam_Spanish="es-419",
-    .German="de",.French="fr",.Portuguese="pt-BR",.Italian="it",
-}
-
 // How the interfaces of the game are sized and what they read their texts from.
 @(storage,setting)
 UI_Settings :: struct {
     reference:[2]f32 `mirai:"min=0"`, // the size in points the interfaces are designed for: they scale to fit the window, or the part of a player; zero: one unit per point
-    languages:Languages, // the languages the game is in: a key of its .strings has a text for each
-    source:Language,     // the one its texts are written in: the first of its .strings, what a key shows where another lacks it
+    // The code of the language its texts are written in ("en"): the first
+    // of the .strings the tools write, what a key shows where another lacks
+    // it. The languages of the game are those its .strings name.
+    source:[LANGUAGE_CODE]u8 `mirai:"text"`,
     prompts:base.Asset_Id, // the images of the prompts (.prompts); none: they are drawn
     // Images of inputs that win over those of the pack: Project Settings > UI
     // shows them with the inputs the game binds.
@@ -139,26 +130,24 @@ prompt_image_find :: proc "contextless" (settings:^UI_Settings,family:ui.Prompt_
     return -1
 }
 
-UI_SETTINGS_DEFAULT :: UI_Settings{languages={.English}}
+UI_SETTINGS_DEFAULT :: UI_Settings{source={0='e',1='n'}}
+
+LANGUAGE_CODE :: 16 // bytes of the code of a language, its NUL included, as a .strings keeps it
 
 // What the player chose for the interfaces: the language they show and a
 // scale over the one that fits them. An option of the player, which the
 // options menu of the game writes and save keeps in the options of the player.
 @(storage,setting="machine")
 UI_Preferences :: struct {
-    language:Language, // the one the interfaces show
+    language:[LANGUAGE_CODE]u8 `mirai:"text"`, // the code of the one the interfaces show; empty: the one their texts are written in
     scale:f32 `mirai:"min=0.25,max=4"`, // over the one that fits the window or the part of a player
 }
 
 UI_PREFERENCES_DEFAULT :: UI_Preferences{scale=1}
 
-// What the localized texts of the interfaces show: the name_hash of the code
-// of the language the player chose, or 0 for the one they are written in.
-ui_language :: proc(settings:^UI_Settings,preferences:^UI_Preferences) -> u64 {
-    if preferences.language==settings.source {return 0}
-    codes:=LANGUAGE_CODES
-    return base.name_hash(codes[preferences.language])
-}
+// What the localized texts of the interfaces show: the code of the language
+// the player chose, as base.text finds it.
+ui_language :: proc(preferences:^UI_Preferences) -> string {return base.text_get(preferences.language[:])}
 
 // The first kinds are those of ui.Tree_Event_Kind.
 UI_Event_Kind :: enum u8 {
@@ -613,7 +602,7 @@ frame_begin :: proc(
         s.key=key
         s.input=input
         s.viewed,s.animating=false,false
-        source_bind(&s,gui,app,p,seat_state,seats,bindings,actions,cameras,exposures,view_volumes,volumes,worlds,settings,preferences,gamepad,effects,sounds)
+        source_bind(&s,gui,app,p,seat_state,seats,bindings,actions,cameras,exposures,view_volumes,volumes,worlds,settings,gamepad,effects,sounds)
         if world_panels && !preview {meshes_aim(gui,app.assets,app.renderer,&app.extras,&s,p,input.ray,meshes,worlds)}
         ui.frame_begin(s.ctx,input)
         s.open=true

@@ -560,7 +560,7 @@ a_screen_kept_from_its_last_frame_is_built_again_for_another_device_or_language 
     ctx.game.family=.PlayStation
     pad:=screen_key(app.assets,&ctx,&instance,&entry,0,rect)
     testing.expect(t,pad!=first,"the prompts of another device")
-    ctx.game.language=7
+    ctx.game.language="pl"
     testing.expect(t,screen_key(app.assets,&ctx,&instance,&entry,0,rect)!=pad,"the texts of another language")
 }
 

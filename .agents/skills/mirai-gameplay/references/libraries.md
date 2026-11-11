@@ -633,16 +633,16 @@ one per local player that has screens or sees a `World_Widget`.
   safe area floats over its player's part. Each player's camera is that of their view in the last
   split frame (`App.local_cameras`).
 - **`UI_Settings`** (project setting): `reference` is the design size in points, which
-  `ui.scale_to_fit` brings to the window or the player's part. `languages` are the languages the
-  game is in (`Language`, those the fonts have the glyphs of, with their code in
-  `LANGUAGE_CODES`; English by default) and `source` the one the interfaces are written in.
-  What each text says in them is in the `.strings`
-  ([texts](../../mirai-assets/references/kinds.md#texts)). `prompts` picks the prompt
-  pack (none: they are drawn). `prompt_images` gives loose entries a texture that wins over that of
-  the pack; Project Settings > UI shows them in a table with the entries the game binds.
+  `ui.scale_to_fit` brings to the window or the player's part. `source` is the code of the
+  language the texts are written in (`en` by default); the languages of the game are the columns
+  of its `.strings`, any code ([texts](../../mirai-assets/references/kinds.md#texts)).
+  `prompts` picks the prompt pack (none: they are drawn). `prompt_images` gives loose entries a
+  texture that wins over that of the pack; Project Settings > UI shows them in a table with the
+  entries the game binds.
 - **`UI_Preferences`** (machine setting): what the player chose, `language` (the language they
-  show) and `scale` (over which it adjusts them). The game's options menu writes it, `save` stores
-  it in the player's options and `gui` only reads it.
+  show, by its code; empty: the one the texts are written in) and `scale` (over which it adjusts
+  them). The game's options menu writes it (a `Dropdown` written `English=en|Español=es` that binds
+  `UI_Preferences.language`), `save` stores it in the player's options and `gui` only reads it.
 - **Game source** (`ui.Game_Source` of each context): `family` follows live the player's last used
   device (keyboard and mouse: `Keyboard`; a gamepad, the family SDL recognizes for it: Xbox,
   PlayStation or Nintendo), and a retained screen is redone when the family or the language

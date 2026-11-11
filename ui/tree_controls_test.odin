@@ -162,13 +162,14 @@ templates_format_numbers_bools_enums_and_plurals_as_the_language_does :: proc(t:
     defer context_destroy(&ctx)
     input:=test_input()
     shows :: proc(t:^testing.T,ctx:^Context,input:^Input,s:^Test_Shop,language:string,texts:..string) {
-        ctx.game.language=base.name_hash(language) if language!="" else 0
+        ctx.game.language=language
         test_frame(ctx,input,test_shop_build,s)
         for text in texts {testing.expectf(t,test_paint(ctx,text)!=nil,"%s shows %q",language,text)}
     }
     shows(t,&ctx,&input,&s,"","12,345.25","1,234","Yes On","Arco Bow","1,234 coins","25.6%")
     shows(t,&ctx,&input,&s,"de","12.345,25","1.234")
     shows(t,&ctx,&input,&s,"es","12.345,25","1234","1234 coins")
+    shows(t,&ctx,&input,&s,"es-AR","12.345,25","1234") // a region without a row writes as its language
     shows(t,&ctx,&input,&s,"fr","12\u00a0345,25")
     s.values={coins=1,alive=false,weapon=.Staff}
     shows(t,&ctx,&input,&s,"en","1 coin","No Off","Staff Staff")

@@ -389,7 +389,7 @@ Tree_Instance :: struct {
     dirty_any:bool,
     failure:Bind_Failure,     // why the tree was not taken
     replan:bool,              // a localized text names a path the plan does not read: make the instance again
-    language:u64,             // Game_Source.language the localized texts were read in
+    language:u64,             // name_hash of the Game_Source.language the localized texts were read in
     texts_generation:u32,     // of Game_Source.texts then
     texts:[]string,           // of each node: the text it shows by itself, in that language
     slots:[]u32,              // of each node: its first slot
@@ -407,7 +407,7 @@ Tree_Instance :: struct {
 
 // The text a node shows by itself: its own, or for a Localized one what its
 // key says in a language (base.text); a key the texts lack shows as it is.
-tree_text :: proc "contextless" (tree:^Widget_Tree,node:^Node,texts:^base.Texts,language:u64) -> string {
+tree_text :: proc "contextless" (tree:^Widget_Tree,node:^Node,texts:^base.Texts,language:string) -> string {
     own:=string(tree.strings[node.text_offset:][:node.text_length])
     if .Localized not_in node.flags {return own}
     return base.text(texts,own,language) or_else own
@@ -419,8 +419,8 @@ tree_text :: proc "contextless" (tree:^Widget_Tree,node:^Node,texts:^base.Texts,
 // (Game_Source.texts and Game_Source.language). A transaction: fails, leaving nothing but failure, when a node
 // names a path the game does not have or one it cannot show, or the lists
 // need more than TREE_SLOTS slots. Without a host a path binds nothing.
-tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_Host,texts:^base.Texts=nil,language:u64=0,allocator:=context.allocator) -> bool {
-    instance^={allocator=allocator,host=host,failure={node=-1},language=language,texts_generation=texts.generation if texts!=nil else 0}
+tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_Host,texts:^base.Texts=nil,language:="",allocator:=context.allocator) -> bool {
+    instance^={allocator=allocator,host=host,failure={node=-1},language=base.name_hash(language),texts_generation=texts.generation if texts!=nil else 0}
     if host!=nil {instance.schema=host.schema}
     count:=tree.node_count
     e:[6]runtime.Allocator_Error
@@ -531,13 +531,14 @@ tree_instance_destroy :: proc(instance:^Tree_Instance) {
 @(private)
 tree_instance_texts :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance) {
     generation:=ctx.game.texts.generation if ctx.game.texts!=nil else 0
-    if instance.language==ctx.game.language && instance.texts_generation==generation || len(instance.texts)<tree.node_count {return}
-    instance.language,instance.texts_generation=ctx.game.language,generation
+    language:=base.name_hash(ctx.game.language)
+    if instance.language==language && instance.texts_generation==generation || len(instance.texts)<tree.node_count {return}
+    instance.language,instance.texts_generation=language,generation
     for &kept in instance.kept {kept.valid=false}
     for &node,i in tree.nodes[:tree.node_count] {
         if .Localized not_in node.flags {continue}
         instance.templates[i]={}
-        instance.texts[i]=tree_text(tree,&node,ctx.game.texts,instance.language)
+        instance.texts[i]=tree_text(tree,&node,ctx.game.texts,ctx.game.language)
         found:=instance.texts[i]
         first:=len(instance.parts)
         scope:=instance.scopes[node.parent] if node.parent>=0 else Bind_Scope{}

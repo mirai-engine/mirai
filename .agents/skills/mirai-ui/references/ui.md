@@ -486,9 +486,9 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
     it moves a shown step (its decimals, a second of a clock), and the value of a Progress when its
     fill moves a pixel; below that nothing is copied and no node is built. Games never round.
   - The formats after the colon are in `tree_bind.odin`: numbers with the separators of the
-    language of `Game_Source.language` (`NUMBER_LOCALES`), times, texts by value and CLDR plurals
-    (`{n:one=# coin|other=# coins}`). An enum name or a category that does not exist fails like a
-    path.
+    language of `Game_Source.language` (`NUMBER_LOCALES`, a region writing as its language),
+    times, texts by value and CLDR plurals (`{n:one=# coin|other=# coins}`). An enum name or a
+    category that does not exist fails like a path.
   - A text with braces is a template of names (`{health:0}/{most}`): each name is a field of the
     node with its path, so the text names the same in every language without paths. It is
     interpreted when creating the instance and in the frame only what changed is formatted;

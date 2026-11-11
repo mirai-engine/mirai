@@ -22,9 +22,6 @@ INTERFACE_INVENTORY :: "Interface inventory"
 INTERFACE_DIALOGUE :: "Interface dialogue"
 // The variants the HUD takes, by Interface_Demo.style.
 INTERFACE_STYLES :: [3]string{"","minimal","neon"}
-// The languages of the interfaces, by Interface_Demo.language: the options
-// of the dropdown of the menu.
-INTERFACE_LANGUAGES :: [2]gui.Language{.English,.Spanish}
 
 INTERFACE_CHOICES :: 4
 INTERFACE_FLAGS :: 16
@@ -81,7 +78,6 @@ Interface_Demo :: struct {
     style:i32,                       // of INTERFACE_STYLES
     quality:i32,
     subtitles:bool,
-    language:i32,                    // of INTERFACE_LANGUAGES
     items:[INTERFACE_ITEMS]Interface_Item,
     item_count:i32,
     equipped:Interface_Item,
@@ -106,7 +102,7 @@ Interface_Demo :: struct {
 interface_demo :: proc(
     demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:^core.Table(render.Hidden),
     names:core.Read(core.Name),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
-    ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,
+    preferences:core.Ref(gui.UI_Preferences),
     items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,problems:^core.Problems,
 ) {
     holder,found:=core.sole(demos)
@@ -131,10 +127,6 @@ interface_demo :: proc(
 
     // The menu: what its controls wrote, and the buttons that close it.
     if value,ok:=gui.changed_value(events,menu,"quality");ok {demo.quality=i32(value)}
-    languages:=INTERFACE_LANGUAGES
-    if value,ok:=gui.changed_value(events,menu,"language");ok {preferences.language=languages[clamp(int(value),0,len(languages)-1)]}
-    // The menu shows the options of the player, also those a run before saved.
-    for language,i in languages {if language==preferences.language && demo.language!=i32(i) {demo.language=i32(i)}}
     for style in ([]string{"classic","minimal","neon"}) {
         if value,ok:=gui.changed_value(events,menu,style);ok {demo.style=i32(value)}
     }
@@ -195,8 +187,8 @@ interface_demo :: proc(
 
     // The texts of the rows, made again when a table or the texts load again,
     // the language changes or the conversation moves.
-    language:=gui.ui_language(ui_settings.ptr,preferences)
-    loaded:=[5]u64{u64(core.records_generation(items)),u64(core.records_generation(lines)),u64(core.records_generation(answers)),u64(texts.generation),language}
+    language:=gui.ui_language(preferences.ptr)
+    loaded:=[5]u64{u64(core.records_generation(items)),u64(core.records_generation(lines)),u64(core.records_generation(answers)),u64(texts.generation),base.name_hash(language)}
     if demo.shown==loaded {return}
     demo.shown=loaded
     for &slot in demo.items {interface_item_show(&slot,items,texts,language,problems,holder)}
@@ -206,7 +198,7 @@ interface_demo :: proc(
 
 // What a slot shows of its row.
 @(private)
-interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),texts:^core.Texts,language:u64,problems:^core.Problems,holder:core.Entity) {
+interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),texts:^core.Texts,language:string,problems:^core.Problems,holder:core.Entity) {
     slot.name,slot.icon,slot.rarity={},{},{}
     if slot.item=={} {return}
     row,found:=core.record(items,slot.item,problems,holder)
@@ -220,7 +212,7 @@ interface_item_show :: proc(slot:^Interface_Item,items:core.Records(Item),texts:
 // What the dialogue shows of the line the conversation is at: who says it,
 // what, and the answers the flags allow, in the order of their rows.
 @(private)
-interface_dialogue_show :: proc(demo:^Interface_Demo,lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,language:u64,problems:^core.Problems,holder:core.Entity) {
+interface_dialogue_show :: proc(demo:^Interface_Demo,lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,language:string,problems:^core.Problems,holder:core.Entity) {
     demo.speaker,demo.said,demo.choice_count,demo.goes_on={},{},0,false
     if demo.line=={} {return}
     line,found:=core.record(lines,demo.line,problems,holder)

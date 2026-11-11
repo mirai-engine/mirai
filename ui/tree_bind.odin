@@ -855,9 +855,9 @@ bound_text :: proc(ctx:^Context,values:rawptr,b:Bound) -> string {
     return number_text(ctx,bound_number(values,b),2 if b.kind==.Float else 0)
 }
 
-// A part of a template, written into buffer in a language (name_hash of its code).
+// A part of a template, written into buffer in a language, by its code.
 @(private)
-template_part_write :: proc(buffer:^strings.Builder,values:rawptr,part:^Template_Part,language:u64) {
+template_part_write :: proc(buffer:^strings.Builder,values:rawptr,part:^Template_Part,language:string) {
     if part.literal!="" {strings.write_string(buffer,part.literal);return}
     b:=part.bound
     switch part.format {
@@ -975,8 +975,8 @@ bound_name :: proc(values:rawptr,b:Bound) -> string {
 // ---------------------------------------------------------------- formats of a language
 
 // How a language writes numbers and chooses its plurals, by its code (that of
-// a translation, as engine/gui names the languages of a game). A language
-// without a row writes as the first one. Groups of French and Russian take a
+// a translation, as a .strings names it). A region without a row writes as
+// its language (es-AR as es), and a language without one as the first. Groups of French and Russian take a
 // no-break space, which the font has, in place of their narrow one.
 @(private)
 Number_Locale :: struct {
@@ -1004,9 +1004,11 @@ NUMBER_LOCALES :: [?]Number_Locale{
     {"it",".",",",1,.One,true},
 }
 @(private)
-number_locale :: proc(language:u64) -> Number_Locale {
+number_locale :: proc(language:string) -> Number_Locale {
     locales:=NUMBER_LOCALES
-    for locale in locales {if base.name_hash(locale.code)==language {return locale}}
+    for code:=language;code!="";code=code[:max(strings.last_index_byte(code,'-'),0)] {
+        for locale in locales {if locale.code==code {return locale}}
+    }
     return locales[0]
 }
 

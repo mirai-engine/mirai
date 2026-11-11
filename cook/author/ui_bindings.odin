@@ -382,7 +382,7 @@ bind_check :: proc(types:^Bind_Types,allocator:runtime.Allocator,a:Assets,info:^
     host_of:=bind_types_host(types,info,allocator)
     for count<len(out) {
         instance:ui.Tree_Instance
-        if ui.tree_instance_init(&instance,&tree,&host_of,nil,0,context.temp_allocator) {
+        if ui.tree_instance_init(&instance,&tree,&host_of,nil,"",context.temp_allocator) {
             ui.tree_instance_destroy(&instance)
             return
         }

@@ -45,8 +45,7 @@ Stage :: struct {
     texture:base.Asset_Id,
     family:ui.Prompt_Family,
     fixed:bool,     // family was chosen; otherwise it follows the device used last
-    language:gui.Language, // of the localized texts, when chosen; until then the one they are written in
-    chosen:bool,
+    language:[gui.LANGUAGE_CODE]u8, // the code of the one of the localized texts; empty: the one they are written in
     reference:int,  // of REFERENCES; past them, custom
     custom:[2]f32,  // the size of the game when it is none of REFERENCES
     trying:bool,    // the interface takes input, as in the game
@@ -79,7 +78,7 @@ Preview :: struct {
 Inline_Edit :: struct {
     row:int,          // of the scope; -1: none
     open:bool,
-    language:gui.Language, // the text edited is the one in this language
+    language:[gui.LANGUAGE_CODE]u8, // the code of the language of the text edited
     buffer:[TEXT_EDIT]u8,
     length:int,
 }
@@ -147,7 +146,7 @@ preview_node :: proc(n:^ui.Tree_Node,texts:[]u8,shown:^[dynamic]u8,sampled:bool,
         return
     }
     if .Localized in n.flags {
-        text=base.text(said,text,0) or_else text
+        text=base.text(said,text,"") or_else text
         n.flags-={.Localized}
     }
     if field:=serial.text_field(n.bind_text[:]);field!="" {
@@ -430,11 +429,11 @@ preview_build :: proc(p:^Preview,app:^host.App,linked:ui.Tree_Data,sampled:bool,
     resources:=ui.Tree_Resources{textures=preview_textures(linked.images,a),fonts=fonts,programs=host.content_ui_programs(a,linked.styles)}
     if !ui.tree_load(&p.tree,linked,resources,allocator) {return false}
     if !sampled {
-        p.valid=ui.tree_instance_init(&p.instance,&p.tree,nil,nil,0,allocator)
+        p.valid=ui.tree_instance_init(&p.instance,&p.tree,nil,nil,"",allocator)
         return p.valid
     }
     host_of:=preview_samples_host(&p.samples,app.info,allocator)
-    if !ui.tree_instance_init(&p.instance,&p.tree,host_of,said,0,allocator) {
+    if !ui.tree_instance_init(&p.instance,&p.tree,host_of,said,"",allocator) {
         if p.instance.allocator.procedure!=nil {ui.tree_instance_destroy(&p.instance)}
         ui.tree_destroy(&p.tree)
         preview_samples_free(&p.samples)
@@ -491,12 +490,7 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
     user:=new(Preview_Game,context.temp_allocator)
     user^={u,app,settings}
     preview_input(u,app)
-    language:u64
-    if settings!=nil {
-        shown:=gui.UI_PREFERENCES_DEFAULT
-        shown.language=stage.language if stage.chosen else settings.source
-        language=gui.ui_language(settings,&shown)
-    }
+    language:=serial.text_field(stage.language[:])
     return {
         user=user,
         texts=host.app_texts(app),
@@ -908,13 +902,15 @@ gesture_update :: proc(s:^editor.Session,u:^Ui_Inspector,node:int) {
 inline_begin :: proc(s:^editor.Session,u:^Ui_Inspector) {
     n:=selected_node(u)
     if n==nil || n.kind!=.Text && n.kind!=.Button && n.kind!=.Rich_Text || serial.text_field(n.bind_text[:])!="" {return}
-    _,source:=texts_languages(s)
-    shown:=u.stage.language if u.stage.chosen else source
+    source:=texts_languages(s,u)[0]
+    shown:=serial.text_field(u.stage.language[:])
+    if shown=="" {shown=source}
     if shown!=source && .Localized not_in n.flags {
-        editor.notify(s,fmt.tprintf("This text is the same in every language: it is edited in %s, or localized with its bubble in Properties",language_name(source)))
+        editor.notify(s,fmt.tprintf("This text is the same in every language: it is edited in %s, or localized with its bubble in Properties",source))
         return
     }
-    u.editing={row=u.selected,open=true,language=shown}
+    u.editing={row=u.selected,open=true}
+    base.text_set(u.editing.language[:],shown)
     u.editing.length=copy(u.editing.buffer[:len(u.editing.buffer)-1],node_text_in(s,&u.records,n,shown,source))
 }
 
@@ -929,7 +925,7 @@ inline_field :: proc(s:^editor.Session,u:^Ui_Inspector,drawn:ui.Rect,layer:i16) 
         result:=ui.text_field(ctx,field,e.buffer[:len(e.buffer)-1],&e.length,{width=ui.GROW})
         if result.committed || result.cancelled {
             if result.committed {
-                if n:=selected_node(u);n!=nil && node_text_set(s,&u.records,n,e.language,string(e.buffer[:e.length])) {changed(u,"Text")}
+                if n:=selected_node(u);n!=nil && node_text_set(s,&u.records,n,serial.text_field(e.language[:]),string(e.buffer[:e.length])) {changed(u,"Text")}
             }
             e.open=false
         }
@@ -1002,7 +998,7 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
         u.stage.fixed=device>0
         if device>0 {u.stage.family=ui.Prompt_Family(device-1)}
     }
-    stage_language(ctx,u,cast(^gui.UI_Settings)editor.setting_value(s,gui.UI_Settings))
+    stage_language(s,u)
     references:=REFERENCE_NAMES
     if ui.dropdown(ctx,ui.id(ctx,"reference"),{list=references[:]},&u.stage.reference,{width=104}) {
         if u.stage.reference<len(REFERENCES) {u.stage.custom=stage_reference(&u.stage)}
@@ -1025,20 +1021,13 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
 // The language the localized texts show in: one of the game, the one they
 // are written in until another is chosen.
 @(private)
-stage_language :: proc(ctx:^ui.Context,u:^Ui_Inspector,settings:^gui.UI_Settings) {
-    if settings==nil {return}
-    names:=make([dynamic]string,context.temp_allocator)
-    values:=make([dynamic]gui.Language,context.temp_allocator)
-    shown:=u.stage.language if u.stage.chosen else settings.source
+stage_language :: proc(s:^editor.Session,u:^Ui_Inspector) {
+    ctx:=s.gui.ctx
+    languages:=texts_languages(s,u)
     chosen:=0
-    for language in gui.Language {
-        if language not_in settings.languages && language!=settings.source {continue}
-        if language==shown {chosen=len(names)}
-        append(&names,language_name(language))
-        append(&values,language)
-    }
+    for language,i in languages {if language==serial.text_field(u.stage.language[:]) {chosen=i}}
     ui.label(ctx,"Language",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-    if ui.dropdown(ctx,ui.id(ctx,"language"),{list=names[:]},&chosen,{width=110}) {u.stage.language,u.stage.chosen=values[chosen],true}
+    if ui.dropdown(ctx,ui.id(ctx,"language"),{list=languages},&chosen,{width=110}) {base.text_set(u.stage.language[:],languages[chosen])}
 }
 
 @(private) STAGE_TEXTURE_KEY :: u64(0x75697374616765)
