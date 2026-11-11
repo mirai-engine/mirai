@@ -1,0 +1,13 @@
+{
+  "version": 3,
+  "settings": {},
+  "folder": "vase",
+  "inputs": ["vase.mtl", "vase_color.png"],
+  "outputs": [
+    {"kind": "SCEN", "name": "vase", "index": 0, "id": "f430e11663e1ae229bf1511ac0c7f82d"},
+    {"kind": "TEX", "name": "vase_color", "index": 0, "id": "f8b0959094ef4d6757a87f85ec92a493"},
+    {"kind": "MAT", "name": "Ceramic", "index": 0, "id": "757da5a655983f642167f358f7add279"},
+    {"kind": "MAT", "name": "Gilding", "index": 1, "id": "be0bbaf3f4f7c9fc87a15c7d08b0bb18"},
+    {"kind": "MESH", "name": "Vase", "index": 0, "id": "0d6f52247150edd52ac17287d54e7bf9", "part": true}
+  ]
+}

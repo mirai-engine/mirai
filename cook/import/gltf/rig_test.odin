@@ -115,9 +115,8 @@ a_humanoid_rig_fits_the_joints_a_person_placed_and_rests_as_the_template :: proc
     }
 
     // Its skeleton is written with a grip on each hand, measured on its skin.
-    folder:=base.test_folder(t,"rig-grips")
+    report,error,folder:=write_model(t,&rigged,"rig-grips")
     if folder=="" {return}
-    report,error:=importer.import_write(&rigged,folder)
     defer importer.report_destroy(&report)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     for warning in report.warnings {testing.expectf(t,!strings.contains(warning,"grip"),"%s",warning)}
