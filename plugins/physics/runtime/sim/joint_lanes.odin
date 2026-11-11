@@ -299,11 +299,16 @@ joint_block_solve :: #force_inline proc "contextless" (st:^Step,jb:^Joint_Block(
         if .Cone in jb.flags {
             // The swing between the X axes stays inside the cone.
             axis,sine:=normalize_length4(cross4(ax,bx))
-            swings:=simd.bit_and(jb.coned,simd.lanes_gt(sine,1e-6))
+            along:=dot4(ax,bx)
+            // Folded exactly back the swing has no side of its own: it opens about the Y axis of frame A.
+            back:=simd.bit_and(simd.lanes_le(sine,1e-6),simd.lanes_lt(along,pass.zero))
+            ay:=quat_axis4(qa,1)
+            axis={simd.select(back,ay.x,axis.x),simd.select(back,ay.y,axis.y),simd.select(back,ay.z,axis.z)}
+            swings:=simd.bit_and(jb.coned,simd.bit_or(simd.lanes_gt(sine,1e-6),back))
             row:=joint_row4(jb,{},axis,axis)
             impulse:=jb.cone_impulse
             if !warm {
-                c:=jb.cone-atan2_lanes(sine,dot4(ax,bx))
+                c:=jb.cone-atan2_lanes(sine,along)
                 soft_bias:=use_bias?pass.bias_rate*c:pass.zero
                 bias:=simd.select(simd.lanes_gt(c,pass.zero),c*pass.inv_h,soft_bias)
                 next:=simd.max(jb.cone_impulse-row.mass*(bias-row_speed4(&row,&a,&b)),pass.zero)
