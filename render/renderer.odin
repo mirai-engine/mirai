@@ -68,7 +68,6 @@ Settings :: struct {
 	light_budget:         u32,    // shadow rays of a point that traces its own (glass, overlays, the other side of a surface that lets light through; probes and reflections take theirs from it), each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
 	direct_samples:       u32,    // samples of the direct light of a pixel, spread over the lights by what each gives it, one of them traced through the whole scene (1 to DIRECT_SAMPLES_MAX)
 	direct_half_resolution: bool, // the samples of the direct light are taken at one pixel of each 2x2 and the filter takes them to the others by their surfaces
-	shadow_maps:          bool,   // the direct light takes the shadows of the lights that light much of the view, and of the sun, from maps of depth drawn from them every frame (shadow_maps_pass): the hard shadow of the maps at each point, averaged over the points of its surface within its penumbra (direct_samples.comp, direct_spread.comp); the other lights trace rays
 	firefly_clamp:        f32,    // the brightest a ray of a traced reflection or of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
@@ -106,7 +105,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 1080, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
-	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15, shadow_maps = true,
+	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	reflection_roughness = 0.3, reflection_light_budget = 8, glass_layers = 1,
@@ -330,11 +329,12 @@ Variant_State :: enum u8 {None, Asked, Refused}
 @(private)
 PIPELINE_VARIANTS :: 64
 
-Targets :: struct {
-	width, height:           u32, // internal 3D resolution
-	half_width, half_height: u32,
-	output_width:            u32, // window resolution (LDR + UI)
-	output_height:           u32,
+// The textures of the targets of a view whose contents live within its
+// frame: the view writes each before it reads it, and nothing reads them once
+// it is recorded. Views are recorded one after another, so those of one size
+// share them (shared_target), as the resources of a pipeline that are never
+// in use at once share memory. Only textures: targets_frame reads a group as a list.
+Frame_Targets :: struct {
 	depth:                   rhi.Texture,
 	albedo:                  rhi.Texture,
 	surface:                 rhi.Texture, // evaluated F0 as sRGB, encoded F90 in alpha; made when the scene first needs it
@@ -350,6 +350,35 @@ Targets :: struct {
 	reflect_shared:          rhi.Texture, // the same at half resolution: the rays that blocks of 2x2 pixels share
 	reflections:             rhi.Texture, // the traced reflections of the frame, filtered
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
+	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
+	using contact_targets: struct {
+		contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
+		contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
+		contact:                 rhi.Texture, // both at each pixel, packed (contact_pixels.comp)
+	},
+	using direct_targets: struct {
+		direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
+		direct_samples:          rhi.Texture, // at each point (direct_points of direct_samples.slang), the light of the local lights with nothing in the way over its reflectance, and the part of it that got there
+		direct_sun:              rhi.Texture, // at each point, what the glass on the way leaves of the light of the sun, and how much of the sun gets there
+		direct_depth:            rhi.Texture, // at each point, its linear depth (0 for none) and the radii of the penumbrae of the sun and of the local lights
+		direct_points:           rhi.Texture, // what the window of the samples gives each point (direct_points.comp), its part spread over its penumbra (direct_spread.comp)
+		direct_sun_points:       rhi.Texture, // the same of the part of the sun
+		direct_spread:           rhi.Texture, // those parts spread along the rows (direct_spread.comp)
+		direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
+	},
+	using shadow_targets: struct {
+		shadow_atlas:            rhi.Texture, // the depth from the lights of the shadow maps of the frame (shadow_maps_pass)
+		shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
+		shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
+	},
+}
+
+Targets :: struct {
+	width, height:           u32, // internal 3D resolution
+	half_width, half_height: u32,
+	output_width:            u32, // window resolution (LDR + UI)
+	output_height:           u32,
+	using frame:              Frame_Targets,
 	taa:                     [2]rhi.Texture, // output-resolution history
 	taa_frames:              [2]rhi.Texture, // the frames the history of each of its pixels holds
 	taa_valid:               bool,
@@ -357,9 +386,6 @@ Targets :: struct {
 	hiz_width, hiz_height:   u32,
 	hiz_levels:              u32,
 	hiz_valid:               bool, // the previous pyramid holds last frame's depth
-	contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
-	contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
-	contact:                 rhi.Texture, // both at each pixel, packed (contact_pixels.comp)
 	contact_scale:           u32, // the pixels across a point of contact_points
 	ldr:                     rhi.Texture,
 	generated:               rhi.Texture, // the image shown before ldr, while the pipeline generates frames: made with the first one
@@ -367,10 +393,7 @@ Targets :: struct {
 	ui_blur:                 [2]rhi.Texture,
 	highlight:               rhi.Texture, // editor selection mask: level and depth of highlighted surfaces
 	highlight_depth:         rhi.Texture,
-	shadow_atlas:            rhi.Texture, // the depth from the lights of the shadow maps of the frame (shadow_maps_pass)
-	shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
-	shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
-	shadow_buffers:          Shadow_Buffers,
+	shadow_raster:           Shadow_Raster,
 	highlight_filtered:      rhi.Texture, // premultiplied editor coat, window-point resolution
 	highlight_width, highlight_height: u32,
 	gi_given:                rhi.Texture, // what a custom pass writes as Gi in place of the Indirect stage (Render_Resource.Gi); made when one first does
@@ -381,18 +404,9 @@ Targets :: struct {
 	glass_reflections:       rhi.Texture, // the traced reflections of the nearest layer of glass, filtered
 	glass_valid:             bool,
 	glass_needs_clear:       bool,
-	direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
-	direct_samples:          rhi.Texture, // at each point (direct_points of direct_samples.slang), the light of the local lights with nothing in the way over its reflectance, and the part of it that got there
-	direct_sun:              rhi.Texture, // at each point, what the glass on the way leaves of the light of the sun, and how much of the sun gets there
-	direct_depth:            rhi.Texture, // at each point, its linear depth (0 for none) and the radii of the penumbrae of the sun and of the local lights
-	direct_points:           rhi.Texture, // what the window of the samples gives each point (direct_points.comp), its part spread over its penumbra (direct_spread.comp)
-	direct_sun_points:       rhi.Texture, // the same of the part of the sun
-	direct_spread:           rhi.Texture, // those parts spread along the rows (direct_spread.comp)
 	direct_scale:            u32, // the pixels across a point of the direct targets
-	direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage drew over: TAA keeps less of its history there
 	reactive_drawn:          bool,        // the Blend stage drew in reactive since it was last cleared
-	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
 	aerial:                  rhi.Texture, // the aerial perspective of an atmosphere (air.odin), made when the sky first is one
 	aerial_key:              Air_Aerial_Key, // what it was computed for
 }
@@ -499,7 +513,7 @@ View_State :: struct {
 	generated:bool, // the frame being recorded generated the image shown before its own (Targets.generated)
 	frames:u64, // it was drawn: the turn of its histories
 	turn:u64,   // frames drawn since its last discontinuity (view_camera_cut): the turn of its jitter and of the pixels that share a ray, so what follows a cut does not depend on what was drawn before it
-	glass_dispatch,glass_seen:rhi.Buffer, // Gpu_Glass_Dispatch of the frame being recorded, and whether the glass passes ran in the one before
+	glass_dispatch:rhi.Buffer, // Gpu_Glass_Dispatch of the frame being recorded
 	dispatch_start:rhi.Buffer, // {0,1,1,0}: copied over an indirect dispatch whose groups in x the GPU counts, to start it each frame
 	prev_depth_plane:Vec4,
 	texture:Texture_Handle, // of a view drawn into a texture
@@ -618,6 +632,7 @@ Renderer :: struct {
 	texture_views:   [TEXTURE_VIEW_CAPACITY]View_State, // those drawn into a texture, at each size they were
 	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
 	shared_targets:  [SHARED_TARGET_CAPACITY]Shared_Target, // the targets of a frame of the views (targets_frame)
+	shadow_buffers:  Shadow_Buffers,
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for
@@ -702,7 +717,6 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
 	r.scratch_buffer = rhi.buffer_create(device, {size = 256, usage = {.Storage}, name = "scratch"})
 	r.glass_dispatch = rhi.buffer_create(device, {size = size_of(Gpu_Glass_Dispatch), usage = {.Storage, .Indirect}, name = "glass dispatch"})
-	r.glass_seen = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "glass seen"})
 	r.dispatch_start = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "dispatch start"})
 	r.light_changes = rhi.buffer_create(device, {size = LIGHT_CHANGES_MAX * size_of(Vec4), usage = {.Storage}, name = "light changes"})
 	feedback := textures_feedback_reserve(r, rhi.TEXTURE_TABLE_FIRST)
@@ -716,7 +730,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	for &b in r.ui_shape_buffers {b=rhi.buffer_create(device,{size=u64(r.ui_shape_capacity*size_of(Ui_Shape)),usage={.Storage},memory=.Upload,name="ui shapes"})}
 	r.debug_capacity = desc.debug_vertex_capacity if desc.debug_vertex_capacity > 0 else DEBUG_VERTEX_CAPACITY
 	for &b in r.debug_buffers {b = rhi.buffer_create(device, {size = u64(r.debug_capacity * size_of(Debug_Vertex)), usage = {.Storage}, memory = .Upload, name = "debug lines"})}
-	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.glass_seen == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
+	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
 		set_error(r, "renderer resources: %s", rhi.device_error(device))
 		return false
 	}
@@ -787,7 +801,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.glass_seen, r.dispatch_start, r.dummy_buffer}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.entries, r.shadow_buffers.draw, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
@@ -1554,22 +1568,12 @@ highlight_style_valid :: proc(style: Highlight_Style) -> bool {
 
 // ---------------------------------------------------------------- targets
 
-// The textures of the targets of a view whose contents live within its
-// frame: the view writes each before it reads it, and nothing reads them once
-// it is recorded. Views are recorded one after another, so those of one size
-// share them (shared_target), as the resources of a pipeline that are never
-// in use at once share memory.
 @(private)
-FRAME_TARGETS :: 34
+FRAME_TARGETS :: size_of(Frame_Targets) / size_of(rhi.Texture)
+// The textures of Frame_Targets or of a group of it.
 @(private)
-targets_frame :: proc(t: ^Targets) -> [FRAME_TARGETS]^rhi.Texture {
-	return {
-		&t.depth, &t.albedo, &t.surface, &t.layers, &t.instance, &t.normal, &t.emission, &t.motion, &t.linear_depth, &t.direct, &t.display,
-		&t.reflect_raw, &t.reflect_shared, &t.reflections, &t.nested_depth, &t.post_hdr[0], &t.post_hdr[1], &t.post_ldr[0], &t.post_ldr[1],
-		&t.contact_rays, &t.contact_points[0], &t.contact_points[1], &t.contact,
-		&t.direct_blockers, &t.direct_samples, &t.direct_sun, &t.direct_depth, &t.direct_points, &t.direct_sun_points, &t.direct_spread, &t.direct_marks,
-		&t.shadow_atlas, &t.shadow_tint, &t.shadow_glass,
-	}
+targets_frame :: proc(group: ^$T) -> []rhi.Texture {
+	return ([^]rhi.Texture)(group)[:size_of(T) / size_of(rhi.Texture)]
 }
 
 // The other textures of the targets of a view but those of its glass
@@ -1636,26 +1640,18 @@ shared_target_release :: proc(r: ^Renderer, texture: rhi.Texture) {
 
 // The targets of the frame of a view in a list go back to the views that share them.
 @(private)
-shared_targets_release :: proc(r: ^Renderer, textures: []^rhi.Texture) {
-	for texture in textures {
-		if texture^ != 0 {shared_target_release(r, texture^)}
-		texture^ = 0
+shared_targets_release :: proc(r: ^Renderer, textures: []rhi.Texture) {
+	for &texture in textures {
+		if texture != 0 {shared_target_release(r, texture)}
+		texture = 0
 	}
-}
-
-// Every buffer of the targets of a view, made or not.
-@(private)
-targets_buffers :: proc(t: ^Targets) -> [3]rhi.Buffer {
-	b := &t.shadow_buffers
-	return {b.entries, b.draw, b.table}
 }
 
 @(private)
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	for tex in targets_frame(t) {if tex^ != 0 {shared_target_release(r, tex^)}}
-	for b in targets_buffers(t) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	shared_targets_release(r, targets_frame(&t.frame))
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height
 	t^ = {}
@@ -1722,13 +1718,13 @@ ensure_instance_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
 // makes again.
 @(private)
 destroy_gi_targets :: proc(r: ^Renderer, t: ^Targets) {
-	shared_targets_release(r, {&t.contact_rays, &t.contact_points[0], &t.contact_points[1], &t.contact})
+	shared_targets_release(r, targets_frame(&t.contact_targets))
 	t.contact_scale = 0
 }
 
 @(private)
 destroy_direct_targets :: proc(r: ^Renderer, t: ^Targets) {
-	shared_targets_release(r, {&t.direct_blockers, &t.direct_samples, &t.direct_sun, &t.direct_depth, &t.direct_points, &t.direct_sun_points, &t.direct_spread, &t.direct_marks})
+	shared_targets_release(r, targets_frame(&t.direct_targets))
 	t.direct_scale = 0
 	destroy_shadow_maps(r, t)
 }

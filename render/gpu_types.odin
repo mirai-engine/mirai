@@ -432,14 +432,10 @@ Visible_Kind_Id :: enum {Levels, Single, Batch}
 
 // Indirect dispatch sizes of the glass passes, at render and at half
 // resolution. The cull pass leaves them at zero while no instance with
-// blended triangles passes its tests, and sets `seen` when one does.
+// blended triangles passes its tests.
 Gpu_Glass_Dispatch :: struct {
-	full: [3]u32,
-	seen: u32,
-	half: [3]u32,
-	pad:  u32,
+	full, half: [3]u32,
 }
-#assert(size_of(Gpu_Glass_Dispatch) == 32)
 
 // The parameters of a post-process effect (Post_Parameters of common.slang).
 Gpu_Post_Parameters :: struct {program,exposed,outlined:u32,fade:f32,values:[16]Vec4}

@@ -349,7 +349,7 @@ bind_light_maps :: proc(p: ^Pass, maps: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_atlas if maps else r.dummy_texture)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_tint if maps && p.frame.sun_maps.w != 0 else r.dummy_texture)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, t.shadow_buffers.table if maps else r.dummy_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
 // Farthest-depth mip chain of the linear depth target.
@@ -1016,7 +1016,6 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), groups(t.half_width, 8), groups(t.half_height, 8)}
 	rhi.cmd_timestamp(cmd, "cull")
 	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, size_of(Gpu_Cull_Stats), 0)
-	rhi.cmd_copy_buffer(cmd, p.view.glass_dispatch, u64(offset_of(Gpu_Glass_Dispatch, seen)), p.view.glass_seen, 0, size_of(u32))
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
 	if !cull_reset(r, cmd) {return false}
 	if threads > 0 {
@@ -1250,7 +1249,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
 	params.shadow = shadow_maps_pass(p)
 	atlas := t.shadow_atlas if params.shadow.on != 0 else r.dummy_texture
-	table := t.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
+	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
 	grid := or_dummy(r, s.light_grid_buffer)
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
 	#assert(DIRECT_MAPS_COMP_UNLAYERED == DIRECT_SAMPLES_COMP_UNLAYERED && DIRECT_MAPS_COMP_UNLAYERED == DIRECT_FILTER_COMP_UNLAYERED)
