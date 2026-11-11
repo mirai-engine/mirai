@@ -145,6 +145,28 @@ uint3 block_triangle(Cluster_Block b, uint t) {
 }
 uint cluster_corner(Mesh mesh, Cluster c, uint corner) { return block_corner(cluster_block(mesh, c), corner); }
 uint3 cluster_triangle(Mesh mesh, Cluster c, uint t) { return block_triangle(cluster_block(mesh, c), t); }
+
+// The box and the cone of the normals of cluster k of a pose as posed now;
+// false where the pose has none for it.
+struct Posed_Bounds { float3 low; float3 high; bool cone; float3 axis; float cutoff; };
+bool posed_bounds(Mesh mesh, uint k, out Posed_Bounds b) {
+    b.low = float3(0.0);
+    b.high = float3(0.0);
+    b.cone = false;
+    b.axis = float3(0.0, 0.0, 1.0);
+    b.cutoff = 1.0;
+    if (mesh.bounds_word == INVALID) return false;
+    uint at = mesh.bounds_word + k * POSED_BOUNDS_WORDS;
+    uint flags = vertex_words[at + 3u];
+    if ((flags & POSED_BOUNDS_BOX) == 0u) return false;
+    b.low = asfloat(uint3(vertex_words[at], vertex_words[at + 1u], vertex_words[at + 2u]));
+    b.high = asfloat(uint3(vertex_words[at + 4u], vertex_words[at + 5u], vertex_words[at + 6u]));
+    b.cone = (flags & POSED_BOUNDS_CONE) != 0u;
+    b.cutoff = float(int(flags << 16u) >> 24) / 127.0;
+    uint axis = vertex_words[at + 7u];
+    b.axis = oct_decode(max(float2(float(int(axis << 24u) >> 24), float(int(axis << 16u) >> 24)) / 127.0, float2(-1.0)));
+    return true;
+}
 // The material word of the slot of a cluster: the row of the table, and its source slot << 24.
 uint cluster_material(Mesh mesh, Cluster c) { return indices[mesh.slot_word + cluster_slot(c)]; }
 

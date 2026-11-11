@@ -1378,8 +1378,8 @@ content_create_menu :: proc(s:^Session) {
         if c.create_on_folder {
             ui.menu_separator(ctx)
             off:=asset_create_refusal(s)!=""
-            if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=command_icon(s,"rename"),disabled=off}) {content_rename_begin(s,{},folder)}
-            if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=command_icon(s,"duplicate"),disabled=off}) {
+            if ui.menu_item(ctx,ui.id(ctx,"rename"),command_label(s,"asset_rename"),{icon=command_icon(s,"asset_rename"),disabled=off}) {content_rename_begin(s,{},folder)}
+            if ui.menu_item(ctx,ui.id(ctx,"duplicate"),command_label(s,"asset_duplicate"),{icon=command_icon(s,"asset_duplicate"),disabled=off}) {
                 if _,message:=asset_folder_duplicate(s,folder);message!="" {notify(s,message)}
             }
             if ui.submenu(ctx,ui.id(ctx,"move"),"Move to",{icon=ui.icon_user(u8(User_Icon.Folder)),disabled=off}) {content_move_items(s,{},folder)}
@@ -2531,10 +2531,10 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
         // Duplicating and moving scan the registry again: what follows names the asset by its id.
         id:=file.id
         off:=asset_create_refusal(s)!=""
-        if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=command_icon(s,"rename"),shortcut=command_shortcut_text(s,"rename"),disabled=off}) {content_rename_begin(s,id)}
-        if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=command_icon(s,"duplicate"),shortcut=command_shortcut_text(s,"duplicate"),disabled=off}) {content_duplicate(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"rename"),command_label(s,"asset_rename"),{icon=command_icon(s,"asset_rename"),shortcut=command_shortcut_text(s,"asset_rename"),disabled=off}) {content_rename_begin(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"duplicate"),command_label(s,"asset_duplicate"),{icon=command_icon(s,"asset_duplicate"),shortcut=command_shortcut_text(s,"asset_duplicate"),disabled=off}) {content_duplicate(s,id)}
         if ui.submenu(ctx,ui.id(ctx,"move"),"Move to",{icon=ui.icon_user(u8(User_Icon.Folder)),disabled=off}) {content_move_items(s,id,"")}
-        if ui.menu_item(ctx,ui.id(ctx,"delete"),"Delete",{icon=command_icon(s,"delete"),shortcut="Del",danger=true,disabled=s.mode!=.Edit || watching(s)}) {asset_delete_ask(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"delete"),command_label(s,"asset_delete"),{icon=command_icon(s,"asset_delete"),shortcut=command_shortcut_text(s,"asset_delete"),danger=true,disabled=s.mode!=.Edit || watching(s)}) {asset_delete_ask(s,id)}
     }
     return
 }

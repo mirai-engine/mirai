@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:hash"
 import "mirai:core"
 import "mirai:editor"
-import "mirai:editor/api"
 import "mirai:host"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -13,17 +12,11 @@ import "mirai:ui"
 // captures of the profile.* methods and shows the last one: the time of each
 // frame, the zones of the threads and the GPU passes of the frame chosen, and
 // the zones that took most. An agent and the panel see the same captures.
-// The entry of View calls profile.panel, which an agent calls to see it too.
 
 @(storage)
 Profiler_Api :: struct {provider:editor.Api_Provider}
 
 PROFILER_API_DEFAULT :: Profiler_Api{provider={register=api_register}}
-
-Panel_Params :: struct {
-	open:bool `mirai:"optional,label=false closes it"`,
-}
-Panel_Result :: struct {open:bool}
 
 @(private)
 panel_of :: proc(s:^editor.Session) -> ^Profiler_Panel {
@@ -33,11 +26,8 @@ panel_of :: proc(s:^editor.Session) -> ^Profiler_Panel {
 
 @(private)
 api_register :: proc(s:^editor.Session) {
-	open:=Panel_Params{open=true}
-	editor.api_method_register(s,{params=type_info_of(Panel_Params),result=type_info_of(Panel_Result),
-		name="profile.panel",summary="Opens or closes the Profiler panel of the editor, which shows the last capture of profile.capture; capture with ui to see it.",
-		defaults=&open,flags={.Idempotent},run=api_panel,
-		entry={name="profiler",params=`{"open":"$toggle"}`,label="Profiler",menu=.View,group=editor.MENU_GROUP_PLUGINS,state=panel_state},
+	editor.command_bind(s,{name="profiler",label="Profiler",menu=.View,group=editor.MENU_GROUP_PLUGINS,state=panel_state,
+		view=proc(s:^editor.Session) {if p:=panel_of(s);p!=nil {p.open=!p.open}},
 	})
 }
 
@@ -45,17 +35,6 @@ api_register :: proc(s:^editor.Session) {
 panel_state :: proc(s:^editor.Session,b:^editor.Binding) -> editor.Command_State {
 	p:=panel_of(s)
 	return {checked=p!=nil && p.open,disabled=p==nil}
-}
-
-@(private)
-api_panel :: proc(s:^editor.Session,call:^api.Call) {
-	p:=panel_of(s)
-	if p==nil {
-		api.call_fail(call,api.SERVER_ERROR,"The editor holds no Profiler panel")
-		return
-	}
-	p.open=api.call_params(call,Panel_Params).open
-	api.call_result(call,Panel_Result).open=p.open
 }
 
 PANEL_SCOPE :: ui.Id(0x70726f66)

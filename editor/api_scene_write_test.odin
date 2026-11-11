@@ -43,9 +43,10 @@ write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Write_Answer,failur
 // A write with what its result names as made: "name id" of each, in order.
 @(private="file")
 write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Write_Answer,created:[]string,failure:string,ok:bool) {
-    method:=api.Method{result_id=Api_Write_Result}
+    method:=api.Method{params_id=Api_Scene_Write_Params,result_id=Api_Write_Result}
+    params:Api_Scene_Write_Params
     written:Api_Write_Result
-    call:=api.Call{method=&method,raw=raw,result=&written,allocator=context.temp_allocator}
+    call:=api.Call{method=&method,raw=raw,params=&params,result=&written,allocator=context.temp_allocator}
     api_scene_write(&f.s,&call)
     if call.failed {return {},nil,call.error.message,false}
     result={written.id,written.made,written.removed,written.disabled}
@@ -110,7 +111,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     steps:=len(f.edits.steps)
 
     // B by name, A by id with another name, C by place; New and Leaf are made, D and E go.
-    document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"name":"B","position":[1,0,0]}},{{"id":"0x%016x","name":"A2","components":{{"Prefab_Test_Lamp":{{"intensity":5}}}}}},{{}},{{"name":"New","children":[{{"name":"Leaf"}}]}}]}}]}}`,u64(ids[0]),u64(ids[1]))
+    document:=fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Root","children":[{{"name":"B","position":[1,0,0]}},{{"id":"0x%016x","name":"A2","components":{{"Prefab_Test_Lamp":{{"intensity":5}}}}}},{{}},{{"name":"New","children":[{{"name":"Leaf"}}]}}]}}]}}`,u64(ids[0]),u64(ids[1]))
     result,failure,ok:=write_scene(f,document)
     if !testing.expect(t,ok,failure) {return}
     testing.expect_value(t,result,Write_Answer{id=ids[0],made=2,removed=2})
@@ -134,7 +135,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     testing.expect(t,write_names(shape)=="B,A2,C,New" && "components" not_in shape["children"].(json.Array)[1].(json.Object),"Without components only the shape of the tree")
 
     // What inspect gives, written back, changes nothing.
-    result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(ids[0]),entities))
+    result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":%s}}`,u64(ids[0]),entities))
     testing.expect(t,ok,failure)
     testing.expect_value(t,result,Write_Answer{id=ids[0]})
     testing.expect_value(t,len(f.edits.steps),steps+1)
@@ -146,7 +147,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     testing.expect(t,core.has(&f.world.lamps,api_entity(w,ids[3])))
 
     // Without root the document makes a new root.
-    result,failure,ok=write_scene(f,`{"entities":[{"name":"Level","children":[{"name":"Floor","scale":[10,1,10]}]}]}`)
+    result,failure,ok=write_scene(f,`{"replace":true,"entities":[{"name":"Level","children":[{"name":"Floor","scale":[10,1,10]}]}]}`)
     testing.expect(t,ok,failure)
     testing.expect_value(t,result.made,2)
     level:=api_entity(w,result.id)
@@ -174,12 +175,12 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
     steps:=len(f.edits.steps)
 
-    _,failure,ok:=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,u64(root_id),u64(a_id),u64(c_id),u64(b_id)))
+    _,failure,ok:=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Root","children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,u64(root_id),u64(a_id),u64(c_id),u64(b_id)))
     testing.expect(t,!ok && strings.has_prefix(failure,"entities[0].children[1]: C is a member of an instance of a prefab and keeps the place"),failure)
     testing.expect_value(t,len(f.edits.steps),steps)
     testing.expect(t,entity_parent(w,api_entity(w,c_id))==api_entity(w,a_id))
 
-    result,write_failure,written:=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"name":"A","children":[{{"name":"Added"}}]}}]}}]}}`,u64(root_id)))
+    result,write_failure,written:=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Root","children":[{{"name":"A","children":[{{"name":"Added"}}]}}]}}]}}`,u64(root_id)))
     if !testing.expect(t,written,write_failure) {return}
     testing.expect_value(t,result,Write_Answer{id=root_id,made=1,disabled=2})
     for id in ([]base.Entity_Id{b_id,c_id}) {
@@ -197,7 +198,7 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     // The document of the instance, written back, changes nothing.
     tree,entities:=write_tree(t,f,root_id)
     testing.expect_value(t,write_names(tree),"A,B")
-    result,write_failure,written=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(root_id),entities))
+    result,write_failure,written=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":%s}}`,u64(root_id),entities))
     testing.expect(t,written,write_failure)
     testing.expect_value(t,result,Write_Answer{id=root_id})
     testing.expect_value(t,len(f.edits.steps),steps+1)
@@ -237,7 +238,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
         return
     }
 
-    document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.scene","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
+    document:=fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.scene","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
     result,named,failure,ok:=write_scene_made(f,document)
     if !testing.expect(t,ok,failure) {return}
     testing.expect_value(t,result,Write_Answer{id=level_id,made=3})
@@ -262,7 +263,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     tree,entities:=write_tree(t,f,level_id)
     placed:=tree["children"].(json.Array)[0].(json.Object)["prefab"].(json.Object)
     testing.expect(t,placed["root"].(json.Boolean) && len(placed["asset"].(json.String))>0)
-    result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(level_id),entities))
+    result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":%s}}`,u64(level_id),entities))
     testing.expect(t,ok && result==Write_Answer{id=level_id} && len(f.edits.steps)==steps+1,failure)
 
     // One step: undone, the instance is gone with its link; done again, it is linked as before.
@@ -281,7 +282,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     testing.expect(t,revert_error==.None && reverted>0 && value.intensity==2 && value.range==3,fmt.tprintf("%v %d %v",revert_error,reverted,value))
 
     // Without root the instance goes at the top of the scene, with what the document says of it.
-    result,failure,ok=write_scene(f,`{"merge":true,"entities":[{"name":"Alone","prefab":"crate.scene","enabled":false}]}`)
+    result,failure,ok=write_scene(f,`{"entities":[{"name":"Alone","prefab":"crate.scene","enabled":false}]}`)
     alone,placed_alone:=prefab_link_of(w,api_entity(w,result.id))
     testing.expect(t,ok && result.made==3 && placed_alone && alone.root && entity_has(w,api_entity(w,result.id),core.Disabled),fmt.tprintf("%s %v %v %v",failure,result,placed_alone,alone))
 
@@ -293,9 +294,9 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     instances,members:=core.count(&f.world.instances),core.count(&f.world.members)
     open_id:=f.document.id
     cases:=[?]struct{document,says:string,inside:bool}{
-        {`{"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.scene"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
-        {`{"entities":[{"name":"In","prefab":"crate.scene"}]}`,"holds the scene it would be placed in",true},
-        {`{"entities":[{"name":"In","prefab":"yard.scene"}]}`,"holds the scene it would be placed in",true},
+        {`{"replace":true,"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.scene"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
+        {`{"replace":true,"entities":[{"name":"In","prefab":"crate.scene"}]}`,"holds the scene it would be placed in",true},
+        {`{"replace":true,"entities":[{"name":"In","prefab":"yard.scene"}]}`,"holds the scene it would be placed in",true},
     }
     for c in cases {
         if c.inside {f.document.id=id}
@@ -328,21 +329,21 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
     alive,steps:=core.world_entities(w).alive,len(f.edits.steps)
     at:=fmt.tprintf(`"root":"0x%016x"`,u64(root_id))
     cases:=[?]struct{document,says:string}{
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),`entities[0].children[2].components.Light: "Light" is not a component; the nearest are`},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{"components":{{"Prefab_Test_Lamp":{{"intensty":1}}}}}}]}}]}}`,at),"entities[0].children[1].components.Prefab_Test_Lamp"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"components":{{"Prefab_Test_Lamp":null}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Test_Lamp: the document declares the components"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","off":["Prefab_Test_Lamp"]}}]}}]}}`,at),"entities[0].children[0].off: Prefab_Test_Lamp is not among the components it declares"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"x","colour":1}}]}}]}}`,at),"entities[0].children[0] has no 'colour'"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"position":[1,2]}}]}}]}}`,at),"entities[0].children[0].position must be an array of 3 numbers"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}}]}}]}}`,at,u64(other_id)),"entities[0].children[0].id: 0x"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"nobody.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "nobody.scene" is no .scene asset`},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"level.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "level.scene" is no .scene asset`},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"nobody.scene","size":2}}}}]}}]}}`,at),"entities[0].children[0].prefab has no 'size'"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":7}}]}}]}}`,at),"entities[0].children[0].prefab must be the path or the id of a prefab"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","prefab":{{"root":true}}}}]}}]}}`,at),"entities[0].children[0].prefab: it is not what links the entity to a prefab"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","components":{{"Prefab_Instance":{{}}}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,at,u64(root_id)+1,u64(root_id)+1),"entities[0].children[1].id: 0x"},
-        {fmt.tprintf(`{{%s,"entities":[{{"name":"Root"}},{{"name":"Two"}}]}}`,at),"entities declares one entity"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),`entities[0].children[2].components.Light: "Light" is not a component; the nearest are`},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"made"}},{{"components":{{"Prefab_Test_Lamp":{{"intensty":1}}}}}}]}}]}}`,at),"entities[0].children[1].components.Prefab_Test_Lamp"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"components":{{"Prefab_Test_Lamp":null}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Test_Lamp: a document that replaces declares the components"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"A","off":["Prefab_Test_Lamp"]}}]}}]}}`,at),"entities[0].children[0].off: Prefab_Test_Lamp is not among the components it declares"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"x","colour":1}}]}}]}}`,at),"entities[0].children[0] has no 'colour'"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"position":[1,2]}}]}}]}}`,at),"entities[0].children[0].position must be an array of 3 numbers"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"id":"0x%016x"}}]}}]}}`,at,u64(other_id)),"entities[0].children[0].id: 0x"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"made","prefab":"nobody.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "nobody.scene" is no .scene asset`},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"made","prefab":"level.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "level.scene" is no .scene asset`},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"nobody.scene","size":2}}}}]}}]}}`,at),"entities[0].children[0].prefab has no 'size'"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"made","prefab":7}}]}}]}}`,at),"entities[0].children[0].prefab must be the path or the id of a prefab"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"A","prefab":{{"root":true}}}}]}}]}}`,at),"entities[0].children[0].prefab: it is not what links the entity to a prefab"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"name":"A","components":{{"Prefab_Instance":{{}}}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,at,u64(root_id)+1,u64(root_id)+1),"entities[0].children[1].id: 0x"},
+        {fmt.tprintf(`{{%s,"replace":true,"entities":[{{"name":"Root"}},{{"name":"Two"}}]}}`,at),"entities declares one entity"},
     }
     for c in cases {
         _,failure,ok:=write_scene(f,c.document)
@@ -352,18 +353,18 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
         testing.expect_value(t,write_child_names(f,root),"A,B")
     }
     hostile:=[?]struct{document,says:string}{
-        {`{"merge":true,"entities":[{"name":"Root","delete":true,"position":[1,2,3]}]}`,"entities[0]: an entity that goes declares nothing else"},
-        {`{"merge":true,"entities":[{"copy":"Nobody"}]}`,`entities[0].copy: "Nobody" names no entity`},
-        {`{"merge":true,"entities":[{"copy":"Root","preset":"cube"}]}`,"entities[0].copy: a copy is a new entity made from another"},
-        {`{"root":"Root","merge":true,"entities":[{"copy":"Other"}]}`,"entities[0].copy: a copy is a new entity; root is the entity that is there"},
-        {`{"merge":"yes","entities":[]}`,"merge must be true or false"},
-        {`{"root":"Nobody","entities":[{}]}`,`root: "Nobody" names no entity`},
-        {`{"root":"Root","entities":[]}`,"entities declares one entity with root"},
-        {`{"entities":"all"}`,"entities must be an array"},
-        {`{"merge":true}`,"entities is required"},
-        {`{"merge":true,"entities":[{"name":"Root","position":[1,2,1e999]}]}`,"entities[0].position must be an array of 3 finite numbers"},
-        {`{"merge":true,"entities":[{"name":"Root","off":["Prefab_Test_Lamp"]}]}`,"entities[0].off: Prefab_Test_Lamp is not among the components it has"},
-        {`{"merge":true,"entities":[{"name":"Root","children":[{"name":"A","components":{"Prefab_Test_Lamp":{"intensity":"bright"}}}]}]}`,"entities[0].children[0].components.Prefab_Test_Lamp"},
+        {`{"entities":[{"name":"Root","delete":true,"position":[1,2,3]}]}`,"entities[0]: an entity that goes declares nothing else"},
+        {`{"entities":[{"copy":"Nobody"}]}`,`entities[0].copy: "Nobody" names no entity`},
+        {`{"entities":[{"copy":"Root","preset":"cube"}]}`,"entities[0].copy: a copy is a new entity made from another"},
+        {`{"root":"Root","entities":[{"copy":"Other"}]}`,"entities[0].copy: a copy is a new entity; root is the entity that is there"},
+        {`{"replace":"yes","entities":[]}`,"replace must be true or false"},
+        {`{"root":"Nobody","replace":true,"entities":[{}]}`,`root: "Nobody" names no entity`},
+        {`{"root":"Root","replace":true,"entities":[]}`,"entities declares one entity with root"},
+        {`{"replace":true,"entities":"all"}`,"entities must be an array"},
+        {`{}`,"entities is required"},
+        {`{"entities":[{"name":"Root","position":[1,2,1e999]}]}`,"entities[0].position must be an array of 3 finite numbers"},
+        {`{"entities":[{"name":"Root","off":["Prefab_Test_Lamp"]}]}`,"entities[0].off: Prefab_Test_Lamp is not among the components it has"},
+        {`{"entities":[{"name":"Root","children":[{"name":"A","components":{"Prefab_Test_Lamp":{"intensity":"bright"}}}]}]}`,"entities[0].children[0].components.Prefab_Test_Lamp"},
         {"\xff\x00{[",""},
         {`[1,2,3]`,"document must be an object"},
     }
@@ -377,7 +378,7 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
     testing.expect_value(t,lamp.intensity,f32(2))
 }
 
-// With merge a document names only what changes: what it leaves out stays,
+// A document names only what changes: what it leaves out stays,
 // delete takes an entity away, null a component, and copy makes an entity
 // from another. Each write is one step.
 @(test)
@@ -402,22 +403,22 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
     NONE :: [2]f32{-1,-1}
     cases:=[?]struct{document:string,made,removed:int,children,under_a:string,lamp:[2]f32,off:bool,x:f32}{
         // A field of a component, and the rest of it, of the entity and of its siblings stays.
-        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"A","components":{"Prefab_Test_Lamp":{"intensity":5}}}]}]}`,0,0,"A,B","C",{5,3},false,0},
+        {`{"root":"Root","entities":[{"children":[{"name":"A","components":{"Prefab_Test_Lamp":{"intensity":5}}}]}]}`,0,0,"A,B","C",{5,3},false,0},
         // A name no sibling has is a new entity; one without a name is too.
-        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"New","position":[1,2,3]},{}]}]}`,2,0,"A,B,New,Entity","C",{5,3},false,0},
+        {`{"root":"Root","entities":[{"children":[{"name":"New","position":[1,2,3]},{}]}]}`,2,0,"A,B,New,Entity","C",{5,3},false,0},
         // At the top an id names the entity where it is.
-        {fmt.tprintf(`{{"merge":true,"entities":[{{"id":"0x%016x","position":[7,0,0]}}]}}`,u64(a_id)),0,0,"A,B,New,Entity","C",{5,3},false,7},
+        {fmt.tprintf(`{{"entities":[{{"id":"0x%016x","position":[7,0,0]}}]}}`,u64(a_id)),0,0,"A,B,New,Entity","C",{5,3},false,7},
         // off turns a component off, and declared without it in off, on again.
-        {`{"root":"Root/A","merge":true,"entities":[{"off":["Prefab_Test_Lamp"]}]}`,0,0,"A,B,New,Entity","C",{5,3},true,7},
-        {`{"root":"Root/A","merge":true,"entities":[{"components":{"Prefab_Test_Lamp":{"range":4}},"off":[]}]}`,0,0,"A,B,New,Entity","C",{5,4},false,7},
+        {`{"root":"Root/A","entities":[{"off":["Prefab_Test_Lamp"]}]}`,0,0,"A,B,New,Entity","C",{5,3},true,7},
+        {`{"root":"Root/A","entities":[{"components":{"Prefab_Test_Lamp":{"range":4}},"off":[]}]}`,0,0,"A,B,New,Entity","C",{5,4},false,7},
         // delete takes entities away, and one that is not there is not an error.
-        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"B","delete":true},{"name":"Entity","delete":true},{"name":"Nobody","delete":true}]}]}`,0,2,"A,New","C",{5,4},false,7},
+        {`{"root":"Root","entities":[{"children":[{"name":"B","delete":true},{"name":"Entity","delete":true},{"name":"Nobody","delete":true}]}]}`,0,2,"A,New","C",{5,4},false,7},
         // A copy stays beside what it copies, with what hangs from it, and takes what the document says.
-        {`{"merge":true,"entities":[{"copy":"Root/A","name":"A2","position":[9,0,0],"children":[{"name":"C","enabled":false}]}]}`,2,0,"A,New,A2","C",{5,4},false,7},
+        {`{"entities":[{"copy":"Root/A","name":"A2","position":[9,0,0],"children":[{"name":"C","enabled":false}]}]}`,2,0,"A,New,A2","C",{5,4},false,7},
         // null takes a component away.
-        {`{"root":"Root/A","merge":true,"entities":[{"components":{"Prefab_Test_Lamp":null}}]}`,0,0,"A,New,A2","C",NONE,false,7},
-        // Without merge the document declares all there is under root.
-        {`{"root":"Root","entities":[{"children":[{"name":"A"}]}]}`,0,4,"A","",NONE,false,0},
+        {`{"root":"Root/A","entities":[{"components":{"Prefab_Test_Lamp":null}}]}`,0,0,"A,New,A2","C",NONE,false,7},
+        // With replace the document declares all there is under root.
+        {`{"root":"Root","replace":true,"entities":[{"children":[{"name":"A"}]}]}`,0,4,"A","",NONE,false,0},
     }
     for c in cases {
         steps:=len(f.edits.steps)
@@ -442,11 +443,11 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
         testing.expect(t,lamp.intensity==5 && entity_local(w,child).position.x==9 && len(held)==1 && entity_has(w,held[0],core.Disabled))
     }
     // kind makes the document a prefab only with one root, and a scene again.
-    _,many,made:=write_scene(f,`{"merge":true,"kind":"Prefab","entities":[]}`)
+    _,many,made:=write_scene(f,`{"kind":"Prefab","entities":[]}`)
     testing.expectf(t,!made && strings.contains(many,"exactly one root") && !s.document.prefab,"gave '%s'",many)
-    _,why,ok:=write_scene(f,`{"merge":true,"kind":"Prefab","entities":[{"name":"Other","delete":true}]}`)
+    _,why,ok:=write_scene(f,`{"kind":"Prefab","entities":[{"name":"Other","delete":true}]}`)
     testing.expectf(t,ok && s.document.prefab && document_dirty(s),"gave '%s'",why)
-    _,why,ok=write_scene(f,`{"merge":true,"kind":"Scene","entities":[]}`)
+    _,why,ok=write_scene(f,`{"kind":"Scene","entities":[]}`)
     testing.expectf(t,ok && !s.document.prefab,"gave '%s'",why)
 }
 
@@ -477,9 +478,9 @@ a_document_written_to_a_file_gives_the_bytes_the_method_and_a_save_give :: proc(
     defer {asset.registry_destroy(&p.registry);asset.types_destroy(&p.types);author.scratch_world_free(&p.scratch)}
     p.assets={&p.registry,&p.types}
     documents:=[?]string{
-        `{"root":"Root","merge":true,"entities":[{"children":[{"name":"A","position":[1,2,3],"components":{"Prefab_Test_Lamp":{"intensity":5}}},{"name":"B","delete":true}]}]}`,
-        `{"root":"Root","entities":[{"name":"Yard","children":[{"name":"C","position":[0,1,0]},{"name":"A","components":{"Prefab_Test_Lamp":{"range":9}},"off":["Prefab_Test_Lamp"]}]}]}`,
-        `{"merge":true,"entities":[{"name":"Root","children":[{"name":"C","enabled":false}]}]}`,
+        `{"root":"Root","replace":false,"entities":[{"children":[{"name":"A","position":[1,2,3],"components":{"Prefab_Test_Lamp":{"intensity":5}}},{"name":"B","delete":true}]}]}`,
+        `{"root":"Root","replace":true,"entities":[{"name":"Yard","children":[{"name":"C","position":[0,1,0]},{"name":"A","components":{"Prefab_Test_Lamp":{"range":9}},"off":["Prefab_Test_Lamp"]}]}]}`,
+        `{"replace":false,"entities":[{"name":"Root","children":[{"name":"C","enabled":false}]}]}`,
     }
     for document in documents {
         if !testing.expect_value(t,os.write_entire_file(file,saved),nil) {return}
@@ -515,7 +516,7 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
         return
     }
     document :: proc(root:base.Entity_Id,plain:string) -> string {
-        return fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"name":"Red","preset":"point_light","position":[0,3,0],"components":{{"Point_Light":{{"color":[1,0,0]}}}}}},{{"name":"Plain","preset":"point_light"%s}},{{"name":"Sun","preset":"sun"}}]}}]}}`,u64(root),plain)
+        return fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Root","children":[{{"name":"Red","preset":"point_light","position":[0,3,0],"components":{{"Point_Light":{{"color":[1,0,0]}}}}}},{{"name":"Plain","preset":"point_light"%s}},{{"name":"Sun","preset":"sun"}}]}}]}}`,u64(root),plain)
     }
     result,failure,ok:=write_scene(f,document(root_id,""))
     if !testing.expect(t,ok,failure) {return}
@@ -542,7 +543,7 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
     plain,_=light(f,root,"Plain")
     testing.expect(t,ok && plain==erender.POINT_LIGHT_DEFAULT,failure)
 
-    _,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"children":[{{"name":"X","preset":"nope"}}]}}]}}`,u64(root_id)))
+    _,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"children":[{{"name":"X","preset":"nope"}}]}}]}}`,u64(root_id)))
     testing.expect(t,!ok && strings.has_prefix(failure,"entities[0].children[0].preset: "),failure)
     testing.expect_value(t,core.world_entities(w).alive,4)
 }

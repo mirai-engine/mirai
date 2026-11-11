@@ -202,7 +202,6 @@ mirai rpc <method> [key=value...|json|-|--file F] [--select FIELDS]
   [--wait-until CONDITION]
   [--project P] [--port N] [--timeout S]
 mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
-mirai rpc --batch <calls.jsonl|-> [the same options]
 ```
 
 - Params are `key=value` arguments or one JSON object (`{}` if missing; `-` from stdin).
@@ -224,11 +223,8 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
   process is alive but uses no CPU for `api.CLIENT_HUNG_SECONDS` is `-32095`, naming its pid and
   its log. Knowing the process needs a port file: with `--port` only that of the project at or
   above the current folder. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK`
-  ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line, from a
-  file or from stdin (`-`), and sends them as the calls of one
-  [`batch`](methods.md#scene), so many calls cost one process and one request; it prints what
-  `batch` answers, and at the first call that fails its error. `--timeout` bounds the whole
-  batch.
+  ([context](#ai-turn-context)). Many calls cost one process and one request as the params of
+  one [`batch`](methods.md#scene), in a file (`mirai rpc batch --file calls.json`) or from stdin.
 - Output: the result on stdout and code 0; an error, on stderr as `{"error":{...}}` and code 1;
   invalid arguments, `Usage:` and code 2. From the client: `-32099` with no editor listening,
   `-32097` when `--timeout` runs out, `-32096` if it closed the connection without answering (it
@@ -403,7 +399,7 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - **Hexadecimal ids.** An entity (`core.Id`) is taken as a string of up to 16 digits
   (`"00a1b2c3d4e5f607"`, also with `0x`) and answered with `0x` and all its digits; an asset, 32
   digits without it. A live `core.Entity` handle has the form of an id and appears as `entity`
-  (`play.inspect`, `play.player`).
+  (`scene.inspect` of a game, `play.player`).
 - **Transforms local to the parent**: `rotation_deg` in Euler degrees, position in meters and
   scale in factors. `world_position` is read-only.
 - **`Call.raw` is the text of the params as their types say them**: a handler that reads a

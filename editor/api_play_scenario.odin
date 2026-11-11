@@ -76,7 +76,7 @@ Scenario_Step :: struct {
 
 @(private)
 api_play_scenario_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=type_info_of(Api_Play_Scenario_Params),result=type_info_of(Api_Play_Scenario_Result),run=api_play_scenario_run})
+    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, capture, the other play methods, and scene.write and scene.inspect with world Game) and stops; says per step whether it passed, at which tick and what its method answered.",params=type_info_of(Api_Play_Scenario_Params),result=type_info_of(Api_Play_Scenario_Result),run=api_play_scenario_run})
 }
 
 
@@ -103,7 +103,7 @@ scenario_method_refusal :: proc(name:string) -> string {
     switch {
     case name=="play.start" || name=="play.stop": return "the scenario starts the game before its steps and stops it after them: leave it out (start takes the params of play.start)"
     case strings.has_prefix(name,"play.scenario."): return "a scenario does not run scenarios"
-    case !strings.has_prefix(name,"play.") && name!="capture": return "a scenario plays the game: its steps are play methods and capture (play.input, play.step, play.check, play.spawn, play.set...)"
+    case !strings.has_prefix(name,"play.") && name!="capture" && name!="scene.write" && name!="scene.inspect": return "a scenario plays the game: its steps are play methods (play.input, play.step, play.check...), capture, and scene.write and scene.inspect with world Game"
     }
     return ""
 }
@@ -116,6 +116,9 @@ api_scenario_check :: proc(server:^api.Server,sc:^Scenario,allocator:=context.al
         method:=api.method_find(server,step.method)
         if method==nil {return fmt.aprintf("steps[%d].method: %q is not a method of this editor; engine.describe lists them",i,step.method,allocator=allocator)}
         if refusal:=scenario_method_refusal(step.method);refusal!="" {return fmt.aprintf("steps[%d].method: %s: %s",i,step.method,refusal,allocator=allocator)}
+        if world:[1]string;strings.has_prefix(step.method,"scene.") && (!api.object_values(allocator,string(step.params),{"world"},world[:]) || world[0]!=`"Game"`) {
+            return fmt.aprintf(`steps[%d].params: a scenario plays the game: give %s "world": "Game"`,i,step.method,allocator=allocator)
+        }
         mark:=base.arena_mark(&server.scratch)
         _,_,error,read:=api.params_read(server,method,string(step.params))
         base.arena_rewind(&server.scratch,mark)

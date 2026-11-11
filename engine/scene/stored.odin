@@ -64,7 +64,7 @@ texts_clone :: proc(texts:[]string,allocator:=context.allocator) -> []string {
 // or nothing reads them; otherwise it only says the values were read from
 // another layout.
 stored_text :: proc(entry:Stored,scene:string) -> (text:string,warning:bool) {
-    if entry.unknown {return fmt.tprintf("%s: the component %s is not one of this game: a save keeps its values and nothing reads them; add the plugin or the code that declares it, or take it off the entities (a merge document of mirai scene write with \"%s\": null)",scene,entry.component,entry.component),true}
+    if entry.unknown {return fmt.tprintf("%s: the component %s is not one of this game: a save keeps its values and nothing reads them; add the plugin or the code that declares it, or take it off the entities (mirai scene write with \"replace\": false and \"%s\": null)",scene,entry.component,entry.component),true}
     b:=strings.builder_make(context.temp_allocator)
     fmt.sbprintf(&b,"%s: %s is stored with another layout and read by the names of its fields",scene,entry.component)
     if len(entry.removed)>0 {fmt.sbprintf(&b,"; saving the scene loses the stored fields %v, which it has under no name now: a renamed field says the names it had with the tag mirai:\"was=<earlier name>\"",entry.removed)}

@@ -43,9 +43,9 @@ Api_Play_Trace :: struct {
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of entities"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of entities or a storage: the entities named are its points"`,
-    fields:[API_TRACE_FIELDS][128]u8 `mirai:"text,label=Values as play.get names them for an entity (Motion.linear.1 or world_position) or names of fields and indices joined by dots inside the storage or the view (points.0.normalized); a[0].b is a.0.b"`,
+    fields:[API_TRACE_FIELDS][128]u8 `mirai:"text,label=Values of an entity as play.check names them (Motion.linear.1 or world_position) or names of fields and indices joined by dots inside the storage or the view (points.0.normalized); a[0].b is a.0.b"`,
     every:int `mirai:"optional,min=1,max=3600,label=Ticks between two rows"`,
-    include_runtime:bool `mirai:"optional,label=Hidden fields and transient component state as play.inspect with include_runtime reads them"`,
+    include_runtime:bool `mirai:"optional,label=Hidden fields and transient component state as scene.inspect with include_runtime reads them"`,
 }
 
 // What play.step writes: Api_Play_Result, the ticks it ran and its trace.
@@ -69,7 +69,7 @@ Api_Play_Trace_Column :: struct {
 }
 Api_Play_Trace_Row :: struct {
     tick:u64 `mirai:"label=The tick of the game it was read at"`,
-    values:serial.Json `mirai:"label=One per column as play.inspect writes it; null where the entity or its component is gone"`,
+    values:serial.Json `mirai:"label=One per column as scene.inspect writes it; null where the entity or its component is gone"`,
 }
 
 // One segment of input of a step, checked.
@@ -409,7 +409,7 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
     }
     if storage!="" {
         for &info,i in s.info.storages {if st.storage_types[i]!=serial.TYPE_NONE && info.name==storage {trace.storage=i;break}}
-        if trace.storage<0 {return fmt.tprintf("trace.storage %q is not a storage of the game; play.inspect with storages lists them",storage)}
+        if trace.storage<0 {return fmt.tprintf("trace.storage %q is not a storage of the game; scene.inspect with world Game and storages lists them",storage)}
     } else if named {
         table:^core.Table_Info
         if component!="" {
@@ -431,7 +431,7 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
             if matched<API_TRACE_ENTITIES {trace.entities[matched],trace.names[matched]=e,strings.clone(entity_name(w,e),call.allocator)}
             matched+=1
         }
-        if matched==0 {return "trace matches no entity of the game: play.inspect lists them"}
+        if matched==0 {return "trace matches no entity of the game: scene.inspect with world Game lists them"}
         if matched>API_TRACE_ENTITIES {return fmt.tprintf("trace matches %d entities and reads at most %d: narrow it with entity or component",matched,API_TRACE_ENTITIES)}
         trace.count=matched
     }
@@ -452,7 +452,7 @@ api_trace_take :: proc(s:^Session,trace:^Api_Trace,w:core.World_Ref,ran:int) -> 
     st:=api_state(s)
     row:Api_Play_Trace_Row
     if t:=core.world_storage_of(w,core.Time);t!=nil {row.tick=t.tick}
-    // The values are what the world names: one per column, as play.inspect writes it.
+    // The values are what the world names: one per column, as scene.inspect writes it.
     values:serial.Writer
     serial.writer_init(&values,0,trace.rows.allocator)
     out:=&values

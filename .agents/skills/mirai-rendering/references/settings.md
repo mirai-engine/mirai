@@ -21,9 +21,9 @@
   - the probe volume with its shape, `colored_shadows` or `sun_shadows`; its probes gather again
     everywhere, keeping the volume, with `gi_strength`, `light_budget` or `sun_radius`. With
     either, the worlds not shown lose the light they kept;
-  - the histories that hold what the change alters: shadows with `sun_shadows`; reflections,
-    glass and TAA with `colored_shadows`, `sun_shadows`, `reflection_light_budget` and
-    `reflections`;
+  - the histories that hold what the change alters: glass and TAA with `colored_shadows`,
+    `sun_shadows`, `reflection_light_budget` and `reflections`. The direct light and the
+    reflections keep none;
   - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
 - `page_pool_bytes` recreates nothing: the
   [pages](scene.md#scene-and-instances) region is reserved once, with the first mesh that uses

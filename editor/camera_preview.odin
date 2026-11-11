@@ -1,6 +1,5 @@
 package editor
 
-import "core:fmt"
 import "core:mem"
 import "mirai:core"
 import "mirai:editor/history"
@@ -93,7 +92,7 @@ camera_preview_button :: proc(c:^Inspect,camera:core.Entity) {
     if s.mode!=.Edit {return}
     ctx:=s.gui.ctx
     if ui.button(ctx,ui.id(ctx,"camera_preview"),{label="Preview",icon=.Play,variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),center=true}).clicked {
-        command_call(s,"camera.preview",fmt.tprintf(`{{"entity":"0x%016x"}}`,u64(camera)))
+        camera_preview_start(s,camera)
     }
 }
 

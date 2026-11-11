@@ -35,7 +35,7 @@ UI_RENAMES :: 8   // nodes of the tree renamed before a write, which the .ui tha
 @(storage)
 Ui_Documents :: struct {provider:editor.Asset_Document_Provider}
 ui_documents_default :: proc() -> Ui_Documents {
-    return {provider={kinds={0=asset.KIND_UI},count=1,hierarchy={0},flat={0},creates={0},create=ui_create,takes={0="copy",1="paste",2="duplicate",3="delete",4="rename"}}}
+    return {provider={kinds={0=asset.KIND_UI},count=1,hierarchy={0},flat={0},creates={0},create=ui_create}}
 }
 
 // The bytes of the empty .ui Create of the content browser and asset.create make.
@@ -90,7 +90,6 @@ Ui_Inspector :: struct {
     rename_count:int,
     imports:Imports_Cache, // the widgets the records of the document name
     drag:Node_Drag,
-    request_seen:u64,      // the last Asset_Document.request_serial run
     texts:Texts_Edit,      // what the popup of texts of a localized node edits
     languages:Texts_Languages,
     pick_prefix:[ui.TREE_PATH_CAPACITY]u8, // the path the list of a binding walked so far
@@ -140,7 +139,6 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
         for open in ([]Section{.Node,.Layout,.Style,.Component}) {u.open[open]=true}
         u.stage=STAGE_DEFAULT
         u.drag.row=-1
-        u.request_seen=d.request_serial
     }
     inspector_sync(s,u,a,d.id,d.history.cursor)
     // What it binds that the game does not have, once a gesture ends and after each build.

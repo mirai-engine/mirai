@@ -155,7 +155,9 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 ### Tracks tool
 
 The one editor of the keys of any clip (a door, a light, a camera move, a cinematic), in
-`plugins/animation/editor/tracks.odin`: Tools > Tracks, or `animation.tracks.show`, on the clip of
+`plugins/animation/editor/tracks.odin`: Tools > Tracks (`editor.tool` with `tracks`; in Edit
+`animation.request` with `seek` moves its
+head on the clip of an entity), on the clip of
 the `Animation` of the selection or of the entity whose clip moves it. Its panel lists the tracks by
 target and field, the key chosen (interpolation, ease) and what adds a track for a value of the
 selected entity; the strip at the bottom has a lane of keys per track in view and, after them, a
@@ -182,8 +184,8 @@ an actor), whose marks a drag moves and the right button deletes.
   matching, modifiers, actions with the parameters of the set, motion and morphs; `diagnostics`
   adds solver and fades). A part that does not apply answers `{available:false, code, reason}`
   without failing the call; a set that does not evaluate gives `Program_Error`. `entity`
-  also takes, in Play or Simulate, the handle `play.inspect` gives, the only name of an entity
-  the game made.
+  also takes, in Play or Simulate, the handle `scene.inspect` of the game gives, the only name of
+  an entity the game made.
 - `animation.inspect` part `Match` lists the clips of the database and the candidates of its last
   forced search with their costs per feature, then the best row of each clip it left out with its
   `reason`: why a jump or a start chose its clip, or never picks one, is read there. The tick keeps

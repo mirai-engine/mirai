@@ -71,23 +71,24 @@ or interleave its own passes.
    - Sun, local lights (all with size) and lights from
      [extensions](views.md#extension-hooks-and-constants), with the diffuse lobe and the GGX
      specular: the output is reflected radiance.
-   - `shadow trace` and `shadow filter` compute beforehand, at half resolution, the fraction of
-     light that reaches each 2×2 block; `direct` multiplies by it the unshadowed light of the
-     pixel ([shadows](lights.md#shadows)) and adds that of the GPU lights that do not cast
-     shadows ([GPU lights](lights.md#gpu-lights)).
-   - `direct` does not trace: a pixel with no block on its surface enters a list that
-     `direct rays` (`lighting_traced.comp`, indirect dispatch) traces. Without blocks (pipeline
-     `Light`), `direct rays` lights each pixel and `direct` does not run.
+   - The light of a pixel comes from `direct_samples` samples spread over the lights of its cell
+     of the [grid](lights.md#direct-light-of-a-view), in this order: the grid when the lights
+     change, the shadow maps of the lights that cover much of the view and of the sun,
+     `direct_rays` (one point of each 2×2 traces a sample), `direct_samples`, and `direct_points`,
+     `direct_spread` and `direct_filter`, which filter the points, take them to the pixels, where
+     the sun gives its light, and add the lights that cast no shadows
+     ([GPU lights](lights.md#gpu-lights)).
+   - The points that trace their own rays (glass, overlays, the back side) use `direct_lighting`.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
-   second pass filters in space and time; it is omitted while no material of the table can go
+   second pass filters the rays of the frame; it is omitted while no material of the table can go
    below that limit ([traced reflections](materials.md#traced-reflections)).
 7. **ddgi**: with indirect light, in the first window view, the
    [probe volume](gi.md#probe-volume) marks the probes that scene changes reach and those that
    pixels use, chooses by priority those it traces and updates their atlases and positions. With
    a still scene it keeps tracing in turns, with the same rays. The animated emission of a
    Surface program does not count as a change.
-8. **contact**: the [contact occlusion](gi.md#contact-occlusion) traces its short rays and blurs
-   them over the surface.
+8. **contact**: the [contact occlusion](gi.md#contact-occlusion) traces its short rays at points
+   over frames and takes them, with the probe light of each point, to the pixels.
 9. **composite**: `direct + indirect_compose + emission`
    ([indirect composition](materials.md#indirect-composition)), or the view's
    [inspection mode](settings.md#inspection-modes). Under an atmosphere, the image that is shown
@@ -132,7 +133,7 @@ or interleave its own passes.
       highlight weighs by how bright it shows, whatever the light scale. The history stays in
       render units.
     - Where the `Blend` stage covered the pixel (`Targets.reactive`) the history weighs less.
-      Where the pixel's shadow block was marked because what casts its shadow changed
+      Where the pixel's direct light was marked because what casts its shadow changed
       ([shadows](lights.md#shadows)), the pixel keeps what a moving one keeps: a shadow that moves
       over a still floor leaves no trail. An upscaler that replaces TAA does not receive that
       mark.

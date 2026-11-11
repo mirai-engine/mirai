@@ -15,7 +15,7 @@ forward is where it looks.
 ## Third person
 
 ```json
-{"method":"scene.write","params":{"root":"Player view","merge":true,"entities":[{
+{"method":"scene.write","params":{"root":"Player view","entities":[{
  "components":{"Camera_Follow":{"mode":"Orbit","offset":[0,1.6,0],"distance":4.5,"pitch":0.3,
  "min_pitch":-0.4,"max_pitch":1.2,"aim":true}}}]}}
 ```

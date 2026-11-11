@@ -43,7 +43,7 @@ scene, not in the camera; a night or a lamp-lit scene meters whatever lamps are 
 
 1. Brightness of the whole scene: `compensation` in EV on the `View_Volume` that has no `Volume`.
    Move by half an EV or one, then capture. Set
-   `exposure.compensation` of that `View_Volume` with `scene.write` (`merge`) or the inspector.
+   `exposure.compensation` of that `View_Volume` with `scene.write` or the inspector.
 2. A game that must look the same everywhere: `exposure.mode` `Manual` in that `View_Volume`,
    with `aperture`, `shutter` and `iso`, and then adjust `compensation`.
 3. Light that is out of balance (sun against sky, lamps against daylight) is fixed in the

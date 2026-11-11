@@ -308,7 +308,7 @@ shared_layouts_must_match_the_probe_and_assert_the_odin_mirrors :: proc(t:^testi
         return layouts_reflected(reflection(t,fmt.tprintf(`{{"parameters":[{{"name":"frame","type":{{"kind":"struct","name":"Frame_Data","fields":[%s],"sizes":[{{"kind":"uniform","value":%d}}]}}}}]}}`,fields,size)),context.temp_allocator)
     }
     INDEX :: `{"name":"frame_index","binding":{"kind":"uniform","offset":0,"size":4}}`
-    MOVED :: `,{"name":"moved_lights","binding":{"kind":"uniform","offset":4,"size":4}}`
+    MOVED :: `,{"name":"sun_map_rows","binding":{"kind":"uniform","offset":4,"size":4}}`
     NESTED :: `,{"name":"nested","binding":{"kind":"uniform","offset":8,"size":8}}`
     whole:=frame(t,INDEX+MOVED+NESTED,16)
     testing.expect_value(t,layouts_compare(frame(t,INDEX+MOVED,8),whole,context.temp_allocator),"")
