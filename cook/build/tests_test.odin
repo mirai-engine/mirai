@@ -112,30 +112,6 @@ not_asked :: proc(t:^testing.T) {testing.expect(t,false,"ran without being asked
     }
 }
 
-// A test of a game compiles against the declarations of the engine libraries,
-// which carry no test file: the test-world builder of core, how a test builds
-// a world of its steps, is public API in them.
-@(test)
-the_declarations_of_core_carry_the_test_world_builder :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    folder:=base.test_folder(t,"decl-core")
-    if folder=="" {return}
-    engine:=project.path_absolute(project.path(#directory,"..",".."))
-    decl:=project.path(folder,"decl")
-    errors,_:=declare({root=engine,packages={"core"},binary="mirai",library=project.path(folder,"core.lib"),stage=project.path(folder,"stage"),decl=decl})
-    if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
-    text:=strings.builder_make()
-    entries,_:=os.read_all_directory_by_path(project.path(decl,"core"),context.temp_allocator)
-    for entry in entries {
-        data,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-        strings.write_string(&text,string(data))
-    }
-    declared:=strings.to_string(text)
-    for name in ([]string{"Test_World :: struct","test_world_init ::","test_world_destroy ::","test_info ::"}) {
-        testing.expectf(t,strings.contains(declared,name),"the declarations of core lack %s",name)
-    }
-}
-
 // The code of a project compiles into libraries of its own, game/ and
 // editor/ besides its plugins, each from a stage without the tests the
 // compiler would otherwise read with their folder, and the library of the

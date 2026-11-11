@@ -2381,7 +2381,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
 // the file is of, whose alias is "".
 @(private="file")
 ref :: proc(pkg:^Package,name:string) -> string {
-    return pkg.alias==""?name:fmt.aprintf("%s.%s",pkg.alias,name)
+    return pkg.alias==""?strings.clone(name):fmt.aprintf("%s.%s",pkg.alias,name)
 }
 
 // The type of a table or a storage as the file being written says it; one of
@@ -2652,7 +2652,7 @@ test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Fie
                 test_fields_read(g,tw,storages,place,owner,from,group_file,group_record)
                 continue
             }
-            tag:=reflect.Struct_Tag(strings.trim(field.tag.text,"`\""))
+            tag:=reflect.Struct_Tag(strings.trim(field.tag.text,"`"))
             f:=Test_Field{field=name,place=place,offset=fmt.aprintf("offset_of(%s,%s)",tw.structs[place],name)}
             _,f.game=core.field_option(tag,"game")
             held,kind,by_world,count:=field.type,Kind.Storage,false,-1
@@ -2683,7 +2683,7 @@ test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Fie
             t:=f.type
             if t.pkg==nil {
                 t.name=name
-                t.key=fmt.aprintf("type_of(%s{{}}.%s%s%s)",tw.structs[place],name,count>0?"[0]":"",kind==.Component?".values[0]":"")
+                t.key=fmt.aprintf("type_of((^%s)(nil).%s%s%s)",tw.structs[place],name,count>0?"[0]":"",kind==.Component?".values[0]":"")
             } else if t.file!=nil {
                 switch {
                 case t.kind!=kind:
@@ -2706,7 +2706,7 @@ test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Fie
             for k in 0..<max(count,1) {
                 if count>0 {
                     f.name=fmt.aprintf("%s_%d",t.name,k)
-                    f.offset=fmt.aprintf("offset_of(%s,%s)+%d*size_of(%s{{}}.%s[0])",tw.structs[place],name,k,tw.structs[place],name)
+                    f.offset=fmt.aprintf("offset_of(%s,%s)+%d*size_of((^%s)(nil).%s[0])",tw.structs[place],name,k,tw.structs[place],name)
                 }
                 append(&tw.fields,f)
             }

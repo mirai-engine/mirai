@@ -2,17 +2,18 @@ package core
 
 import "core:testing"
 
-@(private="file")
+@(private)
 Probe :: struct {value:i32}
 
-@(private="file")
+@(private)
 Probe_Tag :: struct {}
 
-@(private="file")
+@(private)
 @(component,single)
 Single_Probe :: struct {value:i32}
 
-@(private="file")
+@(private)
+@(test_world)
 World_Of_Single :: struct {
     using world:Test_World,
     disabled:Table(Disabled),
@@ -21,7 +22,8 @@ World_Of_Single :: struct {
     hierarchy:Hierarchy,
 }
 
-@(private="file")
+@(private)
+@(test_world)
 World_Of_Probes :: struct {
     using world:Test_World,
     disabled:Table(Disabled),
@@ -244,14 +246,15 @@ a_disabled_entity_turns_off_what_hangs_from_it_and_keeps_what_was_off :: proc(t:
     testing.expect(t,!entity_off(&w.entities,reused))
 }
 
-@(private="file")
+@(private)
 Lock_Owner :: struct {value:u8}
 
-@(private="file")
+@(private)
 @(component,locks="Lock_Owner")
 Lock_Body :: struct {value:i32}
 
-@(private="file")
+@(private)
+@(test_world)
 World_Of_Locks :: struct {
     using world:Test_World,
     bodies:Table(Lock_Body),

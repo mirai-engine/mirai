@@ -232,8 +232,7 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         if desc.test_package!="" {append(&folders,desc.test_package)}
         if errors:=test_worlds_write(p.engine_root,p.root,folders[:],context.temp_allocator);len(errors)>0 {
-            job.result.text=strings.join(errors,"
-",a)
+            job.result.text=strings.join(errors,"\n",a)
             return job_fail(job,.Generate)
         }
     }
