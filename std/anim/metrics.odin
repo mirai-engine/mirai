@@ -293,17 +293,8 @@ frames_contacts :: proc "contextless" (rig:Body_Rig,f:Frames,world:[]math.Transf
     count:=frames_count(f)
     total:=0
     for foot in Foot {
-        floors:[2]f32
-        joints:=[2]int{-1,-1}
-        for part,k in foot_parts(foot) {
-            bone:=rig.body.bones[part]
-            if bone<0 {continue}
-            floors[k]=frames_floor(world,f.bones,count,int(bone),ground.up)
-            joints[k]=int(bone)
-        }
-        if joints[0]<0 {joints[0],floors[0]=joints[1],floors[1]}
-        if joints[1]<0 {joints[1],floors[1]=joints[0],floors[0]}
-        if joints[0]<0 {continue}
+        joints,floors,found:=contact_joints(rig,f,world,ground,foot)
+        if !found {continue}
         first_of_foot:=total
         stands :: proc "contextless" (rig:Body_Rig,f:Frames,world:[]math.Transform,ground:Ground,floors:[2]f32,foot:Foot,frame:int) -> bool {
             standing,_:=frames_standing(rig,f,world,ground,floors,foot,frame)
@@ -323,33 +314,81 @@ frames_contacts :: proc "contextless" (rig:Body_Rig,f:Frames,world:[]math.Transf
             }
             frame=last+1
             if last-start+1<3 && !(start==0 || last==count-1) {continue}
-            anchors:[2]math.Vec3
-            for joint,k in joints {
-                sum:math.Vec3;weight:f32
-                for i in start..=last {
-                    p:=world[i*f.bones+joint].position
-                    w:=frames_down(linalg.dot(p,ground.up)-floors[k],ground.height)+1e-3
-                    sum+=(p-ground.velocity*(f32(i)/f.rate))*w;weight+=w
-                }
-                anchors[k]=sum/weight
-            }
-            if total<len(out) {out[total]={foot,i32(start),i32(last),anchors}}
+            if total<len(out) {out[total]={foot,i32(start),i32(last),contact_anchors(f,world,ground,joints,floors,start,last)}}
             total+=1
         }
-        // Across the seam of a loop the ground has moved by a pass of travel.
-        if f.loop && total-first_of_foot>=2 && total<=len(out) {
-            a,b:=&out[first_of_foot],&out[total-1]
-            if a.first==0 && int(b.last)==count-1 {
-                pass:=ground.travel*frames_duration(f)
-                na,nb:=f32(a.last-a.first+1),f32(b.last-b.first+1)
-                for k in 0..<2 {
-                    shared:=(a.anchors[k]*na+(b.anchors[k]-pass)*nb)/(na+nb)
-                    a.anchors[k],b.anchors[k]=shared,shared+pass
-                }
-            }
-        }
+        if total<=len(out) {contact_seam(f,ground,out[first_of_foot:total],foot)}
     }
     return total
+}
+
+// The anchors of contacts whose feet and frames come from elsewhere (the clip a retarget was made
+// from), where the feet of this clip stand over those frames. False for a contact outside the
+// frames or of a foot the body lacks.
+@(private)
+frames_contacts_place :: proc "contextless" (rig:Body_Rig,f:Frames,world:[]math.Transform,ground:Ground,contacts:[]Contact) -> bool {
+    count:=frames_count(f)
+    for &contact in contacts {
+        if contact.foot>max(Foot) || contact.first<0 || contact.first>contact.last || int(contact.last)>=count {return false}
+        joints,floors,found:=contact_joints(rig,f,world,ground,contact.foot)
+        if !found {return false}
+        contact.anchors=contact_anchors(f,world,ground,joints,floors,int(contact.first),int(contact.last))
+    }
+    for foot in Foot {contact_seam(f,ground,contacts,foot)}
+    return true
+}
+
+// The ankle and toe joints of a foot, a foot without toe has the ankle twice, and the floor of each.
+@(private="file")
+contact_joints :: proc "contextless" (rig:Body_Rig,f:Frames,world:[]math.Transform,ground:Ground,foot:Foot) -> (joints:[2]int,floors:[2]f32,found:bool) {
+    count:=frames_count(f)
+    joints={-1,-1}
+    for part,k in foot_parts(foot) {
+        bone:=rig.body.bones[part]
+        if bone<0 {continue}
+        floors[k]=frames_floor(world,f.bones,count,int(bone),ground.up)
+        joints[k]=int(bone)
+    }
+    if joints[0]<0 {joints[0],floors[0]=joints[1],floors[1]}
+    if joints[1]<0 {joints[1],floors[1]=joints[0],floors[0]}
+    return joints,floors,joints[0]>=0
+}
+
+// Where the joints of a foot stand over the ground from a frame to another, each frame weighted by
+// how far down the joint is.
+@(private="file")
+contact_anchors :: proc "contextless" (f:Frames,world:[]math.Transform,ground:Ground,joints:[2]int,floors:[2]f32,start,last:int) -> (anchors:[2]math.Vec3) {
+    for joint,k in joints {
+        sum:math.Vec3;weight:f32
+        for i in start..=last {
+            p:=world[i*f.bones+joint].position
+            w:=frames_down(linalg.dot(p,ground.up)-floors[k],ground.height)+1e-3
+            sum+=(p-ground.velocity*(f32(i)/f.rate))*w;weight+=w
+        }
+        anchors[k]=sum/weight
+    }
+    return
+}
+
+// Across the seam of a loop the ground has moved by a pass of travel: the contacts of a foot that
+// touch both ends share their anchor.
+@(private="file")
+contact_seam :: proc "contextless" (f:Frames,ground:Ground,contacts:[]Contact,foot:Foot) {
+    count:=frames_count(f)
+    if !f.loop {return}
+    a,b:^Contact
+    for &contact in contacts {
+        if contact.foot!=foot {continue}
+        if contact.first==0 {a=&contact}
+        if int(contact.last)==count-1 {b=&contact}
+    }
+    if a==nil || b==nil || a==b {return}
+    pass:=ground.travel*frames_duration(f)
+    na,nb:=f32(a.last-a.first+1),f32(b.last-b.first+1)
+    for k in 0..<2 {
+        shared:=(a.anchors[k]*na+(b.anchors[k]-pass)*nb)/(na+nb)
+        a.anchors[k],b.anchors[k]=shared,shared+pass
+    }
 }
 
 // Measures a clip: see Clip_Metrics and Metric_Request. scratch holds

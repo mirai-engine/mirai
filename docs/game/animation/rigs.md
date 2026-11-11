@@ -74,7 +74,9 @@ anim.animation_clip(a,"stride",.2,loop=false)
 ## Retarget and mirror
 
 - Clips for another skeleton: `animation.retarget.bake` writes an `.anim` for the destination by
-  the same mapping as a live `Pose_Source` of stage `Sampled`; the result is a plain `.anim`.
+  the same mapping as a live `Pose_Source` of stage `Sampled`, with the feet that stand locked to
+  the ground; the result is a plain `.anim`. `crotch_floor` keeps the hips of a body of other
+  proportions off the floor while the source crouches (both skeletons need a saved body).
 - `Animation.mirror=true` swaps left and right (bone names must say the side) and reflects root
   motion; without sided names the entity plays unmirrored with the problem `animation.mirror`.
 
