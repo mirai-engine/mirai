@@ -1097,7 +1097,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     particles_lights(sync,pass)
     volumes_light(sync,pass,&params)
     world_textures_write(sync,pass)
-    grid_bake_read(sync,pass)
     if pool.reports {erender.pass_readback(pass,events,REPORTS_AT,reports_readback())}
     data_readback(sync,pass,u32(pool.frame&1))
     watch_copy(sync,pass)

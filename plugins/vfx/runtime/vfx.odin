@@ -112,7 +112,6 @@ Particle_Sync :: struct {
     world_shown:World_Textures_Frame, // and as the steps before, which the views of this frame show
     loads:[dynamic]Grid_Load,      // the states of the frame the grids start from (gridfile)
     load_bytes:[dynamic]u8,        // their cells, as the grids keep them
-    bake:Grid_Bake,
 }
 
 particle_sync_free :: proc(sync:^Particle_Sync) {
@@ -325,7 +324,6 @@ particles_release :: proc(sync:^Particle_Sync,id:core.World_Id,renderer:^erender
     if renderer!=nil {
         pool_release(renderer,id,&sync.pool)
         erender.buffer_release(renderer,id,world_buffer(sync).name)
-        erender.readback_release(renderer,id,GRID_BAKE_READBACK)
         for name in sync.world_textures[:sync.world_texture_count] {erender.table_texture_release(renderer,id,world_texture_key(name))}
         erender.readback_release(renderer,id,reports_readback().name)
         for entry in sync.data.entries {erender.readback_release(renderer,id,data_readback_desc(entry.name,entry.words).name)}

@@ -68,8 +68,6 @@ Api_Particle_Control_Result :: struct {
 api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.inspect",params_schema=PARTICLE_PARAMS_SCHEMA,summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},run=api_particle_inspect})
     editor.api_method_register(s,{name="particle.set",params_schema=PARTICLE_PARAMS_SCHEMA,summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},run=api_particle_set})
-    bake:=Api_Grid_Bake_Params{}
-    editor.api_method_register(s,Api_Grid_Bake_Params,{name="particle.grid.bake",defaults=&bake,summary="Writes the cells of the grid of an entity of the edited world, as the steps of the next frame leave them, as a .grid at path (one there takes the new state) in an undo step of its own: a Particle_Grid that names it in cached starts from that state. The call holds until the cells come back from the GPU and names the file and its id, or fails when they do not come back.",run=api_grid_bake})
     editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}

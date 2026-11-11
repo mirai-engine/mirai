@@ -1514,11 +1514,10 @@ particle_sprites_hand_their_data_to_the_program_of_their_material :: proc(t: ^te
 	expect_clean(t, f.device)
 }
 
-// A grid baked as its steps left it is a .grid of its region from its first
-// cell, wherever the region wraps; a grid of the same cells that names it
-// starts from it, and counts on from there.
+// A grid that names a .grid of its cells starts from it, wherever its region
+// wraps, and counts on from there.
 @(test)
-particle_grids_bake_their_state_and_start_from_it :: proc(t: ^testing.T) {
+particle_grids_start_from_their_state :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
 	settings := test_settings()
@@ -1526,30 +1525,14 @@ particle_grids_bake_their_state_and_start_from_it :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
 	defer gpu_fixture_destroy(f)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	// A region that wraps: its first cell is not the first one kept.
-	grid := test_grid(f, "counts", {4, 1, 3}, 0.5, 1, {-3, 0, -1})
-	f.sync.grids.entries[grid].entity = 7
-	tally := test_emitter(1, {0, 0.5, 0})
-	if !test_program(t, f, &tally, "Tally", Resource_Desc{kind = .Grid, first = grid}) {return}
 	DT :: f32(1.0 / 60)
-	frame :: proc(t: ^testing.T, f: ^Gpu_Fixture, tally: Emitter_Desc, i: int, camera: gpu.Camera) {
-		testing.expect(t, frame_emitters(f, &f.sync, {tally}, DT))
-		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * DT}), f.renderer.error)
-	}
-	for i in 0 ..< 3 {frame(t, f, tally, i, camera)}
-	testing.expect(t, grid_bake_ask(&f.sync, 7))
-	for i in 3 ..< 7 {frame(t, f, tally, i, camera)}
-	rhi.device_wait_idle(f.device)
-	for i in 7 ..< 9 {frame(t, f, tally, i, camera)}
-	info, cells, ok := grid_bake_take(&f.sync, f.app.renderer, core.World_Id{index = 1}, context.temp_allocator)
-	if !testing.expect(t, ok, "the bake came back") {return}
-	testing.expect(t, info.cells == {4, 1, 3} && info.layers == 1 && info.cell_size == 0.5)
-	baked := cells[0]
-	testing.expectf(t, baked == 5 * 4, "the cells of the grid count %v after the four steps of the frame that read it", baked)
-	for c in 0 ..< 12 {testing.expect_value(t, cells[c * 4], baked)}
+	baked :: f32(20)
+	info := gridfile.Grid_Info{cells = {4, 1, 3}, layers = 1, cell_size = 0.5}
+	cells: [12 * 4]f32
+	for c in 0 ..< 12 {cells[c * 4] = baked}
 	// The state as a file, and a grid that starts from it.
 	id := base.Asset_Id{0x6772696400000001, 1}
-	bytes, error := gridfile.grid_bytes(&f.assets.types, {id = id, info = info, cells = cells}, context.temp_allocator)
+	bytes, error := gridfile.grid_bytes(&f.assets.types, {id = id, info = info, cells = cells[:]}, context.temp_allocator)
 	if !testing.expect_value(t, error, asset.Error.None) {return}
 	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/state.grid", f.folder), bytes) == nil)
 	testing.expect_value(t, asset.registry_scan(&f.assets.registry), asset.Error.None)
