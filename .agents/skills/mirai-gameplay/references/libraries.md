@@ -675,8 +675,8 @@ one per local player that has screens or sees a `World_Widget`.
 - **Requests (`UI_Requests`).** `gui.play_animation(r, e, node, anim, item)` plays an animation of
   the `.ui` on a node (`ui.tree_play`; its end arrives as `Finished` with the animation in `from`)
   and `gui.focus(r, e, node, item)` moves the focus; they are applied when the interface of `e` is
-  built in the frame. `item` counts the copies of a node inside lists; focus only reaches a node of
-  a list, not of nested lists.
+  built in the frame. `item` is the element of the innermost list around the node, as
+  `UI_Event.item` says, in the first element of the lists around that one.
 - **Repeated frames.** A context without changes in its interfaces, without trees that say
   `animating`, without input reaching it (pointer, buttons, keys, wheel, gamepad, text), without
   shown cameras or particles, with the same size, scale, density, atlas, family, view and ray of

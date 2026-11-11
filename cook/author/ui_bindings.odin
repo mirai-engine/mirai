@@ -19,7 +19,7 @@ import "mirai:ui"
 // checked against the types of the game, and ui.check says what failed.
 
 // What a binding takes: the kinds of fields its list offers.
-Bind_Kind :: enum u8 {Shown,Number,Asset,Color,Name,Entity,Items,Options,Data,Any}
+Bind_Kind :: enum u8 {Shown,Number,Asset,Color,Name,Entity,Items,Key,Options,Data,Any}
 
 BIND_KIND_TAKES :: [Bind_Kind]string{
     .Shown  = "a number, a bool, an enum or a text",
@@ -29,6 +29,7 @@ BIND_KIND_TAKES :: [Bind_Kind]string{
     .Name   = "an enum or a text",
     .Entity = "an Entity",
     .Items  = "an array of structs or of entities",
+    .Key    = "a whole number, an enum, an Entity or a text",
     .Options = "an array of texts or of enums",
     .Data   = "a struct or an Entity",
     .Any    = "a field of any type: the procedure that draws the node reads its bytes",
@@ -62,6 +63,7 @@ bind_kind :: proc(binding:ui.Binding,node:ui.Node_Kind) -> Bind_Kind {
     case .Value:                        return .Entity if node==.View else .Any if node==.Draw else .Number
     case .Visible,.Selected,.Disabled:  return .Number
     case .Items:                        return .Options if node==.Selector || node==.Dropdown || node==.Tabs else .Items
+    case .Key:                          return .Key
     case .Image:                        return .Asset
     case .Tint:                         return .Color
     case .Variant:                      return .Name
@@ -74,14 +76,16 @@ type_fits :: proc(t:^runtime.Type_Info,kind:Bind_Kind) -> bool {
     if t==nil {return false}
     if kind==.Any {return t.size>0}
     if t.id==base.Asset_Id {return kind==.Asset}
-    if t.id==base.Entity {return kind==.Entity || kind==.Data}
+    if t.id==base.Entity {return kind==.Entity || kind==.Data || kind==.Key}
     #partial switch v in runtime.type_info_base(t).variant {
-    case runtime.Type_Info_Boolean,runtime.Type_Info_Integer:
+    case runtime.Type_Info_Boolean:
         return kind==.Shown || kind==.Number
+    case runtime.Type_Info_Integer:
+        return kind==.Shown || kind==.Number || kind==.Key
     case runtime.Type_Info_Float:
         return (t.size==4 || t.size==8) && (kind==.Shown || kind==.Number)
     case runtime.Type_Info_Enum:
-        return kind==.Shown || kind==.Number || kind==.Name
+        return kind==.Shown || kind==.Number || kind==.Name || kind==.Key
     case runtime.Type_Info_Array:
         elem:=runtime.type_info_base(v.elem)
         _,is_uint:=elem.variant.(runtime.Type_Info_Integer)
@@ -98,7 +102,7 @@ type_fits :: proc(t:^runtime.Type_Info,kind:Bind_Kind) -> bool {
             return is_integer && !letter.signed && text.elem.size==1
         }
         if (v.count==3 || v.count==4) && kind==.Color {return is_float && v.elem.size==4 || is_uint && v.elem.size==1}
-        return is_uint && v.elem.size==1 && (kind==.Shown || kind==.Name)
+        return is_uint && v.elem.size==1 && (kind==.Shown || kind==.Name || kind==.Key)
     case runtime.Type_Info_Struct:
         return kind==.Data
     }
@@ -651,9 +655,9 @@ slice_has :: proc(list:[]string,name:string) -> bool {
 
 
 // The paths of a node: its bindings and the data of a widget.
-node_paths :: proc(n:^ui.Tree_Node) -> [14][]u8 {
+node_paths :: proc(n:^ui.Tree_Node) -> [15][]u8 {
     f:=&n.fields
-    return {n.bind_text[:],n.bind_value[:],n.bind_visible[:],n.bind_selected[:],n.bind_disabled[:],n.bind_items[:],n.bind_image[:],n.bind_tint[:],n.bind_variant[:],n.data[:],
+    return {n.bind_text[:],n.bind_value[:],n.bind_visible[:],n.bind_selected[:],n.bind_disabled[:],n.bind_items[:],n.bind_key[:],n.bind_image[:],n.bind_tint[:],n.bind_variant[:],n.data[:],
         f[0].path[:],f[1].path[:],f[2].path[:],f[3].path[:]}
 }
 

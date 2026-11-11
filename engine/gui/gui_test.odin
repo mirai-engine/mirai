@@ -33,12 +33,12 @@ the_rect_of_a_node_of_a_screen_is_in_window_points :: proc(t:^testing.T) {
     ui.tree_build(&ctx,&tree,&instance,{})
     ui.id_pop(&ctx)
     ui.frame_end(&ctx)
-    rect,found:=screen_node_rect(&ctx,&tree,e,1)
+    rect,found:=screen_node_rect(&ctx,&tree,&instance,e,1)
     testing.expect(t,found)
     testing.expect_value(t,rect,ui.Rect{20,20,80,40})
-    _,found=screen_node_rect(&ctx,&tree,core.entity_make(5,2),1)
+    _,found=screen_node_rect(&ctx,&tree,&instance,core.entity_make(5,2),1)
     testing.expect(t,!found,"another screen builds under another scope")
-    _,found=screen_node_rect(&ctx,&tree,e,2)
+    _,found=screen_node_rect(&ctx,&tree,&instance,e,2)
     testing.expect(t,!found)
 }
 

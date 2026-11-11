@@ -264,7 +264,7 @@ UI_Request :: struct {
     entity:core.Entity, // the one with the UI_Screen or the World_Widget
     node:[REQUEST_NAME_CAPACITY]u8,
     anim:[REQUEST_NAME_CAPACITY]u8,
-    item:i32,           // of a node in lists, which of its copies (ui.tree_play); -1: the first
+    item:i32,           // of a node in lists, the element of the innermost one (UI_Event.item); -1: the first
 }
 
 @(storage,queue)

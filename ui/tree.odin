@@ -241,6 +241,7 @@ Node_Desc :: struct {
     fields:[TREE_TEXT_FIELDS]Node_Field_Desc, // the names in braces of its text and the paths they show
     bind_text,bind_value,bind_visible,bind_selected,bind_disabled:string, // names of fields of the bound value
     bind_items:string, // of a List: an array; the nodes it holds bind fields of its elements
+    bind_key:string,   // of a List: the field of its element that tells its items apart, a number, an entity or a text
     bind_image,bind_tint,bind_variant:string,
     index,count,choice,limit:u16,
     delay:f32,
@@ -262,7 +263,7 @@ tree_node_strings :: proc "contextless" (desc:^Node_Desc,tab:bool) -> int {
     fields:=len(desc.name) if tab else 0
     for f in desc.fields {fields+=len(f.path)}
     return len(desc.text)+len(desc.bind_text)+len(desc.bind_value)+len(desc.bind_visible)+len(desc.bind_selected)+len(desc.bind_disabled)+
-        len(desc.bind_items)+len(desc.bind_image)+len(desc.bind_tint)+len(desc.bind_variant)+len(desc.action)+fields
+        len(desc.bind_items)+len(desc.bind_key)+len(desc.bind_image)+len(desc.bind_tint)+len(desc.bind_variant)+len(desc.action)+fields
 }
 
 // The path a name in braces of the text of a node shows; empty for none.
@@ -307,7 +308,7 @@ tree_node :: proc(tree:^Widget_Tree,parent:i32,desc:Node_Desc) -> i32 {
     text:=keep(tree,desc.text)
     node.text_offset,node.text_length=text.offset,text.length
     names:=[Binding]string{.Text=desc.bind_text,.Value=desc.bind_value,.Visible=desc.bind_visible,.Selected=desc.bind_selected,.Disabled=desc.bind_disabled,
-        .Items=desc.bind_items,.Image=desc.bind_image,.Tint=desc.bind_tint,.Variant=desc.bind_variant}
+        .Items=desc.bind_items,.Key=desc.bind_key,.Image=desc.bind_image,.Tint=desc.bind_tint,.Variant=desc.bind_variant}
     for name,binding in names {node.binds[binding]=keep(tree,name)}
     for f,i in desc.fields {
         if f.name=="" {continue}
@@ -362,6 +363,13 @@ Bar_Entry :: struct {
     length:u16,
 }
 
+// Of a slot of the node a List with a key holds: the key of the item whose
+// states it holds (0: none) and the build that found that item last; and, by
+// element, the slot the element took in the last build. An item keeps its
+// slot while it is in the list, wherever it moves.
+@(private)
+Item_Key :: struct {key:u64,seen,slot:u32}
+
 // What one use of a tree owns: where its nodes read their values and what
 // each of them is playing. A node inside a List has a slot per element of
 // the list, and per element of each list around it.
@@ -388,6 +396,8 @@ Tree_Instance :: struct {
     states:[]Anim_State,      // by slot
     scrolls:[][2]f32,         // by slot: how far a Scroll or a List that clips moved its content, left and up
     slot:[]Slot,              // by slot
+    keys:[]Item_Key,          // by slot, of the node a List with a key holds
+    builds:u32,               // of tree_build: what tells the items a List found in this build
     kept:[]Kept_Text,         // by slot: the text it formatted, while values do not change
     kept_bytes:[]u8,
     bar,bar_next:[TREE_BAR]Bar_Entry,
@@ -444,11 +454,16 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
             if path:=name(tree,&node,.Items);path!="" {
                 instance.items[i],instance.scopes[i],ok=tree_bind_items(instance,scope,path,u32(node.count) if node.count>0 else TREE_TABLE_ROWS)
                 if !ok {instance.failure={node=i,binding=.Items};break}
+                if key:=name(tree,&node,.Key);key!="" {
+                    instance.items[i].key,ok=tree_bind_field(instance,instance.scopes[i],key,.Key)
+                    if !ok {instance.failure={node=i,binding=.Key};break}
+                }
             } else {instance.items[i].count=u32(node.count)}
         }
         b:=&instance.bounds[i]
         o:[Binding]bool
         o[.Items]=true
+        o[.Key]=name(tree,&node,.Key)=="" || instance.items[i].bound
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
         b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),tree_value_want(node.kind))
         if node.kind==.Progress && b.value.kind==.Float && b.value.size==4 && instance.host!=nil {instance.ranges[len(instance.ranges)-1].step=-1}
@@ -479,7 +494,8 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
     }
     instance.host=nil
     if ok {
-        e2:[5]runtime.Allocator_Error
+        e2:[6]runtime.Allocator_Error
+        instance.keys,e2[5]=make([]Item_Key,slots,allocator)
         instance.states,e2[0]=make([]Anim_State,slots,allocator)
         instance.scrolls,e2[1]=make([][2]f32,slots,allocator)
         instance.slot,e2[2]=make([]Slot,slots,allocator)
@@ -504,7 +520,7 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
 tree_instance_destroy :: proc(instance:^Tree_Instance) {
     a:=instance.allocator
     delete(instance.bounds,a);delete(instance.items,a);delete(instance.slots,a);delete(instance.states,a);delete(instance.scrolls,a)
-    delete(instance.templates,a);delete(instance.scopes,a);delete(instance.parts);delete(instance.slot,a);delete(instance.kept,a);delete(instance.kept_bytes,a);delete(instance.texts,a)
+    delete(instance.templates,a);delete(instance.scopes,a);delete(instance.parts);delete(instance.slot,a);delete(instance.kept,a);delete(instance.kept_bytes,a);delete(instance.texts,a);delete(instance.keys,a)
     delete(instance.regions);delete(instance.ranges);delete(instance.values,a);delete(instance.sources,a);delete(instance.dirty,a)
     instance^={}
 }
@@ -627,6 +643,7 @@ Tree_Build :: struct {
 // that floats counts from the layer the tree is built in.
 tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:Tree_Build_Desc) -> Tree_Build_Result {
     b:=Tree_Build{ctx=ctx,tree=tree,instance=instance,desc=desc,floor=int(ctx.layer),ghost=-1}
+    instance.builds+=1
     tree_instance_texts(ctx,tree,instance)
     tree_kept_invalidate(tree,instance,desc.changed)
     b.tracks=ctx.layout.track_count
@@ -682,9 +699,9 @@ tree_kept_invalidate :: proc(tree:^Widget_Tree,instance:^Tree_Instance,every:boo
 
 // Plays the animation of the tree called anim (name_hash) on the node called
 // node, instead of what its set plays, until it ends: then the tree reports
-// Finished. item: for a node inside lists, which of its copies, counted as
-// the elements of its list (of the lists inside lists, the outer ones first);
-// -1 or 0: the first. False when the tree has no such node or animation.
+// Finished. item: for a node inside lists, the element of the innermost one
+// (Tree_Event.item), in the first element of the others; -1: the first.
+// False when the tree has no such node, element or animation.
 tree_play :: proc(tree:^Widget_Tree,instance:^Tree_Instance,node,anim:u64,item:i32=-1) -> bool {
     played:Anim
     for name,i in tree.anim_names[:min(tree.anims.node_count,len(tree.anim_names))] {
@@ -693,12 +710,10 @@ tree_play :: proc(tree:^Widget_Tree,instance:^Tree_Instance,node,anim:u64,item:i
     if played==0 {return false}
     for &n,i in tree.nodes[:tree.node_count] {
         if n.name!=node {continue}
-        first:=int(instance.slots[i])
-        // The slots of a node follow one another, one per copy, up to those of the next node.
         end:=int(instance.slots[i+1]) if i+1<tree.node_count else len(instance.slot)
-        slot:=first+max(int(item),0)
-        if slot>=end {return false}
-        anim_play(&instance.slot[slot].played,played)
+        c:=tree_node_copy(tree,instance,i,int(item))
+        if !c.present || c.slot>=end {return false}
+        anim_play(&instance.slot[c.slot].played,played)
         return true
     }
     return false
@@ -1058,9 +1073,12 @@ tree_list_axis :: proc(tree:^Widget_Tree,node:^Node) -> (axis:int,virtual:bool) 
 tree_build_list :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,values:rawptr,copy:int,axis:int,virtual:bool,layout:Layout,area:Id) {
     instance:=b.instance
     items:=instance.items[index]
+    capacity:=int(max(items.count,1))
     count:=int(items.count)
     if items.rows {count=min(count,int(instance.regions[instance.regions[items.region].parent].count))}
     if value:=instance.bounds[index].value;value.bound {count=clamp(int(bound_number(values,value)),0,count)}
+    keys:[]Item_Key
+    if items.key.bound {keys=tree_list_claim(b,index,values,copy,count)}
     first,last:=0,count
     holder:=id(ctx,"items",index+1)
     columns,rows:=1,count
@@ -1069,15 +1087,16 @@ tree_build_list :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,val
         layout:=layout
         if layout.direction==.Grid {columns=grid_columns(&ctx.layout,&layout)}
         rows=(count+columns-1)/columns
-        first,last,pitch=tree_list_window(ctx,b,node,index,slot,copy,axis,holder,columns,count,area)
+        first,last,pitch=tree_list_window(ctx,b,node,index,slot,values,copy,axis,holder,columns,count,area)
         tree_list_room(ctx,axis,f32(first/columns)*pitch)
         box_begin(ctx,{id=holder,layout=layout,track=true})
     }
     for element in first..<last {
         at:=values
         if items.bound {at=rawptr(uintptr(values)+uintptr(items.offset)+uintptr(element)*uintptr(items.stride))}
-        id_push(ctx,id(ctx,"item",element+1))
-        tree_build_node(ctx,b,index+1,at,copy*int(max(items.count,1))+element,i32(element))
+        place:=int(keys[element].slot) if keys!=nil else element
+        id_push(ctx,id(ctx,"item",int(u32(tree_item_key(&items,values,element)))))
+        tree_build_node(ctx,b,index+1,at,copy*capacity+place,i32(element))
         id_pop(ctx)
     }
     if virtual {
@@ -1085,6 +1104,71 @@ tree_build_list :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,val
         tree_list_room(ctx,axis,f32(rows-(last+columns-1)/columns)*pitch)
         state:=&instance.slot[slot]
         state.first,state.built=i32(first),i32(last-first)
+    }
+}
+
+// What tells an element of a List apart, never 0: the hash of its key, or
+// its index plus one. values: the frame of the List.
+@(private)
+tree_item_key :: proc(items:^Node_Items,values:rawptr,element:int) -> u64 {
+    if !items.key.bound {return u64(element+1)}
+    bytes:=mem.byte_slice(rawptr(uintptr(values)+uintptr(items.offset)+uintptr(element)*uintptr(items.stride)+uintptr(items.key.offset)),int(items.key.size))
+    if cut:=strings.index_byte(string(bytes),0);items.key.text && cut>=0 {bytes=bytes[:cut]}
+    return max(hash.fnv64a(bytes),1)
+}
+
+// Gives each element of a List with a key the slot its item had, found from
+// the hash of the key, or else one no item of this build holds, whose states
+// start again. An item that moved formats its texts again, as the copy tells
+// what changed by place. Returns the keys of the list, by element.
+@(private)
+tree_list_claim :: proc(b:^Tree_Build,index:int,values:rawptr,copy,count:int) -> []Item_Key {
+    instance:=b.instance
+    items:=&instance.items[index]
+    capacity:=int(max(items.count,1))
+    keys:=instance.keys[int(instance.slots[index+1])+copy*capacity:][:capacity]
+    build:=instance.builds
+    // The slot of the item with key, or with free any that no item of this build holds.
+    find :: proc(keys:[]Item_Key,key:u64,build:u32,free:bool) -> int {
+        for i,at:=0,int(key%u64(len(keys)));i<len(keys);i,at=i+1,(at+1)%len(keys) {
+            if keys[at].seen!=build && (free || keys[at].key==key) {return at}
+            if keys[at].key==0 {break}
+        }
+        return -1
+    }
+    for e in 0..<count {
+        s:=find(keys,tree_item_key(items,values,e),build,false)
+        if s<0 {keys[e].slot=max(u32);continue}
+        keys[s].seen=build
+        if keys[e].slot!=u32(s) {tree_element_reset(b,index,copy*capacity+s,false)}
+        keys[e].slot=u32(s)
+    }
+    for e in 0..<count {
+        if keys[e].slot!=max(u32) {continue}
+        key:=tree_item_key(items,values,e)
+        s:=find(keys,key,build,true)
+        keys[s].key,keys[s].seen,keys[e].slot=key,build,u32(s)
+        tree_element_reset(b,index,copy*capacity+s,true)
+    }
+    return keys
+}
+
+// The states of the nodes of an element of the List at index, at copy of the
+// node it holds: all of them for a new item, the texts they kept for one that
+// moved.
+@(private)
+tree_element_reset :: proc(b:^Tree_Build,index,copy:int,fresh:bool) {
+    instance:=b.instance
+    copies :: proc(instance:^Tree_Instance,count,n:int) -> int {return (int(instance.slots[n+1]) if n+1<count else len(instance.slot))-int(instance.slots[n])}
+    count:=b.tree.node_count
+    holder:=copies(instance,count,index+1)
+    for n in index+1..=index+int(b.tree.nodes[index].subtree) {
+        per:=copies(instance,count,n)/holder
+        first:=int(instance.slots[n])+copy*per
+        for s in first..<first+per {
+            if fresh {instance.slot[s],instance.states[s],instance.scrolls[s]={},{},{}}
+            instance.kept[s].valid=false
+        }
     }
 }
 
@@ -1100,7 +1184,7 @@ tree_list_room :: proc(ctx:^Context,axis:int,room:f32) {
 // now. While it does not know them, the first few. An element the code just
 // gave the focus to, out of sight, is brought into it the next frame.
 @(private)
-tree_list_window :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot,copy,axis:int,holder:Id,columns,count:int,area:Id) -> (first,last:int,pitch:f32) {
+tree_list_window :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,values:rawptr,copy,axis:int,holder:Id,columns,count:int,area:Id) -> (first,last:int,pitch:f32) {
     instance:=b.instance
     state:=&instance.slot[slot]
     view_id,scroll:=area,&instance.scrolls[slot]
@@ -1131,7 +1215,7 @@ tree_list_window :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot,copy,a
         // The focus may be on any node of the element, other than those inside a List of its own.
         nodes:=b.tree.nodes[index+1:][:int(node.subtree)]
         for element in 0..<count {
-            id_push(ctx,id(ctx,"item",element+1))
+            id_push(ctx,id(ctx,"item",int(u32(tree_item_key(&instance.items[index],values,element)))))
             focused:=false
             for at:=0;at<len(nodes) && !focused; {
                 focused=tree_node_id(ctx,&nodes[at],index+1+at)==ctx.focus
@@ -1375,23 +1459,52 @@ tree_element_id :: proc(ctx:^Context,name:string) -> Id {
     return tree_name_id(ctx,base.name_hash(name))
 }
 
+// Where the copy of the node at index is for element item of the innermost
+// List around it (below 0: the first) and the first element of the others:
+// its slot, the frame of its values and what tells each of those elements
+// apart, outermost first. Not present when a list has no such element.
+@(private)
+Node_Copy :: struct {slot:int,values:rawptr,keys:[TREE_DEPTH]u64,depth:int,present:bool}
+@(private)
+tree_node_copy :: proc(tree:^Widget_Tree,instance:^Tree_Instance,index,item:int) -> (c:Node_Copy) {
+    lists:[TREE_DEPTH]int
+    for parent:=int(tree.nodes[index].parent);parent>=0 && c.depth<TREE_DEPTH;parent=int(tree.nodes[parent].parent) {
+        if tree.nodes[parent].kind==.List {lists[c.depth]=parent;c.depth+=1}
+    }
+    c.present=true
+    built:=instance!=nil && len(instance.items)>=tree.node_count && len(instance.keys)==len(instance.slot)
+    if built {c.values=raw_data(instance.values)}
+    copy:=0
+    for i:=c.depth-1;i>=0;i-=1 {
+        element:=max(item,0) if i==0 else 0
+        at:=c.depth-1-i
+        c.keys[at]=u64(element+1)
+        if !built {continue}
+        items:=&instance.items[lists[i]]
+        capacity:=int(max(items.count,1))
+        if element>=int(items.count) {c.present=false;return}
+        c.keys[at]=tree_item_key(items,c.values,element)
+        place:=element
+        if items.key.bound {
+            if s:=int(instance.keys[int(instance.slots[lists[i]+1])+copy*capacity+element].slot);s<capacity {place=s}
+        }
+        copy=copy*capacity+place
+        if items.bound {c.values=rawptr(uintptr(c.values)+uintptr(items.offset)+uintptr(element)*uintptr(items.stride))}
+    }
+    if built {c.slot=int(instance.slots[index])+copy}
+    return
+}
+
 // The id of the node at index where its tree is built, as the node is for
-// element 0 of the lists around it.
-tree_node_element :: proc(ctx:^Context,tree:^Widget_Tree,index:int) -> Id {
+// element item of the innermost list around it (-1: the first) and the first
+// element of the others. instance: what it was built with; nil, as if no
+// list had a key.
+tree_node_element :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,index:int,item:=-1) -> Id {
     if index<0 || index>=tree.node_count {return 0}
-    // The lists around the node push the scope of their first element.
-    lists:[TREE_DEPTH]bool
-    depth:=0
-    for parent:=tree.nodes[index].parent;parent>=0 && depth<TREE_DEPTH;parent=tree.nodes[parent].parent {
-        lists[depth]=tree.nodes[parent].kind==.List
-        depth+=1
-    }
-    pushed:=0
-    for i:=depth-1;i>=0;i-=1 {
-        if lists[i] {id_push(ctx,id(ctx,"item",1));pushed+=1}
-    }
+    c:=tree_node_copy(tree,instance,index,item)
+    for key in c.keys[:c.depth] {id_push(ctx,id(ctx,"item",int(u32(key))))}
     element:=tree_node_id(ctx,&tree.nodes[index],index)
-    for _ in 0..<pushed {id_pop(ctx)}
+    for _ in 0..<c.depth {id_pop(ctx)}
     return element
 }
 
@@ -1418,24 +1531,11 @@ tree_node_state :: proc(tree:^Widget_Tree,instance:^Tree_Instance,index:int) -> 
     }
     node:=&tree.nodes[index]
     state.disabled=node.disabled
-    // The values of element 0: each list around the node moves them to its first element.
-    values:=rawptr(raw_data(instance.values))
-    present:=true
-    lists:[TREE_DEPTH]i32
-    depth:=0
-    for parent:=node.parent;parent>=0 && depth<TREE_DEPTH;parent=tree.nodes[parent].parent {
-        if tree.nodes[parent].kind==.List {lists[depth]=parent;depth+=1}
-    }
-    for i:=depth-1;i>=0;i-=1 {
-        items:=instance.items[lists[i]]
-        if !items.bound {continue}
-        if items.count==0 {present=false;break}
-        values=rawptr(uintptr(values)+uintptr(items.offset))
-    }
+    c:=tree_node_copy(tree,instance,index,-1)
     bound:=&instance.bounds[index]
-    if present && bound.disabled.bound {state.disabled=bound_number(values,bound.disabled)!=0}
-    if first<end && first<len(instance.kept) {
-        if kept:=instance.kept[first];kept.valid && int(kept.offset)+int(kept.length)<=len(instance.kept_bytes) {
+    if c.present && bound.disabled.bound {state.disabled=bound_number(c.values,bound.disabled)!=0}
+    if c.present && c.slot<end && c.slot<len(instance.kept) {
+        if kept:=instance.kept[c.slot];kept.valid && int(kept.offset)+int(kept.length)<=len(instance.kept_bytes) {
             state.text=string(instance.kept_bytes[kept.offset:][:kept.length])
             return state,true
         }
@@ -1447,10 +1547,10 @@ tree_node_state :: proc(tree:^Widget_Tree,instance:^Tree_Instance,index:int) -> 
 
 // The deepest node of the tree whose element held point when the last frame
 // was laid out, built with Tree_Build_Desc.track; -1 for none.
-tree_hit :: proc(ctx:^Context,tree:^Widget_Tree,point:[2]f32) -> int {
+tree_hit :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,point:[2]f32) -> int {
     best:=-1
     for i in 0..<tree.node_count {
-        r,found:=widget_rect(ctx,tree_node_element(ctx,tree,i))
+        r,found:=widget_rect(ctx,tree_node_element(ctx,tree,instance,i))
         if !found || !rect_contains(r,point) {continue}
         // Later nodes in pre-order are inside or after earlier ones.
         best=i

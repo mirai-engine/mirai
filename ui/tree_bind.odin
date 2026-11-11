@@ -36,7 +36,7 @@ import mm "mirai:std/math"
 // keeps which of them changed until the tree is built: only the texts that
 // read those are formatted again.
 
-Binding :: enum u8 {Text,Value,Visible,Selected,Disabled,Items,Image,Tint,Variant}
+Binding :: enum u8 {Text,Value,Visible,Selected,Disabled,Items,Key,Image,Tint,Variant}
 
 // A name kept in the strings of a tree.
 Name_Ref :: struct {offset,length:u32}
@@ -144,6 +144,7 @@ Node_Items :: struct {
     region:i32,
     bound:bool,
     rows:bool,  // of a table: as many elements as the table has rows now, up to count
+    key:Bound,  // in the frame of an element: what tells its item apart, its key field or its entity; unbound, its index
 }
 
 @(private)
@@ -284,7 +285,7 @@ bind_resolve :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string) -> (r
 // A field a node shows or reads. want: what it must hold; Option, what a
 // Selector or a Dropdown binds: a number, or an enum or text its options name.
 @(private)
-Bound_Want :: enum u8 {Shown,Number,Option,Asset,Color,Name,Entity,Data}
+Bound_Want :: enum u8 {Shown,Number,Option,Asset,Color,Name,Entity,Data,Key}
 @(private)
 tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,want:Bound_Want) -> (bound:Bound,ok:bool) {
     if path=="" {return {},true}
@@ -301,14 +302,14 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     #partial switch t.kind {
     case .Bool,.Int,.Uint,.Float,.Enum:
         if t.kind==.Float && t.size!=4 && t.size!=8 {return {},false}
-        if want==.Asset || want==.Color || want==.Entity {return {},false}
+        if want==.Asset || want==.Color || want==.Entity || want==.Key && (t.kind==.Float || t.kind==.Bool) {return {},false}
         if t.kind==.Enum && want!=.Number {bound.choices_of,bound.choices_type=schema,field_type}
         if want==.Name && t.kind!=.Enum {return {},false}
     case .Array:
         elem:=serial.schema_type(schema,t.elem)
         bound.count,bound.elem=t.count,elem.kind
         switch {
-        case elem.kind==.Uint && elem.size==1 && (want==.Shown || want==.Name || want==.Option):
+        case elem.kind==.Uint && elem.size==1 && (want==.Shown || want==.Name || want==.Option || want==.Key):
             bound.text=true
         case want==.Color && (t.count==3 || t.count==4) && (elem.kind==.Float && elem.size==4 || elem.kind==.Uint && elem.size==1):
         case:
@@ -317,7 +318,7 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     case .Asset:
         if want!=.Asset {return {},false}
     case .Entity:
-        if want!=.Entity {return {},false}
+        if want!=.Entity && want!=.Key {return {},false}
     case:
         return {},false
     }
@@ -447,13 +448,15 @@ tree_bind_items :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,row
     if e==nil || e.size==0 || e.kind!=.Struct && e.kind!=.Entity {return}
     array:=bind_region(instance,{kind=.Array,frame=region_home(instance,region),parent=region,type=t.elem,src=offset,count=t.count,stride=e.size})
     if array<0 {return}
+    items={count=t.count,region=array,bound=true}
     if e.kind==.Struct {
         element={kind=.Struct,region=array,offset=0,type=t.elem}
     } else {
         element={kind=.Entity,region=array,offset=0}
         bind_want(instance,array,0,size_of(base.Entity)) or_return
+        items.key={size=size_of(base.Entity),region=array,kind=.Entity,bound=true}
     }
-    return {count=t.count,region=array,bound=true},element,true
+    return items,element,true
 }
 
 // Packs the ranges the tree reads, by region, and places the regions in
@@ -547,6 +550,7 @@ bind_plan :: proc(instance:^Tree_Instance) -> bool {
         if !items.bound {continue}
         r:=&instance.regions[items.region]
         items.offset,items.stride=r.dst,r.size
+        rebase(instance,&items.key)
     }
     e:[3]runtime.Allocator_Error
     instance.values,e[0]=make([]u8,size,instance.allocator)

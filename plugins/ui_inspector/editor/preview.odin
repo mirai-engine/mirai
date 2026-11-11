@@ -155,7 +155,7 @@ preview_node :: proc(n:^ui.Tree_Node,texts:[]u8,shown:^[dynamic]u8,sampled:bool,
     } else {n.text=ui.tree_string_add(shown,preview_text(text))}
     if n.kind==.List && n.count==0 && serial.text_field(n.bind_items[:])!="" {n.count=3}
     n.bind_text,n.bind_value,n.bind_visible,n.bind_selected,n.bind_disabled={},{},{},{},{}
-    n.bind_items,n.bind_image,n.bind_tint,n.bind_variant={},{},{},{}
+    n.bind_items,n.bind_key,n.bind_image,n.bind_tint,n.bind_variant={},{},{},{},{}
     for &f in n.fields {f.path={}}
 }
 
@@ -755,11 +755,11 @@ snap_targets :: proc(ctx:^ui.Context,p:^Preview,node:int,axis:int) -> []f32 {
     }
     parent:=p.tree.nodes[node].parent
     if parent>=0 {
-        if r,found:=ui.widget_rect(ctx,ui.tree_node_element(ctx,&p.tree,int(parent)));found {add(&targets,r,axis)}
+        if r,found:=ui.widget_rect(ctx,ui.tree_node_element(ctx,&p.tree,&p.instance,int(parent)));found {add(&targets,r,axis)}
     } else {add(&targets,p.game,axis)}
     for &n,i in p.tree.nodes[:p.tree.node_count] {
         if i==node || n.parent!=parent {continue}
-        if r,found:=ui.widget_rect(ctx,ui.tree_node_element(ctx,&p.tree,i));found {add(&targets,r,axis)}
+        if r,found:=ui.widget_rect(ctx,ui.tree_node_element(ctx,&p.tree,&p.instance,i));found {add(&targets,r,axis)}
     }
     return targets[:]
 }
@@ -785,7 +785,7 @@ preview_edit :: proc(s:^editor.Session,u:^Ui_Inspector,stage:ui.Id,size:[2]f32) 
     n:=selected_node(u)
     node:=preview_node_of(p,u.selected)
     if n==nil || node<0 {g.handle=.None;return}
-    r,shown:=ui.widget_rect(ctx,ui.tree_node_element(ctx,&p.tree,node))
+    r,shown:=ui.widget_rect(ctx,ui.tree_node_element(ctx,&p.tree,&p.instance,node))
     if !shown {g.handle=.None;return}
     drawn:=preview_drawn(p,r)
     if ui.box(ctx,{width=ui.fixed(drawn.w+4),height=ui.fixed(drawn.h+4),float={to=.Surface,offset={drawn.x-2,drawn.y-2},layer=layer},stroke=ui.tone(ctx,"accent"),stroke_width=2,radius=3}) {}
@@ -837,7 +837,7 @@ stage_pick :: proc(s:^editor.Session,u:^Ui_Inspector,pointer:[2]f32,double:bool)
     p:=&u.preview
     if p.scale<=0 {return}
     point:=p.center+(pointer-p.drawn)/p.scale
-    hit:=ui.tree_hit(s.gui.ctx,&p.tree,point)
+    hit:=ui.tree_hit(s.gui.ctx,&p.tree,&p.instance,point)
     row:=p.origins[hit] if hit>=0 && hit<len(p.origins) else -1
     choose_rows(u,{row} if row>=0 else {})
     u.ux.peek.instance=-1
