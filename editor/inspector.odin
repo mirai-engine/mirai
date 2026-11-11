@@ -395,8 +395,8 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(INSPECTOR_HEAD),padding={11,0,7,0},gap=4,align_y=.Center}) {
         if !single {
             ui.label(ctx,fmt.tprintf("%d selected",len(s.selection.entities)),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
-            if s.mode==.Edit {command_button(s,"group",{icon=command_icon(s,"group"),tip=fmt.tprintf("Group selection (%s)",command_shortcut_text(s,"group")),icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},2)}
-            if s.mode==.Edit && s.app.assets!=nil {command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},1)}
+            if s.mode==.Edit {command_button(s,"group",{icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},2)}
+            if s.mode==.Edit && s.app.assets!=nil {command_button(s,"prefab_create",{icon=.Prefab,icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},1)}
         }
         if single && identity_row(s,w,active) {return}
     }
@@ -538,7 +538,7 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
         named:=ui.text_field(ctx,field,ins.name[:len(ins.name)-1],&ins.name_length,{height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_heading"),inline=true,font=ui.FONT_SEMIBOLD,color=linked && link.root?PREFAB_TEXT:entity_has(w,e,scene.Scene_Reference)?SECTION_TEXT:ui.tone(ctx,"text")})
         if named.changed && !entity_rename(s,e,string(ins.name[:ins.name_length])) {notify(s,"An entity needs a name")}
         if s.mode==.Edit && s.app.assets!=nil && !linked && len(s.selection.entities)==1 {
-            changed|=command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},1)
+            changed|=command_button(s,"prefab_create",{icon=.Prefab,icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},1)
         }
         if s.mode==.Edit && entity_has(w,e,scene.Scene_Reference) {
             editing:=section_editing(s)==e

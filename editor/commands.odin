@@ -416,7 +416,7 @@ commands_run :: proc(s:^Session) {
         case b.view!=nil: b.view(s)
         case:
             params:=strings.builder_make(context.temp_allocator)
-            if binding_params(s,b,&params) {command_execute(s,st,b.method,strings.to_string(params),b.label)}
+            if binding_params(s,b,&params) {command_execute(s,st,b.method,strings.to_string(params),b.label)} else {notify(s,fmt.tprintf("%s: what it works on is not in what the editor shows",b.label))}
         }
     }
     c.asked_count=0
@@ -578,7 +578,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="pause",method="play.pause",params=`{"paused":true}`,label="Pause",icon=user(.Pause),shortcut=key(.F6),modes={.Play,.Simulate},scene=true,in_game=true},
         {name="resume",method="play.pause",params=`{"paused":false}`,label="Resume",icon=.Play,shortcut=key(.F6),modes={.Paused,.Simulation_Paused},scene=true,in_game=true},
         {name="stop",method="play.stop",label="Stop",icon=.Stop,shortcut=key(.F5,{.Shift}),alternate=key(.F5),state=state_stop,in_game=true},
-        {name="release_input",view=proc(s:^Session) {if player_processes_captured(s) {player_processes_release(s)} else {play_release_input(s)}},label="Release input",shortcut=key(.F1),state=state_release_input,scene=true,in_game=true},
+        {name="release_input",view=proc(s:^Session) {if player_processes_captured(s) {player_processes_release(s)} else {play_release_input(s)}},label="Eject",shortcut=key(.F1),state=state_release_input,scene=true,in_game=true},
         {name="camera_preview",view=camera_preview_selected,label="Preview camera",modes=edit,state=state_camera_preview,scene=true},
         {name="camera_keep",view=proc(s:^Session) {camera_preview_end(s,true)},label="Keep cameras",state=state_camera_previewing},
         {name="camera_discard",view=proc(s:^Session) {camera_preview_end(s,false)},label="Discard cameras",state=state_camera_previewing},
