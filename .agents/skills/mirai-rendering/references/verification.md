@@ -16,7 +16,9 @@
   even if there are several threads. It fails if it leaves alive anything it made or if the
   device or the validation report errors. Only a test that exercises a device (capacities, ring,
   messages, loss) or measures without validation makes its own device, with
-  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone. The GPU tests of
+  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone; a shared device stays
+  alive beside it, so no test destroys the last device of the process
+  ([driver defect](../../../../docs/ODIN_WORKAROUNDS.md#drivers)). The GPU tests of
   `rhi` are in `rhi/tests`
   (`mirai test rhi/tests`), which can import it; those of `rhi` do not touch the GPU.
 - The GPU tests of a plugin load the shaders that `mirai test` generates before compiling them in

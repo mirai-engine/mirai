@@ -288,6 +288,7 @@ Glow :: struct {range:f32}
 @(private="file")
 glow_prefab_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
     asset.scene_init(&lamp,types,PROP)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
     glow:=Glow{range}

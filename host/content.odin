@@ -51,13 +51,20 @@ Content_Animation :: struct {
     lib:anim.Library,
     clip_count:int,
     roots:[]asset.Animation_Root,
-    markers:[]u64, // name_hash of each marker: anim.Marker.id is its index
+    markers:[]Content_Marker, // of each marker: anim.Marker.id is its index
     names:[][asset.ANIMATION_NAME_CAPACITY]u8, // of each clip
     morphs:[]Content_Morph, // its curves of morph weights, each once
     fields:[]Content_Field, // its curves that drive a field of a component, each once
     load:^Content_Animation_Load, // a load of its file under way (content_animation.odin)
     adopted:u32, // generation of its first load when a job made it; 0 when it loaded at once
 }
+// The name_hash of the name of a marker and of its target (0: none); a marker on an entity keeps its
+// name too, the action it plays there.
+Content_Marker :: struct {
+    name,target:u64,
+    text:[asset.ANIMATION_NAME_CAPACITY]u8,
+}
+
 // A curve "<path>/@morph/<target>": the name_hash of the curve and of the target, which binds a
 // mesh that names no path to the curve of each of its targets.
 Content_Morph :: struct {curve,target:u64}

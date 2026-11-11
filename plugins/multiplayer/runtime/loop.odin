@@ -13,12 +13,13 @@ import wire "mirai:net"
 //   input (begin)    after the libraries read what arrived, client: goes back to the earliest
 //                    tick a library asked for (rewind)
 //   fixed (begin)    who arrived and who left, and the messages that arrived, since the last
-//                    tick (Net_Connections, Net_Events).
+//                    tick (Net_Connections, core.Net_Messages).
 //                    server: the input each connection sent for the tick.
 //                    client: the copy of the world as the tick found it, and the interpolated
 //                    replicas where they are shown at that tick
-//   fixed (end)      client: the entities libraries made for replicas take their place
-//                    (adopt). Both: publishes what the tick left, and the host sends what changed
+//   fixed (end)      the spawns of the tick get their Ids (Net_Spawns); client: what it made
+//                    takes the place of its replica. Both: publishes what the tick left, and the
+//                    host sends what changed
 //   frame (begin)    client: the error a correction left on a predicted replica fades
 //   late (end)       the host sends and receives; the player is told how it stands
 //
@@ -67,7 +68,7 @@ net_rewind :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,rewin
 }
 
 @(step="fixed",loops="game",stage="begin",before="pose_targets_place")
-net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,inputs:^Remote_Inputs,connections:^Net_Connections,events:^Net_Events,problems:^core.Problems) {
+net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,inputs:^Remote_Inputs,connections:^Net_Connections,messages:^core.Net_Messages,problems:^core.Problems) {
     previous:=session.problems
     session.problems=problems
     defer session.problems=previous
@@ -82,11 +83,7 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
         for event in session.arrived {core.push(&connections.events,event)}
         clear(&session.arrived)
     }
-    if events!=nil && !time.resimulating {
-        core.queue_clear(&events.received)
-        for item in session.received {core.push(&events.received,item)}
-        clear(&session.received)
-    }
+    if messages!=nil && !time.resimulating {messages_fill(session,messages)}
     if !session.host_ready {return}
     world_follow(session,world)
     tick:=u32(time.tick)
@@ -98,18 +95,16 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
 }
 
 @(step="fixed",loops="game",stage="end")
-net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outbox,adoptions:^Net_Adoptions,problems:^core.Problems) {
+net_tick_tail :: proc(world:core.World_Ref,session:^Net_Session,outbox:^Net_Outbox,spawns:^Net_Spawns,problems:^core.Problems) {
     previous:=session.problems
     session.problems=problems
     defer session.problems=previous
     world_follow(session,world)
-    adopted:=core.take(&adoptions.queue)
+    made:=core.take(&spawns.queue)
     time:=core.world_storage_of(world,core.Time)
     if !session.host_ready || time==nil {return}
-    if session.mode==.Client {
-        for item in adopted {replica_adopt(session,world,item.id,item.entity)}
-        spawns_settle(session,world,time)
-    }
+    spawns_take(session,world,made,time.tick)
+    if session.mode==.Client {spawns_settle(session,world,time)}
     if time.resimulating {return}
     tick:=u32(time.tick)
     if session.mode==.Server {

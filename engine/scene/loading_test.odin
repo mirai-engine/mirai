@@ -87,8 +87,9 @@ loading_mesh :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,bytes:int,
 
 // A scene with an entity for each mesh, and the references given.
 @(private)
-loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]base.Asset_Id,references:[]Scene_Reference=nil) {
+loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]base.Asset_Id,references:[]Scene_Reference=nil,prefab:=false) {
     document:asset.Scene;asset.scene_init(&document,&p.types,id);defer asset.scene_destroy(&document)
+    if prefab {document.doc.flags+={.Prefab}}
     for mesh,i in meshes {
         asset.scene_entity_add(&document,base.Entity_Id(i+1),0,"Model")
         asset.scene_set(&document,base.Entity_Id(i+1),"Loading_Model",&Loading_Model{mesh})
@@ -253,7 +254,7 @@ a_load_waits_for_the_animations_its_world_can_play :: proc(t:^testing.T) {
     tracks:=[1]asset.Animation_Track_Desc{{target="hips",property=.Position,keys=keys[:]}}
     clips:=[1]asset.Animation_Clip_Desc{{name="walk",tracks=tracks[:]}}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/walk.anim",p.folder),&p.types,{id=CLIPS,clips=clips[:]}),asset.Error.None)
-    loading_scene(t,&p,PREFAB,{CLIPS})
+    loading_scene(t,&p,PREFAB,{CLIPS},prefab=true)
     loading_scene(t,&p,LEVEL,{PREFAB})
     host.assets_scan(&p.assets)
 

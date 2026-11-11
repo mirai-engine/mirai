@@ -18,7 +18,7 @@ Style_Key :: enum u8 {
     Text_Shadow_Color, Text_Shadow_X, Text_Shadow_Y,
     Move_X, Move_Y, Scale,
     Text_Align_X, Text_Align_Y, Text_Wrap, Ellipsis, Line_Height,
-    Fill_Mode, Program, Program_Values, Sounds, Transition, Blur,
+    Fill_Mode, Program, Program_Values, Sounds, Transition, Layout_Transition, Blur,
     Width, Height, Direction, Padding, Gap, Align_X, Align_Y, Columns, Span, Self_X, Self_Y, Aspect,
 }
 Style_Keys :: bit_set[Style_Key;u64]
@@ -93,6 +93,7 @@ STYLE_KEYS := [Style_Key]Style_Key_Info{
     .Program_Values={name="program_values",kind=.Numbers,offset=u16(offset_of(Node_Style,program_values)),size=size_of([4]f32)},
     .Sounds={name="sounds",kind=.Sounds,offset=u16(offset_of(Node_Style,sounds)),size=size_of([Sound_Cue]base.Asset_Id)},
     .Transition={name="transition",kind=.Number,offset=u16(offset_of(Node_Style,transition)),size=size_of(f32)},
+    .Layout_Transition={name="layout_transition",kind=.Number,offset=u16(offset_of(Node_Style,layout_transition)),size=size_of(f32)},
     .Blur={name="blur",kind=.Number,place=.Info,offset=u16(offset_of(Tree_Style_Info,blur)),size=size_of(f32)},
     .Width={name="width",kind=.Size,place=.Layout,offset=u16(offset_of(Layout,width)),size=size_of(Size)},
     .Height={name="height",kind=.Size,place=.Layout,offset=u16(offset_of(Layout,height)),size=size_of(Size)},

@@ -11,6 +11,7 @@ import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
 import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
+import spawn "plugins:spawn/runtime"
 
 // AI arenas: an entity with an AI_Arena builds, when its world runs, a place
 // and the agents that show one kind of AI, each deciding with a mind:
@@ -18,7 +19,8 @@ import phys "plugins:physics/runtime"
 //   they see, jumping from roof to roof and dropping to the street, around a
 //   cart that parks in a street; three bite at once and the rest circle the
 //   runner until a place frees (attack tokens). With Horde_Waves, more come in
-//   waves that are rows of a table.
+//   waves that are rows of a table, at the spawn points of the game, each of
+//   the zombie of its point.
 // - Firefight: two squads of tactical bots. They fire holding a token, take
 //   the cover a query of places finds among the walls, reload, fetch ammo and
 //   health from the crates of their side, man a turret and sound an alarm:
@@ -45,39 +47,22 @@ AI_Arena :: struct {
 }
 AI_ARENA_DEFAULT :: AI_Arena{agents=60,place=true}
 
-HORDE_WAVE_KINDS :: 4
 HORDE_MOST :: 2000 // zombies the waves of a horde send at most
 HORDE_SENDS :: 64  // zombies the waves of a horde send in a tick at most
 
-@(record,description="A kind of zombie a wave of a horde sends: how fast it runs, how far it sees and its color.")
-Zombie_Kind :: struct {
-    speed:f32 `mirai:"min=0,unit=m/s"`,
-    sight:f32 `mirai:"min=0,unit=m"`,
-    color:[4]f32 `mirai:"color"`,
-}
-ZOMBIE_KIND_DEFAULT :: Zombie_Kind{speed=3.5,sight=25,color={0.45,0.75,0.35,1}}
-
-Horde_Wave_Kind :: struct {
-    kind:core.Record(Zombie_Kind),
-    weight:f32 `mirai:"min=0"`, // the chances of the kind are its share of the weights of the wave
-}
-
-@(record,description="A wave of a horde: delay seconds after the wave before it, count zombies interval seconds apart, each of a kind picked by weight; then the wave next. A wave that names one before it repeats them.")
+@(record,description="A wave of a horde: delay seconds after the wave before it, count zombies interval seconds apart, each at the next spawn point of the game; then the wave next. A wave that names one before it repeats them.")
 Horde_Wave :: struct {
     delay,interval:f32 `mirai:"min=0,unit=s"`,
     count:i32 `mirai:"min=0,max=500"`,
-    kinds:[HORDE_WAVE_KINDS]Horde_Wave_Kind, // without any, the zombies of the arena
     next:core.Record(Horde_Wave),
 }
 
-@(component,description="Sends more zombies to a horde arena in waves, rows of Horde_Wave: first, then the one each names next. The same seed sends the same kinds.")
+@(component,description="Sends more zombies to a horde arena in waves, rows of Horde_Wave: first, then the one each names next. Each zombie is the prefab of the next Spawn_Point without players.")
 Horde_Waves :: struct {
     first:core.Record(Horde_Wave),
-    seed:u64,
     wave:core.Record(Horde_Wave) `mirai:"transient,readonly"`, // the one sending; none: over
     sent:i32 `mirai:"transient,readonly"`,                     // of that wave
     total:i32 `mirai:"transient,readonly"`,                    // of every wave
-    rng:mm.Rng `mirai:"transient,hidden"`,
 }
 
 // The hordes that wait for their next zombie, each pushed for the tick it is due at.
@@ -776,8 +761,8 @@ arena_target :: proc(c:core.Commands,position:mm.Vec3,team:behavior.Team) -> cor
 // built: a horde waits for its next zombie as a request due at its tick.
 @(step="fixed",stage="apply",server)
 horde_waves :: proc(
-    commands:core.Commands,hordes:^core.Table(Horde_Waves),sends:^Horde_Sends,arenas:core.Read(AI_Arena),worlds:core.Read(core.World_Transform),
-    waves:core.Records(Horde_Wave),kinds:core.Records(Zombie_Kind),time:core.Time,problems:^core.Problems,
+    hordes:^core.Table(Horde_Waves),sends:^Horde_Sends,arenas:core.Read(AI_Arena),requests:^spawn.Spawn_Requests,
+    waves:core.Records(Horde_Wave),time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
@@ -785,7 +770,6 @@ horde_waves :: proc(
         at:=core.row_of(arenas,e)
         if !core.added(hordes,row) || at<0 || core.added(arenas,at) || core.at(arenas,at).kind!=.Horde {continue}
         h:=core.edit_at(hordes,row)
-        h.rng=mm.rng_make(h.seed,7)
         h.wave=h.first
         first,_:=core.record(waves,h.wave,problems,e)
         core.later(&sends.queue,time,first.delay,e)
@@ -793,8 +777,6 @@ horde_waves :: proc(
     for e in core.take_due(&sends.queue,time) {
         h:=core.edit(hordes,e)
         if h==nil {continue}
-        origin:mm.Vec3
-        if pose,ok:=core.get(worlds,e);ok {origin=pose.position}
         // A chain of waves that send nothing and wait nothing goes on in the next tick.
         wait:f32 // s to the next zombie; below 0: the waves are over
         for _ in 0..<HORDE_SENDS {
@@ -803,9 +785,7 @@ horde_waves :: proc(
             wave,found:=core.record(waves,h.wave,problems,e)
             if !found {h.wave={};break}
             if h.sent<wave.count {
-                kind:=ZOMBIE_KIND_DEFAULT
-                if picked,ok:=core.record(kinds,horde_pick(&h.rng,wave.kinds),problems,e);ok {kind=picked}
-                arena_zombie(commands,arena_body(commands,horde_spot(origin,int(h.total)),kind.color,kind.speed),kind.sight)
+                spawn.spawn(requests,core.NONE)
                 h.sent+=1
                 h.total+=1
             }
@@ -820,32 +800,6 @@ horde_waves :: proc(
         }
         if wait>=0 {core.later(&sends.queue,time,wait,e)}
     }
-}
-
-// A kind of the wave with chances in proportion to its weight; none when no
-// kind has weight.
-@(private)
-horde_pick :: proc(rng:^mm.Rng,kinds:[HORDE_WAVE_KINDS]Horde_Wave_Kind) -> (picked:core.Record(Zombie_Kind)) {
-    total:f32
-    for k in kinds {
-        if k.kind!={} && k.weight>0 {total+=k.weight}
-    }
-    if !(total>0) || total>max(f32) {return}
-    at:=mm.random_f32(rng)*total
-    for k in kinds {
-        if k.kind=={} || !(k.weight>0) {continue}
-        picked=k.kind
-        if at<k.weight {return}
-        at-=k.weight
-    }
-    return
-}
-
-// Where the zombie number i of the waves comes in: along the streets at the
-// edge of the block, a little further each round.
-@(private)
-horde_spot :: proc(origin:mm.Vec3,i:int) -> mm.Vec3 {
-    return origin+{-30+f32(i%12)*5+f32((i/36)%4)*0.6,0.05,32-f32((i/12)%3)*2}
 }
 
 // A zombie, or a drone with the mind of the zombies: it wanders, chases what it sees or hears, bites what it reaches.

@@ -52,6 +52,24 @@ animation_playing :: proc(playback:^Playback,entity:core.Entity) -> bool {
     return state!=nil && state.seen==playback.frame && state.playing
 }
 
+// The markers of the clip an entity plays, in time order, which content.markers names by their
+// id; none while it plays no clip.
+animation_markers :: proc(playback:^Playback,sources:^Source_Assets,app:^host.App,entity:core.Entity) -> (markers:[]lib.Marker,content:^host.Content_Animation) {
+    if playback==nil {return}
+    state:=constraint_playing(playback,entity)
+    if state==nil || state.clip<0 {return}
+    content=animation_playing_content(sources,app,state)
+    if content==nil || state.clip>=content.clip_count {return nil,nil}
+    return lib.clip_markers(&content.lib,lib.Clip(state.clip+1)),content
+}
+
+// The entity the clip of an animated entity calls target as its tracks bind it: itself for 0, none
+// when nothing it animates has that name.
+animation_bound :: proc(playback:^Playback,entity:core.Entity,target:u64) -> core.Entity {
+    state:=constraint_playing(playback,entity) if playback!=nil else nil
+    return field_entity(state,target) if state!=nil else core.NONE
+}
+
 // Takes the commands of the tick for a state: whether its clip plays, in animation, and the seeks
 // they leave in the queue for the tick to read.
 @(private)

@@ -71,7 +71,9 @@ Server :: struct {
     objects:[]Server_Object, // by object index
     views:[]View,            // by connection index
     peers:[]Server_Peer,     // by connection index
-    visibility:[2]core.Seen, // what of Visibility and of input.Seat the bits of the objects and of the connections were read for
+    visibility:core.Seen,    // what of Visibility the bits of the objects and of the connections were read for,
+    seats:core.Shape,        // and the rows of input.Seat the bits of the connections were
+    visibility_reads:int,    // objects whose Visibility was read again: what a test counts
     layouts:[]core.Shape,    // by table of the world info: the rows of each replicated component the types of the objects were looked at for
     changed:[]bool,          // likewise: it changed since the publish before
     moved:[2]core.Shape,     // the rows of core.Motion and of input.Move_Input, likewise
@@ -264,9 +266,11 @@ object_retype :: proc(s:^Net_Session,w:core.World_Ref,slot:^Server_Object,disabl
     return true
 }
 
-// The visibility bits of the objects (Visibility.mask) and of the connections
-// (Visibility.sees of their seats), told to the host when Visibility or the
-// seats change; what the full frame refuses is told at the next publish.
+// The visibility bits of the objects (Visibility.mask), told to the host when
+// Visibility changes, and of the connections (Visibility.sees of their
+// seats), also when a seat comes, goes or turns; an object made takes its own
+// as it is made, and a connection that arrives reads them all again. What the
+// full frame refuses is told at the next publish.
 @(private)
 server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
     server:=&s.server
@@ -275,13 +279,14 @@ server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
     if visibility==nil {return}
     seats:=core.world_table_of(w,input.Seat)
     // Moved on only once everything was told: what the full frame refuses is read again.
-    seen:=server.visibility
-    changed:=core.touched(visibility,&seen[0])
-    if seats!=nil && core.touched(seats,&seen[1]) {changed=true}
-    if !changed {return}
+    seen,shape:=server.visibility,server.seats
+    changed:=core.touched(visibility,&seen)
+    seated:=seats!=nil && core.reshaped(seats,&shape)
+    if !changed && !seated {return}
     told:=true
-    for &slot in server.objects {
+    for &slot in server.objects[:changed?len(server.objects):0] {
         if slot.object==0 {continue}
+        server.visibility_reads+=1
         value,_:=core.get(core.read(visibility),slot.entity)
         if slot.visibility==value.mask {continue}
         if wire.object_set_visibility(h,slot.object,value.mask)==.None {slot.visibility=value.mask} else {told=false}
@@ -295,7 +300,7 @@ server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
         if peer.sees==value.sees {continue}
         if wire.connection_set_visibility(h,peer.connection,value.sees)==.None {peer.sees=value.sees} else {told=false}
     }
-    if told {server.visibility=seen}
+    if told {server.visibility,server.seats=seen,shape}
 }
 
 // The datagrams received since the last frame, as changes to the world and as events.
@@ -320,7 +325,7 @@ server_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comm
                 core.report(s.problems,core.NONE,"net.memory","a connection was closed: out of memory for the inputs of its player; free memory, or lower Net_Settings.max_clients")
             }
             s.server.peers[index]={connection=command.connection,held=s.follows}
-            s.server.visibility={}
+            s.server.visibility,s.server.seats={},{}
             mem.zero_slice(loaded_of(&s.server,index))
             append(&s.arrived,Connection_Event{kind=.Connected,connection=command.connection})
             // Without the world to load, it is in it already.
@@ -436,27 +441,31 @@ member_of :: proc(w:core.World_Ref,e,section:core.Entity) -> base.Entity_Id {
     return core.id_of(core.read(core.world_table_of(w,core.Id)),e)
 }
 
-// A message of the game that arrived waits in the session for the next tick, which has it in Net_Events.
+// A message of the game that arrived waits in the session for the next tick, which has it in core.Net_Messages.
 @(private)
 event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,inputs:^Remote_Inputs) {
     if int(command.event)>=len(s.events) || own_deliver(s,w,command,inputs) || !in_world(s,command.connection) {return}
     event:=s.events[command.event]
-    if len(s.received)>=PENDING_EVENTS {
+    pending:=&s.received[command.event]
+    if pending.count>=PENDING_EVENTS {
         s.stats.events_dropped+=1
-        core.report(s.problems,core.NONE,"net.events_pending","a message of type %v was dropped: %d messages wait for the next tick of this world, which runs none (it is paused); resume it, or have the other ends send less while it is paused",event.type,PENDING_EVENTS)
+        core.report(s.problems,core.NONE,"net.events_pending","a message of type %v was dropped: %d of its type wait for the next tick of this world, which runs none (it is paused); resume it, or have the other ends send less while it is paused",event.type,PENDING_EVENTS)
         return
     }
-    item:=Received{type=event.type,sender=command.connection,size=u16(event.size)}
-    payload:=s.scratch[:event.size]
-    mem.zero_slice(payload)
-    if event.size>0 && !wire.event_read(&s.host,command,raw_data(payload)) {return}
-    copy(item.data[:],payload)
-    if command.object!=0 {item.about=core.Entity(wire.object_user(&s.host,command.object))}
-    if _,error:=append(&s.received,item);error!=nil {
+    // As a core.Message of its type, after those of the type that came before.
+    sender,stride:=core.message_layout(event.size,event.align)
+    used:=pending.count*stride
+    if resize(&pending.blocks,(used+stride+15)/16)!=nil {
         s.stats.events_dropped+=1
         core.report(s.problems,core.NONE,"net.memory","a message of type %v was dropped: out of memory to keep it until the next tick; free memory",event.type)
         return
     }
+    record:=([^]u8)(raw_data(pending.blocks))[used:][:stride]
+    mem.zero_slice(record)
+    if event.size>0 && !wire.event_read(&s.host,command,raw_data(record)) {return}
+    (^u64)(&record[sender])^=u64(command.connection)
+    if command.object!=0 {(^core.Entity)(&record[sender+8])^=core.Entity(wire.object_user(&s.host,command.object))}
+    pending.count+=1
     s.stats.events_received+=1
 }
 
@@ -850,7 +859,7 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
         groups=section_groups(s,ids,sections),
     }
     if visibility:=core.world_table_of(w,Visibility);visibility!=nil {
-        if value:=core.staged(visibility,e);value!=nil {desc.visibility=value.mask}
+        if value:=core.table_added(visibility,e);value!=nil {desc.visibility=value.mask} else if value,has:=core.get(visibility,e);has {desc.visibility=value.mask}
     }
     // Through rawptr: the host lets go of these locals below, which the escape analysis of Odin cannot tell.
     desc.sources[0]=rawptr(&pose)

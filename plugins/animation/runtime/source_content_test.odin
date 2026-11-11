@@ -26,7 +26,7 @@ sources_test_content :: proc(t:^testing.T,id:base.Asset_Id,duration,distance,mor
     host.content_animation_loops(&content.lib,1)
     content.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,1);base.text_set(content.names[0][:],"Walk")
     content.roots=make([]asset.Animation_Root,1);base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
-    content.markers=make([]u64,1);content.markers[0]=base.name_hash("step")
+    content.markers=make([]host.Content_Marker,1);content.markers[0].name=base.name_hash("step")
     return content
 }
 @(private="file")

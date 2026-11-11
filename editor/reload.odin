@@ -23,8 +23,8 @@ import "mirai:std/serial"
 // scenes, the history, the Play and the runs of the agents go on, and so do
 // the agents. The editor restarts with the scene as it is only when the
 // migration cannot keep what the engine holds in place: a storage of the
-// engine that would move, or a struct past the room it has. Libraries stay loaded until the editor ends: what a world holds can
-// point into them.
+// engine that would move, or a struct past the room it has. Libraries stay loaded until the
+// editor ends: what a world holds can point into them.
 
 Library_Reload :: enum u8 {
     Reloaded,
@@ -39,7 +39,6 @@ library_reload :: proc(s:^Session) -> Library_Reload {
     if !goes_on {return .Restart}
     stamp:=library_stamp_here(s,context.temp_allocator)
     if stamp==s.library_stamp {
-        // What the editor keeps by procedure is registered again (api_poll).
         if taken {s.library_generation+=1}
         return .Reloaded
     }
@@ -150,12 +149,12 @@ session_record_follow :: proc(s:^Session,pid:int) {
     }
 }
 
-// What keeps the worlds from migrating now: a call of the API that runs
-// frames holds them on its stack (one in api_wait does not), and a scene or a
-// section that loads fills one over frames.
+// What keeps the worlds from migrating now: a call of the API that runs frames holds them on its
+// stack (one of the editor in api_wait does not; one of a plugin runs its library's code), and a
+// scene or a section that loads fills one over frames.
 @(private)
 library_busy :: proc(s:^Session) -> bool {
-    if st:=api_state(s);st!=nil && st.waiting==0 && (st.in_call>0 || st.stepping) {return true}
+    if st:=api_state(s);st!=nil && (st.provided_calls>0 || st.waiting==0 && (st.in_call>0 || st.stepping)) {return true}
     app:=s.app
     if loads:=core.world_storage_of(core.world_ref(app.shared,s.info,.Shared),scene.Scene_Loads);loads!=nil && loads.job!=nil {return true}
     for slot in app.worlds {

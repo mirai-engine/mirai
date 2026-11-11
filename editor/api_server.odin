@@ -44,6 +44,7 @@ Api_Entry :: struct {
     state:^Api_State,
     session:^Session,
     run:Api_Handler,
+    provided:bool, // of a plugin, by its provider: its code is of the library it came from
 }
 
 // Memory of the API; the storage only points at it because the server must stay where it was made.
@@ -63,6 +64,7 @@ Api_State :: struct {
     poll_temp:runtime.Allocator,
     allocator:runtime.Allocator,
     in_call:int,
+    provided_calls:int, // handlers of plugins on the stack, which a swap of their library would strand
     last_call:time.Tick, // when a call arrived last: an agent that drives the editor keeps it at its rate
     stepping:bool,
     waiting:int,    // handlers inside api_wait: what runs meanwhile holds no world of theirs
@@ -137,23 +139,16 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> Api_Open_Error
         free(st)
         return .Server
     }
-    st.server.assets={s,asset_text_resolve}
-    api_schema_build(s,st)
     st.port=api.server_port(&st.server)
     a.state=st
-    api_plugins_set(s,st)
     guides:=AI_GUIDES
     api.server_guides_set(&st.server,guides[:])
-    api_methods_register(s,st)
-    commands_register(s,st)
-    api_providers_register(s)
+    api_registrations(s,st)
     if st.refused>0 {
         fmt.eprintfln("mirai: the API does not open: %d methods did not register, the first: %s",st.refused,st.refusal)
         api_close(s)
         return .Methods
     }
-    st.library_generation=s.library_generation
-    st.server.pause,st.server.transaction,st.server.user=api_server_pause,api_server_transaction,s
     api_disk_baseline(s)
     if listen {api_port_file_write(s,st.port)}
     return .None
@@ -256,19 +251,34 @@ api_poll :: proc(s:^Session) {
     st.poll_temp=context.temp_allocator
     if st.library_generation!=s.library_generation {
         if !api.server_methods_reset(&st.server) {return}
-        st.count,st.refused=0,0
-        st.commands={}
-        api_schema_free(st)
-        api_schema_build(s,st)
-        api_plugins_set(s,st)
-        api_methods_register(s,st)
-        commands_register(s,st)
-        api_providers_register(s)
+        api_registrations(s,st)
         if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload, the first: %s",st.refused,st.refusal)}
-        st.library_generation=s.library_generation
     }
     st.server.instance={os.get_pid(),project.ENGINE_VERSION,project_name(s),s.project_root}
     api.server_poll(&st.server)
+}
+
+// Every procedure the API keeps, of the libraries in use: again after each swap (api_poll).
+@(private)
+api_registrations :: proc(s:^Session,st:^Api_State) {
+    st.count,st.refused,st.commands,st.library_generation=0,0,{},s.library_generation
+    api_schema_free(st)
+    api_schema_build(s,st)
+    st.server.assets={s,asset_text_resolve}
+    st.server.pause,st.server.transaction,st.server.user=api_server_pause,api_server_transaction,s
+    api_plugins_set(s,st)
+    api_methods_register(s,st)
+    commands_register(s,st)
+    found:[PROVIDER_CAPACITY]Api_Provider
+    plugins:[PROVIDER_CAPACITY]string
+    first:=st.count
+    for provider,i in found[:provided_all(s,found[:],plugins[:])] {
+        if provider.register==nil {continue}
+        st.plugin=plugins[i]
+        provider.register(s)
+    }
+    st.plugin=""
+    for &entry in st.entries[first:st.count] {entry.provided=true}
 }
 
 // A manual editor (headless, driven by the API) does not draw frames by itself: it answers requests and waits.
@@ -422,11 +432,14 @@ api_active :: proc(s:^Session) -> bool {
 api_trampoline :: proc(call:^api.Call) {
     entry:=(^Api_Entry)(call.user)
     st:=entry.state
+    // From a swap until api_poll registers again, the handler is of the code the swap replaced.
+    if st.library_generation!=entry.session.library_generation {api.call_fail(call,api.SERVER_ERROR,"The editor is taking the code a build left: ask again");return}
     // The server lends its scratch as the temporary allocator of a request, and a frame empties the
     // temporary allocator: a method that advances frames would lose its own call.
     context.temp_allocator=st.poll_temp
     st.in_call+=1
-    defer st.in_call-=1
+    st.provided_calls+=int(entry.provided)
+    defer {st.in_call-=1;st.provided_calls-=int(entry.provided)}
     if !st.person {st.last_call=time.tick_now()}
     task:^Ai_Task
     if call.client_tag!="" {
@@ -541,20 +554,6 @@ Api_Method :: struct {
 // A provider is the sole field of an Editor storage with a default procedure.
 // The current library supplies its descriptor; no callback is retained in the World.
 Api_Provider :: struct {register:proc(s:^Session)}
-
-// The methods of a provider belong to the plugin that gives it.
-@(private)
-api_providers_register :: proc(s:^Session) {
-    found:[PROVIDER_CAPACITY]Api_Provider
-    plugins:[PROVIDER_CAPACITY]string
-    st:=api_state(s)
-    for provider,i in found[:provided_all(s,found[:],plugins[:])] {
-        if provider.register==nil {continue}
-        if st!=nil {st.plugin=plugins[i]}
-        provider.register(s)
-    }
-    if st!=nil {st.plugin=""}
-}
 
 // The plugins the project finds and the ones it uses, for engine.describe.
 @(private)

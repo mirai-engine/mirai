@@ -1,7 +1,6 @@
 #+private
 package mirai_audio
 
-import "core:math"
 import "core:sync"
 
 // The audio thread side of a voice: everything here runs inside mixer_render.
@@ -31,7 +30,7 @@ Voice_Start :: struct {
     doppler:f32,
     occlusion:f32,
     transmission:[BANDS]f32,
-    lowpass,reverb:f32,
+    reverb:f32,
 }
 Voice_Phase :: enum u8 {Free,Playing,Paused}
 Mix_Voice :: struct {
@@ -62,10 +61,7 @@ Mix_Voice :: struct {
     // A binaural voice that went silent adds one more block, and then ends
     // or, with tail_pause, pauses.
     tail,tail_pause:bool,
-    // The filter and the send, ramped over every chunk from where they were:
-    // a coefficient of 1 lets everything through.
-    filter:f32,filter_state:[2]f32,
-    reverb_now:f32,
+    reverb_now:f32, // the send, ramped over every chunk from where it was
     next:Voice_Start,has_next:bool,
 }
 
@@ -79,15 +75,9 @@ voice_begin :: proc "contextless" (m:^Mixer,v:^Mix_Voice,start:Voice_Start) {
     }
     v.spatial_dirty=true
     v.spatial_pitch=1
-    v.filter=lowpass_coefficient(start.lowpass,f32(m.sample_rate))
     v.reverb_now=start.reverb
 }
 
-// The coefficient of a one-pole low-pass: 1 for a cutoff of 0, or so high it passes everything.
-lowpass_coefficient :: proc "contextless" (cutoff_hz,sample_rate:f32) -> f32 {
-    if cutoff_hz<=0 || cutoff_hz>=sample_rate*0.49 {return 1}
-    return 1-math.exp(-2*math.PI*cutoff_hz/sample_rate)
-}
 // The game thread learns of the end through finished, unless the slot was
 // stolen: then it has already been given to another voice.
 voice_end :: proc "contextless" (m:^Mixer,index:u32) {
@@ -133,7 +123,6 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         case .Voice_Loop:target.loop=command.flag
         case .Voice_Place:target.position=command.vectors[0];target.velocity=command.vectors[1];target.rotation=command.rotation
         case .Voice_Occlusion:target.occlusion=command.value;target.transmission=command.vectors[0]
-        case .Voice_Lowpass:target.lowpass=command.value
         case .Voice_Reverb:target.reverb=command.value
         }
         return
@@ -179,7 +168,6 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
     case .Voice_Occlusion:
         v.occlusion=command.value;v.transmission=command.vectors[0]
         v.spatial_dirty=true
-    case .Voice_Lowpass:v.lowpass=command.value
     case .Voice_Reverb:v.reverb=command.value
     }
 }
@@ -236,9 +224,9 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     step:=u64(f64(pitch)*f64(v.source.rate)/f64(m.sample_rate)*f64(ONE))
     bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
     out:=bus
-    // A voice that is placed, filtered or sent is mixed apart first.
-    filter:=lowpass_coefficient(v.lowpass,f32(m.sample_rate))
-    apart:=placed || filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0
+    // A voice that is placed or sent is mixed apart first.
+    sent:=v.reverb>0 || v.reverb_now>0
+    apart:=placed || sent
     if apart {
         out=raw_data(m.voice_scratch)
         #no_bounds_check for i in offset*2..<n*2 {out[i]=0}
@@ -252,16 +240,16 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     }
     v.base=target
     if placed && spatial_post(m,v,out,offset,n,pans,silent) {
-        // Binaural: filtered and sent as one source, then added to the sums of its
-        // bus; a silent one adds nothing once its last block is complete.
-        if filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0 {voice_post(m,v,out,nil,offset,n,filter)}
+        // Binaural: sent as one source, then added to the sums of its bus; a
+        // silent one adds nothing once its last block is complete.
+        if sent {voice_post(m,v,out,nil,offset,n)}
         if !silent || v.binaural_live && v.binaural_clock==clock {
             x:=m.binaural_input[:n]
             #no_bounds_check for i in 0..<n {x[i]=out[i*2] if i>=offset else 0}
             binaural_add(m,v,index,x,v.direction,clock)
         }
     } else if apart {
-        voice_post(m,v,out,bus,offset,n,filter)
+        voice_post(m,v,out,bus,offset,n)
     }
     ended:=!alive || v.stopping
     if (ended || v.pausing) && v.binaural_live && m.output_now==.Headphones && m.channels==2 {
@@ -288,33 +276,22 @@ voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     v.binaural_live=false
 }
 
-// Filters frames [from,to) of a voice mixed apart into its bus, or back into
-// src without one, and sends them to the reverb.
-voice_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,src,bus:[^]f32,from,to:int,filter:f32) {
-    span:=f32(to-from)
-    a0,da:=v.filter,(filter-v.filter)/span
-    s0,ds:=v.reverb_now,(v.reverb-v.reverb_now)/span
+// Sends frames [from,to) of a voice mixed apart to the reverb, and adds them
+// to its bus when there is one.
+voice_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,src,bus:[^]f32,from,to:int) {
+    s0,ds:=v.reverb_now,(v.reverb-v.reverb_now)/f32(to-from)
     send:=raw_data(m.reverb_input)
-    left,right:=v.filter_state[0],v.filter_state[1]
     #no_bounds_check for k in from..<to {
-        ramp:=f32(k-from)
-        a:=a0+da*ramp
-        left+=a*(src[k*2]-left)
-        right+=a*(src[k*2+1]-right)
+        left,right:=src[k*2],src[k*2+1]
         if bus!=nil {
             bus[k*2]+=left
             bus[k*2+1]+=right
-        } else {
-            src[k*2],src[k*2+1]=left,right
         }
-        g:=s0+ds*ramp
+        g:=s0+ds*f32(k-from)
         send[k*2]+=left*g
         send[k*2+1]+=right*g
     }
-    if abs(left)<1e-20 {left=0}
-    if abs(right)<1e-20 {right=0}
-    v.filter_state={left,right}
-    v.filter,v.reverb_now=filter,v.reverb
+    v.reverb_now=v.reverb
 }
 
 // Mixes output frames [from,to) of a chunk from a source laid out in memory.

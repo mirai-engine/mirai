@@ -169,7 +169,7 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
         low[axis]=int(clamp(lo,first,last))
         high[axis]=int(clamp(hi,first,last))
     }
-    if !grid_prepare(source_samples_grid(s),low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
+    if !grid_prepare(&s.field,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     if brush.kind==.Erode {return source_erode(s,brush,low,high)}
     // Smooth reads the region as it was, with a halo as wide as its box, and
     // so does the slope filter: what the brush raises before a sample does not
@@ -280,11 +280,11 @@ source_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
         value=clamp(value,-limit,limit)
         if value==old {continue}
         dug_count(s,p,old,value)
-        if volume {block_set(&s.distances,p,value)} else {grid_set(&s.heights,x,z,value)}
+        if volume {block_set(&s.field,p,value)} else {grid_set(&s.field,x,z,value)}
         change.changed=true
         for axis in 0..<3 {change.low[axis]=min(change.low[axis],p[axis]);change.high[axis]=max(change.high[axis],p[axis])}
     }}}
-    if volume {grid_settle(&s.distances,low,high,s.allocator)}
+    if volume {grid_settle(&s.field,low,high,s.allocator)}
     return
 }
 
@@ -344,8 +344,8 @@ brush_slope_allows :: proc "contextless" (s:^Source,brush:Brush,x,z:int) -> bool
     if brush.slope=={} {return true}
     x0,x1:=max(x-1,0),min(x+1,int(s.samples.x)-1)
     z0,z1:=max(z-1,0),min(z+1,int(s.samples.z)-1)
-    dx:=(grid_get(&s.heights,x1,z)-grid_get(&s.heights,x0,z))/(f32(x1-x0)*s.cell)
-    dz:=(grid_get(&s.heights,x,z1)-grid_get(&s.heights,x,z0))/(f32(z1-z0)*s.cell)
+    dx:=(grid_get(&s.field,x1,z)-grid_get(&s.field,x0,z))/(f32(x1-x0)*s.cell)
+    dz:=(grid_get(&s.field,x,z1)-grid_get(&s.field,x,z0))/(f32(z1-z0)*s.cell)
     slope:=math.atan(math.sqrt(dx*dx+dz*dz))
     return (slope>=brush.slope.x && slope<=brush.slope.y)!=brush.slope_invert
 }
@@ -457,8 +457,8 @@ source_volume_shape :: proc(s:^Source,brush:Brush) -> (change:Change) {
         low[axis],high[axis]=int(clamp(lo,first,last)),int(clamp(hi,first,last))
     }
     change.low=high;change.high=low
-    if !grid_prepare(&s.distances,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
-    defer grid_settle(&s.distances,low,high,s.allocator)
+    if !grid_prepare(&s.field,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
+    defer grid_settle(&s.field,low,high,s.allocator)
     layered:=brush.kind==.Add
     if layered && !grid_prepare(&s.weights,low,high,s.allocator) {return Change{error=.Out_Of_Memory}}
     defer if layered {grid_settle(&s.weights,low,high,s.allocator)}
@@ -471,7 +471,7 @@ source_volume_shape :: proc(s:^Source,brush:Brush) -> (change:Change) {
         if value==old {continue}
         dug_count(s,p,old,value)
         if layered {grid_write(&s.weights,p,weights_grow(grid_value(&s.weights,p),int(brush.layer),int(s.layer_count),volume_solid(old,s.cell),volume_solid(value,s.cell)))}
-        block_set(&s.distances,p,value)
+        block_set(&s.field,p,value)
         change.changed=true
         for axis in 0..<3 {change.low[axis]=min(change.low[axis],p[axis]);change.high[axis]=max(change.high[axis],p[axis])}
     }}}
