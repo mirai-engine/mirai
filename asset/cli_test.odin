@@ -320,7 +320,7 @@ cli_reads_and_edits_assets_of_every_kind :: proc(t:^testing.T) {
     expect_run(&cli,0,fmt.tprintf("ok %s\nok %s\n",file(&cli,"rise.anim"),file(&cli,"tick.sound")),"verify",file(&cli,"rise.anim"),file(&cli,"tick.sound"))
     expect_run(&cli,0,"","set",file(&cli,"rise.anim"),"tracks[0].key_count=9")
     expect_run(&cli,0,"","set",file(&cli,"tick.sound"),"sound.channels=7")
-    expect_run(&cli,1,fmt.tprintf("FAIL %s: animation: an invalid range, key or name\nFAIL %s: sound: inconsistent channels, sample rate, lossless data or file\n",file(&cli,"rise.anim"),file(&cli,"tick.sound")),
+    expect_run(&cli,1,fmt.tprintf("FAIL %s: animation: an invalid range, key or name\nFAIL %s: sound: inconsistent channels, sample rate, loop start, lossless data or file\n",file(&cli,"rise.anim"),file(&cli,"tick.sound")),
         "verify",file(&cli,"rise.anim"),file(&cli,"tick.sound"))
     // And so do fonts, texts and prompts.
     testing.expect_value(t,font_save(file(&cli,"face.font"),&types,{id={0xf07,1},file=#load("../assets/fixtures/cff.otf")}),Error.None)
@@ -377,7 +377,7 @@ cli_commands_answer_for_damaged_files :: proc(t:^testing.T) {
         lossless:=[8]u8{'M','L','P','C',0,0,0,0}
         testing.expect_value(t,sound_save(file(&cli,"tick.sound"),&types,{id={0x50d,2},channels=2,sample_rate=48000,frames=4,lossless=lossless[:]}),Error.None)
     }
-    for name in ([]string{"ai/horde_waves.records","showcase/lift.anim","tick.sound","gallery/plant.gltf/Leaves.mat"}) {
+    for name in ([]string{"ai/horde_waves.records","showcase/lift.anim","tick.sound","gallery/plant/Leaves.mat"}) {
         seed:=file(&cli,name) if name=="tick.sound" else fmt.tprintf("%s/demo/assets/%s",root,name)
         good,read_error:=serial.file_read(seed,context.temp_allocator)
         if !testing.expectf(t,read_error==.None,"%s cannot be read",seed) {continue}

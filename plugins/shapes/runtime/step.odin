@@ -239,7 +239,9 @@ shapes_update :: proc(
         b:=&cache.builds[used]
         clear(&b.brushes)
         b.entity,b.body,b.spline,b.material,b.cut_first,b.key,b.limits=e,body,entry.spline,material,cut_first,key,limits
-        b.collider,b.collides=collider,collides
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        b.collider=collider
+        b.collides=collides
         if entry.spline {
             ribbon_lay(q,&spline,entry.place,&b.geometry)
         } else if append(&b.brushes,..cache.gathered[:])!=len(cache.gathered) {

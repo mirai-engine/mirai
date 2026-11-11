@@ -205,7 +205,7 @@ damaged_fonts_texts_and_prompts_go_through_every_command :: proc(t:^testing.T) {
 @(test)
 damaged_meshes_textures_materials_scenes_and_prefabs_go_through_every_command :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"blockout/column.mesh","gallery/plant.gltf/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","gallery/vase.obj/vase.scene"}) {
+    for file in ([]string{"blockout/column.mesh","gallery/plant/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","gallery/vase/vase.scene"}) {
         fuzz_file(t,&types,strings.concatenate({DEMO,file},context.temp_allocator),1200)
     }
 }
@@ -215,7 +215,7 @@ damaged_meshes_textures_materials_scenes_and_prefabs_go_through_every_command ::
 @(test)
 damaged_text_of_an_asset_is_packed_or_refused :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    for file in ([]string{"showcase/hud.ui","showcase/lift.anim","gallery/plant.gltf/Leaves.mat","gallery/vase.obj/vase.scene"}) {
+    for file in ([]string{"showcase/hud.ui","showcase/lift.anim","gallery/plant/Leaves.mat","gallery/vase/vase.scene"}) {
         path:=strings.concatenate({DEMO,file},context.temp_allocator)
         seed:Document
         if !testing.expect_value(t,document_load(&seed,path),Error.None) {continue}

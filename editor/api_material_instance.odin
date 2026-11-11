@@ -288,7 +288,11 @@ material_given_read :: proc(s:^Session,call:^api.Call,program:^gpu.Program,mater
 
     switch text:=api.json_member(call.raw,"overlays");text {
     case "":
-    case "null": next.own_overlays,next.overlay_count,next.overlays=false,0,{}
+    case "null":
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        next.own_overlays=false
+        next.overlay_count=0
+        next.overlays={}
     case:
         elements,_:=api.json_elements(text)
         if len(overlays)>asset.MATERIAL_MAX_OVERLAYS {
@@ -308,7 +312,10 @@ material_given_read :: proc(s:^Session,call:^api.Call,program:^gpu.Program,mater
             }
             list[i]=layer
         }
-        next.own_overlays,next.overlay_count,next.overlays=true,u32(len(overlays)),list
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        next.own_overlays=true
+        next.overlay_count=u32(len(overlays))
+        next.overlays=list
     }
     return true
 }

@@ -452,7 +452,11 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         name :: proc(tree:^Widget_Tree,node:^Node,binding:Binding) -> string {return tree_binding(tree,node,binding)}
         if node.kind==.List {
             if path:=name(tree,&node,.Items);path!="" {
-                instance.items[i],instance.scopes[i],ok=tree_bind_items(instance,scope,path,u32(node.count) if node.count>0 else TREE_TABLE_ROWS)
+                // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+                items,element,bound:=tree_bind_items(instance,scope,path,u32(node.count) if node.count>0 else TREE_TABLE_ROWS)
+                instance.items[i]=items
+                instance.scopes[i]=element
+                ok=bound
                 if !ok {instance.failure={node=i,binding=.Items};break}
                 if key:=name(tree,&node,.Key);key!="" {
                     instance.items[i].key,ok=tree_bind_field(instance,instance.scopes[i],key,.Key)
