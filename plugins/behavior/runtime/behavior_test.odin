@@ -753,6 +753,13 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     offered.layout,offered.outer,offered.use,offered.entity_count=.Offers,8,1,0
     result=run(&f,offered)
     testing.expect(t,result.count==1 && result.entities[0]==crate && result.offers[0]==1 && linalg.distance(result.points[0],mm.Vec3{1,0,3})<1e-3)
+    // Held by another at priority 0: closed to the querier at that priority, open at a higher one.
+    testing.expect(t,ai.reserve_take(&f.claims.reservations,{u64(crate),2},u64(friend),1,0,10))
+    result=run(&f,offered)
+    testing.expect(t,result.status!=.Found,"held by another at the same priority")
+    offered.priority=1
+    result=run(&f,offered)
+    testing.expect(t,result.status==.Found && result.entities[0]==crate,"a higher priority displaces the holder")
     testing.expect_value(t,f.problems.count,0)
 }
 

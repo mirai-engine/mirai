@@ -86,7 +86,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   team and its abilities, and he holds it, there is room, or a holder of a lower priority
   (`Smart_User.priority`) has not started to use it. They are found among what the agent
   perceives (`smart_offer` of the subject), near a point (`smart_nearest`, which looks at each
-  object) or with a place query of layout `Offers`, scored like the others.
+  object) or with a place query of layout `Offers` (open at the query's `priority`), scored like
+  the others.
 - The action that uses it reserves it for its whole life (`smart_claim`, in `Claims` with the
   attack tokens) and the mind releases it in its `Exit`. A claim of a higher priority displaces
   one not in use; one in use (`ai.claim_use`) is never displaced, and the one displaced is not

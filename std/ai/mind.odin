@@ -294,6 +294,11 @@ claim_use :: proc "contextless" (a:^Act($A)) {
     if a.frame.reserved.target!=0 {reserve_use(a.reservations,a.frame.reserved,a.holder)}
 }
 
+// Whether the frame still holds what it claimed: false once a claim of a higher priority took it.
+claim_held :: proc "contextless" (a:^Act($A)) -> bool {
+    return reserve_holds(a.reservations,a.frame.reserved,a.holder,a.tick)
+}
+
 @(private)
 mind_valid :: #force_inline proc "contextless" ($A:typeid,action:int) -> bool {
     return action>=0 && action<MIND_ACTIONS && action>=int(min(A)) && action<=int(max(A))

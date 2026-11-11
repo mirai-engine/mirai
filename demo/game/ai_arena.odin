@@ -243,6 +243,8 @@ Soldier_Act :: enum u8 {Advance,Take_Cover,Fire,Reload,Get_Ammo,Heal,Man_Turret,
 SOLDIER_SHOOTERS :: 2 // soldiers that fire at the same enemy at once
 SOLDIER_MAG :: 6
 SOLDIER_SURE :: f32(0.8) // how sure of an enemy it fires at it: seen a moment ago, in its turn of rays
+SOLDIER_WOUNDED :: f32(40) // health below which it heals and is first to cover
+SOLDIER_FIRST :: u8(1) // claim priority of a wounded soldier: it takes the cover of one still on the way
 SOLDIER_ERRAND :: f32(0.8) // what going for a smart object counts once begun: only healing and fetching ammo interrupt it
 
 @(mind="soldier")
@@ -254,7 +256,7 @@ soldier_think :: proc(t:^ai.Think(Soldier_Act),w:Arena,soldiers:^core.Table(Sold
     here:=arena_position(w,e)
     subject,_,confidence:=arena_seen(w,e)
     sees:=confidence>=SOLDIER_SURE && subject!=core.NONE
-    if s.health<40 {
+    if s.health<SOLDIER_WOUNDED {
         if _,open:=behavior.smart_nearest(t,USE_HEALTH,here,60,user);open {ai.propose(t,.Heal,0.9)}
     }
     if s.ammo==0 && s.reserve>0 {ai.propose(t,.Reload,0.8)}
@@ -287,15 +289,18 @@ soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Sold
 }
 
 // Asks for the wall that covers it best and stays behind it: stage 0 waits
-// for the answer and claims the place, 1 walks there, 2 holds it.
+// for the answer and claims the place, 1 walks there while it holds it, 2
+// holds it in use. A wounded soldier claims first.
 @(act="Take_Cover")
-soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,smart_objects:^core.Table(behavior.Smart_Object,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
+soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier,.Read),smart_objects:^core.Table(behavior.Smart_Object,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
     e:=behavior.agent(a)
+    user:=arena_user(w,e)
+    if s,ok:=core.get(soldiers,e);ok && s.health<SOLDIER_WOUNDED {user.priority=SOLDIER_FIRST}
     switch a.phase {
     case .Enter:
         subject,_,_:=arena_seen(w,e)
-        mine:=arena_user(w,e).team
-        q:=behavior.Place_Query{querier=e,center=.Querier,layout=.Offers,use=USE_COVER,outer=14,keep=1}
+        mine:=user.team
+        q:=behavior.Place_Query{querier=e,center=.Querier,layout=.Offers,use=USE_COVER,priority=user.priority,outer=14,keep=1}
         falling:=ai.Response{kind=.Linear,slope=-1,shift_y=1}
         q.tests[0]={measure=.Visible,from=.Target if subject!=core.NONE else .Querier,target=subject,min=0,max=1,response=falling}
         q.tests[1]={measure=.Path,from=.Querier,min=0,max=30,response=falling}
@@ -311,17 +316,19 @@ soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,smart_objects:^core.Table(b
             if result.status!=.Found || result.offers[0]<0 {return .Failure}
             object,_:=core.get(smart_objects,result.entities[0])
             found:=behavior.Smart_Found{object=result.entities[0],offer=int(result.offers[0]),at=result.points[0],users=max(int(object.offers[result.offers[0]].users),1)}
-            if !behavior.smart_claim(a,found,arena_user(w,e)) {return .Failure}
+            if !behavior.smart_claim(a,found,user) {return .Failure}
             nav.nav_move_to(requests,e,found.at)
             return ai.next_stage(a)
         case 1:
+            if !ai.claim_held(a) {return .Failure}
             status:=behavior.path_status(a)
             if status!=.Success {return status}
+            ai.claim_use(a)
             return ai.next_stage(a)
         }
         return .Running
     case .Exit:
-        if a.cause==.Aborted && ai.stage(a)==1 {nav.nav_stop(requests,e)}
+        if ai.stage(a)==1 {nav.nav_stop(requests,e)}
     }
     return .Success
 }

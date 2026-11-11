@@ -124,6 +124,7 @@ Nav_Requests :: struct {
 nav_move_to :: proc(r:^Nav_Requests,e:core.Entity,point:[3]f32) {core.push(&r.queue,Nav_Request{kind=.Move_To,entity=e,point=point})}
 // Walks the agent after an entity, keeping that far from it.
 nav_follow :: proc(r:^Nav_Requests,e,target:core.Entity,distance:f32=1) {core.push(&r.queue,Nav_Request{kind=.Follow,entity=e,target=target,distance=distance})}
+// Stops the agent where it is, and its look: what it faces next is not navigation's.
 nav_stop :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Stop,entity=e})}
 // Faces a point, walking (a shooter that strafes) or standing; nav_look_along faces the way again.
 nav_look_at :: proc(r:^Nav_Requests,e:core.Entity,point:[3]f32) {core.push(&r.queue,Nav_Request{kind=.Look_At,entity=e,point=point})}
@@ -304,7 +305,7 @@ navigation_agents :: proc(
             if pose,ok:=core.get(worlds,asked.target);ok {p.goal=pose.position}
         case .Stop:
             agent_stop_crossing(p,asked.entity,loco)
-            p.state=.Idle
+            p.state,p.looking=.Idle,false
             p.velocity={}
             p.corridor.count=0
             if mi:=core.edit(inputs,asked.entity);mi!=nil {mi.move,mi.velocity={},false}

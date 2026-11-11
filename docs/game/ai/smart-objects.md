@@ -90,6 +90,8 @@ case .Update:
     // r.points[0] is the best place; r.entities[0] and r.offers[0] name the object and its offer
 ```
 
-To use an offer that a query found, build a `behavior.Smart_Found` (`object`, `offer`, `at`,
-`users`) and claim it with `behavior.smart_claim(a, found, user)` before walking to `at`; call
+The layout `Offers` lays out the offers open to the querier at the query's `priority`: give it
+its `Smart_User.priority`. To use an offer that a query found, build a `behavior.Smart_Found`
+(`object`, `offer`, `at`, `users`) and claim it with `behavior.smart_claim(a, found, user)` before
+walking to `at`; while it walks, `ai.claim_held(a)` false means a higher priority took it; call
 `ai.claim_use(a)` when the agent starts using it.

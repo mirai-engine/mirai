@@ -312,7 +312,6 @@ offer_held :: proc(v:Smart_View,a:^ai.Act($A),user:Smart_User) -> (found:Smart_F
     if !has || !placed || offer<0 || offer>=SMART_OFFERS {return {offer=-1}}
     state,_:=core.get(v.states,object)
     if !offer_ready(v,offer,o.offers[offer],state,user) {return {offer=-1}}
-    key:=ai.Reservation_Key{u64(object),u16(offer+1)}
-    if v.claims.ptr!=nil && !ai.reserve_holds(&v.claims.ptr.reservations,key,a.holder,v.time.tick) {return {offer=-1}}
+    if !ai.claim_held(a) {return {offer=-1}}
     return offer_found(object,offer,o.offers[offer],pose.transform)
 }

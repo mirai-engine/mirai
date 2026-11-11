@@ -1622,7 +1622,8 @@ an_agent_goes_at_the_speed_of_its_path_under_its_top_speed :: proc(t:^testing.T)
     testing.expectf(t,abs(linalg.length(motion.linear.xz)-2)<0.05,"it goes at %v",motion.linear)
 }
 
-// One that stands turns to what it is asked to look at, where it stays.
+// One that stands turns to what it is asked to look at, where it stays, until
+// it is stopped again.
 @(test)
 an_agent_that_stands_turns_to_what_it_looks_at :: proc(t:^testing.T) {
     f:Nav_Test
@@ -1639,6 +1640,14 @@ an_agent_that_stands_turns_to_what_it_looks_at :: proc(t:^testing.T) {
     forward:=mm.quat_forward(pose.rotation)
     testing.expectf(t,forward.z>0.95,"it faces %v",forward)
     testing.expectf(t,linalg.length(pose.position.xz)<0.1,"it stayed, at %v",pose.position)
+    // Stopped again, it looks no more: where the game turns it, it stays turned.
+    nav_stop(&f.nav_requests,e)
+    agents_test_step(&f)
+    core.edit(&f.inputs,e).look_yaw=mm.yaw_of_direction({1,0,0})
+    for _ in 0..<90 {agents_test_step(&f)}
+    pose,_=core.get(&f.worlds,e)
+    forward=mm.quat_forward(pose.rotation)
+    testing.expectf(t,forward.x>0.95,"it faces %v",forward)
 }
 
 // Six walkers patrol the paths of the AI arena of the demo, each from another

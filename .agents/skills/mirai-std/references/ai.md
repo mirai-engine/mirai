@@ -349,7 +349,7 @@ no GOAP. What those models gave is written this way, without implementing them o
 - Priority: without room, a claim of a higher priority displaces the live holder of the lowest
   priority below it that is not in use; `claim_use` (`reserve_use`) marks a holder in use, and
   then nobody displaces it. Equal priorities never displace. The displaced holder is not
-  notified: `reserve_holds` is false for it.
+  notified: `reserve_holds` (`claim_held` of its frame) is false for it.
 - The mind renews the lease of what it holds on each tick; whoever stops running loses it `lease`
   ticks later (far agents, until their next decision). `think` reads without taking with
   `reserve_free(t, target, N)` (`reserve_open` from outside a think); `reserve_count` and
