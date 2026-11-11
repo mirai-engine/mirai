@@ -377,8 +377,11 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 
 - With a window, or with a surface that another process shows (the `--surface` player of a network
   Play, `App_Desc.shown`), the host creates the renderer with `pipeline_thread`
-  (`pipeline_thread.odin`): a program's pipeline is requested from the renderer thread the first
-  time a draw or a resolve needs it, and a frame does not wait for the driver. Until a frame finds
+  (`pipeline_thread.odin`, a thread a core but one): when a program first gets rows in the scene
+  the pipelines of the stages its rows are drawn with on the camera (the three G-buffers, or the
+  glass layer and filter) and of its points are asked for ahead of time (`programs_ask`); the
+  first draw or resolve that needs one puts it before those, and a frame does not wait for the
+  driver. Until a frame finds
   it made (`pipelines_install`, at the start), the stage itself draws those materials as their rows
   and their points are read as the row (the record unwritten, `point_record_given`).
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
@@ -400,6 +403,7 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 - Focal tests: `material_program_shows_in_what_a_reflection_finds`,
   `material_program_shows_on_what_the_camera_sees`,
   `material_program_draws_as_its_rows_until_its_pipelines_are_made`,
+  `material_program_pipelines_are_made_before_a_frame_draws_with_them`,
   `material_textures_color_the_bounced_light`, `glass_tints_the_indirect_light_with_its_mean`,
   `material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see`,
   `gpu_a_program_moves_a_skin_after_its_skin_now_and_before` and, without GPU,

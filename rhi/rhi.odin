@@ -52,6 +52,8 @@ Pipeline :: distinct base.Handle
 Accel    :: distinct base.Handle
 
 MAX_FRAMES_IN_FLIGHT :: 2
+MAX_LABEL_DEPTH :: 16 // labels open at once; deeper ones are not kept
+PIPELINE_NAME_BYTES :: 64 // of the name a pipeline keeps; past them it is cut
 MAX_BINDING_SLOTS    :: 35 // Shared texture slots precede the texture table.
 MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the texture table.
 MAX_SAMPLER_BINDING_SLOTS :: 16
@@ -374,8 +376,31 @@ shader_constants_valid :: proc(d: ^Device, pipeline: string, code: ^Shader_Code,
 			return false
 		}
 	}
+	if d.refuse.shader != "" && code.name == d.refuse.shader && constants == d.refuse.constants {
+		sync.atomic_add(&d.refuse.count, 1)
+		return false
+	}
 	return true
 }
+
+// What device_refuse_pipeline refuses.
+@(private)
+Pipeline_Refusal :: struct {
+	shader:    string,
+	constants: Shader_Constants,
+	count:     int, // pipelines refused (atomic)
+}
+
+// Makes the device refuse every pipeline of the shader so named with these
+// constants, as a driver that fails to compile it, without an error of the
+// device, and counts them: what a test of the reaction to a refused pipeline
+// provokes. "" refuses none.
+device_refuse_pipeline :: proc(d: ^Device, shader: string, constants: Shader_Constants) {
+	d.refuse = {shader = shader, constants = constants}
+}
+
+// The pipelines device_refuse_pipeline refused since it was called.
+device_refused_pipelines :: proc(d: ^Device) -> int {return sync.atomic_load(&d.refuse.count)}
 // The code of a shader as bytes, and the entry point its MSL names ("" for SPIR-V).
 shader_code_bytes :: proc "contextless" (code: Shader_Code) -> []u8 {
 	when SHADER_FORMAT == .Msl {return transmute([]u8)code.msl} else {return code.spirv}
@@ -581,6 +606,7 @@ Features :: struct {
 	timestamps:          bool, // cmd_timestamp intervals while timestamps_want is on; else one "frame" interval
 	validation:          bool, // API validation is active
 	clip_distance:       bool, // a vertex shader can clip by planes of its own
+	stop_place:          bool, // a loss names where the GPU stopped (device_failure); Vulkan with VK_AMD_buffer_marker
 }
 
 Device_Type :: enum u8 {Other, Integrated, Discrete, Virtual, CPU}
