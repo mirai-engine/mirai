@@ -180,10 +180,11 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act),w:Arena) {
     ai.propose(t,.Chase,0.5)
     distance:=linalg.length(arena_position(w,subject)-arena_position(w,e))
     if distance>4 {return}
-    if distance<1.8 && ai.reserve_free(t,subject,ZOMBIE_BITERS) {
-        ai.propose(t,.Bite,1)
-    } else {
+    // With a place to bite free it keeps chasing until it is near enough: circling keeps it out of reach.
+    if !ai.reserve_free(t,subject,ZOMBIE_BITERS) {
         ai.propose(t,.Circle,0.7)
+    } else if distance<1.8 {
+        ai.propose(t,.Bite,1)
     }
 }
 

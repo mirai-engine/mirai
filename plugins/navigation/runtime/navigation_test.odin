@@ -1,10 +1,13 @@
 package navigation
 
+import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:slice"
 import "core:testing"
+import "core:thread"
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import input "mirai:engine/input"
@@ -72,11 +75,11 @@ Nav_Test :: struct {
 }
 
 @(private)
-nav_test_init :: proc(t:^testing.T,f:^Nav_Test) -> bool {
+nav_test_init :: proc(t:^testing.T,f:^Nav_Test,threads:=0) -> bool {
     if !test_world_init(t,&f.w) {return false}
     f.settings={bodies=64,shapes=64,contacts=256,joints=4,characters=8}
     f.nav_settings.tile_cells=48
-    jobs.system_init(&f.app.jobs,{threads=0})
+    jobs.system_init(&f.app.jobs,{threads=threads})
     f.ground.open=proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
         f:=cast(^Nav_Test)w.data
         return {unloaded=f.unloaded[:]},true
@@ -227,6 +230,49 @@ a_floor_with_a_box_gets_a_mesh_that_goes_around_the_box :: proc(t:^testing.T) {
     length:=corners_length(corners.items[:corners.count])
     testing.expect(t,corners.count>=3 && length>11)
     for c in corners.items[:corners.count] {testing.expect(t,!(abs(c.position.x)<1.2 && abs(c.position.z)<4.2))}
+}
+
+@(test)
+a_tile_is_published_a_fixed_number_of_ticks_after_its_build_whatever_the_threads :: proc(t:^testing.T) {
+    TICKS :: 24
+    Run :: struct {built:[TICKS]u64,started:int}
+    run :: proc(t:^testing.T,threads:int,blocked:bool) -> (r:Run) {
+        f:Nav_Test
+        if !nav_test_init(t,&f,threads) {return}
+        defer nav_test_destroy(&f)
+        // A worker busy with a long job: the builds are not done by their tick, which waits for them.
+        busy:jobs.Counter
+        running:bool
+        defer if blocked {jobs.wait(&f.app.jobs,jobs.OWNER,&busy)}
+        if blocked {
+            jobs.run(&f.app.jobs,jobs.OWNER,.Background,proc(data:rawptr,worker:int) {
+                intrinsics.atomic_store((^bool)(data),true)
+                time.sleep(300*time.Millisecond)
+            },&running,&busy)
+            for !intrinsics.atomic_load(&running) {thread.yield()}
+        }
+        nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+        nav_test_box(&f,{0,1,0},{1,1,4})
+        r.started=-1
+        for &built,tick in r.built {
+            nav_test_step(&f)
+            built=f.nav.stats.built
+            for build in f.builds.builds {if build.busy && r.started<0 {r.started=tick}}
+        }
+        return
+    }
+    alone:=run(t,0,false)
+    testing.expect(t,alone.started>=0 && alone.built[TICKS-1]>0)
+    for tick in 0..<alone.started+NAV_BUILD_TICKS {testing.expectf(t,alone.built[tick]==0,"a tile at tick %d, asked at %d",tick,alone.started)}
+    testing.expectf(t,alone.built[alone.started+NAV_BUILD_TICKS]>0,"no tile %d ticks after the first build",NAV_BUILD_TICKS)
+    cases:=[]struct{threads:int,blocked:bool}{
+        {2,false}, // done before their tick: nothing waits
+        {1,true},  // still queued at their tick: waited for, and published in that same tick
+    }
+    for c in cases {
+        threaded:=run(t,c.threads,c.blocked)
+        testing.expectf(t,threaded==alone,"%d threads, blocked %v: %v, without threads %v",c.threads,c.blocked,threaded,alone)
+    }
 }
 
 @(test)
