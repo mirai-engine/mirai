@@ -209,13 +209,13 @@ variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^test
 	defer fixture_destroy(&f)
 	r := f.renderer
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
-	unlayered := pipeline_slot(r, .Lighting, .Any, {LIGHTING_COMP_UNLAYERED})
+	unlayered := pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})
 	testing.expect(t, unlayered^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "the renderer starts with the variants without layers")
 	renderer_pipelines_wait(r, all = true)
-	testing.expect(t, pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "and makes those of colored shadows, while they are off, behind the frames")
+	testing.expect(t, pipeline_slot(r, .Direct_Samples, tracer, {DIRECT_SAMPLES_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "and makes those of colored shadows, while they are off, behind the frames")
 
 	// As a change of the shaders that the driver fails to compile.
-	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Lighting_Comp].name, {LIGHTING_COMP_UNLAYERED})
+	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Composite_Comp].name, {COMPOSITE_COMP_UNLAYERED})
 	defer rhi.device_refuse_pipeline(f.device, "", {})
 	rhi.pipeline_destroy(f.device, unlayered^)
 	unlayered^ = 0
@@ -223,6 +223,6 @@ variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^test
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 100 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expectf(t, rhi.device_refused_pipelines(f.device) == 1, "the refused variant was asked for %d times in 100 frames", rhi.device_refused_pipelines(f.device))
-	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Lighting"), "the frames say it: %s", renderer_stats(r).problem)
+	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Composite"), "the frames say it: %s", renderer_stats(r).problem)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

@@ -73,7 +73,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - Traced reflections and glass → [reflections](references/materials.md#traced-reflections),
   [glass](references/materials.md#glass); which rays see the glass detail and which its medium
   color → [medium filter](references/materials.md#medium-filter)
-- Local lights, shadows, colored shadows → [lights](references/lights.md#local-lights)
+- Local lights, shadows, colored shadows → [lights](references/lights.md#local-lights);
+  direct light of a view (grid, samples, shadow maps) →
+  [direct light](references/lights.md#direct-light-of-a-view)
 - GI, BVH, probe volume, sky →
   [GI](references/gi.md#lighting-techniques-and-optimization); contact occlusion, small instances
   outside the volume → [contact](references/gi.md#contact-occlusion)
@@ -125,7 +127,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   variant is only for what the stage declares to the device
   ([constants and variants](references/shaders.md#compilation)).
 - The engine has no Surface program: those of the tests are in `render/testdata/`.
-- A shadow technique costs no more than tracing one ray per 2×2 block.
+- A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
+- A graphics option keeps a choice, and a preset a step above another, only where the image
+  differs to the eye: what costs more and looks the same is not offered.
 - The display transform is a project setting, Neutral by default and ACES 2.0 by choice, baked
   into one LUT. Every view is exposed above its meter by the bias of its transform, one that gives
   the meter's gray the same light under each; the ACES 2.0 calibration is not touched.
@@ -169,7 +173,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   place (a surface, the fog and its distant slices) comes only from `sun_light` (`scene.slang`),
   which makes it cross the air of an atmosphere.
 - The indirect samples nothing per frame: the probes always trace the same directions, contact
-  occlusion a fixed pattern per pixel and the shadows fixed points of each light. What the scene
+  occlusion a fixed pattern and the direct light samples of fixed places. What the scene
   does not change gives the same every frame; there is no on-screen history of the indirect or
   bounce factor, and the scene changes are marked by `Scene_State.changes`
   ([GI](references/gi.md#temporal-and-denoising)).

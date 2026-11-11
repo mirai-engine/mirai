@@ -576,6 +576,7 @@ texture_table_has_a_budget :: proc(t: ^testing.T) {
 	}
 	last := Texture_Handle(texture_count(r))
 	testing.expect_value(t, texture_index(r, last), u32(TEXTURE_RESERVED + rhi.TEXTURE_TABLE_FIRST))
+	testing.expect_value(t, u32(sky_map(r, last, false).x), texture_index(r, last))
 	testing.expect(t, texture_capacity(r) == rhi.texture_table_limit(f.device) - TEXTURE_RESERVED && texture_capacity(r) > rhi.TEXTURE_TABLE_FIRST)
 	// A material that names a texture that does not exist renders without it.
 	material := DEFAULT_MATERIAL
@@ -664,13 +665,14 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 	beside := floor_point(t, &f, camera, {3, 0, 0})
 	testing.expectf(t, mirrored.r > 150 && mirrored.r > mirrored.b * 3, "the mirror shows the red emitter: %v", mirrored)
 	testing.expectf(t, beside.b > beside.r + 20, "next to it the mirror shows the sky: %v", beside)
-	testing.expect_value(t, r.stats.rays_per_frame, u64(r.targets.half_width * r.targets.half_height) + u64(r.targets.width * r.targets.height)) // a mirror ray per pixel, and the sun ray of each block the statistics count of the Direct stage
+	traced := r.stats.rays_per_frame
 
 	settings := r.settings
 	settings.reflections = .Off
 	testing.expect(t, renderer_apply_settings(r, settings))
 	untraced := floor_point(t, &f, camera, {0, 0, 0})
 	testing.expectf(t, untraced.r < 40, "without traced reflections the mirror only has the probe volume: %v", untraced)
+	testing.expect_value(t, traced - r.stats.rays_per_frame, u64(r.targets.width * r.targets.height)) // a mirror ray per pixel
 
 	// A rough floor never traces: the pass is skipped altogether.
 	settings.reflections = .Detailed
@@ -1485,9 +1487,10 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
 @(test)
 material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	f: Fixture
+	// Wide enough that the tile a shared ray is filtered over, 8 pixels, is small beside the lobe.
 	settings := material_settings()
 	settings.reflections = .Traced
-	if !fixture_init(t, &f, 96, 64, settings, reference = {.Lights}) {return}
+	if !fixture_init(t, &f, 192, 128, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	floor, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -1516,7 +1519,8 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	scene_given(r, instances, nil, {}, {})
 	mirror_inside := settled(t, &f, camera, inside)
 	mirror_beside := settled(t, &f, camera, beside)
-	floor.roughness = 0.3
+	// Rough, under the roughness reflections trace up to (Settings.reflection_roughness).
+	floor.roughness = 0.25
 	materials_set(r, {floor, lamp})
 	rough_inside := settled(t, &f, camera, inside)
 	rough_beside := settled(t, &f, camera, beside)
@@ -1531,14 +1535,13 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, high - low < 12, "the filtered reflection flickers between %v and %v", low, high)
 	// The rays above were one per block of 2x2 pixels. A ray per pixel shows the same image.
-	// The statistics count the sun rays of the Direct stage, one per block, not those of the reference.
-	pixels, blocks := u64(r.targets.width * r.targets.height), u64(r.targets.half_width * r.targets.half_height)
-	testing.expect_value(t, r.stats.rays_per_frame, 2 * blocks)
+	pixels := u64(r.targets.width * r.targets.height)
+	shared := r.stats.rays_per_frame
 	settings.reflections = .Detailed
 	testing.expect(t, renderer_apply_settings(r, settings))
 	full_inside := settled(t, &f, camera, inside)
 	full_beside := settled(t, &f, camera, beside)
-	testing.expect_value(t, r.stats.rays_per_frame, blocks + pixels)
+	testing.expect_value(t, r.stats.rays_per_frame - shared, pixels - u64(r.targets.half_width * r.targets.half_height))
 	testing.expectf(t, abs(full_inside.r - rough_inside.r) < 14 && abs(full_beside.r - rough_beside.r) < 14, "shared rays change the image: %v and %v against %v and %v", rough_inside, rough_beside, full_inside, full_beside)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

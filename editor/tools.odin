@@ -126,12 +126,6 @@ asset_import_source :: proc(s:^Session,path:string) -> string {
 @(private)
 api_asset_import :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Import_Params)
-    // A person picks the files.
-    if api_asks(s,base.text_get(params.path[:])) {
-        import_ask(s)
-        api_import_status_answer(s,call)
-        return
-    }
     path:=asset_import_source(s,base.text_get(params.path[:]))
     folder:=base.text_get(params.folder[:])
     if folder!="" {

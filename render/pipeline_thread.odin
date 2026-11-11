@@ -184,14 +184,15 @@ pipeline_asked :: proc(r: ^Renderer, owner: ^rhi.Pipeline) -> bool {
 }
 
 // A frame needs the pipeline of owner: when the threads have not begun it,
-// they make it before those asked ahead of time.
+// they make it before those asked ahead of time; until it is in place it is
+// pending (renderer_pipelines_pending) even when they had begun it.
 @(private)
 pipeline_urgent :: proc(r: ^Renderer, owner: ^rhi.Pipeline) {
 	t := r.pipeline_thread
 	if t == nil || sync.atomic_load(&t.busy) == 0 {return}
 	sync.mutex_lock(&t.mutex)
 	defer sync.mutex_unlock(&t.mutex)
-	for &job in t.jobs {if job.state == .Asked && job.owner == owner {job.urgent = true}}
+	for &job in t.jobs {if job.state != .Free && job.owner == owner {job.urgent = true}}
 }
 
 // Whether a pipeline a frame asked for is not in place: the frames draw the

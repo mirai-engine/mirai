@@ -82,7 +82,8 @@ Pass :: struct {
 	glass_layered: bool, // the layers of glass were drawn before the Lit stage, which runs on each side of them
 	glass_medium: u32, // instance plus one of the solid of glass the camera may be in (glass_layers), 0 none
 	reflections: rhi.Texture, // the filtered traced reflections, when the view traced any
-	gi:    rhi.Texture, // the contact occlusion of the probe volume, or what a custom pass writes as Gi
+	gi:    rhi.Texture, // the light of the probe volume at each pixel, or what a custom pass writes as Gi
+	gathered: bool, // gi holds the light of the probe volume (contact_pixels.comp)
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
 	nested:       [NESTED_VIEW_CAPACITY]Nested_View,
 	nested_count: int,
@@ -261,14 +262,13 @@ highlight_screen_bounds :: proc(instances: []Gpu_Instance, view_projection: Mat4
 }
 
 // Traces one ray of the specular lobe of the surfaces of a G-buffer that are
-// smooth enough and filters the result over space and time. lit receives the
-// direct light plus those reflections, and the current history their radiance.
-// shared_from is the roughness from which a block of 2x2 pixels shares a ray;
-// a pixel that reflects less than cached_below of what its ray finds lights
-// the hit from the probe volume. For a layer of glass the pass runs with the
-// dispatch sizes of the cull pass and keeps the history alone.
+// smooth enough and filters the rays of the frame into filtered: their
+// radiance. shared_from is the roughness from which a block of 2x2 pixels
+// shares a ray; a pixel that reflects less than cached_below of what its ray
+// finds lights the hit from the probe volume. For a layer of glass the pass
+// runs with the dispatch sizes of the cull pass.
 @(private)
-reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_current: rhi.Texture, history_valid, stored_reflectance: bool, shared_from: f32, cached_below: f32 = 0, glass := false) {
+reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, stored_reflectance: bool, shared_from: f32, cached_below: f32 = 0, glass := false) {
 	run :: proc(p: ^Pass, glass, half: bool, x, y: u32) {
 		if glass {
 			rhi.cmd_dispatch_indirect(p.cmd, p.view.glass_dispatch, u64(offset_of(Gpu_Glass_Dispatch, half)) if half else 0)
@@ -276,7 +276,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 			rhi.cmd_dispatch(p.cmd, x, y)
 		}
 	}
-	Params :: struct {light_budget: u32, max_distance, firefly_clamp, pixel_spread: f32, block: u32, roughness_from, roughness_to, cached_below, detail_below: f32, stored_reflectance, material_roughness: u32, faint_below: f32, resume, pad0, pad1, pad2: u32}
+	Params :: struct {light_budget: u32, max_distance, firefly_clamp, pixel_spread: f32, block: u32, roughness_from, roughness_to, cached_below, detail_below: f32, stored_reflectance, material_roughness, pad0, resume, medium, pad1, pad2: u32}
 	// The rays of a size of block, then what waits for the programs of what they hit.
 	trace :: proc(p: ^Pass, pipeline: rhi.Pipeline, params: ^Params, glass, half: bool, x, y: u32) {
 		batch := points_begin(p)
@@ -307,8 +307,9 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, r.dummy_texture if glass else t.motion)
 	params.material_roughness = 0 if glass else 1
-	// Until the filter has a past to keep, every turn traces.
-	params.faint_below = GLASS_FAINT_REFLECTANCE if glass && history_valid else 0
+	// The exit faces of the solid the camera is in reflect inside it.
+	params.medium = p.glass_medium if glass else 0
+	bind_light_maps(p, p.frame.sun_maps.z != 0)
 	// A layer of glass always keeps what it reflects.
 	params.stored_reflectance = 1 if stored_reflectance else 0
 	if s.smoothest < split {
@@ -318,27 +319,37 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	}
 	if split < max(f32) {
 		params.block, params.roughness_from, params.roughness_to = 2, split, max(f32)
+		// The rays a block shares take the light of what they meet from the probe volume.
+		params.cached_below = 2
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.reflect_shared)
 		trace(p, pipeline, &params, glass, true, groups(t.half_width, 8), groups(t.half_height, 8))
 	}
 
-	Resolve :: struct {history_valid, max_radius, blend, shared_from: f32}
-	// The disc keeps its size on screen at any resolution, down to the few
-	// pixels a filter needs to have neighbours at all.
-	resolve := Resolve{history_valid = 1 if history_valid else 0, max_radius = max(7 * f32(t.height) / 900, 3), blend = 0.08, shared_from = split}
+	Resolve :: struct {shared_from, pad0, pad1, pad2: f32}
+	resolve := Resolve{shared_from = split}
 	resolve_pipeline := pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^
 	if resolve_pipeline == 0 {return}
+	rhi.cmd_timestamp(cmd, "glass reflect resolve" if glass else "reflect resolve")
 	rhi.cmd_bind_pipeline(cmd, resolve_pipeline)
 	set_params(cmd, &resolve)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, depth)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, p.view.glass_seen if glass else r.dummy_buffer)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS5, history_previous)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.motion)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS8, history_current)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, filtered)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.reflect_shared)
 	run(p, glass, false, groups(t.width, 8), groups(t.height, 8))
+}
+
+// The maps of the view for a pass that lights hits with MIRAI_LIGHT_MAPS of
+// lighting.slang (SUN_SHADOW_SLOT, SHADOW_TINT_SLOT, SHADOW_DATA_SLOT); the
+// dummies when the view drew none.
+@(private)
+bind_light_maps :: proc(p: ^Pass, maps: bool) {
+	r, cmd, t := p.r, p.cmd, p.t
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_atlas if maps else r.dummy_texture)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_tint if maps && p.frame.sun_maps.w != 0 else r.dummy_texture)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, t.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
 // Farthest-depth mip chain of the linear depth target.
@@ -597,9 +608,7 @@ histories_rescale :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	set_params(cmd, &params)
 	for view in views_all(r) {
 		t := &view.targets
-		for i in 0 ..< 2 {
-			for texture in ([?]rhi.Texture{t.taa[i], t.reflect_history[i], t.glass_history[i]}) {scale(r, cmd, texture)}
-		}
+		for i in 0 ..< 2 {scale(r, cmd, t.taa[i])}
 	}
 }
 
@@ -637,7 +646,7 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         case .Geometry:    ok=pass_gbuffer(&p)
         case .Nested:      ok=pass_nested(&p)
         case .Surface:     if r.pass_count>0 {stage_run(&p,.Surface)}
-        case .Direct:      ok=pass_direct(&p,pass.direct)
+        case .Direct:      ok=pass_direct(&p)
         case .Reflections: ok=pass_reflections(&p)
         case .World:       ok=pass_world_lighting(&p)
         case .Indirect:    ok=pass_indirect(&p)
@@ -819,7 +828,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		t.needs_clear = false
 	}
 	if t.glass_needs_clear {
-		clear_textures(cmd, t.glass_history[0], t.glass_history[1])
+		clear_textures(cmd, t.glass_reflections)
 		t.glass_needs_clear = false
 	}
 	bind_scene_table(p)
@@ -827,7 +836,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if !glass_means_record(p) {return false}
 
 	// What the stages a pipeline may leave out give the ones after them.
-	p.reflections, p.gi = 0, r.dummy_texture
+	p.reflections, p.gi, p.gathered = 0, r.dummy_texture, false
 	if p.plan.gi_given {
 		if !target(r, cmd, &t.gi_given, t.width, t.height, .RGBA32_Float, HISTORY_USAGE, "given gi", true) {return false}
 		p.gi = t.gi_given
@@ -1205,152 +1214,153 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 // blurred over many rays and probes.
 PROBE_LIGHT_BUDGET :: u32(4)
 
-// The list of the pixels whose direct light traces rays of its own
-// (DIRECT_TRACED_* in lighting.slang), room for every pixel of the view, and
-// the dispatch over them, which starts each frame as a copy of dispatch_start.
-DIRECT_TRACED_FIRST :: abi.DIRECT_TRACED_FIRST
-DIRECT_TRACED_GROUP :: abi.DIRECT_TRACED_GROUP
+// The direct light of each pixel, the sun and the local lights with their
+// shadows (direct_samples.slang): the grid of the lights in the frame one
+// changed, the maps of the shadows and the light of what they hold at each
+// point, the ray of one point of each square of 2x2 and the samples of each
+// point of the lights no map holds, the window and the spread that filter
+// them, and the pass that takes them to the pixels, where the sun gives its
+// light.
 @(private)
-ensure_direct_list :: proc(r: ^Renderer, t: ^Targets) -> bool {
-	if t.direct_traced != 0 {return true}
-	t.direct_traced = rhi.buffer_create(r.device, {size = u64(DIRECT_TRACED_FIRST + t.width * t.height) * 4, usage = {.Storage}, name = "direct traced pixels"})
-	t.direct_dispatch = rhi.buffer_create(r.device, {size = 16, usage = {.Storage, .Indirect}, name = "direct traced dispatch"})
-	if t.direct_traced == 0 || t.direct_dispatch == 0 {set_error(r, "direct traced pixels: %s", rhi.device_error(r.device)); return false}
-	return true
-}
-
-// A set of soft shadows: the rays of its blocks, their history and the filter
-// of their penumbras, which leaves the share of light of each block in set.raw.
-@(private)
-pass_shadow_set :: proc(p: ^Pass, set: ^Shadow_Set) {
+pass_direct :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
+	s := &r.scene
 	settings := &r.settings
-	current, previous := p.current, p.previous
-	rhi.cmd_timestamp(cmd, "shadow trace")
-	{
-		Params :: struct {light_budget: u32, sun_radius: f32, block, resume: u32}
-		params := Params{light_budget = settings.light_budget, sun_radius = settings.sun_radius, block = set.block}
-		// The filters of glass with a program wait for it.
-		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := pipeline_of(r, .Shadow_Trace, {SHADOW_TRACE_COMP_COLOR} if shadows_colored(r) else {}, {SHADOW_TRACE_COMP_COLOR})^
-		rhi.cmd_bind_pipeline(cmd, pipeline)
+	scale := u32(2) if settings.direct_half_resolution else 1
+	if !ensure_direct_targets(r, cmd, t, scale) {return false}
+	if s.light_grid_dirty {
+		rhi.cmd_timestamp(cmd, "light grid")
+		light_grid_record(r, cmd)
+		s.light_grid_dirty = false
+	}
+	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, resume, glass, pad2: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
+	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
+	params := Params{
+		scale       = scale,
+		samples     = clamp(settings.direct_samples, 1, DIRECT_SAMPLES_MAX),
+		sun_radius  = settings.sun_radius,
+		hard        = clamp(settings.light_budget, 1, LIGHT_CUT_MAX),
+		// The glass the light of the samples crosses colors it (direct_glass).
+		glass       = 1 if shadows_colored(r) else 0,
+		grid_origin = s.light_grid.origin,
+		grid_cell   = s.light_grid.cell,
+		grid_size   = s.light_grid.size,
+		cells       = cells if s.light_grid_buffer != 0 else 0,
+	}
+	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
+	params.shadow = shadow_maps_pass(p)
+	atlas := t.shadow_atlas if params.shadow.on != 0 else r.dummy_texture
+	table := t.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
+	grid := or_dummy(r, s.light_grid_buffer)
+	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
+	#assert(DIRECT_MAPS_COMP_UNLAYERED == DIRECT_SAMPLES_COMP_UNLAYERED && DIRECT_MAPS_COMP_UNLAYERED == DIRECT_FILTER_COMP_UNLAYERED)
+	// The light of what the maps hold, while the view drew them: the samples
+	// add the rest where it marks a point (Frame.sun_maps.z, direct_maps.comp).
+	if p.frame.sun_maps.z != 0 {
+		rhi.cmd_timestamp(cmd, "direct maps")
+		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Maps, unlayered, unlayered)^)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, set.raw)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS3, set.geometry[current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, set.light)
-		points_bind(p)
-		rhi.cmd_dispatch(cmd, groups(set.width, 8), groups(set.height, 8))
-		points_rounds(p, batch, pipeline, &params, 1)
-	}
-	rhi.cmd_timestamp(cmd, "shadow filter")
-	{
-		Params :: struct {max_history, history_valid, still_history: f32, block: u32}
-		params := Params{max_history = SHADOW_HISTORY_FRAMES, history_valid = 1 if set.valid else 0, still_history = SHADOW_HISTORY_STILL_FRAMES, block = set.block}
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Temporal])
-		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, set.raw)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, set.geometry[current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, set.geometry[previous])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS3, set.history[previous])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, set.widths[previous])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.motion)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.normal)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS8, set.history[current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS9, set.widths[current])
-		rhi.cmd_dispatch(cmd, groups(set.width, 8), groups(set.height, 8))
-	}
-	// The widths along x, then y; the share along x, then y, into the texture the rays of the frame no longer need.
-	sources := [4]rhi.Texture{set.widths[current], set.filter[0], set.history[current], set.filter[0]}
-	targets := [4]rhi.Texture{set.filter[0], set.filter[1], set.filter[0], set.raw}
-	for step in 0 ..< 4 {
-		Params :: struct {step, block, pad0, pad1: u32}
-		params := Params{step = u32(step), block = set.block}
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Penumbra])
-		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, sources[step])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, set.geometry[current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, set.filter[1] if step >= 2 else r.dummy_texture)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS3, targets[step])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, set.light if step == 0 else r.dummy_texture)
-		rhi.cmd_dispatch(cmd, groups(set.width, 8), groups(set.height, 8))
-	}
-	set.valid = true
-}
-
-// The direct light of each pixel: the sun and the local lights, with their shadows.
-@(private)
-pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
-	r, cmd, t := p.r, p.cmd, p.t
-	settings := &r.settings
-	current := p.current
-	// The share of light of each 2x2 block, with the penumbra its casters ask for.
-	shadow_share := r.dummy_texture
-	blocks := mode == .Blocks
-	if blocks {
-		if !ensure_shadow_targets(r, cmd, t, &t.shadow, 2) {return false}
-		pass_shadow_set(p, &t.shadow)
-		shadow_share = t.shadow.raw
-	} else {
-		t.shadow.valid = false
-	}
-	rhi.cmd_timestamp(cmd, "direct")
-	if blocks {
-		if !ensure_direct_list(r, t) {return false}
-		rhi.cmd_fill_buffer(cmd, t.direct_traced, 0, 4, 0)
-		rhi.cmd_copy_buffer(cmd, r.dispatch_start, 0, t.direct_dispatch, 0, 16)
-		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Lighting, {} if p.layered else {LIGHTING_COMP_UNLAYERED}, {LIGHTING_COMP_UNLAYERED})^)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS4, shadow_share)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow.geometry[current])
-		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.shadow.filter[1])
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS7, t.direct_traced)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS8, t.direct_dispatch)
-		rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.shadow_tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
+		rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
 	}
-	// The pixels that trace their own rays: those of the list, or without
-	// blocks every pixel.
 	rhi.cmd_timestamp(cmd, "direct rays")
-	{
-		Params :: struct {light_budget, listed, pad0, pad1, resume, pad2, pad3, pad4: u32}
-		params := Params{light_budget = settings.light_budget, listed = u32(blocks)}
-		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := pipeline_of(r, .Lighting_Traced, {LIGHTING_TRACED_COMP_COLOR} if shadows_colored(r) else {}, {LIGHTING_TRACED_COMP_COLOR})^
-		rhi.cmd_bind_pipeline(cmd, pipeline)
-		set_params(cmd, &params)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Rays)^)
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_blockers)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
+	// A thread for each square of 2x2 points, and a group of the samples for
+	// each 4x4 of them (direct_group_pixel).
+	squares := (points.x + 1) / 2
+	rhi.cmd_dispatch(cmd, groups(squares, 8), groups((points.y + 1) / 2, 8))
+	rhi.cmd_timestamp(cmd, "direct samples")
+	samples := pipeline_of(r, .Direct_Samples, unlayered + ({DIRECT_SAMPLES_COMP_COLOR} if params.glass != 0 else {}), {DIRECT_SAMPLES_COMP_UNLAYERED, DIRECT_SAMPLES_COMP_COLOR})^
+	// Glass with a program colors the light by what its program gives where each ray crosses it.
+	batch := params.glass != 0 && points_begin(p, filters = true)
+	rhi.cmd_bind_pipeline(cmd, samples)
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_blockers)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
+	points_bind(p)
+	rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
+	points_rounds(p, batch, samples, &params, 1)
+	// What the window of the pattern gives each point.
+	rhi.cmd_timestamp(cmd, "direct points")
+	Window :: struct {scale, samples, pad0, pad1: u32}
+	window := Window{scale = scale, samples = params.samples}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_Points])
+	set_params(cmd, &window)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_samples)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_sun)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_points)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun_points)
+	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+	rhi.cmd_timestamp(cmd, "direct spread")
+	Spread :: struct {axis, scale, samples, even: u32}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Direct_Spread])
+	for axis in u32(0) ..< 2 {
+		spread := Spread{axis = axis, scale = scale, samples = params.samples, even = 1 if params.shadow.on != 0 else 0}
+		set_params(cmd, &spread)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, t.direct_traced if blocks else r.dummy_buffer)
-		points_bind(p)
-		if blocks {
-			rhi.cmd_dispatch_indirect(cmd, t.direct_dispatch, 0)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_spread)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.direct_points)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_depth)
+		// A group for each run of 64 points along the axis.
+		if axis == 0 {
+			rhi.cmd_dispatch(cmd, groups(points.x, 64), points.y)
 		} else {
-			rhi.cmd_dispatch(cmd, groups(t.width * t.height, DIRECT_TRACED_GROUP))
+			rhi.cmd_dispatch(cmd, points.x, groups(points.y, 64))
 		}
-		points_rounds(p, batch, pipeline, &params, 1)
 	}
+	rhi.cmd_timestamp(cmd, "direct pixels")
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, unlayered, unlayered)^)
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_marks)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_sun)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.shadow_tint if p.frame.sun_maps.w != 0 else r.dummy_texture)
+	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	return true
 }
 
 @(private)
 pass_reflections :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
-	if !p.use_reflections {
-		t.reflect_valid = false
-		return true
-	}
+	if !p.use_reflections {return true}
 	if !ensure_reflect_targets(r, cmd, t) {return false}
 	rhi.cmd_timestamp(cmd, "reflect")
-	reflect_pass(p, t.normal, t.linear_depth, t.albedo, t.reflect_history[p.previous], t.reflect_history[p.current], t.reflect_valid, p.reflectance, REFLECTION_SHARED_ROUGHNESS)
-	p.reflections = t.reflect_history[p.current]
-	t.reflect_valid = true
+	reflect_pass(p, t.normal, t.linear_depth, t.albedo, t.reflections, p.reflectance, REFLECTION_SHARED_ROUGHNESS)
+	p.reflections = t.reflections
 	return true
 }
 
@@ -1411,30 +1421,55 @@ pass_indirect :: proc(p: ^Pass) -> bool {
 	return pass_contact(p)
 }
 
-// The contact occlusion of the probe volume (contact.comp): the composition
-// takes it in p.gi.
-// Rays of each pixel.
+// The contact occlusion of each point (contact.comp) and the light of the
+// probe volume there (contact_light.comp), which contact_pixels.comp takes to
+// the pixels: the composition takes it in p.gi.
+// Rays of each point.
 CONTACT_RAYS :: abi.CONTACT_RAYS
 @(private)
 pass_contact :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
-	ok := target(r, cmd, &t.contact[0], t.width, t.height, .R16_Float, HISTORY_USAGE, "contact", true, true)
-	ok &&= target(r, cmd, &t.contact[1], t.width, t.height, .R16_Float, HISTORY_USAGE, "contact blurred", true, true)
-	if !ok {return false}
-	rhi.cmd_timestamp(cmd, "contact")
-	Params :: struct {mode, pad0, pad1, pad2: u32}
-	contact := pipeline_of(r, .Contact)^
-	for mode in u32(0) ..< 2 {
-		params := Params{mode = mode}
-		rhi.cmd_bind_pipeline(cmd, contact)
-		set_params(cmd, &params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.contact[0] if mode == 1 else texture_or_dummy(r, 0))
-		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact[mode])
-		rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
+	// A point for each 2x2 pixels with the direct light at half resolution.
+	scale := u32(2) if r.settings.direct_half_resolution else 1
+	if t.contact != 0 && t.contact_scale != scale {
+		rhi.device_wait_idle(r.device)
+		destroy_gi_targets(r, t)
 	}
-	p.gi = t.contact[1]
+	t.contact_scale = scale
+	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
+	ok := target(r, cmd, &t.contact_rays, points.x, points.y, .RGBA16_Float, {.Sampled, .Storage}, "contact rays", shared = true)
+	ok &&= target(r, cmd, &t.contact_points[0], points.x, points.y, .RGBA16_Float, {.Sampled, .Storage}, "contact light", shared = true)
+	ok &&= target(r, cmd, &t.contact_points[1], points.x, points.y, .RGBA16_Float, {.Sampled, .Storage}, "contact specular", shared = true)
+	ok &&= target(r, cmd, &t.contact, t.width, t.height, .RG32_Float, {.Sampled, .Storage}, "contact", shared = true)
+	if !ok {return false}
+	Params :: struct {scale, pad0, pad1, pad2: u32}
+	params := Params{scale = scale}
+	rhi.cmd_timestamp(cmd, "contact")
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Contact)^)
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact_rays)
+	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+	rhi.cmd_timestamp(cmd, "contact light")
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Contact_Light])
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact_points[0])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.contact_points[1])
+	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+	rhi.cmd_timestamp(cmd, "contact pixels")
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Contact_Pixels])
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.contact_rays)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.contact_points[0])
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.contact_points[1])
+	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
+	p.gi, p.gathered = t.contact, true
 	return true
 }
 
@@ -1445,6 +1480,9 @@ pass_composite :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "composite")
 	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED}, {COMPOSITE_COMP_UNLAYERED})^)
+	Params :: struct {gathered, pad0, pad1, pad2: u32}
+	params := Params{gathered = u32(p.gathered)}
+	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.emission)
@@ -1518,7 +1556,9 @@ pass_taa :: proc(p: ^Pass) {
 	}
 	rhi.cmd_timestamp(cmd, "taa")
 	Params :: struct {history_valid, feedback, clip_gamma, reactive, shadows: f32, pad: [3]f32}
-	params := Params{history_valid = 1 if t.taa_valid else 0, feedback = 0.1, clip_gamma = 1.25, reactive = 1 if p.blended else 0, shadows = 1 if t.shadow.valid else 0}
+	// Of the Direct stage of this frame: a custom pass in its place leaves none.
+	marks := .Direct in p.plan.stages && t.direct_marks != 0
+	params := Params{history_valid = 1 if t.taa_valid else 0, feedback = 0.1, clip_gamma = 1.25, reactive = 1 if p.blended else 0, shadows = 1 if marks else 0}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Taa])
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, p.shown)
@@ -1529,7 +1569,7 @@ pass_taa :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.reactive)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.taa_frames[p.previous])
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.taa_frames[p.current])
-	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.shadow.widths[p.current] if t.shadow.valid else r.dummy_texture)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.direct_marks if marks else r.dummy_texture)
 	rhi.cmd_dispatch(cmd, groups(t.output_width, 8), groups(t.output_height, 8))
 	p.shown = t.taa[p.current]
 	t.taa_valid = true
@@ -1702,14 +1742,18 @@ update_stats :: proc(r: ^Renderer) {
 	s.probes = r.ddgi.total if r.ddgi.valid else 0
 	s.probes_per_frame = r.ddgi.budget if r.ddgi.valid else 0
 	pixels := u64(t.width) * u64(t.height)
-	// A block of 2x2 pixels traces a ray to the sun and one to each light or
-	// group of its cut.
-	rays := u64(t.half_width) * u64(t.half_height) * u64(1 + min(s.lights, r.settings.light_budget))
+	points :: proc(t: ^Targets, scale: u32) -> u64 {
+		scale := max(scale, 1)
+		return u64((t.width + scale - 1) / scale) * u64((t.height + scale - 1) / scale)
+	}
+	// A point traces its samples, and a square of 2x2 points a ray.
+	samples := u64(clamp(r.settings.direct_samples, 1, DIRECT_SAMPLES_MAX))
+	rays := points(t, t.direct_scale) * (4 * samples + 1) / 4
 	if r.settings.gi_enabled {
 		// A probe ray traces the sun and the lights of its cut where it hits.
 		rays += u64(s.probes_traced) * u64(r.ddgi.rays_per_probe) * u64(2 + min(s.lights, PROBE_LIGHT_BUDGET))
-		// The contact occlusion: CONTACT_RAYS short rays of each pixel.
-		rays += pixels * CONTACT_RAYS
+		// The contact occlusion: CONTACT_RAYS short rays of each point.
+		rays += points(t, t.contact_scale) * CONTACT_RAYS
 	}
 	if r.settings.reflections != .Off && r.scene.smoothest < r.settings.reflection_roughness {
 		// A pixel traces its own ray or takes its turn for its block, never both.

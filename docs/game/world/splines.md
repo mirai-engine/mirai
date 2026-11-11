@@ -12,7 +12,7 @@ what happens in it is another component:
 
 ```sh
 P="mirai rpc --project ."
-$P scene.write '{"merge":true,"entities":[
+$P scene.write '{"entities":[
   {"name":"Road","components":{"Spline":{"material":"surfaces/cobblestone/Cobblestone.mat","count":3,
     "points":[{"position":[0,0,0],"width":3,"height":0.04},{"position":[8,0,-10],"width":3,"height":0.04},
       {"position":[0,0,-24],"width":4,"height":0.04}]}}},

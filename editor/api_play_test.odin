@@ -242,30 +242,43 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     running:=cast(^Probe_World)run_find(&f.s,0).world
     hero:=fmt.tprintf("%016x",u64(f.hero))
     // Storages of the game, by name.
-    error,text:=probe_call(f,"play.inspect",`{"storage":"Probe_*","limit":1}`)
+    error,text:=probe_call(f,"scene.inspect",`{"world":"Game","storage":"Probe_*","limit":1}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"storages": {"Probe_Score": {"points": 0, "state": "Waiting", "seen": {"version": 0, "gone": 0}}`),text)
     testing.expect(t,strings.contains(text,`"entities": []`) && strings.contains(text,`"matched": 0`) && strings.contains(text,`"left_out"`),"a storage named answers no entities")
-    error,text=probe_call(f,"play.inspect",`{"storage":"Probe_*","name":"Hero"}`)
+    error,text=probe_call(f,"scene.inspect",`{"world":"Game","storage":"Probe_*","name":"Hero"}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,strings.contains(text,`"name": "Hero"`) && strings.contains(text,`"storages"`),"entities named too keep them")
-    error,_=probe_call(f,"play.inspect",`{"storage":"Score"}`)
+    error,_=probe_call(f,"scene.inspect",`{"world":"Game","storage":"Score"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
-    // A component and a teleport, without the document.
-    error,text=probe_call(f,"play.set",strings.concatenate({`{"entity":"`,hero,`","position":[4,5,6],"components":{"Probe_Health":{"target":"`,fmt.tprintf("%016x",u64(f.foe)),`"}}}`},context.temp_allocator))
-    testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,`"teleported": true`),text)
+    // A component and a teleport of the game, by the handle of its entity, without the document.
+    error,text=probe_call(f,"scene.write",strings.concatenate({`{"world":"Game","entities":[{"id":"`,hero,`","position":[4,5,6],"components":{"Probe_Health":{"target":"`,fmt.tprintf("%016x",u64(f.foe)),`"}}}]}`},context.temp_allocator))
+    testing.expectf(t,error.code==0,"%v",error)
     health,_:=core.get(&running.health,f.hero)
     testing.expect_value(t,health,Probe_Health{points=3,target=f.foe})
     testing.expect_value(t,entity_world(run_ref(&f.s,run_find(&f.s,0)),f.hero).position,[3]f32{4,5,6})
     testing.expect_value(t,len(running.jumps.queue.items),1)
     testing.expect_value(t,entity_local(edited_world(&f.s),f.hero).position,[3]f32{1,0,0})
-    // A failure changes nothing.
-    error,_=probe_call(f,"play.set",strings.concatenate({`{"entity":"`,hero,`","position":[9,9,9],"components":{"Probe_Health":{"points":"many"}}}`},context.temp_allocator))
+    // A failure changes nothing: the teleport it had asked for is taken back.
+    error,_=probe_call(f,"scene.write",strings.concatenate({`{"world":"Game","entities":[{"id":"`,hero,`","position":[9,9,9],"components":{"Probe_Health":{"points":"many"}}}]}`},context.temp_allocator))
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expect_value(t,entity_world(run_ref(&f.s,run_find(&f.s,0)),f.hero).position,[3]f32{4,5,6})
-    error,_=probe_call(f,"play.set",`{"entity":"00000000000000ff","position":[0,0,0]}`)
-    testing.expect_value(t,error.code,api.INVALID_PARAMS)
+    health,_=core.get(&running.health,f.hero)
+    testing.expect_value(t,health,Probe_Health{points=3,target=f.foe})
+    // An entity it makes, a copy, and what it takes away, as the game does between two ticks.
+    alive:=running.entities.alive
+    error,text=probe_call(f,"scene.write",`{"world":"Game","entities":[{"name":"Spark","position":[0,3,0],"components":{"Probe_Health":{"points":9}}},{"copy":"Hero","name":"Twin"},{"name":"Foe","delete":true}]}`)
+    testing.expectf(t,error.code==0 && strings.contains(text,`"made": 2`) && strings.contains(text,`"removed": 1`) && running.entities.alive==alive+1,"%v %s",error,text)
+    testing.expect_value(t,core.world_entities(edited_world(&f.s)).alive,alive)
+    refused:=[?]struct{params,says:string}{
+        {`{"world":"Game","entities":[{"id":"00000000000000ff","position":[0,0,0]}]}`,"00000000000000ff"},
+        {`{"world":"Game","replace":true,"entities":[]}`,"replace and kind are of the document"},
+        {`{"world":"Game","kind":"Prefab","entities":[{"name":"Hero"}]}`,"replace and kind are of the document"},
+    }
+    for c in refused {
+        wrong,_:=probe_call(f,"scene.write",c.params)
+        testing.expectf(t,wrong.code==api.INVALID_PARAMS && strings.contains(wrong.message,c.says) && running.entities.alive==alive+1,"%s: %v",c.params,wrong)
+    }
     // Requests pushed to a queue, read by the next tick.
     error,text=probe_call(f,"play.push",strings.concatenate({`{"storage":"Probe_Pings","items":[{"entity":"`,hero,`","amount":4},{"amount":2}]}`},context.temp_allocator))
     testing.expect_value(t,error.code,0)
@@ -320,26 +333,25 @@ every_method_of_the_editor_is_described_by_its_types :: proc(t:^testing.T) {
     // What the state of the editor does not allow now has one code, with the method that changes it.
     error,_=probe_call(f,"play.stop",`{}`)
     testing.expect_value(t,error.code,0)
-    for method in ([]string{"play.player","play.get"}) {
-        error,_=probe_call(f,method,method=="play.get"?`{"entity":"Hero","field":"Transform.position"}`:`{}`)
+    for c in ([][2]string{{"play.player",`{}`},{"scene.inspect",`{"world":"Game"}`},{"scene.write",`{"world":"Game","entities":[{"name":"Hero"}]}`}}) {
+        method:=c[0]
+        error,_=probe_call(f,method,c[1])
         testing.expectf(t,error.code==api.NOT_NOW && error.message==API_NO_GAME && error.data==`{"fix":"play.start"}`,"%s: %v",method,error)
     }
 }
 
 @(test)
-play_set_takes_an_entity_by_its_name_and_a_parameter_it_does_not_know_is_refused_by_name :: proc(t:^testing.T) {
+a_write_of_the_game_takes_an_entity_by_its_name_and_a_parameter_it_does_not_know_is_refused_by_name :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
     if !probe_open(t,f) {return}
     defer probe_close(f)
     placed :: proc(f:^Probe) -> [3]f32 {return entity_world(run_ref(&f.s,run_find(&f.s,0)),f.hero).position}
-    error,text:=probe_call(f,"play.set",`{"entity":"Hero","position":[7,8,9]}`)
+    error,_:=probe_call(f,"scene.write",`{"world":"Game","root":"Hero","entities":[{"position":[7,8,9]}]}`)
     testing.expect_value(t,error.code,0)
-    testing.expect(t,strings.contains(text,fmt.tprintf("%016x",u64(f.hero))),text)
     testing.expect_value(t,placed(f),[3]f32{7,8,9})
     refused:=[?]struct{method,params,says:string}{
-        {"play.set",`{"entity":"Nobody","position":[0,0,0]}`,"Nobody"},
-        {"play.set",`{"position":[0,0,0]}`,"entity is required"},
-        {"play.set",`{"entity":"Hero","position":[0,0,0],"speed":3}`,"speed"},
+        {"scene.write",`{"world":"Game","root":"Nobody","entities":[{"position":[0,0,0]}]}`,"Nobody"},
+        {"scene.write",`{"world":"Game","root":"Hero","entities":[{"position":[0,0,0]}],"speed":3}`,"speed"},
         {"play.check",`{"conditions":[{"storage":"Probe_Score"}],"speed":3}`,"speed"},
     }
     for c in refused {
@@ -350,49 +362,45 @@ play_set_takes_an_entity_by_its_name_and_a_parameter_it_does_not_know_is_refused
 }
 
 @(test)
-play_get_reads_one_value_of_an_entity_as_play_inspect_and_play_check_name_it :: proc(t:^testing.T) {
+one_value_of_an_entity_of_the_game_is_read_as_an_inspect_and_a_check_name_it :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
     if !probe_open(t,f) {return}
     defer probe_close(f)
     hero:=fmt.tprintf("%016x",u64(f.hero))
     start:=(cast(^Probe_World)run_find(&f.s,0).world).time.tick
     testing.expect(t,probe_steps(f,2),"two ticks")
-    error,text:=probe_call(f,"play.get",`{"entity":"Hero","field":"Transform.position"}`)
+    error,text:=probe_call(f,"scene.inspect",`{"world":"Game","entity":"Hero","components":["Probe_Health"]}`)
     testing.expect_value(t,error.code,0)
-    api_result_shape_expect(t,text,Api_Play_Get_Result)
+    api_result_shape_expect(t,text,Api_Inspect_Result)
     parsed,_:=json.parse_string(text,allocator=context.temp_allocator)
     result,_:=parsed.(json.Object)
-    testing.expect_value(t,result["entity"].(json.String),fmt.tprintf("0x%s",hero))
     testing.expect_value(t,u64(result["tick"].(json.Float)),start+2)
-    position,_:=result["value"].(json.Array)
-    testing.expect(t,len(position)==3 && position[0].(json.Float)==1 && position[1].(json.Float)==0,text)
-    read:=[?]struct{params,value:string}{
+    entity,_:=result["entities"].(json.Array)[0].(json.Object)
+    testing.expect_value(t,entity["entity"].(json.String),fmt.tprintf("0x%s",hero))
+    testing.expect_value(t,entity["components"].(json.Object)["Probe_Health"].(json.Object)["points"].(json.Float),3)
+    read:=[?]struct{condition,value:string}{
         {strings.concatenate({`{"entity":"`,hero,`","field":"Probe_Health.points"}`},context.temp_allocator),`"value":3`},
         {`{"entity":"Hero","field":"world_position[0]"}`,`"value":1`},
         {`{"entity":"Foe","field":"position.0"}`,`"value":5`},
         {`{"entity":"Hero","field":"name"}`,`"value":"Hero"`},
         {`{"entity":"Hero","field":"Transform.position.0"}`,`"value":1`},
         {`{"entity":"Hero","field":"Transform.position[0]"}`,`"value":1`},
+        {`{"entity":"Foe","field":"Probe_Health.points"}`,`"value":null`},
     }
     for c in read {
-        error,text=probe_call(f,"play.get",c.params)
-        testing.expectf(t,error.code==0 && strings.contains(api.json_compact(text),c.value),"%s: %v %s",c.params,error,text)
+        error,text=probe_call(f,"play.check",strings.concatenate({`{"conditions":[`,c.condition,`]}`},context.temp_allocator))
+        testing.expectf(t,error.code==0 && strings.contains(api.json_compact(text),c.value),"%s: %v %s",c.condition,error,text)
     }
     error,text=probe_call(f,"play.check",`{"conditions":[{"entity":"Hero","field":"Transform.position.0","compare":"Equal","number":1},{"entity":"Hero","field":"Transform.position[0]","compare":"Equal","number":1},{"entity":"Foe","field":"Probe_Health.points","compare":"Gone"}]}`)
     testing.expectf(t,error.code==0 && strings.contains(api.json_compact(text),`"passed":true`),"%v %s",error,text)
-    refused:=[?]struct{params,says:string}{
+    refused:=[?]struct{condition,says:string}{
         {`{"entity":"Hero","field":"components.Probe_Health.points"}`,"named by itself"},
-        {`{"entity":"Foe","field":"Probe_Health.points"}`,"no Probe_Health"},
         {`{"entity":"Hero","field":"Probe_Health.lives"}`,"points"},
         {`{"entity":"Hero","field":"nothing"}`,"world_position"},
-        {`{"entity":"Nobody","field":"world_position"}`,"Nobody"},
-        {`{"entity":"Hero"}`,"field"},
-        {`{"field":"world_position"}`,"entity"},
-        {`{"entity":"Hero","field":"world_position","speed":3}`,"speed"},
     }
     for c in refused {
-        wrong,_:=probe_call(f,"play.get",c.params)
-        testing.expectf(t,wrong.code==api.INVALID_PARAMS && strings.contains(wrong.message,c.says),"%s: %v",c.params,wrong)
+        wrong,_:=probe_call(f,"play.check",strings.concatenate({`{"conditions":[`,c.condition,`]}`},context.temp_allocator))
+        testing.expectf(t,wrong.code==api.INVALID_PARAMS && strings.contains(wrong.message,c.says),"%s: %v",c.condition,wrong)
     }
 }
 
@@ -1089,14 +1097,14 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
         return strings.concatenate({`{"entity":"Hero","field":"Probe_Health.points","compare":"`,compare,`","number":`,fmt.tprint(points),`}`},context.temp_allocator)
     }
     write(folder,"a_weakens.mirai",strings.concatenate({`{"steps":[`,
-        `{"name":"weaken","method":"play.set","params":{"entity":"`,hero,`","components":{"Probe_Health":{"points":1}}}},`,
+        `{"name":"weaken","method":"scene.write","params":{"world":"Game","entities":[{"id":"`,hero,`","components":{"Probe_Health":{"points":1}}}]}},`,
         `{"method":"play.check","params":{"conditions":[`,health("Equal",1),`]}},`,
         `{"method":"play.step","params":{"for":5,"until":[`,health("Below",2),`]}},`,
         `{"method":"play.check","params":{"conditions":[{"storage":"Probe_Score","field":"points","compare":"Equal","number":0}]}}]}`},context.temp_allocator))
     write(folder,"b_misses.mirai",strings.concatenate({`{"steps":[`,
         `{"name":"fresh","method":"play.check","params":{"conditions":[`,health("Equal",3),`]}},`,
         `{"method":"play.check","params":{"conditions":[{"storage":"Probe_Score","field":"points","compare":"Equal","number":5}]}},`,
-        `{"method":"play.set","params":{"entity":"`,hero,`","position":[0,0,0]}}]}`},context.temp_allocator))
+        `{"method":"scene.write","params":{"world":"Game","entities":[{"id":"`,hero,`","position":[0,0,0]}]}}]}`},context.temp_allocator))
     write(folder,"notes.txt","not a scenario")
     text:string
     error,text=probe_call(f,"play.scenario.run",strings.concatenate({`{"path":"`,folder,`"}`},context.temp_allocator))
@@ -1122,7 +1130,8 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
         {`{"steps":[{"method":"play.check","params":{"conditions":[{"storage":"Nothing"}]}}]}`,"steps[0] play.check: conditions[0]"},
         {`{"steps":[{"method":"play.step","params":{"drive":{"position":[100,0,0],"move":"move"},"for":2}}]}`,"the drive did not arrive"},
         {`{"steps":[{"method":"play.step","params":{"ticks":"many"}}]}`,"steps[0].params"},
-        {`{"steps":[{"method":"scene.write","params":{}}]}`,"steps are play methods"},
+        {`{"steps":[{"method":"scene.save","params":{}}]}`,"steps are play methods"},
+        {`{"steps":[{"method":"scene.write","params":{"entities":[]}}]}`,`give scene.write "world": "Game"`},
         {`{"steps":[{"method":"play.start"}]}`,"leave it out"},
         {`{"steps":[{"method":"play.nothing"}]}`,"is not a method"},
         {`{"start":{"players":9},"steps":[{"method":"play.step"}]}`,"start:"},
@@ -1195,7 +1204,7 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
     testing.expect(t,run_find(&f.s,0).world==world,"a game already playing is not started again")
     testing.expect(t,play_start(&f.s,false,7))
     other:=run_find(&f.s,7).world
-    error,_=probe_call(f,"scene.write",`{"root":"Hero","merge":true,"entities":[{"name":"Renamed"}]}`)
+    error,_=probe_call(f,"scene.write",`{"root":"Hero","entities":[{"name":"Renamed"}]}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,run_find(&f.s,0).world==world,"an edit alone does not touch the run")
     f.document.saved=history.edits_state(&f.edits)
@@ -1212,16 +1221,15 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
     testing.expect_value(t,error.code,0)
     testing.expect(t,run_find(&f.s,0)==nil)
     changes:=[?]struct{method,params:string}{
-        {"play.inspect",`{}`},
+        {"scene.inspect",`{"world":"Game"}`},
         {"play.player",`{}`},
         {"play.view",`{}`},
         {"play.ui",`{}`},
         {"play.audio",`{}`},
-        {"play.get",`{"entity":"Hero","field":"Transform.position"}`},
         {"play.check",`{"conditions":[{"storage":"Probe_Score","field":"points","compare":"At_Least","number":7}]}`},
         {"play.step",`{"for":1}`},
         {"play.pause",`{}`},
-        {"play.destroy",`{"entity":"Hero"}`},
+        {"scene.write",`{"world":"Game","entities":[{"name":"Hero","delete":true}]}`},
     }
     for c in changes {
         error,_=probe_call(f,c.method,c.params)
@@ -1241,7 +1249,7 @@ the_api_edits_the_document_while_a_game_plays :: proc(t:^testing.T) {
     defer probe_close(f)
     running:=run_ref(&f.s,run_find(&f.s,0))
     document:=edited_world(&f.s)
-    error,_:=probe_call(f,"scene.write",`{"root":"Hero","merge":true,"entities":[{"name":"Renamed","position":[9,0,0]}]}`)
+    error,_:=probe_call(f,"scene.write",`{"root":"Hero","entities":[{"name":"Renamed","position":[9,0,0]}]}`)
     testing.expect_value(t,error.code,0)
     hero:=api_entity(document,1)
     testing.expect_value(t,entity_name(document,hero),"Renamed")

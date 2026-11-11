@@ -372,7 +372,9 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
     smart:=behavior.Smart_View{objects=core.read(objects if objects!=nil else &empty_objects),states=core.read(states if states!=nil else &empty_states),worlds=core.read(worlds),claims=core.ref(core.world_storage_of(world,behavior.Claims)),time=time}
-    filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,walks if walks!=nil else &empty_walks,swims if swims!=nil else &empty_swims,core.ref(physics))
+    characters:=core.world_table_of(world,phys.Character)
+    empty_characters:core.Table(phys.Character)
+    filter:=behavior.place_filter(core.ref(navigation),e,paths_read,agents_read,characters if characters!=nil else &empty_characters,walks if walks!=nil else &empty_walks,swims if swims!=nil else &empty_swims,core.ref(physics))
     if !behavior.place_run(&places,q,&result,worlds,perceivers if perceivers!=nil else &empty_perceivers,perceivables if perceivables!=nil else &empty_perceivables,paths_read,core.ref(navigation),core.ref(physics),&filter,smart,agents_read,influence_of(s,world)) {api.call_fail(call,api.SERVER_ERROR,"no memory for the path search of the query: free memory and ask again");return}
     found:=make([]Place_Result,int(result.count),call.allocator)
     for &place,i in found {

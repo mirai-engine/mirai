@@ -7,14 +7,14 @@ import "core:math/linalg"
 // plane (discs), N=3 for agents that fly or swim (spheres). Every neighbor
 // forbids a half-space of velocities, the ones that would bring the two
 // together within the time horizon, and each agent takes half of the change
-// needed to leave it. On the plane, every wall near the agent forbids the
-// velocities that would cross it within its own horizon, before any neighbor:
-// what the walls forbid is never chosen, whatever the neighbors ask. The new
-// velocity is the allowed one nearest to the preferred velocity, found with a
-// linear program in N dimensions; when the half-spaces leave nothing, the one
-// that violates those of the neighbors least. Agents that all run it do not
-// collide and do not oscillate. A neighbor that does not avoid (a parked
-// vehicle) is only given half the room: block those on the navmesh.
+// needed to leave it, or all of it toward one that does not step aside (a
+// player, a moving body), met at its real velocity. On the plane, every wall
+// near the agent forbids the velocities that would cross it within its own
+// horizon, before any neighbor: what the walls forbid is never chosen,
+// whatever the neighbors ask. The new velocity is the allowed one nearest to
+// the preferred velocity, found with a linear program in N dimensions; when
+// the half-spaces leave nothing, the one that violates those of the neighbors
+// least. Agents that all run it do not collide and do not oscillate.
 
 AVOID_MAX_NEIGHBORS :: #config(MIRAI_AVOID_MAX_NEIGHBORS,16)
 AVOID_MAX_WALLS :: #config(MIRAI_AVOID_MAX_WALLS,8)
@@ -23,6 +23,7 @@ AVOID_WALL_TOUCH :: f32(0.01) // m from a wall within which an agent is on it
 Avoid_Agent :: struct($N:int) {
     position,velocity:[N]f32,
     radius:f32,
+    ignores:bool, // as a neighbor, it does not step aside: the agent takes the whole change
 }
 
 // A wall the center of an agent on the plane does not cross: the segment
@@ -116,7 +117,7 @@ avoid_velocity :: proc "contextless" (self:Avoid_Agent($N),preferred:[N]f32,max_
             if w_length>AVOID_EPSILON {plane.normal=w/w_length} else {plane.normal[0]=1}
             push=combined*inverse_dt-w_length
         }
-        plane.offset=linalg.dot(self.velocity,plane.normal)+push*0.5
+        plane.offset=linalg.dot(self.velocity,plane.normal)+push*(1 if other.ignores else 0.5)
         planes[fixed+i]=plane
     }
     count+=fixed

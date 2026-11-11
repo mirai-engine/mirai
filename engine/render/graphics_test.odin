@@ -82,15 +82,15 @@ a_preset_named_moves_the_fields_and_what_they_are_at_is_computed :: proc(t:^test
     g.resolution=600
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
     graphics_preset_apply(&g,.Low)
-    testing.expect(t,g.resolution==presets[.Low].resolution && g.shadowed_lights==presets[.Low].shadowed_lights)
+    testing.expect(t,g.resolution==presets[.Low].resolution && g.light_samples==presets[.Low].light_samples)
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
     // A field changed by hand leaves the others where the preset put them.
-    g.shadowed_lights=16
+    g.light_samples=31
     testing.expect(t,g.resolution==presets[.Low].resolution)
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
     // Naming the preset again reaches it.
     graphics_preset_apply(&g,.Low)
-    testing.expect(t,g.shadowed_lights==presets[.Low].shadowed_lights)
+    testing.expect(t,g.light_samples==presets[.Low].light_samples)
     // Traced reflections are off unless chosen, and no preset changes them.
     // expect_value, not ==: constant_field_compare of docs/ODIN_WORKAROUNDS.md.
     testing.expect_value(t,GRAPHICS_SETTINGS_DEFAULT.reflections,gpu.Reflections.Off)
@@ -119,7 +119,7 @@ applying_the_graphics_settings_writes_none_of_them :: proc(t:^testing.T) {
     sync:=new(Render_Sync)
     defer free(sync)
     own:=GRAPHICS_SETTINGS_DEFAULT
-    own.shadowed_lights,own.glass_shadows,own.glass_layers=16,true,2
+    own.light_samples,own.glass_shadows,own.glass_layers=31,false,2
     low:=GRAPHICS_SETTINGS_DEFAULT
     graphics_preset_apply(&low,.Low)
     scaled:=low

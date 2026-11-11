@@ -236,13 +236,13 @@ a_room_nobody_wrote_goes_back_to_the_scene_and_no_lights_without_shadows :: proc
 	scene_init(r)
 	defer scene_destroy(r)
 	s := &r.scene
-	lights_ask(r, 0, 3)
+	lights_ask(r, 0, 3, LIGHTS_ANYWHERE, 0)
 	scene_light_region(r)
 	testing.expect_value(t, s.light_region, Light_Region{1, 4})
 	testing.expect(t, s.lights_dirty && len(s.light_tree) == int(light_region_first(s.light_region)))
 	s.lights_dirty = false
 	clear(&s.light_node_ranges)
-	lights_ask(r, 0, 3)
+	lights_ask(r, 0, 3, LIGHTS_ANYWHERE, 0)
 	scene_light_region(r)
 	root := light_region_shadowless(s.light_region)
 	ranges := [2]bool{}
@@ -403,4 +403,62 @@ light_groups_face_the_directions_of_their_lights :: proc(t: ^testing.T) {
 	seen: [3]int
 	outside, _, _ := light_tree_faults(nodes[:], seen[:])
 	testing.expect_value(t, outside, 0)
+}
+
+// Whatever the lights reach, even past any scene, the grid of the lights fits
+// its rows and holds each placed light in some cell.
+@(test)
+the_grid_of_the_lights_fits_its_rows_however_far_they_reach :: proc(t: ^testing.T) {
+	ranges := [?]f32{0.5, 20, 1e4, 1e7, 1e30, math.inf_f32(1), math.nan_f32()}
+	for range in ranges {
+		lights := [2]Gpu_Light{{position_range = {0, 0, 0, range}}, {position_range = {500, 2, -300, 4}}}
+		for &l in lights {l.direction_cone.w = GPU_LIGHT_POINT}
+		grid := light_grid_place(lights[:], len(lights))
+		testing.expectf(t, grid.rows > 0 && grid.rows <= LIGHT_GRID_ROWS_MAX, "range %v: %d rows", range, grid.rows)
+		testing.expectf(t, grid.size.x >= 1 && grid.size.y >= 1 && grid.size.z >= 1 && grid.cell >= LIGHT_GRID_CELL, "range %v: %v cells of %v m", range, grid.size, grid.cell)
+	}
+}
+
+// The lights with shadows a pass writes on the GPU light the cells of the
+// scene around where the pass says they lie, or all of it where it cannot
+// tell, though no light of the scene is there: the grid holds those cells and
+// rows for their entries, and is placed again only when they leave them.
+@(test)
+the_grid_holds_what_the_lights_a_pass_writes_light :: proc(t: ^testing.T) {
+	r := new(Renderer);defer free(r)
+	r.allocator = context.allocator
+	scene_init(r)
+	defer scene_destroy(r)
+	s := &r.scene
+	s.bounds_min, s.bounds_max, s.has_bounds = {-50, 0, -50}, {50, 10, 50}, true
+	Case :: struct {box: [2]Vec3, reach: f32, low, high: Vec3}
+	// Each case after a small box, which the scene before is far larger than.
+	small := Case{{{10, 1, 10}, {12, 3, 12}}, 4, {6, 0, 6}, {16, 7, 16}}
+	cases := [?]Case{
+		small,
+		{LIGHTS_ANYWHERE, 4, s.bounds_min, s.bounds_max},
+		small,
+		{{{1, 1, 1}, {-1, -1, -1}}, 4, s.bounds_min, s.bounds_max},
+		small,
+		{small.box, math.nan_f32(), s.bounds_min, s.bounds_max},
+	}
+	for c in cases {
+		lights_ask(r, 3, 0, c.box, c.reach)
+		scene_light_region(r)
+		held := s.light_region_box
+		testing.expectf(t, s.light_grid_stale && linalg.min(held[0], c.low) == held[0] && linalg.max(held[1], c.high) == held[1], "%v: holds %v", c.box, held)
+		testing.expectf(t, linalg.max(held[0], s.bounds_min) == held[0] && linalg.min(held[1], s.bounds_max) == held[1], "%v: within the scene, %v", c.box, held)
+		count := light_region_lights(s.light_region)
+		grid := light_grid_place(nil, count, {held, int(s.light_region_asked), s.light_region_reach})
+		top := grid.origin + Vec3{f32(grid.size.x), f32(grid.size.y), f32(grid.size.z)} * grid.cell
+		cells := int(grid.size.x) * int(grid.size.y) * int(grid.size.z)
+		testing.expectf(t, linalg.min(grid.origin, held[0]) == grid.origin && linalg.max(top, held[1]) == top, "%v: the grid from %v to %v", c.box, grid.origin, top)
+		testing.expectf(t, grid.rows > cells + LIGHT_GRID_WEIGHT_ROWS * count && grid.rows <= LIGHT_GRID_ROWS_MAX, "%v: %d rows for %d cells", c.box, grid.rows, cells)
+		s.light_grid_stale = false
+		lights_ask(r, 3, 0, c.box, c.reach)
+		scene_light_region(r)
+		testing.expectf(t, !s.light_grid_stale, "%v: asked again, the grid stays", c.box)
+	}
+	scene_light_region(r)
+	testing.expect(t, s.light_grid_stale && s.light_region_asked == 0, "no pass asks: the grid holds none of it")
 }
