@@ -67,7 +67,8 @@ Data_Entry :: struct {
     name:u64,
     words:u32,
     offset:u32, // bytes of its counters and copies among the channels
-    watched:bool, // a game reads it back this frame
+    watched:bool, // a game reads it back this frame, or it holds the reports
+    used:bool,    // a program or an emitter that reports asked for it since it was placed
     readback:[32]u8, // the name of its readback, written once
 }
 
@@ -93,10 +94,10 @@ data_copy_bytes :: proc "contextless" (words:u32) -> u32 {return 16+DATA_ENTRIES
 
 // The channels the programs of the frame read, and the most words each asks.
 @(private)
-data_need :: proc(d:^Data_Channels,name:u64,words:u32,used:^[DATA_CHANNELS]bool,problems:^core.Problems,e:core.Entity) {
-    for &entry,at in d.entries {
+data_need :: proc(d:^Data_Channels,name:u64,words:u32,problems:^core.Problems,e:core.Entity) {
+    for &entry in d.entries {
         if entry.name!=name {continue}
-        used[at]=true
+        entry.used=true
         if words>entry.words {entry.words=words;d.made=false}
         return
     }
@@ -104,18 +105,17 @@ data_need :: proc(d:^Data_Channels,name:u64,words:u32,used:^[DATA_CHANNELS]bool,
         core.report(problems,e,"vfx.data","a world has at most %d data channels",DATA_CHANNELS)
         return
     }
-    used[len(d.entries)]=true
-    entry:=Data_Entry{name=name,words=words}
+    entry:=Data_Entry{name=name,words=words,used=true}
     base.text_set(entry.readback[:],fmt.tprintf("vfx data %x",name))
     append(&d.entries,entry)
     d.made=false
 }
 
-// Keeps the channels used this frame, places them, and takes which games watch.
+// Keeps the channels asked for since the last time, and places them.
 @(private)
-data_place :: proc(d:^Data_Channels,used:[DATA_CHANNELS]bool,watched:[]u64=nil) {
+data_place :: proc(d:^Data_Channels) {
     for i:=len(d.entries)-1;i>=0;i-=1 {
-        if used[i] {continue}
+        if d.entries[i].used {continue}
         ordered_remove(&d.entries,i)
         d.made=false
     }
@@ -125,11 +125,20 @@ data_place :: proc(d:^Data_Channels,used:[DATA_CHANNELS]bool,watched:[]u64=nil) 
         entry.offset=offset
         offset+=data_bytes(entry.words)
         layout=base.hash_combine(layout,base.hash_combine(entry.name,u64(entry.words)))
-        entry.watched=entry.name==REPORTS_CHANNEL
-        for name in watched {entry.watched||=name==entry.name}
+        entry.watched||=entry.name==REPORTS_CHANNEL
+        entry.used=false
     }
     if layout!=d.layout {d.made=false}
     d.layout,d.bytes=layout,offset
+}
+
+// The channels a game reads back this frame, and that of the reports.
+@(private)
+data_watched :: proc(d:^Data_Channels,watched:[]u64) {
+    for &entry in d.entries {
+        entry.watched=entry.name==REPORTS_CHANNEL
+        for name in watched {entry.watched||=name==entry.name}
+    }
 }
 
 @(private)

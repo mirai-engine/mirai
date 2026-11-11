@@ -216,7 +216,6 @@ particles_sync :: proc(
     shaders:=app.shaders.reloads
     // What an emitter is resolved from besides its own: the triangles of meshes move when the scene is made again.
     made:=erender.vertices_made(app.renderer)
-    used:[DATA_CHANNELS]bool
     placed:=core.join(emitters,worlds)
     for e,emitter,world in core.each_joined(&placed) {
         shown:=shown_of(sync,e)
@@ -266,9 +265,8 @@ particles_sync :: proc(
         }
         desc.stages=emitter_stages(sync,&shown.needs,desc.resources,desc.id,e,problems)
         for need in shown.needs.resources {
-            if need.kind==.Data {data_need(&sync.data,need.name,need.words,&used,problems,e)}
+            if need.kind==.Data {data_need(&sync.data,need.name,need.words,problems,e)}
         }
-        if desc.report!=.None || shown.has_sub && shown.sub_desc.report!=.None {data_need(&sync.data,REPORTS_CHANNEL,REPORT_WORDS,&used,problems,e)}
         if listener,listens:=core.get(listeners,e);listens && !listener.silent {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
         desc.paused,desc.generation=paused,shown.generation
         if shown.has_sub {
@@ -284,7 +282,7 @@ particles_sync :: proc(
     grids_release(&sync.grids,&sync.pool)
     watched:[]u64
     if watch!=nil {watched=core.take(&watch.queue)}
-    data_place(&sync.data,used,watched)
+    data_watched(&sync.data,watched)
     asked:[]gui.UI_Effect
     if ui_requests.ptr!=nil {asked=ui_requests.items[:]}
     if ui_effects!=nil && (ui_effects.count>0 || len(asked)>0) {

@@ -15,11 +15,10 @@ data_channels_follow_the_programs_that_read_them :: proc(t:^testing.T) {
     problems:core.Problems
     sparks,smoke:=base.name_hash("sparks"),base.name_hash("smoke")
     // Two programs read sparks with different words, one reads smoke: sparks keeps the most.
-    used:[DATA_CHANNELS]bool
-    data_need(&d,sparks,4,&used,&problems,core.NONE)
-    data_need(&d,smoke,2,&used,&problems,core.NONE)
-    data_need(&d,sparks,7,&used,&problems,core.NONE)
-    data_place(&d,used)
+    data_need(&d,sparks,4,&problems,core.NONE)
+    data_need(&d,smoke,2,&problems,core.NONE)
+    data_need(&d,sparks,7,&problems,core.NONE)
+    data_place(&d)
     testing.expect_value(t,len(d.entries),2)
     testing.expect_value(t,d.entries[0].words,u32(7))
     testing.expect_value(t,d.entries[1].offset,data_bytes(7))
@@ -27,9 +26,8 @@ data_channels_follow_the_programs_that_read_them :: proc(t:^testing.T) {
     layout:=d.layout
     // A frame without the programs of smoke lets it go, and the channels are made again.
     d.made=true
-    used={}
-    data_need(&d,sparks,7,&used,&problems,core.NONE)
-    data_place(&d,used)
+    data_need(&d,sparks,7,&problems,core.NONE)
+    data_place(&d)
     testing.expect_value(t,len(d.entries),1)
     testing.expect(t,d.layout!=layout && !d.made)
     testing.expect_value(t,data_find(&d,smoke),-1)
@@ -43,11 +41,12 @@ data_channels_a_game_watches_come_back_from_the_copy_the_frame_wrote :: proc(t:^
     defer data_free(&d)
     problems:core.Problems
     sparks,smoke:=base.name_hash("sparks"),base.name_hash("smoke")
-    used:[DATA_CHANNELS]bool
-    data_need(&d,sparks,2,&used,&problems,core.NONE)
-    data_need(&d,smoke,2,&used,&problems,core.NONE)
-    data_place(&d,used,[]u64{sparks})
-    testing.expect(t,d.entries[0].watched && !d.entries[1].watched)
+    data_need(&d,sparks,2,&problems,core.NONE)
+    data_need(&d,smoke,2,&problems,core.NONE)
+    data_need(&d,REPORTS_CHANNEL,REPORT_WORDS,&problems,core.NONE)
+    data_place(&d)
+    data_watched(&d,[]u64{sparks})
+    testing.expect(t,d.entries[0].watched && !d.entries[1].watched && d.entries[2].watched, "the reports come back too")
     // The copy the frame wrote comes back alone: two entries, as its counter says.
     words:u32=2
     bytes:=make([]u8,data_copy_bytes(words))

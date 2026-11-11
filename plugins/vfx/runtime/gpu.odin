@@ -878,6 +878,11 @@ programs_span :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (left_o
 // False while the shaders in use have no stages of the plugin.
 particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     pool:=&sync.pool
+    // The data channels the programs asked for, and that of the reports while a live emitter reports.
+    for s in pool.slots[:pool.slot_end] {
+        if s.live && s.desc.report!=.None {data_need(&sync.data,REPORTS_CHANNEL,REPORT_WORDS,nil,core.NONE);break}
+    }
+    data_place(&sync.data)
     if pool.slot_end==0 {return true}
     p:=&sync.pipelines
     simulate:=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_simulate",name="particle simulate"})
