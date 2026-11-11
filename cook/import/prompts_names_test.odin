@@ -42,7 +42,7 @@ the_names_of_the_images_of_packs_say_what_they_show :: proc(t:^testing.T) {
 // The folder of the Kenney pack names, by itself, every input its manifest maps.
 @(test)
 the_folder_of_the_kenney_pack_maps_what_its_manifest_maps :: proc(t:^testing.T) {
-    folder,_:=filepath.join({#directory,"../../plugins/prompts_kenney/source"},context.temp_allocator)
+    folder,_:=filepath.join({#directory,"../../plugins/prompts_kenney/assets"},context.temp_allocator)
     manifest_path,_:=filepath.join({folder,"kenney.prompts.json"},context.temp_allocator)
     text,error:=os.read_entire_file(manifest_path,context.temp_allocator)
     if !testing.expect(t,error==nil) {return}
