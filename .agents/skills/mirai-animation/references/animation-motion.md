@@ -20,7 +20,9 @@ distance→time curves, without components per window, foot or operation. Math:
   angle of zero leave the pose exact. It is applied before grounding and the constraints, after
   physics publishes the place of the actor. Below `MOTION_WARP_FADE_SPEED` of the body or of its
   clip it fades out with that speed, so a body that slows to a stop keeps the pose of the clip
-  without the stride shrinking to its minimum on the way.
+  without the stride shrinking to its minimum on the way. The turn follows the angle asked by a
+  spring, so a body that starts or turns at once does not swing the legs round in a tick; a clip
+  that stands travels nowhere, so a start turns from the walk's own direction, not the idle's.
 - A distance (`Motion_Distance`) is strictly monotonic keys of a clip. `motion_distance_time` gives
   clip and time without advancing the world; `motion_play_distance` and `animation_distance` enqueue
   that time for the active clip, without choosing another.
@@ -45,7 +47,8 @@ Advance by distance:
 
 ## Requests and order
 
-- `motion_target` enqueues by window name a [spatial target](animation-rigs.md#spatial-targets)
+- `motion_target` enqueues in `Animation_Requests` by window name a
+  [spatial target](animation-rigs.md#spatial-targets)
   that `motion_resolve_targets` places every tick before the rigs sample: a bone or socket reads the
   pose of the previous tick. If what it names is missing, the target stops being used and its last
   position does not remain. `motion_locomotion` delivers the velocity reached in world space

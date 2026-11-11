@@ -51,16 +51,26 @@ time_advance :: proc "contextless" (t:^Time) {
 // is between the last two ticks (1 in the editor loop). dilation makes the
 // ticks run faster or slower than the frames: the function that keeps the
 // clock of the world on another one (the network client, on its server's)
-// writes it, and host reads it.
+// writes it, and host reads it. A tick may run up to half a tick before or
+// after its time so the frames keep a steady count of ticks: the accumulator
+// then goes that far below zero or above one tick, and the shown time
+// (accumulator - lag) stays between the last two ticks.
 @(storage,copy=false)
 Frame_Time :: struct {
     accumulator:f64, // s
+    lag:f64,         // s the shown time trails the accumulator
     dt:f32,          // s, of the frame
     alpha:f32,
     phase:Phase,     // the phase that runs
     dilation:f32,    // added to the speed of the ticks: 0 at the pace of the frames, -1 stops them
+    seen:i32,                  // frames counted in ran, at most TICK_HISTORY
+    ran:[TICK_HISTORY]i32,     // ticks of the last i+1 frames
+    typical:[TICK_HISTORY]i32, // ran[i] is usually this or one more
 }
 
+// Frames over which the count of ticks is kept steady: 144 Hz frames over 60 Hz ticks repeat
+// every 12 frames.
+TICK_HISTORY :: 12
 FRAME_TIME_DEFAULT :: Frame_Time{alpha=1}
 
 // How the simulation of a world runs as its game asked: paused, or at a scale

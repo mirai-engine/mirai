@@ -106,7 +106,7 @@ shape_outline :: proc(s:^Shape) -> (points:[]geom.Vec2,loops:[]int) {
     return s.points[:count],sizes
 }
 
-// Makes s the Outline of one polygon of a set: its first loop the outline,
+// Makes s a Solid of one polygon of a set: its first loop the outline,
 // counter-clockwise, and the others its holes, clockwise. Repeated points and
 // points on the line of their neighbors go, and so does a hole left without
 // area. A polygon that still has more points or loops than a Shape holds is
@@ -150,7 +150,6 @@ shape_outline_set :: proc(s:^Shape,set:^geom.Polygon_Set,polygon:int) -> Shape_E
     if kept_loops>SHAPE_LOOPS {return .Too_Many_Loops}
     if kept_points>SHAPE_POINTS {return .Too_Many_Points}
     t:=s^
-    t.kind=.Outline
     t.points={}
     t.loops={}
     t.point_count,t.loop_count=u16(kept_points),0
@@ -167,7 +166,7 @@ shape_outline_set :: proc(s:^Shape,set:^geom.Polygon_Set,polygon:int) -> Shape_E
     return .None
 }
 
-// Combines an Outline with a polygon with holes, its outline first, in the
+// Combines the polygon of a Solid with another polygon with holes, its outline first, in the
 // local XY of the shape: union adds its area, difference cuts it,
 // intersection keeps only what both cover. out gets every polygon of the
 // result, the one of largest area first, and s becomes that one. With no
@@ -175,7 +174,7 @@ shape_outline_set :: proc(s:^Shape,set:^geom.Polygon_Set,polygon:int) -> Shape_E
 // caller makes a shape of each of the others with shape_outline_set. It fails
 // before changing s when some polygon of the result does not fit a Shape.
 shape_combine :: proc(s:^Shape,points:[]geom.Vec2,loops:[]int,op:geom.Polygon_Op,out:^geom.Polygon_Set) -> Shape_Error {
-    if s.kind!=.Outline || out==nil || len(loops)==0 {return .Invalid}
+    if out==nil || len(loops)==0 {return .Invalid}
     if error:=shape_valid_counts(s);error!=.None {return error}
     shape_points,shape_loops:=shape_outline(s)
     switch geom.polygon_boolean(shape_points,shape_loops,points,loops,op,out) {
@@ -192,7 +191,7 @@ shape_combine :: proc(s:^Shape,points:[]geom.Vec2,loops:[]int,op:geom.Polygon_Op
     return shape_outline_set(s,out,0)
 }
 
-// Stamps a loop on an Outline: shape_combine with a polygon of one loop.
+// Stamps a loop on the polygon of a Solid: shape_combine with a polygon of one loop.
 shape_stamp :: proc(s:^Shape,stamp:[]geom.Vec2,op:geom.Polygon_Op,out:^geom.Polygon_Set) -> Shape_Error {
     if len(stamp)<3 {return .Invalid}
     stamp_loops:=[1]int{len(stamp)}
@@ -210,36 +209,6 @@ shape_contains :: proc(s:^Shape,p:geom.Vec2) -> bool {
         first+=n
     }
     return inside
-}
-
-// The nearest vertex within radius of p.
-shape_vertex_near :: proc(s:^Shape,p:geom.Vec2,radius:f32) -> (vertex:int,found:bool) {
-    if shape_valid_counts(s)!=.None {return}
-    best:=radius*radius
-    for q,i in s.points[:s.point_count] {
-        d:=q-p
-        if distance:=d.x*d.x+d.y*d.y;distance<=best {vertex,found,best=i,true,distance}
-    }
-    return
-}
-
-// The nearest edge within radius of p, by its first vertex, and the point of
-// it nearest to p.
-shape_edge_near :: proc(s:^Shape,p:geom.Vec2,radius:f32) -> (edge:int,at:geom.Vec2,found:bool) {
-    if shape_valid_counts(s)!=.None {return}
-    best:=radius*radius
-    first:=0
-    for l in 0..<int(s.loop_count) {
-        n:=int(s.loops[l])
-        for i in 0..<n {
-            a,b:=s.points[first+i],s.points[first+(i+1)%n]
-            q:=segment_nearest(a,b,p)
-            d:=q-p
-            if distance:=d.x*d.x+d.y*d.y;distance<=best {edge,at,found,best=first+i,q,true,distance}
-        }
-        first+=n
-    }
-    return
 }
 
 // Moves a vertex to a new place in the local XY.
@@ -587,13 +556,4 @@ set_largest_first :: proc(set:^geom.Polygon_Set) -> bool {
     copy(set.polygon_loops[1:best+1],set.polygon_loops[:best])
     set.polygon_loops[0]=loops
     return true
-}
-
-@(private)
-segment_nearest :: proc "contextless" (a,b,p:geom.Vec2) -> geom.Vec2 {
-    ab:=b-a
-    length:=ab.x*ab.x+ab.y*ab.y
-    if !(length>0) {return a}
-    t:=clamp(((p.x-a.x)*ab.x+(p.y-a.y)*ab.y)/length,0,1)
-    return a+ab*t
 }

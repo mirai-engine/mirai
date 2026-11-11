@@ -16,9 +16,9 @@ import "mirai:std/jobs"
 // The command mirai import, which the import program of the engine runs: it
 // turns a model (OBJ, glTF, GLB, USD, FBX, or a format a plugin of the
 // project adds), an image, a sound (WAV, Ogg Vorbis), a font (TrueType,
-// OpenType), a CSV of texts or a manifest of prompts (<name>.prompts.json) in
-// the assets folder of a project or a plugin into assets with import_source,
-// as the editor does: a model also gets the prefab of its hierarchy.
+// OpenType) or a manifest of prompts (<name>.prompts.json) in the assets
+// folder of a project or a plugin into assets with import_source, as the
+// editor does: a model also gets the prefab of its hierarchy.
 // A source is imported with the settings its sidecar keeps (<file>.import),
 // changed by the options given; the result is written back there with the id
 // of each asset, so importing again without options gives the same assets.
@@ -42,9 +42,9 @@ import "mirai:std/jobs"
 @(private="file")
 IMPORT_USAGE :: "Usage: mirai import <file> [--max-texture N] [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--max-triangles N] [--collision none|hull|pieces|mesh|exact] [--force-collision] [--hulls N] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--rebuild] [--texture-cache <folder>] [--mesh-cache <folder>] [--profile] [--release]"
 
-// plugins reads the formats the plugins of a project add (in the import
-// program of the engine, editor.plugin_import_formats).
-command :: proc(args:[]string,output,errors:io.Writer,plugins:Plugin_Formats=nil) -> int {
+// library reads the formats the plugins of a project add and the types of its
+// game (in the import program of the engine, editor.import_library).
+command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> int {
     file:string
     options:importer.Import_Options
     roots:=make([dynamic]string,context.temp_allocator) // of --sync
@@ -198,7 +198,7 @@ command :: proc(args:[]string,output,errors:io.Writer,plugins:Plugin_Formats=nil
     defer jobs.system_destroy(&js)
     options.worker={system=&js,worker=jobs.OWNER}
     if len(roots)>0 {
-        return sync_command(roots[:],options,plugins,output,errors)
+        return sync_command(roots[:],options,library,output,errors)
     }
     if file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     root,in_assets:=source_root(file,context.temp_allocator)
@@ -211,9 +211,9 @@ command :: proc(args:[]string,output,errors:io.Writer,plugins:Plugin_Formats=nil
     release:proc(state:rawptr)
     state:rawptr
     defer if release!=nil {release(state)}
-    if kind==.None && plugins!=nil {
+    if (kind==.None || kind==.Model) && library!=nil {
         found:[]importer.Format
-        found,release,state,_=plugins(root,context.temp_allocator)
+        found,options.world,release,state,_=library(root,context.temp_allocator)
         all:=make([dynamic]importer.Format,0,len(FORMATS)+len(found),context.temp_allocator)
         append(&all,..FORMATS[:])
         append(&all,..found)
@@ -272,11 +272,11 @@ command :: proc(args:[]string,output,errors:io.Writer,plugins:Plugin_Formats=nil
 
 // --sync: every root in turn, one line each with what its sync did.
 @(private="file")
-sync_command :: proc(roots:[]string,options:importer.Import_Options,plugins:Plugin_Formats,output,errors:io.Writer) -> int {
+sync_command :: proc(roots:[]string,options:importer.Import_Options,library:Library,output,errors:io.Writer) -> int {
     code:=0
     for root in roots {
         started:=time.tick_now()
-        report:=sync(root,{texture_cache=options.texture_cache,mesh_cache=options.mesh_cache,rebuild=options.rebuild,worker=options.worker,plugins=plugins})
+        report:=sync(root,{texture_cache=options.texture_cache,mesh_cache=options.mesh_cache,rebuild=options.rebuild,worker=options.worker,library=library})
         defer sync_report_destroy(&report)
         for warning in report.warnings {fmt.wprintfln(output,"warning: %s",warning)}
         for failure in report.failures {fmt.wprintfln(errors,"mirai import: %s",failure)}

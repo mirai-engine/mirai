@@ -6,7 +6,7 @@ import "mirai:core"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
-// A stroke applied to the outline shapes of a plane, which the caller gives
+// A stroke applied to the polygons of the shapes of a plane, which the caller gives
 // as pieces with their entities and where their local XY is. Each change of
 // the area combines the shape of a piece as it was given with the whole area:
 // adding goes into one piece, the first the area joins at the first point or
@@ -70,13 +70,13 @@ shape_edit_free :: proc(e:^Shape_Edit) {
     e^={}
 }
 
-// Gives the edit an Outline shape it may change, of an entity whose local XY
+// Gives the edit a Solid shape with a polygon it may change, of an entity whose local XY
 // is at world: its base is the shape as given, also when the stroke reaches
-// it later. False when the edit has not begun, the shape is not a valid
-// Outline or its plane is not that of the edit.
+// it later. False when the edit has not begun, the shape has no valid
+// polygon or its plane is not that of the edit.
 shape_edit_piece :: proc(e:^Shape_Edit,entity:core.Entity,world:mm.Transform,shape:Shape) -> bool {
     shape:=shape
-    if len(e.stroke.brush)<3 || shape.kind!=.Outline || shape_valid_counts(&shape)!=.None || !shape_coplanar(world,e.plane) {return false}
+    if len(e.stroke.brush)<3 || shape_valid_counts(&shape)!=.None || !shape_coplanar(world,e.plane) {return false}
     _,error:=append(&e.pieces,Shape_Piece{entity=entity,given=true,split_of=-1,world=world,base=shape,shape=shape})
     return error==nil
 }

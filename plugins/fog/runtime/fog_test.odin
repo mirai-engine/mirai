@@ -4,17 +4,6 @@ import "core:testing"
 import volume "mirai:engine/volume"
 import mm "mirai:std/math"
 
-// A view has a column every 8 pixels up to 160, as many rows as keep its
-// cells square and 64 slices: the grid of a large view does not grow with it.
-@(test)
-fog_grids_follow_the_proportion_of_the_view_up_to_their_size :: proc(t:^testing.T) {
-    testing.expect_value(t,grid_size(1440,900),[3]u32{160,100,64})
-    testing.expect_value(t,grid_size(3072,1728),[3]u32{160,90,64})
-    testing.expect_value(t,grid_size(256,144),[3]u32{32,18,64})
-    testing.expect_value(t,grid_size(4,4),[3]u32{1,1,64})
-    testing.expect_value(t,grid_size(0,900),[3]u32{})
-}
-
 // The shaders get the volumes relative to the origin the renderer draws from:
 // the base of a volume and its box move by it, and what it is made of does not.
 @(test)

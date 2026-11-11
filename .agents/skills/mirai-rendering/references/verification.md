@@ -23,8 +23,9 @@
   `rhi` are in `rhi/tests`
   (`mirai test rhi/tests`), which can import it; those of `rhi` do not touch the GPU.
 - The GPU tests of a plugin load the shaders that `mirai test` generates before compiling them in
-  `.mirai/tmp/<plugin>-test-shaders`: those of the plugin and, as `<plugin>_test`, the programs of
-  the package's `testdata/`. A test of a runtime package does not import `cook`: the shipped game
+  `.mirai/tmp/<plugin>-test-shaders`: those of the plugin, of the plugins it and its tests depend
+  on (its dependencies and test dependencies) and, as `<plugin>_test`, the programs of the
+  package's `testdata/`. A test of a runtime package does not import `cook`: the shipped game
   also compiles the `*_test.odin` of its packages, and `cook` is not shipped.
 - A package of the engine with programs in its `testdata/` gets them the same way, in
   `.mirai/tmp/<package>-test-shaders`. The Surface programs the tests of `render` draw (`Grid`,

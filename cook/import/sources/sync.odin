@@ -6,6 +6,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import importer "mirai:cook/import"
 import "mirai:project"
 import "mirai:std/base"
@@ -24,17 +25,18 @@ import "mirai:std/serial"
 // plugins of the project add; a file of the folder that no sidecar with its
 // source lists is removed.
 
-// The formats of models the plugins of the project at root add, from the
-// library of its editor, with what they read prepared for its assets;
-// release(state) lets them go. problem: why there are none. Only a program
-// that links the editor reads them (editor.plugin_import_formats).
-Plugin_Formats :: #type proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,release:proc(state:rawptr),state:rawptr,problem:string)
+// What the library of the editor of the project at root gives its imports:
+// the formats of models its plugins add, with what they read prepared for its
+// assets, and the types of its game, which the prefab of a model is written
+// in; release(state) lets them go. problem: why there are none. Only a
+// program that links the editor reads it (editor.import_library).
+Library :: #type proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string)
 
 Sync_Options :: struct {
     texture_cache,mesh_cache:string, // "": those of the root (project.content_cache_path)
     rebuild:bool,                    // imports every source again
     worker:jobs.Worker_Ref,
-    plugins:Plugin_Formats,          // nil: the formats of the engine alone
+    library:Library,                 // nil: the formats of the engine alone, and no model imports
 }
 
 Sync_Report :: struct {
@@ -77,9 +79,9 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
         texture_cache=options.texture_cache if options.texture_cache!="" else project.content_cache_path(top,project.TEXTURE_CACHE,context.temp_allocator),
         mesh_cache=options.mesh_cache if options.mesh_cache!="" else project.content_cache_path(top,project.MESH_CACHE,context.temp_allocator),
     }
-    // The formats of the plugins, read once a source needs them.
-    plugins:struct {formats:[]importer.Format,release:proc(state:rawptr),state:rawptr,problem:string,read:bool}
-    defer if plugins.release!=nil {plugins.release(plugins.state)}
+    // The library, read once a source needs a format of its plugins or a model imports.
+    library:Library_Read
+    defer if library.release!=nil {library.release(library.state)}
     hashes_path:=project.cache_path(top,importer.SOURCE_HASHES,allocator=context.temp_allocator)
     hashes:=importer.source_hashes_load(hashes_path,context.temp_allocator)
     defer importer.source_hashes_save(&hashes,hashes_path)
@@ -103,14 +105,13 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
             formats:=FORMATS[:]
             kind:=source_kind(source,formats)
             if kind==.None && len(sidecar.outputs)>0 {
-                if !plugins.read && options.plugins!=nil {plugins.formats,plugins.release,plugins.state,plugins.problem=options.plugins(top,context.temp_allocator)}
-                plugins.read=true
-                all:=make([dynamic]importer.Format,0,len(FORMATS)+len(plugins.formats),context.temp_allocator)
+                library_read(&library,options,top,&import_options)
+                all:=make([dynamic]importer.Format,0,len(FORMATS)+len(library.formats),context.temp_allocator)
                 append(&all,..FORMATS[:])
-                append(&all,..plugins.formats)
+                append(&all,..library.formats)
                 formats=all[:]
                 if kind=source_kind(source,formats);kind==.None {
-                    append(&report.failures,fmt.aprintf("%s: no format of the engine or of the plugins of the project reads it%s",source,plugins.problem!=""?fmt.tprintf(" (%s)",plugins.problem):"",allocator=allocator))
+                    append(&report.failures,fmt.aprintf("%s: no format of the engine or of the plugins of the project reads it%s",source,library.problem!=""?fmt.tprintf(" (%s)",library.problem):"",allocator=allocator))
                     whole=false
                     continue
                 }
@@ -135,6 +136,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
                 if pass==1 || !cached {break}
                 report.sources+=1
                 if current {continue}
+                if kind==.Model {library_read(&library,options,top,&import_options)}
                 written,import_error:=import_source(source,import_options,formats,allocator)
                 if import_error.code!=.None {
                     append(&report.failures,fmt.aprintf("%s: %s",source,import_error.message,allocator=allocator))
@@ -157,4 +159,14 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
         if os.remove(fmt.tprintf("%s/%s",imported,entry.name))==nil {report.removed+=1}
     }
     return
+}
+
+@(private="file")
+Library_Read :: struct {formats:[]importer.Format,release:proc(state:rawptr),state:rawptr,problem:string,read:bool}
+
+@(private="file")
+library_read :: proc(library:^Library_Read,options:Sync_Options,top:string,import_options:^importer.Import_Options) {
+    if library.read || options.library==nil {return}
+    library.formats,import_options.world,library.release,library.state,library.problem=options.library(top,context.temp_allocator)
+    library.read=true
 }

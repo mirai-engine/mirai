@@ -207,9 +207,14 @@ guarantees that the audio thread no longer touches the mixer with the previous s
 with a headless `Platform`. The mixer is destroyed after closing the device or destroying the
 `Platform`.
 
+SDL moves a stream opened as the default to the next default by itself, but one opened on an
+output by its name stays on it when it leaves, played to nowhere. `frame_begin` turns SDL's events
+into `audio_device_changes`: `Lost` when that output leaves, `Added` when one is plugged in, each
+taken once. `engine/audio`'s `audio_output` acts on them: it plays the default while the chosen
+output is not connected, reports `audio.output` once, and returns to it when it is listed again.
+
 ## What it does not do
 
 Sockets (`net` uses `core:net`), several windows, IME, text composition, touch and pen, native
-notifications of file changes, child processes
-([std/subprocess](../../mirai-std/references/subprocess.md)), and reacting to an audio output
-appearing or leaving beyond what SDL does.
+notifications of file changes and child processes
+([std/subprocess](../../mirai-std/references/subprocess.md)).

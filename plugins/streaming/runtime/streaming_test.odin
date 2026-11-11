@@ -54,6 +54,13 @@ a_section_follows_how_near_its_sources_are :: proc(t:^testing.T) {
     testing.expect_value(t,want(&w,40,&settings,&seen,&sources),scene.Section_State.Loaded)
     testing.expect_value(t,want(&w,62,&settings,&seen,&sources),scene.Section_State.Loaded)
     testing.expect_value(t,want(&w,75,&settings,&seen,&sources),scene.Section_State.Unloaded)
+    // A section with a distance of its own loads at it, and turns on at the same share of it.
+    testing.expect_value(t,want(&w,90,&settings,&seen,&sources),scene.Section_State.Unloaded)
+    core.edit(&w.references,e).distance=100
+    testing.expect_value(t,want(&w,90,&settings,&seen,&sources),scene.Section_State.Loaded)
+    testing.expect_value(t,want(&w,45,&settings,&seen,&sources),scene.Section_State.Active)
+    core.edit(&w.references,e).distance=0
+    testing.expect_value(t,want(&w,75,&settings,&seen,&sources),scene.Section_State.Unloaded)
     // Once it looked, nothing is looked at again until a source or a section moves.
     streaming_sections(core.ref(&sources),core.read(&w.references),core.read(&w.worlds),core.ref(&settings),&seen,&w.requests)
     clear(&w.requests.queue.items)

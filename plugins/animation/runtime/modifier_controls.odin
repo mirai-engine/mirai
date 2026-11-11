@@ -21,9 +21,10 @@ Modifier_Control_State :: struct {
     fade_row:u32,
     base_weight,weight,start,target,elapsed,duration:f32,
     base_enabled,enabled:bool,
+    turning:bool, // a Look turns from its former target over the fade
 }
 
-modifier_control :: proc(requests:^Modifier_Requests,control:Modifier_Control) {
+modifier_control :: proc(requests:^Animation_Requests,control:Modifier_Control) {
     if requests==nil {return}
     control:=control
     if !blend_text_valid(control.name[:],true) || control.rig==core.NONE || control.kind>max(Modifier_Kind) || control.slot>=POSE_CONSTRAINTS || control.kind==.Grounding && control.slot!=0 || !profile_weight(control.weight) || !finite(control.fade) || control.fade<0 {
@@ -64,7 +65,7 @@ modifier_controls_prepare :: proc(next,previous:^Modifier_Runtime) -> bool {
         slot:u16
         rig:=core.NONE
         for &value,row in table.values {
-            if rig!=value.rig {rig=value.rig;slot=0}
+            if rig!=table.entities[row] {rig=table.entities[row];slot=0}
             state:=Modifier_Control_State{rig=rig,kind=kind,slot=slot,row=row,base_weight=value.weight,base_enabled=value.enabled,weight=1,start=1,target=1,enabled=true}
             if found:=modifier_control_state(previous,rig,kind,slot);found!=nil && modifier_same_operation(previous,next,rig,kind,slot) {
                 state.weight,state.start,state.target,state.elapsed,state.duration,state.enabled=found.weight,found.start,found.target,found.elapsed,found.duration,found.enabled
@@ -95,7 +96,11 @@ modifier_control_apply :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control
     }
     switch state.kind {
     case .IK: apply(&runtime.ik,state.row,weight,enabled)
-    case .Look: apply(&runtime.look,state.row,weight,enabled)
+    case .Look:
+        apply(&runtime.look,state.row,weight,enabled)
+        turning:=f32(0)
+        if state.turning && state.elapsed<state.duration {alpha:=state.elapsed/state.duration;turning=1-alpha*alpha*(3-2*alpha)}
+        if state.row>=0 && state.row<len(runtime.look.values) && runtime.look.values[state.row].turning!=turning {core.edit_at(&runtime.look,state.row).turning=turning}
     case .Grounding: apply(&runtime.grounding,state.row,weight,enabled)
     case .Limit: apply(&runtime.limits,state.row,weight,enabled)
     case .Chain_IK: apply(&runtime.chain_ik,state.row,weight,enabled)
@@ -119,8 +124,23 @@ modifier_fade_remove :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_S
     state.fade_row=0
 }
 
+// Moves the weight of a control from the one it has to target over fade seconds; turning, a Look
+// turns from its former target over them too.
 @(private)
-modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,problems:^core.Problems,dt:f32) {
+modifier_fade_to :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_State,target:f32,enabled:bool,fade:f32,turning:=false) -> bool {
+    state.turning=turning && fade>0
+    if fade>0 && (state.weight!=target || state.turning) && state.fade_row==0 {
+        row:=int((uintptr(state)-uintptr(raw_data(runtime.controls)))/size_of(Modifier_Control_State))
+        if append(&runtime.fades,u32(row))!=1 {return false}
+        state.fade_row=u32(len(runtime.fades))
+    }
+    state.start,state.target,state.enabled,state.duration,state.elapsed=state.weight,target,enabled,fade,0
+    if fade==0 || state.start==target && !state.turning {state.weight=target;state.elapsed=state.duration;modifier_fade_remove(runtime,state)}
+    return true
+}
+
+@(private)
+modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,problems:^core.Problems,dt:f32) {
     if requests==nil {return}
     for control in core.take(&requests.controls) {
         control:=control
@@ -140,13 +160,7 @@ modifier_controls_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requ
         }
         target:=control.weight if control.enabled else f32(0)
         if state.target==target && state.enabled==control.enabled {continue}
-        if control.fade>0 && state.weight!=target && state.fade_row==0 {
-            row:=int((uintptr(state)-uintptr(raw_data(runtime.controls)))/size_of(Modifier_Control_State))
-            if append(&runtime.fades,u32(row))!=1 {memory_problem(problems,control.rig,"the fade of a control of its .character");continue}
-            state.fade_row=u32(len(runtime.fades))
-        }
-        state.start,state.target,state.enabled,state.duration,state.elapsed=state.weight,target,control.enabled,control.fade,0
-        if control.fade==0 || state.start==target {state.weight=target;state.elapsed=state.duration;modifier_fade_remove(runtime,state)}
+        if !modifier_fade_to(runtime,state,target,control.enabled,control.fade) {memory_problem(problems,control.rig,"the fade of a control of its .character");continue}
         modifier_control_apply(runtime,state)
     }
     if !finite(dt) || dt<=0 {return}

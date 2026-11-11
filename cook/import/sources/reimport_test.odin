@@ -13,7 +13,9 @@ import "core:testing"
 import "core:time"
 import stbi "vendor:stb/image"
 import "mirai:asset"
+import "mirai:core"
 import importer "mirai:cook/import"
+import "mirai:cook/prefab"
 import "mirai:cook/import/gltf"
 import "mirai:project"
 import "mirai:std/base"
@@ -36,7 +38,7 @@ box_source :: proc(folder,file:string,first,second:string,roughness:="0.5") -> s
 @(private="file")
 box_import :: proc(t:^testing.T,source,root:string) -> (report:importer.Import_Report,ok:bool) {
     error:importer.Error
-    report,error=import_source(source,{root=root,textures=.Uncompressed})
+    report,error=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed})
     ok=testing.expectf(t,error.code==.None,"%s: %s",source,error.message)
     return
 }
@@ -140,8 +142,8 @@ a_source_keeps_the_ids_of_its_import_with_its_sidecar_and_a_copy_without_it_is_a
     }
     testing.expect_value(t,len(moved.warnings),0)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    prefab,_:=written_of(&moved,asset.KIND_SCENE,"crate")
-    if a,loaded:=read_asset(t,prefab,&types);loaded {
+    scene,_:=written_of(&moved,asset.KIND_SCENE,"crate")
+    if a,loaded:=read_asset(t,scene,&types);loaded {
         info,_:=asset.import_info(&a,&types)
         testing.expect(t,info!=nil && string_of(info.source[:])=="assets/props/crate.gltf","the import names the source where it is now")
         asset.asset_close(&a)
@@ -149,7 +151,7 @@ a_source_keeps_the_ids_of_its_import_with_its_sidecar_and_a_copy_without_it_is_a
 
     // The same bytes without the sidecar: an import of its own, which takes nothing of the other.
     copy:=box_source(assets,"copy.gltf","Wood","Paint","0.8")
-    second,second_error:=import_source(copy,{root=root,textures=.Uncompressed})
+    second,second_error:=import_source(copy,{world=prefab.import_world(t),root=root,textures=.Uncompressed})
     if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return};defer importer.report_destroy(&second)
     testing.expect(t,second.prefab!={} && second.prefab!=first.prefab,"the copy writes a prefab of its own")
     for written in second.assets {
@@ -193,7 +195,7 @@ a_material_renamed_in_the_source_is_a_new_one_and_a_part_taken_out_is_left_alone
     testing.expect(t,header.owner=={} && .Cooked in header.flags,"the part taken out keeps its id and its import, and stays out of its owner")
 
     // Forced, every material and texture is a part.
-    forced,forced_ok:=import_source(source,{root=root,textures=.Uncompressed,parts=.All,ignore_stored=true})
+    forced,forced_ok:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed,parts=.All,ignore_stored=true})
     if !testing.expectf(t,forced_ok.code==.None,"%s",forced_ok.message) {return};defer importer.report_destroy(&forced)
     for written in forced.assets {
         if written.kind==asset.KIND_MATERIAL || written.kind==asset.KIND_TEXTURE {testing.expectf(t,header_of(written.path).owner==first.prefab,"%s is forced into the prefab",written.name)}
@@ -268,7 +270,7 @@ a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^t
     if root=="" {return}
     atlas_images(assets)
     source:=atlas_source(assets,"props.gltf",{"atlas","waves","across","shared"})
-    report,error:=import_source(source,{root=root,textures=.Uncompressed})
+    report,error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&report)
     reason :: proc(material:string) -> string {
         switch material {
@@ -300,7 +302,7 @@ two_models_with_the_same_image_get_a_texture_each_and_neither_touches_the_other 
     atlas_images(fmt.tprintf("%s/second",assets))
     cache:=fmt.tprintf("%s/cache/textures",root)
     first_source:=atlas_source(fmt.tprintf("%s/first",assets),"crate.gltf",{"atlas","waves","across","shared"})
-    first,error:=import_source(first_source,{root=root,texture_cache=cache})
+    first,error:=import_source(first_source,{world=prefab.import_world(t),root=root,texture_cache=cache})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&first)
     atlas,_:=written_of(&first,asset.KIND_MATERIAL,"Atlas")
     texture,_:=written_of(&first,asset.KIND_TEXTURE,"atlas")
@@ -317,7 +319,7 @@ two_models_with_the_same_image_get_a_texture_each_and_neither_touches_the_other 
     cached,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
 
     second_source:=atlas_source(fmt.tprintf("%s/second",assets),"barrel.gltf",{"atlas","waves","across","shared"})
-    second,second_error:=import_source(second_source,{root=root,texture_cache=cache})
+    second,second_error:=import_source(second_source,{world=prefab.import_world(t),root=root,texture_cache=cache})
     if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return};defer importer.report_destroy(&second)
     second_atlas,wrote_material:=written_of(&second,asset.KIND_MATERIAL,"Atlas")
     second_texture,wrote_texture:=written_of(&second,asset.KIND_TEXTURE,"atlas")
@@ -346,9 +348,10 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     sources:=[3]string{crate,barrel,fmt.tprintf("%s/sign.png",assets)}
     Built :: struct {path:string,id:base.Asset_Id,bytes:[]u8}
     built:=make([dynamic]Built,context.temp_allocator)
-    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root)}
+    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root),library=test_library}
+    context.user_ptr=prefab.import_world(t)
     for source in sources {
-        report,error:=import_source(source,{root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache})
+        report,error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache})
         if !testing.expectf(t,error.code==.None,"%s: %s",source,error.message) {return}
         for written in report.assets {append(&built,Built{path=strings.clone(written.path,context.temp_allocator),id=written.id})}
         importer.report_destroy(&report)
@@ -483,7 +486,7 @@ the_sources_of_a_plugin_format_build_in_the_cache_and_a_source_outside_the_asset
     os.make_directory_all(outside)
     os.make_directory_all(fmt.tprintf("%s/assets",project))
     box:=box_source(outside,"box.gltf","Wood","Paint")
-    _,refused:=import_source(box,{root=project,textures=.Uncompressed})
+    _,refused:=import_source(box,{world=prefab.import_world(t),root=project,textures=.Uncompressed})
     testing.expect(t,refused.code==.Not_Found && strings.contains(refused.message,"assets") && !os.exists(fmt.tprintf("%s.import",box)),refused.message)
 
     formats:=make([dynamic]importer.Format,context.temp_allocator)
@@ -492,7 +495,7 @@ the_sources_of_a_plugin_format_build_in_the_cache_and_a_source_outside_the_asset
     crate:=box_source(fmt.tprintf("%s/assets",project),"crate.probe","Wood","Paint")
     text,_:=os.read_entire_file(crate,context.temp_allocator)
     _=os.write_entire_file(crate,transmute([]u8)strings.concatenate({PROBE_MAGIC,string(text)},context.temp_allocator))
-    first,error:=import_source(crate,{root=project,textures=.Uncompressed},formats[:])
+    first,error:=import_source(crate,{world=prefab.import_world(t),root=project,textures=.Uncompressed},formats[:])
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&first)
     mesh,has_mesh:=written_of(&first,asset.KIND_MESH,"Box")
     testing.expect(t,has_mesh && strings.contains(mesh.path,"/.mirai/imported/"),"what a plugin format gives that nobody edits is of the cache")
@@ -501,10 +504,11 @@ the_sources_of_a_plugin_format_build_in_the_cache_and_a_source_outside_the_asset
     testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",project))==nil)
     lacking:=sync(project,caches,context.temp_allocator)
     testing.expectf(t,len(lacking.failures)==1 && strings.contains(lacking.failures[0],"no format"),"%v",lacking)
-    caches.plugins=proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,release:proc(state:rawptr),state:rawptr,problem:string) {
+    context.user_ptr=prefab.import_world(t)
+    caches.library=proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string) {
         listed:=make([]importer.Format,1,allocator)
         listed[0]=probe_format()
-        return listed,nil,nil,""
+        return listed,(^core.World_Info)(context.user_ptr),nil,nil,""
     }
     synced:=sync(project,caches,context.temp_allocator)
     testing.expectf(t,synced.sources==1 && synced.imported==1 && len(synced.failures)==0,"%v",synced)
@@ -560,7 +564,7 @@ importing_over_a_skeleton_of_an_older_version_says_what_it_did_not_keep :: proc(
     root,folder:=test_project(t,"old-skeleton")
     if folder=="" {return}
     source:=copy_in(root,FIXTURES,"skeletal-analytic.glb")
-    first,error:=import_source(source,{textures=.Uncompressed})
+    first,error:=import_source(source,{world=prefab.import_world(t),textures=.Uncompressed})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     defer importer.report_destroy(&first)
     skeleton:importer.Written
@@ -570,7 +574,7 @@ importing_over_a_skeleton_of_an_older_version_says_what_it_did_not_keep :: proc(
     old:=asset.SKELETON_VERSION-1
     data[10],data[11]=u8(old),u8(old>>8)
     testing.expect(t,os.write_entire_file(skeleton.path,data)==nil)
-    again,failed:=import_source(source,{textures=.Uncompressed})
+    again,failed:=import_source(source,{world=prefab.import_world(t),textures=.Uncompressed})
     if !testing.expectf(t,failed.code==.None,"%s",failed.message) {return}
     defer importer.report_destroy(&again)
     told:=false
