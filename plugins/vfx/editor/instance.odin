@@ -76,7 +76,7 @@ bindings_section :: proc(c:editor.Inspector_Context) -> bool {
     if found==nil {return true}
     bindings,_:=editor.entity_get(c.world,active,vfx.Particle_Bindings)
     for resource,at in found.resources[:min(len(found.resources),vfx.RESOURCES)] {
-        if resource.kind!=.Surface && resource.kind!=.Bones && resource.kind!=.Grid && resource.kind!=.Emitter {continue}
+        if resource.kind!=.Surface && resource.kind!=.Grid && resource.kind!=.Emitter {continue}
         slot:=at
         for &source,i in bindings.sources {
             if base.text_get(source.resource[:])==resource.name {slot=i;break}

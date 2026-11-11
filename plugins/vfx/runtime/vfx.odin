@@ -144,15 +144,14 @@ particles_tick :: proc(
     }
     channels_step(clocks,core.take(&births.queue),listeners,time)
     // The clocks of the emitters that went, or whose entity is no longer placed.
-    rows:=core.read(emitters)
-    core.entity_map_prune(&clocks.clocks,rows,core.changes(rows,&clocks.seen_emitters))
+    core.entity_map_prune(&clocks.clocks,emitters,core.changes(emitters,&clocks.seen_emitters))
     core.entity_map_prune(&clocks.clocks,worlds,core.changes(worlds,&clocks.seen_worlds))
     dt:=time.playing?time.dt:max(frame.dt,0)
     requests_apply(requests,emitters,overrides,clocks,problems)
     a:=assets
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
-    placed:=core.join(rows,worlds)
+    placed:=core.join(emitters,worlds)
     for e,emitter,world in core.each_joined(&placed) {
         clock:=clock_of(clocks,e)
         if clock==nil {continue}
@@ -172,7 +171,7 @@ particles_tick :: proc(
         if time.playing && clock.done && emitter.destroy_when_done {append(&done,e)}
     }
     for e in done {
-        if subtree_done(rows,clocks,hierarchy,e) {core.destroy_tree(entities.entities,hierarchy,e)}
+        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy_tree(entities.entities,hierarchy,e)}
     }
 }
 

@@ -88,7 +88,8 @@ Values of an instance:
 
 What an emitter reads besides its values are resources, in rows that the GPU finds through the
 emitter: first the surface or bones of its shape, then those that its program declares
-(`//! resource name surface|channel|bones|grid`), in their order. A grid is the one that the
+(`//! resource name surface|channel|grid|emitter|data`), in their order. Bones are of the `Bones`
+shape alone: no program resource reads them. A grid is the one that the
 emitter binds or one of the world by its name ([grids](#grids-and-stages)).
 
 - A surface is the mesh that an entity draws in the frame, as the renderer has it: a skeleton's
@@ -106,14 +107,14 @@ emitter binds or one of the world by its name ([grids](#grids-and-stages)).
   shape, `sources` for those of the program: the source of its name or, with none, the unnamed one
   of its index) and, for the shape, what the emitter draws. An effect names no mesh: one that must
   emit from a given mesh is a prefab whose emitter binds that mesh's entity. A resource without a
-  source has neither surface nor bones: the program reads it with `valid` false.
+  source has no surface: the program reads it with `valid` false.
 - A grid: that of the entity that binds its source or that of the world's grid it names (`grid`);
   without a binding, the first grid that its stages walk is that of the emitter's entity, if it has
   one, and any other that of the world with the resource's name. A binding to what does not exist
   reads nothing: it is not looked up elsewhere. So each fluid runs on its own and several emitters
   read different grids with the same program.
 - Details shows of `Particle_Bindings` the surface and one row per resource of the program that an
-  entity reads (surface, bones, grid or emitter), with the name that the program gives it, and for
+  entity reads (surface, grid or emitter), with the name that the program gives it, and for
   a grid another with the name of the grid it reads; it writes the source of its index, unnamed
   (`bindings_section`).
 - A surface is sampled by area and bones by length, on the GPU: the summed length of the bones goes
