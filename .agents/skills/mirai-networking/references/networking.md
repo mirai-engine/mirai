@@ -154,6 +154,14 @@ command. `budget` limits the bytes of a channel per update.
   queues what has room, and the channel takes nothing else until it is in, so a message has no
   size limit. A message longer than `PIECE_BYTES` arrives in pieces (`Command.more`), which the
   receiver joins; the library's own reliable channel takes only whole messages.
+- **Window.** The chunks a reliable channel keeps in flight grow by what the path acknowledges
+  (`channel_window`, each congestion interval), so they double each round trip while they hold the
+  channel back. Twice what the connection's rate sends in a round trip bounds them,
+  so congestion control and `send_rate` decide what a stream takes, and `Channel_Desc.window`, a
+  power of two the same at both ends, is the most a channel holds and receives ahead. A loss does
+  not shrink the window: its resend waits a round trip with the chunks after it acknowledged.
+- While objects wait for the update, the reliable game channels leave half of each datagram to
+  them: a part that streams does not starve the state.
 - The library channels count their queue the same way: `event_send` of a `Reliable` event and the
   authority requests return `Full` and send nothing if they do not fit in the queue of some
   connection they may go to, and the sender retries. The connection is not closed;

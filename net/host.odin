@@ -306,8 +306,11 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
         if c.queue_bytes<=0 {c.queue_bytes=32<<10}
         if c.kind==.Reliable {
             c.max_message_bytes=max(int)
+            if c.window<=0 {c.window=CHUNK_WINDOW}
+            if c.window>MAX_WINDOW || c.window&(c.window-1)!=0 {return refuse(h,"channels.window","a power of two up to 4096; 0 takes 64")}
         } else {
             c.max_message_bytes=c.max_message_bytes<=0?MAX_UNRELIABLE_BYTES:min(c.max_message_bytes,MAX_UNRELIABLE_BYTES)
+            c.window=0
         }
         h.channels[i]=c
     }
@@ -315,7 +318,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     d.channels=nil
     if d.protocol!=nil {
         if !d.protocol.sealed {return refuse(h,"protocol","sealed by protocol_seal")}
-        h.channels[CHANNEL_SYSTEM]={kind=.Reliable,queue_bytes=64<<10,max_message_bytes=RELIABLE_EVENT_MAX_BYTES+16}
+        h.channels[CHANNEL_SYSTEM]={kind=.Reliable,queue_bytes=64<<10,max_message_bytes=RELIABLE_EVENT_MAX_BYTES+16,window=CHUNK_WINDOW}
         h.channels[CHANNEL_EVENTS]={kind=.Unreliable,queue_bytes=16<<10,max_message_bytes=EVENT_MAX_BYTES+16}
     }
     h.start=time.tick_now()
@@ -351,7 +354,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     b.reserve_bytes=PACKET_BYTES*2
     b.reserve_count=PACKET_BYTES*8/15
     for i in 0..<MAX_CHANNELS {
-        if h.channels[i].kind==.Reliable {b.reserve_bytes+=CHUNK_WINDOW*CHUNK_BYTES+PIECE_BYTES}
+        if h.channels[i].kind==.Reliable {b.reserve_bytes+=h.channels[i].window*CHUNK_BYTES+PIECE_BYTES}
     }
     if d.replication.records<=0 {d.replication.records=d.protocol!=nil?4096:1024}
     if d.protocol!=nil && !h.failed {

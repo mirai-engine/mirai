@@ -249,7 +249,7 @@ net_test_session :: proc(s:^Net_Session,w:rawptr,info:^core.World_Info,app:^host
     if !protocol_build(s,core.world_ref(w,info)) {return false}
     exchange:=transport
     if exchange.send==nil {exchange=wire.sim_endpoint_transport(network,endpoint)}
-    desc:=wire.Host_Desc{mode=mode,protocol=&s.protocol,transport=exchange,protocol_id=99,seed=u64(endpoint+1),tick_rate=int(1/tick_dt+0.5),replication=s.desc.replication,hold=s.follows,allocator=context.allocator}
+    desc:=wire.Host_Desc{mode=mode,protocol=&s.protocol,transport=exchange,protocol_id=99,seed=u64(endpoint+1),tick_rate=int(1/tick_dt+0.5),replication=s.desc.replication,hold=s.follows,allocator=context.allocator,channels=JOURNAL_CHANNELS}
     desc.replication.max_objects=s.desc.max_objects
     if wire.host_init(&s.host,desc)!=.None {return false}
     s.host_ready,s.mode=true,mode

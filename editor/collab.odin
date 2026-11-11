@@ -45,7 +45,7 @@ COLLAB_PRESENCE_INTERVAL :: 1.0/12
 COLLAB_EDIT_INTERVAL :: 1.0/30
 COLLAB_PRESENCE_SEEN :: 3.0 // seconds
 COLLAB_MESSAGE_BYTES :: 1<<30 // what one message may hold: a peer that sends more is cut off
-COLLAB_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10},{kind=.Unreliable}}
+COLLAB_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10,window=512},{kind=.Unreliable}}
 COLLAB_HELLO_TIMEOUT :: 10.0
 COLLAB_WORKER_INTERVAL :: 2*time.Millisecond // between updates of the network half
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own

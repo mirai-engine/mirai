@@ -366,6 +366,9 @@ congestion_update :: proc(h:^Host,p:^Peer) {
         if p.window_min>0 {p.min_rtt=p.window_min}
         p.window_min,p.window_time=0,now
     }
+    for &c in p.channels {
+        if c.active && c.kind==.Reliable {channel_window(&c,p.rtt,p.rate)}
+    }
     p.stats.send_limit=f32(p.rate)
     p.cc_time,p.cc_rtt,p.cc_samples,p.cc_limited=now,0,0,false
     p.cc_acked,p.cc_lost=p.stats.packets_acked,p.stats.packets_lost
@@ -513,7 +516,7 @@ handshake_accept :: proc(h:^Host,p:^Peer) {
 host_protocol_hash :: proc(h:^Host) -> u64 {
     hash:=base.hash_combine(h.desc.protocol!=nil?h.desc.protocol.hash:0,TRANSPORT_VERSION)
     for c in h.channels[:USER_CHANNELS] {
-        hash=base.hash_combine(hash,u64(c.kind)<<32|u64(c.max_message_bytes))
+        hash=base.hash_combine(base.hash_combine(hash,u64(c.kind)<<32|u64(c.max_message_bytes)),u64(c.window))
     }
     return hash
 }
@@ -797,7 +800,9 @@ peer_send :: proc(h:^Host,p:^Peer) {
         ack_bits_write(&w,&p.recv_bits,p.recv_any && p.recv_counter>p.ack_known?int(min(p.recv_counter-p.ack_known,ACK_WINDOW)):0)
         serial.bit_write(&w,u64(clamp((b.now-p.recv_time)*1000,0,255)),8)
         wrote:=time_write(h,p,&w,seq)
-        if channels_write(h,p,&w,SECTION_RESERVE) {wrote=true}
+        r:=&b.repl
+        yield:=r.key_cursor<r.key_count && budget>0?min(budget,PACKET_BYTES*4):0
+        if channels_write(h,p,&w,SECTION_RESERVE,yield) {wrote=true}
         more:=false
         last:=packet+1>=h.desc.packets_per_update || u16(p.send_seq+1-p.sent_tail)>=SENT_WINDOW-1 || p.tokens<=PACKET_BYTES
         if objects_write(h,p,&w,seq,&budget,&more,last) {wrote=true}

@@ -205,9 +205,13 @@ it leaves) and applies what the journal hands it; the journal owns the rest:
   the parts of the key over a region, or a base (`journal_resync`, with what the client holds,
   `since`, in the library's terms); a server offers a base itself (`journal_offer`), as to each
   connection that enters its world. The library writes each part (`journal_serves`,
-  `journal_part`); the journal packs it in LZ and sends it within `JOURNAL_BUDGET` bytes a tick, and
-  the client applies it in its place among the operations. A new ask waits for the answer to the
-  last one, or `JOURNAL_ASK_TICKS`.
+  `journal_part`); the journal packs it in LZ, tells it in its place among the operations
+  (`Net_Journal_Part`, numbered) and streams its bytes whole on the session's channel of parts
+  (`JOURNAL_CHANNEL`), handing a connection more while less than `JOURNAL_QUEUE` of it waits, so
+  a part goes as fast as the connection carries. The client applies it in that place once its
+  bytes are here; bytes that come before the part was told wait for it. A new ask waits for the
+  answer to the last one, or `JOURNAL_ASK_TICKS` while no told part is still arriving; a base on
+  its way stands for the operations it covers.
 - A scene that replaces the world forgets the journal (`journal_world`).
 
 A third library declares its operation bytes, applies them and writes its parts: nothing else.
@@ -793,7 +797,7 @@ one set by whoever tests those functions by hand).
   `history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_and_corrections`
   and `a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from` (rewind).
 - Operation journal (`journal_test.odin`):
-  `operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_within_the_budget`
+  `operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_whole`
   (in-memory network with loss, a late joiner and UDP on loopback),
   `a_correction_hands_each_operation_again_at_its_tick_and_never_twice` and
   `what_a_client_receives_without_memory_is_left_out_and_reported`.

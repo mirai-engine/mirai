@@ -207,12 +207,22 @@ Outgoing :: struct {
     at:u32, // of its value in Net_Outbox.bytes
 }
 
+// A part a journal hands to stream whole to one connection on its channel of
+// parts (JOURNAL_CHANNEL).
+Outgoing_Part :: struct {
+    to:Connection,
+    bytes:[]u8, // its head and its LZ bytes
+    sent:int,   // bytes of it the host took
+}
+
 // Not copied with the world: a correction that brings back an older copy
 // keeps what waits to be sent.
 @(storage,queue,copy=false)
 Net_Outbox :: struct {
     queue:core.Queue(Outgoing),
     bytes:[dynamic]u8,
+    parts:[dynamic]Outgoing_Part, // in order for each connection, none waiting for another connection's
+
     replaying:bool `mirai:"readonly"`, // what runs now runs again (core.Time.resimulating): it sent the first time
 }
 
