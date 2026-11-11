@@ -70,4 +70,6 @@ err:=effect.particle_save("assets/particles/dust.particle", &types, {id=id, info
   `engine.diagnostics`. An emitter that finds no room in the particle pool reports
   `vfx.capacity`.
 - `destroy_when_done` never fires with `loop` on, unless the emitter is stopped.
+- Particles that hold NaN or Inf report `vfx.nan` once an emitter is watched
+  (`particle.instance.inspect`), naming the fields of its program that hold them.
 - Requests go in `fixed`, so a rollback does not draw them twice.

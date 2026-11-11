@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -1624,5 +1625,138 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 	testing.expectf(t, open[0].r > 40 && open[1].r > 40, "without fog both sprites show: %v", open)
 	testing.expectf(t, misty[0].r < open[0].r * 0.3, "the sprite behind the fog %v is dimmed by it, from %v", misty[0], open[0])
 	testing.expectf(t, abs(misty[1].r - open[1].r) <= 0.1 * open[1].r + 2, "the sprite in front of the fog %v shows as without it %v", misty[1], open[1])
+	expect_clean(t, f.device)
+}
+
+// What the passes of the debugging tools read back of a world, in the
+// Simulate stage after the particles: the counters of every emitter and the
+// rows of one.
+@(private = "file")
+Inspect_Pass :: struct {
+	sync:   ^Particle_Sync,
+	id:     u64,
+	count:  u32,
+	states: bool,
+	poses:  [rhi.MAX_FRAMES_IN_FLIGHT + 2]Emitter_Pose,
+	posed:  int,
+}
+
+@(private = "file")
+inspect_pass :: proc(pass: ^erender.Pass, user: rawptr) {
+	r := cast(^Inspect_Pass)user
+	if r.states {states_read(pass, r.sync)}
+	if r.id == 0 {return}
+	if pose, ok := emitter_read(pass, r.sync, r.id, r.count); ok {
+		r.poses[r.posed % len(r.poses)] = pose
+		r.posed += 1
+	}
+}
+
+// A frame of the emitters of a world with the passes of read.
+@(private = "file")
+inspect_frame :: proc(t: ^testing.T, f: ^Gpu_Fixture, sync: ^Particle_Sync, emitters: []Emitter_Desc, read: ^Inspect_Pass, time: f32) {
+	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	gpu.scene_world(&f.renderer, sync.world)
+	testing.expect(t, frame_emitters(f, sync, emitters, 1.0 / 60))
+	erender.frame_pass(f.app.renderer, .Simulate, inspect_pass, read)
+	testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = time}), f.renderer.error)
+}
+
+// Each pass of the particles marks the interval the profiler lists by its name.
+@(test)
+particle_passes_mark_the_intervals_the_profiler_lists :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	emitter := test_emitter(1, {0, 0, 0})
+	emitter.info.lifetime = {5, 5}
+	read := Inspect_Pass{sync = &f.sync}
+	seen: map[string]bool
+	defer delete(seen)
+	for i in 0 ..< 6 {
+		emitter.spawns = test_burst(16) if i == 0 else {}
+		inspect_frame(t, f, &f.sync, {emitter}, &read, f32(i) / 60)
+		for timing in gpu.renderer_stats(&f.renderer).timings {
+			if strings.has_prefix(timing.name, "particle") {seen[strings.clone(timing.name, context.temp_allocator)] = true}
+		}
+	}
+	for name in ([]string{"particle begin", "particle emit", "particle simulate", "particle finish", "particle lights", "particle sprites"}) {
+		testing.expectf(t, seen[name], "the profiler lists %q: %v", name, seen)
+	}
+	expect_clean(t, f.device)
+}
+
+// The counters of every emitter of a world come back in one readback, as
+// many alive as the rows of each hold.
+@(test)
+particle_pool_overview_counts_every_emitter_as_its_rows :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	f.sync.world_id = {index = 1}
+	a, b := test_emitter(1, {0, 0, 0}), test_emitter(2, {1, 0, 0})
+	a.info.lifetime, b.info.lifetime = {5, 5}, {5, 5}
+	b.capacity = 32
+	for e, which in ([]^Emitter_Desc{&a, &b}) {
+		read := Inspect_Pass{sync = &f.sync, id = e.id, count = e.capacity, states = true}
+		for i in 0 ..< 4 + rhi.MAX_FRAMES_IN_FLIGHT {
+			a.spawns = test_burst(10) if which == 0 && i == 0 else {}
+			b.spawns = test_burst(7) if which == 0 && i == 0 else {}
+			inspect_frame(t, f, &f.sync, {a, b}, &read, f32(i) / 60)
+		}
+		rows, ok := emitter_rows(f.app.renderer, &f.sync, read.poses[:])
+		if !testing.expectf(t, ok, "the rows of emitter %d came back", e.id) {continue}
+		held: u32
+		for p in rows.particles {if row_held(p) {held += 1}}
+		list, frame, listed := pool_overview(f.app.renderer, &f.sync)
+		testing.expect(t, listed && frame > 0 && len(list) == 2)
+		for row in list {
+			if row.id != e.id {continue}
+			testing.expect_value(t, row.alive, held)
+			testing.expect_value(t, row.capacity, e.capacity)
+			testing.expect_value(t, row.alive, u32(10) if which == 0 else u32(7))
+			testing.expect(t, row.bytes >= u64(e.capacity) * size_of(Gpu_Particle))
+		}
+		// The most alive first.
+		if len(list) == 2 {testing.expect(t, list[0].alive >= list[1].alive)}
+	}
+	expect_clean(t, f.device)
+}
+
+// A program that writes NaN into its Attributes is the vfx.nan problem of
+// its emitter, which names that attribute and not the finite one.
+@(test)
+particle_rows_that_are_not_finite_are_a_problem_naming_the_attribute :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	f.sync.world_id = {index = 1}
+	emitter := test_emitter(1, {0, 0, 0})
+	emitter.info.lifetime = {5, 5}
+	emitter.owner = core.Entity(1)
+	base.text_set(emitter.info.program[:], "Glitch")
+	if !testing.expect_value(t, particle_program_check(&f.assets, &emitter.info, nil, nil, &emitter.program), "") {return}
+	program := erender.program_find(&f.assets, "Glitch", .Vfx)
+	if !testing.expect(t, program != nil && len(program.attribute_fields) == 2) {return}
+	read := Inspect_Pass{sync = &f.sync, id = emitter.id, count = emitter.capacity}
+	for i in 0 ..< 4 + rhi.MAX_FRAMES_IN_FLIGHT {
+		emitter.spawns = test_burst(5) if i == 0 else {}
+		inspect_frame(t, f, &f.sync, {emitter}, &read, f32(i) / 60)
+	}
+	rows, ok := emitter_rows(f.app.renderer, &f.sync, read.poses[:])
+	if !testing.expect(t, ok) {return}
+	scan := rows_scan(&rows, program.attribute_fields)
+	testing.expect_value(t, scan.particles, 5)
+	testing.expect(t, scan.count == 1 && scan.names[0] == "heat", "only heat holds NaN")
+	problems: core.Problems
+	rows_report(&problems, emitter.owner, scan, "Glitch")
+	testing.expect_value(t, problems.count, 1)
+	text := base.text_get(problems.entries[0].text[:])
+	testing.expectf(t, base.text_get(problems.entries[0].code[:]) == "vfx.nan" && strings.contains(text, "heat") && strings.contains(text, "Glitch") && !strings.contains(text, "calm"), "%s", text)
 	expect_clean(t, f.device)
 }

@@ -1127,6 +1127,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             }
         }
         attributes:int
+        attribute_fields:[]abi.Program_Attribute
         vertex:abi.Program_Vertex
         if of==.Surface {
             problem:string
@@ -1137,6 +1138,16 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
         }
         if of==.Vfx {
             attributes=e.layouts[1].size
+            attribute_fields=make([]abi.Program_Attribute,len(e.layouts[1].fields),allocator)
+            for field,i in e.layouts[1].fields {
+                kind:=abi.Program_Kind.Float
+                switch field.scalar {
+                case "int32": kind=.Int
+                case "uint32": kind=.Uint
+                case "bool": kind=.Bool
+                }
+                attribute_fields[i]={strings.clone(field.name,allocator),kind,u8(clamp(field.count,1,4)),u16(field.offset)}
+            }
             // The include of the program alone: the stages of each program are compiled with it.
             own,failure:=vfx_program_include(name,prelude,relative,layout,e.layouts[1],stages,e.said)
             if failure!="" {append(&refused,strings.clone(failure,allocator));continue}
@@ -1162,7 +1173,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             dispatchers_add(&dispatchers,of,id,name,relative,layout,e.coverage,string(e.alpha[:]) if e.coverage else "")
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),vertex=vertex})
+        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),vertex=vertex})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {

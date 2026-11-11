@@ -375,6 +375,8 @@ To the GPU:
   them.
 - The `finish` pass counts in the `particles` counters (`erender.counters`): those alive and the
   emitters that have any, two frames back.
+- Each pass marks a GPU interval by its name (`particle begin` ... `particle sprites`): the
+  profiler lists time per pass, not per emitter, because a pass goes over every emitter at once.
 - Asking for a world's passes is asking for them once per frame even if several lists arrive.
 
 ### Births and steps
@@ -413,9 +415,7 @@ To the GPU:
   of its program have (in the pool or in the emitter table) and filters those of others; events are
   dispatched only for the programs of some destination emitter. The spans and pipelines are looked
   up again when a range, a program or a destination, or the shaders change.
-- `particle.instance.inspect` copies the particles of the emitter it looks at with their
-  Attributes, to debug a program: the editor part asks for that readback in a `Simulate` pass of
-  its own (`editor/watch.odin`), so a game binary has none of it.
+- [Debugging](vfx-editor.md#debugging) (`runtime/inspect.odin`) runs only in editor passes.
 - The resource functions of `mirai_vfx.slang` are defined by `particle_programs.slang` over the
   emitter's resource rows (`ctx.emitter`), the areas buffer and the frame's channel births.
 
@@ -544,7 +544,9 @@ they light everything within their reach, without shadow rays or a place in thos
   behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's
   world texture (`count_ground.slang`), channel births and their rollback (`testdata/gather.slang`),
   reports, sprites behind a `fog` box dimmed by it and one in front of it not, all the modes
-  around glass without validation errors and stable frames without allocating.
+  around glass without validation errors and stable frames without allocating; the debugging
+  reads: the intervals of the passes, the counters of every emitter against its rows and a
+  program that writes NaN (`glitch.slang`; `inspect_test.odin` without the GPU).
 - `mirai test plugins/vfx/editor` (with `-collection:plugins=<root>/plugins`): the effects document
   (`document_test.odin`).
 - In the demo editor, without a window and with validation: the physics gallery launches

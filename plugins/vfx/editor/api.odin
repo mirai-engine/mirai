@@ -54,6 +54,26 @@ Api_Particle_Control_Result :: struct {
     queued:bool `mirai:"label=It takes the request in its next fixed step"`,
 }
 
+@(private)
+Api_Particle_Pool_Params :: struct {
+    world:Particle_World `mirai:"optional,label=Edit: the document; Play: the Play of the caller"`,
+}
+
+Pool_Result :: struct {
+    world:string,
+    frame:u64 `mirai:"label=Of the renderer when the GPU had these counters; 0: none came back yet, ask again"`,
+    capacity:u32 `mirai:"label=Particles of the pool of the world"`,
+    emitters:[]Pool_Emitter `mirai:"label=The most particles alive first"`,
+}
+Pool_Emitter :: struct {
+    id:base.Entity_Id,
+    sub:bool `mirai:"optional,label=The sub effect of the entity"`,
+    program:string `mirai:"optional,label=Its Vfx program"`,
+    alive,dead,capacity:u32,
+    bytes:u64 `mirai:"label=Of the pool its particles, lists, Attributes and counters take"`,
+    paused:bool `mirai:"optional"`,
+}
+
 Particle_Inspect_Params :: struct {
     particle:string `mirai:"optional,label=An effect: its path under the assets folder, or its id"`,
     path:string `mirai:"optional,label=particle.create: where the new effect goes, under the assets folder"`,
@@ -119,6 +139,7 @@ Instance_Gpu :: struct {
     alive:int,
     dead,births,born:u64 `mirai:"optional"`,
     frame:u64,
+    not_finite:int `mirai:"optional,label=Particles that hold NaN or Inf: the vfx.nan problem of the entity names where"`,
     particles:[]Gpu_Particle `mirai:"label=The first of them"`,
 }
 Gpu_Particle :: struct {
@@ -126,7 +147,7 @@ Gpu_Particle :: struct {
     position,velocity:[3]f32,
     age,size:f32,
     seed:u32,
-    attributes:[]f32,
+    attributes:serial.Json `mirai:"optional,label=Of its Vfx program, by the names of its fields"`,
 }
 
 @(private)
@@ -141,6 +162,8 @@ api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.instance.revert",params=type_info_of(Api_Particle_Id_Params),summary="In Edit, one undo step: the entity takes back every value and parameter of its effect.",result=type_info_of(Instance_Result),run=api_particle_instance_revert})
     editor.api_method_register(s,{name="particle.instance.apply",params=type_info_of(Api_Particle_Id_Params),summary="Writes the values and parameters the entity shows into its effect, for every entity that shows it, and reverts the entity, in one undo step.",result=type_info_of(Instance_Result),run=api_particle_instance_apply})
     editor.api_method_register(s,{name="particle.instance.control",params=type_info_of(Api_Particle_Control_Params),result=type_info_of(Api_Particle_Control_Result),defaults=&control,summary="Asks an emitter in the Play of the caller to start or stop (its active), restart, pause, resume or burst count particles, or one in the preview of the document all of them but start and stop. It takes it in its next fixed step.",run=api_particle_instance_control})
+    pool:=Api_Particle_Pool_Params{world=.Edit}
+    editor.api_method_register(s,{name="particle.pool.inspect",params=type_info_of(Api_Particle_Pool_Params),defaults=&pool,summary="Every emitter of a world with its particles alive, free slots, capacity, Vfx program and the bytes it takes of the pool, as the GPU had them some frames ago; the editor reads them from the first call on.",flags={.Read_Only},result=type_info_of(Pool_Result),run=api_particle_pool_inspect})
 }
 
 // The params of an effect: its name, path and values, its parameters (the
@@ -465,23 +488,44 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
         }
     }
     // What the GPU copied back of its particles, and the editor watches it from now on.
-    if sync,v:=host.app_world_storage(s.app,s.edit_world,vfx.Particle_Sync),vfx_editor_of(s);sync!=nil && v!=nil {
-        v.watch=u64(e)
-        if list,frame,ok:=watched(sync,v.watch,s.app.renderer);ok {
-            r.gpu.alive,r.gpu.frame=len(list),frame
-            if state,read:=watched_state(sync,s.app.renderer);read {
-                r.gpu.dead,r.gpu.births,r.gpu.born=u64(state.dead),u64(state.births),u64(state.born)
-            }
-            particles:=make([]Gpu_Particle,min(len(list),8),call.allocator)
-            for &shown,i in particles {
-                p:=list[i]
-                shown={slot=p.slot,position=p.position,velocity=p.velocity,age=p.age,size=p.size,seed=p.seed}
-                shown.attributes=make([]f32,min(len(p.attributes),48),call.allocator)
-                for &value,k in shown.attributes {value=transmute(f32)p.attributes[k]}
-            }
-            r.gpu.particles=particles
-        }
+    if v:=vfx_editor_of(s);v!=nil {
+        watch_emitter(&v.watch,w.data,u64(e))
+        if sync:=host.app_world_storage(s.app,w.data,vfx.Particle_Sync);sync!=nil {instance_gpu(s,call,sync,&v.watch,&info,&r.gpu)}
     }
+}
+
+// What the GPU copied back of the watched emitter: its counters and its
+// first particles in the world, with their Attributes by name.
+@(private)
+instance_gpu :: proc(s:^editor.Session,call:^api.Call,sync:^vfx.Particle_Sync,w:^Particle_Watch,info:^effect.Particle_Info,out:^Instance_Gpu) {
+    rows,ok:=vfx.emitter_rows(s.app.renderer,sync,w.poses[:])
+    if !ok || rows.id!=w.emitter {return}
+    fields:[]erender.Program_Attribute
+    if program,_:=particle_program_of(s,info);program!=nil {fields=program.attribute_fields}
+    out.frame=rows.frame
+    out.dead,out.births,out.born=u64(rows.state.dead),u64(rows.state.births),u64(rows.state.born)
+    out.not_finite=vfx.rows_scan(&rows,fields).particles
+    out.particles=make([]Gpu_Particle,8,call.allocator)
+    shown:=0
+    for p,slot in rows.particles {
+        if !(p.lifetime>0) {continue}
+        out.alive+=1
+        if shown==len(out.particles) {continue}
+        out.particles[shown]=gpu_particle(&rows,slot,fields,call.allocator)
+        shown+=1
+    }
+    out.particles=out.particles[:shown]
+}
+
+// A particle of rows in the world, with its Attributes by name.
+@(private)
+gpu_particle :: proc(rows:^vfx.Emitter_Rows,slot:int,fields:[]erender.Program_Attribute,allocator:=context.temp_allocator) -> Gpu_Particle {
+    p:=rows.particles[slot]
+    shown:=Gpu_Particle{slot=u32(slot),position=p.position+rows.origin,velocity=p.velocity,age=p.age,size=p.size,seed=p.seed}
+    if words:=int(rows.stride/4);words>0 && len(fields)>0 && (slot+1)*words<=len(rows.words) {
+        shown.attributes=serial.Json(vfx.attributes_text(rows.words[slot*words:][:words],fields,allocator))
+    }
+    return shown
 }
 
 @(private)
@@ -646,4 +690,34 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     case .Burst: vfx.burst(requests,e,p.count)
     }
     api.call_result(call,Api_Particle_Control_Result)^={id=editor.api_entity_id(w,e),queued=true}
+}
+
+@(private)
+api_particle_pool_inspect :: proc(s:^editor.Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Particle_Pool_Params)
+    w,ok:=particle_world(s,call,p.world)
+    if !ok {return}
+    r:=api.call_result(call,Pool_Result)
+    r.world=fmt.tprint(p.world)
+    v,sync:=vfx_editor_of(s),host.app_world_storage(s.app,w.data,vfx.Particle_Sync)
+    if v==nil || sync==nil {return}
+    watch_world_set(&v.watch,w.data)
+    v.watch.pool=true
+    r.capacity=sync.pool.capacity
+    list,frame,listed:=vfx.pool_overview(s.app.renderer,sync,call.allocator)
+    if !listed {
+        api.call_fail(call,api.SERVER_ERROR,"Out of memory for the list of emitters")
+        return
+    }
+    r.frame=frame
+    error:mem.Allocator_Error
+    if r.emitters,error=make([]Pool_Emitter,len(list),call.allocator);error!=nil {
+        api.call_fail(call,api.SERVER_ERROR,"Out of memory for the list of emitters")
+        return
+    }
+    for row,i in list {
+        desc:=&sync.pool.slots[row.slot].desc
+        r.emitters[i]={id=editor.api_entity_id(w,row.owner),sub=row.id!=u64(row.owner),alive=row.alive,dead=row.dead,capacity=row.capacity,bytes=row.bytes,paused=row.paused}
+        if row.program!=0 {r.emitters[i].program=strings.clone(base.text_get(desc.info.program[:]),call.allocator)}
+    }
 }
