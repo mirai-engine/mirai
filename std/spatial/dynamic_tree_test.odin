@@ -438,6 +438,72 @@ dynamic_tree_stays_shallow_after_sorted_insertion :: proc(t:^testing.T) {
     testing.expectf(t,dynamic_tree_height(&tree)<=26,"height %d for %d sorted boxes on a diagonal",dynamic_tree_height(&tree),COUNT)
 }
 
+// A level of 10k boxes inserted in the order it was authored, row by row: the rebuild keeps every proxy
+// with its box and user, bounds less area, and gives the same tree for the same leaves.
+@(test)
+dynamic_tree_rebuild_lowers_the_area_of_a_level_and_keeps_every_proxy :: proc(t:^testing.T) {
+    SIDE :: 100
+    trees:[2]Dynamic_Tree
+    for &tree in trees {testing.expect(t,dynamic_tree_init(&tree,{proxy_capacity=SIDE*SIDE}))}
+    defer for &tree in trees {dynamic_tree_destroy(&tree)}
+    random:=random_make(13)
+    boxes:=make([]Aabb,SIDE*SIDE)
+    defer delete(boxes)
+    for &box,i in boxes {
+        corner:=[3]f32{f32(i%SIDE)*4,random_f32(&random,0,2),f32(i/SIDE)*4}
+        box={corner,corner+random_vector(&random,0.5,3.5)}
+        for &tree in trees {dynamic_tree_insert(&tree,box,u64(i))}
+    }
+    before:=dynamic_tree_area_ratio(&trees[0])
+    testing.expect(t,dynamic_tree_rebuild(&trees[0]))
+    testing.expect(t,dynamic_tree_validate(&trees[0]))
+    after:=dynamic_tree_area_ratio(&trees[0])
+    testing.expectf(t,after<0.9*before,"area ratio %f after the rebuild, %f before",after,before)
+    kept:=0
+    for &node,proxy in trees[0].nodes[:trees[0].node_high] {
+        if node.height==0 && node.child1==NULL_NODE && node.user<SIDE*SIDE && node.aabb==boxes[node.user] && dynamic_tree_user(&trees[0],i32(proxy))==node.user {kept+=1}
+    }
+    testing.expect_value(t,kept,SIDE*SIDE)
+    testing.expect(t,dynamic_tree_rebuild(&trees[1]))
+    testing.expect(t,trees_equal(&trees[0],&trees[1]))
+}
+
+// A box that is not finite or a temporary allocator without room leave the tree as it was; after a
+// rebuild what it finds is what it holds, and edits go on.
+@(test)
+dynamic_tree_rebuild_refuses_hostile_boxes_and_lack_of_memory :: proc(t:^testing.T) {
+    m:Model
+    testing.expect(t,model_init(&m,909))
+    defer dynamic_tree_destroy(&m.tree)
+    for _ in 0..<3000 {model_step(&m)}
+    nan:=transmute(f32)u32(0x7fc00000)
+    copied:=make([]byte,len(tree_bytes(&m.tree)))
+    defer delete(copied)
+    hostile,_:=dynamic_tree_insert(&m.tree,{{nan,0,0},{1,1,1}},MODEL_CAPACITY)
+    copy(copied,tree_bytes(&m.tree))
+    testing.expect(t,!dynamic_tree_rebuild(&m.tree))
+    testing.expect(t,mem.compare(copied,tree_bytes(&m.tree))==0)
+    dynamic_tree_remove(&m.tree,hostile)
+    copy(copied,tree_bytes(&m.tree))
+    buffer:[64]byte
+    arena:mem.Arena
+    mem.arena_init(&arena,buffer[:])
+    temp:=context.temp_allocator
+    context.temp_allocator=mem.arena_allocator(&arena)
+    testing.expect(t,!dynamic_tree_rebuild(&m.tree))
+    context.temp_allocator=temp
+    testing.expect(t,mem.compare(copied,tree_bytes(&m.tree))==0)
+    testing.expect(t,dynamic_tree_rebuild(&m.tree))
+    testing.expect(t,dynamic_tree_validate(&m.tree))
+    disagreed:=0
+    for round in 0..<300 {
+        if round%3==0 {model_step(&m)}
+        for kind in Expectation {disagreed+=int(!model_agrees(&m,kind))}
+    }
+    testing.expect_value(t,disagreed,0)
+    testing.expect(t,dynamic_tree_validate(&m.tree))
+}
+
 @(test)
 dynamic_tree_iterators_cross_a_chain_deeper_than_their_stack :: proc(t:^testing.T) {
     COUNT :: 300

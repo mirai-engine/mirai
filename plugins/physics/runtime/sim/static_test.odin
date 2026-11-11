@@ -2,6 +2,7 @@ package mirai_physics
 
 import "core:testing"
 import cmath "core:math"
+import "mirai:std/spatial"
 
 @(private="file")
 Test_Triangles :: struct {
@@ -487,6 +488,36 @@ the_static_change_log_changes_no_simulation_result :: proc(t:^testing.T) {
         if world_hash(&a)!=world_hash(&b) {
             testing.expectf(t,false,"the worlds diverged at step %v",step)
             return
+        }
+    }
+}
+
+// A level of static boxes made one by one: rebuilding their tree once static collision changed lowers its
+// area until static collision changes again, and what rests on them moves as in the world that kept the tree as
+// it was filled.
+@(test)
+rebuilding_the_static_tree_after_a_load_lowers_its_area_and_changes_no_result :: proc(t:^testing.T) {
+    worlds:[2]World
+    bodies:[2][40]Body_Handle
+    for &w,k in worlds {
+        testing.expect(t,test_world(&w,512))
+        for i in 0..<400 {test_static_box(&w,{f32(i%20)*2.5-25,0,f32(i/20)*2.5-25},half={1,0.5+0.05*f32(i%7),1})}
+        for i in 0..<40 {bodies[k][i]=test_body(&w,Box{{0.3,0.3,0.3}},{f32(i%8)*3-12,2+f32(i/8),f32(i%5)*3-6})}
+    }
+    defer for &w in worlds {world_destroy(&w)}
+    tree:=&worlds[0].trees[STATIC_TREE]
+    before:=spatial.dynamic_tree_area_ratio(tree)
+    testing.expect(t,world_rebuild_static(&worlds[0]))
+    testing.expect(t,spatial.dynamic_tree_validate(tree))
+    testing.expectf(t,spatial.dynamic_tree_area_ratio(tree)<0.9*before,"area ratio %v, %v before",spatial.dynamic_tree_area_ratio(tree),before)
+    testing.expect(t,!worlds[0].static_unbuilt && bool(worlds[1].static_unbuilt))
+    for step in 0..<90 {
+        for &w in worlds {world_step(&w,1.0/60)}
+        for i in 0..<40 {
+            if body_transform(&worlds[0],bodies[0][i])!=body_transform(&worlds[1],bodies[1][i]) {
+                testing.expectf(t,false,"body %v moved apart at step %v",i,step)
+                return
+            }
         }
     }
 }

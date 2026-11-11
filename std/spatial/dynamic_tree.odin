@@ -227,6 +227,56 @@ dynamic_tree_update :: proc(tree:^Dynamic_Tree, proxy:i32, tight:Aabb, displacem
     leaf_move(tree,proxy,aabb_translate_extend(math.aabb_expand(tight,tree.margin),displacement))
     return true
 }
+// Builds the internal nodes again by binned surface area, as bvh_build does, over the leaves, which
+// keep their proxies, boxes and users: a tree filled one insertion at a time, as the static shapes of
+// a level, is left as good as one built from all of them at once. A transaction: the scratch comes from
+// context.temp_allocator. Without it, or with a box that is not finite, the tree stays as it was.
+dynamic_tree_rebuild :: proc(tree:^Dynamic_Tree) -> bool {
+    count:=int(tree.proxy_count)
+    if count<3 {return true}
+    nodes:=tree.nodes[:tree.node_high]
+    boxes,boxes_error:=make([]Aabb,count,context.temp_allocator)
+    order,order_error:=make([]u32,count,context.temp_allocator)
+    built,built_error:=make([]Bvh_Node,2*count,context.temp_allocator)
+    // the proxy of each gathered leaf, then the node each node of the build becomes
+    ids,ids_error:=make([]i32,3*count,context.temp_allocator)
+    if boxes_error!=nil||order_error!=nil||built_error!=nil||ids_error!=nil||len(ids)!=3*count {return false}
+    leaves:=0
+    for &node,i in nodes {
+        if node.height!=0 {continue}
+        if leaves==count || !aabb_valid(node.aabb) {return false}
+        boxes[leaves],order[leaves],ids[leaves]=node.aabb,u32(leaves),i32(i)
+        leaves+=1
+    }
+    if leaves!=count {return false}
+    // Halving below the depth limit leaves one leaf per node.
+    builder:=Bvh_Builder{built,1,boxes,order,1,BVH_STACK_CAPACITY}
+    bvh_node_build(&builder,0,0,count,0)
+    // Every slot that is not a leaf is free, in ascending order: the nodes the build takes are the same
+    // for the same leaves.
+    tree.free_list=NULL_NODE
+    #reverse for &node,i in nodes {
+        node_written(tree,i32(i))
+        if node.height==0 {continue}
+        node.height=-1
+        node.parent=tree.free_list
+        tree.free_list=i32(i)
+    }
+    made:=ids[count:][:builder.node_count]
+    for b,i in built[:builder.node_count] {
+        if i!=1 {made[i]=b.count>0?ids[order[b.first]]:node_alloc(tree)}
+    }
+    // Children come after their parent in the build: walked backwards, their heights are ready.
+    #reverse for b,i in built[:builder.node_count] {
+        if i==1 || b.count>0 {continue}
+        a,c:=made[b.first],made[b.first+1]
+        nodes[made[i]]={aabb=Aabb{b.min,b.max},child1=a,child2=c,height=1+max(nodes[a].height,nodes[c].height)}
+        nodes[a].parent,nodes[c].parent=made[i],made[i]
+    }
+    tree.root=made[0]
+    nodes[tree.root].parent=NULL_NODE
+    return true
+}
 @(private) proxy_valid :: #force_inline proc "contextless" (tree:^Dynamic_Tree, proxy:i32) -> bool {
     return proxy>=0&&proxy<tree.node_high&&tree.nodes[proxy].height==0&&tree.nodes[proxy].child1==NULL_NODE
 }
