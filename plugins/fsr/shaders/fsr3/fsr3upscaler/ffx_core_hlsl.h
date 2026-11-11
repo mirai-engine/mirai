@@ -25,12 +25,6 @@
 ///
 /// @ingroup FfxHLSL
 
-#define DECLARE_SRV_REGISTER(regIndex) t##regIndex
-#define DECLARE_UAV_REGISTER(regIndex) u##regIndex
-#define DECLARE_CB_REGISTER(regIndex)  b##regIndex
-#define FFX_DECLARE_SRV(regIndex)   register(DECLARE_SRV_REGISTER(regIndex))
-#define FFX_DECLARE_UAV(regIndex)   register(DECLARE_UAV_REGISTER(regIndex))
-#define FFX_DECLARE_CB(regIndex)    register(DECLARE_CB_REGISTER(regIndex))
 
 /// A define for abstracting shared memory between shading languages.
 ///

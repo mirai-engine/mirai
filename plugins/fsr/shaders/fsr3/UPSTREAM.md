@@ -22,11 +22,13 @@ Devices: `LICENSE.txt` in this folder and the header of each file.
   files left unincluded (`ffx_core_gpu_common_half.h`, `ffx_opticalflow_resources.h`) are
   deleted. What stays conditional is the binding of each resource, which each entry point
   declares, the `sharpen` variant of the accumulation and `FFX_WAVE`.
+- Each resource takes its Vulkan binding (`[[vk::binding(slot, 0)]]`, the slot its entry point
+  names) instead of a D3D register, and the implicit conversions Slang warns about are written
+  out (`GetOpticalFlowSize`, `IsSceneChanged`, `SPD_SetMipmap` of the optical flow).
 - The other changes, each with a `Mirai:` comment on its line:
   - In `ffx_fsr3upscaler_callbacks_hlsl.h` and `ffx_frameinterpolation_callbacks_hlsl.h`, the
-    samplers take the registers of Mirai's (`s3`, `SLOT_POINT_SAMPLER`; `s2`,
-    `SLOT_LINEAR_SAMPLER`) instead of `s0` and `s1`, which in Vulkan are the bindings of the frame
-    constants and of the parameters.
+    samplers take the bindings of Mirai's (3, `SLOT_POINT_SAMPLER`; 2, `SLOT_LINEAR_SAMPLER`)
+    instead of 0 and 1, which are those of the frame constants and of the parameters.
   - The SDK compiles with `gpu/` among the include folders and Slang resolves an `#include` next
     to the file that makes it or in the plugin's `shaders/`: the callbacks of
     `frameinterpolation/` and `opticalflow/` include `../fsr3upscaler/ffx_core.h`, those of
