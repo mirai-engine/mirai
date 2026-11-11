@@ -212,14 +212,7 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:int
                 eq_run(&v.eq[current],&v.eq_state[current][c],old)
                 eq_run(&v.eq[1-current],&v.eq_state[1-current][c],x)
             }
-            if change==.Steady {
-                for i in 0..<count {out[(from+i)*2+c]=x[i]}
-                continue
-            }
-            for i in 0..<count {
-                w:=f32(i)/f32(count)
-                out[(from+i)*2+c]=w*x[i]+(1-w)*old[i]
-            }
+            for i in 0..<count {out[(from+i)*2+c]=x[i] if change==.Steady else old[i]+(x[i]-old[i])*(f32(i)/f32(count))}
         }
     }
     if binaural {return}

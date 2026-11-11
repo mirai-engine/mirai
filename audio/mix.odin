@@ -361,12 +361,10 @@ segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,
         switch {
         case slow:
             // A frame next to an end of the source, whose neighbours are found one by one.
-            mu:=f32(u32(v.cursor))*(1.0/4294967296.0)
+            w:=hermite_weights(f32(u32(v.cursor))*(1.0/4294967296.0))
             y:[2]f32
             for c in 0..<int(v.source.channels) {
-                p:[4]f32
-                for k in 0..<4 {p[k]=edge_sample(v,samples,frames,loop,before,i64(index)+i64(k)-1,c)}
-                y[c]=hermite(p[0],p[1],p[2],p[3],mu)
+                for k in 0..<4 {y[c]+=w[k]*edge_sample(v,samples,frames,loop,before,i64(index)+i64(k)-1,c)}
             }
             if stereo {
                 dst[0]+=y[0]*g0[0]+y[1]*g0[2]
@@ -416,8 +414,8 @@ mix_direct_stereo :: proc "contextless" (out:[^]f32,src:[^]f32,count:int,g0,dg:[
 // Godot's AudioStreamPlaybackResampled::mix: a cubic Hermite (Catmull-Rom)
 // through the frame before the cursor, the one at it and the two after,
 // without Godot's delay of two frames. Flat within 0.4 dB to 10 kHz for a
-// 44.1 kHz sound, where a line between two frames loses 1.5 dB.
-// Its weights for the four frames, shared by the channels of a frame.
+// 44.1 kHz sound, where a line between two frames loses 1.5 dB. As the
+// weights of the four frames, which the channels of a frame share.
 hermite_weights :: #force_inline proc "contextless" (mu:f32) -> [4]f32 {
     mu2:=mu*mu
     h11:=mu2*(mu-1)
@@ -425,10 +423,6 @@ hermite_weights :: #force_inline proc "contextless" (mu:f32) -> [4]f32 {
     h01:=z-h11
     h10:=mu-z
     return {-0.5*h10,1-h01-0.5*h11,h01+0.5*h10,0.5*h11}
-}
-hermite :: #force_inline proc "contextless" (y0,y1,y2,y3,mu:f32) -> f32 {
-    w:=hermite_weights(mu)
-    return w[0]*y0+w[1]*y1+w[2]*y2+w[3]*y3
 }
 // The sample of channel c of frame i of a source as it plays: beyond its
 // ends silence, the frame a feed kept before it, or the frames around a loop.
@@ -449,7 +443,8 @@ mix_hermite_mono :: proc "contextless" (out:[^]f32,src:[^]f32,count:int,cursor,s
     #no_bounds_check for k in 0..<count {
         ramp:=f32(k)
         i:=int(position>>32)
-        sample:=hermite(src[i-1],src[i],src[i+1],src[i+2],f32(u32(position))*(1.0/4294967296.0))
+        w:=hermite_weights(f32(u32(position))*(1.0/4294967296.0))
+        sample:=w[0]*src[i-1]+w[1]*src[i]+w[2]*src[i+1]+w[3]*src[i+2]
         out[k*2]+=sample*(g0[0]+dg[0]*ramp)
         out[k*2+1]+=sample*(g0[1]+dg[1]*ramp)
         position+=step

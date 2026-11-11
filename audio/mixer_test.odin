@@ -41,6 +41,8 @@ test_mono :: proc(t:^testing.T,m:^Mixer,frames:int,value:proc(i:int) -> f32,rate
 @(private) test_one :: proc(i:int) -> f32 {return 1}
 @(private) test_ramp :: proc(i:int) -> f32 {return f32(i+1)/(1<<17)} // under full scale, exact
 @(private) test_small :: proc(i:int) -> f32 {return f32(i%7)*0.125-0.25}
+// The cubic Hermite halfway between b and c, a before them and d after.
+@(private) test_halfway :: proc(a,b,c,d:f32) -> f32 {return (9*(b+c)-a-d)/16}
 @(private)
 test_near :: proc(t:^testing.T,got,want:f32,tolerance:f32=1e-5,loc:=#caller_location) -> bool {
     if abs(got-want)<=tolerance {return true}
@@ -347,10 +349,10 @@ loop_seam_has_no_gap_and_no_repeated_frame :: proc(t:^testing.T) {
     for i in 0..<600 {
         frame:=proc(j:int) -> f32 {return 0 if j<0 else test_ramp(j%100)}
         j:=i/2
-        want:=frame(j) if i%2==0 else hermite(frame(j-1),frame(j),frame(j+1),frame(j+2),0.5)
+        want:=frame(j) if i%2==0 else test_halfway(frame(j-1),frame(j),frame(j+1),frame(j+2))
         if !test_near(t,out[i*2],want,1e-6) {break}
     }
-    test_near(t,out[199*2],(-test_ramp(98)+9*test_ramp(99)+9*test_ramp(0)-test_ramp(1))/16,1e-6)
+    test_near(t,out[199*2],test_halfway(test_ramp(98),test_ramp(99),test_ramp(0),test_ramp(1)),1e-6)
     // Told to stop looping, it plays to the end of the sound and ends there.
     voice_set_loop(m,voice,false)
     out=test_render(m,600)
@@ -372,7 +374,7 @@ loop_seam_has_no_gap_and_no_repeated_frame :: proc(t:^testing.T) {
             want:=body(i)
             if pitch!=1 {
                 j:=i/2
-                want=body(j) if i%2==0 else hermite(body(j-1) if j>0 else 0,body(j),body(j+1),body(j+2),0.5)
+                want=body(j) if i%2==0 else test_halfway(body(j-1) if j>0 else 0,body(j),body(j+1),body(j+2))
             }
             if !test_near(t,out[i*2],want,1e-6) {break}
         }
@@ -380,7 +382,7 @@ loop_seam_has_no_gap_and_no_repeated_frame :: proc(t:^testing.T) {
         test_render(m,CHUNK_FRAMES)
         mixer_update(m)
     }
-    test_near(t,out[201*2],hermite(test_ramp(99),test_ramp(30),test_ramp(31),test_ramp(32),0.5),1e-6)
+    test_near(t,out[201*2],test_halfway(test_ramp(99),test_ramp(30),test_ramp(31),test_ramp(32)),1e-6)
 }
 
 @(test)
