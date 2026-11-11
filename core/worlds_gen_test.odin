@@ -8,7 +8,7 @@ import "core:testing"
 Test_World :: struct {
     entities:Entities,
     storage_revisions:[4]u64,
-    info:World_Info,
+    made_of:World_Info,
 }
 
 // Indexes a World_Info again after the test gave it names, records or name
@@ -32,32 +32,32 @@ test_info_destroy :: proc(info:^World_Info,allocator:=context.allocator) {
 // application: test_world_destroy frees both. False, with the test failed,
 // without memory.
 test_world_init :: proc(t:^testing.T,w:^$W,allocator:=context.allocator,loc:=#caller_location) -> bool {
-    w.info=test_info(t,W,allocator,loc) or_return
-    if world_init(&w.info,.World,w,allocator) {return true}
+    w.made_of=test_info(t,W,allocator,loc) or_return
+    if world_init(&w.made_of,.World,w,allocator) {return true}
     test_world_destroy(w,allocator)
     return testing.expect(t,false,"no memory for a test world",loc=loc)
 }
 
 test_world_destroy :: proc(w:^$W,allocator:=context.allocator) {
-    if w.info.sizes[.World]==0 {return}
-    world_destroy(&w.info,.World,w)
-    test_info_destroy(&w.info,allocator)
+    if w.made_of.sizes[.World]==0 {return}
+    world_destroy(&w.made_of,.World,w)
+    test_info_destroy(&w.made_of,allocator)
 }
 
-test_world_info :: proc(w:^$W) -> ^World_Info {return &w.info}
+test_world_info :: proc(w:^$W) -> ^World_Info {return &w.made_of}
 
-test_world_ref :: proc(w:^$W) -> World_Ref {return {w,&w.info,.World}}
+test_world_ref :: proc(w:^$W) -> World_Ref {return {w,&w.made_of,.World}}
 
 // The settle of a world test_world_init made: how many tables it came to.
-test_world_settle :: proc(w:^$W) -> int {return settle(&w.info,w,nil)}
+test_world_settle :: proc(w:^$W) -> int {return settle(&w.made_of,w,nil)}
 
-test_world_copy :: proc(dst,src:^$W) -> bool {return world_copy(&src.info,dst,src)}
+test_world_copy :: proc(dst,src:^$W) -> bool {return world_copy(&src.made_of,dst,src)}
 
-test_world_copy_changed :: proc(dst,src:^$W,marks:[]Copy_Mark) -> bool {return world_copy_changed(&src.info,dst,src,marks)}
+test_world_copy_changed :: proc(dst,src:^$W,marks:[]Copy_Mark) -> bool {return world_copy_changed(&src.made_of,dst,src,marks)}
 
-test_world_swap :: proc(a,b:^$W) {world_swap(&a.info,a,b)}
+test_world_swap :: proc(a,b:^$W) {world_swap(&a.made_of,a,b)}
 
-test_world_clear :: proc(w:^$W) -> bool {return world_clear(&w.info,w)}
+test_world_clear :: proc(w:^$W) -> bool {return world_clear(&w.made_of,w)}
 
 default_test_world_transform :: proc(dst:rawptr) {(cast(^Transform)dst)^=TRANSFORM_DEFAULT}
 default_test_world_own_pace :: proc(dst:rawptr) {(cast(^Own_Pace)dst)^=OWN_PACE_DEFAULT}

@@ -35,14 +35,14 @@ a_child_of_the_camera_far_from_the_centre_stays_still_when_drawn_from_the_camera
         return world-eye
     }
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     camera_entity,child:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.cameras,camera_entity,Camera{})
     core.add(&w.locals,camera_entity,core.TRANSFORM_IDENTITY)
     core.add(&w.locals,child,core.from_math(local))
     core.add(&w.parents,child,core.Parent{entity=camera_entity})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     worst_world,worst_carried:f64
     for frame in 0..<600 {
         time:=f32(frame)/60
@@ -61,7 +61,7 @@ a_child_of_the_camera_far_from_the_centre_stays_still_when_drawn_from_the_camera
         worst_world=max(worst_world,pixels(linalg.array_cast(seen,f64)-exact,depth))
         // Composed from the camera, as render_sync does it.
         core.add(&w.worlds,camera_entity,core.World_Transform{camera,camera})
-        core.test_world_settle(&w)
+        test_world_settle(&w)
         anchor,carried,ok:=camera_carried(core.FRAME_TIME_DEFAULT,core.read(&w.offsets),core.read(&w.parents),core.read(&w.worlds),core.read(&w.locals),core.read(&w.cameras),child)
         if !testing.expect(t,ok && anchor==camera.position) {return}
         seen=drawn(gpu.origin_matrix(mm.transform_matrix(carried),origin-anchor),vertex,eye)

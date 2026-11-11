@@ -17,8 +17,9 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
+@(test_world,editor="Prefab_Fixture_Editor")
 Prefab_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     lamps:core.Table(Prefab_Test_Lamp),
     point_lights:core.Table(erender.Point_Light),
@@ -32,7 +33,7 @@ Prefab_Test_Lamp :: struct {intensity,range:f32,target:core.Entity,uses:u32 `mir
 // The World_Info of Prefab_Test_World with what a session over it holds of the editor.
 @(private)
 prefab_test_info :: proc(t:^testing.T) -> (info:core.World_Info,ok:bool) {
-    return core.test_info(t,Prefab_Test_World,core.Test_None,Prefab_Fixture_Editor,test_types)
+    return test_info(t,Prefab_Test_World)
 }
 
 // A session over Prefab_Test_World with an assets folder of its own. It
@@ -78,7 +79,7 @@ prefab_fixture_destroy :: proc(f:^Prefab_Fixture) {
     asset.registry_destroy(&f.assets.registry)
     asset.types_destroy(&f.assets.types)
     if f.info.sizes[.World]>0 {core.world_destroy(&f.info,.World,&f.world)}
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(private)
@@ -184,7 +185,7 @@ test_only_root :: proc(w:core.World_Ref) -> (root:core.Entity) {
 prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T) {
     info,described:=prefab_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Prefab_Test_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)

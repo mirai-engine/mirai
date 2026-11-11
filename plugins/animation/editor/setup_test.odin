@@ -23,7 +23,7 @@ test_locomotion_modes :: proc(info:^core.World_Info) {
     types[0]={type=Test_Locomotion_Mode,name="Locomotion_Mode",path="plugins:physics/runtime",prefix="MODE_",limit=1<<16}
     for name,i in ([4]string{"FALLING","WALKING","FLYING","SWIMMING"}) {names[i]={type=Test_Locomotion_Mode,value=i64(i),name=name}}
     info.named_types,info.names=types,names
-    core.test_info_index(info)
+    test_info_index(info)
 }
 
 @(test)

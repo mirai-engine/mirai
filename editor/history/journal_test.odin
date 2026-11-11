@@ -10,7 +10,7 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     f:=new(Test_Journal);defer free(f)
     if !test_journal_init(t,f,20) {return}
     defer test_journal_free(f)
-    w:=core.test_world_ref(&f.world)
+    w:=test_world_ref(&f.world)
     // The image keeps the authors: the derived rows never enter it.
     testing.expect_value(t,len(f.edits.image[1].entities),18)
     testing.expect_value(t,len(f.edits.image[3].entities),18)
@@ -35,7 +35,7 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     observed:=edits_state(&f.edits)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Turn off"))
     core.disable(&f.world.lamps,test_journal_entity(f,2))
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     after_review:=0
@@ -74,18 +74,18 @@ journal_steps_hold_what_changed_whatever_the_size_of_the_world :: proc(t:^testin
     f:=new(Test_Journal);defer free(f)
     if !test_journal_init(t,f,4000) {return}
     defer test_journal_free(f)
-    w:=core.test_world_ref(&f.world)
+    w:=test_world_ref(&f.world)
     // A step that makes and destroys entities keeps those indices, not the entities of the World.
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Replace"))
     gone:=test_journal_entity(f,51)
     core.destroy(&f.world.entities,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     made:=core.create(&f.world.entities)
     core.add(&f.world.ids,made,{value=9001})
     core.add(&f.world.transforms,made,core.TRANSFORM_IDENTITY)
     derived:=core.create(&f.world.entities)
     core.add(&f.world.transforms,derived,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     step:=&f.edits.steps[0]
@@ -132,10 +132,10 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
     context.allocator={journal_allocator,&failure}
     if !test_journal_init(t,f,300) {return}
     defer test_journal_free(f)
-    w:=core.test_world_ref(&f.world)
+    w:=test_world_ref(&f.world)
     lamp,moved,gone,parent:=test_journal_entity(f,3),test_journal_entity(f,4),test_journal_entity(f,5),test_journal_entity(f,6)
     core.disable(&f.world.lamps,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_reset(&f.edits,w)
     // A gesture that turns, writes, removes off rows, destroys, reuses and
     // makes more entities than it reserved.
@@ -145,14 +145,14 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
     core.edit(&f.world.transforms,moved).position.y=4
     core.add(&f.world.parents,moved,{entity=parent})
     core.destroy(&f.world.entities,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     for _ in 0..<40 {
         e:=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(1000+core.entity_index(e))})
         core.add(&f.world.transforms,e,core.TRANSFORM_IDENTITY)
         core.add(&f.world.lamps,e,{power=2})
     }
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     failure.fail=true
     edits_cancel(&f.edits,w)
     failure.fail=false
@@ -169,13 +169,13 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Everything"))
     core.disable(&f.world.lamps,lamp)
     core.destroy(&f.world.entities,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     for _ in 0..<40 {
         e:=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(1000+core.entity_index(e))})
         core.add(&f.world.transforms,e,core.TRANSFORM_IDENTITY)
     }
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     step:=&f.edits.steps[f.edits.cursor-1]

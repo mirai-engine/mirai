@@ -15,13 +15,13 @@ world_create_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alig
     }
     return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
-@(private) World_Create_Value :: struct {using world:core.Test_World,owned:core.Table(u64)}
+@(test_world) @(private) World_Create_Value :: struct {using world:Test_World,owned:core.Table(u64)}
 
 @(test)
 world_creation_frees_every_partial_initializer_and_publishes_no_failed_clock :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,World_Create_Value)
+    info,described:=test_info(t,World_Create_Value)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     succeeded:=false
     for budget in 0..<64 {
         tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator)

@@ -10,8 +10,8 @@ import volume "mirai:engine/volume"
 @(test)
 a_trigger_turns_its_sky_on_once_the_body_is_well_inside_its_volume :: proc(t:^testing.T) {
     w:Test_Cameras
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     w.seat_state.local_count=1
 
     seat,body,box,sky:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
@@ -20,11 +20,11 @@ a_trigger_turns_its_sky_on_once_the_body_is_well_inside_its_volume :: proc(t:^te
     core.add(&w.volumes,box,volume.box({2,2,2}))
     core.add(&w.worlds,box,core.World_Transform{transform={rotation=1,scale=1}})
     core.add(&w.worlds,body,core.World_Transform{transform={position={1.9,0,0},rotation=1,scale=1}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     step :: proc(w:^Test_Cameras,x:f32) {
         core.edit(&w.worlds,core.entity_at(&w.worlds,1)).position.x=x
         environment_triggers(&w.triggers,core.read(&w.volumes),core.read(&w.worlds),core.ref(&w.seat_state),core.read(&w.seats),&w.environment)
-        core.test_world_settle(w)
+        test_world_settle(w)
     }
 
     step(&w,1.9)

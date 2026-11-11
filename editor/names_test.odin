@@ -9,7 +9,7 @@ import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 
-@(private="file") Names_World :: struct {using world:core.Test_World,settings:input.Input_Settings}
+@(test_world) @(private) Names_World :: struct {using world:Test_World,settings:input.Input_Settings}
 
 // An input action is renamed in code; once built, renaming it follows:
 // Input_Settings of the project takes the new name and the code stays as it
@@ -25,15 +25,15 @@ renaming_an_action_follows_the_code_in_input_settings :: proc(t:^testing.T) {
     SOURCE :: "package game\n@(actions)\nAction :: enum u8 {Strike,Hitter}\n"
     testing.expect(t,os.write_entire_file(code,SOURCE)==nil)
 
-    info,made:=core.test_info(t,Names_World)
+    info,made:=test_info(t,Names_World)
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.names=[]core.Name_Info{
         {type=input.Action,value=16,name="strike",library="game",file="game/game.odin",line=3,project=true},
         {type=input.Action,value=17,name="hitter",library="game",file="game/game.odin",line=3,project=true},
     }
     info.named_types=[]core.Named_Type_Info{{type=input.Action,name="Action",path="mirai:engine/input",actions=true}}
-    core.test_info_index(&info)
+    test_info_index(&info)
     world:Names_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)

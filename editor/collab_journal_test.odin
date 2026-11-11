@@ -15,7 +15,7 @@ Journal_Fixture :: struct {
 @(private="file")
 journal_init :: proc(t:^testing.T,f:^Journal_Fixture,count:int) -> bool {
     if !history.test_journal_init(t,&f.journal,count) {return false}
-    f.s=Session{info=core.test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,document=&f.document}
+    f.s=Session{info=test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,document=&f.document}
     return true
 }
 
@@ -67,7 +67,7 @@ collaboration_reads_the_journal_and_does_not_echo_what_it_applies :: proc(t:^tes
     defer journal_end_close(a)
     if !journal_end_open(t,b) {return}
     defer journal_end_close(b)
-    wa,wb:=core.test_world_ref(&a.f.world),core.test_world_ref(&b.f.world)
+    wa,wb:=test_world_ref(&a.f.world),test_world_ref(&b.f.world)
     at :: proc(end:^Journal_End,id:base.Entity_Id) -> core.Entity {return history.test_journal_entity(&end.f.journal,id)}
     // An edit not committed yet travels live; cancelled, its row goes back too.
     testing.expect(t,history.edits_begin(&a.f.edits,&a.f.selection,"Drag"))
@@ -87,7 +87,7 @@ collaboration_reads_the_journal_and_does_not_echo_what_it_applies :: proc(t:^tes
     core.disable(&a.f.world.lamps,at(a,2))
     core.add(&a.f.world.parents,at(a,4),{entity=at(a,3)})
     core.destroy(&a.f.world.entities,at(a,5))
-    core.test_world_settle(&a.f.world)
+    test_world_settle(&a.f.world)
     history.edits_end(&a.f.edits)
     testing.expect(t,history.edits_commit(&a.f.edits,wa,&a.f.selection))
     testing.expect_value(t,journal_end_send(a,b),1)
@@ -130,9 +130,9 @@ undo_at_each_end_keeps_what_the_other_end_wrote_since :: proc(t:^testing.T) {
     at :: proc(end:^Journal_End,id:base.Entity_Id) -> core.Entity {return history.test_journal_entity(&end.f.journal,id)}
     position :: proc(end:^Journal_End,id:base.Entity_Id) -> [3]f32 {return core.at(&end.f.world.transforms,core.row_of(&end.f.world.transforms,at(end,id))).position}
     commit :: proc(t:^testing.T,end:^Journal_End,loc:=#caller_location) {
-        core.test_world_settle(&end.f.world)
+        test_world_settle(&end.f.world)
         history.edits_end(&end.f.edits)
-        testing.expect(t,history.edits_commit(&end.f.edits,core.test_world_ref(&end.f.world),&end.f.selection),loc=loc)
+        testing.expect(t,history.edits_commit(&end.f.edits,test_world_ref(&end.f.world),&end.f.selection),loc=loc)
     }
     // The same field: A's undo keeps what B wrote after it, and tells nothing.
     testing.expect(t,history.edits_begin(&a.f.edits,&a.f.selection,"A moves"))
@@ -193,7 +193,7 @@ undo_at_each_end_keeps_what_the_other_end_wrote_since :: proc(t:^testing.T) {
     testing.expect(t,history_redo(&a.f.s).done && history_undo(&a.f.s).done)
     testing.expect_value(t,journal_end_send(a,b),1)
     testing.expect(t,at(a,100)==core.NONE && at(b,100)==core.NONE)
-    testing.expect(t,history.journal_settled(&a.f.edits,core.test_world_ref(&a.f.world)) && history.journal_settled(&b.f.edits,core.test_world_ref(&b.f.world)))
+    testing.expect(t,history.journal_settled(&a.f.edits,test_world_ref(&a.f.world)) && history.journal_settled(&b.f.edits,test_world_ref(&b.f.world)))
 }
 
 // A session of several ends, the host first, each with its document: what a
@@ -316,7 +316,7 @@ fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host :: 
             testing.expect(t,history.edits_begin(&end.f.edits,&end.f.selection,c.name))
             journal_field_write(end,id,change.field,change.value)
             history.edits_end(&end.f.edits)
-            testing.expect(t,history.edits_commit(&end.f.edits,core.test_world_ref(&end.f.world),&end.f.selection),c.name)
+            testing.expect(t,history.edits_commit(&end.f.edits,test_world_ref(&end.f.world),&end.f.selection),c.name)
         }
         journal_session_sync(ends[:],..c.order)
         journal_session_expect(t,ends[:],id,c.want,c.name)
@@ -333,14 +333,14 @@ fields_changed_at_several_ends_stay_and_a_field_two_changed_follows_the_host :: 
         testing.expect(t,history.edits_begin(&guest.f.edits,&guest.f.selection,"Twice"))
         journal_field_write(guest,7,.Scale,value)
         history.edits_end(&guest.f.edits)
-        testing.expect(t,history.edits_commit(&guest.f.edits,core.test_world_ref(&guest.f.world),&guest.f.selection))
+        testing.expect(t,history.edits_commit(&guest.f.edits,test_world_ref(&guest.f.world),&guest.f.selection))
         if value==5 {journal_session_up(ends[:],1)}
     }
     journal_session_down(ends[:])
     testing.expect_value(t,core.at(&guest.f.world.transforms,core.row_of(&guest.f.world.transforms,history.test_journal_entity(&guest.f.journal,7))).scale.x,f32(8))
     journal_session_sync(ends[:],1)
     journal_session_expect(t,ends[:],7,{.Position=7,.Rotation=1,.Scale=8},"two edits in a row")
-    for end in ends {testing.expect(t,history.journal_settled(&end.f.edits,core.test_world_ref(&end.f.world)))}
+    for end in ends {testing.expect(t,history.journal_settled(&end.f.edits,test_world_ref(&end.f.world)))}
 }
 
 // A gesture one end leaves open tells its field as it goes; a field of the
@@ -355,14 +355,14 @@ a_gesture_left_open_keeps_what_another_end_writes_to_another_field :: proc(t:^te
         defer for end in ends {journal_end_close(end)}
         if !opened {return}
         dragging,other:=ends[1],ends[2]
-        w:=core.test_world_ref(&dragging.f.world)
+        w:=test_world_ref(&dragging.f.world)
         testing.expect(t,history.edits_begin(&dragging.f.edits,&dragging.f.selection,"Drag"))
         testing.expect_value(t,history.edits_cancel_prepare(&dragging.f.edits,w),history.Edit_Error.None)
         journal_field_write(dragging,1,.Position,5)
         testing.expect(t,history.edits_begin(&other.f.edits,&other.f.selection,"Scale"))
         journal_field_write(other,1,.Scale,3)
         history.edits_end(&other.f.edits)
-        testing.expect(t,history.edits_commit(&other.f.edits,core.test_world_ref(&other.f.world),&other.f.selection))
+        testing.expect(t,history.edits_commit(&other.f.edits,test_world_ref(&other.f.world),&other.f.selection))
         journal_session_sync(ends[:],1,2)
         journal_session_expect(t,ends[:],1,{.Position=5,.Rotation=1,.Scale=3},"both fields")
         // The drag goes on: what arrived of the other field is not its edit.

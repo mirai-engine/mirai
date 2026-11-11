@@ -109,18 +109,19 @@ collision_settings_reject_repeated_presets_custom_entries_and_bad_pushes :: proc
     testing.expect_value(t,defaults,Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
 }
 
+@(private) @(test_world) Named_World :: struct {
+    using world:Test_World,
+    colliders:core.Table(Collider),
+}
+
 // The settings, a Collider and a Query_Filter speak in text by the names the
 // code declares, and keep the numbers.
 @(test)
 categories_and_presets_take_the_names_the_code_declares_in_text :: proc(t:^testing.T) {
-    Named_World :: struct {
-        using world:core.Test_World,
-        colliders:core.Table(Collider),
-    }
     names,types,bits:=collision_test_names()
-    info,described:=core.test_info(t,Named_World,test_types)
+    info,described:=test_info(t,Named_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.names,info.named_types,info.name_bits=names[:],types[:],bits[:]
     ws:=core.world_schema_make(&info,context.temp_allocator)
     if !testing.expect(t,ws!=nil) {return}

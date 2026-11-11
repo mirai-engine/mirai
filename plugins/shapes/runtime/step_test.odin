@@ -12,9 +12,10 @@ import "mirai:std/jobs"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Step_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     shapes:core.Table(Shape),
     brushes:core.Table(Shape_Brush),
     parts:core.Table(Shape_Part),
@@ -69,19 +70,19 @@ app_destroy :: proc(a:^App) {
 @(private="file")
 world_init :: proc(t:^testing.T,w:^Step_Test,app:^host.App) -> bool {
     w.app=app
-    return core.test_world_init(t,&w.rows,test_types)
+    return test_world_init(t,&w.rows)
 }
 
 @(private="file")
 world_destroy :: proc(w:^Step_Test) {
     shapes_release(&w.cache,w.app.assets)
     shapes_cache_free(&w.cache)
-    core.test_world_destroy(&w.rows)
+    test_world_destroy(&w.rows)
 }
 
 @(private="file")
 world_settle :: proc(w:^Step_Test) {
-    core.test_world_settle(&w.rows)
+    test_world_settle(&w.rows)
     core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
 }
 
@@ -90,9 +91,9 @@ world_step :: proc(w:^Step_Test) {
     world_settle(w)
     ground:=w.ground
     core.events_read(&ground.changed,&w.ground_seen)
-    shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(&w.rows,core.test_world_info(&w.rows)),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
+    shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(&w.rows,test_world_info(&w.rows)),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
         &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems,
-        core.read(&w.splines),core.ref(&ground),core.test_world_ref(&w.rows))
+        core.read(&w.splines),core.ref(&ground),test_world_ref(&w.rows))
     world_settle(w)
 }
 
@@ -207,7 +208,7 @@ a_change_builds_again_and_releases_only_what_the_world_made :: proc(t:^testing.T
     // A copy of the world finds the child, makes its own mesh and leaves the original's.
     copy:Step_Test
     if !world_init(t,&copy,&a.app) {return}
-    testing.expect(t,core.test_world_copy(&copy.rows,&w.rows))
+    testing.expect(t,test_world_copy(&copy.rows,&w.rows))
     world_step(&copy)
     copied,copies:=parts_of(&copy,e)
     own:=mesh_of(&copy,copied)

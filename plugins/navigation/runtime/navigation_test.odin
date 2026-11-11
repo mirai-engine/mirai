@@ -22,8 +22,9 @@ import phys "plugins:physics/runtime"
 // collision the tests make, the meshes built from it, and the agents with
 // the tables and queues of navigation_agents and of the locomotion.
 @(private)
+@(test_world)
 Nav_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     bounds:core.Table(Nav_Bounds),
     areas:core.Table(Nav_Area),
@@ -72,7 +73,7 @@ Nav_Test :: struct {
 
 @(private)
 nav_test_init :: proc(t:^testing.T,f:^Nav_Test) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.settings={bodies=64,shapes=64,contacts=256,joints=4,characters=8}
     f.nav_settings.tile_cells=48
     jobs.system_init(&f.app.jobs,{threads=0})
@@ -89,12 +90,12 @@ nav_test_destroy :: proc(f:^Nav_Test) {
     delete(f.unloaded);delete(f.ground.unloaded.items)
     agents_free(&f.run)
     phys.test_host_destroy(&f.host)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     jobs.system_destroy(&f.app.jobs)
 }
 
 @(private)
-nav_test_settle :: proc(f:^Nav_Test) {core.test_world_settle(&f.w)}
+nav_test_settle :: proc(f:^Nav_Test) {test_world_settle(&f.w)}
 
 // One tick of physics and of the build, then as many more as the builds take.
 @(private)

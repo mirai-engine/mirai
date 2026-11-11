@@ -25,9 +25,10 @@ test_action_defaults :: proc(dst:rawptr) {
     }
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Defaults_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
 }
 
 @(private="file")
@@ -38,10 +39,10 @@ TEST_NAMES :: [3]core.Name_Info{
 }
 
 @(private="file")
-test_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(dst:rawptr)=test_action_defaults) -> (info:core.World_Info,ok:bool) {
+named_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(dst:rawptr)=test_action_defaults) -> (info:core.World_Info,ok:bool) {
     @(static) actions:=[1]core.Actions_Info{{type=Test_Action,base=3,library="test"}}
     actions[0].info,actions[0].defaults=type_info_of(Test_Action),defaults
-    info=core.test_info(t,W) or_return
+    info=test_info(t,W) or_return
     info.names,info.actions=names,actions[:]
     return info,true
 }
@@ -52,9 +53,9 @@ test_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(ds
 @(test)
 input_settings_replace_the_defaults_of_the_actions_they_name :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     problems:core.Problems
     settings:Input_Settings
     testing.expect(t,input_settings_put(&settings,"hit",action_default(.Button,binding_mouse_button(.Left))))
@@ -118,9 +119,9 @@ defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
     names:=TEST_NAMES
     cases:=[]struct{defaults:proc(dst:rawptr),bound:bool}{{test_action_defaults,true},{nil,false}}
     for c in cases {
-        info,made:=test_info(t,Defaults_World,names[:],c.defaults)
+        info,made:=named_info(t,Defaults_World,names[:],c.defaults)
         if !made {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         problems:core.Problems
         m:Input_Map
         input_map_make(&m,&info,nil,&problems)
@@ -137,15 +138,15 @@ defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
 @(test)
 typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     seat:=core.create(&w.entities)
     core.add(&w.seats,seat,Seat{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     m:Input_Map
     input_map_make(&m,&info,nil,nil)
     device:=core.Input{keys_down={.D,.Space},keys_pressed={.D,.Space}}
@@ -174,15 +175,15 @@ typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
 @(test)
 a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     seat:=core.create(&w.entities)
     core.add(&w.seats,seat,Seat{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     m:Input_Map
     input_map_make(&m,&info,nil,nil)
     state:=Seats{local_count=1}
@@ -211,9 +212,9 @@ a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
 @(test)
 what_the_code_does_not_take_is_a_problem :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     problems:core.Problems
     settings:Input_Settings
     input_settings_put(&settings,"jump",action_default(.Button,binding_key(.J)))
@@ -288,9 +289,9 @@ the_bindings_the_player_changed_come_back_over_those_of_the_project :: proc(t:^t
     root,player:=project.path(folder,"game",allocator=context.temp_allocator),project.path(folder,"player",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(player)==nil)
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     settings:Input_Settings
     list:=[]project.Setting{{name="Input_Settings",info=type_info_of(Input_Settings),value=&settings,machine=true}}
 
@@ -345,9 +346,9 @@ an_old_input_mirai_is_refused_with_where_its_bindings_go :: proc(t:^testing.T) {
     if folder=="" {return}
     defer base.remove_all(folder)
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     testing.expect(t,os.write_entire_file(project.path(folder,"input.mirai",allocator=context.temp_allocator),`{"actions":[]}`)==nil)
     app:host.App
     app.info,app.root=&info,folder

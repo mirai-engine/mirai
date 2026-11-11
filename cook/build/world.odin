@@ -2684,7 +2684,9 @@ test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Fie
             if t.pkg==nil {
                 t.name=name
                 t.key=fmt.aprintf("type_of((^%s)(nil).%s%s%s)",tw.structs[place],name,count>0?"[0]":"",kind==.Component?".values[0]":"")
-            } else if t.file!=nil {
+            } else if t.file==nil {
+                t.by_world=by_world
+            } else {
                 switch {
                 case t.kind!=kind:
                     append(&g.errors,fmt.aprintf("%s: %s is a %s: a test world holds it as %s",where_,t.name,t.kind==.Component?"@(component)":"@(storage)",t.kind==.Component?fmt.tprintf("core.Table(%s)",t.name):"a value"))
@@ -2745,6 +2747,10 @@ test_type_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr,k
     case is_component || is_storage:
         t=type_read(g,declared_file,from,decl,name,options,false)
         if t==nil {return nil}
+    case type_key(g,declared_file,from,decl.values[0])!="":
+        // Another name of a type: scene.Prefab_Instance is asset.Prefab_Instance.
+        t=test_type_read(g,declared_file,from,decl.values[0],kind,where_)
+        if t==nil || t.pkg==nil {return t}
     case strings.has_suffix(declared_file.fullpath,"_test.odin"):
         t=new(Type)
         t.name,t.pkg,t.key,t.kind=name,from,key,kind
@@ -2855,7 +2861,7 @@ TEST_WORLDS_TEMPLATE :: `
 Test_World :: struct {
     entities:C.Entities,
     storage_revisions:[N]u64,
-    info:C.World_Info,
+    made_of:C.World_Info,
 }
 
 // Indexes a World_Info again after the test gave it names, records or name
@@ -2879,32 +2885,32 @@ test_info_destroy :: proc(info:^C.World_Info,allocator:=context.allocator) {
 // application: test_world_destroy frees both. False, with the test failed,
 // without memory.
 test_world_init :: proc(t:^testing.T,w:^$W,allocator:=context.allocator,loc:=#caller_location) -> bool {
-    w.info=test_info(t,W,allocator,loc) or_return
-    if C.world_init(&w.info,.World,w,allocator) {return true}
+    w.made_of=test_info(t,W,allocator,loc) or_return
+    if C.world_init(&w.made_of,.World,w,allocator) {return true}
     test_world_destroy(w,allocator)
     return testing.expect(t,false,"no memory for a test world",loc=loc)
 }
 
 test_world_destroy :: proc(w:^$W,allocator:=context.allocator) {
-    if w.info.sizes[.World]==0 {return}
-    C.world_destroy(&w.info,.World,w)
-    test_info_destroy(&w.info,allocator)
+    if w.made_of.sizes[.World]==0 {return}
+    C.world_destroy(&w.made_of,.World,w)
+    test_info_destroy(&w.made_of,allocator)
 }
 
-test_world_info :: proc(w:^$W) -> ^C.World_Info {return &w.info}
+test_world_info :: proc(w:^$W) -> ^C.World_Info {return &w.made_of}
 
-test_world_ref :: proc(w:^$W) -> C.World_Ref {return {w,&w.info,.World}}
+test_world_ref :: proc(w:^$W) -> C.World_Ref {return {w,&w.made_of,.World}}
 
 // The settle of a world test_world_init made: how many tables it came to.
-test_world_settle :: proc(w:^$W) -> int {return C.settle(&w.info,w,nil)}
+test_world_settle :: proc(w:^$W) -> int {return C.settle(&w.made_of,w,nil)}
 
-test_world_copy :: proc(dst,src:^$W) -> bool {return C.world_copy(&src.info,dst,src)}
+test_world_copy :: proc(dst,src:^$W) -> bool {return C.world_copy(&src.made_of,dst,src)}
 
-test_world_copy_changed :: proc(dst,src:^$W,marks:[]C.Copy_Mark) -> bool {return C.world_copy_changed(&src.info,dst,src,marks)}
+test_world_copy_changed :: proc(dst,src:^$W,marks:[]C.Copy_Mark) -> bool {return C.world_copy_changed(&src.made_of,dst,src,marks)}
 
-test_world_swap :: proc(a,b:^$W) {C.world_swap(&a.info,a,b)}
+test_world_swap :: proc(a,b:^$W) {C.world_swap(&a.made_of,a,b)}
 
-test_world_clear :: proc(w:^$W) -> bool {return C.world_clear(&w.info,w)}
+test_world_clear :: proc(w:^$W) -> bool {return C.world_clear(&w.made_of,w)}
 
 `
 

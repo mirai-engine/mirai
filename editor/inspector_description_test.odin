@@ -5,11 +5,11 @@ import "mirai:core"
 import "mirai:std/base"
 import "mirai:ui"
 
-@(private="file")
+@(private)
 @(component,description="A component description that explains the purpose of this entity capability and wraps to fit beside the pointer without covering the whole screen.")
 Description_Tag :: struct {}
 
-@(private="file") Description_World :: struct {using world:core.Test_World,tags:core.Table(Description_Tag)}
+@(test_world) @(private) Description_World :: struct {using world:Test_World,tags:core.Table(Description_Tag)}
 
 @(test)
 component_descriptions_wait_for_the_pointer_to_rest_on_the_header :: proc(t:^testing.T) {
@@ -20,9 +20,9 @@ component_descriptions_wait_for_the_pointer_to_rest_on_the_header :: proc(t:^tes
     defer core.value_free(&inspector,type_info_of(Inspector))
     gui:=Editor_Ui{ctx=&ctx}
     session:=Session{gui=&gui,inspector=&inspector}
-    info,described:=core.test_info(t,Description_World,test_types)
+    info,described:=test_info(t,Description_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     metadata:=&info.tables[0]
     inspect:=Inspect{s=&session,t=metadata,size=0}
     frame :: proc(t:^testing.T,inspect:^Inspect,input:ui.Input) {

@@ -25,8 +25,9 @@ pick_device_close :: proc(d:^Pick_Device) {
 }
 
 @(private)
+@(test_world)
 Pick_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     meshes:core.Table(erender.Mesh_Renderer),
     highlights:core.Table(erender.Highlight),
@@ -36,9 +37,9 @@ Pick_Test_World :: struct {
 @(test)
 marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.T) {
     world:Pick_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     owner,child,other:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,owner,core.Id{value=1})
     core.add(&world.ids,other,core.Id{value=2})
@@ -47,7 +48,7 @@ marquee_previews_the_committed_selection_without_changing_it :: proc(t:^testing.
     core.add(&world.parents,child,core.Parent{entity=owner})
     core.add(&world.meshes,child,{shape=.Cube})
     core.add(&world.meshes,other,{shape=.Cube})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     viewport:=Viewport{size={800,600},capture=.Select,moved=true,press={300,200},pointer={500,400},show_indicators=true}
     defer viewport_free(&viewport)
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})

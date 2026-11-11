@@ -17,9 +17,10 @@ import "mirai:std/jobs"
 import "mirai:std/serial"
 import stbi "vendor:stb/image"
 
-@(private="file")
+@(private)
+@(test_world)
 Save_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -44,12 +45,12 @@ Save_Test :: struct {
 @(private="file")
 save_test_init :: proc(t:^testing.T,f:^Save_Test) -> bool {
     described:bool
-    f.info,described=core.test_info(t,Save_Test_World)
+    f.info,described=test_info(t,Save_Test_World)
     if !described {return false}
     f.app={info=&f.info,allocator=context.allocator}
     f.w=cast(^Save_Test_World)host.app_world_create(&f.app)
     if !testing.expect(t,f.w!=nil) {
-        core.test_info_destroy(&f.info)
+        test_info_destroy(&f.info)
         return false
     }
     return true
@@ -59,7 +60,7 @@ save_test_init :: proc(t:^testing.T,f:^Save_Test) -> bool {
 save_test_destroy :: proc(f:^Save_Test) {
     host.app_world_free(&f.app,f.w)
     delete(f.app.worlds)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 // An entity without an Id, as a transient copy, travels with one it is lent

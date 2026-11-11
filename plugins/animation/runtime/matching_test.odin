@@ -73,9 +73,10 @@ Mirai_Metrics :: struct {
     searches,jumps:u32,
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Match_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     animations:core.Table(Animation),
 }
@@ -87,9 +88,9 @@ Match_World :: struct {
 @(private="file")
 mirai_avatar_walk :: proc(t:^testing.T,app:^host.App,skeletons:^Skeleton_Assets,graphs:^Character_Assets,id,skeleton:base.Asset_Id) -> (metrics:Mirai_Metrics,ok:bool) {
     w:Match_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    entity:=core.create(&w.entities);core.add(&w.transforms,entity,core.TRANSFORM_IDENTITY);core.test_world_settle(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    entity:=core.create(&w.entities);core.add(&w.transforms,entity,core.TRANSFORM_IDENTITY);test_world_settle(&w)
     animation:=ANIMATION_DEFAULT;animation.asset=id
     state:=Playing{entity=entity,clip=-1};defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
@@ -228,10 +229,10 @@ Match_Fixture :: struct {
 
 @(private="file")
 match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAULT.memory,leap:=false) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.rig=core.create(&f.entities)
     f.animation=ANIMATION_DEFAULT;f.animation.asset=MATCH_TEST_ID
-    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.add(&f.animations,f.rig,f.animation);core.test_world_settle(&f.w)
+    core.add(&f.transforms,f.rig,core.TRANSFORM_IDENTITY);core.add(&f.animations,f.rig,f.animation);test_world_settle(&f.w)
     Bone :: struct {name,path:string,at:mm.Vec3}
     for bone,i in ([4]Bone{{"hips","hips",{0,1,0}},{"foot_l","hips/foot_l",{.1,-.95,0}},{"foot_r","hips/foot_r",{-.1,-.95,0}},{"head","hips/head",{0,.7,0}}}) {
         f.bones[i]={parent=-1 if i==0 else 0,translation=bone.at,rotation=1,scale={1,1,1},target=base.name_hash(bone.path)}
@@ -338,7 +339,7 @@ match_fixture_free :: proc(f:^Match_Fixture) {
     character_assets_free(&f.graphs);actions_runtime_free(&f.actions);core.table_destroy(&f.played);core.table_destroy(&f.remotes)
     delete(f.assets.registry.by_id);delete(f.assets.registry.files)
     delete(f.events.items);delete(f.requests.plays.items);delete(f.requests.values.items)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 // A tick of the rig with the body in mode: standing, or going at velocity, asked for desired,
 // against a wall of that normal, landing in time_to_land seconds. It serves what play, stop and set

@@ -158,7 +158,7 @@ timing_destroy :: proc(x:^Timing) {
     core.value_free(&x.outbox,type_info_of(Net_Outbox))
     wire.sim_network_destroy(&x.network)
     if x.platform!=nil {platform.destroy(x.platform)}
-    core.test_info_destroy(&x.info)
+    test_info_destroy(&x.info)
 }
 
 // One frame of the client of dt seconds, and the ticks of the server that time completes.
@@ -328,7 +328,7 @@ an_interpolated_replica_over_a_jittery_link_keeps_moving :: proc(t:^testing.T) {
 an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -388,7 +388,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
 an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_gives_it_back :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
