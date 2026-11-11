@@ -1,6 +1,5 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -152,7 +151,7 @@ session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (fi
 
 // One call of a command to its session; what fails goes to stderr.
 session_call :: proc(command:string,port:int,method:string,params:any,timeout_ms:=600000) -> (result:string,ok:bool) {
-    text,_:=json.marshal(params,allocator=context.temp_allocator)
+    text,_:=serial.text_encode(params,.Line,context.temp_allocator,sparse=true)
     response,err,called:=api.rpc_call(port,method,string(text),1,timeout_ms,context.allocator)
     if !called {fmt.eprintfln("mirai %s: %s: %s",command,method,api.error_text(err,context.temp_allocator))}
     return response,called
@@ -377,8 +376,8 @@ session_unsaved_parse :: proc(documents,assets:string) -> (paths:[]string,ok:boo
     Assets :: struct {assets:[]struct {path:string}}
     d:Documents
     a:Assets
-    if json.unmarshal_string(documents,&d,allocator=context.temp_allocator)!=nil {return}
-    if json.unmarshal_string(assets,&a,allocator=context.temp_allocator)!=nil {return}
+    if serial.text_decode(documents,&d,context.temp_allocator,skip_unknown=true)!="" {return}
+    if serial.text_decode(assets,&a,context.temp_allocator,skip_unknown=true)!="" {return}
     list:=make([dynamic]string,context.temp_allocator)
     for document in d.documents {
         if document.dirty {append(&list,document.path)}
@@ -814,7 +813,7 @@ session_take :: proc(folder:string,paths:build.Engine_Paths) {
     started:=time.tick_now()
     result,err,called:=api.rpc_call(file.port,"build.start",`{"target":"built"}`,1,SESSION_TAKE_S*1000,context.temp_allocator)
     reply:struct {restarting:bool}
-    if !called || err.code!=0 || json.unmarshal_string(result,&reply,allocator=context.temp_allocator)!=nil {
+    if !called || err.code!=0 || serial.text_decode(result,&reply,context.temp_allocator,skip_unknown=true)!="" {
         fmt.eprintfln("mirai build: the session of %s (pid %d) did not take this build (%s); mirai session restart opens it with it",folder,file.pid,err.message!=""?err.message:"it did not answer")
         return
     }

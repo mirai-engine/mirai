@@ -14,22 +14,45 @@ Painted :: struct {
 }
 
 // A .paint: one color per vertex of a mesh, by index in the mesh (the order
-// of the vertices of its clusters, every level of detail), RGBA8.
-VERSION :: 1
+// of the vertices of its clusters, every level of detail), RGBA8, with where
+// each vertex was in the mesh and the content hash of the file of the mesh it
+// was painted on, so that the editor fits the colors to another version of it.
+VERSION :: 2
 
-colors_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,colors:[]u32,allocator:=context.allocator) -> asset.Error {
-    if len(colors)==0 {return .Invalid}
+Paint_Info :: struct {
+    mesh:u64, // content_hash of the file of the mesh painted on; 0: a shape
+}
+
+Paint_View :: struct {
+    using info:Paint_Info,
+    positions:[][3]f32, // in the space of the mesh, one per color
+    colors:[]u32,
+}
+
+paint_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,view:Paint_View,allocator:=context.allocator) -> asset.Error {
+    if len(view.colors)==0 || len(view.positions)!=len(view.colors) {return .Invalid}
     asset.document_init(doc,PAINT_KIND,id,allocator)
     doc.kind_version=VERSION
-    _,error:=asset.document_put(doc,types,"colors",colors,{.Bulk},.LZ)
+    error:=paint_tables(doc,types,view)
     if error!=.None {asset.document_destroy(doc)}
     return error
 }
 
-colors_view :: proc(a:^asset.Asset,types:^asset.Types) -> (colors:[]u32,error:asset.Error) {
+@(private)
+paint_tables :: proc(doc:^asset.Document,types:^asset.Types,view:Paint_View) -> asset.Error {
+    info:=view.info
+    asset.document_put_row(doc,types,"paint",&info) or_return
+    asset.document_put(doc,types,"positions",view.positions,{.Bulk},.LZ) or_return
+    asset.document_put(doc,types,"colors",view.colors,{.Bulk},.LZ) or_return
+    return .None
+}
+
+paint_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Paint_View,error:asset.Error) {
     asset.kind_check(a,PAINT_KIND,VERSION) or_return
-    colors=asset.asset_rows(a,types,"colors","",u32) or_return
-    if len(colors)==0 {return nil,.Corrupt}
+    view.info=(asset.asset_row(a,types,"paint",Paint_Info) or_return)^
+    view.positions=asset.asset_rows(a,types,"positions","",[3]f32) or_return
+    view.colors=asset.asset_rows(a,types,"colors","",u32) or_return
+    if len(view.colors)==0 || len(view.positions)!=len(view.colors) {return {},.Corrupt}
     return
 }
 
@@ -55,7 +78,7 @@ Paint_Render :: struct {
 }
 
 @(step="render",loops="game editor",after="render_sync")
-paint_render :: proc(state:^Paint_Render,painted:^core.Table(Painted,.Read),synced:core.Ref(render.Render_Sync),assets:^host.Assets,renderer:^render.Renderer) {
+paint_render :: proc(state:^Paint_Render,painted:^core.Table(Painted,.Read),synced:core.Ref(render.Render_Sync),assets:^host.Assets,renderer:^render.Renderer,problems:^core.Problems) {
     if renderer==nil || assets==nil || synced.ptr==nil {return}
     sync:=synced.ptr
     loaded:=[2]u64{assets.registry.revision,core.version(painted)}
@@ -75,7 +98,12 @@ paint_render :: proc(state:^Paint_Render,painted:^core.Table(Painted,.Read),sync
     }
     if given==state.given {return}
     state.given=given
-    for shown in state.shown[:state.count] {render.instance_colors_set(renderer,render.instance_of(sync,shown.entity),shown.handle)}
+    for shown in state.shown[:state.count] {
+        index:=render.instance_of(sync,shown.entity)
+        if index>=0 && !render.instance_colors_set(renderer,index,shown.handle) {
+            core.report(problems,shown.entity,"paint.mismatch","its .paint was painted on another version of its mesh, with another number of vertices, and is not shown; open the scene in the editor, which fits the paint to the mesh, and save it")
+        }
+    }
 }
 
 // 0 for colors that are not a .paint the renderer can take.
@@ -84,8 +112,8 @@ colors_load :: proc(assets:^host.Assets,renderer:^render.Renderer,id:base.Asset_
     file:asset.Asset
     if host.assets_file(assets,id,PAINT_KIND,&file)!=.None {return 0}
     defer asset.asset_close(&file)
-    colors,error:=colors_view(&file,&assets.types)
+    view,error:=paint_view(&file,&assets.types)
     if error!=.None {return 0}
-    handle,_:=render.colors_load(renderer,colors)
+    handle,_:=render.colors_load(renderer,view.colors)
     return handle
 }

@@ -386,10 +386,7 @@ terrain_changed :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,since:u32) 
             if version<=since && !anew {continue}
             a,b,valid:=chunk_region(s,chunk_coord(s,index))
             if !valid {continue}
-            origin:=source_origin(s)
-            from:=origin+[3]f32{f32(a.x),f32(a.y),f32(a.z)}*s.cell
-            to:=origin+[3]f32{f32(b.x),f32(b.y),f32(b.z)}*s.cell
-            if s.kind==.Heightfield {from.y,to.y=-HEIGHT_LIMIT,HEIGHT_LIMIT}
+            from,to:=source_box(s,a,b)
             if !changed {low,high,changed=from,to,true;continue}
             for axis in 0..<3 {low[axis]=min(low[axis],from[axis]);high[axis]=max(high[axis],to[axis])}
         }

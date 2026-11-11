@@ -156,7 +156,7 @@ chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source
     index:=slot.index
     chunk:=&source.chunks[index]
     s:=&entry.source
-    mesh,ok:=chunk_publish(resident.assets,s.kind,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
+    mesh,ok:=chunk_publish(resident.assets,&slot.mesh,slot.key.collision,resident.picking,piece_levels(s,&source.quad,index))
     if !ok {
         name:[base.ASSET_ID_TEXT]u8
         core.report(problems,source_owner(terrains,entry.id),"terrain.chunk_mesh","the mesh of piece %v (depth %d) of terrain source %s could not be made: out of memory for the mesh or its collision; free memory, or give the source fewer cells per chunk",quad_place(&entry.source,&source.quad,index),quad_depth(&source.quad,index),host.assets_name(resident.assets,entry.id,&name))
@@ -578,10 +578,8 @@ dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:^core.Table(Terrain,$A
         e:=core.entity_at(terrains,row)
         local:=brush_local(brush,edit_place(worlds,e))
         s:=&entry.source
-        low:=source_origin(s)
-        high:=low+[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*s.cell
+        low,high:=source_box(s,{},s.field.size-1)
         outside:=linalg.max(low-local.center,local.center-high,[3]f32{})
-        if s.kind==.Heightfield {outside.y=0}
         distance:=linalg.length(outside)
         reach:=max(local.radius,linalg.length(local.extent))
         area:=(high.x-low.x)*(high.z-low.z)
@@ -665,7 +663,7 @@ brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
     origin:=source_origin(s)
     reach:=max(brush.radius,brush.extent.x,brush.extent.y,brush.extent.z,0)*1.75/s.cell+max(brush.blend,0)/s.cell+3
     if s.kind==.Volume {reach+=SDF_BAND_CELLS}
-    limit:=f32(HEIGHT_SAMPLES_MAX)
+    limit:=f32(SAMPLES_MAX)
     low,high:[3]int
     for axis in 0..<3 {
         if s.kind==.Heightfield && axis==1 {continue}

@@ -122,8 +122,7 @@ struct_fields :: proc(t:^runtime.Type_Info,list:^[dynamic]Path_Entry,kind:Bind_K
     v,ok:=runtime.type_info_base(t).variant.(runtime.Type_Info_Struct)
     if !ok {return}
     for i in 0..<int(v.field_count) {
-        tag:=v.tags[i]
-        if strings.contains(tag,"transient") || strings.contains(tag,"hidden") {continue}
+        if tagged,_:=serial.field_tag(v.tags[i]);tagged.flags&{.Transient,.Hidden}!={} {continue}
         if v.usings[i] {struct_fields(v.types[i],list,kind);continue}
         next,navigable:=type_next(v.types[i])
         append(list,Path_Entry{name=v.names[i],info=v.types[i],next=next,navigable=navigable,fits=type_fits(v.types[i],kind)})

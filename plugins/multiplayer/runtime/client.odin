@@ -1588,12 +1588,16 @@ sync_hashes :: proc(s:^Net_Session,w:core.World_Ref,out:[]u64) {
 }
 
 // A tick ran again different: the table, or the simulation, and after the last
-// tick the entity, which the world the first time left tells.
+// tick the entity, or where the simulation differs, which the world the first
+// time left tells.
 @(private)
 sync_problem :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,table:int,last:bool) {
     WHY :: "a fixed function reads something besides the World and the Input, or keeps what it needs outside the World; keep it in a component or a storage of the World"
     if table>=len(w.info.tables) {
-        core.report(s.problems,core.NONE,"net.sync_test","tick %d leaves what simulates outside the tables (the bodies of physics) different when it runs again from the same world and input (Net_Settings.sync_test): %s",tick,WHY)
+        buf:[512]byte
+        storage,where_:="the bodies of physics",""
+        if last {if name,text:=core.world_diff(w.info,s.client.sync_world,w.data,buf[:]);text!="" {storage,where_=name,text}}
+        core.report(s.problems,core.NONE,"net.sync_test","tick %d leaves what simulates outside the tables (%s%s%s) different when it runs again from the same world and input (Net_Settings.sync_test): %s",tick,storage,where_==""?"":": ",where_,WHY)
         return
     }
     info:=&w.info.tables[table]

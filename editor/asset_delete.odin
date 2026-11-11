@@ -5,6 +5,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:platform"
@@ -14,7 +15,8 @@ import "mirai:ui"
 // Deleting an asset from the content browser or the API: the file goes to the
 // trash of the system, from which the user brings it back, at once and not as
 // an edit, as an import writes. The parts of an import go with the asset that
-// owns them; what uses it is named before and keeps the reference.
+// owns them; what uses it, saved or in an open document, is named before and
+// keeps the reference.
 
 Api_Asset_Delete_Params :: struct {
     asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset to delete: its path under the asset folder or its id"`,
@@ -25,7 +27,7 @@ Api_Asset_Users_Params :: struct {
 }
 
 Api_Asset_Users_Result :: struct {
-    used_by:[]string `mirai:"label=The files that reference the asset or a part it owns, by id: moving it keeps them working and deleting it breaks them"`,
+    used_by:[]string `mirai:"label=The files that reference the asset or a part it owns, by id, and the open documents whose unsaved changes do (Untitled for one never saved): moving it keeps them working and deleting it breaks them"`,
 }
 
 ASSET_DELETE_USERS :: 4 // rows of the files that use it; the rest is a count
@@ -59,13 +61,29 @@ asset_delete_all :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (file
     return listed[:],sidecar
 }
 
-// The files that use what deleting id moves and are not moved with it.
+// What uses what deleting moves and is not moved with it, by path: the files
+// that reference it, and the open documents whose unsaved changes do
+// ("Untitled" for one never saved).
 @(private)
-asset_delete_users :: proc(r:^asset.Registry,files:[]u32) -> []u32 {
-    users:=make([dynamic]u32,context.temp_allocator)
+asset_delete_users :: proc(s:^Session,r:^asset.Registry,files:[]u32) -> []string {
+    users:=make([dynamic]string,context.temp_allocator)
     for at in files {
         for user in asset.registry_dependents(r,r.files[at].id) {
-            if !slice.contains(files,user) && !slice.contains(users[:],user) {append(&users,user)}
+            if !slice.contains(files,user) && !slice.contains(users[:],r.files[user].path) {append(&users,r.files[user].path)}
+        }
+    }
+    ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for i in -1..<len(s.documents) {
+        world:=s.edit_world if i<0 else s.documents[i].world
+        if i==s.active_document || world==nil || !(document_dirty(s) if i<0 else document_tab_dirty(s,i)) {continue}
+        clear(&ids)
+        host.world_asset_ids(core.world_ref(world,s.info),&ids)
+        for at in files {
+            if !slice.contains(ids[:],r.files[at].id) {continue}
+            path:=document_path(s.document if i<0 else &s.documents[i].document)
+            if path=="" {path="Untitled"}
+            if !slice.contains(users[:],path) {append(&users,path)}
+            break
         }
     }
     return users[:]
@@ -151,7 +169,7 @@ asset_delete_modal :: proc(s:^Session) {
     defer if closed {g.modal,g.delete_asset=.None,{}}
     if ui.modal(ctx,shell_id(g,"delete_asset"),{width=420,padding=16,gap=14,close=&closed}) {
         files,_:=asset_delete_all(s,r,file.id)
-        users:=asset_delete_users(r,files)
+        users:=asset_delete_users(s,r,files)
         refusal:=asset_delete_refusal(s,r,file)
         ui.label(ctx,"Delete asset",ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=12,align_y=.Center}) {
@@ -172,12 +190,13 @@ asset_delete_modal :: proc(s:^Session) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,0,8,4}}) {
                     ui.label(ctx,fmt.tprintf("Used by %d",len(users)),ui.metric(ctx,"font"),ui.tone(ctx,"danger"),font=ui.FONT_SEMIBOLD)
                 }
-                for at in users[:min(len(users),ASSET_DELETE_USERS)] {
-                    user:=&r.files[at]
-                    icon,_:=asset_file_icon(s,user)
+                for path in users[:min(len(users),ASSET_DELETE_USERS)] {
+                    // An open document never saved is no file: a scene.
+                    icon,_:=asset_icon(s,asset.KIND_SCENE)
+                    if user,known:=asset.registry_find_path(r,path);known {icon,_=asset_file_icon(s,user)}
                     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=8,padding={8,0,8,0},align_y=.Center}) {
                         ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),14)
-                        ui.label(ctx,filepath.base(user.path),ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
+                        ui.label(ctx,filepath.base(path),ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
                     }
                 }
                 if len(users)>ASSET_DELETE_USERS {
@@ -225,9 +244,9 @@ api_asset_named :: proc(s:^Session,call:^api.Call,name:string) -> (r:^asset.Regi
 api_asset_users :: proc(s:^Session,call:^api.Call) {
     r,id,ok:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Asset_Users_Params).asset[:]))
     if !ok {return}
-    users:=asset_delete_users(r,asset_delete_files(r,id))
+    users:=asset_delete_users(s,r,asset_delete_files(r,id))
     used:=make([]string,len(users),call.allocator)
-    for at,i in users {used[i]=r.files[at].path}
+    for path,i in users {used[i]=strings.clone(path,call.allocator)}
     api.call_result(call,Api_Asset_Users_Result).used_by=used
 }
 
@@ -236,7 +255,7 @@ api_asset_delete :: proc(s:^Session,call:^api.Call) {
     r,id,ok:=api_asset_named(s,call,base.text_get(api.call_params(call,Api_Asset_Delete_Params).asset[:]))
     if !ok {return}
     users:=make([dynamic]string,call.allocator)
-    for at in asset_delete_users(r,asset_delete_files(r,id)) {append(&users,strings.clone(r.files[at].path,call.allocator))}
+    for path in asset_delete_users(s,r,asset_delete_files(r,id)) {append(&users,strings.clone(path,call.allocator))}
     moved,message:=asset_delete(s,id)
     if len(moved)==0 {
         api.call_fail(call,api.INVALID_PARAMS,message!=""?message:"Nothing was deleted")

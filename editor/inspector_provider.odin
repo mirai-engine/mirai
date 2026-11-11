@@ -17,9 +17,9 @@ Inspector_Context :: struct {
 // Each one says whether it drew what it was handed; the editor draws the rest.
 Inspector_Provider :: struct {
     component:proc(c:Inspector_Context) -> bool,
-    field:proc(c:Inspector_Context,info:^runtime.Type_Info,offset:uintptr,label:string) -> bool,
-    number:proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr,key:u64) -> bool, // a number of a component or a setting, in its row
-    array:proc(c:^Inspect,info:^runtime.Type_Info,name,label:string,offset:uintptr) -> bool,     // an array of a component or a setting, with its rows
+    field:proc(c:Inspector_Context,type:typeid,offset:uintptr,label:string) -> bool,
+    number:proc(c:^Inspect,type:typeid,label:string,offset:uintptr,key:u64) -> bool, // a number of a component or a setting, in its row
+    array:proc(c:^Inspect,type:typeid,name,label:string,offset:uintptr) -> bool,     // an array of a component or a setting, with its rows
     popup:proc(s:^Session,w:core.World_Ref),          // what the inspector opens over itself, outside its scroll area
     valid:proc(info:^runtime.Type_Info,value:rawptr) -> (problem:string), // a setting the API is given; empty: it takes it
     // A component that the section of another shows (the values of an
@@ -34,17 +34,17 @@ Component_Provider :: struct {
 }
 
 @(private)
-inspector_number_extension :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr,key:u64) -> bool {
+inspector_number_extension :: proc(c:^Inspect,type:typeid,label:string,offset:uintptr,key:u64) -> bool {
     for &p in providers(c.s).inspectors[:providers(c.s).inspector_count] {
-        if p.number!=nil && p.number(c,info,label,offset,key) {return true}
+        if p.number!=nil && p.number(c,type,label,offset,key) {return true}
     }
     return false
 }
 
 @(private)
-inspector_array_extension :: proc(c:^Inspect,info:^runtime.Type_Info,name,label:string,offset:uintptr) -> bool {
+inspector_array_extension :: proc(c:^Inspect,type:typeid,name,label:string,offset:uintptr) -> bool {
     for &p in providers(c.s).inspectors[:providers(c.s).inspector_count] {
-        if p.array!=nil && p.array(c,info,name,label,offset) {return true}
+        if p.array!=nil && p.array(c,type,name,label,offset) {return true}
     }
     return false
 }
@@ -87,24 +87,25 @@ component_companions :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
 }
 
 @(private)
-inspector_extension :: proc(c:^Inspect,info:^runtime.Type_Info=nil,offset:uintptr=0,label:string="") -> bool {
+inspector_extension :: proc(c:^Inspect,type:typeid,offset:uintptr=0,label:string="") -> bool {
     // A field of a setting or of the values of a panel has no table to hand a provider.
-    if info!=nil && c.t==nil {return false}
+    if type!=nil && c.t==nil {return false}
     descriptor:=Inspector_Context{c.s,c.w,c.t,c.entities,c.width}
     p:=providers(c.s)
     for provider in p.inspectors[:p.inspector_count] {
-        if info==nil {
+        if type==nil {
             if provider.component!=nil && provider.component(descriptor) {return true}
-        } else if provider.field!=nil && provider.field(descriptor,info,offset,label) {return true}
+        } else if provider.field!=nil && provider.field(descriptor,type,offset,label) {return true}
     }
     return false
 }
 
-inspector_fields :: proc(c:Inspector_Context,info:^runtime.Type_Info,offset:uintptr=0,prefix:string="") {
-    if c.session==nil || c.table==nil || len(c.entities)==0 || info==nil {return}
+// The rows of the fields of the component, of a provider that draws them under its own.
+inspector_fields :: proc(c:Inspector_Context) {
+    if c.session==nil || c.table==nil || len(c.entities)==0 {return}
     inspected:=inspect_component(c.session,c.world,c.table.type,c.entities)
     inspected.width=c.width
-    fields_rows(&inspected,info,offset,0,prefix)
+    if inspected.schema!=nil {fields_rows(&inspected,inspected.of,0,0,"")}
 }
 
 // The row of a reference to an entity at an offset of the component, under a label of the provider's.

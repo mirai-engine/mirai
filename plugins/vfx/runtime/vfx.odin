@@ -63,11 +63,7 @@ PARTICLE_SETTINGS_DEFAULT :: Particle_Settings{capacity=CAPACITY}
 // What the renderer was told of an emitter.
 Emitter_Shown :: struct {
     resolved:u64,                // what it was resolved from: the asset, its revision, the values of the entity, the shaders
-    info:effect.Particle_Info,    // the effect with the values of the entity over it
-    sub:effect.Particle_Info,     // the effect its particles start in another emitter
-    has_sub:bool,
-    program,sub_program:Program,
-    desc,sub_desc:Emitter_Desc,   // what the GPU is told of it and of its sub effect, but for what each frame gives
+    desc,sub_desc:Emitter_Desc,   // what the GPU is told of it and of its sub effect (id 0: none), but for what each frame gives
     needs:Program_Needs,          // the resources and stages its program declares
     resource_previous:[RESOURCE_ROWS]mm.Mat4, // where each of its resources was drawn last
     resource_placed:[RESOURCE_ROWS]bool,
@@ -87,7 +83,6 @@ Particle_Sync :: struct {
     timed:bool,
     descs:[dynamic]Emitter_Desc,
     fields:Gpu_Fields, // the gravity and the wind of the world, as the frame found them
-    owners:[dynamic]core.Entity, // the entity of each of descs
     births:[dynamic]Gpu_Birth,   // of the channels, those the GPU starts in this frame
     regions:[dynamic]Channel_Region,
     started:[dynamic]Channel_Started,
@@ -115,7 +110,6 @@ Particle_Sync :: struct {
 particle_sync_free :: proc(sync:^Particle_Sync) {
     delete(sync.shown.values);delete(sync.shown.entities);delete(sync.shown.rows)
     delete(sync.descs)
-    delete(sync.owners)
     delete(sync.births);delete(sync.regions);delete(sync.started)
     pool_free(&sync.pool)
     surfaces_free(&sync.surfaces)
@@ -190,7 +184,6 @@ particles_sync :: proc(
     r,a:=app.renderer,app.assets
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.descs)
-    clear(&sync.owners)
     clear(&sync.resources)
     clear(&sync.stage_rows)
     clear(&sync.segments)
@@ -222,12 +215,14 @@ particles_sync :: proc(
         key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),a!=nil?a.revision:0)
         key=base.hash_combine(base.hash_combine(base.hash_combine(key,row_stamp(overrides,e)),shaders),made)|1
         if shown.resolved!=key {
-            shown.resolved=shown_resolve(shown,app,emitter.particle,overrides,e)?key:0
+            override,_:=core.get(overrides,e)
+            shown.resolved=shown_resolve(shown,a,r,emitter.particle,&override,{u64(e),sub_id(e)},&shown.needs)?key:0
+            shown.desc.owner,shown.sub_desc.owner=e,e
             shown.desc.revision,shown.sub_desc.revision=shown.resolved,shown.resolved
         }
-        for info in ([2]^effect.Particle_Info{&shown.info,shown.has_sub?&shown.sub:nil}) {
-            if info==nil || !(info.sort || info.render==.Ribbon) {continue}
-            if needed:=emitter_capacity(info);needed>SORT_MAX {
+        for d in ([2]^Emitter_Desc{&shown.desc,&shown.sub_desc}) {
+            if d.id==0 || !(d.info.sort || d.info.render==.Ribbon) {continue}
+            if needed:=emitter_capacity(&d.info);needed>SORT_MAX {
                 core.report(problems,e,"vfx.capacity","a sorted or ribbon effect keeps at most %d particles alive and this one needs %d: give it max_particles %d or less, or a lower rate or lifetime",SORT_MAX,needed,SORT_MAX)
             }
         }
@@ -256,9 +251,9 @@ particles_sync :: proc(
         desc:=shown.desc
         desc.transform,desc.previous,desc.spawns=transform,previous,spawns
         desc.age,desc.born=age,u32(born)
-        if shown.info.shape==.Surface || shown.info.shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
+        if shape:=shown.desc.info.shape;shape==.Surface || shape==.Bones || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
             bound,_:=core.get(bindings,e)
-            rows:=emitter_resources(sync,shown,&shown.info,&bound,e,host.extras_instances(&app.extras),drawn.ptr,meshes,worlds,id,app.assets,app.renderer)
+            rows:=emitter_resources(sync,shown,&bound,e,host.extras_instances(&app.extras),drawn.ptr,meshes,worlds,id,app.assets,app.renderer)
             desc.resources=u32(len(sync.resources))+1
             append(&sync.resources,..rows[:])
         }
@@ -268,15 +263,13 @@ particles_sync :: proc(
         }
         if listener,listens:=core.get(listeners,e);listens && !listener.silent {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
         desc.paused,desc.generation=paused,shown.generation
-        if shown.has_sub {
+        if shown.sub_desc.id!=0 {
             sub:=shown.sub_desc
             sub.transform,sub.previous=transform,previous
             sub.paused,sub.generation=paused,shown.generation
             append(&sync.descs,sub)
-            append(&sync.owners,e)
         }
         append(&sync.descs,desc)
-        append(&sync.owners,e)
     }
     grids_release(&sync.grids,&sync.pool)
     watched:[]u64
@@ -292,7 +285,6 @@ particles_sync :: proc(
             dt=clamp(frame.dt,0,1)
         }
         ui_effects_sync(ui_effects,asked,app.assets,app.renderer,clamp(frame.dt,0,1),shaders,&sync.descs)
-        for len(sync.owners)<len(sync.descs) {append(&sync.owners,core.NONE)}
     }
     if r==nil {return}
     if a!=nil {host.assets_commit(a)}
@@ -301,8 +293,8 @@ particles_sync :: proc(
         if len(sync.descs)>0 {core.report(problems,core.NONE,"vfx.capacity","the device takes no pool of %d particles: ask a smaller Particle_Settings.capacity",capacity)}
         return
     } else if dropped>0 {
-        for desc,at in sync.descs {
-            if pool_slot_find(&sync.pool,desc.id)<0 {core.report(problems,sync.owners[at],"vfx.capacity","this emitter found no room among the %d particles and %d emitters of the world: ask a larger Particle_Settings.capacity, or fewer max_particles of its effect",sync.pool.capacity,EMITTER_CAPACITY)}
+        for desc in sync.descs {
+            if pool_slot_find(&sync.pool,desc.id)<0 {core.report(problems,desc.owner,"vfx.capacity","this emitter found no room among the %d particles and %d emitters of the world: ask a larger Particle_Settings.capacity, or fewer max_particles of its effect",sync.pool.capacity,EMITTER_CAPACITY)}
         }
     }
     if sync.pool.refused==capacity && sync.pool.capacity!=capacity {
@@ -352,41 +344,26 @@ births_since :: proc(clock:^Emitter_Clock,started:^u64) -> (spawns:[SPAWNS]Parti
 }
 
 // The values, the sub effect and the programs an emitter shows, and what the
-// GPU is told of them. False without assets, or while the renderer does not
-// have the triangles of its mesh: it is resolved again.
+// GPU is told of them; ids: of its emitter and of that of its sub effect.
+// False without assets, or while the renderer does not have the triangles of
+// its mesh: it is resolved again.
 @(private)
-shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,overrides:^core.Table(Particle_Override,$A),e:core.Entity) -> bool {
-    a:=app.assets
-    override,_:=core.get(overrides,e)
-    shown.info=particle_resolve(a,particle,&override)
-    shown.sub={}
-    shown.has_sub=false
-    problem:=particle_program(a,particle,&shown.info,&override,&shown.program,&shown.needs)
-    channel_needs(a,&shown.program,&shown.needs)
-    shown.sub_program={}
-    if shown.info.trigger!=.None && shown.info.sub_particle!={} {
-        shown.sub=particle_resolve(a,shown.info.sub_particle,nil)
-        shown.has_sub=true
-        sub_problem:=particle_program(a,shown.info.sub_particle,&shown.sub,nil,&shown.sub_program,nil)
-        if problem=="" {problem=sub_problem}
+shown_resolve :: proc(shown:^Emitter_Shown,a:^host.Assets,renderer:^erender.Renderer,particle:base.Asset_Id,override:^Particle_Override,ids:[2]u64,needs:^Program_Needs) -> bool {
+    ready:bool
+    shown.desc,ready=emitter_desc(particle_resolve(a,particle,override),a,renderer,ids[0])
+    d:=&shown.desc
+    problem:=particle_program(a,particle,&d.info,override,&d.program,needs)
+    shown.sub_desc={}
+    if d.info.trigger!=.None && d.info.sub_particle!={} {
+        sub_ready:bool
+        shown.sub_desc,sub_ready=emitter_desc(particle_resolve(a,d.info.sub_particle,nil),a,renderer,ids[1])
+        sub:=&shown.sub_desc
+        if sub_problem:=particle_program(a,d.info.sub_particle,&sub.info,nil,&sub.program);problem=="" {problem=sub_problem}
+        sub.capacity+=min(d.capacity*d.info.sub_count,1<<16)
+        d.event_target=sub.id
+        ready&&=sub_ready
     }
     base.text_set(shown.problem[:],problem)
-    if a==nil {return false}
-    desc,ready:=emitter_desc(&shown.info,app.assets,app.renderer,u64(e))
-    shown.desc=desc
-    shown.desc.program=shown.program
-    shown.desc.report,shown.desc.owner=shown.info.report,e
-    shown.sub_desc={}
-    if shown.has_sub {
-        sub_desc,sub_ready:=emitter_desc(&shown.sub,app.assets,app.renderer,sub_id(e))
-        shown.sub_desc=sub_desc
-        ready&&=sub_ready
-        sub:=&shown.sub_desc
-        sub.program=shown.sub_program
-        sub.report,sub.owner=shown.sub.report,e
-        sub.capacity+=min(shown.desc.capacity*shown.info.sub_count,1<<16)
-        shown.desc.event,shown.desc.event_target,shown.desc.event_count=shown.info.trigger,sub.id,shown.info.sub_count
-    }
     return ready
 }
 
@@ -395,37 +372,24 @@ shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,
 sub_id :: proc "contextless" (e:core.Entity) -> u64 {return base.hash_combine(u64(e),0x7375625f70617274)}
 
 // What the GPU is told of an effect at an emitter, but for what each frame
-// gives. ready: the renderer has the triangles of its mesh, or it draws none.
+// gives. ready: there are assets, and the renderer has the triangles of its
+// mesh or it draws none.
 @(private)
-emitter_desc :: proc(m:^effect.Particle_Info,assets:^host.Assets,renderer:^erender.Renderer,id:u64) -> (desc:Emitter_Desc,ready:bool) {
-    a:=assets
-    material:=erender.Material_Handle(m.material!={}?host.assets_material_row(a,m.material):0)
-    mesh:[3]u32
-    blended:=false
-    ready=true
+emitter_desc :: proc(info:effect.Particle_Info,a:^host.Assets,renderer:^erender.Renderer,id:u64) -> (d:Emitter_Desc,ready:bool) {
+    d.info,d.id,ready=info,id,true
+    m:=&d.info
+    d.capacity=emitter_capacity(m)
+    if m.light_intensity<=0 || m.light_range<=0 {m.lights=0}
+    if a==nil {return d,false}
+    d.material=erender.Material_Handle(m.material!={}?host.assets_material_row(a,m.material):0)
     if m.render==.Mesh {
         // A material that blends draws its meshes over the lit scene, as a sprite.
-        if found:=host.assets_material(a,m.material);found!=nil {blended=found.info.alpha_mode==.Blend}
+        if found:=host.assets_material(a,m.material);found!=nil {d.blended=found.info.alpha_mode==.Blend}
         entry:=m.mesh!={}?host.assets_mesh(a,m.mesh):host.assets_shape(a,.Cube)
-        if entry!=nil {mesh.x,ready=erender.mesh_draw_range(renderer,entry.handle);mesh.y=u32(entry.handle)}
+        if entry!=nil {d.mesh.x,ready=erender.mesh_draw_range(renderer,entry.handle);d.mesh.y=u32(entry.handle)}
         ready||=renderer==nil
     }
-    return {
-        id=id,capacity=emitter_capacity(m),
-        seed=u32(base.hash_combine(id,0x7061727469636c65)),
-        local=m.local_space,lit=m.lit,relative=m.emission_mode==.Relative,sort=m.sort,
-        lights=m.lights if m.light_intensity>0 && m.light_range>0 else 0,light={m.light_intensity,m.light_range,m.light_radius},shadows=m.light_shadows,
-        shape=m.shape,shape_size=m.shape_size,shape_angle=m.shape_angle,shell=m.shell,
-        lifetime=m.lifetime,speed=m.speed,size=m.size,rotation=m.rotation,spin=m.spin,velocity=m.velocity,
-        color={m.colors[0],m.colors[1]},inherit=m.inherit_velocity,
-        acceleration=m.acceleration,gravity=m.gravity,drag=m.drag,
-        noise_strength=m.noise,noise_frequency=m.noise_frequency,noise_speed=m.noise_speed,
-        attractor=m.attractor,attractor_strength=m.attractor_strength,
-        collision=m.collision,bounce=m.bounce,friction=m.friction,collision_life=m.collision_life,
-        render=m.render,blend=m.blend,material=material,mesh=mesh,blended=blended,
-        stretch=m.stretch,soft=m.soft,intensity=m.intensity,flipbook=m.flipbook,flipbook_speed=m.flipbook_speed,
-        size_curve=m.size_over_life,color_curve=m.color_over_life,
-    },ready
+    return
 }
 
 Particle_State :: enum u8 {

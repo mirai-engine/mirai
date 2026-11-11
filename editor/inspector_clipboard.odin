@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -28,7 +27,7 @@ Value_Menu :: struct {
     kind:Value_Menu_Kind,
     table:int,               // of the world info: the component
     offset:int,              // of the field in it
-    info:^runtime.Type_Info, // of the field
+    type:serial.Type_Index,  // of the field, in the schema of the world
     transform:Transform_Field,
     label:[48]u8,
 }
@@ -130,20 +129,16 @@ value_copy :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
         if value==nil {return ""}
         bytes:=make([]u8,max(t.info.size,1),context.temp_allocator)
         api_value_out(w,t.info,value,bytes)
-        schema:serial.Schema
-        serial.schema_init(&schema,context.temp_allocator)
-        core.schema_named(&schema,w.info,context.temp_allocator)
+        schema,type,ok:=core.world_value_type(w.info,t.type)
+        if !ok {return "This component has no JSON form"}
         if menu.kind==.Component {
-            type,ok:=serial.schema_add_type_info(&schema,t.info)
-            if !ok {return "This component has no JSON form"}
             serial.write_u8(&out,'{');serial.text_write_string(&out,t.name);serial.write_u8(&out,':')
-            serial.text_write(&out,&schema,type,bytes[:t.info.size],.Line)
+            serial.text_write(&out,schema,type,bytes[:t.info.size],.Line)
             serial.write_u8(&out,'}')
         } else {
-            if menu.info==nil || menu.offset<0 || menu.offset+menu.info.size>t.info.size {return ""}
-            type,ok:=serial.schema_add_type_info(&schema,menu.info)
-            if !ok {return "This field has no JSON form"}
-            serial.text_write(&out,&schema,type,bytes[menu.offset:][:menu.info.size],.Line)
+            size:=int(schema.types[menu.type].size) if serial.type_valid(schema,menu.type) else 0
+            if size==0 || menu.offset<0 || menu.offset+size>t.info.size {return ""}
+            serial.text_write(&out,schema,menu.type,bytes[menu.offset:][:size],.Line)
         }
     }
     if out.overflow>0 {return "The value is too large to copy"}
@@ -233,17 +228,19 @@ value_paste :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
         }
     case .Field:
         t,value:=value_menu_component(w,menu,active)
-        if value==nil || menu.info==nil || menu.offset<0 || menu.offset+menu.info.size>t.info.size {return ""}
-        type,ok:=serial.schema_add_type_info(&schema,t.info)
-        field_type,field_ok:=serial.schema_add_type_info(&schema,menu.info)
-        if !ok || !field_ok {return fmt.tprintf("%s has no JSON form",label)}
+        if value==nil {return ""}
+        schema,type,ok:=core.world_value_type(w.info,t.type)
+        if !ok || !serial.type_valid(schema,menu.type) {return fmt.tprintf("%s has no JSON form",label)}
+        size:=int(schema.types[menu.type].size)
+        if menu.offset<0 || menu.offset+size>t.info.size {return ""}
         bytes:=make([]u8,max(t.info.size,1),context.temp_allocator)
         api_value_out(w,t.info,value,bytes)
-        field:=bytes[menu.offset:][:menu.info.size]
-        if !serial.text_read(&r,&schema,field_type,field) || !serial.text_end(&r) {return value_text_error(&r,label)}
-        if message,valid:=api.value_check(&schema,type,bytes[:t.info.size],readable(t.name),context.temp_allocator);!valid {return message}
-        for at in entity_offsets(menu.info) {
-            reference:=cast(^u64)&field[at]
+        field:=bytes[menu.offset:][:size]
+        if !serial.text_read(&r,schema,menu.type,field) || !serial.text_end(&r) {return value_text_error(&r,label)}
+        if message,valid:=api.value_check(schema,type,bytes[:t.info.size],readable(t.name),context.temp_allocator);!valid {return message}
+        for at in w.info.schema.tables[menu.table].entities {
+            if int(at)<menu.offset || int(at)>=menu.offset+size {continue}
+            reference:=cast(^u64)&bytes[at]
             if reference^==0 {continue}
             target:=api_entity(w,base.Entity_Id(reference^))
             if target==core.NONE {return fmt.tprintf("%s names 0x%016x, which is not an entity of the scene",label,reference^)}
@@ -258,7 +255,7 @@ value_paste :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
     case .Component:
         t,value:=value_menu_component(w,menu,active)
         if value==nil {return ""}
-        type,ok:=serial.schema_add_type_info(&schema,t.info)
+        schema,type,ok:=core.world_value_type(w.info,t.type)
         if !ok {return fmt.tprintf("%s has no JSON form",label)}
         // The object of the component, under its name or alone.
         wrapped:=false
@@ -274,7 +271,7 @@ value_paste :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
             if current==nil {continue}
             r.offset,r.error=start,{}
             bytes:=make([]u8,max(t.info.size,1),context.temp_allocator)
-            if message,valid:=component_value_read(w,t,current,&schema,type,&r,bytes[:t.info.size],readable(t.name),context.temp_allocator);!valid {return message}
+            if message,valid:=component_value_read(w,t,current,schema,type,&r,bytes[:t.info.size],readable(t.name),context.temp_allocator);!valid {return message}
             if wrapped && !serial.text_expect(&r,'}') || !serial.text_end(&r) {return value_text_error(&r,label)}
             append(&pending,Value_Pending{e,t,bytes})
         }
@@ -290,7 +287,7 @@ value_paste :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
             if !ok || !serial.text_expect(&r,':') {return value_text_error(&r,"Components")}
             t:=component_table(s,name)
             if t==nil || t.place!=.World || !inspector_listed(s,t) {return fmt.tprintf("%q is not a component that Paste adds",name)}
-            type,typed:=serial.schema_add_type_info(&schema,t.info)
+            schema,type,typed:=core.world_value_type(w.info,t.type)
             if !typed {return fmt.tprintf("%s has no JSON form",name)}
             table:=core.world_table_at(w,t)
             start:=r.offset
@@ -298,7 +295,7 @@ value_paste :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
                 if !entity_alive(w,e) {continue}
                 r.offset,r.error=start,{}
                 bytes:=make([]u8,max(t.info.size,1),context.temp_allocator)
-                if message,valid:=component_value_read(w,t,core.raw_find(table,t.info,e),&schema,type,&r,bytes[:t.info.size],name,context.temp_allocator);!valid {return message}
+                if message,valid:=component_value_read(w,t,core.raw_find(table,t.info,e),schema,type,&r,bytes[:t.info.size],name,context.temp_allocator);!valid {return message}
                 append(&pending,Value_Pending{e,t,bytes})
             }
         }

@@ -3,13 +3,13 @@ package editor
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/records"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:ui"
 
 // The document of a table of game data (.records): a grid with a row per
@@ -63,9 +63,7 @@ Records_Document :: struct {
 Records_Column :: struct {
     label:string,
     offset:int,
-    info:^runtime.Type_Info,
-    tag:reflect.Struct_Tag,
-    name:string,        // of the field, for the kind of asset it takes
+    field:serial.Field, // its description in the schema of the world
     description:string, // of its field on the type
     width:f32,
 }
@@ -164,40 +162,44 @@ records_columns_make :: proc(s:^Session,r:^Records_Document) {
     delete(r.defaults)
     r.defaults=make([]u8,info.info.size)
     if info.default!=nil {info.default(raw_data(r.defaults))}
-    fields,is_struct:=runtime.type_info_base(info.info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return}
-    for i in 0..<int(fields.field_count) {
+    ws:=s.app.info.schema
+    if ws==nil {return}
+    for field in serial.schema_fields(&ws.schema,ws.records[r.edit.record].type) {
         description:=""
         for f in info.fields {
-            if f.name==fields.names[i] {description=f.text}
+            if f.name==field.name {description=f.text}
         }
-        records_columns_add(s,r,fields.types[i],reflect.Struct_Tag(fields.tags[i]),fields.names[i],readable(fields.names[i]),int(fields.offsets[i]),description,0)
+        records_columns_add(s,r,&ws.schema,field,readable(field.name),int(field.offset),description,0)
     }
 }
 
 @(private="file")
-records_columns_add :: proc(s:^Session,r:^Records_Document,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name,label:string,offset:int,description:string,depth:int) {
-    column :: proc(r:^Records_Document,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name,label:string,offset:int,description:string,width:f32) {
-        append(&r.columns,Records_Column{label=strings.clone(label),offset=offset,info=info,tag=tag,name=name,description=description,width=width})
+records_columns_add :: proc(s:^Session,r:^Records_Document,schema:^serial.Schema,field:serial.Field,label:string,offset:int,description:string,depth:int) {
+    column :: proc(r:^Records_Document,field:serial.Field,label:string,offset:int,description:string,width:f32) {
+        append(&r.columns,Records_Column{label=strings.clone(label),offset=offset,field=field,description=description,width=width})
     }
-    if info.id==base.Asset_Id || core.record_of_ref(s.app.info,info.id)>=0 || core.named_type_of(s.app.info,info.id)!=nil {
-        column(r,info,tag,name,label,offset,description,RECORDS_CELL_WIDTH)
+    type:=schema.types[field.type]
+    if type.kind==.Asset || core.record_of_ref(s.app.info,type.id)>=0 || core.named_type_of(s.app.info,type.id)!=nil {
+        column(r,field,label,offset,description,RECORDS_CELL_WIDTH)
         return
     }
-    #partial switch v in runtime.type_info_base(info).variant {
-    case runtime.Type_Info_Boolean,runtime.Type_Info_Integer,runtime.Type_Info_Float,runtime.Type_Info_Enum:
-        column(r,info,tag,name,label,offset,description,RECORDS_CELL_WIDTH)
-    case runtime.Type_Info_Array:
-        if .Text in field_tagged(string(tag)).flags && v.elem.size==1 {
-            column(r,info,tag,name,label,offset,description,RECORDS_TEXT_WIDTH)
+    #partial switch type.kind {
+    case .Bool,.Int,.Uint,.Float,.Enum,.Entity,.Entity_Id:
+        column(r,field,label,offset,description,RECORDS_CELL_WIDTH)
+    case .Array:
+        elem:=schema.types[type.elem]
+        if .Text in field.flags && elem.size==1 {
+            column(r,field,label,offset,description,RECORDS_TEXT_WIDTH)
             return
         }
-        if v.count>RECORDS_ARRAY_COLUMNS || depth>=RECORDS_COLUMN_DEPTH {return}
-        for at in 0..<v.count {records_columns_add(s,r,v.elem,tag,name,fmt.tprintf("%s %d",label,at+1),offset+at*v.elem_size,description,depth+1)}
-    case runtime.Type_Info_Struct:
+        if .Rotation in field.flags || type.count>RECORDS_ARRAY_COLUMNS || depth>=RECORDS_COLUMN_DEPTH {return}
+        element:=field
+        element.type=type.elem
+        for at in 0..<int(type.count) {records_columns_add(s,r,schema,element,fmt.tprintf("%s %d",label,at+1),offset+at*int(elem.size),description,depth+1)}
+    case .Struct:
         if depth>=RECORDS_COLUMN_DEPTH {return}
-        for i in 0..<int(v.field_count) {
-            records_columns_add(s,r,v.types[i],reflect.Struct_Tag(v.tags[i]),v.names[i],fmt.tprintf("%s %s",label,readable(v.names[i])),offset+int(v.offsets[i]),description,depth+1)
+        for inner in serial.schema_fields(schema,field.type) {
+            records_columns_add(s,r,schema,inner,fmt.tprintf("%s %s",label,readable(inner.name)),offset+int(inner.offset),description,depth+1)
         }
     }
 }
@@ -298,53 +300,45 @@ records_name_cell :: proc(s:^Session,r:^Records_Document,row:int) {
 records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Records_Column,at:int) -> (changed:bool) {
     ctx:=s.gui.ctx
     e:=&r.edit
-    value:=records.row_bytes(e,row)[c.offset:][:c.info.size]
+    type:=s.app.info.schema.schema.types[c.field.type]
+    value:=records.row_bytes(e,row)[c.offset:][:type.size]
     p:=raw_data(value)
     id:=ui.id(ctx,"cell",at+1)
-    if c.info.id==base.Asset_Id {
+    if type.kind==.Asset {
         key:=KEY_RECORDS_ROW~(u64(row)<<20|u64(at))
-        return held_asset_button(s,id,key,field_asset_kinds(s,c.tag,c.name),cast(^base.Asset_Id)p,c.width-6)
+        return held_asset_button(s,id,key,field_asset_kinds(s,c.field),cast(^base.Asset_Id)p,c.width-6)
     }
-    if record:=core.record_of_ref(s.app.info,c.info.id);record>=0 {
+    if record:=core.record_of_ref(s.app.info,type.id);record>=0 {
         return record_choice(s,id,record,cast(^core.Record_Id)&value[size_of(base.Asset_Id)],cast(^base.Asset_Id)p,ui.fixed(c.width-6))
     }
-    if names:=core.names_of(s.app.info,c.info.id);len(names)>0 {
-        options:=make([]string,len(names),context.temp_allocator)
-        current:=i64(number_read(p,c.info))
-        selected:=-1
+    names:=core.names_of(s.app.info,type.id)
+    choices:=s.app.info.schema.schema.choices[type.first:][:type.count] if type.kind==.Enum else nil
+    if len(names)>0 || type.kind==.Enum {
+        options:=make([]string,max(len(names),len(choices)),context.temp_allocator)
+        selected:=choice_at(p,len(value),choices)
         for n,i in names {
             options[i]=n.name
-            if n.value==current {selected=i}
+            if n.value==i64(number_read(p,type)) {selected=i}
         }
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true}) && selected>=0 {
-            number_write(p,c.info,f64(names[selected].value))
+        for choice,i in choices {options[i]=readable(choice.name)}
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=len(names)>0}) && selected>=0 {
+            chosen:=names[selected].value if len(names)>0 else choices[selected].value
+            copy(value,mem.ptr_to_bytes(&chosen)[:len(value)])
             return true
         }
         return false
     }
-    #partial switch v in runtime.type_info_base(c.info).variant {
-    case runtime.Type_Info_Boolean:
+    #partial switch type.kind {
+    case .Bool:
         return ui.checkbox(ctx,id,cast(^bool)p)
-    case runtime.Type_Info_Integer,runtime.Type_Info_Float:
-        desc,scale:=field_number(c.info,c.tag)
+    case .Int,.Uint,.Float,.Entity,.Entity_Id:
+        desc,scale:=field_number(c.field,type)
         desc.height=ui.metric(ctx,"row")
-        number:=number_read(p,c.info)*scale
+        number:=number_read(p,type)*scale
         result:=ui.number_field(ctx,id,&number,desc)
-        if result.changed {number_write(p,c.info,number/scale)}
+        if result.changed {number_write(p,type,number/scale)}
         return result.changed
-    case runtime.Type_Info_Enum:
-        current:=i64(number_read(p,v.base))
-        selected:=-1
-        options:=make([]string,len(v.names),context.temp_allocator)
-        for name,i in v.names {
-            options[i]=readable(name)
-            if i64(v.values[i])==current {selected=i}
-        }
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row")}) && selected>=0 {
-            number_write(p,v.base,f64(v.values[selected]))
-            return true
-        }
-    case runtime.Type_Info_Array:
+    case .Array:
         length:=base.text_len(value)
         result:=ui.text_field(ctx,id,value[:len(value)-1],&length,{height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")})
         if result.changed || result.committed {

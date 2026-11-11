@@ -188,7 +188,6 @@ terrain_interior_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
 terrain_interior_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,interior:terrain.Interior) -> bool {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} {return false}
-    if stroke.source.kind!=.Volume {editor.notify(s,"Only a Volume has an interior");return false}
     if !terrain.interior_valid(interior,stroke.source.layer_count) {editor.notify(s,"The interior names a layer the terrain does not have, or its depths are out of order");return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
     previous:=stroke.source.interior

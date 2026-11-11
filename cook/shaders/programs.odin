@@ -239,8 +239,6 @@ program_stages :: proc(program:string,lines:[][]string,resources:[]Resource,allo
                     return nil,fmt.aprintf("%s.%s: iterations is a number from 1 to %d",program,name,MAX_ITERATIONS,allocator=allocator)
                 }
                 stage.iterations=count
-            case "neighbors":
-                return nil,fmt.aprintf("%s.%s: a stage has no neighbors: declare a grid resource, add each particle to the words of its cell (mirai_vfx_grid_word_add) in a stage over particles, and read the cells around a particle in a later stage",program,name,allocator=allocator)
             case "writes":
                 written:=make([dynamic]string,allocator)
                 for target in strings.split(words[at+1],",",context.temp_allocator) {

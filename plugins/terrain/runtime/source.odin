@@ -12,8 +12,7 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 
 VERSION :: 11
-HEIGHT_SAMPLES_MAX :: 16385
-VOLUME_SAMPLES_MAX :: HEIGHT_SAMPLES_MAX
+SAMPLES_MAX :: 16385
 // A Volume has at most this many chunks: one that reaches further takes more cells per chunk.
 VOLUME_CHUNKS_MAX :: 1<<18
 CHUNK_CELLS_MIN :: 4
@@ -59,10 +58,11 @@ source_valid :: proc "contextless" (info:Source_Info) -> bool {
     for layer,i in info.layers {
         if i<int(info.layer_count) {if !layer_valid(layer) {return false}} else if layer!={} {return false}
     }
+    for n in info.samples {if n>SAMPLES_MAX {return false}}
     switch info.kind {
-    case .Heightfield: return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2 && info.samples.x<=HEIGHT_SAMPLES_MAX && info.samples.z<=HEIGHT_SAMPLES_MAX
+    case .Heightfield: return info.samples.y==1 && info.samples.x>=2 && info.samples.z>=2
     case .Volume:
-        if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3 && info.samples.x<=VOLUME_SAMPLES_MAX && info.samples.y<=VOLUME_SAMPLES_MAX && info.samples.z<=VOLUME_SAMPLES_MAX) {return false}
+        if !(info.samples.x>=3 && info.samples.y>=3 && info.samples.z>=3) {return false}
         chunks:=u64(1)
         for n in info.samples {chunks*=u64(max((int(n)-2+int(info.chunk_cells))/int(info.chunk_cells),1))}
         return chunks<=VOLUME_CHUNKS_MAX
@@ -95,7 +95,7 @@ source_allocate :: proc(s:^Source,info:Source_Info,allocator:=context.allocator)
 }
 
 source_make :: proc(s:^Source,kind:Source_Kind,samples:[3]int,cell:f32,chunk_cells:int,allocator:=context.allocator) -> bool {
-    for n in samples {if n<1 || n>HEIGHT_SAMPLES_MAX {return false}}
+    for n in samples {if n<1 || n>SAMPLES_MAX {return false}}
     if chunk_cells<CHUNK_CELLS_MIN || chunk_cells>CHUNK_CELLS_MAX {return false}
     info:=Source_Info{kind=kind,samples={u32(samples.x),u32(samples.y),u32(samples.z)},cell=cell,chunk_cells=u32(chunk_cells),layer_count=1,layers={0=LAYER_DEFAULT}}
     return source_allocate(s,info,allocator) && (kind!=.Volume || volume_box(s))
@@ -213,6 +213,23 @@ source_origin :: proc "contextless" (s:^Source) -> [3]f32 {
     return -[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*(s.cell*0.5)
 }
 
+// The box of samples a to b in the space of a source; that of a Heightfield
+// reaches every height.
+source_box :: proc "contextless" (s:^Source,a,b:[3]int) -> (low,high:[3]f32) {
+    origin:=source_origin(s)
+    low,high=origin+[3]f32{f32(a.x),f32(a.y),f32(a.z)}*s.cell,origin+[3]f32{f32(b.x),f32(b.y),f32(b.z)}*s.cell
+    if s.kind==.Heightfield {low.y,high.y=-HEIGHT_LIMIT,HEIGHT_LIMIT}
+    return
+}
+
+// A point of a source carried along its normal onto the surface: on a
+// Heightfield to its height there, on a Volume to the surface reach about it.
+source_carry :: proc(s:^Source,point,normal:[3]f32,reach:f32) -> ([3]f32,[3]f32) {
+    if s.kind==.Heightfield {return {point.x,source_height(s,point.x,point.z),point.z},normal}
+    if reach>0 {if hit,hit_normal,on:=source_ray(s,point+normal*reach,-normal);on && linalg.length(hit-point)<=reach*2 {return hit,hit_normal}}
+    return point,normal
+}
+
 source_point :: proc "contextless" (s:^Source,p:[3]int) -> [3]f32 {
     point:=source_origin(s)+[3]f32{f32(p.x),f32(p.y),f32(p.z)}*s.cell
     if s.kind==.Heightfield {point.y=grid_get(&s.field,p.x,p.z)}
@@ -238,11 +255,9 @@ source_ray :: proc(s:^Source,origin,direction:[3]f32) -> (point,normal:[3]f32,ok
     for axis in 0..<3 {if origin[axis]-origin[axis]!=0 || direction[axis]-direction[axis]!=0 {return}}
     d:=linalg.normalize0(direction)
     if d=={} {return}
-    low:=source_origin(s)
-    high:=low+[3]f32{f32(s.samples.x-1),f32(s.samples.y-1),f32(s.samples.z-1)}*s.cell
+    low,high:=source_box(s,{},s.field.size-1)
     near,far:=f32(0),f32(1e9)
     for axis in 0..<3 {
-        if s.kind==.Heightfield && axis==1 {continue}
         if abs(d[axis])<1e-9 {
             if origin[axis]<low[axis] || origin[axis]>high[axis] {return}
         } else {
