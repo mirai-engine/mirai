@@ -672,13 +672,14 @@ abi_text :: proc() -> string {
     return fmt.tprintf("%d;table;%d;%d;%d",TABLE_SLOT,TABLE_METAL_BUFFER,BUFFER_SLOTS,SAMPLER_SLOTS)
 }
 
-// SPIRV-Tools 2026.3 and 2026.4 fall with an invalid access when they
-// optimize the SPIR-V of these two FSR 3.1 passes with -O2 or above. -O1 keeps
-// the Metal build working; remove the workaround when the SDK brings a fixed
-// tool (KhronosGroup/SPIRV-Tools#7005).
+// The spirv-opt -O of SPIRV-Tools 2026.3 and 2026.4, which only the Metal
+// build runs, falls with an invalid access on the SPIR-V of these stages: its
+// loop unrolling uses a value before defining it and merge-blocks crashes on
+// that. Compiled with -O1 they go through; remove the workaround when the SDK
+// brings a fixed tool (KhronosGroup/SPIRV-Tools#7005).
 @(private)
 shader_reduced :: proc(name:string) -> bool {
-    return strings.has_prefix(name,"fsr3_prepare_reactivity.") || strings.has_prefix(name,"fsr3_shading_change.")
+    return strings.has_prefix(name,"fsr3_prepare_reactivity.") || strings.has_prefix(name,"fsr3_shading_change.") || strings.has_prefix(name,"direct_spread.")
 }
 
 // Whether the SPIR-V takes a pointer to a texel of an image (OpImageTexelPointer),

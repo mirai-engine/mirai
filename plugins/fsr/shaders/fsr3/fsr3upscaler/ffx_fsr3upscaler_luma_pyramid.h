@@ -37,7 +37,6 @@ void SpdResetAtomicCounter(FfxUInt32 slice)
     SPD_ResetAtomicCounter();
 }
 
-#ifndef SPD_PACKED_ONLY
 FFX_GROUPSHARED FfxFloat32 spdIntermediateR[16][16];
 FFX_GROUPSHARED FfxFloat32 spdIntermediateG[16][16];
 FFX_GROUPSHARED FfxFloat32 spdIntermediateB[16][16];
@@ -125,62 +124,12 @@ void SpdStoreIntermediate(FfxUInt32 x, FfxUInt32 y, FfxFloat32x4 value)
     spdIntermediateA[x][y] = value.w;
 }
 
-#endif
-
 // define fetch and store functions Packed
-#if FFX_HALF
-
-FFX_GROUPSHARED FfxFloat16x2 spdIntermediateRG[16][16];
-FFX_GROUPSHARED FfxFloat16x2 spdIntermediateBA[16][16];
-
-FfxFloat16x4 SpdLoadSourceImageH(FfxFloat32x2 tex, FfxUInt32 slice)
-{
-    return FfxFloat16x4(0, 0, 0, 0);
-}
-
-FfxFloat16x4 SpdLoadH(FfxInt32x2 p, FfxUInt32 slice)
-{
-    return FfxFloat16x4(0, 0, 0, 0);
-}
-
-void SpdStoreH(FfxInt32x2 p, FfxFloat16x4 value, FfxUInt32 mip, FfxUInt32 slice)
-{
-}
-
-FfxFloat16x4 SpdLoadIntermediateH(FfxUInt32 x, FfxUInt32 y)
-{
-    return FfxFloat16x4(
-        spdIntermediateRG[x][y].x,
-        spdIntermediateRG[x][y].y,
-        spdIntermediateBA[x][y].x,
-        spdIntermediateBA[x][y].y);
-}
-
-void SpdStoreIntermediateH(FfxUInt32 x, FfxUInt32 y, FfxFloat16x4 value)
-{
-    spdIntermediateRG[x][y] = value.xy;
-    spdIntermediateBA[x][y] = value.zw;
-}
-
-FfxFloat16x4 SpdReduce4H(FfxFloat16x4 v0, FfxFloat16x4 v1, FfxFloat16x4 v2, FfxFloat16x4 v3)
-{
-    return (v0 + v1 + v2 + v3) * FfxFloat16(0.25);
-}
-#endif
 
 #include "spd/ffx_spd.h"
 
 void ComputeAutoExposure(FfxUInt32x3 WorkGroupId, FfxUInt32 LocalThreadIndex)
 {
-#if FFX_HALF
-    SpdDownsampleH(
-        FfxUInt32x2(WorkGroupId.xy),
-        FfxUInt32(LocalThreadIndex),
-        FfxUInt32(MipCount()),
-        FfxUInt32(NumWorkGroups()),
-        FfxUInt32(WorkGroupId.z),
-        FfxUInt32x2(WorkGroupOffset()));
-#else
     SpdDownsample(
         FfxUInt32x2(WorkGroupId.xy),
         FfxUInt32(LocalThreadIndex),
@@ -188,5 +137,4 @@ void ComputeAutoExposure(FfxUInt32x3 WorkGroupId, FfxUInt32 LocalThreadIndex)
         FfxUInt32(NumWorkGroups()),
         FfxUInt32(WorkGroupId.z),
         FfxUInt32x2(WorkGroupOffset()));
-#endif
 }

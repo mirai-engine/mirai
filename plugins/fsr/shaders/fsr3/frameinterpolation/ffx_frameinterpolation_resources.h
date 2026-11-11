@@ -23,7 +23,6 @@
 #ifndef FFX_FRAMEINTERPOLATION_RESOURCES_H
 #define FFX_FRAMEINTERPOLATION_RESOURCES_H
 
-#if defined(FFX_CPU) || defined(FFX_GPU)
 #define FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_NULL                                         0
 #define FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_OUTPUT                                       1
 //#define FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_BACKBUFFER                                 2
@@ -89,7 +88,5 @@
 #define FFX_FRAMEINTERPOLATION_CONSTANTBUFFER_IDENTIFIER                                        0
 #define FFX_FRAMEINTERPOLATION_INPAINTING_PYRAMID_CONSTANTBUFFER_IDENTIFIER                     1
 #define FFX_FRAMEINTERPOLATION_CONSTANTBUFFER_COUNT                                             2
-
-#endif // #if defined(FFX_CPU) || defined(FFX_GPU)
 
 #endif //!defined( FFX_FRAMEINTERPOLATION_RESOURCES_H )

@@ -107,35 +107,6 @@ FfxUInt32x4 CalculateQSads2(FfxInt32x2 iSearchId)
 {
     FfxUInt32x4 sad = ffxBroadcast4(0u);
 
-#if FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION == 1
-
-    FfxInt32 idx = iSearchId.y * 6 + iSearchId.x;
-
-    sad = msad4(pixels[0][0], FfxUInt32x2(searchBuffer[0][idx],     searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[0][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-    idx += 6;
-    sad = msad4(pixels[1][0], FfxUInt32x2(searchBuffer[0][idx], searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[1][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-    idx += 6;
-    sad = msad4(pixels[2][0], FfxUInt32x2(searchBuffer[0][idx], searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[2][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-    idx += 6;
-    sad = msad4(pixels[3][0], FfxUInt32x2(searchBuffer[0][idx], searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[3][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-    idx += 6;
-    sad = msad4(pixels[4][0], FfxUInt32x2(searchBuffer[0][idx], searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[4][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-    idx += 6;
-    sad = msad4(pixels[5][0], FfxUInt32x2(searchBuffer[0][idx], searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[5][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-    idx += 6;
-    sad = msad4(pixels[6][0], FfxUInt32x2(searchBuffer[0][idx], searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[6][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-    idx += 6;
-    sad = msad4(pixels[7][0], FfxUInt32x2(searchBuffer[0][idx], searchBuffer[0][idx + 1]), sad);
-    sad = msad4(pixels[7][1], FfxUInt32x2(searchBuffer[0][idx + 1], searchBuffer[0][idx + 2]), sad);
-
-#else
     for (FfxInt32 dy = 0; dy < CompareSize; dy++)
     {
         FfxInt32 rowOffset = (iSearchId.y + dy) * SearchBufferSizeX;
@@ -145,7 +116,6 @@ FfxUInt32x4 CalculateQSads2(FfxInt32x2 iSearchId)
         sad += QSad(a0, a1, pixels[dy][0]);
         sad += QSad(a1, a2, pixels[dy][1]);
     }
-#endif
 
     return sad;
 }
@@ -160,27 +130,16 @@ FfxUInt32x2 abs_2(FfxInt32x2 val)
 
 FfxUInt32 EncodeSearchCoord(FfxInt32x2 coord)
 {
-#if FFX_OPTICALFLOW_FIX_TOP_LEFT_BIAS == 1
     FfxUInt32x2 absCoord = FfxUInt32x2(abs_2(coord - 8));
     return FfxUInt32(absCoord.y << 12) | FfxUInt32(absCoord.x << 8) | FfxUInt32(coord.y << 4) | FfxUInt32(coord.x);
-#else //FFX_OPTICALFLOW_FIX_TOP_LEFT_BIAS == 1
-    return FfxUInt32(coord.y << 8) | FfxUInt32(coord.x);
-#endif //FFX_OPTICALFLOW_FIX_TOP_LEFT_BIAS == 1
 }
 
 FfxInt32x2 DecodeSearchCoord(FfxUInt32 bits)
 {
-#if FFX_OPTICALFLOW_FIX_TOP_LEFT_BIAS == 1
     FfxInt32 dx = FfxInt32(bits & 0xfu) - SearchRadiusX;
     FfxInt32 dy = FfxInt32((bits >> 4) & 0xfu) - SearchRadiusY;
 
     return FfxInt32x2(dx, dy);
-#else
-    FfxInt32 dx = FfxInt32(bits & 0xffu) - SearchRadiusX;
-    FfxInt32 dy = FfxInt32((bits >> 8) & 0xffu) - SearchRadiusY;
-
-    return FfxInt32x2(dx, dy);
-#endif
 }
 
 void PrepareSadMap(FfxInt32x2 iSearchId, FfxUInt32x4 qsad)
@@ -191,7 +150,6 @@ void PrepareSadMap(FfxInt32x2 iSearchId, FfxUInt32x4 qsad)
     sadMapBuffer[3][iSearchId.y][iSearchId.x] = (qsad.w << 16) | EncodeSearchCoord(FfxInt32x2(iSearchId.x * 4 + 3, iSearchId.y));
     FFX_GROUP_MEMORY_BARRIER;
 }
-
 
 uint ABfe(uint src, uint off, uint bits) { uint mask = (1u << bits) - 1u; return (src >> off) & mask; }
 uint ABfi(uint src, uint ins, uint mask) { return (ins & mask) | (src & (~mask)); }
@@ -227,10 +185,8 @@ void ComputeOpticalFlowAdvanced(FfxInt32x2 iGlobalId, FfxInt32x2 iLocalId, FfxIn
 
     FfxUInt32 packedLuma_4blocks = LoadFirstImagePackedLuma(iPxPos);
 
-#if FFX_LOCAL_SEARCH_FALLBACK == 1
     FfxUInt32 prevPackedLuma_4blocks = LoadSecondImagePackedLuma(iPxPos);
     FfxUInt32 sad_4blocks = Sad(packedLuma_4blocks, prevPackedLuma_4blocks);
-#endif //FFX_LOCAL_SEARCH_FALLBACK
 
     FfxInt32x2 ofGroupOffset = iGroupId << 1u;
     FfxInt32x2 pixelGroupOffset = iGroupId << 4u;
@@ -261,13 +217,11 @@ void ComputeOpticalFlowAdvanced(FfxInt32x2 iGlobalId, FfxInt32x2 iLocalId, FfxIn
             FfxInt32x2 minSadCoord = DecodeSearchCoord(minSad);
             FfxInt32x2 newVector = currentVector + minSadCoord;
 
-#if FFX_LOCAL_SEARCH_FALLBACK == 1
             FfxUInt32 blockSadSum = BlockSad64(sad_4blocks, iLocalIndex, iLaneToBlockId, blockId.x + blockId.y * 2);
             if (OpticalFlowPyramidLevel() == 0 && blockSadSum <= (minSad >> 16u))
             {
                 newVector = FfxInt32x2(0, 0);
             }
-#endif //FFX_LOCAL_SEARCH_FALLBACK
 
             {
                 StoreOpticalFlow(ofGroupOffset + blockId, newVector);

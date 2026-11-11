@@ -84,11 +84,7 @@ void FindNearestDepth(FFX_PARAMETER_IN FfxInt32x2 iPxPos, FFX_PARAMETER_IN FfxIn
         if (IsOnScreen(iPos, iPxSize)) {
 
             FfxFloat32 fNdDepth = depth[iSampleIndex];
-#if FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
             if (fNdDepth > fNearestDepth) {
-#else
-            if (fNdDepth < fNearestDepth) {
-#endif
                 fNearestDepthCoord = iPos;
                 fNearestDepth = fNdDepth;
             }
@@ -103,13 +99,8 @@ void ReconstructAndDilate(FfxInt32x2 iPxLrPos)
 
     FindNearestDepth(iPxLrPos, RenderSize(), fDilatedDepth, iNearestDepthCoord);
 
-#if FFX_FRAMEINTERPOLATION_OPTION_LOW_RES_MOTION_VECTORS
     FfxInt32x2 iSamplePos = iPxLrPos;
     FfxInt32x2 iMotionVectorPos = iNearestDepthCoord;
-#else
-    FfxInt32x2 iSamplePos = ComputeHrPosFromLrPos(iPxLrPos);
-    FfxInt32x2 iMotionVectorPos = ComputeHrPosFromLrPos(iNearestDepthCoord);
-#endif
 
     FfxFloat32x2 fDilatedMotionVector = LoadInputMotionVector(iMotionVectorPos);
 
@@ -118,6 +109,5 @@ void ReconstructAndDilate(FfxInt32x2 iPxLrPos)
 
     ReconstructPrevDepth(iPxLrPos, fDilatedDepth, fDilatedMotionVector, RenderSize());
 }
-
 
 #endif //!defined( FFX_FRAMEINTERPOLATION_RECONSTRUCT_DILATED_VELOCITY_AND_PREVIOUS_DEPTH_H )

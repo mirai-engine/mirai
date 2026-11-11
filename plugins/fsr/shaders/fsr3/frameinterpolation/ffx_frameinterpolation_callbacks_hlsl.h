@@ -22,18 +22,7 @@
 
 #include "ffx_frameinterpolation_resources.h"
 
-#if defined(FFX_GPU)
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic push
-#pragma dxc diagnostic ignored "-Wambig-lit-shift"
-#endif //__hlsl_dx_compiler
 #include "../fsr3upscaler/ffx_core.h" // Mirai: the core of fsr3upscaler/
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic pop
-#endif //__hlsl_dx_compiler
-#endif // #if defined(FFX_GPU)
-
-#if defined(FFX_GPU)
 
 #define COUNTER_SPD                          0
 #define COUNTER_FRAME_INDEX_SINCE_LAST_RESET 1
@@ -42,7 +31,7 @@
  // declare CBs and CB accessors
 ///////////////////////////////////////////////
 #if defined(FFX_FRAMEINTERPOLATION_BIND_CB_FRAMEINTERPOLATION)
-    cbuffer cbFI : FFX_DECLARE_CB(FFX_FRAMEINTERPOLATION_BIND_CB_FRAMEINTERPOLATION)
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_CB_FRAMEINTERPOLATION, 0)]] cbuffer cbFI
     {
         FfxInt32x2      renderSize;
         FfxInt32x2      displaySize;
@@ -125,7 +114,7 @@
 
     FfxInt32x2 GetOpticalFlowSize()
     {
-        FfxInt32x2 iOpticalFlowSize = (1.0f / opticalFlowScale) / FfxFloat32x2(opticalFlowBlockSize.xx);
+        FfxInt32x2 iOpticalFlowSize = FfxInt32x2((1.0f / opticalFlowScale) / FfxFloat32x2(opticalFlowBlockSize.xx));
 
         return iOpticalFlowSize;
     }
@@ -198,7 +187,7 @@
 #endif // #if defined(FFX_FRAMEINTERPOLATION_BIND_CB_FRAMEINTERPOLATION)
 
 #if defined(FFX_FRAMEINTERPOLATION_BIND_CB_INPAINTING_PYRAMID)
-    cbuffer cbInpaintingPyramid : FFX_DECLARE_CB(FFX_FRAMEINTERPOLATION_BIND_CB_INPAINTING_PYRAMID)
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_CB_INPAINTING_PYRAMID, 0)]] cbuffer cbInpaintingPyramid
     {
         FfxUInt32 mips;
         FfxUInt32 numWorkGroups;
@@ -219,49 +208,18 @@
     }
 #endif // #if defined(FFX_FRAMEINTERPOLATION_BIND_CB_INPAINTING_PYRAMID)
 
-#define FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(p) FFX_FRAMEINTERPOLATION_ROOTSIG_STR(p)
-#define FFX_FRAMEINTERPOLATION_ROOTSIG_STR(p) #p
-#define FFX_FRAMEINTERPOLATION_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-
-#define FFX_FRAMEINTERPOLATION_INPAINTING_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "CBV(b1), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-
-#if defined(FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG)
-#define FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG_CONTENT FFX_FRAMEINTERPOLATION_ROOTSIG
-#define FFX_FRAMEINTERPOLATION_EMBED_INPAINTING_ROOTSIG_CONTENT FFX_FRAMEINTERPOLATION_INPAINTING_ROOTSIG
-#else
-#define FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG_CONTENT
-#define FFX_FRAMEINTERPOLATION_EMBED_INPAINTING_ROOTSIG_CONTENT
-#endif // #if FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG
-
 ///////////////////////////////////////////////
 // declare samplers
 ///////////////////////////////////////////////
 
-SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
+[[vk::binding(2, 0)]] SamplerState s_LinearClamp; // Mirai: SLOT_LINEAR_SAMPLER
 
 ///////////////////////////////////////////////
 // declare SRVs and SRV accessors
 ///////////////////////////////////////////////
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_PREVIOUS_INTERPOLATION_SOURCE
-    Texture2D<FfxFloat32x4> r_previous_interpolation_source : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_PREVIOUS_INTERPOLATION_SOURCE);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_PREVIOUS_INTERPOLATION_SOURCE, 0)]] Texture2D<FfxFloat32x4> r_previous_interpolation_source;
 
     FfxFloat32x3 LoadPreviousBackbuffer(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -274,7 +232,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_CURRENT_INTERPOLATION_SOURCE
-    Texture2D<FfxFloat32x4> r_current_interpolation_source : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_CURRENT_INTERPOLATION_SOURCE);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_CURRENT_INTERPOLATION_SOURCE, 0)]] Texture2D<FfxFloat32x4> r_current_interpolation_source;
 
     FfxFloat32x3 LoadCurrentBackbuffer(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -287,7 +245,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_DILATED_MOTION_VECTORS
-    Texture2D<FfxFloat32x2> r_dilated_motion_vectors : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_DILATED_MOTION_VECTORS);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_DILATED_MOTION_VECTORS, 0)]] Texture2D<FfxFloat32x2> r_dilated_motion_vectors;
 
     FfxFloat32x2 LoadDilatedMotionVector(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -296,7 +254,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_DILATED_DEPTH
-    Texture2D<FfxFloat32> r_dilated_depth : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_DILATED_DEPTH);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_DILATED_DEPTH, 0)]] Texture2D<FfxFloat32> r_dilated_depth;
 
     FfxFloat32 LoadDilatedDepth(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -305,7 +263,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_RECONSTRUCTED_DEPTH_PREVIOUS_FRAME
-    Texture2D<FfxUInt32>   r_reconstructed_depth_previous_frame : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_RECONSTRUCTED_DEPTH_PREVIOUS_FRAME);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_RECONSTRUCTED_DEPTH_PREVIOUS_FRAME, 0)]] Texture2D<FfxUInt32>   r_reconstructed_depth_previous_frame;
 
     FfxFloat32 LoadReconstructedDepthPreviousFrame(FFX_PARAMETER_IN FfxInt32x2 iPxInput)
     {
@@ -314,7 +272,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_RECONSTRUCTED_DEPTH_INTERPOLATED_FRAME
-    Texture2D<FfxUInt32>   r_reconstructed_depth_interpolated_frame : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_RECONSTRUCTED_DEPTH_INTERPOLATED_FRAME);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_RECONSTRUCTED_DEPTH_INTERPOLATED_FRAME, 0)]] Texture2D<FfxUInt32>   r_reconstructed_depth_interpolated_frame;
 
     FfxFloat32 LoadEstimatedInterpolationFrameDepth(FFX_PARAMETER_IN FfxInt32x2 iPxInput)
     {
@@ -323,7 +281,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_DISOCCLUSION_MASK
-    Texture2D<FfxFloat32x4> r_disocclusion_mask : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_DISOCCLUSION_MASK);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_DISOCCLUSION_MASK, 0)]] Texture2D<FfxFloat32x4> r_disocclusion_mask;
 
     FfxFloat32x4 LoadDisocclusionMask(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -337,8 +295,8 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 
 #if defined(FFX_FRAMEINTERPOLATION_BIND_SRV_GAME_MOTION_VECTOR_FIELD_X) && \
     defined(FFX_FRAMEINTERPOLATION_BIND_SRV_GAME_MOTION_VECTOR_FIELD_Y)
-    Texture2D<FfxUInt32> r_game_motion_vector_field_x : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_GAME_MOTION_VECTOR_FIELD_X);
-    Texture2D<FfxUInt32> r_game_motion_vector_field_y : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_GAME_MOTION_VECTOR_FIELD_Y);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_GAME_MOTION_VECTOR_FIELD_X, 0)]] Texture2D<FfxUInt32> r_game_motion_vector_field_x;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_GAME_MOTION_VECTOR_FIELD_Y, 0)]] Texture2D<FfxUInt32> r_game_motion_vector_field_y;
 
     FfxUInt32x2 LoadGameFieldMv(FFX_PARAMETER_IN FfxInt32x2 iPxSample)
     {
@@ -351,8 +309,8 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 
 #if defined(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_X) && \
     defined(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_Y)
-    Texture2D<FfxUInt32> r_optical_flow_motion_vector_field_x : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_X);
-    Texture2D<FfxUInt32> r_optical_flow_motion_vector_field_y : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_Y);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_X, 0)]] Texture2D<FfxUInt32> r_optical_flow_motion_vector_field_x;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_Y, 0)]] Texture2D<FfxUInt32> r_optical_flow_motion_vector_field_y;
 
     FfxUInt32x2 LoadOpticalFlowFieldMv(FFX_PARAMETER_IN FfxInt32x2 iPxSample)
     {
@@ -364,7 +322,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW
-    [[vk::image_format("rg16i")]] Texture2D<FfxInt32x2> r_optical_flow : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW); // Mirai: R16G16_SINT
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW, 0)]] [[vk::image_format("rg16i")]] Texture2D<FfxInt32x2> r_optical_flow; // Mirai: R16G16_SINT
     
     #if defined(FFX_FRAMEINTERPOLATION_BIND_CB_FRAMEINTERPOLATION)
         FfxFloat32x2 LoadOpticalFlow(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
@@ -375,7 +333,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_UPSAMPLED
-    Texture2D<FfxFloat32x2> r_optical_flow_upsampled : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_UPSAMPLED);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_UPSAMPLED, 0)]] Texture2D<FfxFloat32x2> r_optical_flow_upsampled;
 
     FfxFloat32x2 LoadOpticalFlowUpsampled(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -384,7 +342,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_CONFIDENCE
-    Texture2D<FfxUInt32x2> r_optical_flow_confidence : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_CONFIDENCE);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_CONFIDENCE, 0)]] Texture2D<FfxUInt32x2> r_optical_flow_confidence;
     
     FfxFloat32 LoadOpticalFlowConfidence(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -393,7 +351,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_GLOBAL_MOTION
-    Texture2D<FfxUInt32> r_optical_flow_global_motion : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_GLOBAL_MOTION);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_GLOBAL_MOTION, 0)]] Texture2D<FfxUInt32> r_optical_flow_global_motion;
 
     FfxUInt32 LoadOpticalFlowGlobalMotion(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -402,7 +360,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_SCENE_CHANGE_DETECTION
-    Texture2D<FfxUInt32> r_optical_flow_scd : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_SCENE_CHANGE_DETECTION);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_SCENE_CHANGE_DETECTION, 0)]] Texture2D<FfxUInt32> r_optical_flow_scd;
 
     FfxUInt32 LoadOpticalFlowSceneChangeDetection(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -426,7 +384,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_DEBUG
-    Texture2D<FfxFloat32x4> r_optical_flow_debug : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_DEBUG);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OPTICAL_FLOW_DEBUG, 0)]] Texture2D<FfxFloat32x4> r_optical_flow_debug;
 
     FfxFloat32x4 LoadOpticalFlowDebug(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -435,15 +393,15 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #if defined(FFX_FRAMEINTERPOLATION_BIND_SRV_INPAINTING_MASK) && defined(FFX_FRAMEINTERPOLATION_BIND_SRV_OUTPUT)
-    Texture2D<FfxFloat32x3> r_output          : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OUTPUT);
-    Texture2D<FfxFloat32>   r_inpainting_mask : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_INPAINTING_MASK);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OUTPUT, 0)]] Texture2D<FfxFloat32x3> r_output;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_INPAINTING_MASK, 0)]] Texture2D<FfxFloat32>   r_inpainting_mask;
 
     FfxFloat32x4 LoadFrameInterpolationOutput(FFX_PARAMETER_IN FfxInt32x2 iPxInput)
     {
         return FfxFloat32x4(r_output[iPxInput], r_inpainting_mask[iPxInput]);
     }
 #elif defined(FFX_FRAMEINTERPOLATION_BIND_SRV_OUTPUT)
-    Texture2D<FfxFloat32x4> r_output          : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_OUTPUT);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_OUTPUT, 0)]] Texture2D<FfxFloat32x4> r_output;
     FfxFloat32x4 LoadFrameInterpolationOutput(FFX_PARAMETER_IN FfxInt32x2 iPxInput)
     {
         return r_output[iPxInput];
@@ -451,7 +409,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_INPAINTING_PYRAMID
-    Texture2D<FfxFloat32x4> r_inpainting_pyramid : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_INPAINTING_PYRAMID);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_INPAINTING_PYRAMID, 0)]] Texture2D<FfxFloat32x4> r_inpainting_pyramid;
 
     FfxFloat32x4 LoadInpaintingPyramid(FFX_PARAMETER_IN FfxInt32 mipLevel, FFX_PARAMETER_IN FfxUInt32x2 iPxInput)
     {
@@ -460,7 +418,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_PRESENT_BACKBUFFER
-    Texture2D<FfxFloat32x4> r_present_backbuffer : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_PRESENT_BACKBUFFER);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_PRESENT_BACKBUFFER, 0)]] Texture2D<FfxFloat32x4> r_present_backbuffer;
 
     FfxFloat32x4 LoadPresentBackbuffer(FFX_PARAMETER_IN FfxInt32x2 iPxInput)
     {
@@ -473,7 +431,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_SRV_COUNTERS
-    StructuredBuffer<FfxUInt32> r_counters : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_COUNTERS);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_COUNTERS, 0)]] StructuredBuffer<FfxUInt32> r_counters;
 
     FfxUInt32 LoadCounter(FFX_PARAMETER_IN FfxInt32 iPxPos)
     {
@@ -487,7 +445,7 @@ SamplerState s_LinearClamp : register(s2); // Mirai: SLOT_LINEAR_SAMPLER
 #endif
 
 #if defined(FFX_FRAMEINTERPOLATION_BIND_SRV_INPUT_DEPTH)
-Texture2D<FfxFloat32> r_input_depth : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_INPUT_DEPTH);
+[[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_INPUT_DEPTH, 0)]] Texture2D<FfxFloat32> r_input_depth;
 FfxFloat32 LoadInputDepth(FfxInt32x2 iPxPos)
 {
     return r_input_depth[iPxPos];
@@ -495,23 +453,19 @@ FfxFloat32 LoadInputDepth(FfxInt32x2 iPxPos)
 #endif
 
 #if defined(FFX_FRAMEINTERPOLATION_BIND_SRV_INPUT_MOTION_VECTORS)
-Texture2D<FfxFloat32x4> r_input_motion_vectors : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_INPUT_MOTION_VECTORS);
+[[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_INPUT_MOTION_VECTORS, 0)]] Texture2D<FfxFloat32x4> r_input_motion_vectors;
 FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 {
     FfxFloat32x2 fSrcMotionVector = r_input_motion_vectors[iPxDilatedMotionVectorPos].xy;
 
     FfxFloat32x2 fUvMotionVector = fSrcMotionVector * MotionVectorScale();
 
-#if FFX_FRAMEINTERPOLATION_OPTION_JITTERED_MOTION_VECTORS
-    fUvMotionVector -= MotionVectorJitterCancellation();
-#endif
-
     return fUvMotionVector;
 }
 #endif
 
 #if defined(FFX_FRAMEINTERPOLATION_BIND_SRV_DISTORTION_FIELD)
-    Texture2D<FfxFloat32x2> r_input_distortion_field : FFX_DECLARE_SRV(FFX_FRAMEINTERPOLATION_BIND_SRV_DISTORTION_FIELD);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_SRV_DISTORTION_FIELD, 0)]] Texture2D<FfxFloat32x2> r_input_distortion_field;
     FfxFloat32x2 SampleDistortionField(FFX_PARAMETER_IN FfxFloat32x2 fUv)
     {
         return r_input_distortion_field.SampleLevel(s_LinearClamp, fUv, 0);
@@ -522,8 +476,8 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 // declare UAVs and UAV accessors
 ///////////////////////////////////////////////
 #if defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_MASK) && defined(FFX_FRAMEINTERPOLATION_BIND_UAV_OUTPUT)
-    RWTexture2D<FfxFloat32x3> rw_output          : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_OUTPUT);
-    RWTexture2D<FfxFloat32>   rw_inpainting_mask : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_MASK);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_OUTPUT, 0)]] RWTexture2D<FfxFloat32x3> rw_output;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_MASK, 0)]] RWTexture2D<FfxFloat32>   rw_inpainting_mask;
 
     FfxFloat32x4 RWLoadFrameinterpolationOutput(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -537,7 +491,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     }
 
 #elif defined(FFX_FRAMEINTERPOLATION_BIND_UAV_OUTPUT)
-    RWTexture2D<FfxFloat32x4> rw_output : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_OUTPUT);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_OUTPUT, 0)]] RWTexture2D<FfxFloat32x4> rw_output;
 
     FfxFloat32x4 RWLoadFrameinterpolationOutput(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -551,7 +505,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_UAV_DILATED_MOTION_VECTORS
-    RWTexture2D<FfxFloat32x2> rw_dilated_motion_vectors : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_DILATED_MOTION_VECTORS);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_DILATED_MOTION_VECTORS, 0)]] RWTexture2D<FfxFloat32x2> rw_dilated_motion_vectors;
 
     FfxFloat32x2 RWLoadDilatedMotionVectors(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -565,7 +519,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_UAV_DILATED_DEPTH
-    RWTexture2D<FfxFloat32> rw_dilated_depth : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_DILATED_DEPTH);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_DILATED_DEPTH, 0)]] RWTexture2D<FfxFloat32> rw_dilated_depth;
 
     FfxFloat32 RWLoadDilatedDepth(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -579,7 +533,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_UAV_RECONSTRUCTED_DEPTH_PREVIOUS_FRAME
-    RWTexture2D<FfxUInt32> rw_reconstructed_depth_previous_frame : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_RECONSTRUCTED_DEPTH_PREVIOUS_FRAME);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_RECONSTRUCTED_DEPTH_PREVIOUS_FRAME, 0)]] RWTexture2D<FfxUInt32> rw_reconstructed_depth_previous_frame;
 
     FfxFloat32 RWLoadReconstructedDepthPreviousFrame(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -590,16 +544,12 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     {
         FfxUInt32 uDepth = ffxAsUInt32(fDepth);
 
-#if FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
         InterlockedMax(rw_reconstructed_depth_previous_frame[iPxSample], uDepth);
-#else
-        InterlockedMin(rw_reconstructed_depth_previous_frame[iPxSample], uDepth);  // min for standard, max for inverted depth
-#endif
     }
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_UAV_RECONSTRUCTED_DEPTH_INTERPOLATED_FRAME
-    RWTexture2D<FfxUInt32>   rw_reconstructed_depth_interpolated_frame : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_RECONSTRUCTED_DEPTH_INTERPOLATED_FRAME);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_RECONSTRUCTED_DEPTH_INTERPOLATED_FRAME, 0)]] RWTexture2D<FfxUInt32>   rw_reconstructed_depth_interpolated_frame;
     
     FfxFloat32 RWLoadReconstructedDepthInterpolatedFrame(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -616,16 +566,12 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     {
         FfxUInt32 uDepth = ffxAsUInt32(fDepth);
 
-#if FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
         InterlockedMax(rw_reconstructed_depth_interpolated_frame[iPxSample], uDepth);
-#else
-        InterlockedMin(rw_reconstructed_depth_interpolated_frame[iPxSample], uDepth);  // min for standard, max for inverted depth
-#endif
     }
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_UAV_DISOCCLUSION_MASK
-    RWTexture2D<FfxFloat32x2> rw_disocclusion_mask : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_DISOCCLUSION_MASK);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_DISOCCLUSION_MASK, 0)]] RWTexture2D<FfxFloat32x2> rw_disocclusion_mask;
 
     FfxFloat32x2 RWLoadDisocclusionMask(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -641,8 +587,8 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 #if defined(FFX_FRAMEINTERPOLATION_BIND_UAV_GAME_MOTION_VECTOR_FIELD_X) && \
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_GAME_MOTION_VECTOR_FIELD_Y)
 
-    RWTexture2D<FfxUInt32> rw_game_motion_vector_field_x : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_GAME_MOTION_VECTOR_FIELD_X);
-    RWTexture2D<FfxUInt32> rw_game_motion_vector_field_y : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_GAME_MOTION_VECTOR_FIELD_Y);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_GAME_MOTION_VECTOR_FIELD_X, 0)]] RWTexture2D<FfxUInt32> rw_game_motion_vector_field_x;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_GAME_MOTION_VECTOR_FIELD_Y, 0)]] RWTexture2D<FfxUInt32> rw_game_motion_vector_field_y;
 
     FfxUInt32 RWLoadGameMotionVectorFieldX(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -686,8 +632,8 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 #if defined(FFX_FRAMEINTERPOLATION_BIND_UAV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_X) && \
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_Y)
 
-    RWTexture2D<FfxUInt32> rw_optical_flow_motion_vector_field_x : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_X);
-    RWTexture2D<FfxUInt32> rw_optical_flow_motion_vector_field_y : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_Y);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_X, 0)]] RWTexture2D<FfxUInt32> rw_optical_flow_motion_vector_field_x;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_OPTICAL_FLOW_MOTION_VECTOR_FIELD_Y, 0)]] RWTexture2D<FfxUInt32> rw_optical_flow_motion_vector_field_y;
 
     FfxUInt32 RWLoadOpticalflowMotionVectorFieldX(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
     {
@@ -713,7 +659,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 #endif
 
 #ifdef FFX_FRAMEINTERPOLATION_BIND_UAV_COUNTERS
-    globallycoherent RWStructuredBuffer<FfxUInt32> rw_counters : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_COUNTERS);
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_COUNTERS, 0)]] globallycoherent RWStructuredBuffer<FfxUInt32> rw_counters;
 
     FfxUInt32 RWLoadCounter(FFX_PARAMETER_IN FfxInt32 iPxPos)
     {
@@ -730,7 +676,6 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     }
 #endif
 
-
 #if defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_0)    && \
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_1)    && \
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_2)    && \
@@ -745,20 +690,19 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_11)   && \
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_12)
 
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid0   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_0);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid1   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_1);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid2   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_2);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid3   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_3);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid4   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_4);
-    globallycoherent RWTexture2D<FfxFloat32x4>  rw_inpainting_pyramid5   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_5);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid6   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_6);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid7   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_7);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid8   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_8);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid9   : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_9);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid10  : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_10);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid11  : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_11);
-    RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid12  : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_12);
-
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_0, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid0;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_1, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid1;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_2, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid2;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_3, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid3;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_4, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid4;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_5, 0)]] globallycoherent RWTexture2D<FfxFloat32x4>  rw_inpainting_pyramid5;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_6, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid6;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_7, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid7;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_8, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid8;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_9, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid9;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_10, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid10;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_11, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid11;
+    [[vk::binding(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_12, 0)]] RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid12;
 
     FfxFloat32x4 RWLoadInpaintingPyramid(FFX_PARAMETER_IN FfxInt32x2 iPxPos, FFX_PARAMETER_IN FfxUInt32 index)
     {
@@ -811,4 +755,3 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     }
 #endif
 
-#endif // #if defined(FFX_GPU)

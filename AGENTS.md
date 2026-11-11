@@ -67,6 +67,10 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 
 ## Scope and done
 
+- **Root fixes, not workarounds.** A problem is fixed where it is caused, also in third-party code
+  that lives in the repository, which is ours to edit or rewrite: no wrapper, define, suppressed
+  warning or special case around it. If the root fix is large, tell the user its size and wait
+  for the answer instead of choosing the workaround.
 - **A defect found during a task** is fixed in it if it blocks the task or is in what the task
   touches; if it is a large change that needs a decision, ask the user.
 - **A defect of a dependency** (Odin, Slang, SDL): prepare the upstream fix (minimal repro, PR or
