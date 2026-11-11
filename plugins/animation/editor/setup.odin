@@ -58,6 +58,7 @@ Setup_Params :: struct {
     trajectory_direction:f32 `mirai:"optional,min=0,label=Weight of where the body faces along its trajectory; 0 for a body that never turns, as one that walks sideways"`,
     landing_marker:[64]u8 `mirai:"text,optional,label=The marker of first contact on the clips that land (a jump), played to reach it when the body lands; omitted is the default of a .character, empty plays no landing"`,
     landing_rates:[2]f32 `mirai:"optional,min=0,label=The least and most rate a clip plays at to reach its landing marker when the body lands; omitted is the default of a .character"`,
+    spans:[anim.MATCH_SPANS]anim.Match_Span `mirai:"optional,label=Rules over the rows of the locomotion clips inside their spans of each name: Exclude (never searched, left at once) or Block (never searched, played on into)"`,
     want:Setup_Wants `mirai:"optional,label=Locomotion (the clips told apart by name: idle and walk to sprint walk, a fall or air loop falls, jump and land enter falling and walking, swim and fly; the physics plugin moves it); Look (head); Foot_Ik (grounding); Hand_Ik (reach); Gestures (actions that play each clip that is not locomotion over the upper body or one arm). Omitted is all of them"`,
     folder:[1024]u8 `mirai:"text,optional,label=Folder of the .character; empty puts it by the clips"`,
     name:[64]u8 `mirai:"text,optional,label=Name of the .character; empty takes the skeleton's"`,
@@ -531,6 +532,9 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             append(&sources,source)
         }
         set.match.clips,set.match.samples=sources[:],samples[:]
+        span_count,_:=api.params_array_count(call,"spans")
+        set.match.spans=p.spans[:min(span_count,anim.MATCH_SPANS)]
+        if !anim.match_spans_check(set.match.spans) {authoring_failure(call,"spans","Invalid_Span","spans each named, of a kind, and one rule per name","an invalid span","A span rule is invalid",fix="Name each span, give it the kind Exclude or Block, and give a name one rule");return}
         // The warping turns and stretches the legs of the body toward the velocity of the Character.
         if mapped(body,.Pelvis,.Hip_L,.Knee_L,.Foot_L) || mapped(body,.Pelvis,.Hip_R,.Knee_R,.Foot_R) {
             warp:=&set.motion.warp

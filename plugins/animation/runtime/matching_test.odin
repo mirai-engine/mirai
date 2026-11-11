@@ -229,7 +229,8 @@ Match_Fixture :: struct {
 }
 
 @(private="file")
-match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAULT.memory,leap:=false) -> bool {
+// walk_spans: markers of the walk, of id 4 (hold) or 5 (stumble), with the spans of the set.
+match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAULT.memory,leap:=false,walk_spans:[]lib.Marker={},spans:[]Match_Span={}) -> bool {
     if !test_world_init(t,&f.w) {return false}
     f.rig=core.create(&f.entities)
     f.animation=ANIMATION_DEFAULT;f.animation.asset=MATCH_TEST_ID
@@ -266,7 +267,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     hit:=[1]lib.Marker{{time=.5,id=3}}
     descs:=[11]lib.Clip_Desc{
         {name=base.name_hash("idle"),tracks={{target=left,property=.Position,keys=still[:]},{target=right,property=.Position,keys=other[:]}}},
-        {name=base.name_hash("walk"),tracks={{target=left,property=.Position,keys=stride_l[:]},{target=right,property=.Position,keys=stride_r[:]}}},
+        {name=base.name_hash("walk"),tracks={{target=left,property=.Position,keys=stride_l[:]},{target=right,property=.Position,keys=stride_r[:]}},markers=walk_spans},
         {name=base.name_hash("fall"),tracks={{target=left,property=.Position,keys=tucked[:]},{target=right,property=.Position,keys=other[:]}}},
         {name=base.name_hash("jump"),tracks={{target=left,property=.Position,keys=rise_l[:]},{target=right,property=.Position,keys=rise_r[:]}},markers=land[:]},
         {name=base.name_hash("vault"),tracks={{target=left,property=.Position,keys=over_l[:]},{target=right,property=.Position,keys=over_r[:]}},markers=release[:]},
@@ -282,7 +283,8 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     for desc in descs {if _,error:=lib.clip_add(&f.content.lib,desc);error!=.None {return false}}
     if _,error:=lib.library_compress(&f.content.lib);error!=.None {return false}
     host.content_animation_loops(&f.content.lib,len(descs));f.content.clip_count=len(descs)
-    f.content.markers=make([]host.Content_Marker,4);f.content.markers[0].name,f.content.markers[1].name,f.content.markers[2].name,f.content.markers[3].name=base.name_hash("release"),base.name_hash("land"),base.name_hash("land"),base.name_hash("hit")
+    f.content.markers=make([]host.Content_Marker,6)
+    for name,i in ([6]string{"release","land","land","hit","hold","stumble"}) {f.content.markers[i].name=base.name_hash(name)}
     // The lunge carries the hips, its root.
     f.content.roots=make([]asset.Animation_Root,len(descs));base.text_set(f.content.roots[6].bone[:],"hips");f.content.roots[6].translation=true
     f.assets.registry.by_id=make(map[base.Asset_Id]u32)
@@ -319,7 +321,8 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     set.actions[7].root_motion,set.actions[7].body_move=.In_Place,.Override
     set.actions[8].fade_in,set.actions[8].fade_out=0,0
     // One .character: the locomotion, the space and the actions.
-    character:=Character_Set{info={animation=f.content.id},match={info=info,clips=clips},actions=set,spaces=spaces,space_samples=samples,motion={warp=POSE_WARP_PROFILE_DEFAULT}}
+    owned_spans:=make([]Match_Span,len(spans));copy(owned_spans,spans)
+    character:=Character_Set{info={animation=f.content.id},match={info=info,clips=clips,spans=owned_spans},actions=set,spaces=spaces,space_samples=samples,motion={warp=POSE_WARP_PROFILE_DEFAULT}}
     if !testing.expect(t,character_check(character)) {return false}
     points:=[2]mm.Vec2{blend_position(spaces[0],samples[0].position),blend_position(spaces[0],samples[1].position)}
     space,prepared:=lib.blend_space_prepare(points[:],.One)
@@ -336,7 +339,7 @@ match_fixture_free :: proc(f:^Match_Fixture) {
     playback_free(&f.playback);lib.library_destroy(&f.content.lib);delete(f.content.markers);delete(f.content.roots)
     if len(f.graphs.contents)>0 {
         set:=&f.graphs.contents[0].set
-        delete(set.match.clips);delete(set.match.samples);delete(set.actions.layers);delete(set.actions.actions);delete(set.spaces);delete(set.space_samples)
+        delete(set.match.clips);delete(set.match.samples);delete(set.match.spans);delete(set.actions.layers);delete(set.actions.actions);delete(set.spaces);delete(set.space_samples)
     }
     character_assets_free(&f.graphs);actions_runtime_free(&f.actions);core.table_destroy(&f.played);core.table_destroy(&f.remotes)
     delete(f.assets.registry.by_id);delete(f.assets.registry.files)
@@ -1045,4 +1048,102 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     // Past the blend, the feet are those of the new walk.
     for _ in 0..<15 {testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking))}
     testing.expect(t,!f.state.program.inertia.active,"the transition ends within its blend")
+}
+
+@(private="file")
+match_test_span :: proc(name:string,kind:lib.Match_Span_Kind) -> (span:Match_Span) {
+    base.text_set(span.name[:],name);span.kind=kind
+    return
+}
+// Walks steadily for ticks of dt, noting whether the walk plays inside from..to of its clip, the
+// most ticks in a row it does, and how many jumps land there.
+@(private="file")
+match_test_walk_span :: proc(t:^testing.T,f:^Match_Fixture,ticks:int,dt,from,to:f32) -> (inside,runs,landed:int) {
+    walk:=base.name_hash("walk")
+    run,jumps:=0,u32(0)
+    for _ in 0..<ticks {
+        if !testing.expect(t,match_step(f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5})) {return}
+        value,_:=animation_match(&f.playback,f.rig)
+        within:=value.clip==walk && value.time>=from && value.time<=to
+        if within {inside+=1;run+=1;runs=max(runs,run)} else {run=0}
+        if within && value.jumps>jumps {landed+=1}
+        jumps=value.jumps
+    }
+    return
+}
+
+@(test)
+spans_of_a_set_keep_rows_out_of_the_search_and_leave_or_play_into_them :: proc(t:^testing.T) {
+    dt:=f32(1.0/60)
+    // The walk stumbles in .4..6 s, which a steady walk plays through when no span rules it.
+    // Excluded: no jump lands there and one that plays into it leaves at once; blocked: none lands
+    // there, and the walk plays on through it.
+    stumble:=[1]lib.Marker{{time=.4,id=5,duration=.2}}
+    for ruled in 0..<3 {
+        f:Match_Fixture
+        kind:=lib.Match_Span_Kind.Exclude if ruled==1 else .Block
+        spans:=[1]Match_Span{match_test_span("stumble",kind)}
+        if !testing.expect(t,match_fixture(t,&f,walk_spans=stumble[:],spans=spans[:] if ruled>0 else nil)) {match_fixture_free(&f);continue}
+        f.graphs.contents[0].set.match.info.lag=0
+        inside,runs,landed:=match_test_walk_span(t,&f,240,dt,.4+1e-3,.6-1e-3)
+        if ruled==0 {
+            testing.expectf(t,runs>=8,"a steady walk plays through the stumble: %d ticks in a row",runs)
+            match_fixture_free(&f)
+            continue
+        } else if kind==.Exclude {
+            testing.expectf(t,runs<=1 && landed==0,"an excluded stumble is left at once: %d ticks inside, %d in a row, %d jumps into it",inside,runs,landed)
+        } else {
+            testing.expectf(t,runs>=8 && landed==0,"a blocked stumble plays through: %d ticks in a row, %d jumps into it",runs,landed)
+        }
+        db:=animation_match_database(&f.graphs,&f.content,f.state)
+        testing.expect(t,db!=nil && len(db.flags)==db.rows && core.problem_find(&f.problems,f.rig,"animation.match_span")==nil,"the spans of the walk rule its rows")
+        match_fixture_free(&f)
+    }
+    whole:=[1]lib.Marker{{time=0,id=4,duration=1}}
+    // A span no clip has, and an exclusion of a whole clip, are problems of the rig; the search
+    // says Span of the clip it keeps out.
+    {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        spans:=[1]Match_Span{match_test_span("nowhere",.Exclude)}
+        if testing.expect(t,match_fixture(t,&f,spans=spans[:])) {
+            testing.expect(t,match_step(&f,dt,GROUND))
+            testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_span")!=nil,"a span of a name no clip has is reported")
+        }
+    }
+    {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        spans:=[1]Match_Span{match_test_span("hold",.Exclude)}
+        if testing.expect(t,match_fixture(t,&f,walk_spans=whole[:],spans=spans[:])) {
+            for _ in 0..<4 {testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
+            testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_span")!=nil,"a walk excluded whole is reported")
+            db:=animation_match_database(&f.graphs,&f.content,f.state)
+            if testing.expect(t,db!=nil) {
+                noted:=match_searched_candidates(db,f.state.program.match.searched)
+                reason:=lib.Match_Reject.None
+                for item in noted.items[:noted.count] {if lib.match_range_of(db,int(item.row))==1 {reason=item.reason}}
+                testing.expectf(t,reason==.Span,"the walk is left out by its span, not %v",reason)
+            }
+        }
+    }
+    // The table reads back, and a set refuses a span without a name, a second rule for a name, or
+    // one of no kind.
+    {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        spans:=[2]Match_Span{match_test_span("stumble",.Block),match_test_span("hold",.Exclude)}
+        if !testing.expect(t,match_fixture(t,&f,walk_spans=stumble[:],spans=spans[:])) {return}
+        set:=f.graphs.contents[0].set
+        types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+        doc:asset.Document;if !testing.expect_value(t,character_document(&doc,&types,MATCH_TEST_ID,set),asset.Error.None) {return};defer asset.document_destroy(&doc)
+        writer:serial.Writer;serial.writer_init(&writer);defer serial.writer_destroy(&writer)
+        file:asset.Asset
+        if testing.expect(t,asset.document_write(&doc,&writer)==.None && asset.asset_open(&file,serial.writer_bytes(&writer))==.None) {
+            defer asset.asset_close(&file)
+            view,read:=character_view(&file,&types)
+            testing.expect(t,read==.None && len(view.match.spans)==2 && view.match.spans[1]==spans[1],"the spans read back")
+        }
+        for wrong in ([3]Match_Span{match_test_span("",.Block),match_test_span("stumble",.Exclude),match_test_span("swing",lib.Match_Span_Kind(7))}) {
+            changed:=set.match;more:=[3]Match_Span{spans[0],spans[1],wrong};changed.spans=more[:]
+            testing.expectf(t,!match_check(changed),"%v is refused",wrong)
+        }
+    }
 }
