@@ -1,6 +1,7 @@
 package mirai_render
 
 import "core:mem"
+import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import mm "mirai:std/math"
@@ -430,41 +431,6 @@ mesh_slab_axes_need_every_vertex_on_a_face_of_the_box :: proc(t: ^testing.T) {
 }
 
 @(test)
-instance_values_stay_with_the_identity_of_the_instance_and_change_no_light :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r)
-    r.allocator=context.allocator
-    scene_init(r)
-    defer scene_destroy(r)
-    vertices,indices:=edit_grid(4,2)
-    defer delete(vertices);defer delete(indices)
-    handle,_:=edit_add(r,vertices[:],indices[:],{0,1})
-    materials_set(r,{DEFAULT_MATERIAL})
-    a:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1}}
-    b:=Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={1,1,1}}
-    scene_given(r,{a,b},nil,{},{})
-    s:=&r.scene
-    s.changes={}
-    values:=Vec4{0.25,3,0,1}
-    testing.expect(t,scene_set_instance_values(r,1,values))
-    testing.expect_value(t,instance_values(s.instances[1]),values)
-    testing.expect(t,!s.changes.all && s.changes.count==0,"values change no light")
-    testing.expect(t,!scene_set_instance_values(r,2,values),"a descriptor the scene does not have")
-    testing.expect(t,!scene_set_instance_values(r,0,{0,0,0,max(f32)*2}),"a value that is not finite")
-    moved:=Mat4(1);moved[0,3]=2
-    scene_move(r,{1},{moved})
-    testing.expect(t,scene_tint(r,{1},{{0.5,0.5,0.5}},{{0,0,0}}))
-    testing.expect_value(t,instance_values(s.instances[1]),values)
-    scene_given(r,{a,b},nil,{},{})
-    testing.expect_value(t,instance_values(s.instances[1]),values)
-    testing.expect(t,scene_update(r,1,{b}))
-    testing.expect_value(t,instance_values(s.instances[1]),values)
-    other:=b
-    other.object_id=3
-    testing.expect(t,scene_update(r,1,{other}))
-    testing.expect_value(t,instance_values(s.instances[1]),Vec4{})
-}
-
-@(test)
 how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light :: proc(t:^testing.T) {
     r:=new(Renderer);defer free(r)
     r.allocator=context.allocator
@@ -479,11 +445,8 @@ how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light :: proc(t:^t
     scene_given(r,{a,b},nil,{},{})
     s:=&r.scene
     s.changes={}
-    values:=Vec4{0.25,3,0,1}
-    testing.expect(t,scene_set_instance_values(r,1,values))
     testing.expect(t,scene_set_instance_wet(r,1,0.75))
     testing.expect_value(t,s.instances[1].wet,f32(0.75))
-    testing.expect_value(t,instance_values(s.instances[1]),values)
     testing.expect_value(t,s.instances[0].wet,f32(0))
     testing.expect(t,!s.changes.all && s.changes.count==0,"how wet it is changes no light")
     testing.expect(t,!scene_set_instance_wet(r,2,1),"a descriptor the scene does not have")
@@ -498,13 +461,64 @@ how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light :: proc(t:^t
     // Moved to another index, as the sync closes a gap with the last, it keeps it.
     testing.expect(t,scene_update(r,0,{b}) && scene_instance_was(r,0,1) && scene_update(r,1,nil,true))
     testing.expect_value(t,s.instances[0].wet,f32(0.75))
-    testing.expect_value(t,instance_values(s.instances[0]),values)
     testing.expect(t,scene_update(r,0,{b}))
     testing.expect_value(t,s.instances[0].wet,f32(0.75))
     other:=b
     other.object_id=3
     testing.expect(t,scene_update(r,0,{other}))
     testing.expect_value(t,s.instances[0].wet,f32(0))
+}
+
+// The colors an instance shows over its mesh stay with its identity while
+// its mesh has as many vertices, and leave every instance with the colors;
+// none, colors of another number of vertices and handles the renderer does
+// not have are refused.
+@(test)
+the_colors_of_an_instance_stay_with_its_identity_and_its_mesh :: proc(t:^testing.T) {
+    r:=new(Renderer);defer free(r)
+    r.allocator=context.allocator
+    scene_init(r)
+    defer scene_destroy(r)
+    vertices,indices:=edit_grid(4,2)
+    defer delete(vertices);defer delete(indices)
+    handle,_:=edit_add(r,vertices[:],indices[:],{0,1})
+    fewer_vertices,fewer_indices:=edit_grid(2,2)
+    defer delete(fewer_vertices);defer delete(fewer_indices)
+    fewer,_:=edit_add(r,fewer_vertices[:],fewer_indices[:],{0,1})
+    materials_set(r,{DEFAULT_MATERIAL})
+    a:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1}}
+    b:=Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={1,1,1}}
+    scene_given(r,{a,b},nil,{},{})
+    s:=&r.scene
+    count:=s.meshes[handle].vertex_count
+    red:=make([]u32,count,context.temp_allocator)
+    for &color in red {color=0xff0000ff}
+    reds,loaded:=colors_load(r,red)
+    short,_:=colors_load(r,red[:count-1])
+    _,empty:=colors_load(r,nil)
+    testing.expect(t,loaded && !empty)
+    cases:=[]struct{descriptor:u32,colors:Colors_Handle,why:string}{
+        {1,short,"colors of another number of vertices"},
+        {1,Colors_Handle(len(s.colors)+1),"colors the renderer does not have"},
+        {2,reds,"a descriptor the scene does not have"},
+    }
+    for c in cases {testing.expect(t,!scene_set_instance_colors(r,c.descriptor,c.colors),c.why)}
+    testing.expect(t,scene_set_instance_colors(r,1,reds))
+    shown:=s.instances[1]
+    testing.expect(t,shown.color_count==count && slice.equal(s.vertices[shown.colors:][:count],red))
+    testing.expect_value(t,s.instances[0].color_count,u32(0))
+    // Another order keeps them with the instance; another mesh of other vertices does not.
+    testing.expect(t,scene_update(r,0,{b}) && scene_instance_was(r,0,1) && scene_update(r,1,{a}))
+    testing.expect_value(t,s.instances[0].color_count,count)
+    testing.expect_value(t,s.instances[1].color_count,u32(0))
+    other:=b
+    other.mesh=fewer
+    testing.expect(t,scene_update(r,0,{other}))
+    testing.expect_value(t,s.instances[0].color_count,u32(0))
+    testing.expect(t,scene_update(r,0,{b}) && scene_set_instance_colors(r,0,reds) && scene_set_instance_colors(r,1,reds))
+    testing.expect(t,colors_remove(r,reds))
+    testing.expect(t,s.instances[0].color_count==0 && s.instances[1].color_count==0)
+    testing.expect(t,!colors_remove(r,reds),"colors that are gone")
 }
 
 // What casts shadows and changed since the last frame drew the scene: each
@@ -742,4 +756,76 @@ the_scene_answers_what_an_instance_shows_and_where_it_is :: proc(t:^testing.T) {
         _,_,placed=scene_instance_placed(r,missing)
         testing.expect(t,!shown && !placed)
     }
+}
+
+// The values an instance gives over the rows of its materials are words of
+// its own in the index pool: another value touches that instance alone, no
+// row of the material table, and what goes gives its words back.
+@(test)
+the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^testing.T) {
+    r:=new(Renderer);defer free(r)
+    r.allocator=context.allocator
+    scene_init(r)
+    defer scene_destroy(r)
+    vertices,indices:=edit_grid(4,2)
+    defer delete(vertices);defer delete(indices)
+    handle,_:=edit_add(r,vertices[:],indices[:],{0,1})
+    materials_set(r,{DEFAULT_MATERIAL,DEFAULT_MATERIAL})
+    s:=&r.scene
+    COUNT :: 1000
+    descs:=make([]Instance_Desc,COUNT,context.temp_allocator)
+    for &desc,i in descs {
+        desc={object_id=u64(i+1),mesh=handle,transform=Mat4(1),tint={1,1,1}}
+        desc.material_values={count=1,entries={0=instance_material_value(1,Instance_Material_Value_Target.Roughness,{f32(i)/COUNT,0,0,0})}}
+    }
+    rows,words:=len(s.materials),len(s.indices)
+    if !testing.expect(t,scene_given(r,descs,nil,{},{})) {return}
+    // What a thousand entities with a roughness of their own cost: before, a row of the table each.
+    held:=(len(s.indices)-words)*size_of(u32)
+    testing.expect_value(t,len(s.materials),rows)
+    testing.expect_value(t,held,COUNT*(1+INSTANCE_VALUE_WORDS)*size_of(u32))
+    testing.expect(t,held*20<COUNT*size_of(Gpu_Material_Row),"a value is far smaller than the row it was")
+    block:=instance_material_values_words(s,s.instances[7].material_values)
+    if testing.expect_value(t,len(block),INSTANCE_VALUE_WORDS) {
+        testing.expect(t,block[0]==1 && block[1]&0xff==u32(Instance_Material_Value_Target.Roughness) && transmute(f32)block[2]==7.0/COUNT)
+    }
+
+    // Another value of one instance: its words alone go to the GPU, and no light changes around it.
+    for &ranges in s.pool_dirty {clear(&ranges)}
+    for &word in s.touched {word=0}
+    s.touched_count=0
+    s.changes={}
+    version:=s.material_versions[1] if len(s.material_versions)>1 else 0
+    next:=descs[7].material_values
+    next.entries[0]=instance_material_value(1,Instance_Material_Value_Target.Roughness,{0.5,0,0,0})
+    testing.expect(t,scene_tint(r,{7,8},{{1,1,1},{1,1,1}},{{},{}},{next,descs[8].material_values}))
+    testing.expect(t,len(s.pool_dirty[.Index])==1 && s.pool_dirty[.Index][0].count==INSTANCE_VALUE_WORDS,"the words of that value alone")
+    testing.expect_value(t,s.touched_count,1)
+    testing.expect_value(t,len(s.materials),rows)
+    testing.expect_value(t,s.material_versions[1] if len(s.material_versions)>1 else 0,version)
+    testing.expect_value(t,transmute(f32)instance_material_values_words(s,s.instances[7].material_values)[2],f32(0.5))
+    // An emission is light: it changes around the instance that gives it.
+    glow:=next
+    glow.entries[1],glow.count=instance_material_value(1,Instance_Material_Value_Target.Emission,{4,4,4,0}),2
+    testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},{glow}) && (s.changes.all || s.changes.count>0))
+    // A layer given in place puts it with what has layers, still without a row.
+    coat:=next
+    coat.entries[1],coat.count=instance_material_value(1,Instance_Material_Value_Target.Coat,{1,0,0,0}),2
+    testing.expect(t,len(s.reflective)==0 && scene_tint(r,{7},{{1,1,1}},{{}},{coat}))
+    testing.expect(t,len(s.reflective)==1 && s.reflective[0].instance==u32(7) && s.reflective[0].layered && len(s.materials)==rows)
+    testing.expect(t,!scene_tint(r,{COUNT},{{1,1,1}},{{}},{next}) && !scene_tint(r,{1},{{1,1,1}},{{}},{next,next}),"a descriptor the scene does not have, lists that differ")
+
+    // What goes gives its words back.
+    testing.expect(t,scene_given(r,descs[:COUNT/2],nil,{},{}))
+    testing.expect_value(t,len(s.indices)-words,COUNT/2*(1+INSTANCE_VALUE_WORDS))
+    testing.expect(t,scene_update(r,0,nil,true))
+    testing.expect(t,scene_given(r,nil,nil,{},{}))
+    testing.expect_value(t,len(s.indices),words)
+    // Values an instance cannot hold are not there: no words past its own.
+    full:=Instance_Material_Values{}
+    for &entry,i in full.entries {entry={row=1,target=u32(i)|1<<8}}
+    full.count=max(u32)
+    only:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1},material_values=full}
+    testing.expect(t,scene_given(r,{only},nil,{},{}))
+    testing.expect_value(t,len(s.indices)-words,1+INSTANCE_VALUES_MAX*INSTANCE_VALUE_WORDS)
 }

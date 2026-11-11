@@ -50,7 +50,6 @@ Batch_Desc :: struct {
 	cull_distance:  f32,  // metres from the eye where they are gone; 0: never
 	vertex:         Vec4, // the four numbers the vertex hook of the shaders reads of it (wind)
 	reach:          f32,  // metres the vertex hook moves a point of an instance at most: the boxes the views cull its instances by grow by it
-	values:         Vec4, // the four numbers of extensions (instance_values)
 	object_id:      u64,  // what its instances give as object id
 }
 
@@ -304,7 +303,6 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	}
 	for value in desc.vertex {if !finite(value) {return handle, "batch_set: a number of Batch_Desc.vertex is not finite"}}
 	if !finite(desc.reach) || desc.reach < 0 {return handle, "batch_set: Batch_Desc.reach is negative or not finite; give the metres the vertex hook moves a point at most, or 0"}
-	for value in desc.values {if !finite(value) {return handle, "batch_set: a number of Batch_Desc.values is not finite"}}
 	for instance, i in instances {
 		_, across, along := batch_instance_unpack(instance)
 		if !finite(instance.position.x) || !finite(instance.position.y) || !finite(instance.position.z) {
@@ -483,10 +481,10 @@ batches_build :: proc(r: ^Renderer) {
 			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {}},
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
-			bounds_min = {low.x, low.y, low.z, desc.values.z},
-			bounds_max = {high.x, high.y, high.z, desc.values.w},
-			tint = {desc.tint.x, desc.tint.y, desc.tint.z, desc.values.x},
-			emission = {0, 0, 0, desc.values.y},
+			bounds_min = {low.x, low.y, low.z, 0},
+			bounds_max = {high.x, high.y, high.z, 0},
+			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
+			emission = {0, 0, 0, 0},
 			slot_materials = slots,
 		})
 		append(&b.boxes, mm.Aabb{low, high})
@@ -605,33 +603,11 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 	return total
 }
 
-// Gives a batch the four numbers of extensions (Batch_Desc.values, what
-// instance_values reads), as an extension that is not its owner gives them:
-// its row changes in place, without building the tables again, and it
-// keeps them until it is set again. False for a handle that names no batch
-// or a value that is not finite.
-batch_values_set :: proc(r: ^Renderer, handle: Batch_Handle, values: Vec4) -> bool {
-	s := &r.scene
-	index, ok := batch_index(s, handle)
-	if !ok {return false}
-	for value in values {if value - value != 0 {return false}}
-	record := &s.batch.records[index]
-	if record.desc.values == values {return true}
-	record.desc.values = values
-	if s.batch.built && record.drawn >= 0 && int(record.drawn) < len(s.batch.rows) {
-		row := &s.batch.rows[record.drawn]
-		row.tint.w, row.emission.w, row.bounds_min.w, row.bounds_max.w = values.x, values.y, values.z, values.w
-		s.batch.upload = true
-	}
-	return true
-}
-
 // What a batch is, as whoever goes through the batches reads it.
 Batch_Info :: struct {
 	handle:    Batch_Handle,
 	world:     u64,
 	object_id: u64,
-	values:    Vec4,
 	mesh:      Mesh_Handle,
 	count:     int,
 }
@@ -642,7 +618,7 @@ batch_info :: proc(r: ^Renderer, index: int) -> (info: Batch_Info, ok: bool) {
 	records := r.scene.batch.records[:]
 	if index < 0 || index >= len(records) || !records[index].used {return}
 	record := &records[index]
-	return {handle = Batch_Handle(u64(record.generation) << 32 | u64(index + 1)), world = record.world, object_id = record.desc.object_id, values = record.desc.values, mesh = record.desc.mesh, count = int(record.count)}, true
+	return {handle = Batch_Handle(u64(record.generation) << 32 | u64(index + 1)), world = record.world, object_id = record.desc.object_id, mesh = record.desc.mesh, count = int(record.count)}, true
 }
 
 batch_records :: proc(r: ^Renderer) -> int {return len(r.scene.batch.records)}

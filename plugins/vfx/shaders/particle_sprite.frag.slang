@@ -17,6 +17,7 @@
 // between it and the eye take what it sends and add what they scatter over
 // what it covers, as over the opaque scene behind.
 #define MATERIAL_RASTER
+#define MIRAI_NO_INSTANCES
 #include "particles.slang"
 #include "depth.slang"
 #include "media_grid.slang"

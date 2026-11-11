@@ -116,8 +116,9 @@ a_surface_seen_only_in_a_mirror_keeps_its_reflectance_and_layers :: proc(t: ^tes
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
 	values := host.assets_material_values(&f.assets, 0)
-	values.ior, values.specular_color = 0, {0.2, 0.8, 0.4}
-	values.coat.weight = 1
+	// Under the coat the base meets an IOR of 1.5 instead of the air: its F0 is that of a relative IOR of 2.
+	values.ior, values.specular_color = 3, {0.2, 0.8, 0.4}
+	values.coat.weight, values.coat.ior = 1, 1.5
 	material, derived := host.assets_material_derive(&f.assets, values)
 	if !testing.expect(t, derived) {return}
 	host.assets_commit(&f.assets)
@@ -144,13 +145,13 @@ a_surface_seen_only_in_a_mirror_keeps_its_reflectance_and_layers :: proc(t: ^tes
 	x, y := int(targets.width) / 2, int(targets.height) / 2
 	f0 := middle_texel(t, f, targets.surface, x, y)
 	seen := [3]f32{srgb_linear(f0[0]), srgb_linear(f0[1]), srgb_linear(f0[2])}
-	testing.expectf(t, abs(seen.x - 0.2) < 0.01 && abs(seen.y - 0.8) < 0.01 && abs(seen.z - 0.4) < 0.01, "the mirror shows the F0 of the surface: %v", seen)
+	testing.expectf(t, abs(seen.x - 0.2 / 9) < 0.004 && abs(seen.y - 0.8 / 9) < 0.004 && abs(seen.z - 0.4 / 9) < 0.004, "the mirror shows the F0 of the surface: %v", seen)
 	layers := middle_texel(t, f, targets.layers, x, y)
 	coated := false
 	for b in layers {coated ||= b != 0}
 	testing.expect(t, coated, "the mirror shows the coat of the surface")
 	// The ground in front of the mirror, in the view itself: the default dielectric of its albedo.
 	ground := middle_texel(t, f, targets.surface, x, int(targets.height) - 2)
-	testing.expectf(t, abs(srgb_linear(ground[0]) - 0.04) < 0.005 && ground[3] == 254, "the view itself reflects what its albedo gives: %v", ground)
+	testing.expectf(t, abs(srgb_linear(ground[0]) - 0.04) < 0.005 && ground[3] == 255, "the view itself reflects what its albedo gives: %v", ground)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
 }

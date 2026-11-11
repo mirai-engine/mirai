@@ -52,7 +52,8 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
     es:=cast(^Entities)(uintptr(world)+info.entities)
     s:=settles(info)
     marks:=es.pending[:]
-    linked:=len(marks)>0 && len(marks)>=len(info.tables)
+    // Checking writes, every table settles: a row written late shows at the next settle of the World.
+    linked:=!CHECK_WRITES && len(marks)>0 && len(marks)>=len(info.tables)
     if linked {settle_mark(info,world,marks,es.doomed[:],false)}
     for at in ([2]int{s.disabled,s.parent}) {
         if at<0 || linked && !marks[at] {continue}

@@ -268,7 +268,7 @@ patrols_walk_the_points_of_their_spline :: proc(t:^testing.T) {
     if !test_world_init(t,&world) {return}
     defer test_world_destroy(&world)
     e,route:=core.create(&world.entities),core.create(&world.entities)
-    line:=volume.Spline{count=3,points={0={{0,0,0},1,0},1={{0,0,-4},1,0},2={{0,0,-8},1,0}}}
+    line:=volume.Spline{count=3,points={0={position={0,0,0},width=1},1={position={0,0,-4},width=1},2={position={0,0,-8},width=1}}}
     core.add(&world.paths,e,nav.Nav_Path{})
     core.add(&world.worlds,e,core.World_Transform{transform={{5,0,3},mm.QUAT_IDENTITY,{1,1,1}}})
     core.add(&world.worlds,route,core.World_Transform{transform={{5,0,0},mm.QUAT_IDENTITY,{1,1,1}}})

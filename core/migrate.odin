@@ -228,6 +228,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     // What waits to be added is of the old type: none does after a settle. So is what the
     // edits kept: the rows asked for stay written.
     edits_drop(t)
+    when CHECK_WRITES {clear(&t.settled.values)}
     t.added,old_table.added=old_table.added,t.added
     t.edited,old_table.edited=old_table.edited,t.edited
     count:=t.values.len

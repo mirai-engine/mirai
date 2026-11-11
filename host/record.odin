@@ -79,7 +79,7 @@ app_recording_frame :: proc(app:^App,rec:^World_Recording,world:rawptr,out:[]f32
     })
     extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
     clear(&extras.instances)
-    extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
+    extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
     app.camera_cut=false
     app.inspection={}
     app.view_count=0

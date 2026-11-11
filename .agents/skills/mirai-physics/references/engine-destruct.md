@@ -53,13 +53,13 @@ simulation starts. A breakable is a body that can break: its pieces replace the 
   a `source_mesh` different from the `Mesh_Renderer` is rejected.
 - Voronoi is computed as a transaction in a job, with a key of mesh, shape, pieces, seed, pattern,
   scale, interior slot and source; while it is pending, `waiting` is active.
-- `destruct_step` runs `fixed` after `physics_step`, whose step already damaged the breakables
-  with its hits (`physics.breakable_events`). A destructible is a breakable of `Physics_State`, with
-  the capacities of `Physics_Settings` (`breakables`, `pieces`, `bonds`): what it became is copied,
-  swapped and reset with the simulation. The step creates the breakables and the
-  proxies of their pieces in the simulation, writes `Mesh_Renderer` and `Tint` of the group entities
-  and gives them `Parent` with `core.Commands`. It publishes each new group that is not debris, with
-  its Id, in `Destruct_Events.grouped`.
+- `destruct_step` runs `fixed` after `physics_step`, whose step already damaged the breakables with
+  its hits (`physics.breakable_events`). A destructible is a breakable of `Physics_State`, with the
+  capacities of `Physics_Settings` (`breakables`, `pieces`, `bonds`): what it became is copied,
+  swapped and reset with the simulation. The step creates the breakables and the proxies of their
+  pieces in the simulation, writes `Mesh_Renderer` and `Material_Values` of the group entities and
+  gives them `Parent` with `core.Commands`. It publishes each new group that is not debris, with its
+  Id, in `Destruct_Events.grouped`.
 - A failure is a `destruct.*` problem of the destructible
   ([problems](../../mirai-core/references/core.md#problems)), with the cause and the fix, and it is
   not retried until what it is made of changes. What the simulation did not give it in a tick is
@@ -122,8 +122,8 @@ Proxies and movement:
 - `Group_Info.remaining_ticks` reads the physical removal date
   ([removal](destruction.md#removal)); a reached date stays so on a passive client until `Remove`
   arrives.
-- Physics decides when a fragment ceases to exist; its fade belongs to the game or to a
-  presentation plugin (`render.Tint.color.a`). For a fade before a removal by time, the game reads
+- Physics decides when a fragment ceases to exist; its fade belongs to the game or to a presentation
+  plugin (`render.Material_Values.color.a`). For a fade before a removal by time, the game reads
   `remaining_ticks` without duplicating age or timer; for a life that gameplay decides,
   `removal_lifetime=0`, `remove_on_sleep=false` and `remove` at the end. Group zero never takes
   part.

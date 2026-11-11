@@ -10,14 +10,16 @@ import geom "mirai:std/geom"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
-// The surface of water along a path (a river): a ribbon along the samples
-// the physics follows (phys.fluid_path), level across from bank to bank, made
-// again only when those samples or the waters they meet change. Where another water holds the
-// river, as the physics decides by priority, that one draws and the ribbon
-// ends. Its vertex colors carry the flow of each point (water_surface.slang
-// FLOW_REACH): the small waves of its surface drift with it.
+// The surface of water along a path (a river): a ribbon along the curve of the
+// points the physics follows (phys.fluid_path, mm.path_sample), level across
+// from bank to bank, made again only when those points or the waters they meet
+// change. Where another water holds the river, as the physics decides by
+// priority, that one draws and the ribbon ends. Its vertex colors carry the
+// flow of each point (water_surface.slang FLOW_REACH): the small waves of its
+// surface drift with it.
 
 FLOW_REACH :: f32(8) // m/s of flow the colors of a ribbon carry, either way along x and z
+@(private) RIVER_SAMPLES :: 4096 // of the curve of a ribbon, 1 m apart or farther on a longer river
 
 @(private)
 Ribbon :: struct {
@@ -55,8 +57,8 @@ ribbon_build :: proc(physics:core.Ref(phys.Physics_State),found:[]phys.Fluid_Inf
         across:=linalg.normalize0([3]f32{-along.z,0,along.x})
         n:=linalg.normalize0(linalg.cross(across,along))
         if n.y<=0 {n={0,1,0}}
-        // The current is in the frame of the path: -Z along it, +X to its right.
-        flow:=across*current.x-along*current.z
+        // Along it at the speed of the point, and across by the current: +X to its right.
+        flow:=across*current.x+along*p.speed
         color:=[4]f32{0.5+0.5*clamp(flow.x/FLOW_REACH,-1,1),0.5+0.5*clamp(flow.z/FLOW_REACH,-1,1),0,1}
         x:=linalg.normalize0([3]f32{1,0,0}-n*n.x)
         for side in ([2]f32{-1,1}) {
@@ -82,7 +84,7 @@ ribbon_build :: proc(physics:core.Ref(phys.Physics_State),found:[]phys.Fluid_Inf
     // Where between two samples the river stops being its own (from_own), or starts to be: by halves.
     edge :: proc(physics:core.Ref(phys.Physics_State),found:[]phys.Fluid_Info,river:int,a,b:mm.Path_Point,from_own:bool) -> mm.Path_Point {
         mix :: proc(a,b:mm.Path_Point,t:f32) -> mm.Path_Point {
-            return {a.position+(b.position-a.position)*t,a.width+(b.width-a.width)*t,a.height+(b.height-a.height)*t}
+            return {a.position+(b.position-a.position)*t,a.width+(b.width-a.width)*t,a.height+(b.height-a.height)*t,a.speed+(b.speed-a.speed)*t}
         }
         lo,hi:=f32(0),f32(1)
         for _ in 0..<12 {
@@ -110,9 +112,9 @@ ribbon_build :: proc(physics:core.Ref(phys.Physics_State),found:[]phys.Fluid_Inf
 @(private)
 ribbon_place :: proc(state:^Water_Gpu,app:^host.App,physics:core.Ref(phys.Physics_State),found:[]phys.Fluid_Info,river:int,material:u32) {
     info:=found[river]
-    curve:[phys.FLUID_PATH_SAMPLES]mm.Path_Point
-    count:=phys.fluid_path(physics,info.fluid,&curve)
-    key:=base.hash64(mem.slice_to_bytes(curve[:count]),base.hash64(mem.ptr_to_bytes(&found[river].desc)))
+    points:[phys.FLUID_PATH_POINTS]mm.Path_Point
+    count:=phys.fluid_path(physics,info.fluid,&points)
+    key:=base.hash64(mem.slice_to_bytes(points[:count]),base.hash64(mem.ptr_to_bytes(&found[river].desc)))
     for &other in found {
         if other.entity!=info.entity && other.desc.density>0 {key=base.hash64(mem.ptr_to_bytes(&other.desc),key)}
     }
@@ -129,7 +131,8 @@ ribbon_place :: proc(state:^Water_Gpu,app:^host.App,physics:core.Ref(phys.Physic
         geom.mesh_buffer_init(&buffer,context.temp_allocator)
         tangents:=make([dynamic][4]f32,context.temp_allocator)
         id:base.Asset_Id
-        if ribbon_build(physics,found,river,curve[:count],&buffer,&tangents) {
+        curve:=make([]mm.Path_Point,RIVER_SAMPLES,context.temp_allocator)
+        if ribbon_build(physics,found,river,curve[:mm.path_sample(points[:count],1,curve)],&buffer,&tangents) {
             id,_=host.assets_mesh_generate(app.assets,geom.mesh_buffer_view(&buffer),options={no_lods=true,tangents=tangents[:]})
         }
         if r.mesh!={} {host.assets_mesh_release(app.assets,r.mesh)}

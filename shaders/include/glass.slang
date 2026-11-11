@@ -26,7 +26,7 @@ struct Glass {
 // through diffusely, what its transmission and coverage leave.
 Shading glass_shading(Material m, Glass g) {
     float covered = g.alpha * (1.0 - m.transmission);
-    Shading s = shading_make(g.position, g.normal, g.view, diffuse_reflectance(g.base_color, g.metallic) * covered, g.f0, specular_grazing(g.f0, g.f90, g.base_color, g.metallic), g.roughness);
+    Shading s = shading_make(g.position, g.normal, g.view, diffuse_reflectance(g.base_color, g.metallic) * covered, g.f0, float3(g.f90), g.roughness);
     shading_layers(s, g.layers, g.metallic);
     s.transmit *= covered;
     return s;

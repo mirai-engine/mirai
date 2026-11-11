@@ -14,7 +14,7 @@ plugin, through its `Inspector_Provider`. The Details panel is in [layout](panel
   Group selection and Create prefab. Below go a fixed search, the `Transform` (rotation in
   degrees), Hierarchy and a card per component that the scene stores.
 - Components with controls of their own have no card: `Transform`, `Name`, `Id`, `Parent`,
-  `Hidden`, `Disabled` and `Material_Override`.
+  `Hidden`, `Disabled` and `Material_Values`.
 - The checkbox of each card, except that of `Transform`, turns its component on or off without
   losing its values, like the entity's does for the entity; both are undo steps.
 - With several entities it shows the sections they all have and an edit goes to all; in the
@@ -187,15 +187,15 @@ Transform row (Rotation in degrees), `{"Spot_Light":{...}}` for a component and 
   the standard model with its maps and layers (coat, fuzz and anisotropy show their other values
   with weight greater than zero) or the Surface program's parameters. Unlit hides the light values.
   With several slots, each one's label (`Material 1`, `Material 2`...) unfolds below it, with its
-  own open state, the parameters of its material, with its Apply and its Revert; the `Tint`, which
-  applies to all, goes once above them. With a single one, Color and Emission show the material
-  with the `Tint`.
-- Everything changed there belongs to the entity (`Material_Override` and `Tint`): values, maps,
+  own open state, the parameters of its material, with its Apply and its Revert; the color and
+  the emission of the entity, which apply to all, go once above them. With a single one, Color and
+  Emission show the material with them.
+- Everything changed there belongs to the entity (its `Material_Values`): values, maps,
   program textures and overlays. The inspector never writes the material; Apply to material and the
   [material document](panels.md#material-document) change it for everyone.
 - Apply to material (`material_apply`, `material.instance.apply`) writes into the material what the
-  entity changes of that slot, removes it from the entity and saves the file right away, like a
-  prefab's Apply, in one undo step; the other entities that show it take it, except in what they
+  entity changes of that slot and removes it from the entity, in one undo step and in memory like
+  every edit: Save writes the file. The other entities that show it take it, except in what they
   change. Revert material changes removes from the entity what it changes of that slot
   (`material_revert`); the overlays belong to the first one. Reverting a shader parameter keeps the
   other overrides.
@@ -207,8 +207,8 @@ Transform row (Rotation in degrees), `{"Spot_Light":{...}}` for a component and 
 - **Overlays** goes below Material, outside its box. Its layers (`Overlay`) are the material's
   until the entity changes one: from then on the entity has its own list, which replaces the
   material's, and its arrow returns to the prefab's or the material's.
-- `Tint` is edited in the material properties and never as a section; without a `Mesh_Renderer`
-  its data is kept but not shown.
+- `Material_Values` is edited in the material properties and never as a section; without a
+  `Mesh_Renderer` its data is kept but not shown.
 - A material of the content browser is assigned to the first slot of the selected meshes with a
   click, or by dropping it on a mesh in the scene (`material_assign`, one step).
 

@@ -21,10 +21,11 @@ names the Surface program of a water without its own material (empty or unknown:
   vertices. That of a plane goes on to the horizon; that of a box ends at its walls (its vertices
   past them go onto them), so a box is a lake that sits in its basin, and its walls are the ground
   or the banks around it. Water along a path (a `volume.Spline` with a `Fluid`: a river) is a ribbon
-  along the samples the physics follows (`phys.fluid_path`, `river.odin`), level across, made
-  again only when they or the waters it meets change, ending where a water of higher priority
-  takes it; its vertex colors carry the current, which its small waves drift with. They are added
-  as frame instances (`instance_add`) before `render_sync`.
+  along the curve of the points the physics follows (`phys.fluid_path`, sampled with
+  `mm.path_sample`; `river.odin`), level across, made again only when they or the waters it meets
+  change, ending where a water of higher priority takes it; its vertex colors carry the current
+  of each sample (the speed of the points along it), which its small waves drift with. They are
+  added as frame instances (`instance_add`) before `render_sync`.
 - **Waves.** Those of a fluid are those of physics ([`Fluid_Waves`][waves]): `water_render` uploads
   with each body its `wave_terms`, measured from the origin of each pass at the time the frame
   shows (that of physics between its last two steps, like the poses; without Play, the

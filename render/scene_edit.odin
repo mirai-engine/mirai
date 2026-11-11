@@ -82,6 +82,7 @@ pool_release :: proc(pool:^[dynamic]$T,free:^[dynamic]Pool_Range,first,count:u32
 // The instances and what is built of them. Gone until the next scene_update.
 @(private)
 scene_instances_clear :: proc(s: ^Scene_State) {
+	for &inst in s.instances {instance_material_values_release(s, &inst)}
 	clear(&s.translucent)
 	clear(&s.instances)
 	clear(&s.instance_next)

@@ -62,6 +62,7 @@ Program :: struct {
     size:int,
     parameters:[]Program_Parameter,
     layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model it may give
+    standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
     resources:[]Program_Resource, // of a Vfx program, in the order it declares them
     stages:[]Program_Stage,       // of a Vfx program, in the order they run
@@ -184,6 +185,7 @@ catalog_read :: proc(catalog:^Program_Catalog,bytes:[]u8) -> (ok:bool) {
                 program.vertex.reach=f32(reach)
             }
         }
+        program.standard,_=item["standard"].(json.Boolean)
         if layers,listed:=item["layers"].(json.Array);listed {
             for entry in layers {
                 switch entry.(json.String) or_return {

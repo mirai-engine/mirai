@@ -117,7 +117,7 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
 
 // The globe of each lamp glows while it is lit.
 @(step="fixed")
-horror_glow :: proc(tints:^core.Table(render.Tint),lamps:^core.Table(House_Lamp,.Read)) {
+horror_glow :: proc(tints:^core.Table(render.Material_Values),lamps:^core.Table(House_Lamp,.Read)) {
     for row in 0..<core.count(lamps) {
         lamp:=core.at(lamps,row)
         if tint:=core.edit(tints,lamp.globe);tint!=nil {tint.emission=lamp.lit?lamp.glow:[3]f32{}}

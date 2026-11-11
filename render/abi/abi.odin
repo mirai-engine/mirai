@@ -218,6 +218,24 @@ PROGRAMS_COUNT    :: 0 // a word a phase
 PROGRAMS_DISPATCH :: 2 // three words a phase
 PROGRAMS_HEADER   :: 8
 
+// The values an instance gives over the rows of its materials, in the index
+// pool: how many, then INSTANCE_VALUE_WORDS each: its row, its target with how
+// many of its four words it gives from INSTANCE_VALUE_COUNT_SHIFT, and the
+// words. A target is a word of the parameters of the program of the row, or
+// from INSTANCE_VALUE_STANDARD a value of the standard model.
+INSTANCE_VALUES_MAX         :: 16
+INSTANCE_VALUE_WORDS        :: 6
+INSTANCE_VALUE_COUNT_SHIFT  :: 8
+INSTANCE_VALUE_STANDARD     :: 64
+// The values of the standard model an instance gives. A row holds the others
+// (the index of refraction, the transmission and the alpha mode), which choose
+// the passes that draw it and the media its glass leaves.
+Instance_Value :: enum u32 {
+	Base_Color = INSTANCE_VALUE_STANDARD, Opacity, Metallic, Roughness, Emission, Specular,
+	Coat, Coat_Roughness, Coat_Color, Coat_Ior, Fuzz, Fuzz_Color, Fuzz_Roughness, Anisotropy, Anisotropy_Rotation,
+	Unlit, Emission_Mode, Diffuse_Transmission, Diffuse_Transmission_Color,
+}
+
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256
 PARTICLE_ATTRIBUTE_BYTES :: 1024

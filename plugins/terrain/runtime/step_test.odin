@@ -57,7 +57,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
     view.fov=50*mm.RAD_PER_DEG
     owner:=core.create(&worlds[0].entities)
     core.add(&worlds[0].transforms,owner,core.TRANSFORM_IDENTITY)
-    core.add(&worlds[0].tints,owner,render.Tint{color={1,1,1,1},emission={3,3,3}})
+    core.add(&worlds[0].looks,owner,render.Material_Values{color={1,1,1,1},emission={3,3,3}})
     core.add(&worlds[0].terrains,owner,Terrain{source=id,revision=1})
     reference:[]u8;defer delete(reference)
     preview:base.Asset_Id
@@ -70,7 +70,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             duplicate:=core.create(&w.entities)
             transform:=core.TRANSFORM_IDENTITY;transform.position.x=72
             core.add(&w.transforms,duplicate,transform)
-            core.add(&w.tints,duplicate,render.Tint{color={0,1,0,1},emission={3,3,3}})
+            core.add(&w.looks,duplicate,render.Material_Values{color={0,1,0,1},emission={3,3,3}})
             core.add(&w.terrains,duplicate,Terrain{source=id,revision=1})
         }
         test_world_settle(&w.w)
@@ -95,7 +95,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
                     if marker.coord!=([3]i32{}) {continue}
                     e:=w.chunks.entities[row]
                     world,_:=core.get(&poses[current],e)
-                    tint,_:=core.get(&w.tints,e)
+                    tint,_:=core.get(&w.looks,e)
                     instance,usable:=render.mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true
@@ -105,7 +105,8 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},&poses[current],&w.statics,&w.tints,&hidden,&elsewhere,&w.parents,{},&suns,&points,&spots,&rects,&emissions,&skies,&posts,{},&w.overrides,&highlights,&outlines,{&outline_styles},&offsets,&layers,{},{},{},{},nil)
+            shows:render.Frame_Values_Requests
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},&poses[current],&w.statics,&w.looks,&hidden,&elsewhere,&w.parents,{},&suns,&points,&spots,&rects,&emissions,&skies,&posts,{},&highlights,&outlines,{&outline_styles},&offsets,&layers,{},{},{},{},nil,&shows)
             host.app_frame_end(app)
         }
         if pass==4 {continue}
@@ -202,7 +203,7 @@ restored_entity_handles_do_not_turn_authors_into_cached_terrain_chunks :: proc(t
     epoch:=w.data.epoch
     core.entities_copy(&w.entities,&authors)
     core.table_clear(&w.chunks);core.table_clear(&w.parents);core.table_clear(&w.transforms)
-    core.table_clear(&w.statics);core.table_clear(&w.colliders);core.table_clear(&w.tints);core.table_clear(&w.overrides)
+    core.table_clear(&w.statics);core.table_clear(&w.colliders);core.table_clear(&w.looks)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.statics,owner,render.Mesh_Renderer{})
     duplicate:=core.create(&w.entities)
@@ -363,7 +364,7 @@ terrain_test_write :: proc(t:^testing.T,assets:^host.Assets,path:string,source:^
 }
 
 terrain_test_tables :: proc(w:^Terrain_Test_World) -> Chunk_Tables {
-    return {core.commands_of(test_world_ref(&w.w)),&w.chunks,core.read(&w.transforms),core.read(&w.parents),core.read(&w.ids),&w.colliders,&w.statics,&w.tints,&w.overrides}
+    return {core.commands_of(test_world_ref(&w.w)),&w.chunks,core.read(&w.transforms),core.read(&w.parents),core.read(&w.ids),&w.colliders,&w.statics,&w.looks}
 }
 
 // A dig in the world edits the terrain it touches, in the space of its source;
