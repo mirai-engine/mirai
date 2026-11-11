@@ -435,8 +435,8 @@ which does not change size so that few projects do not leave a large empty windo
   leaves the project unopened. Closed, the process waits for the editor it started, which writes in
   its same terminal: `mirai edit` ends with the last editor.
 - **New project**, or a template of the list, shows the form with that template; Create copies it
-  (`build.project_create`) and opens it; with Initialize Git repository, the new editor starts with
-  `--git-init` and makes the repository.
+  (`build.project_create`) and opens it; the new editor starts with `--git-init` and makes the
+  repository, with the remote and Git LFS the form says.
 - Beside it, Plugins is a list with a check per plugin the project can receive: those of the
   engine and the template, on as the template names them and reread on changing it; those of the
   catalog, off; and the added repositories. The automatic ones do not appear: they arrive with

@@ -93,6 +93,7 @@ Procedures:
 
 - Quitting while an agent works asks first (`Pending.Quit`), and so do New and Open of a scene
   while agents work or a session is shared. Closing a tab asks nothing: its file holds it.
+  Quitting with [pending changes](git.md#pending-and-kept) lists them, to keep or discard.
 - The dialog says how many agents are working and how many changes await review. Accepting stops
   the agents first (`ai_working_stop`), and from that moment the API rejects their calls; Cancel
   lets them work. The review that remains: [persistence](ai-review.md#persistence-and-capacity).

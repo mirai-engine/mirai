@@ -84,7 +84,8 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   an editor (an agent's material, a painted texture, an undo) travels to the others (`file_changed`,
   `file_set`). The host writes it with its step and forwards it; a guest keeps it in the memory of
   its registry while it is in the session and forgets it when it leaves. To whoever enters, the
-  host sends the files its registry holds after the scene.
+  host sends after the scene the files its registry holds and those git lists as changed since
+  its last commit, which the checkout of the guest lacks.
 - **A file that cannot travel** (larger than `COLLAB_FILE_BYTES`) stays where it was edited and
   every editor is told (`File_Unsent`, `Collab_State.unsent`): a toast when it happens, a line of
   Session while it lasts and `unsent` of `collab.status`, with the file, who changed it and what
