@@ -43,12 +43,12 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     owner:=core.create(&world.entities)
     core.add(&world.transforms,owner,core.Transform{position={3,2,-4},rotation=1,scale={1,1,1}})
     core.add(&world.meshes,owner,render.Mesh_Renderer{shape=.Cube})
-    core.add(&world.configs,owner,destruct.destructible(pieces=4,seed=55));core.add(&world.colliders,owner,destruct.collider_fracture())
+    core.add(&world.configs,owner,destruct.destructible(pieces=4,seed=55))
     core.test_world_settle(&world)
     for tick in 0..<4 {cache_test_step(&world,&h,u64(tick))}
     state,has:=core.get(&world.states,owner)
     if !testing.expect(t,has && phys.breakable_valid(core.ref(&world.physics),state.handle)) {return}
-    testing.expect_value(t,phys.body_of(core.ref(&world.physics),owner),state.body)
+    testing.expect_value(t,phys.body_of(core.ref(&world.physics),owner),phys.breakable_body(core.ref(&world.physics),state.handle))
     record:cache.Cache_Recorder
     testing.expect_value(t,cache.record_init(&record,{frames=8,tracks=16,samples=128,vertices=8192,indices=16384,origin={position={3,2,-4},rotation=1,scale={1,1,1}}}),cache.Cache_Error.None)
     defer cache.record_destroy(&record)

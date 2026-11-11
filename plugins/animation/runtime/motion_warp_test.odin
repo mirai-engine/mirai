@@ -78,8 +78,8 @@ Motion_Test_Span :: struct {name:string,from,to:f32}
 @(private)
 motion_test_spans :: proc(content:^host.Content_Animation,spans:..Motion_Test_Span) {
     delete(content.lib.markers);delete(content.markers)
-    content.lib.markers=make([]lib.Marker,len(spans));content.markers=make([]u64,len(spans));content.lib.marker_count=len(spans)
-    for span,i in spans {content.lib.markers[i]={time=span.from,id=u32(i),duration=span.to-span.from};content.markers[i]=base.name_hash(span.name)}
+    content.lib.markers=make([]lib.Marker,len(spans));content.markers=make([]host.Content_Marker,len(spans));content.lib.marker_count=len(spans)
+    for span,i in spans {content.lib.markers[i]={time=span.from,id=u32(i),duration=span.to-span.from};content.markers[i].name=base.name_hash(span.name)}
     for index in ([2]int{0,3}) {if index<content.lib.clip_count {content.lib.clips[index].first_marker,content.lib.clips[index].marker_count=0,u32(len(spans))}}
 }
 

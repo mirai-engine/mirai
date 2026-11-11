@@ -77,8 +77,8 @@ source_volume_mesh :: proc(s:^Source,operand:geom.Mesh,brush:Brush) -> (change:C
         }}
     }
     change.low=high;change.high=low
-    if !grid_prepare(&s.distances,low,high,s.allocator) {return {error=.Out_Of_Memory}}
-    defer grid_settle(&s.distances,low,high,s.allocator)
+    if !grid_prepare(&s.field,low,high,s.allocator) {return {error=.Out_Of_Memory}}
+    defer grid_settle(&s.field,low,high,s.allocator)
     layered:=brush.kind==.Add
     if layered && !grid_prepare(&s.weights,low,high,s.allocator) {return {error=.Out_Of_Memory}}
     defer if layered {grid_settle(&s.weights,low,high,s.allocator)}
@@ -92,7 +92,7 @@ source_volume_mesh :: proc(s:^Source,operand:geom.Mesh,brush:Brush) -> (change:C
         if value==old {continue}
         dug_count(s,p,old,value)
         if layered {grid_write(&s.weights,p,weights_grow(grid_value(&s.weights,p),int(brush.layer),int(s.layer_count),volume_solid(old,s.cell),volume_solid(value,s.cell)))}
-        block_set(&s.distances,p,value)
+        block_set(&s.field,p,value)
         change.changed=true
         for axis in 0..<3 {change.low[axis]=min(change.low[axis],p[axis]);change.high[axis]=max(change.high[axis],p[axis])}
     }}}

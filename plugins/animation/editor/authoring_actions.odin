@@ -87,14 +87,14 @@ action_authoring_prepare :: proc(s:^editor.Session,call:^api.Call,p:^Action_Writ
         duration:=lib.clip_duration(&content.lib,clip)
         if marker:=base.text_get(definition.exit_marker[:]);marker!="" {
             known:=false
-            for value in lib.clip_markers(&content.lib,clip) {known ||= int(value.id)<len(content.markers) && content.markers[value.id]==base.name_hash(marker)}
+            for value in lib.clip_markers(&content.lib,clip) {known ||= int(value.id)<len(content.markers) && content.markers[value.id].name==base.name_hash(marker)}
             if !known {authoring_failure(call,fmt.tprintf("actions[%d].exit_marker",i),"Missing_Marker","a marker of the action clip",marker,"The clip has no such marker",fix="List its markers with animation.asset.inspect and the clip, or leave exit_marker empty to end at exit");return}
         }
         if definition.root_motion!=.None && (int(clip)>len(content.roots) || content.roots[clip-1].bone=={} || !content.roots[clip-1].translation && !content.roots[clip-1].rotation) {authoring_failure(call,fmt.tprintf("actions[%d].root_motion",i),"Incompatible_Root","root metadata on the action clip","none","The action clip has no root motion");return}
         for &section,j in profile.sections {
             if int(section.action)!=i {continue}
             spanned:=false
-            for value in lib.clip_markers(&content.lib,clip) {spanned ||= value.duration>0 && value.time+value.duration<=duration && int(value.id)<len(content.markers) && content.markers[value.id]==base.name_hash(base.text_get(section.name[:]))}
+            for value in lib.clip_markers(&content.lib,clip) {spanned ||= value.duration>0 && value.time+value.duration<=duration && int(value.id)<len(content.markers) && content.markers[value.id].name==base.name_hash(base.text_get(section.name[:]))}
             if !spanned {authoring_failure(call,fmt.tprintf("sections[%d].name",j),"Missing_Span","a span of the action clip of that name",base.text_get(section.name[:]),"A section is a span of the clip of its action",fix="Mark the span with animation.marker.set and a duration");return}
         }
     }

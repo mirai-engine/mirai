@@ -87,11 +87,11 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return}
         defer textures.heightmap_destroy(&heightmap)
         if !terrain.source_make(&source,.Heightfield,{heightmap.width,1,heightmap.height},tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The heightmap dimensions exceed their budget");return}
-        if !terrain.grid_prepare(&source.heights,{0,0,0},{heightmap.width-1,0,heightmap.height-1},source.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return}
+        if !terrain.grid_prepare(&source.field,{0,0,0},{heightmap.width-1,0,heightmap.height-1},source.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return}
         for value,i in heightmap.values {
             height:=value*tool.height_scale+tool.height_offset
             if abs(height)>terrain.HEIGHT_LIMIT {editor.notify(s,"Heightmap heights exceed the terrain limit");return}
-            terrain.grid_set(&source.heights,i%heightmap.width,i/heightmap.width,height)
+            terrain.grid_set(&source.field,i%heightmap.width,i/heightmap.width,height)
         }
     } else {
         samples:=[3]int{tool.samples,tool.create_kind==.Volume?tool.depth:1,tool.samples}
@@ -143,7 +143,7 @@ volume_over_ground :: proc(s:^editor.Session,world:core.World_Ref,assets:^host.A
     center:=[2]int{int(linalg.round((local.x-origin.x)/g.cell)),int(linalg.round((local.z-origin.z)/g.cell))}
     offset:=[2]int{clamp(center.x-(n.x-1)/2,0,int(g.samples.x)-n.x),clamp(center.y-(n.y-1)/2,0,int(g.samples.z)-n.y)}
     if !terrain.source_make(source,.Volume,{n.x,tool.depth,n.y},g.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
-    middle:=terrain.grid_get(&g.heights,offset.x+(n.x-1)/2,offset.y+(n.y-1)/2)
+    middle:=terrain.grid_get(&g.field,offset.x+(n.x-1)/2,offset.y+(n.y-1)/2)
     lift:=middle-f32(tool.depth-1)*0.5*g.cell
     if !terrain.source_volume_ground(source,{ground=&g,offset=offset,lift=lift}) {editor.notify(s,"There is not enough memory for the Volume");return}
     corner:=origin+[3]f32{f32(offset.x)*g.cell,lift,f32(offset.y)*g.cell}

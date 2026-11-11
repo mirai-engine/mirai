@@ -20,7 +20,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     delete(source.lib.markers);source.lib.markers=make([]lib.Marker,3);source.lib.marker_count=3
     source.lib.markers[0],source.lib.markers[1],source.lib.markers[2]={time=.25,id=0},{time=0,id=1,duration=1},{time=.125,id=0}
     for index in ([2]int{2,5}) {source.lib.clips[index].first_marker,source.lib.clips[index].marker_count=1,2}
-    delete(source.markers);source.markers=make([]u64,2);source.markers[0],source.markers[1]=base.name_hash("step"),base.name_hash("ledge")
+    delete(source.markers);source.markers=make([]host.Content_Marker,2);source.markers[0].name,source.markers[1].name=base.name_hash("step"),base.name_hash("ledge")
     source.id,source.generation={0x710,0x711},1;append(&content.animations,source);content.index[source.id]={kind=.Animation,index=0}
     test_character_register(&assets,{1,2});defer test_registry_free(&assets)
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)

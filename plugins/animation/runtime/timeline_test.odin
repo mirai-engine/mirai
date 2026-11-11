@@ -55,8 +55,12 @@ timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Ti
         base.text_set(rows[i].target[:],track.target)
     }
     marks:=make([]lib.Marker,len(markers),context.temp_allocator)
-    source.markers=make([]u64,len(markers),app.allocator)
-    for marker,i in markers {marks[i]={time=marker.time,id=u32(i)};source.markers[i]=base.name_hash(marker.name)}
+    source.markers=make([]host.Content_Marker,len(markers),app.allocator)
+    for marker,i in markers {
+        marks[i]={time=marker.time,id=u32(i),duration=marker.duration}
+        source.markers[i].name=base.name_hash(marker.name)
+        if marker.target!="" {source.markers[i].target=base.name_hash(marker.target);base.text_set(source.markers[i].text[:],marker.name)}
+    }
     clip,error:=lib.clip_add(&source.lib,{name=base.name_hash("open"),tracks=descs,markers=marks})
     if !testing.expect(t,clip==1 && error==.None) {return false}
     host.content_animation_loops(&source.lib,1)

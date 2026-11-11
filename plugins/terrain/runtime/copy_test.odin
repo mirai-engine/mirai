@@ -36,11 +36,11 @@ terrain_copy_expect :: proc(t:^testing.T,dst,src:^Terrain_Data) {
         testing.expect(t,copy.source.coarse.size==entry.source.coarse.size && grid_equal(&copy.source.coarse.heights,&entry.source.coarse.heights) && grid_equal(&copy.source.coarse.weights,&entry.source.coarse.weights))
         for dirty,j in copy.dirty {testing.expect(t,dirty && copy.pending[j]==u32(j))}
         if entry.source.kind==.Heightfield {
-            testing.expect(t,grid_equal(&copy.source.heights,&entry.source.heights))
-            testing.expect(t,raw_data(copy.source.heights.pages[0].values)==raw_data(entry.source.heights.pages[0].values),"the copy shares the pages")
+            testing.expect(t,grid_equal(&copy.source.field,&entry.source.field))
+            testing.expect(t,raw_data(copy.source.field.pages[0].values)==raw_data(entry.source.field.pages[0].values),"the copy shares the pages")
         } else {
-            testing.expect(t,grid_equal(&copy.source.distances,&entry.source.distances))
-            testing.expect(t,raw_data(copy.source.distances.pages[0].values)==raw_data(entry.source.distances.pages[0].values),"the copy shares the blocks")
+            testing.expect(t,grid_equal(&copy.source.field,&entry.source.field))
+            testing.expect(t,raw_data(copy.source.field.pages[0].values)==raw_data(entry.source.field.pages[0].values),"the copy shares the blocks")
         }
         testing.expect_value(t,len(entry.pending),0)
         for dirty in entry.dirty {testing.expect(t,!dirty)}
@@ -78,11 +78,11 @@ warm_terrain_copies_and_swaps_reuse_all_source_buffers_and_invalidate_both_host_
     failure:=Failing_Allocator{owner=context.allocator,remaining=1000};allocator:=runtime.Allocator{failing_allocator,&failure}
     context.allocator=allocator
     if !testing.expect(t,terrain_data_copy(&destination,&source)) {return}
-    values:=raw_data(destination.entries[0].source.heights.pages[0].values)
+    values:=raw_data(destination.entries[0].source.field.pages[0].values)
     failure.remaining=0;context.temp_allocator=runtime.nil_allocator()
     for _ in 0..<16 {testing.expect(t,terrain_data_copy(&destination,&source))}
     terrain_copy_expect(t,&destination,&source)
-    testing.expect_value(t,raw_data(destination.entries[0].source.heights.pages[0].values),values)
+    testing.expect_value(t,raw_data(destination.entries[0].source.field.pages[0].values),values)
     source.epoch=1000;terrain_data_swap(&source,&destination)
     testing.expect(t,source.epoch==1001 && destination.epoch==1001 && source.ready && destination.ready)
     source.epoch=max(u32);terrain_data_swap(&source,&destination)

@@ -79,6 +79,7 @@ binaural_add :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,x:[]f32,dire
 // Once per chunk of n frames, after the voices: the sums of each bus back to
 // time and into its ring, and the next n frames of each ring into its bus.
 binaural_flush :: proc "contextless" (m:^Mixer,n:int) #no_bounds_check {
+    if !m.binaural_ready {return}
     bins:=m.conv.n/2+1
     ring_frames:=m.binaural_ring
     mask:=ring_frames-1

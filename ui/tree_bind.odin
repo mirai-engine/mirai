@@ -90,9 +90,12 @@ Bind_Region :: struct {
     unchanged:bool,    // outside arrays: its stamp did not move in the last refresh, so its bytes were not looked at
     pure:bool,         // Array: no entity is reached inside it, so it changes only with the bytes of its parent
 }
-// Bytes of a region the tree reads: where they are in the game and in the copy.
+// Bytes of a region the tree reads: where they are in the game and in the
+// copy. step: of an f32 shown only as its rounded multiples (floor: those at
+// or under it), what it must move to change what is shown; 0: any change
+// shows; -1: the bar of a Progress, exact until its pixels are known.
 @(private)
-Bind_Range :: struct {region:i32,src,dst,size:u32}
+Bind_Range :: struct {region:i32,src,dst,size:u32,step:f32,floor:bool}
 
 // Where the paths of a node start.
 @(private)
@@ -465,7 +468,13 @@ bind_plan :: proc(instance:^Tree_Instance) -> bool {
         if merged>0 {
             last:=&wanted[merged-1]
             if last.region==range.region && range.src<=last.src+last.size {
+                same:=last.src==range.src && last.size==range.size
+                if same && (last.step!=range.step || last.floor!=range.floor) {last.step,last.floor=0,false}
+                if same {continue}
+                // A field shown by its steps is a range of its own.
+                if (last.step!=0 || range.step!=0) && range.src==last.src+last.size {wanted[merged]=range;merged+=1;continue}
                 last.size=max(last.size,range.src+range.size-last.src)
+                last.step,last.floor=0,false
                 continue
             }
         }
@@ -559,6 +568,18 @@ bound_dirty :: proc(instance:^Tree_Instance,b:Bound) -> bool {
     return false
 }
 
+// The range that holds exactly the field a bound reads; nil when none does.
+@(private)
+bound_range :: proc(instance:^Tree_Instance,b:Bound) -> ^Bind_Range {
+    if !b.bound || b.region<0 || int(b.region)>=len(instance.regions) {return nil}
+    r:=&instance.regions[b.region]
+    origin:=u32(0) if r.kind==.Array else r.dst
+    for &range in instance.ranges[r.first:][:r.ranges] {
+        if origin+range.dst==b.offset && range.size==b.size {return &range}
+    }
+    return nil
+}
+
 // Every range of a region changed, and those of the regions packed in its elements.
 @(private)
 region_dirty :: proc(instance:^Tree_Instance,region:i32) {
@@ -648,12 +669,21 @@ ranges_copy :: proc(instance:^Tree_Instance,region:i32,dst:[^]u8,src:rawptr,chan
         from:=rawptr(uintptr(src)+uintptr(range.src))
         to:=rawptr(&dst[range.dst])
         if mem.compare_ptrs(to,from,int(range.size))!=0 {
+            if range.step>0 && range_same_step(range,(^f32)(to)^,(^f32)(from)^) {continue}
             mem.copy(to,from,int(range.size))
             changed^=true
             instance.dirty[int(r.first)+i]=true
             instance.dirty_any=true
         }
     }
+}
+
+// Whether two values of an f32 range show the same: the same step of it.
+@(private)
+range_same_step :: proc "contextless" (range:Bind_Range,a,b:f32) -> bool {
+    if a-a!=0 || b-b!=0 {return false} // NaN or infinite: always shown anew
+    half:=f64(0) if range.floor else 0.5
+    return math.floor(f64(a)/f64(range.step)+half)==math.floor(f64(b)/f64(range.step)+half)
 }
 
 // True when bytes held something, now zero.
@@ -727,6 +757,16 @@ tree_template_parse :: proc(parts:^[dynamic]Template_Part,text:string,instance:^
             digits,digits_ok:=strconv.parse_int(spec)
             if !digits_ok || digits<0 || digits>9 {return true,false}
             part.format,part.decimals=.Decimals,u8(digits)
+        }
+        // An f32 that only a number of it shows changes the text by its shown steps.
+        if instance.host!=nil && kind==.Float && part.bound.size==4 && len(instance.ranges)>0 {
+            last:=&instance.ranges[len(instance.ranges)-1]
+            #partial switch part.format {
+            case .Default:          last.step=0.01
+            case .Decimals,.Pattern:last.step=f32(math.pow(10,-f64(part.decimals)))
+            case .Percent:          last.step=f32(math.pow(10,-f64(part.decimals)-2))
+            case .Clock,.Clock_Hours:last.step,last.floor=1,true
+            }
         }
         append(parts,part)
         i+=close+1

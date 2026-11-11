@@ -336,15 +336,26 @@ refused_has :: proc(j:^Journal,key:Journal_Key,tick:u32,index:u8) -> bool {
     return false
 }
 
+// The messages of every journal that arrived for the tick, for the step of a
+// library that receives them (journal_receive).
+@(params)
+Journal_Inbox :: struct {
+    ops:core.Inbox(Net_Journal_Op),
+    parts:core.Inbox(Net_Journal_Part),
+    refused:core.Inbox(Net_Journal_Refused),
+    asks:core.Inbox(Net_Journal_Ask),
+    resyncs:core.Inbox(Net_Journal_Resync),
+}
+
 // What arrived for the journal since the tick before, at the start of a tick.
 // Client: an operation of a tick already simulated asks to go back to it,
 // every one when rewind_all, otherwise one over what the client predicts
 // within margin. A tick that runs again took its messages the first time.
-journal_receive :: proc(j:^Journal,events:core.Ref(Net_Events),server:bool,own:Connection,time:core.Time,rewinds:^Net_Rewinds,rewind_all:bool,margin:i32,problems:^core.Problems) {
-    if events.ptr==nil || time.resimulating {return}
-    for item in events.received.items {
-        if op,ok:=event_read(item,Net_Journal_Op);ok && op.journal==j.id {
-            if server || op.sequence==0 {continue}
+journal_receive :: proc(j:^Journal,inbox:Journal_Inbox,server:bool,own:Connection,time:core.Time,rewinds:^Net_Rewinds,rewind_all:bool,margin:i32,problems:^core.Problems) {
+    if time.resimulating {return}
+    for item in inbox.ops.items {
+        op:=item.value
+        if op.journal==j.id && !server && op.sequence!=0 {
             s:=journal_stream(j,op.key,true)
             put,enough:=false,false
             if s!=nil {put,enough=log_put(s,op.op)}
@@ -355,18 +366,24 @@ journal_receive :: proc(j:^Journal,events:core.Ref(Net_Events),server:bool,own:C
             late:=rewind_all
             for p in j.predictions {late ||= p.key==op.key && boxes_overlap(p.low,p.high,op.low,op.high,margin)}
             if late {rewind(rewinds,op.tick)}
-        } else if piece,piece_ok:=event_read(item,Net_Journal_Part);piece_ok && piece.journal==j.id {
-            if !server {part_piece(j,piece,problems)}
-        } else if refused,refused_ok:=event_read(item,Net_Journal_Refused);refused_ok && refused.journal==j.id {
-            if server {continue}
-            if _,error:=append(&j.refused,Journal_Refusal{refused=refused});error!=nil {journal_memory(problems)}
-            j.stats.refused+=1
-        } else if ask,ask_ok:=event_read(item,Net_Journal_Ask);ask_ok && ask.journal==j.id {
-            if !server || item.sender==0 {continue}
-            if _,error:=append(&j.held,Journal_Held{item.sender,ask,i32(ask.tick-u32(time.tick))>JOURNAL_AHEAD_TICKS});error!=nil {journal_memory(problems)}
-        } else if resync,resync_ok:=event_read(item,Net_Journal_Resync);resync_ok && resync.journal==j.id {
-            if server && item.sender!=0 {journal_offer(j,item.sender,resync.key,resync.base,resync.since,resync.low,resync.high)}
         }
+    }
+    for item in inbox.parts.items {
+        if item.value.journal==j.id && !server {part_piece(j,item.value,problems)}
+    }
+    for item in inbox.refused.items {
+        if item.value.journal!=j.id || server {continue}
+        if _,error:=append(&j.refused,Journal_Refusal{refused=item.value});error!=nil {journal_memory(problems)}
+        j.stats.refused+=1
+    }
+    for item in inbox.asks.items {
+        if item.value.journal!=j.id || !server || item.sender==0 {continue}
+        sender,ask:=Connection(item.sender),item.value
+        if _,error:=append(&j.held,Journal_Held{sender,ask,i32(ask.tick-u32(time.tick))>JOURNAL_AHEAD_TICKS});error!=nil {journal_memory(problems)}
+    }
+    for item in inbox.resyncs.items {
+        resync:=item.value
+        if resync.journal==j.id && server && item.sender!=0 {journal_offer(j,Connection(item.sender),resync.key,resync.base,resync.since,resync.low,resync.high)}
     }
 }
 

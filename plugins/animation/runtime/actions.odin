@@ -283,7 +283,7 @@ action_playing :: proc(runtime:core.Ref(Action_Runtime),entity:core.Entity,name:
 clip_span :: proc(content:^host.Content_Animation,handle:lib.Clip,name:u64) -> (start,end:f32,ok:bool) {
     if content==nil || !lib.clip_valid(&content.lib,handle) {return}
     for marker in lib.clip_markers(&content.lib,handle) {
-        if marker.duration>0 && int(marker.id)<len(content.markers) && content.markers[marker.id]==name {return marker.time,marker.time+marker.duration,true}
+        if marker.duration>0 && int(marker.id)<len(content.markers) && content.markers[marker.id].name==name {return marker.time,marker.time+marker.duration,true}
     }
     return
 }
@@ -317,7 +317,7 @@ action_windows :: proc(runtime:^Action_Runtime,state:^Action_State,slot:^Action_
     profile:=runtime.plans[state.plan].profile
     spans:for marker in lib.clip_markers(&content.lib,handle) {
         if marker.duration<=0 || int(marker.id)>=len(content.markers) {continue}
-        name:=content.markers[marker.id]
+        name:=content.markers[marker.id].name
         for &section in profile.sections {if int(section.action)==int(slot.action) && base.name_hash(base.text_get(section.name[:]))==name {continue spans}}
         start,end:=marker.time,marker.time+marker.duration
         open:=-1;free:=-1
@@ -535,7 +535,7 @@ action_exit :: proc(content:^host.Content_Animation,handle:lib.Clip,definition:^
     if definition.exit_marker[0]!=0 {
         name:=base.name_hash(base.text_get(definition.exit_marker[:]))
         for marker in lib.clip_markers(&content.lib,handle) {
-            if int(marker.id)<len(content.markers) && content.markers[marker.id]==name && marker.time>0 {return min(marker.time,duration)}
+            if int(marker.id)<len(content.markers) && content.markers[marker.id].name==name && marker.time>0 {return min(marker.time,duration)}
         }
     }
     return duration*definition.exit
@@ -651,8 +651,8 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
                 slot.time=target;slot.from,slot.to=target,target;slot.continuous=false;slot.windows={}
                 windows:for marker in lib.clip_markers(&content.lib,handle) {
                     if marker.duration<=0 || target<marker.time || target>=marker.time+marker.duration || int(marker.id)>=len(content.markers) {continue}
-                    for &section in profile.sections {if int(section.action)==int(slot.action) && base.name_hash(base.text_get(section.name[:]))==content.markers[marker.id] {continue windows}}
-                    for &open in slot.windows {if open==0 {open=content.markers[marker.id];break}}
+                    for &section in profile.sections {if int(section.action)==int(slot.action) && base.name_hash(base.text_get(section.name[:]))==content.markers[marker.id].name {continue windows}}
+                    for &open in slot.windows {if open==0 {open=content.markers[marker.id].name;break}}
                 }
                 current.time,current.fresh,current.done,layer.from=target,false,false,target;remaining=0
             } else {remaining=(target-slot.time)/speed}

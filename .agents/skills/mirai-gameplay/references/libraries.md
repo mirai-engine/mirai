@@ -40,8 +40,8 @@ the name of their type) and a world (handles and tables).
   only a scene the game ships: what hangs from it loads unchecked. `report.refused` says what
   failed and `untrusted_text` how to fix it.
 - `spawn(spawner, path_or_id, at)` is the one way to place a copy of a scene while playing and
-  returns its root. It places a scene with exactly one root, a prefab; one with none or several is
-  `Not_One_Root`, and hangs whole from a `Scene_Reference` instead. One that fails returns `NONE`
+  returns its root. It places a prefab (`Header_Flag.Prefab`), by its one root; another scene is
+  `Not_A_Prefab`, and hangs whole from a `Scene_Reference` instead. One that fails returns `NONE`
   and is the problem `scene.spawn` of its `parent` (or of the world), with the fix. A zero
   rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
   it. The root receives `Prefab_Instance{prefab}`, the one component that says what prefab an
@@ -102,14 +102,14 @@ the name of their type) and a world (handles and tables).
 - An entity is looked up by its `Id` with `core.entity_of(&es, id)`, up to date from the settle that
   settles what was instantiated
   ([identity](../../mirai-core/references/core.md#persistent-identity)).
-- `Error`: `No_Assets`, `Not_Found`, `Invalid`, `Cycle`, `Not_One_Root`, `Corrupt`,
+- `Error`: `No_Assets`, `Not_Found`, `Invalid`, `Cycle`, `Not_A_Prefab`, `Corrupt`,
   `Duplicate_Id`, `Out_Of_Memory`, `Write_Failed` and, of `load_untrusted`, `Too_Large`,
   `Not_Allowed`, `Out_Of_Range`, `Unknown_Reference`; `error_text`.
 
 ### Scene references
 
-One kind of scene, placed as its use asks: loaded as the world, referenced as a section or,
-with exactly one root, copied (an instance with overrides in a document, `spawn` while running).
+Any scene is loaded as the world or referenced as a section; a prefab is also copied by its one
+root (an instance with overrides in a document, `spawn` while running).
 
 - `Scene_Reference{scene}` (`reference.odin`) on an entity: the scene's entities hang from it
   without being copied into the document that has the reference. Deleting or turning it off removes
@@ -448,14 +448,16 @@ the reverb of the room where the listener is and what covers each source.
   ([positional audio](../../mirai-platform/references/audio.md#positional-audio)), attenuated by
   its curve between `min_distance` and `max_distance`, and with `directivity` louder toward -Z of
   the entity; without it, with its `pan`. `audio_sources` (`late`, after
-  `transforms_propagate` and `camera_view`) starts, moves and updates the voices and sends only
-  what changed.
+  `transforms_propagate` and `camera_view`) tunes, starts and stops voices from the source rows
+  written since it looked, follows each live voice (its end, its place, what hides it) and writes
+  `Audio_Source_State` only when it changes.
   - `pitch` is the speed: it moves the tone with it, like a "slowed" song; with the reverb of its
     bus it gives "slowed + reverb". There is no speed change without a tone change.
   - Volume, pitch, pan and loop are applied to the voice that is sounding; another sound, another
     bus, another curve, another doppler or directivity or a file that was reloaded start it anew.
   - Clearing `playing` or removing the component stops the voice. A sound without `loop` that ends
-    leaves `Audio_Source_State.ended` until `playing` is cleared.
+    leaves `Audio_Source_State.ended`; another value of `plays` starts it again from its start,
+    also while it sounds.
   - Doppler: the source's and the listener's velocity come from how much they moved in the frame; a
     `View` with `cut` does not move. It is only sent while there is doppler.
   - With the world's `core.Clock` paused, its voices are paused and the sources are not updated
@@ -721,8 +723,8 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
     name.
   - **Storages are not stored**: what a save must keep goes in a component. What is derived (bodies,
     replicas, caches) is redone by the owning library from the components; that is why the bodies'
-    velocity is in `core.Motion`, a clip's time in `anim.Animation_Progress` and what a cinematic
-    shows in `Cinematic_View`.
+    velocity is in `core.Motion` and a clip's time in `anim.Animation_Progress`, from which a
+    cinematic asks for its shot again.
 - **It is written after capturing.** The capture is immediate. With a renderer the slot waits for
   its thumbnail: the player's view (`core.View`) drawn in a texture view of the library, without
   the scene's UI and exposed at once, which returns without waiting for the GPU

@@ -452,6 +452,13 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
         held:=entity_children(w,child)
         testing.expect(t,lamp.intensity==5 && entity_local(w,child).position.x==9 && len(held)==1 && entity_has(w,held[0],core.Disabled))
     }
+    // kind makes the document a prefab only with one root, and a scene again.
+    _,many,made:=write_scene(f,`{"merge":true,"kind":"Prefab","entities":[]}`)
+    testing.expectf(t,!made && strings.contains(many,"exactly one root") && !s.document.prefab,"gave '%s'",many)
+    _,why,ok:=write_scene(f,`{"merge":true,"kind":"Prefab","entities":[{"name":"Other","delete":true}]}`)
+    testing.expectf(t,ok && s.document.prefab && document_dirty(s),"gave '%s'",why)
+    _,why,ok=write_scene(f,`{"merge":true,"kind":"Scene","entities":[]}`)
+    testing.expectf(t,ok && !s.document.prefab,"gave '%s'",why)
 }
 
 // The same document written to the file with no editor gives the bytes the

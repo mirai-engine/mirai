@@ -31,7 +31,7 @@ action_test_spans :: proc(content:^host.Content_Animation) {
     content.lib.markers[0],content.lib.markers[1],content.lib.markers[2]={time=0,id=0,duration=.25},{time=.1,id=0},{time=.1,id=1,duration=.1}
     content.lib.markers[3],content.lib.markers[4]={time=1,id=2,duration=.5},{time=1.1,id=2}
     content.lib.clips[0].marker_count=5;content.lib.clips[3].marker_count=5
-    content.markers=make([]u64,3);content.markers[0],content.markers[1],content.markers[2]=base.name_hash("windup"),base.name_hash("contact"),base.name_hash("recover")
+    content.markers=make([]host.Content_Marker,3);content.markers[0].name,content.markers[1].name,content.markers[2].name=base.name_hash("windup"),base.name_hash("contact"),base.name_hash("recover")
 }
 @(private)
 action_test_spans_free :: proc(content:^host.Content_Animation) {delete(content.markers);content.markers=nil}
