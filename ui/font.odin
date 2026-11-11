@@ -691,7 +691,10 @@ font_face :: proc "contextless" (font:^Font,f:int,pixels:f32) -> ^Face {
 }
 
 font_advance :: proc "contextless" (font:^Font,f:int,character:rune,size:f32) -> f32 {
-    if character=='\t' {return font_advance(font,f,' ',size)*4}
+    switch character {
+    case '\t':return font_advance(font,f,' ',size)*4
+    case '\n',0xad,0x200b:return 0
+    }
     if index:=font_index(font,f,character);index>=0 {return font.metrics[f].advances[index]*size}
     // A context without a font still lays out; drawing text requires the atlas.
     if character==' ' {return size*0.25}
@@ -725,12 +728,13 @@ text_pen :: proc "contextless" (font:^Font,size:f32,f:int=0) -> Text_Pen {
     return pen
 }
 // How far character moves the pen: its kerning with the character before
-// (kern) and its advance.
+// (kern) and its advance. A soft hyphen and a zero width space take no room
+// and draw nothing.
 text_pen_step :: #force_inline proc "contextless" (pen:^Text_Pen,character:rune) -> (kern,advance:f32) #no_bounds_check {
     m:=pen.metrics
-    if m==nil || character=='\t' || character=='\n' {
+    if m==nil || character=='\t' || character=='\n' || character==0xad || character==0x200b {
         pen.previous=-1
-        return 0,font_advance(pen.font,pen.f,character,pen.size) if character!='\n' else 0
+        return 0,font_advance(pen.font,pen.f,character,pen.size)
     }
     // metrics_index gives a glyph of the atlas.
     index:=metrics_index(m,character)
@@ -777,7 +781,8 @@ text_line :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text
         if !more {break}
         if w.length==0 {rest=text[w.start:];break}
         p:=Flow_Piece{text=text[w.start:][:w.length],width=w.width}
-        if !flow_put(&flow,font,&p) {rest,wrapped=text[w.start:],true;break}
+        // A word cut where the line ends goes on in the next.
+        if !flow_put(&flow,font,&p) {rest,wrapped=text[uintptr(raw_data(p.text))-uintptr(raw_data(text)):],true;break}
     }
     end:int
     for p in flow.pieces[:flow.count] {end+=len(p.text)}

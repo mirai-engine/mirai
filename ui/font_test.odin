@@ -213,9 +213,9 @@ text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
         // A word and the space after it fit, or the word starts the next line.
         {"alpha beta",49,.Words,{"alpha beta"}},
         {"alpha beta gamma",49,.Words,{"alpha","beta gamma"}},
-        // A word wider than the line takes one of its own, whole.
-        {"unbreakable word",20,.Words,{"unbreakable","word"}},
-        {"a unbreakable b",20,.Words,{"a","unbreakable","b"}},
+        // A word wider than the line starts one and breaks after its last character that fits.
+        {"unbreakable word",20,.Words,{"unbr","eaka","ble","word"}},
+        {"a unbreakable b",20,.Words,{"a","unbr","eaka","ble","b"}},
         // A line ends before the spaces it breaks at; one that does not fit after a word starts the next line.
         {"aaaa  bbbb",25,.Words,{"aaaa","bbbb"}},
         {"aaaa  bbbb",24,.Words,{"aaaa"," bbbb"}},
