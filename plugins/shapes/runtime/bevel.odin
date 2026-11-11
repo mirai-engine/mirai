@@ -220,7 +220,7 @@ ring_z :: #force_inline proc "contextless" (h,along,drop:f32) -> f32 {
 // inset, the rings of the profile on its front and back rims and its sides
 // between them. False, with nothing built, when no inset fits.
 @(private)
-outline_bevel_build :: proc(s:^Shape,points:[]geom.Vec2,sizes:[]int,rings:[]Bevel_Ring,k:f32,g:^Shape_Geometry) -> bool {
+outline_bevel_build :: proc(s:^Shape,points:[]geom.Vec2,sizes:[]int,rings:[]Bevel_Ring,k:[2]f32,g:^Shape_Geometry) -> bool {
     h:=0.5*s.depth
     b:=bevel_insets(points,sizes,s.bevel)
     caps:=make([]geom.Vec2,len(points),context.temp_allocator)
@@ -257,10 +257,10 @@ outline_bevel_build :: proc(s:^Shape,points:[]geom.Vec2,sizes:[]int,rings:[]Beve
     m:=&g.mesh
     n:=u32(len(points))
     for q in caps {
-        append(&m.positions,geom.Vec3{q.x,q.y,h});append(&m.normals,geom.Vec3{0,0,1});append(&m.uvs,geom.Vec2{q.x*k,-q.y*k})
+        append(&m.positions,geom.Vec3{q.x,q.y,h});append(&m.normals,geom.Vec3{0,0,1});append(&m.uvs,geom.Vec2{q.x,-q.y}*k)
     }
     for q in caps {
-        append(&m.positions,geom.Vec3{q.x,q.y,-h});append(&m.normals,geom.Vec3{0,0,-1});append(&m.uvs,geom.Vec2{-q.x*k,-q.y*k})
+        append(&m.positions,geom.Vec3{q.x,q.y,-h});append(&m.normals,geom.Vec3{0,0,-1});append(&m.uvs,geom.Vec2{-q.x,-q.y}*k)
     }
     for i:=0;i<len(triangles);i+=3 {
         a,c,d:=triangles[i],triangles[i+1],triangles[i+2]
@@ -275,13 +275,13 @@ outline_bevel_build :: proc(s:^Shape,points:[]geom.Vec2,sizes:[]int,rings:[]Beve
             j:=(i+1)%size
             ends:=[2]int{first+i,first+j}
             across:=[2]geom.Vec2{side_normal(side[(i+size-1)%size],side[i]),side_normal(side[j],side[i])}
-            u:=side_u(loop[i],loop[j])*k
+            u:=side_u(loop[i],loop[j])*k.x
             base:=u32(len(m.positions))
             for e in 0..<2 {
                 p:=points[ends[e]]
                 append(&m.positions,geom.Vec3{p.x,p.y,-top},geom.Vec3{p.x,p.y,top})
                 append(&m.normals,geom.Vec3{across[e].x,across[e].y,0},geom.Vec3{across[e].x,across[e].y,0})
-                append(&m.uvs,geom.Vec2{u[e],2*top*k},geom.Vec2{u[e],0})
+                append(&m.uvs,geom.Vec2{u[e],2*top*k.y},geom.Vec2{u[e],0})
             }
             append(&m.indices,base,base+2,base+3,base,base+3,base+1)
             // The front band, then the back one: a vertex per ring and end.
@@ -296,7 +296,7 @@ outline_bevel_build :: proc(s:^Shape,points:[]geom.Vec2,sizes:[]int,rings:[]Beve
                         // The normal of the profile scaled by the inset across and the drop along.
                         normal:=linalg.normalize0(geom.Vec3{across[e].x*ring.out*drop,across[e].y*ring.out*drop,sign*ring.up*b.insets[at]})
                         arc:=arcs[at*count+r]
-                        v:=-arc*k if face==0 else (2*top+arc)*k
+                        v:=-arc*k.y if face==0 else (2*top+arc)*k.y
                         append(&m.positions,geom.Vec3{p.x,p.y,sign*ring_z(h,ring.along,drop)})
                         append(&m.normals,normal)
                         append(&m.uvs,geom.Vec2{u[e],v})

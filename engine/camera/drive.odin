@@ -108,14 +108,14 @@ yaw_in :: proc "contextless" (vertical,rotation:mm.Quat) -> f32 {
 camera_free :: proc(
     es:core.Commands,free:^Free_Camera,seats:^core.Table(input.Seat,.Read),seat_state:core.Ref(input.Seats),requests:^input.Seat_Requests,
     cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),moves:^core.Table(input.Move_Input,.Read),
-    origin:core.Ref(scene.Play_Origin),network:core.Ref(core.Network),hierarchy:core.Ref(core.Hierarchy),time:core.Time,
+    origin:core.Ref(scene.Play_Origin),network:core.Ref(core.Network),time:core.Time,
 ) {
     seat:=seat_state.local_count>0?input.local_seat(seats,0):core.NONE
     body:=input.body_of(seats,seat)
     if body!=core.NONE && body!=free.entity {free.bodied=true}
     if free.entity!=core.NONE {
         if body!=free.entity && body!=core.NONE || seat==core.NONE || !core.alive(es.entities,free.entity) {
-            core.destroy_tree(es.entities,hierarchy,free.entity)
+            core.destroy(es,free.entity)
             free.entity=core.NONE
         } else if row:=core.edit(transforms,free.entity);row!=nil && body==free.entity {
             move,_:=core.get(moves,free.entity)

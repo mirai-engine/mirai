@@ -369,7 +369,7 @@ layout_text_span :: proc(t:^Layout_Tree,font:^Font,span:Layout_Span) -> bool {
     if !(s.height>0) {s.height=0}
     if !s.box && s.text!="" {
         s.measure=layout_measure(t,font,s.text,s.size,s.font)
-        s.width=s.measure.width+s.pad
+        s.width=s.measure.width+s.pad+(s.size+6 if s.icon!=.None else 0)
     }
     t.span_count+=1
     t.texts[t.text_count].spans_len+=1
@@ -724,6 +724,7 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
     for &s,i in spans {
         p:=Flow_Piece{span=i32(i),text=s.text,width=s.width,gap=s.gap}
         if s.box || s.pad>0 || s.solid {
+            if s.pad>0 {p.width=min(p.width,f.width)}
             // What is solid fills the line it starts on, whatever it follows.
             if s.solid {f.glued,f.unit,f.unit_at,f.unit_x=true,f.count,0,0}
             for !flow_put(&f,font,&p) {layout_flow_line(t,font,text,keep,&f,&y)}
@@ -1681,9 +1682,9 @@ layout_place_text :: proc(t:^Layout_Tree,index:i32) {
     }
     text.shown=i32(shown)
     if shown==0 {return}
-    y:=n.box.y+align_offset(text.align_y,n.dim.y-(lines[shown-1].y+lines[shown-1].height))
+    y:=n.box.y+align_offset(text.align_y,n.box.h-(lines[shown-1].y+lines[shown-1].height))
     for &line,i in lines[:shown] {
-        line.x=n.box.x+align_offset(text.align_x,n.dim.x-line.width)
+        line.x=n.box.x+align_offset(text.align_x,n.box.w-line.width)
         line.y+=y
         line.cut=text.ellipsis && (line.width>n.dim.x+LAYOUT_EPSILON || i==shown-1 && shown<len(lines))
         if line.pieces_len>0 {layout_command(t,{.Text,index,text.lines_first+i32(i)})}

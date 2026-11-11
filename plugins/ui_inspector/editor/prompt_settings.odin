@@ -1,6 +1,5 @@
 package ui_inspector_editor
 
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
@@ -34,7 +33,7 @@ Prompt_Row :: struct {
 }
 
 @(private)
-prompt_images_field :: proc(c:^editor.Inspect,info:^runtime.Type_Info,name,label:string,offset:uintptr) -> bool {
+prompt_images_field :: proc(c:^editor.Inspect,type:typeid,name,label:string,offset:uintptr) -> bool {
     if c.type!=gui.UI_Settings || name!="prompt_images" || offset!=offset_of(gui.UI_Settings,prompt_images) {return false}
     s:=c.s
     settings:=cast(^gui.UI_Settings)c.value

@@ -317,7 +317,13 @@ Pipeline_Variant :: struct {
 	rays:      Pipeline_Rays,
 	constants: rhi.Shader_Constants,
 	pipeline:  rhi.Pipeline,
+	state:     Variant_State,
 }
+
+// Asked: of the pipeline thread, or made; Refused: the device did not make
+// it, and it is not asked again until the shaders change.
+@(private)
+Variant_State :: enum u8 {None, Asked, Refused}
 
 // Variants a renderer holds at most.
 @(private)
@@ -549,6 +555,9 @@ Renderer :: struct {
 	variants:        [PIPELINE_VARIANTS]Pipeline_Variant, // the others (pipeline_of)
 	variant_count:   int,
 	variants_wanted: bool, // the variants a scene may ask for are asked of the pipeline thread before the next frame
+	pipeline_waiting: string, // the stage whose pass the frame skipped while its pipeline is made (Stats.problem)
+	pipeline_problem: string, // the variants the device refused, in pipeline_problem_buffer
+	pipeline_problem_buffer: [256]u8,
 	shader_codes:    [Shader_Id]rhi.Shader_Code,
 	shader_assets:   Shader_Assets,
 	embedded:        []u8, // the code of the shaders the executable embeds, decoded when it runs them
@@ -856,7 +865,6 @@ Pipeline_Make :: struct {
 	rays:     Pipeline_Rays,
 	clip:     bool, // it needs a device that clips by a plane
 	required: bool, // the renderer fails without it
-	lazy:     bool, // made the first time a frame asks for it, not when the renderer starts
 	graphics: bool,
 	desc:     rhi.Graphics_Pipeline_Desc,
 	cost:     int, // bytes of its code: the driver takes longer with more
@@ -864,7 +872,7 @@ Pipeline_Make :: struct {
 
 @(private)
 Pipeline_List :: struct {
-	items: [2 * (len(Pipeline_Id) + len(asset.Overlay_Blend))]Pipeline_Make, // a stage that traces rays lists one for each tracer
+	items: [2 * (len(Pipeline_Id) + len(asset.Overlay_Blend)) + PIPELINE_VARIANTS]Pipeline_Make, // a stage that traces rays lists one for each tracer; create_pipelines adds variants
 	count: int,
 }
 
@@ -875,13 +883,13 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	list.count = 0
 	// A stage that traces rays has a shader for each tracer (`//! variant hw`),
 	// whose pipelines are kept as variants; one that only a tracer runs, in r.pipelines.
-	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, lazy := false, twin := false) {
+	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, required := true, twin := false) {
 		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays if twin else .Any), shaders = {shader, shader}, name = reflect.enum_string(id),
-			rays = rays, required = !lazy, lazy = lazy})
+			rays = rays, required = required})
 	}
-	traced :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, software, hardware: Shader_Id, lazy := false) {
-		compute(list, r, id, software, .Software, lazy, true)
-		compute(list, r, id, hardware, .Hardware, lazy, true)
+	traced :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, software, hardware: Shader_Id) {
+		compute(list, r, id, software, .Software, twin = true)
+		compute(list, r, id, hardware, .Hardware, twin = true)
 	}
 	graphics :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, desc: rhi.Graphics_Pipeline_Desc, rays := Pipeline_Rays.Any) {
 		clip := pipeline_uses_clip_distance(id)
@@ -931,7 +939,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	// Only rays traced by software run them: they walk or refit the software BVH.
 	compute(list, r, .Skin_Triangles, .Skin_Triangles_Comp, .Software)
 	compute(list, r, .Skin_Refit, .Skin_Refit_Comp, .Software)
-	compute(list, r, .Debug_Views, .Debug_Views_Comp, lazy = true)
+	compute(list, r, .Debug_Views, .Debug_Views_Comp, required = false)
 	ids := r.frame_layout.instance_ids
 	gbuffer := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Gbuffer_Batches_Vert], fragment = &r.shader_codes[.Gbuffer_Frag],
@@ -1109,10 +1117,13 @@ pipeline_slot :: proc(r: ^Renderer, id: Pipeline_Id, rays: Pipeline_Rays, consta
 }
 
 // Where the pipeline a frame runs for a stage with constants is kept, for the
-// tracer in use when the stage traces rays: made the first time a frame asks
-// for it. It holds 0, with r.error, when the device does not make it.
+// tracer in use when the stage traces rays. A frame does not wait for one the
+// pipeline thread makes, unless the renderer has no pipelines_async: while it
+// is made the pass takes the stage without the constants of `optional` (those
+// that only spare work), or skips, with Stats.problem. One the device refused
+// holds 0 until the shaders change, and the refusal is reported once.
 @(private)
-pipeline_of :: proc(r: ^Renderer, id: Pipeline_Id, constants: rhi.Shader_Constants = {}) -> ^rhi.Pipeline {
+pipeline_of :: proc(r: ^Renderer, id: Pipeline_Id, constants: rhi.Shader_Constants = {}, optional: rhi.Shader_Constants = {}) -> ^rhi.Pipeline {
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	if constants == {} && r.pipelines[id] != 0 {return &r.pipelines[id]}
 	for &v in r.variants[:r.variant_count] {
@@ -1127,15 +1138,39 @@ pipeline_of :: proc(r: ^Renderer, id: Pipeline_Id, constants: rhi.Shader_Constan
 			set_error(r, "pipeline %s: more than %d variants of stages", pipeline_name(r, item), PIPELINE_VARIANTS)
 			break
 		}
-		// One the pipeline thread makes is waited for; one it was not asked for is made here.
-		if target^ == 0 && !pipeline_wait(r, target) {
+		v := variant_of(r, target)
+		if v == nil {return target}
+		if v.state == .None {
 			graphics, compute := pipeline_desc(r, item, constants)
-			pipeline_make(r, target, graphics, compute, now = true)
+			if pipeline_make(r, target, graphics, compute, early = true) {v.state = .Asked}
 		}
-		if target^ == 0 {set_error(r, "pipeline %s: %s", pipeline_name(r, item), rhi.device_error(r.device))}
+		if v.state == .Asked && target^ == 0 {
+			pipeline_urgent(r, target)
+			if !r.pipelines_async {renderer_pipelines_wait(r, target)}
+			if target^ == 0 && !pipeline_asked(r, target) {
+				v.state = .Refused
+				names: [rhi.MAX_SHADER_CONSTANTS]string
+				count := 0
+				for name, at in r.shader_codes[item.shaders[1]].constants {
+					if at < rhi.MAX_SHADER_CONSTANTS && at in constants {names[count] = name; count += 1}
+				}
+				r.pipeline_problem = fmt.bprintf(r.pipeline_problem_buffer[:], "the device refused the pipeline %s with the constants %v (%s): its pass is skipped until the shaders change; a newer GPU driver may make it", pipeline_name(r, item), names[:count], rhi.device_error(r.device))
+				set_error(r, "%s", r.pipeline_problem)
+			}
+		}
+		if target^ != 0 {return target}
+		if constants & optional != {} {return pipeline_of(r, id, constants - optional)}
+		if v.state == .Asked {r.pipeline_waiting = pipeline_name(r, item)}
 		return target
 	}
 	return &r.pipelines[id]
+}
+
+// The variant whose pipeline is kept in target; nil for one kept elsewhere.
+@(private)
+variant_of :: proc(r: ^Renderer, target: ^rhi.Pipeline) -> ^Pipeline_Variant {
+	for &v in r.variants[:r.variant_count] {if &v.pipeline == target {return &v}}
+	return nil
 }
 
 // What makes the pipeline an item of the list describes with more constants:
@@ -1150,31 +1185,48 @@ pipeline_desc :: proc(r: ^Renderer, item: Pipeline_Make, constants: rhi.Shader_C
 	return {}, {shader = &r.shader_codes[item.shaders[0]], constants = item.constants + constants, name = item.name}
 }
 
-// The variants a scene may ask for of the stages of the tracer in use, asked
-// of the pipeline thread so that no frame waits for the driver: every set of
-// the constants of a stage that traces or computes, those of colored shadows
-// last, so that turning the setting on finds them made.
+// The variants of the stages of both tracers, as items of a list: the sets of
+// the constants of each stage that traces or computes, those the settings
+// select or the others. Those of colored shadows are selected when the
+// setting is on.
+@(private)
+variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List, selected: bool) {
+	stages: Pipeline_List
+	pipelines_list(r, &stages)
+	info := rhi.device_info(r.device)
+	for item in stages.items[:stages.count] {
+		if item.target == nil || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
+		code := &r.shader_codes[item.shaders[1]]
+		color, colored := rhi.shader_constant(code, "color")
+		for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
+			constants := transmute(rhi.Shader_Constants)bits
+			if (!colored || !(color <= constants) || r.settings.colored_shadows) != selected || list.count == len(list.items) {continue}
+			variant := item
+			variant.target = pipeline_slot(r, item.id, .Any if item.target == &r.pipelines[item.id] else item.rays, constants)
+			if variant.target == nil {continue}
+			if item.graphics {variant.desc.fragment_constants += constants} else {variant.constants += constants}
+			variant.required = false
+			pipeline_listed(list, variant)
+		}
+	}
+}
+
+// The variants of the tracer in use that are not made, asked of the pipeline
+// thread behind what frames ask for: the renderer made those the settings
+// select when it started (create_pipelines). One past the jobs of the thread
+// is asked before a later frame.
 @(private)
 pipeline_variants_ask :: proc(r: ^Renderer) {
 	r.variants_wanted = false
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
-	info := rhi.device_info(r.device)
 	list: Pipeline_List
-	pipelines_list(r, &list)
-	for colored_last in ([2]bool{false, true}) {
-		for item in list.items[:list.count] {
-			if item.lazy || item.target == nil || item.rays != .Any && item.rays != tracer || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
-			code := &r.shader_codes[item.shaders[1]]
-			color, colored := rhi.shader_constant(code, "color")
-			for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
-				constants := transmute(rhi.Shader_Constants)bits
-				if (colored && color <= constants) != colored_last {continue}
-				target := pipeline_slot(r, item.id, .Any if item.target == &r.pipelines[item.id] else item.rays, constants)
-				if target == nil || target^ != 0 || pipeline_asked(r, target) {continue}
-				graphics, compute := pipeline_desc(r, item, constants)
-				pipeline_make(r, target, graphics, compute, background = true)
-			}
-		}
+	variants_listed(r, &list, true)
+	variants_listed(r, &list, false)
+	for item in list.items[:list.count] {
+		v := variant_of(r, item.target)
+		if item.rays != .Any && item.rays != tracer || v.state != .None {continue}
+		graphics, compute := pipeline_desc(r, item)
+		if pipeline_make(r, item.target, graphics, compute, early = true) {v.state = .Asked} else {r.variants_wanted = true}
 	}
 }
 
@@ -1183,7 +1235,7 @@ pipeline_variants_ask :: proc(r: ^Renderer) {
 pipelines_destroy :: proc(r: ^Renderer) {
 	for p in r.pipelines {if p != 0 {rhi.pipeline_destroy(r.device, p)}}
 	for v in r.variants[:r.variant_count] {if v.pipeline != 0 {rhi.pipeline_destroy(r.device, v.pipeline)}}
-	r.pipelines, r.variant_count = {}, 0
+	r.pipelines, r.variant_count, r.pipeline_problem = {}, 0, ""
 }
 
 @(private)
@@ -1192,7 +1244,7 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 }
 
 // Makes the pipelines of r of the rays in make that it lacks and the device
-// can, the costliest first, on a thread a core (half the logical processors):
+// can, with the variants the settings select, the costliest first, on a thread a core (half the logical processors):
 // the driver compiles each one for up to seconds. A transaction that may
 // allocate. Once r.reload_stop is set, from any thread, none more is made.
 // False when one the renderer needs is not there; those of rays traced by
@@ -1201,6 +1253,7 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 	list: Pipeline_List
 	pipelines_list(r, &list)
+	variants_listed(r, &list, true)
 	info := rhi.device_info(r.device)
 	Work :: struct {
 		r:     ^Renderer,
@@ -1210,7 +1263,11 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 	}
 	work := Work{r = r, list = &list}
 	for &item, i in list.items[:list.count] {
-		if item.lazy || item.target == nil || item.rays not_in make || item.target^ != 0 || !pipeline_possible(info, item) {continue}
+		if item.target == nil || item.rays not_in make || item.target^ != 0 || !pipeline_possible(info, item) {continue}
+		if v := variant_of(r, item.target); v != nil {
+			if pipeline_asked(r, item.target) {continue}
+			v.state = .Asked
+		}
 		for id in item.shaders[:2 if item.graphics else 1] {
 			item.cost += len(rhi.shader_code_bytes(r.shader_codes[id]))
 		}
@@ -1303,8 +1360,8 @@ tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardwar
 }
 
 // The stages of r that none of the pipelines its frames run now is made of:
-// those of the rays it does not trace, of pipelines the device does not make
-// and of lazy ones no frame asked for. A generation that changes only these
+// those of the rays it does not trace and of pipelines the device does not
+// make. A generation that changes only these
 // leaves the image as it is.
 renderer_shaders_idle :: proc(r: ^Renderer) -> (idle: [Shader_Id]bool) {
 	list: Pipeline_List

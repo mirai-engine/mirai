@@ -1,10 +1,10 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "mirai:project"
+import "mirai:std/serial"
 
 RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|exr] [--fps N] [--seconds S] [--size WxH] [--sheet N] [--no-audio] [--release]"
 
@@ -17,7 +17,7 @@ RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|e
 cmd_record :: proc(root:string,args:[]string) -> int {
     mode,args:=build_mode_take(args)
     folder,out,scene:=".","",""
-    Params :: struct {path:string,format:string,fps:int,duration:string `json:"for"`,width,height:int,audio:bool,sheet:int}
+    Params :: struct {path:string,format:string,fps:int,duration:string `mirai:"name=for"`,width,height:int,audio:bool,sheet:int}
     params:=Params{format="Png16",fps=30,duration="2s",width=1280,height=720,audio=true,sheet=16}
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",RECORD_USAGE);return 2}
     for i:=0;i<len(args);i+=1 {
@@ -74,7 +74,7 @@ cmd_record :: proc(root:string,args:[]string) -> int {
     }
     Status :: struct {playing:bool}
     status:Status
-    if text,ok:=call(file.port,"play.status",struct{}{});ok {_=json.unmarshal_string(text,&status,allocator=context.temp_allocator)}
+    if text,ok:=call(file.port,"play.status",struct{}{});ok {serial.text_decode(text,&status,context.temp_allocator,skip_unknown=true)}
     started:=false
     if !status.playing {
         if _,ok:=call(file.port,"play.start",struct{}{});!ok {return 1}
@@ -88,7 +88,7 @@ cmd_record :: proc(root:string,args:[]string) -> int {
     Diagnostics :: struct {validation:Validation}
     diagnostics:Diagnostics
     if text,ok:=call(file.port,"engine.diagnostics",struct{min_level:string,limit:int}{"Warning",20});ok {
-        _=json.unmarshal_string(text,&diagnostics,allocator=context.temp_allocator)
+        serial.text_decode(text,&diagnostics,context.temp_allocator,skip_unknown=true)
     }
     Recording :: struct {
         path,first,audio:string,
@@ -105,8 +105,8 @@ cmd_record :: proc(root:string,args:[]string) -> int {
         validation_messages:[]string,
     }
     report:=Report{validation_errors=diagnostics.validation.errors,loader_errors=diagnostics.validation.loader_errors,validation_messages=diagnostics.validation.messages}
-    _=json.unmarshal_string(recorded,&report.recording,allocator=context.temp_allocator)
-    text,_:=json.marshal(report,{pretty=true},context.temp_allocator)
+    serial.text_decode(recorded,&report.recording,context.temp_allocator,skip_unknown=true)
+    text,_:=serial.text_encode(report,.Pretty,context.temp_allocator)
     fmt.println(string(text))
     return report.validation_errors>0?1:0
 }

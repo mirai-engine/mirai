@@ -148,7 +148,7 @@ markdown_lays_out_each_kind_of_block :: proc(t:^testing.T) {
     testing.expect_value(t,bullets,2)
     testing.expect(t,test_markdown_paint(&ctx,"3.")!=nil,"An ordered item shows its number")
     quoted:=test_markdown_paint(&ctx,"quoted")
-    testing.expect(t,quoted!=nil && quoted.text_color==tone(&ctx,"text_muted"))
+    testing.expect(t,quoted!=nil && quoted.style.color==tone(&ctx,"text_muted"))
     rules,bars:=0,0
     for &p in ctx.paints[:ctx.paint_count] {
         if p.kind==.Rect && p.fill==tone(&ctx,"divider") {rules+=1}
@@ -230,7 +230,7 @@ markdown_reports_the_target_of_a_live_link_clicked :: proc(t:^testing.T) {
     test_point(&input,test_rect(t,&ctx,id_derive(&ctx,markdown_id,"link",1)))
     test_frame(&ctx,&input,test_markdown_build,&s)
     lit:=test_markdown_paint(&ctx,"the docs")
-    testing.expect(t,lit!=nil && lit.fill==tone(&ctx,"chip_on") && lit.text_color==tone(&ctx,"accent"))
+    testing.expect(t,lit!=nil && lit.fill==tone(&ctx,"chip_on") && lit.style.color==tone(&ctx,"accent"))
 }
 
 @(test)
@@ -354,6 +354,6 @@ markdown_draws_a_button_pill_with_its_icon_in_the_fill_of_the_accent :: proc(t:^
     r:=test_rect(t,&ctx,id_derive(&ctx,id(&ctx,"markdown"),"link",1))
     testing.expectf(t,test_near(r.w,text_width(&ctx.font,name,body)+2*MARKDOWN_PILL_PAD+body+6),"its icon widens the pill: %v",r)
     p:=test_markdown_paint(&ctx,name)
-    testing.expect(t,p!=nil && p.fill==tone(&ctx,"accent") && p.text_color==tone(&ctx,"on_accent") && p.icon==.Play,"a button is the accent with its icon")
+    testing.expect(t,p!=nil && p.fill==tone(&ctx,"accent") && p.style.color==tone(&ctx,"on_accent") && p.icon==.Play,"a button is the accent with its icon")
     testing.expect(t,test_rect(t,&ctx,id(&ctx,"panel")).h==math.floor(body*PARAGRAPH_LINE),"a button keeps the line")
 }

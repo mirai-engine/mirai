@@ -24,7 +24,7 @@ import "mirai:core"
 // Edits made while a Play runs are made to its World and are not kept: the
 // history is that of the World of the document.
 
-EDITS_STEP_CAPACITY :: 256    // steps kept: the oldest goes first
+EDITS_STEP_CAPACITY :: 256    // steps kept: the oldest of the author with the most goes first
 EDITS_BYTE_CAPACITY :: 512<<20 // bytes the steps may hold
 EDIT_LABEL_BYTES :: 48
 
@@ -471,7 +471,7 @@ step_exact :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step) -> bool {
         table:=core.world_table_at(w,info)
         size:=info.info.size
         ranges:=edits.ranges[rows.table].ranges
-        offsets:=saved_entity_offsets(info.info)
+        offsets:=saved_entity_offsets(w.info,info.info)
         for e,k in rows.entities {
             row:=core.raw_row(table,e)
             if (row>=0)!=rows.held.present[k] {return false}

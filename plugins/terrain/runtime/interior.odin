@@ -191,5 +191,5 @@ dug_count :: proc "contextless" (s:^Source,p:[3]int,old,value:f32) {
     d.volume+=taken
     d.sum+=point*taken
     for axis in 0..<3 {d.low[axis],d.high[axis]=min(d.low[axis],point[axis]),max(d.high[axis],point[axis])}
-    d.layers+=weights_float(grid_value(&s.weights,s.kind==.Heightfield?{p.x,0,p.z}:p))*taken
+    d.layers+=weights_float(grid_value(&s.weights,p))*taken
 }

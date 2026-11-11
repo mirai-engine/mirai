@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import build "mirai:cook/build"
 import "mirai:core"
@@ -11,6 +12,7 @@ import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // A Build takes what was built since the editor loaded it, while the editor
@@ -29,6 +31,7 @@ Library_Reload :: enum u8 {
     Reloaded,
     Wait,    // something runs that the migration cannot move: a call of the API, a load
     Restart, // the editor starts again on the new library
+    Refused, // the new library leaves out components the open documents hold: the next build tries again
 }
 
 @(private)
@@ -50,9 +53,9 @@ library_reload :: proc(s:^Session) -> Library_Reload {
         return .Restart
     }
     if core.world_layout_hash(&library.info)!=core.world_layout_hash(s.info) {
-        if !library_migrate(s,&library) {
+        if outcome:=library_migrate(s,&library);outcome!=.Reloaded {
             host.project_library_unload(&library)
-            return .Restart
+            return outcome
         }
     } else {
         s.info^=library.info
@@ -166,26 +169,34 @@ library_busy :: proc(s:^Session) -> bool {
     return false
 }
 
-// The worlds move to the layout of library. False, with nothing changed,
-// when the engine would not keep its storages where they are.
+// The worlds move to the layout of library. Restart, with nothing changed,
+// when the engine would not keep its storages where they are; Refused when
+// the open documents hold rows of a component library leaves out.
 @(private)
-library_migrate :: proc(s:^Session,library:^host.Project_Library) -> bool {
+library_migrate :: proc(s:^Session,library:^host.Project_Library) -> Library_Reload {
     info:=new(core.World_Info)
     info^=library.info
     m:core.World_Migration
     if !core.world_migration_make(&m,s.info,info) {
         core.world_migration_destroy(&m)
         free(info)
-        return false
+        return .Restart
     }
     defer core.world_migration_destroy(&m)
+    if dropped:=library_rows_dropped(s,&m);dropped!="" {
+        log.warnf("%s",dropped)
+        notify(s,dropped)
+        if s.build.play.pending {base.text_set(s.build.play_error[:],dropped)}
+        free(info)
+        return .Refused
+    }
     // The editor and the engine hold their storages by address across frames.
     for &t,i in info.storages {
         if t.place==.World || t.plugin!="" || t.game || m.storages[i]!=.Move {continue}
         if m.from.storages[m.storage_sources[i]].offset!=t.offset {
             log.infof("the layout of the world changed and %s would move: restarting",t.name)
             free(info)
-            return false
+            return .Restart
         }
     }
     // What holds worlds of another layout or rows by table elsewhere ends first.
@@ -205,7 +216,7 @@ library_migrate :: proc(s:^Session,library:^host.Project_Library) -> bool {
     if !host.app_worlds_migrate(s.app,&m,s.editor_world) {
         log.info("the worlds of the new layout do not fit the room they have: restarting")
         free(info)
-        return false
+        return .Restart
     }
     s.info=info
     session_bind(s)
@@ -220,5 +231,31 @@ library_migrate :: proc(s:^Session,library:^host.Project_Library) -> bool {
     }
     sections_relayout(s,&m)
     log.infof("the layout of the world changed: its worlds moved to it")
-    return true
+    return .Reloaded
+}
+
+// What taking the layout of m would drop of the open documents: the
+// components it leaves out that they hold rows of. "" when none.
+@(private)
+library_rows_dropped :: proc(s:^Session,m:^core.World_Migration) -> string {
+    dropped:=make([dynamic]int,context.temp_allocator)
+    rows,documents:=0,0
+    for i in -1..<len(s.documents) {
+        world:=s.edit_world if i<0 else s.documents[i].world
+        if i==s.active_document || world==nil {continue}
+        held:=false
+        for &t,j in m.from.tables {
+            if m.table_map[j]>=0 || t.derived || t.place!=.World {continue}
+            count:=len(core.world_table_at(core.world_ref(world,m.from),&t).entities)
+            if count==0 {continue}
+            rows+=count
+            held=true
+            if !slice.contains(dropped[:],j) {append(&dropped,j)}
+        }
+        if held {documents+=1}
+    }
+    if rows==0 {return ""}
+    names:=strings.builder_make(context.temp_allocator)
+    for j,at in dropped {fmt.sbprintf(&names,"%s%s",at>0?", ":"",m.from.tables[j].name)}
+    return fmt.tprintf("The build was not taken: it leaves out %s, which the open documents hold (%d rows in %d documents). Remove those components or close those documents, or keep the type (one renamed names the old name with @(component,was=)); the next build tries again",strings.to_string(names),rows,documents)
 }

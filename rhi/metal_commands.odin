@@ -6,8 +6,6 @@ import "mirai:std/base"
 import NS "core:sys/darwin/Foundation"
 import MTL "vendor:darwin/Metal"
 
-MAX_LABEL_DEPTH :: 16
-
 Mtl_Encoder_Kind :: enum u8 {None, Render, Compute, Blit, Accel}
 
 Slot_Binding :: struct {

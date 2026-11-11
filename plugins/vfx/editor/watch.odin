@@ -68,7 +68,7 @@ watched :: proc(sync:^vfx.Particle_Sync,watch:u64,renderer:^erender.Renderer,all
     stride:=int(sync.pool.slots[at].stride)
     // In the world, as the reports: those local to their emitter or of an effect view keep their places.
     desc:=&sync.pool.slots[at].desc
-    origin:=desc.local || desc.view!=0?[3]f32{}:sync.pool.origin
+    origin:=desc.info.local_space || desc.view!=0?[3]f32{}:sync.pool.origin
     rows:=([^]vfx.Gpu_Particle)(raw_data(data))[:len(data)/size_of(vfx.Gpu_Particle)]
     out:=make([dynamic]Watched_Particle,allocator)
     for row,slot in rows {

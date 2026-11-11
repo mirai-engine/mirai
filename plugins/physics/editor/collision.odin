@@ -1,12 +1,11 @@
 package physics_editor
 
 import "mirai:editor"
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "mirai:core"
 import "mirai:std/base"
+import "mirai:std/serial"
 import phys "plugins:physics/runtime"
 import "mirai:editor/kit"
 import "mirai:ui"
@@ -39,7 +38,7 @@ collision_categories :: proc(info:^core.World_Info,allocator:=context.temp_alloc
 // The preset of a collider, chosen by name; typing a new one declares it. Choosing Custom keeps what the
 // collider was as its own. Its sensor, belongs and collides show those of its preset, in gray.
 @(private)
-collision_collider_field :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset:uintptr,label:string) -> bool {
+collision_collider_field :: proc(c:editor.Inspector_Context,type:typeid,offset:uintptr,label:string) -> bool {
     if c.table==nil || c.table.type!=phys.Collider || len(c.entities)==0 {return false}
     table:=core.world_table_at(c.world,c.table)
     first:=cast(^phys.Collider)core.raw_find(table,c.table.info,c.entities[0])
@@ -300,17 +299,19 @@ collision_settings_presets :: proc(c:^editor.Inspect,settings:^phys.Collision_Se
 @(private)
 collision_push_force_field :: proc(c:^editor.Inspect,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
-    field:=reflect.struct_field_by_name(phys.Collision_Push,"force")
-    desc,scale:=editor.field_number(field.type,field.tag)
-    value:=editor.number_read(&c.value[offset],field.type)*scale
+    force:serial.Field
+    for field in editor.type_fields(c.w.info,type_info_of(phys.Collision_Push)) {if field.name=="force" {force=field}}
+    number:=serial.Type{kind=.Float,size=size_of(f32)}
+    desc,scale:=editor.field_number(force,number)
+    value:=editor.number_read(&c.value[offset],number)*scale
     editor.row_begin(ctx,"Force")
     r:=kit.slider_field(ctx,ui.id(ctx,"push_force",int(offset)+1),&value,desc)
     stepped:=c.held==0 || c.panel!=nil
     if stepped {editor.gesture_follow(c.s,key,r,editor.readable(c.name))}
     if r.changed {
         buffer:[8]u8
-        editor.number_write(raw_data(buffer[:]),field.type,value/scale)
-        collision_value_write(c,int(offset),buffer[:field.type.size])
+        editor.number_write(raw_data(buffer[:]),number,value/scale)
+        collision_value_write(c,int(offset),buffer[:number.size])
     }
     if r.ended && stepped {editor.gesture_end(c.s,key)}
     editor.row_end(ctx)
@@ -341,13 +342,13 @@ collision_settings_pushes :: proc(c:^editor.Inspect,settings:^phys.Collision_Set
 // The categories and presets the code declares, each preset with what Collision_Settings says of it, the
 // entries for values it does not declare, and the pushes set with one more to fill.
 @(private)
-collision_settings_field :: proc(c:^editor.Inspect,info:^runtime.Type_Info,name,label:string,offset:uintptr) -> bool {
+collision_settings_field :: proc(c:^editor.Inspect,type:typeid,name,label:string,offset:uintptr) -> bool {
     if c.type!=phys.Collision_Settings {return false}
     settings:=cast(^phys.Collision_Settings)c.value
     switch {
-    case name=="presets" && offset==offset_of(phys.Collision_Settings,presets) && info.size==size_of(settings.presets):
+    case name=="presets" && offset==offset_of(phys.Collision_Settings,presets):
         collision_settings_presets(c,settings)
-    case name=="pushes" && offset==offset_of(phys.Collision_Settings,pushes) && info.size==size_of(settings.pushes):
+    case name=="pushes" && offset==offset_of(phys.Collision_Settings,pushes):
         collision_settings_pushes(c,settings,offset)
     case: return false
     }

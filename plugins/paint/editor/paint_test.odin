@@ -236,3 +236,78 @@ a_stroke_paints_every_level_of_a_mesh_two_entities_share :: proc(t:^testing.T) {
     testing.expect_value(t,core.at(&w.meshes,core.row_of(&w.meshes,other)),shown)
     testing.expect(t,core.has(&w.painted,f.cube) && !core.has(&w.painted,other))
 }
+
+// A flat grid of cells with its vertices and triangles in order, or backwards.
+@(private)
+paint_grid_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,backwards:bool) -> bool {
+    CELLS :: 4
+    LAST :: (CELLS+1)*(CELLS+1)-1
+    slot :: proc(v:u32,backwards:bool) -> u32 {return LAST-v if backwards else v}
+    vertices:=make([]asset.Vertex,LAST+1,context.temp_allocator)
+    for z in 0..=u32(CELLS) {for x in 0..=u32(CELLS) {
+        p:=[3]f32{f32(x)/CELLS-0.5,0,f32(z)/CELLS-0.5}
+        vertices[slot(z*(CELLS+1)+x,backwards)]=asset.Vertex{position=p,normal=mm.normal_pack({0,1,0}),uv={p.x,p.z},color=0xffffffff,tangent=mm.tangent_pack({1,0,0},1)}
+    }}
+    triangles:=make([dynamic][3]u32,context.temp_allocator)
+    for z in 0..<u32(CELLS) {for x in 0..<u32(CELLS) {
+        a:=z*(CELLS+1)+x
+        append(&triangles,[3]u32{a,a+CELLS+1,a+1},[3]u32{a+1,a+CELLS+1,a+CELLS+2})
+    }}
+    indices:=make([dynamic]u32,context.temp_allocator)
+    for k in 0..<len(triangles) {
+        corners:=triangles[len(triangles)-1-k].yzx if backwards else triangles[k]
+        for v in corners {append(&indices,slot(v,backwards))}
+    }
+    g:asset.Mesh_Geometry
+    return asset.mesh_build_dag({vertices=vertices},indices[:],&g,context.temp_allocator) && asset.mesh_save(path,types,{id=id,geometry=g})==.None
+}
+
+// A painted mesh imported again with its vertices in another order keeps its
+// colors on the same places: the editor fits the .paint to it, unsaved.
+@(test)
+paint_follows_its_mesh_imported_again_with_its_vertices_in_another_order :: proc(t:^testing.T) {
+    f:Paint_Test
+    if !paint_test_open(t,&f,"paint-fit") {return}
+    defer paint_test_close(&f)
+    w,a:=&f.world,&f.assets
+    mesh:=base.Asset_Id{0x67726964,0x6669}
+    first:=fmt.tprintf("%s/grid.mesh",f.root)
+    if !testing.expect(t,paint_grid_save(first,&a.types,mesh,false) && host.assets_scan(a)) {return}
+    shown:=erender.Mesh_Renderer{mesh=mesh}
+    core.add(&w.meshes,f.cube,shown)
+    core.world_settle(f.ref)
+    params:=Stroke_Params{radius=0.4,strength=1,color={0,1,0}};copy(params.entity[:],"0000000000000007")
+    params.points[0]={-0.5,0,-0.5}
+    result:Stroke_Result
+    method:=api.Method{params_id=Stroke_Params,result_id=Stroke_Result}
+    call:=api.Call{method=&method,params=&params,result=&result,raw=`{"entity":"0000000000000007","points":[[-0.5,0,-0.5]]}`,allocator=context.temp_allocator}
+    api_stroke(&f.session,&call)
+    if !testing.expectf(t,!call.failed,"%s",call.error.message) {return}
+    before:Canvas
+    if !testing.expect(t,canvas_load(&before,a,shown,result.colors)) {return}
+    defer canvas_destroy(&before)
+
+    if !testing.expect(t,os.remove(first)==nil && paint_grid_save(fmt.tprintf("%s/grid_again.mesh",f.root),&a.types,mesh,true) && host.assets_scan(a)) {return}
+    fit:Paint_Fit;defer paint_fit_free(&fit)
+    tool:Paint_Tool
+    paint_fit(&f.session,&fit,&tool,core.read(&w.meshes),core.read(&w.painted),a)
+    record,_:=asset.registry_find(&a.registry,mesh)
+    file:asset.Asset
+    if !testing.expect_value(t,host.assets_file(a,result.colors,paint.PAINT_KIND,&file),asset.Error.None) {return}
+    defer asset.asset_close(&file)
+    after,error:=paint.paint_view(&file,&a.types)
+    if !testing.expect_value(t,error,asset.Error.None) || !testing.expect_value(t,len(after.colors),len(before.colors)) {return}
+    testing.expect_value(t,after.mesh,record.content_hash)
+    testing.expect(t,editor.asset_unsaved(&f.session,result.colors))
+    moved,painted:=0,0
+    for p,at in after.positions {
+        if p!=before.positions[at] {moved+=1}
+        if after.colors[at]!=0xffffffff {painted+=1}
+        for q,was in before.positions {
+            if q!=p {continue}
+            testing.expectf(t,after.colors[at]==before.colors[was],"the vertex at %v keeps its color",p)
+            break
+        }
+    }
+    testing.expectf(t,moved>0 && painted>0 && painted<len(after.colors),"%d vertices moved and %d of %d are painted",moved,painted,len(after.colors))
+}

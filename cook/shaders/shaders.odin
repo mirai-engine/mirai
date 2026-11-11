@@ -26,6 +26,8 @@ import "mirai:cook/workspace"
 import "mirai:rhi"
 import "mirai:std/base"
 import job_system "mirai:std/jobs"
+import "mirai:render/abi"
+import "mirai:std/serial"
 
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
@@ -729,10 +731,8 @@ spirv_image_atomics :: proc(spirv:[]u8) -> bool {
 Collected :: enum u8 {All,Plain,Programs}
 
 @(private)
-jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:string,previous:json.Object,key:string,allocator:runtime.Allocator,engine:json.Object=nil,collected:=Collected.All) -> (first,count:int) {
+jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:string,previous:[]Shader,allocator:runtime.Allocator,engine:[]Shader=nil,collected:=Collected.All) -> (first,count:int) {
     first=len(jobs)
-    entries,_:=previous[key].(json.Array)
-    engine_entries,_:=engine[key].(json.Array)
     for source in sources_in(&g.sources,source_dir,".slang",allocator) {
         stem,stage,is_stage:=stage_of(path_name(source))
         if !is_stage {continue}
@@ -780,21 +780,17 @@ jobs_collect :: proc(g:^Generation,jobs:^[dynamic]Job,source_dir,out,staging:str
             job:=Job{source=source,name=name,stage=itself,defines=defines[:],constants=constant_names,includes=includes,bases=g.bases,out=out,staging=staging,reduced=shader_reduced(name),backends=g.backends}
             if software_rays(text,variant) {job.backends-={.Metal}}
             if problem!="" {job.error=fmt.aprintf("%s: %s",name,problem,allocator=allocator)}
-            for value in engine_entries {
-                object,is_object:=value.(json.Object)
-                if !is_object || json_text(object["name"])!=name {continue}
-                built,valid:=shader_from_json(object,allocator)
+            for &built in engine {
+                if built.name!=name {continue}
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
                 job.engine=built
-                job.has_engine=valid
+                job.has_engine=shader_valid(built)
             }
-            for value in entries {
-                object,is_object:=value.(json.Object)
-                if !is_object || json_text(object["name"])!=name {continue}
-                prior,valid:=shader_from_json(object,allocator)
+            for &prior in previous {
+                if prior.name!=name {continue}
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
                 job.prior=prior
-                job.has_prior=valid
+                job.has_prior=shader_valid(prior)
             }
             append(jobs,job)
         }
@@ -970,37 +966,24 @@ early_write :: proc(g:^Generation,folder:string,written:^bool,active:bool) {
     }
     catalog,read_error:=os.read_entire_file(path_join(g.staging,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     if read_error!=nil || !write_file(path_join(folder,"catalog.json",allocator=context.temp_allocator),catalog) {return}
-    if !write_file(path_join(folder,"manifest.json",allocator=context.temp_allocator),manifest_json(g,entries[0][:],entries[1][:],entries[2][:],nil,context.temp_allocator)) {return}
+    if !write_file(path_join(folder,abi.SHADER_MANIFEST,allocator=context.temp_allocator),manifest_text(g,entries[0][:],entries[1][:],entries[2][:],nil)) {return}
     sync.atomic_store(written,true)
 }
 
 // The manifest of a generation of these stages.
 @(private)
-manifest_json :: proc(g:^Generation,shaders,programs,extensions,tests:[]Shader,allocator:=context.allocator) -> []u8 {
-    writer:=json_writer(allocator)
-    json_object_begin(&writer)
-    json_key(&writer,"version");json_integer(&writer,1)
-    json_key(&writer,"compiler");json_string(&writer,fmt.tprintf("%s; %s",g.version,g.metal_tools))
-    json_key(&writer,"engine");json_string(&writer,g.identity)
-    json_key(&writer,"catalog");json_string(&writer,g.catalog)
-    json_key(&writer,"shaders");json_array_begin(&writer)
-    for shader in shaders {shader_to_json(&writer,shader)}
-    json_array_end(&writer)
-    if len(programs)>0 {
-        json_key(&writer,"program_stages");json_array_begin(&writer)
-        for shader in programs {shader_to_json(&writer,shader)}
-        json_array_end(&writer)
-    }
-    if len(extensions)>0 {
-        json_key(&writer,"extensions");json_array_begin(&writer)
-        for shader in extensions {shader_to_json(&writer,shader)}
-        json_array_end(&writer)
-    }
-    json_key(&writer,"tests");json_array_begin(&writer)
-    for shader in tests {shader_to_json(&writer,shader)}
-    json_array_end(&writer)
-    json_object_end(&writer)
-    return json_finish(&writer)
+manifest_text :: proc(g:^Generation,shaders,programs,extensions,tests:[]Shader) -> []u8 {
+    manifest:=abi.Shader_Manifest{version=1,compiler=fmt.tprintf("%s; %s",g.version,g.metal_tools),engine=g.identity,catalog=g.catalog,shaders=shaders,program_stages=programs,extensions=extensions,tests=tests}
+    text,_:=serial.text_encode(manifest,.Pretty,context.temp_allocator)
+    return text
+}
+
+// The manifest of the generation in a folder; empty without one.
+@(private)
+manifest_read :: proc(folder:string,allocator:runtime.Allocator) -> (manifest:abi.Shader_Manifest) {
+    data,error:=os.read_entire_file(path_join(folder,abi.SHADER_MANIFEST,allocator=context.temp_allocator),context.temp_allocator)
+    if error!=nil || serial.text_decode(string(data),&manifest,allocator)!="" {return {}}
+    return
 }
 
 @(private)
@@ -1159,7 +1142,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     g.metal_tools=fmt.aprintf("%s; SPIRV-Cross %s",strings.trim_right_space(optimizer),strings.trim_space(cross),allocator=scratch)
 
     if os.make_directory_all(g.output)!=nil && !os.is_directory(g.output) {fail(&result,allocator,"could not create %s",g.output);return}
-    previous,_:=read_json(path_join(g.output,"manifest.json",allocator=scratch),scratch)
+    previous:=manifest_read(g.output,scratch)
     staging,staging_error:=os.make_directory_temp(path_parent(g.output),".mirai-shaders-*",scratch)
     if staging_error!=nil {fail(&result,allocator,"could not create the staging folder next to %s",g.output);return}
     staging=path_clean(staging,scratch)
@@ -1220,22 +1203,22 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     staging_shaders:=path_join(staging,"shaders",allocator=scratch)
     staging_tests:=path_join(staging_shaders,"tests",allocator=scratch)
     os.make_directory_all(staging_shaders)
-    engine_manifest:json.Object
-    if g.engine_build!="" {engine_manifest,_=read_json(path_join(g.engine_build,"manifest.json",allocator=scratch),scratch)}
+    engine_manifest:abi.Shader_Manifest
+    if g.engine_build!="" {engine_manifest=manifest_read(g.engine_build,scratch)}
     engine_shaders:=path_join(g.root,"shaders",allocator=scratch)
-    shader_first,shader_count:=jobs_collect(g,&jobs,engine_shaders,g.output,staging_shaders,previous,"shaders",scratch,engine_manifest,.Plain)
+    shader_first,shader_count:=jobs_collect(g,&jobs,engine_shaders,g.output,staging_shaders,previous.shaders,scratch,engine_manifest.shaders,.Plain)
     // The stages of the engine compiled for each program, which the renderer finds by name.
-    program_first,program_count:=jobs_collect(g,&jobs,engine_shaders,g.output,staging_shaders,previous,"program_stages",scratch,engine_manifest,.Programs)
+    program_first,program_count:=jobs_collect(g,&jobs,engine_shaders,g.output,staging_shaders,previous.program_stages,scratch,engine_manifest.program_stages,.Programs)
     // The stages the project and its plugins bring.
     extension_first:=len(jobs)
     for entry in extension_folders(&g.sources,g.project,options.sources,scratch) {
-        jobs_collect(g,&jobs,entry.folder,g.output,staging_shaders,previous,"extensions",scratch)
+        jobs_collect(g,&jobs,entry.folder,g.output,staging_shaders,previous.extensions,scratch)
     }
     extension_count:=len(jobs)-extension_first
     test_first,test_count:=0,0
     if odin {
         os.make_directory_all(staging_tests)
-        test_first,test_count=jobs_collect(g,&jobs,g.tests_folder,tests_out,staging_tests,previous,"tests",scratch)
+        test_first,test_count=jobs_collect(g,&jobs,g.tests_folder,tests_out,staging_tests,previous.tests,scratch)
     }
     g.jobs=jobs[:]
     if g.features!={} && !jobs_tailor(g,extensions,staging,scratch) {fail(&result,allocator,"could not write %s of the stages",EXTENSIONS_INCLUDE);return}
@@ -1355,9 +1338,9 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         append(&outputs,..tables[:])
     }
     // A generation equal to the published one leaves its manifest alone: whoever watches it sees no change.
-    manifest_path:=path_join(g.output,"manifest.json",allocator=scratch)
-    manifest:=manifest_json(g,compiled[0],compiled[1],compiled[2],compiled[3],scratch)
-    if !write_file(path_join(staging_shaders,"manifest.json",allocator=scratch),manifest) {fail(&result,allocator,"could not prepare the manifest of %s",g.output);return}
+    manifest_path:=path_join(g.output,abi.SHADER_MANIFEST,allocator=scratch)
+    manifest:=manifest_text(g,compiled[0],compiled[1],compiled[2],compiled[3])
+    if !write_file(path_join(staging_shaders,abi.SHADER_MANIFEST,allocator=scratch),manifest) {fail(&result,allocator,"could not prepare the manifest of %s",g.output);return}
     if !generation_matches(staging_shaders,g.output) {
         inject_at(&replacements,0,Publication{source=staging_shaders,target=g.output,backup=path_join(staging,"previous",allocator=scratch)})
         result.changed=true
@@ -1420,21 +1403,20 @@ generation_matches :: proc(staging,output:string) -> bool {
 // interface, which engine names (engine_interface).
 @(private)
 odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,rhi_import,engine,guard,appended:string,allocator:=context.allocator,programs:[]Job=nil,program_table:=false,packed:=false) -> []u8 {
-    stages:=STAGE_NAMES
     relative:=path_from(out,target_folder,context.temp_allocator)
     prefix:="rhi." if rhi_import!="" else ""
-    code :: proc(b:^strings.Builder,shader:Shader,metal:bool,relative,prefix:string,stages:[Stage]string,packed:bool) {
+    code :: proc(b:^strings.Builder,shader:Shader,metal:bool,relative,prefix:string,packed:bool) {
         switch {
         case packed && metal: fmt.sbprintf(b,"{{binary = {{msl_entry = \"%s\"}}, ",shader.entry)
         case packed, metal && shader.msl=="": strings.write_string(b,"{")
         case metal: fmt.sbprintf(b,"{{binary = {{msl = #load(\"%s/%s\", string), msl_entry = \"%s\"}}, ",relative,shader.msl,shader.entry)
         case: fmt.sbprintf(b,"{{binary = {{spirv = #load(\"%s/%s\")}}, ",relative,shader.spv)
         }
-        fmt.sbprintf(b,"name = \"%s\", stage = .%s,\n",shader.name,stages[shader.stage])
+        fmt.sbprintf(b,"name = \"%s\", stage = .%v,\n",shader.name,shader.stage)
         fmt.sbprintf(b,"\t\t\tthreadgroup = {{%d, %d, %d}}, bindings = []%sBinding_Info{{",shader.group[0],shader.group[1],shader.group[2],prefix)
         for binding,i in shader.bindings {
             if i>0 {strings.write_string(b,", ")}
-            fmt.sbprintf(b,"{{slot = %d, kind = .%s, stages = {{.%s}}}}",binding.slot,binding.kind,stages[shader.stage])
+            fmt.sbprintf(b,"{{slot = %d, kind = .%s, stages = {{.%v}}}}",binding.slot,binding.kind,shader.stage)
         }
         strings.write_string(b,"}")
         if len(shader.constants)>0 {
@@ -1485,14 +1467,14 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
         fmt.sbprintf(&b,"\t@(rodata)\n\tSHADERS := [Shader_Id]%sShader_Code{{\n",prefix)
         for job in jobs {
             fmt.sbprintf(&b,"\t\t.%s = ",job.result.id)
-            code(&b,job.result,metal,relative,prefix,stages,packed)
+            code(&b,job.result,metal,relative,prefix,packed)
         }
         strings.write_string(&b,"\t}\n")
         if program_table {
             fmt.sbprintf(&b,"\t@(rodata)\n\tPROGRAM_SHADERS := [%d]%sShader_Code{{\n",len(programs),prefix)
             for job in programs {
                 strings.write_string(&b,"\t\t")
-                code(&b,job.result,metal,relative,prefix,stages,packed)
+                code(&b,job.result,metal,relative,prefix,packed)
             }
             strings.write_string(&b,"\t}\n")
         }

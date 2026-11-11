@@ -376,6 +376,17 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
     }
     lamp,_:=core.get(&f.world.lamps,a)
     testing.expect_value(t,lamp.intensity,f32(2))
+    // A name two siblings have names neither: the write fails with both ids.
+    b,twin:=entity_children(w,root)[1],write_entity(f,"B",root)
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    _,failure,ok:=write_scene(f,`{"root":"Root","entities":[{"children":[{"name":"B","position":[1,0,0]}]}]}`)
+    testing.expectf(t,!ok && strings.has_prefix(failure,"entities[0].children[0]: 2 children are named B"),"%s",failure)
+    for e in ([]core.Entity{b,twin}) {
+        testing.expectf(t,strings.contains(failure,fmt.tprintf("0x%016x",u64(api_entity_id(w,e)))),"%s names both",failure)
+        testing.expect_value(t,entity_local(w,e).position.x,f32(0))
+    }
+    testing.expect_value(t,len(f.edits.steps),0)
 }
 
 // A document names only what changes: what it leaves out stays,

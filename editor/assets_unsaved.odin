@@ -177,7 +177,7 @@ world_owned_unsaved :: proc(s:^Session,w:core.World_Ref,out:^[dynamic]string) {
     if len(unsaved)==0 || w.data==nil {return}
     r:=&s.app.assets.registry
     ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    host.world_asset_ids(w,&ids,owned=true)
+    host.world_owned_asset_ids(w,&ids)
     for id in ids {
         file,found:=asset.registry_find(r,id)
         if !found {continue}

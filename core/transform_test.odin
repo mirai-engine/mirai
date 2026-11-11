@@ -147,11 +147,12 @@ a_chain_of_parents_that_goes_round_ends_and_a_deep_one_composes_whole :: proc(t:
     testing.expect(t,placed)
 
     // The Parent of b closed the cycle, so b is the root of the tree above a.
-    destroy_tree(&f.entities,ref(&f.hierarchy),a)
+    destroy(&f.entities,a)
+    test_world_settle(&f)
     testing.expect(t,!alive(&f.entities,a) && !alive(&f.entities,c) && alive(&f.entities,b))
     testing.expect(t,alive(&f.entities,root) && alive(&f.entities,other))
+    destroy(&f.entities,root)
     test_world_settle(&f)
-    destroy_tree(&f.entities,ref(&f.hierarchy),root)
     testing.expect(t,!alive(&f.entities,deepest) && alive(&f.entities,other))
 }
 

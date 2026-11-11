@@ -411,7 +411,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
             before:=core.world_entities(a.w).alive
             if a.run==nil {entities_delete(a.s,transmute([]core.Entity)nodes)} else {
                 for node in nodes {
-                    if core.alive(core.world_entities(a.w),core.Entity(node)) {core.world_destroy_tree(a.w,core.Entity(node))}
+                    if core.alive(core.world_entities(a.w),core.Entity(node)) {core.destroy(core.world_entities(a.w),core.Entity(node))}
                 }
             }
             core.world_settle(a.w)

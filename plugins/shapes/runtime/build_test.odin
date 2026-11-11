@@ -50,7 +50,7 @@ built_shapes_are_closed_and_face_out :: proc(t:^testing.T) {
     testing.expect(t,shape_stamp(&holed,circle[:],.Difference,&set)==.None && holed.loop_count==2)
     reversed:=SHAPE_DEFAULT
     reversed.points[1],reversed.points[3]=reversed.points[3],reversed.points[1]
-    solid:=Shape{uv_scale=2}
+    solid:=Shape{uv_scale={2,2}}
     brushes:=[]Brush{
         brush_at(.Box,{0,0,0},{2,2,2}),
         brush_at(.Sphere,{1,1,1},{1.6,1.6,1.6},.Subtract),

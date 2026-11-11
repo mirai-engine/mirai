@@ -22,6 +22,7 @@ Step_World :: struct {
     rigids:core.Table(physics.Rigid_Body),
     colliders:core.Table(physics.Collider),
     meshes:core.Table(render.Mesh_Renderer),
+    tints:core.Table(render.Material_Values),
     parents:core.Table(core.Parent),
     transforms:core.Table(core.Transform),
     ids:core.Table(core.Id),
@@ -92,7 +93,7 @@ world_step :: proc(w:^Step_Test) {
     ground:=w.ground
     core.events_read(&ground.changed,&w.ground_seen)
     shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(&w.rows,test_world_info(&w.rows)),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
-        &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems,
+        &w.colliders,&w.meshes,&w.tints,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems,
         core.read(&w.splines),core.ref(&ground),test_world_ref(&w.rows))
     world_settle(w)
 }
@@ -156,10 +157,18 @@ a_shape_shows_and_collides_through_one_unsaved_child :: proc(t:^testing.T) {
             testing.expectf(t,collider.friction==physics.COLLIDER_DEFAULT.friction,"%s: default surface",c.name)
         }
     }
-    // A shape whose Collider physics would also make reports it.
-    core.edit(&w.colliders,static).kind=.Box
+    // A Collider of its own kind collides in place of the shape, and its child only draws it with
+    // the Material_Values of the shape.
+    core.edit(&w.colliders,static)^={kind=.Box,size={0.5,0.5,0.5}}
+    core.add(&w.tints,static,render.Material_Values{color={0.4,0.38,0.36,1}})
     world_step(&w)
-    testing.expect_value(t,w.problems.count,1)
+    child,_:=parts_of(&w,static)
+    tint,tinted:=core.get(&w.tints,child)
+    testing.expect(t,w.problems.count==0 && !core.has(&w.colliders,child) && mesh_of(&w,child)!={},"the child draws and does not collide")
+    testing.expect(t,tinted && tint.color=={0.4,0.38,0.36,1},"the child takes the Material_Values of the shape")
+    core.remove(&w.tints,static)
+    world_step(&w)
+    testing.expect(t,!core.has(&w.tints,child),"and loses them with it")
 }
 
 @(test)
@@ -271,7 +280,7 @@ a_solid_is_made_of_its_brush_children_and_follows_their_changes :: proc(t:^testi
     solid:=core.create(&w.entities)
     core.add(&w.ids,solid,core.Id{value=1})
     core.add(&w.transforms,solid,core.TRANSFORM_IDENTITY)
-    core.add(&w.shapes,solid,Shape{uv_scale=1})
+    core.add(&w.shapes,solid,Shape{uv_scale={1,1}})
     box:=brush_add(&w,solid,0,{kind=.Box},{0,0,0},{2,2,2})
     cut:=brush_add(&w,solid,1,{kind=.Sphere,op=.Subtract},{1,1,1},{1.6,1.6,1.6})
     world_step(&w)
@@ -326,7 +335,7 @@ a_body_of_brushes_that_only_add_has_a_piece_per_brush :: proc(t:^testing.T) {
     defer world_destroy(&w)
     solid:=core.create(&w.entities)
     core.add(&w.transforms,solid,core.TRANSFORM_IDENTITY)
-    core.add(&w.shapes,solid,Shape{uv_scale=1})
+    core.add(&w.shapes,solid,Shape{uv_scale={1,1}})
     core.add(&w.rigids,solid,physics.RIGID_BODY_DYNAMIC)
     brush_add(&w,solid,0,{kind=.Box},{0,0,0},{1,1,1})
     brush_add(&w,solid,1,{kind=.Cylinder},{0,0,1},{0.5,1,0.5})

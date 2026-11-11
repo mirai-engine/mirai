@@ -85,7 +85,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             testing.expect(t,chunk_build(&w.data.entries[0].source,{0,0,0},&scratch))
             for &position in scratch.geometry.positions {position.y+=0.2}
             made:bool
-            preview,made=chunk_publish(app.assets,.Heightfield,&scratch,false)
+            preview,made=chunk_publish(app.assets,&scratch,false)
             testing.expect(t,made)
         } else if preview!={} {testing.expect(t,host.assets_mesh_release(app.assets,preview));preview={}}
         for _ in 0..<3 {

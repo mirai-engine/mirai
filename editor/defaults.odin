@@ -19,6 +19,7 @@ inspect_component :: proc(s:^Session,w:core.World_Ref,type:typeid,entities:[]cor
         if t.place!=w.place || t.type!=type {continue}
         c={s=s,w=w,t=&t,index=index,table=core.world_table_at(w,&t),entities=entities,type=type,size=t.info.size,name=t.name}
         if len(entities)>0 {c.value=cast([^]u8)core.raw_find(c.table,t.info,entities[len(entities)-1])}
+        inspect_schema(&c,t.info)
         return
     }
     return

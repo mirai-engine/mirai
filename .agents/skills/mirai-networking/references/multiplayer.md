@@ -516,7 +516,7 @@ so a player who joins while no frame runs gets an answer.
 
 **Client.** Each new replica receives an entity (the one from the scene with its `Id`, if no other
 replicates it; otherwise an instance of the prefab of its pose; otherwise an empty one), which on
-ending or leaving the view is destroyed with the pieces its prefab brought (`core.destroy_tree`).
+ending or leaving the view is destroyed with the pieces its prefab brought.
 It carries `Replicate`, `Net_Link`, `core.Pose_Target` and the components the server said. Its rows
 are written where they wait for the end of the function (`core.raw_staged`, `core.staged`), which
 settles once at the end.

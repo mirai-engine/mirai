@@ -255,12 +255,10 @@ api_create :: proc(s:^editor.Session,call:^api.Call) {
     tool:=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Terrain_Tool)
     if tool==nil {api.call_fail(call,api.INVALID_PARAMS,"The project has no terrain: activate the plugin terrain in project.mirai");return}
     tool_ready(tool)
-    kind:terrain.Source_Kind
-    switch strings.to_lower(base.text_get(p.kind[:]),context.temp_allocator) {
-    case "","heightfield": kind=.Heightfield
-    case "volume":      kind=.Volume
-    case: api.call_fail(call,api.INVALID_PARAMS,"kind is heightfield or volume");return
-    }
+    named:=base.text_get(p.kind[:])
+    kind,known:=terrain.Source_Kind{},named==""
+    for k in terrain.Source_Kind {if strings.equal_fold(fmt.tprint(k),named) {kind,known=k,true}}
+    if !known {api.call_fail(call,api.INVALID_PARAMS,"kind is heightfield or volume");return}
     name:=base.text_get(p.name[:])
     if name!="" && !api_name_free(s,call,name) {return}
     path:=base.text_get(p.heightmap[:])
@@ -312,6 +310,65 @@ brush_named :: proc(name:string) -> (kind:terrain.Brush_Kind,level,ok:bool) {
     return
 }
 
+// The brush of the params of terrain.edit in the space of a source, which
+// to_local and scale take the world into, and the ends of its stroke there on
+// its surface; amount and the points it touches are the caller's.
+@(private)
+edit_brush :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,source:^terrain.Source,to_local:matrix[4,4]f32,scale:f32,kind:terrain.Brush_Kind,level:bool) -> (brush:terrain.Brush,from,to:[3]f32,ok:bool) {
+    layer:=0
+    if name:=base.text_get(p.layer[:]);name!="" {
+        found:bool
+        if layer,found=layer_named(s,call,source,name);!found {return}
+    }
+    falloff:=geom.Falloff.Smooth
+    if name:=base.text_get(p.falloff[:]);name!="" {
+        found:=false
+        for f,i in ([?]string{"smooth","sphere","linear","sharp","flat"}) {if strings.equal_fold(f,name) {falloff,found=geom.Falloff(i),true}}
+        if !found {api.call_fail(call,api.INVALID_PARAMS,"falloff is smooth, sphere, linear, sharp or flat");return}
+    }
+    way:=terrain.Brush_Way.Both
+    switch strings.to_lower(base.text_get(p.way[:]),context.temp_allocator) {
+    case "","both":
+    case "raise": way=.Up
+    case "lower": way=.Down
+    case: api.call_fail(call,api.INVALID_PARAMS,"way is both, raise or lower");return
+    }
+    local :: proc(to_local:matrix[4,4]f32,p:[3]f32) -> [3]f32 {return (to_local*[4]f32{p.x,p.y,p.z,1}).xyz}
+    from,_=terrain.source_carry(source,local(to_local,p.at),{0,1,0},0)
+    to=from
+    if p.to!={} {to,_=terrain.source_carry(source,local(to_local,p.to),{0,1,0},0)}
+    radius:=p.radius/scale
+    brush={kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),way=way,capped=p.capped && (kind==.Raise || kind==.Lower),interval=max(p.interval,0.01)/scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/scale,layer=u32(layer),turn=math.to_radians(p.turn),rotation=1}
+    if p.slope!={} {
+        low,high:=math.to_radians(min(p.slope.x,p.slope.y)),math.to_radians(max(p.slope.x,p.slope.y))
+        brush.slope,brush.slope_invert={clamp(low,0,math.PI/2),clamp(max(high,low+1e-4),0,math.PI/2)},p.slope_invert
+    }
+    // Flatten, set_height and a capped brush keep the height of at, or the one given.
+    if kind==.Flatten || brush.capped || kind==.Terrace {brush.target=level && editor.tool_call_given(call,"height")?local(to_local,{p.at.x,p.height,p.at.z}).y:from.y}
+    if kind==.Paint && editor.tool_call_given(call,"weight") {brush.toward,brush.target=true,clamp(p.weight,0,1)}
+    if kind==.Add || kind==.Carve {
+        // One shape: a sphere at at, a capsule to to, or a box.
+        shape:=strings.to_lower(base.text_get(p.shape[:]),context.temp_allocator)
+        if shape=="" {shape=p.to!={}?"capsule":"sphere"}
+        found:=false
+        for name,i in ([?]string{"sphere","capsule","box"}) {if name==shape {brush.shape,found=terrain.Brush_Shape(i),true}}
+        if !found {api.call_fail(call,api.INVALID_PARAMS,"shape is sphere, capsule or box");return}
+        brush.center,brush.amount=local(to_local,p.at),1
+        if brush.shape==.Capsule {brush.delta=local(to_local,p.to)-brush.center}
+        if brush.shape==.Box {brush.extent=radius}
+    }
+    return brush,from,to,true
+}
+
+// What one touch of a stroke of terrain.edit does at a point, by its params.
+@(private)
+edit_amount :: proc(p:^Edit_Params,kind:terrain.Brush_Kind,radius:f32) -> f32 {
+    #partial switch kind {
+    case .Raise,.Lower,.Noise: return clamp(p.strength,0,1)*radius*RAISE_PER_PASS
+    }
+    return clamp(p.strength,0,1)
+}
+
 @(private)
 api_edit :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Edit_Params)
@@ -326,98 +383,39 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     if !ok {return}
     stroke:=&tool.stroke
     source:=&stroke.source
-    layer:=0
-    if name:=base.text_get(p.layer[:]);name!="" {
-        found:bool
-        if layer,found=layer_named(s,call,source,name);!found {return}
-    }
-    falloffs:=[?]string{"smooth","sphere","linear","sharp","flat"}
-    falloff:=geom.Falloff.Smooth
-    if name:=strings.to_lower(base.text_get(p.falloff[:]),context.temp_allocator);name!="" {
-        found:=false
-        for f,i in falloffs {if f==name {falloff,found=geom.Falloff(i),true}}
-        if !found {api.call_fail(call,api.INVALID_PARAMS,"falloff is smooth, sphere, linear, sharp or flat");return}
-    }
-    way:=terrain.Brush_Way.Both
-    switch strings.to_lower(base.text_get(p.way[:]),context.temp_allocator) {
-    case "","both":
-    case "raise": way=.Up
-    case "lower": way=.Down
-    case: api.call_fail(call,api.INVALID_PARAMS,"way is both, raise or lower");return
-    }
-    alpha:^terrain.Brush_Alpha
-    if name:=base.text_get(p.alpha[:]);name!="" {
+    brush,from,to,made:=edit_brush(s,call,p,source,stroke.to_local,stroke.scale,kind,level)
+    if !made {return}
+    brush.seed=u32(stroke.id[0])
+    if name:=base.text_get(p.alpha[:]);name!="" && kind!=.Add && kind!=.Carve {
         alphas_ready(&tool.alphas)
-        for held,i in tool.alphas.names {if strings.equal_fold(held,name) {alpha=&tool.alphas.list[i]}}
-        if alpha==nil {api.call_fail(call,api.INVALID_PARAMS,"No alpha by that name: the Shape of the panel lists them");return}
+        for held,i in tool.alphas.names {if strings.equal_fold(held,name) {brush.alpha=&tool.alphas.list[i]}}
+        if brush.alpha==nil {api.call_fail(call,api.INVALID_PARAMS,"No alpha by that name: the Shape of the panel lists them");return}
     }
-    // Points of the world into the terrain; on a Heightfield on its surface.
-    local :: proc(stroke:^Stroke,p:[3]f32) -> [3]f32 {
-        q:=(stroke.to_local*[4]f32{p.x,p.y,p.z,1}).xyz
-        if stroke.source.kind==.Heightfield {q.y=terrain.source_height(&stroke.source,q.x,q.z)}
-        return q
-    }
-    from:=local(stroke,p.at)
-    to:=from
-    path:=p.to!={}
-    if path {to=local(stroke,p.to)}
-    radius:=p.radius/stroke.scale
-    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),way=way,capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/stroke.scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/stroke.scale,layer=u32(layer),alpha=alpha,turn=math.to_radians(p.turn),seed=u32(stroke.id[0])}
-    if p.slope!={} && source.kind==.Heightfield {
-        low,high:=math.to_radians(min(p.slope.x,p.slope.y)),math.to_radians(max(p.slope.x,p.slope.y))
-        brush.slope,brush.slope_invert={clamp(low,0,math.PI/2),clamp(max(high,low+1e-4),0,math.PI/2)},p.slope_invert
-    }
-    if kind==.Paint && editor.tool_call_given(call,"weight") {brush.toward,brush.target=true,clamp(p.weight,0,1)}
-    // Flatten, set_height and a capped brush keep the height of at, or the one given.
-    target:=from.y
-    if level && editor.tool_call_given(call,"height") {target=(stroke.to_local*[4]f32{p.at.x,p.height,p.at.z,1}).y}
-    stroke.target=target
-    if kind==.Flatten || brush.capped || kind==.Terrace {brush.target=target}
-    strength:=clamp(p.strength,0,1)
     stroke.active=true
     defer if stroke.active {stroke_cancel(tool)}
     touches:=0
     s.toast_length=0
+    path:=p.to!={}
     // A ramp and a shape are one touch from at to to; the others touch along the stroke.
     if kind==.Ramp || kind==.Add || kind==.Carve {
-        brush.center,brush.amount=from,1
         if kind==.Ramp {
             if !path {api.call_fail(call,api.INVALID_PARAMS,"A ramp goes from at to to: give to");return}
             sides:=max(p.sides,0)/stroke.scale
-            brush.center,brush.delta=from,to-from
-            brush.center.y,brush.delta.y=(stroke.to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).y,(stroke.to_local*[4]f32{p.to.x,p.to.y,p.to.z,1}).y-(stroke.to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).y
-            brush.radius,brush.hardness=radius+sides,min(radius/(radius+sides),0.99)
-        } else {
-            names:=[?]string{"sphere","capsule","box"}
-            shape:=strings.to_lower(base.text_get(p.shape[:]),context.temp_allocator)
-            if shape=="" {shape=path?"capsule":"sphere"}
-            brush.center=(stroke.to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).xyz
-            brush.alpha=nil
-            found:=false
-            for name,i in names {if name==shape {brush.shape,found=terrain.Brush_Shape(i),true}}
-            if !found {api.call_fail(call,api.INVALID_PARAMS,"shape is sphere, capsule or box");return}
-            brush.rotation=1
-            if brush.shape==.Capsule {brush.delta=(stroke.to_local*[4]f32{p.to.x,p.to.y,p.to.z,1}).xyz-brush.center}
-            if brush.shape==.Box {brush.extent=radius}
-            if source.kind==.Volume {brush.blend=max(tool.blend,0)/stroke.scale}
-        }
+            at,end:=(stroke.to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).y,(stroke.to_local*[4]f32{p.to.x,p.to.y,p.to.z,1}).y
+            brush.center,brush.delta,brush.amount={from.x,at,from.z},{to.x-from.x,end-at,to.z-from.z},1
+            brush.radius,brush.hardness=brush.radius+sides,min(brush.radius/(brush.radius+sides),0.99)
+        } else {brush.blend=max(tool.blend,0)/stroke.scale}
         change:=terrain.source_edit(source,brush)
         if change.error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(change.error,brush.kind));return}
         stroke_changed(stroke,change)
         touches=1
     } else {
         step:=to-from
-        count:=path?clamp(int(math.ceil(linalg.length(step)/(radius*STROKE_SPACING))),1,4096):1
+        count:=path?clamp(int(math.ceil(linalg.length(step)/(brush.radius*STROKE_SPACING))),1,4096):0
+        brush.amount=edit_amount(p,kind,brush.radius)
         for _ in 0..<max(p.passes,1) {
             for i in 0..=count {
-                if !path && i>0 {break}
-                point:=from+step*(f32(i)/f32(max(count,1)))
-                if source.kind==.Heightfield {point.y=terrain.source_height(source,point.x,point.z)} else if hit,_,found:=terrain.source_ray(source,point+[3]f32{0,radius*4,0},{0,-1,0});found {point=hit}
-                brush.center=point
-                #partial switch kind {
-                case .Raise,.Lower,.Noise: brush.amount=strength*radius*RAISE_PER_PASS
-                case:                      brush.amount=strength
-                }
+                brush.center,_=terrain.source_carry(source,from+step*(f32(i)/f32(max(count,1))),{0,1,0},brush.radius*4)
                 if kind==.Erode {brush.seed=u32(base.hash_u64(u64(touches)+u64(stroke.id[1])))}
                 if !(brush.amount>0) {continue}
                 change:=terrain.source_edit(source,brush)
@@ -520,62 +518,25 @@ api_edit_play :: proc(s:^editor.Session,call:^api.Call,p:^Edit_Params,w:core.Wor
     if !ok {return}
     if base.text_get(p.alpha[:])!="" {api.call_fail(call,api.INVALID_PARAMS,"A game asks for brushes without an alpha: leave alpha out");return}
     if kind==.Ramp {api.call_fail(call,api.INVALID_PARAMS,"While a game plays terrain.edit asks for the brushes that touch along a stroke and for add and carve; a ramp goes in a request of play.push");return}
-    layer:=0
-    if name:=base.text_get(p.layer[:]);name!="" {
-        found:bool
-        if layer,found=layer_named(s,call,source,name);!found {return}
-    }
-    local :: proc(source:^terrain.Source,to_local:matrix[4,4]f32,p:[3]f32) -> [3]f32 {
-        q:=(to_local*[4]f32{p.x,p.y,p.z,1}).xyz
-        if source.kind==.Heightfield {q.y=terrain.source_height(source,q.x,q.z)}
-        return q
-    }
-    from:=local(source,to_local,p.at)
-    to:=p.to!={}?local(source,to_local,p.to):from
-    radius:=p.radius/scale
-    falloff:=geom.Falloff.Smooth
-    if name:=base.text_get(p.falloff[:]);name!="" {
-        names:=[?]string{"smooth","sphere","linear","sharp","flat"}
-        found:=false
-        for f,i in names {if strings.equal_fold(f,name) {falloff,found=geom.Falloff(i),true}}
-        if !found {api.call_fail(call,api.INVALID_PARAMS,"falloff is smooth, sphere, linear, sharp or flat");return}
-    }
-    brush:=terrain.Brush{kind=kind,radius=radius,falloff=falloff,hardness=clamp(p.hardness,0,0.95),capped=p.capped && source.kind==.Heightfield,interval=max(p.interval,0.01)/scale,riser=clamp(p.riser,0,1),scale=max(p.scale,0.1)/scale,layer=u32(layer),rotation=1,seed=u32(editor.api_entity_id(w,e))}
-    if kind==.Paint && editor.tool_call_given(call,"weight") {brush.toward,brush.target=true,clamp(p.weight,0,1)}
-    if kind==.Flatten || brush.capped || kind==.Terrace {brush.target=level && editor.tool_call_given(call,"height")?(to_local*[4]f32{p.at.x,p.height,p.at.z,1}).y:from.y}
-    step:=to-from
-    count:=p.to!={}?clamp(int(math.ceil(linalg.length(step)/(radius*STROKE_SPACING))),1,4096):0
+    brush,from,to,made:=edit_brush(s,call,p,source,to_local,scale,kind,level)
+    if !made {return}
+    brush.seed=u32(editor.api_entity_id(w,e))
     place,_:=core.get(core.world_table_of(w,core.World_Transform),e)
     if kind==.Add || kind==.Carve {
-        // One shape: a sphere at at, a capsule to to, or a box.
-        shape:=strings.to_lower(base.text_get(p.shape[:]),context.temp_allocator)
-        if shape=="" {shape=p.to!={}?"capsule":"sphere"}
-        found:=false
-        for name,i in ([?]string{"sphere","capsule","box"}) {if name==shape {brush.shape,found=terrain.Brush_Shape(i),true}}
-        if !found {api.call_fail(call,api.INVALID_PARAMS,"shape is sphere, capsule or box");return}
-        brush.center=(to_local*[4]f32{p.at.x,p.at.y,p.at.z,1}).xyz
-        if brush.shape==.Capsule {brush.delta=(to_local*[4]f32{p.to.x,p.to.y,p.to.z,1}).xyz-brush.center}
-        if brush.shape==.Box {brush.extent=radius}
-        brush.amount=1
         if error:=terrain.dig(requests,terrain.brush_world(brush,place.transform),e);error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(error,kind));return}
-        serial.text_write_raw(call.out,"{")
-        api.write_bool(call.out,"changed",true,true)
-        api.write_int(call.out,"touches",1)
-        serial.text_write_raw(call.out,"}")
+        api_changed_write(call,true,1)
         return
     }
+    step:=to-from
+    count:=p.to!={}?clamp(int(math.ceil(linalg.length(step)/(brush.radius*STROKE_SPACING))),1,4096):0
     touches:=(count+1)*int(max(p.passes,1))
     room:=cap(requests.edits.items)-len(requests.edits.items)
     if touches>room {api.call_failf(call,api.INVALID_PARAMS,"The stroke would ask for %d touches and the game has room for %d in this tick: make it shorter or the radius larger, go on after a tick, or raise Terrain_Settings.requests",touches,room);return}
+    brush.amount=edit_amount(p,kind,brush.radius)
     pushed:=0
     for _ in 0..<max(p.passes,1) {
         for i in 0..=count {
-            brush.center=from+step*(f32(i)/f32(max(count,1)))
-            if source.kind==.Heightfield {brush.center.y=terrain.source_height(source,brush.center.x,brush.center.z)}
-            #partial switch kind {
-            case .Raise,.Lower,.Noise: brush.amount=clamp(p.strength,0,1)*radius*RAISE_PER_PASS
-            case:                      brush.amount=clamp(p.strength,0,1)
-            }
+            brush.center,_=terrain.source_carry(source,from+step*(f32(i)/f32(max(count,1))),{0,1,0},brush.radius*4)
             if brush.amount>0 && terrain.dig(requests,terrain.brush_world(brush,place.transform),e)==.None {pushed+=1}
         }
     }
@@ -689,11 +650,9 @@ api_sample :: proc(s:^editor.Session,call:^api.Call) {
         strings.write_byte(&by_layer,'}')
         r.weights=serial.Json(strings.builder_len(by_layer)>1?strings.to_string(by_layer):"{}")
     }
-    if source.kind==.Heightfield {
-        origin:=terrain.source_origin(source)
-        c,r_:=int((q.x-origin.x)/source.cell),int((q.z-origin.z)/source.cell)
-        r.hole=c>=0 && r_>=0 && c<int(source.samples.x)-1 && r_<int(source.samples.z)-1 && terrain.source_hole(source,c,r_)
-    }
+    origin:=terrain.source_origin(source)
+    c,r_:=int((q.x-origin.x)/source.cell),int((q.z-origin.z)/source.cell)
+    r.hole=c>=0 && r_>=0 && c<int(source.samples.x)-1 && r_<int(source.samples.z)-1 && terrain.source_hole(source,c,r_)
 }
 
 @(private)

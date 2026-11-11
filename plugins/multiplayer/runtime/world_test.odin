@@ -103,7 +103,7 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
         core.clock_requests(&client.clock_requests,&client.clock,core.ref(&client.network),&p.problems[1])
     }
     net_seats({entities=&server.entities},&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
-        core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),core.ref(&server.hierarchy),{},server.time)
+        core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),{},server.time)
     core.settle(&p.info,server,nil)
     if ticks {
         p.tick+=1
@@ -514,7 +514,7 @@ pair_member :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,se
 @(private="file")
 pair_load_section :: proc(w:^Net_Test_World,info:^core.World_Info,section:core.Entity,loaded:bool,member:=core.NONE) {
     core.edit(&w.references,section).loaded=loaded?LEVEL_A:{}
-    if !loaded {core.destroy_tree(&w.entities,core.ref(&w.hierarchy),member)}
+    if !loaded {core.destroy(&w.entities,member)}
     core.settle(info,w,nil)
 }
 
