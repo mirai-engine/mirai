@@ -11,7 +11,7 @@ import "mirai:std/subprocess"
 // closes discarding what it did. tool and label name it in messages.
 Headless_Editor :: struct {
     port:int,
-    process:os.Process,
+    process:subprocess.Process,
     project:string,
     tool,label:string,
 }
@@ -22,14 +22,14 @@ Headless_Editor :: struct {
 headless_open :: proc(e:^Headless_Editor,tool,label,editor,project,checkout,log:string,size:[2]int,port:^int) -> bool {
     for session_answers(port^) {port^+=1}
     command:=[]string{editor,"--project",project,"--headless","--api-port",fmt.tprintf("%d",port^),"--width",fmt.tprintf("%d",size.x),"--height",fmt.tprintf("%d",size.y)}
-    process,error:=subprocess.detached(command,log,checkout)
+    process,error:=detached_logged(command,log,checkout)
     if error!=nil {fmt.eprintfln("mirai %s: could not open %s: %v",tool,editor,error);return false}
     e^={port=port^,process=process,project=project,tool=tool,label=label}
     port^+=1
     fmt.eprintfln("mirai %s: %s at %dx%d (pid %d)",tool,label,size.x,size.y,process.pid)
     start:=time.tick_now()
     for !session_answers(e.port) {
-        if state,_:=os.process_wait(process,0);state.exited {fmt.eprintfln("mirai %s: the editor of %s exited before opening the API (exit code %d); see %s",tool,label,state.exit_code,log);return false}
+        if state,_:=subprocess.wait(&process,0);state.exited {fmt.eprintfln("mirai %s: the editor of %s exited before opening the API (exit code %d); see %s",tool,label,state.exit_code,log);return false}
         if time.duration_seconds(time.tick_since(start))>300 {fmt.eprintfln("mirai %s: the API of %s did not answer in 300 s; see %s",tool,label,log);return false}
         time.sleep(250*time.Millisecond)
     }

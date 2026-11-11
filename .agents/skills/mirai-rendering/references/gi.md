@@ -18,7 +18,8 @@ Each technique states its status; what is listed as prepared is not implemented.
 - **BVH** (implemented, `render/bvh.odin`). Built by the one SAH builder of `std/spatial`
   (`bvh_build`), its nodes uploaded as it lays them out, with a depth that limits the shader
   stack; compute traversal nearest-first, bounded by the nearest hit and with early exit for
-  shadow rays.
+  shadow rays. Its triangle test is watertight, as the hardware one: no ray passes between two
+  triangles through the edge or corner they share, so each triangle keeps its corners whole.
 - **BLAS / TLAS** (implemented). One BLAS per ray cut of each mesh in object space, persistent:
   editing transform, material or visibility does not rebuild it. Cut 0 is level 0; the coarser
   ones are cuts of the DAG that the file stores (`ray_errors`). `ray_cuts_update` chooses the
@@ -168,6 +169,11 @@ other and do not see the corner of a table or the floor under a wardrobe.
   already reads a cascade whose probes see through thin walls.
 - `sample_probes_around` gives the light around several directions of a point (normal, specular
   lobe and coat) with a single choice of probes and weights; `sample_probes` reads one.
+- **Specular from the probes.** Each texel of the irradiance atlas also keeps the share of its
+  light that comes from the sky (its rays that meet nothing; beyond the cascades, all of it). A
+  specular lobe takes that share as the sky itself as sharp as its roughness (`probe_specular`),
+  not as the blur of a hemisphere, and a rough lobe keeps what the probes hold: with reflections
+  `Off` a mirror under an open sky shows the sky as without GI, and under a roof it does not.
 
 ## Glass in the indirect
 
