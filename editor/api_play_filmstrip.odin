@@ -212,7 +212,7 @@ api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:st
 // What a filmstrip answers besides its image: where it is, its grid and the tick of each cell.
 @(private)
 api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_Cell,followed:bool,allocator:mem.Allocator,counted:=Api_Capture_Seen{},ticks:=0) -> (r:Api_Capture_Result) {
-    r={path=path,width=sheet.image.width,height=sheet.image.height,columns=sheet.columns,rows=sheet.rows,ticks=ticks,cell={int(sheet.tile.x),int(sheet.tile.y)},seen=counted}
+    r={path=api.clone_text(allocator,path),width=sheet.image.width,height=sheet.image.height,columns=sheet.columns,rows=sheet.rows,ticks=ticks,cell={int(sheet.tile.x),int(sheet.tile.y)},seen=counted}
     r.cells=make([]Api_Capture_Cell,len(cells),allocator)
     for &cell,i in r.cells {
         cell.tick=cells[i].tick

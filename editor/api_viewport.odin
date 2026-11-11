@@ -185,10 +185,11 @@ api_capture_seen :: proc(app:^host.App) -> Api_Capture_Seen {
     return {int(stats.textures_pending),int(stats.visible_instances),int(stats.culled_instances),int(stats.occluded_instances)}
 }
 
-// What capture answers for one image; shown: MCP also gives the image.
+// What capture answers for one image; shown: MCP also gives the image. path
+// is copied: the answer is written after whoever made it lets go of it.
 @(private)
 api_capture_reply :: proc(call:^api.Call,path:string,width,height:int,shown:bool,seen:=Api_Capture_Seen{}) {
-    api.call_result(call,Api_Capture_Result)^={path=path,width=width,height=height,seen=seen}
+    api.call_result(call,Api_Capture_Result)^={path=api.clone_text(call.allocator,path),width=width,height=height,seen=seen}
     if shown {api.call_image(call,path)}
 }
 
