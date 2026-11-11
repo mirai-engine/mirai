@@ -292,12 +292,16 @@ a_vector_is_a_row_of_fields_and_tab_moves_along_its_axes :: proc(t:^testing.T) {
     s:=Test_Numbers{vector={1,2,3}}
     input:=test_input()
     test_numbers_frame(&ctx,&input,&s)
+    previous:ui.Rect
     for axis in 0..<3 {
         rect:=test_rect(t,&ctx,ui.id_derive(&ctx,ui.id(&ctx,"vector"),"axis",axis+1))
         // 300 less the label column and three gaps, in three equal fields,
-        // under the row of the number before it.
+        // under the row of the number before it: on whole pixels the fields
+        // differ by a pixel at most and the gaps stay whole.
         w:=(300-ui.metric(&ctx,"label_width")-3*4)/3
-        testing.expect(t,test_rect_near(rect,{ui.metric(&ctx,"label_width")+4+f32(axis)*(w+4),ui.metric(&ctx,"row")+4,w,ui.metric(&ctx,"row")},0.5))
+        testing.expectf(t,test_rect_snapped(rect,{ui.metric(&ctx,"label_width")+4+f32(axis)*(w+4),ui.metric(&ctx,"row")+4,w,ui.metric(&ctx,"row")}),"axis %d: %v",axis,rect)
+        if axis>0 {testing.expectf(t,rect.x-(previous.x+previous.w)==4 && abs(rect.w-previous.w)<=1,"axis %d: %v after %v",axis,rect,previous)}
+        previous=rect
         paint:^ui.Paint
         for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.strip==ui.tone(&ctx,AXIS_TOKENS[axis]) {paint=&p}}
         testing.expect(t,paint!=nil && paint.label=="","Each axis has its color and no letter")

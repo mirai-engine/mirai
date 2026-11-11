@@ -55,13 +55,13 @@ a_grid_puts_its_children_in_rows_of_cells_of_one_width :: proc(t:^testing.T) {
     cell:=f32(320-10-20)/3
     testing.expect_value(t,grid.h,f32(5+40+10+30+5))
     first:=test_rect(t,&ctx,id(&ctx,"cell",1))
-    testing.expect(t,test_rect_near(first,{5+(cell-50)*0.5,5,50,20},PIXEL_EDGE))
+    testing.expect(t,test_rect_snapped(first,{5+(cell-50)*0.5,5,50,20}))
     third:=test_rect(t,&ctx,id(&ctx,"cell",3))
     testing.expect(t,test_near(third.x,5+2*(cell+10)+(cell-50)*0.5,PIXEL_EDGE))
     fourth:=test_rect(t,&ctx,id(&ctx,"cell",4))
     testing.expect_value(t,fourth.y,f32(5+40+10))
     wide:=test_rect(t,&ctx,id(&ctx,"wide"))
-    testing.expect(t,test_near(wide.w,cell,PIXEL_SIZE) && test_near(wide.x,5+2*(cell+10),PIXEL_EDGE))
+    testing.expect(t,test_rect_snapped(wide,{5+2*(cell+10),wide.y,cell,wide.h}))
 }
 
 @(test)

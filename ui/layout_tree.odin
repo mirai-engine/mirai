@@ -195,6 +195,7 @@ Layout_Tree :: struct {
     aspects:bool,  // an element of the frame keeps an aspect
     transitions:[]Layout_Transition, // by id: a power of two of slots, found from the id on
     dt:f32,        // seconds since the last frame, which carry what transitions
+    ppu:f32,       // device pixels per layout unit: the grid boxes and the sizes of texts fall on
     allocator:mem.Allocator,
 }
 
@@ -261,7 +262,8 @@ layout_destroy :: proc(t:^Layout_Tree) {
 // Starts the tree of a frame on a surface of this size. Node zero is the
 // surface: every element at the top level is inside it.
 @(private)
-layout_begin :: proc(t:^Layout_Tree,size:[2]f32) {
+layout_begin :: proc(t:^Layout_Tree,size:[2]f32,ppu:f32) {
+    t.ppu=ppu
     t.text_count=0;t.span_count=0;t.piece_count=0;t.kids_len=0;t.pending_len=0;t.line_count=0;t.command_count=0
     t.duplicates=0;t.overflow=false;t.aspects=false
     id_table_clear(&t.ids)
@@ -420,8 +422,20 @@ layout_fit_text :: proc(t:^Layout_Tree,font:^Font,n:^Layout_Node) {
         n.min_dim.x=n.dim.x if text.wrap==.None else least
     }
     if l.height.kind==.Fit {n.dim.y,n.min_dim.y=text.line,text.line}
+    n.dim={layout_whole(t.ppu,n.dim.x),layout_whole(t.ppu,n.dim.y)}
+    if text.wrap==.None {n.min_dim.x=n.dim.x}
+    n.min_dim.y=n.dim.y
     layout_limit(n)
 }
+// What a text asks for, up to whole device pixels (ppu per unit): a box
+// rounded to them is never smaller than the text it holds.
+@(private)
+layout_whole :: #force_inline proc "contextless" (ppu,v:f32) -> f32 {
+    return math.ceil(v*ppu-LAYOUT_EPSILON)/ppu if ppu>0 && abs(v)<math.F32_MAX/16 else v
+}
+// A size a widget measures from its text, up to the device pixels of the context.
+@(private)
+context_whole :: #force_inline proc "contextless" (ctx:^Context,v:f32) -> f32 {return layout_whole(ctx.scale*ctx.font.density,v)}
 // The words of a span in order: those its measure kept, or the span walked again.
 @(private)
 layout_span_walk :: proc "contextless" (t:^Layout_Tree,font:^Font,s:^Layout_Span) -> (w:Layout_Walk) {
@@ -1308,9 +1322,8 @@ layout_heights :: proc(t:^Layout_Tree,index:i32) {
 
 // ---------------------------------------------------------------- placement
 
-// ppu: device pixels per layout unit, the grid the edges of the boxes fall on.
 @(private)
-layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt,ppu:f32) -> (moving:bool) {
+layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt:f32) -> (moving:bool) {
     // The surface closes like any container, which puts the elements of the
     // top level inside it.
     layout_kids(t,&t.nodes[0])
@@ -1345,7 +1358,7 @@ layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt,ppu:f32) -> (moving
                 position=float_contain(p,&root,r.dim,bounds,position)
             }
         }
-        layout_place(t,root.node,position,origin,ppu)
+        layout_place(t,root.node,position,origin,t.ppu)
     }
     for &e in t.transitions {moving||=e.frame==frame && e.placed && e.time<e.seconds}
     return
@@ -1370,7 +1383,7 @@ layout_solve :: proc(t:^Layout_Tree,font:^Font) {
     for &text in t.texts[:t.text_count] {
         n:=&t.nodes[text.node]
         height:=layout_text_wrap(t,font,&text,n.dim.x,true)
-        if l:=&n.layout;l.height.kind==.Fit {n.dim.y=clamp(height,axis_min(l.height),axis_max(l.height))}
+        if l:=&n.layout;l.height.kind==.Fit {n.dim.y=clamp(layout_whole(t.ppu,height),axis_min(l.height),axis_max(l.height))}
     }
     for root in t.roots[:t.root_count] {layout_heights(t,root.node)}
     layout_size(t,false)
@@ -1491,9 +1504,7 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
 
 // The children are placed from the place of their parent as laid out and each
 // box is rounded on its own, so neighbours share an edge. What transitions is
-// not rounded while it moves, nor what it holds: ppu 0. A text is not rounded:
-// it draws no rectangle, its lines broke at the width it was given and its
-// glyphs fall on pixels as they are drawn.
+// not rounded while it moves, nor what it holds: ppu 0.
 @(private)
 layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32,ppu:f32) {
     n:=&t.nodes[index]
@@ -1505,7 +1516,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32,ppu:f32) {
         if e.time<e.seconds {ppu=0}
     }
     n.box={position.x,position.y,n.dim.x,n.dim.y}
-    if ppu>0 && n.text<0 {
+    if ppu>0 {
         // Edges on whole device pixels and the size between them (taffy's round_layout).
         lo:=[2]f32{math.round(position.x*ppu),math.round(position.y*ppu)}
         hi:=[2]f32{math.round((position.x+n.dim.x)*ppu),math.round((position.y+n.dim.y)*ppu)}

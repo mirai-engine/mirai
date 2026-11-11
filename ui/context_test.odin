@@ -29,9 +29,14 @@ test_rect :: proc(t:^testing.T,ctx:^Context,id:Id,loc:=#caller_location) -> Rect
     return rect
 }
 test_near :: proc(a,b:f32,tolerance:f32=0.01) -> bool {return abs(a-b)<=tolerance}
-// How far the rounding to device pixels at density 1 moves an edge, and a size.
+// The layout rounds the edges of a box to device pixels: at density 1 an edge
+// moves at most this far from where the layout put it, and a size twice as far.
 PIXEL_EDGE :: f32(0.5)
-PIXEL_SIZE :: f32(1)
+// Whether got is want with its edges rounded to device pixels at density 1.
+test_rect_snapped :: proc(got,want:Rect) -> bool {
+    return test_near(got.x,want.x,PIXEL_EDGE) && test_near(got.y,want.y,PIXEL_EDGE) &&
+        test_near(got.x+got.w,want.x+want.w,PIXEL_EDGE) && test_near(got.y+got.h,want.y+want.h,PIXEL_EDGE)
+}
 test_rect_near :: proc(a,b:Rect,tolerance:f32=0.01) -> bool {
     return test_near(a.x,b.x,tolerance)&&test_near(a.y,b.y,tolerance)&&test_near(a.w,b.w,tolerance)&&test_near(a.h,b.h,tolerance)
 }
@@ -237,7 +242,7 @@ boxes_are_laid_out_in_rows_and_columns :: proc(t:^testing.T) {
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"a")),{10,20,100,50}))
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"b")),{120,20,250,50}))
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"rest")),{10,75,180,185}))
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"c")),{170,157.5,20,20}))
+    testing.expect(t,test_rect_snapped(test_rect(t,&ctx,id(&ctx,"c")),{170,157.5,20,20}))
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
 

@@ -168,7 +168,7 @@ text_end_height :: proc(ctx:^Context,width:f32) -> f32 {
     _,least:=layout_text_ask(t,&ctx.font,text)
     height:=layout_text_wrap(t,&ctx.font,text,max(width,least),false)
     t.span_count=int(text.spans_first)
-    return height
+    return context_whole(ctx,height)
 }
 
 // Text in a style inside a box of width by height. A FIT width is the width

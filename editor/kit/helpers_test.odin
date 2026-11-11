@@ -37,6 +37,11 @@ test_near :: proc(a,b:f32,tolerance:f32=0.01) -> bool {return abs(a-b)<=toleranc
 test_rect_near :: proc(a,b:ui.Rect,tolerance:f32=0.01) -> bool {
     return test_near(a.x,b.x,tolerance)&&test_near(a.y,b.y,tolerance)&&test_near(a.w,b.w,tolerance)&&test_near(a.h,b.h,tolerance)
 }
+// Whether got is want with its edges rounded to device pixels at density 1:
+// each moves at most half a pixel.
+test_rect_snapped :: proc(got,want:ui.Rect) -> bool {
+    return test_near(got.x,want.x,0.5) && test_near(got.y,want.y,0.5) && test_near(got.x+got.w,want.x+want.w,0.5) && test_near(got.y+got.h,want.y+want.h,0.5)
+}
 // Moves the pointer onto a rectangle and presses or releases the left button.
 test_point :: proc(input:^ui.Input,rect:ui.Rect) {input.pointer={rect.x+rect.w*0.5,rect.y+rect.h*0.5}}
 test_press :: proc(input:^ui.Input,clicks:u8=1) {ui.input_button(input,.Left,true,clicks)}
