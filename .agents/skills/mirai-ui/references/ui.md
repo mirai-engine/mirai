@@ -100,7 +100,7 @@ result. It is built every frame and resolved in `frame_end`, one axis at a time:
    element is placed and the commands are listed in draw order.
 5. Each box is rounded to the device pixels of the screen: its edges, from where the layout put
    them, and its size between them, so neighbours share an edge. What transitions is not rounded
-   while it moves, nor what it holds. Pointer hits and `widget_rect` see the rounded boxes, and a
+   while it moves, nor what it holds, and a text leaf is not (its glyphs snap as they are drawn). Pointer hits and `widget_rect` see the rounded boxes, and a
    shape's border is whole device pixels wide.
 
 The measure of a span of text is stored by text, size and face in two generations that swap
