@@ -349,7 +349,6 @@ births_since :: proc(clock:^Emitter_Clock,started:^u64) -> (spawns:[SPAWNS]Parti
 // its mesh: it is resolved again.
 @(private)
 shown_resolve :: proc(shown:^Emitter_Shown,a:^host.Assets,renderer:^erender.Renderer,particle:base.Asset_Id,override:^Particle_Override,ids:[2]u64,needs:^Program_Needs) -> bool {
-    if a==nil {return false}
     ready:bool
     shown.desc,ready=emitter_desc(particle_resolve(a,particle,override),a,renderer,ids[0])
     d:=&shown.desc
@@ -373,13 +372,15 @@ shown_resolve :: proc(shown:^Emitter_Shown,a:^host.Assets,renderer:^erender.Rend
 sub_id :: proc "contextless" (e:core.Entity) -> u64 {return base.hash_combine(u64(e),0x7375625f70617274)}
 
 // What the GPU is told of an effect at an emitter, but for what each frame
-// gives. ready: the renderer has the triangles of its mesh, or it draws none.
+// gives. ready: there are assets, and the renderer has the triangles of its
+// mesh or it draws none.
 @(private)
 emitter_desc :: proc(info:effect.Particle_Info,a:^host.Assets,renderer:^erender.Renderer,id:u64) -> (d:Emitter_Desc,ready:bool) {
     d.info,d.id,ready=info,id,true
     m:=&d.info
     d.capacity=emitter_capacity(m)
     if m.light_intensity<=0 || m.light_range<=0 {m.lights=0}
+    if a==nil {return d,false}
     d.material=erender.Material_Handle(m.material!={}?host.assets_material_row(a,m.material):0)
     if m.render==.Mesh {
         // A material that blends draws its meshes over the lit scene, as a sprite.
