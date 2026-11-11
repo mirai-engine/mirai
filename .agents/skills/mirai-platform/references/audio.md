@@ -94,9 +94,10 @@ feed, with its own decoder and a larger ring.
 is valid until a `mixer_update` sees the voice finish or until it is stolen; operations on an
 invalid one return false.
 
-- **Resampling.** Imported sounds are at `MIXER_RATE` already, so a voice at its own pitch copies
-  its samples; a pitch, Doppler or a sound created at another rate takes Godot's cubic Hermite
-  over four frames, which keeps the highs a line between two frames dulls. The neighbours of a frame
+- **Resampling.** A sound is converted to `MIXER_RATE` when the importer decodes it and kept as it
+  is when its file streams. A voice at its own pitch and rate copies its samples; a pitch, Doppler
+  or another rate (a streamed file's) takes Godot's cubic Hermite over four frames, which keeps
+  the highs a line between two frames dulls. The neighbours of a frame
   are those it plays between: silence before the start and after the end, the frames across the
   seam of a loop (its last frame and its loop start), and the frame before an offset (a feed
   decodes it too).

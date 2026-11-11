@@ -859,18 +859,18 @@ this path. FBX 6 files are rejected with their version.
 WAV and Ogg Vorbis, mono or stereo) and writes `<name>.sound`, the root of its import
 ([identity](#identity-and-reimport)).
 
-- **At the mixer's rate.** Every sound is brought to `audio.MIXER_RATE` by `resample`, a sinc
-  windowed by Kaiser, band-limited to the lower Nyquist frequency, with its loop start moved to
-  the nearest frame, so a voice at its own pitch copies it. The host refuses a `.sound` at
-  another rate and `mirai asset` says to import its source again.
+- **At the mixer's rate.** A sound the importer codes is brought to `audio.MIXER_RATE` by
+  `resample`, a sinc windowed by Kaiser, band-limited to the lower Nyquist frequency, with its
+  loop start moved to the nearest frame, so a voice at its own pitch copies it. The host refuses a
+  coded `.sound` at another rate and `mirai asset` says to import its source again. A stream that
+  keeps its file keeps its rate and its loop start: its voice resamples it.
 - **Short: lossless, kept encoded.** Under `SOUND_STREAM_SECONDS` its 16 bit samples, at its
   channels, are stored `Lossless` (a 16-bit WAV at the mixer's rate arrives bit for bit; anything
   else is rounded without dither); the mixer keeps that coding in memory and each voice decodes it.
 - **Long: streamed.** From that limit it has the `Stream` flag: the mixer decodes it while it plays
   and it is never whole in memory. A WAV whose samples are exactly 16 bit ones is stored
   `Lossless`; an Ogg Vorbis, already lossy, and a WAV that 16 bits would round keep their file as
-  is when it is at the mixer's rate, and at another are coded resampled. `Sound_Options` forces a
-  mode or changes the limit.
+  is. `Sound_Options` forces a mode or changes the limit.
 - **Intact Ogg.** `sound_build` keeps, from the first, the complete pages whose CRC matches: only
   those reach stb_vorbis and the streamed asset, because stb_vorbis does not check a page and, with
   a damaged one, reads outside its memory. With no intact one it is `Malformed`; a cut one keeps

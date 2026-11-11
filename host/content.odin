@@ -373,8 +373,8 @@ content_sound_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound) -> bo
     file:asset.Asset
     content_open(a,id,asset.KIND_SOUND,&file,entry) or_return
     view,error:=asset.sound_view(&file,&a.types)
-    // A sound is imported at the rate of the mixer; one at another is imported again.
-    if error!=.None || view.info.sample_rate!=audio.MIXER_RATE {
+    // A sound the importer coded is at the rate of the mixer; one at another is imported again.
+    if error!=.None || view.info.encoding==.Lossless && view.info.sample_rate!=audio.MIXER_RATE {
         asset.asset_close(&file)
         return false
     }

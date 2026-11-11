@@ -390,7 +390,7 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
     case asset.KIND_SOUND:
         view,error:=asset.sound_view(a,types)
         if error!=.None {return "sound: inconsistent channels, sample rate, loop start, lossless data or file"}
-        if view.info.sample_rate!=audio.MIXER_RATE {return fmt.tprintf("sound: at %d Hz, not the %d Hz the mixer plays: import its source again with mirai import",view.info.sample_rate,audio.MIXER_RATE)}
+        if view.info.encoding==.Lossless && view.info.sample_rate!=audio.MIXER_RATE {return fmt.tprintf("sound: coded at %d Hz, not the %d Hz the mixer plays: import its source again with mirai import",view.info.sample_rate,audio.MIXER_RATE)}
     case asset.KIND_UI:
         if !asset.ui_check(a,types) {return "interface: nodes out of preorder or without a box, or a style, image, animation, track or key that does not exist"}
     case asset.KIND_FONT:

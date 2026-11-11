@@ -15,6 +15,8 @@ import "mirai:std/serial"
 @(private="file") SINE_OGG :: #load("../../audio/testdata/sine_mono.ogg")           // 0.5 s of 440 Hz at 44.1 kHz, amplitude 0.5
 @(private="file") THREE_OGG :: #load("../../audio/testdata/three_channels.ogg")
 @(private="file") TONE_OGG :: #load("../../audio/testdata/tone_long.ogg")           // 2 s of 330 Hz at 32 kHz, mono
+// 2 s at 44.1 kHz, mono: 1 s of silence, 12 kHz at amplitude 0.5 to frame 86000, silence; LOOPSTART=44100.
+@(private="file") INTRO_OGG :: #load("../../audio/testdata/intro_tone.ogg")
 
 // A WAV file of interleaved samples, 16 bit, or 24 with low the low byte of every sample.
 @(private="file")
@@ -108,8 +110,8 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     }
     report_destroy(&report)
 
-    // Half a second of Vorbis at 44.1 kHz, brought to the rate of the mixer: decoded when short,
-    // streamed from a quarter of a second on, coded again since its file is at another rate.
+    // Half a second of Vorbis at 44.1 kHz: decoded when short and brought to the rate of the
+    // mixer, streamed from a quarter of a second on as its file, at its own rate.
     ogg:=fmt.tprintf("%s/sine.ogg",folder)
     _=os.write_entire_file(ogg,SINE_OGG)
     report,error=import_sound(ogg,options={root=root})
@@ -131,7 +133,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     if len(report.assets)==1 {
         a:asset.Asset
         if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
-            testing.expect(t,view.info.encoding==.Lossless && .Stream in view.info.flags && view.info.sample_rate==audio.MIXER_RATE)
+            testing.expect(t,view.info.encoding==.File && .Stream in view.info.flags && view.info.sample_rate==44100 && mem.compare(view.file,SINE_OGG)==0)
         }
         asset.asset_close(&a)
     }
@@ -168,6 +170,59 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
             // Each side of the pan carries it at cos(pi/4).
             level:=2*math.sqrt(s*s+c*c)/9600/(math.SQRT_TWO/2)/(16000.0/32768)
             testing.expectf(t,abs(20*math.log10(level))<0.5,"12 kHz plays at %v dB",20*math.log10(level))
+        }
+        asset.asset_close(&a)
+    }
+    report_destroy(&report)
+
+    // A long Ogg Vorbis at 44.1 kHz streams its file at its own rate: a voice plays its 12 kHz at
+    // that pitch, for its length, and loops back to its LOOPSTART, in the frames of the file.
+    intro_path:=fmt.tprintf("%s/intro.ogg",folder)
+    _=os.write_entire_file(intro_path,INTRO_OGG)
+    report,error=import_sound(intro_path,{stream_seconds=1},{root=root})
+    testing.expect_value(t,error.code,Error_Code.None)
+    if len(report.assets)==1 {
+        a:asset.Asset
+        if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
+            testing.expect(t,view.info.encoding==.File && view.info.sample_rate==44100 && view.info.loop_start==44100 && mem.compare(view.file,INTRO_OGG)==0)
+            testing.expectf(t,report.assets[0].bytes-len(INTRO_OGG)<2048,"%d bytes for a file of %d",report.assets[0].bytes,len(INTRO_OGG))
+            mixer,_:=audio.mixer_create({})
+            sound,_:=audio.sound_stream(mixer,view.file)
+            testing.expect(t,audio.sound_set_loop_start(mixer,sound,int(view.info.loop_start)))
+            desc:=audio.VOICE_DEFAULT
+            desc.loop=true
+            audio.voice_play(mixer,sound,desc)
+            FRAMES :: 150000
+            out:=make([]f32,FRAMES*2,context.temp_allocator)
+            for at:=0;at<FRAMES;at+=500 {
+                audio.mixer_render(mixer,out[at*2:][:500*2])
+                audio.mixer_update(mixer)
+            }
+            audio.mixer_destroy(mixer)
+            // The tone at 12 kHz in the output, while it sounds, through a voice that resamples it.
+            s,c:f64
+            for i in 50000..<90000 {
+                phase:=2*math.PI*12000*f64(i)/f64(audio.MIXER_RATE)
+                s+=f64(out[i*2])*math.sin(phase)
+                c+=f64(out[i*2])*math.cos(phase)
+            }
+            level:=20*math.log10(2*math.sqrt(s*s+c*c)/40000/(math.SQRT_TWO/2)/0.5)
+            testing.expectf(t,level>-1 && level<0.5,"12 kHz plays at %v dB",level)
+            // Where it sounds: from 1 s to frame 86000 of the file, then from the loop start again.
+            sounds :: proc(out:[]f32,at:int) -> bool {
+                e:f64
+                for i in at..<at+100 {e+=f64(out[i*2])*f64(out[i*2])}
+                return e/100>0.01
+            }
+            edges:[dynamic]int
+            edges.allocator=context.temp_allocator
+            for at:=100;at+100<=FRAMES;at+=100 {
+                if sounds(out,at)!=sounds(out,at-100) {append(&edges,at)}
+            }
+            // At 48 kHz: on at 48000, off at 93605, on at 96000 (the end of the file), off at 141605, on at 144000.
+            want:=[?]int{48000,93605,96000,141605,144000}
+            testing.expectf(t,len(edges)==len(want),"edges at %v",edges[:])
+            for edge,i in edges[:min(len(edges),len(want))] {testing.expectf(t,abs(edge-want[i])<=600,"edge %d at %d, not %d",i,edge,want[i])}
         }
         asset.asset_close(&a)
     }
