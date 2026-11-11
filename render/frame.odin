@@ -1550,7 +1550,8 @@ pass_taa :: proc(p: ^Pass) {
 	}
 	rhi.cmd_timestamp(cmd, "taa")
 	Params :: struct {history_valid, feedback, clip_gamma, reactive, shadows: f32, pad: [3]f32}
-	marks := t.direct_marks != 0
+	// Of the Direct stage of this frame: a custom pass in its place leaves none.
+	marks := .Direct in p.plan.stages && t.direct_marks != 0
 	params := Params{history_valid = 1 if t.taa_valid else 0, feedback = 0.1, clip_gamma = 1.25, reactive = 1 if p.blended else 0, shadows = 1 if marks else 0}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Taa])
 	set_params(cmd, &params)
