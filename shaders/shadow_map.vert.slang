@@ -11,7 +11,7 @@
 // The clusters to draw: the instance, the cluster and the map.
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> entries : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// rows: of the slots of the lights in shadow_data; glass: 1 for the draws of
+// rows: of the words of the lights in shadow_data; glass: 1 for the draws of
 // the tint and of the nearest glass, the only ones the instances all of glass
 // draw in.
 struct Params_Block { uint instances; uint maps; uint rows; uint glass; };

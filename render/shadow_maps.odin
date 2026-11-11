@@ -57,7 +57,7 @@ Gpu_Shadow_Map :: struct {
 // What the direct light reads of the maps of the frame.
 Shadow_Maps :: struct {
 	on:   u32, // 1 while there are maps
-	rows: u32, // of the slots of the lights in the buffer of the maps
+	rows: u32, // of the words of the lights in the buffer of the maps
 	maps: u32,
 	sun:  u32, // the first map of the sun | the count << 16; max(u32): none
 }
@@ -288,6 +288,7 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	tan_y := math.tan(math.to_radians(camera.fov_y) * 0.5) if !orthographic else 0.5 * camera.height
 	tan_x := tan_y * aspect
 	near := max(camera.near, 0.001)
+	lights := len(s.lights)
 	// The lights that light most of the view, the most first.
 	chosen: [SHADOW_RASTER_LIGHTS]int
 	shares: [SHADOW_RASTER_LIGHTS]f32
@@ -375,16 +376,15 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 		w.m.span.z = w.m.span.x + texel * f32(w.side)
 		w.m.span.w = w.m.span.y + texel * f32(w.side)
 	}
-	// The buffer of this frame: the slots of the lights picked, then the maps
-	// placed, those of a light together in the order of its faces.
-	slots := 0 if picked == 0 else 2
-	for slots < 2 * picked {slots *= 2}
-	maps.rows = u32(slots / 2)
+	// The buffer of this frame: a word for each light of the scene, then the
+	// maps placed, those of a light together in the order of its faces.
+	all_lights := u32(lights + light_region_lights(s.light_region))
+	maps.rows = (all_lights + 3) / 4
 	placed := 0
 	for w in wants[:count] {if w.placed {placed += 1}}
-	words, data := rhi.frame_alloc_typed(r.device, u32, slots * 2 + placed * SHADOW_MAP_ROWS * 4)
+	words, data := rhi.frame_alloc_typed(r.device, u32, int(maps.rows) * 4 + placed * SHADOW_MAP_ROWS * 4)
 	if words == nil {set_error(r, "transient ring exhausted with %d shadow maps", placed); return maps, false}
-	for &word in words[:slots * 2] {word = 0}
+	for &word in words[:maps.rows * 4] {word = 0}
 	at := 0
 	for w in wants[:count] {
 		if !w.placed {continue}
@@ -392,10 +392,7 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 			if maps.sun == max(u32) {maps.sun = u32(at)}
 			maps.sun += 1 << 16
 		} else {
-			slot := int((u32(w.light) * abi.SHADOW_LIGHT_HASH) >> 16) & (slots - 1)
-			for words[2 * slot] != 0 && words[2 * slot] != u32(w.light) + 1 {slot = (slot + 1) & (slots - 1)}
-			words[2 * slot] = u32(w.light) + 1
-			word := &words[2 * slot + 1]
+			word := &words[w.light]
 			if word^ == 0 {word^ = u32(at) + 1}
 			if word^ >> SHADOW_LIGHT_FACES == 0 && b.rastered < SHADOW_RASTER_LIGHTS {
 				b.raster[b.rastered] = i32(w.light)

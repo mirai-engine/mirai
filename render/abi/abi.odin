@@ -166,17 +166,14 @@ LIGHT_CUT_MAX              :: 32
 // The rows of the grid of the lights a light keeps for a pixel to weigh it by.
 LIGHT_WEIGHT_ROWS          :: 2
 
-// The maps of the shadows of a view. The buffer of the maps (uint4 rows): the
-// slots of the lights with maps, two to a row, a power of two of them at least
-// twice as many: light + 1 (0: empty) and its word, its first map + 1 and, from
-// bit SHADOW_LIGHT_FACES, which faces of its cube have one; a light takes the
-// first empty slot from (light * SHADOW_LIGHT_HASH) >> 16; then SHADOW_MAP_ROWS
-// for each map. The constants of a view hold those of
+// The maps of the shadows of a view. The buffer of the maps (uint4 rows): a
+// word for each light, four to a row, 0 for a light without maps, else its
+// first map + 1 and, from bit SHADOW_LIGHT_FACES, which faces of its cube have
+// one; then SHADOW_MAP_ROWS for each map. The constants of a view hold those of
 // the cascades of the sun, SUN_MAP_ROWS. The maps draw SHADOW_ENTRIES clusters
 // at most, SHADOW_TESTED_ENTRIES of them of masked or blended materials.
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
-SHADOW_LIGHT_HASH          :: u32(0x9E3779B1)
 // The face of a spot whose one map lies along its cone, after the six of the cube.
 SHADOW_SPOT_FACE           :: 6
 SHADOW_MAP_ORTHOGRAPHIC    :: 1

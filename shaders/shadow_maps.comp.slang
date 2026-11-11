@@ -15,7 +15,7 @@
 #define MIRAI_GROUP_Z 1
 
 // instances: of the scene and of the batches drawn; maps: drawn this frame;
-// rows: of the slots of the lights; glass: 1 while the maps keep the tint of
+// rows: of the words of the lights; glass: 1 while the maps keep the tint of
 // glass, which takes the instances all of glass among those whose materials
 // say where.
 struct Params_Block { uint instances; uint maps; uint rows; uint glass; };
