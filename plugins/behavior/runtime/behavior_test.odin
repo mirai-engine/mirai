@@ -698,6 +698,38 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     v.time=clock_at(60,100)
     _,ok=smart_offer(&looks,crate,USE_AMMO,red)
     testing.expect(t,!ok,"spent")
+    // One that walks to a kit walks after it as it moves, and fails once it is destroyed.
+    USE_HEAL :: Smart_Use(3)
+    kit,walker:=placed(&world,{0,0,20}),placed(&world,{0,0,15})
+    heal:Smart_Object
+    heal.offers[0]={use=USE_HEAL,users=1}
+    core.add(&world.objects,kit,heal)
+    core.add(&world.paths,walker,nav.Nav_Path{class=-1})
+    core.test_world_settle(&world)
+    smart_update(core.read(&world.objects),&world.states,&world.uses,v.time)
+    core.test_world_settle(&world)
+    v.requests,v.paths=&world.moves,core.read(&world.paths)
+    walks:ai.Mind
+    memory:[ai.MIND_WORDS]u64
+    walking:=ai.Mind_Context{user=&v,tick=v.time.tick,dt=v.time.dt,holder=u64(walker),reservations=&world.claims.reservations}
+    act=ai.Act(Smart_Act){ctx=&walking,mind=&walks,frame=&walks.main,phase=.Enter,memory=memory[:]}
+    healer:=Smart_User{entity=walker}
+    asked :: proc(world:^Behavior_World) -> nav.Nav_Request {return world.moves.queue.items[len(world.moves.queue.items)-1]}
+    status,taken:=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect(t,status==.Running && taken.object==kit && asked(&world).kind==.Move_To && asked(&world).point==taken.at)
+    core.edit(&world.paths,walker)^={state=.Moving,goal=taken.at,class=-1}
+    act.phase=.Update
+    requests:=len(world.moves.queue.items)
+    status,_=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect(t,status==.Running && len(world.moves.queue.items)==requests)
+    core.edit(&world.worlds,kit).position={3,0,20}
+    core.test_world_settle(&world)
+    status,_=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect(t,status==.Running && asked(&world).kind==.Move_To && asked(&world).point==[3]f32{3,0,20},"it walks to where the kit is now")
+    core.destroy(&world.entities,kit)
+    core.test_world_settle(&world)
+    status,_=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect_value(t,status,ai.Status.Failure)
 }
 
 // The influence of each team is where its Perceivables are, less farther
