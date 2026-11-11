@@ -976,14 +976,9 @@ of an instance" are `-32602`; the rest, `-32000`
   - `particle.programs`: the Vfx programs of the shaders, with `attributes` (bytes per particle),
     their parameters (`kind`, `components`, `default`, `min`, `max`), their resources (`name`,
     `kind` `Surface`, `Channel`, `Bones` or `Grid`) and their stages (`name`, `over`: `particles`
-    or a grid, `iterations`, `neighbors`).
+    or a grid, `iterations`).
   - `particle.set` leaves the `.particle` in an undo step (`history.undo`), attributed to the AI
     turn that calls them.
-  - `particle.grid.bake` (`entity` with `Particle_Grid`, `path`): holds the call until
-    the cells come back from the GPU, writes the `.grid` in an undo step of its own and returns
-    `{path,grid}`, or fails if they do not come back. A grid the world did not take (another with
-    its name, invalid cells or layers) is
-    `-32602` with the `vfx.grid` problem that rejected it.
 - **Emitters** (`entity`; `world` `Edit`, the document, or `Play`, the caller's):
   - `particle.instance.inspect` (`world` `Edit` by default): `values` (what it shows), `overrides`
     (its own values by path), `parameters` (its own), `problem` and `status` (`state` `Idle`,

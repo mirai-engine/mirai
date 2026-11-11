@@ -15,31 +15,21 @@ data_channels_follow_the_programs_that_read_them :: proc(t:^testing.T) {
     problems:core.Problems
     sparks,smoke:=base.name_hash("sparks"),base.name_hash("smoke")
     // Two programs read sparks with different words, one reads smoke: sparks keeps the most.
-    used:[DATA_CHANNELS]bool
-    data_need(&d,sparks,4,&used,&problems,core.NONE)
-    data_need(&d,smoke,2,&used,&problems,core.NONE)
-    data_need(&d,sparks,7,&used,&problems,core.NONE)
-    push:=Data_Push{channel=sparks,count=8}
-    for i in 0..<8 {push.words[i]=f32(i+1)}
-    pushed:=[]Data_Push{push,{channel=base.name_hash("nobody"),count=1}}
-    data_place(&d,used,pushed)
+    data_need(&d,sparks,4,&problems,core.NONE)
+    data_need(&d,smoke,2,&problems,core.NONE)
+    data_need(&d,sparks,7,&problems,core.NONE)
+    data_place(&d)
     testing.expect_value(t,len(d.entries),2)
     testing.expect_value(t,d.entries[0].words,u32(7))
     testing.expect_value(t,d.entries[1].offset,data_bytes(7))
     testing.expect_value(t,d.bytes,data_bytes(7)+data_bytes(2))
-    // What a game pushed keeps the words of the channel, and nothing goes to a channel no program reads.
-    testing.expect_value(t,len(d.entries[0].pushed),7)
-    testing.expect_value(t,d.entries[0].pushed[6],f32(7))
-    testing.expect_value(t,len(d.entries[1].pushed),0)
     layout:=d.layout
     // A frame without the programs of smoke lets it go, and the channels are made again.
     d.made=true
-    used={}
-    data_need(&d,sparks,7,&used,&problems,core.NONE)
-    data_place(&d,used,nil)
+    data_need(&d,sparks,7,&problems,core.NONE)
+    data_place(&d)
     testing.expect_value(t,len(d.entries),1)
     testing.expect(t,d.layout!=layout && !d.made)
-    testing.expect_value(t,len(d.entries[0].pushed),0)
     testing.expect_value(t,data_find(&d,smoke),-1)
 }
 
@@ -51,11 +41,12 @@ data_channels_a_game_watches_come_back_from_the_copy_the_frame_wrote :: proc(t:^
     defer data_free(&d)
     problems:core.Problems
     sparks,smoke:=base.name_hash("sparks"),base.name_hash("smoke")
-    used:[DATA_CHANNELS]bool
-    data_need(&d,sparks,2,&used,&problems,core.NONE)
-    data_need(&d,smoke,2,&used,&problems,core.NONE)
-    data_place(&d,used,nil,[]u64{sparks})
-    testing.expect(t,d.entries[0].watched && !d.entries[1].watched)
+    data_need(&d,sparks,2,&problems,core.NONE)
+    data_need(&d,smoke,2,&problems,core.NONE)
+    data_need(&d,REPORTS_CHANNEL,REPORT_WORDS,&problems,core.NONE)
+    data_place(&d)
+    data_watched(&d,[]u64{sparks})
+    testing.expect(t,d.entries[0].watched && !d.entries[1].watched && d.entries[2].watched, "the reports come back too")
     // The copy the frame wrote comes back alone: two entries, as its counter says.
     words:u32=2
     bytes:=make([]u8,data_copy_bytes(words))

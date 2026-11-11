@@ -96,7 +96,6 @@ Program_Stage_Result :: struct {
     name:string,
     over:string `mirai:"label=particles, or the resource it goes over"`,
     iterations:u32,
-    neighbors:f64 `mirai:"unit=m,label=The radius of its neighbors"`,
 }
 
 Instance_Result :: struct {
@@ -134,9 +133,7 @@ Gpu_Particle :: struct {
 api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.inspect",params=type_info_of(Particle_Inspect_Params),summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},result=type_info_of(Particle_Result),run=api_particle_inspect})
     editor.api_method_register(s,{name="particle.set",params=type_info_of(Particle_Inspect_Params),summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},result=type_info_of(Particle_Result),run=api_particle_set})
-    bake:=Api_Grid_Bake_Params{}
-    editor.api_method_register(s,{name="particle.grid.bake",params=type_info_of(Api_Grid_Bake_Params),defaults=&bake,summary="Writes the cells of the grid of an entity of the edited world, as the steps of the next frame leave them, as a .grid at path (one there takes the new state) in an undo step of its own: a Particle_Grid that names it in cached starts from that state. The call holds until the cells come back from the GPU and names the file and its id, or fails when they do not come back.",result=type_info_of(Grid_Bake_Result),run=api_grid_bake})
-    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},result=type_info_of(Programs_Result),run=api_particle_programs})
+    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over and its iterations.",flags={.Read_Only},result=type_info_of(Programs_Result),run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
     editor.api_method_register(s,{name="particle.instance.inspect",params=type_info_of(Api_Particle_Instance_Params),defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, seconds, generation, births).",flags={.Read_Only},result=type_info_of(Instance_Result),run=api_particle_instance_inspect})
@@ -380,7 +377,7 @@ api_particle_programs :: proc(s:^editor.Session,call:^api.Call) {
             for &stage,i in program.stages {
                 over:="particles"
                 if stage.over!=erender.PROGRAM_STAGE_PARTICLES && int(stage.over)<len(program.resources) {over=program.resources[stage.over].name}
-                stages[i]={stage.name,over,u32(stage.iterations),f64(stage.neighbors)}
+                stages[i]={stage.name,over,u32(stage.iterations)}
             }
             append(&programs,Program_Result{program.name,u32(program.attributes),parameters,resources,stages})
         }
@@ -465,11 +462,11 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
         }
     }
     // What the GPU copied back of its particles, and the editor watches it from now on.
-    if sync:=host.app_world_storage(s.app,s.edit_world,vfx.Particle_Sync);sync!=nil {
-        sync.watch=u64(e)
-        if list,frame,ok:=vfx.watched(sync,s.app.renderer);ok {
+    if sync,v:=host.app_world_storage(s.app,s.edit_world,vfx.Particle_Sync),vfx_editor_of(s);sync!=nil && v!=nil {
+        v.watch=u64(e)
+        if list,frame,ok:=watched(sync,v.watch,s.app.renderer);ok {
             r.gpu.alive,r.gpu.frame=len(list),frame
-            if state,read:=vfx.watched_state(sync,s.app.renderer);read {
+            if state,read:=watched_state(sync,s.app.renderer);read {
                 r.gpu.dead,r.gpu.births,r.gpu.born=u64(state.dead),u64(state.births),u64(state.born)
             }
             particles:=make([]Gpu_Particle,min(len(list),8),call.allocator)
