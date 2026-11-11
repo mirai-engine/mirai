@@ -140,7 +140,6 @@ texture_views_count :: proc(r:^Renderer) {
         }
         for texture in glass {bytes+=rhi.texture_bytes(r.device,texture)}
         bytes+=rhi.texture_bytes(r.device,state.wide)
-        for buffer in targets_buffers(&state.targets) {bytes+=rhi.buffer_size(r.device,buffer)}
         for resource in state.resources {
             if !resource.owned {continue}
             for texture in resource.textures {bytes+=rhi.texture_bytes(r.device,texture)}

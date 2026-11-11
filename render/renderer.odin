@@ -295,7 +295,7 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, // the cull of the maps of the shadows, and their draws by what each writes
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, // the cull of the maps of the shadows by instance and by cluster, and their draws by what each writes
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
@@ -1014,6 +1014,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow glass",
 	})
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
+	compute(list, r, .Shadow_Clusters, .Shadow_Clusters_Comp)
 	graphics(list, r, .Tonemap, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Tonemap_Frag],
 		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "tonemap",
@@ -1587,19 +1588,11 @@ shared_targets_release :: proc(r: ^Renderer, textures: []^rhi.Texture) {
 	}
 }
 
-// Every buffer of the targets of a view, made or not.
-@(private)
-targets_buffers :: proc(t: ^Targets) -> [3]rhi.Buffer {
-	b := &t.shadow_buffers
-	return {b.entries, b.draw, b.table}
-}
-
 @(private)
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
 	for tex in targets_frame(t) {if tex^ != 0 {shared_target_release(r, tex^)}}
-	for b in targets_buffers(t) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height
 	t^ = {}

@@ -414,7 +414,18 @@ Gpu_Cull_State :: struct {
 	candidate_count:  u32,
 	dropped:          [Cull_List]u32, // past the capacities of the lists of the cull
 }
-#assert(size_of(Gpu_Cull_State) == 80)
+#assert(size_of(Gpu_Cull_State) == 88)
+
+// What the cull of the clusters the maps of the shadows draw counts
+// (shadow_cull.slang): the draws of those that hide whole and of those of
+// masked or blended materials, the groups of its cluster pass over the chunks
+// and how many chunks its instance pass handed over.
+Gpu_Shadow_State :: struct {
+	draws:            [2]Gpu_Draw,
+	cluster_dispatch: [3]u32,
+	chunk_count:      u32,
+}
+#assert(size_of(Gpu_Shadow_State) == 48)
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
@@ -451,11 +462,13 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 }
 
 // The lists of the cull of a view: chunks of the instance pass, visible
-// clusters of both phases, and clusters phase 0 found hidden. What does not
+// clusters of both phases, and clusters phase 0 found hidden; and of the cull
+// of its maps of the shadows, its chunks and the clusters the maps draw, of 16
+// bytes each (shadow_cull.slang). What does not
 // fit is dropped and counted (Gpu_Cull_State.dropped, Gpu_Cull_Stats.dropped),
 // and the renderer grows the list for the frames after: a frame may show
 // holes where a list first overflows, never again at that size.
 // Programs: the visible clusters of materials with a Surface program
 // (Scene_State.program_bins), which the G-buffer draws by program.
-Cull_List :: enum {Chunks, Visible, Candidates, Programs}
-CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Programs = 1 << 14}
+Cull_List :: enum {Chunks, Visible, Candidates, Programs, Shadow_Chunks, Shadow_Entries}
+CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Programs = 1 << 14, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18}

@@ -584,7 +584,7 @@ pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 // Binds the buffer of the maps of the view at SLOT_PASS0 + slot, from which a
 // pass of the Lit stage reads the maps of the local lights (media.slang).
 pass_shadow_data :: proc(s: ^Stage_Pass, slot: u32) {
-	data := s.pass.t.shadow_buffers.table if s.pass.frame.sun_maps.z != 0 else s.pass.r.dummy_buffer
+	data := s.pass.r.scene.shadow_table if s.pass.frame.sun_maps.z != 0 else s.pass.r.dummy_buffer
 	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_buffer(s.pass.cmd, SLOT_PASS0 + slot, data)}
 }
 

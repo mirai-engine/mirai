@@ -11,9 +11,8 @@
 #define MIRAI_SHADOW_MAPS_SLANG
 #include "scene.slang"
 
-// SHADOW_MAP_ROWS, SHADOW_LIGHT_FACES, SHADOW_ENTRIES: the buffer of the maps
-// and the clusters they draw (render/abi); those of the instances with masked
-// or blended materials are listed from the end. The side of the atlas, texels,
+// SHADOW_MAP_ROWS, SHADOW_LIGHT_FACES: the buffer of the maps (render/abi);
+// the clusters they draw, shadow_cull.slang. The side of the atlas, texels,
 // is Frame.sun_maps.z.
 // The width of what a ray reads of a material over how far it came
 // (hit_covers): a fragment of a map reads its material as coarsely as a texel.
