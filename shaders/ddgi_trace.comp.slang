@@ -56,9 +56,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         Hit hit = trace_ray(origin, dir, 0.0, params.max_distance, false, path);
         // What a ray finds beyond a gate of an extension lights the probe, and for
         // its visibility is as far as the gate: what is behind it is another place.
+        // A ray that meets the sky stores the whole distance, which no hit reaches.
         gate = path.gate;
         if (hit.instance == INVALID) {
-            ray_data[int2(ray, slot)] = float4(probe_light_encode(sky_radiance(path.direction) * path.glass), gate >= 0.0 ? gate : 1e4);
+            ray_data[int2(ray, slot)] = float4(probe_light_encode(sky_radiance(path.direction) * path.glass), gate >= 0.0 ? gate : params.max_distance);
             return;
         }
         // Each ray stands for an equal share of the sphere around the probe.

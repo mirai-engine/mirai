@@ -161,7 +161,7 @@ the_code_of_a_project_compiles_into_libraries_without_its_tests :: proc(t:^testi
     testing.expect(t,game.project && slice.equal(game.packages,[]string{"game","game/sub"}),"the game library has its packages but testdata")
     testing.expect(t,editor.part==.Editor && slice.equal(editor.project_needs,game.packages),"editor/ compiles against the game")
     plugin_library_name(root,game,0)
-    if failed:=plugin_library_prepare(game);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
+    if failed:=plugin_library_prepare(game,nil);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
     testing.expect(t,os.is_file(project.path(game.stage,"game/game.odin")) && !os.is_file(project.path(game.stage,"game/game_test.odin")),"the stage has no tests")
 
     collection :: proc(flags:[]string) -> string {

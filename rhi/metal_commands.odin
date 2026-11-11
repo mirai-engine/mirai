@@ -211,7 +211,7 @@ cmd_barrier_buffer :: proc(c: ^Command_List, buffer: Buffer, access: Access) {
 	assert(!c.in_render_pass, "rhi: buffer barriers must be recorded outside render passes")
 }
 
-cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access) {}
+cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access, mip: i32 = -1) {}
 
 // ---------------------------------------------------------------- render passes
 
@@ -241,12 +241,17 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	for i in 0 ..< desc.color_count {
 		a := desc.colors[i]
 		t := pool_get(&d.textures, base.Handle(a.texture))
-		if t == nil || t.handle == nil {set_error(d, "render pass %s has an invalid color target", desc.name); return}
-		width = min(width, t.desc.width)
-		height = min(height, t.desc.height)
+		size: [2]u32
+		inside: bool
+		if t != nil && t.handle != nil {size, inside = attachment_extent(t.desc, a.mip, a.layer)}
+		if !inside {set_error(d, "render pass %s: its color target is not a texture or has no mip %d or layer %d", desc.name, a.mip, a.layer); return}
+		width = min(width, size.x)
+		height = min(height, size.y)
 		attachment := MTL.RenderPassColorAttachmentDescriptorArray_object(colors, NS.UInteger(i))
 		base := cast(^MTL.RenderPassAttachmentDescriptor)attachment
 		MTL.RenderPassAttachmentDescriptor_setTexture(base, t.handle)
+		MTL.RenderPassAttachmentDescriptor_setLevel(base, NS.UInteger(a.mip))
+		MTL.RenderPassAttachmentDescriptor_setSlice(base, NS.UInteger(a.layer))
 		MTL.RenderPassAttachmentDescriptor_setLoadAction(base, mtl_load_action(a.load))
 		MTL.RenderPassAttachmentDescriptor_setStoreAction(base, mtl_store_action(a.store))
 		clear := [4]f64{f64(a.clear[0]), f64(a.clear[1]), f64(a.clear[2]), f64(a.clear[3])}
@@ -256,12 +261,17 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	}
 	if desc.depth.texture != 0 {
 		t := pool_get(&d.textures, base.Handle(desc.depth.texture))
-		if t == nil || t.handle == nil {set_error(d, "render pass %s has an invalid depth target", desc.name); return}
-		width = min(width, t.desc.width)
-		height = min(height, t.desc.height)
+		size: [2]u32
+		inside: bool
+		if t != nil && t.handle != nil {size, inside = attachment_extent(t.desc, desc.depth.mip, desc.depth.layer)}
+		if !inside {set_error(d, "render pass %s: its depth target is not a texture or has no mip %d or layer %d", desc.name, desc.depth.mip, desc.depth.layer); return}
+		width = min(width, size.x)
+		height = min(height, size.y)
 		depth := MTL.RenderPassDescriptor_depthAttachment(rpd)
 		base := cast(^MTL.RenderPassAttachmentDescriptor)depth
 		MTL.RenderPassAttachmentDescriptor_setTexture(base, t.handle)
+		MTL.RenderPassAttachmentDescriptor_setLevel(base, NS.UInteger(desc.depth.mip))
+		MTL.RenderPassAttachmentDescriptor_setSlice(base, NS.UInteger(desc.depth.layer))
 		MTL.RenderPassAttachmentDescriptor_setLoadAction(base, mtl_load_action(desc.depth.load))
 		MTL.RenderPassAttachmentDescriptor_setStoreAction(base, mtl_store_action(desc.depth.store))
 		MTL.RenderPassDepthAttachmentDescriptor_setClearDepth(depth, f64(desc.depth.clear))

@@ -316,10 +316,8 @@ remove_later :: proc(paths:[]string) {
     when ODIN_OS==.Windows {
         // A line of cmd holds at most 8191 characters.
         LINE :: 8000
-        null:="NUL"
     } else {
         LINE :: 100_000
-        null:="/dev/null"
     }
     for start:=0;start<len(moved); {
         command:=make([dynamic]string,context.temp_allocator)
@@ -332,7 +330,7 @@ remove_later :: proc(paths:[]string) {
             length+=len(path)+3
             end+=1
         }
-        if _,error:=subprocess.detached(command[:],null,"");error!=nil {
+        if _,error:=subprocess.detached({command=command[:]});error!=nil {
             for path in moved[start:end] {_=base.remove_all(path)}
         }
         start=end
