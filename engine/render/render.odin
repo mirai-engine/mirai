@@ -236,7 +236,7 @@ Material_Values :: struct {
 // what it authors in Material_Values: values by name as those, which win
 // over the authored ones of the same name, and a screen. A step gives it and
 // takes it away in any world (material_live, material_screen).
-@(component,derived,description="What the steps of the world give the look of this entity at run time: values by name over those of its Material_Values, and a screen.")
+@(component,derived,shared,description="What the steps of the world give the look of this entity at run time: values by name over those of its Material_Values, and a screen.")
 Material_Live :: struct {
     count:u32 `mirai:"transient"`,
     slots:[MATERIAL_VALUES_CAPACITY]u8 `mirai:"transient"`,
