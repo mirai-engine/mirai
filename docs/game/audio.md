@@ -25,7 +25,7 @@ source.volume, source.max_distance = 0.7, 25
 
 - Put it in the scene; the library starts, moves and stops it. `spatial` places it at the entity,
   quieter and duller far away, else `pan` does; `directivity` aims it at -Z; `near_radius` stops
-  jumps between ears; `delay` starts it late by distance; `spread` (m) widens stereo up close.
+  jumps between ears; `delay` starts it late by distance; `spread` (m) widens stereo, 0 a point.
 - The listener is the entity with `Audio_Listener`, else the view. Game code writes `playing`,
   `plays`, `volume`, `pitch`, `pan`, `loop` (`core.writable`). A loop goes back to the loop start
   its file names (a WAV sampler loop, an Ogg `LOOPSTART` comment), so an intro plays once.

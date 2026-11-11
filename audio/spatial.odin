@@ -30,8 +30,9 @@ Attenuation :: struct {
     spread:f32,
     delay:bool, // starts later by its distance over the speed of sound, as thunder after its flash
 }
-// The HRTF is measured 1 m from the head: nearer, it no longer tells where a source is.
-ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1,near_radius=1}
+// The HRTF is measured 1 m from the head: nearer, it no longer tells where a source is. A
+// stereo recording keeps the width of a pair of speakers 2 m apart (Unreal's default spread).
+ATTENUATION_DEFAULT :: Attenuation{model=.Inverse,min_distance=1,max_distance=100,rolloff=1,near_radius=1,spread=2}
 ATTENUATION_FADE :: f32(0.25)
 
 // What the output plays on. Speakers pan each spatial voice between them;

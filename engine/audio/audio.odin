@@ -91,7 +91,7 @@ Audio_Source :: struct {
     priority:u8, // when more sources play than the mixer has voices, the higher keep theirs before the louder
 }
 
-AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,near_radius=1,directivity_power=1}
+AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,near_radius=1,spread=2,directivity_power=1}
 
 // A spatial source that what collides between it and the listener hides:
 // Audio_Source_State.occlusion is the part of it out of sight, 0 to 1, which
