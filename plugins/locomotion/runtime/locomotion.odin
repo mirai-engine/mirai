@@ -65,13 +65,10 @@ Move_Mix :: enum u8 {
     Override, // replaces it on every axis, without gravity or ground, for as long as it lasts
 }
 
-// A velocity on top of the locomotion for a number of ticks: dash, wind, conveyor.
+// A velocity on top of the locomotion for a number of ticks: dash, wind, conveyor. The body reaches
+// it within the tick, as every drive of the locomotion (drives_reach).
 Layered_Move :: struct {
     velocity:[3]f32 `mirai:"unit=m/s"`, // world axes
-    // N: the limit of the force of an Override, 0 taking the traction force; an Additive adds it to the
-    // force of the locomotion, so that the body follows an added velocity that changes faster than
-    // traction drives it (root motion), which the locomotion would otherwise count as its own
-    force:f32 `mirai:"min=0,unit=N"`,
     ticks:u32,                          // left
     mix:Move_Mix,
     id:u32,                             // meaning given by the game
@@ -324,6 +321,7 @@ locomotion_step :: proc(
         } else {
             next.value=locomotion_move_paced(c,body,walk,fly,swim,extra,ground,frame,given,jump,input.action_of(walk_actions,.Sprint),input.action_of(walk_actions,.Crouch),motion.linear,phys.gravity_of_entity(physics,e)*body.gravity_scale*locomotion_gravity(c^),time.dt,pace)
         }
+        drives_reach(&next.value,motion.linear,ground,frame,capsule.mass,time.dt)
         next.value.gravity_scale=c.gravity
         next.height=0
         if walking,ok:=walk.?;ok && c.crouched {next.height=walking.crouch_height}
@@ -642,7 +640,6 @@ additive_delivered :: proc "contextless" (velocity,added,driven:[3]f32) -> [3]f3
 // the game.
 layers_apply :: proc(loco:^Locomotion_State,move:^phys.Character_Drive,traction:f32,pace:f32=1) {
     added:[3]f32
-    extra:f32 // the force the Additive ones add
     kept:u32
     loco.layer_time+=pace
     spent:=u32(loco.layer_time)
@@ -652,12 +649,11 @@ layers_apply :: proc(loco:^Locomotion_State,move:^phys.Character_Drive,traction:
         switch layered.mix {
         case .Additive:
             added+=layered.velocity
-            extra+=layered.force
             if move.ground.force==0 {move.ground.force=traction}
             if move.air.force==0 {move.air.force=traction}
         case .Override:
-            added={};extra=0
-            drive:=phys.Drive{layered.velocity,layered.force>0?layered.force:traction}
+            added={}
+            drive:=phys.Drive{layered.velocity,traction}
             move.ground,move.air=drive,drive
             move.flags+={.Airborne,.Drive_Vertical,.No_Gravity}
             move.flags-={.Float}
@@ -673,8 +669,27 @@ layers_apply :: proc(loco:^Locomotion_State,move:^phys.Character_Drive,traction:
     loco.added=added
     move.ground.velocity+=added
     move.air.velocity+=added
-    move.ground.force+=extra
-    move.air.force+=extra
+}
+
+// The force of each drive of a move raised to what reaches its velocity within the tick from the
+// velocity of the body, along its ground for the one of the ground: how fast a character gets there
+// is the acceleration of its mode, and its traction force only how hard it holds it against what
+// pushes it. A drive without force stays off.
+@(private)
+drives_reach :: proc "contextless" (move:^phys.Character_Drive,velocity:[3]f32,ground:phys.Character_State,frame:mm.Quat,mass,dt:f32) {
+    if !(mass>0) || !(dt>0) {return}
+    up:=mm.quat_rotate(frame,{0,1,0})
+    n:=ground.ground_normal
+    if linalg.dot(n,up)<=0 {n=up}
+    if move.ground.force>0 {
+        miss:=move.ground.velocity-(velocity-ground.ground_velocity)
+        move.ground.force=max(move.ground.force,mass*linalg.length(miss-n*linalg.dot(miss,n))/dt)
+    }
+    if move.air.force>0 {
+        miss:=move.air.velocity-velocity-move.launch
+        if .Drive_Vertical not_in move.flags {miss-=up*linalg.dot(miss,up)}
+        move.air.force=max(move.air.force,mass*linalg.length(miss)/dt)
+    }
 }
 
 // A move of the time of a character in the time of the world, at its pace:

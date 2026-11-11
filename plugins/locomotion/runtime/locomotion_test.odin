@@ -12,6 +12,20 @@ import phys "plugins:physics/runtime"
 
 @(test)
 walking_reaches_the_speed_of_the_locomotion_and_brakes :: proc(t:^testing.T) {
+    // The acceleration of the walk decides how fast it gets there, past what the traction force of
+    // the 80 kg body (3200 N, 40 m/s2) would drive: 5 m/s at 90 m/s2 takes 1/18 s, under 4 ticks.
+    for acceleration in ([2]f32{30,90}) {
+        f:Loco_Test
+        if !loco_test_init(t,&f,{0,0,0}) {return}
+        defer loco_test_destroy(&f)
+        loco_test_tick(&f,{},30)
+        core.edit(&f.walks,f.e).acceleration=acceleration
+        ticks:=int(cmath.ceil(5/(acceleration/60)-1e-3))
+        loco_test_tick(&f,{0,0,-1},ticks-1)
+        testing.expectf(t,-loco_velocity(&f).z<4.95,"at %v m/s2 it is short of 5 m/s a tick early: %v",acceleration,loco_velocity(&f))
+        loco_test_tick(&f,{0,0,-1},1)
+        testing.expectf(t,near(-loco_velocity(&f).z,5,0.05),"at %v m/s2 it walks at 5 m/s in %d ticks: %v",acceleration,ticks,loco_velocity(&f))
+    }
     f:Loco_Test
     if !loco_test_init(t,&f,{0,0,0}) {return}
     defer loco_test_destroy(&f)
@@ -103,7 +117,7 @@ the_body_turns_toward_its_look_at_its_turn_speed :: proc(t:^testing.T) {
     locomotion_step(
         core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
         core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
-        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},core.CLOCK_DEFAULT,&f.problems,
+        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},core.CLOCK_DEFAULT,&f.problems,
     )
     testing.expectf(t,near(loco_state(&f).yaw,-cmath.PI*dt,1e-5),"a tick turns it pi*dt: %v",loco_state(&f).yaw)
     move,_:=core.get(&f.moves,f.e)
@@ -195,10 +209,11 @@ a_dash_overrides_the_locomotion_for_its_ticks_and_a_conveyor_adds_to_it :: proc(
     if !loco_test_init(t,&f,{0,0,0}) {return}
     defer loco_test_destroy(&f)
     loco_test_tick(&f,{},30)
-    add_move(&f.loco_requests,f.e,{velocity={12,0,0},force=80*12*240,ticks=12,mix=.Override,id=7})
+    add_move(&f.loco_requests,f.e,{velocity={12,0,0},ticks=12,mix=.Override,id=7})
     loco_test_tick(&f,{},12)
+    // 12 m/s for 12 ticks, less what it ramps up to that speed within its first tick.
     p:=loco_position(&f)
-    testing.expectf(t,near(p.x,2.4,0.05) && near(p.y,0,0.01),"dashed to %v",p)
+    testing.expectf(t,near(p.x,2.35,0.05) && near(p.y,0,0.01),"dashed to %v",p)
     testing.expect(t,near(loco_velocity(&f).x,12,0.05))
     testing.expect_value(t,loco_state(&f).move_count,0)
     loco_test_tick(&f,{},30)
@@ -238,20 +253,19 @@ a_flying_locomotion_flies_toward_the_look_and_holds_its_height :: proc(t:^testin
     testing.expect(t,loco_state(&f).mode==MODE_WALKING && near(loco_position(&f).y,0,0.01))
 }
 
-// An Additive move that lunges faster than traction drives the body (the root motion of a slash) and
-// brings its force is followed, and the locomotion does not count it as its own: when the lunge
-// eases off and stops, the body stops where it went instead of sliding back.
+// An Additive move that lunges faster than traction would drive the body (the root motion of a slash)
+// is followed, and the locomotion does not count it as its own: when the lunge eases off and stops,
+// the body stops where it went instead of sliding back.
 @(test)
-an_additive_lunge_with_its_force_is_followed_and_does_not_slide_back :: proc(t:^testing.T) {
+an_additive_lunge_is_followed_and_does_not_slide_back :: proc(t:^testing.T) {
     f:Loco_Test
     if !loco_test_init(t,&f,{0,0,0}) {return}
     defer loco_test_destroy(&f)
     loco_test_tick(&f,{},30)
-    mass:=phys.character_default().mass
     lunge:=[?]f32{6,12,18,21,21,18,12,8,5,3,2,1}
     fastest:f32
     for speed in lunge {
-        add_move(&f.loco_requests,f.e,{velocity={0,0,-speed},force=mass*speed*60,ticks=1,mix=.Additive,id=5})
+        add_move(&f.loco_requests,f.e,{velocity={0,0,-speed},ticks=1,mix=.Additive,id=5})
         loco_test_tick(&f,{})
         fastest=max(fastest,-loco_velocity(&f).z)
     }
@@ -269,7 +283,7 @@ an_additive_lunge_with_its_force_is_followed_and_does_not_slide_back :: proc(t:^
     loco_test_box(&f,{5,2,0.25},{0,2,wall-0.25})
     for _ in 0..<2 {
         for speed in lunge {
-            add_move(&f.loco_requests,f.e,{velocity={0,0,-speed},force=mass*speed*60,ticks=1,mix=.Additive,id=5})
+            add_move(&f.loco_requests,f.e,{velocity={0,0,-speed},ticks=1,mix=.Additive,id=5})
             loco_test_tick(&f,{})
         }
     }

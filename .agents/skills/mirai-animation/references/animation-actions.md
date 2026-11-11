@@ -128,9 +128,8 @@ Discovery and memory:
   `animation_body_motion` gives the share of the root delta of the tick that those layers have,
   not what the base keeps, mirrored and warped with the root, with the mix of the one with the
   most share. With physics, `animation_physics` makes it a one-tick layered move of that mix for
-  its `Character`, in the body's own time and across its up unless `body_vertical`, with the force
-  that reaches it in that tick for the mass of the body, except while it mantles (the climb has its
-  own). A game does not convert root motion itself, and passes no locomotion mode.
+  its `Character`, in the body's own time and across its up unless `body_vertical`, which the body
+  reaches in that tick, except while it mantles (the climb has its own). A game does not convert root motion itself, and passes no locomotion mode.
 - `action_clock` gives the `Motion_Clock` of the layer that leads the root when it has at least half
   of it, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
   that ends or cancels while fading its root, suspends the warp without applying a window of the
