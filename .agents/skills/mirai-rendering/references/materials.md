@@ -21,25 +21,27 @@ mode.
   light nor on exposure.
 - An instance can replace the materials of its mesh with a single one; it also tints the base
   color and adds emission. An object without a material uses the default tinted with its color.
-- **Values of an instance** (`Instance_Material_Values`, given with `scene_tint`). What an
-  instance gives over the rows of its materials lives with the instance, in words of the index
-  pool that `Gpu_Instance.material_values` names: runs of up to four words of one row of the
-  table (`Gpu_Material_Row`), in place of the row's, for the points of the instance that show
-  it. `instance_material_values_hold` makes them from what `gpu_material` gives the material
-  with and without the values: the one conversion decides what an instance shows, and neither
-  the shaders nor the classification know the fields. The shaders put them over the row
-  wherever they read one at a point of an instance (`material_row(row, block)`,
-  `material_layers`, `material_parameters`, with `Instance.material_values`), so culling,
-  raster, ray hits, coverage, glass and the vertex functions see the same. Another value
-  touches the words of its instance alone: no row, no texture residency, no other instance. A
-  stage that draws no instance of a scene (the previews: `MIRAI_NO_INSTANCES`) reads none and
-  does not bind the pool. A row holds its layer blocks also with their weight at zero, so a
-  weight an instance gives takes the rest from them. Textures are of the row. The fade of an
-  instance
-  (`Instance_Material_Values.fade`) scales the opacity of every row it shows and blends the
-  opaque ones. What an instance gives counts, like the row's, for how it is traced and drawn
-  (`instance_alpha` reads the row as the instance shows it, `instance_material`): a value that
-  changes that classes every instance again.
+- **Values of an instance** (`Instance_Material_Values`, given with `scene_tint`). An instance
+  is given the words of a row of the table (`Gpu_Material_Row`) that it shows otherwise:
+  `instance_material_values_hold` makes them from what `gpu_material` gives the material with
+  and without the values, so the one conversion decides what an instance shows, and neither the
+  shaders nor the classification know the fields. The renderer makes of them, once, the row as
+  the instance shows it (`instance_material_values_give`): the index pool holds, where
+  `Gpu_Instance.material_values` names, each row the instance changes whole (the values shading
+  holds, its layer blocks, its program parameters). A shader reads of it the words it would
+  read of the row of the table (`material_row(row, block)`, `material_layers`,
+  `material_parameters`, with `Instance.material_values`), so culling, raster, ray hits,
+  coverage, glass and the vertex functions see the same, and no pass pays per pixel for what
+  is decided per instance. Another value touches the words of its instance alone: no row of
+  the table, no texture residency, no other instance. A row of the table that changes is given
+  again to the instances that hold their own of it (`engine/render` makes again what derives
+  from a material). A stage that draws no instance of a scene (the previews:
+  `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. A row holds its layer blocks
+  also with their weight at zero, so a weight an instance gives takes the rest from them.
+  Textures are of the row. The fade of an instance (`Instance_Material_Values.fade`) scales the
+  opacity of every row it shows and blends the opaque ones. What an instance gives counts, like
+  the row's, for how it is traced and drawn (`instance_alpha` reads the row as the instance
+  shows it, `instance_material`): a value that changes that classes every instance again.
 
 ## Evaluation
 

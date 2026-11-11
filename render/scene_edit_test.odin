@@ -788,10 +788,9 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     rows,words:=len(s.materials),len(s.indices)
     if !testing.expect(t,scene_given(r,descs,nil,{},{})) {return}
     // What a thousand entities with a roughness of their own cost: before, a row of the table each.
-    block:=INSTANCE_VALUES_HEADER+INSTANCE_VALUE_WORDS
+    block:=INSTANCE_VALUES_HEADER+INSTANCE_ROW_WORDS
     testing.expect_value(t,len(s.materials),rows)
     testing.expect_value(t,len(s.indices)-words,COUNT*block)
-    testing.expect(t,block*size_of(u32)*20<size_of(Gpu_Material_Row),"a value is far smaller than the row it was")
     testing.expect_value(t,instance_material(s,s.instances[7].material_values,1).roughness,f32(8)/(2*COUNT))
 
     // Another value of one instance: its words alone go to the GPU, and no light changes around it.
@@ -851,5 +850,5 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     full.count=max(u32)
     only:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1},material_values=full}
     testing.expect(t,scene_given(r,{only},nil,{},{}))
-    testing.expect_value(t,len(s.indices)-words,INSTANCE_VALUES_HEADER+INSTANCE_VALUES_MAX*INSTANCE_VALUE_WORDS)
+    testing.expect_value(t,len(s.indices)-words,INSTANCE_VALUES_HEADER+INSTANCE_ROW_WORDS)
 }

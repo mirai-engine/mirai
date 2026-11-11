@@ -69,7 +69,7 @@ given :: proc(t:^testing.T,s:^gpu.Scene_State) -> (by_object:map[u64]gpu.Gpu_Ins
         testing.expectf(t,object not_in by_object,"object %x is drawn twice",object)
         held:=instance
         if at:=held.material_values;at!=0 {
-            block:=s.indices[at-1:][:gpu.INSTANCE_VALUES_HEADER+int(s.indices[at-1])*gpu.INSTANCE_VALUE_WORDS]
+            block:=s.indices[at-1:][:gpu.INSTANCE_VALUES_HEADER+int(s.indices[at-1])*gpu.INSTANCE_ROW_WORDS]
             held.material_values=u32(base.hash64(mem.slice_to_bytes(block)))|1
         }
         by_object[object]=held

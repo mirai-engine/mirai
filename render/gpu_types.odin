@@ -268,14 +268,15 @@ MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
 // instance its words in the index pool and no row of the material table.
 INSTANCE_VALUES_MAX :: abi.INSTANCE_VALUES_MAX
 INSTANCE_VALUES_HEADER :: abi.INSTANCE_VALUES_HEADER
-INSTANCE_VALUE_WORDS :: abi.INSTANCE_VALUE_WORDS
-INSTANCE_VALUE_COUNT_SHIFT :: abi.INSTANCE_VALUE_COUNT_SHIFT
+INSTANCE_ROW_WORDS :: abi.INSTANCE_ROW_WORDS
+// What an instance is given of them: the words of a row that differ from the
+// table's, from which the renderer makes the row as the instance shows it.
+INSTANCE_VALUE_COUNT_SHIFT :: 16
 Instance_Material_Value :: struct {
 	row:   u32,    // of the material table: the words are for the points of the instance that show it
 	word:  u32,    // the first word of the row (Gpu_Material_Row) it gives; from INSTANCE_VALUE_COUNT_SHIFT, how many from it
 	words: [4]u32, // in place of those of the row
 }
-#assert(size_of(Instance_Material_Value) == INSTANCE_VALUE_WORDS * size_of(u32))
 Instance_Material_Values :: struct {
 	count:   u32,
 	fade:    f32, // how much of every row it fades out, 0 none to 1 all: an opaque row it fades blends
