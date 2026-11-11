@@ -532,7 +532,9 @@ audio_output :: proc(output:Audio_Output,applied:^Mixer_Output,app:^host.App,pro
         if !lost && !back {return}
     }
     first:=!applied.set
-    applied.device,applied.set=device,true
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    applied.device=device
+    applied.set=true
     // The application opened the default.
     if first && name=="" {return}
     error,found:=platform.audio_device_switch(p,"" if lost else name)

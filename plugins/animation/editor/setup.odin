@@ -388,7 +388,9 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             say(&capabilities[.Foot_Ik],.Ready,"the feet stand on the ground under them, with physics colliders","")
         } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or not both legs","Set pelvis, and hip, knee and foot of both legs with skeleton.body.set")}
     }
-    pose.look,pose.ik,pose.grounding=looks[:],hands[:],grounding
+    pose.look,pose.ik=looks[:],hands[:]
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    pose.grounding=grounding
 
     // Locomotion: the clips by mode, which the Character of the body drives; the warping stretches
     // the stride of a walk to the speed of the body.
