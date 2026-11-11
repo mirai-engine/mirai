@@ -493,7 +493,7 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 
 @(private)
 destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
-	shared_targets_release(r, {&t.shadow_atlas, &t.shadow_tint, &t.shadow_glass})
+	shared_targets_release(r, targets_frame(&t.shadow_targets))
 	for x in targets_buffers(t) {if x != 0 {rhi.buffer_destroy(r.device, x)}}
 	t.shadow_buffers = {}
 }

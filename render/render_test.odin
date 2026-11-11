@@ -840,10 +840,10 @@ views_of_one_size_share_the_targets_of_a_frame :: proc(t:^testing.T) {
         delete(pixels)
     }
     a,b:=&r.views[0].targets,&r.views[1].targets
-    shared,own:=targets_frame(a),targets_frame(b)
+    shared,own:=targets_frame(&a.frame),targets_frame(&b.frame)
     for texture,i in shared {
-        testing.expectf(t,texture^==own[i]^,"the views share target %d of the frame",i)
-        for other in shared[:i] {testing.expectf(t,texture^==0 || texture^!=other^,"target %d of the frame of a view is one of its own",i)}
+        testing.expectf(t,texture==own[i],"the views share target %d of the frame",i)
+        for other in shared[:i] {testing.expectf(t,texture==0 || texture!=other,"target %d of the frame of a view is one of its own",i)}
     }
     testing.expect(t,a.albedo!=0 && a.taa[0]!=b.taa[0] && a.hiz[0]!=b.hiz[0],"each view keeps its histories")
     expect_clean(t,f.device)

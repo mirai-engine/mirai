@@ -324,11 +324,12 @@ Pipeline_Variant :: struct {
 @(private)
 PIPELINE_VARIANTS :: 64
 
-Targets :: struct {
-	width, height:           u32, // internal 3D resolution
-	half_width, half_height: u32,
-	output_width:            u32, // window resolution (LDR + UI)
-	output_height:           u32,
+// The textures of the targets of a view whose contents live within its
+// frame: the view writes each before it reads it, and nothing reads them once
+// it is recorded. Views are recorded one after another, so those of one size
+// share them (shared_target), as the resources of a pipeline that are never
+// in use at once share memory. Only textures: targets_frame reads a group as a list.
+Frame_Targets :: struct {
 	depth:                   rhi.Texture,
 	albedo:                  rhi.Texture,
 	surface:                 rhi.Texture, // evaluated F0 as sRGB, encoded F90 in alpha; made when the scene first needs it
@@ -344,6 +345,35 @@ Targets :: struct {
 	reflect_shared:          rhi.Texture, // the same at half resolution: the rays that blocks of 2x2 pixels share
 	reflections:             rhi.Texture, // the traced reflections of the frame, filtered
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
+	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
+	using contact_targets: struct {
+		contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
+		contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
+		contact:                 rhi.Texture, // both at each pixel, packed (contact_pixels.comp)
+	},
+	using direct_targets: struct {
+		direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
+		direct_samples:          rhi.Texture, // at each point (direct_points of direct_samples.slang), the light of the local lights with nothing in the way over its reflectance, and the part of it that got there
+		direct_sun:              rhi.Texture, // at each point, what the glass on the way leaves of the light of the sun, and how much of the sun gets there
+		direct_depth:            rhi.Texture, // at each point, its linear depth (0 for none) and the radii of the penumbrae of the sun and of the local lights
+		direct_points:           rhi.Texture, // what the window of the samples gives each point (direct_points.comp), its part spread over its penumbra (direct_spread.comp)
+		direct_sun_points:       rhi.Texture, // the same of the part of the sun
+		direct_spread:           rhi.Texture, // those parts spread along the rows (direct_spread.comp)
+		direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
+	},
+	using shadow_targets: struct {
+		shadow_atlas:            rhi.Texture, // the depth from the lights of the shadow maps of the frame (shadow_maps_pass)
+		shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
+		shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
+	},
+}
+
+Targets :: struct {
+	width, height:           u32, // internal 3D resolution
+	half_width, half_height: u32,
+	output_width:            u32, // window resolution (LDR + UI)
+	output_height:           u32,
+	using frame:              Frame_Targets,
 	taa:                     [2]rhi.Texture, // output-resolution history
 	taa_frames:              [2]rhi.Texture, // the frames the history of each of its pixels holds
 	taa_valid:               bool,
@@ -351,9 +381,6 @@ Targets :: struct {
 	hiz_width, hiz_height:   u32,
 	hiz_levels:              u32,
 	hiz_valid:               bool, // the previous pyramid holds last frame's depth
-	contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
-	contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
-	contact:                 rhi.Texture, // both at each pixel, packed (contact_pixels.comp)
 	contact_scale:           u32, // the pixels across a point of contact_points
 	ldr:                     rhi.Texture,
 	generated:               rhi.Texture, // the image shown before ldr, while the pipeline generates frames: made with the first one
@@ -361,9 +388,6 @@ Targets :: struct {
 	ui_blur:                 [2]rhi.Texture,
 	highlight:               rhi.Texture, // editor selection mask: level and depth of highlighted surfaces
 	highlight_depth:         rhi.Texture,
-	shadow_atlas:            rhi.Texture, // the depth from the lights of the shadow maps of the frame (shadow_maps_pass)
-	shadow_tint:             rhi.Texture, // what the glass in front of it lets through of the light of each texel, while glass colors light
-	shadow_glass:            rhi.Texture, // the depth of the nearest of that glass
 	shadow_buffers:          Shadow_Buffers,
 	highlight_filtered:      rhi.Texture, // premultiplied editor coat, window-point resolution
 	highlight_width, highlight_height: u32,
@@ -375,18 +399,9 @@ Targets :: struct {
 	glass_reflections:       rhi.Texture, // the traced reflections of the nearest layer of glass, filtered
 	glass_valid:             bool,
 	glass_needs_clear:       bool,
-	direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
-	direct_samples:          rhi.Texture, // at each point (direct_points of direct_samples.slang), the light of the local lights with nothing in the way over its reflectance, and the part of it that got there
-	direct_sun:              rhi.Texture, // at each point, what the glass on the way leaves of the light of the sun, and how much of the sun gets there
-	direct_depth:            rhi.Texture, // at each point, its linear depth (0 for none) and the radii of the penumbrae of the sun and of the local lights
-	direct_points:           rhi.Texture, // what the window of the samples gives each point (direct_points.comp), its part spread over its penumbra (direct_spread.comp)
-	direct_sun_points:       rhi.Texture, // the same of the part of the sun
-	direct_spread:           rhi.Texture, // those parts spread along the rows (direct_spread.comp)
 	direct_scale:            u32, // the pixels across a point of the direct targets
-	direct_marks:            rhi.Texture, // 1 where a sample of the direct light met what changed, for TAA
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage drew over: TAA keeps less of its history there
 	reactive_drawn:          bool,        // the Blend stage drew in reactive since it was last cleared
-	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
 	aerial:                  rhi.Texture, // the aerial perspective of an atmosphere (air.odin), made when the sky first is one
 	aerial_key:              Air_Aerial_Key, // what it was computed for
 }
@@ -1496,22 +1511,12 @@ highlight_style_valid :: proc(style: Highlight_Style) -> bool {
 
 // ---------------------------------------------------------------- targets
 
-// The textures of the targets of a view whose contents live within its
-// frame: the view writes each before it reads it, and nothing reads them once
-// it is recorded. Views are recorded one after another, so those of one size
-// share them (shared_target), as the resources of a pipeline that are never
-// in use at once share memory.
 @(private)
-FRAME_TARGETS :: 34
+FRAME_TARGETS :: size_of(Frame_Targets) / size_of(rhi.Texture)
+// The textures of Frame_Targets or of a group of it.
 @(private)
-targets_frame :: proc(t: ^Targets) -> [FRAME_TARGETS]^rhi.Texture {
-	return {
-		&t.depth, &t.albedo, &t.surface, &t.layers, &t.instance, &t.normal, &t.emission, &t.motion, &t.linear_depth, &t.direct, &t.display,
-		&t.reflect_raw, &t.reflect_shared, &t.reflections, &t.nested_depth, &t.post_hdr[0], &t.post_hdr[1], &t.post_ldr[0], &t.post_ldr[1],
-		&t.contact_rays, &t.contact_points[0], &t.contact_points[1], &t.contact,
-		&t.direct_blockers, &t.direct_samples, &t.direct_sun, &t.direct_depth, &t.direct_points, &t.direct_sun_points, &t.direct_spread, &t.direct_marks,
-		&t.shadow_atlas, &t.shadow_tint, &t.shadow_glass,
-	}
+targets_frame :: proc(group: ^$T) -> []rhi.Texture {
+	return ([^]rhi.Texture)(group)[:size_of(T) / size_of(rhi.Texture)]
 }
 
 // The other textures of the targets of a view but those of its glass
@@ -1578,10 +1583,10 @@ shared_target_release :: proc(r: ^Renderer, texture: rhi.Texture) {
 
 // The targets of the frame of a view in a list go back to the views that share them.
 @(private)
-shared_targets_release :: proc(r: ^Renderer, textures: []^rhi.Texture) {
-	for texture in textures {
-		if texture^ != 0 {shared_target_release(r, texture^)}
-		texture^ = 0
+shared_targets_release :: proc(r: ^Renderer, textures: []rhi.Texture) {
+	for &texture in textures {
+		if texture != 0 {shared_target_release(r, texture)}
+		texture = 0
 	}
 }
 
@@ -1596,7 +1601,7 @@ targets_buffers :: proc(t: ^Targets) -> [3]rhi.Buffer {
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	for tex in targets_frame(t) {if tex^ != 0 {shared_target_release(r, tex^)}}
+	shared_targets_release(r, targets_frame(&t.frame))
 	for b in targets_buffers(t) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height
@@ -1664,13 +1669,13 @@ ensure_instance_target :: proc(r: ^Renderer, t: ^Targets) -> bool {
 // makes again.
 @(private)
 destroy_gi_targets :: proc(r: ^Renderer, t: ^Targets) {
-	shared_targets_release(r, {&t.contact_rays, &t.contact_points[0], &t.contact_points[1], &t.contact})
+	shared_targets_release(r, targets_frame(&t.contact_targets))
 	t.contact_scale = 0
 }
 
 @(private)
 destroy_direct_targets :: proc(r: ^Renderer, t: ^Targets) {
-	shared_targets_release(r, {&t.direct_blockers, &t.direct_samples, &t.direct_sun, &t.direct_depth, &t.direct_points, &t.direct_sun_points, &t.direct_spread, &t.direct_marks})
+	shared_targets_release(r, targets_frame(&t.direct_targets))
 	t.direct_scale = 0
 	destroy_shadow_maps(r, t)
 }

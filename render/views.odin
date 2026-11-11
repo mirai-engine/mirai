@@ -131,11 +131,11 @@ texture_views_count :: proc(r:^Renderer) {
         if state.texture==0 {continue}
         base,glass:=targets_textures(&state.targets),glass_textures(&state.targets)
         for texture in base {bytes+=rhi.texture_bytes(r.device,texture)}
-        for texture in targets_frame(&state.targets) {
-            if texture^==0 || slice.contains(counted[:count],texture^) {continue}
-            counted[count]=texture^
+        for texture in targets_frame(&state.targets.frame) {
+            if texture==0 || slice.contains(counted[:count],texture) {continue}
+            counted[count]=texture
             count+=1
-            bytes+=rhi.texture_bytes(r.device,texture^)
+            bytes+=rhi.texture_bytes(r.device,texture)
         }
         for texture in glass {bytes+=rhi.texture_bytes(r.device,texture)}
         bytes+=rhi.texture_bytes(r.device,state.wide)
