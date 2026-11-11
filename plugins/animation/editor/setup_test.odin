@@ -44,7 +44,14 @@ setup_classifies_clips_by_the_words_of_their_name :: proc(t:^testing.T) {
 // The figure with a skinned mesh and a library: idle sways in place, walk
 // travels at 1.2 m/s and loops, wave turns an arm without moving.
 setup_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> base.Asset_Id {
-    a:=&f.authoring
+    library,mesh:=setup_test_assets(&f.authoring,t)
+    core.add(&f.world.meshes,f.rig,erender.Mesh_Renderer{mesh=mesh})
+    core.settle(&f.info,&f.world,nil)
+    return library
+}
+
+// The files of the figure: its skeleton, its skinned mesh and its library of clips.
+setup_test_assets :: proc(a:^Authoring_Test,t:^testing.T) -> (library,mesh:base.Asset_Id) {
     source_id,skeleton_id,mesh_id:=base.Asset_Id{840,1},base.Asset_Id{840,2},base.Asset_Id{840,3}
     bones:=body_test_figure()
     map_,_:=asset.skeleton_body_detect(bones,lib.body_map_empty())
@@ -73,9 +80,7 @@ setup_test_character :: proc(f:^Pose_Bake_Test,t:^testing.T) -> base.Asset_Id {
     }
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/moves.anim",a.root),&a.assets.types,{id=source_id,clips=clips[:]}),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
-    core.add(&f.world.meshes,f.rig,erender.Mesh_Renderer{mesh=mesh_id})
-    core.settle(&f.info,&f.world,nil)
-    return source_id
+    return source_id,mesh_id
 }
 
 @(test)

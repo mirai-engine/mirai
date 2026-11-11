@@ -191,14 +191,13 @@ Match_Playing :: struct {
     told:bool,               // body holds a velocity
     searched:Match_Searched,
 }
-// The last search matching had to make (a mode it enters, a start or a stop, a clip that ends or
-// none playing), as it made it: its request, the row that played, whether its clip was left whole,
-// the reselect span and the rows the rig had left, and which of searches it was. It searched mode
-// m for the bit m of request.modes. match_searched_candidates searches it again to note its
-// candidates; the tick does not.
+// The last search of matching, as it made it: its request, the row that played, whether its clip
+// was left whole, the reselect span and the rows the rig had left, and which of searches it was.
+// It searched mode m for the bit m of request.modes. match_searched_candidates searches it again
+// to note its candidates; the tick does not.
 Match_Searched :: struct {request:lib.Match_Request,row:i32,whole:bool,span:f32,recent:lib.Match_Recent,search:u32}
 
-// The candidates of the last search matching had to make, searched again as it was made in db.
+// The candidates of the last search of matching, searched again as it was made in db.
 match_searched_candidates :: proc "contextless" (db:^lib.Match_Database,searched:Match_Searched) -> (candidates:lib.Match_Candidates) {
     if db==nil || searched.search==0 {return}
     recent:=searched.recent
@@ -479,7 +478,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 best,cost,_=lib.match_search(db,request,row,whole,info.reselect,&m.recent)
             }
             m.searches+=1;m.cost=min(cost,playing_on)
-            if forced {m.searched={request=searched,row=i32(row),whole=whole,span=info.reselect,recent=m.recent,search=m.searches}}
+            m.searched={request=searched,row=i32(row),whole=whole,span=info.reselect,recent=m.recent,search=m.searches}
             if best>=0 && (forced && !passed || playing_on==max(f32) || cost<playing_on-info.bias) {
                 m.phase=.Landing if landing else .Matching
                 range:=lib.match_range_of(db,best)

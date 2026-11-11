@@ -431,3 +431,45 @@ look_and_ik_publish_their_residual_and_whether_they_reach_in_the_constraints_of_
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,!aimed.valid)
 }
+
+@(test)
+the_sampled_pose_of_a_rig_is_the_one_before_its_rig_operations :: proc(t:^testing.T) {
+    problems:core.Problems
+    rig:=core.entity_make(1,1)
+    playback:Playback;defer playback_free(&playback)
+    append(&playback.states,rig_test_state(rig,3,.5))
+    resize(&playback.rows,core.entity_index(rig)+1);playback.rows[core.entity_index(rig)]=1
+    state:=&playback.states[0]
+    cache:Animation_Constraints;defer constraints_free(&cache)
+    transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
+    inputs:=Constraint_Inputs{problems=&problems}
+    reaching,still:Modifier_Runtime;defer {modifier_runtime_free(&reaching);modifier_runtime_free(&still)}
+    multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig,multi.root=rig,bone_ref("joint1")
+    multi.joint_count,multi.effector_count=3,1;multi.settings.iterations=4
+    for &joint,i in multi.joints[:3] {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",i+1))}
+    multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;multi.effectors[0].bone=bone_ref("joint3");multi.effectors[0].target=spatial_point({.4,.5,0})
+    testing.expect(t,modifier_append(&reaching.multi_ik,rig,multi))
+    // The end of a tick of this rig: the sampled pose, then its modifiers.
+    tick :: proc(playback:^Playback,state:^Playing,inputs:Constraint_Inputs,cache:^Animation_Constraints,transforms:^core.Table(core.Transform),modifiers:^Modifier_Runtime) {
+        state.sampled[2].rotation=mm.quat_axis_angle({0,0,1},.3)
+        copy(state.local[:],state.sampled[:])
+        constraints_apply(state,playback,inputs,cache,transforms,{},1.0/60,rig_runtime=modifiers)
+        state.pose_ready=true
+    }
+    same :: proc(a,b:[]mm.Transform) -> bool {
+        if len(a)!=len(b) {return false}
+        for x,i in a {if linalg.length(x.position-b[i].position)>1e-5 || mm.quat_angle(x.rotation,b[i].rotation)>1e-4 {return false}}
+        return true
+    }
+    tick(&playback,state,inputs,&cache,&transforms,&reaching)
+    sampled,sampled_ok:=pose_space(&playback,rig,context.temp_allocator,.Sampled)
+    finished,finished_ok:=pose_space(&playback,rig,context.temp_allocator)
+    testing.expect(t,sampled_ok && finished_ok && problems.count==0)
+    testing.expect(t,!same(sampled,finished),"the Multi IK row moves the chain after the sampled pose")
+    tick(&playback,state,inputs,&cache,&transforms,&still)
+    sampled,_=pose_space(&playback,rig,context.temp_allocator,.Sampled)
+    finished,_=pose_space(&playback,rig,context.temp_allocator)
+    testing.expect(t,same(sampled,finished),"no row moves a bone")
+    _,posed:=pose_space(&playback,core.entity_make(9,1),context.temp_allocator,.Sampled)
+    testing.expect(t,!posed)
+}
