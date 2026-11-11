@@ -482,8 +482,9 @@ The Content Browser tab shows the registry of the assets of the project and its 
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
 - **Strip** under the search: a toggle per family (Prefab, Model, Material, Scene, Plugins) with the
-  glyph of its cards and no color, each named only in its tooltip; a funnel opens the rest
-  (Texture, Animation, Sound, UI), with their glyphs too, and lights up while
+  glyph of its cards in the color of its kind (the others fade while some are on), each named only
+  in its tooltip; a funnel opens the rest (Texture, Animation, Sound, UI), with their glyphs too,
+  and lights up while
   one of them is on, and a cross by it, there only while a filter is on, clears them and the
   viewport selection. They combine; none active shows everything. Model gathers meshes, fractures
   and physics caches; Sound, sounds and sound sets; Plugins, every kind of a plugin ([types of a

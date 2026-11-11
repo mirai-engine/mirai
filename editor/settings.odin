@@ -500,8 +500,11 @@ settings_panels_card :: proc(s:^Session) {
         value:=int(l.right_mode)
         if ui.tabs(ctx,ui.id(ctx,"right"),modes,&value,ui.fixed(column),th.control) {l.right_mode=Panel_Mode(value)}
     }
-    // Each type of document follows the panel above (Global) or has its own.
-    names:=#partial [Document_Type]string{.Scene="In scenes",.Prefab="In prefabs"}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.End}) {
+        if ui.box(ctx,{width=ui.fixed(th.label_width),height=ui.FIT}) {ui.label(ctx,"BY DOCUMENT",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)}
+        ui.label(ctx,"Right",th.font_caption,th.text_faint,column)
+    }
+    names:=#partial [Document_Type]string{.Scene="Scene",.Prefab="Prefab"}
     for type in Document_Type {
         if type==.Asset {continue}
         if ui.property(ctx,names[type]) {
@@ -630,13 +633,16 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
         if ui.scroll_area(ctx,shell_id(g,"settings_nav"),&d.nav_scroll,{height=ui.GROW,padding={0,6,10,0},gap=2,fade=th.panel}) {
             group:=""
             for c,i in categories {
+                // A group starts after a rule, with its name small and dim over its categories.
                 if c.group!=group {
                     group=c.group
-                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(i==0?20:30),padding={9,0,0,4},gap=7,align_y=.End}) {
-                        ui.label(ctx,strings.to_upper(group,context.temp_allocator),th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)
-                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(5),padding={0,0,0,4},direction=.Column}) {
+                    if i>0 {
+                        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={0,10,0,6},direction=.Column}) {
                             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
                         }
+                    }
+                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(22),padding={9,0,0,5},align_y=.End}) {
+                        ui.label(ctx,strings.to_upper(group,context.temp_allocator),th.font_caption,th.text_faint,font=ui.FONT_SEMIBOLD)
                     }
                 }
                 open:=unfolded(d,c,needle)
@@ -644,7 +650,7 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
                 id:=shell_id(g,"settings_category",i+1)
                 it:=ui.interact(ctx,id,{.Focusable})
                 if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(th.control),padding={9,0,9,0},align_y=.Center,fill=current?th.accent_soft:it.hot?th.field_hover:ui.Color{},radius=th.radius_control}) {
-                    ui.label(ctx,c.name,th.font,current?th.text:th.text_muted,0,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
+                    ui.label(ctx,c.name,th.font,th.text,0,font=current?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
                     if len(c.sections)>1 {ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text_faint,11)}
                 }
                 if it.clicked {
@@ -718,7 +724,8 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
         }
     }
     d.jump=-1
-    if ui.scroll_area(ctx,area,&d.scroll,{height=ui.fixed(height),padding={8,14,8,18},gap=18,fade=th.panel}) {
+    // The bands of the sections reach both edges; their rows are set in.
+    if ui.scroll_area(ctx,area,&d.scroll,{height=ui.fixed(height),padding={0,14,0,18},gap=10,fade=th.panel}) {
         // The fields read at the size of the rest of the dialog, with the room
         // it has for the column of labels.
         theme:=ctx.theme

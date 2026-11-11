@@ -227,7 +227,7 @@ graphics_build :: proc(s:^Session) {
     segment:=ui.Button{style=.Tab,width=-1,height=th.row-4,size=th.font_small,center=true,padding=2}
     if ui.popup(ctx,popup,{width=GRAPHICS_WIDTH,align_right=true,flush=true}) {
         ui.id_push(ctx,popup)
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),padding={CARD_INSET+SECTION_INDENT,0,CARD_INSET+SECTION_INDENT,0},gap=12,align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),padding={BAND_INSET,0,BAND_INSET,0},gap=12,align_y=.Center}) {
             ui.label(ctx,"Graphics",13,th.text,font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
             ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),th.font_small,th.text,font=ui.FONT_MEDIUM)
@@ -235,8 +235,8 @@ graphics_build :: proc(s:^Session) {
             if s.app.renderer!=nil {gpu_ms=gpu.renderer_stats(s.app.renderer).gpu_ms}
             ui.label(ctx,fmt.tprintf("GPU %.1f ms",gpu_ms),th.font_small,th.text_muted)
         }
-        if ui.scroll_area(ctx,ui.id(ctx,"rows"),&gs.scroll,{height=ui.FIT,max_height=max(ctx.size.y-th.bar_height-GRAPHICS_ROW-80,GRAPHICS_ROW),padding={0,0,0,CARD_INSET},gap=10,fade=th.popup}) {
-            // Two sections, each under its title that folds it: what the presets set,
+        if ui.scroll_area(ctx,ui.id(ctx,"rows"),&gs.scroll,{height=ui.FIT,max_height=max(ctx.size.y-th.bar_height-GRAPHICS_ROW-80,GRAPHICS_ROW),gap=0,fade=th.popup}) {
+            // Two sections, each under its band that folds it: what the presets set,
             // and the frame rate. A section_card ends with the if that opens it.
             for rate in ([]bool{false,true}) {
                 if section_card(s,ui.id(ctx,"graphics_section",int(rate)+1),"Frame rate" if rate else "Quality") {

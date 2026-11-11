@@ -20,7 +20,7 @@ Content_Categories :: bit_set[Content_Category;u16]
 CONTENT_STRIP_CATEGORIES :: [?]Content_Category{.Prefab,.Mesh,.Material,.Scene,.Plugin}
 CONTENT_MENU_CATEGORIES :: [?]Content_Category{.Texture,.Animation,.Sound,.Ui}
 CONTENT_CATEGORY_LABELS :: [Content_Category]string{.Prefab="Prefab",.Mesh="Model",.Material="Material",.Scene="Scene",.Plugin="Plugins",.Texture="Texture",.Animation="Animation",.Sound="Sound",.Ui="UI"}
-// The kind whose glyph a filter carries; the Plugins filter, that of plugins.
+// The kind whose glyph and color a filter carries; the Plugins filter has its own.
 CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=asset.KIND_PREFAB,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
 CONTENT_PLUGIN_COLOR :: ui.Color{214,107,255,255} // of every kind of a plugin
 
@@ -2166,7 +2166,7 @@ content_more_menu :: proc(s:^Session) {
             id:=ui.id(ctx,"category",int(category)+1)
             it:=ui.interact(ctx,id,{.Focusable})
             if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(th.control),padding={8,0,8,0},gap=8,align_y=.Center,fill=ui.color_hover(th) if it.hot else {},radius=th.radius_control}) {
-                ui.icon(ctx,content_category_icon(category),th.text_muted,13)
+                ui.icon(ctx,content_category_icon(category),content_category_color(category),13)
                 ui.label(ctx,labels[category],th.font,th.text,0)
                 if category in c.categories {ui.icon(ctx,.Check,th.text_muted,10)}
             }
@@ -2176,6 +2176,12 @@ content_more_menu :: proc(s:^Session) {
             }
         }
     }
+}
+
+@(private)
+content_category_color :: proc "contextless" (category:Content_Category) -> ui.Color {
+    kinds:=CONTENT_CATEGORY_KINDS
+    return CONTENT_PLUGIN_COLOR if category==.Plugin else asset_color(kinds[category])
 }
 
 // The glyph of a filter: that of the cards of its kind.
@@ -2231,7 +2237,9 @@ content_strip_row :: proc(s:^Session) {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_FILTERS_GAP}) {
             for category in CONTENT_STRIP_CATEGORIES {
                 on:=category in c.categories
-                if ui.button(ctx,ui.id(ctx,"content_category",int(category)+1),{icon=content_category_icon(category),icon_size=14,icon_color=th.text if on else th.text_muted,tip=labels[category],style=.Toggle,active=on,width=CONTENT_STRIP_ROW+4,height=CONTENT_STRIP_ROW}).clicked {
+                // Each in the color of its kind; while some are on, the others fade.
+                color:=ui.color_alpha(content_category_color(category),255 if on || c.categories=={} else 80)
+                if ui.button(ctx,ui.id(ctx,"content_category",int(category)+1),{icon=content_category_icon(category),icon_size=14,icon_color=color,tip=labels[category],style=.Toggle,active=on,width=CONTENT_STRIP_ROW+4,height=CONTENT_STRIP_ROW}).clicked {
                     c.categories~={category}
                     c.scroll=0
                 }
