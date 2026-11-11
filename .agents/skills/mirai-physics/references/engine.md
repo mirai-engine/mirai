@@ -360,14 +360,17 @@ zone; `gravity.odin` applies it to the simulation.
 
 Manipulation:
 
-- `manipulation_target` moves a body temporarily as kinematic without modifying its `Rigid_Body`,
-  also a collider without that component or a proxy. It chases the pose in fixed steps and transmits
-  velocity to contacts: a large jump needs several ticks because of the solver's velocity limits.
-  Afterwards it stays held at the pose reached.
-- `manipulation_end` releases it on reaching the pending destination and restores authoring type
-  and mass (or the previous type of the proxy); it sets the velocity to zero except with
-  `preserve_velocity` (animation-to-simulation transition). With `dt=0`, placing and releasing are
-  immediate and without contacts.
+- `manipulation_target` holds a body toward a world pose without modifying its `Rigid_Body`, also a
+  collider without that component or a proxy. A dynamic body stays dynamic: a joint from the world
+  body drives its six axes toward the pose with a soft spring (Box2D's mouse drag) whose force is
+  bounded by `PULL_WEIGHTS` times its weight, so it collides, stops at walls and pushes no more than
+  that force allows. A static or kinematic body, or any with `follow` (a pose by design: the
+  animated ragdoll), is held as kinematic: it chases the pose in fixed steps, pushes what it touches
+  as infinite mass and needs several ticks for a large jump because of the solver's velocity limits.
+- `manipulation_end` lets a pulled body go at once and a kinematic hold once it reaches the pending
+  pose, restoring the authored type and mass (or the previous type of the proxy). A body dynamic
+  again keeps its velocity (a throw, the ragdoll going limp); any other stops. With `dt=0`, placing
+  and releasing are immediate and without contacts.
 - Requests go to the owner that `manipulation_owner` gives (the ancestor of a compound collider;
   `NONE` for characters) and their poses are in its world frame: they do not move a child shape
   separately. Two proxies of the same body share a hold and the last request wins. The hold is
@@ -677,12 +680,12 @@ Physics does not know the network: both share `core` tables.
     touches moves it away from what the other owner shows. It does not push like a kinematic body:
     what it touches moves aside by itself.
   - Following and manipulation are two sources of the same hold (`Physics_State.held`, which lists
-    only what a manipulation or a pose target steers): the first that takes the body makes it
-    kinematic and stores its type, the last that releases it gives it back, and
-    the target's pose goes before that of manipulation. While the target continues,
-    `manipulation_target` stores the destination without moving the body and `manipulation_end`
-    releases the manipulation without changing its type or velocity; when following ends, a
-    manipulation that is still requested holds it.
+    only what a manipulation or a pose target steers): the first that holds the body as kinematic
+    stores its type, the last that releases it gives it back, and the target's pose goes before
+    that of manipulation. While the target continues, `manipulation_target` stores the destination
+    without moving the body (a pull has no spring) and `manipulation_end` releases the manipulation
+    without changing its type or velocity; when following ends, a manipulation that is still
+    requested holds or pulls it.
   - A body that is not yet made receives the pose in its `Transform` and the velocities in
     `core.Motion`, from where it takes them when made. An entity with a parent is left to the
     parent.

@@ -115,8 +115,8 @@ Link :: struct {
     made:u64, // a hash of what its shapes or its capsule were made from (shape_key): another asks to make them again
 }
 
-// Who holds a body as kinematic, heading for a pose in every step: a
-// manipulation (a tool, a ragdoll) or a following pose target, which goes first.
+// Who holds a body, heading for a pose in every step: a manipulation (a tool, a
+// ragdoll) or a following pose target, which goes first and holds it as kinematic.
 // A character a following target leads is put at its pose after every step.
 @(private)
 Hold_Source :: enum u8 {Manipulation,Target}
@@ -126,12 +126,13 @@ Hold_Source :: enum u8 {Manipulation,Target}
 Held :: struct {
     entity:core.Entity,
     by:bit_set[Hold_Source;u8],
-    type_before:Body_Type, // what the body was before the first one held it
-    release:bool,          // the manipulation lets go once its pose is reached
-    keep_velocity:bool,    // and leaves the body moving
+    type_before:Body_Type, // what the body was before it was held as kinematic
+    release:bool,          // the following manipulation lets go once its pose is reached
+    follow:bool,           // the manipulation holds the body as kinematic; else a spring pulls it
     placed:u32,            // the core.Pose_Target.placed it took
     pose:[Hold_Source]sim.Transform,
     linear:[3]f32,         // of a character a following target leads
+    pull:sim.Joint_Handle, // the spring from the world body of a manipulation that pulls
 }
 
 @(private)
@@ -241,13 +242,17 @@ apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,
 move_kinematic :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1) {
     core.push(&requests.queue,Body_Request{entity=e,kind=.Kinematic,position=position,rotation=rotation})
 }
-// Temporarily holds a body as kinematic, pursuing the world pose at the solver's speed limits.
-manipulation_target :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1) {
-    core.push(&requests.queue,Body_Request{entity=e,kind=.Manipulate,position=position,rotation=rotation})
+// Holds a body toward a world pose until manipulation_end. A dynamic body stays dynamic: a spring of bounded
+// force pulls it, so it collides and pushes with at most PULL_WEIGHTS times its weight. A static or
+// kinematic body, or any with follow (a pose by design: an animated ragdoll), is held as kinematic and
+// reaches the pose at the solver's speed limits, pushing what it touches.
+manipulation_target :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1,follow:=false) {
+    core.push(&requests.queue,Body_Request{entity=e,kind=.Manipulate,position=position,rotation=rotation,override=follow})
 }
-// Releases once the pending target is reached, preserving pose and clearing velocity.
-manipulation_end :: proc(requests:^Body_Requests,e:core.Entity,preserve_velocity:=false) {
-    core.push(&requests.queue,Body_Request{entity=e,kind=.Release_Manipulation,override=preserve_velocity})
+// Lets go: a pulled body at once, a held one once it reaches its pose. A body dynamic again keeps its
+// velocity; any other stops.
+manipulation_end :: proc(requests:^Body_Requests,e:core.Entity) {
+    core.push(&requests.queue,Body_Request{entity=e,kind=.Release_Manipulation})
 }
 
 // a and b are the entities of the bodies; collider_a and collider_b those of the colliders that touched,
