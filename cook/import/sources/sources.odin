@@ -20,7 +20,7 @@ import "mirai:std/serial"
 // generate content: a model in one of the formats given (FORMATS, and those
 // the plugins of the project add) becomes its meshes, materials, textures, skeletons and
 // clips with a prefab of its hierarchy; an image becomes a texture; a sound
-// file, a sound; a font, a font; a CSV of texts, a table of texts; a manifest
+// file, a sound; a font, a font; a manifest
 // of prompts, a pack of prompts and its atlases. A format of the engine is a
 // package of its own with its Format; it is added here and nowhere else.
 
@@ -31,7 +31,7 @@ IMAGE_EXTENSIONS :: [?]string{".png",".jpg",".jpeg",".tga",".bmp",".gif",".psd",
 SOUND_EXTENSIONS :: [?]string{".wav",".ogg"}
 FONT_EXTENSIONS :: [?]string{".ttf",".otf",".ttc"}
 
-Source_Kind :: enum u8 {None,Model,Image,Sound,Font,Strings,Prompts}
+Source_Kind :: enum u8 {None,Model,Image,Sound,Font,Prompts}
 
 // What an image imported on its own holds by what its name says, for a source
 // with no use in its settings: a normal map, linear data (roughness, metal,
@@ -70,7 +70,7 @@ image_use_from_name :: proc(name:string) -> (use:importer.Image_Use,ok:bool) {
 // What a file is, by its first bytes: a model of one of formats (nil:
 // FORMATS), an image stb decodes, a WAV or Ogg sound or a font (a collection
 // too, which the import refuses saying why). A format whose bytes say
-// nothing (OBJ, TGA, CSV, a manifest of prompts) is known by its extension.
+// nothing (OBJ, TGA, a manifest of prompts) is known by its extension.
 // None for anything else and for a file that cannot be read.
 source_kind :: proc(path:string,formats:[]importer.Format=nil) -> Source_Kind {
     formats:=formats if formats!=nil else FORMATS[:]
@@ -87,8 +87,6 @@ source_kind :: proc(path:string,formats:[]importer.Format=nil) -> Source_Kind {
     if _,found:=importer.format_find(formats,head,extension);found {return .Model}
     text:=string(head)
     switch {
-    case extension==".csv":
-        return .Strings
     case strings.has_suffix(strings.to_lower(path,context.temp_allocator),importer.PROMPTS_MANIFEST):
         return .Prompts
     case strings.has_prefix(text,"\x89PNG"),strings.has_prefix(text,"\xff\xd8\xff"),strings.has_prefix(text,"BM"),strings.has_prefix(text,"GIF8"),strings.has_prefix(text,"8BPS"),
@@ -135,7 +133,7 @@ import_source :: proc(path:string,options:importer.Import_Options={},formats:[]i
     switch kind {
     case .None:
         if importer.unsafe_path(path) || !os.exists(path) {return {},importer.error_make(.Not_Found,"%s does not exist",path)}
-        return {},importer.error_make(.Unsupported,"%s is not a file Mirai imports: a model (%s), an image, a sound (WAV, Ogg Vorbis), a font (TrueType, OpenType), texts (CSV) or a manifest of prompts (%s); a format a plugin adds imports with the plugin in the project",path,importer.format_names(formats),importer.PROMPTS_MANIFEST)
+        return {},importer.error_make(.Unsupported,"%s is not a file Mirai imports: a model (%s), an image, a sound (WAV, Ogg Vorbis), a font (TrueType, OpenType) or a manifest of prompts (%s); a format a plugin adds imports with the plugin in the project",path,importer.format_names(formats),importer.PROMPTS_MANIFEST)
     case .Model:
         return prefab.model_import(path,formats,options,allocator)
     case .Image:
@@ -144,8 +142,6 @@ import_source :: proc(path:string,options:importer.Import_Options={},formats:[]i
         return importer.import_sound(path,{},options,allocator)
     case .Font:
         return importer.import_font(path,options,allocator)
-    case .Strings:
-        return importer.import_strings(path,options,allocator)
     case .Prompts:
         return importer.import_prompts(path,options,allocator)
     }

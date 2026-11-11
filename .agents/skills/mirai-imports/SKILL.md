@@ -2,12 +2,12 @@
 name: mirai-imports
 description: Mirai importers that convert OBJ, glTF/GLB, USD, FBX, static and skinned meshes, morph
   targets, sockets and animations, and images (HDR, 16-bit, cubes and arrays) to .mesh, .skeleton,
-  .mat, .tex and .anim, WAV and Ogg Vorbis to .sound, TrueType and OpenType fonts to .font, CSV
-  texts to .strings and prompt manifests to .prompts with their atlases (`cook/import`, its formats
+  .mat, .tex and .anim, WAV and Ogg Vorbis to .sound, TrueType and OpenType fonts to .font and
+  prompt manifests to .prompts with their atlases (`cook/import`, its formats
   `cook/import/obj`, `gltf`, `usd` and `fbx` (ufbx), `cook/import/sources`, `cook/textures`,
   `cook/rig` template rigs, `cook/cache`, the `mirai import` command), and the formats and whole
   sources a plugin adds to the editor (`Import_Format_Provider`, `Import_Source_Provider`). Use when
-  importing or verifying a model, animation, texture, font, texts or prompts, when changing or
+  importing or verifying a model, animation, texture, font or prompts, when changing or
   adding an import format, when importing with a plugin or when regenerating the demo's imported
   assets.
 ---
@@ -40,7 +40,7 @@ the assets.
   [glTF/GLB](references/imports.md#gltf-and-glb) (skeletons, morph targets, clips, meshopt),
   [USD](references/imports.md#usd), [FBX](references/imports.md#fbx) (ufbx, its binding and its
   fixtures), [sounds](references/imports.md#sounds), [fonts](references/imports.md#fonts),
-  [texts](references/imports.md#texts) and [prompts](references/imports.md#prompts).
+  and [prompts](references/imports.md#prompts).
 - Formats of `.mesh`, `.mat`, `.tex`, `.anim` and the version rule: [asset
   types](../mirai-assets/references/formats.md#asset-types) and
   [versions](../mirai-assets/references/formats.md#versions); verifying what was written: [asset
@@ -193,8 +193,8 @@ the assets.
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its
   version changes.
-- Fonts, texts and prompts: `cook/import/interface_test.odin` (rejected collections, CSV per
-  RFC 4180, power-of-two atlases without overlap) and `cook/import/sources/fuzz_test.odin`
+- Fonts and prompts: `cook/import/interface_test.odin` (rejected collections, power-of-two
+  atlases without overlap) and `cook/import/sources/fuzz_test.odin`
   (damaged files are imported or refused). After changing the prompt importer, import the
   `prompts_kenney` pack again
   ([command](../mirai-plugins/references/plugins.md#first-party-plugins)) and verify it with

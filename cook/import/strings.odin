@@ -1,31 +1,23 @@
 package importer
 
 import "core:fmt"
-import "core:mem"
-import "core:os"
-import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:unicode/utf8"
 import "mirai:asset"
-import "mirai:std/base"
 import "mirai:std/serial"
 
-// Texts: a CSV file (RFC 4180, UTF-8) becomes a .strings. Its first row is
-// "key" and the code of each language ("key,es,en,pt-BR"); every other row
-// is a key and its text in each language. A field in double quotes may hold
-// commas, line breaks and doubled quotes; an empty cell is a text the
-// language does not have.
-
-STRINGS_EXTENSIONS :: [?]string{".csv"}
+// Texts as CSV (RFC 4180, UTF-8), the exchange of mirai texts export and
+// import: the first row is "key" and the code of each language
+// ("key,es,en,pt-BR"); every other row is a key and its text in each
+// language. A field in double quotes may hold commas, line breaks and
+// doubled quotes; an empty cell is a text the language does not have.
 
 Strings_Table :: struct {
     languages:[dynamic]asset.String_Language,
     keys:[dynamic]asset.String_Key,
     entries:[dynamic]asset.String_Entry,
     text:[dynamic]u8,
-    missing:int,         // cells without a text
-    first_missing:[2]int, // key and language of the first of them
 }
 
 // The records of a CSV text, each a list of its fields, and the line each
@@ -133,63 +125,11 @@ strings_table :: proc(text:string,allocator:=context.allocator) -> (table:String
         append(&table.keys,key)
         for language in 0..<len(table.languages) {
             cell:=record[language+1] if language+1<len(record) else ""
-            if cell=="" {
-                if table.missing==0 {table.first_missing={len(table.keys)-1,language}}
-                table.missing+=1
-                continue
-            }
+            if cell=="" {continue}
             if len(table.text)+len(cell)>int(max(u32)) {return {},strings.clone("the texts take more than 4 GiB",allocator)}
             append(&table.entries,asset.String_Entry{key=u32(len(table.keys)-1),language=u32(language),offset=u32(len(table.text)),length=u32(len(cell))})
             append(&table.text,cell)
         }
     }
     return table,""
-}
-
-// Imports a CSV file of texts as <name>.strings beside it, the root of its import.
-import_strings :: proc(path:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
-    caller:=context.temp_allocator
-    scratch:mem.Dynamic_Arena
-    mem.dynamic_arena_init(&scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
-    defer mem.dynamic_arena_destroy(&scratch)
-    context.temp_allocator=base.dynamic_arena_allocator(&scratch)
-
-    if unsafe_path(path) {return {},error_make(.Not_Found,"%s does not exist",path,allocator=caller)}
-    bytes,read_error:=serial.file_read(path,context.temp_allocator,limit=MAX_SOURCE_BYTES)
-    if read_error!=.None {
-        return {},error_make(read_error==.Not_Found?Error_Code.Not_Found:Error_Code.Read,"%s could not be read: %v",path,read_error,allocator=caller)
-    }
-    table,message:=strings_table(string(bytes),context.temp_allocator)
-    if message!="" {return {},error_make(.Malformed,"%s: %s",path,message,allocator=caller)}
-
-    report_init(&report,allocator)
-    w:Writer
-    ok:=writer_init(&w,path,"",options,&report,allocator)
-    defer asset.types_destroy(&w.types)
-    if ok {
-        source:=w.source
-        name:=filepath.stem(path)
-        info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),0,import_version(0))
-        desc:=asset.Strings_Desc{languages=table.languages[:],keys=table.keys[:],entries=table.entries[:],text=table.text[:],source=&info}
-        target:string
-        desc.id,target=root_take(&w,asset.KIND_STRINGS,name,".strings")
-        existed:=os.exists(target)
-        if save_error:=asset.strings_save(target,&w.types,desc,context.temp_allocator);save_error!=.None {
-            ok=save_failed(&w,save_error,target)
-        } else {
-            record(&w,desc.id,asset.KIND_STRINGS,name,target,source,existed,fmt.tprintf("%d languages, %d keys, %d texts",len(table.languages),len(table.keys),len(table.entries)))
-            if table.missing>0 {
-                key,language:=table.keys[table.first_missing[0]],table.languages[table.first_missing[1]]
-                writer_warn(&w,"%s: %d texts are missing, the first one that of %s in %s",path,table.missing,serial.text_field(key.name[:]),serial.text_field(language.code[:]))
-            }
-            ok=writer_finish(&w)
-        }
-    }
-    if !ok {
-        writer_rollback(&w)
-        error=writer_error(&w,caller)
-        report_destroy(&report)
-        return {},error
-    }
-    return report,{}
 }

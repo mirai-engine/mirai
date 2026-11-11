@@ -10,23 +10,22 @@ Packages, all *engine-time*:
   one format each, with its `FORMAT`. They import the core and nothing from the other formats.
 - `cook/import/sources`: the `FORMATS` table (the engine's formats), `source_kind` and
   `import_source`, used by the editor (`editor/import.odin`), `mirai import` (`command.odin`, in the
-  engine's `mirai-import` program) and `tools/demo_content`. The editor adds the formats of
-  plugins ([plugin formats](#plugin-formats)).
+  engine's `mirai-import` program) and `sources.sync`. The editor adds the formats of plugins
+  ([plugin formats](#plugin-formats)).
 - `cook/textures`: images to `.tex` levels.
 
 ## API
 
 - `sources.import_source` imports a file of the assets folder of a project or a plugin: a model
-  writes its assets and, if it has nodes, its prefab; an image, its `.tex`; a sound, a font, a
-  strings CSV or a prompt pack, its asset. The [sidecar](#identity-and-reimport) of the source
+  writes its assets and, if it has nodes, its prefab; an image, its `.tex`; a sound, a font or a
+  prompt pack, its asset. The [sidecar](#identity-and-reimport) of the source
   keeps its settings, the folder of its assets and the id of each asset: importing it again gives
   the same assets. `sources.sync` imports every source of a root whose outputs are missing or
   stale ([sync](#sync)).
 - `sources.source_kind` says what a file is from its first bytes ([sniffing](#formats)), except
-  what the signature does not settle: TGA by extension, strings by `.csv` and prompts by
-  `.prompts.json`. It carries the formats it searches with (`formats`, `FORMATS` by default), like
-  `model_folder` and `import_source`. Only models and images have
-  [settings](#settings-of-a-source).
+  what the signature does not settle: TGA by extension and prompts by `.prompts.json`. It
+  carries the formats it searches with (`formats`, `FORMATS` by default), like `model_folder`
+  and `import_source`. Only models and images have [settings](#settings-of-a-source).
 - `importer.import_model` reads a source with the first of the formats that recognizes it
   (`sources.FORMATS[:]` or those of a test) into an `Imported_Model` in its own arena
   (`model_destroy`); `importer.import_write` writes its assets and returns the `Import_Report`.
@@ -275,9 +274,12 @@ that was just cloned, a worktree that was just made or a branch that changed a s
   named by the key of what the import builds from now (`importer.import_key`): the bytes of the
   source and of every file it read (the buffers and images of a glTF, the material library of an
   OBJ, the images of a pack of prompts), its settings, the versions of the importer and of what it
-  writes, with textures Final. One notion of current, no dates: a source that only moved is not
-  imported, and one whose `.bin` or image changed is. A USD is composed by `usdcat`, which does
-  not say which layers it read: after changing one alone, import the stage.
+  writes, with textures Final. One notion of current, the bytes: a source that only moved is not
+  imported, and one whose `.bin` or image changed is. The hash of a file whose size and
+  modification time are those the cache of the root keeps for it (`importer.Source_Hashes`, in
+  `.mirai/cache/sources`) is taken from there, so a build reads only the files that changed. A
+  USD is composed by `usdcat`, which does not say which layers it read: after changing one
+  alone, import the stage.
 - A source no format of the engine reads takes the formats the plugins of the project add
   (`Sync_Options.plugins`); one no format reads is a failure that says so.
 - A file of the imported folder that no sidecar with its source next to it lists under its
@@ -325,8 +327,8 @@ is in (`project.content_cache_path(root, project.TEXTURE_CACHE)`; of the project
 repository), one `.tex` per key whose id is the key. Every project and worktree of the repository
 shares it.
 
-- `Import_Options.texture_cache` is that folder (`""`, none); the editor, cooking,
-  `tools/demo_content` and `mirai import` of a map pass it, taking it from its project.
+- `Import_Options.texture_cache` is that folder (`""`, none); the editor, cooking and
+  `mirai import` of a map pass it, taking it from its project.
 - A texture that is not kept looks for its `textures.cache_key_build` (the bytes of the image, or
   the texels the format made with their size, layers and format, and the `settings_hash`): if it is
   there, its levels are written with the id and the `Import_Info` of this import; if not, it is
@@ -365,7 +367,8 @@ pass), one `.mesh` per key with its levels, clusters and colliders, without mate
 ## Settings of a source
 
 `Import_Settings` is how a source becomes assets; its zero value is the default of each setting and
-its fields are the options of `mirai import` (`IMPORT_USAGE`). What is not obvious:
+its fields are the options of `mirai import` (`IMPORT_USAGE`). The sidecar writes only the settings
+that differ from their default, so it shows what was chosen. What is not obvious:
 
 - `image` says how a loose image is read; `Normal_Green_Down` is a normal map with green pointing
   down, as DirectX writes them, which is inverted when cooking. `alpha_coverage` is the cutoff of
@@ -881,19 +884,6 @@ WAV and Ogg Vorbis, mono or stereo) and writes `<name>.sound`, the root of its i
   `.ttf` or `.otf`. What FreeType does not open is `Malformed`.
 - The report's detail says the outlines and how many glyphs of the atlas it has
   ([coverage](../../mirai-ui/references/ui.md#font)).
-
-## Texts
-
-`cook/import/strings.odin`. `import_strings` reads a UTF-8 CSV per RFC 4180 (`csv_records`) and
-writes `<name>.strings`, the root of its import.
-
-- The first row is `key` and the code of each language (`key,en,es,pt-BR`), the one the texts are
-  written in first: a language that lacks a key shows that one
-  ([one store](../../mirai-assets/references/kinds.md#texts)). Each following row is a
-  unique key and its text in each language. An empty cell is a missing text, and the report says
-  how many are missing.
-- An error (`Malformed`) names the line: unclosed or stray quotes, invalid or repeated language or
-  key, more cells than languages.
 
 ## Prompts
 

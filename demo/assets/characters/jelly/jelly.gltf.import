@@ -1,23 +1,6 @@
 {
   "version": 3,
-  "settings": {
-    "max_texture_size": 0,
-    "textures": "Blocks",
-    "rdo_lambda": 0,
-    "image": "Data",
-    "alpha_coverage": 0,
-    "lods": "Auto",
-    "max_triangles": 0,
-    "collision": "None",
-    "force_collision": false,
-    "collision_hulls": 0,
-    "parts": "Auto",
-    "front": "Auto",
-    "rig": "Source",
-    "rig_crotch": 0,
-    "rig_neck": 0,
-    "skeleton": "00000000000000000000000000000000"
-  },
+  "settings": {},
   "folder": "jelly",
   "inputs": ["jelly.bin"],
   "outputs": [

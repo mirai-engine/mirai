@@ -10,10 +10,12 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import stbi "vendor:stb/image"
 import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:cook/import/gltf"
+import "mirai:project"
 import "mirai:std/base"
 
 // A box with two materials, the first with the image wood.png next to it.
@@ -380,6 +382,28 @@ a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: 
     }
     again:=sync(root,caches,context.temp_allocator)
     testing.expectf(t,again.imported==0 && len(again.failures)==0,"%v",again)
+
+    // A source settled on disk is hashed once: the next build takes its hash from the cache of
+    // the root without reading it, so a hash the cache says gives another key.
+    sign:=fmt.tprintf("%s/sign.png",assets)
+    an_hour_ago:=time.time_add(time.now(),-time.Hour)
+    testing.expect(t,os.change_times(sign,an_hour_ago,an_hour_ago)==nil)
+    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,0)
+    memo:=project.cache_path(root,importer.SOURCE_HASHES,allocator=context.temp_allocator)
+    hashes:=importer.source_hashes_load(memo,context.temp_allocator)
+    remembered:=""
+    for file in hashes.files {
+        if strings.has_suffix(file,"/sign.png") {remembered=file}
+    }
+    if !testing.expectf(t,remembered!="","%v",hashes.files) {return}
+    known:=hashes.files[remembered]
+    hashes.files[remembered]={known.size,known.modified,known.hash+1}
+    hashes.changed=true
+    importer.source_hashes_save(&hashes,memo)
+    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,1)
+    // Without the cache the bytes decide again.
+    testing.expect(t,os.remove(memo)==nil)
+    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,1)
 
     // The registry lists what the imported folder holds by where its source is now.
     Listed :: struct {id:base.Asset_Id,path:string}

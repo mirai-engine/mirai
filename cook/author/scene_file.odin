@@ -125,15 +125,9 @@ scene_value :: proc(f:^Scene_File,t:^core.Table_Info,v:^core.Value_Schema,id:bas
 scene_value_set :: proc(f:^Scene_File,t:^core.Table_Info,v:^core.Value_Schema,id:base.Entity_Id,value:[]u8) -> bool {
     table,error:=asset.scene_component_add(&f.scene,t.name,&f.ws.schema,v.type)
     if error!=.None {return false}
-    stored:=f.scene.doc.tables[table].columns[1]
-    if f.scene.doc.hashes[stored.type]==v.hash {return asset.scene_component_set(&f.scene,table,id,value)==.None}
-    image:=make([]u8,max(stored.size,1),context.temp_allocator)[:stored.size]
-    migration:serial.Migration
-    if serial.migration_init(&migration,&f.ws.schema,v.type,&f.scene.doc.schema,stored.type,context.temp_allocator)!=.None {return false}
-    defer serial.migration_destroy(&migration)
-    if current,has:=asset.scene_component_get(&f.scene,table,id);has {copy(image,current)}
-    serial.migration_apply(&migration,image,value,1)
-    return asset.scene_component_set(&f.scene,table,id,image)==.None
+    // A table stored with another layout takes the game's first, so no value of the document is lost.
+    if f.scene.doc.hashes[f.scene.doc.tables[table].columns[1].type]!=v.hash && asset.document_column_retype(&f.scene.doc,table,1,&f.ws.schema,v.type,scene_start(t,v))!=.None {return false}
+    return asset.scene_component_set(&f.scene,table,id,value)==.None
 }
 
 @(private="file")
@@ -459,8 +453,15 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
     applied:Scene_Applied
     if applied,problem=scene_file_apply(&f,text);problem!="" {return}
     written={path=path,fresh=!exists,made=applied.made,removed=applied.removed}
-    // A file that says the same stays as it is, in the layout it was written with.
-    if exists && applied.made==0 && applied.removed==0 && !applied.changed {
+    relaid:=make([dynamic]escene.Stored,context.temp_allocator)
+    if exists {
+        for entry in scene_stored(p,path) {
+            if !entry.unknown {append(&relaid,entry)}
+        }
+    }
+    written.stored=relaid[:]
+    // A file that says the same and stores every component of the game as the game reads it stays as it is.
+    if exists && applied.made==0 && applied.removed==0 && !applied.changed && len(relaid)==0 {
         written.same=true
         return written,""
     }

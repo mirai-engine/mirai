@@ -151,6 +151,8 @@ a_standalone_image_takes_its_use_from_its_settings :: proc(t:^testing.T) {
     testing.expect(t,report.assets[0].id!={})
     testing.expect(t,strings.contains(report.assets[0].detail,"4x4"),report.assets[0].detail)
     testing.expect_value(t,report.settings,importer.Import_Settings{image=.Normal,max_texture_size=4})
+    text,_:=os.read_entire_file(fmt.tprintf("%s%s",path,importer.SIDECAR_EXTENSION),context.temp_allocator)
+    testing.expect(t,strings.contains(string(text),`"image": "Normal"`) && strings.contains(string(text),`"max_texture_size": 4`) && !strings.contains(string(text),"max_triangles"),string(text))
 }
 
 @(test)

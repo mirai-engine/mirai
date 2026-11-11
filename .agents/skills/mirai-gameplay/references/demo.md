@@ -232,9 +232,11 @@ Play, F1 releases the mouse and the click that returns it chooses who receives k
 
 ## Generated content
 
-The scenes and prefabs of the demo are authored assets, changed with `scene.write`,
-`mirai scene write` or the editor; no code writes them. `tools/demo_content` writes what code
-computes and gives the same bytes on every run:
+The scenes, prefabs, materials, particles, tables of game data and clips of a few keys of the
+demo are authored assets, changed through the API (`scene.write`, `material.set`, `particle.set`,
+`records.set`), `mirai scene write` or the editor; no code writes them. The imports of
+`demo/source` are the build's. `tools/demo_content` writes what code computes and gives the same
+bytes on every run:
 
 ```sh
 mirai content demo
@@ -243,19 +245,14 @@ mirai content demo
 A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
-- `--control-only`: the intro clip of `control`. `--physics-only`: the fractures, their meshes,
-  the baked cuts, the dust and the ragdoll rig of `physics`.
-- `--raft-only`: the particles of the sea of `raft`.
-- `--features-only`: the meshes of the render plugins' scenes, the blockout slabs and the decal
-  images.
-- `--ai-only`: the horde's wave and zombie-kind tables.
-- `--interface-only`: the icons of the items, the tables of items and of the conversation
-  (`tools/demo_content/records.odin` writes a table with fixed ids) and the `.strings` of their
-  texts, in English and Spanish.
-- `--dig-only`: the dig terrain, its layer materials and its dust.
-- `--animation-only`: imports Mirai and writes what the [animation gallery](animation-gallery.md)
-  uses: the locomotion and gallery clips of Mirai and their programs, the taller Mirai and its
-  baked clips, the spider, the rig chains and the morph jelly. Contracts:
+- `--physics-only`: the fractures, their meshes, the baked cuts and the ragdoll rig of `physics`.
+- `--features-only`: the meshes of the render plugins' scenes and the decal images.
+- `--interface-only`: the icons of the items.
+- `--dig-only`: the dig terrain.
+- `--animation-only`: reads the import of Mirai and writes what the
+  [animation gallery](animation-gallery.md) uses: the locomotion and gallery clips of Mirai and
+  their programs, the taller Mirai and its baked clips, the spider, the rig chains and the source
+  of the morph jelly. Contracts:
   [animation plugin](../../mirai-animation/references/animation.md).
 
 Content:

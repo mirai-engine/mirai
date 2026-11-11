@@ -105,11 +105,11 @@ morph_jelly_source :: proc(o:^Out) -> string {
     return folder+"/jelly.gltf"
 }
 
-// The jelly of morph targets of the gallery, a source written here and imported, and its moods: a
+// The jelly of morph targets of the gallery, a source written here that a build imports, and its moods: a
 // layer that mixes its clips of shapes and an additive layer over it.
 @(private)
 gallery_morphs :: proc(o:^Out) {
-    source:=morph_jelly_source(o);if o.content.failed {return};source_import(o,source);if o.content.failed {return}
+    source:=morph_jelly_source(o);if o.content.failed {return}
     animation:=imported_id(o,source,asset.KIND_ANIMATION,"jelly")
     // Its moods over the dance: how sleepy it is, and how much the rubber adds, by the weights the game sets.
     layers:=[2]anim.Stack_Layer{anim.STACK_LAYER_DEFAULT,anim.STACK_LAYER_DEFAULT}

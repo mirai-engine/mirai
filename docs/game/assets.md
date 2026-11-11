@@ -28,7 +28,7 @@ mirai import assets/player/step.wav     # assets/player/step.sound
 ```
 
 - Formats: OBJ, glTF/GLB, USD, FBX; PNG, JPEG, TGA, BMP, GIF, PSD, HDR; WAV and Ogg Vorbis (mono
-  or stereo); TTF, OTF; CSV texts (`key,en,es`); prompt manifests.
+  or stereo); TTF, OTF; prompt manifests. Texts are `.strings`: [texts](ui/texts.md).
 - A model writes meshes, materials, textures, skeletons, clips and a prefab: instantiate that.
 - An image is color unless its name says otherwise (`normal`, `_n`, `rough`, `metal`, `orm`,
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.

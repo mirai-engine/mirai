@@ -33,12 +33,6 @@ ASSETS_WATCH_SECONDS :: 1  // a pass over the asset folder takes about this long
 ASSETS_WATCH_SLICE :: 64   // units of platform.watch_poll in the frames that look
 ASSETS_WATCH_RATE :: ASSETS_WATCH_SLICE*60 // units per second at most: the pass of a larger folder takes longer
 
-app_assets_watch_reset :: proc(app:^App) {
-    if app.assets_watch.watch!=0 {platform.watch_destroy(app.platform,app.assets_watch.watch)}
-    app.assets_watch={}
-    if app.assets!=nil {app.assets_watch.watch,_=platform.watch_create(app.platform,{path=app.assets.registry.root,recursive=true})}
-}
-
 @(private)
 Assets_Watch :: struct {
     watch:platform.Watch,
