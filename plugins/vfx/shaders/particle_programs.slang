@@ -101,14 +101,6 @@ Mirai_Vfx_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float 
     return particle_bone_at(r, low, random01(seed), dt);
 }
 
-Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed) {
-    return particle_bone_sample(particle_resource(ctx.emitter, 1u + resource), seed, particle_emitters[ctx.emitter].step.x);
-}
-
-Mirai_Vfx_Bone mirai_vfx_bone_at(Mirai_Vfx_Context ctx, uint resource, uint bone, float along) {
-    return particle_bone_at(particle_resource(ctx.emitter, 1u + resource), bone, along, particle_emitters[ctx.emitter].step.x);
-}
-
 // The grid of a resource of an emitter; false without one.
 bool particle_grid_of(uint slot, uint resource, out Particle_Grid_Row g) {
     Particle_Resource r = particle_resource(slot, 1u + resource);
@@ -313,27 +305,6 @@ uint mirai_vfx_emitter_capacity(Mirai_Vfx_Context ctx, uint resource) {
     return particle_emitter_resource(ctx, resource, other) ? particle_emitters[other].range.y : 0u;
 }
 
-// The particles an emitter drew last frame: those on its drawn list.
-uint particle_states_alive(uint slot) {
-#ifdef PARTICLES_WRITABLE
-    return particle_states[slot].instance_count;
-#else
-    return 0u;
-#endif
-}
-
-uint mirai_vfx_emitter_alive(Mirai_Vfx_Context ctx, uint resource) {
-    uint other;
-    if (!particle_emitter_resource(ctx, resource, other)) return 0u;
-    return min(particle_states_alive(other), particle_emitters[other].range.y);
-}
-
-uint mirai_vfx_emitter_drawn(Mirai_Vfx_Context ctx, uint resource, uint i) {
-    uint other;
-    if (!particle_emitter_resource(ctx, resource, other) || i >= particle_emitters[other].range.y) return INVALID;
-    return particle_drawn(other, i) - particle_emitters[other].range.x;
-}
-
 bool mirai_vfx_emitter_particle(Mirai_Vfx_Context ctx, uint resource, uint slot, out Mirai_Vfx_Particle value) {
     uint other;
     value = (Mirai_Vfx_Particle)0;
@@ -473,32 +444,6 @@ uint mirai_vfx_grid_word_add(Mirai_Vfx_Context ctx, uint resource, int3 index, u
 #ifdef PARTICLES_WRITABLE
     uint address;
     if (particle_grid_word(ctx, resource, index, word, true, address)) particle_world_bytes.InterlockedAdd(address, value, before);
-#endif
-    return before;
-}
-
-int mirai_vfx_grid_word_min(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value) {
-    int before = 0;
-#ifdef PARTICLES_WRITABLE
-    uint address;
-    uint seen = 0u;
-    if (particle_grid_word(ctx, resource, index, word, true, address)) {
-        particle_world_bytes.InterlockedMin(address, value, seen);
-        before = asint(seen);
-    }
-#endif
-    return before;
-}
-
-int mirai_vfx_grid_word_max(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value) {
-    int before = 0;
-#ifdef PARTICLES_WRITABLE
-    uint address;
-    uint seen = 0u;
-    if (particle_grid_word(ctx, resource, index, word, true, address)) {
-        particle_world_bytes.InterlockedMax(address, value, seen);
-        before = asint(seen);
-    }
 #endif
     return before;
 }

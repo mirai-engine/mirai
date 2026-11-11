@@ -126,8 +126,7 @@
   generation gives each one a constant with its index in the program's namespace (`hits` inside
   `Gather`) and the catalog lists them in `resources`. A surface is read with
   `mirai_vfx_surface_sample` (a point per area) and `mirai_vfx_surface_at` (the same triangle and
-  barycentrics where it is now, with its normal and velocity); bones, with `mirai_vfx_bone_sample`
-  (by length) and `mirai_vfx_bone_at` (the same bone and fraction); a channel, with
+  barycentrics where it is now, with its normal and velocity); a channel, with
   `mirai_vfx_channel_count` and `mirai_vfx_channel_birth`; a grid (`grid`), with
   `mirai_vfx_grid_load`, `_sample`, `_splatted`, `_store` and `_splat`; the particles of another
   emitter (`emitter`), with `mirai_vfx_emitter_particle` and `_word`; a data channel (`data`),

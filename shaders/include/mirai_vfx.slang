@@ -190,9 +190,7 @@ float mirai_vfx_random(inout uint seed) {
 }
 // A texture parameter at uv, at a level of its mips. A point of a surface
 // resource chosen by area with seed, and the point of a triangle of it at
-// barycentrics, as it is this frame. A point of a bones resource chosen by
-// length with seed, and the point of a bone of it at along, as it is this
-// frame. A grid: what it is; a layer of a cell as the stage before left it
+// barycentrics, as it is this frame. A grid: what it is; a layer of a cell as the stage before left it
 // (zero outside its region; an axis of one cell takes every index), and at a
 // point between its cells; what the particles of the step splatted into a
 // cell; the layer the stage leaves in its cell; and a value spread over the
@@ -201,16 +199,15 @@ float mirai_vfx_random(inout uint seed) {
 // renderer traces it this frame (moving bodies too): in initialize, update
 // and the stages; render meets nothing.
 //
-// Another emitter (a resource of kind emitter): the slots of its range, the
-// particles it drew last frame and the slot of the i-th of them, a particle
-// of a slot (false when it is not alive) and a word of its Attributes; the
+// Another emitter (a resource of kind emitter): the slots of its range, a
+// particle of a slot (false when it is not alive) and a word of its Attributes; the
 // particles it started before this frame and in it, and of the one it
 // started as its birth-th (counting from 0) the seed it has or will have and
 // its slot while it is alive (-1 otherwise). The id of the particle of ctx: its slot in its range and its seed, which no
 // other particle of the emitter alive with it has. The words of a cell of a
 // grid (4 a layer): loaded from what the stage before left or from what this
-// one leaves, stored, and added to or compared at once with other threads in
-// what this one leaves; a layer of what this one leaves, loaded and written.
+// one leaves, stored, and added to at once with other threads in what this
+// one leaves; a layer of what this one leaves, loaded and written.
 // The view, and its depth (linear, 0 where nothing was drawn) and normal at
 // a point of its image (uv from the top left), in initialize and update.
 #ifdef MIRAI_VFX_REFLECTION
@@ -219,8 +216,6 @@ Mirai_Vfx_Surface mirai_vfx_surface_sample(Mirai_Vfx_Context ctx, uint resource,
 Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uint triangle, float2 barycentric) { return (Mirai_Vfx_Surface)0; }
 uint mirai_vfx_channel_count(Mirai_Vfx_Context ctx, uint resource) { return 0u; }
 Mirai_Vfx_Birth mirai_vfx_channel_birth(Mirai_Vfx_Context ctx, uint resource, uint index) { return (Mirai_Vfx_Birth)0; }
-Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed) { return (Mirai_Vfx_Bone)0; }
-Mirai_Vfx_Bone mirai_vfx_bone_at(Mirai_Vfx_Context ctx, uint resource, uint bone, float along) { return (Mirai_Vfx_Bone)0; }
 Mirai_Vfx_Grid mirai_vfx_grid(Mirai_Vfx_Context ctx, uint resource) { return (Mirai_Vfx_Grid)0; }
 float4 mirai_vfx_grid_load(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer) { return float4(0.0); }
 float4 mirai_vfx_grid_sample(Mirai_Vfx_Context ctx, uint resource, float3 position, uint layer) { return float4(0.0); }
@@ -229,8 +224,6 @@ void mirai_vfx_grid_store(Mirai_Vfx_Cell cell, uint layer, float4 value) {}
 void mirai_vfx_grid_splat(Mirai_Vfx_Context ctx, uint resource, float3 position, uint layer, float4 value) {}
 Mirai_Vfx_Hit mirai_vfx_trace(Mirai_Vfx_Context ctx, float3 origin, float3 direction, float distance) { return (Mirai_Vfx_Hit)0; }
 uint mirai_vfx_emitter_capacity(Mirai_Vfx_Context ctx, uint resource) { return 0u; }
-uint mirai_vfx_emitter_alive(Mirai_Vfx_Context ctx, uint resource) { return 0u; }
-uint mirai_vfx_emitter_drawn(Mirai_Vfx_Context ctx, uint resource, uint i) { return 0u; }
 bool mirai_vfx_emitter_particle(Mirai_Vfx_Context ctx, uint resource, uint slot, out Mirai_Vfx_Particle value) { value = (Mirai_Vfx_Particle)0; return false; }
 uint mirai_vfx_emitter_word(Mirai_Vfx_Context ctx, uint resource, uint slot, uint word) { return 0u; }
 uint2 mirai_vfx_emitter_births(Mirai_Vfx_Context ctx, uint resource) { return uint2(0u); }
@@ -245,8 +238,6 @@ void mirai_vfx_data_store(Mirai_Vfx_Context ctx, uint resource, uint entry, uint
 uint mirai_vfx_grid_word_load(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, bool written) { return 0u; }
 void mirai_vfx_grid_word_store(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, uint value) {}
 uint mirai_vfx_grid_word_add(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, uint value) { return 0u; }
-int mirai_vfx_grid_word_min(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value) { return 0; }
-int mirai_vfx_grid_word_max(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value) { return 0; }
 float4 mirai_vfx_grid_load_written(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer) { return float4(0.0); }
 void mirai_vfx_grid_write(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer, float4 value) {}
 Mirai_Vfx_View mirai_vfx_view() { return (Mirai_Vfx_View)0; }
@@ -260,8 +251,6 @@ Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uin
 // The births of a channel resource in this frame, and the index-th of them.
 uint mirai_vfx_channel_count(Mirai_Vfx_Context ctx, uint resource);
 Mirai_Vfx_Birth mirai_vfx_channel_birth(Mirai_Vfx_Context ctx, uint resource, uint index);
-Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed);
-Mirai_Vfx_Bone mirai_vfx_bone_at(Mirai_Vfx_Context ctx, uint resource, uint bone, float along);
 Mirai_Vfx_Grid mirai_vfx_grid(Mirai_Vfx_Context ctx, uint resource);
 float4 mirai_vfx_grid_load(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer);
 float4 mirai_vfx_grid_sample(Mirai_Vfx_Context ctx, uint resource, float3 position, uint layer);
@@ -270,8 +259,6 @@ void mirai_vfx_grid_store(Mirai_Vfx_Cell cell, uint layer, float4 value);
 void mirai_vfx_grid_splat(Mirai_Vfx_Context ctx, uint resource, float3 position, uint layer, float4 value);
 Mirai_Vfx_Hit mirai_vfx_trace(Mirai_Vfx_Context ctx, float3 origin, float3 direction, float distance);
 uint mirai_vfx_emitter_capacity(Mirai_Vfx_Context ctx, uint resource);
-uint mirai_vfx_emitter_alive(Mirai_Vfx_Context ctx, uint resource);
-uint mirai_vfx_emitter_drawn(Mirai_Vfx_Context ctx, uint resource, uint i);
 bool mirai_vfx_emitter_particle(Mirai_Vfx_Context ctx, uint resource, uint slot, out Mirai_Vfx_Particle value);
 uint mirai_vfx_emitter_word(Mirai_Vfx_Context ctx, uint resource, uint slot, uint word);
 uint2 mirai_vfx_emitter_births(Mirai_Vfx_Context ctx, uint resource);
@@ -286,8 +273,6 @@ void mirai_vfx_data_store(Mirai_Vfx_Context ctx, uint resource, uint entry, uint
 uint mirai_vfx_grid_word_load(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, bool written);
 void mirai_vfx_grid_word_store(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, uint value);
 uint mirai_vfx_grid_word_add(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, uint value);
-int mirai_vfx_grid_word_min(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value);
-int mirai_vfx_grid_word_max(Mirai_Vfx_Context ctx, uint resource, int3 index, uint word, int value);
 float4 mirai_vfx_grid_load_written(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer);
 void mirai_vfx_grid_write(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer, float4 value);
 Mirai_Vfx_View mirai_vfx_view();
