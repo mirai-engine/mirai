@@ -361,6 +361,46 @@ the_clipboard_goes_through_the_callbacks_of_the_host :: proc(t:^testing.T) {
 }
 
 @(test)
+a_field_undoes_its_edits_and_goes_by_words :: proc(t:^testing.T) {
+    ctx:Context;s:Test_Text;input:Input
+    test_text_init(t,&ctx,&s,&input)
+    defer context_destroy(&ctx)
+    e:=&ctx.edit
+    // One frame each: what is typed, or a key; want: the text after it.
+    Step :: struct {typed:string,key:Key,modifiers:Modifiers,clip:string,want:Maybe(string)}
+    Case :: struct {name,initial:string,steps:[]Step,cursor:int}
+    P :: Modifiers{.Primary}
+    undo,redo:=Step{key=.Z,modifiers=P},Step{key=.Y,modifiers=P}
+    cases:=[]Case{
+        {"undo takes back a paste and a run of typing","",{{typed="a"},{typed="b"},{typed="c"},{key=.V,modifiers=P,clip="xyz",want="abcxyz"},
+            {key=.Z,modifiers=P,want="abc"},{key=.Z,modifiers=P,want=""},{key=.Y,modifiers=P,want="abc"},{key=.Z,modifiers=P+{.Shift},want="abcxyz"}},6},
+        {"a paste over a selection is one step","hello world",{{key=.V,modifiers=P,clip="xyz",want="xyz"},undo},11},
+        {"a run of Backspace is one step","hello world",{{key=.End},{key=.Backspace},{key=.Backspace},{key=.Delete},{key=.Backspace,want="hello wo"},undo},11},
+        {"a moved caret ends a run","",{{typed="a"},{typed="b"},{key=.Left},{key=.Right},{typed="c",want="abc"},undo},2},
+        {"undo past the first edit and redo past the last do nothing","ab",{{key=.End},{typed="c"},undo,undo,undo,{key=.Z,modifiers=P,want="ab"},redo,{key=.Y,modifiers=P,want="abc"}},3},
+        {"an edit forgets what was undone","",{{typed="a"},undo,{typed="b"},{key=.Y,modifiers=P,want="b"}},1},
+        {"the caret goes by words","hello big world",{{key=.End},{key=.Left,modifiers=P},{key=.Left,modifiers=P},{key=.Backspace,modifiers=P,want="big world"},
+            {key=.Right,modifiers=P},{key=.Delete,modifiers=P,want="big"},undo,{key=.Right,modifiers=P+{.Shift}}},9},
+    }
+    for c in cases {
+        s.name_length=copy(s.name[:],c.initial)
+        edit_request(&ctx,id(&ctx,"name"))
+        test_text_frame(&ctx,&input,&s)
+        for step,i in c.steps {
+            if step.clip!="" {s.clipboard_length=copy(s.clipboard[:],step.clip)}
+            if step.typed!="" {test_type(&input,step.typed)} else {test_key(&input,step.key)}
+            input.modifiers=step.modifiers
+            test_text_frame(&ctx,&input,&s)
+            input.modifiers={}
+            if want,ok:=step.want.?;ok {testing.expectf(t,text_edit_value(e)==want,"%s, step %v: %q",c.name,i+1,text_edit_value(e))}
+        }
+        testing.expectf(t,e.cursor==c.cursor,"%s: the caret at %v",c.name,e.cursor)
+        test_key(&input,.Escape)
+        test_text_frame(&ctx,&input,&s)
+    }
+}
+
+@(test)
 long_text_scrolls_to_keep_the_caret_in_sight :: proc(t:^testing.T) {
     ctx:Context;s:Test_Text;input:Input
     test_text_init(t,&ctx,&s,&input)

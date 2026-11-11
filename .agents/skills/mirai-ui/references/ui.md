@@ -315,6 +315,10 @@ All take the context, an id and their state by parameter.
 - A game field (`style`) takes everything from the style and its first click places the cursor.
 - There is only one field in edit per context (`ctx.edit`, up to `TEXT_EDIT_CAPACITY` bytes, what
   the AI chat message admits). The cursor blinks with `Input.dt` without allocating.
+- Primary+Z undoes and Primary+Y or Primary+Shift+Z redoes, within the edit in progress: a run of
+  typing, of Backspace or of Delete and a paste over a selection are one step each, and a caret
+  moved ends a run. The steps live in `ctx.edit` (`TEXT_EDIT_STEPS`, `TEXT_EDIT_HISTORY`); the
+  oldest go to make room. Primary with the arrows, Backspace or Delete goes by words.
 
 ### Number fields
 
