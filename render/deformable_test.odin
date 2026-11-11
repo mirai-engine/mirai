@@ -87,7 +87,7 @@ an_instance_whose_program_moves_vertices_shows_a_pose_of_its_own :: proc(t: ^tes
 	materials_set(r, {moving, DEFAULT_MATERIAL})
 	s := &r.scene
 	desc := Instance_Desc{object_id = 1, mesh = source, transform = Mat4(1), material = 1, tint = {1, 1, 1}}
-	scene_set(r, {desc}, nil, {}, {})
+	scene_given(r, {desc}, nil, {}, {})
 	displaced_prepare(r)
 	pose := Mesh_Handle(s.instances[0].meta.x & INSTANCE_MESH_MASK)
 	if !testing.expect(t, pose != source && mesh_displaced(s, u32(pose)), "the instance shows its pose") {return}
@@ -110,16 +110,16 @@ an_instance_whose_program_moves_vertices_shows_a_pose_of_its_own :: proc(t: ^tes
 	given := Instance_Material_Values{count = 1, entries = {0 = instance_material_value(1, program_parameter(pieces, "reach"), {2, 0, 0, 0})}}
 	version := s.material_versions[1]
 	skin.dirty = false
-	testing.expect(t, scene_tint(r, {0}, {{1, 1, 1}}, {{}}, nil, {given}))
+	testing.expect(t, scene_tint(r, {0}, {{1, 1, 1}}, {{}}, {given}))
 	displaced_prepare(r)
 	testing.expect(t, skin.dirty && s.material_versions[1] == version)
 	skins_bounds(r)
 	testing.expect_value(t, s.instances[0].bounds_max.xyz, s.meshes[source].bounds_max + 2)
-	testing.expect(t, scene_tint(r, {0}, {{1, 1, 1}}, {{}}, nil, {{}}))
+	testing.expect(t, scene_tint(r, {0}, {{1, 1, 1}}, {{}}, {{}}))
 	displaced_prepare(r)
 	skins_bounds(r)
 	testing.expect_value(t, s.instances[0].bounds_max.xyz, s.meshes[source].bounds_max + 1)
-	scene_set(r, {desc}, nil, {}, {})
+	scene_given(r, {desc}, nil, {}, {})
 	displaced_prepare(r)
 	testing.expect_value(t, Mesh_Handle(s.instances[0].meta.x & INSTANCE_MESH_MASK), pose)
 	// A material that moves nothing gives it its mesh back, and the pose goes.
@@ -139,7 +139,7 @@ an_instance_whose_program_moves_vertices_shows_a_pose_of_its_own :: proc(t: ^tes
 	displaced_prepare(r)
 	moved := s.instances[0].meta.x & INSTANCE_MESH_MASK
 	testing.expect(t, mesh_displaced(s, moved) && len(s.displaced) == 1, "another identity, another pose: the first goes")
-	scene_set(r, {}, nil, {}, {})
+	scene_given(r, {}, nil, {}, {})
 	displaced_prepare(r)
 	testing.expect(t, len(s.displaced) == 0 && s.meshes[moved].vertex_count == 0)
 }

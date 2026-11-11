@@ -23,6 +23,7 @@ Physics_Bake :: struct {
     tints:core.Table(render.Material_Values),
     configs:core.Table(destruct.Destructible),
     colliders:core.Table(phys.Collider),
+    rigids:core.Table(phys.Rigid_Body),
     states:core.Table(destruct.Destructible_State),
     groups:core.Table(destruct.Destructible_Group),
     elsewhere:core.Table(render.Drawn_Elsewhere),
@@ -42,7 +43,7 @@ physics_bake_settle :: proc(world,shared,editor:rawptr) {
 @(private)
 physics_bake_free :: proc(w:^Physics_Bake) {
     core.table_destroy(&w.transforms);core.table_destroy(&w.parents);core.table_destroy(&w.meshes);core.table_destroy(&w.tints)
-    core.table_destroy(&w.configs);core.table_destroy(&w.colliders);core.table_destroy(&w.states);core.table_destroy(&w.groups)
+    core.table_destroy(&w.configs);core.table_destroy(&w.colliders);core.table_destroy(&w.rigids);core.table_destroy(&w.states);core.table_destroy(&w.groups)
     core.table_destroy(&w.elsewhere);core.table_destroy(&w.ids);core.entities_destroy(&w.entities)
 }
 
@@ -83,7 +84,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
     core.add(&world.transforms,owner,core.Transform{position={0,2,0},rotation=1,scale={1,1,1}})
     core.add(&world.meshes,owner,render.Mesh_Renderer{mesh=mesh})
     config:=destruct.destructible();config.fracture=fracture;config.impact_damage=false;config.debris_volume=0
-    config.interior=material_id("Cobblestone");core.add(&world.configs,owner,config);core.add(&world.colliders,owner,destruct.collider_fracture())
+    config.interior=material_id("Cobblestone");core.add(&world.configs,owner,config);dense:=phys.COLLIDER_DEFAULT;dense.density=2000;core.add(&world.colliders,owner,dense)
     physics_bake_settle(&world,nil,nil)
     record:cache.Cache_Recorder
     if error:=cache.record_init(&record,{frames=151,tracks=128,samples=151*128,vertices=32768,indices=65536,origin=mm.TRANSFORM_IDENTITY});error!=.None {o.content.failed=true;return}
@@ -113,7 +114,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
             }
         }
         destruct.destruct_step(&physics,&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),
-            core.read(&world.configs),&world.meshes,&world.tints,core.read(&world.parents),&world.states,&world.groups,&world.elsewhere,&world.transforms,&world.ids,core.read(&world.colliders),{},nil)
+            core.read(&world.configs),&world.meshes,&world.tints,core.read(&world.parents),&world.states,&world.groups,&world.elsewhere,&world.transforms,&world.ids,core.read(&world.colliders),core.read(&world.rigids),{},nil)
         physics_bake_settle(&world,nil,nil)
         if frame==15 || frame==30 {phys.apply_area(&bodies,volume.sphere(4),{position={0,2.5,0}},.6,impulse=true,velocity_change=true)}
         error:=capture.capture_destructible(&record,f32(frame)/30,source[:],destruct.Destruct_View{core.ref(&physics),core.read(&world.states),core.read(&world.groups)},core.ref(&geometry))

@@ -88,15 +88,13 @@ unit :: proc "contextless" (v,fallback:[3]f32) -> [3]f32 {
     return length>1e-6?v/length:fallback
 }
 
-// The meshes with Deform into the frame: each one drawn through its copy, and
-// the copies that move this frame written in its Geometry stage.
+// The meshes with Deform into the frame: each one drawn through its copy, the
+// posed mesh of its entity (erender.Posed_Meshes), and the copies that move
+// this frame written in its Geometry stage.
 @(step="render",loops="game editor",before="render_sync")
 deform_render :: proc(
     state:^Deform_Gpu,deforms:core.Read(Deform),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),looks:core.Read(erender.Material_Values),
-    hidden:core.Read(erender.Hidden),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),
-    layers:core.Read(erender.Layers),app:^host.App,time:core.Time,frame:core.Frame_Time,
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),id:core.World_Id,
+    parents:core.Read(core.Parent),hidden:core.Read(erender.Hidden),app:^host.App,time:core.Time,frame:core.Frame_Time,id:core.World_Id,poses:^erender.Posed_Meshes,
 ) {
     if state==nil || app.renderer==nil || app.assets==nil {return}
     state.world=erender.world_key(id)
@@ -109,18 +107,13 @@ deform_render :: proc(
             e:=core.entity_at(deforms,row)
             deform:=core.at(deforms,row)
             static,has_mesh:=core.get(meshes,e)
-            world,placed:=core.get(worlds,e)
-            if !has_mesh || !placed || erender.is_hidden(hidden,parents,e) {continue}
+            if !has_mesh || !core.has(worlds,e) || erender.is_hidden(hidden,parents,e) {continue}
+            source,known:=erender.mesh_handle(app.assets,static)
+            if !known {continue}
             own:=base.text_get(deform.shape[:])
             // The stage with the equation of the shape, that of this plugin without a name; 0 while the shaders in use have none.
             pipeline:=erender.stage_pipeline(app.renderer,{stage=.Geometry,shader=own!=""?own:"deform",name="deform"})
             if pipeline==0 {continue}
-            look:=erender.MATERIAL_VALUES_DEFAULT
-            if value,exists:=core.get(looks,e);exists {look=value}
-            anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-            shown,usable:=erender.mesh_instance(app.assets,static,transform,look)
-            shown.anchor=anchor
-            if !usable {continue}
             at:=-1
             for &shaped,i in state.shaped {
                 if shaped.valid && shaped.entity==e {at=i;break}
@@ -128,16 +121,13 @@ deform_render :: proc(
             }
             if at<0 {continue}
             shaped:=&state.shaped[at]
-            if shaped.valid && (shaped.entity!=e || shaped.source!=shown.mesh) {
-                erender.mesh_remove(app.renderer,shaped.mesh)
-                shaped^={}
-            }
+            if shaped.valid && (shaped.entity!=e || shaped.source!=source) {shaped_drop(app.renderer,poses,shaped)}
             if !shaped.valid {
-                rest_min,rest_max,known:=erender.mesh_bounds(app.renderer,shown.mesh)
-                if !known {continue}
-                mesh,created:=erender.deformable_create(app.renderer,shown.mesh)
+                rest_min,rest_max,bounded:=erender.mesh_bounds(app.renderer,source)
+                if !bounded {continue}
+                mesh,created:=erender.deformable_create(app.renderer,source)
                 if !created {continue}
-                shaped^={entity=e,source=shown.mesh,mesh=mesh,rest_min=rest_min,rest_max=rest_max,valid=true}
+                shaped^={entity=e,source=source,mesh=mesh,rest_min=rest_min,rest_max=rest_max,valid=true}
             }
             shaped.seen=state.frame
             params:=Gpu_Params{
@@ -160,19 +150,21 @@ deform_render :: proc(
                     state.job_count+=1
                 }
             }
-            shown.mesh,shown.object_id=shaped.mesh,u64(e)
-            shown.copy_owner,shown.replace_source=base.name_hash("deform"),true
-            shown.highlight=erender.instance_outline(highlights,outlines,e)
-            if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-            erender.instance_add(&app.extras,shown)
+            if !erender.posed_set(poses,e,{mesh=shaped.mesh}) {shaped_drop(app.renderer,poses,shaped)}
         }
     }
     for &shaped in state.shaped {
-        if !shaped.valid || shaped.seen==state.frame {continue}
-        erender.mesh_remove(app.renderer,shaped.mesh)
-        shaped={}
+        if shaped.valid && shaped.seen!=state.frame {shaped_drop(app.renderer,poses,&shaped)}
     }
     if state.job_count>0 {erender.frame_pass(app.renderer,.Geometry,deform_record,state)}
+}
+
+// Its entity draws its own mesh again, and the copy goes.
+@(private)
+shaped_drop :: proc(renderer:^erender.Renderer,poses:^erender.Posed_Meshes,shaped:^Shaped) {
+    erender.posed_drop(poses,shaped.entity)
+    erender.mesh_remove(renderer,shaped.mesh)
+    shaped^={}
 }
 
 @(private)

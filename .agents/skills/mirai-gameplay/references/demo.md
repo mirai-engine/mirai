@@ -27,7 +27,7 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
 
 - `project.mirai`: start scene `control/control.scene`; plugins `spawn`, `cinematics`,
   `physics`, `destruct`, `multiplayer`, `paint`, `terrain`, `animation`, `previews`,
-  `physics_placement`, `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
+  `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
   activates on its own.
 - `settings.mirai`: `Spawn_Settings` with `"players": true` and `UI_Settings` in English and
   Spanish, with the prompt pack of `prompts_kenney`.
@@ -107,7 +107,7 @@ Scenes:
   - `game_glow` is the game's only writer of `Material_Values`: it also serves the portals' buttons,
     the lamps of `horror` and the fade of the physics gallery.
   - The cameras of the prefabs are `Camera_Follow`: `Eyes` the player's, `Orbit` with `aim` those of
-    the person and the dog, which walk with `move_relative_to` `View`.
+    the person and the dog, whose `Drivable` walks them with `move_relative_to` `View`.
 - **`control.odin`**: `Follow` is an AI that takes the body behind its leader while no seat drives
   it.
   - `game_dogs` (`server`) gives each person a dog with `Follow`; `game_follow` writes the
@@ -171,8 +171,8 @@ editor.
   Zombies wander, chase the runner they see (`nav_follow`) jumping from roof to roof and falling to
   the street through the generated links, and bite it three at a time (attack tokens); the rest
   surround it until a spot is freed. A cart (`Arena_Cart`, kinematic with `Nav_Obstacle`) parks on a
-  street: the tiles under it are redone. With `Horde_Waves` more arrive through the edge streets,
-  in [waves](#game-data).
+  street: the tiles under it are redone. With `Horde_Waves` more arrive in [waves](#game-data) at
+  the `Spawn_Point`s of an edge street, which have `players` off.
 - `Firefight` (`agents` per squad): two squads of tactical bots in a walled yard. Each soldier
   shoots with one of two tokens per enemy, takes cover on the side of a wall chosen by a place
   query over the cover offers (that its enemy does not see, close and with little enemy
@@ -215,9 +215,10 @@ inventories, dialogues or waves, and these are demo code that can be copied and 
   order, so in the grid they are added without touching the line. `Interface_Demo.talk` is the line
   it starts with.
 - **Waves** (`ai_arena.odin`): `Horde_Waves` in the `Horde` arena sends zombies after those the
-  arena builds. Each `Horde_Wave` says when, how many, how often and with what weight each
-  `Zombie_Kind` (speed, sight, color) comes out, and names the next wave; one that names an earlier
-  one repeats it. The component's seed fixes which kind comes out at each place.
+  arena builds. Each `Horde_Wave` says when, how many and how often, and names the next wave; one
+  that names an earlier one repeats it. Each zombie appears at the next spawn point without
+  players (`spawn.spawn` with no seat), and the prefab of that point (`ai/Walker zombie.scene`,
+  `Runner zombie`, `Brute zombie`) is its kind.
 - What is shown of a row (names, texts) is redone only when `records_generation` of its table or
   the language changes, so editing a row during Play is seen in the next tick at no cost to the
   others.
@@ -331,8 +332,8 @@ The `control` scene walks through the contract of [control](control.md) and of
 - `camera_mode` passes the body's camera through the presets, each time with a transition.
 - `aim` brings the prefab's `Person aim camera`, a camera with the `Aim` preset and a
   `Camera_Activation`; the person walks sideways looking toward it.
-- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots; its
-  viewer (without a seat: the focused player) blocks its input.
+- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots (a cut and
+  a blend, markers on the cameras); it blocks the input of the focused player.
 
 ## Networking
 

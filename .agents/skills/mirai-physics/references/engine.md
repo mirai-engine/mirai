@@ -44,9 +44,9 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
     `physics.character_capsule` problem; without room in `Physics_Settings.characters`,
     `physics.characters`.
 - `Character_Move` (`shared`): the `sim.Character_Move` that drives the character from the next step
-  (ground and air drive, launch, yaw and flags). Locomotion writes it, or in a game mode the step of
-  that mode and then locomotion, and `physics_step` hands it to the solver. Without it, the
-  character stays where it is.
+  (ground and air drive, launch, yaw and flags). The `locomotion` plugin writes it, or in a game
+  mode the step of that mode and then locomotion, or a game without locomotion, and `physics_step`
+  hands it to the solver. Without it, the character stays where it is.
 - `Character_State` and `core.Motion`: what the last step left. `Character_State` says whether it is
   supported and the ground that the end of the step found (walkable, distance, normal, velocity and
   `ground_turn`), which is the one the next step will use, the normal of the wall it leans on
@@ -75,10 +75,13 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   one, the whole world). `force_fields_step` (`fixed`, before `physics_prepare`) asks `apply_area`
   for it each tick while it is on; its `along` turns with the entity. The editor part draws where
   a selected one pushes (`force_field_preview`).
-- `Joint`, `Joint_State`: joins the body of the entity with that of `target` (or with the world if
-  it is `NONE`). Types `Fixed`, `Spherical`, `Revolute`, `Prismatic`, `Distance`, `SixDOF`, with
-  limits, drives, motor, spring and breaking. The configuration, the captured frames and the
-  breaking are replicated. Constructors: `joint_fixed|spherical|revolute|prismatic|distance|sixdof`.
+- `Joint`, `Joint_State`: a joint is an entity of its own that joins `a`, or the body of its parent
+  when `NONE`, with `b`, or the world when `NONE`, so a body has as many joints as there are. Its
+  frame is its Transform, seen from `a`, and seen from `b` where it is when made (kept in
+  `Joint_State`) unless `b_frame` gives it; a joint on the entity of `a` itself has the frame of
+  that body. Its six axes are the one description ([joints](physics.md#joints)); the presets
+  `joint_fixed|spherical|revolute|prismatic|distance` lock what each kind locks. The configuration,
+  the frame taken on `b` and the breaking are replicated.
 - `Body_Twin` and `Collider_Cuts`: the [twin and the cuts](physics.md#twins-and-cuts) as rows that
   another library (the portals) writes.
   - `Body_Twin` gives the body of its entity (`Rigid_Body`, `Character` or proxy) a second place:
@@ -99,10 +102,10 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   cap, and the friction of the ground does not define how much it slips.
 - `COLLIDER_DEFAULT` (also when adding it from the inspector) uses the `Default` preset without
   group: a door with a new collider blocks everything. The inspector shows all fields, also those
-  that do not correspond to the `kind`. Adding a `Character` or a `Destructible` (editor or API)
-  adds `collider_character()` or `collider_fracture()` if the entity has no collider.
+  that do not correspond to the `kind`. Adding a `Character` (editor or API) adds
+  `collider_character()` if the entity has no collider.
 - `kind`: `Hull`, `Mesh` and `Heightfield` read the entity's `Mesh_Renderer`; `External` leaves the
-  shape to another plugin (`destruct`, for the pieces), which takes surface and collision from this
+  shape to another plugin (`shapes`, for a brush), which takes surface and collision from this
   collider. `Mesh` and `Heightfield` contribute no mass and are for static geometry: nothing rejects
   a dynamic with them, but that case has no coverage.
 - A `Hull` whose mesh has several convex pieces (`host.assets_collision_hulls`: those of a generated
@@ -365,7 +368,8 @@ Manipulation:
   separately. Two proxies of the same body share a hold and the last request wins. The hold is
   copied with `Physics_State`.
 
-`^phys.Joint_Requests` (configuration, drives, world rotation, axes, motor, `repair_joint`):
+`^phys.Joint_Requests` (configuration, drives, world rotation, axes, `repair_joint`), sent to the
+entity of the joint:
 
 - `physics_step` is the writer of `Joint`: gameplay creates the component in a recipe and sends
   requests to change it during the simulation.
@@ -373,34 +377,48 @@ Manipulation:
   world variant receives the rotation of both bodies and uses the newly reconciled frames.
 - The queue is applied in order and reconciles each change before the next (`Configure`,
   `World_Rotation` and `Disable` end up suspended), also in the first tick and after repairing.
-- `joint_sixdof` starts with its six axes locked; activating drives frees them and keeps the
-  `Limited` ones. A zero budget keeps the drives; `set_joint_drive_enabled(false)` suspends them.
+- A drive frees the locked axes it drives and keeps the `Limited` ones. A zero budget keeps the
+  drives; `set_joint_drive_enabled(false)` suspends them.
 - An invalid request does not mutate the configuration (`physics.joint_request`); without capacity,
   `physics.joints`. `Joint_State.error` says why a joint is missing and `broken` prevents
   recreating it until `repair_joint`. Repeating targets or budgets keeps the warm start.
 
 ## Locomotion
 
-Locomotion (`locomotion.odin`, `locomotion_seat.odin`) walks, jumps, falls and flies a `Character`
-through its `input.Move_Input` ([engine/input](../../mirai-gameplay/references/control.md)), which
-the seat, the game, an AI or the network writes. The solver only sees the `Character_Move` that it
-writes.
+The first-party `locomotion` plugin (`plugins/locomotion/runtime`: `locomotion.odin`, `moves.odin`,
+`seat.odin`; it depends on `physics`, never the other way) walks, jumps, falls, flies and swims the
+`Character` of an entity that has the component of a mode (`Walk`, `Fly`, `Swim`) through its
+`input.Move_Input` ([engine/input](../../mirai-gameplay/references/control.md)), which the seat,
+the game, an AI or the network writes. A walker is `Character` + `Walk`. It drives the character
+only through the facade of physics: it writes `Character_Move`, reads `Character_State`,
+`core.Motion`, `gravity_of_entity` and `look_yaw_of`, and looks for ledges with `character_capsule`
+and the queries (`sweep`, `raycast`, `overlap_capsule`); like every other plugin it may not import
+the solver. A game with bodies and no walkers leaves the plugin out.
 
-- `Character` is the only component of the character: what the solver reads, the mode, how a seat
-  drives it and the `transient` state of locomotion (jump, coyote, layered movements). It is
-  `replicated`: each end runs the same locomotion from the same state.
-- `Move_Input` and `Character_Move` do not go in prefabs or scenes: `locomotion_step` adds them
-  while the character plays. The network replicates the `Move_Input` if the body has it when its
-  object is created, at the end of the tick: a character that a client drives appears before the
-  `simulate` stage (as `spawn` does), not through a `react` or `end` command.
+- Authored and run-time state are apart: `Character` (the body, and the `turn_speed` toward where it
+  goes that the seat, navigation and the animation read) and the mode components are written only
+  by an author; how a seat drives it (`move_relative_to`, `pitch_limit`) is in its
+  `input.Drivable`. `Locomotion_State` holds what changes while it plays (the mode it is in, jump,
+  coyote, layered movements, the gravity asked with `set_gravity_scale`), every field `transient`,
+  so a scene never holds one and the editor offers none, with `locomotion_step` its only writer.
+  The mode components and the state are `replicated`: each end runs the same locomotion from the
+  same state.
+- The mode a character starts in is not authored: walking (falling until it stands) with a
+  `Walk`, else swimming with a `Swim`, else flying with a `Fly`; a game that starts it otherwise
+  asks `set_mode`. A `Character` without any of them is not moved by locomotion.
+- `Move_Input`, `Locomotion_State` and `Character_Move` do not go in prefabs or scenes:
+  `locomotion_step` adds them while the character plays. The network replicates the `Move_Input`
+  if the body has it when its object is created, at the end of the tick: a character that a client
+  drives appears before the `simulate` stage (as `spawn` does), not through a `react` or `end`
+  command.
 - `locomotion_step` (`fixed`, `simulate` stage: after whoever writes the `Move_Input`, before
-  physics) takes the requests and writes every tick the `Character_Move` of each `Character` with
-  `locomotion_move`, a pure function of the input, the state, the `Character_State` that the
-  previous step left, the frame of its [vertical](character.md#the-vertical), the velocity of
-  `core.Motion` and gravity. The look turns around the up of that frame; ground, jump and air are
-  measured along it. It writes the two drives: the step chooses the ground or air one according to
-  the support it finds, so leaving an edge already moves as in the air even if locomotion saw it
-  supported.
+  `physics_prepare`) takes the requests and writes every tick the `Character_Move` of each
+  `Character` with a mode with `locomotion_move`, a pure function of the input, the state, the
+  `Character_State` that the previous step left, the frame of its
+  [vertical](character.md#the-vertical), the velocity of `core.Motion` and gravity. The look turns
+  around the up of that frame; ground, jump and air are measured along it. It writes the two
+  drives: the step chooses the ground or air one according to the support it finds, so leaving an
+  edge already moves as in the air even if locomotion saw it supported.
   - Walking (with `Walk`): velocity over the ground plane relative to it, with acceleration or
     braking. Holding the `sprint` action (or always, with `Walk.sprint_default`, Fortnite's
     "Sprint by Default"; the action then only asks for a `Tactical_Sprint`) raises the top speed
@@ -411,14 +429,14 @@ writes.
     and makes `MODE_FALLING` the mode. While the button stays down, for up to `Walk.jump_rise`, each
     tick tops the speed up back to the one it jumped with (as Unreal's `JumpMaxHoldTime`), until it
     is let go or something stops the rise; a ledge jump is not lengthened.
-  - Tactical sprint (with `Tactical_Sprint`, `locomotion_moves.odin`): sprinting forward on the
-    ground with `min_energy` starts it (`Character.sprint_active`, energy left by
+  - Tactical sprint (with `Tactical_Sprint`, `moves.odin`): sprinting forward on the
+    ground with `min_energy` starts it (`Locomotion_State.sprint_active`, energy left by
     `tactical_energy`). Its top speed and jump speed grow exponentially to their multipliers over
     `speed_ramp` and `jump_ramp` (`tactical_boost`), which also the animation bridge reads; the
     acceleration multiplier acts only on the ground. Energy is spent per second (not in the air with
     `pause_falling`), per jump and per slide start, and comes back `recharge_delay` after it was
     last spent. It ends without energy, going down in the air past `fall_grace`
-    (`Character.fall_time`: a jump still rising does not count), crouched, sliding or out of
+    (`Locomotion_State.fall_time`: a jump still rising does not count), crouched, sliding or out of
     walking and falling, as soon as sprint is let go, or after `grace` with sprint held and the move
     off forward; back within `grace` it keeps its ramp.
     Without energy it sprints as `Walk` says.
@@ -450,15 +468,14 @@ writes.
     - `jump` on the surface climbs out: an `Override` layered movement takes the feet to the surface
       at the jump speed of `Walk`, which then raises them `jump_height`, and the mode becomes
       falling. An `Override` removes `Float`.
-  - A mode without the component that parameterizes it, requested or the one it starts with, is the
+  - A mode without the component that parameterizes it, requested or left without it, is the
     `locomotion.mode_component` problem: the character falls if it has `Walk` and otherwise stays
     still.
 - The mode is a `Locomotion_Mode`, a type with names
   ([named ids](../../mirai-core/references/core.md#named-ids)): the engine declares
   `MODE_FALLING`, `MODE_WALKING`, `MODE_FLYING` and `MODE_SWIMMING`, and the game its own as
-  constants of the type (`MODE_CLIMB :: physics.Locomotion_Mode(16)`). `Character.mode` is the mode
-  it starts with, chosen in the inspector by name, and afterwards the mode it is in; it is changed
-  with `set_mode` in `Locomotion_Requests`.
+  constants of the type (`MODE_CLIMB :: locomotion.Locomotion_Mode(16)`). `Locomotion_State.mode`
+  is the mode it is in; it is changed with `set_mode` in `Locomotion_Requests`.
 - An entity can use the modes whose components it has: `Walk` for walking and falling, `Fly` for
   flying, `Swim` for swimming, the component of a game mode (`Climb{speed}`) for its own. Each mode
   constant says its component with `@(name_requires="Walk")`, and the inspector offers only the
@@ -472,8 +489,8 @@ writes.
   going the other way.
   The root motion of an action that moves its body arrives as one of them
   ([actions](../../mirai-animation/references/animation-actions.md#root-and-movement)).
-  A request to an entity without `Character`, without ticks or with the array full is the
-  `locomotion.request` problem.
+  A request to an entity that is no `Character` with a mode, without ticks or with the array full
+  is the `locomotion.request` problem.
 - A game mode (climbing) is a step of its own that walks the entities with its component and, while
   they are in its mode, writes the `Character_Move` every tick before `locomotion_step`; this adds
   the layered movements to it (`layers_apply`, public) and does not compute the move. Entering and
@@ -485,17 +502,17 @@ A `Character` with `core.Own_Pace` walks, jumps and swims in its own time, `pace
 the world ([own pace](../../mirai-core/references/core.md#core-storages)).
 
 - `locomotion_move_paced` takes to own time the velocity (by the pace of the previous move,
-  `Character.pace`), that of the ground and that of the fluid, calls `locomotion_move` with
+  `Locomotion_State.pace`), that of the ground and that of the fluid, calls `locomotion_move` with
   `dt * pace` and returns the move in world time (`move_paced`): drives and `launch` by the pace,
   forces by its square and `Character_Move.pace`, with which the solver scales gravity, adhesion and
   push.
 - When the pace changes, a `launch` keeps the own velocity it had (along the ground if supported):
   it neither brakes nor shoots off when slow motion starts.
 - A layered movement lasts its `ticks` of own time. A game mode writes its `Character_Move` in its
-  own time (with `dt * pace_of` and the velocity of `core.Motion` over `Character.pace`), and
-  `locomotion_step` takes it to the world's.
-- The seat turns toward the movement at `turn_speed` of own time; mouse look does not depend on
-  time.
+  own time (with `dt * pace_of` and the velocity of `core.Motion` over `Locomotion_State.pace`),
+  and `locomotion_step` takes it to the world's.
+- The seat turns toward the movement at `Character.turn_speed` of own time; mouse look does not
+  depend on time.
 
 ### Seat control
 
@@ -503,11 +520,12 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
   `input`): the `move` and `look` actions (`Axis2`) give the movement and the look, and the buttons
   are the `Button` actions that the seat has pressed, by id; a button that the game declares
   (crouch) reaches a mode of its own this way without mapping code. It adds `ground_turn` to it.
-- `move_relative_to` says what forward is:
+- `move_relative_to` of its `Drivable` says what forward is:
   - `Look`: where it looks; the look turns `LOOK_SPEED` radians per unit of the action and the pitch
-    stays within `pitch_limit` (first person, camera behind that follows the look).
+    stays within the `pitch_limit` of its `Drivable` (first person, camera behind that follows the
+    look).
   - `Camera`: where the camera of its `Drivable` looks, and the body turns toward the movement at
-    `turn_speed` (orbiting camera).
+    `Character.turn_speed` (orbiting camera).
   - `World`: the world -Z, turning the same (top-down view).
   - Both give the heading transverse to the character's up, in the frame of its vertical.
 
@@ -517,11 +535,11 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
     like `Camera` but looking where the camera looks if it has `facing` (aiming), and like `Camera`
     otherwise. For a body whose camera changes mode or that aims with another
     ([modes](../../mirai-gameplay/references/control.md#modes)).
-- A player's sensitivity is the scale of their `look` bindings. `move`, `jump` and `sprint`
-  belong to `physics` (`Walk_Action`) and `look` to `engine/input` (`Look_Action`)
+- A player's sensitivity is the scale of their `look` bindings. `move`, `jump`, `sprint` and
+  `crouch` belong to `locomotion` (`Walk_Action`) and `look` to `engine/input` (`Look_Action`)
   ([actions](../../mirai-gameplay/references/control.md#actions)).
 - Without a seat, before `locomotion_step` takes its initial look or where another end decides
-  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `input.mirai`
+  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `Input_Settings`
   gives `move` or `look` another type, it is the `locomotion.seat_action` problem.
 - A step that adjusts what it wrote runs with `after="locomotion_seat"`; a portal turns only the
   look of the traveler that drives its tip.
@@ -690,7 +708,9 @@ Joints over the network:
 `plugins/physics/editor` gives the editor what belongs to physics through its
 [providers](../../mirai-editor/references/extensions.md): the preset of a `Collider` and
 `Collision_Settings` in the inspector, the `physics.collision.*` methods of the API, the `Collider`
-that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the wireframes of
+that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the
+[Simulate limited](../../mirai-editor/references/editor.md#simulate) to some entities that
+`physics.settle`, **Drop to rest** and the **Drop** tool run, the wireframes of
 the selection's colliders, the `collision` and `collision.<category>` view modes, and the fluids of
 the world that is seen (box edges and a grid over the sea), editing and in Play: nothing else shows
 them while no plugin draws them. Without the plugin none of that appears.
@@ -703,6 +723,15 @@ them while no plugin draws them. Without the plugin none of that appears.
   changing them.
 - The settings list categories, presets, pushes and the entries of undeclared values, with a button
   that removes them.
+- The **Drop** tool (shortcut **P**): the left button held on the scene drops the chosen mesh, at
+  its height and scale, under the pointer and keeps dropping at its speed; what fell is seen
+  falling in the document until **Confirm** (one undo step with the meshes and their poses),
+  **Cancel**, Escape or another tool, which leave the document as it was (`physics.drop` ends it
+  by API). Each dropped mesh gets a `Collider` of kind `Hull`, which stays: in the game it is a
+  static prop that collides.
+- In a settle, the moving entities are dynamic bodies (their `Rigid_Body` when dynamic) and every
+  other body is static and every character the still capsule of its collider; joints act. Only
+  physics runs, so an `External` collider is the mesh its entity shows (a hull when it moves).
 
 ## Changing these libraries
 

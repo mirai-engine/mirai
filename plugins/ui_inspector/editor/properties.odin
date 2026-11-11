@@ -873,6 +873,7 @@ fixed_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
     }
     if n.kind==.Progress {style_changed(p,"Style",value_row(p,"Fills",Enum_Value(ui.Progress_Fill),&st.fill_mode,d.fill_mode,"Which way the bar grows: from a side, from the center or around"))}
     style_changed(p,"Style",value_row(p,"Transition",Seconds_Value,&st.transition,d.transition,"How long its colors take to go from the look of one state to that of the next; 0: at once"))
+    style_changed(p,"Style",value_row(p,"Layout transition",Seconds_Value,&st.layout_transition,d.layout_transition,"How long it takes to go to a new place or size the layout gives it; 0: at once"))
 }
 
 // The rows of the look the pane edits: the box, for what draws one, the
@@ -1212,8 +1213,8 @@ revert_arrow :: proc(ctx:^ui.Context,name:string,changed:bool) -> bool {
     return ui.button(ctx,ui.id(ctx,name),{icon=.Revert,icon_size=12,icon_color=ctx.theme.text_muted,style=.Ghost,width=editor.REVERT_SIDE,height=editor.REVERT_SIDE}).clicked
 }
 
-// An input action of the game, by its name (an Action constant of any of
-// its packages, as input.mirai binds them): none, or one of the list. A name
+// An input action of the game, by its name (a member of an enum @(actions)
+// of any of its packages): none, or one of the list. A name
 // the game no longer has stays, marked, until another is chosen.
 @(private)
 action_row :: proc(p:^Pane,label:string,field:[]u8) -> (changed:bool) {
@@ -1235,7 +1236,7 @@ action_row :: proc(p:^Pane,label:string,field:[]u8) -> (changed:bool) {
         selected=len(names)
         append(&names,fmt.tprintf("%s (missing)",current))
     }
-    if row(p,label,"An input action of the game, as input.mirai binds it; one marked missing the game does not declare, and does nothing") {
+    if row(p,label,"An input action of the game; one marked missing the game does not declare, and does nothing") {
         if ui.dropdown(ctx,ui.id(ctx,label),{list=names[:]},&selected,{width=-1}) && !(missing && selected==len(names)-1) {
             for &b in field {b=0}
             if selected>0 {copy(field[:len(field)-1],names[selected])}

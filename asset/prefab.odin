@@ -64,9 +64,15 @@ path_covers :: proc(path,part:string) -> bool {
     return len(part)>len(path) && part[:len(path)]==path && (part[len(path)]=='.' || part[len(path)]=='[')
 }
 
-// Whether an open asset, or a file as its registry read its header, is a prefab: a scene with one root.
-asset_prefab :: proc "contextless" (a:^Asset) -> bool {return a.blob.header.kind==KIND_SCENE && .One_Root in a.blob.header.flags}
-registry_prefab :: proc "contextless" (file:^Registry_File) -> bool {return file.state==.Asset && file.kind==KIND_SCENE && .One_Root in file.flags}
+// Whether an open asset, or a file as its registry read its header, is a prefab: a scene its header says is one.
+asset_prefab :: proc "contextless" (a:^Asset) -> bool {return a.blob.header.kind==KIND_SCENE && .Prefab in a.blob.header.flags}
+registry_prefab :: proc "contextless" (file:^Registry_File) -> bool {return file.state==.Asset && file.kind==KIND_SCENE && .Prefab in file.flags}
+
+// Why a scene cannot be a prefab: it has no root or several; "" when it can.
+prefab_refused :: proc(scene:^Scene) -> string {
+    if _,one:=prefab_root(scene);one {return ""}
+    return "a prefab has exactly one root: put its entities under one, or keep it a scene"
+}
 
 // The entity an instance of a prefab places: its only entity without parent.
 prefab_root :: proc(prefab:^Scene) -> (root:base.Entity_Id,found:bool) {

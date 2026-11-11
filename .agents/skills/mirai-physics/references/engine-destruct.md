@@ -5,12 +5,19 @@ which it knows the integration alone. It connects the
 [breakable bodies of the solver](destruction.md) with entities, materials, requests and queries;
 networking is the automatic bridge `destruct_multiplayer` ([network](#network)). Body physics is in
 [physics](engine.md); integration verification is in [engine.md](engine.md#verification). Fields
-and defaults: `components.odin` (`destructible()`, `collider_fracture()`).
+and defaults: `components.odin` (`destructible()`).
 
-An entity with `Mesh_Renderer`, `Destructible` and a `Collider` of type `External`, without
-`Rigid_Body`, uses a pre-authored
+An entity with `Mesh_Renderer` and `Destructible` uses a pre-authored
 [.fracture source](../../mirai-assets/references/kinds.md#fracture) or generates Voronoi when the
-simulation starts.
+simulation starts. A breakable is a body that can break: its pieces replace the entity's
+`Collider`, of any kind, and its `Rigid_Body` says how it moves; neither is required.
+
+- Without a `Collider` its pieces take the surface and collision of `COLLIDER_DEFAULT`; without a
+  `Rigid_Body` it is dynamic. Of a kinematic or static `Rigid_Body` the body it is made as is
+  kinematic, and every piece falls with its `gravity_scale`; the rest of the `Rigid_Body` is not
+  read.
+- Until the breakable is made, physics makes a body of the `Collider` and the `Rigid_Body` as for
+  any entity; making the breakable ends it, and the entity becomes a proxy of its body.
 
 - Each piece has a convex hull; the bonds and clusters determine which bodies detach. A whole
   cluster collides with the hull cooked in its source.
@@ -25,21 +32,22 @@ simulation starts.
 ## Components
 
 - `Destructible`: Voronoi (`pieces`, `seed`, `pattern`, `anchored`) or a `.fracture` source, and the
-  parameters of [`Breakable_Desc`](destruction.md#construction). `kinematic` and `follow_parent`
-  allow kinematic or anchored collections that follow their parent.
-- `Destructible_State`: what this library stores of the destructible; `initial` is the local
-  authoring pose that `follow_parent` uses.
-- `Destructible_Group`: the entity of a detached body or of the root group. This library owns its
-  `Transform`.
+  parameters of [`Breakable_Desc`](destruction.md#construction) that are not those of a body.
+- `Destructible_State`: what this library stores of the destructible.
+- `Destructible_Group`: the entity of a detached body or of the root group, with the mesh generated
+  for its pieces: the one place that says which entity a group is. Physics writes its `Transform`,
+  as a proxy of the body.
 
 ## Configuration and setup
 
 - `impact_damage` enables automatic contact damage ([damage](destruction.md#damage-and-fields));
   disabling it keeps colliders and explicit damage, strain and cut requests, without requiring an
   artificially high threshold. Passive clients disable it: the server decides breakage.
-- Without that `Collider` the destructible is not created and it is reported once. Changing the
-  `Collider` surface, the configuration, the identified geometry or the scale rebuilds it intact;
-  changing its collision re-filters all pieces without rebuilding.
+- Only what changed is looked at (`core.changes` of `Destructible`, `Rigid_Body`, `Collider` and
+  `Mesh_Renderer`). A change of the `Destructible` or the `Rigid_Body`, of the surface of the
+  `Collider`, or of the mesh, shape or scale the pieces were cut for rebuilds it intact; one of the
+  collision of the `Collider` re-filters all pieces without rebuilding. The breakable is the
+  reference: nothing keeps a copy of what it was made from.
 - With `.fracture`, geometry, anchors and clusters come from the source (its hull points scale with
   the entity) and the `Mesh_Renderer` still gives materials and intact exterior mesh. A source with
   a `source_mesh` different from the `Mesh_Renderer` is rejected.
@@ -54,7 +62,7 @@ simulation starts.
   Id, in `Destruct_Events.grouped`.
 - A failure is a `destruct.*` problem of the destructible
   ([problems](../../mirai-core/references/core.md#problems)), with the cause and the fix, and it is
-  not retried until the configuration changes. What the simulation did not give it in a tick is
+  not retried until what it is made of changes. What the simulation did not give it in a tick is
   also one, with the field to raise:
   - `destruct.events`: break events that did not fit in those of a step
     (`Physics_Settings.events`): they were applied, and not told to the game or sent to clients.
@@ -97,10 +105,9 @@ Proxies and movement:
   is the retained one. `owner(view,e)` gives the destructible of which `e` is a part, or `NONE`.
 - A joint follows the proxy entity and its retained group; it does not look for the piece that
   contains its anchor.
-- `follow_parent` keeps the initial local pose under the parent and requests `move_kinematic` before
-  `physics_step`: the anchors stay in that kinematic body and the released pieces are dynamic.
-- The game moves the parent freely or sends a `Body_Request`; it does not write the transforms owned
-  by `Destructible` or `Destructible_Group`.
+- A kinematic destructible moves as any kinematic body, with `physics.move_kinematic` on its entity:
+  the anchors stay in that body and the released pieces are dynamic.
+- The game does not write the `Transform` of a destructible or of its groups: physics writes them.
 
 ## Reflection, queries and events
 
@@ -151,9 +158,9 @@ rollback.
 - Non-cosmetic groups receive the `Id` from `core.id_new` from a state derived from the root's Id
   and `group`, the same at each end. If the root has `Replicate`, the bridge gives each group of
   `Destruct_Events.grouped` its `Replicate` and the server publishes it as an authoritative body
-  with inherited audience and priority; the client asks to adopt it with
-  `multiplayer.adopt(&adoptions, id, e)` and the network binds it to its replica at the end of the
-  tick. Debris is local.
+  with inherited audience and priority; the client marks it with
+  `multiplayer.predict_kept(&spawns, e)` and the network binds it to its replica at the end of the
+  tick, while destruct keeps it. Debris is local.
 - A destructible without Id cannot pair its events between ends.
 - The journal lives in `Destruct_Net`, one per world like the session.
 - The server offers the state of what is broken to each connection that enters its world

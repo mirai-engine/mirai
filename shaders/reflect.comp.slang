@@ -28,6 +28,8 @@
 // resume (params.resume) shades the hit from what the program gave there.
 // The exact filters of glass with a program are added then too.
 #define MIRAI_RAY_FILTERS
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #define POINTS_SLOT SLOT_POINTS
 #define MIRAI_DEFER_FILTERS
 #include "lighting.slang"

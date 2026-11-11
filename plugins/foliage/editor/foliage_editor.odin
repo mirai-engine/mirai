@@ -471,7 +471,7 @@ types_list :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
                 for id in shown[first:min(first+columns,len(shown))] {
                     t,_:=foliage.source_type(source,id)
                     shown_asset,kind:=t.mesh,asset.KIND_MESH
-                    if shown_asset=={} {shown_asset,kind=t.prefab,editor.SHOWN_PREFAB}
+                    if shown_asset=={} {shown_asset,kind=t.prefab,asset.KIND_SCENE}
                     card:=ui.id(ctx,"type",int(id)+1)
                     if tool.reveal==id {ctx.reveal_next,tool.reveal=card,0}
                     it:=editor.asset_card_begin(s,card,shown_asset,kind,type_name(t),slice.contains(tool.painted[:],id),cell)

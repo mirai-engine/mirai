@@ -2,8 +2,6 @@ package main
 
 import "core:fmt"
 import "core:odin/ast"
-import "core:odin/parser"
-import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -28,26 +26,14 @@ alloc_lint_applies :: proc(root,folder:string) -> bool {
     return len(parts)>=2 && parts[len(parts)-1]=="game" && (parts[0]=="demo" || parts[0]=="templates")
 }
 
-// Prints the allocations of the sources of a package, its tests aside, whose
-// allocator error nothing receives, and the appends that drop theirs where
-// their element is then read (append_judge). False when there is one or a
-// source does not parse.
-alloc_lint_package :: proc(folder:string) -> bool {
-    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
-    clean:=true
-    for entry in entries {
-        if entry.type!=.Regular || !strings.has_suffix(entry.name,".odin") || strings.has_suffix(entry.name,"_test.odin") {continue}
-        data,error:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-        if error!=nil {fmt.eprintfln("mirai check: could not read %s",entry.fullpath);clean=false;continue}
-        findings:=make([dynamic]Alloc_Finding,context.temp_allocator)
-        if !alloc_lint_source(entry.fullpath,string(data),&findings) {clean=false}
-        for f in findings {
-            clean=false
-            fmt.eprintfln("%s(%d:%d) Error: the allocator error of `%s` is dropped. %s",entry.fullpath,f.line,f.column,f.call,alloc_fix(f.call))
-        }
-    }
-    return clean
+// Prints the allocations of a source whose allocator error nothing receives,
+// and the appends that drop theirs where their element is then read
+// (append_judge). False when there is one.
+alloc_lint_print :: proc(file:^ast.File) -> bool {
+    findings:=make([dynamic]Alloc_Finding,context.temp_allocator)
+    alloc_lint_file(file,&findings)
+    for f in findings {fmt.eprintfln("%s(%d:%d) Error: the allocator error of `%s` is dropped. %s",file.fullpath,f.line,f.column,f.call,alloc_fix(f.call))}
+    return len(findings)==0
 }
 
 @(private="file")
@@ -152,18 +138,13 @@ Alloc_Scan :: struct {
     scopes:[dynamic]Alloc_Scope,
 }
 
-// The findings of one source. False when it does not parse: the parser has
-// printed where.
-alloc_lint_source :: proc(path,text:string,findings:^[dynamic]Alloc_Finding) -> bool {
+// The findings of one parsed source.
+alloc_lint_file :: proc(file:^ast.File,findings:^[dynamic]Alloc_Finding) {
     context.allocator=context.temp_allocator
-    file:=ast.File{src=text,fullpath=path}
-    p:=parser.default_parser()
-    if !parser.parse_file(&p,&file) || file.syntax_error_count>0 {return false}
-    scan:=Alloc_Scan{text=text,findings=findings}
+    scan:=Alloc_Scan{text=file.src,findings=findings}
     visitor:=ast.Visitor{visit=alloc_visit,data=&scan}
     for decl in file.decls {ast.walk(&visitor,decl)}
     slice.stable_sort_by(findings[:],proc(a,b:Alloc_Finding) -> bool {return a.line<b.line || (a.line==b.line && a.column<b.column)})
-    return true
 }
 
 @(private="file")

@@ -70,7 +70,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(renderer)
     assets:host.Assets
@@ -129,7 +129,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,measure(renderer,"one rig posed"),1)
     if !testing.expect_value(t,len(host.extras_instances(&app.extras)),1) {return}
-    gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_set_environment(renderer,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_update(renderer,0,host.extras_instances(&app.extras),true)
     if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
     record:=renderer.scene.meshes[core.entity_map_get(&state.instances,draws[0]).mesh]
     result:[1]gpu.Gpu_Posed_Vertex

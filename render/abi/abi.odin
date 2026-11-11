@@ -49,6 +49,19 @@ SLOT_LAYERS           :: 32
 SLOT_DISTANCE         :: 33
 SLOT_DRAW             :: SLOT_PASS9
 
+// The finest level the passes that shade surfaces sample of each texture
+// (render/texture_residency.odin): words before the first texture (the first
+// says how many textures the passes may write), the slot of the passes that
+// write it, and the code of a level: steps of 1/TEXTURE_FEEDBACK_STEPS from
+// TEXTURE_FEEDBACK_LOW, below TEXTURE_FEEDBACK_CODES.
+TEXTURE_FEEDBACK_FIRST :: 1
+TEXTURE_FEEDBACK_SLOT  :: SLOT_PASS7
+TEXTURE_FEEDBACK_LOW   :: -32
+TEXTURE_FEEDBACK_STEPS :: 16
+TEXTURE_FEEDBACK_CODES :: 64 * TEXTURE_FEEDBACK_STEPS
+// Of the material sampler: the samples anisotropic filtering spreads along the longer axis of a footprint.
+MATERIAL_ANISOTROPY    :: 8
+
 // The texture table: its first entries hold the tables of the renderer.
 TEXTURE_RESERVED          :: 4
 DFG_TEXTURE               :: 0

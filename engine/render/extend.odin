@@ -191,7 +191,7 @@ EXTENSION_TABLE_TEXTURE_CAPACITY :: gpu.EXTENSION_TABLE_TEXTURE_CAPACITY
 pass_table_texture_copy :: gpu.pass_table_texture_copy
 LIGHTS_ASKED_MAX :: gpu.LIGHT_REGION_MAX
 pass_lights :: gpu.pass_lights
-pass_buffer_ready :: gpu.pass_buffer_ready
+pass_buffer_held :: gpu.pass_buffer_held
 pass_buffer_write :: gpu.pass_buffer_write
 pass_buffer_fill :: gpu.pass_buffer_fill
 pass_dispatch_indirect :: gpu.pass_dispatch_indirect

@@ -21,7 +21,7 @@ Render units:
   irradiance of a light is stored as the luminance of the Lambert white it illuminates
   (lux / π): a diffuse of albedo `a` returns `a · D` and the specular lobe is multiplied by π
   ([BRDF](materials.md#brdf)).
-- **A single place** converts: `scene_set_lights` the local lights, `view_begin` the sun, the sky
+- **A single place** converts: `scene_light_update` the local lights, `view_begin` the sun, the sky
   and the background, and the shaders the emission with `render_units` (`frame.sky_color.w` is the
   scale).
 - The scale is a power of two that brings the strongest light close to one (`light_scale_of`),

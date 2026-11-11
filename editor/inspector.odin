@@ -2344,25 +2344,24 @@ FIELD_KINDS :: 4 // of asset one Asset_Id field takes
 // The kinds of asset a field takes, the first for its look while empty; none: every kind.
 Asset_Kinds :: [FIELD_KINDS]asset.Fourcc
 
-// Whether a field takes an asset shown as a kind: any when it names none, a .sound_set where
-// a .sound goes, since it plays as one, and a prefab where a scene goes, since it is one.
+// Whether a field takes an asset of a kind: any when it names none, and a .sound_set where
+// a .sound goes, since it plays as one.
 asset_kind_takes :: proc "contextless" (field:Asset_Kinds,kind:asset.Fourcc) -> bool {
     if field[0]==0 {return true}
     for each in field {
-        if each!=0 && (kind==each || each==asset.KIND_SOUND && kind==asset.KIND_SOUND_SET || each==asset.KIND_SCENE && kind==SHOWN_PREFAB) {return true}
+        if each!=0 && (kind==each || each==asset.KIND_SOUND && kind==asset.KIND_SOUND_SET) {return true}
     }
     return false
 }
 
 // The kinds of asset a field takes: the extensions its tag names, apart by
 // spaces (`kind=.anim .character`), each of the engine or one a plugin declares
-// (Asset_Kind_Provider), or prefab; without one known, what its name suggests.
+// (Asset_Kind_Provider); without one known, what its name suggests.
 field_asset_kinds :: proc(s:^Session,tag:reflect.Struct_Tag,name:string) -> (kinds:Asset_Kinds) {
     if extensions,found:=core.field_option(tag,"kind");found {
         count:=0
         for extension in strings.fields_iterator(&extensions) {
             kind,known:=asset.kind_of_extension(extension)
-            if extension=="prefab" {kind,known=SHOWN_PREFAB,true}
             if !known {
                 if declared:=asset_plugin_kind_of_extension(s,extension);declared!=nil {kind,known=declared.kind,true}
             }
@@ -2386,8 +2385,7 @@ asset_kind_of_field :: proc(s:^Session,name:string) -> asset.Fourcc {
     case strings.contains(lower,"mesh"):     return asset.KIND_MESH
     case strings.contains(lower,"material"): return asset.KIND_MATERIAL
     case strings.contains(lower,"texture"),strings.contains(lower,"image"): return asset.KIND_TEXTURE
-    case strings.contains(lower,"prefab"):   return SHOWN_PREFAB
-    case strings.contains(lower,"scene"):    return asset.KIND_SCENE
+    case strings.contains(lower,"prefab"),strings.contains(lower,"scene"): return asset.KIND_SCENE
     case strings.contains(lower,"sound"),strings.contains(lower,"audio"),strings.contains(lower,"clip"): return asset.KIND_SOUND
     case strings.contains(lower,"anim"):     return asset.KIND_ANIMATION
     case strings.contains(lower,"widget"),strings.contains(lower,"interface"): return asset.KIND_UI
@@ -2455,7 +2453,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             // The parts of imports, which the browser hides, after the rest.
             parts:=make([dynamic]^asset.Registry_File,context.temp_allocator)
             for &file in a.registry.files {
-                if file.state!=.Asset || !asset_kind_takes(l.kinds,shown_kind(&file)) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
+                if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
                 if l.path>0 && (len(file.path)>=l.path || !asset_under_root(&a.registry,file.path)) {continue}
                 if l.with && !slice.contains(ins.list_with[:],file.id) {continue}
                 if content_part(&a.registry,&file) {
@@ -2484,14 +2482,13 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
         for index in first..<last {
             r:=ui.Row{label=choices[index],height=row_height}
             if l.key!=ADD_COMPONENT_KEY {
-                kind:=asset.Fourcc(0)
+                r.icon,r.icon_color=asset_icon(s,0)
                 file:^asset.Registry_File
                 if ids[index]!={} {
                     found:bool
                     file,found=asset.registry_find(&s.app.assets.registry,ids[index])
-                    if found {kind=shown_kind(file);r.detail=file.path} else {file=nil}
+                    if found {r.icon,r.icon_color=asset_file_icon(s,file);r.detail=file.path} else {file=nil}
                 }
-                r.icon,r.icon_color=asset_icon(s,kind)
                 if file!=nil {
                     if _,_,quad:=content_preview(s,file,row_height);quad.kind!=.Solid {r.icon,r.quad=.None,quad}
                 }

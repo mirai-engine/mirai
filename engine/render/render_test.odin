@@ -14,7 +14,7 @@ import mm "mirai:std/math"
 @(test)
 shared_generated_chunks_survive_world_layout_changes_and_local_preview_retirement :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
@@ -118,7 +118,7 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
 @(test)
 meshes_created_before_their_world_transform_become_visible_and_visual_instances_stay_transient :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},fixed_dt=1.0/60,threads=1,render_settings=settings})
     testing.expect_value(t,error,host.App_Error.None)
     if app==nil {return}
@@ -278,7 +278,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
 @(test)
 hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},fixed_dt=1.0/60,threads=1,render_settings=settings})
     testing.expect_value(t,error,host.App_Error.None)
     if app==nil {return}
@@ -335,7 +335,7 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
 @(test)
 meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},fixed_dt=1.0/60,threads=1,render_settings=settings})
     testing.expect_value(t,error,host.App_Error.None)
     if app==nil {return}
@@ -449,7 +449,7 @@ the_meshes_of_a_body_are_marked_with_the_local_player_whose_view_hides_it :: pro
 @(test)
 a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},fixed_dt=1.0/60,threads=1,render_settings=settings})
     testing.expect_value(t,error,host.App_Error.None)
     if app==nil {return}

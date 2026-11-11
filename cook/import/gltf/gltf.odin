@@ -1072,7 +1072,7 @@ gltf_markers :: proc(g:^Gltf,clip:string,extras:cg.extras_t,total:^int) -> (mark
     for m,i in value.markers {
         if m.time-m.time!=0 || m.time<0 || m.duration-m.duration!=0 || m.duration<0 {return nil,importer.fail(r,.Malformed,"glTF animation %s has a marker %s whose time or duration is not finite and nonnegative",clip,m.name)}
         if m.name=="" || len(m.name)>=asset.ANIMATION_NAME_CAPACITY {return nil,importer.fail(r,.Malformed,"glTF animation %s has a marker without a name or with one of %d bytes or more",clip,asset.ANIMATION_NAME_CAPACITY)}
-        out[i]={m.time,importer.own(r,m.name),m.duration}
+        out[i]={time=m.time,name=importer.own(r,m.name),duration=m.duration}
     }
     for i in 1..<len(out) {
         for j:=i;j>0 && out[j].time<out[j-1].time;j-=1 {out[j],out[j-1]=out[j-1],out[j]}

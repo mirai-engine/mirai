@@ -14,9 +14,9 @@ pause, settings and HUD. Follow these steps; then [rules-test.md](third-person/r
 
 `project.mirai`: add `"terrain","foliage","water","fog"` to the `plugins` the game already has.
 Remove a plugin only after its imports are gone from `game/` and `tools/`. `settings.mirai` stays:
-`Spawn_Settings.players` gives each player a body at the `Spawn_Point`, with no spawn or camera
-code. A sunny scene needs no exposure setting and no fog: `render.SKY_DEFAULT` and a 100000 lux sun
-are a clear day, auto exposure meters it.
+`Spawn_Settings.players` gives each player a body at the `Spawn_Point` (its `players` on), with no
+spawn or camera code. A sunny scene needs no exposure setting and no fog: `render.SKY_DEFAULT` and
+a 100000 lux sun are a clear day, auto exposure meters it.
 
 ## 2. The player
 
@@ -28,7 +28,7 @@ P="mirai rpc --project ."
 $P scene.open '{"path":"player/Player.scene"}'
 $P scene.write '{"root":"Player","merge":true,"entities":[{
   "components":{
-    "Character":{"move_relative_to":"Camera","turn_speed":12},
+    "Drivable":{"move_relative_to":"Camera"},"Character":{"turn_speed":12},
     "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
             "jump_height":1.9,"jump_rise":0.11,"jump_cut":0.42}},
   "children":[

@@ -173,7 +173,7 @@ Assets_Stats :: struct {
     loads:int,             // assets read from their file
     reloads:int,
     unloads:int,           // assets that assets_collect unloaded
-    streamed:int,          // ranges of levels given to textures that follow their distance
+    streamed:int,          // ranges of levels given to textures that follow what the GPU samples
     errors_dropped:int,    // errors that did not fit in the list
 }
 
@@ -1481,7 +1481,7 @@ Assets_Limits :: struct {
 }
 
 // On the thread of the assets. tail: textures come with their levels of
-// side render.TEXTURE_TAIL at most, and their distance asks for the others
+// side render.TEXTURE_TAIL at most, and what the GPU samples of them asks for the others
 // once something shows them: those of what loads far away, as a section.
 assets_limits :: proc(a:^Assets,tail:=false) -> Assets_Limits {
     if a==nil || a.renderer==nil {return {}}

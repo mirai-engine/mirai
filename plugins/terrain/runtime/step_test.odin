@@ -27,7 +27,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
     id:=base.Asset_Id{93,94}
     testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root=root,window_desc={size={160,120}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)

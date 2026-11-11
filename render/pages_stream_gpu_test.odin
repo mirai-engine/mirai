@@ -8,7 +8,7 @@ import "mirai:rhi"
 @(test)
 gpu_streamed_pages_load_what_a_near_view_asks_for :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.reflections, settings.taa = false, false
+	settings.taa = false
 	settings.page_pool_bytes = 64 * PAGE_SLOT_WORDS * 4
 	f: Fixture
 	if !fixture_init(t, &f, 256, 256, settings) {return}
@@ -18,7 +18,7 @@ gpu_streamed_pages_load_what_a_near_view_asks_for :: proc(t: ^testing.T) {
 	if !testing.expect(t, ok, "the sheet has pages out of its root") {return}
 	mesh, added := mesh_add_geometry(r, g, nil)
 	if !testing.expect(t, added, r.error) {return}
-	scene_set(r, {Instance_Desc{object_id = 1, mesh = mesh, transform = Mat4(1)}}, nil, {}, {})
+	scene_given(r, {Instance_Desc{object_id = 1, mesh = mesh, transform = Mat4(1)}}, nil, {}, {})
 	far := Camera{position = {128, 2000, -2000}, forward = {0, -2000, 2128}, up = {0, 1, 0}, fov_y = 50, near = 0.1, far = 10000, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 8 {testing.expect(t, renderer_frame(r, {camera = far}), r.error)}
 	from_far := r.stats.pages_resident

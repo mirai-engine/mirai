@@ -79,7 +79,7 @@ pool_release :: proc(pool:^[dynamic]$T,free:^[dynamic]Pool_Range,first,count:u32
     }
 }
 
-// What scene_set built from the meshes. Instances are gone until the next scene_set.
+// The instances and what is built of them. Gone until the next scene_update.
 @(private)
 scene_instances_clear :: proc(s: ^Scene_State) {
 	for &inst in s.instances {instance_material_values_release(s, &inst)}
@@ -90,7 +90,6 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	for &mesh in s.meshes {mesh.first_instance=-1}
 	clear(&s.overlays);s.overlay_count=0;clear(&s.reflective)
 	clear(&s.instance_keys)
-	clear(&s.desc_instance)
 	s.highlighted = 0
 	clear(&s.hw_instances)
 	clear(&s.tlas_items)

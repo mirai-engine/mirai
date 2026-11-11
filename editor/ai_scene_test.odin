@@ -127,7 +127,7 @@ ai_sent_context_is_not_evicted_before_its_review_is_finished :: proc(t:^testing.
 @(test)
 ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     mounts:=[1]asset.Registry_Mount{{folder=EDITOR_ASSETS,prefix=EDITOR_ASSETS_PREFIX}}
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",asset_mounts=mounts[:],window_desc={size={128,128}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
@@ -193,7 +193,8 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     renderer:=app.renderer
     instances:=[2]gpu.Instance_Desc{instance,other.instance}
     for &shown in instances {shown.highlight=0}
-    gpu.scene_set(renderer,instances[:],nil,{direction={0.3,0.8,0.6},color={1,1,1},illuminance=math.PI,enabled=true},{background={},use_background=true})
+    gpu.scene_set_environment(renderer,{direction={0.3,0.8,0.6},color={1,1,1},illuminance=math.PI,enabled=true},{background={},use_background=true})
+    gpu.scene_update(renderer,0,instances[:],true)
     camera:=gpu.Camera{position={0.375,0.5,2.4},forward={0,-0.05,-2.4},up={0,1,0},fov_y=45,near=0.05,far=100}
     for _ in 0..<4 {testing.expect(t,gpu.renderer_frame(renderer,{camera=camera}),renderer.error)}
     rhi.device_wait_idle(app.device)

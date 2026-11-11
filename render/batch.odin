@@ -598,8 +598,6 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.tlas_instance_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_INDICES, s.index_buffer)
 	set_params(cmd, &params)
-	rhi.cmd_barrier_buffer(cmd, s.index_buffer, .Shader_Read)
-	rhi.cmd_barrier_buffer(cmd, s.tlas_instance_buffer, .Shader_Write)
 	batch_groups := groups(u32(s.batch.hw_count), 64)
 	rhi.cmd_dispatch(cmd, min(batch_groups, rhi.TLAS_DISPATCH_X), (batch_groups + rhi.TLAS_DISPATCH_X - 1) / rhi.TLAS_DISPATCH_X)
 	return total
