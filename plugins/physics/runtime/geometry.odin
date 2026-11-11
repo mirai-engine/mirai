@@ -273,7 +273,9 @@ collider_pieces_make :: proc(s:^Sync,l:^Link,e:core.Entity,scale:[3]f32,round:f3
     static,has_mesh:=core.get(s.statics,e)
     source:Geometry_Source
     shareable:=false
-    if zone,found:=core.get(s.volumes,e);found && zone.shape==.Outline && !core.has(s.colliders,e) {
+    // A Hull without a Collider is the sensor of an outline zone (zone_collider).
+    if !core.has(s.colliders,e) {
+        zone,_:=core.get(s.volumes,e)
         if !zone_pieces(volume.spline_outline(s.splines,e),zone.extents.y,&points,&sizes) {return true,.Hull}
     } else {
         if !has_mesh || !host.assets_collision_hulls(s.app.assets,static.mesh,static.shape,&points,&sizes) || len(sizes)<2 {return}
