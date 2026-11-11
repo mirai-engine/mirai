@@ -210,12 +210,12 @@ bench_compare :: proc(root:string,args:[]string) -> int {
     report:=Bench_Report{release=o.release,project=relative,date=render_stamp(false),scene=o.scene,camera=o.camera,size=o.size,pairs=o.pairs,frames=o.frames,warmup=o.warmup}
     head:=Bench_Build{name="head",checkout=root,project=folder}
     if code,_,_:=build_project(root,.Editor,{folder},mode);code!=0 {return code}
-    head.editor=build.engine_paths(root,mode).editor_program
+    head.editor=project_engine_paths(root,folder,mode).editor_program
     base:Bench_Build
     if os.is_dir(o.base) {
         base={name="base",checkout=project.path_absolute(o.base)}
         base.project=join(base.checkout,relative)
-        base.editor=build.engine_paths(base.checkout,mode).editor_program
+        base.editor=project_engine_paths(base.checkout,base.project,mode).editor_program
         if !os.is_file(base.editor) {
             fmt.eprintfln("mirai bench: %s has no editor built at %s; build it there (mirai build editor %s%s)",base.checkout,render_mode_name(o.release),relative,render_mode_flag(o.release))
             return 1

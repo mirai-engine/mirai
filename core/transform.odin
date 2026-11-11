@@ -19,7 +19,7 @@ TRANSFORM_DEFAULT :: TRANSFORM_IDENTITY
 
 // Where an entity is in the world, and where it was at the tick before: the
 // render draws it between the two. Only transforms_propagate writes it.
-@(component,description="World position, rotation and scale computed from the entity hierarchy.")
+@(component,derived,description="World position, rotation and scale computed from the entity hierarchy.")
 World_Transform :: struct {
     using transform:mm.Transform `mirai:"transient"`,
     previous:mm.Transform `mirai:"transient"`,

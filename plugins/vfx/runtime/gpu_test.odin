@@ -1438,6 +1438,41 @@ particle_collisions_land_on_the_scene_and_slide_by_their_friction :: proc(t: ^te
 	expect_clean(t, f.device)
 }
 
+// Particles dropped on a floor hit it while they bounce and then rest on it:
+// slower than the rest speed a surface keeps them without a hit, an event or
+// lost life. The hits they report and the particles alive do not depend on
+// the steps the frames take.
+@(test)
+particles_that_land_hit_once_per_bounce_and_rest_at_any_frame_rate :: proc(t: ^testing.T) {
+	for dt in ([]f32{1.0 / 30, 1.0 / 144}) {
+		f := new(Gpu_Fixture)
+		defer free(f)
+		if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+		defer gpu_fixture_destroy(f)
+		r := &f.renderer
+		gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12})}},true)
+		camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+		// From 0.45 m over the floor they land at 3 m/s, bounce once at 0.9 m/s and then rest.
+		drop := test_emitter(1, {0, 0, 0})
+		drop.capacity, drop.lifetime, drop.size, drop.acceleration = 128, {5, 5}, {0.1, 0.1}, {0, -9.8, 0}
+		drop.collision, drop.bounce, drop.collision_life, drop.report, drop.owner = .World, 0.3, 0.1, .Collision, core.Entity(77)
+		reports: Particle_Reports
+		defer particle_reports_free(&reports)
+		hits := 0
+		for i in 0 ..< int(1.5 / dt) {
+			drop.spawns = test_burst(100) if i == 0 else {}
+			testing.expect(t, frame_emitters(f, &f.sync, {drop}, dt))
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+			reports_read(&reports, &f.sync, f.app.renderer, core.World_Id{index = 1})
+			for report in reports.reports {hits += 1 if report.kind == .Collision else 0}
+		}
+		testing.expectf(t, hits == 200, "at steps of %v s the 100 particles report a hit per bounce, 200, not %d", dt, hits)
+		testing.expectf(t, particles_alive(f) == 100, "at steps of %v s all 100 are alive, not %d", dt, particles_alive(f))
+		testing.expect_value(t, reports.lost, u32(0))
+		expect_clean(t, f.device)
+	}
+}
+
 // A sprite runs the Surface program of its material with the data, the
 // random value and the radius the program of its particle gives; a particle
 // that gives none leaves the material to its own.

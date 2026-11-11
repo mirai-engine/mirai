@@ -3,11 +3,13 @@ package acp
 import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
+import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:std/subprocess"
 
 Error :: enum u8 {None,Out_Of_Memory,Invalid_State,Capacity,Invalid_Message,Unsupported,Start_Failed}
 Phase :: enum u8 {Stopped,Initializing,Initialized,Authenticating,Opening,Configuring,Ready,Prompting,Stopping,Failed}
@@ -44,7 +46,7 @@ Request :: enum u8 {None,Initialize,Authenticate,Close,New,Load,Resume,Model,Eff
 
 Client :: struct {
     allocator:runtime.Allocator,
-    process:platform.Process,
+    process:subprocess.Process,
     phase:Phase,
     rx,tx:[]u8,
     received,queued,sent:int,
@@ -71,7 +73,7 @@ Client :: struct {
 }
 
 create :: proc(client:^Client,allocator:=context.allocator,receive_bytes:=2*1024*1024,send_bytes:=4*1024*1024) -> Error {
-    if client==nil || client.process!=0 || len(client.rx)>0 || len(client.tx)>0 {return .Invalid_State}
+    if client==nil || client.process.pid!=0 || len(client.rx)>0 || len(client.tx)>0 {return .Invalid_State}
     if receive_bytes<256 || send_bytes<256 {return .Capacity}
     rx,allocation_error:=make([]u8,receive_bytes,allocator)
     if allocation_error!=nil {return .Out_Of_Memory}
@@ -81,8 +83,8 @@ create :: proc(client:^Client,allocator:=context.allocator,receive_bytes:=2*1024
     return .None
 }
 
-destroy :: proc(c:^Client,p:^platform.Platform) {
-    if c.process!=0 {platform.process_release(p,c.process)}
+destroy :: proc(c:^Client) {
+    subprocess.release(&c.process)
     delete(c.rx,c.allocator);delete(c.tx,c.allocator)
     c^={}
 }
@@ -90,11 +92,11 @@ destroy :: proc(c:^Client,p:^platform.Platform) {
 session_id :: proc(c:^Client) -> string {return base.text_get(c.session[:])}
 error_text :: proc(c:^Client) -> string {return base.text_get(c.last_error[:])}
 
-start :: proc(c:^Client,p:^platform.Platform,desc:platform.Process_Desc,session_titles:=false) -> Error {
-    if c.process!=0 || len(c.rx)==0 || len(c.tx)==0 {return .Invalid_State}
-    handle,error:=platform.process_start(p,desc)
-    if error!=.None {return .Start_Failed}
-    c.process=handle;c.received,c.queued,c.sent=0,0,0
+start :: proc(c:^Client,desc:os.Process_Desc,session_titles:=false) -> Error {
+    if c.process.pid!=0 || len(c.rx)==0 || len(c.tx)==0 {return .Invalid_State}
+    process,error:=subprocess.start(desc,pipes=.Separate)
+    if error!=nil {return .Start_Failed}
+    c.process=process;c.received,c.queued,c.sent=0,0,0
     c.session,c.wanted_session={},{};c.last_error={}
     c.load_session,c.resume_session,c.close_session,c.http_mcp,c.image,c.embedded_context=false,false,false,false,false,false
     c.session_rename,c.steering,c.compact_command=false,false,false
@@ -270,36 +272,37 @@ permission :: proc(c:^Client,request_id_json,option_id:string,cancelled:=false) 
     return message_end(c,&w)
 }
 
-stop :: proc(c:^Client,p:^platform.Platform) {
-    if c.process==0 {c.phase=.Stopped;return}
-    platform.process_stdin_close(p,c.process)
+stop :: proc(c:^Client) {
+    if c.process.pid==0 {c.phase=.Stopped;return}
+    subprocess.stdin_close(&c.process)
     c.phase=.Stopping;c.deadline=platform.clock_seconds()+3
 }
 
-poll :: proc(c:^Client,p:^platform.Platform,emit:Event_Proc,user:rawptr) {
-    if c.process==0 {return}
+poll :: proc(c:^Client,emit:Event_Proc,user:rawptr) {
+    if c.process.pid==0 {return}
     if c.sent<c.queued {
-        c.sent+=platform.process_write(p,c.process,c.tx[c.sent:c.queued])
+        c.sent+=subprocess.write(&c.process,c.tx[c.sent:c.queued])
         if c.sent==c.queued {c.sent,c.queued=0,0}
     }
     for _ in 0..<16 {
-        count,_:=platform.process_read(p,c.process,.Stdout,c.read[:])
+        count,_:=subprocess.read(&c.process,.Stdout,c.read[:])
         if count==0 {break}
         feed(c,c.read[:count],emit,user)
     }
     for _ in 0..<4 {
-        count,_:=platform.process_read(p,c.process,.Stderr,c.read[:])
+        count,_:=subprocess.read(&c.process,.Stderr,c.read[:])
         if count==0 {break}
         event(emit,user,{kind=.Stderr,text=string(c.read[:count])})
     }
-    exited,code:=platform.process_poll(p,c.process)
-    if c.phase==.Stopping && !exited && platform.clock_seconds()>=c.deadline {
-        _=platform.process_terminate(p,c.process,true)
-        exited,code=platform.process_poll(p,c.process)
+    state,_:=subprocess.wait(&c.process,0)
+    if c.phase==.Stopping && !state.exited && platform.clock_seconds()>=c.deadline {
+        _=subprocess.terminate(&c.process,force=true)
+        state,_=subprocess.wait(&c.process)
     }
-    if exited {
+    if state.exited {
+        code:=state.exit_code
         was_stopping:=c.phase==.Stopping
-        platform.process_release(p,c.process);c.process=0;c.pending=.None
+        subprocess.release(&c.process);c.pending=.None
         c.phase=.Stopped if was_stopping else .Failed
         steers_fail(c,emit,user)
         if !was_stopping {fail(c,emit,user,"The AI agent process exited",code)}
