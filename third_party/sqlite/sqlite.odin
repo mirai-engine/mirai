@@ -43,6 +43,7 @@ foreign lib {
     reset :: proc(statement:^Stmt) -> c.int ---
     step :: proc(statement:^Stmt) -> c.int ---
     bind_int64 :: proc(statement:^Stmt,index:c.int,value:i64) -> c.int ---
+    bind_double :: proc(statement:^Stmt,index:c.int,value:f64) -> c.int ---
     bind_text :: proc(statement:^Stmt,index:c.int,text:[^]u8,bytes:c.int,destructor:rawptr) -> c.int ---
     column_int64 :: proc(statement:^Stmt,column:c.int) -> i64 ---
     column_double :: proc(statement:^Stmt,column:c.int) -> f64 ---

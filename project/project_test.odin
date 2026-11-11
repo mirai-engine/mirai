@@ -1,18 +1,14 @@
 package project
 
+import "base:runtime"
 import "core:fmt"
+import "core:mem"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 import "mirai:std/serial"
-
-@(private="file")
-test_folder :: proc(t:^testing.T) -> string {
-    folder,error:=os.make_directory_temp("","mirai-project-*",context.temp_allocator)
-    testing.expect(t,error==nil)
-    return path_absolute(folder,context.temp_allocator)
-}
 
 @(private="file")
 test_write :: proc(t:^testing.T,parts:..string,text:="") {
@@ -86,8 +82,7 @@ a_project_manifest_round_trips_as_json :: proc(t:^testing.T) {
 
 @(test)
 the_size_of_a_png_is_read_from_its_header :: proc(t:^testing.T) {
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"project")
     header:=[24]u8{0x89,'P','N','G',0x0d,0x0a,0x1a,0x0a,0,0,0,13,'I','H','D','R',0,0,0,200,0,0,0,100}
     file:=path(folder,"icon.png",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(file,header[:])==nil)
@@ -107,7 +102,11 @@ a_plugin_manifest_round_trips_as_json :: proc(t:^testing.T) {
     base.text_set(m.dependencies[1][:],"streaming")
     m.parts={.Runtime,.Editor,.Assets}
     base.text_set(m.icon[:],"art/icon.png")
+    base.text_set(m.asset_kinds[0].extension[:],".terrain")
+    base.text_set(m.asset_kinds[1].extension[:],".biome")
+    m.asset_kinds[1].merged=true
     text:=plugin_text(&m,context.temp_allocator)
+    testing.expect(t,strings.contains(text,`"extension": ".biome"`) && !strings.contains(text,`"extension": ""`),text)
     testing.expect(t,strings.contains(text,`"dependencies": ["noise", "streaming"]`),text)
     testing.expect(t,strings.contains(text,`"icon": "art/icon.png"`),text)
     testing.expect(t,strings.contains(text,`"parts": ["Runtime", "Editor", "Assets"]`),text)
@@ -118,8 +117,7 @@ a_plugin_manifest_round_trips_as_json :: proc(t:^testing.T) {
 
 @(test)
 an_installed_engine_is_told_by_its_manifest :: proc(t:^testing.T) {
-    installed:=test_folder(t)
-    defer os.remove_all(installed)
+    installed:=base.test_folder(t,"project")
     testing.expect(t,!engine_installed(installed) && !engine_root_is(installed))
     m:Engine_Manifest
     base.text_set(m.version[:],ENGINE_VERSION)
@@ -135,8 +133,7 @@ an_installed_engine_is_told_by_its_manifest :: proc(t:^testing.T) {
     testing.expect_value(t,engine_root_find(installed,context.temp_allocator),installed)
 
     // A checkout is told by its sources; one without them is no engine.
-    checkout:=test_folder(t)
-    defer os.remove_all(checkout)
+    checkout:=base.test_folder(t,"project")
     test_write(t,checkout,"AGENTS.md")
     testing.expect(t,!engine_root_is(checkout))
     testing.expect(t,os.make_directory_all(path(checkout,"tools/mirai",allocator=context.temp_allocator))==nil)
@@ -225,6 +222,10 @@ a_bad_plugin_manifest_is_refused_with_what_and_where :: proc(t:^testing.T) {
         {`{"name": "a", "version": "1.0.0", "engine": {"min": "0.3", "max": "0.2"}}`,.Engine_Invalid,.None,"0.3"},
         {`{"name": "a", "version": "1.0.0", "icon": "../icon.png"}`,.Icon_Invalid,.None,"../icon.png"},
         {`{"name": "a", "version": "1.0.0", "icon": "icon.svg"}`,.Icon_Invalid,.None,"icon.svg"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": "biome"}]}`,.Asset_Kind_Invalid,.None,"biome"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".Biome"}]}`,.Asset_Kind_Invalid,.None,".Biome"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}, {"extension": ".biome", "merged": true}]}`,.Asset_Kind_Invalid,.None,".biome"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"merged": true}]}`,.Asset_Kind_Invalid,.None,""},
     }
     for c in cases {
         _,error:=plugin_parse(c.text)
@@ -261,8 +262,7 @@ a_plugin_states_the_engines_it_works_with_as_a_range :: proc(t:^testing.T) {
 
 @(test)
 manifests_are_written_to_and_read_from_files :: proc(t:^testing.T) {
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"project")
     file:=path(folder,PROJECT_FILE,allocator=context.temp_allocator)
     _,error:=manifest_read(file)
     testing.expect_value(t,error.code,Error_Code.Not_Found)
@@ -363,6 +363,23 @@ paths_join_with_forward_slashes :: proc(t:^testing.T) {
 }
 
 @(test)
+paths_are_the_same_file_as_their_system_tells_them_apart :: proc(t:^testing.T) {
+    folds:=ODIN_OS==.Windows || ODIN_OS==.Darwin
+    cases:=[?]struct{a,b:string,same:bool}{
+        {"C:/games/demo","C:/games/demo",true},
+        {"C:/games/demo/","C:/games/demo",true},
+        {"C:/games/demo","C:/games/demos",false},
+        {"C:/games/demo","C:/games/demo/assets",false},
+        {"C:/games/demo","C:/games/de/mo",false},
+        {"C:/Games/Demo","c:/games/demo",folds},
+        {"C:\\games\\demo","C:/games/demo",ODIN_OS==.Windows},
+        {"bin","BIN",folds},
+        {"","",true},
+    }
+    for c in cases {testing.expectf(t,path_same(c.a,c.b)==c.same && path_same(c.b,c.a)==c.same,"%q and %q",c.a,c.b)}
+}
+
+@(test)
 paths_of_git_bash_name_the_drive_on_windows :: proc(t:^testing.T) {
     named :: proc(t:^testing.T,location,expected:string,expected_ok:bool,loc:=#caller_location) {
         native,ok:=path_native(location)
@@ -383,8 +400,7 @@ paths_of_git_bash_name_the_drive_on_windows :: proc(t:^testing.T) {
 
 @(test)
 a_project_finds_its_plugins_and_orders_them_by_dependency :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     test_plugin(t,plugins,"water",{"terrain","noise"})
     test_plugin(t,plugins,"terrain",{"noise"},{.Runtime,.Editor,.Shaders,.Assets})
@@ -422,10 +438,8 @@ a_project_finds_its_plugins_and_orders_them_by_dependency :: proc(t:^testing.T) 
 
 @(test)
 a_first_party_plugin_of_the_engine_is_found :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
-    engine:=test_folder(t)
-    defer os.remove_all(engine)
+    root:=base.test_folder(t,"project")
+    engine:=base.test_folder(t,"project")
     test_plugin(t,folder_path(engine,.Plugins,context.temp_allocator),"terrain")
     test_plugin(t,folder_path(engine,.Plugins,context.temp_allocator),"idle")
     test_plugin(t,folder_path(root,.Plugins,context.temp_allocator),"rivers",{"terrain"})
@@ -458,8 +472,7 @@ a_first_party_plugin_of_the_engine_is_found :: proc(t:^testing.T) {
 
 @(test)
 plugins_that_cannot_be_ordered_or_found_are_errors :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     _,error:=open(root)
     testing.expect_value(t,error.code,Error_Code.Not_Found)
@@ -499,8 +512,7 @@ plugins_that_cannot_be_ordered_or_found_are_errors :: proc(t:^testing.T) {
 // does not name one.
 @(test)
 an_automatic_plugin_joins_when_its_dependencies_are_active :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     test_plugin(t,plugins,"simulation")
     test_plugin(t,plugins,"network")
@@ -539,8 +551,7 @@ an_automatic_plugin_joins_when_its_dependencies_are_active :: proc(t:^testing.T)
 
 @(test)
 a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     test_project(t,root)
 
@@ -575,17 +586,8 @@ a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
 }
 
 @(test)
-a_package_is_a_folder_with_odin_sources :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
-    testing.expect(t,!package_exists(path(root,"game",allocator=context.temp_allocator)))
-    test_write(t,root,"game","notes.txt",text="x")
-    testing.expect(t,!package_exists(path(root,"game",allocator=context.temp_allocator)))
-    test_write(t,root,"game","game.odin",text="package game\n")
-    testing.expect(t,package_exists(path(root,"game",allocator=context.temp_allocator)))
-    testing.expect(t,!package_exists(path(root,"game","game.odin",allocator=context.temp_allocator)))
-
-    // A file where the plugins folder goes is a project without plugins.
+a_file_where_the_plugins_folder_goes_is_a_project_without_plugins :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"project")
     test_project(t,root)
     test_write(t,root,"plugins",text="not a folder")
     p,error:=open(root)
@@ -596,10 +598,8 @@ a_package_is_a_folder_with_odin_sources :: proc(t:^testing.T) {
 
 @(test)
 a_plugin_of_the_project_brings_its_companions :: proc(t:^testing.T) {
-    root:=test_folder(t)
-    defer os.remove_all(root)
-    engine:=test_folder(t)
-    defer os.remove_all(engine)
+    root:=base.test_folder(t,"project")
+    engine:=base.test_folder(t,"project")
     plugins:=folder_path(root,.Plugins,context.temp_allocator)
     companions:=path(plugins,"unreal",PLUGIN_COMPANIONS,allocator=context.temp_allocator)
     test_plugin(t,folder_path(engine,.Plugins,context.temp_allocator),"terrain")
@@ -627,4 +627,73 @@ a_plugin_of_the_project_brings_its_companions :: proc(t:^testing.T) {
     _,error=open(root,engine)
     testing.expect_value(t,error.code,Error_Code.Plugin_Repeated)
     testing.expect_value(t,base.text_get(error.subject[:]),"unreal_terrain")
+}
+
+// What ordering the plugins asks its allocator for, with the memory ending
+// at each request in turn: Out_Of_Memory with no order and a text that says
+// so, nothing left allocated, and with memory enough the order. And the merge
+// of the settings, whose fields are in the temporary allocator: without
+// memory for one it is Out_Of_Memory, and with memory enough the merged text.
+@(test)
+plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
+    Limit :: struct {owner:runtime.Allocator,remaining:int}
+    limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+        limit:=(^Limit)(data)
+        if size>0 && (mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed) {
+            if limit.remaining<=0 {return nil,.Out_Of_Memory}
+            limit.remaining-=1
+        }
+        return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+    }
+    plugins:=make([]Plugin,3,context.temp_allocator)
+    for name,i in ([]string{"noise","terrain","water"}) {base.text_set(plugins[i].manifest.name[:],name)}
+    base.text_set(plugins[1].manifest.dependencies[0][:],"noise")
+    base.text_set(plugins[2].manifest.dependencies[0][:],"terrain")
+    Case :: struct {wanted:[]string,order:[]int}
+    cases:=[]Case{{{"water"},{0,1,2}},{{"terrain","noise"},{0,1}},{{},{}}}
+    for c in cases {
+        done,refused:=false,false
+        for served in 0..<8 {
+            tracking:mem.Tracking_Allocator
+            mem.tracking_allocator_init(&tracking,context.allocator)
+            limit:=Limit{owner=mem.tracking_allocator(&tracking),remaining=served}
+            order,error:=plugins_order(plugins,c.wanted,{limit_proc,&limit})
+            if done=error.code==.None;done {
+                testing.expectf(t,slice.equal(order,c.order),"%v: ordered %v",c.wanted,order)
+            } else {
+                refused=true
+                testing.expectf(t,error.code==.Out_Of_Memory && order==nil,"%v with %d requests served: %v",c.wanted,served,error.code)
+                testing.expect(t,strings.contains(error_text("project",error,context.temp_allocator),"memory"))
+            }
+            delete(order,mem.tracking_allocator(&tracking))
+            testing.expectf(t,len(tracking.allocation_map)==0,"%v with %d requests served: %d left allocated",c.wanted,served,len(tracking.allocation_map))
+            mem.tracking_allocator_destroy(&tracking)
+            if done {break}
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",c.wanted)
+    }
+
+    folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
+    defer os.remove_all(folder)
+    root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(path(engine,".mirai",allocator=context.temp_allocator))==nil)
+    testing.expect(t,os.write_entire_file(settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Sample": {"count": 2, "inner": {"level": 3}}}`)==nil)
+    testing.expect(t,os.write_entire_file(settings_file(.Project,root,engine,context.temp_allocator),`{"Sample": {"count": 7, "inner": {"on": true}}, "Plugin": {"y": "z"}}`)==nil)
+    whole,whole_error,_:=settings_merge(root,engine,{"Sample"})
+    defer delete(whole)
+    testing.expect_value(t,whole_error.code,Error_Code.None)
+    merged,no_field:=false,false
+    for served:=0;!merged && served<512;served+=1 {
+        limit:=Limit{owner=context.temp_allocator,remaining=served}
+        text:string
+        error:Error
+        {
+            context.temp_allocator={limit_proc,&limit}
+            text,error,_=settings_merge(root,engine,{"Sample"})
+        }
+        merged=error.code==.None && text==whole
+        no_field||=error.code==.Out_Of_Memory
+        delete(text)
+    }
+    testing.expect(t,merged && no_field,"a merge without memory for a field says so, and with memory it is whole")
 }

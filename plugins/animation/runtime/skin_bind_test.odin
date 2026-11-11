@@ -1,8 +1,6 @@
 package anim
 
-import "core:fmt"
 import "core:log"
-import "core:os"
 import "core:path/filepath"
 import "core:testing"
 import "mirai:asset"
@@ -15,6 +13,26 @@ import "mirai:rhi/shared_device"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
+// What animation_skin reads of the World, with the poses it draws.
+@(private="file")
+Bind_Pose_World :: struct {
+    using world:core.Test_World,
+    meshes:core.Table(erender.Mesh_Renderer),
+    skins:core.Table(Pose_Source),
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    worlds:core.Table(core.World_Transform),
+    tints:core.Table(erender.Tint),
+    overrides:core.Table(erender.Material_Override),
+    hidden:core.Table(erender.Hidden),
+    elsewhere:core.Table(erender.Drawn_Elsewhere),
+    highlights:core.Table(erender.Highlight),
+    outlines:core.Table(erender.Outline),
+    offsets:core.Table(erender.Draw_Offset),
+    playback:Playback,
+    modifiers:Modifier_Runtime,
+}
+
 // Many rigs of one skinned mesh at its bind pose draw the mesh of the world,
 // shared, and make no copy of it until a pose leaves the bind.
 @(test)
@@ -22,13 +40,9 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     RIGS :: 64
     SIDE :: 64
     problems:core.Problems
-    temp,_:=os.temp_directory(context.temp_allocator)
-    directory:=fmt.tprintf("%s/mirai-animation-bind-%d",temp,os.get_pid())
-    os.make_directory(directory);defer os.remove(directory)
+    directory:=base.test_folder(t,"animation-bind")
     path,_:=filepath.join({directory,"grid.mesh"},context.temp_allocator)
-    defer os.remove(path)
     skeleton_path,_:=filepath.join({directory,"grid.skeleton"},context.temp_allocator)
-    defer os.remove(skeleton_path)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     vertices:=make([]asset.Vertex,SIDE*SIDE);defer delete(vertices)
     influences:=make([]asset.Skin_Vertex,SIDE*SIDE);defer delete(influences)
@@ -54,8 +68,8 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     skeleton_id:=base.Asset_Id{0x618,0x98}
     if !testing.expect_value(t,asset.skeleton_save(skeleton_path,&types,{id=skeleton_id,bones=nodes[:]}),asset.Error.None) {return}
     if !testing.expect_value(t,rig_mesh_save(path,&types,{id=id,skeleton=skeleton_id,joints=joints[:]},vertices,indices[:],influences),asset.Error.None) {return}
-    device,message:=shared_device.take(t, hardware_rt = false)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,message)};return}
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
     settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
@@ -64,48 +78,35 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     if !testing.expect(t,host.assets_init(&assets,{root=directory,renderer=renderer})) {return}
     defer host.assets_destroy(&assets)
     app:=host.App{allocator=context.allocator,renderer=renderer,assets=&assets}
-    defer host.app_extras_free(&app)
+    defer host.extras_free(&app.extras)
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
-    playback:Playback;defer playback_free(&playback)
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    meshes:core.Table(erender.Mesh_Renderer);defer core.table_destroy(&meshes)
-    skins:core.Table(Pose_Source);defer core.table_destroy(&skins)
-    transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
-    parents:core.Table(core.Parent);defer core.table_destroy(&parents)
-    worlds:core.Table(core.World_Transform);defer core.table_destroy(&worlds)
-    tints:core.Table(erender.Tint);defer core.table_destroy(&tints)
-    overrides:core.Table(erender.Material_Override);defer core.table_destroy(&overrides)
-    hidden:core.Table(erender.Hidden);defer core.table_destroy(&hidden)
-    elsewhere:core.Table(erender.Drawn_Elsewhere);defer core.table_destroy(&elsewhere)
-    highlights:core.Table(erender.Highlight);defer core.table_destroy(&highlights)
-    offsets:core.Table(erender.Draw_Offset);defer core.table_destroy(&offsets)
+    w:Bind_Pose_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
     roots,draws:[RIGS]core.Entity
     for i in 0..<RIGS {
-        roots[i]=core.create(&entities);draws[i]=core.create(&entities)
-        core.add(&parents,draws[i],{entity=roots[i]})
-        core.add(&skins,draws[i],{rig=roots[i]})
-        core.add(&meshes,draws[i],{mesh=id})
+        roots[i]=core.create(&w.entities);draws[i]=core.create(&w.entities)
+        core.add(&w.parents,draws[i],{entity=roots[i]})
+        core.add(&w.skins,draws[i],{rig=roots[i]})
+        core.add(&w.meshes,draws[i],{mesh=id})
         transform:=mm.TRANSFORM_IDENTITY;transform.position.x=f32(i)*2
-        core.add(&transforms,roots[i],core.Transform(transform))
-        core.add(&worlds,roots[i],{transform=transform,previous=transform})
-        core.add(&worlds,draws[i],{transform=transform,previous=transform})
+        core.add(&w.transforms,roots[i],core.Transform(transform))
+        core.add(&w.worlds,roots[i],{transform=transform,previous=transform})
+        core.add(&w.worlds,draws[i],{transform=transform,previous=transform})
     }
-    core.table_settle(&parents,&entities);core.table_settle(&skins,&entities);core.table_settle(&transforms,&entities)
-    core.table_settle(&meshes,&entities);core.table_settle(&worlds,&entities)
-    definition:=skeleton_content(&skeleton_assets,&app,skeleton_id)
+    core.test_world_settle(&w)
+    definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,definition!=nil) {return}
     for rig in roots {
-        pose:=state_get(&playback,rig)
-        if !testing.expect(t,pose!=nil && skeleton_bind(&playback,pose,definition,nil,&transforms)) {return}
+        pose:=state_get(&w.playback,rig)
+        if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
         copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
     }
-    modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer),skins:^core.Table(Pose_Source),parents:^core.Table(core.Parent),worlds:^core.Table(core.World_Transform),tints:^core.Table(erender.Tint),overrides:^core.Table(erender.Material_Override),hidden:^core.Table(erender.Hidden),elsewhere:^core.Table(erender.Drawn_Elsewhere),highlights:^core.Table(erender.Highlight),offsets:^core.Table(erender.Draw_Offset),problems:^core.Problems,modifiers:^Modifier_Runtime=nil) {
+    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,modifiers:^Modifier_Runtime=nil) {
         clear(&app.extras.instances)
-        outlines:core.Table(erender.Outline);defer core.table_destroy(&outlines)
-        animation_skin(core.read(meshes),core.read(skins),core.read(parents),core.read(worlds),core.read(tints),core.read(overrides),core.read(hidden),core.read(elsewhere),core.read(highlights),core.read(&outlines),core.read(offsets),cache,state,app,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.tints),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.highlights),core.read(&w.outlines),core.read(&w.offsets),cache,state,app.assets,app.renderer,&app.extras,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
     }
     measure :: proc(renderer:^gpu.Renderer,label:string) -> int {
         s:=&renderer.scene
@@ -114,20 +115,20 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
         return len(s.skinned)
     }
     measure(renderer,"loaded")
-    tick(&app,&cache,&state,&playback,&meshes,&skins,&parents,&worlds,&tints,&overrides,&hidden,&elsewhere,&highlights,&offsets,&problems)
+    tick(&app,&cache,&state,&w,&problems)
     testing.expect_value(t,problems.count,0)
     testing.expect_value(t,measure(renderer,"64 rigs at the bind pose"),0)
-    testing.expect_value(t,len(host.app_instances(&app)),0)
+    testing.expect_value(t,len(host.extras_instances(&app.extras)),0)
 
     // A pose that leaves the bind makes the copy of that rig alone.
-    pose:=constraint_playing(&playback,roots[0])
+    pose:=constraint_playing(&w.playback,roots[0])
     pose.local[1].position.y=0.5
     copy(pose.previous[:],pose.local[:])
     pose.changed+=1
-    tick(&app,&cache,&state,&playback,&meshes,&skins,&parents,&worlds,&tints,&overrides,&hidden,&elsewhere,&highlights,&offsets,&problems)
+    tick(&app,&cache,&state,&w,&problems)
     testing.expect_value(t,measure(renderer,"one rig posed"),1)
-    if !testing.expect_value(t,len(host.app_instances(&app)),1) {return}
-    gpu.scene_set(renderer,host.app_instances(&app),nil,{},gpu.Environment{sky={1,1,1}})
+    if !testing.expect_value(t,len(host.extras_instances(&app.extras)),1) {return}
+    gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
     if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
     record:=renderer.scene.meshes[core.entity_map_get(&state.instances,draws[0]).mesh]
     result:[1]gpu.Gpu_Posed_Vertex
@@ -136,14 +137,14 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect_value(t,problems.count,0)
 
     // A rig at the bind whose curves move a material value is drawn with its copy, which has it.
-    still:=constraint_playing(&playback,roots[1])
+    still:=constraint_playing(&w.playback,roots[1])
     append(&still.curves,Curve_Output{target=base.name_hash("blush"),property=.Float,value={1,0,0,0},weight=1})
     blush:=CURVE_MATERIAL_DEFAULT;blush.rig,blush.every,blush.scale=roots[1],true,{1,0,0,0}
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"base_color")
-    testing.expect(t,modifier_append(&modifiers.curve_materials,roots[1],blush))
-    tick(&app,&cache,&state,&playback,&meshes,&skins,&parents,&worlds,&tints,&overrides,&hidden,&elsewhere,&highlights,&offsets,&problems,&modifiers)
+    testing.expect(t,modifier_append(&w.modifiers.curve_materials,roots[1],blush))
+    tick(&app,&cache,&state,&w,&problems,&w.modifiers)
     testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),2)
-    testing.expect_value(t,len(host.app_instances(&app)),2)
+    testing.expect_value(t,len(host.extras_instances(&app.extras)),2)
     instance:=core.entity_map_get(&state.instances,draws[1])
     testing.expect(t,instance!=nil && instance.copied,"the still rig with curve materials has its copy")
     testing.expect_value(t,problems.count,0)

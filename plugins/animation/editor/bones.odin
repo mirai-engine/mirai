@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import lib "mirai:std/anim"
@@ -79,7 +80,7 @@ clip_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
     if current!="" && names[selected]!=current {names[count]=fmt.tprintf("Missing: %s",current);selected=count;count+=1}
     ctx:=s.gui.ctx
     if ui.property(ctx,label) {
-        if ui.dropdown(ctx,ui.id(ctx,"clip",int(offset)+1),names[:count],&selected,{width=-1}) && selected<len(content.names) {
+        if ui.dropdown(ctx,ui.id(ctx,"clip",int(offset)+1),{list=names[:count]},&selected,{width=-1}) && selected<len(content.names) {
             chosen:=content.names[selected]
             editor.field_write(s,c.table,c.entities,int(offset),mem.ptr_to_bytes(&chosen))
         }
@@ -96,7 +97,7 @@ bone_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
     if skeleton=={} {return false}
     cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets)
     if cache==nil {return false}
-    content:=anim.skeleton_content(cache,s.app,skeleton)
+    content:=anim.skeleton_content(cache,s.app.assets,s.app.allocator,skeleton)
     if content==nil {return false}
     value:=core.raw_find(core.world_table_at(c.world,c.table),c.table.info,c.entities[0])
     if value==nil {return false}
@@ -123,7 +124,7 @@ bone_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
     if path!="" && selected==0 {names[count]=fmt.tprintf("Missing: %s",path);selected=count;count+=1}
     ctx:=s.gui.ctx
     if ui.property(ctx,label) {
-        if ui.dropdown(ctx,ui.id(ctx,"bone",int(offset)+1),names[:count],&selected,{width=-1}) && selected<known {
+        if ui.dropdown(ctx,ui.id(ctx,"bone",int(offset)+1),{list=names[:count]},&selected,{width=-1}) && selected<known {
             chosen:=choices[selected]
             editor.field_write(s,c.table,c.entities,int(offset),mem.ptr_to_bytes(&chosen))
         }
@@ -138,6 +139,6 @@ bone_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
 animation_attachments_derived :: proc(s:^editor.Session,attachments:core.Read(anim.Bone_Attachment),world:core.World_Ref) {
     if s.edits==nil || world.data!=s.edits.world {return}
     for row in 0..<core.count(attachments) {
-        if core.at(attachments,row).enabled {editor.edits_take_derived(s.edits,world,core.Transform,core.entity_at(attachments,row))}
+        if core.at(attachments,row).enabled {history.edits_take_derived(s.edits,world,core.Transform,core.entity_at(attachments,row))}
     }
 }

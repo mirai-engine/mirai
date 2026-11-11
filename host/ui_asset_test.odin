@@ -10,14 +10,11 @@ import "mirai:ui"
 ROUNDTRIP_ID :: base.Asset_Id{0x51,7}
 
 // Records of a .ui with a node of each family, named styles with a variant,
-// a font, an image, a clip, a sequence, a translation, a grid, a template
-// with an override and paths of the game.
+// a font, an image, a clip, a sequence, a translation, a grid and paths of
+// the game.
 @(private="file")
 Roundtrip_Records :: struct {
-    nodes:[11]ui.Tree_Node,
-    component_nodes:[2]ui.Tree_Node,
-    components:[1]ui.Tree_Component,
-    overrides:[1]ui.Tree_Override,
+    nodes:[10]ui.Tree_Node,
     styles:[3]ui.Node_Style,
     style_infos:[3]ui.Tree_Style_Info,
     variants:[1]ui.Tree_Style_Variant,
@@ -54,11 +51,6 @@ roundtrip_records :: proc(r:^Roundtrip_Records) -> ui.Tree_Data {
     TITLE_ID :: 0x7171
     r.translations={{id=TITLE_ID,text=ui.tree_string_add(t,"Puntos")},{id=TITLE_ID,text=ui.tree_string_add(t,"Очки")}}
     ui.tree_text_set(r.translations[0].language[:],"es");ui.tree_text_set(r.translations[1].language[:],"ru")
-    r.component_nodes={
-        ui.tree_node_record(t,-1,{kind=.Box,name="card",layout={direction=.Column}}),
-        ui.tree_node_record(t,0,{kind=.Text,name="label",text="Card"}),
-    }
-    r.components={ui.tree_component_record("card",0,2)}
     r.nodes={
         ui.tree_node_record(t,-1,{kind=.Box,name="hud",layout={width=ui.GROW,height=ui.GROW,direction=.Column,gap=4},anims=1}),
         ui.tree_node_record(t,0,{kind=.Text,name="title",text="Score: {coins}",style=1,flags={.Localized},text_id=TITLE_ID,fields={0={"coins","Game.coins"}}}),
@@ -70,10 +62,8 @@ roundtrip_records :: proc(r:^Roundtrip_Records) -> ui.Tree_Data {
         ui.tree_node_record(t,5,{kind=.Slider,name="volume",range={0,1,0.1},bind_value="Game.volume"}),
         ui.tree_node_record(t,0,{kind=.List,name="items",bind_items="Game.items"}),
         ui.tree_node_record(t,8,{kind=.Text,name="item",bind_text="name"}),
-        ui.tree_node_record(t,0,{kind=.Component,name="slot",component=1}),
     }
-    r.overrides={ui.tree_override_record(t,10,"label",{.Text},{text="Slot"})}
-    return {nodes=r.nodes[:],component_nodes=r.component_nodes[:],components=r.components[:],overrides=r.overrides[:],styles=r.styles[:],style_infos=r.style_infos[:],
+    return {nodes=r.nodes[:],styles=r.styles[:],style_infos=r.style_infos[:],
         variants=r.variants[:],images=r.images[:],fonts=r.fonts[:],anims=r.anims[:],tracks=r.tracks[:],keys=r.keys[:],parts=r.parts[:],anim_sets=r.anim_sets[:],
         translations=r.translations[:],grid_tracks=r.grid_tracks[:],text=r.text[:]}
 }
@@ -86,7 +76,6 @@ same_rows :: proc(a,b:[]$T) -> bool {
 @(private="file")
 same_data :: proc(t:^testing.T,a,b:ui.Tree_Data) {
     testing.expect(t,same_rows(a.nodes,b.nodes),"nodes")
-    testing.expect(t,same_rows(a.component_nodes,b.component_nodes),"component_nodes")
     testing.expect(t,same_rows(a.components,b.components),"components")
     testing.expect(t,same_rows(a.overrides,b.overrides),"overrides")
     testing.expect(t,same_rows(a.styles,b.styles),"styles")
@@ -135,7 +124,7 @@ a_ui_written_to_its_file_reads_back_the_same_records_and_tree :: proc(t:^testing
     a,b:ui.Widget_Tree
     if !testing.expect(t,roundtrip_load(&a,data) && roundtrip_load(&b,read)) {return}
     defer {ui.tree_destroy(&a);ui.tree_destroy(&b)}
-    testing.expect_value(t,a.node_count,12)
+    testing.expect_value(t,a.node_count,10)
     testing.expect_value(t,b.node_count,a.node_count)
     testing.expect(t,mem.compare(mem.slice_to_bytes(a.nodes[:a.node_count]),mem.slice_to_bytes(b.nodes[:b.node_count]))==0,"The nodes of both trees are the same")
     testing.expect_value(t,string(b.strings[:b.string_length]),string(a.strings[:a.string_length]))

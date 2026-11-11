@@ -2,7 +2,6 @@ package terrain
 
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -77,7 +76,7 @@ terrain_layers_and_weights_round_trip_in_the_terrain_file_for_every_source :: pr
         testing.expect_value(t,grid_dense(&original.weights),page_samples)
         testing.expect(t,grid_value(&original.weights,{x,0,4})[1]>150)
         testing.expect_value(t,grid_value(&original.weights,{10,0,4}),Weights{WEIGHT_FULL,0,0,0})
-        path:=source_test_path("layers.terrain");defer os.remove(path)
+        path:=fmt.tprintf("%s/layers.terrain",base.test_folder(t,"terrain"))
         id:=base.Asset_Id{55,u64(kind)}
         testing.expect_value(t,source_save(&original,path,id,&types),asset.Error.None)
         got,ok:=source_load(&loaded,path,&types)
@@ -177,12 +176,12 @@ layer_materials_fill_the_textures_and_values_of_the_layered_program :: proc(t:^t
 
 @(test)
 layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"terrain")
     heap:base.Heap;testing.expect(t,base.heap_init(&heap,32*1024*1024));defer base.heap_destroy(&heap)
     allocator:=Terrain_Test_Allocator{owner=base.heap_allocator(&heap)}
     temporary:base.Arena;testing.expect(t,base.arena_init(&temporary,16*1024*1024));defer base.arena_destroy(&temporary)
     context.allocator={terrain_test_allocator,&allocator}
     context.temp_allocator=base.arena_allocator(&temporary)
-    root:=source_test_path("layered");os.make_directory_all(root);defer os.remove_all(root)
     source:Source;testing.expect(t,source_make(&source,.Heightfield,{17,1,17},1,4));defer source_destroy(&source)
     source.revision=1
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -190,12 +189,14 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=64}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     owner:=core.create(&w.entities)
-    core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+    core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    terrain_test_world_settle(&w)
+    core.test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     // A new source shows its one layer in every chunk.
     testing.expect(t,core.count(&w.statics)>0)
@@ -205,9 +206,9 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     }
     grass,rock:=LAYER_DEFAULT,LAYER_DEFAULT
     rock.tiling=8
-    testing.expect(t,request_layer(&w.requests,owner,0,grass))
-    testing.expect(t,request_layer(&w.requests,owner,1,rock))
-    testing.expect(t,request_layer(&w.requests,owner,3,rock))
+    request_layer(&w.terrain_requests,owner,0,grass)
+    request_layer(&w.terrain_requests,owner,1,rock)
+    request_layer(&w.terrain_requests,owner,3,rock)
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(2))
@@ -222,7 +223,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     }
     before:[16]base.Asset_Id
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {before[i]=chunk.mesh}
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Paint,center={-6,0,-6},radius=0.6,amount=1,layer=1}))
+    dig(&w.terrain_requests,{kind=.Paint,center={-6,0,-6},radius=0.6,amount=1,layer=1},owner)
     terrain_test_update(&w,&resident,&app)
     changed:=0
     for chunk,i in resident.sources[0].chunks[:resident.sources[0].quad.first[1]] {if chunk.mesh!=before[i] {changed+=1}}
@@ -233,8 +234,8 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     testing.expect_value(t,w.statics.version,version)
     // The last layer stays.
     core.problems_clear(&w.problems)
-    testing.expect(t,request_layer_remove(&w.requests,owner,0))
-    testing.expect(t,request_layer_remove(&w.requests,owner,0))
+    request_layer_remove(&w.terrain_requests,owner,0)
+    request_layer_remove(&w.terrain_requests,owner,0)
     terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(1))
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
@@ -245,7 +246,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
 // and its chunks show it in slot 0 without the parameters of Terrain_Layers.
 @(test)
 a_program_of_the_source_blends_its_layers_in_place_of_terrain_layers :: proc(t:^testing.T) {
-    root:=source_test_path("layers_program");os.make_directory_all(root);defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     source:Source;testing.expect(t,source_make(&source,.Heightfield,{17,1,17},1,4));defer source_destroy(&source)
     source.revision=1
     testing.expect(t,source_layer_set(&source,0,LAYER_DEFAULT))
@@ -263,12 +264,14 @@ a_program_of_the_source_blends_its_layers_in_place_of_terrain_layers :: proc(t:^
     testing.expect_value(t,chunk_materials(&read)[0],blend)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=64}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     owner:=core.create(&w.entities)
-    core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+    core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    terrain_test_world_settle(&w)
+    core.test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.count(&w.statics)>0)
     for row in 0..<core.count(&w.statics) {testing.expect_value(t,w.statics.values[row].materials[0],blend)}

@@ -290,7 +290,7 @@ list_end :: proc(ctx:^Context,id:Id,count,last:int,row_height:f32) {
 // their heights and call rows_end: only they become elements, with room above
 // and below that keeps the scroll range. An offset past the end shows the last
 // rows.
-rows_begin :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,width:Size,height:f32,step:f32=0) -> (first,last:int) {
+rows_begin :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,width:Size,height:f32,step:f32=0,bar_room:f32=0) -> (first,last:int) {
     total:f32
     for h in heights {total+=h}
     moved:=[2]f32{0,offset^}
@@ -308,7 +308,7 @@ rows_begin :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,width:Size,heigh
     box_begin(ctx,{id=id,width=width,height=fixed(height),direction=.Column,clip_y=true,scroll={0,offset^}})
     scroll_clip_mark(ctx,id)
     widget_add(ctx,id,{.Passive,.Scroll})
-    box_begin(ctx,{id=scroll_content_id(ctx,id),width=GROW,height=FIT,direction=.Column,track=true})
+    box_begin(ctx,{id=scroll_content_id(ctx,id),width=GROW,height=FIT,direction=.Column,padding={0,0,bar_room,0},track=true})
     if top>0 {spacer(ctx,-1,top)}
     return
 }

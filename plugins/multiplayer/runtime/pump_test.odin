@@ -10,17 +10,19 @@ import "mirai:platform"
 // net_begin does: its ticks go at the pace of the frames again.
 @(test)
 a_paused_client_whose_server_closes_runs_its_ticks_at_the_pace_of_the_frames :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
     sessions:[2]Net_Session
     for &world,index in worlds {
-        net_test_init(&world,context.allocator)
+        net_test_init(&world,&info)
         shares[index].info=&info
         apps[index]={info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
     }
-    defer for &world in worlds {net_test_destroy(&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=5,endpoints=2,packets=256})) {return}
@@ -38,7 +40,7 @@ a_paused_client_whose_server_closes_runs_its_ticks_at_the_pace_of_the_frames :: 
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
         server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.received,&server.remote)
-        client_commands(&sessions[1],core.world_ref(client,&info),&apps[1],wire.host_poll(&sessions[1].host),&client.received)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client.received)
         if sessions[1].status==.Connected {break}
     }
     if !testing.expect(t,sessions[1].status==.Connected,"the client connects") {return}

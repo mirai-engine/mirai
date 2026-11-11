@@ -10,11 +10,6 @@
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
-// render.DEPTH_PROBE_CAPACITY, DEPTH_PROBE_CELLS and DEPTH_PROBE_CELL.
-#define DEPTH_PROBE_CAPACITY 8
-#define DEPTH_PROBE_CELLS 32
-#define DEPTH_PROBE_CELL 2.0
-
 struct Params_Block {
     uint count;
     uint view;

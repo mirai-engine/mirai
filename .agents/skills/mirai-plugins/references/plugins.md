@@ -133,26 +133,28 @@ demo enables. How an `editor/` adds steps, panels and tools:
   ([destruction](../../mirai-physics/references/engine-destruct.md)).
 - **`shapes`** (`Runtime` and `Editor`; depends on `physics`): editable outlines and solids of
   brush entities whose source is saved and whose mesh and collider are derived on a child
-  ([shapes](shapes.md)).
+  ([shapes](../../mirai-world/references/shapes.md)).
 - **`multiplayer`**: the game network, without physics, and the editor's networked Play
   ([multiplayer](../../mirai-networking/references/multiplayer.md)).
 - **Automatic bridges**: `destruct_multiplayer` (replicated fractures), `foliage_terrain` (the
-  [foliage ground](foliage.md#ground) from the terrains), `foliage_multiplayer` (the replicated
-  [removed instances](foliage.md#instances-removed-in-play)), `terrain_multiplayer` (the
-  [terrain edits](terrain.md#network) over the network), `terrain_vfx` (the
-  [dust of what is dug](terrain.md#what-digging-leaves)) and `spawn_physics` (the body that the
-  [editor's Play puts at a place](../../mirai-gameplay/references/control.md#spawn-points)
-  resting on what is below it). `terrain_debris` is not automatic: a project asks for its pieces
-  and drops. The ground of
-  [grounding](../../mirai-animation/references/animation-grounding.md) and the arm of the cameras
-  need no bridge: they use `core.World_Queries`, which `physics` provides.
+  [foliage ground](../../mirai-world/references/foliage.md#ground) from the terrains),
+  `foliage_multiplayer` (the replicated [removed
+  instances](../../mirai-world/references/foliage.md#instances-removed-in-play)),
+  `terrain_multiplayer` (the [terrain edits](../../mirai-world/references/terrain.md#network) over
+  the network), `terrain_vfx` (the [dust of what is
+  dug](../../mirai-world/references/terrain.md#what-digging-leaves)) and `spawn_physics` (the body
+  that the [editor's Play puts at a place](../../mirai-gameplay/references/control.md#spawn-points)
+  resting on what is below it). `terrain_debris` is not automatic: a project asks for its pieces and
+  drops. The ground of [grounding](../../mirai-animation/references/animation-grounding.md) and the
+  arm of the cameras need no bridge: they use `core.World_Queries`, which `physics` provides.
 - **`navigation`** (`Runtime`, `Editor`; depends on `physics`): automatic navmesh from static
   collision, per agent class and by tiles that rebuild themselves, areas, obstacles, manual and
   generated links, agents that write their `Move_Input` and cross links, the scene's `.navmesh`
-  and the `nav.*` methods. Contract in [navigation](navigation.md).
+  and the `nav.*` methods. Contract in [navigation](../../mirai-world/references/navigation.md).
 - **`behavior`** (`Runtime`, `Editor`; depends on `physics` and `navigation`): minds that the game
   runs by name in its functions, perception with memory, smart objects, place queries, influence
-  maps and the `behavior.*` methods. Contract in [behavior](behavior.md).
+  maps and the `behavior.*` methods. Contract in
+  [behavior](../../mirai-world/references/behavior.md).
 - **`abilities`** (`Runtime`, `Editor`; depends on `physics` and `animation`): abilities as
   `Ability` and `Ability_Kit` rows of game data, the `Ability_User` that runs them, effects and
   the `abilities.*` methods. Contract in [abilities](../../mirai-abilities/SKILL.md).
@@ -175,14 +177,15 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`terrain`** (`Runtime`, `Editor`, `Shaders`, `Assets`)
   - Game: `Terrain{source, revision, solid}` and `terrain_update`. Heightfield, Mesh or Volume
     sources, derived chunks and immutable geometry replaced by region, material layers, levels of
-    detail and holes. Contract in [terrain](terrain.md).
+    detail and holes. Contract in [terrain](../../mirai-world/references/terrain.md).
   - Editor: creation, sculpting, layer and hole painting with local preview, cancellation and
     undo. `terrain_slope.slang` paints by slope; `terrain_layers.slang` blends the layers through
     `assets/terrain_layers.mat`.
 - **`foliage`** (`Runtime`, `Editor`, `Shaders`; depends on `physics`; not enabled in the demo):
   foliage of a scene in cells, with no entity per instance, drawn with instance batches, with one
   static body per cell and over a ground that another library writes. Editor: brush to paint and
-  erase and selection of an instance with the gizmo. Contract in [foliage](foliage.md).
+  erase and selection of an instance with the gizmo. Contract in
+  [foliage](../../mirai-world/references/foliage.md).
 - **`previews`** (`Editor`)
   - Animation [documents](previews.md), with their clips on rigid objects or compact skeletons.
   - GPU skinning isolated from the world and its histories; what they edit is a step of the
@@ -217,17 +220,24 @@ demo enables. How an `editor/` adds steps, panels and tools:
     `mirai import plugins/prompts_kenney/source/kenney.prompts.json --out
     plugins/prompts_kenney/assets --root plugins/prompts_kenney`
     ([prompts](../../mirai-imports/references/imports.md#prompts)).
+- **`playtest`** (`Editor`, development): `play.observe`, the monitors of `play.qa.*` with their
+  repros and the bot of `play.explore`, over the ticks the API runs
+  ([`Run_Provider`](../../mirai-editor/references/extensions.md#runs-the-api-drives)). The bot
+  only picks where to go: the drive of the editor walks it there. Whether a body is stuck is
+  measured once (`stuck_watch`), for the monitors, `play.observe` and the bot. The game
+  template enables it; none of its tools are listed by MCP by default, which the playtester
+  agent reaches through `call`.
 - **`profiler`** (`Editor`, development) and **`tracy`** (`Runtime`, development): captures panel
   of `profile.*` and Tracy GUI client. See [profiling](profiling.md).
 - **`vfx`** (`Runtime`, `Editor`, `Shaders`; depends on `physics`, whose gravity its particles
-  take): GPU [particles](vfx.md), their `.particle` format, the inspector and document of an
-  effect and the `particle.*` methods.
+  take): GPU [particles](../../mirai-world/references/vfx.md), their `.particle` format, the
+  inspector and document of an effect and the `particle.*` methods.
 - **`fluids`** is not part of the engine: the plugin lives in
   <https://github.com/tomaszbk/mirai-fluids>, with its `water_fluids` bridge, and is installed
   from the catalog.
 - **`imprint`** (`Runtime`, `Shaders`; depends on `vfx` and `physics`): snow, mud and sand
-  [footprints](imprint.md) in a height clipmap on a `vfx` grid, with the ground meshes displaced
-  on the GPU for the raster and the rays.
+  [footprints](../../mirai-world/references/imprint.md) in a height clipmap on a `vfx` grid, with
+  the ground meshes displaced on the GPU for the raster and the rays.
 - **`decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`**
   - Parts: `Runtime`; `Shaders` except `monitors`; `Editor` except `deform`.
   - Renderer extensions: decals on the G-buffer, meshes deformed on the GPU with their own

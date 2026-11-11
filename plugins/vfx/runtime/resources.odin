@@ -67,20 +67,20 @@ Gpu_Resource :: struct {
 @(private)
 emitter_resources :: proc(
     sync:^Particle_Sync,shown:^Emitter_Shown,info:^effect.Particle_Info,sources:[]effect.Particle_Resource,bindings:^Particle_Bindings,
-    e:core.Entity,transform:mm.Mat4,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,app:^host.App,
+    e:core.Entity,transform:mm.Mat4,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
-    of_entity :: proc(sync:^Particle_Sync,kind:Resource_Kind,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,app:^host.App,e:core.Entity) -> Resource_Desc {
-        return entity_bones(sync,drawn,meshes,worlds,id,app,e) if kind==.Bones else entity_surface(drawn,meshes,worlds,id,app,e)
+    of_entity :: proc(sync:^Particle_Sync,kind:Resource_Kind,drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
+        return entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,e) if kind==.Bones else entity_surface(drawn,meshes,worlds,id,assets,renderer,e)
     }
-    of_asset :: proc(sync:^Particle_Sync,kind:Resource_Kind,app:^host.App,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
-        return asset_bones(sync,app,mesh,transform) if kind==.Bones else asset_surface(app,mesh,transform)
+    of_asset :: proc(sync:^Particle_Sync,kind:Resource_Kind,assets:^host.Assets,renderer:^erender.Renderer,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
+        return asset_bones(sync,assets,renderer,mesh,transform) if kind==.Bones else asset_surface(assets,renderer,mesh,transform)
     }
     if info.shape==.Surface || info.shape==.Bones {
         kind:=Resource_Kind.Bones if info.shape==.Bones else .Surface
         switch {
-        case bindings.surface!=core.NONE: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,app,bindings.surface)
-        case info.surface_mesh!={}: resources[0]=of_asset(sync,kind,app,info.surface_mesh,transform)
-        case: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,app,e)
+        case bindings.surface!=core.NONE: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,assets,renderer,bindings.surface)
+        case info.surface_mesh!={}: resources[0]=of_asset(sync,kind,assets,renderer,info.surface_mesh,transform)
+        case: resources[0]=of_entity(sync,kind,drawn,meshes,worlds,id,assets,renderer,e)
         }
     }
     for need,at in shown.needs.resources {
@@ -127,11 +127,11 @@ emitter_resources :: proc(
         }
         if need.kind!=.Surface && need.kind!=.Bones {continue}
         if source!=core.NONE {
-            resources[1+at]=of_entity(sync,need.kind,drawn,meshes,worlds,id,app,source)
+            resources[1+at]=of_entity(sync,need.kind,drawn,meshes,worlds,id,assets,renderer,source)
             continue
         }
         for &given in sources {
-            if base.name_hash(base.text_get(given.name[:]))==need.name && given.mesh!={} {resources[1+at]=of_asset(sync,need.kind,app,given.mesh,transform)}
+            if base.name_hash(base.text_get(given.name[:]))==need.name && given.mesh!={} {resources[1+at]=of_asset(sync,need.kind,assets,renderer,given.mesh,transform)}
         }
     }
     // Where each was the frame before: the first frame, where it is.
@@ -155,37 +155,36 @@ first_over :: proc "contextless" (needs:^Program_Needs) -> int {
 
 // The surface of a mesh asset at a transform.
 @(private)
-asset_surface :: proc(app:^host.App,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
-    entry:=host.assets_mesh(app.assets,mesh)
+asset_surface :: proc(assets:^host.Assets,renderer:^erender.Renderer,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
+    entry:=host.assets_mesh(assets,mesh)
     if entry==nil {return {}}
-    return surface_of(app,entry.handle,transform)
+    return surface_of(renderer,entry.handle,transform)
 }
 
 // The surface an entity draws in the frame: the mesh that replaces its own
 // (a skin), or its own, where the renderer draws it. Without the scene of its
 // world in the renderer, its Mesh_Renderer where it is.
 @(private)
-entity_surface :: proc(drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,app:^host.App,e:core.Entity) -> Resource_Desc {
+entity_surface :: proc(drawn:^erender.Render_Sync,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
     if drawn!=nil && drawn.world==id {
         for &extra in drawn.extras {
-            if extra.replace_source && extra.object_id==u64(e) {return surface_of(app,extra.mesh,extra.transform)}
+            if extra.replace_source && extra.object_id==u64(e) {return surface_of(renderer,extra.mesh,extra.transform)}
         }
-        if at:=core.entity_map_index(&drawn.drawn,e);at>=0 && at<len(drawn.instances) {
-            instance:=drawn.instances[at]
-            return surface_of(app,instance.mesh,instance.transform)
+        if at:=core.entity_map_index(&drawn.drawn,e);at>=0 {
+            if mesh,transform,held:=erender.instance_placed(renderer,at);held {return surface_of(renderer,mesh,transform)}
         }
     }
     shown,has_mesh:=core.get(meshes,e)
     world,placed:=core.get(worlds,e)
     if !has_mesh || !placed {return {}}
-    entry:=shown.mesh!={}?host.assets_mesh(app.assets,shown.mesh):host.assets_shape(app.assets,shown.shape)
+    entry:=shown.mesh!={}?host.assets_mesh(assets,shown.mesh):host.assets_shape(assets,shown.shape)
     if entry==nil {return {}}
-    return surface_of(app,entry.handle,mm.transform_matrix(world.transform))
+    return surface_of(renderer,entry.handle,mm.transform_matrix(world.transform))
 }
 
 @(private)
-surface_of :: proc(app:^host.App,mesh:erender.Mesh_Handle,transform:mm.Mat4) -> Resource_Desc {
-    count,ok:=erender.mesh_draw_range(app,mesh)
+surface_of :: proc(renderer:^erender.Renderer,mesh:erender.Mesh_Handle,transform:mm.Mat4) -> Resource_Desc {
+    count,ok:=erender.mesh_draw_range(renderer,mesh)
     if !ok || count<3 {return {}}
     return {kind=.Surface,mesh=mesh,triangles=count/3,transform=transform}
 }
@@ -235,7 +234,7 @@ surface_place :: proc(s:^Surfaces,mesh:erender.Mesh_Handle,count:u32,frame:u64) 
             s.used+=entry.count
             kept+=1
         }
-        resize(&s.entries,kept)
+        base.truncate(&s.entries,kept)
         need:=s.used+count
         if need>s.capacity {
             capacity:=u32(SURFACES_MIN)

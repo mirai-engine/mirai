@@ -73,12 +73,13 @@ placement_api_run :: proc(s:^editor.Session,call:^api.Call,tool:^Physics_Placeme
             return
         }
         measured:bool
-        if bounds[at],measured=placement_box(s.app,mesh);!measured {
+        if bounds[at],measured=placement_box(s.app.assets,mesh);!measured {
             api.call_failf(call,api.INVALID_PARAMS,"drops[%d]: %s has no geometry to measure; give a static .mesh asset or a shape other than None",at,drop.mesh!={}?"the mesh":"the shape")
             return
         }
     }
-    if !editor.api_guard_edit(s,call) {return}
+    if editor.playing(s) {api.call_fail(call,api.SERVER_ERROR,"placement.drop simulates on the document, whose physics runs only in Edit: play.stop first");return}
+    if !editor.api_guard(s,call) {return}
     previous,keys:=s.viewport.plugin_tool,s.viewport.plugin_keys
     defer {
         placement_cancel(tool)

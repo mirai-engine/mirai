@@ -23,10 +23,10 @@ FORMATS:=[?]importer.Format{gltf.FORMAT}
 // whose cone is out of what a Spot_Light takes, cut to it with a warning.
 @(test)
 imported_lights_are_the_lights_of_their_entities :: proc(t:^testing.T) {
-    temp,_:=os.temp_directory(context.temp_allocator)
-    source:=fmt.tprintf("%s/mirai-lights-%d.gltf",temp,os.get_pid())
-    path:=fmt.tprintf("%s/mirai-lights-%d.prefab",temp,os.get_pid())
-    defer {os.remove(source);os.remove(path)}
+    folder:=base.test_folder(t,"lights")
+    if folder=="" {return}
+    source:=fmt.tprintf("%s/lights.gltf",folder)
+    path:=fmt.tprintf("%s/lights.prefab",folder)
     positions:=[9]f32{0,0,0,1,0,0,0,1,0}
     encoded,_:=base64.encode(mem.slice_to_bytes(positions[:]),allocator=context.temp_allocator)
     text:=strings.concatenate({`{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1,2,3]}],"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}],"bufferViews":[{"buffer":0,"byteLength":36}],"buffers":[{"byteLength":36,"uri":"data:application/octet-stream;base64,`,encoded,`"}],
@@ -65,10 +65,10 @@ imported_lights_are_the_lights_of_their_entities :: proc(t:^testing.T) {
 // entity, and a sphere as a point of its radius.
 @(test)
 imported_rectangles_are_rect_lights_sized_by_their_entity :: proc(t:^testing.T) {
-    temp,_:=os.temp_directory(context.temp_allocator)
-    source:=fmt.tprintf("%s/mirai-rect-lights-%d.usda",temp,os.get_pid())
-    path:=fmt.tprintf("%s/mirai-rect-lights-%d.prefab",temp,os.get_pid())
-    defer {os.remove(source);os.remove(path)}
+    folder:=base.test_folder(t,"rect-lights")
+    if folder=="" {return}
+    source:=fmt.tprintf("%s/rect-lights.usda",folder)
+    path:=fmt.tprintf("%s/rect-lights.prefab",folder)
     text:=`#usda 1.0
 (
     metersPerUnit = 1

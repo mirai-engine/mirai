@@ -8,7 +8,8 @@ attributes and writes the code that joins the libraries. `mirai generate <projec
 `stage`, `after`, `before`, `server`, `shared`, `locks`, `host`, `by_world`, `copy`, `swap`, `free`,
 `replicated`, `setting`, `scene`, `description`, `queue`, `events`, `keep`, `reset`, `net_message`,
 `from`, `reliable`, `params`, `names`, `name_bits`, `name`, `name_requires`, `presentation`,
-`record` and `actions`. The CLI and `cook/build` pass it on their own; a hand-compiled program needs it. The
+`record` and `actions`. The CLI and `cook/build` pass it on their own; a hand-compiled program needs
+it. The
 `mirai` tool is compiled with `-ignore-unknown-attributes`: it does not use them, and one compiled
 before a new attribute does not know it.
 
@@ -112,7 +113,10 @@ receives the place of its origin: a type or a function of an editor package neve
 - `copy_kept="proc"`: a `World` storage that is copied; a procedure of the package
   `(dst, src: ^S) -> bool` that `copy_changed` uses, the copy that a history keeps and that is only
   copied back with `copy`: it may store only what that return trip needs (physics, its pools sized
-  to what is used and not to their capacities).
+  to what is used and not to their capacities). `copy_changed` calls it only when the storage was
+  [received to write](core.md#world-reflection) since the last copy; a storage its owner receives
+  on every tick tells there what of it changed, by an identity of its own that no world of another
+  timeline repeats (navigation: the uid and the revision of its meshes).
 - `copy=false`: the storage is neither copied nor swapped: it stays in its world (what a world is
   and not its content).
 - `swap="proc"`: a procedure of the package `(a, b: ^S)` that replaces the default swap (the bytes),
@@ -120,7 +124,7 @@ receives the place of its origin: a type or a function of an editor package neve
   epochs of physics and terrain).
 - `free="proc"`: a procedure of the package `(^S)` that releases what the storage contains; by
   default `core.value_free`.
-- **Class of a `World` storage.** Clearing a world (`clear_world`: loading a scene or a save,
+- **Class of a `World` storage.** Clearing a world (`core.world_clear`: loading a scene or a save,
   opening a document) removes its entities, and a storage is of one of these classes:
   - derived (the default, also `queue` and `events`): state that a library derives from the
     entities or requests about them; it goes back to its start. What a save must keep goes in a
@@ -197,11 +201,15 @@ scene does not use the default: it reads what it saved.
   `p_<declared name>`, so no identifier of a package collides with those of the world.
 - `info()` returns the `core.World_Info` ([reflection](core.md#world-reflection)), completed with
   `core.world_info_index`.
-- `init_*` builds the tables with the allocator received and sets up the `locks`. `copy_world`,
-  `copy_changed_world` (with fewer marks than tables, it copies whole) and `swap_world` leave the
-  `Id` index following the table that arrived with it ([identity](core.md#persistent-identity)).
-- `clear_world` clears entities and tables and takes each derived storage to its start: its
-  `reset`, or its `free` and its initial value.
+- The generator writes no procedure that makes, frees, copies, swaps or clears a world:
+  `core.world_init`, `world_destroy`, `world_copy`, `world_copy_changed` (with fewer marks than
+  `copy_marks_count`, it copies whole), `world_swap` and `world_clear` are loops over the tables
+  and storages of the `World_Info`, which says of each what its attributes say (`locks`,
+  `copy=false`, the procedures a storage names). A copy and a swap leave the `Id` index following
+  the table that arrived with it ([identity](core.md#persistent-identity)).
+- `core.world_clear` clears entities and tables and takes each derived storage to its start: its
+  `reset`, or its `free` and its initial value. Without memory for the entities it answers false
+  and leaves the World as it was.
 
 ## Parameters
 
@@ -216,7 +224,14 @@ Each parameter is bound by its type; the order in the signature is free.
   ([commands](core.md#creating-with-components-of-other-libraries)).
 - `core.World_Ref`: the whole world by reflection, for code that does not know the types (scenes,
   saving, network, the binding of an interface by name, the editor).
-- `^host.App`: the application (window, renderer, mixer, assets).
+- A part of the application, by the type that names it: `^host.Assets` (nil without assets),
+  `^render.Renderer` (nil without a GPU; a plugin names it through `engine/render`),
+  `^host.Frame_Extras` (what a function adds to the frame), `^audio.Mixer` (nil without audio; a
+  game names it through `engine/audio`), `^jobs.Job_System` and `runtime.Allocator` (the
+  application's, for what outlives the call). The application owns them and the call hands out
+  what it holds.
+- `^host.App`: the application itself, for what is not one of those parts (its worlds, its window
+  and the views of the frame, its clock, its content, the launch).
 - `core.Records(T)`, with `T` a `@(record)`: the rows of its tables, read-only
   (`host.app_record_set`).
 - A `@(params)` struct, by value ([groups](#parameter-groups)).
@@ -253,7 +268,8 @@ Each violation is a message with file and line that says how to fix it; `mirai g
 all. The ones most often stumbled on:
 
 - A parameter without a table or storage: a type that is not `@(component)`, `@(storage)` or one of
-  those above.
+  those above. A part of the application asked for in another form (`host.Assets` by value,
+  `^runtime.Allocator`) says which form to receive.
 - A parameter with a default value: the generator binds them all; whoever calls the function
   outside the loop uses `core.world_run` or passes all of them.
 - A function that returns something.
@@ -276,7 +292,8 @@ all. The ones most often stumbled on:
   `fixed` that receives a `presentation` storage.
 - A type declared twice; a `locks` on something that is not a `shared` component.
 - A `@(params)` that is not a struct without type parameters or with one `$E:typeid` (then with a
-  field of the actions type, and received for an enum `@(actions)`), that has no fields, that is also a
+  field of the actions type, and received for an enum `@(actions)`), that has no fields, that is
+  also a
   component, storage or message, with a field that is not a valid parameter or that is another
   `@(params)` (they do not nest); a function that receives it by pointer, or a library one that
   receives one from an editor package.
@@ -307,8 +324,7 @@ and on a dedicated server those requests arrive through the network. Writes by r
 
 Each function is written once, as `call_<name>`, with its binding, its settle, its time and its
 profile zone, and each loop and phase with functions as `game_fixed`, `editor_frame`, etc., which
-calls them in the computed order; the host also runs them at the same time
-([concurrent functions](#concurrent-functions)). `info.steps[i].call` and
+calls them one after another in the computed order ([order](#order)). `info.steps[i].call` and
 `info.order[loop][phase]` give them to `core.world_run`: a tool runs a part of a loop, in order,
 with the same binding and settle ([reflection](core.md#world-reflection)). Nothing binds
 parameters by hand.
@@ -316,19 +332,28 @@ parameters by hand.
 - After each function it applies the pending changes with `table_settle` of each `^core.Table` it
   received.
 - A function with `^core.Entities`, `core.Commands` or `core.World_Ref`, or that writes `Disabled`
-  or `Parent`, may touch any table, destroy entities or change what is disabled: after it `settle`
-  runs on all of them and releases the destroyed indices.
-- `settle` settles `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes
-  what is disabled and then settles the others, which move the rows of the entities that were
-  disabled or enabled.
+  or `Parent`, may touch any table, destroy entities or change what is disabled: after it
+  `core.settle` runs on the World and releases the destroyed indices. One that only asks whether an
+  entity is alive or off receives `core.Ref(core.Entities)`: it asks for no settle of the World
+  and does not wait for every other function.
+- `core.settle` is one loop over the `World_Info`, the same for every project. It settles
+  `Disabled` and `Parent` first, follows `Parent` into the `Hierarchy`, recomputes what is disabled
+  and then settles the others, which move the rows of the entities that were disabled or enabled.
+  It comes only to the tables that wait: `add`, `remove`, `enable` and `disable` mark their table
+  in the `Entities` of its World (`core.world_init` gives each table its mark, `raw_follow`), and
+  an entity destroyed or turned marks the tables that hold a row of it. A World made by hand has no
+  marks, and its settle looks at every table.
 - It adds the time of each function to `app.step_ns` (`engine.status` reports the most expensive
-  ones) and opens its profile zone in the ring of the worker that runs it, which records only
-  during a capture ([profiling](host.md#the-frame)).
+  ones) and opens its profile zone, which records only during a capture
+  ([profiling](host.md#the-frame)).
 - With `core.CHECK_WRITES` it wraps each function that receives tables with `^` in
   `write_check_begin`/`write_check_end`.
 
 The generated code does not touch `version`: each row requested for writing bumps it
-([stamps](core.md#tables)). Receiving a table with `^` and not writing it does not move it.
+([stamps](core.md#tables)). Receiving a table with `^` and not writing it does not move it. A
+storage has no rows to stamp: receiving a `World` storage with `^S` moves its revision before the
+function runs, written or not, and `copy_changed` takes it again
+([reflection](core.md#world-reflection)).
 
 ### Order
 
@@ -364,39 +389,27 @@ cameras before `camera_follow`. A function of several phases has the same stage 
   for the core and the network (`net_tick_tail` is the last of the tick), and what feeds physics
   goes in `simulate` with `before="physics_prepare"`.
 
-### Concurrent functions
+### What a parameter declares
 
-That order is the result; within it, the generator gives per loop and phase the edges of a graph
-(`info.edges[loop][phase]`, by position in `info.order`): a function waits for an earlier one if it
-is of a later stage, if `after` or `before` say so or if they collide, and only the edges that
-others do not imply remain. Two functions collide if one writes a datum that the other reads or
-writes:
+The functions of a phase never run at once, so how a function receives a datum orders nothing. It
+still says what the function does with it, and each form has its reader:
 
-- A table: `^core.Table` writes it and `core.Read` reads it. Writing a table with `locks` also
-  writes those it locks; writing `core.Id`, the index that `core.Ref(core.Entities)` reads.
-- A `World` storage: `^S` writes it, also when pushing to a `queue`; `core.Ref(S)` and `S` read it.
-- A `Shared` storage (`host`, `by_world`, `core.Problems`) or an editor one counts as written
-  however it is received, and `^host.App` and `core.Records` collide with all of them: they are the
-  application, to which they can lead.
-- A whole-world function (`^core.Entities`, `core.Commands`, `core.World_Ref`, or one that writes
-  `Disabled` or `Parent`) collides with all: it is a barrier, because `settle` runs afterwards.
+- `^core.Table(C)`: the function is the writer of `C` (one per table that is not `shared`), its
+  rows are checked with `CHECK_WRITES`, and the table settles after it. Writing `Disabled` or
+  `Parent` settles the whole World.
+- `core.Read(C)`, `core.Ref(S)` and `S`: read-only access, which settles nothing and moves no
+  revision.
+- `^S`: the function's library owns the storage (or pushes to a `queue`, or it is `shared`), and
+  the revision of a `World` storage moves before it runs, so the copy a rollback keeps takes it
+  again ([reflection](core.md#world-reflection)).
+- `^core.Entities`, `core.Commands` and `core.World_Ref`: the World settles after the function;
+  `core.Ref(core.Entities)` asks for no settle.
+- `^host.App` and its parts, `core.Records(T)` and the storages of the application or of the
+  editor: what the rules of the loops and phases check ([rules](#rules-the-generator-checks)).
 
-Those that collide keep the loop order, so the graph gives the same `World` as the in-order
-execution, with any number of workers: what the `fixed` rollback requires. `host` runs the phase as
-a `jobs.Graph` on the application's workers, built the first time it runs with a library and
-without allocating afterwards ([host](host.md#the-frame)):
-
-- Each function receives the index of its worker: its profile zone goes to the ring of that worker
-  and `app.step_ns` adds at the index of the function.
-- Those that receive the application or a `Shared` or editor storage (`Step_Info.main`) run on the
-  loop thread: they use the job system as its owner and what the application does not share.
-- It runs in order, with `info.loops`, with a single worker, with
-  `-define:MIRAI_STEPS_SEQUENTIAL=true`, when the phase runs again from inside itself (a network
-  correction that resimulates ticks) or with a `World_Info` without `parallel` (one built by hand).
-- A function touches only what it receives: what it could reach outside its parameters (a pointer
-  stored in a `World` storage) would run at the same time as its writer.
-- What it requests from `context.temp_allocator` is released on return; the rest of the `context` is
-  that of whoever runs the phase.
+A function that spreads its work does it inside, with `std/jobs` and the `^jobs.Job_System` of the
+application, which it receives; what it requests from `context.temp_allocator` is released on
+return.
 
 ## Outputs
 
@@ -416,6 +429,9 @@ without allocating afterwards ([host](host.md#the-frame)):
 
 - A new attribute goes into `CUSTOM_ATTRIBUTES`, the attribute reader and the list of
   [attributes](#attributes); the consumers of the `World_Info` are updated in the same task.
+- What an attribute says of a component or a storage is read in `core.declared_read`, which the
+  [test worlds](core.md#test-worlds) read too; what the generated world does with it (init, copy,
+  swap, clear) is done as well by the builder of `core/test_world_test.odin`.
 - Error messages say what to do, not only what failed.
 - The generator does not run code of the project or of the engine: it reads syntax. Sizes and
   alignments are computed by the compiler when it compiles the written world.

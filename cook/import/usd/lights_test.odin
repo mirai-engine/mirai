@@ -5,6 +5,7 @@ import "core:math"
 import "core:strings"
 import "core:testing"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 // A Z-up stage in centimeters with a floor and each light UsdLux has an
@@ -99,7 +100,8 @@ near :: proc(a,b:f32,tolerance:f32=1e-4) -> bool {return abs(a-b)<=tolerance*max
 // Z-up stage, and the children of a light stay where they were.
 @(test)
 usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testing.T) {
-    folder:=temp_folder("lights")
+    folder:=base.test_folder(t,"lights")
+    if folder=="" {return}
     model,ok:=import_ok(t,write_text(folder,"lights.usda",LIGHTS),TEXT_ONLY)
     if !ok {return}
     defer importer.model_destroy(&model)
@@ -110,10 +112,10 @@ usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testin
     testing.expectf(t,bulb.kind==.Point && has_radius && near(radius,0.05),"a sphere of 5 cm is a point of that radius: %v",bulb)
     testing.expectf(t,near(bulb.intensity,200*math.PI*0.05*0.05),"candelas of 200 nits over a disc of 5 cm: %v",bulb.intensity)
     testing.expect(t,bulb.color=={1,0.5,0.25})
-    if bulb_row>=0 {testing.expect(t,close_to(world_transform(&model,bulb_row).position,{1,2,0}),"Z up and centimeters are the engine's")}
+    if bulb_row>=0 {testing.expect(t,close_to(world_transform(&model,bulb_row).position,{-1,2,0}),"Z up and centimeters are the engine's")}
     if shade:=find_node(&model,"Shade");testing.expect(t,shade>=0) {
         world:=world_transform(&model,shade)
-        testing.expectf(t,close_to(world.position,{1,2.1,0}) && close_to(mm.quat_rotate(world.rotation,{0,0,-1}),{0,0,-1}),"the child of a light keeps its place and turn: %v",world)
+        testing.expectf(t,close_to(world.position,{-1,2.1,0}) && close_to(mm.quat_forward(world.rotation),{0,0,-1}),"the child of a light keeps its place and turn: %v",world)
     }
 
     spot,spot_row:=light_of(t,&model,"Spot")
@@ -121,14 +123,14 @@ usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testin
     testing.expectf(t,spot.kind==.Spot && spot_sized && spot_radius==0,"a cone makes a spot, a point as treatAsPoint asks: %v",spot)
     testing.expect(t,near(spot.outer_cone,math.to_radians(f32(30))) && near(spot.inner_cone,math.to_radians(f32(15))),"the cone and its softness")
     testing.expectf(t,near(spot.intensity,10*math.PI*0.02*0.02),"the candelas of the sphere it was given: %v",spot.intensity)
-    if spot_row>=0 {testing.expect(t,close_to(mm.quat_rotate(world_transform(&model,spot_row).rotation,{0,0,-1}),down),"it shines down, along -Z of its prim")}
+    if spot_row>=0 {testing.expect(t,close_to(mm.quat_forward(world_transform(&model,spot_row).rotation),down),"it shines down, along -Z of its prim")}
 
     panel,panel_row:=light_of(t,&model,"Panel")
     testing.expectf(t,panel.kind==.Rect && close_to({panel.size.x,panel.size.y,0},{2,0.5,0}),"a rectangle in meters: %v",panel)
     testing.expectf(t,near(panel.intensity,10.0/(200*50*2)),"normalize divides by its area in the world, in the units of the stage: %v",panel.intensity)
     if panel_row>=0 {
         world:=world_transform(&model,panel_row)
-        testing.expect(t,close_to(mm.quat_rotate(world.rotation,{0,0,-1}),down),"it lights the floor")
+        testing.expect(t,close_to(mm.quat_forward(world.rotation),down),"it lights the floor")
         x,y:=mm.quat_rotate(world.rotation,{1,0,0}),mm.quat_rotate(world.rotation,{0,1,0})
         testing.expectf(t,abs(x.x)>0.999 && abs(y.z)>0.999,"its width and height stay along x and y of the prim: %v %v",x,y)
         testing.expectf(t,close_to(world.scale,{2,1,1}),"the scale of the prim stays on its x: %v",world.scale)
@@ -144,7 +146,7 @@ usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testin
     peak:=max(white.r,white.g,white.b)
     testing.expectf(t,sun.kind==.Directional && near(sun.intensity,f32(50000*disc)*peak),"without normalize, the luminance over the disc of the sun, its color below one: %v",sun.intensity)
     testing.expectf(t,abs(sun.color.r-1)<0.06 && abs(sun.color.g-1)<0.06 && abs(sun.color.b-1)<0.06,"6500 K is about white: %v",sun.color)
-    if sun_row>=0 {testing.expect(t,close_to(mm.quat_rotate(world_transform(&model,sun_row).rotation,{0,0,-1}),down),"the sun shines down")}
+    if sun_row>=0 {testing.expect(t,close_to(mm.quat_forward(world_transform(&model,sun_row).rotation),down),"the sun shines down")}
     noon,_:=light_of(t,&model,"Noon")
     testing.expectf(t,noon.kind==.Directional && noon.intensity==100000,"normalized, the intensity is the lux it gives: %v",noon.intensity)
 
@@ -156,7 +158,8 @@ usd_lights_are_imported_in_photometric_units_toward_their_axis :: proc(t:^testin
 // What a light cannot be is refused with the prim that has it.
 @(test)
 usd_lights_that_cannot_be_kept_are_refused :: proc(t:^testing.T) {
-    folder:=temp_folder("lights-refused")
+    folder:=base.test_folder(t,"lights-refused")
+    if folder=="" {return}
     HEADER :: "#usda 1.0\n(\n metersPerUnit = 1\n upAxis = \"Y\"\n)\n"
     cases:=[]struct{body:string,code:importer.Error_Code,part:string}{
         {"def RectLight \"Panel\"\n{\n def Xform \"Inside\"\n {\n }\n}\n",.Unsupported,"/Panel/Inside"},

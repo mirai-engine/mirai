@@ -5,64 +5,69 @@ Code: `prefabs.odin`, `api_prefab.odin`.
 - A prefab is a `.prefab` asset with the shape of a scene. An **instance** is a subtree of the
   document linked to a prefab; its entities (the **members**) have the effective values in the
   `World`.
-- The instance records (`asset.Instance`, `asset.Member`, `asset.Override`) do not fit in the
-  `World`: they live in `Document.previous`, are saved with the scene and are read on opening it.
+- An instance is two components of its entities
+  ([format](../../mirai-assets/references/scenes.md#prefab-instances)): `scene.Prefab_Instance` on
+  its root (the prefab and its stamp when the instance was last brought up to date with it) and
+  `scene.Prefab_Member` on every entity it placed, the root among them (the root and the entity of
+  the prefab it stands for). They are rows like any other: the history, a shared session, the
+  recovery log, a Play copy and a save carry them with no code of their own. Both are hidden from
+  the inspector and from the documents of `scene.write` and `mirai scene`, which name the prefab.
+- The instance of an entity is a table lookup (`prefab_link_of`); its members are found by walking
+  the subtree of its root (`prefab_members`), which the [member lock](#hierarchy-of-an-instance)
+  guarantees.
 
 ## Operations
 
-An operation captures the world and the records (`prefab_begin`), changes the capture with the
-`asset` procedures and replaces the world with the result in **one** undo step (`prefab_finish`).
-All require `Edit`. Since they replace the world, those the UI requests (dropping a prefab into the
-scene, its header or menu actions) run between frames (`Requests.Prefab_Place`,
-`.Prefab_Action`): in the middle of a frame, its render would draw the new world before its fixed
-phase, with every skinned mesh in its rest pose.
+An operation works on **one instance**: it captures the entities under its root as a document
+(`prefab_work_begin`), changes it with the `asset` procedures and writes it back onto the same
+entities (`prefab_work_put`, with `scene.update`), inside **one** gesture whose step holds the rows
+that changed. Entities outside the instance are not touched and the members that stay keep their
+handles. All require `Edit`.
 
-- A step that changes prefab files keeps their bytes from before and after; undo and redo return
-  them, unless another process changed them. Creating, applying and undoing write the `.prefab` to
-  disk immediately: unlike the other assets, they do not stay unsaved. A prefab, and a scene or
-  prefab opened as the document, are read through the registry, as is what the prefab names: an
-  unsaved one (an input action renamed by `names.rename`) or an unsaved material looks as in the
-  scene.
-- A step that changes the records keeps what it removed and what it put (`Prefab_Version`) while
-  the history keeps the step: undo and redo in order cross each step they undo or redo and leave the
-  records with the world. Those steps are not undone by ids.
-- In a shared session, each time an editor's history crosses a version (the step, its undo or its
-  redo) the records it removed and put and the prefab files it wrote travel to the others in the
-  host's order ([collaboration](collaboration.md#what-travels)); the overrides of what another
-  editor changes of a member are observed by each one.
-- A prefab is read with its own instances up to date with its prefabs (`prefab_scene_load`, by the
-  [resolver](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)): what
-  is applied, the base and what `prefab.inspect` shows start from it. Its components take the layout
-  the program gives them, and a field its file does not keep takes what loading gives it (the
-  component's default): such a field is not an override until the instance changes it, and every
-  file an apply writes keeps every field of the components.
+- A prefab file an operation writes (Create, Create variant, Apply) stays **unsaved** in the memory
+  of the registry, as any asset an edit changes, and is part of the step: undo and redo give its
+  bytes back ([files in the history](document.md#edits-and-undo)). Save writes it. A step that
+  wrote a prefab file undoes only in order.
+- A prefab, and a scene or prefab opened as the document, are read through the registry, as is
+  what the prefab names: an unsaved one looks as in the scene.
+- A prefab is read with its own instances up to date with their prefabs (`prefab_scene_load`, by
+  the [resolver](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)):
+  what is applied, the base and what `prefab.inspect` shows start from it. Its components take the
+  layout the program gives them, and a field its file does not keep takes what loading gives it
+  (the component's default): such a field is not an override until the instance changes it, and
+  every file an apply writes keeps every field of the components.
+- Opening a document brings its stale instances up to date before the `World` takes them
+  (`scene_load_file`): no step holds that, and the document is not dirty.
 
 Procedures, with their action and API method:
 
-- `prefab_create` (`Prefab_Create`, `prefab.create`) writes the subtree as a new prefab in
-  `assets/`, without overwriting, and links it as the first instance; the root stays at the origin,
-  without rotation and with its scale, and the subtree's instances travel with it.
-  `prefab_create_entities` (from Details, Edit or the Scene menu) reduces the selection to its roots
-  and, with several, creates a group that keeps their world poses; grouping, link and file are one
-  step. The action creates `<name of the active entity>` beside the scene and is disabled if one of the roots
-  is an internal member of an instance.
+- `prefab_create` (`Prefab_Create`, `prefab.create`) makes the subtree a new prefab in `assets/`,
+  without overwriting, and links it as the first instance; the root stays at the origin, without
+  rotation and with its scale. The instances inside the subtree become the prefab's own: the
+  document keeps only the new one. `prefab_create_entities` (from Details, Edit or the Scene menu)
+  reduces the selection to its roots and, with several, creates a group that keeps their world
+  poses; grouping, link and file are one step. The action creates `<name of the active entity>`
+  beside the scene and is disabled if one of the roots is an internal member of an instance.
 - `prefab_instantiate` (drag to the viewport, placement from Assets, `prefab.instantiate`) places
-  an instance with new ids and returns the root.
+  an instance with new ids and returns the root. `scene.write` places the prefab a new entity
+  names with it too, `joined` to the gesture of the write, whose step holds the instance.
 - `prefab_apply` (`Prefab_Apply`, `prefab.apply`) writes the entity's overrides into its prefab,
-  ends them and updates all instances, also the prefabs that place this one: first the added
-  entities (they pass to the prefab with what hangs from them and remain as members), then values
-  and components. What it writes on members of instances the prefab places is marked as overrides
-  of them (`prefab_scene_mark`), as observation would mark it with the prefab open. With `target`
-  `Base` (`Prefab_Apply_Base`) it continues to the base of a [variant](#variants).
+  ends them and updates all instances: first the added entities (they pass to the prefab with what
+  hangs from them and remain as members), then values and components. The prefabs that place the
+  one that changed, found through the dependencies of the registry, are brought up to date and
+  written too, unsaved. With `target` `Base` (`Prefab_Apply_Base`) it continues to the base of a
+  [variant](#variants).
 - `prefab_variant_create` (`prefab.variant.create`, Create variant in the menu of a `.prefab` in
   Assets) writes a [variant](#variants).
 - `prefab_revert` (`Prefab_Revert`, `prefab.revert`) forgets the overrides and gives back what the
   prefab has; what was added is deleted.
-- `prefab_unlink` (`Prefab_Unlink`, `prefab.unlink`): the members become ordinary entities; with
-  `recursive`, also the instances it brought.
-- `prefab_refresh` (`prefab.refresh`) updates the instances of a prefab, or of all, with its file.
-  The editor runs it by itself on opening a document with instances; a scene loaded by the game is
-  resolved by itself ([loading](../../mirai-gameplay/references/libraries.md#scene)).
+- `prefab_unlink` (`Prefab_Unlink`, `prefab.unlink`): the members become ordinary entities, and the
+  instances its prefab places are given back as instances of the document; with `recursive`, those
+  are unlinked too.
+- `prefab_refresh` (`prefab.refresh`) updates the instances of a prefab, or of all, with its file,
+  as one step. The editor runs it on showing a document that has stale instances; a scene loaded by
+  the game is resolved by itself
+  ([loading](../../mirai-gameplay/references/libraries.md#scene)).
 - `paths` are comma-separated names (`name`, `Component`, `Component.field` or `child`); without
   them, all the entity's overrides. The entity of apply and revert is a member or an added entity
   (its `child` override); `all_members` is for root actions. Apply and Revert require a member with
@@ -90,8 +95,6 @@ Prefab document:
 - Double click in Assets or on an instance's icon opens it in a tab (`file_open_path`); the scene
   and its changes stay in its own. It is edited with the common tools, saved to the same `.prefab`
   keeping identity and root, has its own history and closing asks about the changes.
-- Undo of a creation removes the created file and redo restores it; steps that only change records
-  or files have history even if no row changes.
 - It keeps a single root, which is neither deleted nor moved under another entity. Creating or
   placing without a parent adds a child of the root keeping the world pose; duplicating the root
   adds the copy under it. If its scale prevents computing the relative pose, it is rejected.
@@ -105,34 +108,38 @@ Prefab document:
 - An override is what an instance has different from its **base**: the prefab as the instance was
   last updated. Its types are `field` (`Component.field` or `name`), `added`, `removed`, `turned`
   and `child` (an entity added under a member).
-- `prefab_observe` compares them with the `World` and marks them in the document's records. It
-  looks again only at what the history steps with a turn later than its last observation changed,
-  its cursor in the [journal](document.md#edits-and-undo) (the rows and entities of each step,
-  also on undo and redo), and what the edits of other editors of the session changed, which are not
-  steps (`prefabs_remote_edited`): the values of the touched members and, if an `Id`, a parent or
-  which entities live changed, the added entities of its instance. An instance whose prefab was
-  reread is looked at whole; everything, when the history does not have the intermediate steps or
-  there are edits awaiting their step. It runs in `prefabs_follow` after each step, before an
-  operation and before saving, over a capture of the touched members (`Capture_Desc.entities`).
+- Overrides are **not kept** in the editor: they are derived by comparing the members with the
+  base (`asset.scene_overrides_derive`) when something asks: the actions and `prefab.inspect` of
+  the selected instance (`prefab_overrides_of`, derived again when the history, the bases or the
+  edits of other editors moved), Apply, Revert, Refresh and Save, which writes them into the file
+  for the load that finds the prefab changed.
+- The bases are kept by prefab and stamp (`Prefabs.bases`) while an instance of the `World` or a
+  step of the history is at that stamp. An instance whose base this editor does not hold and whose
+  file is another by now (the rows of another editor arrived before the file, a file changed
+  outside) reads as stale and derives nothing; refreshing it keeps everything it has that the
+  prefab does not give.
 - A member turned off is an `added` of `Disabled`: so an instance leaves out a part of its prefab
   without deleting it.
 - The `Transform` of an instance's root is its placement: it is never an override and is kept on
-  applying, reverting or updating. The observer discards saved records that mark it, even if the
-  asset is missing. The children's transforms are compared.
-- A **stale** instance (`stale`) was not updated against the current file of its prefab (its stamp
-  is not the file's hash) or its prefab brings a stale one; `prefab.refresh` brings it up to date
-  and the members follow the prefab except in their overrides.
+  applying, reverting or updating. The children's transforms are compared.
+- A **stale** instance (`stale`) is not at the stamp its prefab gives now
+  ([as resolved](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab),
+  asked of the files once for each state of the registry: `prefab_stamp`): its file changed, or
+  the file of a prefab it places did. `prefab.refresh` brings it up to date, the members follow
+  the prefab except in their overrides, and nothing is stale after it, whether or not the prefabs
+  that place the one that changed were saved again.
 - A node the prefab no longer has is deleted in each instance on updating it, even if it has
-  overrides: with them, with the entities added under it and with the nested instances that hung
-  from it; what other entities pointed to, to it or to what hung from it, ends up pointing to none,
-  because `asset.scene_entities_remove` empties the references to what it deletes.
-- A prefab whose file is missing counts as `missing` and its instance stays as it was.
+  overrides, with the entities added under it; what other entities pointed to, to it or to what
+  hung from it, ends up pointing to none.
+- A prefab whose file is missing counts as `missing` and its instance stays as it was, with the
+  overrides its file stored.
 - The revert arrows are in [inspector](inspector.md#reversion-and-review).
 
 ## Hierarchy of an instance
 
 - Anything created, placed, pasted or moved under an entity of an instance stays as an added
-  entity.
+  entity. A copy of a member whose root was not copied with it is one too; a copy of a root is
+  another instance.
 - A member that is not the root (`prefab_member_locked`) keeps the place the prefab gives it: it is
   not deleted, does not change parent, nor is it the root of a new prefab. It is turned off to
   leave it out of the instance and is duplicated (the copy is an added entity). Deleting a
@@ -142,16 +149,20 @@ Prefab document:
 
 ## Nested prefabs
 
-- `Instance.outer` is the instance that brought another; 0 if the document placed it. Only the
-  document's own instances are updated from their file; the nested ones arrive with their prefab.
-- `prefab_apply` propagates outward: it updates and writes the registry's prefabs that place the
-  one that changed.
+- A document holds only the instances it placed. The entities of an instance a prefab places are
+  members of the outer instance; that inner instance lives in the file of the prefab, and is read
+  from it through the `source` of each member: when Unlink gives it back, and for the `links` of
+  `prefab.inspect` (`prefab_chain`), which name the instance that placed an entity and then each
+  one inside it that the entity is of. The inspector shows the instance of the document: a crate
+  inside a placed shelf is a member of the shelf.
+- `prefab_apply` propagates outward: it updates and writes, unsaved, the prefabs that place the one
+  that changed.
 - A prefab that contains the open document cannot be placed (`Cycle`).
 
 ## Variants
 
 A variant is a common `.prefab` whose root is the root of an instance of another prefab, its
-**base**, placed in it (`outer` 0): with no new format or fields, it is a nested prefab.
+**base**: with no new format or fields, it is a prefab that places another at its root.
 
 - `asset.prefab_variant_base` recognizes it by its root; `prefab.inspect` with `path` or `asset`
   gives its `base` and the chain of bases. A variant of a variant is the same one level further
@@ -159,11 +170,11 @@ A variant is a common `.prefab` whose root is the root of an instance of another
 - What the variant changes from its base are the overrides of that instance: when the base changes,
   the resolver brings it up to date on reading the variant and the variant keeps its own.
 - Creating a variant writes a prefab with an instance of the base at the origin, without overrides,
-  immediately and as an undo step; it places nothing in the document. From Assets it is called
+  unsaved and as an undo step; it places nothing in the document. From Assets it is called
   `<base>_variant`, beside the base, numbered if it exists.
 - In an instance of a variant, Apply writes into the variant, the nearest prefab. Apply to base
   writes first into the variant and then passes to the base the overrides of the variant's root
-  instance that the selection changed, with the same `prefab_apply`; the variant keeps its other
+  instance that the selection changed, with the same procedure; the variant keeps its other
   overrides and the base propagates to all its variants. What the instance changed of an entity the
   variant added stays in the variant. `target` `Base` on something that is not a variant fails with
   `Not_Variant`.
@@ -171,15 +182,13 @@ A variant is a common `.prefab` whose root is the root of an instance of another
   base and Apply changes writes into it.
 - A prefab document's bar has a menu with its family (the first base and its variants, each under
   its own) that opens the chosen one, and Create variant, which asks for a name, writes a variant
-  of the open prefab beside it and opens it. Variants are written between frames
-  (`Requests.Variant_Create`).
+  of the open prefab beside it and opens it.
 
 ## Errors
 
 - If the migration of a component cannot be prepared, the inspector does not publish an incomplete
-  default and observation keeps the previous overrides; Apply rejects before writing the prefab and
-  the document's capture rejects saving. Without memory the migration gives `Out_Of_Memory`; with
-  an invalid schema, `Rejected`.
+  default; Apply rejects before writing the prefab and the document's capture rejects saving.
+  Without memory the migration gives `Out_Of_Memory`; with an invalid schema, `Rejected`.
 - The errors are `Prefab_Error`. By API, those of an entity, path, id or instance that do not exist
   (`Unknown_Entity`, `No_Id`, `Not_Found`, `Unknown_Path`, `Not_Instance`) and the apply to the
   base of something that is not a variant (`Not_Variant`) are `INVALID_PARAMS`, and the rest,

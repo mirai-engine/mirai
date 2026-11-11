@@ -3,6 +3,8 @@ package shaders
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "mirai:cook/workspace"
+import "mirai:project"
 
 // The Slang release the engine's shaders are generated with.
 SLANG_VERSION :: "2026.20"
@@ -13,17 +15,14 @@ Slang_Package :: struct {suffix,sha256:string}
 // The official prebuilt package of this platform and its pinned SHA-256.
 @(private)
 slang_package :: proc() -> (package_info:Slang_Package,ok:bool) {
-    when ODIN_OS==.Darwin && ODIN_ARCH==.arm64 {
-        return {"macos-aarch64.tar.gz","07fa8833fdbb343c3674c84fdd885910f495f3daaaa0c732b32980151e8b58c4"},true
-    } else when ODIN_OS==.Linux && ODIN_ARCH==.amd64 {
-        return {"linux-x86_64.tar.gz","e863e568c204810d6e8bc31852f056aef6763c55ea9925db2db7affa060347c9"},true
-    } else when ODIN_OS==.Linux && ODIN_ARCH==.arm64 {
-        return {"linux-aarch64.tar.gz","b0345743e2153d8c2bd33f56fb5696bcef63fc03513f054a1ae1b8d3dd0152a9"},true
-    } else when ODIN_OS==.Windows && ODIN_ARCH==.amd64 {
-        return {"windows-x86_64.zip","e6dd32bbddf1720ebb4e679d55e9635ce792865a5bd84f3d2cd9af28647c0174"},true
-    } else {
-        return {},false
+    packages:=#partial [workspace.Target]Slang_Package{
+        .Macos_Arm64={"macos-aarch64.tar.gz","07fa8833fdbb343c3674c84fdd885910f495f3daaaa0c732b32980151e8b58c4"},
+        .Linux_X64={"linux-x86_64.tar.gz","e863e568c204810d6e8bc31852f056aef6763c55ea9925db2db7affa060347c9"},
+        .Linux_Arm64={"linux-aarch64.tar.gz","b0345743e2153d8c2bd33f56fb5696bcef63fc03513f054a1ae1b8d3dd0152a9"},
+        .Windows_X64={"windows-x86_64.zip","e6dd32bbddf1720ebb4e679d55e9635ce792865a5bd84f3d2cd9af28647c0174"},
     }
+    package_info=packages[workspace.TARGET]
+    return package_info,package_info.suffix!=""
 }
 
 // The pinned Slang of this platform, installed into <root>/.deps/slang, where
@@ -35,7 +34,7 @@ slang_prebuilt :: proc() -> (p:Prebuilt,ok:bool) {
     return {
         name="Slang",version=SLANG_VERSION,folder="slang",asset=asset,
         url=fmt.tprintf("https://github.com/shader-slang/slang/releases/download/v%s/%s",SLANG_VERSION,asset),
-        sha256=package_info.sha256,required=strings.concatenate({"bin/slangc",EXECUTABLE_SUFFIX},context.temp_allocator),
+        sha256=package_info.sha256,required=strings.concatenate({"bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),
     },true
 }
 

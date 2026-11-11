@@ -49,7 +49,7 @@ test_world_build :: proc(ctx:^Context,user:rawptr) {
         }
     }
 }
-// A panel of 200 by 100 units, 2 m by 1 m, centered 2 m up and facing +Z,
+// A panel of 200 by 100 units, 2 m by 1 m, centered 2 m up with its face toward +Z,
 // seen by a camera at (0, 2, 5) that looks down -Z.
 test_world_default :: proc() -> (Test_World,Input) {
     s:=Test_World{panel={position={0,2,0},size={200,100},unit=0.01,pivot=.Center,direction=.Column,padding=padding_all(10),gap=4,fill={10,10,10,255}}}
@@ -73,7 +73,7 @@ a_world_panel_is_placed_by_its_position_rotation_and_pivot :: proc(t:^testing.T)
     testing.expect(t,test_vec_near(test_world_point(p,200,100),{1,1.5,0}))
     testing.expect(t,test_vec_near(test_world_point(p,100,50),{0,2,0}))
     out:=p.transform*[4]f32{0,0,1,0}
-    testing.expect(t,test_vec_near(out.xyz,{0,0,0.01}),"Its front looks along +Z")
+    testing.expect(t,test_vec_near(out.xyz,{0,0,0.01}),"Its face looks along +Z")
     // The pivot chooses the point that sits at the position.
     s.panel.pivot=.Top_Left
     frame=test_frame(&ctx,&input,test_world_build,&s)
@@ -382,7 +382,7 @@ a_popup_opened_in_a_world_panel_belongs_to_its_surface :: proc(t:^testing.T) {
     build :: proc(ctx:^Context,user:rawptr) {
         s:=cast(^State)user
         if world_panel(ctx,id(ctx,"panel"),{position={0,2,0},size={200,160},unit=0.01,pivot=.Center,padding=padding_all(10)}) {
-            dropdown(ctx,id(ctx,"kind"),{"Point","Spot","Sun"},&s.selected,{width=96})
+            dropdown(ctx,id(ctx,"kind"),{list={"Point","Spot","Sun"}},&s.selected,{width=96})
         }
     }
     input:=test_input(1000,1000)

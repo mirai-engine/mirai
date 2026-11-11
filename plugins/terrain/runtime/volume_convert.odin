@@ -20,7 +20,7 @@ source_convert_volume :: proc(dst,src:^Source,allocator:=context.allocator) -> b
     geom.mesh_buffer_init(&extracted,allocator);defer geom.mesh_buffer_destroy(&extracted)
     geom.mesh_buffer_init(&welded,allocator);defer geom.mesh_buffer_destroy(&welded)
     if geom.isosurface(grid,{},high,&extracted)!=.None {return false}
-    geom.mesh_weld(geom.mesh_buffer_view(&extracted),0,&welded)
+    if !geom.mesh_weld(geom.mesh_buffer_view(&extracted),0,&welded) {return false}
     if len(welded.indices)==0 || len(welded.indices)/3>MESH_TRIANGLES_MAX {return false}
     revision:=src.revision
     layers:=src.info

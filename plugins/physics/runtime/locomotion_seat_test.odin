@@ -8,9 +8,10 @@ import input "mirai:engine/input"
 import render "mirai:engine/render"
 import mm "mirai:std/math"
 
+// What a seat reads to walk a character.
 @(private="file")
-Seat_Test :: struct {
-    es:core.Entities,
+Seat_World :: struct {
+    using world:core.Test_World,
     characters:core.Table(Character),
     moves:core.Table(input.Move_Input),
     states:core.Table(Character_State),
@@ -22,49 +23,29 @@ Seat_Test :: struct {
     cameras:core.Table(render.Camera),
     shown:cam.Cameras,
     bindings:input.Input_Map,
+}
+
+// The defaults of the actions, which the application holds.
+@(private="file")
+Seat_Shared :: struct {
+    walk:Walk_Actions,
+    look:input.Look_Actions,
+}
+
+@(private="file")
+Seat_Test :: struct {
+    using w:Seat_World,
     problems:core.Problems,
 }
 
 @(private="file")
-seat_test_init :: proc(f:^Seat_Test) {
-    core.entities_init(&f.es)
-    core.table_init(&f.characters,"Character")
-    core.table_init(&f.moves,"Move_Input")
-    core.table_init(&f.states,"Character_State")
-    core.table_init(&f.drivables,"Drivable")
-    core.table_init(&f.seats,"Seat")
-    core.table_init(&f.worlds,"World_Transform")
-    core.table_init(&f.remotes,"Remote")
-    core.table_init(&f.follows,"Camera_Follow")
-    core.table_init(&f.cameras,"Camera")
-}
+seat_test_init :: proc(t:^testing.T,f:^Seat_Test) -> bool {return core.test_world_init(t,&f.w,test_types)}
 
 @(private="file")
-seat_test_destroy :: proc(f:^Seat_Test) {
-    core.table_destroy(&f.characters)
-    core.table_destroy(&f.moves)
-    core.table_destroy(&f.states)
-    core.table_destroy(&f.drivables)
-    core.table_destroy(&f.seats)
-    core.table_destroy(&f.worlds)
-    core.table_destroy(&f.remotes)
-    core.table_destroy(&f.follows)
-    core.table_destroy(&f.cameras)
-    core.entities_destroy(&f.es)
-}
+seat_test_destroy :: proc(f:^Seat_Test) {core.test_world_destroy(&f.w)}
 
 @(private="file")
-seat_test_settle :: proc(f:^Seat_Test) {
-    core.table_settle(&f.characters,&f.es)
-    core.table_settle(&f.moves,&f.es)
-    core.table_settle(&f.states,&f.es)
-    core.table_settle(&f.drivables,&f.es)
-    core.table_settle(&f.seats,&f.es)
-    core.table_settle(&f.worlds,&f.es)
-    core.table_settle(&f.remotes,&f.es)
-    core.table_settle(&f.follows,&f.es)
-    core.table_settle(&f.cameras,&f.es)
-}
+seat_test_settle :: proc(f:^Seat_Test) {core.test_world_settle(&f.w)}
 
 @(private="file")
 seat_test_run :: proc(f:^Seat_Test) {
@@ -73,10 +54,10 @@ seat_test_run :: proc(f:^Seat_Test) {
     locomotion_seat(core.read(&f.characters),&f.moves,core.read(&f.states),core.read(&f.drivables),walk,look,core.ref(&f.bindings),core.read(&f.follows),core.ref(&f.shown),core.read(&f.cameras),core.read(&f.worlds),core.read(&f.remotes),{},{},{playing=true,dt=1.0/60},core.CLOCK_DEFAULT,&f.problems)
 }
 
-// A character facing +X (yaw π/2, as locomotion_step leaves the look of one that stands so) and its Move_Input.
+// A character facing -X (yaw π/2, as locomotion_step leaves the look of one that stands so) and its Move_Input.
 @(private="file")
 seat_test_body :: proc(f:^Seat_Test,relative:=Move_Relative.Look) -> core.Entity {
-    e:=core.create(&f.es)
+    e:=core.create(&f.entities)
     c:=character_default()
     c.move_relative_to,c.ready,c.turn_speed=relative,true,0
     core.add(&f.characters,e,c)
@@ -87,9 +68,9 @@ seat_test_body :: proc(f:^Seat_Test,relative:=Move_Relative.Look) -> core.Entity
 // A seat that holds W and Space and moved the mouse 10 points right.
 @(private="file")
 seat_test_seat :: proc(f:^Seat_Test) -> core.Entity {
-    seat:=core.create(&f.es)
+    seat:=core.create(&f.entities)
     core.add(&f.seats,seat,input.Seat{})
-    core.table_settle(&f.seats,&f.es)
+    seat_test_settle(f)
     device:=core.Input{keys_down={.W,.Space},keys_pressed={.W,.Space},mouse_delta={10,0}}
     input.seat_feed(core.get(&f.seats,seat),&device,&f.bindings,false)
     return seat
@@ -97,15 +78,14 @@ seat_test_seat :: proc(f:^Seat_Test) -> core.Entity {
 
 // The input map of a world whose code declares the walk actions, without input.mirai.
 @(private="file")
-seat_test_map :: proc(m:^input.Input_Map,problems:^core.Problems) {
+seat_test_map :: proc(t:^testing.T,m:^input.Input_Map,problems:^core.Problems) -> bool {
+    info:=core.test_info(t,Seat_World,Seat_Shared,core.Test_None,test_types) or_return
+    defer core.test_info_destroy(&info)
     names:=[]core.Name_Info{{type=input.Action,value=0,name="look"},{type=input.Action,value=i64(TEST_MOVE),name="move"},{type=input.Action,value=i64(TEST_JUMP),name="jump"},{type=input.Action,value=i64(TEST_SPRINT),name="sprint"},{type=input.Action,value=i64(TEST_CROUCH),name="crouch"}}
-    storages:=[]core.Storage_Info{
-        {name="Walk_Actions",type=Walk_Actions,info=type_info_of(Walk_Actions),default=proc(dst:rawptr) {(cast(^Walk_Actions)dst)^=walk_actions_default()}},
-        {name="Look_Actions",type=input.Look_Actions,info=type_info_of(input.Look_Actions),default=proc(dst:rawptr) {(cast(^input.Look_Actions)dst)^=input.look_actions_default()}},
-    }
     actions:=[]core.Actions_Info{{type=input.Look_Action,info=type_info_of(input.Look_Action)},{type=Walk_Action,info=type_info_of(Walk_Action),base=i64(TEST_WALK_BASE)}}
-    info:=core.World_Info{names=names,storages=storages,actions=actions}
+    info.names,info.actions=names,actions
     input.input_map_make(m,&info,"","",problems)
+    return true
 }
 
 // The walk actions have their defaults in the map without a step that declares them.
@@ -113,9 +93,9 @@ seat_test_map :: proc(m:^input.Input_Map,problems:^core.Problems) {
 a_seat_walks_the_character_it_drives_and_leaves_the_others :: proc(t:^testing.T) {
     f:=new(Seat_Test)
     defer free(f)
-    seat_test_init(f)
+    if !seat_test_init(t,f) {return}
     defer seat_test_destroy(f)
-    seat_test_map(&f.bindings,&f.problems)
+    if !seat_test_map(t,&f.bindings,&f.problems) {return}
 
     driven,idle,remote,by_game:=seat_test_body(f),seat_test_body(f),seat_test_body(f),seat_test_body(f,.Game)
     seat,other,third:=seat_test_seat(f),seat_test_seat(f),seat_test_seat(f)
@@ -145,12 +125,12 @@ a_seat_walks_the_character_it_drives_and_leaves_the_others :: proc(t:^testing.T)
 a_seat_walks_toward_where_the_camera_or_the_world_says :: proc(t:^testing.T) {
     f:=new(Seat_Test)
     defer free(f)
-    seat_test_init(f)
+    if !seat_test_init(t,f) {return}
     defer seat_test_destroy(f)
-    seat_test_map(&f.bindings,&f.problems)
+    if !seat_test_map(t,&f.bindings,&f.problems) {return}
 
     followed,mapped:=seat_test_body(f,.Camera),seat_test_body(f,.World)
-    camera:=core.create(&f.es)
+    camera:=core.create(&f.entities)
     core.add(&f.worlds,camera,core.World_Transform{rotation=mm.quat_axis_angle({0,1,0},-math.PI/2),scale=1})
     core.add(&f.drivables,followed,input.Drivable{seat=seat_test_seat(f),camera=camera})
     core.add(&f.drivables,mapped,input.Drivable{seat=seat_test_seat(f)})
@@ -169,13 +149,13 @@ a_seat_walks_toward_where_the_camera_or_the_world_says :: proc(t:^testing.T) {
 a_seat_walks_as_the_mode_of_its_camera_wants :: proc(t:^testing.T) {
     f:=new(Seat_Test)
     defer free(f)
-    seat_test_init(f)
+    if !seat_test_init(t,f) {return}
     defer seat_test_destroy(f)
-    seat_test_map(&f.bindings,&f.problems)
+    if !seat_test_map(t,&f.bindings,&f.problems) {return}
 
     eyes,orbit:=seat_test_body(f,.View),seat_test_body(f,.View)
     for body,i in ([2]core.Entity{eyes,orbit}) {
-        camera:=core.create(&f.es)
+        camera:=core.create(&f.entities)
         core.add(&f.worlds,camera,core.World_Transform{rotation=mm.quat_axis_angle({0,1,0},-math.PI/2),scale=1})
         core.add(&f.follows,camera,cam.Camera_Follow{mode=i==0?.Eyes:.Orbit})
         core.add(&f.drivables,body,input.Drivable{seat=seat_test_seat(f),camera=camera})
@@ -194,7 +174,7 @@ a_seat_walks_as_the_mode_of_its_camera_wants :: proc(t:^testing.T) {
 a_seat_without_the_walk_actions_is_a_problem :: proc(t:^testing.T) {
     f:=new(Seat_Test)
     defer free(f)
-    seat_test_init(f)
+    if !seat_test_init(t,f) {return}
     defer seat_test_destroy(f)
     input.input_map_action(&f.bindings,TEST_MOVE,.Axis2)
     input.input_map_action(&f.bindings,0,.Button)

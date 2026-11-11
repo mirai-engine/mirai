@@ -4,13 +4,15 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
+import "mirai:project"
 
 // A package like the official ones, made with the tar of the system: bin/slangc and a library.
 @(private="file")
 archive_make :: proc(t:^testing.T,root,compiler_text:string,with_compiler:=true) -> (archive,sha256:string,ok:bool) {
     content:=path_join(root,"content",allocator=context.temp_allocator)
     os.remove_all(content)
-    if with_compiler {fixture_write(t,content,strings.concatenate({"bin/slangc",EXECUTABLE_SUFFIX},context.temp_allocator),compiler_text)}
+    if with_compiler {fixture_write(t,content,strings.concatenate({"bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),compiler_text)}
     fixture_write(t,content,"lib/slang.txt","library")
     archive=path_join(root,"slang-test.tar.gz",allocator=context.temp_allocator)
     runner:Runner
@@ -22,14 +24,14 @@ archive_make :: proc(t:^testing.T,root,compiler_text:string,with_compiler:=true)
 
 @(private="file")
 slang_test_package :: proc(sha256:string) -> Prebuilt {
-    return {name="Slang",version=SLANG_VERSION,folder="slang",asset="slang-test.tar.gz",sha256=sha256,required=strings.concatenate({"bin/slangc",EXECUTABLE_SUFFIX},context.temp_allocator)}
+    return {name="Slang",version=SLANG_VERSION,folder="slang",asset="slang-test.tar.gz",sha256=sha256,required=strings.concatenate({"bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator)}
 }
 
 // A package whose files are under one folder of the archive, like the releases of ripgrep.
 @(test)
 prebuilt_package_takes_its_files_from_the_top_folder :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     content:=path_join(root,"content",allocator=context.temp_allocator)
     fixture_write(t,content,"tool-1.0/tool.txt","the tool")
     archive:=path_join(root,"tool-1.0.tar.gz",allocator=context.temp_allocator)
@@ -51,15 +53,15 @@ prebuilt_package_takes_its_files_from_the_top_folder :: proc(t:^testing.T) {
 
 @(test)
 slang_package_is_checked_unpacked_and_marked :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     archive,sha256,made:=archive_make(t,root,"first compiler")
     if !made {return}
     target:=path_join(root,".deps/slang",allocator=context.temp_allocator)
     testing.expect(t,!prebuilt_installed(target,sha256))
     message,ok:=prebuilt_install_archive(target,archive,slang_test_package(sha256),context.temp_allocator)
     testing.expect(t,ok,message)
-    compiler,_:=os.read_entire_file(path_join(target,"bin",strings.concatenate({"slangc",EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),context.temp_allocator)
+    compiler,_:=os.read_entire_file(path_join(target,"bin",strings.concatenate({"slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,string(compiler),"first compiler")
     testing.expect(t,os.is_file(path_join(target,"lib/slang.txt",allocator=context.temp_allocator)))
     testing.expect(t,prebuilt_installed(target,sha256),"the marker names the package that was installed")
@@ -74,7 +76,7 @@ slang_package_is_checked_unpacked_and_marked :: proc(t:^testing.T) {
     archive,sha256,_=archive_make(t,root,"second compiler")
     message,ok=prebuilt_install_archive(target,archive,slang_test_package(sha256),context.temp_allocator)
     testing.expect(t,ok,message)
-    compiler,_=os.read_entire_file(path_join(target,"bin",strings.concatenate({"slangc",EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),context.temp_allocator)
+    compiler,_=os.read_entire_file(path_join(target,"bin",strings.concatenate({"slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,string(compiler),"second compiler")
     siblings,_:=os.read_all_directory_by_path(path_join(root,".deps",allocator=context.temp_allocator),context.temp_allocator)
     testing.expectf(t,len(siblings)==1,"nothing but the installation is left in .deps: %d entries",len(siblings))
@@ -82,8 +84,8 @@ slang_package_is_checked_unpacked_and_marked :: proc(t:^testing.T) {
 
 @(test)
 slang_package_with_another_hash_or_without_compiler_changes_nothing :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     archive,sha256,made:=archive_make(t,root,"good compiler")
     if !made {return}
     target:=path_join(root,".deps/slang",allocator=context.temp_allocator)
@@ -96,7 +98,7 @@ slang_package_with_another_hash_or_without_compiler_changes_nothing :: proc(t:^t
     testing.expect(t,!ok && strings.contains(message,"bin/slangc"),message)
     message,ok=prebuilt_install_archive(target,path_join(root,"missing.tar.gz",allocator=context.temp_allocator),slang_test_package(sha256),context.temp_allocator)
     testing.expect(t,!ok)
-    compiler,_:=os.read_entire_file(path_join(target,"bin",strings.concatenate({"slangc",EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),context.temp_allocator)
+    compiler,_:=os.read_entire_file(path_join(target,"bin",strings.concatenate({"slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator),context.temp_allocator)
     testing.expect_value(t,string(compiler),"good compiler")
     testing.expect(t,prebuilt_installed(target,sha256),"the previous installation is intact")
 }

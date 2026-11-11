@@ -10,15 +10,6 @@ import mm "mirai:std/math"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
 
-// A fresh folder in the temp directory.
-temp_folder :: proc(name:string) -> string {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-usd-%d-%s",directory,os.get_pid(),name)
-    os.remove_all(path)
-    os.make_directory_all(path)
-    return path
-}
-
 write_text :: proc(folder,name,text:string) -> string {
     path:=fmt.tprintf("%s/%s",folder,name)
     _=os.write_entire_file(path,text)

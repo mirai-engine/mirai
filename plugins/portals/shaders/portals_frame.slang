@@ -1,13 +1,13 @@
 //! mirai frame Portals_Frame portals
 //! mirai needs nested_views
+//! mirai constant PORTAL_CAPACITY int ../runtime/portals.odin
+//! mirai constant PORTAL_LIGHT_CAPACITY int ../runtime/gpu.odin
 // What every stage knows of the portals of the scene (portals.Gpu_Portals):
 // the gates a ray may leave through, and the lights that reach the front of
 // one from the place behind it.
 #ifndef PORTALS_FRAME_SLANG
 #define PORTALS_FRAME_SLANG
-
-#define PORTAL_CAPACITY 8
-#define PORTAL_LIGHT_CAPACITY 16
+#include <constants/plugins/portals.slang>
 
 struct Portal_Gate {
     float4 to_local[3]; // rows: the world to the space of the portal, where its opening is the unit square at z = 0 seen from +z

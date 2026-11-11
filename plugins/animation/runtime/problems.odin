@@ -13,9 +13,9 @@ content_error :: proc(contents:[]$T,id:base.Asset_Id) -> asset.Error {
 }
 
 // Reports that the asset id, which field of entity e names, cannot be used.
-asset_problem :: proc(problems:^core.Problems,e:core.Entity,app:^host.App,code,field:string,id:base.Asset_Id,error:asset.Error) {
+asset_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Assets,code,field:string,id:base.Asset_Id,error:asset.Error) {
     name:[base.ASSET_ID_TEXT]u8
-    path:=host.assets_name(app.assets if app!=nil else nil,id,&name)
+    path:=host.assets_name(assets,id,&name)
     switch error {
     case .None:
     case .Not_Found:
@@ -23,7 +23,7 @@ asset_problem :: proc(problems:^core.Problems,e:core.Entity,app:^host.App,code,f
     case .Invalid:
         core.report(problems,e,code,"%s names %s, which is not of the kind it takes or holds nothing to use; name an asset of that kind",field,path)
     case .Version:
-        core.report(problems,e,code,"%s names %s, of a version this build does not read: older than the oldest it migrates, or newer; make it again with what made it (its import or the editor method), or open it with a newer engine if it is newer",field,path)
+        core.report(problems,e,code,"%s names %s, of a version this build does not read; make it again with what made it (its import or the editor method), or open it with a newer engine if it is newer",field,path)
     case .Out_Of_Memory:
         core.report(problems,e,code,"%s names %s, which did not fit in memory; it is read again when the assets change: free memory",field,path)
     case .Truncated,.Not_An_Asset,.Corrupt,.Hash,.Too_Large,.Schema,.IO:

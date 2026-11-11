@@ -6,45 +6,46 @@ import "core:math/linalg"
 import "core:mem"
 import "core:time"
 import "mirai:rhi"
+import "mirai:render/abi"
 
-// Binding slots, mirrored from shaders/include/common.slang.
-SLOT_FRAME          :: 0
-SLOT_PARAMS         :: 1
-SLOT_LINEAR_SAMPLER :: 2
-SLOT_POINT_SAMPLER  :: 3
-SLOT_INSTANCES      :: 4
-SLOT_MESHES         :: 5
-SLOT_VERTICES       :: 6
-SLOT_INDICES        :: 7
-SLOT_MATERIALS      :: 8
-SLOT_LIGHTS         :: 9
-SLOT_LIGHT_TREE     :: 10
-SLOT_BLAS_NODES     :: 11
-SLOT_BLAS_TRIANGLES :: 12
-SLOT_TLAS_NODES     :: 13
-SLOT_TLAS_REFS      :: 14
-SLOT_MATERIAL_SAMPLER :: 15
-SLOT_PROBES         :: 16
-SLOT_IRRADIANCE     :: 17
-SLOT_POINTS         :: 18 // the material points (points.odin)
-SLOT_PASS0          :: 19
-SLOT_PASS1          :: 20
-SLOT_PASS2          :: 21
-SLOT_PASS3          :: 22
-SLOT_PASS4          :: 23
-SLOT_PASS5          :: 24
-SLOT_PASS6          :: 25
-SLOT_PASS7          :: 26
-SLOT_PASS8          :: 27
-SLOT_PASS9          :: 28
-SLOT_TLAS           :: 29
-SLOT_SURFACE        :: 30
-SLOT_VIEWS          :: 31
-SLOT_LAYERS         :: 32
-SLOT_DISTANCE       :: 33
+// Binding slots.
+SLOT_FRAME          :: abi.SLOT_FRAME
+SLOT_PARAMS         :: abi.SLOT_PARAMS
+SLOT_LINEAR_SAMPLER :: abi.SLOT_LINEAR_SAMPLER
+SLOT_POINT_SAMPLER  :: abi.SLOT_POINT_SAMPLER
+SLOT_INSTANCES      :: abi.SLOT_INSTANCES
+SLOT_MESHES         :: abi.SLOT_MESHES
+SLOT_VERTICES       :: abi.SLOT_VERTICES
+SLOT_INDICES        :: abi.SLOT_INDICES
+SLOT_MATERIALS      :: abi.SLOT_MATERIALS
+SLOT_LIGHTS         :: abi.SLOT_LIGHTS
+SLOT_LIGHT_TREE     :: abi.SLOT_LIGHT_TREE
+SLOT_BLAS_NODES     :: abi.SLOT_BLAS_NODES
+SLOT_BLAS_TRIANGLES :: abi.SLOT_BLAS_TRIANGLES
+SLOT_TLAS_NODES     :: abi.SLOT_TLAS_NODES
+SLOT_TLAS_REFS      :: abi.SLOT_TLAS_REFS
+SLOT_MATERIAL_SAMPLER :: abi.SLOT_MATERIAL_SAMPLER
+SLOT_PROBES         :: abi.SLOT_PROBES
+SLOT_IRRADIANCE     :: abi.SLOT_IRRADIANCE
+SLOT_POINTS         :: abi.SLOT_POINTS // the material points (points.odin)
+SLOT_PASS0          :: abi.SLOT_PASS0
+SLOT_PASS1          :: abi.SLOT_PASS1
+SLOT_PASS2          :: abi.SLOT_PASS2
+SLOT_PASS3          :: abi.SLOT_PASS3
+SLOT_PASS4          :: abi.SLOT_PASS4
+SLOT_PASS5          :: abi.SLOT_PASS5
+SLOT_PASS6          :: abi.SLOT_PASS6
+SLOT_PASS7          :: abi.SLOT_PASS7
+SLOT_PASS8          :: abi.SLOT_PASS8
+SLOT_PASS9          :: abi.SLOT_PASS9
+SLOT_TLAS           :: abi.SLOT_TLAS
+SLOT_SURFACE        :: abi.SLOT_SURFACE
+SLOT_VIEWS          :: abi.SLOT_VIEWS
+SLOT_LAYERS         :: abi.SLOT_LAYERS
+SLOT_DISTANCE       :: abi.SLOT_DISTANCE
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
-SLOT_DRAW           :: SLOT_PASS9
+SLOT_DRAW           :: abi.SLOT_DRAW
 
 // What the passes of a view record with: the frame, the view with its
 // targets, and what several of them decide by.
@@ -407,6 +408,7 @@ present_blit :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: rhi.Texture, 
 // swapchain recreation) or failed; r.error says which.
 renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     d:=r.device
+    r.error=""
     started:=time.tick_now()
     texture_uploads_install(r)
     geometry_uploads_install(r)
@@ -439,8 +441,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     if !frame.ui_only {r.frame_occluders,r.scene.occluders=r.scene.occluders,{}}
     batches_build(r)
     // The room for the lights of the GPU sizes the light buffers: it is taken before they are made.
-    scene_light_region(r)
-    if !ensure_scene_capacity(r) {return false}
+    if !scene_light_region(r) || !ensure_scene_capacity(r) {return false}
     if !frame.offscreen && !frame.ui_only {
         // The cuts rays trace follow the eye of the first view of the window, as the probes.
         eye:=frame.camera.position
@@ -454,7 +455,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {focus=camera_focus(view.camera);break}}
         if ddgi_ensure(r) {ddgi_place(r,focus)}
     } else if !r.settings.gi_enabled && r.ddgi.valid {ddgi_release(r)}
-    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_width)*f32(r.window_height)),true) {return false}
+    if r.main.targets.ldr==0 && !create_targets(r,&r.main,r.window_width,r.window_height,window_render_scale(r,f32(r.window_height)),true) {return false}
     // A frame no window shows that draws only into textures leaves the views
     // of the window as they are: it records those alone.
     alone:=frame.offscreen && len(frame.views)>0
@@ -469,13 +470,18 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     }
     prepared:=time.tick_now()
     cmd,began:=rhi.frame_begin(d,!frame.offscreen)
-    if !began {return false}
+    if !began {
+        set_error(r,"the device gave no frame to draw: %s",rhi.device_error(d)!=""?rhi.device_error(d):"the window is being resized or its image is not ready")
+        return false
+    }
     begun:=time.tick_now()
     slot:=int(rhi.frame_number(d)%rhi.MAX_FRAMES_IN_FLIGHT)
     read_stats(r,slot)
     points_read(r,slot)
     pages_update(r,slot)
     extension_counters_begin(r,cmd,slot)
+    // A frame none of whose views culls reports no counts, not those of the last one that did.
+    rhi.cmd_fill_buffer(cmd,r.stats_buffer,0,size_of(Gpu_Cull_Stats),0)
     depth_probes_begin(r,cmd,slot,frame.probes)
     extension_readbacks_take(r,slot)
     r.stats.counters=r.counters.counters[:r.counters.count]
@@ -484,8 +490,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     r.ui_shape_written,r.ui_shape_cache_count,r.ui_vertex_cache_count=0,0,0
     ui_written:=0
     s:=&r.scene
-    if s.instances_dirty || len(s.touched)>0 || s.materials_dirty || len(s.material_ranges)>0 {r.textures.residency.stale=true}
-    r.scene_uploads_change=s.instances_dirty || len(s.touched)>0 || s.materials_dirty || len(s.material_ranges)>0 || s.lights_dirty || s.lights_changed
+    r.scene_uploads_change=s.instances_dirty || s.touched_count>0 || s.materials_dirty || len(s.material_ranges)>0 || s.lights_dirty || s.lights_changed
     s.lights_changed=false
     texture_uploads_record(r,cmd)
     recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && (frame.ui_only || air_frame(r,cmd))
@@ -584,7 +589,9 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
 	r.stats.cpu_end_ms = f32(time.duration_milliseconds(time.tick_diff(recorded, ended)))
 
 	r.frame += 1
+	texture_views_count(r)
 	update_stats(r)
+	if !ok {set_error(r, "the frame was not submitted: %s", rhi.device_error(d))}
 	return ok && recorded_ok
 }
 
@@ -673,6 +680,7 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     state.has_previous=true
     state.resources_frames+=1
     state.frames+=1
+    state.turn+=1
     state.last_frame=r.frame
     return true
 }
@@ -682,11 +690,11 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
 // the air of an atmosphere, the sun is as bright above it as it has to be to
 // give its illuminance on the ground when it stands overhead.
 @(private)
-frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, scale, disc: f32, air: bool) {
+frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, scale, disc: f32, air, shadows: bool) {
 	if sun.enabled {
 		light := sun.color * (sun.illuminance / math.PI * scale)
 		if air && environment.sky_atmosphere {light *= air_overhead(environment.air)}
-		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1}
+		f.sun_direction = {sun.direction.x, sun.direction.y, sun.direction.z, 1 if shadows else SUN_UNSHADOWED}
 		f.sun_color = {light.x, light.y, light.z, disc if sun.disc else 0}
 	}
 	sky := environment.sky * scale
@@ -701,10 +709,10 @@ frame_sun_sky :: proc(f: ^Gpu_Frame, sun: Sun_Desc, environment: Environment, sc
 @(private)
 sky_map :: proc(r: ^Renderer, texture: Texture_Handle, atmosphere: bool) -> Vec4 {
 	if atmosphere && r.air.built {return {0, 1, 0, 0}}
-	entry := texture_index(r, texture)
-	if entry == max(u32) {return {}}
-	size := r.textures.sizes[texture - 1]
-	return {f32(entry), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
+	index := int(texture) - 1
+	if index < 0 || index >= r.textures.count || r.textures.textures[index] == 0 {return {}}
+	size := r.textures.sizes[index]
+	return {f32(texture_entry(index)), 0, math.floor(math.log2(f32(max(size[0], size[1], 1)))), 1}
 }
 
 // The constants of the view and what it decides for all its passes.
@@ -734,7 +742,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	case .None:
 	case .Upscale: phases = upscale_jitter_phases(t.width, t.output_width)
 	}
-	jitter := taa_jitter(p.view.frames, phases) if phases > 0 else Vec2{}
+	jitter := taa_jitter(p.view.turn, phases) if phases > 0 else Vec2{}
 	p.jitter_phases = phases
 	// Sub-pixel offset applied in NDC (pixel y grows downwards, NDC y upwards).
 	shift := Mat4(1)
@@ -752,7 +760,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		resolution = {f32(t.width), f32(t.height)},
 		inv_resolution = {1 / f32(t.width), 1 / f32(t.height)},
 		time={r.time,r.previous_time,r.delta_time,0},
-		frame_index = u32(p.view.frames),
+		frame_index = u32(p.view.turn),
 		light_nodes = u32(len(s.light_tree)),
 		shadowless_lights = light_region_frame(s.light_region),
 		instance_count = u32(len(s.instances)),
@@ -784,7 +792,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		if length > 1e-8 {f.frustum[5] = camera.clip_plane / length}
 	}
 	scale := s.light_scale if s.light_scale > 0 else 1
-	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built)
+	frame_sun_sky(&f, s.sun, s.environment, scale, max(settings.sun_radius, SUN_RADIUS), r.air.built, settings.sun_shadows)
 	f.sky_map = sky_map(r, s.environment.sky_texture, s.environment.sky_atmosphere)
 	f.sky_from_map = sky_map(r, s.environment.sky_from_texture, s.environment.sky_from_atmosphere)
 	air_view(p, &f)
@@ -865,6 +873,7 @@ frame_constants_write :: proc(p: ^Pass) {
 @(private)
 frame_constants_fill :: proc(r: ^Renderer, to: rawptr, frame: ^Gpu_Frame) {
 	layout := &r.frame_layout
+	frame.flags |= display_frame_flags(r)
 	mem.copy(to, frame, size_of(Gpu_Frame))
 	if layout.size > size_of(Gpu_Frame) {mem.zero(rawptr(uintptr(to) + size_of(Gpu_Frame)), layout.size - size_of(Gpu_Frame))}
 	if layout.nested {
@@ -942,8 +951,8 @@ cull_programs_bin :: proc(p: ^Pass, phase: u32) {
 }
 
 // The layout of Scene_State.program_bins (cull_programs.slang), for the most bins.
-@(private) PROGRAMS_DISPATCH :: 2
-@(private) PROGRAMS_HEADER :: 8
+@(private) PROGRAMS_DISPATCH :: abi.PROGRAMS_DISPATCH
+@(private) PROGRAMS_HEADER :: abi.PROGRAMS_HEADER
 @(private)
 program_entry_word :: proc "contextless" (entry: u32) -> u32 {return PROGRAMS_HEADER + 14 * POINTS_PROGRAM_CAPACITY + 3 * entry}
 @(private)
@@ -1460,8 +1469,8 @@ pass_indirect :: proc(p: ^Pass) -> bool {
 // The contact occlusion of each point (contact.comp) and the light of the
 // probe volume there (contact_light.comp), which contact_pixels.comp takes to
 // the pixels: the composition takes it in p.gi.
-// Rays of each point. Must match CONTACT_SAMPLES of contact.comp.
-CONTACT_RAYS :: u64(4)
+// Rays of each point.
+CONTACT_RAYS :: abi.CONTACT_RAYS
 @(private)
 pass_contact :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
@@ -1819,6 +1828,7 @@ update_stats :: proc(r: ^Renderer) {
 	s.materials = u32(len(r.scene.materials))
 	s.textures = u32(r.textures.count)
 	s.texture_bytes = r.textures.bytes
+	s.view_target_bytes = r.texture_view_bytes
 	s.geometry_bytes = geometry_pool_bytes(r)
 	s.geometry_free, s.geometry_free_largest = geometry_pool_free(&r.scene)
 	s.ray_bytes, _ = rhi.accel_memory(r.device)
@@ -1863,17 +1873,31 @@ update_stats :: proc(r: ^Renderer) {
 
 renderer_stats :: proc(r: ^Renderer) -> ^Stats {return &r.stats}
 
+// Stats with the counters of the last frame, which it reads back by the time
+// a later frame needs its slot: for whoever has just read an image of that
+// frame (renderer_capture, view_texture_capture), so the GPU is idle.
+renderer_stats_of_last_frame :: proc(r: ^Renderer) -> ^Stats {
+	if r.frame > 0 {read_stats(r, int((rhi.frame_number(r.device) + rhi.MAX_FRAMES_IN_FLIGHT - 1) % rhi.MAX_FRAMES_IN_FLIGHT))}
+	return &r.stats
+}
+
 // Reads back the last presented LDR image (RGBA8, window resolution). Blocks
 // until the GPU is idle; call between frames. The caller owns the pixels.
 renderer_capture :: proc(r: ^Renderer, allocator := context.allocator) -> (pixels: []u8, width, height: int, ok: bool) {
-	if r.frame == 0 {return nil, 0, 0, false}
+	if r.frame == 0 {
+		set_error(r, "capture: no frame has been drawn")
+		return nil, 0, 0, false
+	}
 	return targets_capture(r, &r.main.targets, allocator)
 }
 
 // Reads back the image the window showed before the last presented one, which
 // frame generation drew (Stats.generated); false when the last frame drew none.
 renderer_capture_generated :: proc(r: ^Renderer, allocator := context.allocator) -> (pixels: []u8, width, height: int, ok: bool) {
-	if !r.stats.generated {return nil, 0, 0, false}
+	if !r.stats.generated {
+		set_error(r, "capture: the last frame generated no image")
+		return nil, 0, 0, false
+	}
 	t := r.main.targets
 	t.ldr = t.generated
 	return targets_capture(r, &t, allocator)
@@ -1881,7 +1905,10 @@ renderer_capture_generated :: proc(r: ^Renderer, allocator := context.allocator)
 
 @(private)
 targets_capture :: proc(r: ^Renderer, t: ^Targets, allocator: mem.Allocator) -> (pixels: []u8, width, height: int, ok: bool) {
-	if t.ldr == 0 {return nil, 0, 0, false}
+	if t.ldr == 0 {
+		set_error(r, "capture: the view has no image yet")
+		return nil, 0, 0, false
+	}
 	width, height = int(t.output_width), int(t.output_height)
 	memory: mem.Allocator_Error
 	pixels, memory = make([]u8, width * height * 4, allocator)

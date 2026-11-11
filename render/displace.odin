@@ -1,6 +1,7 @@
 package mirai_render
 
 import "mirai:rhi"
+import "mirai:std/base"
 
 // Surface programs that move vertices (`//! vertex`, Program_Vertex). An
 // instance whose materials have one shows a pose of its own of its mesh
@@ -25,22 +26,13 @@ Instance_Vertex :: struct {
 	inputs:          u64, // what its vertices are moved from
 }
 
-@(private = "file")
-INPUTS_SEED :: u64(0xcbf29ce484222325)
-
-@(private = "file")
-inputs_mix :: #force_inline proc "contextless" (h, v: u64) -> u64 {
-	x := (h ~ v) * 0x100000001b3
-	return x ~ (x >> 29)
-}
-
 // What the programs of the materials of an instance of mesh do to its
 // vertices. material: the row in place of the slots' (GPU_NONE: theirs).
 @(private)
 instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [32]u32) -> (v: Instance_Vertex) {
 	s := &r.scene
 	palette := slots
-	v.inputs = INPUTS_SEED
+	v.inputs = base.HASH_SEED
 	for packed in s.indices[mesh.slot_word:][:mesh.slot_count] {
 		row := instance_row(packed, material, &palette)
 		if int(row) >= len(s.materials) || s.materials[row].program_id == 0 {continue}
@@ -57,7 +49,7 @@ instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [
 		}
 		v.reach = max(v.reach, reach)
 		version := s.material_versions[row] if int(row) < len(s.material_versions) else 0
-		v.inputs = inputs_mix(inputs_mix(v.inputs, u64(row)), u64(version))
+		v.inputs = base.hash_mix(base.hash_mix(v.inputs, u64(row)), u64(version))
 	}
 	return
 }
@@ -125,8 +117,9 @@ displaced_swap :: proc(r: ^Renderer, index: u32, mesh: Mesh_Handle) {
 	m.first_instance = i32(index)
 	inst.meta.x = u32(mesh) | u32(ray_cut_always(m^)) << INSTANCE_RAY_SHIFT
 	s.ray_cuts_stale = true
+	r.textures.residency.stale = true
 	if !pose_instance_box(s, index) {
-		if len(s.touched) < cap(s.touched) {append(&s.touched, index)} else {s.instances_dirty = true}
+		instance_touch(s, index)
 	}
 	s.tlas_moved, s.tlas_dirty = true, true
 }
@@ -201,9 +194,9 @@ displaced_prepare :: proc(r: ^Renderer) {
 		if index := m.first_instance; index >= 0 {
 			inst := &s.instances[index]
 			v = instance_vertex(r, m^, inst.meta.y, inst.slot_materials)
-			for row in inst.world {for value in row {v.inputs = inputs_mix(v.inputs, u64(transmute(u32)value))}}
-			for row in inst.prev_world {for value in row {v.inputs = inputs_mix(v.inputs, u64(transmute(u32)value))}}
-			if v.animated {v.inputs = inputs_mix(v.inputs, u64(transmute(u32)r.time) << 32 | u64(transmute(u32)r.previous_time))}
+			for row in inst.world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
+			for row in inst.prev_world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
+			if v.animated {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)r.time) << 32 | u64(transmute(u32)r.previous_time))}
 		}
 		// A skin that starts or stops being moved is posed again.
 		if !skin.displaced && v.moves != skin.moves {skin.moves = v.moves; skin.dirty = true}

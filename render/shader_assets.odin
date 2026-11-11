@@ -23,7 +23,7 @@ Shader_Assets :: struct {
 @(private)
 shader_code_destroy :: proc(c:rhi.Shader_Code,allocator:runtime.Allocator) {
     delete(c.name,allocator);delete(c.bindings,allocator)
-    when ODIN_OS==.Darwin {delete(transmute([]u8)c.msl,allocator);delete(c.msl_entry,allocator)} else {delete(c.spirv,allocator)}
+    delete(rhi.shader_code_bytes(c),allocator);delete(rhi.shader_code_entry(c),allocator)
 }
 shader_assets_destroy :: proc(assets:^Shader_Assets) {
     if assets.owned {
@@ -64,7 +64,7 @@ embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len
     at:=0
     place :: proc(code:^rhi.Shader_Code,shader:Embedded_Shader,bytes:[]u8,at:^int) {
         code^=shader.code
-        when ODIN_OS==.Darwin {code.msl=string(bytes[at^:][:shader.size])} else {code.spirv=bytes[at^:][:shader.size]}
+        rhi.shader_code_set(code,bytes[at^:][:shader.size],rhi.shader_code_entry(shader.code))
         at^+=shader.size
     }
     for &code,id in codes^ {place(&code,SHADERS[id],bytes,&at)}
@@ -159,12 +159,7 @@ shader_assets_match_codes :: proc(assets:^Shader_Assets,codes:^[Shader_Id]rhi.Sh
 shader_code_matches :: proc(next,current:rhi.Shader_Code)->bool {
     if next.name!=current.name || next.stage!=current.stage || next.threadgroup!=current.threadgroup || len(next.bindings)!=len(current.bindings) {return false}
     for binding,i in next.bindings {if binding!=current.bindings[i] {return false}}
-    when ODIN_OS==.Darwin {
-        if next.msl!=current.msl || next.msl_entry!=current.msl_entry {return false}
-    } else {
-        if string(next.spirv)!=string(current.spirv) {return false}
-    }
-    return true
+    return string(rhi.shader_code_bytes(next))==string(rhi.shader_code_bytes(current)) && rhi.shader_code_entry(next)==rhi.shader_code_entry(current)
 }
 // Whether two generations bring the same stages of extensions, or of programs.
 @(private)
@@ -208,8 +203,13 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
     }
     extensions,_:=root["extensions"].(json.Array)
     programs,_:=root["program_stages"].(json.Array)
-    assets.extensions=make([]rhi.Shader_Code,len(extensions),allocator)
-    assets.programs=make([]rhi.Shader_Code,len(programs),allocator)
+    extensions_error,programs_error:runtime.Allocator_Error
+    assets.extensions,extensions_error=make([]rhi.Shader_Code,len(extensions),allocator)
+    assets.programs,programs_error=make([]rhi.Shader_Code,len(programs),allocator)
+    if extensions_error!=nil || programs_error!=nil {
+        shader_assets_destroy(&assets)
+        return assets,"out of memory for the shaders of the manifest"
+    }
     for at in 0..<len(shaders)+len(programs)+len(extensions) {
         program:=at>=len(shaders) && at<len(shaders)+len(programs)
         extension:=at>=len(shaders)+len(programs)
@@ -225,20 +225,25 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
             if assets.codes[id].name!="" {error="duplicate shader id";break}
             code=&assets.codes[id]
         }
-        code.name=strings.clone(text(item["name"]),allocator)
+        no_name:runtime.Allocator_Error
+        if code.name,no_name=strings.clone(text(item["name"]),allocator);no_name!=nil {error="out of memory for the name of a shader";break}
         stage,valid_stage:=reflect.enum_from_name(rhi.Shader_Stage,text(item["stage"]));if !valid_stage {error="invalid shader stage";break};code.stage=stage
-        key := "msl" when ODIN_OS==.Darwin else "spv"
-        file,_:=filepath.join({directory,text(item[key])},context.temp_allocator)
+        file,_:=filepath.join({directory,text(item["msl" if rhi.SHADER_FORMAT==.Msl else "spv"])},context.temp_allocator)
         data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
-        when ODIN_OS==.Darwin {
-            code.msl=string(data);code.msl_entry=strings.clone(text(item["entry"]),allocator)
-            if code.msl_entry=="" {error="shader has no Metal entry point";break}
-        } else {code.spirv=data}
+        rhi.shader_code_set(code,data,"")
+        if rhi.SHADER_FORMAT==.Msl {
+            entry,no_entry:=strings.clone(text(item["entry"]),allocator)
+            if no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
+            rhi.shader_code_set(code,data,entry)
+            if entry=="" {error="shader has no Metal entry point";break}
+        }
         group:=item["group"].(json.Array) or_else nil
         if len(group)!=3 {error="invalid workgroup";break}
         for v,i in group {n,valid:=number(v);if !valid {error="invalid workgroup";break};code.threadgroup[i]=n}
         bindings:=item["bindings"].(json.Array) or_else nil
-        code.bindings=make([]rhi.Binding_Info,len(bindings),allocator)
+        bindings_error:runtime.Allocator_Error
+        code.bindings,bindings_error=make([]rhi.Binding_Info,len(bindings),allocator)
+        if bindings_error!=nil {error=fmt.tprintf("out of memory for the bindings of shader %s",code.name);break}
         for binding,i in bindings {
             b:=binding.(json.Object) or_else nil
             kind,valid_kind:=reflect.enum_from_name(rhi.Binding_Kind,text(b["kind"]));if !valid_kind {error="invalid binding kind";break}
@@ -264,16 +269,18 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
 // stop: once set from any thread, the build makes no more pipelines and fails.
 renderer_shader_reload_begin :: proc(r:^Renderer,assets:^Shader_Assets,stop:^bool=nil)->^Renderer {
     if !assets.owned {return nil}
-    candidate:=new(Renderer,r.allocator)
+    candidate,candidate_error:=new(Renderer,r.allocator)
+    if candidate_error!=nil {set_error(r,"shader reload: out of memory for its renderer");return nil}
     candidate^=r^
     candidate.shader_codes=assets.codes;candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.program_graphics={};candidate.pipeline_thread=nil
     candidate.reload_stop=stop
     candidate.frame_layout=frame_layout_of(assets)
     return candidate
 }
-// False when a pipeline is refused: candidate.error says which.
+// False when a pipeline is refused: candidate.error says which. And for the
+// candidate renderer_shader_reload_begin had no memory for.
 renderer_shader_reload_build :: proc(candidate:^Renderer)->bool {
-    if !create_pipelines(candidate) {return false}
+    if candidate==nil || !create_pipelines(candidate) {return false}
     if rhi.device_info(candidate.device).features.ray_query {
         for p,id in candidate.pipelines {if pipeline_uses_hardware(id) && id not_in LAZY_PIPELINES && p==0 {set_error(candidate,"pipeline %v: %s",id,rhi.device_error(candidate.device));return false}}
     }
@@ -334,6 +341,7 @@ renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
         return true
     }
     candidate:=renderer_shader_reload_begin(r,assets)
+    if candidate==nil {return false}
     defer renderer_abort_shader_reload(candidate)
     if !renderer_shader_reload_build(candidate) {set_error(r,"%s",candidate.error);return false}
     renderer_publish_shader_reload(r,assets,candidate)

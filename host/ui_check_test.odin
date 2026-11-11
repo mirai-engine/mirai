@@ -13,10 +13,9 @@ import "mirai:ui"
 
 @(private="file") UI_CHECK_ID :: base.Asset_Id{0x41,2}
 
-// A tree with what the structure of a .ui links: components with a nested
-// one and overrides, a template no node uses, a List, a grid, clips of
+// A tree with what the structure of a .ui links: a use of a widget, a List, a grid, clips of
 // several tracks, a sequence and a parallel, a track no clip plays, sets,
-// styles with a variant, style infos with a base, a font and a translation.
+// styles with a variant, style infos, a font and a translation.
 @(private="file")
 ui_check_base :: proc() -> (d:ui.Tree_Data) {
     a:=context.temp_allocator
@@ -31,30 +30,15 @@ ui_check_base :: proc() -> (d:ui.Tree_Data) {
     d.nodes[0]=named(.Box,-1,"root");d.nodes[0].style=1;d.nodes[0].anims=1
     d.nodes[1]=named(.Text,0,"title");d.nodes[1].style=2;d.nodes[1].text={0,2};d.nodes[1].text_id=7;d.nodes[1].flags={.Localized}
     d.nodes[2]=named(.Box,0,"grid");d.nodes[2].layout.direction=.Grid;d.nodes[2].layout.tracks=1;d.nodes[2].image=1
-    d.nodes[3]=named(.Component,2,"card");d.nodes[3].component=1;d.nodes[3].component_fields={.Style};d.nodes[3].style=2
+    d.nodes[3]=named(.Text,2,"card");d.nodes[3].text={8,4}
     d.nodes[4]=named(.List,2,"items")
     d.nodes[5]=named(.Text,4,"item")
     d.nodes[6]=named(.Button,0,"ok");d.nodes[6].anims=2
-    d.component_nodes=make([]ui.Tree_Node,8,a)
-    d.component_nodes[0]=named(.Box,-1,"frame")
-    d.component_nodes[1]=named(.Text,0,"label");d.component_nodes[1].text={8,4}
-    d.component_nodes[2]=named(.Component,0,"icon");d.component_nodes[2].component=2
-    d.component_nodes[3]=named(.Box,-1,"slot")
-    d.component_nodes[4]=named(.Image,0,"pic");d.component_nodes[4].image=1
-    d.component_nodes[5]=named(.Box,-1,"spare")
-    d.component_nodes[6]=named(.List,0,"rows")
-    d.component_nodes[7]=named(.Text,1,"row");d.component_nodes[7].text={8,4};d.component_nodes[7].layout.tracks=1
-    d.components=slice.clone([]ui.Tree_Component{ui.tree_component_record("card",0,3),ui.tree_component_record("badge",3,2),ui.tree_component_record("spare",5,3)},a)
-    d.overrides=make([]ui.Tree_Override,2,a)
-    d.overrides[0]={instance=3,fields={.Text,.Style}}
-    ui.tree_text_set(d.overrides[0].node[:],"label");d.overrides[0].values.style=2;d.overrides[0].values.text={6,2}
-    d.overrides[1]={instance=3,fields={.Image,.Animations}}
-    ui.tree_text_set(d.overrides[1].node[:],"icon/pic");d.overrides[1].values.image=1;d.overrides[1].values.anims=2;d.overrides[1].values.layout.tracks=1
     d.styles=slice.clone([]ui.Node_Style{{},{text={font=ui.FONT_TREE,size=12}},{text={size=10}}},a)
     d.variants=slice.clone([]ui.Tree_Style_Variant{ui.tree_variant_record(1,"hot",{},{values={text={font=ui.FONT_TREE}}})},a)
     d.style_infos=make([]ui.Tree_Style_Info,3,a)
     ui.tree_text_set(d.style_infos[0].name[:],"base");ui.tree_text_set(d.style_infos[1].name[:],"accent")
-    ui.tree_text_set(d.style_infos[2].name[:],"accent2");d.style_infos[2].base=2
+    ui.tree_text_set(d.style_infos[2].name[:],"accent2")
     d.fonts=slice.clone([]ui.Tree_Font{{font={0xf0,2}}},a)
     d.images=slice.clone([]ui.Tree_Image{{texture={0x7e,2}}},a)
     d.keys=slice.clone([]ui.Keyframe{{time=0},{time=0.2,value={1,0,0,0}},{time=0},{time=0.1},{time=0.3},{time=0},{time=0},{time=0.5}},a)
@@ -72,7 +56,7 @@ ui_check_base :: proc() -> (d:ui.Tree_Data) {
 ui_check_clone :: proc(d:ui.Tree_Data) -> (c:ui.Tree_Data) {
     a:=context.temp_allocator
     c.nodes,c.styles,c.variants,c.components=slice.clone(d.nodes,a),slice.clone(d.styles,a),slice.clone(d.variants,a),slice.clone(d.components,a)
-    c.component_nodes,c.overrides,c.images,c.anims=slice.clone(d.component_nodes,a),slice.clone(d.overrides,a),slice.clone(d.images,a),slice.clone(d.anims,a)
+    c.overrides,c.images,c.anims=slice.clone(d.overrides,a),slice.clone(d.images,a),slice.clone(d.anims,a)
     c.tracks,c.keys,c.parts,c.anim_sets,c.fonts=slice.clone(d.tracks,a),slice.clone(d.keys,a),slice.clone(d.parts,a),slice.clone(d.anim_sets,a),slice.clone(d.fonts,a)
     c.style_infos,c.translations,c.grid_tracks,c.text=slice.clone(d.style_infos,a),slice.clone(d.translations,a),slice.clone(d.grid_tracks,a),slice.clone(d.text,a)
     return
@@ -81,9 +65,9 @@ ui_check_clone :: proc(d:ui.Tree_Data) -> (c:ui.Tree_Data) {
 // The field of a clone at the place of a field of the records it was cloned from.
 @(private="file")
 ui_check_moved :: proc(from,to:^ui.Tree_Data,field:any) -> any {
-    tables :: proc(d:^ui.Tree_Data) -> [17][]u8 {
+    tables :: proc(d:^ui.Tree_Data) -> [16][]u8 {
         to_bytes :: slice.to_bytes
-        return {to_bytes(d.nodes),to_bytes(d.styles),to_bytes(d.variants),to_bytes(d.components),to_bytes(d.component_nodes),to_bytes(d.overrides),to_bytes(d.images),to_bytes(d.anims),
+        return {to_bytes(d.nodes),to_bytes(d.styles),to_bytes(d.variants),to_bytes(d.components),to_bytes(d.overrides),to_bytes(d.images),to_bytes(d.anims),
             to_bytes(d.tracks),to_bytes(d.keys),to_bytes(d.parts),to_bytes(d.anim_sets),to_bytes(d.fonts),to_bytes(d.style_infos),to_bytes(d.translations),to_bytes(d.grid_tracks),d.text}
     }
     at:=uintptr(field.data)
@@ -101,25 +85,17 @@ ui_check_moved :: proc(from,to:^ui.Tree_Data,field:any) -> any {
 @(private="file")
 ui_check_links :: proc(d:^ui.Tree_Data,out:^[dynamic]Ui_Link) {
     add :: proc(out:^[dynamic]Ui_Link,value:any,format:string,args:..any) {append(out,Ui_Link{fmt.tprintf(format,..args),value})}
-    for list,l in ([2][]ui.Tree_Node{d.nodes,d.component_nodes}) {
-        table:=l==0?"nodes":"component_nodes"
-        for &n,i in list {
+    {
+        table:="nodes"
+        for &n,i in d.nodes {
             add(out,n.kind,"%s[%d].kind",table,i);add(out,n.parent,"%s[%d].parent",table,i);add(out,n.name,"%s[%d].name",table,i)
             add(out,n.style,"%s[%d].style",table,i);add(out,n.image,"%s[%d].image",table,i);add(out,n.anims,"%s[%d].anims",table,i)
             add(out,n.component,"%s[%d].component",table,i);add(out,n.component_fields,"%s[%d].component_fields",table,i)
             add(out,n.text.offset,"%s[%d].text.offset",table,i);add(out,n.text.length,"%s[%d].text.length",table,i);add(out,n.layout.tracks,"%s[%d].layout.tracks",table,i)
         }
     }
-    for &c,i in d.components {add(out,c.first,"components[%d].first",i);add(out,c.count,"components[%d].count",i);add(out,c.name,"components[%d].name",i)}
-    for &o,i in d.overrides {
-        add(out,o.instance,"overrides[%d].instance",i);add(out,o.fields,"overrides[%d].fields",i);add(out,o.node,"overrides[%d].node",i)
-        add(out,o.values.style,"overrides[%d].values.style",i);add(out,o.values.image,"overrides[%d].values.image",i);add(out,o.values.anims,"overrides[%d].values.anims",i)
-        add(out,o.values.text.offset,"overrides[%d].values.text.offset",i);add(out,o.values.text.length,"overrides[%d].values.text.length",i)
-        add(out,o.values.layout.tracks,"overrides[%d].values.layout.tracks",i)
-    }
     for &s,i in d.styles {add(out,s.text.font,"styles[%d].text.font",i)}
     for &v,i in d.variants {add(out,v.style,"variants[%d].style",i);add(out,v.patch.values.text.font,"variants[%d].patch.values.text.font",i)}
-    for &s,i in d.style_infos {add(out,s.base,"style_infos[%d].base",i)}
     for &f,i in d.fonts {add(out,f.font,"fonts[%d].font",i)}
     for &an,i in d.anims {add(out,an.kind,"anims[%d].kind",i);add(out,an.first,"anims[%d].first",i);add(out,an.count,"anims[%d].count",i)}
     for &tr,i in d.tracks {add(out,tr.first_key,"tracks[%d].first_key",i);add(out,tr.key_count,"tracks[%d].key_count",i)}
@@ -263,7 +239,7 @@ ui_records_come_back_from_their_file_row_by_row :: proc(t:^testing.T) {
         testing.expectf(t,len(a)==len(b) && mem.compare(slice.to_bytes(a),slice.to_bytes(b))==0,"%s does not come back as it was written",table)
     }
     same(t,view.nodes,data.nodes,"nodes");same(t,view.styles,data.styles,"styles");same(t,view.variants,data.variants,"variants")
-    same(t,view.components,data.components,"components");same(t,view.component_nodes,data.component_nodes,"component_nodes")
+    same(t,view.components,data.components,"components")
     same(t,view.overrides,data.overrides,"overrides");same(t,view.images,data.images,"images");same(t,view.anims,data.anims,"anims")
     same(t,view.tracks,data.tracks,"tracks");same(t,view.keys,data.keys,"keys");same(t,view.parts,data.parts,"parts")
     same(t,view.anim_sets,data.anim_sets,"anim_sets");same(t,view.fonts,data.fonts,"fonts");same(t,view.style_infos,data.style_infos,"style_infos")
@@ -287,7 +263,7 @@ ui_check_refuses_what_tree_load_refuses_case_by_case :: proc(t:^testing.T) {
             ui_check_same(t,&types,d,fmt.tprintf("%s=%s",link.name,what))
         }
     }
-    TABLES :: [?]string{"nodes","styles","variants","components","component_nodes","overrides","images","anims","tracks","keys","parts","anim_sets","fonts","style_infos","translations","grid_tracks","text"}
+    TABLES :: [?]string{"nodes","styles","variants","components","overrides","images","anims","tracks","keys","parts","anim_sets","fonts","style_infos","translations","grid_tracks","text"}
     for table,i in TABLES {
         for rows in 0..<64 {
             runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -303,19 +279,18 @@ ui_check_refuses_what_tree_load_refuses_case_by_case :: proc(t:^testing.T) {
             case 1: cuts=cut(&d.styles,rows)
             case 2: cuts=cut(&d.variants,rows)
             case 3: cuts=cut(&d.components,rows)
-            case 4: cuts=cut(&d.component_nodes,rows)
-            case 5: cuts=cut(&d.overrides,rows)
-            case 6: cuts=cut(&d.images,rows)
-            case 7: cuts=cut(&d.anims,rows)
-            case 8: cuts=cut(&d.tracks,rows)
-            case 9: cuts=cut(&d.keys,rows)
-            case 10: cuts=cut(&d.parts,rows)
-            case 11: cuts=cut(&d.anim_sets,rows)
-            case 12: cuts=cut(&d.fonts,rows)
-            case 13: cuts=cut(&d.style_infos,rows)
-            case 14: cuts=cut(&d.translations,rows)
-            case 15: cuts=cut(&d.grid_tracks,rows)
-            case 16: cuts=cut(&d.text,rows)
+            case 4: cuts=cut(&d.overrides,rows)
+            case 5: cuts=cut(&d.images,rows)
+            case 6: cuts=cut(&d.anims,rows)
+            case 7: cuts=cut(&d.tracks,rows)
+            case 8: cuts=cut(&d.keys,rows)
+            case 9: cuts=cut(&d.parts,rows)
+            case 10: cuts=cut(&d.anim_sets,rows)
+            case 11: cuts=cut(&d.fonts,rows)
+            case 12: cuts=cut(&d.style_infos,rows)
+            case 13: cuts=cut(&d.translations,rows)
+            case 14: cuts=cut(&d.grid_tracks,rows)
+            case 15: cuts=cut(&d.text,rows)
             }
             if !cuts {break}
             ui_check_same(t,&types,d,fmt.tprintf("%s cut to %d rows",table,rows))
@@ -323,43 +298,48 @@ ui_check_refuses_what_tree_load_refuses_case_by_case :: proc(t:^testing.T) {
     }
 }
 
-// Chains of boxes and of components around the depth a tree is built to.
+// Chains of boxes around the depth a tree is built to.
 @(test)
 ui_check_refuses_what_tree_load_refuses_at_the_depth_limit :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     base_data:=ui_check_base()
     for boxes in ui.TREE_DEPTH-6..=ui.TREE_DEPTH+1 {
         runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-        // boxes nested in a chain, the card in the last one: its picture two deeper.
+        // boxes nested in a chain, a text in the last one.
         d:=ui_check_clone(base_data)
         d.nodes=make([]ui.Tree_Node,boxes+1,context.temp_allocator)
         for &n,i in d.nodes {n.kind,n.parent=.Box,i32(i-1)}
-        last:=&d.nodes[boxes]
-        last.kind,last.component=.Component,1
-        ui.tree_text_set(last.name[:],"card")
-        for &o in d.overrides {o.instance=u32(boxes)}
-        ui_check_same(t,&types,d,fmt.tprintf("%d boxes over a card",boxes),boxes+2<ui.TREE_DEPTH)
+        d.nodes[boxes].kind=.Text
+        ui_check_same(t,&types,d,fmt.tprintf("%d boxes over a text",boxes))
         d.nodes=d.nodes[:boxes]
-        d.overrides=nil
         ui_check_same(t,&types,d,fmt.tprintf("%d boxes",boxes),boxes<=ui.TREE_DEPTH)
     }
-    for count in ui.TREE_DEPTH-3..=ui.TREE_DEPTH+1 {
-        runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-        // Component i holds component i+1: a chain of templates.
-        d:ui.Tree_Data
-        d.components=make([]ui.Tree_Component,count,context.temp_allocator)
-        d.component_nodes=make([]ui.Tree_Node,2*count,context.temp_allocator)
-        for i in 0..<count {
-            d.components[i]=ui.tree_component_record(fmt.tprintf("c%d",i),u32(2*i),2 if i+1<count else 1)
-            d.component_nodes[2*i]={kind=.Box,parent=-1}
-            next:=&d.component_nodes[2*i+1]
-            next.kind,next.parent,next.component=.Component,0,u16(i+2)
-            ui.tree_text_set(next.name[:],"next")
-        }
-        d.nodes=make([]ui.Tree_Node,2,context.temp_allocator)
-        d.nodes[0]={kind=.Box,parent=-1}
-        d.nodes[1]={kind=.Component,parent=0,component=1}
-        ui.tree_text_set(d.nodes[1].name[:],"first")
-        ui_check_same(t,&types,d,fmt.tprintf("a chain of %d components",count))
-    }
+}
+
+// A component is a use of the widget of another file: a file holds no other.
+@(test)
+a_ui_file_has_no_components_of_its_own :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    d:ui.Tree_Data
+    d.styles=make([]ui.Node_Style,1,context.temp_allocator)
+    d.nodes=make([]ui.Tree_Node,2,context.temp_allocator)
+    d.nodes[0]={kind=.Box,parent=-1}
+    d.nodes[1]={kind=.Component,parent=0,component=1}
+    ui.tree_text_set(d.nodes[1].name[:],"card")
+    d.component_nodes=make([]ui.Tree_Node,1,context.temp_allocator)
+    d.component_nodes[0]={kind=.Box,parent=-1}
+    d.components=make([]ui.Tree_Component,1,context.temp_allocator)
+    d.components[0]=ui.tree_component_record("card",0,1)
+    doc:asset.Document
+    testing.expect_value(t,ui_tree_document(&doc,&types,UI_CHECK_ID,d,allocator=context.temp_allocator),asset.Error.Invalid)
+    asset.document_init(&doc,asset.KIND_UI,UI_CHECK_ID,context.temp_allocator)
+    defer asset.document_destroy(&doc)
+    doc.kind_version=asset.UI_VERSION
+    if !testing.expect_value(t,ui_tree_tables(&doc,&types,d),asset.Error.None) {return}
+    bytes,error:=asset.document_bytes(&doc,context.temp_allocator)
+    if !testing.expect_value(t,error,asset.Error.None) {return}
+    a:asset.Asset
+    if !testing.expect_value(t,asset.asset_open(&a,bytes,context.temp_allocator),asset.Error.None) {return}
+    defer asset.asset_close(&a)
+    testing.expect(t,!asset.ui_check(&a,&types),"the check of the file refuses it")
 }

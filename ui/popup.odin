@@ -171,15 +171,14 @@ popup_enter :: proc(ctx:^Context,entry:^Popup_Entry) {
     p.rows[p.depth]=0
     for &other,index in p.stack[:p.count] {if &other==entry {p.building[p.depth]=index}}
     entry.icons,entry.icons_next=entry.icons_next,false
-    ctx.clip_stack[ctx.clip_depth]=0
-    ctx.clip_depth+=1
+    clips_suspend(ctx)
     p.depth+=1
 }
 @(private)
 popup_leave :: proc(ctx:^Context,entry:^Popup_Entry) {
     ctx.popup.depth-=1
     if entry!=nil {entry.rows_last=ctx.popup.rows[ctx.popup.depth]}
-    ctx.clip_depth-=1
+    clips_resume(ctx)
 }
 
 // Opens the popup id when it is open: what is built until popup_end is inside.
@@ -484,96 +483,115 @@ Dropdown :: struct {
     empty:string,  // shown when selected^ is not one of the options
     disabled:bool,
     searchable:bool,
+    // What it is drawn with, resolved for the state it is in: the button its
+    // fill, stroke, corners and text with an arrow of its mark; the list the
+    // same box, its track behind the current row and its mark on the chosen
+    // option. nil: the theme.
+    look:^Node_Style,
+    // With a look, its size as an element says it (a node of a tree) instead
+    // of ten sizes of its text wide and a line with its room tall.
+    layout:^Layout,
 }
 
-// A button that shows the chosen option and opens the list of all of them.
-// Returns true when the choice changed. With created, a searchable list
-// offers to create what was searched when no option is it, and created takes
-// it (in the temp allocator) when that row is clicked.
-dropdown :: proc(ctx:^Context,id:Id,options:[]string,selected:^int,d:Dropdown={},created:^string=nil) -> (changed:bool) {
+// A button that shows the chosen option and opens the list of all of them,
+// where one row is current: the pointer moving onto a row makes it current,
+// Up and Down (and the d-pad or the stick) move it among the rows the search
+// leaves, Enter (or accept) takes it, and opening starts it on the chosen
+// option. Choosing gives the focus back to the button. Returns true when the
+// choice changed. With created, a searchable list offers to create what was
+// searched when no option is it, and created takes it (in the temp
+// allocator) when that row is clicked.
+dropdown :: proc(ctx:^Context,id:Id,options:Options,selected:^int,d:Dropdown={},created:^string=nil) -> (changed:bool) {
     th:=&ctx.theme
-    open:=popup_is_open(ctx,id_derive(ctx,id,"list"))
-    chosen:=options[selected^] if selected^>=0 && selected^<len(options) else d.empty
-    it:=button(ctx,id,{label=chosen,style=.Well,width=d.width,height=d.height,size=d.size if d.size>0 else th.font_small,active=open,disabled=d.disabled,icon=.Chevron_Down,icon_size=13,icon_after=true,icon_color=th.text_muted,padding=7})
+    look:=d.look
     list:=id_derive(ctx,id,"list")
-    if it.clicked && !open {
+    open:=popup_is_open(ctx,list)
+    chosen:=option(options,selected^) if selected^>=0 && selected^<options_count(options) else d.empty
+    row_height:=d.row_height if d.row_height>0 else th.row
+    padding,pad:=f32(4),f32(0) // of the list, and of the text of a row of a look
+    clicked:bool
+    if look==nil {
+        clicked=button(ctx,id,{label=chosen,style=.Well,width=d.width,height=d.height,size=d.size if d.size>0 else th.font_small,active=open,disabled=d.disabled,icon=.Chevron_Down,icon_size=13,icon_after=true,icon_color=th.text_muted,padding=7}).clicked
+    } else {
+        line:f32
+        clicked,line=dropdown_button(ctx,id,chosen,d)
+        pad=control_em(ctx,look)*GAME_PAD
+        padding=pad*0.5
+        if d.row_height<=0 {row_height=line}
+    }
+    if clicked && !open {
         anchor,_:=widget_rect(ctx,id)
         popup_open(ctx,list,anchor)
-        popup_find(ctx,list).cursor=selected^
+        if entry:=popup_find(ctx,list);entry!=nil {entry.cursor=selected^}
     }
     entry:=popup_find(ctx,list)
     if entry==nil {return}
-    row_height:=d.row_height if d.row_height>0 else th.row
     size:=surface_size(ctx)
     search_height:=th.row+POPUP_SEARCH_GAP if d.searchable else f32(0)
-    capacity:=clamp(int((size.y-th.bar_height-2*th.margin-8-search_height)/row_height),1,d.rows if d.rows>0 else 10)
-    matches:=0
+    capacity:=clamp(int((size.y-th.bar_height-2*th.margin-2*padding-search_height)/row_height),1,d.rows if d.rows>0 else 10)
     filter:=string(entry.filter[:entry.filter_length])
-    for option in options {if dropdown_matches(option,filter) {matches+=1}}
+    scan:=dropdown_scan(options,filter,entry.cursor)
     // A list that can create what it does not find keeps no empty row for it.
     least:=created!=nil && d.searchable && filter!=""?0:1
-    height:=f32(clamp(matches,least,capacity))*row_height
+    height:=f32(clamp(scan.matches,least,capacity))*row_height
     choice:=-1
-    // The keyboard moves the row and Enter takes it.
     in_:=&ctx.input
     search:=id_derive(ctx,list,"search")
-    if (ctx.edit.id==0 || d.searchable && ctx.edit.id==search) && entry.opened!=ctx.stats.frame {
+    if entry.opened==ctx.stats.frame {
+        if scan.at>=0 {scroll_reveal(&entry.scroll,f32(scan.at)*row_height,f32(scan.at+1)*row_height,height)}
+    } else if ctx.edit.id==0 || d.searchable && ctx.edit.id==search {
         direction:=0
         if .Down in in_.keys_repeated || .Down in in_.pad {direction=1}
         if .Up in in_.keys_repeated || .Up in in_.pad {direction=-1}
+        at:=scan.at
         if direction!=0 {
-            cursor:=entry.cursor+direction
-            if entry.cursor<0 && direction<0 {cursor=len(options)-1}
-            for cursor>=0 && cursor<len(options) {
-                if dropdown_matches(options[cursor],filter) {entry.cursor=cursor;break}
-                cursor+=direction
-            }
-            visible:=0
-            for option,index in options {
-                if !dropdown_matches(option,filter) {continue}
-                if index==entry.cursor {scroll_reveal(&entry.scroll,f32(visible)*row_height,f32(visible+1)*row_height,height);break}
-                visible+=1
-            }
+            to,to_at:=scan.after,scan.after_at
+            if direction<0 {to,to_at=scan.before,scan.before_at}
+            if to>=0 {entry.cursor,at=to,to_at}
+            if at>=0 {scroll_reveal(&entry.scroll,f32(at)*row_height,f32(at+1)*row_height,height)}
         }
         if .Enter in in_.keys_pressed || .Accept in in_.pad {
-            if entry.cursor<0 {
-                for option,index in options {if dropdown_matches(option,filter) {entry.cursor=index;break}}
-            }
-            if entry.cursor>=0 && entry.cursor<len(options) && dropdown_matches(options[entry.cursor],filter) {choice=entry.cursor}
+            if entry.cursor<0 && scan.first>=0 {entry.cursor,at=scan.first,0}
+            if at>=0 {choice=entry.cursor}
         }
     }
     creating:=created!=nil && d.searchable && entry.filter_length>0 ? row_height : 0
-    if popup(ctx,list,{width=max(entry.anchor.w,180),height=height+search_height+creating+8,search="Search" if d.searchable else "",own_keys=true}) {
+    width:=max(entry.anchor.w,180) if look==nil else entry.anchor.w
+    if popup(ctx,list,{width=width,height=height+search_height+creating+2*padding,padding=padding,search="Search" if d.searchable else "",own_keys=true,style=look}) {
         id_push(ctx,list)
         if d.searchable {
             filter,_=popup_search(ctx,list)
-            matches=0
-            for option in options {if dropdown_matches(option,filter) {matches+=1}}
+            scan=dropdown_scan(options,filter,entry.cursor)
             least=created!=nil && filter!=""?0:1
-            height=f32(clamp(matches,least,capacity))*row_height
+            height=f32(clamp(scan.matches,least,capacity))*row_height
         }
-        first,last:=list_begin(ctx,ui_id(ctx,"rows"),&entry.scroll,matches,row_height,height,row_height*1.5)
+        first,last:=list_begin(ctx,ui_id(ctx,"rows"),&entry.scroll,scan.matches,row_height,height,row_height*1.5)
         visible:=0
-        for option,index in options {
-            if !dropdown_matches(option,filter) {continue}
-            at:=visible
+        walk:=options_walk(options)
+        for text,index in option_next(&walk) {
+            if visible>=last {break}
+            if !dropdown_matches(text,filter) {continue}
             visible+=1
-            if at<first || at>=last {continue}
+            if visible<=first {continue}
             row_id:=ui_id(ctx,"row",index+1)
-            // A row takes the keyboard row when the pointer moves onto it.
             if ctx.hot==row_id && ctx.pointer_moved {entry.cursor=index}
-            current:=index==selected^
-            if row(ctx,row_id,{label=option,selected=entry.cursor==index,checked=current,check_room=!current,quiet=true,height=row_height}).clicked {choice=index}
+            if dropdown_row(ctx,row_id,text,entry.cursor==index,index==selected^,true,row_height,look,pad) {choice=index}
         }
-        if matches==0 && created==nil {label(ctx,"No results",th.font_small,th.text_faint)}
-        list_end(ctx,ui_id(ctx,"rows"),matches,last,row_height)
+        if scan.matches==0 && created==nil {
+            if look==nil {label(ctx,"No results",th.font_small,th.text_faint)} else {text(ctx,"No results",look.text)}
+        }
+        list_end(ctx,ui_id(ctx,"rows"),scan.matches,last,row_height)
         if created!=nil && d.searchable && filter!="" {
             exact:=false
-            for option in options {exact ||= strings.equal_fold(option,filter)}
-            if !exact && row(ctx,ui_id(ctx,"create"),{label=fmt.tprintf("Create \"%s\"",filter),quiet=true,height=row_height}).clicked {
+            walk=options_walk(options)
+            for text in option_next(&walk) {
+                if strings.equal_fold(text,filter) {exact=true;break}
+            }
+            if !exact && dropdown_row(ctx,ui_id(ctx,"create"),fmt.tprintf("Create \"%s\"",filter),false,false,false,row_height,look,pad) {
                 created^=strings.clone(filter,context.temp_allocator)
                 if ctx.edit.id==search {ctx.edit={}}
                 popup_close(ctx,list)
+                ctx.focus=id
             }
         }
         id_pop(ctx)
@@ -581,7 +599,68 @@ dropdown :: proc(ctx:^Context,id:Id,options:[]string,selected:^int,d:Dropdown={}
     if choice>=0 {
         if ctx.edit.id==search {ctx.edit={}}
         popup_close(ctx,list)
+        ctx.focus=id
         if choice!=selected^ {selected^=choice;changed=true}
+    }
+    return
+}
+
+// The button of a dropdown with a look: the chosen option and an arrow of
+// its mark in a box of its fill, stroke and corners. line: the height of a
+// line of its text with its room.
+@(private)
+dropdown_button :: proc(ctx:^Context,id:Id,shown:string,d:Dropdown) -> (clicked:bool,line:f32) {
+    look:=d.look
+    disabled:=d.disabled || ctx.disabled_depth>0
+    it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
+    em:=control_em(ctx,look)
+    w,h:Size
+    if d.layout!=nil {w,h=d.layout.width,d.layout.height}
+    width,height,l:=control_size(ctx,w,h,look,GAME_WIDTH)
+    line=l
+    style:=look.text
+    style.align_y=.Center
+    if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center,padding={em*GAME_PAD,0,0,0}},custom=paint_add(ctx,game_background(look))}) {
+        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=shown,style=style})})
+        element_leaf(ctx,{layout={width=fixed(line),height=GROW},custom=paint_add(ctx,{kind=.Arrow,fill=look.mark,size=em*GAME_ARROW,value=3})})
+    }
+    element_close(ctx)
+    return it.clicked,line
+}
+
+// A row of the list of a dropdown, which takes the pointer but not the focus.
+// check_room: the row of an option, which leaves the room of the check.
+@(private)
+dropdown_row :: proc(ctx:^Context,id:Id,text:string,current,chosen,check_room:bool,height:f32,look:^Node_Style,pad:f32) -> bool {
+    if look==nil {return row(ctx,id,{label=text,selected=current,checked=chosen,check_room=check_room && !chosen,quiet=true,height=height}).clicked}
+    it:=interact(ctx,id)
+    style:=look.text
+    style.align_y=.Center
+    if chosen && look.mark[3]>0 {style.color=look.mark}
+    if element_open(ctx,{id=id,layout={width=GROW,height=fixed(height),padding={pad,0,pad,0}},custom=paint_add(ctx,{kind=.Rect,fill=look.track if current else {},corners=look.radius})}) {
+        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=text,style=style})})
+    }
+    element_close(ctx)
+    return it.clicked
+}
+
+// How the options that hold the search lie around the current row: how many,
+// the first, the visible place of the current one, and the nearest before and
+// after it with their places (-1: none). With no current row, before is the
+// last one and after the first.
+@(private)
+Dropdown_Scan :: struct {matches,first,at,before,before_at,after,after_at:int}
+@(private)
+dropdown_scan :: proc(options:Options,filter:string,cursor:int) -> (s:Dropdown_Scan) {
+    s.first,s.at,s.before,s.before_at,s.after,s.after_at=-1,-1,-1,-1,-1,-1
+    walk:=options_walk(options)
+    for text,index in option_next(&walk) {
+        if !dropdown_matches(text,filter) {continue}
+        if s.first<0 {s.first=index}
+        if index==cursor {s.at=s.matches}
+        if cursor<0 || index<cursor {s.before,s.before_at=index,s.matches}
+        if index>cursor && s.after<0 {s.after,s.after_at=index,s.matches}
+        s.matches+=1
     }
     return
 }

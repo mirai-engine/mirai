@@ -1,7 +1,6 @@
 package animation_editor
 
 import "core:fmt"
-import "core:math/linalg"
 import "core:strings"
 import aa "mirai:asset"
 import "mirai:editor"
@@ -14,7 +13,7 @@ import anim "plugins:animation/runtime"
 
 Body_Detect_Params :: struct {
     asset:base.Asset_Id,
-    keep_manual:bool `mirai:"optional,label=Keeps the parts and axes a person set"`,
+    keep_manual:bool `mirai:"optional,label=Keeps the parts a person set"`,
     dry_run:bool `mirai:"optional,label=Answers without writing the skeleton"`,
 }
 Body_Part_Assignment :: struct {
@@ -24,8 +23,6 @@ Body_Part_Assignment :: struct {
 Body_Set_Params :: struct {
     asset:base.Asset_Id,
     parts:[len(lib.Body_Part)]Body_Part_Assignment `mirai:"optional,label=What it sets becomes manual and survives detection and reimport"`,
-    forward:mm.Vec3 `mirai:"optional,label=Where the body faces at rest; with up"`,
-    up:mm.Vec3 `mirai:"optional"`,
     dry_run:bool `mirai:"optional"`,
 }
 Body_Part_Result :: struct {
@@ -37,7 +34,7 @@ Body_Part_Result :: struct {
 }
 Body_Result :: struct {
     asset:base.Asset_Id,path:[1024]u8 `mirai:"text"`,dry_run:bool `mirai:"optional"`,
-    forward,up:mm.Vec3 `mirai:"label=Where the body faces at rest"`,axes_confidence:f32 `mirai:"label=0 to 1"`,manual_axes:bool,
+    up:mm.Vec3 `mirai:"label=The up of the body at rest; it faces -Z"`,axes_confidence:f32 `mirai:"label=0 to 1: how sure detection was of how the body stands"`,
     parts:[len(lib.Body_Part)]Body_Part_Result,
     missing:[len(lib.Body_Part)]lib.Body_Part `mirai:"label=Parts without a bone"`,
     unassigned_total:u32,
@@ -48,8 +45,8 @@ Body_Result :: struct {
 @(private)
 body_register :: proc(s:^editor.Session) {
     detect:=Body_Detect_Params{keep_manual=true}
-    authoring_method_register(s,{name="skeleton.body.detect",summary="Finds the body parts of a skeleton and the way it faces from bone names, hierarchy and rest pose, and saves them in the .skeleton.",params=Body_Detect_Params,params_info=type_info_of(Body_Detect_Params),defaults=&detect,run=body_detect},Body_Result,type_info_of(Body_Result))
-    authoring_method_register(s,{name="skeleton.body.set",summary="Corrects the body parts of a skeleton and the way it faces at rest.",params=Body_Set_Params,params_info=type_info_of(Body_Set_Params),run=body_set},Body_Result,type_info_of(Body_Result))
+    authoring_method_register(s,{name="skeleton.body.detect",summary="Finds the body parts of a skeleton and its up from bone names, hierarchy and rest pose, and saves them in the .skeleton. A body faces -Z: the import turns its source to it (front of asset.import).",params=Body_Detect_Params,params_info=type_info_of(Body_Detect_Params),defaults=&detect,run=body_detect},Body_Result,type_info_of(Body_Result))
+    authoring_method_register(s,{name="skeleton.body.set",summary="Corrects the body parts of a skeleton: the bone of each part it names, or none. Where the body faces is not set here: it faces -Z, and front of asset.import turns a source that does not.",params=Body_Set_Params,params_info=type_info_of(Body_Set_Params),run=body_set},Body_Result,type_info_of(Body_Result))
 }
 
 // The bone with this path or, failing that, this unique name; -1 for none or several.
@@ -75,6 +72,10 @@ body_rig :: proc(call:^api.Call,view:aa.Skeleton_View,root_path:string) -> (rig:
     if len(rig.parents)!=n || len(rig.rest)!=n {authoring_failure(call,"skeleton","Out_Of_Memory","memory for the rig","allocation failed","The rig could not be prepared",api.SERVER_ERROR);return}
     for &bone,i in view.bones {rig.parents[i]=bone.parent;rig.rest[i]={bone.translation,bone.rotation,bone.scale}}
     rig.body=aa.skeleton_body_map(view.bones,view.body,view.body_parts)
+    if view.body==nil {
+        // Found for the call and not stored: skeleton.body.detect is what stores it.
+        if detected,found:=aa.skeleton_body_detect(view.bones,lib.body_map_empty(),call.allocator);found {rig.body=detected}
+    }
     rig.root=-1
     if root_path!="" {rig.root=body_bone_find(view.bones,root_path)}
     pairs,paired:=anim.skeleton_mirror_pairs(view.bones,call.allocator)
@@ -110,8 +111,8 @@ body_set :: proc(s:^editor.Session,call:^api.Call) {
     view,ok:=authoring_skeleton_open(s,call,p.asset,&file);if !ok {return}
     map_:=aa.skeleton_body_map(view.bones,view.body,view.body_parts)
     if view.body==nil {
-        // Without a detected body the axes come from detection.
-        if detected,found:=aa.skeleton_body_detect(view.bones,lib.body_map_empty(),call.allocator);found {map_.forward,map_.up,map_.axes_confidence=detected.forward,detected.up,detected.axes_confidence}
+        // Without a detected body its up comes from detection.
+        if detected,found:=aa.skeleton_body_detect(view.bones,lib.body_map_empty(),call.allocator);found {map_.up,map_.axes_confidence=detected.up,detected.axes_confidence}
     }
     count,_:=api.params_array_count(call,"parts")
     for assignment,i in p.parts[:min(count,len(p.parts))] {
@@ -126,12 +127,6 @@ body_set :: proc(s:^editor.Session,call:^api.Call) {
         for &other,part in map_.bones {if other==bone && part!=assignment.part {other=-1;map_.confidence[part]=0}}
         map_.bones[assignment.part],map_.confidence[assignment.part]=bone,1
         map_.manual+={assignment.part}
-    }
-    if p.forward!={} || p.up!={} {
-        forward,up:=p.forward,p.up
-        f,fok:=body_unit(forward);u,uok:=body_unit(up)
-        if !fok || !uok || abs(linalg.dot(f,u))>1e-3 {authoring_failure(call,"forward","Invalid_Axes","nonzero perpendicular forward and up",fmt.tprintf("forward %v up %v",forward,up),"The body axes must be perpendicular",fix="Pass both, at right angles, as unit vectors (for example forward [0,0,1] and up [0,1,0])");return}
-        map_.forward,map_.up,map_.axes_confidence,map_.manual_axes=f,u,1,true
     }
     body_save(s,call,file,p.asset,view,map_)
 }
@@ -169,8 +164,8 @@ body_save :: proc(s:^editor.Session,call:^api.Call,file:Authoring_File,id:base.A
 @(private)
 body_write :: proc(call:^api.Call,view:aa.Skeleton_View,map_:lib.Body_Map) {
     out:=call.out
-    api.write_numbers(out,"forward",map_.forward);api.write_numbers(out,"up",map_.up)
-    api.write_key(out,"axes_confidence");api.write_number(out,map_.axes_confidence);api.write_bool(out,"manual_axes",map_.manual_axes)
+    api.write_numbers(out,"up",map_.up)
+    api.write_key(out,"axes_confidence");api.write_number(out,map_.axes_confidence)
     api.write_key(out,"parts");serial.text_write_raw(out,"[")
     written:=0
     for bone,part in map_.bones {
@@ -222,11 +217,4 @@ body_parents :: proc(view:aa.Skeleton_View,allocator:=context.temp_allocator) ->
     parents:=make([]i32,len(view.bones),allocator)
     for &bone,i in view.bones {parents[i]=bone.parent}
     return parents
-}
-
-@(private)
-body_unit :: proc(v:mm.Vec3) -> (mm.Vec3,bool) {
-    length:=linalg.length(v)
-    if !(length>1e-6) {return {},false}
-    return v/length,true
 }

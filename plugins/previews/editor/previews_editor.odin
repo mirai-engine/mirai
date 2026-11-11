@@ -6,6 +6,7 @@ import "core:mem"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import eanim "plugins:animation/runtime"
 import "mirai:host"
 import "mirai:ui"
@@ -47,9 +48,9 @@ previews_free :: proc(p:^Previews) {
 }
 
 @(private)
-previews_ready :: proc(p:^Previews,app:^host.App) {
+previews_ready :: proc(p:^Previews,allocator:runtime.Allocator) {
     if p.ready {return}
-    p.ready,p.allocator=true,app.allocator
+    p.ready,p.allocator=true,allocator
     p.animation.image={key=KEY_ANIMATION,name="previews.animation"}
     p.animation.speed,p.animation.loop,p.animation.sun=1,true,true
     p.sound.image={key=KEY_SOUND,name="previews.sound"}
@@ -61,12 +62,12 @@ previews_ready :: proc(p:^Previews,app:^host.App) {
 previews_document :: proc(s:^editor.Session,p:^Previews,world:core.World_Ref,app:^host.App,frame:core.Frame_Time) {
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
-    previews_ready(p,app)
+    previews_ready(p,app.allocator)
     d:=editor.asset_document_active(s)
     if d==nil {return}
     switch d.kind {
     case asset.KIND_ANIMATION: animation_document(s,p,world,app,frame,d)
-    case asset.KIND_SOUND,asset.KIND_SOUND_SET: sound_document(s,p,app,d)
+    case asset.KIND_SOUND,asset.KIND_SOUND_SET: sound_document(s,p,app.assets,app.mixer,d)
     }
 }
 
@@ -77,8 +78,8 @@ previews_drop :: proc(s:^editor.Session) {
     drop,ok:=editor.asset_drop_take(s,asset.KIND_ANIMATION)
     if !ok || editor.playing(s) {return}
     t:=core.world_table_of(editor.edited_world(s),eanim.Animation)
-    if t==nil || !editor.edits_begin(s.edits,s.selection,"Play animation") {return}
-    defer editor.edits_end(s.edits)
+    if t==nil || !history.edits_begin(s.edits,s.selection,"Play animation") {return}
+    defer history.edits_end(s.edits)
     // An added component is there at the end of the function: it goes whole.
     if animation:=core.get(t,drop.entity);animation!=nil {
         animation.asset,animation.clip=drop.id,drop.part

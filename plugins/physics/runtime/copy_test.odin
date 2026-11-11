@@ -112,11 +112,11 @@ physics_world_creation_reports_allocation_failure_and_retries_including_reach_bu
         state:Physics_State
         problems:core.Problems
         failure.remaining=budget
-        if state_make(&state,&settings,&app,&problems) {completed=true;state_destroy(&state);break}
+        if state_make(&state,&settings,&app.jobs,&problems) {completed=true;state_destroy(&state);break}
         failures+=1
         testing.expect(t,!state.ready && problems.count==1 && problems.entries[0].entity==core.NONE)
         failure.remaining=1000
-        testing.expect(t,state_make(&state,&settings,&app,&problems))
+        testing.expect(t,state_make(&state,&settings,&app.jobs,&problems))
         state_destroy(&state)
     }
     testing.expect(t,completed && failures>3)

@@ -94,7 +94,6 @@ PI :: math.PI
     return {q_rotate(q,-t.p),q}
 }
 
-MAT3_ZERO :: Mat3{}
 @(private) mat3_diagonal :: #force_inline proc "contextless" (d:Vec3) -> Mat3 {return Mat3{d.x,0,0, 0,d.y,0, 0,0,d.z}}
 @(private) mat3_skew :: #force_inline proc "contextless" (v:Vec3) -> Mat3 {return Mat3{0,-v.z,v.y, v.z,0,-v.x, -v.y,v.x,0}}
 @(private) mat3_outer :: #force_inline proc "contextless" (a,b:Vec3) -> Mat3 {

@@ -9,7 +9,6 @@ import "mirai:cook/compressor/texture/common"
 // A BC7 block as two little-endian words.
 Bits :: common.Bits128
 
-TOTAL_BITS_HEADER    :: [8]int{5,8,9,10,8,8,7,14}
 TOTAL_BITS_ENDPOINTS :: [8]int{72,72,90,84,42,58,56,80}
 TOTAL_BITS_PBITS     :: [8]int{6,2,0,4,0,0,2,4}
 TOTAL_BITS_INDICES   :: [8]int{45,46,29,30,78,62,63,30}
@@ -83,25 +82,11 @@ bits_store :: #force_inline proc "contextless" (b:^[16]u8,v:Bits) {
     }
 }
 
-// Lexicographic order on (qw[1], qw[0]).
-@(private)
-bits_less :: #force_inline proc "contextless" (a,b:Bits) -> bool {
-    return a[1]==b[1] ? a[0]<b[0] : a[1]<b[1]
-}
-
 // The mode of a block; 8 when it has no mode bit.
 @(private)
 bits_get_mode :: #force_inline proc "contextless" (b:Bits) -> int {
     m:=int(bits.count_trailing_zeros(b[0]))
     return m>8 ? 8 : m
-}
-
-@(private)
-bits_get_part :: proc "contextless" (b:Bits,mode:int) -> int {
-    PB :: [8]int{4,6,6,6,0,0,0,6}
-    pb:=PB
-    m:=mode&7
-    return int((b[0]>>uint(m+1))&((u64(1)<<uint(pb[m]))-1))
 }
 
 @(private)
@@ -112,18 +97,6 @@ bits_extract_indices :: proc "contextless" (b:Bits,with_pbits:bool) -> Bits {
 }
 
 @(private)
-bits_extract_endpoints :: proc "contextless" (b:Bits,with_pbits:bool) -> Bits {
-    m:=bits_get_mode(b)&7
-    mask:=with_pbits ? BITRANGE_ENDPOINTS_WITH_PBITS_MASK[m] : BITRANGE_ENDPOINTS_MASK[m]
-    return b&mask
-}
-
-@(private)
 bits_zero_indices :: proc "contextless" (b:Bits,also_zero_pbits:bool) -> Bits {
     return b~bits_extract_indices(b,also_zero_pbits)
-}
-
-@(private)
-bits_zero_endpoints :: proc "contextless" (b:Bits,also_zero_pbits:bool) -> Bits {
-    return b~bits_extract_endpoints(b,also_zero_pbits)
 }

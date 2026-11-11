@@ -1,6 +1,7 @@
 package editor
 
 import "core:strings"
+import "mirai:editor/ai_store"
 
 // What a task has said so far: lines kept in one block of bytes, the oldest
 // dropped when a new one has no room.
@@ -12,17 +13,10 @@ AI_DECLINED_NOTE :: "Rejected changes"
 AI_UNSAVED_NOTE :: "Changes not in the saved scene"
 AI_RESTORED_NOTE :: "Changes taken back for review"
 
-
-Ai_Line_Kind :: enum u8 {
-    Output, // printed by the agent
-    Prompt, // what the task was asked
-    Note,   // said by the editor: why it did not start, how it ended
-}
-
 Ai_Line :: struct {
     offset:u32,
     length:u16,
-    kind:Ai_Line_Kind,
+    kind:ai_store.Line_Kind,
 }
 
 Ai_Transcript :: struct {
@@ -33,9 +27,10 @@ Ai_Transcript :: struct {
     dropped:int, // lines that were forgotten: the first one kept has this index
     heights:[AI_TRANSCRIPT_LINES]f32, // of each line in the chat, at heights_width and heights_size; 0 until measured
     heights_width,heights_size:f32,
+    heights_held:int, // the first line of the user that had not reached the agent when they were measured
 }
 
-ai_transcript_line :: proc(t:^Ai_Transcript,index:int) -> (text:string,kind:Ai_Line_Kind) {
+ai_transcript_line :: proc(t:^Ai_Transcript,index:int) -> (text:string,kind:ai_store.Line_Kind) {
     line:=t.lines[index]
     return string(t.bytes[line.offset:][:line.length]),line.kind
 }
@@ -60,7 +55,7 @@ ai_transcript_drop :: proc(t:^Ai_Transcript) {
 }
 
 // Adds text as lines, one per line break in it.
-ai_transcript_add :: proc(t:^Ai_Transcript,text:string,kind:Ai_Line_Kind=.Output) {
+ai_transcript_add :: proc(t:^Ai_Transcript,text:string,kind:ai_store.Line_Kind=.Output) {
     rest:=text
     for {
         line:=rest
@@ -100,4 +95,35 @@ ai_transcript_declined :: proc(t:^Ai_Transcript) -> int {
         if kind==.Note && (text==AI_DECLINED_NOTE || text==AI_UNSAVED_NOTE) {return index}
     }
     return -1
+}
+
+// Saves the conversation with the lines of its transcript from first_sequence
+// on, all of them if it is negative.
+ai_transcript_save :: proc(store:^ai_store.Store,c:^ai_store.Conversation,t:^Ai_Transcript,first_sequence:int=-1) -> string {
+    if last:=ai_transcript_last_answer(t);last!="" {
+        plain:[ai_store.LAST_BYTES*2]u8
+        c.last_len=copy(c.last[:],ai_utf8_cut(ai_entity_marks_plain(last,plain[:]),ai_store.LAST_BYTES))
+    }
+    lines:[AI_TRANSCRIPT_LINES]ai_store.Line
+    count:=0
+    for index in 0..<t.count {
+        if first_sequence>=0 && t.dropped+index<first_sequence {continue}
+        text,kind:=ai_transcript_line(t,index)
+        lines[count]={sequence=u64(t.dropped+index),kind=kind,text=text}
+        count+=1
+    }
+    return ai_store.save(store,c,lines[:count])
+}
+
+// Fills t with the latest lines of the conversation it can hold.
+ai_transcript_load :: proc(store:^ai_store.Store,id:u64,t:^Ai_Transcript) -> string {
+    t^={}
+    lines:=make([]ai_store.Line,AI_TRANSCRIPT_LINES,context.temp_allocator)
+    count,message:=ai_store.load(store,id,lines)
+    if message!="" {return message}
+    for line,index in lines[:count] {
+        if index==0 {t.dropped=int(line.sequence)}
+        ai_transcript_add(t,line.text,line.kind)
+    }
+    return ""
 }

@@ -4,6 +4,8 @@ import "base:runtime"
 import "core:hash"
 import "core:math"
 import "core:mem"
+import "core:slice"
+import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -14,52 +16,11 @@ import "mirai:std/serial"
 // described by a serial.Schema, matched by name_hash. Building a tree calls
 // the same widget procedures as code does.
 
-Node_Kind :: enum u8 {
-    Box,      // a container
-    Text,
-    Image,
-    Progress, // shows its bound value, 0 to 1
-    Button,   // reports Clicked
-    Checkbox, // edits its bound bool and reports Changed
-    Spacer,
-    Component, // authoring only: expanded into a Box subtree at load
-    Scroll,   // a container whose content moves with the wheel when it does not fit
-    Switcher, // a container that builds one of the nodes it holds: the one its bound value says, or index
-    List,     // a container that builds the one node it holds once per element of the array bind_items names
-    Prompt,   // the prompts of its action, as the device the player holds shows them
-    Slider,   // edits its bound number between range[0] and range[1], in steps of range[2]
-    Field,    // edits its bound text, as an ASCII keyboard types it, with its own text as the placeholder; Enter reports Submitted
-    Selector, // steps through its options (bind_items, or its text separated by '|'); its bound value is the index
-    Dropdown, // picks one of its options, as a Selector has them, from a list that opens under it
-    Radio,    // selected while its bound value equals choice; choosing it writes choice there
-    Tooltip,  // a container built next to the node that holds it while that one is hovered or focused
-    Rich_Text, // text with markup: <b>, <i>, <u>, <s>, <color=#rrggbb>, <size=n>, <link=name>, <img=name>, <prompt=action>
-    View,     // what the camera its bound entity is sees
-    Action_Bar, // the prompts and texts of the buttons of its tree that an action clicks
-    Number,   // edits its bound number in a field with arrows, between range[0] and range[1], in steps of range[2]
-    Tabs,     // a container with a strip of tabs, one per node it holds, and the page of the one chosen
-    Popup,    // a container that floats from its parent while its bound value, or its parent clicked, opens it
-    Modal,    // a container centered over a backdrop that takes all input while it is shown
-    Context_Menu, // a container that opens at the pointer when its parent is clicked with the right button
-    Radial,   // a container that places what it holds on a circle, chosen by direction
-    Particles, // a .particle of the project, playing in its rectangle
-}
-Node_Kinds :: bit_set[Node_Kind;u32]
-
-// The kinds that hold other nodes.
-node_kind_holds :: #force_inline proc "contextless" (kind:Node_Kind) -> bool {
-    switch kind {
-    case .Box,.Scroll,.Switcher,.List,.Tooltip,.Tabs,.Popup,.Modal,.Context_Menu,.Radial: return true
-    case .Text,.Image,.Progress,.Button,.Checkbox,.Spacer,.Component,.Prompt,.Slider,.Field,.Selector,.Dropdown,.Radio,.Rich_Text,.View,.Action_Bar,.Number,.Particles:
-    }
-    return false
-}
-
 Node_Flag :: enum u8 {
     Localized,   // its text, and each of its options, has translations in its tree, by text_id
     Draggable,   // the pointer drags it: Dragged, and Dropped on the node it is let go over
     Drop,        // takes what is let go over it
-    Focus_First, // takes the focus when its tree takes input and nothing there has it
+    Focus_First, // takes the focus when its tree takes input and nothing there has it, or when the page of a Switcher that had it gives way to its own
     Wrap_X,      // a container: the focus that leaves it by a side comes back by the other
     Wrap_Y,
     Skip,        // navigation passes over it
@@ -67,6 +28,7 @@ Node_Flag :: enum u8 {
     Invisible,   // it keeps its room but draws nothing and takes no input; with a Visible binding, what false does
     Multiline,   // a Field: its text keeps line breaks and wraps
     Password,    // a Field: shows a mark for each character
+    Slot,        // a template: what its instance holds goes in this node, the last of the template
 }
 Node_Flags :: bit_set[Node_Flag;u16]
 
@@ -100,7 +62,9 @@ Node_Style :: struct {
     program:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a ui program that colors the fill
     program_values:[4]f32,                         // the first parameters of that program
     sounds:[Sound_Cue]base.Asset_Id,
-    transition:f32, // seconds its colors take to go from one state to the next
+    transition:f32, // seconds its colors, its shadow and how it moves take to go from one state to the next
+    move:[2]f32,    // drawn this far from where the layout put it; the layout and the pointer stay
+    scale:f32,      // drawn this size around its center, as move; 0: 1
 }
 // How an image takes the rectangle of its node.
 Image_Fit :: enum u8 {
@@ -166,7 +130,8 @@ Widget_Tree :: struct {
     nodes:[]Node,node_count:int,
     translations:[]Translation,translation_count:int,
     styles:[]Node_Style,style_count:int,
-    variants:[]Style_Variant,variant_count:int,
+    variants:[]Style_Variant,variant_count:int, // by style and, within one, in the order style_resolve applies them
+    style_rules:[]Style_Rules, // of each style: its rules in variants
     images:[]Node_Image,image_count:int,
     anim_sets:[]Anim_Set,anim_set_count:int,
     strings:[]u8,string_length:int,
@@ -174,8 +139,11 @@ Widget_Tree :: struct {
     grid_tracks:[]Grid_Tracks,grid_track_count:int,
     anim_names:[]u64,  // name_hash of each animation, by Anim minus one: what tree_play finds
     programs:[]u32,    // of each style: the ui program of its fill; 0: none
+    pages_focused:bool, // tree_pages_focus went over its nodes: the first build does it
     allocator:runtime.Allocator,
 }
+// The rules of a style, in Widget_Tree.variants.
+Style_Rules :: struct {first,count:u32}
 Widget_Tree_Desc :: struct {
     allocator:runtime.Allocator, // context.allocator when unset
     max_nodes,max_styles,max_images,max_anim_sets,max_strings:int, // 256, 64, 64, 32 and 4096 when 0
@@ -188,27 +156,28 @@ Widget_Tree_Desc :: struct {
 tree_init :: proc(tree:^Widget_Tree,desc:Widget_Tree_Desc={}) -> bool {
     a:=desc.allocator if desc.allocator.procedure!=nil else context.allocator
     tree^={allocator=a}
-    e:[6]runtime.Allocator_Error
+    e:[8]runtime.Allocator_Error
     tree.nodes,e[0]=make([]Node,desc.max_nodes if desc.max_nodes>0 else 256,a)
     tree.styles,e[1]=make([]Node_Style,desc.max_styles if desc.max_styles>0 else 64,a)
     tree.images,e[2]=make([]Node_Image,desc.max_images if desc.max_images>0 else 64,a)
     tree.anim_sets,e[3]=make([]Anim_Set,desc.max_anim_sets if desc.max_anim_sets>0 else 32,a)
     tree.strings,e[4]=make([]u8,desc.max_strings if desc.max_strings>0 else 4096,a)
     tree.variants,e[5]=make([]Style_Variant,desc.max_variants if desc.max_variants>0 else 64,a)
-    tree.translations,_=make([]Translation,desc.max_translations if desc.max_translations>0 else 64,a)
-    tree.grid_tracks,_=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
+    tree.translations,e[6]=make([]Translation,desc.max_translations if desc.max_translations>0 else 64,a)
+    tree.grid_tracks,e[7]=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
     anims:=desc.anims
     if anims.allocator.procedure==nil {anims.allocator=a}
-    e2:[2]runtime.Allocator_Error
+    e2:[3]runtime.Allocator_Error
     tree.anim_names,e2[0]=make([]u64,anims.max_anims if anims.max_anims>0 else 128,a)
     tree.programs,e2[1]=make([]u32,len(tree.styles),a)
+    tree.style_rules,e2[2]=make([]Style_Rules,len(tree.styles),a)
     if e!={} || e2!={} || !anim_library_init(&tree.anims,anims) {tree_destroy(tree);return false}
     return true
 }
 tree_destroy :: proc(tree:^Widget_Tree) {
     a:=tree.allocator
     delete(tree.nodes,a);delete(tree.styles,a);delete(tree.variants,a);delete(tree.images,a);delete(tree.anim_sets,a);delete(tree.strings,a);delete(tree.translations,a);delete(tree.grid_tracks,a)
-    delete(tree.anim_names,a);delete(tree.programs,a)
+    delete(tree.anim_names,a);delete(tree.programs,a);delete(tree.style_rules,a)
     if tree.anims.allocator.procedure!=nil {anim_library_destroy(&tree.anims)}
     tree^={}
 }
@@ -220,9 +189,36 @@ tree_style :: proc(tree:^Widget_Tree,style:Node_Style) -> (index:u16,ok:bool) {
     return u16(tree.style_count-1),true
 }
 tree_style_variant :: proc(tree:^Widget_Tree,variant:Style_Variant) -> bool {
-    if tree.variant_count>=len(tree.variants) {return false}
+    tree_rule_add(tree,variant) or_return
+    tree_rules_order(tree)
+    return true
+}
+@(private)
+tree_rule_add :: proc(tree:^Widget_Tree,variant:Style_Variant) -> bool {
+    if tree.variant_count>=len(tree.variants) || int(variant.style)>=len(tree.style_rules) {return false}
     tree.variants[tree.variant_count]=variant;tree.variant_count+=1
     return true
+}
+// Puts the rules by style and, within one, in the order style_resolve applies
+// them, keeping the order of the table among those of one place.
+@(private)
+tree_rules_order :: proc(tree:^Widget_Tree) {
+    rules:=tree.variants[:tree.variant_count]
+    slice.stable_sort_by(rules,proc(a,b:Style_Variant) -> bool {
+        return a.style<b.style || a.style==b.style && style_rule_order(a.states,a.variant)<style_rule_order(b.states,b.variant)
+    })
+    for &r in tree.style_rules {r={}}
+    for &rule,i in rules {
+        r:=&tree.style_rules[rule.style]
+        if r.count==0 {r.first=u32(i)}
+        r.count+=1
+    }
+}
+// The rules of a style, in the order style_resolve applies them.
+tree_style_rules :: proc "contextless" (tree:^Widget_Tree,style:u16) -> []Style_Variant {
+    if int(style)>=len(tree.style_rules) {return nil}
+    r:=tree.style_rules[style]
+    return tree.variants[r.first:][:r.count]
 }
 tree_image :: proc(tree:^Widget_Tree,image:Node_Image) -> (reference:u16,ok:bool) {
     if tree.image_count>=len(tree.images) {return 0,false}
@@ -344,6 +340,8 @@ TREE_TAB_PADDING :: [4]f32{10,4,10,4} // around the text of a tab of a Tabs
 Slot :: struct {
     shown,hovered,focused,latched:bool,
     armed:bool,         // a Button saw its action up: the press that showed it does not click it
+    page:i32,           // 1 + the node a Switcher built
+    page_focused:bool,  // the focus was on a widget of that node
     held:f32,           // seconds its action or the pointer has held a Button
     tip:f32,            // seconds the pointer or the focus has been in it: what its Tooltip waits
     played:Anim_Player, // what tree_play started
@@ -351,7 +349,18 @@ Slot :: struct {
     pressing:bool,      // the pointer went down on it and is still down
     over:bool,          // something dragged that it accepts is over it
     look:Style_Transition, // the colors it shows on the way from one state to another
+    plain:Slot_Plain,   // the states and variant it was last built in, when no rule of its style held
     first,built:i32,    // a List that builds what is in sight: the elements it built
+}
+// What a node was built in when it showed its style as it is: while it stays,
+// no rule is looked at.
+@(private)
+Slot_Plain :: struct {
+    variant:u64,
+    rules:u32, // those its style had
+    states:Style_States,
+    seen:bool,
+    _:u16,
 }
 // A button of the tree that an action clicks, for an Action_Bar: its text as
 // a node keeps it, longer ones cut and counted in Stats.dropped_tree.
@@ -464,7 +473,8 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         o:[Binding]bool
         o[.Items]=true
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
-        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),.Entity if node.kind==.View else .Number)
+        b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),tree_value_want(node.kind))
+        if b.value.text && node.kind!=.Switcher && strings.index_byte(string(tree.strings[node.text_offset:][:node.text_length]),'=')<0 {o[.Value]=false}
         b.visible,o[.Visible]=tree_bind_field(instance,scope,name(tree,&node,.Visible),.Number)
         b.selected,o[.Selected]=tree_bind_field(instance,scope,name(tree,&node,.Selected),.Number)
         b.disabled,o[.Disabled]=tree_bind_field(instance,scope,name(tree,&node,.Disabled),.Number)
@@ -538,7 +548,7 @@ tree_instance_texts :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instan
         first:=len(instance.parts)
         scope:=instance.scopes[node.parent] if node.parent>=0 else Bind_Scope{}
         template,parsed:=tree_template_parse(&instance.parts,found,instance,scope,tree,&node)
-        if template && parsed {instance.templates[i]={u32(first),u32(len(instance.parts)-first),true}} else {resize(&instance.parts,first)}
+        if template && parsed {instance.templates[i]={u32(first),u32(len(instance.parts)-first),true}} else {base.truncate(&instance.parts,first)}
         if !parsed {instance.replan=true}
     }
 }
@@ -570,11 +580,11 @@ Tree_Event :: struct {
     kind:Tree_Event_Kind,
     on:bool,   // Changed: what a checkbox holds now
     item:i32,  // the element of the List the node is in; -1: in none
-    value:f64, // Changed: the number written, or the index of the option chosen
+    value:f64, // Changed: the number written, or the index of the option chosen (of one written Label=Value: its value)
     from:u64,  // Dropped: the name of the node dragged; Finished: of the animation
     from_item:i32,
     from_owner:u64, // Dropped: Context.owner while the tree of the node dragged was built
-    text:[TREE_EVENT_TEXT]u8, // Changed and Submitted by a Field: what it holds
+    text:[TREE_EVENT_TEXT]u8, // Changed and Submitted by a Field: what it holds; Changed by an option of a text field: its value
     rect:Rect, // where the node was laid out in the last frame, in layout units of its surface; zero before
 }
 TREE_EVENT_TEXT :: 256
@@ -602,8 +612,6 @@ Tree_Build_Result :: struct {
     animating:bool,    // something plays, is held, dragged or edited: the next frame differs even with the same values
 }
 
-TREE_DEPTH :: 32
-
 @(private)
 tree_node_id :: proc(ctx:^Context,node:^Node,index:int) -> Id {
     if node.name==0 {return id(ctx,"node",index+1)}
@@ -612,13 +620,13 @@ tree_node_id :: proc(ctx:^Context,node:^Node,index:int) -> Id {
 @(private)
 tree_name_id :: proc(ctx:^Context,name:u64) -> Id {
     name:=name
-    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else u32(0x811c9dc5)
+    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else ID_SEED
     value:=hash.fnv32a(mem.ptr_to_bytes(&name),seed)
     return Id(value) if value!=0 else Id(1)
 }
 @(private)
 tree_box :: proc(node:^Node,style:^Node_Style,id:Id) -> Box {
-    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
+    return {id=id,layout=node.layout,float=node.float,clip_x=node.clip,clip_y=node.clip,fill=style.fill,fill2=style.fill2,stroke=style.stroke,corners=style.radius,stroke_width=style.stroke_width if style.stroke_width>0 || style.stroke[3]==0 else 1,shadow=style.shadow,shadow_color=style.shadow_color,shadow_blur=style.shadow_blur,shadow_offset=style.shadow_offset,layer=node.layer,block=node.block}
 }
 
 @(private)
@@ -631,6 +639,7 @@ Tree_Build :: struct {
     count,dropped:int,
     floor:int, // the layer the tree is built in
     built:int, // nodes built
+    turned:bool, // a Switcher left the page with the focus for this one: its Focus_First takes it
     animating:bool,
     ghost:int, // the node built under the pointer for a drag, whatever it shows; -1: none
     tracks,tracks_end:int, // the rows of the grid tracks of the frame its own start after, and where they end
@@ -646,6 +655,10 @@ tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:T
     for g in tree.grid_tracks[:tree.grid_track_count] {if grid_tracks_add(ctx,g)==0 {break}}
     b.tracks_end=ctx.layout.track_count
     instance.bar_next_count=0
+    if !tree.pages_focused {
+        tree_pages_focus(tree.nodes[:tree.node_count])
+        tree.pages_focused=true
+    }
     if desc.passive {ctx.unfocusable+=1}
     for index:=0;index<tree.node_count; {index=tree_build_node(ctx,&b,index,raw_data(instance.values),0,-1)}
     if desc.passive {ctx.unfocusable-=1}
@@ -849,10 +862,26 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if variant==0 {variant=b.desc.variant}
     states:=style_states({hot=hovered,focused=focused,active=ctx.active==node_id || (under && .Left in ctx.input.down)},selected,disabled,over)
     if b.desc.shown==i32(index)+1 {states=b.desc.shown_states}
-    resolved:=style_resolve(&ctx.theme,base_style,tree.variants[:tree.variant_count],node.style,variant,states)
+    resolved:=base_style
+    if rules:=tree_style_rules(tree,node.style);len(rules)>0 {
+        plain:=Slot_Plain{variant=variant,rules=u32(len(rules)),states=states,seen=true}
+        if state.plain!=plain {
+            held,_:=style_rules_apply(&ctx.theme,&resolved,rules,node.style,variant,states)
+            state.plain=plain if !held else {}
+        }
+    }
     if bound.tint.bound {resolved.fill=bound_color(values,bound.tint)}
     if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
     style:=&resolved
+    // A style moves what its node draws, not where the layout or the pointer find it.
+    moved:=false
+    if style.move!={} || style.scale!=0 && style.scale!=1 {
+        look:=ANIM_IDENTITY
+        look.offset=style.move
+        if style.scale!=0 {look.scale={style.scale,style.scale}}
+        moved=animated_begin(ctx,node_id,look,still=true)
+    }
+    defer if moved {animated_end(ctx)}
     image_ref:Node_Image
     if node.image!=0 && int(node.image)<=tree.image_count {image_ref=tree.images[node.image-1]}
     if bound.image.bound && ctx.game.texture!=nil {
@@ -952,8 +981,18 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
     }
     #partial switch node.kind {
     case .Switcher:
-        shown:=int(bound_number(values,instance.bounds[index].value)) if instance.bounds[index].value.bound else int(node.index)
+        shown:=tree_switcher_page(tree,node,index,next,instance.bounds[index].value,values)
+        state:=&instance.slot[slot]
+        outer:=b.turned
+        b.turned||=state.page_focused && state.page!=i32(shown+1)
+        state.page=i32(shown+1)
+        first:=ctx.widget_count
         tree_build_child(ctx,b,index,next,shown,values,copy,item)
+        b.turned=outer
+        state.page_focused=false
+        for &w in ctx.widgets[first:ctx.widget_count] {
+            if w.id==ctx.focus {state.page_focused=true;break}
+        }
     case .List:
         tree_build_list(ctx,b,node,index,slot,values,copy,axis,virtual,items,area)
     case .Tabs:
@@ -974,6 +1013,34 @@ tree_build_box :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:int
         scroll_end(ctx,area,&instance.scrolls[slot])
     }
     box_end(ctx,box^)
+}
+
+// What the bound value of a node of this kind must hold.
+@(private)
+tree_value_want :: proc "contextless" (kind:Node_Kind) -> Bound_Want {
+    #partial switch kind {
+    case .View:              return .Entity
+    case .Switcher:          return .Shown
+    case .Selector,.Dropdown:return .Option
+    }
+    return .Number
+}
+
+// The position of the node a Switcher builds: by name when it binds an enum or
+// a text (the child called as its value; -1, none, when it has no such child),
+// else by index.
+@(private)
+tree_switcher_page :: proc(tree:^Widget_Tree,node:^Node,index,next:int,bound:Bound,values:rawptr) -> int {
+    if !bound.bound {return int(node.index)}
+    if bound.choices_of==nil && !bound.text {return int(bound_number(values,bound))}
+    name:=bound_name(values,bound)
+    if name=="" {return -1}
+    wanted:=base.name_hash(name)
+    for child,i:=index+1,0;child<next;i+=1 {
+        if tree.nodes[child].name==wanted {return i}
+        child+=int(tree.nodes[child].subtree)+1
+    }
+    return -1
 }
 
 // Builds the node held at position at of the node at index, and no other.
@@ -1139,7 +1206,8 @@ tree_build_tabs :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:in
             if label=="" {label=tree_node_text(ctx,b,c,child,int(instance.slots[child])+copy,values)}
             if label=="" {label=string(tree.strings[c.tab.offset:][:c.tab.length])}
             if label=="" {label=number_text(ctx,f64(at+1),0)}
-            if styled_button(ctx,tab,label,base_style,tree.variants[:tree.variant_count],node.style,variant,{padding=TREE_TAB_PADDING},at==chosen).clicked {picked=at}
+            look:=style_resolve(&ctx.theme,base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
+            if button(ctx,tab,{label=label,look=&look,layout=&Layout{padding=TREE_TAB_PADDING},block=true}).clicked {picked=at}
             if ctx.focus==tab && ctx.focus_moved {picked=at}
             child+=int(c.subtree)+1
         }
@@ -1286,8 +1354,7 @@ tree_build_modal :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next:int,no
     }
     backdrop:=id_derive(ctx,node_id,"backdrop")
     // Nothing it was built in clips it.
-    ctx.clip_stack[ctx.clip_depth]=0
-    ctx.clip_depth+=1
+    clips_suspend(ctx)
     box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=ctx.theme.backdrop,block=true})
     box_end(ctx,{id=backdrop,float={to=.Surface}})
     box.float={to=.Surface,anchor=.Center,pivot=.Center,offset=node.float.offset,layer=LAYER_MODAL+1}
@@ -1296,7 +1363,7 @@ tree_build_modal :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next:int,no
     ctx.area=0
     for child:=index+1;child<next; {child=tree_build_node(ctx,b,child,values,copy,item)}
     box_end(ctx,box^)
-    ctx.clip_depth-=1
+    clips_resume(ctx)
     ctx.modal_open,ctx.modal_layer=true,LAYER_MODAL
     if escape(ctx) {tree_emit(b,{name=node.name,node=i32(index),kind=.Closed,item=item})}
 }

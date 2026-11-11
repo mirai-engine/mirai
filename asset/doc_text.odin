@@ -27,6 +27,11 @@ import "mirai:std/serial"
 // marked Bulk is not text: with Files every column names a file that holds
 // its bytes, and with Summary only its size is told.
 //
+// With diff the text is the one a diff of two versions reads, and pack does
+// not read it back: a row names the row it refers to by the key of that row,
+// and a column does not tell the index of its type, so a row or a type added
+// before them changes neither.
+//
 // Reading takes "schema" before "tables", and in a table "columns" before
 // "data". Keys it does not know, type_name, size and dependencies are
 // ignored: dependencies follow from the values.
@@ -41,12 +46,13 @@ Text_Bulk :: enum u8 {
 Text_Options :: struct {
     schema:bool, // write the types
     bulk:Text_Bulk,
+    diff:bool,   // rows refer to rows by key and columns leave out the index of their type
 }
 
 // The file that holds a bulk column, next to the text.
-bulk_file_name :: proc(table,column:string,allocator:=context.temp_allocator) -> string {
-    if column=="" {return strings.concatenate({table,".bin"},allocator)}
-    return strings.concatenate({table,".",column,".bin"},allocator)
+bulk_file_name :: proc(table,column:string) -> string {
+    if column=="" {return strings.concatenate({table,".bin"},context.temp_allocator)}
+    return strings.concatenate({table,".",column,".bin"},context.temp_allocator)
 }
 
 @(private="file")
@@ -135,8 +141,9 @@ schema_text_write :: proc(w:^serial.Writer,s:^serial.Schema,depth:int) {
     serial.write_u8(w,']')
 }
 
-// One row of a table, on one line.
-document_row_write :: proc(doc:^Document,w:^serial.Writer,table,row:int) {
+// One row of a table, on one line. by_key: a column that refers to a row of a
+// table with a key holds the key of that row, not its position.
+document_row_write :: proc(doc:^Document,w:^serial.Writer,table,row:int,by_key:=false) {
     target:=&doc.tables[table]
     if len(target.columns)==1 && target.columns[0].name=="" {
         column:=&target.columns[0]
@@ -148,18 +155,26 @@ document_row_write :: proc(doc:^Document,w:^serial.Writer,table,row:int) {
         if at>0 {serial.text_write_raw(w,", ")}
         serial.text_write_string(w,column.name)
         serial.text_write_raw(w,": ")
+        if by_key && column.ref>=0 && doc.tables[column.ref].key>=0 {
+            referred:=&doc.tables[column.ref]
+            if index:=index_load(column.data,row,column.size);index<u64(referred.rows) {
+                key:=&referred.columns[referred.key]
+                serial.text_write(w,&doc.schema,key.type,document_cell(doc,column.ref,referred.key,int(index)),.Line,0,.Text in key.flags)
+                continue
+            }
+        }
         serial.text_write(w,&doc.schema,column.type,document_cell(doc,table,at,row),.Line,0,.Text in column.flags)
     }
     serial.write_u8(w,'}')
 }
 
 // The rows of a table, one per line, between brackets.
-document_rows_write :: proc(doc:^Document,w:^serial.Writer,table:int,depth:int) {
+document_rows_write :: proc(doc:^Document,w:^serial.Writer,table:int,depth:int,by_key:=false) {
     serial.write_u8(w,'[')
     for row in 0..<doc.tables[table].rows {
         if row>0 {serial.write_u8(w,',')}
         serial.text_write_break(w,depth+1)
-        document_row_write(doc,w,table,row)
+        document_row_write(doc,w,table,row,by_key)
     }
     if doc.tables[table].rows>0 {serial.text_write_break(w,depth)}
     serial.write_u8(w,']')
@@ -208,7 +223,7 @@ document_text_write :: proc(doc:^Document,w:^serial.Writer,options:=Text_Options
             if c>0 {serial.write_u8(w,',')}
             serial.text_write_break(w,4)
             serial.text_write_raw(w,`{"name": `);serial.text_write_string(w,column.name)
-            write_key(w,-1,"type");serial.text_write_uint(w,u64(column.type))
+            if !options.diff {write_key(w,-1,"type");serial.text_write_uint(w,u64(column.type))}
             if name:=doc.schema.types[column.type].name;name!="" {write_key(w,-1,"type_name");serial.text_write_string(w,name)}
             write_key(w,-1,"size");serial.text_write_uint(w,u64(column.size))
             write_key(w,-1,"alignment");serial.text_write_uint(w,u64(column.alignment))
@@ -224,7 +239,7 @@ document_text_write :: proc(doc:^Document,w:^serial.Writer,options:=Text_Options
         serial.write_u8(w,']')
         if .Bulk not_in table.flags {
             write_key(w,3,"data")
-            document_rows_write(doc,w,t,3)
+            document_rows_write(doc,w,t,3,options.diff)
         }
         serial.text_write_break(w,2)
         serial.write_u8(w,'}')
@@ -297,6 +312,15 @@ fail :: proc(state:^Text_State,rule:Text_Rule,offset:=-1) -> bool {
     return false
 }
 
+// Puts a copy of text in target, which lets go of what it held.
+@(private="file")
+text_keep :: proc(state:^Text_State,target:^string,text:string,allocator:mem.Allocator) -> bool {
+    delete(target^,allocator)
+    error:mem.Allocator_Error
+    if target^,error=strings.clone(text,allocator);error!=nil {return fail(state,.Out_Of_Memory)}
+    return true
+}
+
 @(private="file")
 read_uint :: proc(state:^Text_State,limit:u64) -> (value:u64,ok:bool) {
     serial.text_space(&state.r)
@@ -340,7 +364,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
             start:=r.offset
             if len(s.types)>=int(serial.TYPE_NONE)-1 {return fail(state,.Too_Many_Types,start)}
             // Appended at once, so a failure further on leaves its name to the schema.
-            append(&s.types,serial.Type{elem=serial.TYPE_NONE})
+            if _,err:=append(&s.types,serial.Type{elem=serial.TYPE_NONE});err!=nil {return fail(state,.Out_Of_Memory,start)}
             type:=&s.types[len(s.types)-1]
             serial.text_expect(r,'{') or_return
             type.first=u32(len(s.fields))
@@ -356,8 +380,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                     if kind==.Enum || kind==.Bit_Set {type.first=u32(len(s.choices))}
                 case "name":
                     name:=serial.text_string(r) or_return
-                    delete(type.name,s.allocator)
-                    type.name=strings.clone(name,s.allocator)
+                    text_keep(state,&type.name,name,s.allocator) or_return
                     type.name_hash=base.name_hash(name)
                 case "size": type.size=u32(read_uint(state,u64(max(u32))) or_return)
                 case "align": type.align=u32(read_uint(state,serial.SCHEMA_MAX_ALIGN) or_return)
@@ -382,7 +405,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                     serial.text_expect(r,'[') or_return
                     if !serial.text_accept(r,']') {
                         for {
-                            append(&s.choices,serial.Choice{})
+                            if _,err:=append(&s.choices,serial.Choice{});err!=nil {return fail(state,.Out_Of_Memory)}
                             type.count+=1
                             choice:=&s.choices[len(s.choices)-1]
                             serial.text_expect(r,'{') or_return
@@ -392,8 +415,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                                 switch field {
                                 case "name":
                                     name:=serial.text_string(r) or_return
-                                    delete(choice.name,s.allocator)
-                                    choice.name=strings.clone(name,s.allocator)
+                                    text_keep(state,&choice.name,name,s.allocator) or_return
                                 case "value":
                                     negative,magnitude:=serial.text_integer(r) or_return
                                     choice.value=negative?-i64(magnitude-1)-1:i64(magnitude)
@@ -415,7 +437,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                         for {
                             field:serial.Field
                             // Appended at once, so a failure further on leaves its strings to the schema.
-                            append(&s.fields,field)
+                            if _,err:=append(&s.fields,field);err!=nil {return fail(state,.Out_Of_Memory)}
                             type.count+=1
                             target:=&s.fields[len(s.fields)-1]
                             serial.text_expect(r,'{') or_return
@@ -425,8 +447,7 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                                 switch name {
                                 case "name":
                                     text:=serial.text_string(r) or_return
-                                    delete(target.name,s.allocator)
-                                    target.name=strings.clone(text,s.allocator)
+                                    text_keep(state,&target.name,text,s.allocator) or_return
                                     target.name_hash=base.name_hash(text)
                                 case "type": target.type=serial.Type_Index(read_uint(state,u64(serial.TYPE_NONE)-1) or_return)
                                 case "offset": target.offset=u32(read_uint(state,u64(max(u32))) or_return)
@@ -440,12 +461,10 @@ schema_text_read :: proc(state:^Text_State) -> bool {
                                 case "bits": target.bits=u8(read_uint(state,255) or_return)
                                 case "label":
                                     text:=serial.text_string(r) or_return
-                                    delete(target.label,s.allocator)
-                                    target.label=strings.clone(text,s.allocator)
+                                    text_keep(state,&target.label,text,s.allocator) or_return
                                 case "unit":
                                     text:=serial.text_string(r) or_return
-                                    delete(target.unit,s.allocator)
-                                    target.unit=strings.clone(text,s.allocator)
+                                    text_keep(state,&target.unit,text,s.allocator) or_return
                                 case: serial.text_skip(r) or_return
                                 }
                                 if serial.text_accept(r,',') {continue}

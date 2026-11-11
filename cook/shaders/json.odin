@@ -145,16 +145,17 @@ Number :: struct {is_float:bool,integer:i64,float:f64}
 @(private)
 number_value :: proc(n:Number) -> f64 {return n.float if n.is_float else f64(n.integer)}
 
-// The shortest decimal that reads back as the same f64: "0.5", "100.0",
-// "1e+20", "1e-05". Exponents below -4 or from 16 use scientific notation.
+// The shortest decimal that reads back as the same float of `bits` bits:
+// "0.5", "100.0", "1e+20", "1e-05". Exponents below -4 or from 16 use
+// scientific notation.
 @(private)
-float_text :: proc(builder:^strings.Builder,value:f64) {
+float_text :: proc(builder:^strings.Builder,value:f64,bits:=64) {
     if math.is_nan(value) {strings.write_string(builder,"NaN");return}
     if math.is_inf(value) {strings.write_string(builder,"-Infinity" if value<0 else "Infinity");return}
     if value==0 {strings.write_string(builder,"-0.0" if math.sign_bit(value) else "0.0");return}
     buffer:[64]u8
     // "+d.ddddde+XX": the shortest digits, one of them before the point.
-    scientific:=string(strconv.generic_ftoa(buffer[:],value,'e',-1,64,{.Plus}))
+    scientific:=string(strconv.generic_ftoa(buffer[:],value,'e',-1,bits,{.Plus}))
     negative:=scientific[0]=='-'
     scientific=scientific[1:]
     at:=strings.index_byte(scientific,'e')

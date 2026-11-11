@@ -52,10 +52,8 @@ counts_update :: proc(c:^Counts,s:^foliage.Source,key:Counts_Key,ground:^foliage
         switch {
         case old!=nil && old.version!=0 && old.version==cell.version && old.ground==revision:
             append(&c.next_types,..c.types[old.first:][:old.count])
-        case built<budget:
+        case built<budget && foliage.cell_build(s,&cell,tile,work) && foliage.placed_group(s,work):
             built+=1
-            foliage.cell_build(s,&cell,tile,work)
-            foliage.placed_group(s,work)
             for t,i in s.types {
                 if n:=work.firsts[i+1]-work.firsts[i];n>0 {append(&c.next_types,Type_Count{t.id,n})}
             }

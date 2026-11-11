@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import stbi "vendor:stb/image"
 import "mirai:cook/textures"
+import mm "mirai:std/math"
 
 // Comparing and describing images for the agents that tune a look: PNG files
 // to RGBA8, the difference between two images, the statistics of one, a
@@ -85,8 +86,7 @@ region_resolve :: proc(image:Image,region:Region) -> (resolved:Region,error:Erro
 @(private)
 linear_table :: proc() -> (table:[256]f32) {
     for i in 0..<256 {
-        v:=f32(i)/255
-        table[i]=v<=0.04045?v/12.92:math.pow((v+0.055)/1.055,2.4)
+        table[i]=mm.srgb_to_linear(f32(i)/255)
     }
     return
 }

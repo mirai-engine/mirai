@@ -2,7 +2,6 @@ package editor
 
 import "core:fmt"
 import "core:os"
-import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -13,10 +12,8 @@ import "mirai:std/base"
 
 @(test)
 an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root,_:=strings.replace_all(project.path(temporary,fmt.tprintf("mirai-material-base-%d",os.get_pid()),allocator=context.temp_allocator),"\\","/",context.temp_allocator)
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"material-base")
+    if root=="" {return}
     folder:=project.path(root,"assets",allocator=context.temp_allocator)
     os.make_directory_all(folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -76,10 +73,8 @@ an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field
 // changes of another slot stays out.
 @(test)
 the_override_of_a_slot_of_an_entity_goes_into_its_material :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root,_:=strings.replace_all(project.path(temporary,fmt.tprintf("mirai-material-apply-%d",os.get_pid()),allocator=context.temp_allocator),"\\","/",context.temp_allocator)
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"material-apply")
+    if root=="" {return}
     folder:=project.path(root,"assets",allocator=context.temp_allocator)
     os.make_directory_all(folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)

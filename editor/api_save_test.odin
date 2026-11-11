@@ -10,6 +10,8 @@ import "mirai:host"
 import "mirai:std/base"
 
 @(private="file")
+Save_Api_World :: struct {using world:core.Test_World}
+@(private="file")
 Save_Api_Shared :: struct {state:save.Save_State}
 
 @(private="file")
@@ -26,21 +28,22 @@ save_api_call :: proc(s:^Session,run:proc(s:^Session,call:^api.Call),params:^$P,
 // do not load with why; writing and loading ask for Play.
 @(test)
 save_methods_read_and_delete_slots_in_edit_and_ask_for_play_to_write :: proc(t:^testing.T) {
-    dir,dir_error:=os.make_directory_temp("","mirai-save-api-*",context.allocator)
-    if !testing.expect(t,dir_error==nil) {return}
-    defer {os.remove_all(dir);delete(dir)}
-    storages:=[1]core.Storage_Info{{type=save.Save_State,info=type_info_of(save.Save_State),offset=offset_of(Save_Api_Shared,state),place=.Shared}}
-    info:=core.World_Info{storages=storages[:]}
+    dir:=base.test_folder(t,"save-api")
+    if dir=="" {return}
+    info,described:=core.test_info(t,Save_Api_World,Save_Api_Shared,core.Test_None)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     shared:Save_Api_Shared
     app:=host.App{info=&info,allocator=context.allocator,shared=&shared}
-    save.folder_set(&shared.state,&app,dir)
+    save.folder_set(&shared.state,app.allocator,dir)
     defer delete(shared.state.folder)
     session:=Session{info=&info,app=&app}
     broken:=strings.concatenate({dir,"/broken",save.EXTENSION},context.temp_allocator)
     testing.expect(t,os.write_entire_file(broken,transmute([]u8)string("not a save"))==nil)
     testing.expect(t,os.write_entire_file(strings.concatenate({dir,"/notes.txt"},context.temp_allocator),{1})==nil)
 
-    _,list:=save_api_call(&session,api_save_list,(^struct{})(nil),Api_Save_List)
+    every:Api_Save_List_Params
+    _,list:=save_api_call(&session,api_save_list,&every,Api_Save_List)
     testing.expect_value(t,base.text_get(list.folder[:]),dir)
     testing.expect_value(t,base.text_get(list.slots[0].name[:]),"broken")
     testing.expect_value(t,base.text_get(list.slots[0].error[:]),save.error_text(.Corrupt))
@@ -48,10 +51,12 @@ save_methods_read_and_delete_slots_in_edit_and_ask_for_play_to_write :: proc(t:^
 
     params:Api_Save_Slot_Params
     base.text_set(params.slot[:],"broken")
-    call,_:=save_api_call(&session,api_save_inspect,&params,Api_Save_Slot)
-    testing.expect(t,call.failed && strings.contains(call.error.message,"save.delete"))
-    base.text_set(params.slot[:],"con")
-    call,_=save_api_call(&session,api_save_inspect,&params,Api_Save_Slot)
+    one:Api_Save_List_Params
+    base.text_set(one.slot[:],"broken")
+    call,_:=save_api_call(&session,api_save_list,&one,Api_Save_List)
+    testing.expect(t,!call.failed)
+    base.text_set(one.slot[:],"con")
+    call,_=save_api_call(&session,api_save_list,&one,Api_Save_List)
     testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
 
     base.text_set(params.slot[:],"broken")

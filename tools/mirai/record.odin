@@ -4,8 +4,6 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
-import "core:strings"
-import "mirai:editor/api"
 import "mirai:project"
 
 RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|exr] [--fps N] [--seconds S] [--size WxH] [--sheet N] [--no-audio] [--dev|--release]"
@@ -18,53 +16,45 @@ RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|e
 // exit 1 with validation errors.
 cmd_record :: proc(root:string,args:[]string) -> int {
     folder,out,scene:=".","",""
-    Params :: struct {path:string,format:string,fps:int,seconds:f64,width,height:int,audio:bool,sheet:int}
-    params:=Params{format="Png16",fps=30,seconds=2,width=1280,height=720,audio=true,sheet=16}
+    Params :: struct {path:string,format:string,fps:int,duration:string `json:"for"`,width,height:int,audio:bool,sheet:int}
+    params:=Params{format="Png16",fps=30,duration="2s",width=1280,height=720,audio=true,sheet=16}
     mode:Build_Mode=.Keep
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",RECORD_USAGE);return 2}
-    value :: proc(args:[]string,i:^int) -> (string,bool) {
-        if i^+1>=len(args) {return "",false}
-        i^+=1
-        return args[i^],true
-    }
     for i:=0;i<len(args);i+=1 {
         ok:=true
         text:string
         switch args[i] {
-        case "--out":   out,ok=value(args,&i)
-        case "--scene": scene,ok=value(args,&i)
+        case "--out":   out,ok=option_next(args,&i)
+        case "--scene": scene,ok=option_next(args,&i)
         case "--format":
-            text,ok=value(args,&i)
+            text,ok=option_next(args,&i)
             switch text {
             case "png16": params.format="Png16"
             case "exr":   params.format="Exr"
             case:         ok=false
             }
         case "--fps":
-            text,ok=value(args,&i)
+            text,ok=option_next(args,&i)
             number,valid:=strconv.parse_int(text,10)
             params.fps,ok=number,ok && valid
         case "--seconds":
-            text,ok=value(args,&i)
+            text,ok=option_next(args,&i)
             number,valid:=strconv.parse_f64(text)
-            params.seconds,ok=number,ok && valid
+            _=number
+            params.duration,ok=fmt.aprintf("%ss",text),ok && valid
         case "--size":
-            text,ok=value(args,&i)
-            cut:=strings.index_byte(text,'x')
-            if ok && cut>0 {
-                w,w_ok:=strconv.parse_int(text[:cut],10)
-                h,h_ok:=strconv.parse_int(text[cut+1:],10)
-                params.width,params.height,ok=w,h,w_ok && h_ok
-            } else {ok=false}
+            text,ok=option_next(args,&i)
+            size,valid:=render_size_parse(text)
+            params.width,params.height,ok=size.x,size.y,ok && valid
         case "--sheet":
-            text,ok=value(args,&i)
+            text,ok=option_next(args,&i)
             number,valid:=strconv.parse_int(text,10)
             params.sheet,ok=number,ok && valid
         case "--no-audio": params.audio=false
         case "--dev":  mode=.Dev
         case "--release": mode=.Release
         case:
-            if strings.has_prefix(args[i],"-") || folder!="." {return usage()}
+            if !positional(args[i]) || folder!="." {return argument_unknown("record",args[i])}
             folder=args[i]
         }
         if !ok {return usage()}
@@ -76,23 +66,13 @@ cmd_record :: proc(root:string,args:[]string) -> int {
     folder=project.path_absolute(folder)
     if out!="" {params.path=project.path_absolute(out)}
 
-    file,alive:=session_find(folder)
-    reused:=alive && session_answers(file.port)
-    if reused && !session_reusable(root,folder,mode,file,"record") {return 1}
-    if !reused {
-        code:int
-        if file,code=session_open(root,folder,mode,false,180,{});code!=0 {return code}
-    }
+    file,reused,code:=session_borrow(root,folder,mode,"record")
+    if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 
-    call :: proc(port:int,method:string,params:any) -> (result:string,ok:bool) {
-        text,_:=json.marshal(params,allocator=context.temp_allocator)
-        response,err,called:=api.rpc_call(port,method,string(text),1,3600000,context.allocator)
-        if !called {fmt.eprintfln("mirai record: %s: %s",method,api.error_text(err,context.temp_allocator))}
-        return response,called
-    }
+    call :: proc(port:int,method:string,params:any) -> (result:string,ok:bool) {return session_call("record",port,method,params,3600000)}
     if scene!="" {
-        if _,ok:=call(file.port,"scene.load",struct{path:string}{scene});!ok {return 1}
+        if _,ok:=call(file.port,"scene.open",struct{path:string}{scene});!ok {return 1}
     }
     Status :: struct {playing:bool}
     status:Status

@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math"
 import "core:reflect"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:ui"
@@ -129,7 +130,7 @@ Action_State :: struct {
 
 // What an action shows now. Disabled actions do nothing when run.
 action_state :: proc(s:^Session,action:Action) -> (state:Action_State) {
-    if s.recovery.pending && action!=.Quit {state.disabled=true;return}
+    if s.gui!=nil && s.gui.modal==.Recovery && action!=.Quit {state.disabled=true;return}
     w:=shown_world(s)
     selected:=len(s.selection.entities)>0
     edit:=s.mode==.Edit
@@ -170,11 +171,11 @@ action_state :: proc(s:^Session,action:Action) -> (state:Action_State) {
         case .Failed:          state.label="Build *"
         }
     case .Undo:
-        state.disabled=!edit || undo_label(s.edits)=="" && !s.edits.preview
-        if s.edits.preview {state.label="Cancel preview"} else if !state.disabled {state.label=fmt.tprintf("Undo %s",undo_label(s.edits))}
+        state.disabled=!edit || history.undo_label(s.edits)=="" && !s.edits.preview
+        if s.edits.preview {state.label="Cancel preview"} else if !state.disabled {state.label=fmt.tprintf("Undo %s",history.undo_label(s.edits))}
     case .Redo:
-        state.disabled=!edit || redo_label(s.edits)==""
-        if !state.disabled {state.label=fmt.tprintf("Redo %s",redo_label(s.edits))}
+        state.disabled=!edit || history.redo_label(s.edits)==""
+        if !state.disabled {state.label=fmt.tprintf("Redo %s",history.redo_label(s.edits))}
     case .Deselect,.Focus: state.disabled=!selected
     case .Scene_Thumbnail: state.disabled=!edit || !scene_thumbnail_takes(s)
     case .Copy: state.disabled=!selected || !edit
@@ -198,7 +199,7 @@ action_state :: proc(s:^Session,action:Action) -> (state:Action_State) {
     case .Inspector_Panel: state.checked=s.gui.layout.right_open
     case .Console_Panel:   state.checked=s.gui.layout.bottom_open && s.gui.layout.bottom_tab==.Console
     case .Build_Panel:     state.checked=s.gui.layout.bottom_open && s.gui.layout.bottom_tab==.Build
-    case .Play,.Play_From_Camera,.Simulate: state.disabled=s.mode!=.Edit || s.recovery.pending || play_plugin_active(s)
+    case .Play,.Play_From_Camera,.Simulate: state.disabled=s.mode!=.Edit || play_plugin_active(s)
     case .Apply_Simulation: state.disabled=!simulating(s) || !selected
     case .Pause:
         state.disabled=s.mode==.Edit || s.mode==.Watch
@@ -206,13 +207,13 @@ action_state :: proc(s:^Session,action:Action) -> (state:Action_State) {
     case .Stop:  state.disabled=s.mode==.Edit && !play_plugin_active(s)
     case .Release_Input: state.disabled=!player_processes_captured(s) && (s.mode!=.Play || s.play_input_released)
     case .Import:    state.disabled=!edit || s.app.assets==nil
-    case .Ai_Chat:   state.disabled,state.checked=s.mode==.Play,s.ai.chat_open && (s.gui.layout.left_open || play_shown(s))
+    case .Ai_Chat:   state.disabled,state.checked=s.mode==.Play,ai_chat_open(s.ai) && (s.gui.layout.left_open || play_shown(s))
     case .Source_Control: state.disabled=!s.has_project;state.checked=s.gui.layout.left_open && s.gui.layout.library_tab==.Git
     case .Projects:  state.disabled=s.mode!=.Edit || s.engine_root=="" || s.projects==nil
     case .Graphics:  state.checked=ui.popup_is_open(s.gui.ctx,graphics_popup(s.gui))
     case .Settings:  state.disabled=!s.has_project || s.mode!=.Edit; state.checked=s.gui.modal==.Settings
     case .Prefab_Create,.Prefab_Apply,.Prefab_Revert,.Prefab_Unlink,.Prefab_Apply_Base: state.disabled=prefab_action_disabled(s,action)
-    case .Camera_Preview: state.disabled=!edit || s.recovery.pending || camera_preview_target(s,w)==core.NONE
+    case .Camera_Preview: state.disabled=!edit || camera_preview_target(s,w)==core.NONE
     case .Camera_Keep,.Camera_Discard: state.disabled=!camera_previewing(s)
     }
     return
@@ -267,23 +268,23 @@ action_run :: proc(s:^Session,action:Action) -> bool {
         tools_release(s)
         if document!=nil {
             h:=&document.history
-            if asset_history_undo(h) {notify(s,fmt.tprintf("Undo %s",cstring_text(h.steps[h.cursor].label[:])))}
+            if asset_history_undo(h) {notify(s,fmt.tprintf("Undo %s",history.cstring_text(h.steps[h.cursor].label[:])))}
         } else if text:=history_text(history_undo(s),"Undo");text!="" {notify(s,text)}
     case .Redo:
         tools_release(s)
         if document!=nil {
             h:=&document.history
-            if asset_history_redo(h) {notify(s,fmt.tprintf("Redo %s",cstring_text(h.steps[h.cursor-1].label[:])))}
+            if asset_history_redo(h) {notify(s,fmt.tprintf("Redo %s",history.cstring_text(h.steps[h.cursor-1].label[:])))}
         } else if text:=history_text(history_redo(s),"Redo");text!="" {notify(s,text)}
     case .Copy:       selection_copy(s,w)
     case .Paste:
         sources:=copied_entities(s,w)
         if len(sources)==0 {notify(s,"Nothing to paste: the copied entities are not in this scene");break}
-        if copies:=entities_duplicate(s,sources,"Paste");len(copies)>0 {selection_set(s.selection,copies)}
+        if copies:=entities_duplicate(s,sources,"Paste");len(copies)>0 {history.selection_set(s.selection,copies)}
     case .Duplicate:
-        copies:=entities_duplicate(s,selection_roots(s.selection,w))
-        selection_set(s.selection,copies)
-    case .Delete:     entities_delete(s,selection_roots(s.selection,w))
+        copies:=entities_duplicate(s,history.selection_roots(s.selection,w))
+        history.selection_set(s.selection,copies)
+    case .Delete:     entities_delete(s,history.selection_roots(s.selection,w))
     case .Rename:
         g.layout.right_open=true
         s.inspector.rename=true
@@ -291,8 +292,8 @@ action_run :: proc(s:^Session,action:Action) -> bool {
         all:=make([dynamic]core.Entity,context.temp_allocator)
         items:=scene_items(s,w)
         for item in scene_item_next(&items) {if entity_author(w,item.entity)==item.entity {append(&all,item.entity)}}
-        selection_set(s.selection,all[:])
-    case .Deselect:   selection_clear(s.selection)
+        history.selection_set(s.selection,all[:])
+    case .Deselect:   history.selection_clear(s.selection)
     case .Group:      selection_group(s,w)
     case .Tool_Move:   gizmo_mode(s,.Move)
     case .Tool_Rotate: gizmo_mode(s,.Rotate)
@@ -348,7 +349,7 @@ action_run :: proc(s:^Session,action:Action) -> bool {
     case .Projects:   projects_show(s)
     case .Ai_Chat:
         // A chat folded with its panel comes back with it instead of closing.
-        if play_shown(s) {play_chat_set(s,!s.play_chat_open)} else if s.ai.chat_open && !s.gui.layout.left_open {s.gui.layout.left_open=true} else {ai_chat_toggle(s.ai)}
+        if play_shown(s) {play_chat_set(s,!s.play_chat_open)} else if ai_chat_open(s.ai) && !s.gui.layout.left_open {s.gui.layout.left_open=true} else {ai_chat_toggle(s.ai)}
     case .Source_Control:
         g.layout.left_open=true
         library_select(s,.Git)
@@ -356,16 +357,14 @@ action_run :: proc(s:^Session,action:Action) -> bool {
         anchor,_:=ui.widget_rect(g.ctx,shell_id(g,"graphics"))
         ui.popup_open(g.ctx,graphics_popup(g),anchor)
     case .Prefab_Create,.Prefab_Apply,.Prefab_Revert,.Prefab_Unlink,.Prefab_Apply_Base:
-        // They replace the World: between frames, so no frame draws it before its fixed phase ran.
-        s.prefab_action=action
-        s.requests+={.Prefab_Action}
+        prefab_action_run(s,action)
     }
     return true
 }
 
 // Puts the selected roots under a new group at their center, as one step.
 selection_group :: proc(s:^Session,w:core.World_Ref) {
-    roots:=selection_roots(s.selection,w)
+    roots:=history.selection_roots(s.selection,w)
     if len(roots)==0 {return}
     center:[3]f32
     for e in roots {center+=entity_world(w,e).position}
@@ -381,7 +380,7 @@ selection_group :: proc(s:^Session,w:core.World_Ref) {
     // The group exists once settled: its children are placed relative to where it will be.
     core.world_settle(w)
     for e in roots {entity_reparent(s,e,group)}
-    selection_set(s.selection,{group})
+    history.selection_set(s.selection,{group})
 }
 
 @(private)
@@ -452,7 +451,7 @@ shortcut_text :: proc(s:Shortcut,allocator:=context.temp_allocator) -> string {
 // ---------------------------------------------------------------- steps
 
 @(step="input")
-editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,world:core.World_Ref,app:^host.App) {
+editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Selection,world:core.World_Ref,app:^host.App) {
     started:=platform.clock_ns();defer api_timed(s,.Begin,started)
     ctx:=g.ctx
     if ctx==nil {return}
@@ -469,7 +468,7 @@ editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,wo
     ui.frame_begin(ctx,input)
     g.begun=true
     g.named_count=0
-    selection_prune(selection,world)
+    history.selection_prune(selection,world)
     // The scene is drawn only under the bars, which always cover what is
     // above, and between the left panel and a docked Details: what they take
     // is not drawn. The camera keeps the center of the whole view, the part
@@ -483,7 +482,6 @@ editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,wo
     x1:=max(app.drawable.x-i32(math.round(right*density)),x0+1)
     app.scene={x0,top,x1-x0,max(app.drawable.y-top,1)}
     app.scene_shift={f32(view_x0-x0)/f32(x1-x0),0}
-    app.scene_view_width=x1-view_x0
     viewport_update(v,{left,bars},{max(ctx.size.x-left-right,1),max(ctx.size.y-bars,1)},ctx.size,frame,input.modifiers)
     v.hovered=frame.mouse_inside && !ctx.over && ctx.active==0 && popups==0 && !modal && s.mode!=.Play && !camera_previewing(s) && !player_processes_view(s) && g.drag.kind==.None && !scene_covered(s)
     drag_update(g,frame)
@@ -504,7 +502,10 @@ editor_shortcuts :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,keys:core.Keys,modi
 editor_tools :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,world:core.World_Ref) {
     started:=platform.clock_ns();defer api_timed(s,.Tools,started)
     if !g.begun {return}
-    if s.mode!=.Play && !scene_covered(s) {tools_update(s,world)}
+    if s.mode!=.Play && !scene_covered(s) {
+        tools_update(s,world)
+        ai_annotation_pointer(s,world)
+    }
     collab_follow(s)
     viewport_camera(v)
     view_write(s,world)
@@ -519,7 +520,7 @@ editor_panels :: proc(s:^Session,g:^Editor_Ui,world:core.World_Ref,app:^host.App
 
 // Escape closes what is on top: a dialog with what it asks about, then the
 // gestures, panels and tools, then the run, then the selection.
-escape_run :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection) {
+escape_run :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Selection) {
     switch {
     case g.modal==.Recovery:
     case g.modal==.Confirm:   confirm_resolve(s,.Cancel)
@@ -532,12 +533,12 @@ escape_run :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection) {
     case panel_shown(s.panels)!=nil: panel_show(s,s.panels,-1,false)
     case v.plugin_tool!=0 && !scene_covered(s) && len(selection.entities)==0: tool_leave(s)
     case s.mode!=.Edit || player_processes_view(s): s.requests+={.Stop}
-    case:                     selection_clear(selection)
+    case:                     history.selection_clear(selection)
     }
 }
 
 @(step="ui",stage="end")
-editor_end :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,edits:^Edits,world:core.World_Ref,app:^host.App) {
+editor_end :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Selection,edits:^history.Edits,world:core.World_Ref,app:^host.App) {
     started:=platform.clock_ns();defer api_timed(s,.End,started)
     if !g.begun {return}
     ctx:=g.ctx
@@ -562,12 +563,12 @@ editor_end :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^Selection,edit
     layer,_,panel_count,dropped:=host.ui_frame_convert(ui_frame,g.draws[:],g.panels[:])
     g.dropped+=u64(dropped)
     host.app_ui_font_sync(app,ctx)
-    host.app_ui_layer_add(app,layer)
-    for panel in g.panels[:panel_count] {host.app_world_panel_add(app,panel)}
-    if v.lines.count>0 {host.app_debug_lines_add(app,v.lines)}
+    host.extras_ui_layer_add(&app.extras,layer)
+    for panel in g.panels[:panel_count] {host.extras_world_panel_add(&app.extras,panel)}
+    if v.lines.count>0 {host.extras_debug_lines_add(&app.extras,v.lines)}
     if edits.commit {sections_sync(s)}
-    edits_flush(edits,world,selection)
-    edits_select(edits,world,selection)
+    history.edits_flush(edits,world,selection)
+    history.edits_select(edits,world,selection)
     preferences_update(s,ctx,frame.dt)
     files_settle(s)
     shell_after(s)

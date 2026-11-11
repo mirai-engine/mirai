@@ -3,6 +3,7 @@ package geom
 import "base:runtime"
 import "core:math"
 import "core:slice"
+import "mirai:std/base"
 
 Polygon_Op :: enum u8 {Union,Difference,Intersection}
 Polygon_Error :: enum u8 {None,Invalid,Out_Of_Memory,Too_Complex}
@@ -149,7 +150,7 @@ polygon_boolean :: proc(a_points:[]Vec2,a_loops:[]int,b_points:[]Vec2,b_loops:[]
         points[n]=p
         n+=1
     }
-    resize(points,n)
+    base.truncate(points,n)
 }
 
 @(private="file") pb_find :: proc(points:[]PB_Point,p:PB_Point) -> i32 {
@@ -355,7 +356,7 @@ polygon_boolean :: proc(a_points:[]Vec2,a_loops:[]int,b_points:[]Vec2,b_loops:[]
         n+=1
     }
     if n>0 && w.edges[n-1].wa==0 && w.edges[n-1].wb==0 {n-=1}
-    resize(&w.edges,n)
+    base.truncate(&w.edges,n)
     edges:=w.edges[:]
     pb_resize(&w.ends,len(vertices)) or_return
     slice.zero(w.ends[:])
@@ -468,7 +469,7 @@ polygon_boolean :: proc(a_points:[]Vec2,a_loops:[]int,b_points:[]Vec2,b_loops:[]
                 if first:=w.position[at];first>=0 {
                     pb_loop(w,w.walk[first:]) or_return
                     for x in w.walk[first:] {w.position[x]=-1}
-                    resize(&w.walk,first)
+                    base.truncate(&w.walk,first)
                 }
                 w.position[at]=i32(len(w.walk))
                 pb_push(&w.walk,at) or_return

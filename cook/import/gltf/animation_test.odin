@@ -22,18 +22,18 @@ gltf_animation_import_preserves_tangents_and_unambiguous_targets :: proc(t:^test
     testing.expect(t,model.animations[0].name=="move" && model.animations[1].name=="move (1)")
     tracks:=model.animations[0].tracks
     testing.expect(t,len(tracks)==3 && tracks[0].target=="Bone" && tracks[2].target=="Bone/Bone")
-    testing.expect(t,tracks[0].keys[0].tangents && tracks[0].keys[0].out_slope.x==2)
+    testing.expect(t,tracks[0].keys[0].tangents && tracks[0].keys[0].out_slope.x==-2)
     position:=anim.track_evaluate(tracks[0].keys,.Position,1)
     rotation:=anim.track_evaluate(tracks[1].keys,.Rotation,1)
     scale:=anim.track_evaluate(tracks[2].keys,.Scale,1)
-    testing.expect(t,abs(position.x-1.5)<1e-6,"cubic tangents scale by the two-second interval")
-    testing.expect(t,abs(rotation.z-0.8944272)<1e-6 && abs(rotation.w-0.4472136)<1e-6,"cubic quaternion uses component Hermite and normalization")
+    testing.expect(t,abs(position.x+1.5)<1e-6,"cubic tangents scale by the two-second interval")
+    testing.expect(t,abs(rotation.z+0.8944272)<1e-6 && abs(rotation.w-0.4472136)<1e-6,"cubic quaternion uses component Hermite and normalization")
     testing.expect_value(t,scale,[4]f32{1,1,1,0})
     testing.expect_value(t,anim.track_evaluate(tracks[2].keys,.Scale,2),[4]f32{3,3,3,0})
-    testing.expect_value(t,anim.track_evaluate(model.animations[1].tracks[0].keys,.Position,1),[4]f32{2,2,2,0})
+    testing.expect_value(t,anim.track_evaluate(model.animations[1].tracks[0].keys,.Position,1),[4]f32{-2,2,-2,0})
 
-    folder:=temp_folder("write-animation")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"write-animation")
+    if folder=="" {return}
     report,error:=importer.import_write(&model,folder)
     defer importer.report_destroy(&report)
     if !testing.expect_value(t,error.code,importer.Error_Code.None) {return}
@@ -66,8 +66,8 @@ gltf_animation_import_preserves_tangents_and_unambiguous_targets :: proc(t:^test
 gltf_animation_rejects_inconsistent_channels :: proc(t:^testing.T) {
     source,error:=os.read_entire_file(FIXTURES+"animation.gltf",context.temp_allocator)
     if !testing.expect_value(t,error,nil) {return}
-    folder:=temp_folder("invalid-animation")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"invalid-animation")
+    if folder=="" {return}
     cases:=[?]struct {from,to:string}{
         {`"path":"scale"`,`"path":"weights"`},
         {`"path":"scale"`,`"path":"rotation"`},
@@ -94,7 +94,8 @@ gltf_animation_paths_survive_node_reordering_and_reject_ambiguity :: proc(t:^tes
     text,_=strings.replace_all(text,`"node":0`,`"node":999`,context.temp_allocator)
     text,_=strings.replace_all(text,`"node":1`,`"node":0`,context.temp_allocator)
     text,_=strings.replace_all(text,`"node":999`,`"node":1`,context.temp_allocator)
-    folder:=temp_folder("animation-order");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"animation-order")
+    if folder=="" {return}
     reordered,reorder_error:=importer.import_model(write_text(folder,"reordered.gltf",text),FORMATS[:])
     if !testing.expect_value(t,reorder_error.code,importer.Error_Code.None) {return}
     defer importer.model_destroy(&reordered)
@@ -118,10 +119,11 @@ siblings_that_share_a_name_import_when_nothing_binds_them :: proc(t:^testing.T) 
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}],
 "bufferViews":[{"buffer":0,"byteLength":36}],
 "buffers":[{"byteLength":36,"uri":"data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA"}]}`
-    folder:=temp_folder("shared-names");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"shared-names")
+    if folder=="" {return}
     model,error:=importer.import_model(write_text(folder,"shared.gltf",text),FORMATS[:])
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.nodes),3)
-    testing.expect_value(t,model.nodes[2].transform.position,[3]f32{2,0,0})
+    testing.expect_value(t,model.nodes[2].transform.position,[3]f32{-2,0,0})
 }

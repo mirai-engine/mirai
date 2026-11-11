@@ -4,12 +4,12 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(test)
 by_world_storages_give_each_function_the_value_of_its_world :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-by-world-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"by-world")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
@@ -31,10 +31,9 @@ session_free :: proc(s:^Session) {}
         testing.expect(t,strings.contains(text,"session:p_core.By_World(p_core.Session),"))
         testing.expect(t,strings.contains(text,"p_core.session_open(p_core.by_world_get(&s.session,w.world_id))"))
         testing.expect(t,strings.contains(text,"p_core.session_look(p_core.ref(p_core.by_world_get(&s.session,w.world_id)))"))
-        testing.expect(t,strings.contains(text,"if !p_core.by_world_attach(&s.session,w.world_id,p_core.Session{},allocator) {return false}"))
-        testing.expect(t,strings.contains(text,"p_core.session_free(value)"))
-        testing.expect(t,strings.contains(text,"info.attach,info.detach=attach_World,detach_World"))
-        testing.expect(t,strings.contains(text,`,false,nil,false,false,"",false}`+"\n") && strings.contains(text,`p_core.Session),offset_of(Shared,session),.Shared,.None,nil,true,nil,false,false,"",false}`))
+        // core.world_attach gives each World its value, and core.world_detach frees it with its free.
+        testing.expect(t,strings.contains(text,"free_session :: proc(value:rawptr) {p_core.session_free(cast(^p_core.Session)value)}"),text)
+        testing.expect(t,strings.contains(text,`,false,nil,false,false,"",false,true,{},false}`+"\n") && strings.contains(text,`p_core.Session),offset_of(Shared,session),.Shared,.None,nil,true,nil,false,false,"",false,false,{free=free_session},false}`),text)
     }
     // A value for each World is of the application, and a function takes it by pointer.
     wrong:=`package core

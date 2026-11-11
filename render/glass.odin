@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math/linalg"
 import "mirai:rhi"
+import mm "mirai:std/math"
 
 // Blended surfaces. The nearest ones of each pixel are layers: a small
 // G-buffer each, lit by a compute pass once per pixel with what glass needs
@@ -82,8 +83,9 @@ ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
 
 // The mean filter of each instance with blended surfaces (glass_mean.comp,
 // Gpu_Instance.glass), which the rays that average glass take. It runs in the
-// first view of a frame that uploaded instances, materials or geometry, before
-// any pass traces: an upload of an instance brings the value the CPU holds.
+// first view of a frame that uploaded the table of instances, one with blended
+// surfaces, materials or geometry, before any pass traces: an upload of an
+// instance brings the value the CPU holds.
 // Without colored shadows no ray reads it.
 @(private)
 glass_means_record :: proc(p: ^Pass) -> bool {
@@ -114,15 +116,22 @@ glass_means_record :: proc(p: ^Pass) -> bool {
 	return true
 }
 
+// Every texture of the glass of a view, made or not.
+@(private)
+glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 3]rhi.Texture) {
+	for layer, i in t.glass {
+		each := [7]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}
+		copy(all[i * 7:], each[:])
+	}
+	rest := [3]rhi.Texture{t.glass_zbuffer, t.glass_scene, t.glass_reflections}
+	copy(all[GLASS_LAYERS_MAX * 7:], rest[:])
+	return
+}
+
 @(private)
 destroy_glass_targets :: proc(r: ^Renderer, t: ^Targets) {
-	d := r.device
-	for &layer in t.glass {
-		for tex in ([]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-		layer = {}
-	}
-	for tex in ([]rhi.Texture{t.glass_zbuffer, t.glass_scene, t.glass_reflections}) {if tex != 0 {rhi.texture_destroy(d, tex)}}
-	t.glass_zbuffer, t.glass_scene, t.glass_reflections = 0, 0, 0
+	for tex in glass_textures(t) {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
+	t.glass, t.glass_zbuffer, t.glass_scene, t.glass_reflections = {}, 0, 0, 0
 	t.glass_valid = false
 }
 
@@ -159,9 +168,10 @@ glass_medium :: proc(r: ^Renderer, camera: Vec3) -> (medium: u32) {
 // occlusion too and sizes the compute passes; this spares the rest.
 @(private)
 glass_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> bool {
+	frustum := transmute(mm.Frustum)planes
 	for entry in r.scene.translucent {
 		inst := &r.scene.instances[entry.instance]
-		if bounds_in_frustum(inst.bounds_min.xyz, inst.bounds_max.xyz, planes) {return true}
+		if mm.frustum_overlaps_aabb(frustum, {inst.bounds_min.xyz, inst.bounds_max.xyz}) {return true}
 	}
 	return false
 }

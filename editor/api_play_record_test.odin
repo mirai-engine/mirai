@@ -13,14 +13,16 @@ import mm "mirai:std/math"
 // beyond 1. GPU and validation.
 @(test)
 a_recording_reads_its_frames_wide_before_and_after_the_tonemap :: proc(t:^testing.T) {
+    Recorded_World :: struct {using world:core.Test_World}
+    world:Recorded_World
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     settings:=gpu.DEFAULT_SETTINGS
     settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={96,64}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
-    info:core.World_Info
-    app.info=&info
-    world:struct{x:int}
+    app.info=core.test_world_info(&world)
     cube,made:=erender.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({position={0,0.5,0},rotation=1,scale={1,1,1}}),{color={0.2,0.9,0.5,1},emission={2,6,3}})
     if !testing.expect(t,made) {return}
     host.assets_commit(app.assets)

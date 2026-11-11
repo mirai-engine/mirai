@@ -1,5 +1,7 @@
 // Shared declarations for every Mirai shader. Layouts are scalar and mirrored
-// by render/gpu_types.odin (sizes are asserted there).
+// by render/gpu_types.odin (sizes are asserted there). The constants shared
+// with the CPU come generated in shared_constants.slang from their Odin
+// declarations (render/abi, asset, rhi): none is defined in a shader source.
 #ifndef MIRAI_COMMON_SLANG
 #define MIRAI_COMMON_SLANG
 // What the extensions of the generation ask of the stages of the engine: empty
@@ -9,52 +11,15 @@
 // (cook/shaders/extensions.odin).
 #include <extensions.slang>
 #include <material_schema.slang>
+#include <shared_constants.slang>
 #include "origin.slang"
 
 // ---------------------------------------------------------------- binding slots
-// One table for all passes. Samplers stay below 16 (Metal limit), buffers
-// below 30 and textures below 128 so the slot is also the Metal index.
-#define SLOT_FRAME          0
-#define SLOT_PARAMS         1
-#define SLOT_LINEAR_SAMPLER 2
-#define SLOT_POINT_SAMPLER  3
-#define SLOT_INSTANCES      4
-#define SLOT_MESHES         5
-#define SLOT_VERTICES       6
-#define SLOT_INDICES        7
-#define SLOT_MATERIALS      8
-#define SLOT_LIGHTS         9
-#define SLOT_LIGHT_TREE     10
-#define SLOT_BLAS_NODES     11
-#define SLOT_BLAS_TRIANGLES 12
-#define SLOT_TLAS_NODES     13
-#define SLOT_TLAS_REFS      14
-#define SLOT_MATERIAL_SAMPLER 15
-#define SLOT_PROBES         16
-#define SLOT_IRRADIANCE     17
-#define SLOT_POINTS         18
-#define SLOT_PASS0          19
-#define SLOT_PASS1          20
-#define SLOT_PASS2          21
-#define SLOT_PASS3          22
-#define SLOT_PASS4          23
-#define SLOT_PASS5          24
-#define SLOT_PASS6          25
-#define SLOT_PASS7          26
-#define SLOT_PASS8          27
-#define SLOT_PASS9          28
-#define SLOT_TLAS           29
-#define SLOT_SURFACE        30
-#define SLOT_VIEWS          31
-#define SLOT_LAYERS         32
-#define SLOT_DISTANCE       33
-#define SLOT_DRAW           SLOT_PASS9
-// The texture table of the RHI (rhi.TEXTURE_TABLE_SLOT): every material
-// texture, picked by the index a material stores. It has no size: it grows
-// with the textures of the scene. Its first TEXTURE_TABLE_RESERVED entries
-// hold the tables of the renderer (DFG_TEXTURE, AIR_*_TEXTURE).
-#define MATERIAL_TEXTURE_SLOT     34
-#define TEXTURE_TABLE_RESERVED    4u
+// SLOT_*: one table for all passes (render/abi). MATERIAL_TEXTURE_SLOT is the
+// texture table of the RHI: every material texture, picked by the index a
+// material stores. It has no size: it grows with the textures of the scene.
+// Its first TEXTURE_TABLE_RESERVED entries hold the tables of the renderer
+// (DFG_TEXTURE, AIR_*_TEXTURE).
 
 #define PI 3.14159265358979
 #define INV_PI 0.31830988618379
@@ -66,7 +31,6 @@
 // A view drawn inside some pixels of another with the same projection: what a
 // camera carried by a rigid transform sees. Its pixels keep their linear depth
 // negative, and its index in the alpha of the motion target.
-#define NESTED_VIEW_CAPACITY 4
 struct Nested_View {
     float4 to_world[3];            // rows: carries the camera of the view, and what it would see, to those of the nested one
     float4 from_world_previous[3]; // rows: the inverse of that transform in the previous frame
@@ -74,19 +38,6 @@ struct Nested_View {
     float4 opening;                // the plane its pixels are seen through, in the world of the view; zero: none known
 };
 #endif
-
-// Must match render.VOLUME_CASCADES_MAX.
-#define VOLUME_CASCADES_MAX 6
-
-// render.OCCLUDER_CHANGES_MAX, LIGHT_MOVES_MAX, OCCLUDERS_MANY and the MOVED_* bits.
-#define OCCLUDER_CHANGES_MAX 16
-#define LIGHT_MOVES_MAX 16
-// The rows of the maps of the shadows of the sun a view holds in its constants:
-// SHADOW_MAP_ROWS for each of its cascades (shadow_maps.slang).
-#define SUN_MAP_ROWS 18
-#define OCCLUDERS_MANY 0xFFFFFFFFu
-#define MOVED_SUN 1u
-#define MOVED_LIGHTS_ALL 2u
 
 // The air of an atmosphere (render.Gpu_Air), in metres. Its density falls
 // with altitude: Rayleigh and Mie by e every scale height, ozone as a tent
@@ -110,7 +61,7 @@ struct Frame_Data {
     float4x4 view_proj_unjittered; // current frame without the TAA sub-pixel jitter
     float4 camera_position;   // xyz, w = near plane
     float4 camera_forward;    // xyz, w = far plane
-    float4 sun_direction;     // xyz towards the sun, w = 1 if the sun is active
+    float4 sun_direction;     // xyz towards the sun, w = 0 no sun, 1 active, SUN_UNSHADOWED active and no ray goes to it
     float4 sun_color;         // rgb its illuminance over pi, render units (above the air of an atmosphere: sun_light), w = the angular radius of its disc in the sky; 0: it is not seen
     float4 sky_color;         // rgb the luminance of the sky, render units, w = the light scale: render units per nit
     float4 background;        // rgb luminance shown where no geometry is visible, render units, w = 1 to use it instead of the sky
@@ -176,14 +127,6 @@ struct Frame_Data {
 #endif
 };
 
-#define FRAME_FLAG_GI          1u
-#define FRAME_FLAG_GI_REFERENCE 2u // Settings.reference_gi: the composite takes the reference of the indirect light
-#define FRAME_FLAG_HW_RT       4u
-#define FRAME_FLAG_STUDIO      8u // a preview lit by the analytic studio
-#define FRAME_FLAG_GRID       16u
-#define FRAME_FLAG_GLASS      32u // some instance has blended triangles
-#define FRAME_FLAG_REFLECTANCE 64u // the G-buffer keeps what each pixel reflects (surface_specular)
-
 // ---------------------------------------------------------------- scene data
 // A whole vertex, which thumbnails and previews upload for themselves. The
 // scene keeps its vertices in clusters, read by geometry.slang alone.
@@ -241,23 +184,6 @@ struct Instance {
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
     uint reserved[3];
 };
-#define INSTANCE_FLAG_HIDDEN 1u
-#define INSTANCE_FLAG_SMALL 4u // small and without emission: only rays of the RAY_SMALL class meet it (render.INSTANCE_FLAG_SMALL)
-#define INSTANCE_HIGHLIGHT_SHIFT 8u // bits 8-12: outline level (0 none)
-// Outline levels 1 to HIGHLIGHT_LEVELS are the editor's; the next OUTLINE_STYLES,
-// the styles of the game (render.HIGHLIGHT_LEVELS, render.OUTLINE_STYLES).
-#define HIGHLIGHT_LEVELS 15u
-#define OUTLINE_STYLES 15u
-#define INSTANCE_FLAG_ALPHA_TESTED 8u // some of its triangles are masked or blended: rays ask the material
-#define INSTANCE_FLAG_UNIFORM_COLOR 16u // tint replaces the mesh's vertex colors
-#define INSTANCE_FLAG_BLENDED 32u // every one of its materials is blended: it is not in the G-buffer, and only rays of the RAY_GLASS class meet it
-#define INSTANCE_FLAG_TRANSLUCENT 64u // some of its triangles are blended: the glass passes draw them
-#define INSTANCE_FLAG_OWNED 8192u // of the body of a local player, whose slot is in bits 14-15
-#define INSTANCE_OWNER_SHIFT 14u
-#define INSTANCE_LAYERS_SHIFT 16u // bits 16-31: the layers it is in, which a view draws or not
-
-#define INSTANCE_MESH_MASK 0xffffffu
-#define INSTANCE_RAY_SHIFT 24u
 uint instance_mesh(Instance inst) { return inst.meta.x & INSTANCE_MESH_MASK; }
 uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT) & 3u; }
 
@@ -265,13 +191,6 @@ uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT
 // its first triangle by software, the table of the primitives of its BLAS
 // with hardware, and its error.
 struct Mesh_Ray { uint bvh_root; uint triangle_offset; uint table_word; float error; };
-#define MESH_RAY_LEVELS 4
-#define MESH_FLAG_CLOSED 1u
-#define MESH_FLAG_LEVEL0 2u
-#define MESH_FLAG_SURFACE 4u
-#define MESH_FLAG_UV1 8u
-#define MESH_FLAG_COLORS 16u
-#define MESH_FLAG_STREAMED 32u
 struct Mesh {
     uint cluster_word;   // its first cluster in the index pool
     uint cluster_count;
@@ -373,17 +292,10 @@ struct Light {
     float4 size;             // x the radius of the sphere, or of the capsule, metres; y half the segment of a capsule along axis, or half the width of a rectangle; z half its height; w the material row whose emission a rectangle shows, as uint bits (0: none)
     float4 axis;             // xyz along the segment of a capsule, or the width of a rectangle
 };
-#define LIGHT_POINT -2.0
-#define LIGHT_RECT -3.0
 
 // A node of the tree of the local lights (render/light_tree.odin): a leaf is
 // a light, a group stands for the lights under it as one sphere of light.
 // The first child of a group follows it.
-#define LIGHT_NODE_LEAF 1u
-#define LIGHT_NODE_SPOT 2u // a spot or a group that holds one: it opens before the others, and stands for its spots by the cone of their directions
-#define LIGHT_NODE_COUNT_SHIFT 2u // the flags hold the number of lights of a node from this bit
-#define LIGHT_TREE_DEPTH 48
-#define LIGHT_CUT_MAX 32
 struct Light_Node {
     float4 center_radius; // xyz the center of its lights, weighed by how bright each is; w the radius of the sphere around it that holds them
     float4 power_reach;   // rgb the sum of their colors times their intensities; w how far from the center the farthest of them reaches

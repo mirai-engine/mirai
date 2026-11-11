@@ -1,0 +1,10 @@
+{
+  "project": "game",
+  "prompt": "Restyle the menu of this game through its theme, the file menu/theme.ui of its assets, and save it: the color it calls ink becomes the dark green #14532d and the number it calls round becomes 8. Change nothing else of the theme, and leave the menu itself as it is: its Play button must still start the game.",
+  "checks": [
+    {"ui": "menu/theme.ui", "document": {"tokens": {"ink": "#14532d", "round": 8, "cream": "#fff6e9", "berry": "#f0467f", "edge": 4}}},
+    {"ui": "menu/shell.ui", "nodes": {"pages": {"kind": "Switcher", "bind_value": "Shell.page"}, "menu_play": {"kind": "button", "parent": "menu"}}},
+    {"scenario": {"steps": [{"name": "the game opens", "method": "play.step", "params": {"for": 30}}, {"name": "on the main menu", "method": "play.check", "params": {"conditions": [{"storage": "Shell", "field": "page", "compare": "Equal", "text": "Menu"}]}}, {"name": "a click on Play", "method": "play.step", "params": {"press": "menu_play", "for": 10}}, {"name": "playing", "method": "play.check", "params": {"conditions": [{"storage": "Shell", "field": "page", "compare": "Equal", "text": "Playing"}]}}]}},
+    {"unchanged": {}}
+  ]
+}

@@ -47,25 +47,8 @@ json_valid :: proc(allocator:runtime.Allocator,text:string) -> bool {
 // How many elements the caller gave to an array of the params: the elements
 // it did not give keep their defaults, which may look like given ones.
 params_array_count :: proc(call:^Call,field:string) -> (count:int,found:bool) {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,call.raw,call.allocator)
-    defer serial.text_reader_destroy(&r)
-    if !serial.text_accept(&r,'{') {return}
-    for !serial.text_accept(&r,'}') {
-        name,ok:=serial.text_string(&r);if !ok || !serial.text_expect(&r,':') {return}
-        if name==field {
-            if !serial.text_expect(&r,'[') {return}
-            for !serial.text_accept(&r,']') {
-                if !serial.text_skip(&r) {return}
-                count+=1
-                if !serial.text_accept(&r,',') {if !serial.text_expect(&r,']') {return};break}
-            }
-            return count,true
-        }
-        if !serial.text_skip(&r) {return}
-        if !serial.text_accept(&r,',') {break}
-    }
-    return
+    elements,is_array:=json_elements(json_member(call.raw,field))
+    return len(elements),is_array
 }
 
 @(private)
@@ -142,9 +125,9 @@ request_read :: proc(s:^Server,r:^serial.Text_Reader) -> (req:Request) {
 // Answers the message in body into s.out. False when nothing is to be sent:
 // the body held only notifications.
 // plugins: those whose tools tools/list adds to the ones of the editor, as X-Mirai-Plugins names them.
-process :: proc(s:^Server,body:string,route:Route,client_tag:string="",plugins:string="",client_name:string="") -> bool {
-    s.client_tag,s.client_plugins,s.client_name=client_tag,plugins,client_name
-    defer {s.client_tag,s.client_plugins,s.client_name="","",""}
+process :: proc(s:^Server,body:string,route:Route,client_tag:string="",plugins:string="",client_name:string="",measure:string="") -> bool {
+    s.client_tag,s.client_plugins,s.client_name,s.client_measure=client_tag,plugins,client_name,measure
+    defer {s.client_tag,s.client_plugins,s.client_name,s.client_measure="","","",""}
     context.temp_allocator=base.arena_allocator(&s.scratch)
     base.arena_reset(&s.scratch)
     base.arena_reset(&s.text)
@@ -230,42 +213,123 @@ process_one :: proc(s:^Server,r:^serial.Text_Reader,route:Route,comma:bool) -> b
     return true
 }
 
+// What an error adds about the methods whose names look like name; "" without one.
+@(private)
+methods_similar :: proc(s:^Server,name:string) -> string {
+    allocator:=base.arena_allocator(&s.scratch)
+    names:=make([]string,s.method_count,allocator)
+    for &method,i in s.methods[:s.method_count] {names[i]=method.name}
+    similar:=names_similar(names,name,allocator)
+    return similar!=""?format_text(allocator,"; similar: %s",similar):""
+}
+
+// Up to a dozen of names that look like name: those that contain its last word
+// first, then the others of its namespace (scene. of scene.spawn).
+names_similar :: proc(names:[]string,name:string,allocator:runtime.Allocator) -> string {
+    dot:=strings.last_index_byte(name,'.')
+    namespace:=name[:dot+1]
+    word:=strings.to_lower(name[dot+1:],allocator)
+    first:=make([dynamic]string,allocator)
+    second:=make([dynamic]string,allocator)
+    for each in names {
+        switch {
+        case word!="" && strings.contains(strings.to_lower(each,allocator),word): append(&first,each)
+        case namespace!="" && strings.has_prefix(each,namespace): append(&second,each)
+        }
+    }
+    append(&first,..second[:])
+    if len(first)>SIMILAR_NAMES {return format_text(allocator,"%s and %d more",strings.join(first[:SIMILAR_NAMES],", ",allocator),len(first)-SIMILAR_NAMES)}
+    return strings.join(first[:],", ",allocator)
+}
+
+@(private)
+SIMILAR_NAMES :: 12
+
 @(private)
 rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     method:=method_find(s,req.method)
     if method==nil {
-        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q",shorten(req.method)),""},false
+        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q%s",shorten(req.method),methods_similar(s,req.method)),""},false
     }
-    return method_execute(s,method,req.has_params?req.params:"{}",w)
+    start:=w.count
+    err,ok,selected,note:=method_call(s,method,req.has_params?req.params:"{}",w)
+    if ok && selected!="" {
+        w.count,w.overflow=start,0
+        raw(w,selected)
+    }
+    if ok && note!="" {raw(w,`,"note":`);serial.text_write_string(w,note)}
+    return err,ok
+}
+
+// Reads the text of params into bytes as the params of method, over its defaults.
+@(private="file")
+params_parse :: proc(s:^Server,method:^Method,params:string,bytes:[]u8,r:^serial.Text_Reader) -> bool {
+    mem.zero_slice(bytes)
+    if method.defaults!=nil {copy(bytes,method.defaults)}
+    serial.text_reader_init(r,params,base.arena_allocator(&s.scratch))
+    r.assets=s.assets
+    r.loose_names=true
+    return serial.text_read(r,&s.schema,method.params,bytes) && serial.text_end(r)
+}
+
+// A failure of the reader of params: says what the method takes for a failure
+// of shape or type, not for a name that names nothing.
+@(private="file")
+params_parse_error :: proc(s:^Server,method:^Method,text:string,r:^serial.Text_Reader) -> Error {
+    if r.error.code==.Unknown_Entity {return {INVALID_PARAMS,serial.text_error_message(r,allocator=base.arena_allocator(&s.scratch)),""}}
+    err:=text_error(s,"invalid params",text,r)
+    if r.error.code!=.Unknown_Asset {err.data=params_usage(s,method)}
+    return err
 }
 
 // Reads params as the params of method into the scratch of the server, with
 // its defaults, and checks them against its schema: nil for a method that
-// reads its params by hand. What method_execute does before the handler runs.
-params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,err:Error,ok:bool) {
-    if method.params==serial.TYPE_NONE {return nil,{},true}
+// reads its params by hand. shaped is the text it read (params_shape), which
+// the handler gets. What method_execute does before the handler runs.
+params_read :: proc(s:^Server,method:^Method,params:string) -> (bytes:[]u8,shaped:string,err:Error,ok:bool) {
+    shaped=params
+    s.clamped=""
     allocator:=base.arena_allocator(&s.scratch)
     failed:=s.scratch.failed
+    if method.params==serial.TYPE_NONE {
+        problem:string
+        shaped,problem=params_shape(s,method.params_schema,params)
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
+        return nil,shaped,{},true
+    }
     sc:=&s.schema
     type:=sc.types[method.params]
     bytes=base.arena_alloc(&s.scratch,max(int(type.size),1),max(int(type.align),16))
-    if bytes==nil {return nil,scratch_error(s),false}
-    if method.defaults!=nil {copy(bytes,method.defaults)}
+    if bytes==nil {return nil,params,scratch_error(s),false}
     r:serial.Text_Reader
-    serial.text_reader_init(&r,params,allocator)
-    if !serial.text_read(&r,sc,method.params,bytes) || !serial.text_end(&r) {
-        if s.scratch.failed!=failed {return nil,scratch_error(s),false}
-        return nil,text_error(s,"invalid params",params,&r),false
+    if !params_parse(s,method,params,bytes,&r) {
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        first:=params_parse_error(s,method,params,&r)
+        problem:string
+        shaped,problem=params_shape(s,params_schema_text(s,method),params,by_hand=false)
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        if problem!="" {return nil,params,{INVALID_PARAMS,problem,params_usage(s,method)},false}
+        if shaped==params {return nil,params,first,false}
+        if !params_parse(s,method,shaped,bytes,&r) {
+            if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+            return nil,params,params_parse_error(s,method,shaped,&r),false
+        }
     }
-    if s.scratch.failed!=failed {return nil,scratch_error(s),false}
+    if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
     checker:=Checker{server=s,schema=sc,allocator=allocator}
     again:serial.Text_Reader
-    serial.text_reader_init(&again,params,allocator)
-    if !check_required(&checker,&again,method.params) || !check_value(&checker,method.params,bytes[:type.size],nil) {
-        if s.scratch.failed!=failed {return nil,scratch_error(s),false}
-        return nil,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
+    serial.text_reader_init(&again,shaped,allocator)
+    if !check_required(&checker,&again,method.params) {
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",params_usage(s,method)},false
     }
-    return bytes,{},true
+    if !check_value(&checker,method.params,bytes[:type.size],nil) {
+        if s.scratch.failed!=failed {return nil,params,scratch_error(s),false}
+        return nil,params,{INVALID_PARAMS,checker.message!=""?checker.message:"invalid params",""},false
+    }
+    s.clamped=checker.clamped
+    return bytes,shaped,{},true
 }
 
 @(private="file")
@@ -280,9 +344,10 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     allocator:=base.arena_allocator(&s.scratch)
     failed:=s.scratch.failed
     sc:=&s.schema
-    call:=Call{server=s,method=method,user=method.user,raw=params,client_tag=s.client_tag,client_name=s.client_name,allocator=allocator}
-    params_bytes,read_error,read:=params_read(s,method,params)
+    params_bytes,shaped,read_error,read:=params_read(s,method,params)
     if !read {return read_error,false}
+    clamped:=s.clamped
+    call:=Call{server=s,method=method,user=method.user,raw=shaped,client_tag=s.client_tag,client_name=s.client_name,measure=s.client_measure,allocator=allocator}
     if params_bytes!=nil {call.params=raw_data(params_bytes)}
     typed:=method.result!=serial.TYPE_NONE && !method.writes_result
     if typed {
@@ -304,28 +369,30 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     } else if out.count==mark {
         raw(out,"null")
     }
+    clamped_write(out,mark,clamped)
     s.stats.peak_scratch=max(s.stats.peak_scratch,base.arena_stats(&s.scratch).peak)
     return {},true
 }
 
+// Says in a result that is an object, written from mark, which params took their maximum.
+@(private="file")
+clamped_write :: proc(out:^serial.Writer,mark:int,clamped:string) {
+    if clamped=="" || out.overflow>0 || out.count<=mark || out.data[out.count-1]!='}' || out.data[mark]!='{' {return}
+    out.count-=1
+    if out.count-1>mark {raw(out,",")}
+    raw(out,`"_clamped":{`);raw(out,clamped);raw(out,"}}")
+}
+
 // The raw JSON text of the given keys of an object; "" for keys it does not have.
 object_values :: proc(allocator:runtime.Allocator,text:string,keys:[]string,values:[]string) -> bool {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,allocator)
-    if !serial.text_accept(&r,'{') {return false}
-    if serial.text_accept(&r,'}') {return true}
-    for {
-        key,ok:=serial.text_string(&r)
-        if !ok || !serial.text_expect(&r,':') {return false}
-        slot:=-1
-        for name,i in keys {if name==key {slot=i;break}}
-        serial.text_peek(&r)
-        start:=r.offset
-        if !serial.text_skip(&r) {return false}
-        if slot>=0 {values[slot]=r.text[start:r.offset]}
-        if serial.text_accept(&r,',') {continue}
-        return serial.text_expect(&r,'}')
+    walk:Object_Walk
+    if !object_walk_init(&walk,text,allocator) {return false}
+    for name,value in object_walk_next(&walk) {
+        for key,i in keys {
+            if key==name {values[i]=value;break}
+        }
     }
+    return !walk.failed
 }
 
 // The text of a JSON string.
@@ -338,7 +405,7 @@ string_value :: proc(allocator:runtime.Allocator,text:string) -> (value:string,o
 describe_register :: proc(s:^Server) -> bool {
     return method_register(s,{
         name="engine.describe",
-        summary="Lists every method with its plugin and the plugins of the project; methods, plugin or prefix give the JSON Schema of their params and result.",
+        summary="A short index of the methods and the plugins of the project; methods gives the JSON Schema of the params and the result of those it names, plugin or prefix the summaries of an area.",
         params=Describe_Params,result=Describe_Result,writes_result=true,handler=describe_handler,flags={.Read_Only,.Idempotent,.Core},
     })==.None
 }
@@ -357,9 +424,21 @@ Describe_Params :: struct {
 
 Describe_Result :: struct {
     server:struct {name,version:[MAX_NAME]u8 `mirai:"text"`},
-    methods:[1]Describe_Method `mirai:"list"`,
-    plugins:[1]Describe_Plugin `mirai:"list,optional,label=Without params: every plugin the project finds"`,
+    methods:[1]Describe_Method `mirai:"list,optional,label=With methods; prefix or plugin"`,
     guides:[1][8192]u8 `mirai:"text,list,optional,label=How to use the methods given: read before using them"`,
+    core:[1]Describe_Brief `mirai:"list,optional,label=Without params: the methods used most and what each is for"`,
+    others:[1]Describe_Group `mirai:"list,optional,label=Without params: the names of the other methods by plugin"`,
+    active_plugins:[1][MAX_NAME]u8 `mirai:"text,list,optional,label=Without params: the plugins the project uses"`,
+    other_plugins:[1][MAX_NAME]u8 `mirai:"text,list,optional,label=Without params: the plugins it finds and does not use"`,
+    more:[256]u8 `mirai:"text,optional,label=Without params: how to ask for the rest"`,
+}
+Describe_Brief :: struct {
+    name:[MAX_NAME]u8 `mirai:"text"`,
+    summary:[128]u8 `mirai:"text"`,
+}
+Describe_Group :: struct {
+    plugin:[MAX_NAME]u8 `mirai:"text"`,
+    methods:[16384]u8 `mirai:"text,label=Their names separated by spaces"`,
 }
 Describe_Method :: struct {
     name:[MAX_NAME]u8 `mirai:"text"`,
@@ -370,11 +449,6 @@ Describe_Method :: struct {
     params:u8 `mirai:"any,optional,label=The JSON Schema of its params"`,
     result:u8 `mirai:"any,optional,label=The JSON Schema of its result"`,
 }
-Describe_Plugin :: struct {
-    name:[MAX_NAME]u8 `mirai:"text"`,
-    active:bool `mirai:"label=The project uses it"`,
-}
-
 @(private)
 tool_name :: proc(name:string,buffer:[]u8) -> string {
     n:=min(len(name),len(buffer))
@@ -431,7 +505,8 @@ describe_handler :: proc(call:^Call) {
     }
     if matched==0 && plugin!="" {call_failf(call,INVALID_PARAMS,"no method of plugin %q starts with %q",plugin,prefix);return}
     if matched==0 {call_failf(call,INVALID_PARAMS,"no method starts with %q; engine.describe without params lists them all",prefix);return}
-    whole:=count>0 || prefix!="" || plugin!=""
+    if count==0 && prefix=="" && plugin=="" {describe_index_write(call);return}
+    schemas:=count>0 || matched==1
     raw(w,`{"server":{"name":`);serial.text_write_string(w,s.name)
     raw(w,`,"version":`);serial.text_write_string(w,s.version)
     raw(w,`},"methods":[`)
@@ -443,42 +518,101 @@ describe_handler :: proc(call:^Call) {
         first=false
         raw(w,`{"name":`);serial.text_write_string(w,method.name)
         raw(w,`,"plugin":`);serial.text_write_string(w,method_plugin(&method))
-        if whole {raw(w,`,"tool":`);serial.text_write_string(w,tool_name(method.name,buffer[:]))}
+        if schemas {raw(w,`,"tool":`);serial.text_write_string(w,tool_name(method.name,buffer[:]))}
         raw(w,`,"summary":`);serial.text_write_string(w,method.summary)
-        if whole {
-            raw(w,`,"flags":`);write_flags(w,method.flags)
+        raw(w,`,"flags":`);write_flags(w,method.flags)
+        if schemas {
             raw(w,`,"params":`);method_schema_write(w,s,&method,false)
             raw(w,`,"result":`);method_schema_write(w,s,&method,true)
         }
         raw(w,"}")
     }
     raw(w,"]")
-    if whole {
-        listed:=false
-        for &guide in s.guides {
-            about:=guide.topic==plugin
-            for &method in s.methods[:s.method_count] {
-                if about {break}
-                if !describe_listed(&method,names,prefix,plugin) {continue}
-                about=method.plugin==guide.topic || method.name==guide.topic || strings.has_prefix(method.name,guide.topic) && len(method.name)>len(guide.topic) && method.name[len(guide.topic)]=='.'
-            }
-            if !about {continue}
-            raw(w,listed?",":`,"guides":[`)
-            listed=true
-            serial.text_write_string(w,guide.text)
+    listed:=false
+    for &guide in s.guides {
+        about:=guide.topic==plugin
+        for &method in s.methods[:s.method_count] {
+            if about {break}
+            if !describe_listed(&method,names,prefix,plugin) {continue}
+            about=method.plugin==guide.topic || method.name==guide.topic || strings.has_prefix(method.name,guide.topic) && len(method.name)>len(guide.topic) && method.name[len(guide.topic)]=='.'
         }
-        if listed {raw(w,"]")}
+        if !about {continue}
+        raw(w,listed?",":`,"guides":[`)
+        listed=true
+        serial.text_write_string(w,guide.text)
     }
-    if !whole {
-        raw(w,`,"plugins":[`)
-        for found,i in s.plugins {
-            if i>0 {raw(w,",")}
-            raw(w,`{"name":`);serial.text_write_string(w,found.name)
-            raw(w,`,"active":`);raw(w,found.active?"true":"false");raw(w,"}")
+    if listed {raw(w,"]")}
+    raw(w,"}")
+}
+
+// How many bytes of a summary an index shows at most.
+DESCRIBE_BRIEF :: 72
+
+// A text up to its first sentence or clause, cut at a word when it is longer
+// than at most: what an index shows of a summary or a description.
+summary_brief :: proc(text:string,at_most:=DESCRIBE_BRIEF) -> string {
+    end:=len(text)
+    for i in 0..<len(text) {
+        if text[i]==';' || text[i]=='.' && (i+1==len(text) || text[i+1]==' ') {end=i;break}
+    }
+    if end<=at_most {return text[:end]}
+    space:=strings.last_index_byte(text[:at_most],' ')
+    return space>0?text[:space]:text[:at_most]
+}
+
+// engine.describe without params: the core methods with what each is for,
+// the names of the others by plugin, the plugins and how to ask for the rest.
+@(private)
+describe_index_write :: proc(call:^Call) {
+    s:=call.server
+    w:=call.out
+    raw(w,`{"server":{"name":`);serial.text_write_string(w,s.name)
+    raw(w,`,"version":`);serial.text_write_string(w,s.version)
+    raw(w,`},"core":[`)
+    first:=true
+    for &method in s.methods[:s.method_count] {
+        if .Core not_in method.flags {continue}
+        if !first {raw(w,",")}
+        first=false
+        raw(w,`{"name":`);serial.text_write_string(w,method.name)
+        raw(w,`,"summary":`);serial.text_write_string(w,summary_brief(method.summary))
+        raw(w,"}")
+    }
+    raw(w,`],"others":[`)
+    first=true
+    for &method,i in s.methods[:s.method_count] {
+        if .Core in method.flags {continue}
+        plugin:=method_plugin(&method)
+        seen:=false
+        for &earlier in s.methods[:i] {
+            if .Core not_in earlier.flags && method_plugin(&earlier)==plugin {seen=true;break}
+        }
+        if seen {continue}
+        names:=strings.builder_make(call.allocator)
+        for &other in s.methods[i:s.method_count] {
+            if .Core in other.flags || method_plugin(&other)!=plugin {continue}
+            if strings.builder_len(names)>0 {strings.write_byte(&names,' ')}
+            strings.write_string(&names,other.name)
+        }
+        if !first {raw(w,",")}
+        first=false
+        raw(w,`{"plugin":`);serial.text_write_string(w,plugin)
+        raw(w,`,"methods":`);serial.text_write_string(w,strings.to_string(names))
+        raw(w,"}")
+    }
+    raw(w,"]")
+    for active in ([]bool{true,false}) {
+        raw(w,active?`,"active_plugins":[`:`,"other_plugins":[`)
+        first=true
+        for found in s.plugins {
+            if found.active!=active {continue}
+            if !first {raw(w,",")}
+            first=false
+            serial.text_write_string(w,found.name)
         }
         raw(w,"]")
     }
-    raw(w,"}")
+    raw(w,`,"more":"methods (a list of names) gives their params and results; prefix or plugin the summaries and guides of an area"}`)
 }
 
 // The plugin engine.describe names for a method.

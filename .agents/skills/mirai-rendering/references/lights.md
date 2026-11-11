@@ -90,7 +90,7 @@ and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`:
   The other way around, the copy went past the end of the buffer and the nodes there did not
   exist: a traversal read zeros, groups whose second child is the root.
 - What the GI stores of them is not marked as a light change: the probes take them when traced
-  ([particles](../../mirai-plugins/references/vfx.md#particle-lights)).
+  ([particles](../../mirai-world/references/vfx.md#particle-lights)).
 
 ### Unshadowed light of a pixel
 
@@ -121,7 +121,7 @@ rays do:
   other side of a surface that lets light through), reflection hits at sharp surfaces
   (`reflection_light_budget`), volume probes (up to `PROBE_LIGHT_BUDGET`). Both settings go up to
   `LIGHT_CUT_MAX`.
-- **Lit particles** ([`vfx`](../../mirai-plugins/references/vfx.md#passes)): the unshadowed light
+- **Lit particles** ([`vfx`](../../mirai-world/references/vfx.md#passes)): the unshadowed light
   of both trees from all sides, with the estimate of the light that arrives from each.
 
 ## Shadows
@@ -133,7 +133,7 @@ rays do:
 
 ### Direct light of a view
 
-The `direct` step ([frame graph](frame-graph.md#frame-graph)) takes the light of each point from a
+The `direct` step ([frame graph](frame-graph.md#passes)) takes the light of each point from a
 fixed number of samples (`direct_samples`) spread over the lights that reach it:
 
 - **Grid of lights** (`render/light_grid.odin`, `light_grid.comp`). The world in cells whose lists
@@ -204,7 +204,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
     without stopping it crosses one of those boxes (the shadow that left or arrived), or if it
     goes to a light that moved. A sample stopped by something still does not mark.
   - TAA treats the pixel of a marked point as one that moves
-    ([TAA](frame-graph.md#frame-graph)), and the fog does not blend the history of a froxel whose
+    ([TAA](frame-graph.md#passes)), and the fog does not blend the history of a froxel whose
     ray crosses what changed ([`fog`](../../mirai-plugins/references/render-plugins.md)).
   - A batch that casts shadows marks its box when it arrives, leaves or changes (`batch_set`,
     `batch_remove`).

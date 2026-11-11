@@ -1,12 +1,13 @@
 ---
 name: mirai-gameplay
-description: Write games and plugins with the game libraries of `engine/` (scene, volume, render,
-  input, camera, audio, gui, save) and the plugins spawn, cinematics, animation and vfx. Covers
-  per-zone values (gravity, wind, reverb, view and fog volumes), runtime prefabs, action-based
-  input, player seats, driving bodies and cameras, spawn points, saves (slots, autosave,
-  checkpoints), cinematics, enemies and NPCs with AI (minds, smart objects), mining or dig-and-break
-  terrain games (what is dug by material, inventory, dust, pieces and drops), the demo project and
-  the templates.
+description: Write games with the game libraries of `engine/scene`, `engine/volume`,
+  `engine/render`, `engine/input`, `engine/camera`, `engine/audio`, `engine/gui` and `engine/save`,
+  with the plugins `spawn`, `spawn_physics`, `cinematics` and `streaming`. Covers per-zone values
+  (gravity, wind, reverb, view and fog volumes), runtime prefabs, action-based input, player seats,
+  driving bodies and cameras, spawn points, saves (slots, autosave, checkpoints), cinematics,
+  section streaming, the `demo` project and the game templates. Use when writing game code against
+  those libraries, building a game from a template, or looking for where a game feature lives
+  (enemies, NPCs and mining games are in `mirai-world`, attacks and skills in `mirai-abilities`).
 ---
 
 # Mirai gameplay
@@ -18,18 +19,24 @@ the same attributes and no private paths. Declaration and parameter binding:
 
 ## Map
 
-- Functions, requests, events, playable template: [game.md](references/game.md).
-- `scene`, `render`, `input`, `audio`, `gui`, `save`:
-  [libraries.md](references/libraries.md).
+- Writing a game: [the docs games read](../../../docs/game/core.md), and the requests and events
+  of each library: [requests and events](references/game.md#requests-and-events) and
+  [code style rules](references/game.md#game-code-style-rules).
+- `scene`, `render`, `input`, `audio`, `gui`, `save`: [scene](references/libraries.md#scene),
+  [render](references/libraries.md#render), [input](references/libraries.md#input),
+  [audio](references/libraries.md#audio), [gui](references/libraries.md#gui) and
+  [save](references/libraries.md#save).
 - Per-zone values (`Volume`, `Wind`, `View_Volume`, `Audio_Reverb`, `Gravity`, `Fog_Volume`) and
   their single algorithm: [volume](references/libraries.md#volume).
 - Particles (plugin `vfx`: emitters, effects, clocks and requests):
-  [vfx](../mirai-plugins/references/vfx.md#game).
+  [vfx](../mirai-world/references/vfx.md#game).
 - Animation of transforms and skeletons: [plugin
-  animation](../mirai-animation/references/animation.md); the gallery that shows each feature:
-  [animation-gallery.md](references/animation-gallery.md).
+  animation](../mirai-animation/references/animation.md#components-and-shared-data); the gallery
+  that shows each feature: [animation gallery](references/animation-gallery.md#animation-gallery).
 - Seats, driving bodies and `Move_Input` (`engine/input`), cameras (`engine/camera`), spawn points
-  (plugin `spawn`), their networking: [control.md](references/control.md).
+  (plugin `spawn`), their networking: [seats](references/control.md#seats),
+  [driving](references/control.md#driving), [spawn points](references/control.md#spawn-points),
+  [cameras](references/control.md#cameras) and [networking](references/control.md#networking).
 - Declare an input action (`inp.Action`), its default bindings, `input.mirai` and renaming it:
   [actions](references/control.md#actions). Input contexts (menus, vehicles) and chords:
   [contexts](references/control.md#contexts), [chords](references/control.md#chords).
@@ -37,23 +44,29 @@ the same attributes and no private paths. Declaration and parameter binding:
   [locomotion](../mirai-physics/references/engine.md#locomotion).
 - Slow or fast world time with the player at normal speed (bullet time: `core.Clock` and
   `core.Own_Pace`): [own pace](../mirai-core/references/core.md#core-storages).
-- Cinematics (plugin `cinematics`): [cinematics.md](references/cinematics.md).
+- Cinematics (plugin `cinematics`): [components](references/cinematics.md#components),
+  [playback](references/cinematics.md#playback), [viewers](references/cinematics.md#viewers),
+  [events](references/cinematics.md#events), [networking](references/cinematics.md#networking) and
+  [editor and API](references/cinematics.md#editor-and-api).
 - Attacks, combos, dashes, skills and hit reactions with costs, cooldowns, charges and damage
   (plugin `abilities`): [abilities](../mirai-abilities/SKILL.md); no state machines.
 - Enemies and NPCs (patrol, chase and attack, phased bosses, tactical bots, hordes, use of the
-  environment): [enemies with minds](../mirai-plugins/references/behavior.md#enemies-with-minds);
+  environment): [enemies with minds](../mirai-world/references/behavior.md#enemies-with-minds);
   no state machines, trees or planners.
 - Mining, craters and excavation (digging deeper gives another material, veins, caves, debris):
-  a Volume with an [interior](../mirai-plugins/references/terrain.md#volume-interior), the
-  game that calls `terrain.request_edit` and adds up `terrain.Terrain_Digs`, and the dust, pieces
+  a Volume with an [interior](../mirai-world/references/terrain.md#volume-interior), the
+  game that calls `terrain.dig` and adds up `terrain.Terrain_Digs`, and the dust, pieces
   and drops per layer
-  ([what digging leaves](../mirai-plugins/references/terrain.md#what-digging-leaves)); the example
+  ([what digging leaves](../mirai-world/references/terrain.md#what-digging-leaves)); the example
   is the `dig` scene of the [demo](references/demo.md#code-demogame).
 - Testing that the game plays as it should (walk there, press that, the door opens) in a file
   played again after each change and in CI:
-  [scenarios](../mirai-agent-api/references/methods.md#scenarios), written as the
+  [scenarios](../../../docs/game/testing/scenario.md), written as the
   [player plays](../mirai-agent-api/SKILL.md#testing-like-a-player).
-- Demo, templates, generated content, portal game: [demo.md](references/demo.md).
+- Demo, templates, generated content, portal game: [templates](references/demo.md#templates),
+  [demo](references/demo.md#demo), [AI arenas](references/demo.md#ai-arenas),
+  [generated content](references/demo.md#generated-content) and
+  [portal game](references/demo.md#portal-game).
 - Physics and destruction: [mirai-physics](../mirai-physics/SKILL.md). Networking:
   [mirai-networking](../mirai-networking/SKILL.md).
 
@@ -67,7 +80,7 @@ the same attributes and no private paths. Declaration and parameter binding:
    is `transient` (not saved or replicated); what must not travel over the network is `local`.
 3. The signature declares what the function reads and writes. A table owned by someone else that
    is not `shared` is not written: a request is sent to its owner (`core.place`,
-   `phys.set_velocity`, `destruct.damage`, `inp.drive`, `save.request_save`, `scene.Spawns`,
+   `phys.set_velocity`, `destruct.damage`, `inp.drive`, `save.request_save`, `scene.spawn`,
    `multiplayer.send`).
 4. Phase of the function: simulation in `fixed`, camera and presentation in `late`, own interfaces
    in `ui`, reading to draw in `render`.
@@ -87,12 +100,12 @@ the same attributes and no private paths. Declaration and parameter binding:
    sound, a message) passes the `core.Time` to its sink (`audio.play_asset(app, time, ...)`,
    `multiplayer.send(&outbox, time, ...)`), which does nothing while a rollback replays the tick
    (`time.resimulating`); the game does not ask.
-7. Runtime prefab: `scene.Spawns` (request) or `scene.spawn(commands, app, ...)` with
-   `core.Commands`; its rows wait until the end of the function and are finished with
+7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
+   until the end of the function and are finished with
    `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
    include them as scene entities.
-8. Assets are named by `base.Asset_Id`. An id that only code refers to (a prefab that gets
-   instantiated) goes as a root in `cook.mirai` so that `mirai build game` ships it.
+8. Game code names a prefab or a scene by its path in the assets; data fields hold its
+   `base.Asset_Id`.
 
 ## Invariants
 
@@ -111,7 +124,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   kind and default bindings (`[E]inp.Action_Default`), read by member through `inp.Input_Of(E)`;
   nobody writes an action's number. `input.mirai` is not
   written by hand: it holds only what Project Settings > Input, `input.set` or the player changed.
-  Reading raw `core.Input` is for cases like Escape.
+  The menu of the game is the engine's `Menu` action (`gui.menu_pressed`); pausing and capturing
+  the mouse are the engine's too (`UI_Screen.pause`, `input=.Modal`), never game code.
 - **Seats and movement.** A player is a seat (`inp.Seat`), of this machine or of a connection,
   without telling them apart; it drives a body with `Drivable` and carries its actions. Locomotion
   turns the body's `Move_Input` into movement: the seat writes it according to `move_relative_to`,
@@ -147,7 +161,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   `input.mirai` and the problems of a rejected request); the chord tie-break, in
   `mirai test std/input`.
 - `engine/scene` and `engine/save`: `mirai test engine/scene engine/save` (instantiating leaves the
-  poses to propagation; a save returns without `Id` what it borrowed and does not touch the tables
+  poses to propagation; a prefab spawned again from the form its World keeps is the one read anew;
+  a save returns without `Id` what it borrowed and does not touch the tables
   of the session; a load that fails halfway leaves the world as it was; the header and thumbnail
   of a slot; the rotation and triggers of autosave; the checkpoint; the slot that waits for its
   thumbnail). The real thumbnail is seen in Play in an editor session.
@@ -155,7 +170,7 @@ the same attributes and no private paths. Declaration and parameter binding:
   tests of `engine/audio` (reverb), `plugins/physics/runtime` (`gravity_test.odin`),
   `plugins/vfx/runtime` (`fields_test.odin`) and the capture of `church` (fog).
 - Plugin `vfx`: `mirai test plugins/vfx/runtime`
-  ([verification](../mirai-plugins/references/vfx.md#verification)).
+  ([verification](../mirai-world/references/vfx.md#verification)).
 - `engine/audio`: `mirai test engine/audio`, with assets in a temporary folder and the mixer in
   memory: voices per world, the repeated tick that does not sound again, the choice of a set, the
   buses according to `Audio_Settings`, the listener in the `View` with its velocity, occlusion with

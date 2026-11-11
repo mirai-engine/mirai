@@ -15,15 +15,15 @@ play_shown :: proc "contextless" (s:^Session) -> bool {return s.mode==.Play || s
 
 play_release_input :: proc(s:^Session) {
     if s.mode!=.Play || s.play_input_released {return}
-    s.play_relative_mouse=platform.window_relative_mouse(s.app.platform)
     s.play_input_released=true
+    s.app.game_mouse_off=true
     platform.window_set_relative_mouse(s.app.platform,false)
 }
 
 play_chat_set :: proc(s:^Session,open:bool) {
     if s.ai==nil || !play_shown(s) {return}
     open:=open && s.mode==.Paused
-    s.ai.chat_open=open
+    ai_chat_show(s.ai,open)
     if s.play_chat_open==open {return}
     s.play_chat_open=open
     if open {
@@ -31,7 +31,7 @@ play_chat_set :: proc(s:^Session,open:bool) {
         library_select(s,.Ai)
     } else {
         s.gui.layout.left_open=false
-        s.ai.focus=false
+        ai_chat_focus(s.ai,false)
         if s.gui.ctx!=nil {s.gui.ctx.edit={};ui.popup_close(s.gui.ctx)}
         s.play_input_released=s.play_chat_input_released
         s.play_capture_click=false
@@ -39,10 +39,10 @@ play_chat_set :: proc(s:^Session,open:bool) {
 }
 
 // The click that recaptures the scene never reaches the game; Tab toggles the chat while it is paused.
-@(private)
 play_input_update :: proc(s:^Session) {
     app,g:=s.app,s.gui
     frame:=platform.input_frame(app.platform)
+    app.game_mouse_off=true
     if simulating(s) || s.mode==.Watch {
         app.game_input_blocked=true
         if s.mode==.Watch {_=platform.input_tick_take(app.platform)}
@@ -53,7 +53,7 @@ play_input_update :: proc(s:^Session) {
             play_chat_set(s,!s.play_chat_open)
             app.ui_input.keys_pressed-={.Tab}
             app.ui_input.keys_repeated-={.Tab}
-        } else if s.ai!=nil && s.ai.chat_open!=s.play_chat_open {play_chat_set(s,s.ai.chat_open)}
+        } else if s.ai!=nil && ai_chat_open(s.ai)!=s.play_chat_open {play_chat_set(s,ai_chat_open(s.ai))}
     }
     app.game_input_blocked=s.mode!=.Play && !s.viewport.hovered
     if s.mode!=.Play {
@@ -75,10 +75,10 @@ play_input_update :: proc(s:^Session) {
         if !over_panel && player_process_at(s,point)==0 {
             s.play_input_released=false
             s.play_capture_click=true
-            platform.window_set_relative_mouse(app.platform,s.play_relative_mouse)
         }
     }
     app.game_input_blocked=s.play_input_released || s.play_capture_click
+    app.game_mouse_off=s.play_input_released
     if app.game_input_blocked {_=platform.input_tick_take(app.platform)}
 }
 
@@ -91,14 +91,12 @@ play_pause :: proc(s:^Session,paused:bool,here:=false,stepped:=false) {
     if !playing(s) {return}
     r:=run_find(s,0)
     if paused && (s.mode==.Play || s.mode==.Simulate) {
-        if !s.play_input_released {s.play_relative_mouse=platform.window_relative_mouse(s.app.platform)}
         platform.window_set_relative_mouse(s.app.platform,false)
         s.mode=simulating(s)?.Simulation_Paused:.Paused
         if r!=nil && r.history!=nil {r.history.held=true}
     } else if !paused && play_paused(s) {
         play_chat_set(s,false)
         if r!=nil {history_resume(s,r,here)}
-        platform.window_set_relative_mouse(s.app.platform,!s.play_input_released && s.play_relative_mouse)
         s.mode=simulating(s)?.Simulate:.Play
     }
 }

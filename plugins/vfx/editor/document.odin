@@ -9,7 +9,6 @@ import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:ui"
 import vfx "plugins:vfx/runtime"
@@ -199,7 +198,7 @@ effect_parameter :: proc(values:^Effect_Values,name:string) -> ^effect.Particle_
 }
 
 // Stores a value for a parameter the program declares; false without room.
-effect_parameter_put :: proc(values:^Effect_Values,declared:^gpu.Program_Parameter,value:[4]f64,texture:base.Asset_Id) -> bool {
+effect_parameter_put :: proc(values:^Effect_Values,declared:^erender.Program_Parameter,value:[4]f64,texture:base.Asset_Id) -> bool {
     stored:=effect_parameter(values,declared.name)
     if stored==nil {
         if values.parameter_count>=len(values.parameters) {return false}
@@ -283,11 +282,11 @@ effect_sync :: proc(a:^host.Assets,p:^Effect_Document) {
 // the shaders have refuses what it does not take, as particle.set does: the
 // values go back to the file.
 @(private)
-effect_commit :: proc(s:^editor.Session,app:^host.App,p:^Effect_Document) -> bool {
+effect_commit :: proc(s:^editor.Session,assets:^host.Assets,p:^Effect_Document) -> bool {
     file:=effect_file(&p.held)
-    if name:=base.text_get(file.info.program[:]);name!="" && erender.program_find(app.assets,name,.Vfx)!=nil {
+    if name:=base.text_get(file.info.program[:]);name!="" && erender.program_find(assets,name,.Vfx)!=nil {
         program:vfx.Program
-        if problem:=vfx.particle_program_check(app.assets,&file.info,file.parameters[:],nil,&program);problem!="" {
+        if problem:=vfx.particle_program_check(assets,&file.info,file.parameters[:],nil,&program);problem!="" {
             editor.notify(s,problem)
             p.held=p.file
             return false
@@ -304,8 +303,8 @@ effect_commit :: proc(s:^editor.Session,app:^host.App,p:^Effect_Document) -> boo
 // ---------------------------------------------------------------- the document
 
 @(private)
-effect_document :: proc(s:^editor.Session,p:^Effect_Document,app:^host.App,frame:core.Frame_Time,chosen:base.Asset_Id) {
-    a:=app.assets
+effect_document :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets,frame:core.Frame_Time,chosen:base.Asset_Id) {
+    a:=assets
     g:=s.gui
     ctx:=g.ctx
     if p.id!=chosen {
@@ -329,21 +328,21 @@ effect_document :: proc(s:^editor.Session,p:^Effect_Document,app:^host.App,frame
             editor.asset_column_divider(ctx)
             if editor.asset_column_begin(ctx,ui.fixed(EFFECT_WIDTH),"Effect") {
                 if p.read {
-                    if ui.scroll_area(ctx,ui.id(ctx,"rows"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=3,padding={8,8,10,8}}) {effect_rows(s,p,app)}
+                    if ui.scroll_area(ctx,ui.id(ctx,"rows"),&p.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=3,padding={8,8,10,8}}) {effect_rows(s,p,assets)}
                 }
                 editor.asset_column_end(ctx)
             }
         }
     }
     // What the rows changed goes to the file once nothing holds it.
-    if p.read && ctx.active==0 && ctx.edit.id==0 && ctx.popup.count==0 && effect_edited(&p.held,&p.file) {effect_commit(s,app,p)}
-    effect_document_image(s,app,p)
+    if p.read && ctx.active==0 && ctx.edit.id==0 && ctx.popup.count==0 && effect_edited(&p.held,&p.file) {effect_commit(s,assets,p)}
+    effect_document_image(s,assets,p)
 }
 
 // The fields of the effect in their groups, each with its eye, and the
 // parameters of its program after the program.
 @(private)
-effect_rows :: proc(s:^editor.Session,p:^Effect_Document,app:^host.App) {
+effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     titles:=PARTICLE_GROUP_TITLES
@@ -364,7 +363,7 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,app:^host.App) {
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {editor.held_field_row(s,values,row.field)}
         }
-        if row.field=="program" {parameter_rows(s,p,app)}
+        if row.field=="program" {parameter_rows(s,p,assets)}
     }
 }
 
@@ -372,11 +371,11 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,app:^host.App) {
 // effect stores or their defaults, and those it stores that the program
 // does not declare, which the x takes away.
 @(private)
-parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,app:^host.App) {
+parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
-    program:^gpu.Program
-    if name:=base.text_get(p.held.info.program[:]);name!="" {program=erender.program_find(app.assets,name,.Vfx)}
+    program:^erender.Program
+    if name:=base.text_get(p.held.info.program[:]);name!="" {program=erender.program_find(assets,name,.Vfx)}
     if program!=nil {
         for &declared,index in program.parameters {
             ui.id_push(ctx,ui.id(ctx,"parameter",index+1))
@@ -401,7 +400,7 @@ parameter_rows :: proc(s:^editor.Session,p:^Effect_Document,app:^host.App) {
 // A parameter as its kind and components take it, inside its range, with the
 // arrow that gives it back what the file stores.
 @(private)
-parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^gpu.Program_Parameter) {
+parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^erender.Program_Parameter) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     label:=editor.readable(declared.name)
@@ -486,8 +485,8 @@ parameter_row :: proc(s:^editor.Session,p:^Effect_Document,declared:^gpu.Program
 // What the image is to show: the values, the assets they name and the time.
 // It is drawn between frames (effect_document_between).
 @(private)
-effect_document_image :: proc(s:^editor.Session,app:^host.App,p:^Effect_Document) {
-    a:=app.assets
+effect_document_image :: proc(s:^editor.Session,assets:^host.Assets,p:^Effect_Document) {
+    a:=assets
     if !p.read || a==nil || a.renderer==nil {
         p.image.ready,p.due=false,0
         return

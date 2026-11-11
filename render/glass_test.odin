@@ -1,17 +1,9 @@
 package mirai_render
 
-import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
-
-@(private = "file")
-Glass_Fixture :: struct {
-	device:   ^rhi.Device,
-	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
-}
 
 // No jitter and no probes: a pixel shows one surface point, lit by the sun alone.
 @(private = "file")
@@ -25,27 +17,6 @@ glass_settings :: proc() -> Settings {
 	s.occlusion_culling = false
 	s.reflections = false
 	return s
-}
-
-@(private = "file")
-glass_fixture :: proc(t: ^testing.T, f: ^Glass_Fixture, width, height: u32, settings: Settings) -> bool {
-	device, err := shared_device.take(t)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("glass tests skipped:", err)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)}
-		return false
-	}
-	f.device = device
-	f.renderer = new(Renderer)
-	ok := renderer_init(f.renderer, {device = device, width = width, height = height, settings = settings})
-	testing.expect(t, ok, f.renderer.error)
-	if !ok {f.device = nil}
-	return ok
-}
-
-@(private = "file")
-glass_fixture_destroy :: proc(f: ^Glass_Fixture) {
-	if f.device == nil {return}
-	if f.renderer != nil {renderer_destroy(f.renderer); free(f.renderer)}
 }
 
 // A unit square facing +Y, its tangent along +X; both sides are drawn.
@@ -136,7 +107,7 @@ glass_pixel :: proc(r: ^Renderer, camera: Camera, world: Vec3) -> [2]int {
 }
 
 @(private = "file")
-read_halves :: proc(t: ^testing.T, f: ^Glass_Fixture, target: rhi.Texture, p: [2]int) -> Vec3 {
+read_halves :: proc(t: ^testing.T, f: ^Fixture, target: rhi.Texture, p: [2]int) -> Vec3 {
 	r := f.renderer
 	rhi.device_wait_idle(f.device)
 	pixels := make([]f16, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
@@ -148,7 +119,7 @@ read_halves :: proc(t: ^testing.T, f: ^Glass_Fixture, target: rhi.Texture, p: [2
 // The lit scene with its blended surfaces, in linear light, where a world
 // position shows after `count` frames.
 @(private = "file")
-shown :: proc(t: ^testing.T, f: ^Glass_Fixture, camera: Camera, world: Vec3, count := 3) -> Vec3 {
+shown :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3, count := 3) -> Vec3 {
 	r := f.renderer
 	for _ in 0 ..< count {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	return read_halves(t, f, r.targets.display, glass_pixel(r, camera, world))
@@ -170,9 +141,9 @@ SUN :: Sun_Desc{direction = {1, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math
 
 @(test)
 glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 96, 64, glass_settings()) {return}
-	defer glass_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, glass_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	coat := glass_material({1, 0, 0}, 0.6)
 	coat.transmission = 0
@@ -216,9 +187,9 @@ glass_filters_the_scene_where_a_coat_covers_it :: proc(t: ^testing.T) {
 // filters what shows through, crossed once.
 @(test)
 glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 64, 64, glass_settings()) {return}
-	defer glass_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, glass_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	pane := glass_material({1, 1, 1}, 1, 0.5)
 	black := DEFAULT_MATERIAL
@@ -244,7 +215,7 @@ glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 	materials_set(r, materials[:])
 	sheet := sheet_mesh(r)
 	mirror := Camera{position = {-3, 3, 0}, forward = {3, -3, 0}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	seen :: proc(t: ^testing.T, f: ^Glass_Fixture, sheet: Mesh_Handle, material: int, camera: Camera) -> Vec3 {
+	seen :: proc(t: ^testing.T, f: ^Fixture, sheet: Mesh_Handle, material: int, camera: Camera) -> Vec3 {
 		scene_set(f.renderer, {{object_id = 1, mesh = sheet, transform = placed({}, {4, 1, 4}), material = Material_Handle(material + 1), tint = {1, 1, 1}}}, nil, SUN, {})
 		return shown(t, f, camera, {})
 	}
@@ -260,7 +231,7 @@ glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 
 	floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {20, 1, 20}), tint = {1, 1, 1}}
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	over := proc(t: ^testing.T, f: ^Glass_Fixture, floor: Instance_Desc, sheet: Mesh_Handle, material: int, camera: Camera) -> Vec3 {
+	over := proc(t: ^testing.T, f: ^Fixture, floor: Instance_Desc, sheet: Mesh_Handle, material: int, camera: Camera) -> Vec3 {
 		scene_set(f.renderer, {floor, {object_id = 2, mesh = sheet, transform = placed({0, 1, 0}, {2, 1, 2}), material = Material_Handle(material + 1), tint = {1, 1, 1}}}, nil, SUN, {})
 		return shown(t, f, camera, {0, 1, 0})
 	}
@@ -275,9 +246,9 @@ glass_wears_the_layers_of_its_material :: proc(t: ^testing.T) {
 
 @(test)
 glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.T) {
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 96, 64, glass_settings()) {return}
-	defer glass_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, glass_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	green := glass_material({0.2, 1, 0.2}, 1, 0.05)
 	green.thickness = 0.5
@@ -345,9 +316,9 @@ glass_solid_filters_once_absorbs_and_shades_colored_shadows :: proc(t: ^testing.
 glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 	settings := glass_settings()
 	settings.gi_enabled = true
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 96, 64, settings) {return}
-	defer glass_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
 	if !testing.expect(t, grid != nil, "the engine has the Grid program") {return}
@@ -401,9 +372,9 @@ glass_tints_the_indirect_light_with_its_mean :: proc(t: ^testing.T) {
 
 @(test)
 glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 128, 96, glass_settings()) {return}
-	defer glass_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 128, 96, glass_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	clear := glass_material({1, 1, 1}, 0, 0.05)
 	clear.thickness = 1
@@ -435,9 +406,9 @@ glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 
 @(test)
 glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 256, 192, glass_settings()) {return}
-	defer glass_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 256, 192, glass_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	clear := glass_material({1, 1, 1}, 0, 0.05)
 	clear.thickness = 0.4
@@ -468,11 +439,11 @@ glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 
 @(test)
 glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
-	f: Glass_Fixture
+	f: Fixture
 	settings := glass_settings()
 	settings.reflections = true
-	if !glass_fixture(t, &f, 128, 96, settings) {return}
-	defer glass_fixture_destroy(&f)
+	if !fixture_init(t, &f, 128, 96, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	materials_set(r, {glass_material({1, 1, 1}, 0, 0.05)})
 	sheet, box := sheet_mesh(r), box_mesh(r)
@@ -501,9 +472,9 @@ glass_reflects_what_stands_before_it :: proc(t: ^testing.T) {
 
 @(test)
 glass_rough_scatters_what_shows_through :: proc(t: ^testing.T) {
-	f: Glass_Fixture
-	if !glass_fixture(t, &f, 128, 96, glass_settings()) {return}
-	defer glass_fixture_destroy(&f)
+	f: Fixture
+	if !fixture_init(t, &f, 128, 96, glass_settings()) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	materials_set(r, {glass_material({1, 1, 1}, 0, 0.05), glass_material({1, 1, 1}, 0, 0.7)})
 	sheet := sheet_mesh(r)
@@ -527,11 +498,11 @@ glass_rough_scatters_what_shows_through :: proc(t: ^testing.T) {
 // a filter, and what the ray finds as the glossy surface it is.
 @(test)
 glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
-	f: Glass_Fixture
+	f: Fixture
 	settings := glass_settings()
 	settings.reflections = true
-	if !glass_fixture(t, &f, 128, 96, settings) {return}
-	defer glass_fixture_destroy(&f)
+	if !fixture_init(t, &f, 128, 96, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	mirror, plate := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	mirror.metallic, mirror.roughness = 1, 0.05
@@ -574,11 +545,11 @@ glass_and_gloss_show_in_sharp_reflections :: proc(t: ^testing.T) {
 // one it settles into.
 @(test)
 reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
-	f: Glass_Fixture
+	f: Fixture
 	settings := glass_settings()
 	settings.reflections = true
-	if !glass_fixture(t, &f, 128, 96, settings) {return}
-	defer glass_fixture_destroy(&f)
+	if !fixture_init(t, &f, 128, 96, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	polished := DEFAULT_MATERIAL
 	polished.metallic, polished.roughness = 1, 0.15
@@ -596,7 +567,7 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 		camera.forward.x += 0.03
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	}
-	read :: proc(t: ^testing.T, f: ^Glass_Fixture) -> []f16 {
+	read :: proc(t: ^testing.T, f: ^Fixture) -> []f16 {
 		r := f.renderer
 		rhi.device_wait_idle(f.device)
 		pixels := make([]f16, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
@@ -623,11 +594,11 @@ reflection_on_a_ball_keeps_its_place_on_the_move :: proc(t: ^testing.T) {
 // hidden, with the same two-phase test as the opaque draws.
 @(test)
 glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
-	f: Glass_Fixture
+	f: Fixture
 	settings := glass_settings()
 	settings.occlusion_culling = true
-	if !glass_fixture(t, &f, 96, 64, settings) {return}
-	defer glass_fixture_destroy(&f)
+	if !fixture_init(t, &f, 96, 64, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	materials_set(r, {glass_material({1, 0, 0}, 0.6)})
 	sheet := sheet_mesh(r)
@@ -647,13 +618,13 @@ glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 
 @(test)
 glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
-	f: Glass_Fixture
+	f: Fixture
 	settings := glass_settings()
 	settings.gi_enabled = true
 	settings.reflections = true
 	settings.glass_layers = 2
-	if !glass_fixture(t, &f, 96, 64, settings) {return}
-	defer glass_fixture_destroy(&f)
+	if !fixture_init(t, &f, 96, 64, settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	solid := glass_material({0.8, 0.9, 1}, 0.2, 0.05)
 	solid.thickness = 0.5
@@ -687,12 +658,12 @@ glass_frames_stay_allocation_free :: proc(t: ^testing.T) {
 // absorbs what the view crosses of it from the camera.
 @(test)
 glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_scatters :: proc(t: ^testing.T) {
-	f: Glass_Fixture
+	f: Fixture
 	// What a back face reflects inside comes from the reflections of the layer.
 	inside_settings := glass_settings()
 	inside_settings.reflections = true
-	if !glass_fixture(t, &f, 96, 64, inside_settings) {return}
-	defer glass_fixture_destroy(&f)
+	if !fixture_init(t, &f, 96, 64, inside_settings) {return}
+	defer fixture_destroy(&f)
 	r := f.renderer
 	water := glass_material({1, 1, 1}, 1, 0.02)
 	water.thickness = 1

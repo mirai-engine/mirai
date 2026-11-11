@@ -1,6 +1,5 @@
 package mirai_render
 
-import "core:fmt"
 import "core:testing"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
@@ -9,11 +8,8 @@ import "mirai:rhi/shared_device"
 // staging buffer: mip 0 reads back as written with the smaller mips after it.
 @(test)
 the_levels_of_a_texture_upload_in_one_transaction :: proc(t: ^testing.T) {
-	device, error := shared_device.take(t, hardware_rt = false)
-	if device == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("texture upload test skipped:", error)} else {testing.expect(t, false, error)}
-		return
-	}
+	device := shared_device.take_or_skip(t, hardware_rt = false)
+	if device == nil {return}
 	texture := rhi.texture_create(device, {width = 4, height = 4, layers = 1, mip_levels = 3, format = .RGBA8_Unorm, usage = {.Sampled, .Transfer_Src}, name = "levels test"})
 	if !testing.expect(t, texture != 0, rhi.device_error(device)) {return}
 	defer rhi.texture_destroy(device, texture)

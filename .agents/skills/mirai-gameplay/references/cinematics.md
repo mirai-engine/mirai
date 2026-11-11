@@ -111,5 +111,5 @@ The sampling of tracks, shots and blends is the runtime's (`cinematic_track_valu
   `mirai test plugins/cinematics/editor` (order and capacity of the keys).
 - Reference walkthrough: the intro of the demo's control scene ([demo](demo.md#control)): playback,
   shot blending, markers and input blocking during the intro; in the editor, `cinematics.control`
-  Seek with view Shot over that intro and `editor.capture` with the UI.
+  Seek with view Shot over that intro and `capture` with the UI.
 - Cinematics over the network were not exercised.

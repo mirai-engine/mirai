@@ -33,11 +33,11 @@ Draw :: struct {
     vertices:[]Vertex,count:int,
     region:base.Region, // of vertices when the context made them: committed up to the most a frame used
     commands:[]Draw_Command,command_count:int,
-    scissor:Rect,scissor_stack:[SCISSOR_DEPTH]Rect,scissor_depth:int,
+    scissor:Rect,scissor_stack:[SCISSOR_DEPTH]Rect,scissor_depth,scissor_skipped:int,
     clip:Rect,          // in the space shapes are given in
     clip_surface:Rect,  // the same clip in layout units of the surface, past every transform
     clipping:bool,
-    clip_stack:[CLIP_DEPTH]Clip_Entry,clip_depth:int,
+    clip_stack:[CLIP_DEPTH]Clip_Entry,clip_depth,clip_skipped:int,
     surface:u32,
     layered:bool,       // isolated layers compose here: on the screen, or in a panel drawn into a texture
     bounds:Rect,        // the surface, in layout units
@@ -65,7 +65,7 @@ Draw :: struct {
 
 @(private)
 draw_reset :: proc(d:^Draw,bounds:Rect,scale,density:f32) {
-    d.count=0;d.command_count=0;d.scissor_depth=0
+    d.count=0;d.command_count=0;d.scissor_depth=0;d.scissor_skipped=0
     d.shape_count=0;d.layer_count=0;d.composition_depth=0;d.accepted_layers=0;d.skipped_layers=0;d.suppressed=0
     d.dropped_shapes=0;d.dropped_layers=0
     d.dropped_vertices=0;d.dropped_commands=0;d.shear=0
@@ -80,7 +80,7 @@ draw_surface :: proc(d:^Draw,surface:u32,bounds:Rect,scale,ppu:f32,contained,lay
     d.scale=scale;d.ppu=max(ppu,0.001);d.pixel=1/d.ppu
     d.scope=AFFINE_IDENTITY;d.scope_inverse=AFFINE_IDENTITY
     d.m={scale,0,0,0,scale,0};d.tint={1,1,1,1};d.transformed=false
-    d.clip_depth=0;d.clipping=contained;d.clip=bounds;d.clip_surface=bounds
+    d.clip_depth=0;d.clip_skipped=0;d.clipping=contained;d.clip=bounds;d.clip_surface=bounds
     d.dirty=true
 }
 
@@ -178,14 +178,17 @@ vertex_at :: #force_inline proc "contextless" (d:^Draw,p:[2]f32,color:[4]f32) ->
 
 // ---------------------------------------------------------------- scissor and clip
 
+// A scissor or a clip nested deeper than its stack holds is not applied, and
+// is counted in Stats.dropped_clips.
 scissor_push :: proc(ctx:^Context,r:Rect) {
     d:=&ctx.draw
-    if d.scissor_depth>=SCISSOR_DEPTH {ctx.stats.dropped_clips+=1;return}
+    if d.scissor_depth>=SCISSOR_DEPTH {d.scissor_skipped+=1;ctx.stats.dropped_clips+=1;return}
     d.scissor_stack[d.scissor_depth]=d.scissor;d.scissor_depth+=1
     d.scissor=rect_intersect(d.scissor,rect_through(d.scope,r) if d.transformed else r);d.dirty=true
 }
 scissor_pop :: proc(ctx:^Context) {
     d:=&ctx.draw
+    if d.scissor_skipped>0 {d.scissor_skipped-=1;return}
     if d.scissor_depth<=0 {return}
     d.scissor_depth-=1;d.scissor=d.scissor_stack[d.scissor_depth];d.dirty=true
 }
@@ -193,7 +196,7 @@ scissor_pop :: proc(ctx:^Context) {
 // What is drawn until clip_pop is cut to r, inside the clips already set.
 clip_push :: proc(ctx:^Context,r:Rect) {
     d:=&ctx.draw
-    assert(d.clip_depth<CLIP_DEPTH,"UI clip stack capacity exceeded")
+    if d.clip_depth>=CLIP_DEPTH {d.clip_skipped+=1;ctx.stats.dropped_clips+=1;return}
     d.clip_stack[d.clip_depth]={d.clip,d.clip_surface,d.clipping,d.scope};d.clip_depth+=1
     surface:=rect_through(d.scope,r) if d.transformed else r
     if d.clipping {d.clip=rect_intersect(d.clip,r);d.clip_surface=rect_intersect(d.clip_surface,surface)} else {d.clip=r;d.clip_surface=surface}
@@ -201,7 +204,8 @@ clip_push :: proc(ctx:^Context,r:Rect) {
 }
 clip_pop :: proc(ctx:^Context) {
     d:=&ctx.draw
-    assert(d.clip_depth>0,"Unbalanced UI clip stack")
+    if d.clip_skipped>0 {d.clip_skipped-=1;return}
+    if d.clip_depth<=0 {return}
     d.clip_depth-=1
     entry:=d.clip_stack[d.clip_depth]
     d.clip,d.clip_surface,d.clipping=entry.local,entry.surface,entry.clipping

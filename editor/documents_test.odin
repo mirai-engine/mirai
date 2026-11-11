@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:testing"
+import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:ui"
@@ -22,7 +23,7 @@ document_tabs_hover_as_one_surface_and_close_independently :: proc(t:^testing.T)
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx}
     document:Document
-    edits:Edits
+    edits:history.Edits
     session:=Session{gui=&gui,document=&document,edits=&edits}
     document_name(&document,"scenes/Active.scene","")
     append(&session.documents,Document_Tab{})
@@ -71,7 +72,7 @@ document_tabs_scroll_and_reveal_the_active_document_with_clipped_native_regions 
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx,documents_reveal=true}
     document:Document
-    edits:Edits
+    edits:history.Edits
     session:=Session{gui=&gui,document=&document,edits=&edits,active_document=19}
     for index in 0..<20 {
         tab:Document_Tab
@@ -126,7 +127,7 @@ the_question_before_opening_a_scene_keeps_the_other_requests_of_the_frame :: pro
     gui:Editor_Ui
     defer delete(gui.confirm_assets)
     document:Document
-    edits:Edits
+    edits:history.Edits
     s:=Session{gui=&gui,document=&document,edits=&edits}
     append(&s.documents,Document_Tab{})
     defer delete(s.documents)
@@ -144,8 +145,8 @@ escape_closes_a_dialog_with_what_it_asks_about :: proc(t:^testing.T) {
     gui:Editor_Ui
     defer delete(gui.confirm_assets)
     viewport:Viewport
-    selection:Selection
-    edits:Edits
+    selection:history.Selection
+    edits:history.Edits
     s:=Session{gui=&gui,edits=&edits,selection=&selection,viewport=&viewport}
     for modal in ([]Modal{.Save_Changes,.Delete_Asset,.Git_Discard}) {
         gui.modal=modal

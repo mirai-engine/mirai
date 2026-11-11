@@ -8,7 +8,6 @@
 #define MIRAI_GROUP_X 64
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
-#define TLAS_DISPATCH_X 32768u
 
 struct Tlas_Batch {
     uint words;      // the first word of its instances in the pool

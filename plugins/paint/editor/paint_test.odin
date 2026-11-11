@@ -6,6 +6,7 @@ import "core:testing"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import paint "plugins:paint/runtime"
@@ -13,17 +14,10 @@ import "mirai:std/base"
 
 @(private)
 Paint_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     meshes:core.Table(erender.Mesh_Renderer),
     painted:core.Table(paint.Painted),
-}
-
-@(private)
-paint_test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Paint_Test_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.meshes,&w.entities);core.table_settle(&w.painted,&w.entities)
-    core.entities_settle(&w.entities)
 }
 
 // A cube with Id 7 in a world of its own, with its assets under a folder that goes with the test.
@@ -32,13 +26,11 @@ Paint_Test :: struct {
     root:string,
     assets:host.Assets,
     world:Paint_Test_World,
-    tables:[3]core.Table_Info,
-    info:core.World_Info,
     ref:core.World_Ref,
     cube:core.Entity,
     app:host.App,
-    selection:editor.Selection,
-    edits:editor.Edits,
+    selection:history.Selection,
+    edits:history.Edits,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     session:editor.Session,
@@ -46,39 +38,30 @@ Paint_Test :: struct {
 
 @(private)
 paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.root=fmt.tprintf("%s/mirai-%s-%d",directory,name,os.get_pid())
-    testing.expect_value(t,os.make_directory_all(f.root),nil)
-    if !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=16})) {
-        os.remove_all(f.root)
+    f.root=base.test_folder(t,name)
+    if f.root=="" || !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=16})) {return false}
+    w:=&f.world
+    if !core.test_world_init(t,w) {
+        host.assets_destroy(&f.assets)
         return false
     }
-    w:=&f.world
-    core.entities_init(&w.entities);core.table_init(&w.ids,"Id");core.table_init(&w.meshes,"Mesh_Renderer");core.table_init(&w.painted,"Painted")
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Paint_Test_World,ids)},
-        {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Paint_Test_World,meshes)},
-        {name="Painted",type=paint.Painted,info=type_info_of(paint.Painted),offset=offset_of(Paint_Test_World,painted)},
-    }
-    f.info=core.World_Info{entities=offset_of(Paint_Test_World,entities),tables=f.tables[:],settle=paint_test_settle}
-    f.ref=core.world_ref(&f.world,&f.info)
+    f.ref=core.test_world_ref(w)
     f.cube=core.create(&w.entities)
     core.add(&w.ids,f.cube,core.Id{value=7})
     core.add(&w.meshes,f.cube,erender.Mesh_Renderer{shape=.Cube})
     core.world_settle(f.ref)
     f.app={allocator=context.allocator,assets=&f.assets}
-    editor.edits_reset(&f.edits,f.ref)
-    f.session={app=&f.app,info=&f.info,edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
+    history.edits_reset(&f.edits,f.ref)
+    f.session={app=&f.app,info=core.test_world_info(w),edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
     return true
 }
 
 @(private)
 paint_test_close :: proc(f:^Paint_Test) {
-    editor.edits_free(&f.edits)
+    history.edits_free(&f.edits)
     delete(f.selection.entities)
-    core.table_destroy(&f.world.painted);core.table_destroy(&f.world.meshes);core.table_destroy(&f.world.ids);core.entities_destroy(&f.world.entities)
+    core.test_world_destroy(&f.world)
     host.assets_destroy(&f.assets)
-    os.remove_all(f.root)
 }
 
 // Begins a stroke on the cube as stroke_begin does after its pick, with every
@@ -109,11 +92,11 @@ painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
 
     if !paint_test_stroke(t,&tool,app,e,cube,root,0x51) {return}
     first,first_path:=tool.stroke.id,fmt.tprintf("%s/%s/%016x.mesh",root,FOLDER,u64(0x51))
-    testing.expect(t,stroke_write(s,&tool,ref,app))
+    testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
     tool.stroke.dirty=true
-    testing.expect(t,stroke_write(s,&tool,ref,app))
-    stroke_end(s,&tool,ref,app)
-    if !testing.expect(t,editor.edits_commit(edits,ref,selection)) {return}
+    testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
+    stroke_end(s,&tool,ref,app.assets,app.allocator)
+    if !testing.expect(t,history.edits_commit(edits,ref,selection)) {return}
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
     testing.expect(t,editor.file_exists(s,first_path) && !os.exists(first_path))
@@ -125,20 +108,20 @@ painted_copies_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     testing.expect_value(t,tool.stroke.before[0],u32(0xff0000ff))
     second_path:=fmt.tprintf("%s/%s/%016x.mesh",root,FOLDER,u64(0x52))
     tool.color=[3]f32{0,0,1}
-    testing.expect(t,stroke_write(s,&tool,ref,app))
+    testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
     testing.expect(t,editor.file_exists(s,second_path))
-    stroke_cancel(s,&tool,ref,app)
+    stroke_cancel(s,&tool,ref)
     testing.expect(t,!editor.file_exists(s,second_path))
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
     testing.expect_value(t,edits.cursor,1)
 
-    testing.expect(t,editor.undo(edits,ref,selection))
+    testing.expect(t,history.undo(edits,ref,selection))
     editor.files_settle(s)
     testing.expect_value(t,core.get(&world.meshes,e)^,cube)
     testing.expect(t,!core.has(&world.painted,e))
     testing.expect(t,!editor.file_exists(s,first_path))
     testing.expect_value(t,len(editor.assets_unsaved(s)),0)
-    testing.expect(t,editor.redo(edits,ref,selection))
+    testing.expect(t,history.redo(edits,ref,selection))
     editor.files_settle(s)
     testing.expect_value(t,core.get(&world.meshes,e).mesh,first)
     testing.expect(t,editor.file_exists(s,first_path))
@@ -157,10 +140,10 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     clear_method:=api.Method{params_id=Clear_Params,result_id=Clear_Result}
 
     // Along an edge of the cube the brush paints the vertices of its two corners and no other.
-    params:=Stroke_Params{id=7,radius=0.3,strength=1,color={0,1,0}}
+    params:=Stroke_Params{radius=0.3,strength=1,color={0,1,0}};copy(params.entity[:],"0000000000000007")
     params.points[0],params.points[1]={0.5,0.5,0.5},{0.5,0.5,-0.5}
     result:Stroke_Result
-    call:=api.Call{method=&stroke_method,params=&params,result=&result,raw=`{"id":"7","points":[[0.5,0.5,0.5],[0.5,0.5,-0.5]]}`,allocator=context.temp_allocator}
+    call:=api.Call{method=&stroke_method,params=&params,result=&result,raw=`{"entity":"0000000000000007","points":[[0.5,0.5,0.5],[0.5,0.5,-0.5]]}`,allocator=context.temp_allocator}
     api_stroke(s,&call)
     if !testing.expectf(t,!call.failed,"%s",call.error.message) {return}
     testing.expect_value(t,result.vertices,u32(24))
@@ -175,13 +158,13 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     // Away from the mesh nothing is painted and no step is made.
     params.points[0]={10,10,10}
     far:Stroke_Result
-    away:=api.Call{method=&stroke_method,params=&params,result=&far,raw=`{"id":"7","points":[[10,10,10]]}`,allocator=context.temp_allocator}
+    away:=api.Call{method=&stroke_method,params=&params,result=&far,raw=`{"entity":"0000000000000007","points":[[10,10,10]]}`,allocator=context.temp_allocator}
     api_stroke(s,&away)
     testing.expect(t,away.failed && away.error.code==api.INVALID_PARAMS)
     testing.expect_value(t,f.edits.cursor,1)
 
     clear_params:Clear_Params
-    clear_params.ids[0]=7
+    copy(clear_params.entities[0][:],"0000000000000007")
     cleared:Clear_Result
     clear:=api.Call{method=&clear_method,params=&clear_params,result=&cleared,allocator=context.temp_allocator}
     api_clear(s,&clear)
@@ -195,9 +178,9 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     testing.expect(t,again.failed && again.error.code==api.INVALID_PARAMS)
     testing.expect_value(t,f.edits.cursor,2)
 
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     testing.expect_value(t,core.get(&f.world.meshes,e).mesh,result.mesh)
-    testing.expect(t,editor.undo(&f.edits,f.ref,&f.selection))
+    testing.expect(t,history.undo(&f.edits,f.ref,&f.selection))
     editor.files_settle(s)
     testing.expect_value(t,core.get(&f.world.meshes,e)^,erender.Mesh_Renderer{shape=.Cube})
     testing.expect(t,!editor.file_exists(s,path))

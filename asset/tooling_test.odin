@@ -192,6 +192,11 @@ document_text_is_stable_and_says_everything :: proc(t:^testing.T) {
     serial.writer_reset(&w)
     document_row_write(&doc,&w,1,1)
     testing.expect_value(t,string(serial.writer_bytes(&w)),`{"id": "0x0000000000000020", "name": "saw", "value": {"weight": 0.25, "tags": ["Cold", "Wet"], "offset": [2, 3]}}`)
+    // For a diff: what a row or a type added before would change is left out.
+    serial.writer_reset(&w)
+    document_text_write(&doc,&w,{diff=true})
+    diffed:=string(serial.writer_bytes(&w))
+    testing.expect(t,strings.contains(diffed,`{"item": "0x0000000000000020", "count": 7}`) && !strings.contains(diffed,`"type": `),"rows refer to rows by key and columns do not tell the index of their type")
     free_all(context.temp_allocator)
 }
 
@@ -364,7 +369,8 @@ document_diff_matches_rows_by_key_and_fields_by_name :: proc(t:^testing.T) {
     a:Document;tool_document(&a,&types);defer document_destroy(&a)
     b:Document;tool_document(&b,&types);defer document_destroy(&b)
     w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
-    testing.expect_value(t,document_diff(&a,&b,&w),0)
+    same,diff_error:=document_diff(&a,&b,&w)
+    testing.expect(t,same==0 && diff_error==.None)
     testing.expect_value(t,w.count,0)
 
     // The same rows in another order are the same document.
@@ -379,7 +385,8 @@ document_diff_matches_rows_by_key_and_fields_by_name :: proc(t:^testing.T) {
     uses,_:=document_table(&b,"uses")
     refs:=mem.slice_data_cast([]u32,b.tables[uses].columns[0].data)
     refs[0],refs[1]=0,1
-    testing.expect_value(t,document_diff(&a,&b,&w),0)
+    same,diff_error=document_diff(&a,&b,&w)
+    testing.expect(t,same==0 && diff_error==.None)
 
     b.kind_version=3
     b.id={0x11,0x23}
@@ -411,7 +418,7 @@ document_diff_matches_rows_by_key_and_fields_by_name :: proc(t:^testing.T) {
     extra,_:=document_table_add(&a,"extra")
     _=extra
     serial.writer_reset(&w)
-    count:=document_diff(&a,&b,&w)
+    count,_:=document_diff(&a,&b,&w)
     EXPECTED :: `~ kind_version: 2 -> 3
 ~ id: 00000000000000110000000000000022 -> 00000000000000110000000000000023
 ~ info.count: 2 -> 3
@@ -452,7 +459,7 @@ document_diff_follows_fields_that_moved_or_left :: proc(t:^testing.T) {
     document_put_row(&a,&types,"thing",&old)
     document_put_row(&b,&types,"thing",&new)
     w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
-    count:=document_diff(&a,&b,&w)
+    count,_:=document_diff(&a,&b,&w)
     EXPECTED :: `- thing.gone: 4
 ~ thing.points[1]: 2 -> 5
 - thing.points[2]: 3

@@ -2,7 +2,6 @@ package host
 
 import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "core:thread"
 import "mirai:asset"
@@ -68,9 +67,8 @@ a_load_with_the_whole_frame_takes_more_than_a_shared_part :: proc(t:^testing.T) 
 // geometry with the frames that follow.
 @(test)
 a_mesh_prepared_on_another_thread_loads_as_asking_for_it :: proc(t:^testing.T) {
-    root:=fmt.tprintf("%s/mirai-prepared-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"prepared")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     COUNT :: LOAD_FRAME_BYTES/size_of(asset.Cluster_Vertex)+1024
     vertices:=make([]asset.Vertex,COUNT)
@@ -141,16 +139,15 @@ a_load_waits_for_the_geometry_of_the_meshes_it_took_over_frames :: proc(t:^testi
 }
 
 @(private="file") Building_Model :: struct {mesh:base.Asset_Id}
-@(private="file") Building_World :: struct {entities:core.Entities,models:core.Table(Building_Model),plain:core.Table(core.Name)}
+@(private="file") Building_World :: struct {using world:core.Test_World,models:core.Table(Building_Model),plain:core.Table(core.Name)}
 
 // A World a job builds is not read by the marks: what only it names unloads,
 // and what it names counts once it is done. A table that never changed and
 // one that holds no asset ids are not marked again.
 @(test)
 the_marks_leave_out_a_world_a_job_builds :: proc(t:^testing.T) {
-    root:=fmt.tprintf("%s/mirai-building-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"building")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
     meshes:=[2]base.Asset_Id{{0x6275696c,1},{0x6275696c,2}}
@@ -161,25 +158,9 @@ the_marks_leave_out_a_world_a_job_builds :: proc(t:^testing.T) {
     if !testing.expect(t,assets_init(&assets,{root=root,capacity=8})) {return}
     defer assets_destroy(&assets)
 
-    tables:=[2]core.Table_Info{
-        {name="Building_Model",type=Building_Model,info=type_info_of(Building_Model),offset=offset_of(Building_World,models)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Building_World,plain)},
-    }
-    info:=core.World_Info{entities=offset_of(Building_World,entities),tables=tables[:]}
-    info.sizes[.World],info.aligns[.World]=size_of(Building_World),align_of(Building_World)
-    info.init[.World]=proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-        w:=cast(^Building_World)data
-        core.table_init(&w.models,"Building_Model",allocator)
-        core.table_init(&w.plain,"Name",allocator)
-        return core.entities_init(&w.entities,allocator)
-    }
-    info.destroy[.World]=proc(data:rawptr) {
-        w:=cast(^Building_World)data
-        core.table_destroy(&w.models);core.table_destroy(&w.plain)
-        core.entities_destroy(&w.entities)
-    }
-    core.world_info_index(&info)
-    defer {core.world_schema_destroy(info.schema);delete(info.tables_by_type);delete(info.storages_by_type)}
+    info,described:=core.test_info(t,Building_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     app:=App{info=&info,assets=&assets,allocator=context.allocator}
     app.worlds=make([dynamic]World_Slot)
     defer delete(app.worlds)
@@ -220,9 +201,8 @@ mesh_save_test :: proc(path:string,types:^asset.Types,id:base.Asset_Id,vertices:
 // file as their source; what loads far away (tail) reads only the small ones.
 @(test)
 a_texture_is_read_from_the_level_asked_for :: proc(t:^testing.T) {
-    root:=fmt.tprintf("%s/mirai-levels-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"levels")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     SIZE :: 512
     mips:=make([dynamic][]u8,context.temp_allocator)
@@ -261,9 +241,8 @@ a_texture_is_read_from_the_level_asked_for :: proc(t:^testing.T) {
 // once, or far away with only its small levels, it costs what it reads.
 @(test)
 a_texture_larger_than_a_frame_costs_its_small_levels_in_the_frame_it_is_taken :: proc(t:^testing.T) {
-    root:=fmt.tprintf("%s/mirai-split-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"split")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     SIZE :: 2048
     mips:=make([dynamic][]u8,context.temp_allocator)
@@ -318,9 +297,8 @@ a_texture_larger_than_a_frame_costs_its_small_levels_in_the_frame_it_is_taken ::
 // in the call.
 @(test)
 what_a_load_read_is_freed_in_a_job :: proc(t:^testing.T) {
-    root:=fmt.tprintf("%s/mirai-release-%d",os.get_env("TEMP",context.temp_allocator),os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"release")
+    if root=="" {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     vertices:=[3]asset.Vertex{{position={0,0,0},normal=mm.normal_pack({0,1,0})},{position={1,0,0},normal=mm.normal_pack({0,1,0})},{position={0,0,1},normal=mm.normal_pack({0,1,0})}}
     meshes:=[3]base.Asset_Id{{0x72656c65,1},{0x72656c65,2},{0x72656c65,3}}

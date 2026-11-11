@@ -1,11 +1,12 @@
 package ui_inspector_editor
 
 import "core:fmt"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor"
 import inp "mirai:engine/input"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -106,7 +107,7 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     p:=Pane{s=s,u=u,needle=string(u.search[:u.search_length]),width=width-28}
     // A node inside a widget: its records are the widget's, and nothing of them changes here.
     x:=&u.ux
-    if x.peek.instance>=0 && x.peek.instance==u.selected && u.scope<0 {
+    if x.peek.instance>=0 && x.peek.instance==u.selected {
         if w:=widget_records(u,a,x.peek.widget);w!=nil && x.peek.row<len(w.nodes) {
             records:=u.records
             selected,pending,change,label:=u.selected,u.pending,u.change,u.label
@@ -124,8 +125,8 @@ properties :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,width:f32) {
     // What the document binds that the game does not have, or why it does not load, until it is fixed.
     for &problem,i in u.problem[:u.problem_count] {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},gap=6,align_y=.Center,fill=ui.color_alpha(th.danger,36),stroke=ui.color_alpha(th.danger,120),radius=4}) {
-            ui.paragraph(ctx,bind_problem_text(a,&problem),th.font_small,th.text)
-            if problem.row>=0 && problem.row!=u.selected && u.scope<0 {
+            ui.paragraph(ctx,author.bind_problem_text(author.assets_of(a),&problem),th.font_small,th.text)
+            if problem.row>=0 && problem.row!=u.selected {
                 if ui.button(ctx,ui.id(ctx,"problem_node",i+1),{label="Show",style=.Ghost,height=th.row,size=th.font_small}).clicked {choose_rows(u,{problem.row})}
             }
         }
@@ -151,6 +152,11 @@ properties_node :: proc(p:^Pane,a:^host.Assets) {
     section_end(p)
     if n.kind==.Component {
         if section(p,.Component,"Widget",.Prefab,whole=true) {section_component(p,a,n)}
+        section_end(p)
+    }
+    // What a file with one root declares of itself as a widget: on its root, or once it declares it.
+    if widget_declares(p.u) && (p.u.selected==0 || len(p.u.records.params)>0 || author.records_slot_row(&p.u.records)>=0) {
+        if section(p,.Parameters,"Parameters",.Prefab,whole=true) {section_parameters(p,a,n)}
         section_end(p)
     }
     if section(p,.Layout,"Layout",.Grid) {section_layout(p,n)}
@@ -223,7 +229,7 @@ section :: proc(p:^Pane,which:Section,title:string,icon:ui.Icon=.None,whole:=fal
     ui.id_push(ctx,ui.id(ctx,"section",int(which)+1))
     p.which,p.icon,p.pending,p.whole=which,icon,"",false
     if p.needle!="" {
-        if editor.contains_fold(title,p.needle) {
+        if base.contains_fold(title,p.needle) {
             p.whole=true
             return card_open(p,title)
         }
@@ -270,7 +276,7 @@ card_open :: proc(p:^Pane,title:string) -> bool {
 @(private)
 shown :: proc(p:^Pane,label:string) -> bool {
     if p.needle=="" || p.whole {return true}
-    if !editor.contains_fold(label,p.needle) {return false}
+    if !base.contains_fold(label,p.needle) {return false}
     if p.pending!="" {
         title:=p.pending
         p.pending=""
@@ -342,13 +348,13 @@ edit :: proc(u:^Ui_Inspector,label:string,changes:bool) {
 @(private)
 section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     u:=p.u
-    d:=node_default(n.kind)
+    d:=author.node_default(n.kind)
     // The text, and the bubble that shows it in each language of the game.
     text_row :: proc(p:^Pane,n:^ui.Tree_Node,label,about:string) {
         ctx:=p.s.gui.ctx
         if !shown(p,label) {return}
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Center}) {
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {edit(p.u,"Text",string_row(p,label,&n.text,node_default_text(n.kind),about))}
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {edit(p.u,"Text",string_row(p,label,&n.text,author.node_default_text(n.kind),about))}
             texts_button(p,n,false)
         }
     }
@@ -382,7 +388,7 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         bind_only(p,"Value",n.bind_value[:],.Number,"It is selected while this value is what it writes, and choosing it writes it there")
         edit(u,"Writes",value_row(p,"Writes",Count_Value,&n.choice,d.choice,"What choosing it writes in its value"))
     case .Switcher:
-        if bindable(p,"Child",n.bind_value[:],.Number,"The node it builds: 0 is the first it holds") {edit(u,"Child",value_row(p,"Child",Count_Value,&n.index,d.index,"The node it builds: 0 is the first it holds"))}
+        if bindable(p,"Child",n.bind_value[:],.Number,"The node it builds: 0 is the first it holds; bound to an enum or a text, the node of that name") {edit(u,"Child",value_row(p,"Child",Count_Value,&n.index,d.index,"The node it builds: 0 is the first it holds"))}
     case .Tabs:
         if bindable(p,"Tab",n.bind_value[:],.Number,"The tab it shows, and where it writes the one the player chooses: 0 is the first node it holds") {edit(u,"Tab",value_row(p,"Tab",Count_Value,&n.index,d.index,"The tab it shows first: 0 is the first node it holds"))}
     case .Popup:
@@ -481,7 +487,7 @@ ghost_row :: proc(p:^Pane,n:^ui.Tree_Node) -> (changed:bool) {
     }
     if current!="" && chosen==0 {chosen=len(names);append(&names,current)}
     if row(p,"Under pointer","What shows under the pointer while it is dragged: a copy of it, or another node of the interface, by its name") {
-        if ui.dropdown(ctx,ui.id(ctx,"ghost"),names[:],&chosen,{width=-1}) {
+        if ui.dropdown(ctx,ui.id(ctx,"ghost"),{list=names[:]},&chosen,{width=-1}) {
             ui.tree_text_set(n.ghost[:],names[chosen] if chosen>0 else "")
             changed=true
         }
@@ -498,28 +504,44 @@ binding_row :: proc(p:^Pane,label:string,field:^[ui.TREE_PATH_CAPACITY]u8,about:
 @(private)
 section_layout :: proc(p:^Pane,n:^ui.Tree_Node) {
     u:=p.u
-    l:=&n.layout
-    d:=node_default(n.kind).layout
     list:=scope_nodes(u)
-    edit(u,"Layout",size_row(p,"Width",&l.width,d.width))
-    if l.width.kind==.Fit || l.width.kind==.Grow {edit(u,"Layout",limits_row(p,"Width limits",&l.width,d.width))}
-    edit(u,"Layout",size_row(p,"Height",&l.height,d.height))
-    if l.height.kind==.Fit || l.height.kind==.Grow {edit(u,"Layout",limits_row(p,"Height limits",&l.height,d.height))}
-    edit(u,"Layout",value_row(p,"Aspect",Positive_Value,&l.aspect,d.aspect,"The width over the height it keeps: the side that fits gives the other; 0: none"))
-    // How it places itself in what holds it.
-    if parent:=int(n.parent);parent>=0 && parent<len(list) {
-        about:="Where it goes across the direction of what holds it, in its cell of a grid or in a stack: as what holds it says, or on its own"
-        edit(u,"Layout",value_row(p,"Align self X",Enum_Value(ui.Self_Align),&l.self_x,d.self_x,about))
-        edit(u,"Layout",value_row(p,"Align self Y",Enum_Value(ui.Self_Align),&l.self_y,d.self_y,about))
-        if list[parent].layout.direction==.Grid {edit(u,"Layout",value_row(p,"Span",Span_Value,&l.span,d.span,"The columns of the grid it takes; 0 is 1"))}
+    holds:=ui.node_kind_holds(n.kind) || n.kind==.Action_Bar
+    grid:=false
+    if parent:=int(n.parent);parent>=0 && parent<len(list) {grid=list[parent].layout.direction==.Grid}
+    layout_rows(p,&n.layout,author.node_default(n.kind).layout,&n.layout_own,n,int(n.parent)>=0 && int(n.parent)<len(list),holds,grid)
+}
+
+// The rows of a layout, of a node or of a style: the row a person changes is
+// its own from then on, what its style gave it until then. own: the keys of
+// the layout that are set here. n: the node, for its grid.
+@(private)
+layout_rows :: proc(p:^Pane,l:^ui.Layout,d:ui.Layout,own:^ui.Style_Keys,n:^ui.Tree_Node,in_parent,holds,grid:bool) {
+    u:=p.u
+    row :: proc(p:^Pane,own:^ui.Style_Keys,key:ui.Style_Key,changes:bool) {
+        if changes {
+            own^+={key}
+            changed(p.u,"Layout")
+        }
     }
-    if ui.node_kind_holds(n.kind) || n.kind==.Action_Bar {
-        edit(u,"Layout",value_row(p,"Direction",Enum_Value(ui.Direction),&l.direction,d.direction,"How it lays out what it holds: in a row, in a column, in a grid of Columns cells, in rows that wrap where the next does not fit, or one over another"))
-        if l.direction==.Grid {grid_rows(p,n)}
-        edit(u,"Layout",value_row(p,"Align X",Align_X_Value,&l.align_x,d.align_x,"Where what it holds goes across it when it does not fill it; to fill it, a node grows"))
-        edit(u,"Layout",value_row(p,"Align Y",Align_Y_Value,&l.align_y,d.align_y,"Where what it holds goes down it when it does not fill it; to fill it, a node grows"))
-        edit(u,"Layout",value_row(p,"Gap",Positive_Value,&l.gap,d.gap,"The room between the nodes it holds"))
-        edit(u,"Layout",value_row(p,"Padding",Sides_Value,&l.padding,d.padding,"The room between its edges and what it holds"))
+    row(p,own,.Width,size_row(p,"Width",&l.width,d.width))
+    if l.width.kind==.Fit || l.width.kind==.Grow {row(p,own,.Width,limits_row(p,"Width limits",&l.width,d.width))}
+    row(p,own,.Height,size_row(p,"Height",&l.height,d.height))
+    if l.height.kind==.Fit || l.height.kind==.Grow {row(p,own,.Height,limits_row(p,"Height limits",&l.height,d.height))}
+    row(p,own,.Aspect,value_row(p,"Aspect",Positive_Value,&l.aspect,d.aspect,"The width over the height it keeps: the side that fits gives the other; 0: none"))
+    // How it places itself in what holds it.
+    if in_parent {
+        about:="Where it goes across the direction of what holds it, in its cell of a grid or in a stack: as what holds it says, or on its own"
+        row(p,own,.Self_X,value_row(p,"Align self X",Enum_Value(ui.Self_Align),&l.self_x,d.self_x,about))
+        row(p,own,.Self_Y,value_row(p,"Align self Y",Enum_Value(ui.Self_Align),&l.self_y,d.self_y,about))
+        if grid {row(p,own,.Span,value_row(p,"Span",Span_Value,&l.span,d.span,"The columns of the grid it takes; 0 is 1"))}
+    }
+    if holds {
+        row(p,own,.Direction,value_row(p,"Direction",Enum_Value(ui.Direction),&l.direction,d.direction,"How it lays out what it holds: in a row, in a column, in a grid of Columns cells, in rows that wrap where the next does not fit, or one over another"))
+        if l.direction==.Grid && n!=nil {grid_rows(p,n)}
+        row(p,own,.Align_X,value_row(p,"Align X",Align_X_Value,&l.align_x,d.align_x,"Where what it holds goes across it when it does not fill it; to fill it, a node grows"))
+        row(p,own,.Align_Y,value_row(p,"Align Y",Align_Y_Value,&l.align_y,d.align_y,"Where what it holds goes down it when it does not fill it; to fill it, a node grows"))
+        row(p,own,.Gap,value_row(p,"Gap",Positive_Value,&l.gap,d.gap,"The room between the nodes it holds"))
+        row(p,own,.Padding,value_row(p,"Padding",Sides_Value,&l.padding,d.padding,"The room between its edges and what it holds"))
     }
 }
 
@@ -529,17 +551,17 @@ grid_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
     u:=p.u
     r:=&u.records
     l:=&n.layout
-    d:=node_default(n.kind).layout
+    d:=author.node_default(n.kind).layout
     if value_row(p,"Columns",Count_Value,&l.columns,d.columns,"The cells of each row of the grid") {
         if l.tracks!=0 {
-            if at:=records_grid_tracks(r,n);at>=0 {records_grid_tracks_count(r,at,int(l.columns))}
+            if at:=author.records_grid_tracks(r,n);at>=0 {author.records_grid_tracks_count(r,at,int(l.columns))}
         }
         changed(u,"Layout")
     }
     at:=int(l.tracks)-1
     if at<0 || at>=len(r.grid_tracks) {
         if shown(p,"Column widths") && add_button(p,"tracks_add","Column widths") {
-            if records_grid_tracks(r,n)>=0 {changed(u,"Columns")}
+            if author.records_grid_tracks(r,n)>=0 {changed(u,"Columns")}
         }
         return
     }
@@ -547,7 +569,7 @@ grid_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
     for i in 0..<int(tracks.count) {
         ui.id_push(p.s.gui.ctx,ui.id(p.s.gui.ctx,"track",i+1))
         if size_row(p,fmt.tprintf("Column %d",i+1),&tracks.columns[i],ui.GROW,"The width of the column: Fixed points, Percent of the grid, Fit to its widest cell, or Grow by its weight with the others that grow") {
-            if own:=records_grid_tracks(r,n);own>=0 {
+            if own:=author.records_grid_tracks(r,n);own>=0 {
                 r.grid_tracks[own].columns[i]=tracks.columns[i]
                 changed(u,"Columns")
             }
@@ -555,7 +577,7 @@ grid_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
         ui.id_pop(p.s.gui.ctx)
     }
     if shown(p,"Same widths") && add_button(p,"tracks_drop","Same widths") {
-        records_grid_tracks_drop(r,n)
+        author.records_grid_tracks_drop(r,n)
         changed(u,"Columns")
     }
 }
@@ -563,7 +585,7 @@ grid_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
 @(private)
 section_floating :: proc(p:^Pane,n:^ui.Tree_Node) {
     u:=p.u
-    d:=node_default(n.kind).float
+    d:=author.node_default(n.kind).float
     edit(u,"Float",value_row(p,"Float",Enum_Value(ui.Float_To),&n.float.to,d.to,"Out of the layout of its parent, over it: hung from the screen, its safe area, its parent or the root of a panel in the world. On the stage, the screen and its safe area are the stage"))
     if n.float.to==.None {return}
     edit(u,"Float",value_row(p,"Anchor",Enum_Value(ui.Anchor),&n.float.anchor,d.anchor,"The point of what it hangs from"))
@@ -578,15 +600,15 @@ section_floating :: proc(p:^Pane,n:^ui.Tree_Node) {
 @(private)
 section_focus :: proc(p:^Pane,n:^ui.Tree_Node) {
     u:=p.u
-    d:=node_default(n.kind).flags
-    if focusable(n.kind) {edit(u,"Navigation",flag_row(p,"Focused first",&n.flags,.Focus_First,d,"It has the focus when the interface shows"))}
+    d:=author.node_default(n.kind).flags
+    if focusable(n.kind) {edit(u,"Navigation",flag_row(p,"Focused first",&n.flags,.Focus_First,d,"It asks for the focus when its page shows; without this the first control of the page has it"))}
     edit(u,"Navigation",flag_row(p,"Skipped",&n.flags,.Skip,d,"Navigation goes past it, and past what it holds"))
     if ui.node_kind_holds(n.kind) {
         edit(u,"Navigation",flag_row(p,"Wraps sideways",&n.flags,.Wrap_X,d,"Past its last node to the right, the focus goes to its first"))
         edit(u,"Navigation",flag_row(p,"Wraps up and down",&n.flags,.Wrap_Y,d,"Past its last node down, the focus goes to its first"))
     }
     if focusable(n.kind) && advanced(p) {
-        nd:=node_default(n.kind)
+        nd:=author.node_default(n.kind)
         sides:=[4]string{"Up","Right","Down","Left"}
         for side,i in sides {edit(u,"Navigation",value_row(p,fmt.tprintf("Focus %s",side),Name_Value,&n.nav[i],nd.nav[i],"The node, by its name, the focus goes to that way; empty: the closest one"))}
         edit(u,"Navigation",value_row(p,"Tab order",Order_Value,&n.order,nd.order,"Where Tab takes the focus: lower first; 0 follows the tree"))
@@ -601,14 +623,14 @@ style_edit_begin :: proc(p:^Pane,n:^ui.Tree_Node) {
     row:=int(n.style)
     p.style={row=row}
     if row>=len(r.styles) {return}
-    base:=records_style_base(r,row)
+    base:=author.records_style_base(r,row)
     p.style.defaults=r.styles[base if base>=0 else row]
-    named:=records_style_named(r,row)
-    if base<0 && (named || row==0 || records_style_users(r,row)>1) {
+    named:=author.records_style_named(r,row)
+    if base<0 && (named || row==0 || author.records_style_users(r,row)>1) {
         p.style.draft,p.style.own=true,!named
         p.style.values=r.styles[row]
         p.style.variants=make([dynamic]ui.Tree_Style_Variant,context.temp_allocator)
-        append(&p.style.variants,..records_style_variants(r,row))
+        append(&p.style.variants,..author.records_style_variants(r,row))
     }
 }
 
@@ -616,11 +638,16 @@ style_edit_begin :: proc(p:^Pane,n:^ui.Tree_Node) {
 @(private)
 style_edit_end :: proc(p:^Pane,n:^ui.Tree_Node) {
     if p.style.label=="" || p.readonly {return}
+    r:=&p.u.records
+    row:=p.style.row
     if p.style.draft {
-        row:=records_style_add(&p.u.records,p.style.values,p.style.variants[:],{} if p.style.own else {base=u16(p.style.row+1)})
+        info:=ui.Tree_Style_Info{family=author.style_family(n.kind)}
+        if !p.style.own {ui.tree_text_set(info.extends[:],author.records_style_name(r,row))}
+        row=author.records_style_add(r,p.style.values,p.style.variants[:],info)
         if row<0 {return}
         n.style=u16(row)
     }
+    author.records_override_own(r,row)
     changed(p.u,p.style.label)
 }
 
@@ -648,23 +675,23 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     r:=&u.records
-    base:=records_style_base(r,int(n.style))
+    base:=author.records_style_base(r,int(n.style))
     current:=base if base>=0 else int(n.style)
-    named:=records_style_named(r,current)
-    family:=style_family(n.kind)
+    named:=author.records_style_named(r,current)
+    family:=author.style_family(n.kind)
     names:=make([dynamic]string,context.temp_allocator)
     rows:=make([dynamic]int,context.temp_allocator)
     append(&names,"None");append(&rows,-1)
     selected:=0
     for i in 0..<len(r.styles) {
-        if !records_style_named(r,i) || records_style_base(r,i)>=0 || r.style_infos[i].family!=family {continue}
+        if !author.records_style_named(r,i) || author.records_style_base(r,i)>=0 || r.style_infos[i].family!=family {continue}
         if i==current {selected=len(names)}
-        append(&names,records_style_name(r,i));append(&rows,i)
+        append(&names,author.records_style_name(r,i));append(&rows,i)
     }
     // A style of another family the node already has stays in its list.
     if named && selected==0 {
         selected=len(names)
-        append(&names,records_style_name(r,current));append(&rows,current)
+        append(&names,author.records_style_name(r,current));append(&rows,current)
     }
     if selected>0 && base>=0 {names[selected]=fmt.tprintf("%s *",names[selected])}
     icon :: proc(ctx:^ui.Context,name:string,icon:ui.Icon,tip:string,disabled:=false) -> bool {
@@ -677,30 +704,36 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
             if ctx.edit.id!=field {ui.edit_request(ctx,field)}
             result:=ui.text_field(ctx,field,u.style_name[:len(u.style_name)-1],&u.style_name_length,{width=ui.GROW})
             if result.committed && u.style_name_length>0 {
-                ui.tree_text_set(r.style_infos[current].name[:],string(u.style_name[:u.style_name_length]))
+                author.records_style_rename(r,current,string(u.style_name[:u.style_name_length]))
                 changed(u,"Rename style")
             }
             if result.committed || result.cancelled {u.style_rename=false}
-        } else if ui.dropdown(ctx,ui.id(ctx,"style"),names[:],&selected,{width=-1}) {
+        } else if ui.dropdown(ctx,ui.id(ctx,"style"),{list=names[:]},&selected,{width=-1}) {
             old:=int(n.style)
             to:=rows[selected]
             // None keeps the look the node has, as its own.
-            if to<0 {to=records_style_add(r,r.styles[old],records_style_variants(r,old),{})}
+            if to<0 {
+                rules:=author.records_style_variants(r,old)
+                author.records_rules_own(rules)
+                to=author.records_style_add(r,r.styles[old],rules,{})
+            }
             if to>=0 {
                 n.style=u16(to)
-                if !records_style_named(r,old) {n.style=u16(records_style_remove(r,old,to))}
+                if !author.records_style_named(r,old) {n.style=u16(author.records_style_remove(r,old,to))}
                 changed(u,"Style")
             }
         }
         if icon(ctx,"style_new",.Plus,"New style with this look") {
             at:=int(n.style)
             if base>=0 {
-                r.style_infos[at].base=0
-            } else if named || at==0 || records_style_users(r,at)>1 {
-                at=records_style_add(r,r.styles[at],records_style_variants(r,at),{})
+                author.records_style_detach(r,at)
+            } else if named || at==0 || author.records_style_users(r,at)>1 {
+                rules:=author.records_style_variants(r,at)
+                author.records_rules_own(rules)
+                at=author.records_style_add(r,r.styles[at],rules,{})
             }
             if at>=0 {
-                ui.tree_text_set(r.style_infos[at].name[:],records_style_name_unique(r))
+                ui.tree_text_set(r.style_infos[at].name[:],author.records_style_name_unique(r))
                 r.style_infos[at].family=family
                 n.style=u16(at)
                 style_rename_begin(u,at)
@@ -712,22 +745,23 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     if current>0 && current<len(r.style_infos) && !p.readonly {
         taken:=n.kind in r.style_infos[current].defaults
         if value_row(p,"Default",Flag_Value,&taken,false,fmt.tprintf("New %v nodes of this file take this style",n.kind)) {
-            if taken {records_kind_style_set(r,current,{n.kind})} else {r.style_infos[current].defaults-={n.kind}}
+            if taken {author.records_kind_style_set(r,current,{n.kind})} else {r.style_infos[current].defaults-={n.kind}}
             changed(u,"Default style")
         }
     }
     // The changes of this node to the style it shares: into the style, or away.
     if base>=0 && !p.readonly {
         p.flush=true
-        if row(p,"Changes",fmt.tprintf("What this node changes of %s, marked *: Apply to style writes it into the style, for every node that has it; Revert leaves the style as it is and the node with it",records_style_name(r,base))) {
-            if ui.button(ctx,ui.id(ctx,"style_apply"),{label="Apply to style",style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
-                n.style=u16(records_style_save(r,int(n.style)))
+        lent:=r.style_infos[base].from!=0
+        if row(p,"Changes",fmt.tprintf("What this node changes of %s, marked *: Apply to style writes it into the style, for every node that has it; Revert leaves the style as it is and the node with it. A style another file lends is changed in that file",author.records_style_name(r,base))) {
+            if ui.button(ctx,ui.id(ctx,"style_apply"),{label="Apply to style",style=.Field,width=-1,height=th.row,size=th.font_small,disabled=lent}).clicked {
+                n.style=u16(author.records_style_save(r,int(n.style)))
                 changed(u,"Apply to style")
             }
             if ui.button(ctx,ui.id(ctx,"style_revert"),{label="Revert",icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
                 old:=int(n.style)
                 n.style=u16(base)
-                n.style=u16(records_style_remove(r,old,base))
+                n.style=u16(author.records_style_remove(r,old,base))
                 changed(u,"Revert style")
             }
         }
@@ -739,7 +773,28 @@ style_head :: proc(p:^Pane,n:^ui.Tree_Node) {
 @(private)
 style_rename_begin :: proc(u:^Ui_Inspector,row:int) {
     u.style_rename,u.style_renamed=true,row
-    u.style_name_length=copy(u.style_name[:len(u.style_name)-1],records_style_name(&u.records,row))
+    u.style_name_length=copy(u.style_name[:len(u.style_name)-1],author.records_style_name(&u.records,row))
+}
+
+// What names give a style, in the Style card: the style it extends, and the
+// rows of the layout it gives every node that takes it. Changing a layout
+// here reaches them at once, as the file settles when it is written.
+@(private)
+style_names_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
+    r:=&p.u.records
+    row:=int(n.style)
+    if row<=0 || row>=len(r.style_infos) || author.records_style_base(r,row)>=0 || !author.records_style_named(r,row) {return}
+    info:=&r.style_infos[row]
+    ctx:=p.s.gui.ctx
+    if p.needle=="" {
+        if ext:=serial.text_field(info.extends[:]);ext!="" {ui.label(ctx,fmt.tprintf("Extends %s",ext),ctx.theme.font_small,ctx.theme.text_muted)}
+        if info.from!=0 {ui.label(ctx,"From another file: change it there",ctx.theme.font_small,ctx.theme.text_muted)}
+    }
+    if info.from!=0 || p.readonly {return}
+    open:=p.u.ux.style_layout_open
+    defer p.u.ux.style_layout_open=open
+    if p.needle=="" && !subsection(p,ui.id(ctx,"style_layout"),"Layout of the style",&open) {return}
+    layout_rows(p,&info.layout,{},&info.sets,nil,true,true,false)
 }
 
 // The style of the node: its look, box and text, in the variant it shows,
@@ -754,7 +809,8 @@ section_style :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     r:=&u.records
     style_head(p,n)
     if p.style.row>=len(r.styles) {return}
-    if users:=records_style_users(r,int(n.style));users>1 && p.needle=="" && records_style_named(r,int(n.style)) {ui.label(ctx,fmt.tprintf("Shared by %d nodes",users),th.font_small,th.text_muted)}
+    if users:=author.records_style_users(r,int(n.style));users>1 && p.needle=="" && author.records_style_named(r,int(n.style)) {ui.label(ctx,fmt.tprintf("Shared by %d nodes",users),th.font_small,th.text_muted)}
+    style_names_rows(p,n)
     // What lays the text out is the style's in every variant and state: first.
     fixed_rows(p,n)
     look_head(p,n)
@@ -869,7 +925,7 @@ text_rows :: proc(p:^Pane) {
     chosen:=0
     for value,i in values {if value==t.font {chosen=i}}
     if row(p,"Font","A font of the editor, or one of the fonts of the file") {
-        if ui.dropdown(ctx,ui.id(ctx,"font"),fonts[:],&chosen,{width=-1}) {t.font=values[chosen];look_changed(p,"Text",.Text_Font,true)}
+        if ui.dropdown(ctx,ui.id(ctx,"font"),{list=fonts[:]},&chosen,{width=-1}) {t.font=values[chosen];look_changed(p,"Text",.Text_Font,true)}
     }
     look_changed(p,"Text",.Text_Size,value_row(p,"Size",Positive_Value,&t.size,d.size))
     look_color(p,"Color",.Text_Color,&t.color,d.color,group="Text")
@@ -892,26 +948,26 @@ style_advanced :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     chosen:=0
     current:=serial.text_field(st.program[:])
     if a.renderer!=nil {
-        for &program in gpu.renderer_programs(a.renderer) {
+        for &program in erender.programs(a.renderer) {
             if program.domain!=.Ui {continue}
             if program.name==current {chosen=len(programs)}
             append(&programs,program.name)
         }
     }
     if row(p,"Program","A ui program of the shaders of the project that colors the fill instead, as the shader says") {
-        if ui.dropdown(ctx,ui.id(ctx,"program"),programs[:],&chosen,{width=-1}) {
+        if ui.dropdown(ctx,ui.id(ctx,"program"),{list=programs[:]},&chosen,{width=-1}) {
             name:=programs[chosen] if chosen>0 else ""
             ui.tree_text_set(st.program[:],name)
             st.program_values={}
-            if program:=gpu.program_find(a.renderer,name,.Ui) if a.renderer!=nil && name!="" else nil;program!=nil {
-                defaults:=gpu.program_defaults(program)
+            if program:=erender.program_find(a,name,.Ui) if name!="" else nil;program!=nil {
+                defaults:=erender.program_defaults(program)
                 st.program_values=transmute([4]f32)defaults[0]
             }
             style_changed(p,"Program",true)
         }
     }
     if current!="" {style_changed(p,"Program",value_row(p,"Values",Program_Value,&st.program_values,d_style.program_values,"The first parameters of the program"))}
-    if ui.node_kind_holds(n.kind) {layer_rows(p,u,&n.layer,node_default(n.kind).layer)}
+    if ui.node_kind_holds(n.kind) {layer_rows(p,u,&n.layer,author.node_default(n.kind).layer)}
 }
 
 // A layer of its own of what holds nodes.
@@ -945,12 +1001,12 @@ section_styles :: proc(p:^Pane,n:^ui.Tree_Node) {
     r:=&u.records
     removed:=-1
     for i in 0..<len(r.styles) {
-        if !records_style_named(r,i) || records_style_base(r,i)>=0 {continue}
-        name:=records_style_name(r,i)
+        if !author.records_style_named(r,i) || author.records_style_base(r,i)>=0 {continue}
+        name:=author.records_style_name(r,i)
         if !shown(p,name) {continue}
-        users:=records_style_users(r,i)
+        users:=author.records_style_users(r,i)
         // An override of it is a node that has it too.
-        for j in 0..<len(r.styles) {users+=int(records_style_base(r,j)==i)}
+        for j in 0..<len(r.styles) {users+=int(author.records_style_base(r,j)==i)}
         ui.id_push(ctx,ui.id(ctx,"style",i+1))
         p.flush=true
         if row(p,name) {
@@ -962,7 +1018,7 @@ section_styles :: proc(p:^Pane,n:^ui.Tree_Node) {
     }
     if removed>=0 {
         keep:=int(n.style) if n!=nil else 0
-        kept:=records_style_remove(r,removed,keep)
+        kept:=author.records_style_remove(r,removed,keep)
         if n!=nil {n.style=u16(kept)}
         changed(u,"Delete style")
     }
@@ -981,7 +1037,7 @@ section_image :: proc(p:^Pane,n:^ui.Tree_Node) {
     if n.image==0 || int(n.image)>len(r.images) {
         if n.kind==.Image {bind_only(p,"Texture",n.bind_image[:],.Asset,about)}
         if add_button(p,"image_add","Add image") {
-            if records_image(r,n)>=0 {changed(u,"Image")}
+            if author.records_image(r,n)>=0 {changed(u,"Image")}
         }
         return
     }
@@ -1087,10 +1143,10 @@ value_row :: proc(p:^Pane,label:string,$H:typeid,value:^$V,default:V,about:="") 
 string_row :: proc(p:^Pane,label:string,s:^ui.Tree_String,default:string,about:="") -> (changed:bool) {
     r:=&p.u.records
     value,initial:[TEXT_EDIT]u8
-    ui.tree_text_set(value[:],records_text(r,s^))
+    ui.tree_text_set(value[:],author.records_text(r,s^))
     ui.tree_text_set(initial[:],default)
     if !value_row(p,label,Text_Value,&value,initial,about) {return}
-    records_text_set(r,s,serial.text_field(value[:]))
+    author.records_text_set(r,s,serial.text_field(value[:]))
     return true
 }
 
@@ -1173,7 +1229,7 @@ action_row :: proc(p:^Pane,label:string,field:[]u8) -> (changed:bool) {
         append(&names,fmt.tprintf("%s (missing)",current))
     }
     if row(p,label,"An input action of the game, as input.mirai binds it; one marked missing the game does not declare, and does nothing") {
-        if ui.dropdown(ctx,ui.id(ctx,label),names[:],&selected,{width=-1}) && !(missing && selected==len(names)-1) {
+        if ui.dropdown(ctx,ui.id(ctx,label),{list=names[:]},&selected,{width=-1}) && !(missing && selected==len(names)-1) {
             for &b in field {b=0}
             if selected>0 {copy(field[:len(field)-1],names[selected])}
             changed=true
@@ -1192,7 +1248,7 @@ size_row :: proc(p:^Pane,label:string,size:^ui.Size,default:ui.Size,about:="Fit:
         ui.id_push(ctx,ui.id(ctx,label))
         defer ui.id_pop(ctx)
         kind:=int(size.kind)
-        if ui.dropdown(ctx,ui.id(ctx,"kind"),{"Fit","Grow","Fixed","Percent"},&kind,{width=84}) {
+        if ui.dropdown(ctx,ui.id(ctx,"kind"),{list={"Fit","Grow","Fixed","Percent"}},&kind,{width=84}) {
             size.kind=ui.Size_Kind(kind)
             if size.kind==.Percent && size.value>1 {size.value=1}
             changed=true
@@ -1226,7 +1282,7 @@ list_row :: proc(p:^Pane,label:string,value:^$E,names:[]string) -> (changed:bool
     ctx:=p.s.gui.ctx
     if row(p,label) {
         selected:=int(value^)
-        if ui.dropdown(ctx,ui.id(ctx,label),names,&selected,{width=-1}) {value^=E(selected);changed=true}
+        if ui.dropdown(ctx,ui.id(ctx,label),{list=names},&selected,{width=-1}) {value^=E(selected);changed=true}
     }
     return
 }

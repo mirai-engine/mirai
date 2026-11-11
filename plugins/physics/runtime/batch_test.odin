@@ -9,7 +9,7 @@ import "mirai:core"
 @(test)
 bodies_come_and_go_a_part_of_each_tick :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     COUNT :: BODIES_PER_TICK*2+10
     f.settings.bodies,f.settings.shapes=COUNT+8,COUNT+8

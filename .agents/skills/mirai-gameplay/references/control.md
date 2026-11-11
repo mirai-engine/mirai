@@ -182,7 +182,7 @@ its own seats; `Drivable` is not replicated.
 - An AI needs no seat: it writes the `Move_Input` of its body while no seat drives it, only where
   this end decides (`core.owned`). A seated `Nav_Agent` also walks a body its seat drives while it
   goes, keeping the seat's buttons
-  ([navigation](../../mirai-plugins/references/navigation.md#agents)).
+  ([navigation](../../mirai-world/references/navigation.md#agents)).
 
 ## Spawn points
 
@@ -195,8 +195,8 @@ requested point, the points are used in turn in table order; a game with another
 distance) picks the point and passes it.
 
 - Requests in `^spawn.Spawn_Requests`, which `spawn_step` (`fixed`, `input`) takes before driving.
-- `spawn(r, seat, prefab={}, point=NONE)`: takes the requested point or the next one with a prefab,
-  instantiates the requested prefab, the point's or `Spawn_Settings.prefab` (the project's player
+- `spawn(r, seat, path="", point=NONE)`: takes the requested point or the next one with a prefab,
+  instantiates the prefab at `path`, the point's or `Spawn_Settings.prefab` (the project's player
   body) with its world transform (`scene.spawn`, `transient`) and asks the seat to drive it, in the
   same tick. In the editor's Play, a scene without points makes it appear at the editor camera
   (`scene.Play_Origin`, which the editor fills when Play starts). With Play from here or from
@@ -208,7 +208,7 @@ distance) picks the point and passes it.
   the collider of its root on what is below, without burying it; from inside something, or with
   nothing below within reach, it stays where the editor put it. Up to `SPAWN_CAPACITY` bodies per
   tick (`spawn.spawns_full`). Without a point with a prefab it is the problem
-  `spawn.no_spawn_point` of the seat; a prefab that does not appear, `spawn.spawn_prefab` of the
+  `spawn.no_spawn_point` of the seat; a prefab that does not appear, `scene.spawn` of the
   point. On a client it is rejected (`spawn.client_spawn`): the server decides.
 - A body given to a seat carries `Seat_Body`: `spawn_seat_bodies` (`fixed`, `input`) destroys it
   when its seat no longer exists (a player who left). A body given by the game does not carry it,
@@ -262,7 +262,8 @@ of the focused slot in `render.View_Camera`.
 - The view changes when the chosen camera changes or when its camera takes a mode, with the
   transition of the override or of the mode; without a transition it cuts and marks `cut`.
 - A transition starts from what the view was drawing, which travels with the seat's body and
-  turns around it as the new camera turns (a player looking around) while it lasts; meanwhile, `View_Camera.posed` says the view comes from `pose` and does not cut: the
+  turns around it as the new camera turns (a player looking around) while it lasts; meanwhile,
+  `View_Camera.posed` says the view comes from `pose` and does not cut: the
   temporal history of the render continues. One requested in the middle of another starts from
   what is drawn.
 - Around the pivot of an `Orbit` the position rotates, so it does not cross the target. Between a
@@ -394,7 +395,7 @@ where the geometry covers the change.
   that acts from the next tick whatever the bindings, its contexts, blocks and capacity, and the
   same holds giving the same ticks; in `remote_test.odin`, the actions another end sent, a
   repeated tick and hostile ones. The rename that rewrites
-  `input.mirai`: `mirai test editor renaming_an_action_renames_it_in_input_mirai`.
+  `input.mirai`: `mirai test editor renaming_an_action_follows_the_code_in_input_mirai`.
   `mirai test plugins/spawn/runtime`: the bodies of a seat that leaves.
 - `mirai test engine/camera`: modes, views that enter and leave an override and a mode, the orbit
   and the dolly zoom of the blend, the dead zone, the lead and a camera that an action brings, and

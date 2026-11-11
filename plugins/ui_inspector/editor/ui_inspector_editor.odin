@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:mem/virtual"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:engine/gui"
@@ -37,24 +38,15 @@ ui_documents_default :: proc() -> Ui_Documents {
     return {provider={kinds={0=asset.KIND_UI},count=1,hierarchy={0},flat={0},creates={0},create=ui_create,actions={.Copy,.Paste,.Duplicate,.Delete,.Rename}}}
 }
 
-// The records of a new .ui, in the temporary allocator: a root Box that grows
-// to the surface, and style 0.
-ui_empty_data :: proc() -> ui.Tree_Data {
-    nodes:=make([]ui.Tree_Node,1,context.temp_allocator)
-    texts:=make([dynamic]u8,context.temp_allocator)
-    nodes[0]=ui.tree_node_record(&texts,-1,{kind=.Box,name="root",layout={width=ui.GROW,height=ui.GROW},float={to=.Surface}})
-    return {nodes=nodes,styles=make([]ui.Node_Style,1,context.temp_allocator)}
-}
-
 // The bytes of the empty .ui Create of the content browser and asset.create make.
 ui_create :: proc(s:^editor.Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 {
     a:=s.app.assets
     if a==nil || kind!=asset.KIND_UI {return nil}
-    bytes,error:=host.ui_tree_bytes(&a.types,id,ui_empty_data(),allocator=context.temp_allocator)
+    bytes,error:=host.ui_tree_bytes(&a.types,id,author.ui_empty_data(),allocator=context.temp_allocator)
     return bytes if error==.None else nil
 }
 
-Section :: enum u8 {Node,Layout,Floating,Focus,Style,Events,Image,Animations,Component,Fonts,Styles}
+Section :: enum u8 {Node,Layout,Floating,Focus,Style,Events,Image,Animations,Component,Parameters,Fonts,Styles}
 
 @(storage,free="ui_inspector_free")
 Ui_Inspector :: struct {
@@ -64,12 +56,11 @@ Ui_Inspector :: struct {
     failed:bool,           // the file could not be read
     stamp:[2]i64,          // size and time of the file when the records were read or written
     cursor:int,            // of the history of the document then
-    records:Records,
+    records:author.Records,
     pending:bool,          // the records changed and the file does not have it yet
     label:[LABEL_CAPACITY]u8, // the step of history the change becomes
     change:u64,            // advances with every change of the records
-    scope:Scope,           // the tree, or the template edited
-    selected:int,          // row of the scope; -1: none
+    selected:int,          // row of the nodes; -1: none
     preview:Preview,
     stage:Stage,
     nodes_scroll,properties_scroll,add_scroll:[2]f32,
@@ -94,7 +85,7 @@ Ui_Inspector :: struct {
     anim:int,              // the animation the Animations section shows; -1: none
     editing:Inline_Edit,
     input:Preview_Input,
-    clip:Clip_Nodes,       // what Copy copied
+    clip:author.Clip_Nodes,       // what Copy copied
     renames:[UI_RENAMES]Node_Rename,
     rename_count:int,
     imports:Imports_Cache, // the widgets the records of the document name
@@ -104,17 +95,17 @@ Ui_Inspector :: struct {
     pick_prefix:[ui.TREE_PATH_CAPACITY]u8, // the path the list of a binding walked so far
     pick_length:int,
     pick_scroll:[2]f32,
-    bind_types:Bind_Types,
-    problems:[dynamic]Bind_Problem, // of the .ui of the project, against the game of checked_info
+    bind_types:author.Bind_Types,
+    problems:[dynamic]author.Bind_Problem, // of the .ui of the project, against the game of checked_info
     checked:[dynamic]Ui_Checked,    // the .ui those problems are of, as they were read
     checked_uses:[dynamic]base.Asset_Id,
     checked_info:^core.World_Info,
     checked_revision:u64,
-    problem:[BIND_PROBLEMS]Bind_Problem, // of the document in front, for change, problem_assets and problem_info
+    problem:[author.BIND_PROBLEMS]author.Bind_Problem, // of the document in front, for change, problem_assets and problem_info
     problem_count:int,
     problem_change,problem_assets:u64,
     problem_info:^core.World_Info,
-    widget_scope:Path_Scope, // where the @ paths of the document start, for widget_scope_id
+    widget_scope:author.Path_Scope, // where the @ paths of the document start, for widget_scope_id
     widget_scope_id:base.Asset_Id,
     widget_scope_revision:u64,
     widget_scope_info:^core.World_Info,
@@ -122,12 +113,12 @@ Ui_Inspector :: struct {
 }
 
 ui_inspector_free :: proc(u:^Ui_Inspector) {
-    records_destroy(&u.records)
+    author.records_destroy(&u.records)
     preview_free(&u.preview)
-    clip_destroy(&u.clip)
+    author.clip_destroy(&u.clip)
     imports_free(&u.imports)
     delete(u.input.actions)
-    bind_types_free(&u.bind_types)
+    author.bind_types_free(&u.bind_types)
     delete(u.problems);delete(u.checked);delete(u.checked_uses)
     ux_free(&u.ux)
     u^={}
@@ -154,9 +145,9 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
     // What it binds that the game does not have, once a gesture ends and after each build.
     if u.read && !u.pending && app.info!=nil && (u.problem_change!=u.change || u.problem_assets!=a.revision || u.problem_info!=app.info) {
         u.problem_change,u.problem_assets,u.problem_info=u.change,a.revision,app.info
-        data:=records_data(&u.records)
+        data:=author.records_data(&u.records)
         imports,imported:=imports_cached(&u.imports,a,data,u.allocator)
-        u.problem_count=bind_check(&u.bind_types,u.allocator,a,app.info,data,imports,imported,u.problem[:])
+        u.problem_count=author.bind_check(&u.bind_types,u.allocator,author.assets_of(a),app.info,data,imports,imported,u.problem[:])
         for &problem in u.problem[:u.problem_count] {problem.asset=u.id}
     }
     // What the AI is told the user picked: the node chosen, by name, or by kind and row.
@@ -194,13 +185,14 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
             ui.id_push(ctx,properties_id)
             defer ui.id_pop(ctx)
             properties_head(s,u)
+            origin:=editor.ai_provenance_asset_row(s)
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.SEARCH_BAR),padding={8,0,8,6},align_y=.Center}) {
                 if editor.search_field(s,ui.id(ctx,"search"),u.search[:],&u.search_length,"Search properties") {u.properties_scroll=0}
                 editor.scroll_shadow(s,u.properties_scroll.y>0)
             }
             // What another node shows has another length: kept, the offset could show nothing.
             if u.scrolled!=u.selected {u.properties_scroll,u.scrolled={},u.selected}
-            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
+            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
                 properties(s,u,a,details.width.value)
             }
         }
@@ -210,17 +202,13 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
     inspector_commit(s,u,a,d)
 }
 
-// The nodes of the scope edited.
-scope_nodes :: proc(u:^Ui_Inspector) -> []ui.Tree_Node {
-    list:=records_list(&u.records,u.scope)
-    return list[:] if list!=nil else nil
-}
+// The nodes of the document.
+scope_nodes :: proc(u:^Ui_Inspector) -> []ui.Tree_Node {return u.records.nodes[:]}
 
 // The node chosen; nil for none.
 selected_node :: proc(u:^Ui_Inspector) -> ^ui.Tree_Node {
-    list:=records_list(&u.records,u.scope)
-    if list==nil || u.selected<0 || u.selected>=len(list) {return nil}
-    return &list[u.selected]
+    if u.selected<0 || u.selected>=len(u.records.nodes) {return nil}
+    return &u.records.nodes[u.selected]
 }
 
 // The records changed: they go to the file once nothing holds them, as a
@@ -235,10 +223,10 @@ changed :: proc(u:^Ui_Inspector,label:string) {
 inspector_sync :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,id:base.Asset_Id,cursor:int) {
     if u.id!=id {
         view_keep(u)
-        records_destroy(&u.records)
+        author.records_destroy(&u.records)
         preview_free(&u.preview)
         u.id,u.read,u.failed,u.pending,u.rename_count=id,false,false,false,0
-        u.scope,u.anim=-1,-1
+        u.anim=-1
         u.editing={}
         u.texts.open=false
         view_take(u)
@@ -250,19 +238,18 @@ inspector_sync :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,id:base.
     if host.assets_file(a,id,asset.KIND_UI,&file)!=.None {u.failed=true;u.stamp,u.cursor=stamp,cursor;return}
     defer asset.asset_close(&file)
     data,error:=host.ui_tree_view(&file,&a.types)
-    records:Records
-    if error!=.None || !records_load(&records,data,u.allocator) {u.failed=true;u.stamp,u.cursor=stamp,cursor;return}
+    records:author.Records
+    if error!=.None || !author.records_load(&records,data,u.allocator) {u.failed=true;u.stamp,u.cursor=stamp,cursor;return}
     first:=!u.read
     // What an undo or a redo changed is chosen, as in a scene; records read
     // from the file, as these are, compare byte by byte.
     if !first {
-        if row:=records_changed_row(&u.records,&records,u.scope,u.selected);row>=0 {u.selected=row}
+        if row:=author.records_changed_row(&u.records,&records,u.selected);row>=0 {u.selected=row}
     }
-    records_destroy(&u.records)
+    author.records_destroy(&u.records)
     u.records=records
     u.read,u.failed,u.stamp,u.cursor,u.rename_count=true,false,stamp,cursor,0
     u.change+=1
-    if records_list(&u.records,u.scope)==nil {u.scope=-1}
     if first && u.selected<0 && len(u.records.nodes)>0 {u.selected=0}
     u.selected=min(u.selected,len(scope_nodes(u))-1)
     u.anim=min(u.anim,len(u.records.anims)-1)
@@ -348,14 +335,15 @@ inspector_write :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^edit
     record,found:=asset.registry_find(&a.registry,u.id)
     if !found {return false}
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
-    records_tidy(&u.records)
-    data:=records_data(&u.records)
-    imports,imported:=imports_cached(&u.imports,a,data,u.allocator)
+    author.records_tidy(&u.records)
+    params:=author.widget_params(author.assets_of(a),u.id)
+    imports,imported:=imports_cached(&u.imports,a,author.records_data(&u.records),u.allocator)
     bytes:[]u8
     error:=asset.Error.Invalid
-    if imported {bytes,error=host.ui_tree_bytes(&a.types,u.id,data,imports,context.temp_allocator)}
+    if imported {bytes,error=author.records_commit(&a.types,u.id,&u.records,imports)}
+    data:=author.records_data(&u.records)
     if error!=.None {
-        why:=load_why(a,data,imports) if imported else WIDGET_MISSING
+        why:=author.load_why(author.assets_of(a),data,imports) if imported else author.widget_why(author.assets_of(a),data)
         editor.notify(s,fmt.tprintf("That change leaves an interface that does not load (%s): it was undone",why) if error==.Invalid else fmt.tprintf("The interface could not be written: %v",error))
         u.read=false
         return false
@@ -366,10 +354,29 @@ inspector_write :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^edit
     u.stamp,u.cursor=file_stamp(a,u.id),d.history.cursor
     u.change+=1
     for &rename in renames[:count] {widget_rename_follow(s,u.id,serial.text_field(rename.from[:]),serial.text_field(rename.to[:]))}
+    widget_params_follow(s,a,u.id,author.params_changes(params,author.data_params(data,imports)))
     return true
 }
 
 // ---------------------------------------------------------------- widgets
+
+// Whether the document can be a widget: one root, what a use names as its
+// parts and where what it holds goes.
+widget_declares :: proc(u:^Ui_Inspector) -> bool {
+    roots:=0
+    for &n in u.records.nodes {roots+=int(n.parent<0)}
+    return roots==1
+}
+
+// What the uses of a widget gave follows where its parameters go now
+// (author.widget_params_follow): one step of history for each file changed.
+widget_params_follow :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,changes:[]author.Param_Change) {
+    author.widget_params_follow(author.assets_of(a),id,changes,proc(user:rawptr,id:base.Asset_Id,records:^author.Records) -> bool {
+        _,written:=records_write((^editor.Session)(user),id,records,"Follow widget")
+        return written
+    },s)
+}
+
 
 // The widgets the records of the document name, as host.ui_tree_imports read
 // them, while their files keep their stamps: they are read again when one
@@ -424,7 +431,7 @@ data_node :: proc(data:ui.Tree_Data,nodes:[]ui.Tree_Node,path:string) -> (node:u
             if len(path)==len(name) {return n,true}
             continue
         }
-        inner:=data_template(data,int(n.component))
+        inner:=author.data_template(data,int(n.component))
         if len(inner)==0 {return}
         if len(path)==len(name) {return inner[0],true}
         rest:=path[len(name)+1:]
@@ -434,15 +441,6 @@ data_node :: proc(data:ui.Tree_Data,nodes:[]ui.Tree_Node,path:string) -> (node:u
     return
 }
 
-// The nodes of a component of data (row plus one); none outside it.
-@(private)
-data_template :: proc(data:ui.Tree_Data,component:int) -> []ui.Tree_Node {
-    if component<=0 || component>len(data.components) {return nil}
-    c:=data.components[component-1]
-    if u64(c.first)+u64(c.count)>u64(len(data.component_nodes)) {return nil}
-    return data.component_nodes[c.first:][:c.count]
-}
-
 // The records an instance of the tree is made of, linked, and their nodes
 // its overrides name.
 @(private)
@@ -450,19 +448,15 @@ override_nodes :: proc(u:^Ui_Inspector,a:^host.Assets,instance:int) -> (data:ui.
     r:=&u.records
     if instance<0 || instance>=len(r.nodes) || r.nodes[instance].kind!=.Component {return}
     c:=int(r.nodes[instance].component)-1
-    if c<0 || c>=len(r.templates) {return}
-    if r.templates[c].component.widget=={} {
-        data=records_data(r)
-        return data,data_template(data,c+1),true
-    }
-    imports,imported:=imports_cached(&u.imports,a,records_data(r),u.allocator)
+    if c<0 || c>=len(r.components) {return}
+    imports,imported:=imports_cached(&u.imports,a,author.records_data(r),u.allocator)
     if !imported || c>=len(imports) {return}
     return imports[c],imports[c].nodes,true
 }
 
 // The names an override of an instance of the tree can reach: the nodes of
-// its widget or template and, past an instance of another widget there, the
-// nodes of that one.
+// its widget and, past an instance of another widget there, the nodes of
+// that one.
 override_targets :: proc(u:^Ui_Inspector,a:^host.Assets,instance:int) -> []string {
     names:=make([dynamic]string,context.temp_allocator)
     data,nodes,ok:=override_nodes(u,a,instance)
@@ -472,7 +466,7 @@ override_targets :: proc(u:^Ui_Inspector,a:^host.Assets,instance:int) -> []strin
         if name=="" {continue}
         append(&names,name)
         if n.kind!=.Component {continue}
-        inner:=data_template(data,int(n.component))
+        inner:=author.data_template(data,int(n.component))
         for &child in inner[min(1,len(inner)):] {
             if child_name:=serial.text_field(child.name[:]);child_name!="" {append(&names,fmt.tprintf("%s/%s",name,child_name))}
         }
@@ -498,12 +492,12 @@ override_field_set :: proc(u:^Ui_Inspector,a:^host.Assets,override:int,field:ui.
         if on {o.fields+={field}} else {o.fields-={field}}
         return
     }
-    source:^Records
-    if r.templates[int(r.nodes[o.instance].component)-1].component.widget!={} {
-        source=new(Records,context.temp_allocator)
-        if !records_load(source,data,context.temp_allocator) {return}
+    source:^author.Records
+    if r.components[int(r.nodes[o.instance].component)-1].widget!={} {
+        source=new(author.Records,context.temp_allocator)
+        if !author.records_load(source,data,context.temp_allocator) {return}
     }
-    records_override_field(r,override,field,on,source,node)
+    author.records_override_field(r,override,field,on,source,node)
 }
 
 // A node of the tree renamed from one name to another, which the overrides
@@ -518,8 +512,8 @@ widget_rename_follow :: proc(s:^editor.Session,id:base.Asset_Id,from,to:string) 
     if a==nil || from=="" || to=="" {return}
     for &file in a.registry.files {
         if file.kind!=asset.KIND_UI || file.id=={} || file.id==id {continue}
-        records:Records
-        if !records_read(a,file.id,&records,context.temp_allocator) {continue}
+        records:author.Records
+        if !author.records_read(author.assets_of(a),file.id,&records,context.temp_allocator) {continue}
         if records_rename_follow(a,&records,id,from,to)>0 {records_write(s,file.id,&records,"Rename node")}
     }
 }
@@ -527,11 +521,11 @@ widget_rename_follow :: proc(s:^editor.Session,id:base.Asset_Id,from,to:string) 
 // Renames from to to in the overrides of records that name node from of
 // the .ui id, as widget_rename_follow does in each file; how many changed.
 @(private)
-records_rename_follow :: proc(a:^host.Assets,records:^Records,id:base.Asset_Id,from,to:string) -> (count:int) {
+records_rename_follow :: proc(a:^host.Assets,records:^author.Records,id:base.Asset_Id,from,to:string) -> (count:int) {
     for &o in records.overrides {
         c:=int(records.nodes[o.instance].component)-1 if int(o.instance)<len(records.nodes) else -1
-        if c<0 || c>=len(records.templates) {continue}
-        count+=int(override_rename(a,o.node[:],records.templates[c].component.widget,id,from,to))
+        if c<0 || c>=len(records.components) {continue}
+        count+=int(override_rename(a,o.node[:],records.components[c].widget,id,from,to))
     }
     return
 }
@@ -544,15 +538,15 @@ override_rename :: proc(a:^host.Assets,field:[]u8,widget,id:base.Asset_Id,from,t
     path:=serial.text_field(field)
     w,start:=widget,0
     for depth:=0;w!={} && start<len(path) && depth<ui.TREE_DEPTH;depth+=1 {
-        if w==id {return path_part_rename(field,start,from,to)}
+        if w==id {return author.path_part_rename(field,start,from,to)}
         end:=strings.index_byte(path[start:],'/')
         end=len(path) if end<0 else start+end
-        records:Records
-        if !records_read(a,w,&records,context.temp_allocator) {return false}
+        records:author.Records
+        if !author.records_read(author.assets_of(a),w,&records,context.temp_allocator) {return false}
         next:base.Asset_Id
         for &n in records.nodes {
             if serial.text_field(n.name[:])!=path[start:end] || n.kind!=.Component {continue}
-            if c:=int(n.component)-1;c>=0 && c<len(records.templates) {next=records.templates[c].component.widget}
+            if c:=int(n.component)-1;c>=0 && c<len(records.components) {next=records.components[c].widget}
             break
         }
         w,start=next,end+1

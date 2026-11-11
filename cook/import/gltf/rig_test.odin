@@ -1,6 +1,5 @@
 package gltf
 
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:math/linalg"
@@ -116,8 +115,8 @@ a_humanoid_rig_fits_the_joints_a_person_placed_and_rests_as_the_template :: proc
     }
 
     // Its skeleton is written with a grip on each hand, measured on its skin.
-    folder:=temp_folder("rig-grips")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"rig-grips")
+    if folder=="" {return}
     report,error:=importer.import_write(&rigged,folder)
     defer importer.report_destroy(&report)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
@@ -168,13 +167,13 @@ a_humanoid_rig_fits_a_person_whose_arms_hang :: proc(t:^testing.T) {
     side_of:=make([]f32,len(bones),context.temp_allocator)
     for &bone,i in bones {
         name:=base.text_get(bone.name[:])
-        if strings.has_prefix(name,"upperarm_") {side_of[i]=1 if strings.has_suffix(name,"_l") else -1}
+        if strings.has_prefix(name,"upperarm_") {side_of[i]=-1 if strings.has_suffix(name,"_l") else 1}
         if bone.parent>=0 && side_of[i]==0 {side_of[i]=side_of[bone.parent]}
     }
     DOWN :: 0.75
     lowered :: proc(bones:[]asset.Skeleton_Bone,truth:[]mm.Transform,side:f32,p:mm.Vec3) -> mm.Vec3 {
         if side==0 {return p}
-        shoulder:=truth[bone_named(bones,"upperarm_l" if side>0 else "upperarm_r")].position
+        shoulder:=truth[bone_named(bones,"upperarm_l" if side<0 else "upperarm_r")].position
         return shoulder+mm.quat_rotate(mm.quat_axis_angle({0,0,1},-side*DOWN),p-shoulder)
     }
     positions:=make([][3]f32,len(mesh.vertices),context.temp_allocator)

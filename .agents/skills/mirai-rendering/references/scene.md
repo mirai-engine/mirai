@@ -26,6 +26,10 @@
   change only around those that appear, disappear or show something else (transform, mesh,
   material, tint, emission, flags; not the highlight); lights, sun and environment mark their own.
   A `mesh_add` marks nothing: no instance shows the mesh yet.
+- **Without memory** `scene_set`, `scene_update`, `scene_set_lights`, `materials_set` and
+  `materials_update` take the room of all they write before they change anything: they return
+  false with the scene as it was and the reason in `Renderer.error`, and the caller gives the
+  same again in a later frame.
 - What changes afterwards enters without replacing the scene
   ([partial changes](#partial-scene-changes)).
 - **Transform without an inverse.** An instance whose transform has no inverse (zero scale on some
@@ -110,7 +114,7 @@
   editor looks closer.
 - The G-buffer is drawn with one non-indexed indirect draw per phase, whose instance count is
   written by the culling: one instance per visible cluster, which the vertex shader reads from the
-  visible list ([culling](frame-graph.md#frame-graph)). No binds per material or per object.
+  visible list ([culling](frame-graph.md#passes)). No binds per material or per object.
 - `mesh_add` encodes vertices and indices with `asset.mesh_build` at one level and registers them
   with `mesh_add_geometry`, which takes the geometry from a file or that made earlier in a job
   (`host.assets_render_geometry_make`) with its ray cuts. The meshes made at runtime
@@ -126,7 +130,7 @@
   go in the block of each page: it is paged like any streamed mesh.
 - The registered geometry is immutable.
 
-### Partial scene changes
+## Partial scene changes
 
 `scene_set` rebuilds the instance table, their boxes, the software TLAS and the lights, and uploads
 the whole tables: it is used when what is drawn changes. For the rest:
@@ -142,7 +146,10 @@ the whole tables: it is used when what is drawn changes. For the rest:
     times that of when freshly built. The rays find the same surfaces as after a `scene_set`.
   - It returns `false`, without changing anything, if the lists differ in length or name an
     instance that the set did not have.
-- **`scene_tint(r, descs, tints, emissions)`** changes only tint and emission.
+  - One that is where it is told stays as it is: whoever moves gives every candidate and reads
+    in `count` how many moved.
+- **`scene_tint(r, descs, tints, emissions)`** changes only tint and emission, of those that had
+  another.
 - **`scene_update(r, first_desc, instances, truncate=false)`** replaces a range of descriptors,
   can append at the end and, with `truncate`, remove the suffix that follows the range.
   - It keeps indices and rows of others. It updates geometry, materials, opaque/blend flags,
@@ -169,7 +176,12 @@ the whole tables: it is used when what is drawn changes. For the rest:
 - **`scene_set_lights(r, lights, sun, environment)`** replaces lights, sun and environment; it
   touches neither instances nor their tree. While each index names the same light it refits the
   light tree and uploads only what changed ([light tree](lights.md#light-tree)).
-- **`scene_set_highlights`** and **`scene_set_environment`** change highlights and environment.
+- **`scene_set_highlights`** and **`scene_set_environment`** change highlights and environment;
+  only the instances whose level is another go to the GPU.
+- **What the scene answers.** `scene_instance_materials` (the rows an instance shows) and
+  `scene_instance_placed` (its mesh and its transform into the world), by descriptor: whoever
+  gave the scene keeps no copy of it. `scene_instance_was(r, descriptor, from)` gives an
+  instance described again at another place of the list the motion from where it was.
 - **`materials_set(r, materials)`** replaces the material table and
   **`materials_update(r, materials, rows)`** changes only the rows `rows` (row `n` takes
   `materials[n - 1]`). Both compare row by row:
@@ -183,12 +195,13 @@ the whole tables: it is used when what is drawn changes. For the rest:
     `LIGHT_CHANGE_REACH`, and each light rectangle that shows its emission. Past
     `MATERIAL_LIT_ROWS` rows, or `LIGHT_CHANGES_MAX` marks, it changes across the whole scene.
   - A row beyond the table enlarges it with the default material.
-- **Upload.** The instances touched by `scene_move` or `scene_tint` are uploaded one by one
-  (`Scene_State.touched`, up to `SCENE_TOUCHED_MAX` = 256); with more, the whole table. Tracing in
-  software, after a movement the tree nodes are uploaded, and the references only if it was
-  built again; with hardware RT the tree is not uploaded.
+- **Upload.** The instances a partial change touches go alone, in runs of the table, however many
+  they are (`Scene_State.touched`, a bit per instance); the whole table goes with `scene_set`, a
+  change of the instance count and what rewrites every row. What moved goes once more, at rest,
+  with the frame after. Tracing in software, after a movement the tree nodes are uploaded, and
+  the references only if it was built again; with hardware RT the tree is not uploaded.
 
-### Visual instances
+## Visual instances
 
 - An entity can contribute several instances. `Instance_Desc.copy_owner` and `copy_variant`
   separate their transform histories; at zero they identify the original. The GPU object ID is
@@ -196,13 +209,13 @@ the whole tables: it is used when what is drawn changes. For the rest:
 - `uniform_color` omits the vertex colors as tint and keeps the tint, the same in raster, hits and
   shadow filters; a program still reads them as data. A translucent white copy is this flag with a
   white blend material and shares the resident geometry.
-- **Replacement** (`host.app_instance_add` with `replace_source=true`): visually substitutes the
+- **Replacement** (`host.extras_instance_add` with `replace_source=true`): visually substitutes the
   world mesh with the same `object_id`; `engine/render` hides the base sent to the GPU and when it
   stops delivering it, draws it again. It uses `scene_update` without extracting the world again;
   it does not change picking, colliders, scenes or undo; with `hidden=true` it also hides its
   source.
 
-### Instance batches
+## Instance batches
 
 `render/batch.odin`. A batch is many instances of a mesh with their materials, without a row of
 the instance table for each one: the same cull, the same G-buffer and the same rays as the scene
@@ -279,7 +292,7 @@ instances.
   (`batch_trace_test.odin`), which compares a batch with the same scene instances with each
   tracer.
 
-### Meshes and textures one at a time
+## Meshes and textures one at a time
 
 `render/scene_edit.odin`:
 
@@ -292,7 +305,7 @@ instances.
 - **`texture_remove`** removes a texture between frames without changing the other handles; the
   materials that named it are replaced with `materials_set` before the next frame.
 
-### Geometry publication
+## Geometry publication
 
 - `renderer_commit_geometry` publishes the pending ranges of vertices, indices, mesh rows, nodes
   and triangles, and builds the new native BLAS. In a frame it is recorded at the start of its
@@ -326,7 +339,7 @@ instances.
 - Adding or removing instances and growing buffers requires global work: there is no constant cost
   per chunk.
 
-### Geometry over several frames
+## Geometry over several frames
 
 `render/geometry_uploads.odin`. What does not fit in what a frame uploads goes through a fixed queue
 of `GEOMETRY_UPLOADS` meshes, without allocating in a stable frame.
@@ -371,7 +384,7 @@ of `GEOMETRY_UPLOADS` meshes, without allocating in a stable frame.
 - What a load takes this way `host` awaits
   ([load budget](../../mirai-core/references/host.md#loaded-assets)).
 
-### Program catalog
+## Program catalog
 
 `render/programs.odin`: `renderer_programs` reads the `catalog.json` of the shaders in use;
 `program_find` gives a program with its reflected parameters, `program_defaults` its default

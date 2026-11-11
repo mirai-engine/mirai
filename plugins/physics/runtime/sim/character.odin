@@ -195,7 +195,7 @@ character_create :: proc(w:^World,desc:Character_Desc,position:Vec3,rotation:=QU
     }
     turned:=q_normalize(rotation)
     up_frame:=up_frame_turn(q_normalize(frame),q_rotate(turned,UP))
-    yaw:=character_yaw(up_frame,turned)
+    yaw:=up_frame_yaw(up_frame,turned)
     body_desc:=BODY_DESC_DEFAULT
     body_desc.position=position
     body_desc.rotation=character_rotation(up_frame,yaw)
@@ -348,7 +348,7 @@ character_set_rotation :: proc(w:^World,h:Character_Handle,rotation:Quat) {
     if ch==nil {return}
     turned:=q_normalize(rotation)
     ch.state.up_frame=up_frame_turn(ch.state.up_frame,q_rotate(turned,UP))
-    ch.move.yaw=character_yaw(ch.state.up_frame,turned)
+    ch.move.yaw=up_frame_yaw(ch.state.up_frame,turned)
     body_set_transform(w,ch.body,body_position(w,ch.body),character_rotation(ch.state.up_frame,ch.move.yaw))
     ch.state.ground+={.Stale}
 }
@@ -368,20 +368,12 @@ up_frame_turn :: proc "contextless" (frame:Quat,up:Vec3,angle:=max(f32)) -> Quat
 }
 // The yaw of a rotation in a frame of the vertical: where its -Z heads, about the up, as a camera looks.
 up_frame_yaw :: proc "contextless" (frame,rotation:Quat) -> f32 {
-    forward:=q_rotate(conj(frame)*rotation,{0,0,-1})
-    return cmath.atan2(-forward.x,-forward.z)
+    forward:=q_rotate(conj(frame)*rotation,math.FORWARD)
+    return math.yaw_of_direction(forward)
 }
-// Half a turn about +Y, exact: what turns a look (-Z ahead) into a body (+Z ahead).
-HALF_TURN :: Quat(quaternion(w=0,x=0,y=1,z=0))
-// The body of a character faces its yaw with +Z, the front of a glTF model, while the yaw is a look that
-// faces -Z: a half turn about the up apart.
+// The body of a character faces its yaw with -Z, as a look does.
 character_rotation :: #force_inline proc "contextless" (frame:Quat,yaw:f32) -> Quat {
-    return frame*q_axis_angle(UP,yaw)*HALF_TURN
-}
-// The yaw of a character's body rotation in a frame of the vertical: where its +Z heads, about the up.
-character_yaw :: proc "contextless" (frame,rotation:Quat) -> f32 {
-    forward:=q_rotate(conj(frame)*rotation,{0,0,1})
-    return cmath.atan2(-forward.x,-forward.z)
+    return frame*q_axis_angle(UP,yaw)
 }
 
 // Instant effect, applied at the next step: adds to the velocity of the character or replaces it. An

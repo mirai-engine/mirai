@@ -2,6 +2,7 @@ package shapes
 
 import "core:fmt"
 import "core:math"
+import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
@@ -314,6 +315,7 @@ shape_error_text :: proc(error:Shape_Error) -> string {
     case .Too_Many_Loops:    return fmt.tprintf("The shape would have more than %d holes; cut it in parts",SHAPE_LOOPS-1)
     case .Self_Intersecting: return "That would make edges of the shape cross or touch"
     case .Geometry:          return "The boolean of the shape and the stamp failed"
+    case .Out_Of_Memory:     return "No memory to build the shape"
     }
     return ""
 }
@@ -547,7 +549,7 @@ loop_simplify :: proc(loop:^[dynamic]geom.Vec2) {
             loop[kept]=loop[i]
             kept+=1
         }
-        resize(loop,kept)
+        base.truncate(loop,kept)
         if !removed {return}
     }
 }

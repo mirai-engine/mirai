@@ -124,7 +124,7 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
 // and follows the meshes from then on.
 @(private)
 bake_call :: proc(s:^editor.Session,call:^api.Call) {
-    if editor.playing(s) || editor.document_is_prefab(s) {api.call_fail(call,api.INVALID_PARAMS,"nav.bake works on a scene in Edit: stop the run or open the scene");return}
+    if editor.document_is_prefab(s) {api.call_fail(call,api.INVALID_PARAMS,"nav.bake works on a scene: open one");return}
     w:=editor.edited_world(s)
     n:=core.world_storage_of(w,nav.Navigation)
     bakes,bakes_info:=core.world_table(w,nav.Navigation_Bake)

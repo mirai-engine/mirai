@@ -56,7 +56,7 @@ THUMBNAIL_SHAPE_TINT :: [4]f32{0.7,0.7,0.7,1}
 THUMBNAIL_RENDERER :: 3
 THUMBNAIL_LOADS :: 8
 THUMBNAIL_FILE_MAGIC :: u32('M')|u32('T')<<8|u32('H')<<16|u32('B')<<24
-THUMBNAIL_FILE_VERSION :: 2
+THUMBNAIL_FILE_VERSION :: 3
 THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the LZ image after it
 
 // A stored preview as its file holds it, and the coders of its image.
@@ -459,7 +459,7 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
 thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> bool {
     if len(image)!=side*side*4 {return false}
     resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(len(image)))
-    packed,error:=asset.pack(&file.encoder,.Edit,image,file.bytes[THUMBNAIL_FILE_HEADER:])
+    packed,error:=asset.pack(&file.encoder,asset.PACK_EDIT,image,file.bytes[THUMBNAIL_FILE_HEADER:])
     if error!=.None {return false}
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)

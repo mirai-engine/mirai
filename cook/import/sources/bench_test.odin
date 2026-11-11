@@ -1,12 +1,12 @@
 package sources
 
 import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 
 BENCH :: #config(COOK_BENCH,false)
 BENCH_ROUNDS :: 5
@@ -29,8 +29,8 @@ Large :: struct {path,out:string,model_bytes,asset_bytes:int,triangles,vertices:
 bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
     if !BENCH {return}
     SIDE :: 400
-    folder:=temp_folder("bench")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"bench")
+    if folder=="" {return}
     text:=strings.builder_make();defer strings.builder_destroy(&text)
     for y in 0..=SIDE {
         for x in 0..=SIDE {fmt.sbprintf(&text,"v %d %d %f\nvt %f %f\nvn 0 1 0\n",x,y,f32(x*y%7)*0.1,f32(x)/SIDE,f32(y)/SIDE)}

@@ -48,7 +48,7 @@ mode.
 - In common PBR, mask coverage reads only opacity and base color.
 - The scene caches the opaque instances that require their own F0/F90; G-buffer and lighting use
   stored reflectance only while some of their boxes is in the frustum of the view or of a nested
-  view ([G-buffer](frame-graph.md#frame-graph)), and the target is allocated the first time it is
+  view ([G-buffer](frame-graph.md#passes)), and the target is allocated the first time it is
   needed.
 
 ## BRDF
@@ -163,9 +163,10 @@ previews studio use it.
   (`assets_texture_image`). No pass samples cubes or arrays yet.
 - **Pool.** `texture_pool_megabytes` (in game and editor, a part of `Device_Info.memory` or
   `Graphics_Settings.texture_memory`) is the GPU memory for textures, which the
-  [residency by distance](#residency-by-distance) distributes. A texture that does not fit whole
-  when added enters without its largest levels; the one that does not follow the distance is
-  counted this way in `textures_reduced`.
+  [residency by distance](#residency-by-distance) distributes, less what the targets of the
+  [texture views](views.md#texture-views) hold (`Stats.view_target_bytes`). A texture that does
+  not fit whole when added enters without its largest levels; the one that does not follow the
+  distance is counted this way in `textures_reduced`.
 - Changing the maximum size or the pool does not touch what was already uploaded:
   `host.assets_textures_reload` loads again, from the smallest to the largest, the textures that
   the change reaches: those whose larger side exceeds the smaller of the two sizes, all if the pool
@@ -191,8 +192,8 @@ A texture of an asset resides with the levels that the distance of what shows it
   rows name it in a map. A texture of a Surface program, whose uv its source decides, asks for all
   its levels while something shows it. One that nothing in the scene shows (particles, UI, sky,
   decals, previews) keeps the levels it has unless the pool asks for them.
-- **From where.** The views of the last frame that the window showed (not captures or offscreen
-  frames) and the
+- **From where.** The views of the last frame that the window showed (not offscreen frames, except
+  those of a capture that waits for its textures, `Frame_Desc.streamed`) and the
   [streaming sources](../../mirai-gameplay/references/libraries.md#sources-and-residency)
   of the drawn world with their advanced point (`texture_sources`), seen as from the perspective
   view of the largest scale.
@@ -209,7 +210,12 @@ A texture of an asset resides with the levels that the distance of what shows it
   farthest ends up coarser. Those this holds back are counted in `textures_reduced`; those that do
   not have their levels yet, in `textures_pending`.
 - **When.** The estimate runs between frames (`textures_update`) only if a view or a source moved
-  `TEXTURE_VIEW_MOVE`, or instances, materials, batches or textures changed. `host`
+  `TEXTURE_VIEW_MOVE`, or what the scene shows changed: its instance table, the mesh or the
+  materials of an instance, a material, a batch or a texture. An instance that only moves, or is
+  hidden or shown, asks again alone when its row goes to the GPU (`textures_touched`): nearer, its
+  textures take the finer level at once; `TEXTURE_FAR_STEP` farther than where it last asked, or
+  hidden, the scene is estimated again only if a texture was at the level that instance asked.
+  A level is never coarser than the estimate of the whole scene gives. `host`
   (`app_textures_stream`, in `app_frame_begin`) reads up to `TEXTURE_READS` at a time in jobs,
   each decoding only the levels it gives (the smallest lie at the start of the `.tex` stream),
   first those that need more levels (those that free memory if the pool is exceeded) and those
@@ -361,7 +367,7 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
   requested: what a frame draws does not depend on driver time.
 - A thumbnail, a material capture or an impostor, which are read right away, wait for the pipeline.
-  `editor.capture` and `app_capture_world` draw one more frame if the last one drew a program as
+  `capture` and `app_capture_world` draw one more frame if the last one drew a program as
   its row (`renderer_pipelines_pending`, `renderer_pipelines_wait`); the editor images are drawn
   again when pipelines arrive (`renderer_pipelines_made`).
 - Extensions ask for a program's with `Stage_Pipeline_Desc.program` or
@@ -420,7 +426,7 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   coverage, normal and depth. What is not covered is extended by `impostor_dilate`, on any thread,
   like the levels (`texture_build`, which `texture_add_built` uploads afterwards). The grid and the
   axes of each frame are `impostor_direction` and `impostor_axes`; a shader that draws an impostor
-  repeats them ([foliage](../../mirai-plugins/references/foliage.md#far-impostor-and-crown)).
+  repeats them ([foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown)).
 
 ## Traced reflections
 
@@ -534,8 +540,8 @@ The light that crosses glass is paid for with its detail only where it is seen:
 - `glass_mean.comp` writes it in `Gpu_Instance.glass`: the filter of each blend face averaged by
   area, evaluating the same material as the visible surface; the faces with a program, from their
   [points](#surface-programs-in-rays-and-raster). It runs in the first view of a frame that
-  uploaded instances, materials or geometry, before any ray, only with `colored_shadows` and glass
-  in the scene.
+  uploaded the instance table, an instance with blend faces, materials or geometry, before any
+  ray, only with `colored_shadows` and glass in the scene.
 - In the traversal (`BLEND_MEANS`), a blend-only instance multiplies the ray's filter by its mean
   without reading the triangle; a mixed one reads the triangle's material to know whether it is
   blend. No ray reads textures or evaluates programs for that; glass with a program is corrected

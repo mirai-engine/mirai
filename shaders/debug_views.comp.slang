@@ -9,12 +9,6 @@
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
-// The values of render.Debug_View.
-#define DEBUG_SHADOWS 13u
-#define DEBUG_REFLECTIONS 14u
-#define DEBUG_REFLECTIONS_RAW 15u
-#define DEBUG_LIGHTS 16u
-
 struct Params_Block {
     uint mode;
     uint available;

@@ -10,7 +10,9 @@
   "force_collision": false,
   "collision_hulls": 0,
   "parts": "Auto",
+  "front": "Auto",
   "rig": "Source",
   "rig_crotch": 0,
-  "rig_neck": 0
+  "rig_neck": 0,
+  "skeleton": "00000000000000000000000000000000"
 }

@@ -96,7 +96,7 @@ float3 media_ambient(float3 position, float3 to_eye_ray) {
 // shadow there. changed: as for media_local_light.
 float3 media_sun(float3 position, float3 eye_ray, float g, float3 sun_kept, inout bool changed) {
     if (frame.sun_direction.w < 0.5) return float3(0.0);
-    float reach = scene_reach(position, frame.sun_direction.xyz);
+    float reach = sun_reach(position, frame.sun_direction.xyz);
 #ifdef SUN_SHADOW_SLOT
     float known = sun_shadow_seen(position, float3(0.0));
     float3 through = float3(known < 0.0 ? 1.0 : known);

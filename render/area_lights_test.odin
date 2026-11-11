@@ -8,27 +8,19 @@ import "core:strings"
 import stbi "vendor:stb/image"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(private)
 Area_Fixture :: struct {
-	device:   ^rhi.Device,
-	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
-	cube:     Mesh_Handle,
-	camera:   Camera,
+	using base: Fixture,
+	cube:       Mesh_Handle,
+	camera:     Camera,
 }
 
 @(private)
-area_init :: proc(t: ^testing.T, f: ^Area_Fixture) -> bool {
-	f.device, _ = shared_device.take(t)
-	if f.device == nil {
-		if !rhi.gpu_skip_allowed() {testing.expect(t, false, "no GPU device (set MIRAI_ALLOW_GPU_SKIP=1 to skip)")}
-		return false
-	}
+area_init :: proc(t: ^testing.T, f: ^Area_Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
 	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
-	f.renderer = new(Renderer)
-	if !testing.expect(t, renderer_init(f.renderer, {device = f.device, width = 96, height = 96, settings = settings}), f.renderer.error) {return false}
+	if !fixture_init(t, f, 96, 96, settings, loc = loc) {return false}
 	vertices: [24]Mesh_Vertex
 	indices: [36]u32
 	normals := [6]Vec3{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}
@@ -44,12 +36,6 @@ area_init :: proc(t: ^testing.T, f: ^Area_Fixture) -> bool {
 	f.cube, added = mesh_add(f.renderer, vertices[:], indices[:])
 	f.camera = {position = {0, 4, 0.001}, forward = {0, -4, -0.001}, up = {0, 0, -1}, fov_y = 70, near = 0.05, far = 100, exposure = TUNED_EXPOSURE}
 	return testing.expect(t, added)
-}
-
-@(private)
-area_destroy :: proc(f: ^Area_Fixture) {
-	if f.device == nil {return}
-	if f.renderer != nil {renderer_destroy(f.renderer); free(f.renderer)}
 }
 
 // A white matte floor whose top is at y = 0, with the lights given.
@@ -134,7 +120,7 @@ area_compare :: proc(f: ^Area_Fixture, approximate, reference: []Vec3) -> (worst
 area_lights_give_what_their_points_give :: proc(t: ^testing.T) {
 	f: Area_Fixture
 	if !area_init(t, &f) {return}
-	defer area_destroy(&f)
+	defer fixture_destroy(&f)
 	cases := [?]struct {name: string, light: Light_Desc, worst, mean: f32}{
 		{"rectangle above", {position = {0.3, 1.2, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2, 1}}, 0.06, 0.03},
 		{"tilted rectangle", {position = {0, 0.5, 0}, color = {1, 0.8, 0.6}, intensity = 3 * math.PI / 2.1, range = 20, direction = {0.8, -0.6, 0}, axis = {0, 0, 1}, size = {1.5, 1.4}}, 0.1, 0.03},
@@ -159,7 +145,7 @@ area_lights_give_what_their_points_give :: proc(t: ^testing.T) {
 rectangles_light_one_side_and_far_away_are_points :: proc(t: ^testing.T) {
 	f: Area_Fixture
 	if !area_init(t, &f) {return}
-	defer area_destroy(&f)
+	defer fixture_destroy(&f)
 	area_scene(&f, []Light_Desc{{position = {0, 1.5, 0}, color = {1, 1, 1}, intensity = 5 * math.PI / 4, range = 20, direction = {0, 1, 0}, axis = {1, 0, 0}, size = {2, 2}}})
 	brightest: f32
 	for value in area_direct(t, &f, 2, false) {brightest = max(brightest, area_luminance(value))}
@@ -184,7 +170,7 @@ rectangles_light_one_side_and_far_away_are_points :: proc(t: ^testing.T) {
 rectangles_show_the_emission_of_their_material :: proc(t: ^testing.T) {
 	f: Area_Fixture
 	if !area_init(t, &f) {return}
-	defer area_destroy(&f)
+	defer fixture_destroy(&f)
 	r := f.renderer
 	SIZE :: 32
 	pixels: [SIZE * SIZE * 4]u8

@@ -2,16 +2,15 @@ package ragdoll_editor
 
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import aa "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
-import "mirai:project"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -21,7 +20,7 @@ import phys "plugins:physics/runtime"
 import rag "plugins:ragdoll/runtime"
 
 Setup_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -40,11 +39,9 @@ Setup_Test :: struct {
     assets:host.Assets,
     app:host.App,
     world:Setup_Test_World,
-    tables:[12]core.Table_Info,
-    info:core.World_Info,
     session:editor.Session,
-    selection:editor.Selection,
-    edits:editor.Edits,
+    selection:history.Selection,
+    edits:history.Edits,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
     document:^editor.Document,
@@ -53,26 +50,16 @@ Setup_Test :: struct {
     figure,plain:core.Entity, // a rig whose skeleton has a body, and one whose skeleton has none
 }
 
-@(private)
-setup_test_settle :: proc(data,shared,ed:rawptr) {
-    w:=(^Setup_Test_World)(data)
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities);core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.meshes,&w.entities);core.table_settle(&w.sources,&w.entities);core.table_settle(&w.animations,&w.entities)
-    core.table_settle(&w.rigids,&w.entities);core.table_settle(&w.colliders,&w.entities);core.table_settle(&w.joints,&w.entities)
-    core.table_settle(&w.configs,&w.entities);core.table_settle(&w.bones,&w.entities)
-    core.entities_settle(&w.entities)
-}
-
-// A standing figure facing +Z with its left at +X, with three spine bones and a bone outside the body.
+// A standing figure facing -Z with its left at -X, with three spine bones and a bone outside the body.
 @(private)
 setup_test_bones :: proc() -> []aa.Skeleton_Bone {
     Row :: struct {name:string,parent:i32,at:[3]f32}
     rows:=[?]Row{
         {"root",-1,{}},{"pelvis",0,{0,1,0}},{"spine_01",1,{0,1.12,0}},{"spine_02",2,{0,1.25,0}},{"spine_03",3,{0,1.38,0}},{"neck_01",4,{0,1.5,0}},{"head",5,{0,1.6,0}},
-        {"clavicle_l",4,{.05,1.45,0}},{"upperarm_l",7,{.2,1.45,0}},{"lowerarm_l",8,{.45,1.45,-.02}},{"hand_l",9,{.7,1.45,0}},
-        {"clavicle_r",4,{-.05,1.45,0}},{"upperarm_r",11,{-.2,1.45,0}},{"lowerarm_r",12,{-.45,1.45,-.02}},{"hand_r",13,{-.7,1.45,0}},
-        {"thigh_l",1,{.1,.95,0}},{"calf_l",15,{.1,.5,.02}},{"foot_l",16,{.1,.08,0}},{"ball_l",17,{.1,.02,.12}},
-        {"thigh_r",1,{-.1,.95,0}},{"calf_r",19,{-.1,.5,.02}},{"foot_r",20,{-.1,.08,0}},{"ball_r",21,{-.1,.02,.12}},
+        {"clavicle_l",4,{-.05,1.45,0}},{"upperarm_l",7,{-.2,1.45,0}},{"lowerarm_l",8,{-.45,1.45,.02}},{"hand_l",9,{-.7,1.45,0}},
+        {"clavicle_r",4,{.05,1.45,0}},{"upperarm_r",11,{.2,1.45,0}},{"lowerarm_r",12,{.45,1.45,.02}},{"hand_r",13,{.7,1.45,0}},
+        {"thigh_l",1,{-.1,.95,0}},{"calf_l",15,{-.1,.5,-.02}},{"foot_l",16,{-.1,.08,0}},{"ball_l",17,{-.1,.02,-.12}},
+        {"thigh_r",1,{.1,.95,0}},{"calf_r",19,{.1,.5,-.02}},{"foot_r",20,{.1,.08,0}},{"ball_r",21,{.1,.02,-.12}},
         {"ik_hand_root",0,{}},
     }
     bones:=make([]aa.Skeleton_Bone,len(rows),context.temp_allocator)
@@ -113,42 +100,21 @@ setup_test_rig :: proc(f:^Setup_Test,t:^testing.T,name:string,id:base.Entity_Id,
     e:=core.create(&w.entities)
     core.add(&w.ids,e,core.Id{id});core.add(&w.names,e,core.name_make(name));core.add(&w.transforms,e,core.from_math(pose))
     core.add(&w.meshes,e,erender.Mesh_Renderer{mesh=mesh_id});core.add(&w.animations,e,anim.ANIMATION_DEFAULT)
-    setup_test_settle(w,nil,nil)
+    core.test_world_settle(w)
     return e
 }
 
 @(private)
 setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
-    temp,_:=os.temp_directory(context.temp_allocator)
-    f.root=fmt.tprintf("%s/mirai-ragdoll-%d-%s",temp,os.get_pid(),name)
-    os.remove_all(f.root);os.make_directory_all(f.root)
-    f.root=project.path_absolute(f.root,context.temp_allocator)
+    f.root=base.test_folder(t,fmt.tprintf("ragdoll-%s",name))
+    if f.root=="" {return false}
     if !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=8,error_capacity=8})) {return false}
     f.app.assets,f.app.allocator=&f.assets,context.allocator
     w:=&f.world
-    core.entities_init(&w.entities)
-    core.table_init(&w.ids,"Id");core.table_init(&w.names,"Name");core.table_init(&w.transforms,"Transform");core.table_init(&w.parents,"Parent")
-    core.table_init(&w.meshes,"Mesh_Renderer");core.table_init(&w.sources,"Pose_Source");core.table_init(&w.animations,"Animation")
-    core.table_init(&w.rigids,"Rigid_Body");core.table_init(&w.colliders,"Collider");core.table_init(&w.joints,"Joint")
-    core.table_init(&w.configs,"Ragdoll");core.table_init(&w.bones,"Ragdoll_Bone")
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Setup_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Setup_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Setup_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Setup_Test_World,parents)},
-        {name="Mesh_Renderer",type=erender.Mesh_Renderer,info=type_info_of(erender.Mesh_Renderer),offset=offset_of(Setup_Test_World,meshes)},
-        {name="Pose_Source",type=anim.Pose_Source,info=type_info_of(anim.Pose_Source),offset=offset_of(Setup_Test_World,sources)},
-        {name="Animation",type=anim.Animation,info=type_info_of(anim.Animation),offset=offset_of(Setup_Test_World,animations)},
-        {name="Rigid_Body",type=phys.Rigid_Body,info=type_info_of(phys.Rigid_Body),offset=offset_of(Setup_Test_World,rigids)},
-        {name="Collider",type=phys.Collider,info=type_info_of(phys.Collider),offset=offset_of(Setup_Test_World,colliders)},
-        {name="Joint",type=phys.Joint,info=type_info_of(phys.Joint),offset=offset_of(Setup_Test_World,joints)},
-        {name="Ragdoll",type=rag.Ragdoll,info=type_info_of(rag.Ragdoll),offset=offset_of(Setup_Test_World,configs)},
-        {name="Ragdoll_Bone",type=rag.Ragdoll_Bone,info=type_info_of(rag.Ragdoll_Bone),offset=offset_of(Setup_Test_World,bones)},
-    }
-    f.info=core.World_Info{entities=offset_of(Setup_Test_World,entities),tables=f.tables[:],settle=setup_test_settle}
+    if !core.test_world_init(t,w,rag.test_types) {return false}
     f.document=new(editor.Document)
-    f.session=editor.Session{app=&f.app,assets_root=f.root,mode=.Edit,headless=true,info=&f.info,edit_world=&f.world,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=f.document,id_state=977}
-    editor.edits_reset(&f.edits,core.world_ref(&f.world,&f.info))
+    f.session=editor.Session{app=&f.app,assets_root=f.root,mode=.Edit,headless=true,info=core.test_world_info(w),edit_world=&f.world,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=f.document,id_state=977}
+    history.edits_reset(&f.edits,core.test_world_ref(&f.world))
     if !testing.expect_value(t,api.server_init(&f.server,{max_connections=1,max_methods=4}),api.Init_Error.None) {return false}
     serial.writer_init(&f.out,1<<20)
     defaults:=new(Ragdoll_Setup_Params,context.temp_allocator);defaults^={mode=rag.RAGDOLL_DEFAULT.mode}
@@ -156,20 +122,16 @@ setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
     turned:=mm.Transform{{2,0,3},mm.quat_axis_angle({0,1,0},.5),{1,1,1}}
     f.figure=setup_test_rig(f,t,"figure",0x11,701,true,turned)
     f.plain=setup_test_rig(f,t,"plain",0x12,702,false,mm.TRANSFORM_IDENTITY)
-    editor.edits_reset(&f.edits,core.world_ref(&f.world,&f.info))
+    history.edits_reset(&f.edits,core.test_world_ref(&f.world))
     return true
 }
 
 @(private)
 setup_test_destroy :: proc(f:^Setup_Test) {
-    w:=&f.world
-    core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms);core.table_destroy(&w.parents)
-    core.table_destroy(&w.meshes);core.table_destroy(&w.sources);core.table_destroy(&w.animations)
-    core.table_destroy(&w.rigids);core.table_destroy(&w.colliders);core.table_destroy(&w.joints)
-    core.table_destroy(&w.configs);core.table_destroy(&w.bones);core.entities_destroy(&w.entities)
-    editor.edits_free(&f.edits);delete(f.selection.entities);free(f.document)
+    core.test_world_destroy(&f.world)
+    history.edits_free(&f.edits);delete(f.selection.entities);free(f.document)
     host.app_content_destroy(&f.app)
-    serial.writer_destroy(&f.out);api.server_destroy(&f.server);host.assets_destroy(&f.assets);os.remove_all(f.root)
+    serial.writer_destroy(&f.out);api.server_destroy(&f.server);host.assets_destroy(&f.assets)
 }
 
 @(private)
@@ -196,7 +158,7 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"humanoid") {return};defer setup_test_destroy(f)
     w:=&f.world
-    result,text:=setup_test_call(f,`{"id":"11","mass":70}`)
+    result,text:=setup_test_call(f,`{"entity":"0000000000000011","mass":70}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     bodies:=setup_test_bodies(f,f.figure)
     testing.expect_value(t,len(bodies),16)
@@ -253,49 +215,47 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
     }
     testing.expect(t,abs(mass-70)<.01)
 
-    ref:=core.world_ref(&f.world,&f.info)
-    testing.expect(t,editor.undo(&f.edits,ref,&f.selection))
+    ref:=core.test_world_ref(&f.world)
+    testing.expect(t,history.undo(&f.edits,ref,&f.selection))
     testing.expect(t,len(w.bones.values)==0 && len(w.rigids.values)==0 && len(w.joints.values)==0 && !core.has(&w.configs,f.figure))
-    testing.expect(t,editor.redo(&f.edits,ref,&f.selection))
+    testing.expect(t,history.redo(&f.edits,ref,&f.selection))
     testing.expect(t,len(w.bones.values)==16 && core.has(&w.configs,f.figure))
 }
 
 @(test)
-ragdoll_setup_without_a_body_map_fails_with_how_to_detect_it_and_changes_nothing :: proc(t:^testing.T) {
+ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_as_it_is :: proc(t:^testing.T) {
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"no-body") {return};defer setup_test_destroy(f)
-    result,_:=setup_test_call(f,`{"id":"12"}`)
-    testing.expect_value(t,result.code,api.INVALID_PARAMS)
-    testing.expectf(t,strings.contains(result.data,`"code":"Missing_Body_Map"`) && strings.contains(result.data,"skeleton.body.detect"),"%s",result.data)
-    testing.expect(t,len(f.world.bones.values)==0 && len(f.world.rigids.values)==0 && !core.has(&f.world.configs,f.plain))
-    testing.expect_value(t,f.edits.cursor,0)
-    core.remove(&f.world.animations,f.figure);setup_test_settle(&f.world,nil,nil)
-    result,_=setup_test_call(f,`{"id":"11"}`)
+    result,_:=setup_test_call(f,`{"entity":"0000000000000012"}`)
+    if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
+    testing.expect_value(t,len(setup_test_bodies(f,f.plain)),16)
+    testing.expect(t,core.has(&f.world.configs,f.plain))
+    testing.expect_value(t,f.edits.cursor,1)
+    testing.expect_value(t,len(host.assets_unsaved(&f.assets)),0)
+    core.remove(&f.world.animations,f.figure);core.test_world_settle(&f.world)
+    result,_=setup_test_call(f,`{"entity":"0000000000000011"}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`))
     f.session.mode=.Play
-    result,_=setup_test_call(f,`{"id":"11"}`)
-    testing.expect(t,result.code==api.SERVER_ERROR && strings.contains(result.data,"play.stop"))
-    testing.expect_value(t,f.edits.cursor,0)
+    result,_=setup_test_call(f,`{"entity":"0000000000000011"}`)
+    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`),"the document is what it validates while a game plays")
+    testing.expect_value(t,f.edits.cursor,1)
 }
 
 @(test)
-ragdoll_setup_refuses_a_rig_with_a_ragdoll_unless_replace_removes_its_bodies :: proc(t:^testing.T) {
+ragdoll_setup_replaces_the_ragdoll_of_a_rig_in_one_step_of_undo :: proc(t:^testing.T) {
     f:=new(Setup_Test);defer free(f)
     if !setup_test_init(f,t,"replace") {return};defer setup_test_destroy(f)
     w:=&f.world
-    result,_:=setup_test_call(f,`{"id":"11"}`)
+    result,_:=setup_test_call(f,`{"entity":"0000000000000011"}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     first:=setup_test_bodies(f,f.figure)
-    result,_=setup_test_call(f,`{"id":"11","mode":"Driven"}`)
-    testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Ragdoll_Exists"`) && strings.contains(result.data,"replace"))
-    testing.expect(t,len(w.bones.values)==16 && core.get(&w.configs,f.figure).mode==.Simulated && f.edits.cursor==1)
     text:string
-    result,text=setup_test_call(f,`{"id":"11","mode":"Driven","replace":true,"mass":80}`)
+    result,text=setup_test_call(f,`{"entity":"0000000000000011","mode":"Driven","mass":80}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     testing.expectf(t,strings.contains(strings.join(strings.fields(text,context.temp_allocator),"",context.temp_allocator),`"removed":16`),"%s",text)
     for _,e in first {testing.expect(t,!core.alive(&w.entities,e))}
     testing.expect(t,len(w.bones.values)==16 && len(w.rigids.values)==16 && len(w.joints.values)==15)
     testing.expect(t,core.get(&w.configs,f.figure).mode==.Driven && f.edits.cursor==2)
-    testing.expect(t,editor.undo(&f.edits,core.world_ref(&f.world,&f.info),&f.selection))
+    testing.expect(t,history.undo(&f.edits,core.test_world_ref(&f.world),&f.selection))
     testing.expect(t,len(w.bones.values)==16 && core.get(&w.configs,f.figure).mode==.Simulated)
 }

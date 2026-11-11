@@ -10,6 +10,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:cook/shaders"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/serial"
@@ -44,7 +45,7 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     engine,_:=strings.replace_all(cleaned,"\\","/",context.temp_allocator)
     if _,found:=shaders.tool_find(engine,.Slangc,context.temp_allocator);!found {log.warn("slangc is not installed: run `mirai setup slang`");return}
     f:Files_Test
-    files_test_open(&f,"mirai-programs-api")
+    if !files_test_open(t,&f,"programs-api") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
@@ -81,7 +82,7 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     _,failure,ok=programs_test_call(t,state,"material.program.create",`{"program":"Other","source":"//! mirai ui Else\n"}`)
     testing.expect(t,!ok && strings.contains(failure.message,"//! mirai ui Other"),failure.message)
     _,failure,ok=programs_test_call(t,state,"material.program.create",`{"program":"Bad","kind":"light"}`)
-    testing.expect(t,!ok && strings.contains(failure.message,"surface, postprocess, vfx or ui"),failure.message)
+    testing.expect(t,!ok && strings.contains(failure.message,`"light" is not one of its names`),failure.message)
 
     // It is found by its name before it is saved, as its domain.
     reply,failure,ok=programs_test_call(t,state,"material.program.inspect",`{"program":"Glow_Post"}`)
@@ -99,7 +100,7 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
 
     // Its undo takes the edit back, and then the program: the steps are of the API.
     w:=edited_world(s)
-    f.edits.author=EDIT_AUTHOR_API
+    f.edits.author=history.EDIT_AUTHOR_API
     testing.expect(t,programs_test_quiet_undo(&f,w))
     testing.expect_value(t,held(&assets.registry,path),template)
     testing.expect(t,programs_test_quiet_undo(&f,w))
@@ -107,14 +108,20 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     _,_,ok=programs_test_call(t,state,"material.program.inspect",`{"program":"Glow_Post"}`)
     testing.expect(t,!ok,"an undone program is not there")
 
-    // A shader changed outside the editor: build.shaders publishes again and answers with what that left.
+    // Publishing again answers with what that left.
     published:=build.programs.serial
-    _,failure,ok=programs_test_call(t,state,"build.shaders",`{"seconds":5}`)
-    testing.expect(t,!ok && strings.contains(failure.message,"could not be published") && build.programs.serial==published+1,failure.message)
+    method:=api.Method{result_id=Api_Build_Result}
+    result:Api_Build_Result
+    publish:=api.Call{method=&method,result=&result,allocator=context.temp_allocator}
+    {
+        context.logger=log.nil_logger()
+        api_build_shaders(s,&publish,5)
+    }
+    testing.expect(t,publish.failed && strings.contains(publish.error.message,"could not be published") && build.programs.serial==published+1,publish.error.message)
 }
 
 @(private="file")
 programs_test_quiet_undo :: proc(f:^Files_Test,w:core.World_Ref) -> bool {
     context.logger=log.nil_logger()
-    return undo(&f.edits,w,&f.selection)
+    return history.undo(&f.edits,w,&f.selection)
 }

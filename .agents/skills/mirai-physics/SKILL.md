@@ -2,11 +2,11 @@
 name: mirai-physics
 description: Modify, use and verify Mirai physics - the `physics` plugin (the
   `plugins/physics/runtime/sim` solver with bodies, joints, queries, character and snapshots, the
-  `plugins/physics/runtime` integration with character locomotion, and its editor part), the
-  `destruct` plugin with its fracture model (`plugins/destruct/runtime/fracture`) and
-  `std/spatial`. Use to change the solver or the model, write gameplay with bodies and characters
-  (walk, jump, fly, swim, `Character`, `Walk`, `Swim`), water and buoyancy (`Fluid_Volume`,
-  buoyancy, drag, surface query) or change how the simulation is reflected in entities.
+  `plugins/physics/runtime` integration with character locomotion, and its editor part) and the
+  `destruct` plugin with its fracture model (`plugins/destruct/runtime/fracture`). Use when changing
+  the solver or the model, writing gameplay with bodies and characters (walk, jump, fly, swim,
+  `Character`, `Walk`, `Swim`), working with buoyancy and drag of `Fluid_Volume`s (the drawn water
+  is in `mirai-world`) or changing how the simulation is reflected in entities.
 ---
 
 # Mirai physics
@@ -20,22 +20,34 @@ with networking ([networking](../mirai-networking/SKILL.md)).
 
 ## Map
 
-- Bodies, shapes, step, joints, queries, snapshot, debug draw → [physics.md](references/physics.md)
+- Bodies, shapes, step, joints, queries, snapshot, debug draw →
+  [bodies and shapes](references/physics.md#bodies-and-shapes), [step](references/physics.md#step),
+  [joints](references/physics.md#joints), [queries](references/physics.md#queries),
+  [snapshot](references/physics.md#snapshot-and-determinism) and
+  [debug draw](references/physics.md#debug-draw)
 - `std/spatial` → [physics.md#stdspatial](references/physics.md#stdspatial)
 - Water: fluid volumes, buoyancy, drag and the surface query →
   [physics.md#fluids](references/physics.md#fluids); the character in a fluid →
   [character.md#in-a-fluid](references/character.md#in-a-fluid); `Fluid_Volume`, `fluid_at`,
   `fluids_in` → [engine.md](references/engine.md#components)
-- Physical character (capsule, support, `Character_Move`) → [character.md](references/character.md);
+- Physical character (capsule, support, `Character_Move`) →
+  [data and lifecycle](references/character.md#data-and-lifecycle),
+  [the body](references/character.md#the-body) and [step](references/character.md#step);
   its own vertical (walking around a planet, `core.Vertical`) →
   [character.md#the-vertical](references/character.md#the-vertical)
 - Walk, jump, fly, swim, layered movements, seat control, game modes →
   [engine.md#locomotion](references/engine.md#locomotion); at normal speed in slow motion
   (`core.Own_Pace`) → [engine.md#own-pace](references/engine.md#own-pace)
 - Fracture (pieces, damage, cut, state, copy) on the public API of the solver →
-  [destruction.md](references/destruction.md)
+  [construction](references/destruction.md#construction),
+  [damage and fields](references/destruction.md#damage-and-fields),
+  [removal](references/destruction.md#removal), [cut](references/destruction.md#cut) and
+  [reading and replay](references/destruction.md#reading-and-replay)
 - `Rigid_Body`, `Collider`, `Character`, `Joint`, requests, queries, pose targets, proxies →
-  [engine.md](references/engine.md)
+  [components](references/engine.md#components),
+  [collider fields](references/engine.md#collider-fields),
+  [binding and world step](references/engine.md#binding-and-world-step),
+  [requests](references/engine.md#requests) and [queries](references/engine.md#queries)
 - Categories and presets declared in code, sensors, `Collision_Settings` and pushes →
   [collision](references/engine.md#collision-categories-and-presets)
 - Solver push rules (pairs that yield) →
@@ -43,9 +55,15 @@ with networking ([networking](../mirai-networking/SKILL.md)).
 - A body in two places and shapes cut by boxes (`Body_Twin`, `Collider_Cuts`, the portals) →
   [physics.md#twins-and-cuts](references/physics.md#twins-and-cuts)
 - `Destructible` in the data world, requests, reflection, networking →
-  [engine-destruct.md](references/engine-destruct.md)
+  [components](references/engine-destruct.md#components),
+  [configuration and setup](references/engine-destruct.md#configuration-and-setup),
+  [requests and movement](references/engine-destruct.md#requests-and-movement),
+  [reflection, queries and events](references/engine-destruct.md#reflection-queries-and-events)
+  and [network](references/engine-destruct.md#network)
 - Breaking or digging terrain (craters, debris, pieces with physics per material): not `destruct`
-  → [what can be dug](../mirai-plugins/references/terrain.md#what-digging-leaves)
+  → [what can be dug](../mirai-world/references/terrain.md#what-digging-leaves)
+- Bodies a library makes from its own data (the cells of a foliage), the capacities of the
+  simulation, who may import the solver → [owned bodies](references/engine.md#owned-bodies)
 - `core.place` on a body → [engine.md#requests](references/engine.md#requests);
   `core.World_Queries` (cameras, feet) → [engine.md#queries](references/engine.md#queries)
 - Editor part (collider preset, collision settings, `physics.collision.*` API, Simulate, Collision
@@ -113,7 +131,11 @@ with networking ([networking](../mirai-networking/SKILL.md)).
   moves a body sends a request to `Body_Requests`; whoever teleports it uses `core.place`; whoever
   imposes the pose of another owner writes `core.Pose_Target`; whoever owns a body of another
   library uses proxies. Nobody writes the `Transform` of a body.
-- A Character's body faces +Z (the glTF model front); its look faces -Z like a camera.
+- Only the physics plugin and the destruct plugins, whose fracture model is built on it, import
+  the solver: `mirai check` refuses the import in any other package of the engine, tests and tools
+  included, and in a game. A library makes static collision of its own with the owned bodies of
+  the integration.
+- A Character's body and its look both face -Z.
 - A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
   the step of that mode writes it first, to which locomotion only adds the layered movements.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs

@@ -2,6 +2,7 @@ package mirai_render
 
 import "mirai:asset"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // CPU mirrors of shaders/include/common.slang. The generated shaders_gen.odin
 // asserts the size and the offset of each field of those it shares, as Slang
@@ -17,7 +18,7 @@ Gpu_Frame :: struct {
 	view_proj_unjittered: Mat4,
 	camera_position: Vec4, // w = near
 	camera_forward:  Vec4, // w = far
-	sun_direction:   Vec4, // w = active
+	sun_direction:   Vec4, // w = 0: no sun; 1: active; SUN_UNSHADOWED: active, and no ray goes to it
 	sun_color:       Vec4, // above the air of an atmosphere; w = the angular radius of its disc in the sky, radians; 0: it is not seen
 	sky_color:       Vec4, // rgb the luminance of the sky, render units; w the light scale, render units per nit
 	background:      Vec4, // w = 1: solid background instead of the sky
@@ -69,10 +70,11 @@ Gpu_Frame :: struct {
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
 	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z 1 while the view drew maps; w 1 while they keep the tint of glass
-	sun_map_rows:     [len(SHADOW_SUN_CASCADES) * SHADOW_MAP_ROWS][4]u32,
+	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
-MOVED_SUN        :: 1 // the sun moved further than its radius, or came on
-MOVED_LIGHTS_ALL :: 2 // more lights moved than moved_lights holds: each counts as moved
+SUN_UNSHADOWED   :: abi.SUN_UNSHADOWED
+MOVED_SUN        :: abi.MOVED_SUN // the sun moved further than its radius, or came on
+MOVED_LIGHTS_ALL :: abi.MOVED_LIGHTS_ALL // more lights moved than moved_lights holds: each counts as moved
 
 // A nested view in the constants of its view (Nested_View of common.slang),
 // which follow Gpu_Frame in a generation of shaders that has them.
@@ -83,13 +85,14 @@ Gpu_Nested :: struct {
 	opening:             Vec4, // the plane its pixels are seen through, in the world of the view; zero: none known
 }
 
-FRAME_FLAG_GI           :: 1
-FRAME_FLAG_GI_REFERENCE :: 2
-FRAME_FLAG_HW_RT        :: 4
-FRAME_FLAG_STUDIO       :: 8
-FRAME_FLAG_GRID         :: 16
-FRAME_FLAG_GLASS        :: 32
-FRAME_FLAG_REFLECTANCE  :: 64
+FRAME_FLAG_GI           :: abi.FRAME_FLAG_GI
+FRAME_FLAG_GI_REFERENCE :: abi.FRAME_FLAG_GI_REFERENCE
+FRAME_FLAG_HW_RT        :: abi.FRAME_FLAG_HW_RT
+FRAME_FLAG_STUDIO       :: abi.FRAME_FLAG_STUDIO
+FRAME_FLAG_GRID         :: abi.FRAME_FLAG_GRID
+FRAME_FLAG_GLASS        :: abi.FRAME_FLAG_GLASS
+FRAME_FLAG_REFLECTANCE  :: abi.FRAME_FLAG_REFLECTANCE
+FRAME_FLAG_NEUTRAL      :: abi.FRAME_FLAG_NEUTRAL
 
 // A whole vertex, which thumbnails and previews upload for themselves; the
 // scene keeps its vertices in clusters (Gpu_Cluster).
@@ -114,31 +117,25 @@ Gpu_Vertex :: struct {
 // rays trace with hardware, and the instances of the batches. Every vertex
 // and triangle of a cluster is read through the entry of its page.
 Gpu_Cluster :: asset.Cluster
-CLUSTER_WORDS :: size_of(Gpu_Cluster) / 4
-VERTEX_WORDS :: size_of(asset.Cluster_Vertex) / 4
+CLUSTER_WORDS :: abi.CLUSTER_WORDS
+VERTEX_WORDS :: abi.VERTEX_WORDS
 CLUSTER_TRIANGLES :: asset.CLUSTER_TRIANGLES
 // The vertices a draw gives every cluster: the corners of as many triangles as one has.
-CLUSTER_DRAW_VERTICES :: CLUSTER_TRIANGLES * 3
+CLUSTER_DRAW_VERTICES :: abi.CLUSTER_DRAW_VERTICES
 // A level of a mesh in the index pool (asset.Mesh_Level): its first cluster,
 // how many, their triangles, their error and that of what replaces them.
-LEVEL_WORDS :: 5
+LEVEL_WORDS :: abi.LEVEL_WORDS
 
 // A vertex of a skinned or deformed mesh where it is now: in the space of
 // the mesh, unquantized.
-Gpu_Posed_Vertex :: struct {
-	position: Vec3,
-	normal:   u32, // octahedral snorm16x2
-	tangent:  u32, // std/math tangent_pack
-}
-POSED_WORDS :: size_of(Gpu_Posed_Vertex) / 4
+Gpu_Posed_Vertex :: abi.Gpu_Posed_Vertex
+POSED_WORDS :: abi.POSED_WORDS
 
 // A page of a mesh in the page table (Gpu_Mesh.page_word): where its block
 // is in the vertex pool, GPU_NONE while it is not there, and the first vertex,
 // the vertices and the first word of triangles of the mesh it holds.
-Gpu_Mesh_Page :: struct {
-	base, first_vertex, vertex_count, first_triangle: u32,
-}
-PAGE_ENTRY_WORDS :: size_of(Gpu_Mesh_Page) / 4
+Gpu_Mesh_Page :: abi.Gpu_Mesh_Page
+PAGE_ENTRY_WORDS :: abi.PAGE_ENTRY_WORDS
 
 Gpu_Instance :: struct {
 	world:      [3]Vec4,
@@ -158,48 +155,48 @@ Gpu_Instance :: struct {
 GPU_NONE :: max(u32)
 // meta.x: the mesh in bits 0-23 and in bits 24-25 the cut of it rays trace,
 // Gpu_Mesh.rays: 0 is level 0.
-INSTANCE_MESH_MASK :: u32(0xffffff)
-INSTANCE_RAY_SHIFT :: 24
-INSTANCE_FLAG_HIDDEN :: 1
+INSTANCE_MESH_MASK :: abi.INSTANCE_MESH_MASK
+INSTANCE_RAY_SHIFT :: abi.INSTANCE_RAY_SHIFT
+INSTANCE_FLAG_HIDDEN :: abi.INSTANCE_FLAG_HIDDEN
 // Hidden only because it cannot be drawn yet: its transform has no inverse
 // (a zero scale, or not finite) or the geometry of its mesh still goes to the
 // GPU (geometry_uploads.odin). Nothing of it is drawn, outlined or traced
 // until a move gives it one and its mesh is there (the CPU reads it).
-INSTANCE_FLAG_COLLAPSED :: 2
+INSTANCE_FLAG_COLLAPSED :: abi.INSTANCE_FLAG_COLLAPSED
 // Within SMALL_INSTANCE_REACH of its centre: rays of the RAY_SMALL class meet
 // it, and the probe volume, which does not ask for that class, never sees
 // it. What moves of that size changes no light they hold:
 // its shadow near it is the contact occlusion's, and what it gives off, the
 // light inside it (light_stands_for) gives. A few fixed rays of a probe met a
 // small thing that moves in some frames and not in others.
-INSTANCE_FLAG_SMALL :: 4
+INSTANCE_FLAG_SMALL :: abi.INSTANCE_FLAG_SMALL
 SMALL_INSTANCE_REACH :: f32(1) // metres
 // Bits 8-12: outline level (0 none; see HIGHLIGHT_LEVELS), drawn in the
 // outline mask and outlined after tonemapping.
-INSTANCE_HIGHLIGHT_SHIFT :: 8
+INSTANCE_HIGHLIGHT_SHIFT :: abi.INSTANCE_HIGHLIGHT_SHIFT
 INSTANCE_HIGHLIGHT_MASK :: u32(31) << INSTANCE_HIGHLIGHT_SHIFT
 // Some triangles of the instance have a masked or blended material: rays ask
 // the material whether they stop.
-INSTANCE_FLAG_ALPHA_TESTED :: 8
+INSTANCE_FLAG_ALPHA_TESTED :: abi.INSTANCE_FLAG_ALPHA_TESTED
 // The instance tint replaces vertex colors for every material consumer.
-INSTANCE_FLAG_UNIFORM_COLOR :: 16
+INSTANCE_FLAG_UNIFORM_COLOR :: abi.INSTANCE_FLAG_UNIFORM_COLOR
 // Every material of the instance is blended: it has nothing for the G-buffer
 // and belongs to the RAY_GLASS class.
-INSTANCE_FLAG_BLENDED :: 32
+INSTANCE_FLAG_BLENDED :: abi.INSTANCE_FLAG_BLENDED
 
 // Some of the triangles of the instance are blended: seeing it turns on the
 // glass passes.
-INSTANCE_FLAG_TRANSLUCENT :: 64
+INSTANCE_FLAG_TRANSLUCENT :: abi.INSTANCE_FLAG_TRANSLUCENT
 // Bit 13: the instance is of the body of a local player, whose slot is in bits 14-15: a
 // view of that slot (Gpu_Frame.own) fades it out and leaves out the layers it does not draw of it.
-INSTANCE_FLAG_OWNED :: u32(1) << 13
-INSTANCE_OWNER_SHIFT :: 14
+INSTANCE_FLAG_OWNED :: abi.INSTANCE_FLAG_OWNED
+INSTANCE_OWNER_SHIFT :: abi.INSTANCE_OWNER_SHIFT
 // Bits 16-31: the layers the instance is in. A view draws those that share one with its own.
-INSTANCE_LAYERS_SHIFT :: 16
+INSTANCE_LAYERS_SHIFT :: abi.INSTANCE_LAYERS_SHIFT
 LAYERS_ALL :: u32(0xffff)
 
 // Hidden but outlined: only the highlight mask draws it (the CPU reads it).
-INSTANCE_FLAG_OUTLINE_ONLY :: 128
+INSTANCE_FLAG_OUTLINE_ONLY :: abi.INSTANCE_FLAG_OUTLINE_ONLY
 
 // Whether the highlight mask draws an instance: highlighted, and shown or
 // outline only and not collapsed.
@@ -208,13 +205,13 @@ highlight_drawn :: proc "contextless" (flags: u32) -> bool {
 }
 
 // Classes of instances for rays, the mask of the instance in a native TLAS.
-RAY_SOLID :: 1
-RAY_GLASS :: 2
-RAY_SMALL :: 4 // the solid instances of INSTANCE_FLAG_SMALL
-RAY_SHADOW_ONLY :: 8 // the instances of a batch that casts shadows and that other rays do not see
-RAY_UNSHADOWED :: 16 // the instances of a batch that rays see and that casts no shadow
+RAY_SOLID :: abi.RAY_SOLID
+RAY_GLASS :: abi.RAY_GLASS
+RAY_SMALL :: abi.RAY_SMALL // the solid instances of INSTANCE_FLAG_SMALL
+RAY_SHADOW_ONLY :: abi.RAY_SHADOW_ONLY // the instances of a batch that casts shadows and that other rays do not see
+RAY_UNSHADOWED :: abi.RAY_UNSHADOWED // the instances of a batch that rays see and that casts no shadow
 // Set in the reference of a RAY_GLASS instance in the software TLAS.
-TLAS_REF_GLASS :: u32(1) << 31
+TLAS_REF_GLASS :: abi.TLAS_REF_GLASS
 
 // A cut of a mesh rays trace: the root of its tree and its first triangle
 // (Gpu_Bvh_Triangle) by software; with hardware, where the clusters and
@@ -251,18 +248,18 @@ Gpu_Mesh :: struct {
 	rays:            [asset.MESH_RAY_LEVELS]Gpu_Mesh_Ray,
 }
 // Level 0 is closed: a cluster of it seen from behind the cone of its normals is hidden.
-MESH_FLAG_CLOSED :: 1
+MESH_FLAG_CLOSED :: abi.MESH_FLAG_CLOSED
 // Only level 0 is posed: the cut stays there.
-MESH_FLAG_LEVEL0 :: 2
+MESH_FLAG_LEVEL0 :: abi.MESH_FLAG_LEVEL0
 // The streams of the blocks of its pages past the vertices: the surface of a
 // far mesh (asset.Surface_Vertex, two words a vertex), uv1 and colors (rgba8),
 // a word a vertex; without uv1 a vertex has its uv, without colors white.
-MESH_FLAG_SURFACE :: 4
-MESH_FLAG_UV1 :: 8
-MESH_FLAG_COLORS :: 16
+MESH_FLAG_SURFACE :: abi.MESH_FLAG_SURFACE
+MESH_FLAG_UV1 :: abi.MESH_FLAG_UV1
+MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 // Its pages out of the root come and go in slots (pages.odin): the cull
 // draws what is in the pools and asks for what it lacks.
-MESH_FLAG_STREAMED :: 32
+MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
 
 // uv' = linear * uv + offset: the transform of the material and that of the
 // map, composed. ray_lod: the texture level a ray adds for what they shrink.
@@ -343,8 +340,8 @@ Gpu_Light :: struct {
 	size:            Vec4, // x the radius of the sphere or the capsule, metres; y half the segment of a capsule, or half the width of a rectangle; z half its height; w the bits of the material row whose emission a rectangle shows (0: none)
 	axis:            Vec4, // xyz along the segment of a capsule, or the width of a rectangle
 }
-GPU_LIGHT_POINT :: -2.0
-GPU_LIGHT_RECT :: -3.0
+GPU_LIGHT_POINT :: abi.GPU_LIGHT_POINT
+GPU_LIGHT_RECT :: abi.GPU_LIGHT_RECT
 
 Gpu_Bvh_Node :: struct {
 	bounds_min: Vec3,
@@ -383,11 +380,6 @@ Gpu_Cull_State :: struct {
 	dropped:          [Cull_List]u32, // past the capacities of the lists of the cull
 }
 #assert(size_of(Gpu_Cull_State) == 80)
-// A chunk of the cluster pass: up to CULL_CHUNK clusters of an instance,
-// x the instance and y its first cluster << 6 | how many - 1.
-CULL_CHUNK :: 64
-// The groups of a dispatch along x before it goes on along y.
-CULL_DISPATCH_X :: 32768
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
@@ -413,11 +405,6 @@ Gpu_Glass_Dispatch :: struct {
 	pad:  u32,
 }
 #assert(size_of(Gpu_Glass_Dispatch) == 32)
-
-
-pack_half2 :: proc "contextless" (a, b: f32) -> u32 {
-	return u32(transmute(u16)f16(a)) | u32(transmute(u16)f16(b)) << 16
-}
 
 // The parameters of a post-process effect (Post_Parameters of common.slang).
 Gpu_Post_Parameters :: struct {program,exposed,outlined:u32,fade:f32,values:[16]Vec4}

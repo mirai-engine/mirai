@@ -153,11 +153,13 @@ Migration :: struct {
     ops:[dynamic]Op,
     pairs:[dynamic]Pair,
     added:int,        // destination fields without a source field
+    lacking:string,   // the first of them, named by the destination schema
     removed:int,      // source fields without a destination field
     incompatible:int, // fields of both whose types cannot be converted
 }
 
-// With a type that is not of its schema the migration converts nothing.
+// With a type that is not of its schema, or without memory, the migration
+// converts nothing and holds nothing.
 migration_init :: proc(m:^Migration,src:^Schema,src_type:Type_Index,dst:^Schema,dst_type:Type_Index,allocator:=context.allocator) -> Schema_Error {
     m^={}
     m.ops=make([dynamic]Op,allocator)
@@ -185,6 +187,10 @@ migration_init :: proc(m:^Migration,src:^Schema,src_type:Type_Index,dst:^Schema,
     }
     m.src_size,m.dst_size=int(src.types[src_type].size),int(dst.types[dst_type].size)
     migration_build(&build,src_type,dst_type,0,0)
+    if build.refused {
+        migration_destroy(m)
+        return .Out_Of_Memory
+    }
     m.identical=len(m.ops)==1 && m.ops[0].kind==.Copy && int(m.ops[0].size)==m.dst_size && m.src_size==m.dst_size || m.src_size==0 && m.dst_size==0
     return .None
 }
@@ -221,6 +227,7 @@ Build :: struct {
     src_hashes,dst_hashes:[dynamic]u64,
     transient:[]bool, // destination types with a transient field somewhere inside
     barrier:int,      // ops before this one belong to a finished loop: nothing merges into them
+    refused:bool,     // an op or a pair found no memory
 }
 
 @(private="file")
@@ -234,7 +241,17 @@ build_copy :: proc(b:^Build,src_offset,dst_offset,size:u32) {
             return
         }
     }
-    append(ops,Op{kind=.Copy,src_offset=src_offset,dst_offset=dst_offset,size=size})
+    build_op(b,Op{kind=.Copy,src_offset=src_offset,dst_offset=dst_offset,size=size})
+}
+
+@(private="file")
+build_op :: proc(b:^Build,op:Op) {
+    if _,err:=append(&b.m.ops,op);err!=nil {b.refused=true}
+}
+
+@(private="file")
+build_pair :: proc(b:^Build,pair:Pair) {
+    if _,err:=append(&b.m.pairs,pair);err!=nil {b.refused=true}
 }
 
 @(private="file")
@@ -277,7 +294,7 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
         for field in dst_fields {
             size:=b.dst.types[field.type].size
             if .Transient in field.flags {
-                if size>0 {append(&m.ops,Op{kind=.Zero,dst_offset=dst_offset+field.offset,size=size})}
+                if size>0 {build_op(b,Op{kind=.Zero,dst_offset=dst_offset+field.offset,size=size})}
                 continue
             }
             at:=-1
@@ -288,13 +305,17 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
                     if candidate.name_hash==field.name_hash {at=i;break}
                 }
             }
-            if at<0 || .Transient in src_fields[at].flags {m.added+=1;continue}
+            if at<0 || .Transient in src_fields[at].flags {
+                if m.added==0 {m.lacking=field.name}
+                m.added+=1
+                continue
+            }
             matched+=1
             if .Text in field.flags && type_is_bytes(b.dst,field.type) && type_is_bytes(b.src,src_fields[at].type) {
                 // A text keeps the bytes that fit; what follows them is zero, not the default.
                 kept:=min(size,b.src.types[src_fields[at].type].size)
                 build_copy(b,src_offset+src_fields[at].offset,dst_offset+field.offset,kept)
-                if size>kept {append(&m.ops,Op{kind=.Zero,dst_offset=dst_offset+field.offset+kept,size=size-kept})}
+                if size>kept {build_op(b,Op{kind=.Zero,dst_offset=dst_offset+field.offset+kept,size=size-kept})}
                 continue
             }
             migration_build(b,src_fields[at].type,field.type,src_offset+src_fields[at].offset,dst_offset+field.offset)
@@ -309,7 +330,8 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
             return
         }
         loop:=len(m.ops)
-        append(&m.ops,Op{kind=.Loop,src_offset=src_offset,dst_offset=dst_offset,size=count,src_stride=src_elem.size,dst_stride=dst_elem.size})
+        build_op(b,Op{kind=.Loop,src_offset=src_offset,dst_offset=dst_offset,size=count,src_stride=src_elem.size,dst_stride=dst_elem.size})
+        if b.refused {return}
         migration_build(b,src_type.elem,dst_type.elem,0,0)
         body:=len(m.ops)-loop-1
         if body==0 {pop(&m.ops)}
@@ -320,27 +342,27 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
         first:=len(m.pairs)
         for from in b.src.choices[src_type.first:][:src_type.count] {
             for to in b.dst.choices[dst_type.first:][:dst_type.count] {
-                if to.name==from.name {append(&m.pairs,Pair{from.value,to.value});break}
+                if to.name==from.name {build_pair(b,Pair{from.value,to.value});break}
             }
         }
         class,_:=number_class(b.src,src_index)
-        append(&m.ops,Op{kind=.Enum,src_class=class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset,first=u32(first),count=u32(len(m.pairs)-first)})
+        build_op(b,Op{kind=.Enum,src_class=class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset,first=u32(first),count=u32(len(m.pairs)-first)})
     case moves_values(dst_type):
         // A number becomes the member with its value, when there is one.
         class,_:=number_class(b.src,src_index)
         if class==.Float || class==.Bool {m.incompatible+=1;return}
         first:=len(m.pairs)
-        for to in b.dst.choices[dst_type.first:][:dst_type.count] {append(&m.pairs,Pair{to.value,to.value})}
-        append(&m.ops,Op{kind=.Enum,src_class=class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset,first=u32(first),count=u32(len(m.pairs)-first)})
+        for to in b.dst.choices[dst_type.first:][:dst_type.count] {build_pair(b,Pair{to.value,to.value})}
+        build_op(b,Op{kind=.Enum,src_class=class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset,first=u32(first),count=u32(len(m.pairs)-first)})
     case moves_bits(dst_type) && names_bits(src_type):
         first:=len(m.pairs)
         for from in b.src.choices[src_type.first:][:src_type.count] {
             for to in b.dst.choices[dst_type.first:][:dst_type.count] {
-                if to.name==from.name {append(&m.pairs,Pair{from.value,to.value});break}
+                if to.name==from.name {build_pair(b,Pair{from.value,to.value});break}
             }
         }
         full:=src_type.named==.Bits && dst_type.named==.Bits
-        append(&m.ops,Op{kind=.Flags,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset,first=u32(first),count=u32(len(m.pairs)-first),full=full})
+        build_op(b,Op{kind=.Flags,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset,first=u32(first),count=u32(len(m.pairs)-first),full=full})
     case:
         src_class,_:=number_class(b.src,src_index)
         dst_class,_:=number_class(b.dst,dst_index)
@@ -348,7 +370,7 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
             build_copy(b,src_offset,dst_offset,dst_type.size)
             return
         }
-        append(&m.ops,Op{kind=.Number,src_class=src_class,dst_class=dst_class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset})
+        build_op(b,Op{kind=.Number,src_class=src_class,dst_class=dst_class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset})
     }
 }
 

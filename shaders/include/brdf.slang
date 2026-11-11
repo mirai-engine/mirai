@@ -8,6 +8,7 @@
 // split-sum table of the lobe.
 #ifndef MIRAI_BRDF_SLANG
 #define MIRAI_BRDF_SLANG
+#include <shared_constants.slang>
 
 // Below this the highlight of a point light is smaller than a pixel and the
 // lobe overflows half floats.
@@ -16,8 +17,8 @@
 // Below this a traced reflection follows the mirror direction alone.
 #define MIRROR_ROUGHNESS 0.06
 // From this roughness a block of 2x2 pixels can share one reflection ray: the
-// lobe is wide enough for the filter to hide it (render.REFLECTION_SHARED_ROUGHNESS).
-#define SHARED_RAY_ROUGHNESS 0.15
+// lobe is wide enough for the filter to hide it: SHARED_RAY_ROUGHNESS
+// (render.REFLECTION_SHARED_ROUGHNESS).
 // Share of the tail of the lobe that reflection rays do not sample: the rare
 // directions far from the mirror one are most of the noise.
 #define LOBE_TAIL_CUT 0.3
@@ -170,8 +171,6 @@ float smith_masking(float cosine, float alpha) {
 // Fresnel of one: what it keeps without the light that bounces between
 // microfacets. render builds it once (dfg.comp) into the entry DFG_TEXTURE of
 // the texture table, DFG_SIZE texels a side from 0 to 1 on each axis.
-#define DFG_SIZE 64
-#define DFG_TEXTURE 0u
 #define DFG_SAMPLES 512u
 
 // The integral of the table at one texel, over directions of the visible

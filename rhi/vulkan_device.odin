@@ -15,7 +15,7 @@ VK_LIBRARY_NAMES :: [?]string{"vulkan-1.dll"} when ODIN_OS == .Windows else [?]s
 
 Vk_Buffer :: struct {
 	handle:   vk.Buffer,
-	memory:   vk.DeviceMemory,
+	memory:   Vk_Memory,
 	size:     u64,
 	mapped:   rawptr,
 	address:  u64,
@@ -23,11 +23,12 @@ Vk_Buffer :: struct {
 	kind:     Memory,
 	write:    Access,          // last write not yet superseded (None = clean)
 	reads:    bit_set[Access], // reads made visible since that write
+	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
 }
 
 Vk_Texture :: struct {
 	image:     vk.Image,
-	memory:    vk.DeviceMemory,
+	memory:    Vk_Memory,
 	view:      vk.ImageView,
 	mip_views: [MAX_TEXTURE_MIPS]vk.ImageView,
 	desc:      Texture_Desc,
@@ -81,7 +82,7 @@ Vk_Accel :: struct {
 // them has completed on the GPU.
 Vk_Deferred :: struct {
 	buffer:     vk.Buffer,
-	memory:     vk.DeviceMemory,
+	memory:     Vk_Memory, // of the buffer or the image
 	image:      vk.Image,
 	views:      [MAX_TEXTURE_MIPS + 1]vk.ImageView,
 	sampler:    vk.Sampler,
@@ -180,7 +181,12 @@ Device :: struct {
 	surface_ext:       bool,
 	swapchain_ext:     bool,
 	scratch_alignment: u64,
-	accel_arena:       Accel_Arena,      // where acceleration structures live
+	memory:            Vk_Memory_Pools,  // where buffers and textures live
+	staging:           Buffer,           // what uploads copy from (vk_staging_take)
+	staging_size:      u64,
+	fresh:             [dynamic]Buffer,  // of GPU memory, made between lists: the next list zeroes them (vk_zero_new)
+	immediate_open:    bool,             // between immediate_begin and immediate_end
+	accel_arena:       Arena,            // where acceleration structures live
 	accel_blocks:      [dynamic]Buffer,  // the buffer of each block of the arena
 	accel_empty:       [dynamic]int,     // blocks a deletion left empty, which go at the next creation
 	compact_pool:      vk.QueryPool,     // the compacted sizes of BLASes (accel_compact.odin)
@@ -214,9 +220,9 @@ Device :: struct {
 	table_taken:       []u32, // as long as the table: what a copy takes
 	table_limit:       int,   // the most entries the table grows to on this device
 	table_default:     Texture,
-	pipeline_cache:    vk.PipelineCache,
-	cache_path:        [512]u8,
-	cache_path_len:    int,
+	pipelines_kept:    Pipeline_Store, // with a path, read when created and written when destroyed
+	store_path:        [512]u8,
+	store_path_len:    int,
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
 	timing_bytes:      [MAX_TIMESTAMPS][MAX_TIMESTAMP_NAME_BYTES]u8, // the names of timings, kept until the next ones
 	timing_count:      int,
@@ -374,8 +380,11 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 		f.deletions, err = make([dynamic]Vk_Deferred, 0, c.deletions, d.allocator)
 		ok &&= err == nil
 	}
-	d.swapchain.images = make([dynamic]Texture, 0, 8, d.allocator)
-	d.swapchain.present = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
+	images_error, present_error: runtime.Allocator_Error
+	d.swapchain.images, images_error = make([dynamic]Texture, 0, 8, d.allocator)
+	d.swapchain.present, present_error = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
+	d.fresh = make([dynamic]Buffer, d.allocator)
+	ok &&= images_error == nil && present_error == nil
 	if !ok {set_error(d, "out of memory for the resource tables")}
 	return ok
 }
@@ -550,6 +559,7 @@ vk_pick_physical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	}
 	if d.physical == nil {set_error(d, "no Vulkan 1.3 device with push descriptors and a graphics+compute queue"); return false}
 	d.ivk.GetPhysicalDeviceMemoryProperties(d.physical, &d.memory_properties)
+	vk_memory_init(&d.memory, &d.memory_properties, d.properties.limits.maxMemoryAllocationCount, u64(d.properties.limits.bufferImageGranularity), d.allocator)
 	name := string(cstring(&d.properties.deviceName[0]))
 	n := copy(d.name_buffer[:], name)
 	d.info.name = string(d.name_buffer[:n])
@@ -729,21 +739,12 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		d.ivk.GetPhysicalDeviceProperties2(d.physical, &props2)
 		d.scratch_alignment = max(u64(as_props.minAccelerationStructureScratchOffsetAlignment), 256)
 	}
-	// The driver validates the header (vendor, device, cache UUID) and ignores
-	// data from another GPU or driver version.
-	cache_info := vk.PipelineCacheCreateInfo{sType = .PIPELINE_CACHE_CREATE_INFO}
-	// A path that does not fit, cut, would name another file: memory only.
-	if len(desc.pipeline_cache_path) <= len(d.cache_path) {d.cache_path_len = copy(d.cache_path[:], desc.pipeline_cache_path)}
-	if d.cache_path_len > 0 {
-		if data, err := os.read_entire_file(desc.pipeline_cache_path, context.temp_allocator); err == nil && len(data) > 0 {
-			cache_info.initialDataSize = len(data)
-			cache_info.pInitialData = raw_data(data)
-		}
-	}
-	if d.dvk.CreatePipelineCache(d.handle, &cache_info, nil, &d.pipeline_cache) != .SUCCESS {
-		cache_info.initialDataSize = 0
-		cache_info.pInitialData = nil
-		d.dvk.CreatePipelineCache(d.handle, &cache_info, nil, &d.pipeline_cache)
+	// A path that does not fit, cut, would name another file: nothing is kept.
+	if len(desc.pipeline_cache_path) <= len(d.store_path) {d.store_path_len = copy(d.store_path[:], desc.pipeline_cache_path)}
+	if d.store_path_len > 0 {
+		p := d.properties
+		pipeline_store_init(&d.pipelines_kept, {vendor = p.vendorID, device = p.deviceID, driver = p.driverVersion, uuid = p.pipelineCacheUUID}, allocator = d.allocator)
+		pipeline_store_load(&d.pipelines_kept, desc.pipeline_cache_path)
 	}
 	return true
 }
@@ -797,7 +798,7 @@ device_destroy :: proc(d: ^Device) {
 		}
 		if d.scratch != 0 {buffer_destroy(d, d.scratch)}
 		// The blocks of the arena are buffers, released below with the others.
-		accel_arena_destroy(&d.accel_arena)
+		arena_destroy(&d.accel_arena)
 		delete(d.accel_blocks)
 		delete(d.accel_empty)
 		if d.compact_pool != 0 {d.dvk.DestroyQueryPool(d.handle, d.compact_pool, nil)}
@@ -814,9 +815,8 @@ device_destroy :: proc(d: ^Device) {
 		for &t, i in d.textures.items {if d.textures.alive[i] && !t.swapchain {vk_release_texture(d, &t)}}
 		for &b, i in d.buffers.items {
 			if d.buffers.alive[i] {
-				if b.mapped != nil {d.dvk.UnmapMemory(d.handle, b.memory)}
 				d.dvk.DestroyBuffer(d.handle, b.handle, nil)
-				d.dvk.FreeMemory(d.handle, b.memory, nil)
+				vk_memory_unbind(d, b.memory)
 			}
 		}
 		for &s, i in d.samplers.items {if d.samplers.alive[i] {d.dvk.DestroySampler(d.handle, s, nil)}}
@@ -829,10 +829,8 @@ device_destroy :: proc(d: ^Device) {
 		if d.immediate_pool != 0 {d.dvk.DestroyCommandPool(d.handle, d.immediate_pool, nil)}
 		if d.immediate_fence != 0 {d.dvk.DestroyFence(d.handle, d.immediate_fence, nil)}
 		if d.timeline != 0 {d.dvk.DestroySemaphore(d.handle, d.timeline, nil)}
-		if d.pipeline_cache != 0 {
-			vk_save_pipeline_cache(d)
-			d.dvk.DestroyPipelineCache(d.handle, d.pipeline_cache, nil)
-		}
+		vk_memory_shutdown(d, true)
+		if d.store_path_len > 0 {_ = pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
 		vk_loader_lock(d)
 		d.dvk.DestroyDevice(d.handle, nil)
 		vk_loader_unlock(d)
@@ -842,6 +840,9 @@ device_destroy :: proc(d: ^Device) {
 	if d.instance != nil {d.ivk.DestroyInstance(d.instance, nil)}
 	if d.library != nil {dynlib.unload_library(d.library)}
 	vk_loader_unlock(d)
+	vk_memory_shutdown(d, false)
+	pipeline_store_destroy(&d.pipelines_kept)
+	delete(d.fresh)
 	for &f in d.frames {delete(f.deletions)}
 	delete(d.swapchain.images)
 	delete(d.swapchain.present)
@@ -851,21 +852,6 @@ device_destroy :: proc(d: ^Device) {
 	pool_destroy(&d.pipelines, d.allocator)
 	pool_destroy(&d.accels, d.allocator)
 	free(d, d.allocator)
-}
-
-@(private)
-vk_save_pipeline_cache :: proc(d: ^Device) {
-	if d.cache_path_len == 0 {return}
-	size: int
-	if d.dvk.GetPipelineCacheData(d.handle, d.pipeline_cache, &size, nil) != .SUCCESS || size == 0 {return}
-	data := make([]u8, size, d.allocator)
-	defer delete(data, d.allocator)
-	if data == nil || d.dvk.GetPipelineCacheData(d.handle, d.pipeline_cache, &size, raw_data(data)) != .SUCCESS {return}
-	// Several processes share the file: each writes its own and replaces it
-	// whole, so none reads a half-written one.
-	path := string(d.cache_path[:d.cache_path_len])
-	staged := fmt.tprintf("%s.%d.tmp", path, os.get_pid())
-	if os.write_entire_file(staged, data[:size]) != nil || os.rename(staged, path) != nil {_ = os.remove(staged)}
 }
 
 device_info :: proc(d: ^Device) -> ^Device_Info {return &d.info}
@@ -912,6 +898,7 @@ device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
 	for f in d.frames {if f.upload != 0 {buffers += 1}}
 	for block in d.accel_blocks {if block != 0 {buffers += 1}}
 	if d.scratch != 0 {buffers += 1}
+	if d.staging != 0 {buffers += 1}
 	if d.table_default != 0 {textures += 1}
 	if d.tlas_translator != 0 {pipelines += 1}
 	return
@@ -937,7 +924,7 @@ device_timestamps_calibrated :: proc(d: ^Device) -> bool {return d.calibrate != 
 vk_release_deferred :: proc(d: ^Device, e: ^Vk_Deferred) {
 	if e.accel != 0 {d.dvk.DestroyAccelerationStructureKHR(d.handle, e.accel, nil)}
 	// The block of an empty range goes later: destroying it here would defer it into the list being released.
-	if e.arena_block > 0 && d.accel_arena.blocks != nil && accel_arena_give(&d.accel_arena, int(e.arena_block - 1), e.arena_offset, e.arena_size) {
+	if e.arena_block > 0 && arena_give(&d.accel_arena, int(e.arena_block - 1), e.arena_offset, e.arena_size) {
 		append(&d.accel_empty, int(e.arena_block - 1))
 	}
 	if e.pipeline != 0 {d.dvk.DestroyPipeline(d.handle, e.pipeline, nil)}
@@ -947,7 +934,7 @@ vk_release_deferred :: proc(d: ^Device, e: ^Vk_Deferred) {
 	for view in e.views {if view != 0 {d.dvk.DestroyImageView(d.handle, view, nil)}}
 	if e.image != 0 {d.dvk.DestroyImage(d.handle, e.image, nil)}
 	if e.buffer != 0 {d.dvk.DestroyBuffer(d.handle, e.buffer, nil)}
-	if e.memory != 0 {d.dvk.FreeMemory(d.handle, e.memory, nil)}
+	vk_memory_unbind(d, e.memory)
 	if e.sampler != 0 {d.dvk.DestroySampler(d.handle, e.sampler, nil)}
 }
 
@@ -1044,7 +1031,7 @@ frame_timings :: proc(d: ^Device) -> []Gpu_Timing {return d.timings[:d.timing_co
 // Begins recording a frame. Without present it takes no image of the
 // swapchain: the frame draws only into textures, for a capture.
 frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: bool) {
-	assert(!d.in_frame, "rhi: frame_begin called twice")
+	if d.in_frame {set_error(d, "frame_begin while a frame is being recorded: end it with frame_end first"); return nil, false}
 	f := &d.frames[d.slot]
 	if d.failure != .None || !vk_wait_timeline(d, f.signal_value) {return nil, false}
 	// Before the deletions: the copy of this slot stops naming what goes.
@@ -1089,13 +1076,14 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 		// Without passes the frame is one interval, from here to frame_end.
 		if !f.passes {vk_timestamp_write(f, "frame")}
 	}
+	vk_zero_fresh(&f.list)
 	d.in_frame = true
 	return &f.list, true
 }
 
 // generated: the frame drew swapchain_generated_texture, which is shown before its own image.
 frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
-	assert(d.in_frame && cmd == &d.frames[d.slot].list, "rhi: frame_end without matching frame_begin")
+	if !d.in_frame || cmd != &d.frames[d.slot].list {set_error(d, "frame_end without the list its frame_begin gave"); return false}
 	f := &d.frames[d.slot]
 	pr := &d.presenter
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
@@ -1162,7 +1150,7 @@ frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
 frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
 	// Between frames the slot may still be in flight and frame_begin resets
 	// the ring, so transient memory only exists while a frame is recorded.
-	assert(d.in_frame, "rhi: frame_alloc outside frame_begin/frame_end")
+	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
 	f := &d.frames[d.slot]
 	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
 	offset := align_up(f.upload_used, align)
@@ -1178,19 +1166,26 @@ frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
 // ---------------------------------------------------------------- immediate transactions
 
 // Begins a blocking command list for load-time work (uploads, BLAS builds,
-// readback). Not allowed while a frame is being recorded.
+// readback). nil, with the error of the device, while a frame is being
+// recorded: immediate_end of it fails.
 immediate_begin :: proc(d: ^Device) -> ^Command_List {
-	assert(!d.in_frame, "rhi: immediate commands cannot interleave with frame recording")
+	if d.in_frame {set_error(d, "immediate_begin while a frame is being recorded: a load transaction runs between frame_end and frame_begin"); return nil}
 	vk_table_take(d, table_copy(true, 0))
 	d.dvk.ResetCommandBuffer(d.immediate.cmd, {})
 	begin := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}}
 	d.dvk.BeginCommandBuffer(d.immediate.cmd, &begin)
 	vk_list_reset(&d.immediate)
+	vk_zero_fresh(&d.immediate)
+	d.immediate_open = true
 	return &d.immediate
 }
 
 immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
-	assert(cmd == &d.immediate)
+	if cmd != &d.immediate {
+		if cmd != nil {set_error(d, "immediate_end of a list immediate_begin did not give")}
+		return false
+	}
+	d.immediate_open = false
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	vk_flush_barriers(cmd)
 	d.dvk.EndCommandBuffer(cmd.cmd)

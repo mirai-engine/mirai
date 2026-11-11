@@ -3,7 +3,6 @@ package anim
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -45,8 +44,7 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
     doc:asset.Document;defer asset.document_destroy(&doc)
     if !testing.expect_value(t,pose_profile_document(&doc,&types,{3,4},profile),asset.Error.None) {return}
     testing.expect_value(t,doc.kind_version,u16(POSE_VERSION))
-    temp,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-rig-shapes-%d.pose",temp,os.get_pid());defer os.remove(path)
+    path:=fmt.tprintf("%s/shapes.pose",base.test_folder(t,"rig-shapes"))
     testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None) {return}
@@ -55,23 +53,22 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
     testing.expect_value(t,read,asset.Error.None)
     testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.correctives[0].samples[1].curve_value==1 && view.follow[0].target.kind==.Socket)
     testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose && len(view.curve_drives)==1 && view.curve_drives[0]==drive)
-    // A profile of the version before curve poses, drives and materials reads them empty; one of
-    // the current version without them is incomplete, and one older than the oldest is refused.
+    // A profile of the current version without curve poses, drives and materials is incomplete,
+    // and one of another version is refused.
     for name in ([3]string{"curve_poses","curve_drives","curve_materials"}) {
         if table,found:=asset.document_table(&doc,name);found {asset.document_table_remove(&doc,table)}
     }
-    for version,i in ([3]u16{POSE_OLDEST,POSE_VERSION,POSE_OLDEST-1}) {
+    for version,i in ([2]u16{POSE_VERSION,POSE_VERSION-1}) {
         doc.kind_version=version
         bytes,written:=asset.document_bytes(&doc,context.temp_allocator)
         if !testing.expect_value(t,written,asset.Error.None) {continue}
         old:asset.Asset
         if !testing.expect_value(t,asset.asset_open(&old,bytes,context.temp_allocator),asset.Error.None) {continue}
         defer asset.asset_close(&old)
-        migrated,error:=pose_profile_view(&old,&types)
+        _,error:=pose_profile_view(&old,&types)
         switch i {
-        case 0: testing.expect(t,error==.None && len(migrated.curve_poses)==0 && len(migrated.curve_drives)==0 && len(migrated.follow)==1 && migrated.follow[0].target.kind==.Socket,"a profile of the version before reads with no curves")
-        case 1: testing.expect_value(t,error,asset.Error.Not_Found)
-        case 2: testing.expect_value(t,error,asset.Error.Version)
+        case 0: testing.expect_value(t,error,asset.Error.Not_Found)
+        case 1: testing.expect_value(t,error,asset.Error.Version)
         }
     }
     nan:=f32(0);nan/=nan
@@ -233,7 +230,6 @@ ik_holds_the_rotation_it_is_asked_and_look_keeps_its_up_axis :: proc(t:^testing.
     problems:core.Problems
     rig,helper:=core.entity_make(1,1),core.entity_make(2,1)
     state:=rig_test_state(rig,3,.5);defer playing_free(&state)
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     iks:core.Table(IK_Constraint);looks:core.Table(Look_Constraint)
     defer {core.table_destroy(&iks);core.table_destroy(&looks)}
     turn:=mm.quat_axis_angle({0,1,0},.7)
@@ -271,12 +267,21 @@ ik_holds_the_rotation_it_is_asked_and_look_keeps_its_up_axis :: proc(t:^testing.
     testing.expect(t,linalg.dot(mm.quat_rotate(state.world[3].rotation,look.forward),aimed)>.9999 && linalg.dot(up,wanted)>.9999,"the bone aims and its up axis turns to world_up around the aim")
 }
 
+@(private="file")
+Rig_Shapes_World :: struct {
+    using world:core.Test_World,
+    configs:core.Table(Pose_Modifiers),
+    animations:core.Table(Animation),
+    attachments:core.Table(Bone_Attachment),
+    playback:Playback,
+    modifiers:Modifier_Runtime,
+    requests:Modifier_Requests,
+}
+
 @(test)
 named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(t:^testing.T) {
     problems:core.Problems
-    temp,_:=os.temp_directory(context.temp_allocator)
-    directory:=fmt.tprintf("%s/mirai-modifier-identity-%d",temp,os.get_pid())
-    os.make_directory_all(directory);defer os.remove_all(directory)
+    directory:=base.test_folder(t,"modifier-identity")
     path:=fmt.tprintf("%s/rig.pose",directory)
     head,eyes:=LOOK_CONSTRAINT_DEFAULT,LOOK_CONSTRAINT_DEFAULT
     head.bone,eyes.bone=bone_ref("head"),bone_ref("eyes")
@@ -290,49 +295,47 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return}
     defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    rig:=core.create(&entities)
-    configs:core.Table(Pose_Modifiers);defer core.table_destroy(&configs)
-    core.add(&configs,rig,Pose_Modifiers{profile=id,weight=1,enabled=true});core.table_settle(&configs,&entities)
-    animations:core.Table(Animation);defer core.table_destroy(&animations)
-    attachments:core.Table(Bone_Attachment);defer core.table_destroy(&attachments)
-    playback:Playback;defer playback_free(&playback)
+    w:Rig_Shapes_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    rig:=core.create(&w.entities)
+    core.add(&w.configs,rig,Pose_Modifiers{profile=id,weight=1,enabled=true});core.test_world_settle(&w)
     profiles:Pose_Assets;defer pose_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
-    modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    prepare :: proc(modifiers:^Modifier_Runtime,configs:^core.Table(Pose_Modifiers),animations:^core.Table(Animation),attachments:^core.Table(Bone_Attachment),profiles:^Pose_Assets,skeletons:^Skeleton_Assets,playback:^Playback,app:^host.App) -> bool {
-        return modifier_prepare(modifiers,core.read(configs),core.read(animations),core.read(attachments),profiles,skeletons,playback,app,nil)
+    prepare :: proc(w:^Rig_Shapes_World,profiles:^Pose_Assets,skeletons:^Skeleton_Assets,app:^host.App) -> bool {
+        return modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),profiles,skeletons,&w.playback,app.assets,app.allocator,nil)
     }
-    if !testing.expect(t,prepare(&modifiers,&configs,&animations,&attachments,&profiles,&skeletons,&playback,&app)) {return}
-    requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true}) && modifier_control(&requests,{rig=rig,kind=.Look,weight=.25,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true}))
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems)
-    testing.expect(t,len(modifiers.goals)==2 && modifiers.look.values[0].weight==.25)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head"))
-    testing.expect(t,modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head"))
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({9,8,7}),weight=1,enabled=true},"hands"))
+    if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
+    modifier_goal(&w.requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true})
+    modifier_control(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true})
+    modifier_goal(&w.requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true})
+    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+    testing.expect(t,len(w.modifiers.goals)==2 && w.modifiers.look.values[0].weight==.25)
+    modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head")
+    modifier_control_named(&w.requests,&w.modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head")
+    modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({9,8,7}),weight=1,enabled=true},"hands")
     // The profile reorders its looks and effectors: what was asked by slot goes; by name, follows.
     hands.effectors[0],hands.effectors[1]=hands.effectors[1],hands.effectors[0]
     testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes,head},multi_ik={hands}}),asset.Error.None)
     record,found:=asset.registry_find(&assets.registry,id)
     if !testing.expect(t,found) {return}
     record.time+=1;assets.revision+=1
-    if !testing.expect(t,prepare(&modifiers,&configs,&animations,&attachments,&profiles,&skeletons,&playback,&app)) {return}
-    testing.expect(t,len(modifiers.goals)==0 && modifiers.look.values[0].weight==1 && modifiers.look.values[1].weight==1)
+    if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
+    testing.expect(t,len(w.modifiers.goals)==0 && w.modifiers.look.values[0].weight==1 && w.modifiers.look.values[1].weight==1)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems)
+    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
     context=saved
-    testing.expect(t,modifiers.look.values[0].target.position=={} && modifiers.look.values[1].target.position==mm.Vec3{3,4,5} && modifiers.look.values[1].weight==.6)
-    testing.expect(t,modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{9,8,7} && modifiers.multi_ik.values[0].effectors[0].target.position=={} && problems.count==0)
+    testing.expect(t,w.modifiers.look.values[0].target.position=={} && w.modifiers.look.values[1].target.position==mm.Vec3{3,4,5} && w.modifiers.look.values[1].weight==.6)
+    testing.expect(t,w.modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{9,8,7} && w.modifiers.multi_ik.values[0].effectors[0].target.position=={} && problems.count==0)
     controls:Modifier_Requests;defer delete(controls.controls.items)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands") && modifier_control_named(&controls,&modifiers,{rig=rig,kind=.Look,weight=0},"head"))
+    modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands")
+    modifier_control_named(&controls,&w.modifiers,{rig=rig,kind=.Look,weight=0},"head")
     hands.effector_count=1
     testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes},multi_ik={hands}}),asset.Error.None)
     record.time+=1;assets.revision+=1
-    if !testing.expect(t,prepare(&modifiers,&configs,&animations,&attachments,&profiles,&skeletons,&playback,&app)) {return}
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems)
-    testing.expect(t,problems.count==1 && core.problem_find(&problems,rig,"animation.modifier_effector")!=nil && modifier_request_error(&modifiers,rig)==.Missing_Effector)
-    modifier_controls_take(&modifiers,&controls,&problems,0)
-    testing.expect(t,problems.count==2 && core.problem_find(&problems,rig,"animation.modifier_name")!=nil && modifier_request_error(&modifiers,rig)==.Missing_Operation && modifiers.look.values[0].weight==1)
+    if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
+    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+    testing.expect(t,problems.count==1 && core.problem_find(&problems,rig,"animation.modifier_effector")!=nil && modifier_request_error(&w.modifiers,rig)==.Missing_Effector)
+    modifier_controls_take(&w.modifiers,&controls,&problems,0)
+    testing.expect(t,problems.count==2 && core.problem_find(&problems,rig,"animation.modifier_name")!=nil && modifier_request_error(&w.modifiers,rig)==.Missing_Operation && w.modifiers.look.values[0].weight==1)
 }

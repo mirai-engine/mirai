@@ -48,7 +48,7 @@ Camera_Follow :: struct {
     look_ahead:f32 `mirai:"min=0,unit=s"`, // the pivot leads the target by how far it goes across the ground in this time
     look_ahead_max:f32 `mirai:"min=0,unit=m"`, // 0: no limit
     yaw:f32 `mirai:"angle,section=Look"`, // Orbit: where it starts; aiming, what it adds to the look
-    pitch:f32 `mirai:"angle"`,
+    pitch:f32 `mirai:"angle"`, // Orbit: where it starts, positive above the pivot looking down, negative below it looking up; aiming, what it adds to the look. Eyes: where it starts, positive looks up
     min_pitch,max_pitch:f32 `mirai:"angle"`, // both 0: almost straight up and down
     turn:bool,                      // Orbit without aim: the look action of the focused local player who drives its target turns it
     recenter:f32 `mirai:"min=0,unit=s"`, // Orbit without aim: this long after it was last turned, it comes back behind a target that moves; 0: never
@@ -102,6 +102,18 @@ Camera_Input :: struct {
 
 camera_look :: proc(input:^Camera_Input,camera:core.Entity,yaw,pitch:f32) {
     core.push(&input.looks,Camera_Look{camera,yaw,pitch})
+}
+
+// Asks an Orbit camera to turn so that it looks from its pivot at a point of
+// the world, whatever turned it so far; up is the frame of the vertical of its
+// target. false for one that does not orbit by itself or has not started.
+camera_look_toward :: proc(input:^Camera_Input,camera:core.Entity,follow:Camera_Follow,point:[3]f32,up:=mm.QUAT_IDENTITY) -> bool {
+    if follow.mode!=.Orbit || follow.aim || !follow.state.ready {return false}
+    toward:=point-follow.state.pivot.position
+    if linalg.length(toward)<1e-4 {return true}
+    want:=look_toward(mm.quat_rotate(conj(up),linalg.normalize(toward)))
+    camera_look(input,camera,mm.angle_wrap(want.x-follow.looking.x),want.y-follow.looking.y)
+    return true
 }
 
 // A camera the seat sees through for as long as the owner asks; the latest
@@ -397,8 +409,13 @@ camera_lens_set :: proc "contextless" (camera:^render.Camera,lens:Camera_Lens) {
 // The yaw and pitch of an Orbit that looks as rotation does.
 @(private)
 look_of :: proc "contextless" (rotation:mm.Quat) -> [2]f32 {
-    forward:=mm.quat_rotate(rotation,{0,0,-1})
-    return {linalg.atan2(-forward.x,-forward.z),math.asin(clamp(-forward.y,-1,1))}
+    return look_toward(mm.quat_forward(rotation))
+}
+
+// The yaw and pitch of an Orbit that looks along forward, a unit vector.
+@(private)
+look_toward :: proc "contextless" (forward:[3]f32) -> [2]f32 {
+    return {mm.yaw_of_direction(forward),math.asin(clamp(-forward.y,-1,1))}
 }
 
 @(private)
@@ -531,7 +548,7 @@ follow_one :: proc(
             s.idle+=dt
             if s.idle>=follow.recenter && linalg.length(ground)>RECENTER_SPEED {
                 along:=mm.quat_rotate(conj(vertical),ground)
-                follow.looking.x=mm.damp_angle(follow.looking.x,linalg.atan2(-along.x,-along.z),RECENTER_RATE,dt)
+                follow.looking.x=mm.damp_angle(follow.looking.x,mm.yaw_of_direction(along),RECENTER_RATE,dt)
             }
         }
         orbit:=orbit_make(pivot,follow.distance,follow.looking.x,follow.looking.y)

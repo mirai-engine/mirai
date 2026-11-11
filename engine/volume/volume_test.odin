@@ -12,32 +12,19 @@ mix_level :: proc(value:^Level,by:Level,weight:f32,add:bool) {mix_linear(&value.
 
 @(private="file")
 Fixture :: struct {
-    es:core.Entities,
+    using world:core.Test_World,
     volumes:core.Table(Volume),
     worlds:core.Table(core.World_Transform),
     levels:core.Table(Level),
 }
 
 @(private="file")
-fixture_init :: proc(f:^Fixture) {
-    core.entities_init(&f.es)
-    core.table_init(&f.volumes,"Volume")
-    core.table_init(&f.worlds,"World_Transform")
-    core.table_init(&f.levels,"Level")
-}
-
-@(private="file")
-fixture_destroy :: proc(f:^Fixture) {
-    core.table_destroy(&f.levels);core.table_destroy(&f.worlds);core.table_destroy(&f.volumes);core.entities_destroy(&f.es)
-}
-
-@(private="file")
 place :: proc(f:^Fixture,level:f32,v:Maybe(Volume),position:[3]f32={},scale:f32=1) -> core.Entity {
-    e:=core.create(&f.es)
+    e:=core.create(&f.entities)
     core.add(&f.levels,e,Level{level})
     if v,ok:=v.?;ok {core.add(&f.volumes,e,v)}
     core.add(&f.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale=scale}})
-    core.table_settle(&f.levels,&f.es);core.table_settle(&f.volumes,&f.es);core.table_settle(&f.worlds,&f.es)
+    core.test_world_settle(f)
     return e
 }
 
@@ -58,9 +45,31 @@ level_indexed :: proc(f:^Fixture,ix:^Index,point:[3]f32) -> f32 {
 
 // Without a Volume the value rules the world; a box replaces it inside and
 // fades over its blend; a smaller box of the same priority goes on top.
+// What the shapes make, and an Unbounded volume with extents is a problem once.
+@(test)
+the_shapes_are_as_their_constructors_say_and_a_world_volume_with_extents_is_reported :: proc(t:^testing.T) {
+    testing.expect_value(t,box({1,2,3},0.5),Volume{shape=.Box,extents={1,2,3},blend=0.5})
+    testing.expect_value(t,sphere(4),Volume{shape=.Sphere,extents={4,0,0}})
+    testing.expect_value(t,world(),Volume{})
+    f:Fixture
+    if !core.test_world_init(t,&f,test_types) {return}
+    defer core.test_world_destroy(&f)
+    check:Volume_Check
+    problems:core.Problems
+    place(&f,1,box({1,1,1}))
+    volumes_check(core.read(&f.volumes),&check,&problems)
+    testing.expect_value(t,problems.count,0)
+    e:=place(&f,2,Volume{extents={4,4,4}})
+    volumes_check(core.read(&f.volumes),&check,&problems)
+    volumes_check(core.read(&f.volumes),&check,&problems)
+    testing.expect(t,problems.count==1 && core.problem_find(&problems,e,"volume.unbounded_extents")!=nil && problems.entries[0].count==1)
+}
+
 @(test)
 a_box_replaces_the_level_inside_and_fades_at_its_border :: proc(t:^testing.T) {
-    f:Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Fixture
+    if !core.test_world_init(t,&f,test_types) {return}
+    defer core.test_world_destroy(&f)
     testing.expect_value(t,level_at(&f,{}),1)
     place(&f,2,nil)
     testing.expect_value(t,level_at(&f,{}),2)
@@ -77,7 +86,9 @@ a_box_replaces_the_level_inside_and_fades_at_its_border :: proc(t:^testing.T) {
 // one that adds goes on top of what is below.
 @(test)
 priority_orders_bounded_and_unbounded_and_add_sums :: proc(t:^testing.T) {
-    f:Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Fixture
+    if !core.test_world_init(t,&f,test_types) {return}
+    defer core.test_world_destroy(&f)
     place(&f,5,Volume{shape=.Sphere,extents={2,0,0}})
     place(&f,3,Volume{shape=.Unbounded,priority=1})
     testing.expect_value(t,level_at(&f,{}),3)
@@ -91,10 +102,12 @@ priority_orders_bounded_and_unbounded_and_add_sums :: proc(t:^testing.T) {
 // nowhere while that box has no size.
 @(test)
 an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
-    f:Fixture;fixture_init(&f);defer fixture_destroy(&f)
-    section:=core.create(&f.es)
+    f:Fixture
+    if !core.test_world_init(t,&f,test_types) {return}
+    defer core.test_world_destroy(&f)
+    section:=core.create(&f.entities)
     core.add(&f.worlds,section,core.World_Transform{transform={position={100,0,0},rotation=1,scale=1}})
-    core.table_settle(&f.worlds,&f.es)
+    core.test_world_settle(&f)
     place(&f,9,Volume{shape=.Unbounded,scope=section,scope_extents={10,10,10}})
     testing.expect_value(t,level_at(&f,{100,0,0}),9)
     testing.expect_value(t,level_at(&f,{0,0,0}),1)
@@ -107,7 +120,9 @@ an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
 // outside; a turned box is found where it is, not where its axes would be.
 @(test)
 the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^testing.T) {
-    f:Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Fixture
+    if !core.test_world_init(t,&f,test_types) {return}
+    defer core.test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     place(&f,2,nil)
     place(&f,3,Volume{shape=.Unbounded,priority=5,mode=.Add})
@@ -132,7 +147,9 @@ the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^t
 // volumes every point gets the unbounded ones alone: the value combined once.
 @(test)
 the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
-    f:Fixture;fixture_init(&f);defer fixture_destroy(&f)
+    f:Fixture
+    if !core.test_world_init(t,&f,test_types) {return}
+    defer core.test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     update :: proc(f:^Fixture,ix:^Index) -> bool {
         changed,_:=index_update(ix,core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels))
@@ -148,9 +165,9 @@ the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
     }
     testing.expect_value(t,level_indexed(&f,&ix,{5,5,5}),f32(6))
 
-    other:=core.create(&f.es)
+    other:=core.create(&f.entities)
     core.add(&f.worlds,other,core.World_Transform{transform={rotation=1,scale=1}})
-    core.table_settle(&f.worlds,&f.es)
+    core.test_world_settle(&f)
     core.get(&f.worlds,other).position={3,0,0}
     testing.expect(t,!update(&f,&ix),"what moves is not one of its volumes")
     zone:=place(&f,10,Volume{shape=.Box,extents={1,1,1},priority=2})

@@ -5,7 +5,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
-import "core:strings"
 import "mirai:core"
 import "mirai:std/base"
 import phys "plugins:physics/runtime"
@@ -32,20 +31,6 @@ collision_categories :: proc(info:^core.World_Info,allocator:=context.temp_alloc
         append(&list,entry)
     }
     return list[:]
-}
-
-// A mask of categories by their names: Everything, Nothing, or the names.
-@(private)
-collision_layers_text :: proc(info:^core.World_Info,layers:phys.Collision_Layers) -> string {
-    if layers==phys.COLLISION_LAYERS_ALL {return "Everything"}
-    if layers==phys.COLLISION_LAYERS_NONE {return "Nothing"}
-    b:=strings.builder_make(context.temp_allocator)
-    for index in 0..<phys.COLLISION_CATEGORY_CAPACITY {
-        if layers&(phys.Collision_Layers(1)<<uint(index))==0 {continue}
-        if strings.builder_len(b)>0 {strings.write_string(&b,", ")}
-        if name,found:=core.name_of(info,phys.Collision_Category,i64(index));found {strings.write_string(&b,editor.readable(name))} else {fmt.sbprintf(&b,"%d",index)}
-    }
-    return strings.to_string(b)
 }
 
 // ---------------------------------------------------------------- the collider
@@ -110,7 +95,7 @@ collision_preset_choice :: proc(c:editor.Inspector_Context,table:^core.Raw_Table
     chosen:=phys.Collision_Preset(0)
     changed:=false
     editor.row_begin(ctx,label)
-    if ui.dropdown(ctx,ui.id(ctx,"collider_preset",1),options,&selected,{width=-1,height=ctx.theme.row,searchable=true,empty=phys.collision_name(c.world.info,phys.Collision_Preset,i64(current))},&created) {
+    if ui.dropdown(ctx,ui.id(ctx,"collider_preset",1),{list=options},&selected,{width=-1,height=ctx.theme.row,searchable=true,empty=phys.collision_name(c.world.info,phys.Collision_Preset,i64(current))},&created) {
         chosen,changed=phys.Collision_Preset(presets[selected].value),true
     }
     editor.row_end(ctx)
@@ -211,7 +196,7 @@ collision_category_choice :: proc(c:^editor.Inspect,label,id:string,at:int,curre
     }
     created:string
     editor.row_begin(ctx,label)
-    if ui.dropdown(ctx,ui.id(ctx,id,at+1),options,&selected,{width=-1,height=ctx.theme.row,searchable=true,empty=phys.collision_name(c.w.info,phys.Collision_Category,i64(current))},&created) {
+    if ui.dropdown(ctx,ui.id(ctx,id,at+1),{list=options},&selected,{width=-1,height=ctx.theme.row,searchable=true,empty=phys.collision_name(c.w.info,phys.Collision_Category,i64(current))},&created) {
         value,changed=phys.Collision_Category(categories[selected].value),true
     }
     editor.row_end(ctx)
@@ -233,7 +218,7 @@ collision_declare_row :: proc(c:^editor.Inspect,label,id:string,type:typeid,type
     selected:=-1
     created:string
     editor.row_begin(ctx,label)
-    ui.dropdown(ctx,ui.id(ctx,id,1),options,&selected,{width=-1,height=ctx.theme.row,searchable=true,empty="Type a name to declare"},&created)
+    ui.dropdown(ctx,ui.id(ctx,id,1),{list=options},&selected,{width=-1,height=ctx.theme.row,searchable=true,empty="Type a name to declare"},&created)
     editor.row_end(ctx)
     if created=="" {return}
     if _,error:=editor.names_create(c.s,c.w.info,type,created);error!=.None {editor.notify(c.s,editor.names_error_text(error,type_name,created))}

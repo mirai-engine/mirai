@@ -7,7 +7,6 @@ import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -34,13 +33,13 @@ COLLISION_OUT_COLOR :: mm.Vec4{0.6,0.6,0.7,0.25} // blocks only others: not in i
 
 @(storage,free="nav_view_free")
 Nav_View :: struct {
-    vertices:[dynamic]gpu.Debug_Vertex, // made the first time a mode is shown
+    vertices:[dynamic]erender.Debug_Vertex, // made the first time a mode is shown
     world:rawptr,   // what the lines were made from
     revision:u64,
     class:int,
     count,dropped:int,
     ready:bool,
-    agents:[dynamic]gpu.Debug_Vertex, // the paths of the selected agents, made every frame
+    agents:[dynamic]erender.Debug_Vertex, // the paths of the selected agents, made every frame
     shown:int,      // the class the mode of this frame shows, or -1
     collision:bool, // the mode shows the collision of the class, not its mesh
     lines_collision:bool, // what the lines were made of
@@ -86,13 +85,13 @@ navigation_view_modes :: proc(s:^editor.Session,view:^Nav_View) {
 }
 
 @(step="render",after="render_sync")
-navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,app:^host.App) {
+navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,extras:^host.Frame_Extras) {
     if view.shown<0 {return}
     w:=editor.shown_world(s)
     n:=core.world_storage_of(w,nav.Navigation)
     if n==nil || view.shown>=n.count {return}
     if len(view.vertices)==0 {resize(&view.vertices,2*NAV_VIEW_LINES)}
-    lines:=gpu.debug_lines_make(view.vertices[:])
+    lines:=erender.debug_lines_make(view.vertices[:])
     // The collision follows the camera: made again once it went a quarter of the reach away.
     center:=s.viewport.camera.position
     moved:=view.collision && linalg.length(center-view.center)>NAV_VIEW_COLLISION_REACH*0.25
@@ -105,18 +104,18 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,app:^host.App) {
         view.count,view.dropped,view.ready=lines.count,lines.dropped,true
     }
     lines.count,lines.dropped=view.count,view.dropped
-    if lines.count>0 {host.app_debug_lines_add(app,lines)}
+    if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
     if s.selection==nil || len(s.selection.entities)==0 {return}
     paths:=core.world_table_of(w,nav.Nav_Path)
     if paths==nil {return}
     if len(view.agents)==0 {resize(&view.agents,2*NAV_VIEW_AGENT_LINES)}
-    agent_lines:=gpu.debug_lines_make(view.agents[:],depth_test=false)
+    agent_lines:=erender.debug_lines_make(view.agents[:],depth_test=false)
     for e in s.selection.entities {
         p,found:=core.get(core.read(paths),e)
         if !found || p.class<0 || int(p.class)>=n.count {continue}
         if nav.class_in_volume(n,int(p.class)) {draw_flier(&agent_lines,&n.classes[p.class].volume,p)} else {draw_agent(&agent_lines,&n.classes[p.class].mesh,p)}
     }
-    if agent_lines.count>0 {host.app_debug_lines_add(app,agent_lines)}
+    if agent_lines.count>0 {host.extras_debug_lines_add(extras,agent_lines)}
 }
 
 NAV_VIEW_AGENT_LINES :: 4096
@@ -124,7 +123,7 @@ AGENT_COLOR :: mm.Vec4{1,1,1,0.95}
 CORRIDOR_COLOR :: mm.Vec4{0.35,0.6,1,0.6}
 
 // The path of an agent: the outlines of its corridor and its next corners to the goal.
-draw_agent :: proc(lines:^gpu.Debug_Lines,mesh:^ai.Nav_Mesh,p:nav.Nav_Path) {
+draw_agent :: proc(lines:^erender.Debug_Lines,mesh:^ai.Nav_Mesh,p:nav.Nav_Path) {
     up:=mm.Vec3{0,NAV_VIEW_LIFT*2,0}
     corridor:=p.corridor
     for ref in corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)] {
@@ -132,17 +131,17 @@ draw_agent :: proc(lines:^gpu.Debug_Lines,mesh:^ai.Nav_Mesh,p:nav.Nav_Path) {
         if poly==nil {continue}
         corners:[ai.NAV_VERTS_PER_POLY]mm.Vec3
         count:=ai.nav_poly_vertices(tile,poly,&corners)
-        for i in 0..<count {gpu.debug_line(lines,corners[i]+up,corners[(i+1)%count]+up,CORRIDOR_COLOR)}
+        for i in 0..<count {erender.debug_line(lines,corners[i]+up,corners[(i+1)%count]+up,CORRIDOR_COLOR)}
     }
     if p.state!=.Moving && p.state!=.Crossing {return}
     corners:[16]ai.Nav_Corner
     count,_:=ai.nav_straight_path(mesh,corridor.position,corridor.target,corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)],corners[:])
-    for i in 1..<count {gpu.debug_line(lines,corners[i-1].position+up,corners[i].position+up,AGENT_COLOR)}
-    if p.state==.Crossing {gpu.debug_line(lines,p.from+up,p.to+up,LINK_COLOR)}
+    for i in 1..<count {erender.debug_line(lines,corners[i-1].position+up,corners[i].position+up,AGENT_COLOR)}
+    if p.state==.Crossing {erender.debug_line(lines,p.from+up,p.to+up,LINK_COLOR)}
 }
 
 // The path of an agent that flies: the cells of its corridor and its path pulled tight to the goal.
-draw_flier :: proc(lines:^gpu.Debug_Lines,volume:^ai.Nav_Volume,p:nav.Nav_Path) {
+draw_flier :: proc(lines:^erender.Debug_Lines,volume:^ai.Nav_Volume,p:nav.Nav_Path) {
     corridor:=p.corridor
     path:=corridor.path[:clamp(corridor.count,0,ai.NAV_CORRIDOR_CAPACITY)]
     for ref in path {
@@ -151,23 +150,23 @@ draw_flier :: proc(lines:^gpu.Debug_Lines,volume:^ai.Nav_Volume,p:nav.Nav_Path) 
     if p.state!=.Moving {return}
     corners:[32]mm.Vec3
     count,_:=ai.nav_volume_straight_path(volume,corridor.position,corridor.target,path,corners[:])
-    for i in 1..<count {gpu.debug_line(lines,corners[i-1],corners[i],AGENT_COLOR)}
+    for i in 1..<count {erender.debug_line(lines,corners[i-1],corners[i],AGENT_COLOR)}
 }
 
 ZONE_COLOR :: mm.Vec4{0.6,0.6,0.6,0.35}
 FREE_COLOR :: mm.Vec4{0.3,0.85,1,0.25}
 
-draw_box :: proc(lines:^gpu.Debug_Lines,box:mm.Aabb,color:mm.Vec4) {
+draw_box :: proc(lines:^erender.Debug_Lines,box:mm.Aabb,color:mm.Vec4) {
     corner :: #force_inline proc "contextless" (box:mm.Aabb,i:int) -> mm.Vec3 {
         return {box.max.x if i&1!=0 else box.min.x,box.max.y if i&2!=0 else box.min.y,box.max.z if i&4!=0 else box.min.z}
     }
     edges:=[12][2]int{{0,1},{2,3},{4,5},{6,7},{0,2},{1,3},{4,6},{5,7},{0,4},{1,5},{2,6},{3,7}}
-    for e in edges {gpu.debug_line(lines,corner(box,e[0]),corner(box,e[1]),color)}
+    for e in edges {erender.debug_line(lines,corner(box,e[0]),corner(box,e[1]),color)}
 }
 
 // The zones of a volume and the free nodes of their octrees bigger than a
 // block: the blocks and voxels along the obstacles are too many to read.
-draw_volume :: proc(lines:^gpu.Debug_Lines,volume:^ai.Nav_Volume) {
+draw_volume :: proc(lines:^erender.Debug_Lines,volume:^ai.Nav_Volume) {
     Item :: struct {layer:int,index:u32,cell:[3]i32}
     stack:[8*ai.NAV_VOLUME_MAX_LAYERS+8]Item
     for &zone in volume.zones {
@@ -201,7 +200,7 @@ draw_volume :: proc(lines:^gpu.Debug_Lines,volume:^ai.Nav_Volume) {
 // The static collision around center that the mesh of a class reads: the
 // triangles of the colliders that block its agents bright, those of the
 // colliders that block only others dim.
-draw_collision :: proc(lines:^gpu.Debug_Lines,view:^Nav_View,physics:^phys.Physics_State,c:^nav.Class_Mesh,center:mm.Vec3) {
+draw_collision :: proc(lines:^erender.Debug_Lines,view:^Nav_View,physics:^phys.Physics_State,c:^nav.Class_Mesh,center:mm.Vec3) {
     if physics==nil {return}
     if len(view.owners)==0 {
         resize(&view.triangles,3*NAV_VIEW_COLLISION_TRIANGLES)
@@ -219,9 +218,9 @@ draw_collision :: proc(lines:^gpu.Debug_Lines,view:^Nav_View,physics:^phys.Physi
     for i in 0..<index_count/3 {
         color:=COLLISION_IN_COLOR if view.owners[i] in in_mesh else COLLISION_OUT_COLOR
         a,b,d:=view.triangles[view.indices[i*3]],view.triangles[view.indices[i*3+1]],view.triangles[view.indices[i*3+2]]
-        gpu.debug_line(lines,a,b,color)
-        gpu.debug_line(lines,b,d,color)
-        gpu.debug_line(lines,d,a,color)
+        erender.debug_line(lines,a,b,color)
+        erender.debug_line(lines,b,d,color)
+        erender.debug_line(lines,d,a,color)
     }
     if !complete {lines.dropped+=1}
 }
@@ -249,14 +248,14 @@ LINK_LOOSE_COLOR :: mm.Vec4{1,0.25,0.2,0.9}
 PORTAL_COLOR :: mm.Vec4{0.3,0.85,1,0.6}
 TILE_COLOR :: mm.Vec4{0.6,0.6,0.6,0.35}
 
-draw_mesh :: proc(lines:^gpu.Debug_Lines,mesh:^ai.Nav_Mesh) {
+draw_mesh :: proc(lines:^erender.Debug_Lines,mesh:^ai.Nav_Mesh) {
     up:=mm.Vec3{0,NAV_VIEW_LIFT,0}
     for &tile in mesh.tiles {
         if !tile.used {continue}
         b:=tile.data.bounds
         y:=b.min.y
         rect:=[4]mm.Vec3{{b.min.x,y,b.min.z},{b.max.x,y,b.min.z},{b.max.x,y,b.max.z},{b.min.x,y,b.max.z}}
-        for i in 0..<4 {gpu.debug_line(lines,rect[i],rect[(i+1)%4],TILE_COLOR)}
+        for i in 0..<4 {erender.debug_line(lines,rect[i],rect[(i+1)%4],TILE_COLOR)}
         for &poly,p in tile.data.polys {
             corners:[ai.NAV_VERTS_PER_POLY]mm.Vec3
             count:=ai.nav_poly_vertices(&tile,&poly,&corners)
@@ -265,11 +264,11 @@ draw_mesh :: proc(lines:^gpu.Debug_Lines,mesh:^ai.Nav_Mesh) {
                 a,c:=corners[e]+up,corners[(e+1)%count]+up
                 switch {
                 case neighbor==ai.NAV_EDGE_WALL:
-                    gpu.debug_line(lines,a,c,area_color(poly.area,true))
+                    erender.debug_line(lines,a,c,area_color(poly.area,true))
                 case neighbor&ai.NAV_EDGE_PORTAL!=0:
-                    gpu.debug_line(lines,a,c,PORTAL_COLOR)
+                    erender.debug_line(lines,a,c,PORTAL_COLOR)
                 case int(neighbor)-1>p:
-                    gpu.debug_line(lines,a,c,area_color(poly.area,false))
+                    erender.debug_line(lines,a,c,area_color(poly.area,false))
                 }
             }
         }
@@ -282,7 +281,7 @@ draw_mesh :: proc(lines:^gpu.Debug_Lines,mesh:^ai.Nav_Mesh) {
 
 // A link as the arc an agent jumps (a straight line when its ends are level
 // or one under the other), with a head at each end it can be left by.
-draw_link :: proc(lines:^gpu.Debug_Lines,link:^ai.Nav_Link) {
+draw_link :: proc(lines:^erender.Debug_Lines,link:^ai.Nav_Link) {
     rested:=link.start_poly!=0 && link.end_poly!=0
     a:=link.start_point if rested else link.desc.start
     b:=link.end_point if rested else link.desc.end
@@ -295,18 +294,18 @@ draw_link :: proc(lines:^gpu.Debug_Lines,link:^ai.Nav_Link) {
         t:=f32(i)/SEGMENTS
         p:=a+(b-a)*t
         p.y+=4*rise*t*(1-t)
-        gpu.debug_line(lines,previous,p,color)
+        erender.debug_line(lines,previous,p,color)
         previous=p
     }
-    head :: proc(lines:^gpu.Debug_Lines,at,from:mm.Vec3,color:mm.Vec4) {
+    head :: proc(lines:^erender.Debug_Lines,at,from:mm.Vec3,color:mm.Vec4) {
         d:=at-from
         d.y=0
         length:=linalg.length(d)
         if !(length>1e-4) {return}
         d/=length
         side:=mm.Vec3{-d.z,0,d.x}
-        gpu.debug_line(lines,at,at-d*0.25+side*0.12,color)
-        gpu.debug_line(lines,at,at-d*0.25-side*0.12,color)
+        erender.debug_line(lines,at,at-d*0.25+side*0.12,color)
+        erender.debug_line(lines,at,at-d*0.25-side*0.12,color)
     }
     head(lines,b,a,color)
     if link.desc.two_way {head(lines,a,b,color)}

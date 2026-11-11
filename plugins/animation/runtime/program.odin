@@ -8,6 +8,7 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 PROGRAM_PLAYERS :: PROGRAM_GROUPS*PROGRAM_LEAVES
 Program_Leaf :: struct {clip:u64,key:u32,weight,speed:f32,loop,sync:bool,player:u16,start:f32} // start: seconds a new player of it starts at
@@ -148,7 +149,7 @@ program_weights :: proc(output:^Program_Output) {
 }
 
 @(private)
-program_node :: proc(output:^Program_Output,profile:Graph_Profile,index:u16,parameters:[]f32,blends:^Blend_Assets,app:^host.App,depth:int=0,plan:^Graph_Plan=nil,override:base.Asset_Id={}) -> bool {
+program_node :: proc(output:^Program_Output,profile:Graph_Profile,index:u16,parameters:[]f32,blends:^Blend_Assets,assets:^host.Assets,allocator:runtime.Allocator,depth:int=0,plan:^Graph_Plan=nil,override:base.Asset_Id={}) -> bool {
     if depth>=GRAPH_NODES || int(index)>=len(profile.nodes) {return false}
     wanted:[GRAPH_NODES]bool;wanted[index]=true
     if plan!=nil {for node in plan.nodes[:plan.count] {wanted[node]=true}} else {
@@ -190,7 +191,7 @@ program_node :: proc(output:^Program_Output,profile:Graph_Profile,index:u16,para
                 source:=source_effective(node.animation,profile.info.animation,override)
                 group.count=1;group.leaves[0]={clip=source_clip_name(output.asset,source,base.name_hash(base.text_get(node.clip[:]))),key=u32(n)*256,weight=1,speed=node.speed,loop=node.loop,sync=node.sync_mode!=.Independent}
             } else {
-                content:=blend_content(blends,app,node.blend_space)
+                content:=blend_content(blends,assets,allocator,node.blend_space)
                 if content==nil {return false}
                 weights,sampled:=blend_content_sample(content,{program_parameter(parameters,node.x_param,node.position.x),program_parameter(parameters,node.y_param,node.position.y)})
                 if !sampled {return false}
@@ -260,21 +261,21 @@ program_representative :: proc(group:^Program_Group,content:^host.Content_Animat
 // The program an Animation plays this tick: that of a .match or an .agraph. A .blend is refused
 // with Additive_Space: it plays only under an Additive node of a graph. problems: where what a
 // .match cannot do is reported.
-program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:^Blend_Assets,graphs:^Graph_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},plays:[]Match_Play={},facing:=mm.Vec3{0,0,1}) -> (output:^Program_Output,programmed,ok:bool) {
-    if app==nil || app.assets==nil {return nil,false,false}
+program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:^Blend_Assets,graphs:^Graph_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},plays:[]Match_Play={},facing:=mm.FORWARD) -> (output:^Program_Output,programmed,ok:bool) {
+    if app.assets==nil {return nil,false,false}
     runtime:=&state.program
     runtime.error=.None
     defer {if programmed && !ok && runtime.error==.None {runtime.error=.Invalid_Asset}}
     kind:=runtime.kind
-    if runtime.asset!=animation.asset || runtime.checked!=assets_stamp(app) {
+    if runtime.asset!=animation.asset || runtime.checked!=assets_stamp(app.assets) {
         record,found:=aa.registry_find(&app.assets.registry,animation.asset)
         kind=record.kind if found else aa.Fourcc(0)
-        runtime.kind,runtime.checked=kind,assets_stamp(app)
+        runtime.kind,runtime.checked=kind,assets_stamp(app.assets)
     }
     if kind==BLEND_KIND {runtime.error=.Additive_Space;return nil,true,false}
     if kind!=GRAPH_KIND && kind!=MATCH_KIND {
         program_free(runtime)
-        runtime.kind,runtime.asset,runtime.checked=kind,animation.asset,assets_stamp(app)
+        runtime.kind,runtime.asset,runtime.checked=kind,animation.asset,assets_stamp(app.assets)
         return nil,false,true
     }
     programmed=true
@@ -288,15 +289,15 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:
     source:base.Asset_Id
     reused:=false;compiled_stamp:u64
     if kind==MATCH_KIND {
-        content:=match_content(graphs,app,animation.asset);if content==nil {return nil,true,false}
+        content:=match_content(graphs,app.assets,app.allocator,animation.asset);if content==nil {return nil,true,false}
         source=animation.library if animation.library!={} else content.profile.info.animation
         revision=content.revision;reset=runtime.asset!=animation.asset || runtime.revision!=revision || runtime.library!=source || !runtime.ready
         swapped=reset && runtime.ready && runtime.asset==animation.asset && runtime.revision==revision
         if reset && !program_output_prepare(output,1,1) {runtime.error=.Out_Of_Memory;return nil,true,false}
         if reset {runtime.match=match_swapped(runtime.match) if swapped else MATCH_PLAYING_DEFAULT}
-        ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,plays,facing,app,events,playback,problems)
+        ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,plays,facing,app.assets,app.allocator,events,playback,problems)
     } else {
-        content:=graph_content(graphs,app,animation.asset);if content==nil {return nil,true,false}
+        content:=graph_content(graphs,app.assets,app.allocator,animation.asset);if content==nil {return nil,true,false}
         source=animation.library if animation.library!={} else content.profile.info.animation
         revision=content.revision;reset=runtime.asset!=animation.asset || runtime.revision!=revision || runtime.library!=source || !runtime.ready
         node:=content.profile.info.output
@@ -310,9 +311,9 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,blends:
         for parameter,i in content.profile.parameters {parameters[i]=parameter.value}
         if !program_parameter_values(animation,content.parameter_names[:count],parameters[:count]) {runtime.error=.Unknown_Parameter;return nil,true,false}
         for parameter,i in content.profile.parameters {if !finite(parameters[i]) || parameters[i]<parameter.min || parameters[i]>parameter.max {runtime.error=.Invalid_Parameter;return nil,true,false}}
-        compiled_stamp=base.hash_combine(base.hash_combine(revision,assets_stamp(app)),u64(node))
+        compiled_stamp=base.hash_combine(base.hash_combine(revision,assets_stamp(app.assets)),u64(node))
         for parameter in parameters[:count] {compiled_stamp=base.hash_combine(compiled_stamp,u64(transmute(u32)parameter))}
-        if !reset && runtime.compiled_stamp==compiled_stamp {ok,reused=true,true} else {ok=program_node(output,content.profile,node,parameters[:count],blends,app,0,&content.plans[node],animation.library)}
+        if !reset && runtime.compiled_stamp==compiled_stamp {ok,reused=true,true} else {ok=program_node(output,content.profile,node,parameters[:count],blends,app.assets,app.allocator,0,&content.plans[node],animation.library)}
     }
     if reset {
         mem.zero_slice(runtime.players[:]);mem.zero_slice(runtime.leader_keys[:])
@@ -557,15 +558,18 @@ program_buffers :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
 }
 
 @(private)
-program_evaluate_nodes :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,output:^Program_Output,last:int,reference:f32=-1) -> bool {
+program_evaluate_nodes :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,output:^Program_Output,last:int,reference:f32=-1,worker:=0) -> bool {
     runtime:=&state.program;n:=len(state.bindings);c:=len(state.curves)
     for instruction,i in output.instructions[:last+1] {
         out:=runtime.nodes[i*n:(i+1)*n];properties:=runtime.node_properties[i*n:(i+1)*n];curves:=runtime.node_curves[i*c:(i+1)*c];weights:=runtime.node_weights[i*n:(i+1)*n]
         if instruction.kind==.Clip || instruction.kind==.Blend_Space {
-            group:=output.groups[instruction.group];pose:=&playback.pose;lib.pose_clear(pose)
+            group:=output.groups[instruction.group]
+            _,bones,shared,ready:=pose_room(playback,state,worker)
+            if !ready {runtime.error=.Out_Of_Memory;return false}
             for leaf in group.leaves[:group.count] {
-            leaf:=leaf;player:=runtime.players[leaf.player].player;if reference>=0 {player.time=reference} else if reference==-2 {player.time=runtime.players[leaf.player].from};lib.pose_blend(pose,&content.lib,player,leaf.weight)}
-            for binding,b in state.bindings {out[b],weights[b],properties[b]=lib.pose_bone(pose,binding.target,binding.rest)}
+            leaf:=leaf;player:=runtime.players[leaf.player].player;if reference>=0 {player.time=reference} else if reference==-2 {player.time=runtime.players[leaf.player].from};lib.bones_blend(bones,shared.bones[:],&content.lib,player,leaf.weight)}
+            tracks_twins(shared,bones)
+            for binding,b in state.bindings {out[b],weights[b],properties[b]=lib.bone_transform(bones[b],binding.rest)}
             if group.mirror {
                 if !playing_mirror(state,out) {runtime.error=.Unsupported_Mirror;return false}
                 for pair,b in state.mirror_pairs {if int(pair)>b {properties[b],properties[pair]=properties[pair],properties[b];weights[b],weights[pair]=weights[pair],weights[b]}}
@@ -636,7 +640,7 @@ program_mask_over :: proc(state:^Playing,over:u64,mask:[]f32) -> bool {
 }
 
 @(private)
-program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,output:^Program_Output,transforms:core.Read(core.Transform)) -> bool {
+program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,output:^Program_Output,transforms:core.Read(core.Transform),worker:=0) -> bool {
     if !program_buffers(state,output,content) {state.program.error=.Out_Of_Memory;return false}
     runtime:=&state.program;n:=len(state.bindings);c:=len(state.curves)
     for instruction,i in output.instructions[:output.instruction_count] {
@@ -648,13 +652,13 @@ program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
             runtime.mask_keys[i]=key
         }
         if instruction.kind==.Additive || instruction.curves==.Additive {
-            if !program_evaluate_nodes(playback,state,content,output,int(instruction.right),instruction.reference) {return false}
+            if !program_evaluate_nodes(playback,state,content,output,int(instruction.right),instruction.reference,worker) {return false}
             copy(runtime.reference_nodes[i*n:(i+1)*n],runtime.nodes[int(instruction.right)*n:(int(instruction.right)+1)*n])
             copy(runtime.reference_curves[i*c:(i+1)*c],runtime.node_curves[int(instruction.right)*c:(int(instruction.right)+1)*c])
         }
     }
     runtime.mask_bound=state.bound
-    if !program_evaluate_nodes(playback,state,content,output,int(output.output)) {return false}
+    if !program_evaluate_nodes(playback,state,content,output,int(output.output),-1,worker) {return false}
     pose:=runtime.nodes[int(output.output)*n:(int(output.output)+1)*n];curves:=runtime.node_curves[int(output.output)*c:(int(output.output)+1)*c]
     share:=mm.saturate(animation.weight)
     for value,b in pose {if state.bindings[b].target!=0 {state.local[b]=value if share==1 else state.bindings[b].rest if share==0 else mm.transform_interpolate(state.bindings[b].rest,value,share)}}
@@ -663,7 +667,7 @@ program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
     if runtime.capture && len(runtime.from)==n {
         previous:=runtime.history[:] if runtime.history_dt>0 else runtime.from[:]
         values:=runtime.inertia_values[:];old:=values[:c*5];now:=values[c*5:c*10];target:=values[c*10:c*15];target_previous:=values[c*15:]
-        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2) {return false}
+        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2,worker) {return false}
         before:=runtime.reference_nodes[int(output.output)*n:(int(output.output)+1)*n]
         for value,b in runtime.nodes[int(output.output)*n:(int(output.output)+1)*n] {before[b]=mm.transform_interpolate(state.bindings[b].rest,value,share)}
         for value,k in runtime.node_curves[int(output.output)*c:(int(output.output)+1)*c] {for v,j in value.value {target_previous[k*5+j]=v*share};target_previous[k*5+4]=value.weight*share}
@@ -681,7 +685,7 @@ program_pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
     }
     if runtime.inertia.active {
         before:=runtime.reference_nodes[int(output.output)*n:(int(output.output)+1)*n]
-        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2) {return false}
+        if !program_evaluate_nodes(playback,state,content,output,int(output.output),-2,worker) {return false}
         for value,b in runtime.nodes[int(output.output)*n:(int(output.output)+1)*n] {before[b]=mm.transform_interpolate(state.bindings[b].rest,value,share)}
         root_bone:=bone_resolve(state,runtime.root.bone) if runtime.has_root else -1
         old_root,new_root:=mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY
@@ -712,12 +716,12 @@ program_mask_key :: proc(state:^Playing,instruction:Program_Instruction) -> u64 
     return base.hash_combine(key,instruction.over)
 }
 @(private)
-program_masks_prepare :: proc(state:^Playing,output:^Program_Output,content:^host.Content_Animation,graphs:^Graph_Assets,app:^host.App) -> (ok:bool) {
+program_masks_prepare :: proc(state:^Playing,output:^Program_Output,content:^host.Content_Animation,graphs:^Graph_Assets,assets:^host.Assets,allocator:runtime.Allocator) -> (ok:bool) {
     defer {if !ok && state.program.error==.None {state.program.error=.Unbound_Mask}}
     if !program_buffers(state,output,content) {state.program.error=.Out_Of_Memory;return false}
     runtime:=&state.program;n:=len(state.bindings)
     profile:Graph_Profile
-    if runtime.kind==GRAPH_KIND {compiled:=graph_content(graphs,app,runtime.asset);if compiled==nil {return false};profile=compiled.profile
+    if runtime.kind==GRAPH_KIND {compiled:=graph_content(graphs,assets,allocator,runtime.asset);if compiled==nil {return false};profile=compiled.profile
         maximum:=1
         for plan in compiled.plans[:len(profile.nodes)] {maximum=max(maximum,int(plan.count))}
         capacity:=min(PROGRAM_INSTRUCTIONS,maximum*2+1)

@@ -3,6 +3,7 @@ package geom
 import "base:runtime"
 import "core:math"
 import "core:slice"
+import "mirai:std/base"
 
 Boolean_Op :: enum u8 {Union,Subtract,Intersect}
 Boolean_Error :: enum u8 {None,Invalid_Mesh,Invalid_Settings,Not_Closed,No_Volume,Capacity,Out_Of_Memory,Topology}
@@ -367,10 +368,10 @@ Boolean_Settings :: struct {
         if len(out.materials)>0 {out.materials[count]=out.materials[i]}
         count+=1
     }
-    resize(&out.positions,count*3);resize(&out.normals,count*3);resize(&out.indices,count*3)
-    if len(out.uvs)>0 {resize(&out.uvs,count*3)}
-    if len(out.colors)>0 {resize(&out.colors,count*3)}
-    if len(out.materials)>0 {resize(&out.materials,count)}
+    base.truncate(&out.positions,count*3);base.truncate(&out.normals,count*3);base.truncate(&out.indices,count*3)
+    if len(out.uvs)>0 {base.truncate(&out.uvs,count*3)}
+    if len(out.colors)>0 {base.truncate(&out.colors,count*3)}
+    if len(out.materials)>0 {base.truncate(&out.materials,count)}
     return .None
 }
 
@@ -444,7 +445,7 @@ Boolean_Settings :: struct {
     next,ne:=make([]u32,len(w.points),context.temp_allocator)
     defer delete(grid,context.temp_allocator);defer delete(next,context.temp_allocator)
     if ge!=nil || ne!=nil {w.error=.Out_Of_Memory;return}
-    cell_key :: proc "contextless" (cell:[3]i64) -> u64 {return hash_u64(hash_u64(hash_u64(u64(cell.x))~u64(cell.y))~u64(cell.z))}
+    cell_key :: proc "contextless" (cell:[3]i64) -> u64 {return base.hash_u64(base.hash_u64(base.hash_u64(u64(cell.x))~u64(cell.y))~u64(cell.z))}
     cell_of :: proc "contextless" (p:Vec3,epsilon:f64) -> [3]i64 {
         result:[3]i64
         for i in 0..<3 {result[i]=i64(clamp(math.floor(f64(p[i])/epsilon),-4e18,4e18))}

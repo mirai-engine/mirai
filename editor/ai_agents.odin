@@ -6,6 +6,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "mirai:editor/acp"
+import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -20,8 +21,6 @@ import "mirai:std/serial"
 AI_AGENTS_FILE :: "agents.json"
 // The program of the official adapter of each agent, as its package installs it.
 AI_AGENT_PROGRAMS :: [Ai_Agent]string{.Codex="codex-acp",.Claude="claude-agent-acp",.Command=""}
-// The program of the agent the adapter runs, as its installer leaves it.
-AI_AGENT_CLIS :: [Ai_Agent]string{.Codex="codex",.Claude="claude",.Command=""}
 
 // What an initialize of an adapter announced: what the editor can ask of it.
 Ai_Capability :: enum u8 {Load,Resume,Close,Http_Mcp,Image,Embedded_Context,Rename}
@@ -190,13 +189,10 @@ ai_user_adapter :: proc(agent:Ai_Agent,allocator:=context.temp_allocator) -> (pr
 // and pnpm hoist it or keep it inside the package that needs it.
 @(private)
 ai_codex_vendor :: proc(folder:string,allocator:=context.temp_allocator) -> string {
-    suffix,triple:string
-    when ODIN_OS==.Darwin && ODIN_ARCH==.arm64 {suffix,triple="darwin-arm64","aarch64-apple-darwin"}
-    else when ODIN_OS==.Windows && ODIN_ARCH==.amd64 {suffix,triple="win32-x64","x86_64-pc-windows-msvc"}
-    else when ODIN_OS==.Linux && ODIN_ARCH==.amd64 {suffix,triple="linux-x64","x86_64-unknown-linux-musl"}
-    else {return ""}
-    name:="codex"+(".exe" when ODIN_OS==.Windows else "")
-    vendor:=project.path("@openai",strings.concatenate({"codex-",suffix},allocator),"vendor",triple,"bin",name,allocator=allocator)
+    target:=workspace.target_names()
+    if target.node=="" {return ""}
+    name:="codex"+project.EXECUTABLE_SUFFIX
+    vendor:=project.path("@openai",strings.concatenate({"codex-",target.node},allocator),"vendor",target.triple,"bin",name,allocator=allocator)
     for parent in ([3]string{folder,project.path(folder,"@openai","codex","node_modules",allocator=allocator),project.path(folder,"@agentclientprotocol","codex-acp","node_modules",allocator=allocator)}) {
         if path:=project.path(parent,vendor,allocator=allocator);os.is_file(path) {return path}
     }

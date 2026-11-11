@@ -2,14 +2,13 @@ package main
 
 import "core:os"
 import "core:testing"
+import "mirai:std/base"
 
 @(test)
 agent_publication_keeps_the_previous_install_on_failure_or_cancel :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-agent-test-*",context.temp_allocator)
-    testing.expect(t,error==nil)
-    if error!=nil {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"agent-test")
+    if folder=="" {return}
     target,stage,previous:=join(folder,"codex"),join(folder,"stage"),join(folder,"previous")
     os.make_directory(target);os.make_directory(stage)
     testing.expect(t,os.write_entire_file(join(target,"installation.json"),"previous")==nil)

@@ -9,7 +9,8 @@ import mixer "mirai:audio"
 import volume "mirai:engine/volume"
 import "mirai:std/base"
 
-// Sound. The mixer belongs to the application (app.mixer); this library
+// Sound. The mixer belongs to the application, which hands it to the
+// function that asks for a ^Mixer (nil without audio); this library
 // keeps its voices equal to the Audio_Source components of the world, its
 // listener at the Audio_Listener entity or, without one, at the View, its
 // buses as Audio_Settings says and its reverb as the Audio_Reverb volumes
@@ -17,7 +18,7 @@ import "mirai:std/base"
 // What collides in the world (core.World_Query) hides the sources that have
 // an Audio_Occlusion. Its game-thread procedures are not thread-safe, so only
 // this library's steps and the helpers below, called from a step that
-// receives ^host.App, talk to it.
+// receives the mixer or the application, talk to it.
 
 VOICE_RESERVE :: 256
 AUDIO_BUS_CAPACITY :: 8  // the buses of the mixer, the master included
@@ -25,6 +26,7 @@ AUDIO_SILENCE_DB :: -80  // a gain at or below it silences
 REVERB_FADE :: f32(0.5)  // s: the reverb goes from a room to the next in about this long
 OCCLUSION_CLEARANCE :: f32(0.5) // m around the listener that does not hide: its own body
 
+Mixer :: mixer.Mixer
 Voice :: mixer.Voice
 Attenuation_Model :: mixer.Attenuation_Model
 Reverb :: mixer.Reverb
@@ -144,18 +146,17 @@ Audio_Settings :: struct {
     reverb_bus:Audio_Bus,
 }
 
-// The volume of each bus as the player chose it, over the gain the game gives
-// it in Audio_Settings: an option of the player, which the options menu of the
-// game writes (audio_volume_set) and save keeps in the options of the player.
+// The volume of each bus as the player chose it, 0 to 1, over the gain the
+// game gives it in Audio_Settings: what a slider of the options menu binds
+// (Audio_Volumes.music) and save keeps in the options of the player.
 @(storage,setting="machine")
 Audio_Volumes :: struct {
-    buses:[AUDIO_BUS_CAPACITY]Audio_Volume `mirai:"trim"`,
+    master,music,effects,voice,ui:f32 `mirai:"min=0,max=1"`, // by the order of the BUS_ constants
+    more:[AUDIO_BUS_CAPACITY-5]f32 `mirai:"min=0,max=1"`,    // the buses a game adds after BUS_UI
 }
+#assert(size_of(Audio_Volumes)==AUDIO_BUS_CAPACITY*size_of(f32))
 
-Audio_Volume :: struct {
-    bus:Audio_Bus,
-    volume:f32 `mirai:"min=-80,max=0,unit=dB"`, // 0: as the game mixes it; AUDIO_SILENCE_DB or below: silent
-}
+AUDIO_VOLUMES_DEFAULT :: Audio_Volumes{1,1,1,1,1,{1,1,1}}
 
 AUDIO_OUTPUT_NAME_BYTES :: 128
 
@@ -278,9 +279,8 @@ sources_update :: proc(sources:core.Read(Audio_Source),states:^core.Table(Audio_
 @(step="late",stage="end",after="transforms_propagate camera_view")
 audio_reverb :: proc(
     reverbs:core.Read(Audio_Reverb),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),listeners:core.Read(Audio_Listener),
-    view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,app:^host.App,
+    view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,m:^Mixer,
 ) {
-    m:=app.mixer
     if m==nil || reverb==nil {return}
     bus:=BUS_MASTER
     if settings.ptr!=nil {bus=settings.reverb_bus}
@@ -317,15 +317,14 @@ reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
 // The buses of the mixer as the settings and the medium of the listener say;
 // only what differs is sent.
 @(step="late",stage="end")
-audio_buses :: proc(settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),app:^host.App) {
-    buses_apply(app,settings.ptr,volumes.ptr,medium.ptr)
+audio_buses :: proc(settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),m:^Mixer) {
+    buses_apply(m,settings.ptr,volumes.ptr,medium.ptr)
 }
 
 // Gives the buses of the mixer what the settings say, and the master the
 // lowpass of the medium: what audio_buses does each frame of a game, and the
 // editor before it plays a sound to be heard.
-buses_apply :: proc(app:^host.App,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium:^Audio_Medium=nil) {
-    m:=app.mixer
+buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium:^Audio_Medium=nil) {
     if m==nil || settings==nil && medium==nil {return}
     if settings!=nil {
         for setting in settings.buses {
@@ -337,7 +336,7 @@ buses_apply :: proc(app:^host.App,settings:^Audio_Settings,volumes:^Audio_Volume
     for index in 0..<min(mixer.bus_count(m),AUDIO_BUS_CAPACITY) {
         bus:=Audio_Bus(index)
         setting:=audio_bus_setting(settings,bus)
-        if volume:=db_volume(setting.gain+audio_volume(volumes,bus));mixer.bus_volume(m,mixer.Bus(bus))!=volume {mixer.bus_set_volume(m,mixer.Bus(bus),volume)}
+        if volume:=db_volume(setting.gain)*audio_volume(volumes,bus);mixer.bus_volume(m,mixer.Bus(bus))!=volume {mixer.bus_set_volume(m,mixer.Bus(bus),volume)}
         lowpass:=max(setting.lowpass,0)
         if bus==BUS_MASTER && medium!=nil {lowpass=lowpass_lower(lowpass,medium.lowpass)}
         if mixer.bus_lowpass(m,mixer.Bus(bus))!=lowpass {mixer.bus_set_lowpass(m,mixer.Bus(bus),lowpass)}
@@ -375,9 +374,9 @@ audio_output :: proc(output:Audio_Output,applied:^Mixer_Output,app:^host.App,pro
 
 // The voices of a World that is freed stop with it.
 @(step="release")
-audio_release :: proc(voices:^Voices,app:^host.App) {
+audio_release :: proc(voices:^Voices,m:^Mixer) {
     if voices==nil {return}
-    if app.mixer!=nil {for entry in voices.entries.values {mixer.voice_stop(app.mixer,entry.voice)}}
+    if m!=nil {for entry in voices.entries.values {mixer.voice_stop(m,entry.voice)}}
     core.entity_map_clear(&voices.entries)
 }
 
@@ -408,39 +407,15 @@ audio_bus_setting_set :: proc "contextless" (settings:^Audio_Settings,setting:Au
     return true
 }
 
-// The volume in dB the player chose for a bus; 0 without a choice.
+// The volume the player chose for a bus, 0 to 1; 1 without a choice.
 audio_volume :: proc "contextless" (volumes:^Audio_Volumes,bus:Audio_Bus) -> f32 {
-    if volumes!=nil {
-        for entry in volumes.buses {
-            if entry!={} && entry.bus==bus {return min(entry.volume,0)}
-        }
-    }
-    return 0
+    if volumes==nil || int(bus)>=AUDIO_BUS_CAPACITY {return 1}
+    volume:=(^[AUDIO_BUS_CAPACITY]f32)(volumes)[int(bus)]
+    return volume>=0?min(volume,1):0
 }
 
-// Sets the volume of a bus the player chose, in dB; 0 removes the choice.
-// False when every entry is taken.
-audio_volume_set :: proc "contextless" (volumes:^Audio_Volumes,bus:Audio_Bus,volume:f32) -> bool {
-    if volumes==nil {return false}
-    free:=-1
-    for &entry,i in volumes.buses {
-        if entry!={} && entry.bus==bus {
-            entry=volume==0?{}:Audio_Volume{bus,volume}
-            return true
-        }
-        if entry=={} && free<0 {free=i}
-    }
-    if volume==0 {return true}
-    if free<0 {return false}
-    volumes.buses[free]={bus,volume}
-    return true
-}
-
-// The gain in dB of a linear volume, and the volume of a gain.
-volume_db :: proc "contextless" (volume:f32) -> f32 {
-    if volume<=0 {return AUDIO_SILENCE_DB}
-    return max(20*math.log10(volume),AUDIO_SILENCE_DB)
-}
+// The gain of a level in dB, as the mixer takes it.
+@(private)
 db_volume :: proc "contextless" (gain:f32) -> f32 {
     if gain<=AUDIO_SILENCE_DB {return 0}
     return math.pow(10,gain/20)
@@ -462,7 +437,7 @@ reverb_clamp :: proc "contextless" (r:Reverb) -> Reverb {
 
 // The bus of the mixer for a bus, reserved the first time one is named.
 @(private)
-bus_ready :: proc(m:^mixer.Mixer,bus:Audio_Bus) -> bool {
+bus_ready :: proc(m:^Mixer,bus:Audio_Bus) -> bool {
     if int(bus)>=AUDIO_BUS_CAPACITY {return false}
     for mixer.bus_count(m)<=int(bus) {
         if _,ok:=mixer.bus_create(m);!ok {return false}
@@ -492,7 +467,7 @@ listener_pose :: proc(h:^Hearing) -> (position:[3]f32,rotation:quaternion128,cut
 }
 
 @(private)
-listener_update :: proc(listener:^Mixer_Listener,m:^mixer.Mixer,h:^Hearing,dt:f32) {
+listener_update :: proc(listener:^Mixer_Listener,m:^Mixer,h:^Hearing,dt:f32) {
     position,rotation,cut,found:=listener_pose(h)
     if !found {return}
     velocity:[3]f32
@@ -530,7 +505,7 @@ attenuation_of :: proc "contextless" (source:Audio_Source) -> mixer.Attenuation 
 }
 
 @(private)
-voice_update :: proc(voices:^Voices,m:^mixer.Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
+voice_update :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
     entry:=core.entity_map_get(&voices.entries,e)
     if !source.playing {
         if entry!=nil {
@@ -680,16 +655,14 @@ play_source_at :: proc(app:^host.App,time:core.Time,source:Audio_Source,position
 
 // Moves a voice that play_source_at or play_asset_at started to another point
 // of the world.
-source_place :: proc(app:^host.App,voice:Voice,position:[3]f32) {
-    m:=app.mixer
+source_place :: proc(m:^Mixer,voice:Voice,position:[3]f32) {
     if m==nil || !mixer.voice_valid(m,voice) {return}
     mixer.voice_set_position(m,voice,position)
 }
 
 // Gives a voice play_source started the volume, pitch, pan, loop and send of
 // a source that changed while it plays; a set keeps the sound it chose.
-source_tune :: proc(app:^host.App,voice:Voice,source:Audio_Source) {
-    m:=app.mixer
+source_tune :: proc(m:^Mixer,voice:Voice,source:Audio_Source) {
     if m==nil || !mixer.voice_valid(m,voice) {return}
     mixer.voice_set_volume(m,voice,source.volume)
     mixer.voice_set_pitch(m,voice,source.pitch>0?source.pitch:1)
@@ -699,11 +672,11 @@ source_tune :: proc(app:^host.App,voice:Voice,source:Audio_Source) {
 }
 
 // Ends a voice play_asset started, after fading out for fade seconds.
-stop :: proc(app:^host.App,voice:Voice,fade:f32=0) -> bool {
-    return app.mixer!=nil && mixer.voice_stop(app.mixer,voice,fade)
+stop :: proc(m:^Mixer,voice:Voice,fade:f32=0) -> bool {
+    return m!=nil && mixer.voice_stop(m,voice,fade)
 }
 
 // Whether a voice still plays, as of the last frame.
-playing :: proc(app:^host.App,voice:Voice) -> bool {
-    return app.mixer!=nil && mixer.voice_valid(app.mixer,voice)
+playing :: proc(m:^Mixer,voice:Voice) -> bool {
+    return m!=nil && mixer.voice_valid(m,voice)
 }

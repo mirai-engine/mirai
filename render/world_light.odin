@@ -67,6 +67,15 @@ scene_world :: proc(r: ^Renderer, world: u64, fresh := false) {
 	r.world_key = world
 }
 
+// The world `world` took another scene while it was not shown: what was kept
+// of its light is of the scene before, and it starts without light when it
+// is shown again.
+world_light_forget :: proc(r: ^Renderer, world: u64) {
+	for &w in r.kept[:r.kept_count] {
+		if w.used && w.world == world {w.used = false}
+	}
+}
+
 // The world shown starts without light: an empty volume, a light scale of its
 // own, gathered at once in the next frame.
 @(private)

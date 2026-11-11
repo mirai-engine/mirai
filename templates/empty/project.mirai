@@ -1,20 +1,4 @@
 {
-  "name": "Proyecto",
-  "version": "0.1.0",
-  "identifier": "",
-  "icon": "",
-  "start_scene": "",
-  "plugins": ["sample"],
-  "window": {
-    "title": "",
-    "mode": "Maximized",
-    "width": 1280,
-    "height": 720
-  },
-  "build": {
-    "executable": "",
-    "optimization": "Minimal",
-    "debug": false,
-    "defines": []
-  }
+  "name": "Project",
+  "plugins": ["sample", "playtest"]
 }

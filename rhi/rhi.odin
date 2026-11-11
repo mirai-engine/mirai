@@ -86,13 +86,17 @@ table_grown :: proc "contextless" (capacity, index, limit: int) -> int {
 }
 
 // Gives every copy a bit for each of capacity entries, none set: a copy
-// made with every entry has none to take.
+// made with every entry has none to take. False without memory, and then no
+// copy lost a bit it had.
 @(private)
-table_changes_reset :: proc(changes: ^Table_Changes, capacity: int) {
+table_changes_reset :: proc(changes: ^Table_Changes, capacity: int) -> bool {
 	for &copy in changes {
-		resize(&copy, (capacity + 63) / 64)
+		if resize(&copy, (capacity + 63) / 64) != nil {return false}
+	}
+	for &copy in changes {
 		for &word in copy {word = 0}
 	}
+	return true
 }
 
 @(private)
@@ -184,6 +188,9 @@ Memory :: enum u8 {
 Buffer_Usage_Flag :: enum u8 {Index, Uniform, Storage, Indirect, Transfer_Src, Transfer_Dst, Accel_Input}
 Buffer_Usage :: bit_set[Buffer_Usage_Flag; u16]
 
+// A new buffer reads zero in every byte, whatever its memory. One of GPU
+// memory is zeroed by the GPU unless an upload writes all of it first, and is
+// made outside render passes, which cannot hold that fill.
 Buffer_Desc :: struct {
 	size:   u64,
 	usage:  Buffer_Usage,
@@ -194,6 +201,8 @@ Buffer_Desc :: struct {
 Texture_Usage_Flag :: enum u8 {Sampled, Storage, Color_Target, Depth_Target, Transfer_Src, Transfer_Dst}
 Texture_Usage :: bit_set[Texture_Usage_Flag; u8]
 
+// The texels of a new texture are undefined until an upload, a clear or a
+// pass writes them: nothing reads a texture it did not write.
 Texture_Desc :: struct {
 	width, height: u32,
 	depth:         u32, // slices of a 3D texture, which shaders alone write; 0 or 1 = a 2D texture
@@ -205,10 +214,11 @@ Texture_Desc :: struct {
 	name:          string,
 }
 
-// Why a texture of layers cannot be made, "" when it can: a 3D texture has
-// none, a cube is square and has whole cubes, and a device takes up to
-// limit layers.
-texture_layers_problem :: proc "contextless" (desc: Texture_Desc, limit: u32) -> string {
+// Why a texture cannot be made, "" when it can: it has up to MAX_TEXTURE_MIPS
+// levels, a 3D texture has no layers, a cube is square and has whole cubes,
+// and a device takes up to limit layers.
+texture_desc_problem :: proc "contextless" (desc: Texture_Desc, limit: u32) -> string {
+	if desc.mip_levels > MAX_TEXTURE_MIPS {return "more mip levels than MAX_TEXTURE_MIPS; give it fewer levels or a smaller size"}
 	layers := max(desc.layers, 1)
 	if layers > 1 && desc.depth > 1 {return "a 3D texture has no layers"}
 	if layers > limit {return "more layers than the device takes"}
@@ -291,7 +301,10 @@ Binding_Info :: struct {
 
 // Generated from one Slang source: SPIR-V for Vulkan, MSL translated by
 // SPIRV-Cross for Metal, plus the shared reflected bindings.
-when ODIN_OS == .Darwin {
+Shader_Format :: enum u8 {Spirv, Msl}
+// The code the Shader_Code of this system holds.
+SHADER_FORMAT :: Shader_Format.Msl when ODIN_OS == .Darwin else Shader_Format.Spirv
+when SHADER_FORMAT == .Msl {
 	Shader_Binary :: struct {msl:string,msl_entry:string}
 } else {
 	Shader_Binary :: struct {spirv:[]u8}
@@ -302,6 +315,17 @@ Shader_Code :: struct {
 	stage:       Shader_Stage,
 	threadgroup: [3]u32,
 	bindings:    []Binding_Info,
+}
+// The code of a shader as bytes, and the entry point its MSL names ("" for SPIR-V).
+shader_code_bytes :: proc "contextless" (code: Shader_Code) -> []u8 {
+	when SHADER_FORMAT == .Msl {return transmute([]u8)code.msl} else {return code.spirv}
+}
+shader_code_entry :: proc "contextless" (code: Shader_Code) -> string {
+	when SHADER_FORMAT == .Msl {return code.msl_entry} else {return ""}
+}
+// Gives a shader its code: bytes and entry are kept, not copied.
+shader_code_set :: proc "contextless" (code: ^Shader_Code, bytes: []u8, entry: string) {
+	when SHADER_FORMAT == .Msl {code.msl, code.msl_entry = string(bytes), entry} else {code.spirv = bytes}
 }
 
 Compare :: enum u8 {Never, Less, Less_Equal, Equal, Greater, Greater_Equal, Always}
@@ -400,9 +424,6 @@ Draw_Indirect :: struct {
 	first_vertex:   u32,
 	first_instance: u32,
 }
-
-// Matches VkDispatchIndirectCommand and MTLDispatchThreadgroupsIndirectArguments.
-Dispatch_Indirect :: struct {x, y, z: u32}
 
 // Triangle geometry for a bottom level acceleration structure. Positions are
 // three f32 at the start of each vertex; indices are u32.
@@ -695,6 +716,39 @@ texture_level_bytes :: proc(desc: Texture_Desc, mip: u32) -> u64 {
 	area, _ := texture_region_resolve(desc, mip, {})
 	row, rows := format_rows(desc.format, area.width, area.height)
 	return row * rows * u64(max(desc.layers, 1))
+}
+
+// The bytes of every mip of a texture, tightly packed, of all its layers and slices.
+texture_desc_bytes :: proc(desc: Texture_Desc) -> (bytes: u64) {
+	if desc.format == .Undefined {return 0}
+	for mip in 0 ..< max(desc.mip_levels, 1) {bytes += texture_level_bytes(desc, mip) * u64(max(desc.depth >> mip, 1))}
+	return
+}
+
+// What a texture holds of the memory of the device, less what its driver
+// pads: texture_desc_bytes of it. 0 for one that is not there.
+texture_bytes :: proc(d: ^Device, texture: Texture) -> u64 {return texture_desc_bytes(texture_desc(d, texture))}
+
+// The format that holds the same bytes without the sRGB encoding.
+format_linear :: proc "contextless" (f: Format) -> Format {
+	#partial switch f {
+	case .RGBA8_Srgb: return .RGBA8_Unorm
+	case .BGRA8_Srgb: return .BGRA8_Unorm
+	case .BC1_Srgb:   return .BC1_Unorm
+	case .BC3_Srgb:   return .BC3_Unorm
+	case .BC7_Srgb:   return .BC7_Unorm
+	}
+	return f
+}
+
+// Why cmd_copy_texture cannot copy a texture into another, "" when it can:
+// both are 2D, with one size and as many layers, and their formats hold the
+// same bytes (one format, or two that differ only in the sRGB encoding).
+texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc) -> string {
+	if src.depth > 1 || dst.depth > 1 {return "a 3D texture is written by shaders"}
+	if src.width != dst.width || src.height != dst.height || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers"}
+	if format_linear(src.format) != format_linear(dst.format) {return "the two formats differ in more than the sRGB encoding"}
+	return ""
 }
 
 // Typed wrappers over the byte-oriented transfer procedures.

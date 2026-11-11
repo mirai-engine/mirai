@@ -23,9 +23,7 @@ write_texture :: proc(t:^testing.T,types:^Types,path:string,id:base.Asset_Id) {
 @(test)
 registry_scans_headers_and_answers_by_id_path_and_dependency :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry")
     os.make_directory_all(fmt.tprintf("%s/textures",root))
     os.make_directory_all(fmt.tprintf("%s/materials/deep",root))
     os.make_directory_all(fmt.tprintf("%s/.mirai",root))
@@ -135,7 +133,7 @@ registry_scans_headers_and_answers_by_id_path_and_dependency :: proc(t:^testing.
     testing.expect_value(t,registry_scan(&garbled),Error.None)
     testing.expect_value(t,garbled.stats.files,10)
 
-    nowhere:Registry;registry_init(&nowhere,test_path("no-such-folder"));defer registry_destroy(&nowhere)
+    nowhere:Registry;registry_init(&nowhere,fmt.tprintf("%s/no-such-folder",root));defer registry_destroy(&nowhere)
     testing.expect_value(t,registry_scan(&nowhere),Error.Not_Found)
     testing.expect_value(t,nowhere.revision,u64(1))
     free_all(context.temp_allocator)
@@ -144,9 +142,7 @@ registry_scans_headers_and_answers_by_id_path_and_dependency :: proc(t:^testing.
 @(test)
 registry_from_its_cache_refreshes_a_new_a_changed_and_a_removed_file_without_a_scan :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-refresh")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-refresh")
     os.make_directory_all(fmt.tprintf("%s/textures",root))
     wood,brick,stone:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}
     write_texture(t,&types,fmt.tprintf("%s/textures/wood.tex",root),wood)
@@ -232,9 +228,7 @@ registry_from_its_cache_refreshes_a_new_a_changed_and_a_removed_file_without_a_s
 @(test)
 a_registry_cache_of_another_build_is_read_again_from_the_files :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-other-build")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-other-build")
     os.make_directory_all(root)
     write_material(t,&types,fmt.tprintf("%s/wall.mat",root),{10,10},{})
     info,error:=os.stat(fmt.tprintf("%s/wall.mat",root),context.temp_allocator)
@@ -271,9 +265,7 @@ a_registry_cache_of_another_build_is_read_again_from_the_files :: proc(t:^testin
 @(test)
 registry_loads_a_packed_index_without_looking_at_the_folder :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-index")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-index")
     os.make_directory_all(fmt.tprintf("%s/textures",root))
     wood:=base.Asset_Id{1,1}
     write_texture(t,&types,fmt.tprintf("%s/textures/wood.tex",root),wood)
@@ -338,10 +330,8 @@ bench_registry_scan_against_its_packed_index :: proc(t:^testing.T) {
     if !INDEX_BENCH {return}
     measure :: proc(t:^testing.T,name,root:string) {
         index:=fmt.tprintf("%s/%s",root,REGISTRY_INDEX)
-        cache:=test_path("registry-bench-cache")
+        cache:=fmt.tprintf("%s/cache",base.test_folder(t,"registry-bench-cache"))
         os.remove(index)
-        os.remove(cache)
-        defer os.remove(cache)
         scan_best,cached_best,load_best,refresh_best:=time.Duration(max(i64)),time.Duration(max(i64)),time.Duration(max(i64)),time.Duration(max(i64))
         files:=0
         for _ in 0..<5 {
@@ -385,9 +375,7 @@ bench_registry_scan_against_its_packed_index :: proc(t:^testing.T) {
         fmt.printfln("%s: %d files, scan %.2f ms, scan from its cache %.2f ms, packed index (%d bytes) %.3f ms, refresh of a changed file %.3f ms",name,files,time.duration_milliseconds(scan_best),time.duration_milliseconds(cached_best),info.size,time.duration_milliseconds(load_best),time.duration_milliseconds(refresh_best))
     }
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-bench")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-bench")
     for folder in 0..<20 {
         os.make_directory_all(fmt.tprintf("%s/set%d",root,folder))
         for at in 0..<100 {
@@ -403,9 +391,7 @@ bench_registry_scan_against_its_packed_index :: proc(t:^testing.T) {
 @(test)
 registry_gives_a_copy_made_outside_an_editor_an_id_of_its_own_in_memory :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-copies")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-copies")
     os.make_directory_all(fmt.tprintf("%s/materials",root))
     original,prefab:=base.Asset_Id{3,3},base.Asset_Id{7,7}
     source:Import_Info
@@ -471,9 +457,7 @@ registry_gives_a_copy_made_outside_an_editor_an_id_of_its_own_in_memory :: proc(
 @(test)
 registry_gives_every_copy_an_id_and_forgets_one_whose_file_goes :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root:=test_path("registry-copies-gone")
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"registry-copies-gone")
     os.make_directory_all(fmt.tprintf("%s/materials",root))
     original:=base.Asset_Id{3,3}
     testing.expect_value(t,material_save(fmt.tprintf("%s/materials/wood.mat",root),&types,{id=original,info=MATERIAL_DEFAULTS}),Error.None)
@@ -508,9 +492,7 @@ registry_gives_every_copy_an_id_and_forgets_one_whose_file_goes :: proc(t:^testi
 @(test)
 registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    root,guest:=test_path("registry-guest"),test_path("registry-guest-user")
-    os.remove_all(root);os.remove_all(guest)
-    defer {os.remove_all(root);os.remove_all(guest)}
+    root,guest:=base.test_folder(t,"registry-guest"),base.test_folder(t,"registry-guest-user")
     os.make_directory_all(fmt.tprintf("%s/textures",root))
     os.make_directory_all(fmt.tprintf("%s/levels",guest))
     wood,own,late:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}

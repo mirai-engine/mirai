@@ -15,9 +15,12 @@ import "mirai:project"
 // they are, the procedures that must be compiled where they are called
 // (generic, inline, with a deferred procedure, with an `any`) too, and the
 // rest declared foreign in the binary. Nothing of the engine is compiled again with what
-// uses it. A file is written only when its text changes: a declaration that
+// uses it. A private procedure is declared and exported only when the
+// declarations name it (privates_named): no other package can, so the rest of
+// them stay in the binary and move no declaration when they change.
+// A file is written only when its text changes: a declaration that
 // comes out the same leaves the stage and the declarations as they were, and
-// the halves of the engine follow each folder by itself.
+// the libraries of the engine follow each folder by itself.
 
 Declare_Desc :: struct {
     root:string,       // where the packages are
@@ -30,7 +33,7 @@ Declare_Desc :: struct {
 
 // What the call wrote: of each folder, whether any file was written, or
 // removed. The stage is what the library is compiled from; the declarations
-// are what the halves that compile against it read.
+// are what the libraries that compile against it read.
 @(private)
 Declare_Changed :: struct {
     stage,decl:bool,
@@ -58,6 +61,31 @@ File_Scope :: struct {
     decl_folder:string,  // of its declarations: what the paths of their #load are made relative to
     link_prefix:string,
     private_file,private_package:bool,
+    named:map[^ast.Value_Decl]bool, // the private procedures of its package that are declared
+}
+
+// How a declaration of a source reaches the declarations.
+@(private="file")
+Value_Kind :: enum u8 {
+    Skipped,
+    Copied,  // as text
+    Foreign, // a procedure the binary exports
+}
+
+// The names in the text the declarations of a package carry: those of one
+// file, where what is private to a file is looked up, and those of them all.
+@(private="file")
+Names :: struct {
+    file,all:^map[string]bool,
+}
+
+// A private procedure that is declared foreign if the declarations name it.
+@(private="file")
+Private_Proc :: struct {
+    decl:^ast.Value_Decl,
+    type:^ast.Proc_Type,
+    file:int,
+    of_file:bool,
 }
 
 // Writes the stage and the declarations of the packages. The errors say what
@@ -86,14 +114,21 @@ declare_package :: proc(d:^Declare,path:string) {
     }
     written:=make(map[string]bool,context.temp_allocator)
     link_prefix:=fmt.aprintf("%s.%s",d.desc.binary,strings.join(strings.split(path,"/",context.temp_allocator),".",context.temp_allocator),allocator=context.temp_allocator)
-    for file in files {
-        scope:=File_Scope{file=file,src=file.src,folder=filepath.dir(file.fullpath),stage_folder=stage,decl_folder=decl,link_prefix=link_prefix}
+    scopes:=make([]File_Scope,len(files),context.temp_allocator)
+    for file,index in files {
+        scope:=&scopes[index]
+        scope^={file=file,src=file.src,folder=filepath.dir(file.fullpath),stage_folder=stage,decl_folder=decl,link_prefix=link_prefix}
         for tag in file.tags {
             text:=strings.trim_space(tag.text)
             if strings.has_prefix(text,"#+private") {
                 if strings.contains(text,"file") {scope.private_file=true} else {scope.private_package=true}
             }
         }
+    }
+    named:=privates_named(scopes)
+    for &scope in scopes {
+        scope.named=named
+        file:=scope.file
         name:=filepath.base(file.fullpath)
         written[name]=true
         out:Output
@@ -208,23 +243,177 @@ foreign_block_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,s:^ast.Fore
     intrinsics:=0
     for stmt in body.stmts {
         decl,is_value:=stmt.derived.(^ast.Value_Decl)
-        if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
-        lit,is_lit:=decl.values[0].derived.(^ast.Proc_Lit)
-        if !is_lit {continue}
-        if intrinsic(decl) {
+        if !is_value {continue}
+        kind,lit,private,_:=value_kind(scope,decl,s)
+        switch kind {
+        case .Skipped:
+        case .Copied:
             if intrinsics==0 {
                 fmt.sbprintfln(&out.decl,"%s@(default_calling_convention=%q%s)",indent,convention,private_file?",private=\"file\"":"")
                 fmt.sbprintfln(&out.decl,"%sforeign _ {{",indent)
             }
             fmt.sbprintfln(&out.decl,"%s    %s",indent,decl_text(scope,decl))
             intrinsics+=1
-            continue
+        case .Foreign:
+            if private && !scope.named[decl] {continue}
+            proc_declare(d,scope,out,decl,lit,ident_text(decl.names[0]),convention,indent)
         }
-        if c_vararg(lit.type) {continue}
-        name:=ident_text(decl.names[0])
-        proc_declare(d,scope,out,decl,lit,name,convention,indent)
     }
     if intrinsics>0 {fmt.sbprintfln(&out.decl,"%s}}",indent)}
+}
+
+// How a declaration reaches the declarations, and whether its package or its
+// file keeps it private. block: the foreign block it is in.
+@(private="file")
+value_kind :: proc(scope:^File_Scope,decl:^ast.Value_Decl,block:^ast.Foreign_Block_Decl=nil) -> (kind:Value_Kind,lit:^ast.Proc_Lit,private,private_file:bool) {
+    if len(decl.values)==1 {lit,_=decl.values[0].derived.(^ast.Proc_Lit)}
+    private_file=scope.private_file
+    private=scope.private_package || private_file
+    rodata:=false
+    lists:=[2][]^ast.Attribute{decl.attributes[:],block!=nil?block.attributes[:]:nil}
+    for attributes in lists {
+        for attribute in attributes {
+            for elem in attribute.elems {
+                key,value:=attribute_key(elem)
+                switch key {
+                case "private":
+                    private=true
+                    private_file||=value=="file"
+                case "rodata":
+                    rodata=true
+                case "init","fini":
+                    return
+                }
+            }
+        }
+    }
+    switch {
+    case block!=nil:
+        // An LLVM intrinsic has no symbol to export, and the arguments of a
+        // C variadic one cannot be passed on.
+        switch {
+        case lit==nil || len(decl.names)!=1:
+        case intrinsic(decl): kind=.Copied
+        case !c_vararg(lit.type): kind=.Foreign
+        }
+    case lit==nil:
+        // Types, constants and groups of procedures are the same here; a
+        // variable of the package only when the rest can see it, and a
+        // read-only table always, which the inline bodies copied here read.
+        if !decl.is_mutable || !private || rodata {kind=.Copied}
+    // A procedure with a deferred one runs it in the scope of its caller: a
+    // call through the binary would run it on leaving the export as well.
+    // An `any` carries a typeid that only the type table of the module that
+    // made it knows: through the binary, fmt would find no type for an enum
+    // or a struct of the caller and print nothing.
+    case generic(lit.type) || lit.inlining==.Inline || len(lit.where_clauses)>0 || deferred(decl) || takes_any(lit.type):
+        kind=.Copied
+    case:
+        kind=.Foreign
+    }
+    return
+}
+
+// The private procedures of a package that its declarations name: the ones a
+// body or a value copied into them calls or takes, the ones in the default
+// values of what is declared, and the ones those name in turn. A name counts
+// wherever it is written, so one that a local variable shadows declares its
+// procedure too: more is declared, never less.
+@(private="file")
+privates_named :: proc(scopes:[]File_Scope) -> (named:map[^ast.Value_Decl]bool) {
+    named=make(map[^ast.Value_Decl]bool,context.temp_allocator)
+    files:=make([]map[string]bool,len(scopes),context.temp_allocator)
+    all:=make(map[string]bool,context.temp_allocator)
+    privates:=make([dynamic]Private_Proc,context.temp_allocator)
+    for &scope,index in scopes {
+        files[index]=make(map[string]bool,context.temp_allocator)
+        names:=Names{file=&files[index],all=&all}
+        names_collect(&scope,index,&names,&privates,scope.file.decls[:])
+    }
+    for found:=true;found; {
+        found=false
+        for private in privates {
+            name:=ident_text(private.decl.names[0])
+            if named[private.decl] || !(private.of_file?files[private.file][name]:all[name]) {continue}
+            named[private.decl]=true
+            names:=Names{file=&files[private.file],all=&all}
+            names_add(&names,private.type)
+            found=true
+        }
+    }
+    return
+}
+
+// Follows decls_write: what it would copy adds its names, and what it would
+// declare foreign adds those of its signature, or waits to be named if private.
+@(private="file")
+names_collect :: proc(scope:^File_Scope,file:int,names:^Names,privates:^[dynamic]Private_Proc,stmts:[]^ast.Stmt) {
+    value :: proc(scope:^File_Scope,file:int,names:^Names,privates:^[dynamic]Private_Proc,decl:^ast.Value_Decl,block:^ast.Foreign_Block_Decl) {
+        kind,lit,private,private_file:=value_kind(scope,decl,block)
+        switch kind {
+        case .Skipped:
+        case .Copied:
+            names_add(names,decl)
+        case .Foreign:
+            if len(decl.names)!=1 {return}
+            if private {append(privates,Private_Proc{decl=decl,type=lit.type,file=file,of_file=private_file})}
+            else {names_add(names,lit.type)}
+        }
+    }
+    for stmt in stmts {
+        if stmt==nil {continue}
+        #partial switch s in stmt.derived {
+        case ^ast.When_Stmt:
+            names_add(names,s.cond)
+            names_collect(scope,file,names,privates,{s.body,s.else_stmt})
+        case ^ast.Block_Stmt:
+            names_collect(scope,file,names,privates,s.stmts)
+        case ^ast.Foreign_Block_Decl:
+            body,ok:=s.body.derived.(^ast.Block_Stmt)
+            if !ok {continue}
+            for inner in body.stmts {
+                if decl,is_value:=inner.derived.(^ast.Value_Decl);is_value {value(scope,file,names,privates,decl,s)}
+            }
+        case ^ast.Value_Decl:
+            value(scope,file,names,privates,s,nil)
+        case ^ast.Expr_Stmt:
+            names_add(names,s)
+        }
+    }
+}
+
+@(private="file")
+names_add :: proc(names:^Names,node:^ast.Node) {
+    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
+        if node==nil {return nil}
+        names:=cast(^Names)v.data
+        #partial switch n in node.derived {
+        case ^ast.Ident:
+            names.file[n.name]=true
+            names.all[n.name]=true
+        // What is selected is a field or a name of another package, the names
+        // of a field with a type or a value are its own, and the key of an
+        // attribute is no name: none is a procedure of this package.
+        case ^ast.Selector_Expr:
+            ast.walk(v,n.expr)
+            return nil
+        case ^ast.Implicit_Selector_Expr:
+            return nil
+        case ^ast.Field:
+            if n.type==nil && n.default_value==nil {break}
+            ast.walk(v,n.type)
+            ast.walk(v,n.default_value)
+            return nil
+        case ^ast.Attribute:
+            for elem in n.elems {
+                if pair,is_pair:=elem.derived.(^ast.Field_Value);is_pair {ast.walk(v,pair.value)}
+            }
+            return nil
+        }
+        return v
+    }
+    v:=ast.Visitor{visit=visit,data=names}
+    ast.walk(&v,node)
 }
 
 // Whether a foreign procedure is an LLVM intrinsic, by its link name.
@@ -240,46 +429,21 @@ intrinsic :: proc(decl:^ast.Value_Decl) -> bool {
 
 @(private="file")
 value_write :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_Decl,indent:string) {
-    lit:^ast.Proc_Lit
-    if len(decl.values)==1 {lit,_=decl.values[0].derived.(^ast.Proc_Lit)}
-    private_file,private,rodata:=scope.private_file,scope.private_package,false
-    for attribute in decl.attributes {
-        for elem in attribute.elems {
-            key,value:=attribute_key(elem)
-            switch key {
-            case "private":
-                if value=="file" {private_file=true} else {private=true}
-            case "rodata":
-                rodata=true
-            case "init","fini":
-                return
-            }
+    kind,lit,private,private_file:=value_kind(scope,decl)
+    switch kind {
+    case .Skipped:
+    case .Copied:
+        fmt.sbprintfln(&out.decl,"%s%s",indent,decl_text(scope,decl))
+    case .Foreign:
+        if len(decl.names)!=1 {
+            append(&d.errors,fmt.aprintf("%s(%d): one procedure per declaration",scope.file.fullpath,decl.pos.line))
+            return
         }
+        if private && !scope.named[decl] {return}
+        // One private to its file goes under a link name of its file, which
+        // may repeat its name.
+        proc_declare(d,scope,out,decl,lit,ident_text(decl.names[0]),"",indent,private_file)
     }
-    if lit==nil {
-        // Types, constants and groups of procedures are the same here; a
-        // variable of the package only when the rest can see it, and a
-        // read-only table always, which the inline bodies copied here read.
-        if decl.is_mutable && (private || private_file) && !rodata {return}
-        fmt.sbprintfln(&out.decl,"%s%s",indent,decl_text(scope,decl))
-        return
-    }
-    // A procedure with a deferred one runs it in the scope of its caller: a
-    // call through the binary would run it on leaving the export as well.
-    // An `any` carries a typeid that only the type table of the module that
-    // made it knows: through the binary, fmt would find no type for an enum
-    // or a struct of the caller and print nothing.
-    if generic(lit.type) || lit.inlining==.Inline || len(lit.where_clauses)>0 || deferred(decl) || takes_any(lit.type) {
-        fmt.sbprintfln(&out.decl,"%s%s",indent,decl_text(scope,decl))
-        return
-    }
-    if len(decl.names)!=1 {
-        append(&d.errors,fmt.aprintf("%s(%d): one procedure per declaration",scope.file.fullpath,decl.pos.line))
-        return
-    }
-    // A body copied above can call a procedure private to its file: it is
-    // declared too, under a link name of its file, which may repeat its name.
-    proc_declare(d,scope,out,decl,lit,ident_text(decl.names[0]),"",indent,private_file)
 }
 
 // The foreign declaration of a procedure, and its export in the stage.
@@ -310,7 +474,7 @@ proc_declare :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_De
             }
         }
     }
-    signature:=fmt.tprintf("%s%s%s%s",before,params,after,tags)
+    signature:=fmt.tprintf("%s%s%s%s",before,inner_procs_odin(params),inner_procs_odin(after),tags)
     // Its parameters renamed: one could have the name of the procedure it calls.
     wrapper:=fmt.tprintf("%s%s%s%s",before,renamed,after,tags)
     fmt.sbprintfln(&out.decl,"%s@(default_calling_convention=\"odin\")",indent)
@@ -320,6 +484,24 @@ proc_declare :: proc(d:^Declare,scope:^File_Scope,out:^Output,decl:^ast.Value_De
     if type.results!=nil && !type.diverging {call=fmt.tprintf("return %s",call)}
     fmt.sbprintfln(&out.exports,"%s@(export,link_name=%q%s) __mirai_export_%s :: %s {{%s}}",indent,link,private_file?",private=\"file\"":"",name,wrapper,call)
     out.export_count+=1
+}
+
+// A procedure type among what a foreign block declares takes "cdecl" and not
+// the default_calling_convention of the block (see Odin workarounds): the
+// conventionless ones are the Odin ones the engine and a plugin pass each other.
+@(private="file")
+inner_procs_odin :: proc(text:string) -> string {
+    b:=strings.builder_make(context.temp_allocator)
+    rest:=text
+    for {
+        at:=strings.index(rest,"proc(")
+        if at<0 {strings.write_string(&b,rest);return strings.to_string(b)}
+        strings.write_string(&b,rest[:at])
+        before:=u8(0) if at==0 else rest[at-1]
+        word:=!(before=='_' || before>='0' && before<='9' || before>='a' && before<='z' || before>='A' && before<='Z')
+        strings.write_string(&b,word?`proc "odin" (`:"proc(")
+        rest=rest[at+len("proc("):]
+    }
 }
 
 // The parentheses of the parameters of a procedure type, skipping what is
@@ -601,7 +783,7 @@ rewrite_paths :: proc(scope:^File_Scope,src:string,decls:[]^ast.Stmt) -> string 
 }
 
 // The string literal right after the next #load, #load_hash or #load_directory.
-@(private="file")
+@(private)
 directive_path :: proc(text:string) -> (at:struct{start,end:int}) {
     at={-1,-1}
     search:=0

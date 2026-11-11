@@ -3,6 +3,7 @@ package geom
 import "core:fmt"
 import "core:testing"
 import "core:time"
+import "mirai:std/base"
 
 // Benchmarks run with: mirai test std/geom bench --release -define:GEOM_BENCH=true
 GEOM_BENCH :: #config(GEOM_BENCH,false)
@@ -31,7 +32,7 @@ bench_hull :: proc(t:^testing.T) {
         points:=make([]Vec3,10000)
         defer delete(points)
         for kind in ([?]Cloud{.Ball,.Box,.Sphere_Surface}) {
-            rng:=rng_make(42)
+            rng:=base.rng_make(42)
             cloud_fill(points,kind,&rng)
             for limit in ([?]int{0,64}) {
                 if kind!=.Sphere_Surface && limit!=0 {continue}

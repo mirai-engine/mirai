@@ -2,21 +2,19 @@ package physics
 
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import sim "plugins:physics/runtime/sim"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 @(test)
 reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-physics-reload-%d",directory,os.get_pid())
+    folder:=base.test_folder(t,"physics-reload")
+    if folder=="" {return}
     file:=fmt.tprintf("%s/physics.scene",folder)
-    if !testing.expect(t,os.make_directory_all(folder)==nil) {return}
-    defer os.remove(folder);defer os.remove(file)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     authored:asset.Scene
     testing.expect_value(t,asset.scene_init(&authored,&types,asset.KIND_SCENE,{12,45}),asset.Error.None)
@@ -35,27 +33,16 @@ reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^
     source:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&source,file),asset.Error.None) {return}
     defer asset.asset_close(&source)
-    f:Physics_Test;physics_test_init(&f);defer physics_test_destroy(&f)
-    tables:=[5]core.Table_Info{
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Physics_Test,transforms)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Physics_Test,names)},
-        {name="Rigid_Body",type=Rigid_Body,info=type_info_of(Rigid_Body),offset=offset_of(Physics_Test,rigids)},
-        {name="Collider",type=Collider,info=type_info_of(Collider),offset=offset_of(Physics_Test,colliders)},
-        {name="Joint",type=Joint,info=type_info_of(Joint),offset=offset_of(Physics_Test,joints)},
-    }
-    info:=core.World_Info{entities=offset_of(Physics_Test,entities),tables=tables[:]}
-    info.settle=proc(world,shared,editor:rawptr) {physics_test_settle(cast(^Physics_Test)world)}
-    info.clear=proc(data:rawptr) {
-        f:=cast(^Physics_Test)data
-        core.entities_clear(&f.entities)
-        core.table_clear(&f.transforms);core.table_clear(&f.names);core.table_clear(&f.rigids);core.table_clear(&f.colliders)
-        core.table_clear(&f.joints);core.table_clear(&f.joint_states);core.table_clear(&f.bodies)
-    }
-    w:=core.world_ref(&f,&info)
+    f:Physics_Test;if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    w:=core.test_world_ref(&f.w)
     previous:core.Entity
     previous_body:sim.Body_Handle
     for _ in 0..<3 {
-        info.clear(&f)
+        // The rows of the scene go and the state of physics stays: it follows them.
+        core.entities_clear(&f.entities)
+        core.table_clear(&f.transforms);core.table_clear(&f.names);core.table_clear(&f.rigids);core.table_clear(&f.colliders)
+        core.table_clear(&f.joints);core.table_clear(&f.joint_states);core.table_clear(&f.bodies)
         _,error:=scene.instantiate(w,&source,&types)
         core.world_settle(w)
         if !testing.expect_value(t,error,scene.Error.None) {return}
@@ -77,7 +64,8 @@ reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^
 
 @(test)
 scaled_chain_links_keep_their_adjacent_edge_anchors_together_after_launch :: proc(t:^testing.T) {
-    f:Physics_Test;physics_test_init(&f);defer physics_test_destroy(&f)
+    f:Physics_Test;if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
     f.gravity={0,-9.81,0}
     links:[7]core.Entity
     rigid:=RIGID_BODY_DYNAMIC;rigid.mass=2;rigid.bullet=true

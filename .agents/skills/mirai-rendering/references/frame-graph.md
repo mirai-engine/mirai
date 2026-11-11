@@ -5,6 +5,8 @@ recorded first and then the window ones. Each view goes through passes 2 to 16, 
 stages of the standard `Full` pipeline; a [pipeline](views.md#render-pipelines) can omit stages
 or interleave its own passes.
 
+## Passes
+
 1. **upload**: skinning of the poses that changed; instances, materials, lights and their
    [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the
    refit of the ray structure in use and, with hardware RT, the native TLAS. What does not fit in
@@ -61,7 +63,7 @@ or interleave its own passes.
      where a list fills for the first time, not again at that size.
    - Then, the `Simulate` extension stages (first window view, or texture view in a
      textures-only frame: what moves on the GPU against this depth, like the
-     [particles](../../mirai-plugins/references/vfx.md)) and `Gbuffer` (each view: surfaces of an
+     [particles](../../mirai-world/references/vfx.md)) and `Gbuffer` (each view: surfaces of an
      extension in the G-buffer).
    - With extension passes: `Mask` stage, G-buffers of [nested views](views.md#nested-views) and
      `Surface` stage.
@@ -159,7 +161,7 @@ or interleave its own passes.
     - `View_Inspection.postprocess` of a view runs only the first effects of each side (the eye of
       the stack inspector); without a limit they all run.
 15. **tonemap + postprocess LDR + ui**
-    - Exposure and a read of the display LUT (ACES 2.0 and sRGB:
+    - Exposure and a read of the display LUT (the project's transform and sRGB:
       [transform](display.md#display-transform)), with triangular dithering of up to one 8-bit
       level on each side, fixed between frames and null at pure black and white.
     - Composes the [outlines](#outlines) layer.

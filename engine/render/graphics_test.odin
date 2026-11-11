@@ -11,7 +11,6 @@ import "mirai:rhi"
 graphics_default_is_medium_on_a_gpu_without_hardware_ray_tracing_or_integrated :: proc(t:^testing.T) {
     medium:=GRAPHICS_SETTINGS_DEFAULT
     graphics_preset_apply(&medium,.Medium)
-    medium.render_megapixels=GRAPHICS_SMALL_DEVICE_MEGAPIXELS
     testing.expect_value(t,graphics_settings_for_device({type=.Discrete,features={ray_query=true}}),GRAPHICS_SETTINGS_DEFAULT)
     for device in ([]rhi.Device_Info{{type=.Discrete},{type=.Integrated,features={ray_query=true}},{type=.Integrated}}) {
         testing.expect_value(t,graphics_settings_for_device(device),medium)
@@ -19,7 +18,10 @@ graphics_default_is_medium_on_a_gpu_without_hardware_ray_tracing_or_integrated :
     testing.expect_value(t,medium.frame_limit,GRAPHICS_SETTINGS_DEFAULT.frame_limit)
     // Frame generation takes memory the low presets do not give it.
     presets:=GRAPHICS_PRESETS
-    for preset in Graphics_Preset {testing.expect_value(t,presets[preset].frame_generation,preset>=.High)}
+    for preset in Graphics_Quality {
+        if preset==.Custom {continue}
+        testing.expect_value(t,presets[preset].frame_generation,preset>=.High)
+    }
     testing.expect(t,!medium.frame_generation && GRAPHICS_SETTINGS_DEFAULT.frame_generation)
 }
 
@@ -53,17 +55,70 @@ graphics_default_without_a_device_is_the_high_preset :: proc(t:^testing.T) {
 }
 
 @(test)
-resolution_is_a_budget_of_pixels_under_one_per_point_that_no_preset_sets :: proc(t:^testing.T) {
+a_scale_set_by_hand_is_used_as_it_is_and_zero_follows_the_target_of_the_preset :: proc(t:^testing.T) {
     g:=GRAPHICS_SETTINGS_DEFAULT
     settings:=gpu.DEFAULT_SETTINGS
     settings.render_scale=0.5
     s:=graphics_render_settings(settings,g,{type=.Discrete})
-    testing.expect(t,s.render_scale==1 && s.render_megapixels==2.0736)
-    g.render_megapixels=0
-    testing.expect_value(t,graphics_render_settings(settings,g,{type=.Discrete}).render_megapixels,f32(0))
-    for preset in Graphics_Preset {
-        graphics_preset_apply(&g,preset)
-        testing.expect_value(t,g.render_megapixels,f32(0))
+    testing.expect(t,s.render_scale==1 && s.render_height==1080)
+    g.render_scale=0.5
+    s=graphics_render_settings(settings,g,{type=.Discrete})
+    testing.expect(t,s.render_scale==0.5 && s.render_height==0)
+    testing.expect(t,s.sun_shadows)
+    g.sun_shadows=false
+    testing.expect(t,!graphics_render_settings(settings,g,{type=.Discrete}).sun_shadows)
+    presets:=GRAPHICS_PRESETS
+    for preset in Graphics_Quality {
+        if preset>.Low && preset!=.Custom {testing.expect(t,presets[preset].preset_height>=presets[Graphics_Quality(int(preset)-1)].preset_height)}
+    }
+}
+
+@(test)
+a_preset_named_moves_the_fields_and_what_they_are_at_is_computed :: proc(t:^testing.T) {
+    presets:=GRAPHICS_PRESETS
+    g:=GRAPHICS_SETTINGS_DEFAULT
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.High)
+    // A preset named over a scale set by hand: it follows the target of the preset again.
+    g.render_scale=0.5
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
+    graphics_preset_apply(&g,.Low)
+    testing.expect(t,g.render_scale==0 && g.preset_height==presets[.Low].preset_height && g.reflections==.Off)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
+    // A field changed by hand leaves the others where the preset put them.
+    g.reflections=.Traced
+    testing.expect(t,g.preset_height==presets[.Low].preset_height)
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
+    // Naming the preset again reaches it.
+    graphics_preset_apply(&g,.Low)
+    testing.expect(t,g.reflections==.Off)
+    // What is not of the quality counts for none.
+    g.frame_limit,g.vsync,g.show_fps,g.antialiasing=0,false,false,{}
+    testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
+    // Custom is none: the fields stay where they are.
+    before:=g
+    graphics_preset_apply(&g,.Custom)
+    testing.expect_value(t,g,before)
+}
+
+// The step that brings the renderer to the settings reads them: whatever they
+// hold, at a preset or with fields of a project, it leaves them as they were.
+@(test)
+applying_the_graphics_settings_writes_none_of_them :: proc(t:^testing.T) {
+    app:=new(host.App)
+    defer free(app)
+    sync:=new(Render_Sync)
+    defer free(sync)
+    own:=GRAPHICS_SETTINGS_DEFAULT
+    own.light_samples,own.glass_shadows,own.glass_layers=31,false,2
+    low:=GRAPHICS_SETTINGS_DEFAULT
+    graphics_preset_apply(&low,.Low)
+    scaled:=low
+    scaled.render_scale=0.5
+    for wanted in ([]Graphics_Settings{GRAPHICS_SETTINGS_DEFAULT,own,low,scaled}) {
+        g:=wanted
+        graphics_apply({&g},sync,app)
+        testing.expect_value(t,g,wanted)
+        testing.expect(t,sync.graphics_applied && sync.graphics==wanted,"what was applied is what the settings hold")
     }
 }
 
@@ -98,7 +153,7 @@ memory_chosen_in_megabytes_replaces_the_automatic_pools_and_no_preset_touches_it
     s=graphics_render_settings(settings,g,{type=.Discrete})
     testing.expect_value(t,s.texture_pool_megabytes,gpu.DEFAULT_SETTINGS.texture_pool_megabytes)
     g.texture_memory,g.geometry_memory=1500,512
-    for preset in Graphics_Preset {
+    for preset in Graphics_Quality {
         graphics_preset_apply(&g,preset)
         testing.expect(t,g.texture_memory==1500 && g.geometry_memory==512)
     }
@@ -117,4 +172,16 @@ display_settings_left_at_zero_are_the_window_the_project_opened :: proc(t:^testi
     testing.expect(t,mode==.Fullscreen && size==platform.WINDOW_SIZE_DEFAULT)
     mode,_=display_target({},{})
     testing.expect_value(t,mode,Display_Mode.Windowed)
+}
+
+@(test)
+a_preset_keeps_a_pixel_per_point_within_the_lines_of_its_target :: proc(t:^testing.T) {
+    presets:=GRAPHICS_PRESETS
+    // At the window of the render check the presets it runs draw every pixel, as before.
+    for preset in ([]Graphics_Quality{.Medium,.High,.Ultra}) {
+        testing.expect_value(t,gpu.views_render_scale(1,presets[preset].preset_height,900,1),f32(1))
+    }
+    testing.expect_value(t,gpu.views_render_scale(1,presets[.Low].preset_height,900,1),f32(0.8))
+    testing.expect_value(t,gpu.views_render_scale(1,presets[.High].preset_height,2160,1),f32(0.5))
+    testing.expect_value(t,gpu.views_render_scale(0.5,0,2160,1),f32(0.5))
 }

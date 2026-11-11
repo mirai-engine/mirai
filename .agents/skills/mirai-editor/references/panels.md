@@ -13,8 +13,7 @@
   `dock_scene_left`), in Edit, Simulate and Play: what they always cover consumes no GPU. The left
   panel never moves the image: the viewport (`Viewport.origin`, `size`, `dock_widths`) is the whole
   view, also under the panel, and takes the pointer and projects there, and `App.scene_shift` keeps
-  the center of that view in the part drawn, without moving the camera; the pixels of the Resolution
-  setting count the whole view (`Frame_View.view_width`), so what the panel covers is pixels saved. The bar's edge falls on
+  the center of that view in the part drawn, without moving the camera. The bar's edge falls on
   a whole pixel at any scale (`bars_snap`).
 - During Play the game UI's safe area reserves the height of the bar: a HUD anchored to
   `Float_To.Safe` stays below them.
@@ -100,29 +99,55 @@ say whether it ends or passes over a rectangle; over the scene it places where t
 
 ## AI panel
 
-Logic in [chats and agents](ai-tasks.md); review in [change review](ai-review.md). A conversation
-is a **session**: those that work or await review have a row above the thread; the rest are in
-History.
+Logic in [chats and agents](ai-tasks.md); review in [change review](ai-review.md). The panel is the
+**main chat** of the project: one continuous thread, with no sessions to open or pick. What an
+agent does in parallel shows around it.
 
-- The panel bar carries History (a popup with the document's sessions that have no row), New
-  session (`+`, also while other agents work) and the gear of Connections and Show agents in
-  scene.
-- With no session open and none at work or awaiting review, only the composer waits, in the middle
-  of the panel under the mark of Mirai in gray (`ai_chat_empty_build`, `User_Icon.Mirai_Shape`).
-  The first message takes it down to its place in `AI_COMPOSER_DROP`, easing out. The thread keeps
-  `AI_THREAD_MARGIN` from the sides of the panel.
-- There is one row per session that works or awaits review, and the open one even if it finished:
-  it says what it expects from the user (`!` a permission, `?` a question, or how many changes
-  remain to review) or carries the dot while working. A finished one is closed with its tick, which
-  keeps what changed. Details of the open one gives its state, agent, model, reported
-  spend, context, process and each call with its result. The look (brand or glyph and a color of
-  [the figures](editor.md#figures-of-whoever-works)) is kept in the conversation.
+- **The bar of the editor** has, at its right, the avatars of the agents (`watch_bar_build`): the
+  main agent always, with the dot while it works, then each subagent that works or waits for an
+  answer, and each finished one with changes to accept or reject, with a badge (`!` a permission,
+  `?` a question, or how many changes wait). A click on the main one opens the chat and on a
+  subagent inspects it; a right click opens its menu
+  ([figures](editor.md#figures-of-whoever-works)).
+- **The bar of the panel** carries the clock, the expand button (four corners) and the gear.
+  - The clock opens a popup with a search over the main chat and, under **Finished agents**, the
+    subagents that ended, the latest first, each with how long ago it moved and how it ended; a
+    click inspects one. A hit of the search brings its line into sight, and one the thread no
+    longer holds opens read only with the messages around it.
+  - The gear has **Agents** (the model and effort of the main chat, and what subagents run with:
+    same, fixed or the agent picks, [subagents](ai-tasks.md#subagents)), **Memory** (the project's
+    index, its topics and the user's file, each with Edit in a dialog whose Save writes the file),
+    Connections and Show agents in scene.
+- With nothing sent yet only the composer waits, in the middle of the panel under the mark of
+  Mirai in gray (`ai_chat_empty_build`, `User_Icon.Mirai_Shape`). The first message takes it down
+  to its place in `AI_COMPOSER_DROP`, easing out. The thread keeps `AI_THREAD_MARGIN` from the
+  sides of the panel.
+- **The status line** under the bar of the panel says what the agents do in one line (`2 agents
+  working · 4 changes to review`) and appears only while something works or waits for review. It
+  unfolds into one row per unit: the color of its agent, its glyph, its title and what it waits
+  for (the badge) or the dot while it works; a click inspects it. The main chat is not a row.
+- **Report cards.** A subagent that ends a turn leaves a card in the thread: its title and how it
+  ended, its answer as answers are drawn and one row: **N changes** unfolding its review and, at
+  its end, **Reply**, which attaches that unit to the next message as a chip, then revert and
+  accept. Only the latest report of each subagent is a card; the earlier ones are a line. A click
+  on the title inspects it.
+- **Subagent view.** Inspecting one replaces the thread with its own: a way back to the main chat
+  with its model and effort, its title with its state, which opens its details, and its review
+  over a composer that writes to it (`Message <title>...`; no model selector, context window,
+  Annotate or image buttons). Everything else keeps being about the main chat.
+- **Expanded chat.** The corners button makes the chat the whole area below the bars, in a column
+  in the middle, with the rail still at the left and, at the right, a column of the units that
+  work (a click inspects) and those that wait for review, kept or put back from there; the
+  status line gives way to that column. Details, the docks and the bottom panel are not drawn, and
+  the pins of annotations are not shown. The clock and the gear stay at the top right.
 - Of the agent the last message of each turn is shown (the output after its last call), errors,
   cancellation and how the review ended (`Reviewed · N kept · M reverted`); not the intermediate
-  ACP messages. The steps of a finished turn (API calls and the agent's own tools, each with its
-  icon; `finish` is not a step) are folded under `Worked for 1m 05s · N steps`, with the time its
-  notes give. While it runs, a line says `Working for` with the turn's time and the tool in
-  progress, its last step or its last text.
+  ACP messages. A turn started by the editor to take deliveries has no line of the user. The
+  steps of a finished turn (API calls and the agent's own tools, each with its icon; `finish` is
+  not a step) are folded under `Worked for 1m 05s · N steps`, with the time its notes give. While
+  it runs, a line says `Working for` with the turn's time and the tool in progress, its last step
+  or its last text. A divider marks a new context of the chat (editor reopened) and a note a
+  compaction.
 - The consecutive lines of an answer, or of a user message, are a single message that measures and
   draws its first line; adding or growing a line measures the whole message again
   (`ai_transcript_touch`). Answers are Markdown (`ui.markdown`): a code block can occupy several
@@ -136,16 +161,36 @@ History.
   and if its session is not in view a toast warns. A `finish` question shows its options under the
   answer, always with `Other...`, and the choice is sent as the next message.
 - Each line of the thread is measured once per width and only the visible ones are built.
-- The session's review sits over the composer: folded, how many changes remain with **Revert all**
-  and **Accept all** (Finish); unfolded, one row per change
+- The review of the unit shown sits over the composer: folded, how many changes remain with
+  **Revert all** and **Accept all** (Finish); unfolded, one row per change
   ([review](ai-review.md#finish-revert-and-retry)). Accept all, like **Enter with an empty
-  composer**, confirms and opens a new session. A failed turn that left changes remains reviewable;
-  Build appears as a button when sources changed. These actions belong to the conversation's last
-  turn, and Retry is API-only.
-- In the composer, Enter sends and Shift+Enter adds a line; the selection goes in chips, and
-  removing one deselects the entity. The capture is taken on sending, without frame or
-  announcement. Choosing in the model button one of another agent starts a new session. Next to the
-  image button, the percentage of the context window the session used, if its agent reports it.
+  composer**, confirms and keeps the chat. A failed turn that left changes remains reviewable;
+  Build appears as a button when sources changed. These actions belong to the unit's last turn,
+  and Retry is API-only.
+- **Composer.** Enter sends and Shift+Enter adds a line. While the agent works Enter does not
+  interrupt: the message goes into the thread at once and joins the turn
+  ([steering](ai-tasks.md#chat-flow)); one that could not join is drawn with a dashed outline until
+  it reaches the agent. The button is Stop only with nothing written. The selection goes in chips,
+  and removing one deselects the entity. The capture is taken on sending, without frame or
+  announcement.
+  - The model selector is quiet: the monochrome mark of its agent, the model name in muted text and
+    the effort fainter, without a chevron, and the same menu. Choosing one of another agent changes
+    the main chat's agent with its next turn.
+  - A chip that can be pinned carries a thumbtack; a pinned one stays over the composer across
+    messages ([pins](ai-tasks.md#pins-annotations-and-provenance)).
+  - Beside the image button are the Annotate button and, if the agent reports it, the percentage of
+    the context window used: it opens a popup with the tokens used of the window, a bar and
+    **Compact now** ([compaction](ai-tasks.md#compaction-and-handoff)).
+- **Annotations.** The Annotate tool (the Tools menu and the composer's button) turns clicks on the
+  scene into numbered pins, each opening a note with an optional group and a remove button; a pin
+  left without a note goes away. The pins are drawn over the viewport while the chat is open or the
+  tool is on, in Edit, and a group goes with the next message as a chip. They live in the
+  database, never in the scene.
+- **Provenance.** Details of a single entity, and those of the asset documents that show them,
+  carry one faint row at the top naming the unit that last changed it and how long ago; a click
+  opens its view at that turn.
+- **Content Browser marks.** An asset that a unit changed and that waits for review carries a dot
+  in the color of its agent, and its tooltip adds the unit's title.
 
 Figures and outlines: [agents in scene](ai-tasks.md#agents-in-scene-and-review).
 
@@ -160,8 +205,8 @@ Play with its own camera uses its own.
   from it.
 - A right click that did not turn the camera (nor moved the mouse, nor flew, nor changed the flight
   speed) opens the menu of what is under the pointer (`play_here.odin`): with a selection, **Ask
-  agent** first (`ai_ask`: the chat with its composer focused and the selection as its chips, in a
-  new chat when the open one works or is of an agent outside the editor); **Play from here** and
+  agent** first (`ai_ask`: the main chat with its composer focused and the selection as its chips);
+  **Play from here** and
   **Play from camera** ([Play from a place](editor.md#play-from-a-place)), and below what its ray
   crosses (`pick_through`, which does not stop at the first body), nearest first and each entity
   once, to select it.
@@ -260,7 +305,7 @@ prefab show the lit image, and on returning to Edit the chosen mode returns.
   (`world_debug_draw`), with color per body type. It rebuilds the lines only when the physics
   (`synced`, `epoch`, tick, teleports) or the layers change, and counts those that do not fit.
   Without ready physics it is not available and without the plugin it does not exist; images
-  without UI (`editor.capture` with `ui:false`, `mirai capture`) carry no lines.
+  without UI (`capture` without `ui`, `mirai capture`) carry no lines.
 - A plugin adds modes [from its editor step](extensions.md#an-inspection-mode); one that stops
   being declared returns to Lit.
 - API: `editor.view_mode.list` and `editor.view_mode.set`.
@@ -364,7 +409,7 @@ scene; an asset document has none.
 
 Details, its rows by reflection, copy and paste, collision and material are in
 [inspector](inspector.md); the section of a particle emitter belongs to the plugin
-[vfx](../../mirai-plugins/references/vfx-editor.md#particle_emitter-section).
+[vfx](../../mirai-world/references/vfx-editor.md#particle_emitter-section).
 
 ## Projects
 
@@ -519,8 +564,7 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   folders and its other files as they are.
 - Rename and move are rejected like delete and also with an invalid or taken name, a folder inside
   itself or the root of the assets; duplicate, only outside Edit, while watching and with assets of
-  a plugin, the engine or the editor. The methods are `asset.rename`, `asset.move` and
-  `asset.duplicate`.
+  a plugin, the engine or the editor. The method is `asset.move`.
 
 **Cards:**
 
@@ -644,7 +688,7 @@ browser cards and asset fields):
   card's menu while it is open in a tab (`scene_thumbnail_update`: if it is not in front, it
   brings its tab and takes the view that tab kept). On saving it, a notice says "Scene thumbnail
   updated". `THUMBNAIL_CAPTURE_WAIT` frames after opening it, or between the frames of the action,
-  `thumbnail_scene_capture` draws the world alone from the viewport's camera, like `editor.capture`
+  `thumbnail_scene_capture` draws the world alone from the viewport's camera, like `capture`
   without the UI (`host.app_capture_world`, 512×512 and `API_CAPTURE_SETTLE` frames), reduces it
   to the two sizes, stores it in `.mirai/thumbs` with the fixed key `THUMBNAIL_CAPTURED` and puts
   it in the cells that already show the scene. It is not taken if by then there is a Play, another
@@ -739,9 +783,11 @@ the user looks at the result, adjusts values and chooses among variants.
 
 ### Records document
 
-`records_document.odin`. A `.records`: a grid with a row per record and a column per field, and on
-the right all the fields of the chosen row with the Details rows (`held_field_row`). On top, the
-type's description; that of a field appears on hovering the name of its column.
+`records_document.odin`, over the table as the package `editor/records` changes it (rows, names,
+ids and texts, without the session). A `.records`: a grid with a row per record and a column per
+field, and on the right all the fields of the chosen row with the Details rows
+(`held_field_row`). On top, the type's description; that of a field appears on hovering the name
+of its column.
 
 - **Columns** (`records_columns_make`): the type's fields, with structs opened up to
   `RECORDS_COLUMN_DEPTH` levels and arrays of up to `RECORDS_ARRAY_COLUMNS` elements, one per
@@ -762,7 +808,7 @@ type's description; that of a field appears on hovering the name of its column.
 
 The documents of animations, sounds and sound sets belong to the plugin
 [previews](../../mirai-plugins/references/previews.md), and those of particle effects, to the
-plugin [vfx](../../mirai-plugins/references/vfx-editor.md#particle-document).
+plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 
 ## Import
 
@@ -822,7 +868,7 @@ sections that fold like those of the settings dialog: Quality and Frame rate.
   (`settings.mirai` in `project.machine_folder`: the main checkout's `.mirai`, which its worktrees
   share). A value the project fixes wins again on rereading. It does not touch the document or its
   history.
-- API: `graphics.status` and `graphics.set`.
+- API: `graphics.status` and `settings.set`.
 
 ## Project settings
 

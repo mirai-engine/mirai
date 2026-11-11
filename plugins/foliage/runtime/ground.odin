@@ -1,6 +1,7 @@
 package foliage
 
 import "mirai:core"
+import "mirai:std/base"
 
 // The ground the instances of each Foliage stand on, in the space of its
 // entity: a tile of heights over each cell, with the weights of the layers
@@ -18,6 +19,8 @@ Ground_Owner :: struct {
     entity:core.Entity,
     samples:u32,                // per side of a tile written without saying how many; a cell is samples-1 steps across
     revision:u32,               // raised with the revision of any of its tiles
+    layers:[RULE_LAYERS]base.Asset_Id, // what the weights of its tiles are of: the material of each layer of the terrain under it
+    layer_count:u32,
     tiles:[dynamic]Ground_Tile, // in the order of their coordinates, z then x
     pools:[dynamic]Ground_Pool, // the samples of its tiles, a pool for each count of them
 }
@@ -41,15 +44,10 @@ Ground_Pool :: struct {
 @(storage,queue)
 Foliage_Ground_Requests :: struct {cells:core.Queue(Ground_Request)}
 Ground_Request :: struct {entity:core.Entity,coord:[2]i32}
-GROUND_REQUESTS_MAX :: 256
 
-// False when it was not made: GROUND_REQUESTS_MAX wait already, or no memory.
-ground_request :: proc(requests:^Foliage_Ground_Requests,entity:core.Entity,coord:[2]i32) -> bool {
-    if cap(requests.cells.items)==0 {if reserve(&requests.cells.items,GROUND_REQUESTS_MAX)!=nil {return false}}
-    if len(requests.cells.items)>=GROUND_REQUESTS_MAX {return false}
-    for held in requests.cells.items {if held.entity==entity && held.coord==coord {return true}}
-    core.push(&requests.cells,{entity,coord})
-    return true
+ground_request :: proc(requests:^Foliage_Ground_Requests,entity:core.Entity,coord:[2]i32) {
+    for held in requests.cells.items {if held.entity==entity && held.coord==coord {return}}
+    core.offer(&requests.cells,Ground_Request{entity,coord})
 }
 
 ground_owner :: proc "contextless" (g:^Foliage_Ground,entity:core.Entity) -> ^Ground_Owner {
@@ -137,9 +135,9 @@ pool_block_add :: proc(pool:^Ground_Pool,coord:[2]i32) -> (block:u32,ok:bool) {
     // They grow by doubling: tile after tile does not copy them all each time.
     if first+side>cap(pool.heights) && reserve(&pool.heights,max(first+side,2*cap(pool.heights)))!=nil {return}
     if first+side>cap(pool.weights) && reserve(&pool.weights,max(first+side,2*cap(pool.weights)))!=nil {return}
-    if _,error:=append(&pool.coords,coord);error!=nil {return}
-    resize(&pool.heights,first+side)
-    resize(&pool.weights,first+side)
+    if resize(&pool.heights,first+side)!=nil {return}
+    if resize(&pool.weights,first+side)!=nil {base.truncate(&pool.heights,first);return}
+    if _,error:=append(&pool.coords,coord);error!=nil {base.truncate(&pool.heights,first);base.truncate(&pool.weights,first);return}
     for &h in pool.heights[first:] {h=NO_GROUND}
     for &w in pool.weights[first:] {w={}}
     return u32(len(pool.coords)-1),true
@@ -158,9 +156,9 @@ pool_block_free :: proc(owner:^Ground_Owner,p,block:u32) {
         pool.coords[block]=moved
         if at:=ground_tile_find(owner,moved);at>=0 {owner.tiles[at].block=block}
     }
-    resize(&pool.heights,last*side)
-    resize(&pool.weights,last*side)
-    resize(&pool.coords,last)
+    base.truncate(&pool.heights,last*side)
+    base.truncate(&pool.weights,last*side)
+    base.truncate(&pool.coords,last)
 }
 
 NO_GROUND :: f32(0h7fc00000)

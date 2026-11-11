@@ -2,7 +2,6 @@ package terrain
 
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -29,7 +28,7 @@ holes_are_cut_and_filled_by_cells_and_round_trip_in_the_terrain_file :: proc(t:^
     testing.expect_value(t,change.low,[3]int{8,0,8});testing.expect_value(t,change.high,[3]int{9,0,9})
     testing.expect(t,source_edit(&source,{kind=.Hole,center={-4.5,0,-4.5},radius=1.2}).changed)
     testing.expect(t,source_hole(&source,3,3) && source_hole(&source,4,3) && !source_hole(&source,5,5))
-    path:=source_test_path("holes.terrain");defer os.remove(path)
+    path:=fmt.tprintf("%s/holes.terrain",base.test_folder(t,"terrain"))
     testing.expect_value(t,source_save(&source,path,{9,9},&types),asset.Error.None)
     _,ok:=source_load(&loaded,path,&types)
     testing.expect(t,ok && grid_equal(&loaded.holes,&source.holes))
@@ -83,7 +82,7 @@ holes_leave_no_triangles_picking_or_flat_edges_and_keep_the_collider_samples :: 
 
 @(test)
 bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: proc(t:^testing.T) {
-    root:=source_test_path("holes-runtime");os.make_directory_all(root);defer os.remove_all(root)
+    root:=base.test_folder(t,"terrain")
     source:Source;defer source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{65,1,65},1,16))
     source.revision=1
@@ -92,32 +91,34 @@ bodies_fall_through_holes_cut_at_run_time_and_far_holed_chunks_stay_exact :: pro
     testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+    w:Terrain_Test_World
+    if !terrain_test_world_init(t,&w) {return}
+    defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     owner:=core.create(&w.entities)
-    core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+    core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    terrain_test_world_settle(&w)
+    core.test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={-30,2,-30}
     settings:=Terrain_Settings{lod_distance=8}
     for _ in 0..<2 {terrain_test_update(&w,&resident,&app,view=view,settings=settings)}
     far:=chunk_index(&w.data.entries[0].source,{3,0,3})
     testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0)
-    _,hit:=phys.raycast({&w.physics},{28.5,10,28.5},{0,-1,0})
+    _,hit:=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Hole,center={28.5,0,28.5},radius=0.6}))
+    dig(&w.terrain_requests,{kind=.Hole,center={28.5,0,28.5},radius=0.6},owner)
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
     chunk:=resident.sources[0].chunks[far]
     testing.expect_value(t,chunk.built.lod.level,u8(0))
     testing.expect(t,w.data.entries[0].source.revision==2)
-    _,hit=phys.raycast({&w.physics},{28.5,10,28.5},{0,-1,0})
+    _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,!hit,"the collider has the hole")
-    _,hit=phys.raycast({&w.physics},{27.5,10,28.5},{0,-1,0})
+    _,hit=phys.raycast({&w.state},{27.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
-    testing.expect(t,request_edit(&w.requests,owner,{kind=.Fill,center={28.5,0,28.5},radius=0.6}))
+    dig(&w.terrain_requests,{kind=.Fill,center={28.5,0,28.5},radius=0.6},owner)
     terrain_test_update(&w,&resident,&app,view=view,settings=settings)
-    _,hit=phys.raycast({&w.physics},{28.5,10,28.5},{0,-1,0})
+    _,hit=phys.raycast({&w.state},{28.5,10,28.5},{0,-1,0})
     testing.expect(t,hit)
     testing.expect(t,resident.sources[0].chunks[far].built.lod.level>0)
     testing.expect_value(t,w.problems.count,0)

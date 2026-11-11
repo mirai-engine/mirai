@@ -2,7 +2,6 @@ package anim
 
 import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:host"
@@ -82,7 +81,7 @@ graph_assets_roundtrip_dependencies_and_reject_cyclic_or_unbounded_compositions 
 
 @(test)
 graph_content_reloads_shared_definitions_and_retries_every_allocation_failure :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-graph-cache-%d",os.get_pid());os.make_directory_all(directory);defer os.remove_all(directory)
+    directory:=base.test_folder(t,"graph-cache")
     path:=fmt.tprintf("%s/graph.agraph",directory)
     profile:=graph_test_profile();defer graph_profile_free(&profile)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -97,17 +96,17 @@ graph_content_reloads_shared_definitions_and_retries_every_allocation_failure ::
     for budget in 0..<256 {
         cache:Graph_Assets
         failure.remaining=1000
-        content:=graph_content(&cache,&app,id)
+        content:=graph_content(&cache,app.assets,app.allocator,id)
         if !testing.expect(t,content!=nil) {graph_assets_free(&cache);return}
         old_nodes,old_revision:=raw_data(content.profile.nodes),content.revision
         record.time+=1;assets.revision+=1;failure.remaining=budget
-        content=graph_content(&cache,&app,id)
+        content=graph_content(&cache,app.assets,app.allocator,id)
         if content==nil {
             testing.expect_value(t,raw_data(cache.contents[0].profile.nodes),old_nodes)
             testing.expect_value(t,cache.contents[0].revision,old_revision)
         } else {success=true;testing.expect_value(t,content.revision,old_revision+1)}
         failure.remaining=1000
-        content=graph_content(&cache,&app,id)
+        content=graph_content(&cache,app.assets,app.allocator,id)
         testing.expect(t,content!=nil && len(cache.contents)==1)
         graph_assets_free(&cache)
         if success {break}
@@ -115,17 +114,17 @@ graph_content_reloads_shared_definitions_and_retries_every_allocation_failure ::
     testing.expect(t,success)
     cache:Graph_Assets;defer graph_assets_free(&cache)
     failure.remaining=1000
-    content:=graph_content(&cache,&app,id);if !testing.expect(t,content!=nil) {return}
+    content:=graph_content(&cache,app.assets,app.allocator,id);if !testing.expect(t,content!=nil) {return}
     calls:=failure.calls;failure.remaining=0
-    for _ in 0..<100 {testing.expect_value(t,graph_content(&cache,&app,id),content)}
+    for _ in 0..<100 {testing.expect_value(t,graph_content(&cache,app.assets,app.allocator,id),content)}
     testing.expect_value(t,failure.calls,calls)
     failure.remaining=1000
-    missing:=id;missing[0]+=1;testing.expect(t,graph_content(&cache,&app,missing)==nil)
+    missing:=id;missing[0]+=1;testing.expect(t,graph_content(&cache,app.assets,app.allocator,missing)==nil)
     profile.parameters[0].value=.8
     testing.expect_value(t,graph_save(path,&types,id,profile),asset.Error.None)
     host.assets_scan(&assets)
     assets.revision+=1
-    content=graph_content(&cache,&app,id)
+    content=graph_content(&cache,app.assets,app.allocator,id)
     testing.expect(t,content!=nil && content.profile.parameters[0].value==.8)
     testing.expect(t,graph_parameter_index(content.profile,"speed")==0 && graph_parameter_index(content.profile,"missing")== -1)
 }

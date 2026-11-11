@@ -74,36 +74,6 @@ vk_memory_candidates :: proc(d: ^Device, bits: u32, required, preferred: vk.Memo
 }
 
 @(private)
-vk_allocate :: proc(d: ^Device, requirements: vk.MemoryRequirements, kind: Memory, device_address: bool) -> (vk.DeviceMemory, bool) {
-	required, preferred: vk.MemoryPropertyFlags
-	switch kind {
-	case .GPU:      required = {.DEVICE_LOCAL}
-	case .Upload:   required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.DEVICE_LOCAL}
-	case .Readback: required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.HOST_CACHED}
-	case .Staging:  required = {.HOST_VISIBLE, .HOST_COHERENT}
-	}
-	types, count := vk_memory_candidates(d, requirements.memoryTypeBits, required, preferred, {.DEVICE_LOCAL} if kind == .Staging else {})
-	if count == 0 && kind == .GPU {types, count = vk_memory_candidates(d, requirements.memoryTypeBits, {}, {})}
-	if count == 0 {set_error(d, "no Vulkan memory type for %v", kind); return 0, false}
-	flags_info := vk.MemoryAllocateFlagsInfo{sType = .MEMORY_ALLOCATE_FLAGS_INFO, flags = {.DEVICE_ADDRESS}}
-	last: vk.Result
-	for i in 0 ..< count {
-		// More than its heap holds is not a request the device may get.
-		if requirements.size > d.memory_properties.memoryHeaps[d.memory_properties.memoryTypes[types[i]].heapIndex].size {
-			last = .ERROR_OUT_OF_DEVICE_MEMORY
-			continue
-		}
-		info := vk.MemoryAllocateInfo{sType = .MEMORY_ALLOCATE_INFO, allocationSize = requirements.size, memoryTypeIndex = types[i]}
-		if device_address {info.pNext = &flags_info}
-		memory: vk.DeviceMemory
-		last = d.dvk.AllocateMemory(d.handle, &info, nil, &memory)
-		if last == .SUCCESS {return memory, true}
-	}
-	set_error(d, "vkAllocateMemory failed for %v (%d bytes): %v", kind, requirements.size, last)
-	return 0, false
-}
-
-@(private)
 vk_create_buffer :: proc(d: ^Device, desc: Buffer_Desc, extra_usage: vk.BufferUsageFlags = {}, zero := true) -> Buffer {
 	if !device_room(d, &d.buffers, "buffers") {return 0}
 	usage := extra_usage | {.TRANSFER_DST, .TRANSFER_SRC}
@@ -115,23 +85,14 @@ vk_create_buffer :: proc(d: ^Device, desc: Buffer_Desc, extra_usage: vk.BufferUs
 	if d.info.features.ray_query && .Accel_Input in desc.usage {usage += {.ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR}}
 	if device_address {usage += {.SHADER_DEVICE_ADDRESS}}
 	size := max(desc.size, 16)
-	info := vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = vk.DeviceSize(size), usage = usage, sharingMode = .EXCLUSIVE}
+	// Whole words: the fill that zeroes a buffer writes no less.
+	info := vk.BufferCreateInfo{sType = .BUFFER_CREATE_INFO, size = vk.DeviceSize(align_up(size, 4)), usage = usage, sharingMode = .EXCLUSIVE}
 	b: Vk_Buffer
 	if !vk_check(d, d.dvk.CreateBuffer(d.handle, &info, nil, &b.handle), "vkCreateBuffer") {return 0}
-	requirements: vk.MemoryRequirements
-	d.dvk.GetBufferMemoryRequirements(d.handle, b.handle, &requirements)
-	memory, ok := vk_allocate(d, requirements, desc.memory, device_address)
-	if !ok {d.dvk.DestroyBuffer(d.handle, b.handle, nil); return 0}
-	b.memory = memory
-	d.dvk.BindBufferMemory(d.handle, b.handle, b.memory, 0)
-	if desc.memory != .GPU {
-		if !vk_check(d, d.dvk.MapMemory(d.handle, b.memory, 0, vk.DeviceSize(vk.WHOLE_SIZE), {}, &b.mapped), "vkMapMemory") {
-			d.dvk.DestroyBuffer(d.handle, b.handle, nil)
-			d.dvk.FreeMemory(d.handle, b.memory, nil)
-			return 0
-		}
-		if zero {mem.zero(b.mapped, int(size))}
-	}
+	bound: bool
+	b.memory, b.mapped, bound = vk_memory_bind(d, b.handle, 0, desc.memory, device_address, desc.name)
+	if !bound {d.dvk.DestroyBuffer(d.handle, b.handle, nil); return 0}
+	if b.mapped != nil && zero {mem.zero(b.mapped, int(size))}
 	if device_address {
 		address_info := vk.BufferDeviceAddressInfo{sType = .BUFFER_DEVICE_ADDRESS_INFO, buffer = b.handle}
 		b.address = u64(d.dvk.GetBufferDeviceAddress(d.handle, &address_info))
@@ -140,7 +101,61 @@ vk_create_buffer :: proc(d: ^Device, desc: Buffer_Desc, extra_usage: vk.BufferUs
 	b.usage = desc.usage
 	b.kind = desc.memory
 	vk_set_name(d, .BUFFER, u64(b.handle), desc.name)
-	return Buffer(pool_add(&d.buffers, b))
+	made := Buffer(pool_add(&d.buffers, b))
+	if desc.memory == .GPU && zero && !vk_zero_new(d, made) {
+		vk_release_buffer_now(d, made)
+		return 0
+	}
+	return made
+}
+
+// A new buffer reads zero (Buffer_Desc). Memory the CPU sees is zeroed as it
+// is made; GPU memory, which is a range others held before, by a fill in the
+// list being recorded or, between lists, at the start of the next one.
+@(private)
+vk_zero_new :: proc(d: ^Device, buffer: Buffer) -> bool {
+	list: ^Command_List
+	switch {
+	case d.in_frame:       list = &d.frames[d.slot].list
+	case d.immediate_open: list = &d.immediate
+	}
+	if list == nil {
+		if _, err := append(&d.fresh, buffer); err != nil {
+			set_error(d, "out of memory for the buffers the next list zeroes")
+			return false
+		}
+		pool_get(&d.buffers, base.Handle(buffer)).fresh = true
+		return true
+	}
+	if list.in_render_pass {
+		set_error(d, "a buffer of GPU memory is made outside render passes: a pass cannot hold the fill that zeroes it")
+		return false
+	}
+	vk_zero_buffer(list, buffer)
+	return true
+}
+
+@(private)
+vk_zero_buffer :: proc(c: ^Command_List, buffer: Buffer) {
+	cmd_barrier_buffer(c, buffer, .Transfer_Write)
+	vk_flush_barriers(c)
+	b := pool_get(&c.device.buffers, base.Handle(buffer))
+	b.fresh = false
+	c.device.dvk.CmdFillBuffer(c.cmd, b.handle, 0, vk.DeviceSize(vk.WHOLE_SIZE), VK_FRESH_WORD)
+}
+
+// What fills a new buffer of GPU memory. Tests built with another word
+// (-define:MIRAI_FRESH_WORD=0xCDCDCDCD) show who reads counts nothing wrote.
+@(private)
+VK_FRESH_WORD :: u32(#config(MIRAI_FRESH_WORD, 0))
+
+@(private)
+vk_zero_fresh :: proc(c: ^Command_List) {
+	d := c.device
+	for buffer in d.fresh {
+		if b := pool_get(&d.buffers, base.Handle(buffer)); b != nil && b.fresh {vk_zero_buffer(c, buffer)}
+	}
+	clear(&d.fresh)
 }
 
 buffer_create :: proc(d: ^Device, desc: Buffer_Desc) -> Buffer {return vk_create_buffer(d, desc)}
@@ -151,15 +166,41 @@ buffer_create :: proc(d: ^Device, desc: Buffer_Desc) -> Buffer {return vk_create
 vk_release_buffer_now :: proc(d: ^Device, buffer: Buffer) {
 	b, ok := pool_remove(&d.buffers, base.Handle(buffer))
 	if !ok {return}
-	if b.mapped != nil {d.dvk.UnmapMemory(d.handle, b.memory)}
 	d.dvk.DestroyBuffer(d.handle, b.handle, nil)
-	d.dvk.FreeMemory(d.handle, b.memory, nil)
+	vk_memory_unbind(d, b.memory)
+}
+
+// The buffer the uploads of a transaction copy from, in the memory of the
+// host. An upload ends before the next one begins, so one buffer serves them
+// all: it stays between uploads, grown to the largest so far, and an upload
+// of more than VK_STAGING_KEPT_BYTES takes one for itself.
+VK_STAGING_FIRST_BYTES :: u64(1) << 20
+VK_STAGING_KEPT_BYTES :: VK_MEMORY_BLOCK_BYTES / 2
+
+@(private)
+vk_staging_take :: proc(d: ^Device, size: u64) -> (staging: Buffer, bytes: [^]u8) {
+	if size > VK_STAGING_KEPT_BYTES {
+		staging = vk_create_buffer(d, {size = size, memory = .Staging, name = "upload staging"}, zero = false)
+		return staging, cast([^]u8)buffer_mapped(d, staging)
+	}
+	if d.staging == 0 || d.staging_size < size {
+		if d.staging != 0 {vk_release_buffer_now(d, d.staging)}
+		grown := VK_STAGING_FIRST_BYTES
+		for grown < size {grown *= 2}
+		d.staging = vk_create_buffer(d, {size = grown, memory = .Staging, name = "upload staging"}, zero = false)
+		d.staging_size = grown if d.staging != 0 else 0
+	}
+	return d.staging, cast([^]u8)buffer_mapped(d, d.staging)
+}
+
+@(private)
+vk_staging_give :: proc(d: ^Device, staging: Buffer) {
+	if staging != d.staging {vk_release_buffer_now(d, staging)}
 }
 
 buffer_destroy :: proc(d: ^Device, buffer: Buffer) {
 	b, ok := pool_remove(&d.buffers, base.Handle(buffer))
 	if !ok {return}
-	if b.mapped != nil {d.dvk.UnmapMemory(d.handle, b.memory)}
 	vk_defer(d, {buffer = b.handle, memory = b.memory})
 }
 
@@ -175,7 +216,7 @@ buffer_size :: proc(d: ^Device, buffer: Buffer) -> u64 {
 
 texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	if desc.depth > 1 && (.Storage not_in desc.usage || .Color_Target in desc.usage || .Depth_Target in desc.usage) {set_error(d, "texture %s: a 3D texture needs the Storage usage and no target usage, since shaders write it", desc.name); return 0}
-	if problem := texture_layers_problem(desc, d.info.max_texture_layers); problem != "" {set_error(d, "texture %s: %s", desc.name, problem); return 0}
+	if problem := texture_desc_problem(desc, d.info.max_texture_layers); problem != "" {set_error(d, "texture %s: %s", desc.name, problem); return 0}
 	layers := max(desc.layers, 1)
 	if desc.cube && layers > 6 && !d.cube_arrays {set_error(d, "texture %s: this device samples no arrays of cubes (imageCubeArray)", desc.name); return 0}
 	if !device_room(d, &d.textures, "textures") {return 0}
@@ -183,7 +224,6 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	t.desc.name = ""
 	t.desc.mip_levels = max(desc.mip_levels, 1)
 	t.desc.layers = layers
-	assert(t.desc.mip_levels <= MAX_TEXTURE_MIPS)
 	t.vk_format = vk_format(desc.format)
 	depth := format_is_depth(desc.format)
 	t.aspect = {.DEPTH} if depth else {.COLOR}
@@ -215,12 +255,9 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 	if .Depth_Target in desc.usage && !(.DEPTH_STENCIL_ATTACHMENT in features) {missing = "depth attachment"}
 	if missing != "" {set_error(d, "texture %s: format %v does not support %s on this device", desc.name, desc.format, missing); return 0}
 	if !vk_check(d, d.dvk.CreateImage(d.handle, &info, nil, &t.image), "vkCreateImage") {return 0}
-	requirements: vk.MemoryRequirements
-	d.dvk.GetImageMemoryRequirements(d.handle, t.image, &requirements)
-	memory, ok := vk_allocate(d, requirements, .GPU, false)
-	if !ok {d.dvk.DestroyImage(d.handle, t.image, nil); return 0}
-	t.memory = memory
-	d.dvk.BindImageMemory(d.handle, t.image, t.memory, 0)
+	bound: bool
+	t.memory, _, bound = vk_memory_bind(d, 0, t.image, .GPU, false, desc.name)
+	if !bound {d.dvk.DestroyImage(d.handle, t.image, nil); return 0}
 	view_info := vk.ImageViewCreateInfo{
 		sType = .IMAGE_VIEW_CREATE_INFO, image = t.image, viewType = view_type, format = t.vk_format,
 		subresourceRange = {aspectMask = t.aspect, levelCount = t.desc.mip_levels, layerCount = layers},
@@ -243,7 +280,7 @@ vk_release_texture :: proc(d: ^Device, t: ^Vk_Texture) {
 	for v in t.mip_views {if v != 0 {d.dvk.DestroyImageView(d.handle, v, nil)}}
 	if t.view != 0 {d.dvk.DestroyImageView(d.handle, t.view, nil)}
 	if t.image != 0 {d.dvk.DestroyImage(d.handle, t.image, nil)}
-	if t.memory != 0 {d.dvk.FreeMemory(d.handle, t.memory, nil)}
+	vk_memory_unbind(d, t.memory)
 }
 
 texture_destroy :: proc(d: ^Device, texture: Texture) {
@@ -343,7 +380,14 @@ vk_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 		delete(taken, d.allocator)
 		return false
 	}
-	resize(&d.table_textures, capacity)
+	before := len(d.table_textures)
+	if resize(&d.table_textures, capacity) != nil || !table_changes_reset(&d.table_changes, capacity) {
+		base.truncate(&d.table_textures, before)
+		d.dvk.DestroyDescriptorPool(d.handle, pool, nil)
+		delete(taken, d.allocator)
+		set_error(d, "texture table of %d entries: out of memory", capacity)
+		return false
+	}
 	for &image, index in images {
 		shown := d.table_textures[index] if index < len(d.table_textures) && d.table_textures[index] != 0 else d.table_default
 		image = {imageView = pool_get(&d.textures, base.Handle(shown)).view, imageLayout = .SHADER_READ_ONLY_OPTIMAL}
@@ -360,7 +404,6 @@ vk_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 	d.table_pool, d.table_sets = pool, sets
 	delete(d.table_taken, d.allocator)
 	d.table_taken = taken
-	table_changes_reset(&d.table_changes, capacity)
 	return true
 }
 
@@ -369,7 +412,7 @@ vk_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 // each copy of the table takes it when its next list begins. The texture
 // must have the Sampled usage alone and be uploaded already.
 texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
-	assert(!d.in_frame, "rhi: the texture table changes between frames")
+	if d.in_frame {set_error(d, "texture_table_set while a frame is being recorded: the table changes between frame_end and frame_begin"); return false}
 	if int(index) >= len(d.table_textures) {
 		grown := table_grown(len(d.table_textures), int(index), d.table_limit)
 		if grown == 0 {set_error(d, "texture table index %d out of range: the device holds %d entries", index, d.table_limit); return false}
@@ -449,8 +492,9 @@ vk_shader_module :: proc(d: ^Device, code: ^Shader_Code) -> vk.ShaderModule {
 	aligned: []u32
 	defer delete(aligned, d.allocator)
 	if uintptr(words) % align_of(u32) != 0 {
-		aligned = make([]u32, len(code.spirv) / 4, d.allocator)
-		if aligned == nil {set_error(d, "shader %s: out of memory", code.name); return 0}
+		aligned_error: mem.Allocator_Error
+		aligned, aligned_error = make([]u32, len(code.spirv) / 4, d.allocator)
+		if aligned_error != nil {set_error(d, "shader %s: out of memory", code.name); return 0}
 		mem.copy(raw_data(aligned), raw_data(code.spirv), len(code.spirv))
 		words = raw_data(aligned)
 	}
@@ -511,6 +555,44 @@ vk_pipeline_room :: proc(d: ^Device) -> bool {
 	return device_room(d, &d.pipelines, "pipelines")
 }
 
+// A pipeline cache for one pipeline, holding the blob the device keeps for
+// key: what the driver puts in it is that pipeline alone. 0 without a store.
+@(private)
+vk_pipeline_cache_open :: proc(d: ^Device, key: u64) -> (cache: vk.PipelineCache) {
+	if d.store_path_len == 0 {return 0}
+	info := vk.PipelineCacheCreateInfo{sType = .PIPELINE_CACHE_CREATE_INFO}
+	sync.lock(&d.pipelines_kept.lock)
+	blob := pipeline_store_find(&d.pipelines_kept, key, d.allocator)
+	sync.unlock(&d.pipelines_kept.lock)
+	if blob != nil {
+		info.initialDataSize, info.pInitialData = len(blob), raw_data(blob)
+		// The driver checks the header and ignores a blob it cannot use.
+		if d.dvk.CreatePipelineCache(d.handle, &info, nil, &cache) != .SUCCESS {cache = 0}
+		delete(blob, d.allocator)
+	}
+	if cache != 0 {return cache}
+	info.initialDataSize, info.pInitialData = 0, nil
+	if d.dvk.CreatePipelineCache(d.handle, &info, nil, &cache) != .SUCCESS {return 0}
+	return cache
+}
+
+// Keeps what the driver compiled into cache under key, unless the pipeline came
+// from the blob kept for it, and destroys cache.
+@(private)
+vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, feedback: vk.PipelineCreationFeedback, created: bool) {
+	if cache == 0 {return}
+	defer d.dvk.DestroyPipelineCache(d.handle, cache, nil)
+	if !created || feedback.flags >= {.VALID, .APPLICATION_PIPELINE_CACHE_HIT} {return}
+	size: int
+	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, nil) != .SUCCESS || size == 0 {return}
+	data, error := make([]u8, size, d.allocator)
+	if error != nil {return}
+	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, raw_data(data)) != .SUCCESS || size == 0 {delete(data, d.allocator); return}
+	defer delete(data, d.allocator)
+	sync.guard(&d.pipelines_kept.lock)
+	pipeline_store_put(&d.pipelines_kept, key, data[:size])
+}
+
 pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipeline {
 	if !vk_pipeline_room(d) {return 0}
 	p := Vk_Pipeline{bind_point = .COMPUTE, name = desc.name}
@@ -519,12 +601,18 @@ pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipe
 	module := vk_shader_module(d, desc.shader)
 	if module == 0 {vk_release_pipeline(d, &p); return 0}
 	defer d.dvk.DestroyShaderModule(d.handle, module, nil)
+	feedback: vk.PipelineCreationFeedback
+	feedback_info := vk.PipelineCreationFeedbackCreateInfo{sType = .PIPELINE_CREATION_FEEDBACK_CREATE_INFO, pPipelineCreationFeedback = &feedback}
 	info := vk.ComputePipelineCreateInfo{
-		sType = .COMPUTE_PIPELINE_CREATE_INFO,
+		sType = .COMPUTE_PIPELINE_CREATE_INFO, pNext = &feedback_info,
 		stage = {sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = module, pName = "main"},
 		layout = p.layout,
 	}
-	if !vk_check(d, d.dvk.CreateComputePipelines(d.handle, d.pipeline_cache, 1, &info, nil, &p.handle), desc.name) {vk_release_pipeline(d, &p); return 0}
+	key := pipeline_key_compute(desc)
+	cache := vk_pipeline_cache_open(d, key)
+	created := vk_check(d, d.dvk.CreateComputePipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name)
+	vk_pipeline_cache_close(d, key, cache, feedback, created)
+	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
 }
@@ -604,8 +692,10 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 	blend := vk.PipelineColorBlendStateCreateInfo{sType = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, attachmentCount = u32(desc.color_count), pAttachments = &attachments[0]}
 	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_info := vk.PipelineDynamicStateCreateInfo{sType = .PIPELINE_DYNAMIC_STATE_CREATE_INFO, dynamicStateCount = 2, pDynamicStates = &dynamic_states[0]}
+	feedback: vk.PipelineCreationFeedback
+	feedback_info := vk.PipelineCreationFeedbackCreateInfo{sType = .PIPELINE_CREATION_FEEDBACK_CREATE_INFO, pPipelineCreationFeedback = &feedback}
 	rendering := vk.PipelineRenderingCreateInfo{
-		sType = .PIPELINE_RENDERING_CREATE_INFO, colorAttachmentCount = u32(desc.color_count), pColorAttachmentFormats = &formats[0],
+		sType = .PIPELINE_RENDERING_CREATE_INFO, pNext = &feedback_info, colorAttachmentCount = u32(desc.color_count), pColorAttachmentFormats = &formats[0],
 		depthAttachmentFormat = vk_format(desc.depth_format),
 	}
 	info := vk.GraphicsPipelineCreateInfo{
@@ -615,7 +705,11 @@ pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pi
 		pRasterizationState = &raster, pMultisampleState = &multisample, pDepthStencilState = &depth,
 		pColorBlendState = &blend, pDynamicState = &dynamic_info, layout = p.layout,
 	}
-	if !vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, d.pipeline_cache, 1, &info, nil, &p.handle), desc.name) {vk_release_pipeline(d, &p); return 0}
+	key := pipeline_key_graphics(desc)
+	cache := vk_pipeline_cache_open(d, key)
+	created := vk_check(d, d.dvk.CreateGraphicsPipelines(d.handle, cache, 1, &info, nil, &p.handle), desc.name)
+	vk_pipeline_cache_close(d, key, cache, feedback, created)
+	if !created {vk_release_pipeline(d, &p); return 0}
 	vk_set_name(d, .PIPELINE, u64(p.handle), desc.name)
 	return vk_pipeline_add(d, &p)
 }
@@ -637,14 +731,17 @@ buffer_upload :: proc(d: ^Device, buffer: Buffer, offset: u64, data: []u8) -> bo
 		mem.copy(rawptr(uintptr(b.mapped) + uintptr(offset)), raw_data(data), len(data))
 		return true
 	}
-	staging := vk_create_buffer(d, {size = u64(len(data)), memory = .Staging, name = "upload staging"}, zero = false)
-	if staging == 0 {return false}
-	mem.copy(buffer_mapped(d, staging), raw_data(data), len(data))
+	// An upload that writes all of it leaves nothing to zero.
+	whole := b.fresh && offset == 0 && u64(len(data)) == b.size
+	b.fresh &&= !whole
+	staging, bytes := vk_staging_take(d, u64(len(data)))
+	if staging == 0 {b.fresh ||= whole; return false}
+	defer vk_staging_give(d, staging)
+	mem.copy(bytes, raw_data(data), len(data))
 	cmd := immediate_begin(d)
+	if cmd == nil {b.fresh ||= whole; return false}
 	cmd_copy_buffer(cmd, staging, 0, buffer, offset, u64(len(data)))
-	ok := immediate_end(d, cmd)
-	vk_release_buffer_now(d, staging)
-	return ok
+	return immediate_end(d, cmd)
 }
 
 // Writes a region of a mip (texture_region_resolve) of every layer, whose
@@ -662,22 +759,21 @@ texture_upload :: proc(d: ^Device, texture: Texture, data: []u8, bytes_per_row: 
 		set_error(d, "texture_upload: %d bytes do not cover %d layers of %dx%d", len(data), max(t.desc.layers, 1), area.width, area.height)
 		return false
 	}
-	staging := vk_create_buffer(d, {size = row * rows, memory = .Staging, name = "texture staging"}, zero = false)
+	staging, dst := vk_staging_take(d, row * rows)
 	if staging == 0 {return false}
-	dst := cast([^]u8)buffer_mapped(d, staging)
+	defer vk_staging_give(d, staging)
 	for y in 0 ..< rows {
 		mem.copy(&dst[y * row], &data[y * u64(bytes_per_row)], int(row))
 	}
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_buffer_to_texture(cmd, staging, 0, texture, mip, area)
 	if .Sampled in t.desc.usage {cmd_barrier_texture(cmd, texture, .Shader_Read)}
-	ok := immediate_end(d, cmd)
-	vk_release_buffer_now(d, staging)
-	return ok
+	return immediate_end(d, cmd)
 }
 
 // The levels of a texture from its mip 0, tightly packed, in one transaction:
-// one staging buffer and one submission for all of them. A load of thousands
+// one submission for all of them. A load of thousands
 // of textures would otherwise wait for the GPU once per level of each.
 texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> bool {
 	t := pool_get(&d.textures, base.Handle(texture))
@@ -690,10 +786,11 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 		if u64(len(level)) < size {set_error(d, "texture_upload_levels: %d bytes do not cover mip %d", len(level), mip); return false}
 		total = align_up(total, 16) + size
 	}
-	staging := vk_create_buffer(d, {size = total, memory = .Staging, name = "texture staging"}, zero = false)
+	staging, dst := vk_staging_take(d, total)
 	if staging == 0 {return false}
-	dst := cast([^]u8)buffer_mapped(d, staging)
+	defer vk_staging_give(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	at: u64
 	for level, mip in levels {
 		at = align_up(at, 16)
@@ -703,9 +800,7 @@ texture_upload_levels :: proc(d: ^Device, texture: Texture, levels: [][]u8) -> b
 		at += size
 	}
 	if .Sampled in t.desc.usage {cmd_barrier_texture(cmd, texture, .Shader_Read)}
-	ok := immediate_end(d, cmd)
-	vk_release_buffer_now(d, staging)
-	return ok
+	return immediate_end(d, cmd)
 }
 
 // Blocking readback of a whole buffer range into out.
@@ -716,6 +811,7 @@ buffer_read :: proc(d: ^Device, buffer: Buffer, offset: u64, out: []u8) -> bool 
 	if staging == 0 {return false}
 	defer vk_release_buffer_now(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_buffer(cmd, buffer, offset, staging, 0, u64(len(out)))
 	cmd_barrier_buffer(cmd, staging, .Host_Read)
 	if !immediate_end(d, cmd) {return false}
@@ -734,6 +830,7 @@ texture_read :: proc(d: ^Device, texture: Texture, out: []u8) -> bool {
 	if staging == 0 {return false}
 	defer vk_release_buffer_now(d, staging)
 	cmd := immediate_begin(d)
+	if cmd == nil {return false}
 	cmd_copy_texture_to_buffer(cmd, texture, staging, 0)
 	cmd_barrier_buffer(cmd, staging, .Host_Read)
 	// A texture with the Sampled usage alone may be in the table, which every frame reads.

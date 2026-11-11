@@ -6,6 +6,7 @@ import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // A multiple assignment of a value of more than 64 bytes leaves in the IR a
@@ -21,10 +22,8 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
     root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(root,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    folder,folder_error:=os.make_directory_temp("","mirai-aggregates-*",context.temp_allocator)
-    if !testing.expect(t,folder_error==nil) {return}
-    folder=slashes(project.path_absolute(folder,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"aggregates")
+    if folder=="" {return}
     flags:=engine_flags(root,true)
     ir :: proc(t:^testing.T,root,compiler,package_folder,out:string,flags:[]string,collections:..string) -> bool {
         command:=make([dynamic]string,context.temp_allocator)
@@ -39,17 +38,14 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
         return testing.expectf(t,error==nil && state.exit_code==0,"%s does not compile to IR:\n%s",package_folder,string(errors))
     }
 
-    stage_runtime,stage_editor,decl:=project.path(folder,"stage-runtime"),project.path(folder,"stage-editor"),project.path(folder,"decl")
-    runtime_packages,editor_packages:=ENGINE_RUNTIME_PACKAGES,ENGINE_EDITOR_PACKAGES
-    errors,_:=declare({root=root,packages=runtime_packages[:],binary="mirai",library=project.path(folder,"runtime.lib"),stage=stage_runtime,decl=decl})
-    if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
-    entry_write(stage_runtime,"__mirai_runtime",runtime_packages[:])
-    if !ir(t,root,compiler,project.path(stage_runtime,"__mirai_runtime"),project.path(folder,"ir/runtime"),flags[:],fmt.tprintf("-collection:mirai=%s",stage_runtime)) {return}
-    if !testing.expect(t,os.copy_directory_all(stage_editor,decl)==nil) {return}
-    errors,_=declare({root=root,packages=editor_packages[:],binary="mirai",library=project.path(folder,"editor.lib"),stage=stage_editor,decl=decl})
-    if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
-    entry_write(stage_editor,"__mirai_editor",editor_packages[:])
-    if !ir(t,root,compiler,project.path(stage_editor,"__mirai_editor"),project.path(folder,"ir/editor"),flags[:],fmt.tprintf("-collection:mirai=%s",stage_editor)) {return}
+    paths:=engine_paths(folder,.Dev)
+    decl:=paths.decl
+    libraries:=ENGINE_LIBRARIES
+    for info,library in libraries {
+        errors,_,staged:=engine_library_stage(root,paths,library)
+        if !testing.expectf(t,staged && len(errors)==0,"%s: %v",info.name,errors) {return}
+        if !ir(t,root,compiler,project.path(paths.stages[library],engine_library_entry(library)),project.path(folder,"ir",engine_library_file(library)),flags[:],fmt.tprintf("-collection:mirai=%s",paths.stages[library])) {return}
+    }
 
     p,open_error:=project.open(project.path(root,"demo"),root)
     defer project.close(&p)

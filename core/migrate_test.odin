@@ -13,60 +13,29 @@ import "core:testing"
 
 @(private="file")
 Before_World :: struct {
-    entities:Entities,
-    spin:Table(Before_Spin),
+    using world:Test_World,
+    spin:Table(Before_Spin) `mirai:"name=Spin"`,
     kept:Table(Kept_Tag),
-    score:Before_Score,
+    score:Before_Score `mirai:"name=Score"`,
 }
 
 @(private="file")
 After_World :: struct {
-    entities:Entities,
+    using world:Test_World,
     kept:Table(Kept_Tag),
     added:Table(Added_Tag),
-    spin:Table(After_Spin),
-    score:After_Score,
+    spin:Table(After_Spin) `mirai:"name=Spin"`,
+    score:After_Score `mirai:"name=Score"`,
 }
 
+// What the new library starts its rows and its storage with.
 @(private="file")
-before_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Before_World)data
-    entities_init(&w.entities,allocator) or_return
-    table_init(&w.spin,"Spin",allocator)
-    table_init(&w.kept,"Kept_Tag",allocator)
-    return true
+after_types :: proc(types:^[dynamic]Test_Type) {
+    append(types,
+        test_type(After_Spin,default=proc(dst:^After_Spin) {dst^={turns=7}}),
+        test_type(After_Score,default=proc(dst:^After_Score) {dst.lives=3}),
+    )
 }
-
-@(private="file")
-before_destroy :: proc(data:rawptr) {
-    w:=cast(^Before_World)data
-    entities_destroy(&w.entities)
-    table_destroy(&w.spin)
-    table_destroy(&w.kept)
-}
-
-@(private="file")
-after_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^After_World)data
-    entities_init(&w.entities,allocator) or_return
-    table_init(&w.kept,"Kept_Tag",allocator)
-    table_init(&w.added,"Added_Tag",allocator)
-    table_init(&w.spin,"Spin",allocator)
-    w.score.lives=3
-    return true
-}
-
-@(private="file")
-after_destroy :: proc(data:rawptr) {
-    w:=cast(^After_World)data
-    entities_destroy(&w.entities)
-    table_destroy(&w.kept)
-    table_destroy(&w.added)
-    table_destroy(&w.spin)
-}
-
-@(private="file")
-spin_default :: proc(dst:rawptr) {(cast(^After_Spin)dst)^={turns=7}}
 
 @(test)
 a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
@@ -76,31 +45,12 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     allocator:=mem.tracking_allocator(&tracking)
     context.allocator=allocator
 
-    before:World_Info
-    before.sizes[.World],before.aligns[.World]=size_of(Before_World),align_of(Before_World)
-    before.entities=offset_of(Before_World,entities)
-    before_tables:=[]Table_Info{
-        {name="Spin",type=Before_Spin,info=type_info_of(Before_Spin),offset=offset_of(Before_World,spin)},
-        {name="Kept_Tag",type=Kept_Tag,info=type_info_of(Kept_Tag),offset=offset_of(Before_World,kept)},
-    }
-    before_storages:=[]Storage_Info{{name="Score",type=Before_Score,info=type_info_of(Before_Score),offset=offset_of(Before_World,score)}}
-    before.tables,before.storages=before_tables,before_storages
-    before.init[.World],before.destroy[.World]=before_init,before_destroy
-
-    after:World_Info
-    after.sizes[.World],after.aligns[.World]=size_of(After_World),align_of(After_World)
-    after.entities=offset_of(After_World,entities)
-    after_tables:=[]Table_Info{
-        {name="Kept_Tag",type=Kept_Tag,info=type_info_of(Kept_Tag),offset=offset_of(After_World,kept)},
-        {name="Added_Tag",type=Added_Tag,info=type_info_of(Added_Tag),offset=offset_of(After_World,added)},
-        {name="Spin",type=After_Spin,info=type_info_of(After_Spin),offset=offset_of(After_World,spin),default=spin_default},
-    }
-    after_storages:=[]Storage_Info{{name="Score",type=After_Score,info=type_info_of(After_Score),offset=offset_of(After_World,score)}}
-    after.tables,after.storages=after_tables,after_storages
-    after.init[.World],after.destroy[.World]=after_init,after_destroy
+    before,before_ok:=test_info(t,Before_World)
+    after,after_ok:=test_info(t,After_World,after_types)
+    if !before_ok || !after_ok {return}
 
     old:=new(Before_World)
-    testing.expect(t,before_init(old,allocator))
+    testing.expect(t,world_init(&before,.World,old,allocator))
     a,b:=create(&old.entities),create(&old.entities)
     add(&old.spin,a,Before_Spin{speed=2.5,axis={0,1,0}})
     add(&old.spin,b,Before_Spin{speed=-1,axis={1,0,0}})
@@ -116,9 +66,9 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     testing.expect(t,m.table_map[0]==2 && m.table_map[1]==0 && !world_migration_keeps_indices(&m))
 
     fresh:=new(After_World)
-    testing.expect(t,after_init(fresh,allocator))
+    testing.expect(t,world_init(&after,.World,fresh,allocator))
     place_migrate(&m,.World,old,fresh,allocator)
-    before_destroy(old)
+    world_destroy(&before,.World,old)
     mem.free(old)
 
     testing.expect(t,fresh.entities.alive==2,"The entities move")
@@ -133,11 +83,15 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     // The table takes rows again with the new type.
     c:=create(&fresh.entities)
     add(&fresh.spin,c,After_Spin{speed=9})
+    // It says that it waits where the new World looks for it, not where the old one did.
+    testing.expect(t,fresh.entities.pending[2] && !fresh.entities.pending[0] && !fresh.entities.pending[1])
     testing.expect(t,table_settle(&fresh.spin,&fresh.entities))
     testing.expect(t,(get(read(&fresh.spin),c) or_else After_Spin{}).speed==9)
-    after_destroy(fresh)
+    world_destroy(&after,.World,fresh)
     mem.free(fresh)
     world_migration_destroy(&m)
+    test_info_destroy(&before)
+    test_info_destroy(&after)
     testing.expect_value(t,len(tracking.allocation_map),0)
 }
 
@@ -146,26 +100,9 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
 
 @(private="file")
 Aim_World :: struct {
-    entities:Entities,
+    using world:Test_World,
     aim:Table(Aim_Tag),
     kept:Table(Kept_Tag),
-}
-
-@(private="file")
-aim_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Aim_World)data
-    entities_init(&w.entities,allocator) or_return
-    table_init(&w.aim,"Aim_Tag",allocator)
-    table_init(&w.kept,"Kept_Tag",allocator)
-    return true
-}
-
-@(private="file")
-aim_destroy :: proc(data:rawptr) {
-    w:=cast(^Aim_World)data
-    entities_destroy(&w.entities)
-    table_destroy(&w.aim)
-    table_destroy(&w.kept)
 }
 
 // A library that gives an action another number converts what holds actions,
@@ -178,41 +115,34 @@ a_world_keeps_its_actions_by_name_when_their_numbers_move :: proc(t:^testing.T) 
     allocator:=mem.tracking_allocator(&tracking)
     context.allocator=allocator
 
-    tables:=[]Table_Info{
-        {name="Aim_Tag",type=Aim_Tag,info=type_info_of(Aim_Tag),offset=offset_of(Aim_World,aim)},
-        {name="Kept_Tag",type=Kept_Tag,info=type_info_of(Kept_Tag),offset=offset_of(Aim_World,kept)},
-    }
-    types:=[]Named_Type_Info{{type=Test_Action,name="Test_Action",path="mirai:core",actions=true}}
-    world :: proc(tables:[]Table_Info,types:[]Named_Type_Info,names:[]Name_Info) -> (info:World_Info) {
-        info.sizes[.World],info.aligns[.World]=size_of(Aim_World),align_of(Aim_World)
-        info.entities=offset_of(Aim_World,entities)
-        info.tables,info.named_types,info.names=tables,types,names
-        info.init[.World],info.destroy[.World]=aim_init,aim_destroy
-        return
-    }
-    before:=world(tables,types,{{type=Test_Action,value=0,name="jump"},{type=Test_Action,value=1,name="aim"}})
-    moved:=world(tables,types,{{type=Test_Action,value=0,name="crouch"},{type=Test_Action,value=1,name="jump"},{type=Test_Action,value=2,name="aim"}})
-    renamed:=world(tables,types,{{type=Test_Action,value=0,name="jump"},{type=Test_Action,value=1,name="point"}})
+    before,ok:=test_info(t,Aim_World)
+    if !ok {return}
+    before.named_types={{type=Test_Action,name="Test_Action",path="mirai:core",actions=true}}
+    moved,renamed:=before,before
+    before.names={{type=Test_Action,value=0,name="jump"},{type=Test_Action,value=1,name="aim"}}
+    moved.names={{type=Test_Action,value=0,name="crouch"},{type=Test_Action,value=1,name="jump"},{type=Test_Action,value=2,name="aim"}}
+    renamed.names={{type=Test_Action,value=0,name="jump"},{type=Test_Action,value=1,name="point"}}
 
     m:World_Migration
     testing.expect(t,world_migration_make(&m,&before,&moved))
     testing.expect(t,.World in m.places)
     testing.expect(t,m.tables[0]==.Convert && m.tables[1]==.Move)
     old:=new(Aim_World)
-    testing.expect(t,aim_init(old,allocator))
+    testing.expect(t,world_init(&before,.World,old,allocator))
     a:=create(&old.entities)
     add(&old.aim,a,Aim_Tag{1})
     testing.expect(t,table_settle(&old.aim,&old.entities))
     fresh:=new(Aim_World)
-    testing.expect(t,aim_init(fresh,allocator))
+    testing.expect(t,world_init(&before,.World,fresh,allocator))
     place_migrate(&m,.World,old,fresh,allocator)
     testing.expect_value(t,(get(read(&fresh.aim),a) or_else Aim_Tag{}).action,Test_Action(2))
-    aim_destroy(old);mem.free(old)
-    aim_destroy(fresh);mem.free(fresh)
+    world_destroy(&before,.World,old);mem.free(old)
+    world_destroy(&before,.World,fresh);mem.free(fresh)
     world_migration_destroy(&m)
 
     testing.expect(t,world_migration_make(&m,&before,&renamed))
     testing.expect(t,m.places=={} && m.tables[0]==.Move)
     world_migration_destroy(&m)
+    test_info_destroy(&before)
     testing.expect_value(t,len(tracking.allocation_map),0)
 }

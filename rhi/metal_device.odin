@@ -25,6 +25,7 @@ Mtl_Buffer :: struct {
 Mtl_Texture :: struct {
 	handle:    ^MTL.Texture,
 	mip_views: [MAX_TEXTURE_MIPS]^MTL.Texture, // single-level views when mip_levels > 1
+	encoded:   ^MTL.Texture, // a view with the other sRGB encoding of its format, made by the first copy into a texture of it (cmd_copy_texture)
 	desc:      Texture_Desc,
 	format:    MTL.PixelFormat,
 	swapchain: bool, // handle is the current drawable texture, not owned
@@ -215,7 +216,7 @@ Device :: struct {
 	immediate_pool: ^NS.AutoreleasePool,
 	scratch:        Buffer,
 	tlas_translator: Pipeline, // tlas_translator_set
-	accel_arena:    Accel_Arena,            // where acceleration structures live
+	accel_arena:    Arena,                  // where acceleration structures live
 	accel_heaps:    [dynamic]^MTL.Heap,     // the placement heap of each block of the arena
 	accel_empty:    [dynamic]int,           // blocks a release left empty, which go at the next creation
 	compact_sizes:  Buffer,                 // the compacted sizes of BLASes, a u32 a slot (accel_compact.odin)
@@ -490,17 +491,24 @@ mtl_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 	if encoder == nil {delete(taken, d.allocator); set_error(d, "newArgumentEncoderWithArguments failed for a texture table of %d entries", capacity); return false}
 	default_view := pool_get(&d.textures, base.Handle(d.table_default)).handle
 	before := len(d.table_views)
-	resize(&d.table_textures, capacity)
-	resize(&d.table_views, capacity)
+	buffers: [TEXTURE_TABLE_COPIES]^MTL.Buffer
+	grown := false
+	defer if !grown {
+		for made in buffers {mtl_release(made)}
+		mtl_release(encoder)
+		delete(taken, d.allocator)
+		base.truncate(&d.table_textures, before)
+		base.truncate(&d.table_views, before)
+	}
+	if resize(&d.table_textures, capacity) != nil || resize(&d.table_views, capacity) != nil || reserve(&d.table_resident, capacity + 1) != nil {
+		set_error(d, "texture table of %d entries: out of memory", capacity)
+		return false
+	}
 	for &view in d.table_views[before:] {view = default_view}
 	length := MTL.ArgumentEncoder_encodedLength(encoder)
-	buffers: [TEXTURE_TABLE_COPIES]^MTL.Buffer
 	for &buffer in buffers {
 		buffer = MTL.Device_newBufferWithLength(d.device, length, {.CPUCacheModeWriteCombined, .HazardTrackingModeTracked})
 		if buffer == nil {
-			for made in buffers {mtl_release(made)}
-			mtl_release(encoder)
-			delete(taken, d.allocator)
 			set_error(d, "newBufferWithLength(%d) failed for the texture table", length)
 			return false
 		}
@@ -508,13 +516,16 @@ mtl_table_grow :: proc(d: ^Device, capacity: int) -> bool {
 		MTL.ArgumentEncoder_setArgumentBuffer(encoder, buffer, 0)
 		MTL.ArgumentEncoder_setTextures(encoder, d.table_views[:], NS.Range{TEXTURE_TABLE_SLOT, NS.UInteger(capacity)})
 	}
+	if !table_changes_reset(&d.table_changes, capacity) {
+		set_error(d, "texture table of %d entries: out of memory", capacity)
+		return false
+	}
+	grown = true
 	for buffer in d.table_buffers {mtl_defer(d, buffer)}
 	mtl_defer(d, d.table_encoder)
 	d.table_encoder, d.table_buffers = encoder, buffers
 	delete(d.table_taken, d.allocator)
 	d.table_taken = taken
-	table_changes_reset(&d.table_changes, capacity)
-	reserve(&d.table_resident, capacity + 1)
 	mtl_table_resident(d)
 	return true
 }
@@ -585,6 +596,7 @@ device_destroy :: proc(d: ^Device) {
 	for &t, i in d.textures.items {
 		if !d.textures.alive[i] || t.swapchain {continue}
 		for v in t.mip_views {mtl_release(v)}
+		mtl_release(t.encoded)
 		mtl_release(t.handle)
 	}
 	for &b, i in d.buffers.items {
@@ -599,7 +611,7 @@ device_destroy :: proc(d: ^Device) {
 		delete(f.ranges)
 	}
 	for heap in d.accel_heaps {mtl_release(heap)}
-	accel_arena_destroy(&d.accel_arena)
+	arena_destroy(&d.accel_arena)
 	delete(d.accel_heaps)
 	delete(d.accel_empty)
 	if d.compact_sizes != 0 {buffer_destroy(d, d.compact_sizes)}
@@ -730,7 +742,7 @@ mtl_defer_range :: proc(d: ^Device, block: i32, offset, size: u64) {
 @(private)
 mtl_flush_ranges :: proc(d: ^Device, f: ^Mtl_Frame) {
 	for r in f.ranges {
-		if d.accel_arena.blocks != nil && accel_arena_give(&d.accel_arena, int(r[0]), r[1], r[2]) {append(&d.accel_empty, int(r[0]))}
+		if arena_give(&d.accel_arena, int(r[0]), r[1], r[2]) {append(&d.accel_empty, int(r[0]))}
 	}
 	clear(&f.ranges)
 }
@@ -814,7 +826,7 @@ mtl_collect_timestamps :: proc(d: ^Device, f: ^Mtl_Frame) {
 // Begins recording a frame. Without present it takes no image of the
 // swapchain: the frame draws only into textures, for a capture.
 frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: bool) {
-	assert(!d.in_frame, "rhi: frame_begin called twice")
+	if d.in_frame {set_error(d, "frame_begin while a frame is being recorded: end it with frame_end first"); return nil, false}
 	f := &d.frames[d.slot]
 	d.timing_count = 0
 	if f.cmd != nil {
@@ -881,7 +893,7 @@ mtl_release_drawable :: proc(d: ^Device) {
 
 // generated: the frame drew swapchain_generated_texture, which is shown before its own image.
 frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
-	assert(d.in_frame && cmd == &d.frames[d.slot].list, "rhi: frame_end without matching frame_begin")
+	if !d.in_frame || cmd != &d.frames[d.slot].list {set_error(d, "frame_end without the list its frame_begin gave"); return false}
 	f := &d.frames[d.slot]
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	mtl_end_encoder(cmd)
@@ -919,7 +931,7 @@ frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
 frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
 	// Between frames the slot may still be in flight and frame_begin resets
 	// the ring, so transient memory only exists while a frame is recorded.
-	assert(d.in_frame, "rhi: frame_alloc outside frame_begin/frame_end")
+	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
 	f := &d.frames[d.slot]
 	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
 	offset := align_up(f.upload_used, align)
@@ -935,10 +947,11 @@ frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
 // ---------------------------------------------------------------- immediate transactions
 
 // Begins a blocking command list for load-time work (uploads, BLAS builds,
-// readback). Not allowed while a frame is being recorded.
+// readback). nil, with the error of the device, while a frame is being
+// recorded: immediate_end of it fails.
 immediate_begin :: proc(d: ^Device) -> ^Command_List {
-	assert(!d.in_frame, "rhi: immediate commands cannot interleave with frame recording")
-	assert(d.immediate.cmd == nil, "rhi: immediate_begin called twice")
+	if d.in_frame {set_error(d, "immediate_begin while a frame is being recorded: a load transaction runs between frame_end and frame_begin"); return nil}
+	if d.immediate.cmd != nil {set_error(d, "immediate_begin inside an immediate transaction: end it with immediate_end first"); return nil}
 	mtl_table_take(d, table_copy(true, 0))
 	d.immediate_pool = NS.AutoreleasePool.alloc()->init()
 	cmd := MTL.CommandQueue_commandBuffer(d.queue)
@@ -948,7 +961,10 @@ immediate_begin :: proc(d: ^Device) -> ^Command_List {
 }
 
 immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
-	assert(cmd == &d.immediate)
+	if cmd != &d.immediate {
+		if cmd != nil {set_error(d, "immediate_end of a list immediate_begin did not give")}
+		return false
+	}
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	mtl_end_encoder(cmd)
 	mtl_release_labels(cmd)

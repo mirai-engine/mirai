@@ -5,6 +5,7 @@ import "core:math"
 import "core:slice"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:ui"
@@ -158,19 +159,19 @@ OUTLINER_SCOPE :: f32(28) // the bar of the document shown alone
 // The bar over the outliner while it shows one prefab instance or section
 // alone: back to the scene, the document and where it is.
 @(private)
-outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref,links:map[base.Entity_Id]Prefab_Link) {
+outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(OUTLINER_SCOPE),gap=6,align_y=.Center}) {
         if ui.button(ctx,ui.id(ctx,"outliner_scope_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=22,height=22}).clicked {o.scope=core.NONE}
-        kind:=container_kind(links,w,o.scope)
+        kind:=container_kind(w,o.scope)
         icon,text:=container_color(s,kind)
         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={8,0,8,0},gap=5,align_y=.Center,fill=ui.color_alpha(icon,36),stroke=icon,radius=10}) {
             ui.icon(ctx,kind==.Section?ui.icon_user(u8(User_Icon.Scene)):.Prefab,icon,12)
-            ui.label(ctx,container_document(s,links,w,o.scope),th.font_label,text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,container_document(s,w,o.scope),th.font_label,text,0,font=ui.FONT_SEMIBOLD)
         }
         path:=make([dynamic]string,context.temp_allocator)
-        for at:=container_of(links,w,o.scope);at!=core.NONE;at=container_of(links,w,at) {append(&path,entity_label(w,at))}
+        for at:=container_of(w,o.scope);at!=core.NONE;at=container_of(w,at) {append(&path,entity_label(w,at))}
         append(&path,document_label(s))
         ui.label(ctx,fmt.tprintf("in %s",strings.join(path[:]," › ",context.temp_allocator)),th.font_label,th.text_faint)
     }
@@ -187,7 +188,7 @@ outliner_rows :: proc(o:^Outliner,w:core.World_Ref) {
     clear(&o.rows)
     if filter!="" {
         for at in o.children {
-            if contains_fold(entity_label(w,o.nodes[at].entity),filter) {append(&o.rows,Outliner_Row{at,0})}
+            if base.contains_fold(entity_label(w,o.nodes[at].entity),filter) {append(&o.rows,Outliner_Row{at,0})}
         }
         return
     }
@@ -219,9 +220,8 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     v:=s.viewport
     outliner_sync(o,w)
     if search_field(s,ui.id(ctx,"outliner_filter"),o.filter[:],&o.filter_length,"Search entities") {o.scroll=0}
-    links:=prefab_links(s)
     if o.scope!=core.NONE && !entity_alive(w,o.scope) {o.scope=core.NONE}
-    if o.scope!=core.NONE {outliner_scope_bar(s,o,w,links)}
+    if o.scope!=core.NONE {outliner_scope_bar(s,o,w)}
     outliner_rows(o,w)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(16),align_y=.Center}) {
         ui.label(ctx,fmt.tprintf("%d entities",len(o.nodes)),th.font_label,th.text_faint)
@@ -265,7 +265,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                     at=entity_parent(w,at)
                 }
                 for k in 0..<n {
-                    kind:=container_kind(links,w,ancestors[k])
+                    kind:=container_kind(w,ancestors[k])
                     if kind==.None {
                         ui.spacer(ctx,OUTLINER_INDENT,1)
                         continue
@@ -285,7 +285,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                 ui.spacer(ctx,16,1)
             }
             icon,color:=entity_icon(s,w,e)
-            kind:=container_kind(links,w,e)
+            kind:=container_kind(w,e)
             text_color:ui.Color
             if kind!=.None {color,text_color=container_color(s,kind)}
             hidden:=entity_hidden(w,e) || core.entity_off(core.world_entities(w),e)
@@ -309,7 +309,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                 }
                 if r.committed || r.cancelled || (!r.editing && !r.began && ctx.edit.id!=field) {o.rename=core.NONE}
             } else {
-                selected:=selection_has(s.selection,e)
+                selected:=history.selection_has(s.selection,e)
                 over:=g.drag.kind==.Entity && drag_over(g,line_rect) && g.drag.entity!=e
                 label:=entity_label(w,e)
                 it:=ui.row(ctx,id,{label=label,icon=icon,icon_color=color,icon_size=14,text_color=text_color,font=kind!=.None?ui.FONT_SEMIBOLD:0,selected=selected || over,height=OUTLINER_ROW})
@@ -317,14 +317,14 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                     tool_preview_cancel(s)
                     if entity_alive(w,e) {
                         target:=selection_click_target(s,w,e,it.double)
-                        _,linked:=prefab_link_of(s,api_entity_id(w,e))
+                        _,linked:=prefab_link_of(w,e)
                         switch {
                         case v.pick.active:                inspector_pick_finish(s,w,e)
                         case it.double && !linked:         outliner_rename(o,e)
-                        case .Primary in ctx.input.modifiers: selection_toggle(s.selection,target)
-                        case .Shift in ctx.input.modifiers:   selection_add(s.selection,target)
-                        case !selection_has(s.selection,target): selection_set(s.selection,{target})
-                        case:                              selection_set(s.selection,{target},true)
+                        case .Primary in ctx.input.modifiers: history.selection_toggle(s.selection,target)
+                        case .Shift in ctx.input.modifiers:   history.selection_add(s.selection,target)
+                        case !history.selection_has(s.selection,target): history.selection_set(s.selection,{target})
+                        case:                              history.selection_set(s.selection,{target},true)
                         }
                         if !v.pick.active {drag_begin(g,{kind=.Entity,entity=target},entity_label(w,target))}
                     }
@@ -333,17 +333,17 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
                     tool_preview_cancel(s)
                     if entity_alive(w,e) {
                         o.menu=e
-                        if !selected {selection_set(s.selection,{e})}
+                        if !selected {history.selection_set(s.selection,{e})}
                         ui.popup_open(ctx,outliner_menu_id(g),{ctx.pointer.x,ctx.pointer.y,0,0})
                     }
                 }
             }
             // On the row that is selected or under the pointer: the root of what holds it, and its document alone as a tree.
-            if selection_has(s.selection,e) || ui.rect_contains(line_rect,ctx.pointer) {
-                up:=container_of(links,w,e)
+            if history.selection_has(s.selection,e) || ui.rect_contains(line_rect,ctx.pointer) {
+                up:=container_of(w,e)
                 tree:=kind!=.None?e:up
                 if up!=core.NONE && ui.button(ctx,ui.id(ctx,"outliner_root",index+1),{icon=ui.icon_user(u8(User_Icon.Up)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=20,height=OUTLINER_ROW}).clicked {
-                    selection_set(s.selection,{up})
+                    history.selection_set(s.selection,{up})
                     if o.scope!=core.NONE && !entity_within(w,up,o.scope) {o.scope=core.NONE}
                     outliner_reveal(o,w,up)
                 }
@@ -376,7 +376,7 @@ outliner_drop :: proc(s:^Session,w:core.World_Ref,target:core.Entity) {
     tool_preview_cancel(s)
     d:=&s.gui.drag
     moved:=[]core.Entity{d.entity}
-    if selection_has(s.selection,d.entity) {moved=selection_roots(s.selection,w)}
+    if history.selection_has(s.selection,d.entity) {moved=history.selection_roots(s.selection,w)}
     opened,edit_ready:=edit_open(s,"Parent")
     if !edit_ready {return}
     defer edit_close(s,opened)
@@ -412,7 +412,7 @@ outliner_menu :: proc(s:^Session,w:core.World_Ref) {
             tool_preview_cancel(s)
             if !entity_alive(w,e) {return}
             child:=entity_create(s,{preset=.Empty,parent=e})
-            selection_set(s.selection,{child})
+            history.selection_set(s.selection,{child})
             outliner_reveal(o,w,child)
         }
         if ui.menu_item(ctx,ui.id(ctx,"menu_rename"),"Rename",{shortcut="F2"}) {outliner_rename(o,e)}
@@ -559,12 +559,3 @@ create_card :: proc(s:^Session,id:ui.Id,card:Card,carried:bool,view:Content_View
     return
 }
 
-// True when text holds part, without minding upper and lower case.
-contains_fold :: proc(text,part:string) -> bool {
-    if len(part)==0 {return true}
-    if len(part)>len(text) {return false}
-    for i in 0..=len(text)-len(part) {
-        if strings.equal_fold(text[i:][:len(part)],part) {return true}
-    }
-    return false
-}

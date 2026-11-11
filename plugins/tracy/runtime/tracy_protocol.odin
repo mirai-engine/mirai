@@ -61,10 +61,6 @@ Queue_Type :: enum u8 {
     Frame_Name           = 125,
 }
 
-Queue_Header :: struct #packed {
-    type: Queue_Type,
-}
-
 Zone_Begin :: struct #packed {
     time:            i64,
     source_location: u64,
@@ -174,24 +170,6 @@ FRAME_MARK_SIZE          :: 16
 THREAD_CONTEXT_SIZE      :: 4
 SOURCE_LOCATION_SIZE     :: 31
 STRING_TRANSFER_SIZE     :: 8
-
-// Writes a queue item: the one-byte header followed by the packed record.
-// False, writing nothing, when the buffer does not fit.
-write_zone_begin :: proc(out:[]u8,item:Zone_Begin) -> (int,bool) {
-    if len(out)<1+ZONE_BEGIN_SIZE {return 0,false}
-    out[0]=u8(Queue_Type.Zone_Begin)
-    bytes:=transmute([ZONE_BEGIN_SIZE]u8)item
-    copy(out[1:],bytes[:])
-    return 1+ZONE_BEGIN_SIZE,true
-}
-
-write_zone_end :: proc(out:[]u8,item:Zone_End) -> (int,bool) {
-    if len(out)<1+ZONE_END_SIZE {return 0,false}
-    out[0]=u8(Queue_Type.Zone_End)
-    bytes:=transmute([ZONE_END_SIZE]u8)item
-    copy(out[1:],bytes[:])
-    return 1+ZONE_END_SIZE,true
-}
 
 // Writes a zone begin with the smallest record the delta allows, like Tracy's
 // dequeue does. A 64-bit <time> is stored with ProtocolOffset32Bit subtracted;

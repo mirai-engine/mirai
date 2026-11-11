@@ -5,6 +5,7 @@ import "mirai:asset"
 import "core:math/linalg"
 import "mirai:rhi"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // Instance batches: many instances of one mesh with its materials, drawn by
 // the same cull and G-buffer as the instances of the scene and met by the
@@ -22,8 +23,8 @@ import mm "mirai:std/math"
 // software, an item of the software TLAS each, and their instances are
 // instances of a native TLAS.
 
-BATCH_GROUP :: 64
-BATCH_WORDS :: 5
+BATCH_GROUP :: abi.BATCH_GROUP
+BATCH_WORDS :: abi.BATCH_WORDS
 // Instance indices, of the scene and of the slots of batches, that a native
 // TLAS tells apart by its custom index.
 BATCH_INDICES_MAX :: 1 << 24
@@ -237,7 +238,8 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	s := &r.scene
 	if record.count == 0 || record.tree_nodes > 0 || batch_classes(record.desc.flags, false) == 0 {return}
 	mesh := s.meshes[record.desc.mesh]
-	items := make([]Bvh_Item, record.count, r.allocator)
+	items, items_error := make([]Bvh_Item, record.count, r.allocator)
+	if items_error != nil {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	defer delete(items, r.allocator)
 	for &item, k in items {
 		words := s.indices[record.words + u32(k) * BATCH_WORDS:][:BATCH_WORDS]
@@ -249,7 +251,7 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	order := make([dynamic]u32, 0, 0, r.allocator)
 	defer delete(nodes)
 	defer delete(order)
-	if !bvh_build(items, 2, &nodes, &order) {return}
+	if !bvh_build(items, 2, &nodes, &order) {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	if !pool_room(r, .Index, len(order)) || !pool_room(r, .Node, len(nodes)) {s.refused.batches += 1;return}
 	first := u32(len(s.indices))
 	append(&s.indices, ..order[:])

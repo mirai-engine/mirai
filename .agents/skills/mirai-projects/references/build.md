@@ -22,6 +22,11 @@ errors of the attributes.
   sources with `-o:speed`; executable `<output>/<executable><ext>` (`.mirai/game` or `--out`).
   With `Desc.server` (`mirai build server`) it is the [dedicated server](#dedicated-server), the
   same executable in `.mirai/server`.
+  - `mirai build game` and `server` without `--release` set `Desc.incremental`: the engine and its
+    shipping plugins are one `-o:speed` library next to the executable, kept in the shared cache
+    (`shipped-engine`) by its key, and only the game compiles, against its declarations;
+    `--release` and the editor's Build compile everything whole, the only build to ship
+    (`mirai package` builds no game).
 
 A library compiles only the code of the project: it sees the engine through its declarations.
 
@@ -85,7 +90,8 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     say "unchanged" without waiting; if not, they take the lock and each step checks again.
     `build game` always takes it.
   - `mirai test` and `mirai check` generate the engine shaders under the lock only if there are
-    stages to compile; `mirai test` compiles under the lock and runs outside it.
+    stages to compile; `mirai test` compiles the executables of all its packages under one lock
+    and runs them outside it.
   - `workspace.builds_since` says whether someone compiled since a moment, so that whoever measures
     knows whether builds happened during the measurement. The editor's builds neither take the lock
     nor are annotated.
@@ -101,7 +107,9 @@ and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)
     what started earlier is not stopped.
   - A process with `MIRAI_MEASURE` is part of a measurement: it neither takes `measure.lock` nor
     waits for it. Whoever measures sets it for its children, and an editor opened inside them
-    inherits it.
+    inherits it. The editor of a session is no child of the command that calls it: `mirai rpc`
+    sends its `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the
+    lock names the same measurement.
 - The self-refresh of `bin/mirai` uses one lock per checkout (`bin/.refresh.lock`): if another
   process already rebuilt it, it uses that one.
 
@@ -125,8 +133,8 @@ build.job_destroy(job)
 - `job_cancel` kills the compilers, not the linker they may have launched. A job that fails leaves
   no compilers running.
 - `target_state` says, without writing, whether the output is missing, stale or up to date.
-- `Result.diagnostics` are the messages of `-json-errors`; `text`, everything else the compiler
-  printed (the linker is not structured).
+- `Result.diagnostics` are the messages of `-json-errors` and the warnings of the generator; `text`,
+  everything else the compiler printed (the linker is not structured).
 - A compilation failure or a failure of the engine-time check does not publish the executable or
   store its fingerprint. In `Game`, copy and cooking happen after the executable is published,
   inside the call that finishes the job: `Copy_Failed` and `Cook_Failed` do not revert that
@@ -218,13 +226,14 @@ Settings > Input changed, and SDL3, which the executable links.
 job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
 texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
 
-- **Roots.** Every `.scene` of the folder and what `cook.mirai` (`COOK_FILE`) names: the assets that
-  only code refers to (a material chosen by name, a prefab instantiated by id).
+- **Roots.** Every `.scene`, `.prefab` (code reaches one only by instantiating it) and `.records`
+  of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
+  material chosen by name).
 
   ```json
   {
-    "roots": ["surfaces/metal/Chrome.mat", "characters/player/", "3b4cb4195321a2f7fe61aa57ece0c255"],
-    "textures": "blocks"
+    "roots": ["surfaces/metal/Chrome.mat", "characters/player/",
+    "3b4cb4195321a2f7fe61aa57ece0c255"], "textures": "blocks"
   }
   ```
 
@@ -236,7 +245,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A `--dev` game is cooked with `asset.Pack.Quick` (`Cook_Desc.quick`), a release one with `Ship`.
+  A `--dev` game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
+  release one with `SHIP`.
 - **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
   `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.
 - **Textures.** With `"textures": "blocks"` (default), an RGBA8 texture is written in blocks
@@ -249,7 +259,8 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   the settings of its `.import`) into a temporary folder and writes the texture of the same image
   with the id it has. The import runs in the engine's import program (`Cook_Desc.import_program`,
   what `mirai import` runs), since the tool builds without the importers; `import_source` lets a
-  caller that has them import in-process. The import fills the texture cache, so the editor takes that Final from
+  caller that has them import in-process. The import fills the texture cache, so the editor takes
+  that Final from
   then on. A source that is missing, no longer has the image or builds another texture fails the
   cook with `Source_Failed` and says how to fix it.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
@@ -259,7 +270,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
   shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
-  `Ship`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
+  `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.
 - **Index.** The folder receives `.index` (`asset.REGISTRY_INDEX`), what a scan would find; with
   it `host.assets_init` does not look at the files

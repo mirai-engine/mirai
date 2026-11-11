@@ -3,7 +3,7 @@ package decals_editor
 import "mirai:core"
 import "mirai:editor"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import mm "mirai:std/math"
 import "mirai:ui"
 import decals "plugins:decals/runtime"
@@ -35,15 +35,15 @@ decal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
 }
 
 @(storage)
-Decals_Gizmo :: struct {vertices:[GIZMO_VERTICES]gpu.Debug_Vertex}
+Decals_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // The box of each selected decal, and the way its image goes onto what is inside.
 @(step="frame",after="editor_tools")
 decals_gizmo :: proc(s:^editor.Session,gizmo:^Decals_Gizmo,app:^host.App) {
-    draw :: proc(lines:^gpu.Debug_Lines,w:core.World_Ref,e:core.Entity,_:decals.Decal) {
+    draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,_:decals.Decal) {
         placed:=editor.entity_world(w,e)
-        gpu.debug_box_transformed(lines,mm.transform_matrix(placed),{-0.5,-0.5,-0.5},{0.5,0.5,0.5},GIZMO_COLOR)
-        gpu.debug_arrow(lines,mm.transform_point(placed,{0,0.5,0}),mm.transform_point(placed,{0,-0.5,0}),GIZMO_COLOR)
+        erender.debug_box_transformed(lines,mm.transform_matrix(placed),{-0.5,-0.5,-0.5},{0.5,0.5,0.5},GIZMO_COLOR)
+        erender.debug_arrow(lines,mm.transform_point(placed,{0,0.5,0}),mm.transform_point(placed,{0,-0.5,0}),GIZMO_COLOR)
     }
     editor.selection_gizmo(s,app,gizmo.vertices[:],decals.Decal,draw)
 }

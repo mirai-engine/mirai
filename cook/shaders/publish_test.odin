@@ -2,6 +2,7 @@ package shaders
 
 import "core:os"
 import "core:testing"
+import "mirai:std/base"
 
 @(test)
 publication_rolls_back_a_failure_at_every_rename_of_the_output_and_tables :: proc(t:^testing.T) {
@@ -15,8 +16,8 @@ publication_rolls_back_a_failure_at_every_rename_of_the_output_and_tables :: pro
     for previous in ([2]bool{true,false}) {
         moves:=6 if previous else 5
         for at in 1..=moves {
-            root:=fixture_make(t)
-            defer fixture_remove(root)
+            root:=base.test_folder(t,"shaders")
+            if root=="" {return}
             output:=path_join(root,"output",allocator=context.temp_allocator)
             staging:=path_join(root,"staging",allocator=context.temp_allocator)
             if previous {

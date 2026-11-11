@@ -24,16 +24,19 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/xeq5unRgG"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white"></a>
-  <a href="https://x.com/mirai3d"><img alt="X" src="https://img.shields.io/badge/X-@mirai3d-000000?logo=x&logoColor=white"></a>
-  <a href="https://github.com/sponsors/tomaszbk"><img alt="Sponsor" src="https://img.shields.io/badge/Sponsor-%E2%99%A5-db61a2?logo=githubsponsors&logoColor=white"></a>
+  <a href="https://discord.gg/xeq5unRgG"><img alt="Discord"
+    src="https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white"></a>
+  <a href="https://x.com/mirai3d"><img alt="X"
+    src="https://img.shields.io/badge/X-@mirai3d-000000?logo=x&logoColor=white"></a>
+  <a href="https://github.com/sponsors/tomaszbk"><img alt="Sponsor"
+    src="https://img.shields.io/badge/Sponsor-%E2%99%A5-db61a2?logo=githubsponsors&logoColor=white"></a>
 </p>
 
 ---
 
 Mirai is a native 3D engine and editor where people and AI agents build the same game, in the
-same scene, at the same time. Connect your favorite agent inside the editor, or connect it externally via MCP or JSON-RPC. 
-<p align="center">
+same scene, at the same time. Connect your favorite agent inside the editor, or connect it
+externally via MCP or JSON-RPC.  <p align="center">
   <img src=".github/media/agents.png" alt="Three AI agents working in the Mirai editor"
     width="100%">
 </p>
@@ -83,7 +86,8 @@ same scene, at the same time. Connect your favorite agent inside the editor, or 
 
 ### Modern, fast to build
 
-- **All in [Odin](https://odin-lang.org).** One fast compiler, readable code, no header soup and no multi-hour engine rebuilds.
+- **All in [Odin](https://odin-lang.org).** One fast compiler, readable code, no header soup and no
+  multi-hour engine rebuilds.
 - **Code reloads into the running editor.** Change your game, build, and keep editing the same
   scene.
 - **One implementation of everything.** No per-platform or per-API copies: one renderer for Vulkan
@@ -130,7 +134,8 @@ That builds and opens the editor with the included [demo](demo). To play it inst
 platform from the [releases](https://github.com/mirai-engine/mirai/releases).
 
 Building needs Odin `dev-2026-11` and the platform's graphics driver; `./mirai doctor` says what is
-missing. Platform setup, templates and commands are in
+missing. `./mirai setup git`, once per clone, makes git merge and diff scenes and other
+documents. Platform setup, templates and commands are in
 [projects](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
 ## Documentation
@@ -147,8 +152,10 @@ with a map from tasks to references.
 | Networking | [mirai-networking](.agents/skills/mirai-networking/SKILL.md) |
 | Physics and destruction | [mirai-physics](.agents/skills/mirai-physics/SKILL.md) |
 | Animation | [mirai-animation](.agents/skills/mirai-animation/SKILL.md) |
+| Abilities | [mirai-abilities](.agents/skills/mirai-abilities/SKILL.md) |
 | Gameplay | [mirai-gameplay](.agents/skills/mirai-gameplay/SKILL.md) |
 | Plugins | [mirai-plugins](.agents/skills/mirai-plugins/SKILL.md) |
+| World content (terrain, foliage, water, particles, navigation, AI) | [mirai-world](.agents/skills/mirai-world/SKILL.md) |
 | UI | [mirai-ui](.agents/skills/mirai-ui/SKILL.md) |
 | Assets | [mirai-assets](.agents/skills/mirai-assets/SKILL.md) |
 | Importing | [mirai-imports](.agents/skills/mirai-imports/SKILL.md) |

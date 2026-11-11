@@ -23,10 +23,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 
 @(test)
 the_document_of_a_material_reads_its_program_and_gives_its_picks_to_the_next_message :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root,_:=strings.replace_all(project.path(temporary,"mirai-material-document",allocator=context.temp_allocator),"\\","/",context.temp_allocator)
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"material-document")
+    if root=="" {return}
     os.make_directory_all(project.path(root,"shaders",allocator=context.temp_allocator))
     path:=project.path(root,"shaders/window_test.slang",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(path,WINDOW_PROGRAM)==nil)
@@ -65,7 +63,7 @@ the_document_of_a_material_reads_its_program_and_gives_its_picks_to_the_next_mes
     w.channel=.Roughness
     base.text_set(w.variants[0].label[:],"Wet")
     w.variant_count,w.chosen=1,1
-    material_document_context(&s,w)
+    material_document_context(m,nil,w)
     testing.expect(t,m.material.open)
     testing.expect_value(t,base.text_get(m.material.program[:]),"Window_Test")
     testing.expect_value(t,m.material.pick_count,1)

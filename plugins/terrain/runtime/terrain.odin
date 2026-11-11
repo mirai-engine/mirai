@@ -35,13 +35,14 @@ Terrain_Settings :: struct {
     sources:u32 `mirai:"advanced"`,
     chunks:u32 `mirai:"advanced"`, // pieces the terrains show, chunks and nodes of their quadtrees: past it, the farthest show coarser nodes
     samples:u32 `mirai:"advanced"`,
+    requests:u32 `mirai:"advanced"`, // edits, layer changes and saves a tick can ask for, and digs it reports; past it they are dropped and reported
     lod_distance:f32 `mirai:"unit=m"`,       // level 0 within it of the view, one level more each time it doubles (a Heightfield chunk no coarser than its error allows); 0: a Heightfield takes the coarsest level whose error covers about LOD_PIXELS of the view (others LOD_CHUNKS chunk widths); below 0: every chunk at level 0
     collision_distance:f32 `mirai:"unit=m"`, // chunks farther from the view have no collider; whatever it is, only the nearest that Physics_Settings has room for collide; 0: no distance
     resident_distance:f32 `mirai:"unit=m"`,  // chunks farther from every streaming source (scene.Streaming_Sources) let go of their mesh, collider and pages, and nodes of the quadtree show in their place; 0: every chunk stays
     displacement_distance:f32 `mirai:"unit=m"`, // Heightfield chunks at level 0 within it of the view raise the heights of the textures of their layers (Terrain_Layer.displacement); 0: none
     displacement_detail:u32 `mirai:"max=4,advanced"`, // times a cell of a displaced chunk splits in two along each side
 }
-TERRAIN_SETTINGS_DEFAULT :: Terrain_Settings{sources=16,chunks=4096,samples=8*1024*1024,displacement_distance=32,displacement_detail=3}
+TERRAIN_SETTINGS_DEFAULT :: Terrain_Settings{sources=16,chunks=4096,samples=8*1024*1024,requests=256,displacement_distance=32,displacement_detail=3}
 
 @(storage,copy="terrain_data_copy",swap="terrain_data_swap",free="terrain_data_free",reset="terrain_data_reset")
 Terrain_Data :: struct {
@@ -98,47 +99,70 @@ Data_Source :: struct {
 @(storage)
 Terrain_Focus :: struct {source:base.Asset_Id,center:[3]f32,radius:f32,stroke:bool,low,high:[2]f32}
 
-Edit_Request :: struct {owner:core.Entity,brush:Brush}
+Edit_Request :: struct {owner:core.Entity,brush:Brush} // owner none: the terrain the brush touches; the brush is in the world
 Save_Request :: struct {owner:core.Entity,path:[512]u8 `mirai:"text"`}
 Layer_Request :: struct {owner:core.Entity,change:Layer_Change}
 @(storage,queue)
 Terrain_Requests :: struct {edits:core.Queue(Edit_Request),saves:core.Queue(Save_Request),layers:core.Queue(Layer_Request)}
-REQUEST_CAPACITY :: 256
 
-// False when the request was not made: REQUEST_CAPACITY wait already, no
-// memory, or a brush with an alpha, which the queue does not keep.
-request_edit :: proc(requests:^Terrain_Requests,owner:core.Entity,brush:Brush) -> bool {
-    if brush.alpha!=nil {return false}
-    if cap(requests.edits.items)==0 {if reserve(&requests.edits.items,REQUEST_CAPACITY)!=nil {return false}}
-    if len(requests.edits.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.edits,{owner,brush})
-    return true
+// Edits a terrain with a brush in the world, on the next tick. owner: the
+// terrain to edit; none: the one the brush touches. What it took out comes in
+// Terrain_Digs.
+dig :: proc(requests:^Terrain_Requests,brush:Brush,owner:=core.NONE) {
+    if brush.alpha!=nil {core.refuse(&requests.edits);return}
+    core.offer(&requests.edits,Edit_Request{owner,brush})
 }
-// Sets layer index of the source of a terrain, or adds one with index equal to
-// its count. False when the request was not made: REQUEST_CAPACITY wait already, or no memory.
-request_layer :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int,layer:Terrain_Layer) -> bool {
-    return request_layers_push(requests,{owner,{index=u32(max(index,0)),layer=layer}})
+// Sets layer index of the source of a terrain, or adds one with index equal to its count.
+request_layer :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int,layer:Terrain_Layer) {
+    core.offer(&requests.layers,Layer_Request{owner,{index=u32(max(index,0)),layer=layer}})
 }
 // Takes layer index away from the source of a terrain; what it covered goes to the others.
-request_layer_remove :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int) -> bool {
-    return request_layers_push(requests,{owner,{index=u32(max(index,0)),remove=true}})
+request_layer_remove :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int) {
+    core.offer(&requests.layers,Layer_Request{owner,{index=u32(max(index,0)),remove=true}})
 }
-@(private)
-request_layers_push :: proc(requests:^Terrain_Requests,request:Layer_Request) -> bool {
-    if cap(requests.layers.items)==0 {if reserve(&requests.layers.items,REQUEST_CAPACITY)!=nil {return false}}
-    if len(requests.layers.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.layers,request)
-    return true
-}
-// False when the request was not made: a path of 512 bytes or more, REQUEST_CAPACITY waiting, or no memory.
-request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string="") -> bool {
-    if len(path)>=512 {return false}
-    if cap(requests.saves.items)==0 {if reserve(&requests.saves.items,REQUEST_CAPACITY)!=nil {return false}}
-    if len(requests.saves.items)>=REQUEST_CAPACITY {return false}
+request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string="") {
+    if len(path)>=512 {core.refuse(&requests.saves);return}
     request:=Save_Request{owner=owner}
     asset.text_set(request.path[:],path)
-    core.push(&requests.saves,request)
-    return true
+    core.offer(&requests.saves,request)
+}
+
+// The room of the requests of a tick, and what did not fit in it.
+@(step="input fixed",loops="game editor",stage="begin")
+terrain_requests_serve :: proc(requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,problems:^core.Problems) {
+    capacity,setting:=int(settings.requests),"Terrain_Settings.requests"
+    core.queue_serve(&requests.edits,capacity,problems,"terrain.requests","terrain edits",setting,"a game edits with a brush without an alpha")
+    core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting)
+    core.queue_serve(&requests.saves,capacity,problems,"terrain.requests","terrain saves",setting,"a save names a path shorter than 512 bytes")
+    core.queue_serve(&digs.digs,capacity,problems,"terrain.requests","terrain digs of a tick",setting)
+}
+
+// A brush of the world as the terrain at place reads it, and the other way.
+brush_local :: proc(brush:Brush,place:mm.Transform) -> Brush {
+    return brush_placed(brush,linalg.inverse(mm.transform_matrix(place)),mm.quat_inverse(place.rotation),1/max(abs(place.scale.x),1e-6))
+}
+brush_world :: proc(brush:Brush,place:mm.Transform) -> Brush {
+    return brush_placed(brush,mm.transform_matrix(place),place.rotation,max(abs(place.scale.x),1e-6))
+}
+@(private)
+brush_placed :: proc(brush:Brush,to:matrix[4,4]f32,rotation:quaternion128,factor:f32) -> (moved:Brush) {
+    moved=brush
+    c,d,n:=brush.center,brush.delta,brush.normal
+    moved.center=(to*[4]f32{c.x,c.y,c.z,1}).xyz
+    moved.delta=(to*[4]f32{d.x,d.y,d.z,0}).xyz
+    moved.normal=linalg.normalize0((to*[4]f32{n.x,n.y,n.z,0}).xyz)
+    moved.target=(to*[4]f32{c.x,brush.target,c.z,1}).y
+    moved.rotation=rotation*brush.rotation
+    moved.radius*=factor
+    moved.extent*=factor
+    moved.blend*=factor
+    moved.interval*=factor
+    moved.scale*=factor
+    moved.max_edge*=factor
+    #partial switch brush.kind {
+    case .Raise,.Lower,.Noise: moved.amount*=factor
+    }
+    return
 }
 
 // What an edit of a world that plays took out of a terrain: what stopped
@@ -155,7 +179,7 @@ Terrain_Dig :: struct {
     materials:[LAYERS_MAX]base.Asset_Id, // of those layers; without layers, the material of the source
 }
 
-// What the edits of request_edit and the replays of the tick took out, in
+// What the edits of dig and the replays of the tick took out, in
 // their order. terrain_replay empties it at the start of each tick of a world
 // that plays.
 @(storage,events)
@@ -167,8 +191,6 @@ dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:
     s:=&entry.source
     d:=s.dug
     if !(d.volume>0) {return}
-    if cap(digs.digs.items)==0 {if reserve(&digs.digs.items,REQUEST_CAPACITY)!=nil {return}}
-    if len(digs.digs.items)>=cap(digs.digs.items) {return}
     place:=mm.TRANSFORM_IDENTITY
     if world,found:=core.get(worlds,owner);found {place=world.transform}
     scale:=max(abs(place.scale.x),abs(place.scale.y),abs(place.scale.z))
@@ -176,7 +198,7 @@ dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:
     dig.center=mm.transform_point(place,d.sum/d.volume)
     dig.radius=(linalg.length(d.high-d.low)*0.5+s.cell)*scale
     for i in 0..<int(s.layer_count) {dig.materials[i]=s.layers[i].material}
-    core.push(&digs.digs,dig)
+    core.offer(&digs.digs,dig)
 }
 
 // The meshes of the pieces of the terrains of a world: each world keeps its
@@ -474,12 +496,16 @@ data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^
     if !found || record.kind!=KIND {return nil}
     if _,held:=asset.registry_memory_find(&a.registry,record.path);held {return nil}
     heap:=runtime.heap_allocator()
-    load:=new(Source_Load,heap)
+    load,allocation_error:=new(Source_Load,heap)
+    if allocation_error!=nil {return nil}
     load.id,load.stamp,load.js=id,terrain_stamp(a,id),data.jobs
     load.path=asset.registry_file_path(&a.registry,record.path,heap)
     asset.types_init(&load.types,heap)
     if data.loads==nil {data.loads=make([dynamic]^Source_Load,heap)}
-    append(&data.loads,load)
+    if _,append_error:=append(&data.loads,load);append_error!=nil {
+        data_load_free(load)
+        return nil
+    }
     if data.jobs!=nil {jobs.run(data.jobs,jobs.OWNER,source_load_job,load,&load.counter)} else {source_load_job(load,jobs.OWNER)}
     return load
 }
@@ -522,8 +548,8 @@ data_load_end :: proc(data:^Terrain_Data,load:^Source_Load,a:^host.Assets,proble
         core.report(problems,e,"terrain.sources_full","terrain source %s is not loaded: %d sources are, as many as Terrain_Settings.sources allows; raise it, or share fewer sources among more terrains",host.assets_name(a,load.id,&name),data.settings.sources)
     case !data_fits(data,nil,source_cost(&load.entry.source),problems,e,a,load.id):
     case:
+        if _,err:=append(&data.entries,load.entry);err!=nil {source_memory(problems,e,a,load.id);break}
         data.samples+=u32(source_cost(&load.entry.source))
-        append(&data.entries,load.entry)
         load.entry={}
         data.stats.loads+=1
         entry=&data.entries[len(data.entries)-1]
@@ -698,8 +724,8 @@ data_load :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id,problems:^c
     if !terrain_read(&entry.source,a,id,a.allocator,paged=true) {source_destroy(&entry.source);source_unread(problems,e,a,id);return nil}
     if !data_chunks_allocate(&entry,a.allocator,data.jobs) {data_entry_free(&entry);source_memory(problems,e,a,id);return nil}
     if !data_fits(data,nil,source_cost(&entry.source),problems,e,a,id) {data_entry_free(&entry);return nil}
+    if _,err:=append(&data.entries,entry);err!=nil {data_entry_free(&entry);source_memory(problems,e,a,id);return nil}
     data.samples+=u32(source_cost(&entry.source))
-    append(&data.entries,entry)
     data.stats.loads+=1
     return &data.entries[len(data.entries)-1]
 }
@@ -798,9 +824,9 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
 
 // The meshes of the terrains of a World that is freed go with it.
 @(step="release")
-terrain_release :: proc(resident:^Terrain_Resident,app:^host.App) {
+terrain_release :: proc(resident:^Terrain_Resident,allocator:runtime.Allocator) {
     if resident==nil {return}
-    context.allocator=app.allocator
+    context.allocator=allocator
     stats:=resident.stats
     terrain_resident_free(resident)
     resident.stats=stats

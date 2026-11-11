@@ -8,13 +8,15 @@ import "mirai:std/base"
 
 @(test)
 custom_relevance_replicates_an_entity_only_to_the_connections_the_game_names :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     worlds:[2]Net_Test_World
     apps:[2]host.App
     sessions:[2]Net_Session
     problems:core.Problems
-    for &world,index in worlds {net_test_init(&world,context.allocator);apps[index]={allocator=context.allocator,tick_dt=1.0/60}}
-    defer for &world in worlds {net_test_destroy(&world)}
+    for &world,index in worlds {net_test_init(&world,&info);apps[index]={allocator=context.allocator,tick_dt=1.0/60}}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     defer for &app in apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=5,endpoints=2,packets=1024}))
@@ -26,9 +28,9 @@ custom_relevance_replicates_an_entity_only_to_the_connections_the_game_names :: 
     sessions[0].problems=&problems
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     world:=&worlds[0]
-    secret:=net_test_body(world,1,{0,0,0})
-    hidden:=net_test_body(world,2,{1,0,0})
-    plain:=net_test_body(world,3,{2,0,0})
+    secret:=net_test_body(world,&info,1,{0,0,0})
+    hidden:=net_test_body(world,&info,2,{1,0,0})
+    plain:=net_test_body(world,&info,3,{2,0,0})
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
     connected:Connection
     secret_object,hidden_object:Object
@@ -50,8 +52,8 @@ custom_relevance_replicates_an_entity_only_to_the_connections_the_game_names :: 
             testing.expect(t,!relevance_set(&sessions[1],secret,connected,true))
         }
         if tick==80 {testing.expect(t,relevance_set(&sessions[0],secret,connected,false))}
-        net_test_settle(world,nil,nil)
-        server_publish(&sessions[0],core.world_ref(world,&info),&apps[0],&outbox,u32(tick))
+        core.settle(&info,world,nil)
+        server_publish(&sessions[0],core.world_ref(world,&info),&outbox,u32(tick))
         wire.host_update(&sessions[0].host,now)
         if tick==20 {
             secret_object=wire.object_of_user(&sessions[0].host,u64(secret))
@@ -72,15 +74,17 @@ custom_relevance_replicates_an_entity_only_to_the_connections_the_game_names :: 
 
 @(test)
 entities_of_the_same_frequency_take_turns_instead_of_publishing_together :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator);defer net_test_destroy(&world)
+    net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     entities:[3]core.Entity
     for &e,i in entities {
-        e=net_test_body(&world,base.Entity_Id(i+1),{f32(i),0,0})
+        e=net_test_body(&world,&info,base.Entity_Id(i+1),{f32(i),0,0})
         core.add(&world.objects,e,net_test_replicate(audience=.Always,update_hz=20))
     }
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=3,endpoints=2,packets=64}))
     defer wire.sim_network_destroy(&network)
@@ -91,12 +95,12 @@ entities_of_the_same_frequency_take_turns_instead_of_publishing_together :: proc
     defer session_destroy(&s)
     outbox:Net_Outbox
     defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    for tick in 1..<6 {server_publish(&s,core.world_ref(&world,&info),&app,&outbox,u32(tick))}
+    for tick in 1..<6 {server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))}
     // Twenty times a second at 60 ticks: each once every three ticks, one of them in each tick.
     for tick in 6..<15 {
         for e in entities {core.get(&world.values,e).force=f32(tick)}
         before:=s.stats.fragments_published
-        server_publish(&s,core.world_ref(&world,&info),&app,&outbox,u32(tick))
+        server_publish(&s,core.world_ref(&world,&info),&outbox,u32(tick))
         testing.expectf(t,s.stats.fragments_published-before==1,"tick %v published %v entities",tick,s.stats.fragments_published-before)
     }
 }
@@ -106,10 +110,12 @@ entities_of_the_same_frequency_take_turns_instead_of_publishing_together :: proc
 // root it is moved under after.
 @(test)
 the_parent_on_the_network_is_the_closest_replicated_ancestor :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
+    net_test_init(&world,&info)
+    defer core.world_destroy(&info,.World,&world)
     network:wire.Sim_Network
     testing.expect(t,wire.sim_network_init(&network,{seed=9,endpoints=1,packets=64}))
     defer wire.sim_network_destroy(&network)
@@ -122,16 +128,16 @@ the_parent_on_the_network_is_the_closest_replicated_ancestor :: proc(t:^testing.
     defer core.value_free(&outbox,type_info_of(Net_Outbox))
     tick:u32
     publish :: proc(s:^Net_Session,w:^Net_Test_World,info:^core.World_Info,app:^host.App,outbox:^Net_Outbox,tick:^u32) {
-        net_test_settle(w,nil,nil)
+        core.settle(info,w,nil)
         tick^+=1
-        server_publish(s,core.world_ref(w,info),app,outbox,tick^)
-        net_test_settle(w,nil,nil)
+        server_publish(s,core.world_ref(w,info),outbox,tick^)
+        core.settle(info,w,nil)
     }
     object :: proc(s:^Net_Session,e:core.Entity) -> Object {return wire.object_of_user(&s.host,u64(e))}
-    root:=net_test_body(&world,1)
-    middle:=net_test_body(&world,2)
-    child:=net_test_body(&world,3)
-    other:=net_test_body(&world,4)
+    root:=net_test_body(&world,&info,1)
+    middle:=net_test_body(&world,&info,2)
+    child:=net_test_body(&world,&info,3)
+    other:=net_test_body(&world,&info,4)
     core.add(&world.parents,middle,core.Parent{entity=root})
     core.add(&world.parents,child,core.Parent{entity=middle})
     // The child comes first in the rows: it is made in the publish after its ancestor's.

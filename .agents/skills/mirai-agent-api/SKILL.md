@@ -1,9 +1,10 @@
 ---
 name: mirai-agent-api
 description: Mirai editor agent API - JSON-RPC and MCP on 127.0.0.1 (`editor/api`,
-  `editor/api_*.odin`), the `mirai rpc` and `mirai mcp` commands and the method catalog. Use when
-  driving an open editor from an agent or a script, when adding or changing a method or when
-  investigating a protocol error.
+  `editor/api_*.odin`), the `mirai rpc`, `mirai mcp`, `mirai capture` and `mirai image` commands
+  (`cook/image`), the recordings of a game (`cook/movie`), scenarios and the method catalog. Use
+  when driving an open editor from an agent or a script, testing a game as a player, capturing and
+  comparing frames, adding or changing a method or investigating a protocol error.
 ---
 
 # Mirai agent API
@@ -16,8 +17,11 @@ difference with the catalog, it rules.
 
 ## Map
 
-- Connecting a client, limits, errors, MCP: [protocol and CLI](references/api.md).
-- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`) and
+- Connecting a client, limits, errors, MCP: [the server](references/api.md#the-server),
+  [method conventions](references/api.md#method-conventions) and
+  [MCP over HTTP](references/api.md#mcp-over-http).
+- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
+  calls over one connection, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
   without `sleep` loops: [`--select` and `--wait-until`](references/api.md#fields-and-waits); the
   params and result of a method, with an example, and the methods of a plugin:
@@ -30,33 +34,65 @@ difference with the catalog, it rules.
   [`play.record`, `play.seek`](references/methods.md#play) and
   [`mirai record`](references/api.md#mirai-record).
 - Checking a motion in one or two calls (an input timeline, a table of values per tick, one
-  image of cells around an entity): [`play.step` and `play.capture`](references/methods.md#play).
+  image of cells around an entity): [`play.step`](references/methods.md#play) and
+  [`capture`](references/methods.md#editor-and-viewport).
+- Walking the player to a place, with no bot, and turning the view at something: `play.step` with
+  `drive` or `look_at` ([drive](../../../docs/game/testing/scenario.md#drive)).
+- Writing or changing a `.ui` (one nested document by name: `ui.write asset=<path>
+  document=@<file>
+  save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
+- Reading, checking or writing the documents of interfaces, scenes and prefabs with no editor,
+  from files of text under `source/`:
+  [`mirai ui` and `mirai scene`](references/api.md#mirai-ui-and-mirai-scene).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).
+- Letting a cheap model play with few tokens, finding bugs with monitors or a bot with no model,
+  and a repro of a run as a scenario: the `playtest` plugin, `play.observe`, `play.qa.*` and
+  `play.explore` in [Play](references/methods.md#play).
 - Writing a gameplay test once as a file and playing it again after every change, from the API
-  or from CI: [scenarios](references/methods.md#scenarios),
+  or from CI: [scenarios](../../../docs/game/testing/scenario.md),
   [`mirai play test`](references/api.md#mirai-play-test).
 - Values of entities at past ticks without changing the game, and whether replaying the past
   repeats it (first tick and field that differ): [`play.history`](references/methods.md#play).
 - Capturing the world without UI and comparing it with a reference:
   [`mirai capture`](references/api.md#mirai-capture); measuring PNGs, cropping them, enlarging
-  them or reading their pixels: [`mirai image`](references/image.md).
+  them or reading their pixels: [`mirai image`](references/image.md#comparing-images-mirai-image).
 - Console text, validation and build errors, and the problems of each world (which entity failed,
   why and how to fix it) after a failure:
   [`engine.diagnostics`](references/methods.md#server-and-execution).
-- What a method does and what its schema does not say: [catalog](references/methods.md).
+- What a method does and what its schema does not say, by area of the catalog:
+  [server and execution](references/methods.md#server-and-execution),
+  [editor and viewport](references/methods.md#editor-and-viewport),
+  [collision](references/methods.md#collision), [cinematics](references/methods.md#cinematics),
+  [ragdoll](references/methods.md#ragdoll), [interfaces](references/methods.md#interfaces),
+  [painting and placement](references/methods.md#painting-and-placement),
+  [profiling](references/methods.md#profiling), [history](references/methods.md#history),
+  [scene](references/methods.md#scene), [spatial queries](references/methods.md#spatial-queries),
+  [editor documents](references/methods.md#editor-documents), [Play](references/methods.md#play),
+  [simulation](references/methods.md#simulation), [saves](references/methods.md#saves),
+  [build](references/methods.md#build), [project](references/methods.md#project),
+  [prefabs](references/methods.md#prefabs),
+  [components and assets](references/methods.md#components-and-assets),
+  [graphics and settings](references/methods.md#graphics-and-settings),
+  [input](references/methods.md#input),
+  [material programs](references/methods.md#material-programs),
+  [collaboration](references/methods.md#collaboration),
+  [project panels](references/methods.md#project-panels) and [AI](references/methods.md#ai).
   The animation ones are in `mirai-animation`
-  ([animation-api.md](../mirai-animation/references/animation-api.md)); the AI ones, in
-  `mirai-editor` ([ai-tasks.md](../mirai-editor/references/ai-tasks.md#api-methods)).
+  ([animation-api.md](../mirai-animation/references/animation-api.md#animation-api-methods)); the
+  AI ones, in `mirai-editor` ([ai-tasks.md](../mirai-editor/references/ai-tasks.md#api-methods)).
 - Concurrency, transactions and undo:
   [protocol](references/api.md#concurrency-transactions-and-undo).
 - AI turns and their header: [context](references/api.md#ai-turn-context) and
-  [change review](../mirai-editor/references/ai-review.md).
+  [change sets](../mirai-editor/references/ai-review.md#change-sets) and
+  [finish, revert and retry](../mirai-editor/references/ai-review.md#finish-revert-and-retry).
 - Methods of a plugin:
   [providers](../mirai-editor/references/extensions.md#api-methods).
 - Profiling an open editor, and where the seconds of a load or a Play start went:
   [profiling](references/methods.md#profiling).
 - Opening the editor and its arguments: [editor](../mirai-editor/references/editor.md#arguments).
+- Detecting regressions in how well a cold agent uses the API (the tasks of `tests/agent_tasks/`,
+  a table per task and model): [`scripts/agent_tasks.py`](../../../scripts/agent_tasks.py).
 
 ## Workflow
 
@@ -65,7 +101,8 @@ difference with the catalog, it rules.
 1. Open it with `mirai edit` (window or manual mode and port per
    [arguments](../mirai-editor/references/editor.md#arguments)) or, without a window and in the
    background, with `mirai session start [project] --dev`, on a free port that is never 7940
-   unless `--api-port` names one; `mirai rpc --project <project>` finds the port. If the user's
+   unless `--api-port` names one; `mirai rpc --project <project>` (and `mirai mcp`) finds the port
+   and starts that session when the project has none. If the user's
    windowed editor holds the project, `--copy` opens a session on a fresh copy under its
    `.mirai/tmp/`, whose path it prints; `mirai session stop <copy>` deletes it, and the next
    `--copy` (or `stop --orphans <project>`) deletes the copies a killed run left behind.
@@ -73,18 +110,20 @@ difference with the catalog, it rules.
    project uses; `mirai rpc describe <plugin>` gives those of an area. Before calling a method for
    the first time, `mirai rpc describe <method|prefix>` (several methods at once:
    `mirai rpc describe a b c`): names, params or result fields are not
-   guessed. Read: `scene.inspect` (ids and values), `component.list` (components, fields, ranges
-   and initial values), `asset.list`; a single field with `--select`, and a state that takes time
-   (`build.status`, `play.network.status`) with `--wait-until`.
+   guessed. Read: `scene.inspect` (ids, names, places and the names of the components; the values
+   with `components`), `component.list` (components, fields, ranges
+   and initial values), `asset.list`; a single field with `--select` (`_select` in a call of MCP),
+   and a state that takes time (`play.network.status`) with `--wait-until` (`_wait_until`).
 3. Edit: each edit touches only the fields it names. Edits that succeed or fail together go in
    `scene.batch`. Building or rewriting a group of entities: `scene.write` with a nested document,
    the one `scene.inspect` with `root` gives.
-4. Verify with `scene.inspect` or `editor.capture`; undo with `history.undo`. A method that fails
+4. Verify with `scene.inspect` or `capture`; undo with `history.undo`. A method that fails
    changes nothing.
 5. Debugging a game: `play.history` with `trace` reads what happened at past ticks, `verify`
    finds nondeterminism, and `play.seek` rewinds the run there to step it again.
 6. After changing code of the project (its `game/`, `editor/` or `plugins/`), `build.start` (or
-   `play.start`, which builds first) compiles it and loads it into the running editor: the scene,
+   `play.start`, which builds first) compiles it, answers when it ends with its errors and loads
+   it into the running editor: the scene,
    the Play and the history stay, also with a new or changed component
    ([build](references/methods.md#build)). A large scene is not loaded again for each change.
    `mirai session restart [project]` is only for engine code: it builds and opens another
@@ -98,26 +137,25 @@ difference with the catalog, it rules.
 A person's input has timing and a person looks at the screen; a check that sets actions and reads
 positions misses both.
 
-1. Give devices, not actions, when the test is about how input plays: `segments` of `play.input`
-   or `play.step` go through the path of real input, so taps, holds, double-press windows and
-   thresholds of the actions see them. Each press has its own length: one tick and three ticks are
-   different inputs.
-   - A click: `[{"ticks": 3, "mouse_buttons": ["Left"]}, {"ticks": 1}]`.
+1. Give devices, not actions, when the test is about how input plays: `segments` of `play.step`
+   go through the path of real input, so taps, holds, double-press windows and thresholds of the
+   actions see them. Each press has its own length: one tick and three ticks are different inputs.
+   - A click: `[{"for": 3, "mouse_buttons": ["Left"]}, {"for": 1}]`; on a button of the
+     UI, by its name: `{"press": "start"}` in `play.step`.
    - A double click: two presses with a gap inside the game's window,
-     `[{"ticks": 3, "mouse_buttons": ["Left"]}, {"ticks": 5}, {"ticks": 3, "mouse_buttons":
-     ["Left"]}, {"ticks": 1}]`.
-   - A hold: `[{"seconds": 0.8, "keys": ["E"]}, {"ticks": 1}]`; a press shorter than a tick:
+     `[{"for": 3, "mouse_buttons": ["Left"]}, {"for": 5}, {"for": 3, "mouse_buttons":
+     ["Left"]}, {"for": 1}]`.
+   - A hold: `[{"for": "0.8s", "keys": ["E"]}, {"for": 1}]`; a press shorter than a tick:
      `tap_keys`; a chord: the keys in one segment, or the modifier one segment earlier.
    - A look or a turn of the stick: `mouse_delta` (spread over its segment) or `gamepads` with a
      stick, in a segment as long as the motion.
-2. Schedule them with `play.input` and step a few ticks at a time with `play.step` without input,
-   reading `play.view` (or `play.capture`) between steps; or in one call, `play.step` with the
-   `segments` and a `trace` with `view` that reads every tick.
+2. Step a few ticks at a time, reading `play.view` (or `capture`) between steps; or in one call,
+   `play.step` with the `segments` and a `trace` with `view` that reads every tick.
 3. Assert what a person checks: that the game did it (`play.check` on its components) and what is
    seen, with `view` conditions on `follow.distance`, `blend.weight` or `points.0.normalized` and
    `points.0.on_screen`; `until` with them waits for the moment. Look at one image at the moments
    that matter: values can pass while the picture is wrong.
-4. Once the sequence passes, write it as a [scenario](references/methods.md#scenarios) in
+4. Once the sequence passes, write it as a [scenario](../../../docs/game/testing/scenario.md) in
    `tests/scenarios/` instead of a script: the same steps and params, played again with
    `play.scenario.run` or `mirai play test` after each change. A scenario holds one behavior;
    another setup is another file, not a script that runs part of another.
@@ -127,7 +165,8 @@ positions misses both.
 1. `mirai capture [project] --out x.png` with the scene and the camera; without `--reference` it
    measures the image (`stats`).
 2. If it exits with 1, read `validation_messages` and `console` of the JSON before repeating (or
-   `engine.diagnostics`).
+   `engine.diagnostics`). If the image looks wrong, `textures_pending` above 0 is streaming that
+   had not finished, and `instances_drawn` at 0 is a camera that sees nothing.
 3. Against a reference: `--reference r.png --threshold 0.95` (SSIM); `mirai image diff
    --out diff.png` shows where it differs.
 
@@ -137,6 +176,7 @@ positions misses both.
    [plugin provider](../mirai-editor/references/extensions.md#api-methods), with flat structs
    for params and result ([conventions](references/api.md#method-conventions)). The `summary` is
    one sentence about what it is for; what each field is goes in its `label=`, without commas.
+   A field that only bounds how much it answers takes the `clamp` tag.
 2. If the handler writes the result by hand, declare its shape with `result=R` and
    `writes_result=true` (`list`, `any` and `key=` in the tags) and test what is written with
    `api.result_mismatch`; `params_schema` for params read by hand and `result_schema` written by
@@ -148,15 +188,27 @@ positions misses both.
 
 ## Invariants
 
+- A method acts on the entity it is given: the selection is never a precondition of a method, and
+  a method does not change the selection of the user unless changing it is what it is for.
+- The caller names things as a person does: an entity by its name, a path, an id or a handle,
+  in every param that takes one (`entity`, or its role: `parent`, `target`...), and an asset by its
+  path. The engine resolves them and a name that fits several is an error, never the first match.
+- What is written for the API is taken as it can only be meant, in one place, never per method
+  ([conventions](references/api.md#method-conventions)); saved assets and binary data are read
+  exactly.
 - All handlers run in the main thread between frames, one at a time. One that advances frames
-  (`engine.step`, `editor.capture`, `editor.input`, `ai.task`, `play.step`, `profile.capture`)
-  holds the server meanwhile.
+  (`engine.step`, `capture`, `editor.input`, `ai.task`, `play.step`, `profile.capture`) or waits
+  for a job (`build.start`, `play.start`, `asset.import`) holds the server meanwhile; the editor
+  goes on drawing, and a handler finishes what it asks of later frames before answering.
+- What changes on disk is the editor's at the next call: assets are read again and shaders
+  published, whoever wrote them (`assets_watch.odin`, `api_disk_sync`).
 - A scene edit is a transaction: one undo step or none, the caller's. Beforehand, the user's
   pending gesture is recorded as their own step. `history.undo` undoes only the caller's steps.
 - The caller does not pass revisions: a field edited by two authors keeps the last one's, and the
   user reverts it with the turn's change review or with undo; a replacement of a whole file, the
   same ([protocol](references/api.md#concurrency-transactions-and-undo)).
-- Entities by `core.Id` (16 hexadecimal digits in a string); assets by `Asset_Id` (32).
+- Answers name entities by `core.Id`, or a live one by its handle (`0x` and 16 hexadecimal digits
+  in a string), and assets by `Asset_Id` (32 digits).
 - Methods and their schemas are server data; they are not duplicated by hand elsewhere.
 - Each method belongs to the editor or to the plugin whose provider registers it. MCP lists only
   the editor core (the methods with the `Core` flag: the basics of a scene) and the `call` tool,
@@ -176,43 +228,32 @@ positions misses both.
 
 - `mirai check editor/api` and `mirai check editor`; `mirai test editor/api` covers server, HTTP,
   JSON-RPC, batches, limits, schemas, MCP and the CLI against test methods, not the editor's.
-- Declared results: `mirai test editor/api
-  a_result_the_handler_writes_is_described_by_its_type
-  the_description_of_the_methods_has_the_shape_it_declares`; those of an editor method, with
-  `api_result_shape_expect` in its test (`ai_methods_write_the_results_they_declare`).
-- Writers of a recording (EXR, 16-bit PNG, WAV): `mirai test cook/movie`; its contact sheet:
-  `mirai test cook/image a_sheet_tiles_evenly_spaced_frames_in_order_each_with_its_number`; the
-  held actions of its manifest: `mirai test engine/input
-  a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings`; the Play history:
-  `mirai test editor a_run_goes_to_any_frame_it_played_and_plays_on_from_there
-  a_frame_changed_from_outside_its_input_while_it_plays_does_not_match_when_played_again
-  an_edit_where_a_run_went_back_is_kept_as_a_keyframe_and_drops_the_frames_after_it
-  a_paused_play_resumes_from_its_newest_frame_or_from_where_it_went_back
-  what_the_mouse_does_while_a_play_is_paused_does_not_reach_it_when_it_resumes
-  the_strip_plays_the_past_again_at_the_pace_of_the_clock_with_the_game_paused
-  the_keyframes_of_a_history_fit_its_memory_and_span_its_time
-  a_run_keeps_no_history_when_it_is_off_or_on_the_network
-  the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again
-  verify_says_the_first_tick_and_field_where_playing_the_past_again_differs
-  the_last_play_keeps_its_history_after_stop_until_the_next_play`, and the copy it keeps:
-  `mirai test plugins/physics/runtime
-  a_kept_copy_takes_what_the_simulation_uses_and_copies_back_to_the_same_steps`; the wide image
-  before and after the tonemap, with GPU and validation:
-  `a_recording_reads_its_frames_wide_before_and_after_the_tonemap`; `play.record`, live.
-- The timeline, trace and filmstrip of a step: `mirai test editor
-  a_step_holds_each_segment_for_its_ticks_in_order_with_its_edges_at_its_first
-  a_trace_reads_a_row_before_the_first_tick_every_some_ticks_and_after_the_last
-  a_filmstrip_cell_comes_before_the_first_tick_and_every_every_ticks_around_its_entity`;
-  the input of a person and what the player sees: `mirai test editor
-  play_input_schedules_the_devices_of_a_person_that_the_next_steps_play_tick_by_tick
-  play_view_says_what_the_player_sees_and_where_things_show_on_the_screen`; scenarios:
-  `mirai test editor
-  a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_that_fails
-  a_scenario_step_holds_unless_its_check_fails_or_its_until_runs_out`, and a live run of
-  `mirai play test demo`; and the grid of its
-  cells, `mirai test cook/image
-  a_sheet_of_given_columns_takes_regions_of_frames_black_outside_them`; the filmstrip with a GPU,
-  live.
+  `mirai test <package> --list <file>` prints the tests of a file to pass to `mirai test`.
+- What is written for the API as it can only be meant (params in the singular or plural, a limit
+  past its maximum, the text of an invalid-params error, a param that names an entity, the form of
+  an example): `editor/api/shape_test.odin`; names of a registry: `mirai test std/base`,
+  `std/serial/text_test.odin` (a reader of loose names) and
+  `editor/api_runtime_inspect_test.odin` (a name of a component or a key resolves as it is
+  written or says the nearest).
+- Declared results: `editor/api/schema_test.odin` (a result the handler writes is described by its
+  type; the description of the methods has the shape it declares); those of an editor method, with
+  `api_result_shape_expect` of `editor/api_result_shape_test.odin` in its test, as
+  `editor/ai_api_test.odin` does.
+- Writers of a recording (EXR, 16-bit PNG, WAV): `mirai test cook/movie`; its contact sheet and
+  the grid of its cells: `cook/image/image_test.odin`; the held actions of its manifest:
+  `engine/input/holds_test.odin`; the Play history (any frame a run played, edits where a run went
+  back, memory and span of the keyframes, no history off or on the network, the strip, `verify`
+  naming the first tick and field that differ): `editor/play_history_test.odin` and
+  `editor/api_play_test.odin`; the copy a history keeps: `plugins/physics/runtime/copy_test.odin`;
+  the wide image before and after the tonemap, with GPU and validation:
+  `editor/api_play_record_test.odin`; `play.record`, live.
+- The timeline, trace and filmstrip of a step, what fails with no game, `play.start` again after an
+  edit, the edit API while a game plays, the input of a person, `drive` and what the player sees:
+  `editor/api_play_test.odin` and `editor/api_play_view_test.odin`; scenarios:
+  `editor/api_play_test.odin` and `editor/api_play_scenario_test.odin`, and a live run of
+  `mirai play test demo`; the filmstrip with a GPU, live.
+- What an agent plays with, the monitors, a repro replayed and the bot:
+  `mirai test plugins/playtest/editor`; its filmstrip, live.
 - `mirai image` and the measure of `mirai capture`: `mirai test cook/image`; `mirai capture`
   against a project with GPU and `mirai test tools/mirai` if the CLI changes.
 - `mirai session`: `mirai test tools/mirai` covers options, the free API port, discarding copies
@@ -220,22 +261,19 @@ positions misses both.
   (`tools/mirai/session_test.odin`); `restart`, the build with an open session and
   `stop --orphans` are tested with a real editor.
 - `mirai rpc` (`--select`, `--wait-until`, `describe`): `mirai test tools/mirai` and
-  `mirai test editor/api the_rpc_and_mcp_commands_drive_the_server`, which runs the tool against
-  the test methods.
-- The paths of `editor.capture`: `mirai test editor
-  capture_paths_take_git_bash_drives_and_are_relative_to_the_project
-  a_capture_makes_its_folder_and_says_why_it_cannot_write`.
+  `editor/api/cli_test.odin`, which runs the tool against the test methods.
+- The paths of `capture`: `editor/api_capture_test.odin`; its wait for textures:
+  `host/capture_test.odin`; what it counted, with GPU: `editor/api_viewport_test.odin`.
 - An editor method: the tests of its `editor/api_<topic>_test.odin` with
   `mirai test editor <test...>`; profiling, `editor/profile_test.odin` and the recorder in
-  `std/base` and `std/jobs`, and for loads
-  `mirai test engine/scene a_load_reports_its_phases_and_the_assets_that_finish_after_it`; a
-  plugin method, those of its skill.
-- `large_mcp_images_keep_the_complete_content_with_small_socket_buffers` (`editor/api`) shrinks
-  the receiving socket buffer: run it when touching partial sends.
+  `std/base` and `std/jobs`, and for loads `engine/scene/loading_test.odin`; a plugin method,
+  those of its skill.
+- `editor/api/mcp_test.odin` shrinks the receiving socket buffer for large images: run it when
+  touching partial sends.
 - Live: `mirai session start demo --dev` (`build.start` after changing project code,
   `mirai session restart demo` after changing engine code),
   repeat the change with `mirai rpc ... --project demo` checking `mirai rpc describe`,
-  `scene.inspect`, `history.undo` and `editor.capture`, and `mirai session stop demo`.
+  `scene.inspect`, `history.undo` and `capture`, and `mirai session stop demo`.
 - Live AI attribution: two MCP sessions with different headers over the same entities;
   `ai.status.running` is an array; reverting one keeps the other; the header of a previous turn
   fails; after `finish` reading works and writing fails

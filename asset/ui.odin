@@ -2,6 +2,7 @@ package asset
 
 import "mirai:std/base"
 import "mirai:std/serial"
+import uf "mirai:std/ui_format"
 
 // .ui: a tree of widgets as records.
 //
@@ -16,24 +17,27 @@ import "mirai:std/serial"
 //   fonts       the .font assets the styles name
 //   translations the text of a localized node in the other languages of the game, by its text_id
 //   grid_tracks  the widths of the columns of the grids that name them
+//   tokens       values by name that styles and other files take
+//   token_uses   which values of styles name them
+//   params       the parameters of the widget this file is, and where each goes
 //   text        bulk u8: the texts of nodes and translations, UTF-8, by offset and length
 //
-// A component may name another .ui (widget): its template is the tree of that
-// file, which joins the records when they are loaded.
+// A component names another .ui, once: nodes are uses of the widget that file
+// is, and a style or a token can come from it. What a use expands into joins
+// the records when they are loaded; no file holds it.
 //
 // The rows are the records of ui.Tree_Data: the ui package declares and
-// loads them, and this one stores them as it does any typed table. A program
+// loads them, and this one stores them as it does any typed table. What the
+// structure of both is judged by is in std/ui_format. A program
 // that links both reads and writes the file: runtime.ui_tree_document and
 // runtime.ui_tree_view.
 
 UI_VERSION :: 5
-UI_OLDEST :: UI_VERSION
 
 UI_TABLE_NODES :: "nodes"
 UI_TABLE_STYLES :: "styles"
 UI_TABLE_VARIANTS :: "variants"
 UI_TABLE_COMPONENTS :: "components"
-UI_TABLE_COMPONENT_NODES :: "component_nodes"
 UI_TABLE_OVERRIDES :: "overrides"
 UI_TABLE_IMAGES :: "images"
 UI_TABLE_ANIMS :: "anims"
@@ -45,37 +49,26 @@ UI_TABLE_FONTS :: "fonts"
 UI_TABLE_STYLE_INFOS :: "style_infos"
 UI_TABLE_TRANSLATIONS :: "translations"
 UI_TABLE_GRID_TRACKS :: "grid_tracks"
+UI_TABLE_TOKENS :: "tokens"
+UI_TABLE_TOKEN_USES :: "token_uses"
+UI_TABLE_PARAMS :: "params"
 UI_TABLE_TEXT :: "text"
-
-// As ui.TREE_DEPTH and ui.TREE_CLIP_TRACKS: the limits of the tree the records are built into.
-UI_TREE_DEPTH :: 32
-UI_CLIP_TRACKS :: 16
 
 // The fields of the records that refer to other rows, read by name whatever
 // the layout of the file.
 @(private="file") Ui_String_Links :: struct {offset,length:u32}
 @(private="file") Ui_Layout_Links :: struct {tracks:u16}
-@(private="file") Ui_Node_Links :: struct {kind:u8,parent:i32,style,image,anims,component:u16,component_fields:u32,name:[64]u8 `mirai:"text"`,text:Ui_String_Links,layout:Ui_Layout_Links}
+@(private="file") Ui_Node_Links :: struct {kind:u8,parent:i32,style,image,anims,component:u16,component_fields:u32,name:[64]u8 `mirai:"text"`,text:Ui_String_Links,layout:Ui_Layout_Links,flags:u16}
 @(private="file") Ui_Translation_Links :: struct {text:Ui_String_Links}
-@(private="file") Ui_Component_Links :: struct {first,count:u32,name:[64]u8 `mirai:"text"`,widget:base.Asset_Id}
+@(private="file") Ui_Component_Links :: struct {name:[64]u8 `mirai:"text"`,widget:base.Asset_Id}
 @(private="file") Ui_Override_Links :: struct {instance:u32,node:[64]u8 `mirai:"text"`,fields:u32,values:Ui_Node_Links}
 @(private="file") Ui_Font_Links :: struct {font:u8}
 @(private="file") Ui_Font_Row :: struct {font:base.Asset_Id}
 @(private="file") Ui_Style_Links :: struct {text:Ui_Font_Links}
 @(private="file") Ui_Patch_Links :: struct {values:Ui_Style_Links}
 @(private="file") Ui_Variant_Links :: struct {style:u16,patch:Ui_Patch_Links}
-@(private="file") Ui_Style_Info_Links :: struct {base:u16}
+@(private="file") Ui_Style_Info_Links :: struct {from:u16}
 
-// As ui.FONT_TREE and ui.FONT_CAPACITY: a style font from UI_FONT_TREE on is a
-// row of fonts; below UI_FONT_CAPACITY, a font of the context.
-UI_FONT_TREE :: 16
-UI_FONT_CAPACITY :: 16
-// As ui.node_kind_holds: Box, Scroll, Switcher, List, Tooltip, Tabs, Popup, Modal, Context_Menu and Radial.
-@(private="file") ui_holds :: proc "contextless" (kind:u8) -> bool {return kind==0 || kind==8 || kind==9 || kind==10 || kind==17 || kind>=22 && kind<=26}
-@(private="file") UI_KIND_COMPONENT :: 7
-@(private="file") UI_KIND_LIST :: 10
-// As ui.NODE_FIELDS_UNKNOWN.
-@(private="file") UI_FIELDS_UNKNOWN :: ~u32(0xffff)
 @(private="file") Ui_Anim_Links :: struct {kind:u8,first,count:u32}
 @(private="file") Ui_Track_Links :: struct {first_key,key_count:u32}
 @(private="file") Ui_Key_Time :: struct {time:f32}
@@ -83,7 +76,7 @@ UI_FONT_CAPACITY :: 16
 
 // Whether the records of a .ui are a tree that can be built (ui.tree_load
 // asks the same): the nodes come in pre-order under boxes, no deeper than
-// UI_TREE_DEPTH, and a List holds one node; a node built names a style, an
+// uf.TREE_DEPTH, and a List holds one node; a node built names a style, an
 // image, a set of animations, a text and grid tracks that exist; a clip names
 // tracks and a track keys that exist, in time order; a sequence or a parallel
 // plays animations of earlier rows; the clips together name no more tracks
@@ -91,7 +84,7 @@ UI_FONT_CAPACITY :: 16
 // names animations that exist. The values themselves (enums, numbers, texts)
 // are for whoever checks them against the schema.
 ui_check :: proc(a:^Asset,types:^Types) -> bool {
-    if kind_check(a,KIND_UI,UI_OLDEST,UI_VERSION)!=.None {return false}
+    if kind_check(a,KIND_UI,UI_VERSION)!=.None {return false}
     rows :: proc(a:^Asset,types:^Types,name:string,$T:typeid) -> (list:[]T,ok:bool) {
         if _,found:=asset_table(a,name);!found {return nil,true}
         error:Error
@@ -109,7 +102,6 @@ ui_check :: proc(a:^Asset,types:^Types) -> bool {
     parts:=rows(a,types,UI_TABLE_PARTS,u16) or_return
     sets:=rows(a,types,UI_TABLE_ANIM_SETS,Ui_Set_Links) or_return
     components:=rows(a,types,UI_TABLE_COMPONENTS,Ui_Component_Links) or_return
-    component_nodes:=rows(a,types,UI_TABLE_COMPONENT_NODES,Ui_Node_Links) or_return
     overrides:=rows(a,types,UI_TABLE_OVERRIDES,Ui_Override_Links) or_return
     variants:=rows(a,types,UI_TABLE_VARIANTS,Ui_Variant_Links) or_return
     styled:=rows(a,types,UI_TABLE_STYLES,Ui_Style_Links) or_return
@@ -120,19 +112,17 @@ ui_check :: proc(a:^Asset,types:^Types) -> bool {
     text,grids:=u64(count(a,UI_TABLE_TEXT)),count(a,UI_TABLE_GRID_TRACKS)
     for t in translations {if !ui_inside(t.text,text) {return false}}
     for font in font_rows {if font.font=={} {return false}}
-    font_ok :: proc "contextless" (font:u8,fonts:int) -> bool {return font<UI_FONT_CAPACITY || font>=UI_FONT_TREE && int(font-UI_FONT_TREE)<fonts}
-    for variant in variants {if int(variant.style)>=max(styles,1) || !font_ok(variant.patch.values.text.font,fonts) {return false}}
-    for style in styled {if !font_ok(style.text.font,fonts) {return false}}
-    // A style overrides another style, not itself.
+    for variant in variants {if int(variant.style)>=max(styles,1) || !uf.style_font_exists(variant.patch.values.text.font,fonts) {return false}}
+    for style in styled {if !uf.style_font_exists(style.text.font,fonts) {return false}}
     if len(infos)>styles {return false}
-    for info,row in infos {if int(info.base)>styles || int(info.base)==row+1 {return false}}
-    if !ui_components_check(nodes,component_nodes,components,overrides,styles,images,len(sets),text,grids) {return false}
+    for info in infos {if int(info.from)>len(components) {return false}}
+    if !ui_components_check(nodes,components,overrides,styles,images,len(sets),text,grids) {return false}
     if len(anims)>=int(max(u16)) {return false}
     clip_tracks,clip_keys,group_parts:=0,0,0
     for anim,at in anims {
-        switch anim.kind {
-        case 0: // Clip
-            if u64(anim.first)+u64(anim.count)>u64(len(tracks)) || anim.count>UI_CLIP_TRACKS {return false}
+        switch uf.Anim_Kind(anim.kind) {
+        case .Clip:
+            if u64(anim.first)+u64(anim.count)>u64(len(tracks)) || anim.count>uf.TREE_CLIP_TRACKS {return false}
             clip_tracks+=int(anim.count)
             for track in tracks[anim.first:][:anim.count] {
                 if u64(track.first_key)+u64(track.key_count)>u64(len(keys)) {return false}
@@ -142,7 +132,7 @@ ui_check :: proc(a:^Asset,types:^Types) -> bool {
                 }
                 clip_keys+=len(run)
             }
-        case 1,2: // Sequence, Parallel
+        case .Sequence,.Parallel:
             if u64(anim.first)+u64(anim.count)>u64(len(parts)) {return false}
             group_parts+=int(anim.count)
             for part in parts[anim.first:][:anim.count] {
@@ -168,117 +158,43 @@ ui_check :: proc(a:^Asset,types:^Types) -> bool {
 ui_inside :: proc "contextless" (s:Ui_String_Links,text:u64) -> bool {return u64(s.offset)+u64(s.length)<=text}
 
 @(private="file")
-Ui_Structure :: struct {
-    component_nodes:[]Ui_Node_Links,
-    components:[]Ui_Component_Links,
-    overrides:[]Ui_Override_Links,
-    matched:[]bool,
-    stack:[UI_TREE_DEPTH]u16,
-    styles,images,sets,grids,count:int,
-    text:u64,
-}
-@(private="file")
-ui_path :: proc(out:[]u8,prefix,name:string) -> (string,bool) {
-    length:=len(prefix)+len(name)+(1 if prefix!="" && name!="" else 0)
-    if length>=len(out) {return "",false}
-    copy(out,prefix);at:=len(prefix)
-    if prefix!="" && name!="" {out[at]='/';at+=1}
-    copy(out[at:],name)
-    return string(out[:length]),true
-}
-@(private="file")
-ui_link_patch :: proc(node:^Ui_Node_Links,fields:u32,values:^Ui_Node_Links) {
-    if fields&(1<<0)!=0 {node.text=values.text}
-    if fields&(1<<1)!=0 {node.style=values.style}
-    if fields&(1<<2)!=0 {node.layout=values.layout}
-    if fields&(1<<4)!=0 {node.image=values.image}
-    if fields&(1<<5)!=0 {node.anims=values.anims}
-}
-@(private="file")
-ui_structure_range :: proc(s:^Ui_Structure,nodes:[]Ui_Node_Links,parent_depth:int,prefix,local_prefix:string,instance:i32,component_depth:int,root_patch:^Ui_Node_Links=nil) -> bool {
-    subtree:=make([]i32,len(nodes),context.temp_allocator)
-    depths:=make([]int,len(nodes),context.temp_allocator)
-    // instance -2: a template checked on its own, whose nodes are not built as they are.
-    built:=instance!=-2
-    for &source,at in nodes {
-        if source.parent<-1 || int(source.parent)>=at {return false}
-        if source.parent>=0 && (!ui_holds(nodes[source.parent].kind) || int(source.parent+subtree[source.parent])+1!=at) {return false}
-        // A List holds one node: the first after it.
-        if built && source.parent>=0 && nodes[source.parent].kind==UI_KIND_LIST && int(source.parent)+1!=at {return false}
-        if built && source.kind==UI_KIND_LIST && (at+1>=len(nodes) || int(nodes[at+1].parent)!=at) {return false}
-        for ancestor:=source.parent;ancestor>=0;ancestor=nodes[ancestor].parent {subtree[ancestor]+=1}
-        depth:=depths[source.parent]+1 if source.parent>=0 else parent_depth
-        if depth>=UI_TREE_DEPTH || source.component_fields&UI_FIELDS_UNKNOWN!=0 {return false}
-        name:=serial.text_field(source.name[:])
-        local_buffer,path_buffer:[64]u8
-        local,ok:=ui_path(local_buffer[:],local_prefix,name)
-        path_name:=name if at!=0 || root_patch==nil else ""
-        path,path_ok:=ui_path(path_buffer[:],prefix,path_name)
-        if !ok || !path_ok {return false}
-        if source.kind==UI_KIND_COMPONENT {
-            if source.component==0 || int(source.component)>len(s.components) || name=="" || component_depth>=UI_TREE_DEPTH {return false}
-            for active in s.stack[:component_depth] {if active==source.component {return false}}
-            s.stack[component_depth]=source.component
-            component:=s.components[source.component-1]
-            // The nodes of a widget are in its file: what overrides them is checked when the two load together.
-            if component.widget!={} {
-                for &override,i in s.overrides {if instance==-1 && override.instance==u32(at) {s.matched[i]=true}}
-                s.count+=1
-                depths[at]=depth
-                continue
-            }
-            top:=i32(at) if instance==-1 else instance
-            next_local:=local if instance>=0 else ""
-            if !ui_structure_range(s,s.component_nodes[component.first:][:component.count],depth,path,next_local,top,component_depth+1,&source) {return false}
-        } else {
-            if source.component!=0 {return false}
-            node:=source
-            if at==0 && root_patch!=nil {ui_link_patch(&node,root_patch.component_fields,root_patch)}
-            if instance>=0 {
-                for &override,i in s.overrides {
-                    if override.instance!=u32(instance) || serial.text_field(override.node[:])!=local {continue}
-                    ui_link_patch(&node,override.fields,&override.values)
-                    s.matched[i]=true
-                }
-            }
-            if int(node.style)>=max(s.styles,1) || int(node.image)>s.images || int(node.anims)>s.sets {return false}
-            if built && (!ui_inside(node.text,s.text) || int(node.layout.tracks)>s.grids) {return false}
-            s.count+=1
-            if s.count>65535 {return false}
-        }
-        depths[at]=depth
-    }
-    return true
-}
-@(private="file")
-ui_components_check :: proc(nodes,component_nodes:[]Ui_Node_Links,components:[]Ui_Component_Links,overrides:[]Ui_Override_Links,styles,images,sets:int,text:u64,grids:int) -> bool {
+ui_components_check :: proc(nodes:[]Ui_Node_Links,components:[]Ui_Component_Links,overrides:[]Ui_Override_Links,styles,images,sets:int,text:u64,grids:int) -> bool {
     if len(components)>=int(max(u16)) || len(nodes)>65535 {return false}
     for &component,i in components {
         name:=serial.text_field(component.name[:])
-        if name=="" || len(name)>=len(component.name) {return false}
+        if name=="" || len(name)>=len(component.name) || component.widget=={} {return false}
         for &earlier in components[:i] {if serial.text_field(earlier.name[:])==name {return false}}
-        if component.widget!={} {
-            if component.count!=0 {return false}
-            continue
-        }
-        if component.count==0 || u64(component.first)+u64(component.count)>u64(len(component_nodes)) {return false}
-        run:=component_nodes[component.first:][:component.count]
-        if run[0].kind!=0 || run[0].parent!=-1 {return false}
-        for node,at in run {if at>0 && node.parent<0 {return false}}
     }
     for &override in overrides {
-        if int(override.instance)>=len(nodes) || nodes[override.instance].kind!=UI_KIND_COMPONENT || override.fields&UI_FIELDS_UNKNOWN!=0 {return false}
+        if int(override.instance)>=len(nodes) || uf.Node_Kind(nodes[override.instance].kind)!=.Component || override.fields&uf.NODE_FIELDS_UNKNOWN!=0 {return false}
         name:=serial.text_field(override.node[:])
         if name=="" || len(name)>=len(override.node) {return false}
     }
-    s:=Ui_Structure{component_nodes=component_nodes,components=components,overrides=overrides,matched=make([]bool,len(overrides),context.temp_allocator),styles=styles,images=images,sets=sets,grids=grids,text=text}
-    for component,i in components {
-        if component.widget!={} {continue}
-        s.count=0;s.stack[0]=u16(i+1)
-        if !ui_structure_range(&s,component_nodes[component.first:][:component.count],0,"","",-2,1) {return false}
+    subtree:=make([]i32,len(nodes),context.temp_allocator)
+    depths:=make([]int,len(nodes),context.temp_allocator)
+    for &source,at in nodes {
+        if source.parent<-1 || int(source.parent)>=at {return false}
+        kind:=uf.Node_Kind(source.kind)
+        if source.parent>=0 {
+            holder:=uf.Node_Kind(nodes[source.parent].kind)
+            if !uf.node_kind_holds(holder) && holder!=.Component || int(source.parent+subtree[source.parent])+1!=at {return false}
+            // A List holds one node: the first after it.
+            if holder==.List && int(source.parent)+1!=at {return false}
+        }
+        if kind==.List && (at+1>=len(nodes) || int(nodes[at+1].parent)!=at) {return false}
+        for ancestor:=source.parent;ancestor>=0;ancestor=nodes[ancestor].parent {subtree[ancestor]+=1}
+        depth:=depths[source.parent]+1 if source.parent>=0 else 0
+        if depth>=uf.TREE_DEPTH || source.component_fields&uf.NODE_FIELDS_UNKNOWN!=0 {return false}
+        depths[at]=depth
+        name:=serial.text_field(source.name[:])
+        if len(name)>=len(source.name) {return false}
+        if kind==.Component {
+            // Its nodes, what overrides them and the Slot that takes what it holds are checked when the two load together.
+            if source.component==0 || int(source.component)>len(components) || name=="" {return false}
+            continue
+        }
+        if source.component!=0 || int(source.style)>=max(styles,1) || int(source.image)>images || int(source.anims)>sets {return false}
+        if !ui_inside(source.text,text) || int(source.layout.tracks)>grids {return false}
     }
-    s.count=0
-    if !ui_structure_range(&s,nodes,0,"","",-1,0) {return false}
-    for found in s.matched {if !found {return false}}
     return true
 }

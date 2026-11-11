@@ -21,7 +21,7 @@ ASSET_COMMANDS :: [?]Asset_Command{
     {"ls","ls <folder> [--cache <file>]","Assets of a folder: id, kind, bytes, dependencies and path",asset_ls},
     {"deps","deps <file> [--root <folder>] [--all|--users]","Dependencies of an asset, or the assets that depend on it",asset_deps},
     {"verify","verify <file>...","Checks the container, hash, tables and the rules of the kind",asset_verify},
-    {"dump","dump <file> [--schema]","The whole asset as JSON",asset_dump},
+    {"dump","dump <file> [--schema|--textconv]","The whole asset as JSON, or as the text git diffs",asset_dump},
     {"get","get <file> <path>","A table, a row or a value as JSON",asset_get},
     {"set","set <file> <path>=<value>...","Changes values and rewrites the file",asset_set},
     {"diff","diff <a> <b>","Differences by row key and field path",asset_diff},
@@ -48,6 +48,21 @@ misuse :: proc(command:string) -> int {
         if candidate.name==command {fmt.eprintfln("Usage: mirai asset %s",candidate.usage)}
     }
     return 2
+}
+
+// argument_unknown with the usage of the subcommand.
+@(private="file")
+unknown :: proc(command,arg:string) -> int {
+    argument_refuse(fmt.tprintf("asset %s",command),arg)
+    return misuse(command)
+}
+
+@(private="file")
+positionals :: proc(command:string,args:[]string) -> int {
+    for arg in args {
+        if !positional(arg) {return unknown(command,arg)}
+    }
+    return 0
 }
 
 @(private="file")
@@ -116,29 +131,6 @@ locate_text :: proc(location:asset.Location,error:asset.Locate_Error) -> string 
 }
 
 @(private="file")
-code_text :: proc(code:serial.Text_Error_Code) -> string {
-    switch code {
-    case .None: return ""
-    case .Syntax: return "malformed JSON"
-    case .Expected_Object: return "expected an object"
-    case .Expected_Array: return "expected a list"
-    case .Expected_String: return "expected a quoted text"
-    case .Expected_Number: return "expected a number"
-    case .Expected_Integer: return "expected an integer"
-    case .Expected_Bool: return "expected true or false"
-    case .Unknown_Field: return "the type has no such field"
-    case .Unknown_Member: return "the enum or bit set has no such member"
-    case .Out_Of_Range: return "the number does not fit the field"
-    case .Too_Many_Elements: return "more elements than the array holds"
-    case .Text_Too_Long: return "the text does not fit the field"
-    case .Invalid_Id: return "malformed id"
-    case .Too_Deep: return "too many nested levels"
-    case .Invalid_Type: return "the type is not in the schema"
-    }
-    return "invalid text"
-}
-
-@(private="file")
 rule_text :: proc(rule:asset.Text_Rule) -> string {
     switch rule {
     case .None: return ""
@@ -188,6 +180,7 @@ write_kind :: proc(w:^serial.Writer,kind:asset.Fourcc) {
 }
 
 asset_info :: proc(args:[]string) -> int {
+    if code:=positionals("info",args);code!=0 {return code}
     if len(args)!=1 {return misuse("info")}
     a:asset.Asset
     if error:=asset.asset_load(&a,args[0]);error!=.None {return failed("info",args[0],error_text(error))}
@@ -238,7 +231,8 @@ asset_ls :: proc(args:[]string) -> int {
     for i:=0;i<len(args);i+=1 {
         switch {
         case args[i]=="--cache" && i+1<len(args): i+=1;cache=args[i]
-        case folder=="" && !strings.has_prefix(args[i],"--"): folder=args[i]
+        case !positional(args[i]): return unknown("ls",args[i])
+        case folder=="": folder=args[i]
         case: return misuse("ls")
         }
     }
@@ -282,7 +276,8 @@ asset_deps :: proc(args:[]string) -> int {
         case args[i]=="--root" && i+1<len(args): i+=1;folder=args[i]
         case args[i]=="--all": all=true
         case args[i]=="--users": users=true
-        case file=="" && !strings.has_prefix(args[i],"--"): file=args[i]
+        case !positional(args[i]): return unknown("deps",args[i])
+        case file=="": file=args[i]
         case: return misuse("deps")
         }
     }
@@ -320,27 +315,26 @@ asset_deps :: proc(args:[]string) -> int {
 }
 
 // Everything that can be checked of a file without knowing who will use it,
-// and the rules of its kind when it is one the engine defines. notice: what
-// to tell of a file that reads, such as a version older than the build's.
+// and the rules of its kind when it is one the engine defines.
 @(private)
-verify :: proc(path:string,types:^asset.Types) -> (reason,notice:string) {
-    reason=verify_file(path,types,&notice)
-    return
-}
-
-@(private="file")
-verify_file :: proc(path:string,types:^asset.Types,notice:^string) -> string {
+verify :: proc(path:string,types:^asset.Types) -> string {
     a:asset.Asset
     if error:=asset.asset_load(&a,path);error!=.None {return error_text(error)}
     defer asset.asset_close(&a)
+    return verify_asset(&a,path,types)
+}
+
+// path: where the asset is, for what it says of a version this build does not read.
+@(private="file")
+verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
     if !asset.blob_verify_hash(&a.blob) {return error_text(.Hash)}
     for &table in a.tables {
         for _,column in table.columns {
-            if _,error:=asset.asset_column_data(&a,&table,column);error!=.None {return fmt.tprintf("table %s: a chunk cannot be decompressed",table.name)}
+            if _,error:=asset.asset_column_data(a,&table,column);error!=.None {return fmt.tprintf("table %s: a chunk cannot be decompressed",table.name)}
         }
     }
     doc:asset.Document
-    if error:=asset.document_from_asset(&doc,&a);error!=.None {return error_text(error)}
+    if error:=asset.document_from_asset(&doc,a);error!=.None {return error_text(error)}
     defer asset.document_destroy(&doc)
     if asset.document_check(&doc)!=.None {return "the tables contradict each other"}
     derived:[dynamic]base.Asset_Id
@@ -358,43 +352,41 @@ verify_file :: proc(path:string,types:^asset.Types,notice:^string) -> string {
             }
         }
     }
-    // An asset this build does not read says how to make it again; an older one it migrates, how
-    // to write the current version.
-    if known,found:=asset.kind_info(a.blob.header.kind);found && known.version!=0 {
-        if asset.kind_age(a.blob.header.kind_version,known.oldest,known.version)>=.Too_Old {return asset.version_message(&a,types,path,allocator=context.temp_allocator)}
-        notice^=asset.version_notice(a.blob.header.kind_version,known,context.temp_allocator)
+    // An asset this build does not read says how to make it again.
+    if known,found:=asset.kind_info(a.blob.header.kind);found && known.version!=0 && a.blob.header.kind_version!=known.version {
+        return asset.version_message(a,types,path,allocator=context.temp_allocator)
     }
     switch a.blob.header.kind {
     case asset.KIND_MESH:
-        view,error:=asset.mesh_view(&a,types)
+        view,error:=asset.mesh_view(a,types)
         if error!=.None {return "mesh: counts or ranges outside their tables"}
         if !asset.mesh_check_indices(view) {return "mesh: an index, slot, weight or position out of range"}
     case asset.KIND_TEXTURE:
-        if _,error:=asset.texture_view(&a,types);error!=.None {return "texture: inconsistent size, format, layers or levels"}
+        if _,error:=asset.texture_view(a,types);error!=.None {return "texture: inconsistent size, format, layers or levels"}
     case asset.KIND_MATERIAL:
-        if _,error:=asset.material_view(&a,types);error!=.None {return "material: a value out of range or an invalid name"}
+        if _,error:=asset.material_view(a,types);error!=.None {return "material: a value out of range or an invalid name"}
     case asset.KIND_SCENE,asset.KIND_PREFAB:
-        view,error:=asset.scene_view(&a,types)
+        view,error:=asset.scene_view(a,types)
         if error!=.None {return "scene: a component table names rows that do not exist or are out of order"}
-        if !asset.scene_view_check(view) {return "scene: repeated ids, missing or cyclic parents, or prefab records without an entity"}
+        if asset.scene_view_check(view)!=.None {return "scene: repeated ids, missing or cyclic parents, or prefab records without an entity"}
     case asset.KIND_ANIMATION:
-        if _,error:=asset.animation_view(&a,types);error!=.None {return "animation: an invalid range, key or name"}
+        if _,error:=asset.animation_view(a,types);error!=.None {return "animation: an invalid range, key or name"}
     case asset.KIND_SKELETON:
-        if _,error:=asset.skeleton_view(&a,types);error!=.None {return "skeleton: an invalid hierarchy, transform or bone reference"}
+        if _,error:=asset.skeleton_view(a,types);error!=.None {return "skeleton: an invalid hierarchy, transform or bone reference"}
     case asset.KIND_SOUND:
-        if _,error:=asset.sound_view(&a,types);error!=.None {return "sound: inconsistent channels, sample rate, lossless data or file"}
+        if _,error:=asset.sound_view(a,types);error!=.None {return "sound: inconsistent channels, sample rate, lossless data or file"}
     case asset.KIND_UI:
-        if !asset.ui_check(&a,types) {return "interface: nodes out of preorder or without a box, or a style, image, animation, track or key that does not exist"}
+        if !asset.ui_check(a,types) {return "interface: nodes out of preorder or without a box, or a style, image, animation, track or key that does not exist"}
     case asset.KIND_FRACTURE:
-        if _,error:=asset.fracture_view(&a,types);error!=.None {return "fracture: invalid pieces, geometry, connections, hierarchy or cluster hulls"}
+        if _,error:=asset.fracture_view(a,types);error!=.None {return "fracture: invalid pieces, geometry, connections, hierarchy or cluster hulls"}
     case asset.KIND_FONT:
-        if _,error:=asset.font_view(&a,types);error!=.None {return "font: the file is not a TrueType or OpenType font with the outlines it declares"}
+        if _,error:=asset.font_view(a,types);error!=.None {return "font: the file is not a TrueType or OpenType font with the outlines it declares"}
     case asset.KIND_STRINGS:
-        if _,error:=asset.strings_view(&a,types);error!=.None {return "strings: an empty or repeated language or key, or an entry out of order, repeated, or outside the text or the UTF-8"}
+        if _,error:=asset.strings_view(a,types);error!=.None {return "strings: an empty or repeated language or key, or an entry out of order, repeated, or outside the text or the UTF-8"}
     case asset.KIND_PROMPTS:
-        if _,error:=asset.prompts_view(&a,types);error!=.None {return "prompts: a family or an entry that does not exist, a key too many or too few, a part outside its texture, or a repeated entry"}
+        if _,error:=asset.prompts_view(a,types);error!=.None {return "prompts: a family or an entry that does not exist, a key too many or too few, a part outside its texture, or a repeated entry"}
     case asset.KIND_RECORDS:
-        if _,error:=asset.records_view(&a,types);error!=.None {return "records: no type of rows, a row with the id 0, a repeated id or name, a name that is not a word, or a text out of order or outside the UTF-8"}
+        if _,error:=asset.records_view(a,types);error!=.None {return "records: no type of rows, a row with the id 0, a repeated id or name, a name that is not a word, or a text out of order or outside the UTF-8"}
     }
     return ""
 }
@@ -412,36 +404,45 @@ schema_limits :: proc(s:^serial.Schema,type:serial.Type_Index) -> bool {
 }
 
 asset_verify :: proc(args:[]string) -> int {
+    if code:=positionals("verify",args);code!=0 {return code}
     if len(args)==0 {return misuse("verify")}
     types:asset.Types
     asset.types_init(&types)
     bad:=0
     for path in args {
-        reason,notice:=verify(path,&types)
-        switch {
-        case reason!="":
+        if reason:=verify(path,&types);reason!="" {
             bad+=1
             fmt.printfln("FAIL %s: %s",path,reason)
-        case notice!="": fmt.printfln("ok %s: %s",path,notice)
-        case: fmt.printfln("ok %s",path)
+        } else {
+            fmt.printfln("ok %s",path)
         }
     }
     return bad==0?0:1
 }
 
+// --textconv is what git diffs through diff.mirai.textconv: the text of
+// Text_Options.diff, and of a file this build does not read, one line that
+// says why, so that a diff or a log that reaches one goes on.
 asset_dump :: proc(args:[]string) -> int {
     file:=""
     options:asset.Text_Options
     for arg in args {
         switch {
         case arg=="--schema": options.schema=true
-        case file=="" && !strings.has_prefix(arg,"--"): file=arg
+        case arg=="--textconv": options.diff=true
+        case !positional(arg): return unknown("dump",arg)
+        case file=="": file=arg
         case: return misuse("dump")
         }
     }
-    if file=="" {return misuse("dump")}
+    if file=="" || options.schema && options.diff {return misuse("dump")}
     doc:asset.Document
-    if !load("dump",file,&doc) {return 1}
+    if options.diff {
+        if error:=asset.document_load(&doc,file);error!=.None {
+            fmt.printfln("mirai asset dump: %s",error_text(error))
+            return 0
+        }
+    } else if !load("dump",file,&doc) {return 1}
     w:serial.Writer;serial.writer_init(&w)
     if error:=asset.document_text_write(&doc,&w,options);error!=.None {return failed("dump",file,error_text(error))}
     print(&w)
@@ -449,6 +450,7 @@ asset_dump :: proc(args:[]string) -> int {
 }
 
 asset_get :: proc(args:[]string) -> int {
+    if code:=positionals("get",args);code!=0 {return code}
     if len(args)!=2 {return misuse("get")}
     doc:asset.Document
     if !load("get",args[0],&doc) {return 1}
@@ -483,6 +485,7 @@ value_json :: proc(doc:^asset.Document,location:asset.Location,value:string) -> 
 }
 
 asset_set :: proc(args:[]string) -> int {
+    if code:=positionals("set",args);code!=0 {return code}
     if len(args)<2 {return misuse("set")}
     doc:asset.Document
     if !load("set",args[0],&doc) {return 1}
@@ -505,18 +508,20 @@ asset_set :: proc(args:[]string) -> int {
         reader:serial.Text_Reader
         serial.text_reader_init(&reader,text)
         if serial.text_read(&reader,&doc.schema,location.type,location.bytes,location.is_text) {serial.text_end(&reader)}
-        if reader.error.code!=.None {return failed("set",args[0],"%s: %s in '%s' (column %d)",path,code_text(reader.error.code),text,reader.error.offset+1)}
+        if reader.error.code!=.None {return failed("set",args[0],"%s: %s in '%s' (column %d)",path,serial.text_error_words(reader.error.code),text,reader.error.offset+1)}
     }
     if error:=asset.document_save(&doc,args[0]);error!=.None {return failed("set",args[0],error_text(error))}
     return 0
 }
 
 asset_diff :: proc(args:[]string) -> int {
+    if code:=positionals("diff",args);code!=0 {return code}
     if len(args)!=2 {return misuse("diff")}
     a,b:asset.Document
     if !load("diff",args[0],&a) || !load("diff",args[1],&b) {return 2}
     w:serial.Writer;serial.writer_init(&w)
-    count:=asset.document_diff(&a,&b,&w)
+    count,error:=asset.document_diff(&a,&b,&w)
+    if error!=.None {fmt.eprintfln("mirai asset diff: %v",error);return 2}
     print(&w)
     return count==0?0:1
 }
@@ -524,13 +529,14 @@ asset_diff :: proc(args:[]string) -> int {
 // The merge driver of git (merge=mirai: "mirai asset merge %O %A %B"): the
 // result goes into ours, and one line per conflict to stdout. An empty base is
 // a file both sides added. Exit 1 with conflicts, whose values the merge left
-// as ours had them; 2 when a file is not an asset or the result is not valid,
-// and then ours stays as it was.
+// as ours had them; 2 when a file is not an asset or the result is not valid
+// (as mirai asset verify says, when ours was), and then ours stays as it was.
 asset_merge :: proc(args:[]string) -> int {
     files:=make([dynamic]string,context.temp_allocator)
     out:=""
     for i:=0;i<len(args);i+=1 {
         if args[i]=="--out" && i+1<len(args) {out=args[i+1];i+=1;continue}
+        if !positional(args[i]) {return unknown("merge",args[i])}
         append(&files,args[i])
     }
     if len(files)!=3 {return misuse("merge")}
@@ -552,6 +558,14 @@ asset_merge :: proc(args:[]string) -> int {
         if problem:=asset.scene_read(&check,&types,data);problem!=.None {failed("merge",files[1],"the result is not a valid scene: %s",error_text(problem));return 2}
         asset.scene_destroy(&check)
     }
+    // Rows of a kind may name rows of another table by position, which a merge of rows does not
+    // follow: a merge that breaks what ours kept is not written.
+    if before:=verify(files[1],&types);before=="" {
+        merged:asset.Asset
+        if problem:=asset.asset_open(&merged,data);problem!=.None {failed("merge",files[1],"the result does not read: %s",error_text(problem));return 2}
+        defer asset.asset_close(&merged)
+        if reason:=verify_asset(&merged,out,&types);reason!="" {failed("merge",files[1],"the result is not valid: %s",reason);return 2}
+    }
     if serial.file_write_atomic(out,data)!=.None {failed("merge",out,"could not be written");return 2}
     w:serial.Writer;serial.writer_init(&w)
     for conflict in m.conflicts {
@@ -571,6 +585,7 @@ asset_merge :: proc(args:[]string) -> int {
 MANIFEST :: "asset.json"
 
 asset_unpack :: proc(args:[]string) -> int {
+    if code:=positionals("unpack",args);code!=0 {return code}
     if len(args)!=2 {return misuse("unpack")}
     doc:asset.Document
     if !load("unpack",args[0],&doc) {return 1}
@@ -589,6 +604,7 @@ asset_unpack :: proc(args:[]string) -> int {
 }
 
 asset_pack :: proc(args:[]string) -> int {
+    if code:=positionals("pack",args);code!=0 {return code}
     if len(args)!=2 {return misuse("pack")}
     manifest:=join(args[0],MANIFEST)
     text,read_error:=serial.file_read(manifest)
@@ -604,7 +620,7 @@ asset_pack :: proc(args:[]string) -> int {
     problem,ok:=asset.document_text_read(&doc,string(text),loader)
     if !ok {
         line,column:=serial.text_position(string(text),problem.offset)
-        reason:=problem.code!=.None?code_text(problem.code):rule_text(problem.rule)
+        reason:=problem.code!=.None?serial.text_error_words(problem.code):rule_text(problem.rule)
         fmt.eprintfln("mirai asset pack: %s:%d:%d: %s",manifest,line,column,reason)
         return 1
     }

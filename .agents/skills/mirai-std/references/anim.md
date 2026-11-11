@@ -73,6 +73,12 @@ depends on `core:`, `std/base` and `std/math`.
   measured from its own), over what the others blend: a value is added and a rotation is composed
   afterwards. `pose_bone` turns what a pose blends for a target into the local transform of its
   bone, each channel from the rest by its weight.
+- **By bone.** Whoever plays clips on a fixed list of bones says once, by track of the library,
+  which bone each track moves (−1: none): `bones_blend`, `bones_fader_blend` and
+  `bones_blend_additive` accumulate one `Bone_Blend` per bone through that table, with the values
+  of `pose_blend`, `fader_blend` and `pose_blend_additive`, without a search by name or a capacity
+  to run out of; `bone_transform` is the `pose_bone` of a bone. `Pose` stays for targets that are
+  not such a list (any entity, property or slot).
 - **Root motion** (`root.odin`). `clip_root_motion` gives how much the root target moved and turned
   between two positions of the timeline, in clip space; a `Loop` adds a whole pass for each lap.
 
@@ -230,5 +236,8 @@ section: [rigs](anim-rigs.md#verification), [motion](anim-motion.md#verification
 - Hostile cases: `ANIM_HOSTILE_ROUNDS` (skeletons and solvers), `ANIM_BLEND_HOSTILE_ROUNDS` (blend
   spaces) and `ANIM_PROCEDURAL_HOSTILE_ROUNDS`; when changing validation or memory, `--release` and
   20000.
+- The blend by bone against a `Pose`, with tracks in other orders, missing or of another slot:
+  `bones_blend_what_a_pose_blends_for_their_targets`.
 - Benchmarks, optional with `-define:MIRAI_BENCH=true`: `bench_skeletal_two_clips_layer`,
-  `bench_blend_space_sampling`, `bench_procedural_gait_and_chain`.
+  `bench_bones_blend_against_pose`, `bench_blend_space_sampling`,
+  `bench_procedural_gait_and_chain`.

@@ -3,6 +3,7 @@ package editor
 import "core:encoding/json"
 import "core:strings"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:std/base"
 
 // The title an agent gives a conversation. Claude Agent ACP summarizes the
@@ -24,7 +25,7 @@ ai_session_title_update :: proc(s:^Session,worker:^Ai_Worker,value:json.Value) {
     if task==nil || len(title)>len(task.conversation.title) {return}
     c:=&task.conversation
     if title==string(c.title[:c.title_len]) {return}
-    ai_conversation_set_text(c.title[:],&c.title_len,title)
+    ai_store.conversation_set_text(c.title[:],&c.title_len,title)
     base.text_set(task.title[:],title)
     if !task.dirty {task.dirty_sequence=task.transcript.dropped+task.transcript.count}
     task.dirty=true

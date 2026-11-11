@@ -5,22 +5,10 @@ import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-Node_Field :: enum u8 {
-    Text, Style, Layout, Float, Image, Animations, Bindings, Visibility, Variant, Layer, Clip, Block,
-    Values, // index, count, choice, range, limit, delay and particle
-    Action, // action and hold
-    Focus,  // nav, order and flags
-    Drag,   // tag, accepts and ghost
-}
-Node_Fields :: bit_set[Node_Field; u32]
-NODE_FIELDS_UNKNOWN :: ~u32(1<<len(Node_Field)-1) // bits of Node_Fields that name no field
 Tree_Component :: struct {
     name:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
-    first,count:u32, // component_nodes range; parents are relative to this range
-    // A .ui whose tree is the template instead: one Box at its root. Its
-    // records join these when the tree is linked (tree_link); first and
-    // count are then the range they took.
-    widget:base.Asset_Id,
+    first,count:u32, // the range of component_nodes tree_link expanded it into; 0 in a file
+    widget:base.Asset_Id, // the .ui whose one root is the widget; empty only once linked
 }
 Tree_Override :: struct {
     instance:u32, // row in nodes, whose kind is Component
@@ -33,14 +21,30 @@ Tree_Style_Variant :: struct {
     variant:[TREE_NAME_CAPACITY]u8 `mirai:"text"`,
     states:Style_States,
     patch:Style_Patch,
+    own:Style_Keys,       // what it sets itself; none: every value it has, unless inherited
+    inherited:bool,       // kept for a style that extends the one it came from: tree_settle makes it again
+    extends:Style_States, // the states of another rule of its style and variant it starts from
 }
 TREE_EXPANDED_NODES :: 65535
+
+// What of its layout v gives over what node has: what v has as its own, or
+// all of it when v does not say.
+@(private)
+tree_layout_patch :: proc "contextless" (node,v:^Tree_Node) {
+    if v.layout_own=={} {
+        node.layout=v.layout
+        node.layout_own=LAYOUT_KEYS
+        return
+    }
+    for key in v.layout_own&LAYOUT_KEYS {layout_key_copy(&node.layout,&v.layout,key)}
+    node.layout_own+=v.layout_own&LAYOUT_KEYS
+}
 
 @(private)
 tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tree_Node) {
     if .Text in fields {node.text,node.text_id,node.fields=v.text,v.text_id,v.fields}
     if .Style in fields {node.style=v.style}
-    if .Layout in fields {node.layout=v.layout}
+    if .Layout in fields {tree_layout_patch(node,v)}
     if .Float in fields {node.float=v.float}
     if .Image in fields {node.image=v.image}
     if .Animations in fields {node.anims=v.anims}
@@ -120,7 +124,7 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
     defer delete(depths,e.allocator)
     for &source,at in nodes {
         if source.parent<-1 || int(source.parent)>=at {return -1,false}
-        if source.parent>=0 && (!node_kind_holds(nodes[source.parent].kind) || int(source.parent+subtree[source.parent])+1!=at) {return -1,false}
+        if source.parent>=0 && (!node_kind_holds(nodes[source.parent].kind) && nodes[source.parent].kind!=.Component || int(source.parent+subtree[source.parent])+1!=at) {return -1,false}
         for ancestor:=source.parent;ancestor>=0;ancestor=nodes[ancestor].parent {subtree[ancestor]+=1}
         source:=source
         for field in tree_node_texts(&source) {if len(serial.text_field(field))>=len(field) {return -1,false}}
@@ -136,7 +140,7 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
         local,local_ok:=tree_path(local_buffer[:],local_prefix,name)
         if !path_ok || !local_ok {return -1,false}
         if source.kind==.Component {
-            if source.component==0 || int(source.component)>len(e.data.components) || name=="" || component_depth>=TREE_DEPTH {return -1,false}
+            if source.component==0 || int(source.component)>len(e.data.components) || name=="" || component_depth>=TREE_DEPTH || e.data.components[source.component-1].count==0 {return -1,false}
             for active in e.components[:component_depth] {if active==source.component {return -1,false}}
             e.components[component_depth]=source.component
             component:=e.data.components[source.component-1]
@@ -150,6 +154,14 @@ tree_expand_range :: proc(e:^Tree_Expansion,nodes:[]Tree_Node,parent:i32,prefix,
             root,expanded:=tree_expand_range(e,e.data.component_nodes[component.first:][:component.count],destination_parent,path,next_local,top,component_depth+1,&source,next_variant,depth,inner)
             if !expanded {return -1,false}
             maps[at]=root
+            // What the instance holds goes in the Slot of its template, a node
+            // left without one holds what no node can be.
+            if e.output!=nil && at+1<len(nodes) && nodes[at+1].parent==i32(at) {
+                slot:=-1
+                for i in int(root)..<e.count {if .Slot in e.output[i].flags {slot=i}}
+                if slot<0 {return -1,false}
+                maps[at]=i32(slot)
+            }
             continue
         }
         if source.component!=0 {return -1,false}
@@ -186,12 +198,13 @@ tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator) -> (nodes:[]Tree
     if len(data.components)>=int(max(u16)) || len(data.nodes)>TREE_EXPANDED_NODES {return nil,false}
     for &component,i in data.components {
         // A widget names a file the records must be linked with first.
-        if component.widget!={} || component.count==0 || u64(component.first)+u64(component.count)>u64(len(data.component_nodes)) {return nil,false}
+        if component.widget!={} || u64(component.first)+u64(component.count)>u64(len(data.component_nodes)) {return nil,false}
         name:=serial.text_field(component.name[:])
         if name=="" || len(name)>=len(component.name) {return nil,false}
         for &earlier in data.components[:i] {if serial.text_field(earlier.name[:])==name {return nil,false}}
+        if component.count==0 {continue}
         range:=data.component_nodes[component.first:][:component.count]
-        if range[0].kind!=.Box || range[0].parent!=-1 {return nil,false}
+        if range[0].kind==.Component || range[0].parent!=-1 {return nil,false}
         for node,at in range {if at>0 && node.parent<0 {return nil,false}}
     }
     for &override in data.overrides {
@@ -205,6 +218,7 @@ tree_expand :: proc(data:Tree_Data,allocator:runtime.Allocator) -> (nodes:[]Tree
     e:=Tree_Expansion{data=data,matched=matched,allocator=allocator}
     // Unused templates are validated too, including recursion cycles.
     for &component,i in data.components {
+        if component.count==0 {continue}
         e.count=0;e.components[0]=u16(i+1)
         _,valid:=tree_expand_range(&e,data.component_nodes[component.first:][:component.count],-1,"","",-2,1)
         if !valid {return nil,false}

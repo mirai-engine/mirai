@@ -17,14 +17,10 @@ Both bring `.mcp.json`, which gives an agent outside the editor the `mirai` MCP 
 ([outside the editor](../../mirai-editor/references/ai-tasks.md#agents-outside-the-editor)), and
 the `AGENTS.md` the agents of the project keep, which `CLAUDE.md` brings to Claude Code.
 
-The assets of `templates/game` are written by its `tools/content`, from the project folder. It does
-not go into the game: only `game/`, `editor/` and the plugins are compiled.
-
-```sh
-odin run tools/content -collection:mirai=<engine> -collection:plugins=<engine>/plugins \
-  -collection:project=. -custom-attribute:<attributes>
-```
-
+The scene, the prefab and the `.ui` of `templates/game` are its source: files kept in the
+repository and written through the API. Its `tools/content` writes only what code generates (the
+badge and the hum); `mirai content <project>` runs it. It does not go into the game: only `game/`,
+`editor/` and the plugins are compiled.
 ## Demo
 
 [`demo/`](../../../../demo) is a complete project:
@@ -73,7 +69,7 @@ Scenes:
 - **`raft`**: a raft and boxes that float in the sea, a beach that rises to an island and the
   first-person swimmer (prefab `Swimmer`, with `Walk`, `Swim` and `Diver`): it jumps into the water,
   swims on the surface and under it, climbs back and drowns if it runs out of air. The sea is drawn
-  by the [`water`](../../mirai-plugins/references/water.md) plugin, with waves, shore foam and
+  by the [`water`](../../mirai-world/references/water.md) plugin, with waves, shore foam and
   splashes.
 - **`ocean`**: a water material program.
 - **`animation`**: the only animation scene, a hall that the player walks with Mirai, with a
@@ -95,12 +91,12 @@ Scenes:
 - **`decals`, `deform`, `monitors`, `portals`, `portal_lab`**: scenes of the render plugins
   ([what each one shows](../../mirai-plugins/references/render-plugins.md#verification)).
 
-### Code (`demo/game`)
+## Code (`demo/game`)
 
 - **`game.odin`**: the demo's actions (`Action`, `@(actions)`) with their default bindings
   (`Demo_Actions`), and the components of the scenes.
   - `game_use` reads the actions of the body's seat: opens doors, changes the material sample and
-    throws a cube with `scene.Spawns`.
+    throws a cube with `scene.spawn`.
   - `game_projectiles` (`stage="react"`, `before="destruct_step"`) damages with `destruct.damage`
     what the cube touches, and destruction applies it in the same tick.
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
@@ -134,7 +130,7 @@ Scenes:
   (`door_opened`).
 - **`dig_site.odin`**: `Dig_Site` (on the terrain: how many balls it digs by itself and every how
   many ticks) and `dig_site` (`stage="react"`, nothing on a client), which requests the balls with
-  `terrain.request_edit`, adds to `Dig_Inventory` the cubic meters per material of
+  `terrain.dig`, adds to `Dig_Inventory` the cubic meters per material of
   `terrain.Terrain_Digs` and picks up the `Dig_Pickup`s that a `Player` touches; `dig_hud` shows
   the inventory. It is the game's rule: the engine has no inventory.
 - **`horror.odin`**: `Light_Switch`, `House_Lamp` (its `Point_Light` gives its intensity while its
@@ -158,10 +154,10 @@ Scenes:
 Each component assigned to objects in the editor carries its `NAME_DEFAULT`; scenes store the
 values.
 
-### AI arenas
+## AI arenas
 
 An entity with `AI_Arena` builds in Play, where it is, agents that decide with
-[minds](../../mirai-plugins/references/behavior.md#enemies-with-minds), walk or fly through
+[minds](../../mirai-world/references/behavior.md#enemies-with-minds), walk or fly through
 navigation and perceive through behavior, and its place (`arena_place`, in pieces), unless `place`
 is false because the scene has it: `tools/demo_content` writes it that way in the `ai` scene, so
 that the navmesh exists in the editor.
@@ -197,14 +193,15 @@ that the navmesh exists in the editor.
   and rings the bells. The agents receive a `core.Id` so that `behavior.inspect` and `nav.agent` can
   name them.
 
-### Game data
+## Game data
 
 The demo shows how a game builds its rules over `.records` tables
 ([game data](../../mirai-core/references/core.md#game-data)): the engine brings no
 inventories, dialogues or waves, and these are demo code that can be copied and changed.
 
 - **Inventory** (`interface_demo.odin`): a slot of `Interface_Demo` stores the `Item` row
-  (`assets/interface/items.records`) and how many units it has; name, icon and rarity are read from the
+  (`assets/interface/items.records`) and how many units it has; name, icon and rarity are read from
+  the
   row in the chosen language. Dropping an object on another equal one completes its stack up to the
   row's `stack`.
 - **Conversation** (`interface_demo.odin`): `Dialogue_Line` says who speaks, what, and which line
@@ -220,24 +217,23 @@ inventories, dialogues or waves, and these are demo code that can be copied and 
   the language changes, so editing a row during Play is seen in the next tick at no cost to the
   others.
 
-### Local multiplayer
+## Local multiplayer
 
 `control.scene` carries an `inp.Local_Multiplayer{players=2}`, which applies with `mirai play`
 without `--players`; in the editor the Play selector rules. `input` creates one seat per player,
 each receives its person through `Spawn_Settings.players` and `engine/camera` splits the screen. In
 Play, F1 releases the mouse and the click that returns it chooses who receives keyboard and mouse.
 
-### Generated content
+## Generated content
 
 `tools/demo_content` writes everything that is not edited by hand and gives the same bytes on every
 run:
 
 ```sh
-odin run tools/demo_content -collection:mirai=. -collection:plugins=plugins \
-  -ignore-unknown-attributes -- .
+mirai content demo
 ```
 
-A `--<part>-only` flag after the path regenerates only one part
+A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
 - `--prefabs-only`: `Player.prefab`, `Person.prefab`, `Dog.prefab` and `Thrown cube.prefab`.
@@ -249,14 +245,14 @@ A `--<part>-only` flag after the path regenerates only one part
   `church_fog`, with the meshes of the render plugins' scenes.
 - `--ai-only`: scene `ai` and the horde's wave and zombie-kind tables.
 - `--sky-only`: scene `sky`, the atmosphere over a plain with mountains.
-- `--interface-only`: scene `interface`, its `.ui` with their English texts and their Spanish
+- `--interface-only`: scene `interface`, the English texts of its `.ui` (which are the source) and
+  their Spanish
   translation (`INTERFACE_TEXTS`, by key), the icons of its objects and the tables of objects and
   of the conversation (`tools/demo_content/records.odin` writes a table with fixed ids).
 - `--animation-only`: imports Mirai and writes the [animation gallery](animation-gallery.md): the
   locomotion and gallery clips of Mirai and their programs, the taller
-  Mirai and its baked clips, the spider, the rig chains, the morph jellies, the plaque and panel
-  `.ui` and the scene `animation`. Contracts: [animation
-  plugin](../../mirai-animation/references/animation.md).
+  Mirai and its baked clips, the spider, the rig chains, the morph jellies and the scene
+  `animation`. Contracts: [animation plugin](../../mirai-animation/references/animation.md).
 
 Content:
 
@@ -294,7 +290,7 @@ Content:
   Re-importing keeps the ids
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates
-  on its own uses `base.asset_id_named`. What did not change is kept
+  on its own uses `asset.content_id`. What did not change is kept
   ([cache](../../mirai-imports/references/imports.md#import-cache)).
 - **Prefabs** (`prefabs.odin`): `Player`, `Person`, `Dog` (with `Replicate`) and `Thrown cube`; the
   scenes name them from their spawn points.
@@ -306,7 +302,7 @@ Content:
 - **Hand-edited assets** (with the editor or `mirai asset set`): `main`, `ocean`, `skeletal`, the
   model prefabs and the materials of `assets/surfaces`.
 
-### Portal game
+## Portal game
 
 `portals/portal_chamber.scene` uses the
 [`portals`](../../mirai-plugins/references/render-plugins.md#portals) plugin. The player
@@ -328,7 +324,7 @@ and they do not push it.
   at the exit threshold is a thin trigger: whoever crosses it loses the portals and a cube returns
   to where it started, like one that falls out of the level.
 
-### Control
+## Control
 
 The `control` scene walks through the contract of [control](control.md) and of
 [cinematics](cinematics.md).
@@ -342,7 +338,7 @@ The `control` scene walks through the contract of [control](control.md) and of
 - The intro is a `Cinematic` with shots, tracks and markers; its viewer (without a seat: the focused
   player) blocks its input.
 
-### Networking
+## Networking
 
 The demo is a networked game with a dedicated server and no network code of its own
 ([multiplayer](../../mirai-networking/references/multiplayer.md)): `--server` and `--connect`, or
@@ -375,7 +371,7 @@ mirai play demo --connect 127.0.0.1:27500 --headless --players 1 --frames 600 \
   the dog). The capture shows the AI dog behind the person and, afterwards, the camera behind the
   dog. Over the network, the server's `--status` reports two objects per connection.
 - Tests of `demo/game`: `animation_gallery_controls_test.odin`,
-  `animation_gallery_locomotion_test.odin` (graph with synthetic clips),
+  `animation_gallery_matching_test.odin` (the matching station with the Mirai assets),
   `animation_motor_test.odin`, `portal_game_test.odin` (`portal_fit`) and
   `grounding_physics_test.odin` (grounding with real bodies, which needs the `animation` and
   `physics` plugins). Real clips are checked with the demo integration.

@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
@@ -151,8 +152,7 @@ asset_create_path :: proc(r:^asset.Registry,folder,name,extension:string) -> str
 asset_create_refusal :: proc(s:^Session) -> string {
     switch {
     case files_registry(s)==nil: return "The project has no assets folder"
-    case watching(s):            return "A watcher does not change the files of the host"
-    case s.mode!=.Edit:          return "Stop Play or Simulate first"
+    case watching(s):            return "The run of an agent is being watched; stop watching it first"
     case import_busy(s)!="":     return import_busy(s)
     }
     return ""
@@ -164,7 +164,7 @@ asset_create_refusal :: proc(s:^Session) -> string {
 @(private)
 asset_create_gesture :: proc(s:^Session,label:string) -> (opened,ready:bool) {
     if s.edits==nil {return false,true}
-    opened,ready=edit_open(s,label)
+    opened,ready=edit_open(s,label,document=true)
     return
 }
 
@@ -203,7 +203,7 @@ asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) 
     }
     label:=asset_create_default(s,kind)
     opened,ready:=asset_create_gesture(s,label)
-    if !ready {return edits_error_text(s.edits.error)}
+    if !ready {return history.edits_error_text(s.edits.error)}
     defer edit_close(s,opened)
     switch kind {
     case asset.KIND_MATERIAL:
@@ -235,9 +235,13 @@ api_asset_create :: proc(s:^Session,call:^api.Call) {
     for candidate in kinds {
         if strings.equal_fold(asset_create_kind_name(s,candidate),named) || strings.equal_fold(asset_create_label(s,candidate),named) {kind,known=candidate,true;break}
     }
+    if kind==asset.KIND_RECORDS {
+        api.call_fail(call,api.INVALID_PARAMS,"A table of game data has a type: records.create {path,type} makes it")
+        return
+    }
     if !known {
         names:=make([dynamic]string,context.temp_allocator)
-        for candidate in kinds {append(&names,asset_create_kind_name(s,candidate))}
+        for candidate in kinds {if candidate!=asset.KIND_RECORDS {append(&names,asset_create_kind_name(s,candidate))}}
         api.call_failf(call,api.INVALID_PARAMS,"kind %q is not one asset.create makes: give %s",named,strings.join(names[:],", ",context.temp_allocator))
         return
     }

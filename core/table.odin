@@ -35,10 +35,10 @@ Table :: struct($T:typeid) {
     stamps:[dynamic]u64,      // by row: the version of its last write
     off:[dynamic]bool,        // by row: turned off by itself, whatever its entity
     turns:[dynamic]u64,       // single tables, by row: how late it was turned on, the latest on; 0: it does not wait to be on
-    rows:[dynamic]i32,        // by entity index: row+1, 0 without one
+    rows:[dynamic][]i32,      // by entity index, in pages: row+1, 0 without one
     pending:[dynamic]Pending,
     added:[dynamic]T,         // values of the pending adds
-    gone:[dynamic]Entity,     // the entities whose row stopped being on, oldest first
+    gone:[dynamic]Entity,     // the entities whose row stopped being on, oldest first; made when the first one goes
     version:u64,
     layout:u64,               // grows when rows are added, removed, turned on or off, or replaced whole
     gone_first:u64,           // how many entities went before gone[0]
@@ -48,7 +48,114 @@ Table :: struct($T:typeid) {
     owners:[dynamic]Row_Owner, // shared tables: by index, the generation and lock that own the row
     locks:[]Lock,             // rows of other tables a row on of this one owns
     name:string,
+    waits:Waits,
 }
+
+// Where a table of a World says that it has adds, removes or turns pending,
+// for the settle of the World to come only to the tables that do: its place
+// in the pending of the Entities offset bytes away from it, in the same
+// World (by distance, as a lock: a World is copied in blocks). Zero in a
+// table by itself and in a World made by hand, whose settle looks at every
+// table.
+Waits :: struct {
+    offset:int,
+    index:int,
+}
+
+// Makes a table of a World say what it has pending in es.pending[index]:
+// entities_tables gave it room.
+table_follow :: proc "contextless" (t:^Table($T),es:^Entities,index:int) {raw_follow(raw(t),es,index)}
+
+raw_follow :: proc "contextless" (t:^Raw_Table,es:^Entities,index:int) {
+    t.waits={int(uintptr(es))-int(uintptr(t)),index}
+}
+
+// Every change that waits for the settle goes through here.
+@(private)
+pending_push :: #force_inline proc(t:^Raw_Table,p:Pending) {
+    append(&t.pending,p)
+    table_waits(t)
+}
+
+@(private)
+table_waits :: #force_inline proc "contextless" (t:^Raw_Table,waits:=true) {
+    if t.waits.offset!=0 {(cast(^Entities)rawptr(uintptr(int(uintptr(t))+t.waits.offset))).pending[t.waits.index]=waits}
+}
+
+// The rows by entity index of a table come in pages of ROWS_PAGE indices,
+// made when an entity of theirs first gets a row and kept from then on: a
+// table holds them for the entities it had rows of, not for every entity of
+// its World. An empty page: no entity of it has had a row. Pages are slices
+// so that a table copies, compares and frees as any value does (value_copy).
+ROWS_PAGE_BITS :: 12
+ROWS_PAGE :: 1<<ROWS_PAGE_BITS
+
+// row+1 of the entity of an index; 0 without one.
+@(private)
+rows_at :: #force_inline proc "contextless" (t:^Raw_Table,i:int) -> i32 {
+    p:=i>>ROWS_PAGE_BITS
+    if p>=len(t.rows) {return 0}
+    page:=raw_data(t.rows[p])
+    return page==nil?0:page[i&(ROWS_PAGE-1)]
+}
+
+// The page of the index is there: rows_room made it.
+@(private)
+rows_set :: #force_inline proc "contextless" (t:^Raw_Table,i:int,row:i32) {
+    raw_data(t.rows[i>>ROWS_PAGE_BITS])[i&(ROWS_PAGE-1)]=row
+}
+
+// Room for the row of the entity of an index, in a World of capacity
+// entities. False without memory.
+@(private)
+rows_room :: proc(t:^Raw_Table,i,capacity:int) -> bool {
+    p:=i>>ROWS_PAGE_BITS
+    if p>=len(t.rows) && resize(&t.rows,max(p+1,(capacity+ROWS_PAGE-1)>>ROWS_PAGE_BITS))!=nil {return false}
+    if len(t.rows[p])>0 {return true}
+    page,error:=make([]i32,ROWS_PAGE,t.rows.allocator)
+    if error!=nil {return false}
+    t.rows[p]=page
+    return true
+}
+
+@(private)
+rows_has_room :: #force_inline proc "contextless" (t:^Raw_Table,i:int) -> bool {
+    p:=i>>ROWS_PAGE_BITS
+    return p<len(t.rows) && len(t.rows[p])>0
+}
+
+// No entity has a row; the pages stay.
+@(private)
+rows_zero :: proc "contextless" (t:^Raw_Table) {
+    for page in t.rows {mem.zero_slice(page)}
+}
+
+// Makes the rows by entity of dst those of src, in the pages dst has and
+// those it lacks. False without memory.
+@(private)
+rows_copy :: proc(dst,src:^Raw_Table) -> bool {
+    if dst.rows.allocator.procedure==nil {dst.rows.allocator=context.allocator}
+    if len(dst.rows)<len(src.rows) && resize(&dst.rows,len(src.rows))!=nil {return false}
+    for &page,p in dst.rows {
+        from:[]i32
+        if p<len(src.rows) {from=src.rows[p]}
+        if len(from)==0 {
+            mem.zero_slice(page)
+            continue
+        }
+        if len(page)==0 {
+            made,error:=make([]i32,ROWS_PAGE,dst.rows.allocator)
+            if error!=nil {return false}
+            page=made
+        }
+        copy(page,from)
+    }
+    return true
+}
+
+// The entity indices the rows of a table reach: every entity that has had a
+// row in it has an index below.
+raw_indices :: #force_inline proc "contextless" (t:^Raw_Table) -> int {return len(t.rows)<<ROWS_PAGE_BITS}
 
 Pending :: struct {
     entity:Entity,
@@ -59,10 +166,12 @@ PENDING_REMOVE :: -1
 PENDING_OFF :: -2
 PENDING_ON :: -3
 
-// The entities gone keeps at least: past its room it drops its older half,
-// and a reader that had not seen those reads the table whole. The room grows
-// with the rows (raw_reserve): what goes between two reads, the rows held and
-// those that come, fits in the half that stays, however many a load brings.
+// The entities gone keeps at least, from the first one that goes: past its
+// room it drops its older half, and a reader that had not seen those reads
+// the table whole. The room is made when the first entity goes and grows
+// with the rows from then on (raw_reserve): what goes between two reads, the
+// rows held and those that come, fits in the half that stays, however many a
+// load brings.
 GONE_CAPACITY :: 256
 
 Row_Owner :: struct {generation:u32,id:u16}
@@ -78,23 +187,33 @@ Lock :: struct {
 // Read-only access to a table: what a function that only reads receives.
 Read :: struct($T:typeid) {table:^Table(T)}
 
-table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) {
-    t.values=make([dynamic]T,allocator)
+// An empty table: it asks its allocator for nothing until it has rows.
+table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) {raw_init(raw(t),name,allocator)}
+
+raw_init :: proc(t:^Raw_Table,name:string,allocator:=context.allocator) {
+    t.values={allocator=allocator}
     t.entities=make([dynamic]Entity,allocator)
     t.stamps=make([dynamic]u64,allocator)
     t.off=make([dynamic]bool,allocator)
     t.turns=make([dynamic]u64,allocator)
-    t.rows=make([dynamic]i32,allocator)
+    t.rows=make([dynamic][]i32,allocator)
     t.pending=make([dynamic]Pending,allocator)
-    t.added=make([dynamic]T,allocator)
-    t.gone=make([dynamic]Entity,0,GONE_CAPACITY,allocator) // settle never allocates for it: without it, readers read the table whole
+    t.added={allocator=allocator}
+    t.gone=make([dynamic]Entity,allocator)
     t.owners=make([dynamic]Row_Owner,allocator)
     t.name=name
 }
 
-table_destroy :: proc(t:^Table($T)) {
-    delete(t.values);delete(t.entities);delete(t.stamps);delete(t.off);delete(t.turns);delete(t.rows)
-    delete(t.pending);delete(t.added);delete(t.gone);delete(t.owners)
+table_destroy :: proc(t:^Table($T)) {raw_destroy(raw(t),size_of(T))}
+
+// size: of a value of the table.
+raw_destroy :: proc(t:^Raw_Table,size:int) {
+    for values in ([2]runtime.Raw_Dynamic_Array{t.values,t.added}) {
+        if values.data!=nil {_=mem.free_with_size(values.data,values.cap*size,values.allocator)}
+    }
+    for page in t.rows {delete(page,t.rows.allocator)}
+    delete(t.entities);delete(t.stamps);delete(t.off);delete(t.turns);delete(t.rows)
+    delete(t.pending);delete(t.gone);delete(t.owners)
     t^={}
 }
 
@@ -103,8 +222,11 @@ read :: #force_inline proc "contextless" (t:^Table($T)) -> Read(T) {return {t}}
 // The row of an entity whose component is on, -1 without one. Looking is not writing.
 table_row :: #force_inline proc "contextless" (t:^Table($T),e:Entity) -> int {
     i:=entity_index(e)
-    if i>=len(t.rows) {return -1}
-    row:=int(t.rows[i])-1
+    p:=i>>ROWS_PAGE_BITS
+    if p>=len(t.rows) {return -1}
+    page:=raw_data(t.rows[p])
+    if page==nil {return -1}
+    row:=int(page[i&(ROWS_PAGE-1)])-1
     if row<0 || row>=t.on || t.entities[row]!=e {return -1}
     return row
 }
@@ -167,6 +289,20 @@ table_entity_at :: #force_inline proc "contextless" (t:^Table($T),row:int) -> En
 read_entity_at :: #force_inline proc "contextless" (r:Read($T),row:int) -> Entity {return r.table.entities[row]}
 entity_at :: proc{table_entity_at,read_entity_at}
 
+// The entity of the first row on; false without rows.
+table_first :: #force_inline proc "contextless" (t:^Table($T)) -> (Entity,bool) {
+    return t.on>0?t.entities[0]:NONE,t.on>0
+}
+read_first :: #force_inline proc "contextless" (r:Read($T)) -> (Entity,bool) {return table_first(r.table)}
+first :: proc{table_first,read_first}
+
+// The entity of the only row on; false without rows or with several.
+table_sole :: #force_inline proc "contextless" (t:^Table($T)) -> (Entity,bool) {
+    return t.on==1?t.entities[0]:NONE,t.on==1
+}
+read_sole :: #force_inline proc "contextless" (r:Read($T)) -> (Entity,bool) {return table_sole(r.table)}
+sole :: proc{table_sole,read_sole}
+
 table_stamp :: #force_inline proc "contextless" (t:^Table($T),row:int) -> u64 {return t.stamps[row]}
 read_stamp :: #force_inline proc "contextless" (r:Read($T),row:int) -> u64 {return r.table.stamps[row]}
 stamp :: proc{table_stamp,read_stamp}
@@ -183,12 +319,28 @@ layout :: proc{table_layout,read_layout}
 // function. A component that was off stays off.
 add :: proc(t:^Table($T),e:Entity,value:T) {
     append(&t.added,value)
-    append(&t.pending,Pending{e,i32(len(t.added)-1)})
+    pending_push(raw(t),Pending{e,i32(len(t.added)-1)})
 }
 
 // Takes the component from the entity at the end of the function.
 remove :: proc(t:^Table($T),e:Entity) {
-    append(&t.pending,Pending{e,PENDING_REMOVE})
+    pending_push(raw(t),Pending{e,PENDING_REMOVE})
+}
+
+// Gives an entity a row at once, on and after every other, in a table its
+// owner fills alone, outside a World: it waits for no settle and takes no
+// lock, and every row of the table is on. A row the entity had stays, and
+// the entity names the new one. False without memory, with the table as it
+// was.
+table_append :: proc(t:^Table($T),e:Entity,value:T) -> bool {
+    count:=len(t.values)
+    if reserve(&t.values,count+1)!=nil || reserve(&t.entities,count+1)!=nil || reserve(&t.stamps,count+1)!=nil || reserve(&t.off,count+1)!=nil || !rows_room(raw(t),entity_index(e),0) {return false}
+    t.version+=1
+    append(&t.values,value);append(&t.entities,e);append(&t.stamps,t.version);append(&t.off,false)
+    rows_set(raw(t),entity_index(e),i32(count+1))
+    t.on=count+1
+    t.layout+=1
+    return true
 }
 
 // The value the last add of this function waits to give an entity, to write
@@ -204,6 +356,26 @@ staged :: proc "contextless" (t:^Table($T),e:Entity) -> ^T {
     return table_get(t,e)
 }
 
+// Whether the entity will have the component on at the end of the function,
+// counting what this table waits for: what has answers after the settle. Of a
+// single table it says whether the row of the entity is turned on; which row
+// stays on is decided as the table settles.
+staged_has :: proc "contextless" (t:^Table($T),e:Entity) -> bool {
+    row:=raw_row(raw(t),e)
+    present,off:=row>=0,row>=0 && t.off[row]
+    off_with_entity:=present && row>=t.on && !off
+    for p in t.pending {
+        if p.entity!=e {continue}
+        switch p.value {
+        case PENDING_REMOVE: present,off=false,false
+        case PENDING_OFF:    off=present
+        case PENDING_ON:     off=false
+        case:                present=true
+        }
+    }
+    return present && !off && !off_with_entity
+}
+
 // Turns the component of an entity off at the end of the function: its row
 // keeps its value, and no function sees it until enable. The base of an
 // entity does not turn off: Disabled turns the whole entity off.
@@ -213,6 +385,11 @@ disable :: proc(t:^Table($T),e:Entity) {raw_disable(raw(t),e)}
 // entity is disabled it stays off with it. In a single table it is the one on
 // from then, and the one that was on waits behind it.
 enable :: proc(t:^Table($T),e:Entity) {raw_enable(raw(t),e)}
+
+// Turns the component of an entity on or off at the end of the function.
+set_on :: proc(t:^Table($T),e:Entity,on:bool) {
+    if on {enable(t,e)} else {disable(t,e)}
+}
 
 // What a reader saw of a table, for changes.
 Seen :: struct {
@@ -254,11 +431,14 @@ table_changed :: #force_inline proc "contextless" (t:^Table($T),c:Changes,row:in
 read_changed :: #force_inline proc "contextless" (r:Read($T),c:Changes,row:int) -> bool {return c.all || r.table.stamps[row]>c.since}
 changed :: proc{table_changed,read_changed}
 
-table_clear :: proc(t:^Table($T)) {
-    for e in t.entities[:t.on] {locks_release(raw(t),e)}
-    clear(&t.values);clear(&t.entities);clear(&t.stamps);clear(&t.off);clear(&t.turns);clear(&t.pending);clear(&t.added)
-    gone_reset(raw(t))
-    for &row in t.rows {row=0}
+table_clear :: proc(t:^Table($T)) {raw_clear(raw(t))}
+
+raw_clear :: proc(t:^Raw_Table) {
+    for e in t.entities[:t.on] {locks_release(t,e)}
+    t.values.len,t.added.len=0,0
+    clear(&t.entities);clear(&t.stamps);clear(&t.off);clear(&t.turns);clear(&t.pending)
+    gone_reset(t)
+    rows_zero(t)
     t.on=0
     t.version+=1
     t.layout+=1
@@ -349,18 +529,24 @@ table_settle_reserve :: proc(t:^Raw_Table,size,align:int,es:^Entities) -> bool {
         adds+=1
         high=max(high,entity_index(p.entity))
     }
-    return adds==0 || raw_reserve(t,size,align,t.values.len+adds,high,entities_capacity(es))
+    if adds==0 {return true}
+    if !raw_reserve(t,size,align,t.values.len+adds,high) {return false}
+    capacity:=entities_capacity(es)
+    for p in t.pending {
+        if p.value>=0 && !rows_room(t,entity_index(p.entity),capacity) {return false}
+    }
+    return true
 }
 
-// Room for rows rows, and for an entity of index high among them in a World
-// of capacity entities: what a settle needs to apply its adds without
-// allocating. False without memory, with the rows as they were.
+// Room for rows rows, and in the owners its locks take for an entity of
+// index high among them: with rows_room for each entity, what a settle needs
+// to apply its adds without allocating. False without memory, with the rows
+// as they were.
 @(private)
-raw_reserve :: proc(t:^Raw_Table,size,align,rows,high,capacity:int) -> bool {
+raw_reserve :: proc(t:^Raw_Table,size,align,rows,high:int) -> bool {
     if !runtime.__dynamic_array_reserve(&t.values,size,align,rows) || reserve(&t.entities,rows)!=nil || reserve(&t.stamps,rows)!=nil || reserve(&t.off,rows)!=nil {return false}
     if t.single && reserve(&t.turns,rows)!=nil {return false}
-    if cap(t.gone)<2*rows && reserve(&t.gone,max(2*rows,2*cap(t.gone)))!=nil {return false}
-    if high>=len(t.rows) && resize(&t.rows,max(high+1,capacity))!=nil {return false}
+    if cap(t.gone)>0 && cap(t.gone)<2*rows && reserve(&t.gone,max(2*rows,2*cap(t.gone)))!=nil {return false}
     for lock in t.locks {
         if owners:=lock_owners(t,lock);high>=len(owners) && resize(owners,high+1)!=nil {return false}
     }
@@ -407,7 +593,7 @@ table_pending_apply :: proc(t:^Raw_Table,size:int,es:^Entities,next:u64) -> (cha
                 continue
             }
             i:=entity_index(p.entity)
-            if i<len(t.rows) && t.rows[i]!=0 {changed=raw_drop_index(t,size,i) || changed}
+            if rows_at(t,i)!=0 {changed=raw_drop_index(t,size,i) || changed}
             // In a single table, one that comes while another is on comes off, and waits for no turn.
             waits:=t.single && t.on>0
             on:=!waits && (t.base || !entity_off(es,p.entity))
@@ -419,7 +605,7 @@ table_pending_apply :: proc(t:^Raw_Table,size:int,es:^Entities,next:u64) -> (cha
             append(&t.entities,p.entity)
             append(&t.stamps,next)
             append(&t.off,waits)
-            t.rows[i]=i32(row+1)
+            rows_set(t,i,i32(row+1))
             if on {
                 table_swap_rows(t,size,row,t.on)
                 t.on+=1
@@ -460,8 +646,8 @@ table_place :: proc(t:^Raw_Table,size,row:int,es:^Entities,next:u64) -> (moved,o
 
 @(private)
 raw_drop_index :: proc(t:^Raw_Table,size,i:int) -> bool {
-    if i>=len(t.rows) || t.rows[i]==0 {return false}
-    row:=int(t.rows[i]-1)
+    row:=int(rows_at(t,i))-1
+    if row<0 {return false}
     gone_push(t,t.entities[row])
     if row<t.on {
         locks_release(t,t.entities[row])
@@ -476,7 +662,7 @@ raw_drop_index :: proc(t:^Raw_Table,size,i:int) -> bool {
     pop(&t.stamps)
     pop(&t.off)
     if t.single {pop(&t.turns)}
-    t.rows[i]=0
+    rows_set(t,i,0)
     return true
 }
 
@@ -493,7 +679,7 @@ table_move_row :: proc "contextless" (t:^Raw_Table,size,from,to:int) {
     t.stamps[to]=t.stamps[from]
     t.off[to]=t.off[from]
     if t.single {t.turns[to]=t.turns[from]}
-    t.rows[entity_index(t.entities[to])]=i32(to+1)
+    rows_set(t,entity_index(t.entities[to]),i32(to+1))
 }
 
 @(private)
@@ -504,16 +690,20 @@ table_swap_rows :: proc "contextless" (t:^Raw_Table,size,a,b:int) {
     t.stamps[a],t.stamps[b]=t.stamps[b],t.stamps[a]
     t.off[a],t.off[b]=t.off[b],t.off[a]
     if t.single {t.turns[a],t.turns[b]=t.turns[b],t.turns[a]}
-    t.rows[entity_index(t.entities[a])]=i32(a+1)
-    t.rows[entity_index(t.entities[b])]=i32(b+1)
+    rows_set(t,entity_index(t.entities[a]),i32(a+1))
+    rows_set(t,entity_index(t.entities[b]),i32(b+1))
 }
 
-// Notes that the row of an entity stopped being on, in the room table_init
-// reserved: it never allocates. Full, it drops its older half; without room
-// every reader reads the table whole.
+// Notes that the row of an entity stopped being on. The room is made with
+// the first one, and from then on it never allocates: full, it drops its
+// older half; without room every reader reads the table whole.
 @(private)
-gone_push :: proc "contextless" (t:^Raw_Table,e:Entity) {
+gone_push :: proc(t:^Raw_Table,e:Entity) {
     gone:=cast(^runtime.Raw_Dynamic_Array)&t.gone
+    if gone.cap==0 && reserve(&t.gone,max(GONE_CAPACITY,2*cap(t.entities)))!=nil {
+        gone_reset(t)
+        return
+    }
     if gone.len==gone.cap {
         if gone.len==0 {
             gone_reset(t)
@@ -535,17 +725,25 @@ gone_reset :: proc "contextless" (t:^Raw_Table) {
     clear(&t.gone)
 }
 
-table_copy :: proc(dst,src:^Table($T)) -> bool {
+table_copy :: proc(dst,src:^Table($T)) -> bool {return raw_copy(raw(dst),raw(src),type_info_of(T),false)}
+
+// info: of a value of the table. flat: a value is known to hold nothing
+// behind a pointer (Table_Info.flat); false asks its type.
+raw_copy :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool) -> bool {
     if dst==src {return true}
     dst.on=0
-    if !value_copy(&dst.values,&src.values,type_info_of([dynamic]T)) ||
-       !value_copy(&dst.entities,&src.entities,type_info_of([dynamic]Entity)) ||
-       !value_copy(&dst.stamps,&src.stamps,type_info_of([dynamic]u64)) ||
-       !value_copy(&dst.off,&src.off,type_info_of([dynamic]bool)) ||
-       !value_copy(&dst.turns,&src.turns,type_info_of([dynamic]u64)) ||
-       !value_copy(&dst.rows,&src.rows,type_info_of([dynamic]i32)) ||
-       !value_copy(&dst.owners,&src.owners,type_info_of([dynamic]Row_Owner)) {return false}
-    clear(&dst.pending);clear(&dst.added)
+    values:=flat?array_copy_flat(&dst.values,&src.values,info.size,info.align):array_copy(&dst.values,&src.values,info)
+    // The rows by entity go before the entities: a copy that fails half way
+    // leaves the entities of src over no other rows than theirs.
+    if !values ||
+       !rows_copy(dst,src) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.entities,cast(^runtime.Raw_Dynamic_Array)&src.entities,size_of(Entity),align_of(Entity)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.stamps,cast(^runtime.Raw_Dynamic_Array)&src.stamps,size_of(u64),align_of(u64)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.off,cast(^runtime.Raw_Dynamic_Array)&src.off,size_of(bool),align_of(bool)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.turns,cast(^runtime.Raw_Dynamic_Array)&src.turns,size_of(u64),align_of(u64)) ||
+       !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.owners,cast(^runtime.Raw_Dynamic_Array)&src.owners,size_of(Row_Owner),align_of(Row_Owner)) {return false}
+    clear(&dst.pending)
+    dst.added.len=0
     first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
     clear(&dst.gone)
     dst.gone_first=first
@@ -570,27 +768,33 @@ Copy_Mark :: struct {
 // copy mark says; the rows whose stamps differ when both have the same rows;
 // all of it otherwise. To the readers of dst it is a copy like table_copy.
 table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
+    return raw_copy_changed(raw(dst),raw(src),type_info_of(T),false,mark)
+}
+
+// info and flat: as raw_copy takes them.
+raw_copy_changed :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool,mark:^Copy_Mark) -> bool {
     if dst==src {return true}
     if mark.valid && mark.version==src.version && mark.layout==src.layout {return true}
     mark.valid=false
     same:=dst.on==src.on && len(dst.entities)==len(src.entities) && slice.equal(dst.entities[:],src.entities[:]) && slice.equal(dst.off[:],src.off[:])
     if !same {
-        if !table_copy(dst,src) {return false}
+        if !raw_copy(dst,src,info,flat) {return false}
         mark^={src.version,src.layout,true}
         return true
     }
-    info:=type_info_of(T)
-    flat:=-1
+    size,asked:=info.size,flat
+    flat:=flat
     for stamp,row in src.stamps {
         if dst.stamps[row]==stamp {continue}
-        if flat<0 {flat=int(value_flat(info))}
-        if flat==1 {dst.values[row]=src.values[row]} else if !value_copy(&dst.values[row],&src.values[row],info) {return false}
+        if !asked {flat,asked=value_flat(info),true}
+        if flat {mem.copy_non_overlapping(raw_at(dst,size,row),raw_at(src,size,row),size)} else if !value_copy(raw_at(dst,size,row),raw_at(src,size,row),info) {return false}
         dst.stamps[row]=stamp
     }
-    if !slice.equal(dst.turns[:],src.turns[:]) && !value_copy(&dst.turns,&src.turns,type_info_of([dynamic]u64)) {return false}
-    if !slice.equal(dst.rows[:],src.rows[:]) && !value_copy(&dst.rows,&src.rows,type_info_of([dynamic]i32)) {return false}
-    if !slice.equal(dst.owners[:],src.owners[:]) && !value_copy(&dst.owners,&src.owners,type_info_of([dynamic]Row_Owner)) {return false}
-    clear(&dst.pending);clear(&dst.added)
+    // The rows by entity follow from the entities, which are the same.
+    if !slice.equal(dst.turns[:],src.turns[:]) && !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.turns,cast(^runtime.Raw_Dynamic_Array)&src.turns,size_of(u64),align_of(u64)) {return false}
+    if !slice.equal(dst.owners[:],src.owners[:]) && !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.owners,cast(^runtime.Raw_Dynamic_Array)&src.owners,size_of(Row_Owner),align_of(Row_Owner)) {return false}
+    clear(&dst.pending)
+    dst.added.len=0
     first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
     clear(&dst.gone)
     dst.gone_first=first
@@ -600,7 +804,9 @@ table_copy_changed :: proc(dst,src:^Table($T),mark:^Copy_Mark) -> bool {
     return true
 }
 
-table_swap :: proc(a,b:^Table($T)) {
+table_swap :: proc(a,b:^Table($T)) {raw_swap(raw(a),raw(b))}
+
+raw_swap :: proc(a,b:^Raw_Table) {
     if a==b {return}
     version:=max(a.version,b.version)+1
     layout:=max(a.layout,b.layout)+1
@@ -615,6 +821,8 @@ table_swap :: proc(a,b:^Table($T)) {
     a.pending,b.pending=b.pending,a.pending
     a.added,b.added=b.added,a.added
     a.on,b.on=b.on,a.on
+    table_waits(a,len(a.pending)>0)
+    table_waits(b,len(b.pending)>0)
     clear(&a.gone);clear(&b.gone)
     a.gone_first,b.gone_first=first,first
     a.version,b.version=version,version
@@ -637,7 +845,10 @@ locks_claim :: proc(t:^Raw_Table,e:Entity,name:string) -> bool {
         owners:=lock_owners(t,lock)
         if i>=len(owners) && resize(owners,i+1)!=nil {return false}
     }
-    for lock in t.locks {lock_owners(t,lock)[i]={generation,lock.id}}
+    for lock in t.locks {
+        lock_owners(t,lock)[i]={generation,lock.id}
+        lock_table(t,lock).version+=1
+    }
     return true
 }
 
@@ -646,14 +857,22 @@ locks_release :: proc(t:^Raw_Table,e:Entity) {
     i:=entity_index(e)
     for lock in t.locks {
         owners:=lock_owners(t,lock)
-        if i<len(owners) && owners[i].generation==entity_generation(e) && owners[i].id==lock.id {owners[i]={}}
+        if i<len(owners) && owners[i].generation==entity_generation(e) && owners[i].id==lock.id {
+            owners[i]={}
+            lock_table(t,lock).version+=1
+        }
     }
 }
 
-// The owners of the rows a lock of a table takes: those of the table offset
-// bytes away from it, in the same World.
+// The table whose rows a lock of a table takes: the one offset bytes away
+// from it, in the same World. Who owns its rows is part of what it holds:
+// its version moves when an owner does, so a copy of what changed takes it.
+lock_table :: #force_inline proc "contextless" (t:^Raw_Table,lock:Lock) -> ^Raw_Table {
+    return cast(^Raw_Table)rawptr(uintptr(int(uintptr(t))+lock.offset))
+}
+
 lock_owners :: #force_inline proc "contextless" (t:^Raw_Table,lock:Lock) -> ^[dynamic]Row_Owner {
-    return &(cast(^Raw_Table)rawptr(uintptr(int(uintptr(t))+lock.offset))).owners
+    return &lock_table(t,lock).owners
 }
 
 // The offset of a lock of holder over the rows of target, two tables of one World.
@@ -670,7 +889,7 @@ Raw_Table :: struct {
     stamps:[dynamic]u64,
     off:[dynamic]bool,
     turns:[dynamic]u64,
-    rows:[dynamic]i32,
+    rows:[dynamic][]i32,
     pending:[dynamic]Pending,
     added:runtime.Raw_Dynamic_Array,
     gone:[dynamic]Entity,
@@ -683,6 +902,7 @@ Raw_Table :: struct {
     owners:[dynamic]Row_Owner,
     locks:[]Lock,
     name:string,
+    waits:Waits,
 }
 #assert(size_of(Raw_Table)==size_of(Table(u8)))
 #assert(offset_of(Raw_Table,stamps)==offset_of(Table(u8),stamps))
@@ -690,14 +910,13 @@ Raw_Table :: struct {
 #assert(offset_of(Raw_Table,gone)==offset_of(Table(u8),gone))
 #assert(offset_of(Raw_Table,on)==offset_of(Table(u8),on))
 #assert(offset_of(Raw_Table,name)==offset_of(Table(u8),name))
+#assert(offset_of(Raw_Table,waits)==offset_of(Table(u8),waits))
 
 raw :: #force_inline proc "contextless" (t:^Table($T)) -> ^Raw_Table {return cast(^Raw_Table)t}
 
 // The row of an entity, on or off; -1 without one.
 raw_row :: proc "contextless" (t:^Raw_Table,e:Entity) -> int {
-    i:=entity_index(e)
-    if i>=len(t.rows) {return -1}
-    row:=int(t.rows[i])-1
+    row:=int(rows_at(t,entity_index(e)))-1
     if row<0 || t.entities[row]!=e {return -1}
     return row
 }
@@ -741,22 +960,17 @@ raw_state :: proc "contextless" (t:^Raw_Table,e:Entity) -> (on,turned_off,found:
     return row<t.on,t.off[row],true
 }
 
+// As add, with the value at a pointer; nil: the component zeroed.
 raw_add :: proc(t:^Raw_Table,info:^runtime.Type_Info,e:Entity,value:rawptr) {
-    zero:[1024]u8
-    source:=value
-    if source==nil {
-        assert(info.size<=len(zero),"core: a component of more than 1024 bytes needs a value to be added")
-        source=&zero
+    switch {
+    case info.size==0: t.added.len+=1 // as append does for an empty type: there is no memory to copy into
+    case value==nil:   runtime.__dynamic_array_append_nothing(&t.added,info.size,info.align)
+    case:              runtime.__dynamic_array_append(&t.added,info.size,info.align,value,1)
     }
-    if info.size==0 {
-        t.added.len+=1 // as append does for an empty type: there is no memory to copy into
-    } else {
-        runtime.__dynamic_array_append(&t.added,info.size,info.align,source,1)
-    }
-    append(&t.pending,Pending{e,i32(t.added.len-1)})
+    pending_push(t,Pending{e,i32(t.added.len-1)})
 }
 
-raw_remove :: proc(t:^Raw_Table,e:Entity) {append(&t.pending,Pending{e,PENDING_REMOVE})}
+raw_remove :: proc(t:^Raw_Table,e:Entity) {pending_push(t,Pending{e,PENDING_REMOVE})}
 
 // The value the last add of the function waits to give an entity; nil without
 // one, or when a remove follows it. Valid until the next add to the table.
@@ -781,11 +995,11 @@ raw_disable :: proc(t:^Raw_Table,e:Entity) {
         fail("%s is the base of every entity and does not turn off: give the entity core.Disabled to turn it off",t.name)
         return
     }
-    append(&t.pending,Pending{e,PENDING_OFF})
+    pending_push(t,Pending{e,PENDING_OFF})
 }
 
 raw_enable :: proc(t:^Raw_Table,e:Entity) {
-    if !t.base {append(&t.pending,Pending{e,PENDING_ON})}
+    if !t.base {pending_push(t,Pending{e,PENDING_ON})}
 }
 
 // Takes the row of an entity at once, between functions: what an undo puts
@@ -807,18 +1021,17 @@ raw_drop :: proc(t:^Raw_Table,info:^runtime.Type_Info,e:Entity) -> bool {
 raw_put :: proc(t:^Raw_Table,info:^runtime.Type_Info,es:^Entities,e:Entity,value:rawptr,off:bool) -> bool {
     if t==nil || info==nil || !alive(es,e) || raw_row(t,e)>=0 {return false}
     i,size:=entity_index(e),info.size
-    if t.values.len>=t.values.cap || len(t.entities)>=cap(t.entities) || len(t.stamps)>=cap(t.stamps) || len(t.off)>=cap(t.off) || i>=max(len(t.rows),cap(t.rows)) {return false}
+    if t.values.len>=t.values.cap || len(t.entities)>=cap(t.entities) || len(t.stamps)>=cap(t.stamps) || len(t.off)>=cap(t.off) || !rows_has_room(t,i) {return false}
     if t.single && len(t.turns)>=cap(t.turns) {return false}
     for lock in t.locks {if owners:=lock_owners(t,lock);i>=max(len(owners),cap(owners)) {return false}}
-    if i<len(t.rows) && t.rows[i]!=0 {raw_drop_index(t,size,i)}
-    if i>=len(t.rows) {resize(&t.rows,i+1)}
+    if rows_at(t,i)!=0 {raw_drop_index(t,size,i)}
     t.version+=1
     if t.single {append(&t.turns,off?0:single_turn(t))}
     row:=t.values.len
     t.values.len+=1
     if size>0 {mem.copy(raw_at(t,size,row),value,size)}
     append(&t.entities,e);append(&t.stamps,t.version);append(&t.off,off && !t.base)
-    t.rows[i]=i32(row+1)
+    rows_set(t,i,i32(row+1))
     if !t.off[row] && (t.base || !entity_off(es,e)) {
         if locks_claim(t,e,t.name) {
             table_swap_rows(t,size,row,t.on)
@@ -828,6 +1041,17 @@ raw_put :: proc(t:^Raw_Table,info:^runtime.Type_Info,es:^Entities,e:Entity,value
     if t.single && t.on>1 {single_keep(t,size,es,t.version)}
     t.layout+=1
     return true
+}
+
+// Room for the row of any entity of an index below limit, and to note the
+// entities that go: what code that puts rows back and takes them at once
+// (raw_put, raw_drop) reserves first, with the room of its rows, to ask for
+// no memory later. False without memory.
+raw_room :: proc(t:^Raw_Table,limit:int) -> bool {
+    for i:=0;i<limit;i+=ROWS_PAGE {
+        if !rows_room(t,i,limit) {return false}
+    }
+    return cap(t.gone)>0 || reserve(&t.gone,max(GONE_CAPACITY,2*cap(t.entities)))==nil
 }
 
 // Every row, on or off.
@@ -847,7 +1071,9 @@ Write_Check :: struct {
 }
 
 write_check_begin :: proc(t:^Raw_Table,size:int) -> Write_Check {
-    c:=Write_Check{t,size,t.version,t.layout,make([]u8,t.values.len*size)}
+    values,error:=make([]u8,t.values.len*size)
+    if error!=nil {return {table=t}} // without a size write_check_end skips it
+    c:=Write_Check{t,size,t.version,t.layout,values}
     if len(c.values)>0 {mem.copy(raw_data(c.values),t.values.data,len(c.values))}
     return c
 }

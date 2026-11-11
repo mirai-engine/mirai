@@ -248,6 +248,7 @@ Back :: struct {
     now:f64,
     outbox:^Command_Buffer,
     peers:[]Peer,
+    by_address:base.Hash_Map(u32), // the slot of each peer that is not Free, by the address_key of its address
     key:u64,
     secret:[16]u8,
     secure:Host_Secure,
@@ -331,7 +332,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
         }
     }
     for i in 0..<2 {
-        word:=rng_next(&b.rng)
+        word:=base.splitmix_next(&b.rng)
         mem.copy(&b.secret[i*8],&word,8)
     }
     if !secure_host_init(h) {return refuse(h,"security","a token_key that is an Ed25519 public key, one when require_token, and a system that gives random bytes for Encrypted")}
@@ -354,6 +355,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     h.system_free=host_make(h,u32,d.max_connections)
     h.shared_system_free=host_make(h,u32,d.max_connections)
     b.peers=host_make(h,Peer,d.max_connections)
+    if !base.hash_map_init(&b.by_address,d.max_connections,h.allocator) {h.failed=true}
     // What one datagram can turn into, so a full command buffer stops the reading before it and not halfway.
     b.reserve_bytes=PACKET_BYTES*2
     b.reserve_count=PACKET_BYTES*8/15
@@ -393,6 +395,7 @@ host_destroy :: proc(h:^Host) {
     repl_destroy(h)
     for &peer in h.back.peers {peer_release(h,&peer)}
     delete(h.back.peers,h.allocator)
+    base.hash_map_destroy(&h.back.by_address)
     for frame in h.frames {delete(frame.ops,h.allocator);delete(frame.bytes,h.allocator)}
     for buffer in h.buffers {delete(buffer.commands,h.allocator);delete(buffer.bytes,h.allocator);delete(buffer.released,h.allocator)}
     delete(h.connection_stats,h.allocator);delete(h.connection_handles,h.allocator)
@@ -542,11 +545,12 @@ connection_stats :: proc(h:^Host,connection:Connection) -> (Connection_Stats,boo
 
 // Runs the network half on the calling thread: applies the frames queued by
 // the simulation, receives, and sends what is due. now is in seconds and must
-// not go back. Not to be called while a worker runs.
-host_update :: proc(h:^Host,now:f64) {
-    assert(h.worker==nil)
+// not go back. False, doing nothing, while a worker runs: the half is its.
+host_update :: proc(h:^Host,now:f64) -> bool {
+    if h.worker!=nil {return false}
     frame_submit(h)
     back_update(h,now)
+    return true
 }
 
 @(private)

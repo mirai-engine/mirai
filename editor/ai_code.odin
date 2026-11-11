@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
 
@@ -41,7 +42,7 @@ ai_code_end :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> (kept:bool) {
     if task.code==nil {return}
     now:=make([dynamic]Ai_Code_File,context.temp_allocator)
     ai_code_walk(s,m,s.project_root,"",&now,0)
-    set:Change_Set
+    set:history.Change_Set
     before:=make(map[string]^Ai_Code_File,context.temp_allocator)
     for &file in task.code {before[file.path]=&file}
     after:=make(map[string]bool,context.temp_allocator)
@@ -59,7 +60,7 @@ ai_code_end :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> (kept:bool) {
     ai_code_files_free(&task.code)
     ai_code_prune(m)
     if len(set.files)==0 {
-        change_set_free(&set)
+        history.change_set_free(&set)
         return
     }
     set.state=task.state_after
@@ -102,8 +103,8 @@ ai_code_free :: proc(m:^Ai) {
 // false when what it held or holds is not known (too large, unreadable) or
 // does not fit the review.
 @(private="file")
-ai_code_take :: proc(m:^Ai,task:^Ai_Task,set:^Change_Set,was,is:^Ai_Code_File) -> bool {
-    file:Change_File
+ai_code_take :: proc(m:^Ai,task:^Ai_Task,set:^history.Change_Set,was,is:^Ai_Code_File) -> bool {
+    file:history.Change_File
     if was!=nil {
         content,known:=m.code[was.key]
         if was.key=="" || !known {return false}

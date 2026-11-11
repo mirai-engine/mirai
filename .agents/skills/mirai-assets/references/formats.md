@@ -28,15 +28,16 @@ a multiple of its alignment.
 
 ### Compression
 
-LZ streams: `std/compressor` decodes them and `std/compressor/lz` encodes them.
-`pack` and `unpack` are the only entry points
+LZ streams: `std/compressor` decodes them and `std/compressor/lz` encodes them, with
+`cook/compressor/lz` for the levels of a cook. `pack` and `unpack` are the only entry points
 of the formats, also for what compresses outside a chunk (mesh pages, terrain blocks, the parts the
 terrain sends over the network, editor thumbnails, the shaders the executables embed).
 
-- **Packs.** A write says how hard it compresses (`Pack`): `Edit` for what the editor, imports and
-  the game save, `Ship` for the cooking of a shipped game, which writes every asset again with
-  `document_repack` (its chunks and the pages of a mesh), and `Quick` for the cook of a `--dev`
-  game, a few times faster and a little larger. All decode the same way.
+- **Packs.** A write says how hard it compresses (`Pack`): `PACK_EDIT` for what the editor,
+  imports and the game save. A cook hands the packs of `cook/compressor/lz`: `SHIP` for the
+  cooking of a shipped game, which writes every asset again with `document_repack` (its chunks
+  and the pages of a mesh), and `QUICK` for the cook of a `--dev` game, a few times faster and a
+  little larger. All decode the same way.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of LZ streams of that many raw bytes, each
   decoding without the others (the library's `seekChunkReset`): a scene load decodes them at once
   on its workers (`Piece_Decoders`), and a write with a worker compresses them at once into the
@@ -57,10 +58,14 @@ terrain sends over the network, editor thumbnails, the shaders the executables e
   `format.odin`, the stream format both sides read: block, quantum and chunk headers, array types,
   packet layouts, levels and the prediction of packed Huffman code lengths.
 - `std/compressor/bc7split` (runtime): restores BC7 blocks from a BC7Split stream (`decode`).
-- `std/compressor/lz` (runtime, since a game saves with `Edit`): the encoder (`compress`) and its block
-  framing over the packages `entropy` (entropy arrays: Huffman, tANS, RLE, split; costs and log2
-  tables), `match` (hash tables, suffix trie, long range matcher) and `lz`. It allocates its
-  scratch on demand in the `Encoder`, kept across calls.
+- `std/compressor/lz` (runtime, since a game saves with `PACK_EDIT`): the encoder (`compress`) and
+  its block framing over the packages `entropy` (entropy arrays: Huffman, tANS, RLE, split; costs
+  and log2 tables), `match` (hash tables) and `parse` (the fast and lazy parsers). It allocates
+  its scratch on demand in the `Encoder`, kept across calls. A `Mode` is a level and, above
+  `Normal`, what parses it.
+- `cook/compressor/lz` (engine-time, package `lz_optimal`): the optimal parser, its find-all match
+  finders (cache table, suffix trie) and the long range matcher, as the `Mode` of each of its
+  levels. The framing and the entropy coding are those of `std/compressor/lz`.
 - `cook/compressor/bc7split` (engine-time, package `bc7split_encode`): the BC7Split encoder that
   `cook/textures` runs on BC7 levels, on top of `std/compressor/bc7split` and the log2 table of
   `entropy`.
@@ -120,8 +125,8 @@ their `asset/<type>.odin` and `mirai asset info` shows them. Contract of each: [
 scenes and prefabs: [scenes.md](scenes.md). The plugins' types are declared and validated by their
 plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
 ([animation](../../mirai-animation/references/animation.md)),
-[`.foliage`](../../mirai-plugins/references/foliage.md#format),
-[`.terrain`](../../mirai-plugins/references/terrain.md) and
+[`.foliage`](../../mirai-world/references/foliage.md#format),
+[`.terrain`](../../mirai-world/references/terrain.md) and
 [`.physics_cache`](../../mirai-plugins/references/physics-cache.md).
 
 - **`.mesh`** (`MESH`): `mesh` (`Mesh_Info`); `clusters` bulk (`Cluster`); `levels`
@@ -151,18 +156,17 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
 - **`.sound`** (`SND `): `sound` (`Sound_Info`) and one of two bulk tables: `samples` (`i16`) or
   `file` (`u8`).
 - **`.sound_set`** (`SSET`): `sound_set` (`Sound_Set_Info`).
-- **`.ui`** (`UI  `): `nodes`, `styles`, `variants`, `components`, `component_nodes`, `overrides`,
-  `images`, `anims`, `tracks`, `keys`, `parts`, `anim_sets` (the records of `ui.Tree_Data`).
+- **`.ui`** (`UI  `): the records of `ui.Tree_Data` (`ui/tree_data.odin`).
 - **`.records`** (`RCDS`): `records` (`Records_Info`), `rows` with `id`, `name` and `value` (the
   code's type, with the file's schema), `texts` (`Records_Text`) and `text` bulk
   ([records](kinds.md#records)).
-- **`.particle`** (`PART`, of the [`vfx`](../../mirai-plugins/references/vfx.md#format) plugin):
+- **`.particle`** (`PART`, of the [`vfx`](../../mirai-world/references/vfx.md#format) plugin):
   `particle` (`Particle_Info`), `parameters` (`Particle_Parameter`), `hidden` (`Particle_Field`).
 - **`.fracture`** (`FRAC`): `fracture` (`Fracture_Info`), `pieces`, `connections`, `clusters`,
   `vertices` (`Vertex`) and `indices` local to each piece.
 - **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and LZ bulk `manual`
   and `overrides`; defined and validated by the
-  [foliage](../../mirai-plugins/references/foliage.md#format) plugin.
+  [foliage](../../mirai-world/references/foliage.md#format) plugin.
 - **`.physics_cache`** (`PCAC`): format of the
   [physics_cache](../../mirai-plugins/references/physics-cache.md) plugin (unique geometry, tracks,
   frames and poses).
@@ -180,27 +184,23 @@ meshes or textures: the search for an import's outputs uses it.
 
 One rule for all types, of the engine and of plugins:
 
-- A type writes its current version (`*_VERSION`) and reads every version from its oldest
-  (`*_OLDEST`) to it: each `*_view` (and a plugin's read) starts with
-  `kind_check(&a,KIND,OLDEST,VERSION)`, which gives `Invalid` for another type and `Version` for a
-  file older than the oldest or newer than the build (`kind_age` names the cases). The engine's
-  types carry both in `KINDS`.
-- **A new table or column with a default does not change the version.** A file that lacks it reads
-  the default: `asset_rows`/`asset_row` with `default` (`MATERIAL_DEFAULTS`) or a table that may be
-  missing (`table_rows`), like `skin` in `vertices`. A longer array neither: the read migrates the
-  table by its schema and keeps the elements that fit (`serial.Migration`).
-- **A change old files need a step for raises the version and keeps the oldest**: rows still
-  migrate by the file's schema, and the read branches on the file's version. A table written since
-  a version reads empty from an older file with `asset_rows_since` (the curves of a `.pose` of
-  version 4). `*_OLDEST` is `*_VERSION` until such a change sets it to the previous number.
-- **A change in what a stored value means that no step undoes raises the version and the oldest
-  together**, and no read path remains for older files. `version_message` says which asset it is,
-  its type, its version and those the build reads and, if it was imported, the `mirai import` that
-  rebuilds it in its folder with the root where its source is; for a newer file, a newer engine.
-  `mirai asset verify` and the `asset_errors` of `engine.diagnostics` show it.
+- **A type reads only the version it writes** (`*_VERSION`): each `*_view` (and a plugin's read)
+  starts with `kind_check(&a,KIND,VERSION)`, which gives `Invalid` for another type and `Version`
+  for a file of another version, older or newer. The engine's types carry theirs in `KINDS`.
+- **A change in what a type stores or in what a stored value means raises its version**, and every
+  file of the type is made again. `version_message` says which asset it is, its type, its version
+  and the one the build reads and, if it was imported, the `mirai import` that rebuilds it in its
+  folder with the root where its source is; for a newer file, a newer engine. `mirai asset verify`
+  and the `asset_errors` of `engine.diagnostics` show it.
+- **Rows are read by the schema the file carries**, by field name (`serial.Migration`): the types
+  a game declares (components, records) change while its files stay, and a field their file lacks
+  reads the default of the read (`asset_rows` with `default`). The rows of an asset type hold
+  every field of its version: its read asks for them `whole`, and a file that does not store one
+  fails with `Version`; `version_message` names the table and the field. A table a file may omit
+  reads empty (`table_rows`, like `skin` in `vertices`).
 - **Saving writes the current version**: a type's `*_document` and a scene taken as `asset.Scene`
   stamp it. A generic `Document` (`mirai asset set`, a merge, a move) keeps the version of the file
-  it came from: its rows keep that file's schema and the read's steps still apply to them.
+  it came from, and its rows that file's schema.
 
 ## Registry
 
@@ -267,6 +267,7 @@ scan opens every file and writes it again.
 - One row per line. With a single unnamed column the row is the value; otherwise, an object with one
   value per column.
 - `"schema"` is written with `Text_Options.schema`. `Bulk` tables carry no `"data"`: with
-  `bulk=.Files` each column names its file.
+  `bulk=.Files` each column names its file. `Text_Options.diff` is the text
+  [git diffs](cli.md#git).
 - `document_text_read` rebuilds the document (with a `Bulk_Loader` for the files) and reports
   `Text_Problem {code, rule, offset}`.

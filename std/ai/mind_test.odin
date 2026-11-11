@@ -314,8 +314,8 @@ bot_think :: proc(t:^Think(Bot_Act)) {
     crate:=Reservation_Key{BOT_CRATE,BOT_CRATE_OFFER}
     if bot.health<30 && bot.medkits>0 {propose(t,.Heal,0.9)}
     if bot.mag==0 && bot.reserve>0 {propose(t,.Reload,0.8)}
-    if bot.mag==0 && bot.reserve==0 && reserve_free(t.reservations,crate,t.holder,1,t.tick) {propose(t,.Get_Ammo,0.8)}
-    if w.sees && bot.mag>0 && reserve_free(t.reservations,{BOT_TARGET,0},t.holder,1,t.tick) {propose(t,.Fire,0.6)}
+    if bot.mag==0 && bot.reserve==0 && reserve_free(t,crate,1) {propose(t,.Get_Ammo,0.8)}
+    if w.sees && bot.mag>0 && reserve_free(t,Reservation_Key{BOT_TARGET,0},1) {propose(t,.Fire,0.6)}
     propose(t,.Patrol,0.1)
 }
 
@@ -594,7 +594,7 @@ a_mind_survives_scribbled_state_and_wild_proposals :: proc(t:^testing.T) {
         _=mind_ready(&m,Bot_Act(next(w)%16),ctx.time,f64(wild_f32(w)))
         key:=Reservation_Key{next(w)%4,u16(next(w)%3)}
         _=reserve_count(&w.reservations,key,ctx.tick)
-        _=reserve_free(&w.reservations,key,next(w)%4,int(next(w)%6)-1,ctx.tick)
+        _=reserve_open(&w.reservations,key,next(w)%4,int(next(w)%6)-1,ctx.tick)
         _=reserve_take(&w.reservations,key,next(w)%4,int(next(w)%6)-1,ctx.tick,next(w))
         _=reserve_holds(&w.reservations,key,next(w)%4,ctx.tick)
         reserve_renew(&w.reservations,key,next(w)%4,ctx.tick,next(w))

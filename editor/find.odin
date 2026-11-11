@@ -1,6 +1,8 @@
 package editor
 
 import "mirai:core"
+import "mirai:editor/history"
+import "mirai:std/base"
 import "mirai:ui"
 
 // Find object (Space): a list in the middle of the window of every entity by
@@ -49,7 +51,7 @@ finder_candidates :: proc(s:^Session,w:core.World_Ref) -> []core.Entity {
     result:=make([dynamic]core.Entity,0,names!=nil?core.count(names):0,context.temp_allocator)
     if names==nil {return result[:]}
     for e in names.entities {
-        if !entity_alive(w,e) || !contains_fold(entity_name(w,e),filter) {continue}
+        if !entity_alive(w,e) || !base.contains_fold(entity_name(w,e),filter) {continue}
         append(&result,e)
     }
     return result[:]
@@ -63,7 +65,7 @@ finder_choose :: proc(s:^Session,w:core.World_Ref,e:core.Entity,add:bool) {
         return
     }
     target:=selection_click_target(s,w,e,false)
-    selection_set(s.selection,{target},add)
+    history.selection_set(s.selection,{target},add)
     outliner_reveal(s.outliner,w,target)
     // What is found is in the scene: it comes to the front.
     if scene_covered(s) {asset_document_request(s,-1)}

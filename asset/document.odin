@@ -125,8 +125,9 @@ document_column :: proc(doc:^Document,table:int,name:string) -> (column:int,foun
 document_table_add :: proc(doc:^Document,name:string,flags:=Table_Flags{}) -> (table:int,error:Error) {
     if !name_valid(name) || len(doc.tables)>=MAX_TABLES {return -1,.Invalid}
     if _,exists:=document_table(doc,name);exists {return -1,.Invalid}
-    added:=Doc_Table{name=strings.clone(name,doc.allocator),name_hash=base.name_hash(name),flags=flags,key=-1}
-    if len(added.name)!=len(name) {return -1,.Out_Of_Memory}
+    copied,no_name:=strings.clone(name,doc.allocator)
+    if no_name!=nil {return -1,.Out_Of_Memory}
+    added:=Doc_Table{name=copied,name_hash=base.name_hash(name),flags=flags,key=-1}
     added.rows=.Single in flags?1:0
     added.columns=make([dynamic]Doc_Column,doc.allocator)
     if append(&doc.tables,added)!=1 {delete(added.name,doc.allocator);delete(added.columns);return -1,.Out_Of_Memory}
@@ -156,8 +157,9 @@ document_column_add :: proc(doc:^Document,table:int,name:string,type:serial.Type
     stored:=doc.schema.types[type]
     wanted:=max(alignment,int(stored.align),1)
     if wanted&(wanted-1)!=0 || wanted>1<<MAX_ALIGNMENT_LOG2 {return -1,.Invalid}
-    added:=Doc_Column{name=strings.clone(name,doc.allocator),type=type,size=int(stored.size),flags=flags,ref=-1,alignment=wanted,compression=compression}
-    if len(added.name)!=len(name) {return -1,.Out_Of_Memory}
+    copied,no_name:=strings.clone(name,doc.allocator)
+    if no_name!=nil {return -1,.Out_Of_Memory}
+    added:=Doc_Column{name=copied,type=type,size=int(stored.size),flags=flags,ref=-1,alignment=wanted,compression=compression}
     if error=column_size(doc,&added,target.rows*added.size);error!=.None {
         delete(added.name,doc.allocator)
         return -1,error
@@ -170,8 +172,12 @@ document_column_add :: proc(doc:^Document,table:int,name:string,type:serial.Type
 document_resize :: proc(doc:^Document,table:int,rows:int) -> Error {
     target:=&doc.tables[table]
     if rows<0 || rows>MAX_ROWS || .Single in target.flags && rows!=1 {return .Invalid}
-    for &column in target.columns {
-        column_size(doc,&column,rows*column.size) or_return
+    for &column,at in target.columns {
+        if error:=column_size(doc,&column,rows*column.size);error!=.None {
+            // The columns that grew go back to the rows the table has: no memory is asked for that.
+            for &grown in target.columns[:at] {_=column_size(doc,&grown,target.rows*grown.size)}
+            return error
+        }
     }
     target.rows=rows
     return .None
@@ -231,9 +237,10 @@ document_column_put :: proc(doc:^Document,types:^Types,table:int,name:string,val
     index,known:=types_index(types,T)
     if !known {return -1,types.error}
     type,imported:=document_type(doc,types,T)
-    if !imported {return -1,.Out_Of_Memory}
+    layout:=types_layout(types,index)
+    if !imported || layout==nil {return -1,.Out_Of_Memory}
     column=document_column_add(doc,table,name,type,flags,compression,alignment) or_return
-    serial.value_write(types_layout(types,index),doc.tables[table].columns[column].data,raw_data(values),len(values))
+    serial.value_write(layout,doc.tables[table].columns[column].data,raw_data(values),len(values))
     return column,.None
 }
 
@@ -263,7 +270,7 @@ document_dependencies :: proc(doc:^Document,out:^[dynamic]base.Asset_Id) -> Erro
         out[unique]=id
         unique+=1
     }
-    resize(out,unique)
+    base.truncate(out,unique)
     return .None
 }
 
@@ -302,7 +309,7 @@ document_choice_rename :: proc(doc:^Document,old,name:string) -> int {
 }
 
 // Writes the document as a file into w, which has to be empty, compressed as p says.
-document_write :: proc(doc:^Document,w:^serial.Writer,p:=Pack.Edit,worker:=jobs.Worker_Ref{}) -> Error {
+document_write :: proc(doc:^Document,w:^serial.Writer,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> Error {
     document_check(doc) or_return
     allocator:=doc.allocator
     dependencies:=make([dynamic]base.Asset_Id,allocator);defer delete(dependencies)
@@ -340,7 +347,8 @@ document_write :: proc(doc:^Document,w:^serial.Writer,p:=Pack.Edit,worker:=jobs.
     columns:=0
     for table in doc.tables {columns+=len(table.columns)}
     if len(chunks)+columns>MAX_CHUNKS {return .Invalid}
-    first_chunk:=make([]int,len(doc.tables),allocator);defer delete(first_chunk,allocator)
+    first_chunk,no_first:=make([]int,len(doc.tables),allocator);defer delete(first_chunk,allocator)
+    if no_first!=nil {return .Out_Of_Memory}
     counts:[3]u16
     for bulk in ([]bool{false,true}) {
         for table,t in doc.tables {
@@ -379,14 +387,14 @@ document_write :: proc(doc:^Document,w:^serial.Writer,p:=Pack.Edit,worker:=jobs.
 }
 
 // Writes the document to a file, whole or not at all.
-document_save :: proc(doc:^Document,path:string,sync:=false,p:=Pack.Edit) -> Error {
+document_save :: proc(doc:^Document,path:string,sync:=false,p:=PACK_EDIT) -> Error {
     data:=document_bytes(doc,doc.allocator,p) or_return
     defer mem.free_bytes(data,doc.allocator)
     return serial.file_write_atomic(path,data,sync)==.None?.None:.IO
 }
 
 // The file the document is, as bytes from allocator, aligned for its chunks.
-document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=Pack.Edit,worker:=jobs.Worker_Ref{}) -> (data:[]u8,error:Error) {
+document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> (data:[]u8,error:Error) {
     w:serial.Writer
     serial.writer_init(&w,allocator=allocator)
     if error=document_write(doc,&w,p,worker);error!=.None {
@@ -399,20 +407,31 @@ document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=Pack.Edit,w
 // A copy of an open asset that owns everything it holds.
 document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator) -> Error {
     doc^={kind=a.blob.header.kind,kind_version=a.blob.header.kind_version,id=a.blob.header.id,owner=a.blob.header.owner,flags=a.blob.header.flags,allocator=allocator}
-    serial.schema_clone(&doc.schema,&a.schema,allocator)
+    if serial.schema_clone(&doc.schema,&a.schema,allocator)!=.None {document_destroy(doc);return .Out_Of_Memory}
     doc.hashes=make([dynamic]u64,allocator)
     if !serial.schema_hashes_update(&doc.schema,&doc.hashes) {document_destroy(doc);return .Out_Of_Memory}
-    doc.tables=make([dynamic]Doc_Table,0,len(a.tables),allocator)
+    no_tables:runtime.Allocator_Error
+    if doc.tables,no_tables=make([dynamic]Doc_Table,0,len(a.tables),allocator);no_tables!=nil {document_destroy(doc);return .Out_Of_Memory}
     for &source in a.tables {
-        table:=Doc_Table{name=strings.clone(source.name,allocator),name_hash=source.name_hash,flags=source.flags,rows=source.rows,key=source.key}
-        table.columns=make([dynamic]Doc_Column,0,len(source.columns),allocator)
-        append(&doc.tables,table)
+        table:=Doc_Table{name_hash=source.name_hash,flags=source.flags,rows=source.rows,key=source.key}
+        no_name,no_columns:runtime.Allocator_Error
+        table.name,no_name=strings.clone(source.name,allocator)
+        table.columns,no_columns=make([dynamic]Doc_Column,0,len(source.columns),allocator)
+        if _,no_table:=append(&doc.tables,table);no_table!=nil {
+            delete(table.name,allocator);delete(table.columns)
+            document_destroy(doc)
+            return .Out_Of_Memory
+        }
+        if no_name!=nil || no_columns!=nil {document_destroy(doc);return .Out_Of_Memory}
         target:=&doc.tables[len(doc.tables)-1]
         for from,at in source.columns {
             entry:=blob_chunk(&a.blob,from.chunk)
-            column:=Doc_Column{name=strings.clone(from.name,allocator),type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2,compression=entry.compression}
+            column:=Doc_Column{type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2,compression=entry.compression}
+            no_column_name:runtime.Allocator_Error
+            column.name,no_column_name=strings.clone(from.name,allocator)
             error:=column_size(doc,&column,source.rows*from.size)
             append(&target.columns,column)
+            if no_column_name!=nil {error=.Out_Of_Memory}
             decoder:^Decoder
             if error==.None && entry.compression!=.None {decoder,error=asset_decoder(a)}
             if error==.None {error=blob_read(&a.blob,entry,target.columns[at].data,decoder)}

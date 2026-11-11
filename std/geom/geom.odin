@@ -23,6 +23,7 @@ package geom
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "mirai:std/base"
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -73,7 +74,11 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
 }
 @(private) fnormalize :: #force_inline proc "contextless" (a:Vec3,fallback:Vec3) -> Vec3 {
     l:=linalg.length(a)
-    return a/l if l>1e-20 else fallback
+    if l>1e-20 && l<=max(f32) {return a/l}
+    // The length of a vector of large floats does not fit in one; a vector that is not finite has no direction.
+    d:=dvec(a)
+    wide:=dlength(d)
+    return fvec(d/wide) if wide>1e-20 && wide<=max(f64) else fallback
 }
 
 // Unit plane in f64. ok is false for a normal without length.
@@ -115,48 +120,17 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
     return -cr,sr
 }
 
-@(private) hash_u64 :: #force_inline proc "contextless" (x:u64) -> u64 {
-    z:=x+0x9e3779b97f4a7c15
-    z=(z~(z>>30))*0xbf58476d1ce4e5b9
-    z=(z~(z>>27))*0x94d049bb133111eb
-    return z~(z>>31)
-}
-
 @(private) position_hash :: #force_inline proc "contextless" (p:Vec3) -> u64 {
     // Adding zero folds -0 into +0, which compare equal.
     x,y,z:=transmute(u32)(p.x+0),transmute(u32)(p.y+0),transmute(u32)(p.z+0)
-    return hash_u64(hash_u64(u64(x)|u64(y)<<32)~u64(z))
-}
-
-// PCG32. The sequence depends only on the seed.
-@(private) Rng :: struct {state:u64}
-@(private) rng_make :: proc "contextless" (seed:u64) -> Rng {
-    r:=Rng{hash_u64(seed)}
-    rng_u32(&r)
-    return r
-}
-@(private) rng_u32 :: proc "contextless" (r:^Rng) -> u32 {
-    old:=r.state
-    r.state=old*6364136223846793005+1442695040888963407
-    x:=u32(((old>>18)~old)>>27)
-    rot:=u32(old>>59)
-    return (x>>rot)|(x<<((32-rot)&31))
-}
-// Uniform in [0,1) with 24 bits, exact in f32.
-@(private) rng_f32 :: proc "contextless" (r:^Rng) -> f32 {return f32(rng_u32(r)>>8)*(1.0/16777216.0)}
-@(private) rng_range :: proc "contextless" (r:^Rng,lo,hi:f32) -> f32 {return lo+(hi-lo)*rng_f32(r)}
-// Uniform inside the unit ball, by rejection.
-@(private) rng_ball :: proc "contextless" (r:^Rng) -> Vec3 {
-    for _ in 0..<64 {
-        p:=Vec3{rng_f32(r)*2-1,rng_f32(r)*2-1,rng_f32(r)*2-1}
-        if linalg.dot(p,p)<=1 {return p}
-    }
-    return {}
+    return base.hash_u64(base.hash_u64(u64(x)|u64(y)<<32)~u64(z))
 }
 
 // Open addressing map from a u64 key to a u32. Lookups depend only on the
-// keys inserted, and nothing iterates the table.
-@(private) Key_Map :: struct {keys:[dynamic]u64,values:[dynamic]u32,count:int}
+// keys inserted, and nothing iterates the table. It grows only in
+// key_map_reset, which takes how many keys it will hold: key_map_entry
+// allocates nothing and may add no more than those.
+@(private) Key_Map :: struct {keys:[dynamic]u64,values:[dynamic]u32}
 @(private) KEY_EMPTY :: max(u64)
 
 @(private) key_map_init :: proc(m:^Key_Map,allocator:runtime.Allocator) {
@@ -164,48 +138,43 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
     m.values=make([dynamic]u32,allocator)
 }
 @(private) key_map_destroy :: proc(m:^Key_Map) {delete(m.keys);delete(m.values);m^={}}
-@(private) key_map_reset :: proc(m:^Key_Map,expected:int) {
+// Empties the map and makes room for `expected` keys. Without memory the map
+// is left without a table, where key_map_find finds nothing.
+@(private) key_map_reset :: proc(m:^Key_Map,expected:int) -> runtime.Allocator_Error {
+    capacity:=table_capacity(expected)
+    if capacity==0 || non_zero_resize(&m.keys,capacity)!=nil || non_zero_resize(&m.values,capacity)!=nil {
+        clear(&m.keys);clear(&m.values)
+        return .Out_Of_Memory
+    }
+    for &k in m.keys {k=KEY_EMPTY}
+    return nil
+}
+// Slots of a table that stays at most half full with `expected` entries; 0
+// for a count no table holds.
+@(private) table_capacity :: proc "contextless" (expected:int) -> int {
+    if expected<0 || expected>max(int)/8 {return 0}
     capacity:=64
     for capacity<expected*2 {capacity*=2}
-    resize(&m.keys,capacity);resize(&m.values,capacity)
-    for &k in m.keys {k=KEY_EMPTY}
-    m.count=0
-}
-@(private) key_map_grow :: proc(m:^Key_Map) {
-    old_keys,old_values:=m.keys,m.values
-    m.keys=make([dynamic]u64,len(old_keys)*2,old_keys.allocator)
-    m.values=make([dynamic]u32,len(old_keys)*2,old_keys.allocator)
-    for &k in m.keys {k=KEY_EMPTY}
-    mask:=u64(len(m.keys)-1)
-    for k,i in old_keys {
-        if k==KEY_EMPTY {continue}
-        slot:=hash_u64(k)&mask
-        for m.keys[slot]!=KEY_EMPTY {slot=(slot+1)&mask}
-        m.keys[slot]=k;m.values[slot]=old_values[i]
-    }
-    delete(old_keys);delete(old_values)
+    return capacity
 }
 // Pointer to the value of key, inserting `value` when it is absent. The
-// pointer is valid until the next insertion.
+// pointer is valid until the next reset.
 @(private) key_map_entry :: proc(m:^Key_Map,key:u64,value:u32) -> (entry:^u32,inserted:bool) #no_bounds_check {
-    if (m.count+1)*2>len(m.keys) {
-        if len(m.keys)==0 {key_map_reset(m,32)} else {key_map_grow(m)}
-    }
     mask:=u64(len(m.keys)-1)
-    slot:=hash_u64(key)&mask
+    slot:=base.hash_u64(key)&mask
     for {
         k:=m.keys[slot]
         if k==key {return &m.values[slot],false}
         if k==KEY_EMPTY {break}
         slot=(slot+1)&mask
     }
-    m.keys[slot]=key;m.values[slot]=value;m.count+=1
+    m.keys[slot]=key;m.values[slot]=value
     return &m.values[slot],true
 }
 @(private) key_map_find :: proc(m:^Key_Map,key:u64) -> (value:u32,found:bool) #no_bounds_check {
     if len(m.keys)==0 {return 0,false}
     mask:=u64(len(m.keys)-1)
-    slot:=hash_u64(key)&mask
+    slot:=base.hash_u64(key)&mask
     for {
         k:=m.keys[slot]
         if k==key {return m.values[slot],true}
@@ -216,26 +185,20 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
 @(private) pair_key :: #force_inline proc "contextless" (a,b:u32) -> u64 {return u64(a)<<32|u64(b)}
 
 // Set of distinct positions held in an external array; slots hold index+1.
-@(private) Point_Set :: struct {slots:[dynamic]u32,count:int}
-@(private) point_set_reset :: proc(s:^Point_Set,expected:int) {
-    capacity:=64
-    for capacity<expected*2 {capacity*=2}
-    resize(&s.slots,capacity)
-    for &slot in s.slots {slot=0}
-    s.count=0
-}
-// Index of p in points, appended when it is new.
-@(private) point_set_add :: proc(s:^Point_Set,points:^[dynamic]Vec3,p:Vec3) -> (index:u32,added:bool) #no_bounds_check {
-    if (s.count+1)*2>len(s.slots) {
-        resize(&s.slots,max(64,len(s.slots)*2))
-        for &slot in s.slots {slot=0}
-        mask:=u64(len(s.slots)-1)
-        for q,i in points {
-            slot:=position_hash(q)&mask
-            for s.slots[slot]!=0 {slot=(slot+1)&mask}
-            s.slots[slot]=u32(i)+1
-        }
+// Like Key_Map, it grows only in point_set_reset.
+@(private) Point_Set :: struct {slots:[dynamic]u32}
+@(private) point_set_reset :: proc(s:^Point_Set,expected:int) -> runtime.Allocator_Error {
+    capacity:=table_capacity(expected)
+    if capacity==0 || non_zero_resize(&s.slots,capacity)!=nil {
+        clear(&s.slots)
+        return .Out_Of_Memory
     }
+    for &slot in s.slots {slot=0}
+    return nil
+}
+// Index of p in points, appended when it is new: points has the capacity for
+// every point the set was reset for.
+@(private) point_set_add :: proc(s:^Point_Set,points:^[dynamic]Vec3,p:Vec3) -> (index:u32,added:bool) #no_bounds_check {
     mask:=u64(len(s.slots)-1)
     slot:=position_hash(p)&mask
     for {
@@ -245,14 +208,22 @@ plane_distance :: proc "contextless" (plane:Plane,p:Vec3) -> f32 {
         slot=(slot+1)&mask
     }
     index=u32(len(points))
-    append(points,p)
+    push(points,p)
     s.slots[slot]=index+1
-    s.count+=1
     return index,true
 }
 
 @(private) temp_is :: #force_inline proc(allocator:runtime.Allocator) -> bool {
     return allocator.data==context.temp_allocator.data && allocator.procedure==context.temp_allocator.procedure
+}
+
+// Room for `extra` more elements, grown by doubling: reserve takes exactly
+// what it is asked for, and an array that fills in steps would be copied at
+// each of them.
+@(private) reserve_more :: proc(array:^[dynamic]$T,extra:int) -> runtime.Allocator_Error {
+    need:=len(array)+extra
+    if need<=cap(array) {return nil}
+    return reserve(array,max(2*cap(array),need))
 }
 
 // append for an array whose capacity is already reserved.

@@ -6,10 +6,9 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "mirai:cook/image"
-import "mirai:editor/api"
 import "mirai:project"
 
-CAPTURE_USAGE :: "capture [project] --out <x.png> [--scene S] [--camera-entity ID | --position x,y,z --target x,y,z] [--fov F] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--dev|--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--dev|--release]"
+CAPTURE_USAGE :: "capture [project] [--out x.png] [--scene S] [--camera-entity NAME | --position x,y,z --target x,y,z] [--fov F] [--size WxH] [--frames N] [--view MODE] [--reference ref.png] [--threshold SSIM] [--repeat] [--dev|--release]\n       capture [project] --plan [--views a,b] [--references DIR] [--write] [--repeat] [--dev|--release]"
 
 // mirai capture: one image of the world of a project as the editor draws it,
 // without its UI, from a camera of the scene or a pose, with the validation
@@ -57,49 +56,40 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     repeat,plan,write:=false,false,false
     views,references:string
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",CAPTURE_USAGE);return 2}
-    value :: proc(args:[]string,i:^int) -> (string,bool) {
-        if i^+1>=len(args) {return "",false}
-        i^+=1
-        return args[i^],true
-    }
     for i:=0;i<len(args);i+=1 {
         ok:=true
         switch args[i] {
-        case "--out":           out,ok=value(args,&i)
-        case "--scene":         scene,ok=value(args,&i)
-        case "--camera-entity": entity,ok=value(args,&i)
-        case "--position":      position,ok=value(args,&i)
-        case "--target":        target,ok=value(args,&i)
-        case "--view":          view,ok=value(args,&i)
-        case "--reference":     reference,ok=value(args,&i)
+        case "--out":           out,ok=option_next(args,&i)
+        case "--scene":         scene,ok=option_next(args,&i)
+        case "--camera-entity": entity,ok=option_next(args,&i)
+        case "--position":      position,ok=option_next(args,&i)
+        case "--target":        target,ok=option_next(args,&i)
+        case "--view":          view,ok=option_next(args,&i)
+        case "--reference":     reference,ok=option_next(args,&i)
         case "--fov","--threshold":
             text:string
-            text,ok=value(args,&i)
+            text,ok=option_next(args,&i)
             number,valid:=strconv.parse_f64(text)
             ok&&=valid
             if args[i-1]=="--fov" {fov=number} else {threshold=number}
         case "--frames":
             text:string
-            text,ok=value(args,&i)
+            text,ok=option_next(args,&i)
             frames,ok=strconv.parse_int(text,10)
         case "--size":
             text:string
-            text,ok=value(args,&i)
-            cut:=strings.index_byte(text,'x')
-            if ok && cut>0 {
-                w,w_ok:=strconv.parse_int(text[:cut],10)
-                h,h_ok:=strconv.parse_int(text[cut+1:],10)
-                width,height,ok=w,h,w_ok && h_ok
-            } else {ok=false}
+            text,ok=option_next(args,&i)
+            size,valid:=render_size_parse(text)
+            width,height,ok=size.x,size.y,ok && valid
         case "--repeat": repeat=true
         case "--plan": plan=true
         case "--write": write=true
-        case "--views":      views,ok=value(args,&i)
-        case "--references": references,ok=value(args,&i)
+        case "--views":      views,ok=option_next(args,&i)
+        case "--references": references,ok=option_next(args,&i)
         case "--dev":  mode=.Dev
         case "--release": mode=.Release
         case:
-            if strings.has_prefix(args[i],"-") || folder!="." {return usage()}
+            if !positional(args[i]) || folder!="." {return argument_unknown("capture",args[i])}
             folder=args[i]
         }
         if !ok {return usage()}
@@ -108,7 +98,6 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         if out!="" || scene!="" || entity!="" || position!="" || reference!="" || view!="" {fmt.eprintln("mirai capture: --plan takes its views from captures.mirai: leave out --out, --scene, the camera, --view and --reference");return 2}
         return capture_plan(root,folder,mode,views,references,write,repeat)
     }
-    if out=="" {fmt.eprintln("mirai capture: --out <file.png> is missing");return usage()}
     if (position=="")!=(target=="") {fmt.eprintln("mirai capture: --position and --target go together");return 2}
     if entity!="" && position!="" {fmt.eprintln("mirai capture: --camera-entity or --position/--target, not both");return 2}
     if !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {
@@ -116,32 +105,21 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         return 2
     }
     folder=project.path_absolute(folder)
-    out=project.path_absolute(out)
+    out=out!=""?project.path_absolute(out):project.path(folder,".mirai/captures/capture.png")
 
-    file,alive:=session_find(folder)
-    reused:=alive && session_answers(file.port)
-    if reused && !session_reusable(root,folder,mode,file,"capture") {return 1}
-    if !reused {
-        code:int
-        if file,code=session_open(root,folder,mode,false,180,{});code!=0 {return code}
-    }
+    file,reused,code:=session_borrow(root,folder,mode,"capture")
+    if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
 
-    call :: proc(port:int,method:string,params:any) -> (result:string,ok:bool) {
-        text,_:=json.marshal(params,allocator=context.temp_allocator)
-        response,err,called:=api.rpc_call(port,method,string(text),1,600000,context.allocator)
-        if !called {fmt.eprintfln("mirai capture: %s: %s",method,api.error_text(err,context.temp_allocator))}
-        return response,called
-    }
     // The document again, for the second capture of --repeat: its file, unless it has unsaved changes.
     Document :: struct {path:string,dirty:bool}
     document:Document
     if scene=="" && repeat {
-        if text,ok:=call(file.port,"scene.inspect",struct{summary:bool,limit:int}{true,1});ok {_=json.unmarshal_string(text,&document,allocator=context.temp_allocator)}
+        if text,ok:=capture_call(file.port,"scene.inspect",struct{limit:int}{1});ok {_=json.unmarshal_string(text,&document,allocator=context.temp_allocator)}
     }
     reload:=scene if scene!="" else (document.dirty?"":document.path)
     if scene!="" {
-        if _,ok:=call(file.port,"scene.load",struct{path:string}{scene});!ok {return 1}
+        if _,ok:=capture_call(file.port,"scene.open",struct{path:string}{scene});!ok {return 1}
     }
     camera:=make(json.Object)
     if entity!="" {camera["entity"]=entity}
@@ -154,12 +132,12 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     }
     if fov>0 {camera["fov"]=fov}
     if len(camera)>0 {
-        if _,ok:=call(file.port,"camera.set",camera);!ok {return 1}
+        if _,ok:=capture_call(file.port,"camera.set",camera);!ok {return 1}
     } else if repeat && reload!="" {
         // The camera of the viewport, which the scene loaded again would not keep.
         Pose :: struct {position,target:[3]f64,fov_y:f64}
         pose:Pose
-        text,ok:=call(file.port,"camera.set",struct{}{})
+        text,ok:=capture_call(file.port,"camera.set",struct{}{})
         if !ok || json.unmarshal_string(text,&pose,allocator=context.temp_allocator)!=nil {return 1}
         camera["position"]=vector_json(pose.position)
         camera["target"]=vector_json(pose.target)
@@ -170,24 +148,24 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     shown:=Modes{current="lit"}
     if view!="" {
         if reused {
-            if text,ok:=call(file.port,"editor.view_mode.list",struct{}{});ok {_=json.unmarshal_string(text,&shown,allocator=context.temp_allocator)}
+            if text,ok:=capture_call(file.port,"editor.view_mode.list",struct{}{});ok {_=json.unmarshal_string(text,&shown,allocator=context.temp_allocator)}
         }
-        if _,ok:=call(file.port,"editor.view_mode.set",struct{mode:string}{view});!ok {return 1}
+        if _,ok:=capture_call(file.port,"editor.view_mode.set",struct{mode:string}{view});!ok {return 1}
     }
-    Capture :: struct {path:string,ui:bool,width,height,warmup_frames:int,seconds:f64}
-    captured,captured_ok:=call(file.port,"editor.capture",Capture{out,false,width,height,frames,0})
+    Capture :: struct {path,of:string,ui:bool,width,height,frames:int,seconds:f64}
+    captured,captured_ok:=capture_call(file.port,"capture",Capture{out,"Scene",false,width,height,frames,0})
     again:=""
     if captured_ok && repeat {
         again=fmt.tprintf("%s.repeat.png",strings.trim_suffix(out,".png"))
         if reload!="" {
-            _,captured_ok=call(file.port,"scene.load",struct{path:string}{reload})
-            if captured_ok && len(camera)>0 {_,captured_ok=call(file.port,"camera.set",camera)}
+            _,captured_ok=capture_call(file.port,"scene.open",struct{path:string}{reload})
+            if captured_ok && len(camera)>0 {_,captured_ok=capture_call(file.port,"camera.set",camera)}
         } else {
             fmt.eprintln("mirai capture: the document has unsaved changes or no file: the second capture goes on from the first, with what the GI gathered since")
         }
-        if captured_ok {_,captured_ok=call(file.port,"editor.capture",Capture{again,false,width,height,frames,0})}
+        if captured_ok {_,captured_ok=capture_call(file.port,"capture",Capture{again,"Scene",false,width,height,frames,0})}
     }
-    if view!="" && reused {_,_=call(file.port,"editor.view_mode.set",struct{mode:string}{shown.current})}
+    if view!="" && reused {_,_=capture_call(file.port,"editor.view_mode.set",struct{mode:string}{shown.current})}
     if !captured_ok {return 1}
 
     Validation :: struct {errors,loader_errors:int,messages:[]string}
@@ -195,10 +173,10 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     Console :: struct {entries:[]Entry}
     Diagnostics :: struct {validation:Validation,console:Console}
     diagnostics:Diagnostics
-    if text,ok:=call(file.port,"engine.diagnostics",struct{min_level:string,limit:int}{"Warning",20});ok {
+    if text,ok:=capture_call(file.port,"engine.diagnostics",struct{min_level:string,limit:int}{"Warning",20});ok {
         _=json.unmarshal_string(text,&diagnostics,allocator=context.temp_allocator)
     }
-    Size :: struct {width,height:int}
+    Size :: struct {width,height:int,textures_pending,instances_drawn,instances_culled,instances_occluded:Maybe(int)}
     size:Size
     _=json.unmarshal_string(captured,&size,allocator=context.temp_allocator)
 
@@ -206,6 +184,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     Report :: struct {
         png:string,
         width,height:int,
+        textures_pending,instances_drawn,instances_culled,instances_occluded:Maybe(int) `json:",omitempty"`,
         validation_errors,loader_errors:int,
         validation_messages:[]string,
         console:[]Entry,
@@ -214,7 +193,7 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
         diff:Maybe(image.Image_Diff),
         repeat:Maybe(Repeat),
     }
-    report:=Report{png=out,width=size.width,height=size.height,validation_errors=diagnostics.validation.errors,loader_errors=diagnostics.validation.loader_errors,validation_messages=diagnostics.validation.messages,console=diagnostics.console.entries,reference=reference}
+    report:=Report{png=out,width=size.width,height=size.height,textures_pending=size.textures_pending,instances_drawn=size.instances_drawn,instances_culled=size.instances_culled,instances_occluded=size.instances_occluded,validation_errors=diagnostics.validation.errors,loader_errors=diagnostics.validation.loader_errors,validation_messages=diagnostics.validation.messages,console=diagnostics.console.entries,reference=reference}
     picture,load_error:=image.image_load(out)
     if load_error!=nil {fmt.eprintfln("mirai capture: could not read %s: %s",out,image.error_message(load_error));return 1}
     report.stats,_=image.image_stats(picture,{})
@@ -241,6 +220,9 @@ cmd_capture :: proc(root:string,args:[]string) -> int {
     fmt.println(string(text))
     return report.validation_errors>0 || !passed?1:0
 }
+
+@(private="file")
+capture_call :: proc(port:int,method:string,params:any) -> (result:string,ok:bool) {return session_call("capture",port,method,params)}
 
 @(private="file")
 vector_json :: proc(v:[3]f64) -> json.Array {
@@ -297,39 +279,31 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
     references=project.path_absolute(references)
     if os.make_directory_all(references)!=nil && !os.is_dir(references) {fmt.eprintfln("mirai capture: %s could not be made",references);return 1}
 
-    file,alive:=session_find(folder)
-    reused:=alive && session_answers(file.port)
-    if reused && !session_reusable(root,folder,mode,file,"capture") {return 1}
-    if !reused {
-        code:int
-        if file,code=session_open(root,folder,mode,false,180,{});code!=0 {return code}
-    }
+    file,reused,code:=session_borrow(root,folder,mode,"capture")
+    if code!=0 {return code}
     defer if !reused {session_close(folder,file,true)}
-    call :: proc(port:int,method:string,params:any) -> (result:string,ok:bool) {
-        text,_:=json.marshal(params,allocator=context.temp_allocator)
-        response,err,called:=api.rpc_call(port,method,string(text),1,600000,context.allocator)
-        if !called {fmt.eprintfln("mirai capture: %s: %s",method,api.error_text(err,context.temp_allocator))}
-        return response,called
-    }
     errors_now :: proc(port:int) -> (count:int,messages:[]string) {
         Validation :: struct {errors:int,messages:[]string}
         Diagnostics :: struct {validation:Validation}
         d:Diagnostics
-        if text,ok:=call(port,"engine.diagnostics",struct{min_level:string,limit:int}{"Error",8});ok {_=json.unmarshal_string(text,&d,allocator=context.temp_allocator)}
+        if text,ok:=capture_call(port,"engine.diagnostics",struct{min_level:string,limit:int}{"Error",8});ok {_=json.unmarshal_string(text,&d,allocator=context.temp_allocator)}
         return d.validation.errors,d.validation.messages
     }
+    // What the renderer counted of a capture.
+    Counted :: struct {textures_pending,instances_drawn:Maybe(int)}
     // A capture of the view from its scene loaded anew, the clock at zero.
-    shoot :: proc(port:int,plan:Capture_Plan,v:Capture_View,out:string) -> bool {
-        if _,ok:=call(port,"scene.load",struct{path:string}{v.scene});!ok {return false}
+    shoot :: proc(port:int,plan:Capture_Plan,v:Capture_View,out:string,counted:^Counted=nil) -> bool {
+        if _,ok:=capture_call(port,"scene.open",struct{path:string}{v.scene});!ok {return false}
         if len(v.position)==3 {
             camera:=make(json.Object,context.temp_allocator)
             camera["position"]=vector_json({v.position[0],v.position[1],v.position[2]})
             camera["target"]=vector_json({v.target[0],v.target[1],v.target[2]})
             if v.fov>0 {camera["fov"]=v.fov}
-            if _,ok:=call(port,"camera.set",camera);!ok {return false}
+            if _,ok:=capture_call(port,"camera.set",camera);!ok {return false}
         }
-        Capture :: struct {path:string,ui:bool,width,height,warmup_frames:int,seconds:f64}
-        _,ok:=call(port,"editor.capture",Capture{out,false,plan.size.x,plan.size.y,max(plan.frames,1),0})
+        Capture :: struct {path,of:string,ui:bool,width,height,frames:int,seconds:f64}
+        text,ok:=capture_call(port,"capture",Capture{out,"Scene",false,plan.size.x,plan.size.y,max(plan.frames,1),0})
+        if ok && counted!=nil {_=json.unmarshal_string(text,counted,allocator=context.temp_allocator)}
         return ok
     }
     Result :: struct {
@@ -337,6 +311,7 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         validation_errors:int,
         validation_messages:[]string,
         ssim,max_error,threshold,repeat_ssim:f64,
+        textures_pending,instances_drawn:Maybe(int) `json:",omitempty"`,
         written,passed:bool,
         problem:string,
     }
@@ -347,7 +322,9 @@ capture_plan :: proc(root,folder:string,mode:Build_Mode,views,references:string,
         r:=Result{name=v.name,threshold=v.threshold}
         r.png,_=strings.replace_all(join(references,fmt.tprintf("%s.capture.png",v.name)),"\\","/")
         r.reference,_=strings.replace_all(join(references,fmt.tprintf("%s.png",v.name)),"\\","/")
-        if !shoot(file.port,plan,v,r.png) {return 1}
+        counted:Counted
+        if !shoot(file.port,plan,v,r.png,&counted) {return 1}
+        r.textures_pending,r.instances_drawn=counted.textures_pending,counted.instances_drawn
         errors,messages:=errors_now(file.port)
         r.validation_errors,r.validation_messages=errors-before,messages
         before=errors

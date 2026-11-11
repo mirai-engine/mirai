@@ -8,6 +8,7 @@ import "core:time"
 import render "mirai:render"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
+import "mirai:std/base"
 
 @(private="file")
 GENERATION :: #directory+"/../shaders/build"
@@ -16,8 +17,8 @@ GENERATION :: #directory+"/../shaders/build"
 // otherwise: for the renderer its code is another one.
 @(private="file")
 generation_renamed :: proc(t:^testing.T,stage,name:string) -> string {
-    folder,err:=os.make_directory_temp("","mirai-host-shaders-*",context.temp_allocator)
-    testing.expect(t,err==nil)
+    folder:=base.test_folder(t,"host-shaders")
+    if folder=="" {return ""}
     entries,_:=os.read_all_directory_by_path(GENERATION,context.temp_allocator)
     for entry in entries {
         if os.is_directory(entry.fullpath) {continue}
@@ -43,11 +44,8 @@ loads_settle :: proc(app:^App) {
 
 @(test)
 generations_load_off_the_frames_in_the_order_they_were_asked_for :: proc(t:^testing.T) {
-    device,err:=shared_device.take(t, hardware_rt = false)
-    if device==nil {
-        if !rhi.gpu_skip_allowed() {testing.expectf(t,false,"no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)",err)}
-        return
-    }
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     r:=new(render.Renderer);defer free(r)
     if !render.renderer_init(r,{device=device,width=64,height=64}) {testing.expect(t,false,r.error);return}
     defer render.renderer_destroy(r)
@@ -57,11 +55,8 @@ generations_load_off_the_frames_in_the_order_they_were_asked_for :: proc(t:^test
     app.shaders.loads=make([dynamic]^Shaders_Load,app.allocator)
     defer app_shaders_close(&app)
     same:=generation_renamed(t,"","")
-    defer os.remove_all(same)
     capture:=generation_renamed(t,"thumbnail_values.frag","changed capture")
-    defer os.remove_all(capture)
     compositor:=generation_renamed(t,"composite.comp","changed compositor")
-    defer os.remove_all(compositor)
 
     // The codes the renderer runs: the catalog alone, without new pipelines.
     pipelines:=r.pipelines

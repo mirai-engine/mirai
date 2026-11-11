@@ -28,12 +28,6 @@ bc1_is_4color :: #force_inline proc "contextless" (endpoints:u32,mode:BC1_Palett
     return u16(endpoints)>u16(endpoints>>16)
 }
 
-bc1_unpacked_is_4color :: #force_inline proc "contextless" (e0,e1:Unpacked_565,
-    mode:BC1_Palette_Mode) -> bool {
-    if mode==.Four_Color {return true}
-    return e0>e1
-}
-
 bc1_is_bc3_canonical :: #force_inline proc "contextless" (endpoints:u32) -> bool {
     return u16(endpoints)>=u16(endpoints>>16)
 }
@@ -110,22 +104,6 @@ bc1_decompress :: proc "contextless" (to:^Color_Block,from:BC1_Block,mode:BC1_Pa
     }
 }
 
-bc2_compress_alpha :: proc "contextless" (to:^[8]u8,from:^Color_Block) {
-    for i in 0..<8 {
-        nib0:=mul8bit(i32(from[i*2][A]),15)
-        nib1:=mul8bit(i32(from[i*2+1][A]),15)
-        to[i]=u8(nib0|(nib1<<4))
-    }
-}
-
-bc2_decompress_alpha :: proc "contextless" (to:^Color_Block,from:^[8]u8) {
-    for i in 0..<8 {
-        x:=from[i]
-        to[i*2][A]=(x&0xf)*17
-        to[i*2+1][A]=(x>>4)*17
-    }
-}
-
 kill_alpha :: proc "contextless" (b:^Color_Block) {
     for i in 0..<16 {b[i][A]=255}
 }
@@ -140,11 +118,6 @@ is_one_bit_transparent :: #force_inline proc "contextless" (c:Color) -> bool {re
 // Transparent texels become 0 (black, alpha 0), the others get alpha 255.
 make_one_bit_transparent_canonical :: #force_inline proc "contextless" (c:^Color) {
     if is_one_bit_transparent(c^) {c^={}} else {c[A]=255}
-}
-
-is_one_bit_transparent_canonical :: #force_inline proc "contextless" (c:Color) -> bool {
-    if is_one_bit_transparent(c) {return color_dw(c)==0}
-    return c[A]==255
 }
 
 // Bit 2*i set when texel i is transparent (canonical 0).
@@ -167,29 +140,8 @@ bc1_one_bit_transparent_mask_same :: proc "contextless" (mask,endpoints,indices:
     return mask==indices&(indices>>1)&0x55555555
 }
 
-bc1_one_bit_transparent_same_blocks :: proc "contextless" (b1,b2:^Color_Block) -> bool {
-    for i in 0..<16 {
-        if (color_dw(b1[i])==0)!=(color_dw(b2[i])==0) {return false}
-    }
-    return true
-}
-
 bc1_one_bit_transparent_same :: proc "contextless" (b:^Color_Block,endpoints,indices:u32) -> bool {
     return bc1_one_bit_transparent_mask_same(bc1_one_bit_transparent_mask(b),endpoints,indices)
-}
-
-color_block_is_bc1_canonical :: proc "contextless" (b:^Color_Block,mode:BC1_Palette_Mode) -> bool {
-    if mode==.Alpha {
-        for i in 0..<16 {if !is_one_bit_transparent_canonical(b[i]) {return false}}
-    } else {
-        for i in 0..<16 {if b[i][A]!=255 {return false}}
-    }
-    return true
-}
-
-color_block_has_any_one_bit_transparent :: proc "contextless" (b:^Color_Block) -> bool {
-    for i in 0..<16 {if is_one_bit_transparent(b[i]) {return true}}
-    return false
 }
 
 // Squared RGBA difference of every texel to the palette entry its index picks.
@@ -330,13 +282,6 @@ bc1_eval_palette :: #force_inline proc "contextless" (ctx:^BC1_Find_Errors_Conte
     sum:=transmute(V8i32)bc1_best_errors8(ctx.br[0],ctx.ga[0],pal_br,pal_ga)+
         transmute(V8i32)bc1_best_errors8(ctx.br[1],ctx.ga[1],pal_br,pal_ga)
     return u32(simd.reduce_add_pairs(sum))
-}
-
-// The error bc1_find_indices_palette would give, without the indices.
-bc1_find_error :: proc "contextless" (b:^Color_Block,palette:^[4]Color) -> u32 {
-    ctx:BC1_Find_Errors_Context
-    bc1_find_errors_init(&ctx,b)
-    return bc1_eval_palette(&ctx,palette)
 }
 
 @(private)

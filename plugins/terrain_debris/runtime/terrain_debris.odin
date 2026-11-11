@@ -5,6 +5,7 @@ import "mirai:core"
 import "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 import terrain "plugins:terrain/runtime"
 
@@ -54,7 +55,7 @@ Owed :: struct {
 
 @(step="fixed",loops="game",stage="react")
 terrain_debris :: proc(
-    commands:core.Commands,app:^host.App,digs:core.Ref(terrain.Terrain_Digs),debris:core.Read(Terrain_Debris),
+    commands:core.Commands,assets:^host.Assets,digs:core.Ref(terrain.Terrain_Digs),debris:core.Read(Terrain_Debris),
     owed:^Debris_Owed,bodies:^phys.Body_Requests,network:core.Network,time:core.Time,problems:^core.Problems,
 ) {
     if network.role==.Client || len(digs.digs.items)==0 {return}
@@ -73,17 +74,17 @@ terrain_debris :: proc(
         for layer,i in config.layers {
             taken:=dig.layers[i]
             if !(taken>0) {continue}
-            seed:=u64(time.tick)*0x9e3779b97f4a7c15+u64(i)*0xbf58476d1ce4e5b9+u64(dig.owner)
+            rng:=base.rng_make(base.hash_combine(u64(time.tick),u64(i)),u64(dig.owner))
             if layer.piece!={} {
                 for _ in 0..<debris_count(&o.pieces[i],taken,layer.piece_volume,&rooms[slot][0]) {
-                    direction:=spread(&seed)
-                    root,ok:=debris_spawn(commands,app,layer.piece,dig.center+direction*dig.radius*0.2,dig.owner,problems)
+                    direction:=spread(&rng)
+                    root,ok:=debris_spawn(commands,assets,layer.piece,dig.center+direction*dig.radius*0.2,problems)
                     if ok && config.speed>0 {phys.set_velocity(bodies,root,(direction+{0,1,0})*config.speed*0.5)}
                 }
             }
             if layer.drop!={} {
                 for _ in 0..<debris_count(&o.drops[i],taken,layer.drop_volume,&rooms[slot][1]) {
-                    debris_spawn(commands,app,layer.drop,dig.center+spread(&seed)*dig.radius*0.1,dig.owner,problems)
+                    debris_spawn(commands,assets,layer.drop,dig.center+spread(&rng)*dig.radius*0.1,problems)
                 }
             }
         }
@@ -118,29 +119,19 @@ owed_of :: proc(owed:^Debris_Owed,owner:core.Entity,debris:core.Read(Terrain_Deb
     return owed.count-1
 }
 
-// A direction out of a hemisphere a little above the horizon, the same for
-// the same seed on every end.
+// A direction out of a hemisphere a little above the horizon.
 @(private)
-spread :: proc "contextless" (seed:^u64) -> [3]f32 {
-    next :: proc "contextless" (seed:^u64) -> f32 {
-        seed^=seed^*6364136223846793005+1442695040888963407
-        return f32(seed^>>40)/f32(1<<24)
-    }
-    turn:=next(seed)*math.TAU
-    up:=0.2+next(seed)*0.6
+spread :: proc "contextless" (rng:^base.Rng) -> [3]f32 {
+    turn:=mm.random_f32(rng)*math.TAU
+    up:=0.2+mm.random_f32(rng)*0.6
     side:=math.sqrt(1-up*up)
     return {math.cos(turn)*side,up,math.sin(turn)*side}
 }
 
 @(private)
-debris_spawn :: proc(commands:core.Commands,app:^host.App,prefab:base.Asset_Id,at:[3]f32,owner:core.Entity,problems:^core.Problems) -> (root:core.Entity,ok:bool) {
+debris_spawn :: proc(commands:core.Commands,assets:^host.Assets,prefab:base.Asset_Id,at:[3]f32,problems:^core.Problems) -> (root:core.Entity,ok:bool) {
     transform:=core.TRANSFORM_IDENTITY
     transform.position=at
-    report,error:=scene.spawn(commands,app,{prefab=prefab,transform=transform})
-    if error!=.None {
-        name:[base.ASSET_ID_TEXT]u8
-        core.report(problems,owner,"terrain_debris.prefab","the debris prefab %s of this terrain could not spawn (%v): give each layer of Terrain_Debris a .prefab of the assets, or none",host.assets_name(app.assets,prefab,&name),error)
-        return
-    }
-    return report.root,true
+    root=scene.spawn(scene.Spawner{commands,assets,problems},prefab,transform)
+    return root,root!=core.NONE
 }

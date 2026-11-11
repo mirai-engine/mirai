@@ -6,6 +6,7 @@ import "mirai:core"
 import render "mirai:engine/render"
 import physics "plugins:physics/runtime"
 import "mirai:host"
+import "mirai:std/jobs"
 import sim "plugins:physics/runtime/sim"
 import fr "plugins:destruct/runtime/fracture"
 import "mirai:std/base"
@@ -27,7 +28,8 @@ Ctx :: struct {
     f:^fr.Fracture,
     cache:^Destruct_Cache,
     events:^Destruct_Events,
-    app:^host.App,
+    assets:^host.Assets,
+    job_system:^jobs.Job_System,
     time:core.Time,
     es:^core.Entities,
     commands:core.Commands,
@@ -54,7 +56,7 @@ Ctx :: struct {
 @(step="fixed",stage="react")
 destruct_step :: proc(
     state:^physics.Physics_State,fractures:^Fracture_State,settings:core.Ref(Destruct_Settings),cache:^Destruct_Cache,requests:^Destruct_Requests,events:^Destruct_Events,
-    authority:core.Ref(core.Network),app:^host.App,time:core.Time,commands:core.Commands,
+    authority:core.Ref(core.Network),assets:^host.Assets,job_system:^jobs.Job_System,time:core.Time,commands:core.Commands,
     destructibles:core.Read(Destructible),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),parents:core.Read(core.Parent),
     states:^core.Table(Destructible_State),groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),transforms:^core.Table(core.Transform),ids:^core.Table(core.Id),
@@ -66,19 +68,19 @@ destruct_step :: proc(
     core.queue_clear(&events.grouped)
     if cache==nil || !state.ready || !time.playing || time.dt<=0 {return}
     if !fracture_state_make(fractures,settings.ptr,&state.world,problems) {return}
+    if !cache_make(cache,&fractures.fracture) {
+        core.report(problems,core.NONE,"destruct.memory","out of memory for the %d pieces of Destruct_Settings and the %d bodies of Physics_Settings; nothing breaks until there is: lower them, or free memory",fractures.fracture.desc.pieces,fractures.fracture.desc.bodies)
+        return
+    }
     fr.fracture_update(&fractures.fracture,&state.world)
     pending:=core.take(&requests.queue)
     waiting:=core.take(&requests.waiting)
     replays:=core.take(&requests.replays)
     states_asked:=core.take(&requests.states)
-    if cache.epoch!=state.epoch {
-        cache_reset(app,cache)
-        cache.epoch=state.epoch
-    }
-    cache_make(cache,&fractures.fracture)
+    if physics.simulation_replaced(state,&cache.epoch) {cache_reset(assets,job_system,cache)}
     cache.pass+=1
     c:=Ctx{
-        state=state,w=&state.world,f=&fractures.fracture,cache=cache,events=events,app=app,time=time,es=commands.entities,commands=commands,
+        state=state,w=&state.world,f=&fractures.fracture,cache=cache,events=events,assets=assets,job_system=job_system,time=time,es=commands.entities,commands=commands,
         authority=authority.role,
         destructibles=destructibles,colliders=colliders,collision=collision.ptr,meshes=meshes,tints=tints,parents=parents,locals=core.read(transforms),
         states=states,groups=groups,elsewhere=elsewhere,transforms=transforms,ids=ids,problems=problems,
@@ -87,7 +89,7 @@ destruct_step :: proc(
     entry:Entry
     for e in core.entity_map_left(&cache.entries,destructibles,gone,&at,&entry) {
         entity_end(&c,e,&entry)
-        entry_release(app,cache,&entry)
+        entry_release(assets,job_system,cache,&entry)
     }
     for row in 0..<core.count(destructibles) {reconcile(&c,core.entity_at(destructibles,row),core.at(destructibles,row))}
     events_apply(&c,waiting,pending,&requests.waiting)
@@ -121,7 +123,7 @@ groups_end :: proc(c:^Ctx,entry:^Entry) {
         physics.proxy_remove(c.state,group.entity)
         if core.alive(c.es,group.entity) {core.destroy(c.es,group.entity)}
     }
-    groups_release(c.app,c.cache,entry)
+    groups_release(c.assets,c.cache,entry)
 }
 
 // The simulation destructible of one entity made match its row: made, made
@@ -192,7 +194,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         core.report(c.problems,e,"destruct.pieces","its Destructible asks for %d pieces, and the world holds %d (Destruct_Settings.pieces); ask for 1 to %d, or raise pieces",d.pieces,len(cache.infos),len(cache.infos))
         return
     }
-    _,interior,generated:=slots_of(c.app,d,static.mesh)
+    _,interior,generated:=slots_of(c.assets,d,static.mesh)
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     entry.slots=interior+1
     entry.generated=generated
@@ -200,9 +202,9 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
     if interior<render.MATERIAL_SLOTS && d.interior=={} {entry.materials[interior]=static.materials[0]}
     key:=Prepared_Key{pieces=d.pieces,seed=d.seed,pattern=d.pattern,mesh=static.mesh,fracture=d.fracture,shape=static.shape,scale=scale,interior=interior}
     if entry.prepared==nil || entry.prepared.key!=key {
-        if !prepare_start(c.app,entry,d,static,scale,interior) {
+        if !prepare_start(c.assets,c.job_system,entry,d,static,scale,interior) {
             name:[base.ASSET_ID_TEXT]u8
-            core.report(c.problems,e,"destruct.geometry","mesh %s of its Destructible has no geometry to fracture: the mesh is missing or has no triangles, or memory ran out; give Mesh_Renderer.mesh a closed mesh of the assets",host.assets_name(c.app.assets,static.mesh,&name))
+            core.report(c.problems,e,"destruct.geometry","mesh %s of its Destructible has no geometry to fracture: the mesh is missing or has no triangles, or memory ran out; give Mesh_Renderer.mesh a closed mesh of the assets",host.assets_name(c.assets,static.mesh,&name))
             return
         }
     }
@@ -211,9 +213,14 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         st.failed,st.waiting=false,true
         return
     }
+    if p.error==.Out_Of_Memory {
+        name:[base.ASSET_ID_TEXT]u8
+        core.report(c.problems,e,"destruct.memory","no memory to fracture mesh %s of its Destructible: it stays whole; free memory or lower Destructible.pieces",host.assets_name(c.assets,static.mesh,&name))
+        return
+    }
     if p.error!=.None {
         name:[base.ASSET_ID_TEXT]u8
-        core.report(c.problems,e,"destruct.fracture","mesh %s of its Destructible cannot be fractured (%v): a mesh breaks only when it is closed; close it in the modelling tool, or give Destructible.fracture a .fracture asset",host.assets_name(c.app.assets,static.mesh,&name),p.error)
+        core.report(c.problems,e,"destruct.fracture","mesh %s of its Destructible cannot be fractured (%v): a mesh breaks only when it is closed; close it in the modelling tool, or give Destructible.fracture a .fracture asset",host.assets_name(c.assets,static.mesh,&name),p.error)
         return
     }
     cache.stats.prepared+=1
@@ -255,9 +262,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,d:Destructible) {
         physics.proxy_set(c.state,e,st.body,local.position,local.rotation)
     }
     count:=min(fr.destructible_pieces(f,w,handle,cache.infos),len(cache.infos))
-    for piece in cache.infos[:count] {
-        if piece.source>=0 {visual_source(entry,piece)}
-    }
+    visuals_source(c.problems,e,entry,cache.infos[:count])
 
 }
 
@@ -270,6 +275,7 @@ destructible_problem :: proc(c:^Ctx,e:core.Entity,error:fr.Destructible_Error) {
     case .Invalid_Mesh: why,fix="the pieces of its mesh are not valid","use a closed mesh, or another .fracture asset"
     case .No_Pieces:    why,fix="its mesh gave no pieces","give it a closed mesh with volume"
     case .Capacity:     why,fix="the fracture or the simulation has no room for it","raise the destructibles, pieces or connections of Destruct_Settings, or the hulls, shapes or bodies of Physics_Settings"
+    case .Out_Of_Memory: why,fix="there is no memory to cut its mesh","free memory or lower Destructible.pieces"
     }
     core.report(c.problems,e,"destruct.create","the simulation refused its Destructible: %s; %s",why,fix)
 }
@@ -299,17 +305,17 @@ cache_recover :: proc(c:^Ctx,e:core.Entity,d:Destructible,static:render.Mesh_Ren
     st:=core.get(c.states,e)
     if st==nil {return}
     if entry.prepared==nil {
-        _,interior,generated:=slots_of(c.app,d,static.mesh)
+        _,interior,generated:=slots_of(c.assets,d,static.mesh)
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         entry.slots=interior+1
         entry.generated=generated
         entry.materials=static.materials
-        if !prepare_start(c.app,entry,d,static,scale,interior) {st.failed=true;return}
+        if !prepare_start(c.assets,c.job_system,entry,d,static,scale,interior) {st.failed=true;return}
     }
     st.waiting=prepared_pending(entry.prepared)
     if st.waiting || entry.prepared.error!=.None {return}
     count:=min(fr.destructible_pieces(c.f,c.w,st.handle,c.cache.infos),len(c.cache.infos))
-    for piece in c.cache.infos[:count] {if piece.source>=0 {visual_source(entry,piece)}}
+    visuals_source(c.problems,e,entry,c.cache.infos[:count])
     for row in 0..<core.count(c.groups) {
         group:=c.groups.values[row]
         if group.owner!=e {continue}
@@ -416,7 +422,7 @@ mirror :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,revision
         if wanted && revision!=0 {continue}
         physics.proxy_remove(c.state,record.entity)
         if core.alive(c.es,record.entity) {core.destroy(c.es,record.entity)}
-        if record.mesh!={} && c.app.assets!=nil && host.assets_mesh_release(c.app.assets,record.mesh) {cache.stats.meshes-=1}
+        if record.mesh!={} && c.assets!=nil && host.assets_mesh_release(c.assets,record.mesh) {cache.stats.meshes-=1}
         delete(record.members)
         ordered_remove(&entry.groups,at)
     }
@@ -456,10 +462,10 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:Scratch_Group) {
     if created {record.entity=core.create(c.es)}
     sim.body_set_user_data(w,group.body,u64(group.group==0?owner:record.entity))
     if changed {
-        if record.mesh!={} && c.app.assets!=nil && host.assets_mesh_release(c.app.assets,record.mesh) {cache.stats.meshes-=1}
+        if record.mesh!={} && c.assets!=nil && host.assets_mesh_release(c.assets,record.mesh) {cache.stats.meshes-=1}
         made:bool
-        record.mesh,made=group_mesh_make(c.app,cache,entry,members)
-        if !made && c.app.assets!=nil {
+        record.mesh,made=group_mesh_make(c.assets,cache,entry,members)
+        if !made && c.assets!=nil {
             core.report(c.problems,owner,"destruct.group_mesh","the mesh of a broken part of its Destructible was not made: its pieces have no geometry, or the generated meshes are full; that part collides and is not drawn: free memory, or use fewer pieces")
         }
         clear(&record.members)

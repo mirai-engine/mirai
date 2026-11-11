@@ -262,7 +262,7 @@ step reports the entry as usual.
 ## Fluids
 
 Water is not simulated: it is an analytic volume with a queryable surface, deterministic and inside
-the snapshot; the [`water`](../../mirai-plugins/references/water.md) plugin draws it.
+the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws it.
 
 - `fluid_create`, `fluid_set` and `fluid_destroy` (`Fluid_Desc`): a `Plane` (everything below the
   height of its position, an ocean) or a `Box` rotated only in yaw, whose top face is the surface;

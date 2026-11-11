@@ -49,7 +49,7 @@ graph_named_definition :: proc(call:^api.Call,profile:anim.Graph_Profile,p:^Grap
 authoring_patch_value :: proc(call:^api.Call,text:string,value:^$T) -> bool {
     schema:serial.Schema;serial.schema_init(&schema,call.allocator);defer serial.schema_destroy(&schema)
     index,ok:=serial.schema_add_type_info(&schema,type_info_of(T));if !ok {authoring_failure(call,"patch","Out_Of_Memory","a schema for the patch","allocation failed","The patch could not be prepared",api.SERVER_ERROR);return false}
-    reader:serial.Text_Reader;serial.text_reader_init(&reader,text,call.allocator);defer serial.text_reader_destroy(&reader)
+    reader:serial.Text_Reader;api.call_reader_init(call,&reader,text);defer serial.text_reader_destroy(&reader)
     if !serial.text_read(&reader,&schema,index,mem.ptr_to_bytes(value),true) || !serial.text_end(&reader) {authoring_failure(call,"patch","Invalid_Value","fields matching the target definition","invalid patch","The patch fields could not be read");return false}
     return true
 }
@@ -61,12 +61,12 @@ authoring_graph_patch :: proc(s:^editor.Session,call:^api.Call) {
     if authoring_field_present(call,"animation") {definition.animation=patch.animation};if authoring_field_present(call,"output") {definition.output=patch.output}
     nodes,_:=api.params_array_count(call,"nodes");parameters,_:=api.params_array_count(call,"parameters")
     if !graph_named_unique(call,patch.nodes[:nodes],"nodes") || !graph_named_unique(call,patch.parameters[:parameters],"parameters") {return}
-    text,_:=authoring_json_field(call.raw,"nodes",call.allocator)
+    text:=api.json_member(call.raw,"nodes")
     for &node,i in patch.nodes[:nodes] {
         index,valid:=graph_named_reference(call,definition.nodes[:counts.nodes],base.text_get(node.name[:]),fmt.tprintf("nodes[%d].name",i));if !valid {return};if index<0 {authoring_failure(call,fmt.tprintf("nodes[%d].name",i),"Required","an existing node name","empty","A node patch needs a name");return}
         element,_:=authoring_json_element(text,i,call.allocator);if !authoring_patch_value(call,element,&definition.nodes[index]) || !graph_source_sync(call,definition.nodes[index],element,fmt.tprintf("nodes[%d]",i)) {return}
     }
-    text,_=authoring_json_field(call.raw,"parameters",call.allocator)
+    text=api.json_member(call.raw,"parameters")
     for &parameter,i in patch.parameters[:parameters] {
         index,valid:=graph_named_reference(call,definition.parameters[:counts.parameters],base.text_get(parameter.name[:]),fmt.tprintf("parameters[%d].name",i));if !valid {return};if index<0 {authoring_failure(call,fmt.tprintf("parameters[%d].name",i),"Required","an existing parameter name","empty","A parameter patch needs a name");return}
         element,_:=authoring_json_element(text,i,call.allocator);if !authoring_patch_value(call,element,&definition.parameters[index]) {return}

@@ -31,6 +31,7 @@ Decompose_Error :: enum {
     None,
     Invalid_Mesh,
     No_Volume, // the points of the mesh span no volume: there is no hull to give
+    Out_Of_Memory,
 }
 
 Decomposition :: struct {
@@ -74,7 +75,7 @@ mesh_decompose :: proc(mesh:Mesh,desc:Decompose_Desc={},allocator:=context.alloc
     // One vertex per point, so that islands and cuts see the surface whole.
     source:Mesh_Buffer
     mesh_buffer_init(&source,scratch)
-    mesh_weld({positions=mesh.positions,indices=mesh.indices},0,&source)
+    if !mesh_weld({positions=mesh.positions,indices=mesh.indices},0,&source) {return {},.Out_Of_Memory}
     tolerance:=max(desc.tolerance,tolerance_noise(positions_max_abs(source.positions[:])))
     whole_hull:=points_hull_volume(source.positions[:],{tolerance=tolerance})
     if !(whole_hull>0) {return {},.No_Volume}
@@ -154,7 +155,9 @@ mesh_decompose :: proc(mesh:Mesh,desc:Decompose_Desc={},allocator:=context.alloc
                 normal:Vec3
                 normal[axis]=1
                 plane:=Plane{normal,lo[axis]+(hi[axis]-lo[axis])*f32(step)/f32(planes+1)}
-                if _,slice_error:=mesh_slice(&slicer,view,plane,&front,&back,{tolerance=tolerance});slice_error!=.None {continue}
+                _,slice_error:=mesh_slice(&slicer,view,plane,&front,&back,{tolerance=tolerance})
+                if slice_error==.Out_Of_Memory {return {},.Out_Of_Memory}
+                if slice_error!=.None {continue}
                 if len(front.indices)==0 || len(back.indices)==0 {continue}
                 front_concavity:=part_concavity(front.positions[:],front.indices[:],tolerance)
                 back_concavity:=part_concavity(back.positions[:],back.indices[:],tolerance)
@@ -168,15 +171,21 @@ mesh_decompose :: proc(mesh:Mesh,desc:Decompose_Desc={},allocator:=context.alloc
             continue
         }
         mesh_buffer_init(&best_front,scratch);mesh_buffer_init(&best_back,scratch)
-        mesh_slice(&slicer,view,best_plane,&best_front,&best_back,{tolerance=tolerance})
+        if _,slice_error:=mesh_slice(&slicer,view,best_plane,&best_front,&best_back,{tolerance=tolerance});slice_error!=.None {return {},.Out_Of_Memory}
         part^={mesh=best_front,concavity=best_front_concavity}
         append(&parts,Part{mesh=best_back,concavity=best_back_concavity})
     }
 
-    hulls:=make([dynamic]Hull,0,len(parts),allocator)
+    hulls,no_hulls:=make([dynamic]Hull,0,len(parts),allocator)
+    if no_hulls!=nil {return {},.Out_Of_Memory}
     left:=f32(0)
     for &part in parts {
         hull,hull_error:=hull_build(part.mesh.positions[:],{max_vertices=max_vertices,tolerance=tolerance},allocator)
+        if hull_error==.Out_Of_Memory {
+            for &built in hulls {hull_destroy(&built)}
+            delete(hulls)
+            return {},.Out_Of_Memory
+        }
         if hull_error!=.None {continue}
         if hull_is_flat(hull) {
             hull_destroy(&hull)

@@ -38,21 +38,6 @@ struct Params_Block { uint gathered; uint pad0; uint pad1; uint pad2; };
 // reads it as the previous frame radiance, and lacks a relative emission.
 [[vk::binding(SLOT_PASS9, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_display : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
 
-// The values of render.Debug_View that composite shows.
-#define DEBUG_NONE 0u
-#define DEBUG_ALBEDO 1u
-#define DEBUG_NORMAL 2u
-#define DEBUG_DIRECT 3u
-#define DEBUG_INDIRECT 4u
-#define DEBUG_PROBES 5u
-#define DEBUG_MOTION 6u
-#define DEBUG_DEPTH 7u
-#define DEBUG_ROUGHNESS 8u
-#define DEBUG_METALLIC 9u
-#define DEBUG_EMISSION 10u
-#define DEBUG_UNLIT 11u
-#define DEBUG_LIGHTING 12u
-
 // What lies at distance along the ray of uv seen through the air: its light
 // times what crosses, plus what the air sends.
 float3 aerial_perspective(float3 color, float2 uv, float distance) {

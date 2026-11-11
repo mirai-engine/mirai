@@ -7,34 +7,9 @@ Made :: struct {value:i32}
 
 @(private="file")
 Made_World :: struct {
-    es:Entities,
+    using world:Test_World,
     transforms:Table(Transform),
     made:Table(Made),
-    tables:[2]Table_Info,
-    info:World_Info,
-}
-
-@(private="file")
-made_init :: proc(w:^Made_World) {
-    entities_init(&w.es)
-    table_init(&w.transforms,"Transform");table_init(&w.made,"Made")
-    w.tables={
-        {name="Transform",type=Transform,info=type_info_of(Transform),offset=offset_of(Made_World,transforms)},
-        {name="Made",type=Made,info=type_info_of(Made),offset=offset_of(Made_World,made)},
-    }
-    w.info={entities=offset_of(Made_World,es),tables=w.tables[:]}
-}
-
-@(private="file")
-made_settle :: proc(w:^Made_World) {
-    table_settle(&w.transforms,&w.es);table_settle(&w.made,&w.es)
-    entities_settle(&w.es)
-}
-
-@(private="file")
-made_destroy :: proc(w:^Made_World) {
-    table_destroy(&w.transforms);table_destroy(&w.made)
-    entities_destroy(&w.es)
 }
 
 // A function makes an entity with rows of tables it does not write, finishes
@@ -42,9 +17,9 @@ made_destroy :: proc(w:^Made_World) {
 @(test)
 commands_make_an_entity_and_the_function_finishes_what_waits :: proc(t:^testing.T) {
     w:Made_World
-    made_init(&w)
-    defer made_destroy(&w)
-    c:=commands(&w,&w.info)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    c:=commands(&w,test_world_info(&w))
     e:=commands_create(c)
     commands_add(c,e,TRANSFORM_IDENTITY)
     commands_add(c,e,Made{1})
@@ -53,7 +28,7 @@ commands_make_an_entity_and_the_function_finishes_what_waits :: proc(t:^testing.
     testing.expect(t,waiting!=nil && waiting.value==1)
     waiting.value=2
     staged(&w.transforms,e).position={1,2,3}
-    made_settle(&w)
+    test_world_settle(&w)
     value,found:=get(read(&w.made),e)
     testing.expect(t,found && value.value==2)
     placed,_:=get(read(&w.transforms),e)
@@ -66,7 +41,23 @@ commands_make_an_entity_and_the_function_finishes_what_waits :: proc(t:^testing.
     add(&w.made,e,Made{3})
     remove(&w.made,e)
     testing.expect(t,added(&w.made,e)==nil)
-    made_settle(&w)
+    test_world_settle(&w)
     testing.expect(t,!has(&w.made,e))
-    testing.expect(t,commands_destroy(c,e) && !alive(&w.es,e))
+    testing.expect(t,commands_destroy(c,e) && !alive(&w.entities,e))
+}
+
+// What commands add at its default is what the table of the World starts its rows with.
+@(test)
+commands_add_a_row_at_the_default_of_its_table :: proc(t:^testing.T) {
+    w:Made_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    test_world_info(&w).tables[1].default=proc(dst:rawptr) {(cast(^Made)dst)^={9}}
+    c:=commands(&w,test_world_info(&w))
+    testing.expect_value(t,default(c,Made).value,i32(9))
+    e:=commands_create(c)
+    commands_add_default(c,e,Made)
+    test_world_settle(&w)
+    value,_:=get(read(&w.made),e)
+    testing.expect_value(t,value.value,i32(9))
 }

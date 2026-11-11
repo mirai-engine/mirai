@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math/linalg"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // Immutable meshes own reusable ranges in the common geometry pools.
 
@@ -31,7 +32,7 @@ pool_store :: proc(pool:^[dynamic]$T,free,dirty:^[dynamic]Pool_Range,first:u32) 
         range.first+=count;range.count-=count
         if range.count==0 {unordered_remove(free,index)}
         copy(pool^[destination:][:count],pool^[first:][:count])
-        resize(pool,int(first))
+        base.truncate(pool,first)
         break
     }
     range_add(dirty,{destination,count})
@@ -72,7 +73,7 @@ pool_release :: proc(pool:^[dynamic]$T,free:^[dynamic]Pool_Range,first,count:u32
     for i:=0;i<len(free); {
         range:=free^[i]
         if range.first+range.count!=u32(len(pool)) {i+=1;continue}
-        resize(pool,int(range.first))
+        base.truncate(pool,range.first)
         unordered_remove(free,i)
         i=0
     }
@@ -92,7 +93,7 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	s.highlighted = 0
 	clear(&s.hw_instances)
 	clear(&s.tlas_items)
-	clear(&s.touched)
+	touched_trim(s, 0)
 	s.hidden_count = 0
 	clear(&s.tlas_refs)
 	clear(&s.tlas_nodes)
@@ -154,7 +155,7 @@ mesh_release :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 		inst.meta.w&~=INSTANCE_FLAG_COLLAPSED
 		s.hw_instances[index].mask_flags=0
 		s.overlays[index]={}
-		if len(s.touched)<cap(s.touched) {append(&s.touched,u32(index))} else {s.instances_dirty=true}
+		instance_touch(s, u32(index))
 		index=next
 	}
 	for i:=len(s.translucent)-1;i>=0;i-=1 {if s.instances[s.translucent[i].instance].meta.x&INSTANCE_MESH_MASK==u32(handle) {unordered_remove(&s.translucent,i)}}

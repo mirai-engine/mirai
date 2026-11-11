@@ -11,7 +11,7 @@ import mm "mirai:std/math"
 Authoring_Bone :: struct {
     name:[64]u8 `mirai:"text"`,
     path:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Unique canonical path: the identity of the bone"`,
-    parent:i32 `mirai:"min=-1,label=Parent bone index; -1 for a root; parents precede children"`,
+    parent:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=The canonical path of its parent; empty for a root; parents precede children"`,
     position:mm.Vec3 `mirai:"optional"`,
     rotation:[4]f32 `mirai:"optional,label=Normalized quaternion XYZW"`,
     scale:mm.Vec3 `mirai:"optional"`,
@@ -24,7 +24,7 @@ Skeleton_Create_Params :: struct {
 }
 Skeleton_Bone_Set_Params :: struct {
     asset:base.Asset_Id,
-    index:u32 `mirai:"label=The bone"`,
+    path:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=The canonical path of the bone"`,
     bone:Authoring_Bone_Pose `mirai:"label=Its name and rest pose; an omitted transform is identity"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
@@ -63,9 +63,9 @@ authoring_skeleton_create_defaults :: proc() -> ^Skeleton_Create_Params {
 }
 
 @(private)
-authoring_bone :: proc(value:Authoring_Bone) -> aa.Skeleton_Bone {
+authoring_bone :: proc(value:Authoring_Bone,parent:i32) -> aa.Skeleton_Bone {
     value:=value
-    return {name=value.name,path=value.path,target=base.name_hash(base.text_get(value.path[:])),parent=value.parent,translation=value.position,rotation=quaternion(x=value.rotation.x,y=value.rotation.y,z=value.rotation.z,w=value.rotation.w),scale=value.scale}
+    return {name=value.name,path=value.path,target=base.name_hash(base.text_get(value.path[:])),parent=parent,translation=value.position,rotation=quaternion(x=value.rotation.x,y=value.rotation.y,z=value.rotation.z,w=value.rotation.w),scale=value.scale}
 }
 
 @(private)
@@ -96,11 +96,9 @@ authoring_skeleton_inspect :: proc(s:^editor.Session,call:^api.Call) {
     start:=min(int(p.offset),len(view.bones));end:=min(start+int(p.limit),len(view.bones))
     for &bone,i in view.bones[start:end] {
         if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_int(out,"index",i64(start+i),true)
-        api.write_key(out,"bone")
-        value:=Authoring_Bone{name=bone.name,path=bone.path,parent=bone.parent,position=bone.translation,rotation={bone.rotation.x,bone.rotation.y,bone.rotation.z,bone.rotation.w},scale=bone.scale}
+        value:=Authoring_Bone{name=bone.name,path=bone.path,position=bone.translation,rotation={bone.rotation.x,bone.rotation.y,bone.rotation.z,bone.rotation.w},scale=bone.scale}
+        if bone.parent>=0 {value.parent=view.bones[bone.parent].path}
         authoring_write_value(call,&value,type_info_of(Authoring_Bone))
-        serial.text_write_raw(out,"}")
     }
     serial.text_write_raw(out,"]")
     api.write_key(out,"sockets");serial.text_write_raw(out,"[")
@@ -118,8 +116,20 @@ authoring_skeleton_create :: proc(s:^editor.Session,call:^api.Call) {
     target,id,ok:=authoring_create_target(s,call,base.text_get(p.path[:]),".skeleton");if !ok {return}
     bones,error:=make([]aa.Skeleton_Bone,count,call.allocator)
     if error!=nil {authoring_failure(call,"bones","Out_Of_Memory","memory for bone rows","allocation failed","The bones could not be allocated",api.INTERNAL_ERROR);return}
-    for value,i in p.bones[:count] {bones[i]=authoring_bone(value)}
+    for &value,i in p.bones[:count] {
+        parent,named:=authoring_bone_parent(call,bones[:i],base.text_get(value.parent[:]));if !named {return}
+        bones[i]=authoring_bone(value,parent)
+    }
     authoring_skeleton_save(s,call,target,id,{bones=bones,sockets=p.sockets[:sockets]})
+}
+
+// The index of the bone a path names among the bones before it; -1 for no parent.
+@(private)
+authoring_bone_parent :: proc(call:^api.Call,bones:[]aa.Skeleton_Bone,path:string) -> (parent:i32,ok:bool) {
+    if path=="" {return -1,true}
+    for &bone,i in bones {if base.text_get(bone.path[:])==path {return i32(i),true}}
+    authoring_failure(call,"bones.parent","Missing_Bone","the canonical path of a bone before it",path,"A parent is not a bone that precedes the bone")
+    return -1,false
 }
 
 @(private)
@@ -128,10 +138,12 @@ authoring_bone_set :: proc(s:^editor.Session,call:^api.Call) {
     if !authoring_editable(s,call) {return}
     file:Authoring_File;defer aa.asset_close(&file.file)
     view,ok:=authoring_skeleton_open(s,call,p.asset,&file);if !ok {return}
-    if int(p.index)>=len(view.bones) {authoring_failure(call,"index","Out_Of_Range",fmt.tprintf("an index below %d",len(view.bones)),fmt.tprintf("%d",p.index),"index is outside the skeleton");return}
-    old:=view.bones[p.index]
-    value:=authoring_bone({name=p.bone.name,path=old.path,parent=old.parent,position=p.bone.position,rotation=p.bone.rotation,scale=p.bone.scale})
-    bones,replaced:=authoring_replace_row(view.bones,int(p.index),value,false,aa.SKELETON_MAX_BONES,call.allocator)
+    index:=-1
+    for &bone,i in view.bones {if base.text_get(bone.path[:])==base.text_get(p.path[:]) {index=i;break}}
+    if index<0 {authoring_failure(call,"path","Missing_Bone","the canonical path of a bone of the skeleton",base.text_get(p.path[:]),"The skeleton has no bone at that path",fix="animation.asset.inspect lists the bones with their paths");return}
+    old:=view.bones[index]
+    value:=authoring_bone({name=p.bone.name,path=old.path,position=p.bone.position,rotation=p.bone.rotation,scale=p.bone.scale},old.parent)
+    bones,replaced:=authoring_replace_row(view.bones,index,value,false,aa.SKELETON_MAX_BONES,call.allocator)
     if !replaced {authoring_failure(call,"bone","Out_Of_Memory","memory for the bone edit","allocation failed","The bone edit could not be prepared",api.INTERNAL_ERROR);return}
     view.bones=bones
     authoring_skeleton_save(s,call,file,p.asset,view)

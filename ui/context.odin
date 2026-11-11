@@ -139,16 +139,17 @@ Context :: struct {
 
     widgets,previous:[]Widget,
     widget_count,previous_count:int,
+    previous_ids:Id_Table, // the place in previous of the first widget of each id
     clips:[]Clip,clip_count:int, // the first is no clip
     // Containers that clip around what is being built; 0 is none, which a popup pushes.
-    clip_stack:[LAYOUT_DEPTH+POPUP_DEPTH]u16,clip_depth:int,
+    clip_stack:[LAYOUT_DEPTH+POPUP_DEPTH]u16,clip_depth,clip_skipped:int,
     paints:[]Paint,paint_count:int,
     text:[]u8,text_length:int,
     draw:Draw,
     effects,previous_effects:[]Effect_Clip,
     effect_count,previous_effect_count:int,
     effect_clip:u16,
-    effect_stack:[ID_STACK_DEPTH]Effect_Entry,effect_depth,effect_refused:int,
+    effect_stack:[ID_STACK_DEPTH]Effect_Entry,effect_depth,effect_skipped,effect_refused:int,
 
     scopes:[]Scope,scope_count:int,
     previous_scopes:[]Affine,previous_scope_count:int, // surface to scope, for the pointer
@@ -161,9 +162,11 @@ Context :: struct {
     area:Id,            // while not 0, what Surface and Safe floats hang from in place of the surface (Tree_Build_Desc.area)
     area_rect:Rect,     // its rectangle, in layout units
 
-    id_stack:[ID_STACK_DEPTH]u32,id_depth:int,
+    // A push onto a full stack is not applied and is counted in its *_skipped,
+    // so its pop takes nothing off: Stats.dropped_nesting.
+    id_stack:[ID_STACK_DEPTH]u32,id_depth,id_skipped:int,
     layer:i16,
-    layer_stack:[LAYER_STACK_DEPTH]i16,layer_depth:int,
+    layer_stack:[LAYER_STACK_DEPTH]i16,layer_depth,layer_skipped:int,
 
     hot:Id,             // widget under the pointer
     hot_layer:i16,
@@ -253,6 +256,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     a:=ctx.allocator
     ctx.widgets=slice(Widget,count(desc.max_widgets,2048),a,&ok)
     ctx.previous=slice(Widget,len(ctx.widgets),a,&ok)
+    if !id_table_init(&ctx.previous_ids,len(ctx.widgets),a) {ok=false}
     ctx.links=slice(Focus_Link,FOCUS_LINKS,a,&ok)
     ctx.previous_links=slice(Focus_Link,FOCUS_LINKS,a,&ok)
     ctx.groups=slice(Focus_Group,FOCUS_LINKS,a,&ok)
@@ -297,6 +301,7 @@ context_destroy :: proc(ctx:^Context) {
     if ctx.font_owner==nil && ctx.font.allocator.procedure!=nil {font_destroy(&ctx.font)}
     layout_destroy(&ctx.layout)
     delete(ctx.widgets,a);delete(ctx.previous,a);delete(ctx.paints,a);delete(ctx.text,a)
+    id_table_destroy(&ctx.previous_ids,a)
     delete(ctx.links,a);delete(ctx.previous_links,a);delete(ctx.groups,a);delete(ctx.previous_groups,a)
     retained_destroy(ctx)
     base.region_release(&ctx.draw.region);delete(ctx.draw.commands,a)
@@ -320,10 +325,12 @@ context_set_density :: proc(ctx:^Context,density:f32) -> bool {
 
 // ---------------------------------------------------------------- ids
 
+@(private) ID_SEED :: u32(0x811c9dc5) // of an element outside every scope: the start of FNV-1a 32
+
 // Identity of an element from a name and an index, inside the scopes pushed
 // with id_push.
 id :: proc(ctx:^Context,name:string,index:int=0) -> Id {
-    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else u32(0x811c9dc5)
+    seed:=ctx.id_stack[ctx.id_depth-1] if ctx.id_depth>0 else ID_SEED
     value:=hash.fnv32a(transmute([]byte)name,seed)
     if index!=0 {
         number:=u32(index)
@@ -332,14 +339,75 @@ id :: proc(ctx:^Context,name:string,index:int=0) -> Id {
     return Id(value) if value!=0 else Id(1)
 }
 // Ids made until id_pop belong to this scope: the rows of a list, the fields
-// of an object.
+// of an object. A scope nested deeper than ID_STACK_DEPTH is not opened: its
+// ids are those of the scope around it.
 id_push :: proc(ctx:^Context,scope:Id) {
-    assert(ctx.id_depth<ID_STACK_DEPTH,"UI id stack capacity exceeded")
+    if ctx.id_depth>=ID_STACK_DEPTH {ctx.id_skipped+=1;ctx.stats.dropped_nesting+=1;return}
     ctx.id_stack[ctx.id_depth]=u32(scope);ctx.id_depth+=1
 }
 id_pop :: proc(ctx:^Context) {
-    assert(ctx.id_depth>0,"Unbalanced UI id stack")
-    ctx.id_depth-=1
+    if ctx.id_skipped>0 {ctx.id_skipped-=1;return}
+    if ctx.id_depth>0 {ctx.id_depth-=1}
+}
+
+// Where what has an id is: the first place put for it. A slot of an earlier
+// generation is free, so emptying the table costs nothing. It has slots for
+// twice what it is made for, and is given no more than that.
+@(private)
+Id_Table :: struct {ids:[]Id,places:[]i32,generations:[]u32,mask,generation:u32}
+
+@(private)
+id_table_init :: proc(t:^Id_Table,most:int,allocator:runtime.Allocator) -> bool {
+    slots:=16
+    for slots<most*2 {slots<<=1}
+    errors:[3]runtime.Allocator_Error
+    t.ids,errors[0]=make([]Id,slots,allocator)
+    t.places,errors[1]=make([]i32,slots,allocator)
+    t.generations,errors[2]=make([]u32,slots,allocator)
+    if errors!={} {id_table_destroy(t,allocator);return false}
+    // Allocated memory is not promised to be zeroed, and a slot is free by
+    // the generation it holds.
+    mem.zero_slice(t.generations)
+    t.mask,t.generation=u32(slots-1),1
+    return true
+}
+@(private)
+id_table_destroy :: proc(t:^Id_Table,allocator:runtime.Allocator) {
+    delete(t.ids,allocator);delete(t.places,allocator);delete(t.generations,allocator)
+    t^={}
+}
+@(private)
+id_table_clear :: proc(t:^Id_Table) {
+    t.generation+=1
+    if t.generation==0 {mem.zero_slice(t.generations);t.generation=1}
+}
+@(private)
+id_table_slot :: #force_inline proc "contextless" (t:^Id_Table,id:Id) -> u32 {
+    // Ids are hashes already: one multiplication spreads them over the slots.
+    return (u32(id)*2654435761)>>8 & t.mask
+}
+// False when the id has a place already, which it keeps.
+@(private)
+id_table_put :: proc(t:^Id_Table,id:Id,place:i32) -> bool {
+    slot:=id_table_slot(t,id)
+    for t.generations[slot]==t.generation {
+        if t.ids[slot]==id {return false}
+        slot=(slot+1)&t.mask
+    }
+    t.generations[slot]=t.generation
+    t.ids[slot]=id
+    t.places[slot]=place
+    return true
+}
+@(private)
+id_table_find :: proc(t:^Id_Table,id:Id) -> (place:i32,found:bool) {
+    if len(t.ids)==0 {return}
+    slot:=id_table_slot(t,id)
+    for t.generations[slot]==t.generation {
+        if t.ids[slot]==id {return t.places[slot],true}
+        slot=(slot+1)&t.mask
+    }
+    return
 }
 
 // Adds the widths of the columns of a Grid to the frame and returns what its
@@ -398,6 +466,8 @@ widget_add :: proc(ctx:^Context,id:Id,flags:Widget_Flags) {
     flags:=flags
     if ctx.effect_refused>0 || ctx.invisible>0 {flags+={.Passive,.Disabled}}
     if ctx.unfocusable>0 {flags-={.Focusable}}
+    // The element that a scope registered as its pivot takes the place of that entry.
+    if ctx.widget_count>0 && ctx.widgets[ctx.widget_count-1].id==id && .Passive in ctx.widgets[ctx.widget_count-1].flags {ctx.widget_count-=1}
     if ctx.widget_count>=len(ctx.widgets) {ctx.stats.dropped_widgets+=1;return}
     ctx.widgets[ctx.widget_count]={id=id,layer=ctx.layer,clip=ctx.clip_stack[ctx.clip_depth-1] if ctx.clip_depth>0 else 0,scope=ctx.scope,surface=ctx.surface,flags=flags,effect_clip=ctx.effect_clip,order=ctx.order,group=ctx.nav_group}
     ctx.widget_count+=1
@@ -406,30 +476,72 @@ widget_add :: proc(ctx:^Context,id:Id,flags:Widget_Flags) {
 // The rectangle an element had when the previous frame was laid out: the one
 // that was on screen when this frame's input happened.
 widget_rect :: proc(ctx:^Context,id:Id) -> (rect:Rect,found:bool) {
-    for &w in ctx.previous[:ctx.previous_count] {if w.id==id {return w.rect,true}}
-    return {},false
+    w:=widget_previous(ctx,id)
+    if w==nil {return {},false}
+    return w.rect,true
+}
+// The widget of an id in the previous frame, the first registered with it;
+// nil when none was.
+@(private)
+widget_previous :: proc(ctx:^Context,id:Id) -> ^Widget {
+    place,found:=id_table_find(&ctx.previous_ids,id)
+    return &ctx.previous[place] if found else nil
 }
 
+// A float nested deeper than LAYER_STACK_DEPTH stays in the layer around it.
 @(private)
 layer_push :: proc(ctx:^Context,layer:i16) {
-    assert(ctx.layer_depth<LAYER_STACK_DEPTH,"UI layer stack capacity exceeded")
+    if ctx.layer_depth>=LAYER_STACK_DEPTH {ctx.layer_skipped+=1;ctx.stats.dropped_nesting+=1;return}
     ctx.layer_stack[ctx.layer_depth]=ctx.layer;ctx.layer_depth+=1
     ctx.layer=layer
 }
 @(private)
 layer_pop :: proc(ctx:^Context) {
+    if ctx.layer_skipped>0 {ctx.layer_skipped-=1;return}
+    if ctx.layer_depth<=0 {return}
     ctx.layer_depth-=1;ctx.layer=ctx.layer_stack[ctx.layer_depth]
+}
+
+// Keeps the composition layer around what is built for effect_pop. False when
+// the stack is full: the box changes nothing of it.
+@(private)
+effect_push :: proc(ctx:^Context) -> bool {
+    if ctx.effect_depth>=len(ctx.effect_stack) {ctx.effect_skipped+=1;ctx.stats.dropped_nesting+=1;return false}
+    ctx.effect_stack[ctx.effect_depth]={ctx.effect_clip,ctx.effect_refused};ctx.effect_depth+=1
+    return true
+}
+@(private)
+effect_pop :: proc(ctx:^Context) {
+    if ctx.effect_skipped>0 {ctx.effect_skipped-=1;return}
+    if ctx.effect_depth<=0 {return}
+    ctx.effect_depth-=1
+    e:=ctx.effect_stack[ctx.effect_depth]
+    ctx.effect_clip,ctx.effect_refused=e.clip,e.refused
+}
+
+// The containers around what is built stop clipping it until clips_resume: a
+// popup, a modal.
+@(private)
+clips_suspend :: proc(ctx:^Context) {
+    if ctx.clip_depth>=len(ctx.clip_stack) {ctx.clip_skipped+=1;ctx.stats.dropped_clips+=1;return}
+    ctx.clip_stack[ctx.clip_depth]=0;ctx.clip_depth+=1
+}
+@(private)
+clips_resume :: proc(ctx:^Context) {
+    if ctx.clip_skipped>0 {ctx.clip_skipped-=1;return}
+    if ctx.clip_depth>0 {ctx.clip_depth-=1}
 }
 
 // ---------------------------------------------------------------- frame
 
 @(private)
 dropped_total :: proc "contextless" (s:^Stats) -> u32 {
-    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks
+    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks+s.dropped_nesting
 }
 
+// Begun inside a frame that was not ended, it starts over and that frame is lost.
 frame_begin :: proc(ctx:^Context,input:Input) {
-    assert(!ctx.in_frame,"frame_begin without frame_end")
+    if ctx.in_frame {ctx.stats.layout_errors+=1}
     ctx.in_frame=true
     if ctx.font_owner!=nil {ctx.font=ctx.font_owner^}
     ctx.input=input
@@ -448,11 +560,11 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.dropped_before=dropped_total(&ctx.stats)
 
     ctx.widget_count=0;ctx.paint_count=0;ctx.text_length=0
-    ctx.effect_count=1;ctx.effect_clip=0;ctx.effect_depth=0;ctx.effect_refused=0
-    ctx.clip_count=1;ctx.clip_depth=0;ctx.scope_count=1;ctx.scope=0
+    ctx.effect_count=1;ctx.effect_clip=0;ctx.effect_depth=0;ctx.effect_skipped=0;ctx.effect_refused=0
+    ctx.clip_count=1;ctx.clip_depth=0;ctx.clip_skipped=0;ctx.scope_count=1;ctx.scope=0
     ctx.scopes[0]={m=AFFINE_IDENTITY,tint={1,1,1,1}}
     ctx.panel_count=0;ctx.surface=0;ctx.area=0
-    ctx.id_depth=0;ctx.layer=0;ctx.layer_depth=0;ctx.disabled_depth=0;ctx.invisible=0;ctx.unfocusable=0;ctx.order=0;ctx.nav_group=0
+    ctx.id_depth=0;ctx.id_skipped=0;ctx.layer=0;ctx.layer_depth=0;ctx.layer_skipped=0;ctx.disabled_depth=0;ctx.invisible=0;ctx.unfocusable=0;ctx.order=0;ctx.nav_group=0
     ctx.link_count=0;ctx.group_count=0;ctx.retaining=0
     ctx.elements=0;ctx.skipped=0
     ctx.tooltip="";ctx.modal_open=false;ctx.activate=0
@@ -479,13 +591,26 @@ frame_begin :: proc(ctx:^Context,input:Input) {
     ctx.layout_started=false
 }
 
+// Closes the panel, the containers and the layers the builder left open, so a
+// frame that misses an end is still laid out and drawn.
+@(private)
+frame_close :: proc(ctx:^Context) {
+    d:=&ctx.draw
+    open:=ctx.layout_started && ctx.layout.open_len>1
+    if !open && ctx.surface==0 && ctx.skipped==0 && ctx.clip_depth==0 && d.composition_depth==0 && d.skipped_layers==0 {return}
+    ctx.stats.layout_errors+=1
+    compositions_close(ctx)
+    if ctx.surface!=0 {world_panel_end(ctx)}
+    if open {for ctx.layout.open_len>1 {layout_close(&ctx.layout)}}
+    ctx.skipped,ctx.clip_depth,ctx.clip_skipped=0,0,0
+}
+
+// An empty Frame when no frame was begun.
 frame_end :: proc(ctx:^Context) -> Frame {
-    assert(ctx.in_frame,"frame_end without frame_begin")
-    assert(ctx.surface==0,"frame_end inside a world panel")
-    assert(ctx.draw.composition_depth==0 && ctx.draw.skipped_layers==0,"Unbalanced UI composition layers")
+    if !ctx.in_frame {ctx.stats.layout_errors+=1;return {}}
+    frame_close(ctx)
     popup_frame_end(ctx)
     if ctx.tooltip!="" && ctx.popup.count==0 && !ctx.modal_open {tooltip_build(ctx)}
-    assert(ctx.skipped==0 && ctx.clip_depth==0,"Unbalanced UI containers")
 
     // Without an element in the frame there is no layout to end.
     laid:=ctx.layout_started
@@ -524,12 +649,13 @@ frame_end :: proc(ctx:^Context) -> Frame {
     panels_resolve(ctx)
     if laid {layout_paint(ctx)}
     retained_frame_end(ctx)
-    assert(ctx.draw.composition_depth==0 && ctx.draw.skipped_layers==0,"Unbalanced laid out UI composition layers")
     focus_ring_draw(ctx)
 
     input_frame_end(ctx)
     ctx.widgets,ctx.previous=ctx.previous,ctx.widgets
     ctx.previous_count=ctx.widget_count
+    id_table_clear(&ctx.previous_ids)
+    for &w,place in ctx.previous[:ctx.previous_count] {id_table_put(&ctx.previous_ids,w.id,i32(place))}
     ctx.links,ctx.previous_links=ctx.previous_links,ctx.links
     ctx.previous_link_count=ctx.link_count
     ctx.groups,ctx.previous_groups=ctx.previous_groups,ctx.groups

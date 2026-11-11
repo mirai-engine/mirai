@@ -9,9 +9,9 @@ import "mirai:std/jobs"
 
 // A recording of frames for whoever measures the application (the profile.*
 // methods of the editor): on the main thread a zone for the frame and one for
-// each of its parts; one for each function of the loops, which the world
-// opens with profile_step_begin on the ring of the worker that runs it; on
-// the ring of each worker of the job system its jobs; and per frame what the
+// each of its parts, and one for each function of the loops, which the world
+// opens with profile_step_begin; on the ring of each worker of the job
+// system its jobs; and per frame what the
 // zones do not carry, the times of the
 // renderer and of the GPU. Rings are drained at the end of every frame, so a
 // ring only has to hold one frame. While nothing records a zone costs a
@@ -155,18 +155,18 @@ profile_pass_name :: proc(app:^App,index:int) -> string {
     return string(p.pass_names[index][:p.pass_name_lengths[index]])
 }
 
-// The zone of a function of the loops, by its index in info.steps, on the
-// ring of the worker that runs it: the world opens one around each call.
-profile_step_begin :: #force_inline proc "contextless" (app:^App,index,worker:int) -> base.Profile_Scope {
+// The zone of a function of the loops, by its index in info.steps: the world
+// opens one around each call, on the thread of the loop.
+profile_step_begin :: #force_inline proc "contextless" (app:^App,index:int) -> base.Profile_Scope {
     if !profile_active(app) {return {}}
-    return profile_step_open(app,index,worker)
+    return profile_step_open(app,index)
 }
 profile_step_end :: #force_inline proc "contextless" (zone:base.Profile_Scope) {
     base.profile_end(zone)
 }
-profile_step_open :: proc "contextless" (app:^App,index,worker:int) -> base.Profile_Scope {
+profile_step_open :: proc "contextless" (app:^App,index:int) -> base.Profile_Scope {
     if app.info==nil || index<0 || index>=len(app.info.steps) {return {}}
-    return base.profile_begin(&app.profiler.profile,worker,app.info.steps[index].name)
+    return base.profile_begin(&app.profiler.profile,PROFILE_MAIN,app.info.steps[index].name)
 }
 
 // A zone of the main thread named by a literal, for a part of the frame.

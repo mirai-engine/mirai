@@ -289,7 +289,9 @@ a_skinned_button_changes_its_image_with_its_state :: proc(t:^testing.T) {
             normal={quad={.Image,1,{0,0,1,1}}},hovered={quad={.Image,2,{0,0,1,1}}},pressed={quad={.Image,3,{0,0,1,1}},text_color={255,255,0,255}},
             disabled={tint={40,40,40,255}},text={size=20,color={255,255,255,255}},width=fixed(160),height=fixed(48),
         }
-        if skin_button(ctx,id(ctx,"start"),"Start",skin,s.disabled).clicked {s.clicks+=1}
+        start:=id(ctx,"start")
+        look,image:=skin_look(ctx,start,skin,s.disabled)
+        if button(ctx,start,{label="Start",look=&look,image=image,layout=&Layout{width=skin.width,height=skin.height,padding=skin.padding},block=true,disabled=s.disabled}).clicked {s.clicks+=1}
     }
     input:=test_input()
     frame:=test_frame(&ctx,&input,build,&s)
@@ -313,6 +315,7 @@ a_skinned_button_changes_its_image_with_its_state :: proc(t:^testing.T) {
     testing.expect_value(t,frame.shapes[quad_data(frame.vertices[0].quad)].fill,[4]f32{40,40,40,255}/255)
     test_press(&input)
     test_frame(&ctx,&input,build,&s)
+    testing.expect(t,ctx.hot!=id(&ctx,"start"),"Disabled and without a tooltip, the pointer goes through it")
     test_release(&input)
     test_frame(&ctx,&input,build,&s)
     testing.expect_value(t,s.clicks,1)

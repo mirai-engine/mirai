@@ -25,6 +25,7 @@ Diff :: struct {
     path:[dynamic]u8,
     left,right:serial.Writer,
     count:int,
+    exhausted:bool, // no memory to match the rows of a table
 }
 
 @(private="file")
@@ -59,12 +60,12 @@ diff_value :: proc(d:^Diff,type_a:serial.Type_Index,bytes_a:[]u8,text_a:bool,typ
     ta,tb:=sa.types[type_a],sb.types[type_b]
     if d.a.hashes[type_a]==d.b.hashes[type_b] && text_a==text_b && mem.compare(bytes_a,bytes_b)==0 {return}
     base_length:=len(d.path)
-    defer resize(&d.path,base_length)
+    defer base.truncate(&d.path,base_length)
     if ta.kind==.Struct && tb.kind==.Struct {
         fields_b:=sb.fields[tb.first:][:tb.count]
         for &field in sa.fields[ta.first:][:ta.count] {
             if .Transient in field.flags {continue}
-            resize(&d.path,base_length)
+            base.truncate(&d.path,base_length)
             append(&d.path,'.');append(&d.path,field.name)
             part:=bytes_a[field.offset:][:sa.types[field.type].size]
             is_text:=.Text in field.flags && serial.type_is_bytes(sa,field.type)
@@ -85,7 +86,7 @@ diff_value :: proc(d:^Diff,type_a:serial.Type_Index,bytes_a:[]u8,text_a:bool,typ
                 if candidate.name==field.name && .Transient not_in candidate.flags {known=true;break}
             }
             if known {continue}
-            resize(&d.path,base_length)
+            base.truncate(&d.path,base_length)
             append(&d.path,'.');append(&d.path,field.name)
             only(d,'+',d.b,field.type,bytes_b[field.offset:][:sb.types[field.type].size],.Text in field.flags && serial.type_is_bytes(sb,field.type))
         }
@@ -95,7 +96,7 @@ diff_value :: proc(d:^Diff,type_a:serial.Type_Index,bytes_a:[]u8,text_a:bool,typ
         size_a,size_b:=int(sa.types[ta.elem].size),int(sb.types[tb.elem].size)
         buffer:[24]u8
         for i in 0..<int(max(ta.count,tb.count)) {
-            resize(&d.path,base_length)
+            base.truncate(&d.path,base_length)
             append(&d.path,'[');append(&d.path,index_text(buffer[:],i));append(&d.path,']')
             switch {
             case i>=int(tb.count): only(d,'-',d.a,ta.elem,bytes_a[i*size_a:][:size_a],false)
@@ -173,7 +174,7 @@ diff_rows :: proc(d:^Diff,table_a,row_a,table_b,row_b:int) {
     for &column,at in ta.columns {
         other,found:=document_column(d.b,table_b,column.name)
         if !found || column.ref>=0 {continue}
-        resize(&d.path,base_length)
+        base.truncate(&d.path,base_length)
         if column.name!="" {append(&d.path,'.');append(&d.path,column.name)}
         diff_value(d,column.type,document_cell(d.a,table_a,at,row_a),.Text in column.flags && serial.type_is_bytes(&d.a.schema,column.type),
             tb.columns[other].type,document_cell(d.b,table_b,other,row_b),.Text in tb.columns[other].flags && serial.type_is_bytes(&d.b.schema,tb.columns[other].type))
@@ -226,10 +227,11 @@ diff_tables :: proc(d:^Diff,table_a,table_b:int) {
         }
         return
     }
-    rows_b:=make(map[string]int,tb.rows,a.allocator)
+    rows_b,no_rows:=make(map[string]int,tb.rows,a.allocator)
     defer delete(rows_b)
-    matched:=make([]bool,tb.rows,a.allocator)
+    matched,no_matched:=make([]bool,tb.rows,a.allocator)
     defer delete(matched,a.allocator)
+    if no_rows!=nil || no_matched!=nil {d.exhausted=true;return}
     for row in 0..<tb.rows {
         key:=string(identity(b,table_b,row))
         if !(key in rows_b) {rows_b[key]=row}
@@ -249,8 +251,9 @@ diff_tables :: proc(d:^Diff,table_a,table_b:int) {
     }
 }
 
-// Writes the differences into w and returns how many there are.
-document_diff :: proc(a,b:^Document,w:^serial.Writer) -> int {
+// Writes the differences into w and returns how many there are; Out_Of_Memory
+// when w or the matching of the rows had none, and then they are not all there.
+document_diff :: proc(a,b:^Document,w:^serial.Writer) -> (count:int,error:Error) {
     d:=Diff{a=a,b=b,w=w}
     d.path=make([dynamic]u8,a.allocator)
     serial.writer_init(&d.left,allocator=a.allocator)
@@ -293,6 +296,6 @@ document_diff :: proc(a,b:^Document,w:^serial.Writer) -> int {
         clear(&d.path);append(&d.path,table.name)
         line(&d,'+');line_end(&d)
     }
-    return d.count
+    return d.count,.Out_Of_Memory if d.exhausted || w.overflow!=0 else .None
 }
 

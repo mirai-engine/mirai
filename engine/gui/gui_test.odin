@@ -1,5 +1,6 @@
 package gui
 
+import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
@@ -45,7 +46,7 @@ the_rect_of_a_node_of_a_screen_is_in_window_points :: proc(t:^testing.T) {
 the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=3,resimulating=true})
     testing.expect(t,len(events.items)==0 && len(gui.pending)==1)
@@ -54,10 +55,80 @@ the_events_of_a_frame_wait_for_a_tick_that_does_not_run_again :: proc(t:^testing
 }
 
 @(test)
+a_name_asked_is_kept_once_for_the_screen_it_was_asked_of :: proc(t:^testing.T) {
+    gui_:Gui
+    a,b:=core.entity_make(1,1),core.entity_make(2,1)
+    events:=events_this_frame(&gui_)
+    clicked(events,a,"play")
+    clicked(events,a,"play")
+    clicked(events,b,"play")
+    clicked(events,a,"")
+    asked_merge(&gui_,events)
+    testing.expect_value(t,events.asked_count,0)
+    testing.expect_value(t,gui_.names_asked_count,2)
+    testing.expect(t,gui_.names_asked[0].name==base.name_hash("play") && gui_.names_asked[0].entity==a,"what was asked, each once")
+}
+
+@(test)
+the_helpers_read_the_events_of_a_frame :: proc(t:^testing.T) {
+    entity:=core.entity_make(1,1)
+    gui_:Gui
+    defer delete(gui_.arrived.items)
+    append(&gui_.arrived.items,
+        UI_Event{entity=entity,name=base.name_hash("play"),kind=.Clicked},
+        UI_Event{entity=entity,name=base.name_hash("volume"),kind=.Changed,value=0.5},
+        UI_Event{entity=entity,kind=.Back},
+        UI_Event{kind=.Menu},
+    )
+    events:=events_this_frame(&gui_)
+    testing.expect(t,menu_pressed(events))
+    testing.expect(t,clicked(events,entity,"play") && !clicked(events,entity,"quit"))
+    value,ok:=changed_value(events,entity,"volume")
+    testing.expect(t,ok && value==0.5)
+    testing.expect(t,back(events,entity))
+    testing.expect(t,!clicked(events_this_frame(nil),entity,"play") && !menu_pressed(nil),"without a Gui there are no events")
+}
+
+// A frame step reads an event once, in frames with several ticks and with none.
+@(test)
+events_this_frame_gives_each_event_once_whatever_ticks_ran :: proc(t:^testing.T) {
+    gui:Gui
+    events:UI_Events
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
+    event:=UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked}
+    read :: proc(t:^testing.T,gui:^Gui,want:int,loc:=#caller_location) {
+        testing.expect_value(t,len(events_this_frame(gui).items),want,loc=loc)
+    }
+    // Two ticks: the second leaves UI_Events empty, this frame still has it, the next one does not.
+    append(&gui.pending,event)
+    gui_events_deliver(&events,&gui,core.Time{tick=1})
+    gui_events_deliver(&events,&gui,core.Time{tick=2})
+    testing.expect_value(t,len(events.items),0)
+    gui_events_frame(&events,&gui,core.Time{tick=2})
+    read(t,&gui,1)
+    gui_events_deliver(&events,&gui,core.Time{tick=3})
+    gui_events_frame(&events,&gui,core.Time{tick=3})
+    read(t,&gui,0)
+    // Stopped: no tick runs, and it comes through the frame phase, once.
+    append(&gui.pending,event)
+    gui_events_frame(&events,&gui,core.Time{tick=3})
+    read(t,&gui,1)
+    gui_events_frame(&events,&gui,core.Time{tick=3})
+    read(t,&gui,0)
+    // A tick that runs again gave them already.
+    append(&gui.pending,event)
+    gui_events_deliver(&events,&gui,core.Time{tick=4})
+    gui_events_frame(&events,&gui,core.Time{tick=4})
+    gui_events_deliver(&events,&gui,core.Time{tick=4,resimulating=true})
+    gui_events_frame(&events,&gui,core.Time{tick=4})
+    read(t,&gui,0)
+}
+
+@(test)
 a_tick_that_runs_again_gets_the_events_it_got :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
     append(&gui.pending,UI_Event{entity=core.entity_make(1,1),name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=5})
     gui_events_deliver(&events,&gui,core.Time{tick=6})
@@ -143,30 +214,27 @@ a_hidden_screen_builds_until_nothing_of_it_shows :: proc(t:^testing.T) {
 
 @(private="file")
 Bind_Test_World :: struct {
-    es:core.Entities,
+    using world:core.Test_World,
     healths:core.Table(Bind_Test_Health),
     match:Bind_Test_Match,
 }
 @(private="file") Bind_Test_Health :: struct {value:f32,most:f32}
-@(private="file") Bind_Test_Match :: struct {seconds:f32}
+
+@(private="file") @(storage,setting="machine")
+Bind_Test_Match :: struct {seconds:f32}
 
 @(test)
 paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T) {
     w:Bind_Test_World
-    core.entities_init(&w.es)
-    defer core.entities_destroy(&w.es)
-    core.table_init(&w.healths,"Bind_Test_Health")
-    defer core.table_destroy(&w.healths)
-    e:=core.create(&w.es)
+    if !core.test_world_init(t,&w) {return}
+    defer core.test_world_destroy(&w)
+    e:=core.create(&w.entities)
     core.add(&w.healths,e,Bind_Test_Health{3,10})
-    core.table_settle(&w.healths,&w.es)
-    tables:=[]core.Table_Info{{name="Bind_Test_Health",type=Bind_Test_Health,info=type_info_of(Bind_Test_Health),offset=offset_of(Bind_Test_World,healths)}}
-    storages:=[]core.Storage_Info{{name="Bind_Test_Match",type=Bind_Test_Match,info=type_info_of(Bind_Test_Match),offset=offset_of(Bind_Test_World,match)}}
-    info:=core.World_Info{entities=offset_of(Bind_Test_World,es),tables=tables,storages=storages}
+    core.test_world_settle(&w)
     gui:Gui
     gui.allocator=context.allocator
     defer gui_free(&gui)
-    b:=Bind{gui=&gui,world=core.world_ref(&w,&info)}
+    b:=Bind{gui=&gui,world=core.test_world_ref(&w)}
     host:=bind_host(&b)
     // A component, by its name, is the row of the entity with its stamp.
     _,storage,found:=host.source(host.user,base.name_hash("Bind_Test_Health"))
@@ -186,8 +254,42 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     testing.expect(t,found && storage)
     data,stamp=host.fetch(host.user,base.name_hash("Bind_Test_Match"),0)
     testing.expect(t,data==&w.match && stamp==0)
+    // A control bound to a setting writes it; a component, or anything else, asks the game.
+    testing.expect(t,host.commits(host.user,base.name_hash("Bind_Test_Match")) && !host.commits(host.user,base.name_hash("Bind_Test_Health")))
     _,_,found=host.source(host.user,base.name_hash("Missing"))
     testing.expect(t,!found)
+
+    // With the memory ending at each request in turn, a name that finds none
+    // for its source is not found, and with memory enough it is.
+    Limit :: struct {owner:runtime.Allocator,remaining:int}
+    limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+        limit:=(^Limit)(data)
+        if size>0 && (mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed) {
+            if limit.remaining<=0 {return nil,.Out_Of_Memory}
+            limit.remaining-=1
+        }
+        return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+    }
+    named,refused:=false,false
+    for served:=0;!named && served<64;served+=1 {
+        limit:=Limit{context.allocator,served}
+        limited:=runtime.Allocator{limit_proc,&limit}
+        low:Gui
+        low.allocator=limited
+        low.sources=make([dynamic]Bound_Source,limited)
+        binding:=Bind{gui=&low,world=core.test_world_ref(&w)}
+        {
+            context.allocator=limited
+            low_host:=bind_host(&binding)
+            _,_,named=low_host.source(low_host.user,base.name_hash("Bind_Test_Health"))
+            row,_:=low_host.fetch(low_host.user,base.name_hash("Bind_Test_Health"),base.Entity(e))
+            testing.expectf(t,(row!=nil)==named,"with %d requests served: found %v, its row %v",served,named,row!=nil)
+        }
+        refused||=!named
+        limit.remaining=max(int)
+        gui_free(&low)
+    }
+    testing.expect(t,named && refused,"refused without memory, and with it the source is found")
 }
 
 @(test)
@@ -328,16 +430,13 @@ the_reference_scales_the_interfaces_with_the_scale_of_the_player :: proc(t:^test
 
 @(test)
 a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) {
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    first,second,menu,pause:=core.create(&es),core.create(&es),core.create(&es),core.create(&es)
-    seats:core.Table(inp.Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
-    core.add(&seats,first,inp.Seat{})
-    core.add(&seats,second,inp.Seat{slot=1})
-    core.table_settle(&seats,&es)
+    w:Seats_Test_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    first,second,menu,pause:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,first,inp.Seat{})
+    core.add(&w.seats,second,inp.Seat{slot=1})
+    core.test_world_settle(&w)
     state:inp.Seats
     requests:inp.Seat_Requests
     defer delete(requests.items)
@@ -347,7 +446,7 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
     gui:Gui
     defer {delete(gui.instances);delete(gui.unblock)}
     append(&gui.instances,Instance{entity=menu,modal=true,taking=true,player=2},Instance{entity=pause,modal=true,taking=true})
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),2)
     testing.expect(t,requests.items[0].kind==.Block_Add && requests.items[0].seat==second && requests.items[0].owner==menu)
     testing.expect(t,requests.items[1].kind==.Block_Add && requests.items[1].seat==core.NONE && requests.items[1].owner==pause)
@@ -356,12 +455,12 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
     // Applied by input, the blocks are not asked again.
     state.blocks[0]={owner=menu,seat=second,mask=inp.ALL_ACTIONS,active=true}
     state.blocks[1]={owner=pause,mask=inp.ALL_ACTIONS,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests) && len(requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(requests.items)==0)
     // Off the top, or gone, they give the seats back.
     gui.instances[0].modal,gui.instances[0].taking=false,false
     pop(&gui.instances)
     append(&gui.unblock,pause)
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),2)
     testing.expect(t,requests.items[0].kind==.Block_Remove && requests.items[1].kind==.Block_Remove)
     testing.expect(t,!gui.instances[0].blocking)
@@ -372,35 +471,34 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
 @(test)
 the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing.T) {
     DROP :: inp.Action(4)
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    seat,inventory,cinematic:=core.create(&es),core.create(&es),core.create(&es)
-    seats:core.Table(inp.Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
-    core.add(&seats,seat,inp.Seat{})
-    core.table_settle(&seats,&es)
+    w:Seats_Test_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    seat,inventory,cinematic:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,seat,inp.Seat{})
+    core.test_world_settle(&w)
     bindings:inp.Input_Map
     inp.input_map_action(&bindings,DROP,.Button)
     inp.input_map_bind(&bindings,DROP,inp.binding_key(.X))
     device:=core.Input{keys_down={.X},keys_pressed={.X}}
-    inp.seat_feed(core.get(&seats,seat),&device,&bindings,false)
+    inp.seat_feed(core.get(&w.seats,seat),&device,&bindings,false)
     state:inp.Seats
     state.blocks[0]={owner=inventory,mask=inp.ALL_ACTIONS,active=true}
-    core.get(&seats,seat).blocked=inp.ALL_ACTIONS
+    core.get(&w.seats,seat).blocked=inp.ALL_ACTIONS
     names:=[1]core.Name_Info{{type=inp.Action,value=i64(DROP),name="drop_item"}}
-    info:=core.World_Info{names=names[:]}
+    info:=core.test_world_info(&w)
+    info.names=names[:]
+    core.test_info_index(info)
     app:=new(host.App)
     defer free(app)
-    app.info=&info
+    app.info=info
     gui:Gui
     defer delete(gui.actions)
     instance:=Instance{entity=inventory}
-    src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=&state,seats=core.read(&seats),building=&instance}
+    src:=Source{gui=&gui,app=app,player=1,seat=seat,seat_state=&state,seats=core.read(&w.seats),building=&instance}
     down,pressed:=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,down && pressed)
-    testing.expect(t,!inp.seat_action(core.read(&seats),seat,DROP).down,"the game does not get it")
+    testing.expect(t,!inp.seat_action(core.read(&w.seats),seat,DROP).down,"the game does not get it")
     instance.entity=cinematic
     down,pressed=source_action(&src,base.name_hash("drop_item"))
     testing.expect(t,!down && !pressed,"another interface does not read past the block of the Modal")
@@ -411,13 +509,10 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
 @(test)
 a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing.T) {
     MENU :: inp.Input_Context(1)
-    es:core.Entities
-    core.entities_init(&es)
-    defer core.entities_destroy(&es)
-    inventory:=core.create(&es)
-    seats:core.Table(inp.Seat)
-    core.table_init(&seats,"Seat")
-    defer core.table_destroy(&seats)
+    w:Seats_Test_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    inventory:=core.create(&w.entities)
     state:inp.Seats
     requests:inp.Seat_Requests
     defer delete(requests.items)
@@ -427,7 +522,7 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     gui:Gui
     defer {delete(gui.instances);delete(gui.unblock)}
     append(&gui.instances,Instance{entity=inventory,modal=true,taking=true,input_context=MENU})
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect_value(t,len(requests.items),0)
     if testing.expect_value(t,len(context_requests.items),1) {
         r:=context_requests.items[0]
@@ -436,9 +531,9 @@ a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing
     clear(&context_requests.items)
     // Applied by input, it is not asked again.
     contexts.entries[0]={owner=inventory,input_context=MENU,modal=true,active=true}
-    testing.expect(t,modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
+    testing.expect(t,modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests) && len(context_requests.items)==0)
     gui.instances[0].modal,gui.instances[0].taking=false,false
-    testing.expect(t,!modal_apply(&gui,{&state},core.read(&seats),&requests,{&contexts},&context_requests))
+    testing.expect(t,!modal_apply(&gui,{&state},core.read(&w.seats),&requests,{&contexts},&context_requests))
     testing.expect(t,len(context_requests.items)==1 && context_requests.items[0].leave && !gui.instances[0].entered)
 }
 
@@ -450,19 +545,19 @@ a_screen_kept_from_its_last_frame_is_built_again_for_another_device_or_language 
     entry:Planned
     ctx:ui.Context
     rect:=[4]f32{0,0,800,600}
-    first:=screen_key(app,&ctx,&instance,&entry,0,rect)
+    first:=screen_key(app.assets,&ctx,&instance,&entry,0,rect)
     ctx.game.family=.PlayStation
-    pad:=screen_key(app,&ctx,&instance,&entry,0,rect)
+    pad:=screen_key(app.assets,&ctx,&instance,&entry,0,rect)
     testing.expect(t,pad!=first,"the prompts of another device")
     ctx.game.language=7
-    testing.expect(t,screen_key(app,&ctx,&instance,&entry,0,rect)!=pad,"the texts of another language")
+    testing.expect(t,screen_key(app.assets,&ctx,&instance,&entry,0,rect)!=pad,"the texts of another language")
 }
 
 @(test)
 events_go_to_the_frame_phase_while_no_tick_runs :: proc(t:^testing.T) {
     gui:Gui
     events:UI_Events
-    defer {delete(gui.pending);delete(events.items)}
+    defer {delete(gui.pending);delete(gui.arrived.items);delete(events.items)}
     // A tick ran in the frame: the frame phase leaves it its events.
     append(&gui.pending,UI_Event{name=7,kind=.Clicked})
     gui_events_deliver(&events,&gui,core.Time{tick=4})
@@ -541,6 +636,18 @@ the_instances_of_an_entity_are_found_after_others_go :: proc(t:^testing.T) {
 }
 
 @(test)
+a_fixed_panel_shows_its_face_toward_the_forward_of_its_entity :: proc(t:^testing.T) {
+    rotation:=panel_rotation(quaternion128(1))
+    face:=linalg.quaternion_mul_vector3(rotation,[3]f32{0,0,1})
+    right:=linalg.quaternion_mul_vector3(rotation,[3]f32{1,0,0})
+    testing.expect(t,linalg.distance(face,[3]f32{0,0,-1})<1e-5,"it faces -Z, as any entity")
+    testing.expect(t,linalg.distance(right,[3]f32{-1,0,0})<1e-5,"so what looks at it reads it from left to right")
+    // Half a turn more and the panel looks at +Z.
+    turned:=panel_rotation(quaternion128(quaternion(w=0,x=0,y=1,z=0)))
+    testing.expect(t,linalg.distance(linalg.quaternion_mul_vector3(turned,[3]f32{0,0,1}),[3]f32{0,0,1})<1e-5)
+}
+
+@(test)
 widgets_out_of_sight_are_not_built_and_the_nearest_come_first :: proc(t:^testing.T) {
     view:=Player_View{camera={position={0,0,5},forward={0,0,-5},up={0,1,0},fov_y=90,near=0.1,far=100},rect={0,0,1000,1000}}
     widget:=WORLD_WIDGET_DEFAULT
@@ -558,7 +665,7 @@ widgets_out_of_sight_are_not_built_and_the_nearest_come_first :: proc(t:^testing
     testing.expect_value(t,widget_unit(&view,on_screen,{reference={2000,1000}},1.5),f32(1.5))
     testing.expect_value(t,widget_unit(&view,widget,{reference={2000,1000}},1.5),widget.scale)
     app:host.App
-    _,mesh:=mesh_seen(&app,&view,core.Entity(7),{0,0,10})
+    _,mesh:=mesh_seen(app.renderer,&app.extras,&view,core.Entity(7),{0,0,10})
     testing.expect(t,mesh,"a mesh not drawn yet is seen: the frame that draws it says where it is")
     candidates:=[?]Widget_Candidate{{player=1,distance=3},{player=0,distance=9},{player=1,distance=1},{player=0,distance=2}}
     sort_candidates(candidates[:])
@@ -584,4 +691,24 @@ the_depth_read_around_the_ray_hides_what_is_behind_where_the_point_falls_in_its_
     testing.expect(t,!scene_hides(&view,{0,0,0},1.01,0.02),"where nothing is drawn nothing hides")
     view.depth=nil
     testing.expect(t,!scene_hides(&view,{4,0,0},1.01,0.02),"without a probe yet nothing is known to be in the way")
+}
+
+@(test)
+what_a_frame_nests_too_deep_is_a_problem_of_the_frame_that_did_it :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,ui.context_init(&ctx,{no_font=true}))
+    defer ui.context_destroy(&ctx)
+    problems:=new(core.Problems,context.temp_allocator)
+    s:=Surface{ctx=&ctx}
+    for deep in ([]bool{true,false}) {
+        ui.frame_begin(&ctx,{size={100,100}})
+        if deep {
+            for i in 0..=ui.ID_STACK_DEPTH {ui.id_push(&ctx,ui.id(&ctx,"scope",i+1))}
+            for _ in 0..=ui.ID_STACK_DEPTH {ui.id_pop(&ctx)}
+        }
+        ui.frame_end(&ctx)
+        nesting_report(&s,problems)
+    }
+    problem:=core.problem_find(problems,core.NONE,"gui.nesting")
+    testing.expect(t,problem!=nil && problem.count==1)
 }

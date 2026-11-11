@@ -8,10 +8,10 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 POSE_KIND :: asset.Fourcc(u32('P')|u32('O')<<8|u32('S')<<16|u32('E')<<24)
-POSE_VERSION :: 5
-POSE_OLDEST :: 4
+POSE_VERSION :: 6
 POSE_CONSTRAINTS :: 256
 
 @(component,description="Applies a pose profile with IK, aiming, joint limits or foot grounding. Gameplay supplies the dynamic targets.")
@@ -119,7 +119,7 @@ pose_profile_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profil
     return asset.document_save(&doc,path)
 }
 pose_profile_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Pose_Profile,error:asset.Error) {
-    asset.kind_check(file,POSE_KIND,POSE_OLDEST,POSE_VERSION) or_return
+    asset.kind_check(file,POSE_KIND,POSE_VERSION) or_return
     profile.ik=asset.asset_rows(file,types,"ik","",IK_Constraint) or_return
     profile.look=asset.asset_rows(file,types,"look","",Look_Constraint) or_return
     profile.limits=asset.asset_rows(file,types,"limits","",Rotation_Constraint) or_return
@@ -134,9 +134,9 @@ pose_profile_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Pose
     profile.spline_ik=asset.asset_rows(file,types,"spline_ik","",Spline_IK_Constraint) or_return
     profile.correctives=asset.asset_rows(file,types,"correctives","",Pose_Corrective) or_return
     profile.follow=asset.asset_rows(file,types,"follow","",Follow_Constraint) or_return
-    profile.curve_poses=asset.asset_rows_since(file,types,5,"curve_poses","",Curve_Pose) or_return
-    profile.curve_drives=asset.asset_rows_since(file,types,5,"curve_drives","",Curve_Drive) or_return
-    profile.curve_materials=asset.asset_rows_since(file,types,5,"curve_materials","",Curve_Material) or_return
+    profile.curve_poses=asset.asset_rows(file,types,"curve_poses","",Curve_Pose) or_return
+    profile.curve_drives=asset.asset_rows(file,types,"curve_drives","",Curve_Drive) or_return
+    profile.curve_materials=asset.asset_rows(file,types,"curve_materials","",Curve_Material) or_return
     if !pose_profile_check(profile) {return {},.Corrupt}
     return profile,.None
 }
@@ -155,54 +155,54 @@ pose_assets_free :: proc(cache:^Pose_Assets) {
     for &content in cache.contents {pose_profile_free(&content.profile)}
     delete(cache.contents);cache^={}
 }
-pose_content :: proc(cache:^Pose_Assets,app:^host.App,id:base.Asset_Id) -> ^Pose_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
+pose_content :: proc(cache:^Pose_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Pose_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
     row:=-1
     for content,i in cache.contents {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.contents);if append(&cache.contents,Pose_Content{id=id})!=1 {return nil}}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     profile:Pose_Profile
     error:=asset.Error.Not_Found
-    if found {profile,error=pose_profile_read(app,id)}
+    if found {profile,error=pose_profile_read(assets,allocator,id)}
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     pose_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
     return content if content.valid else nil
 }
 @(private)
-pose_profile_read :: proc(app:^host.App,id:base.Asset_Id) -> (profile:Pose_Profile,error:asset.Error) {
+pose_profile_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (profile:Pose_Profile,error:asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,POSE_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
-    view,read:=pose_profile_view(&file,&app.assets.types)
+    if error:=host.assets_file(assets,id,POSE_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
+    view,read:=pose_profile_view(&file,&assets.types)
     if read!=.None {return {},read}
     clone :: proc(source:[]$T,allocator:mem.Allocator) -> ([]T,bool) {
         out,error:=make([]T,len(source),allocator);if error!=nil {return nil,false};copy(out,source);return out,true
     }
     ok:bool
-    profile.ik,ok=clone(view.ik,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.look,ok=clone(view.look,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.limits,ok=clone(view.limits,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.contacts,ok=clone(view.contacts,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.grounding,ok=clone(view.grounding,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.retarget,ok=clone(view.retarget,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.chain_ik,ok=clone(view.chain_ik,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.twist,ok=clone(view.twist,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.springs,ok=clone(view.springs,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.multi_ik,ok=clone(view.multi_ik,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.retarget_chains,ok=clone(view.retarget_chains,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.spline_ik,ok=clone(view.spline_ik,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.correctives,ok=clone(view.correctives,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.follow,ok=clone(view.follow,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.curve_poses,ok=clone(view.curve_poses,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.curve_drives,ok=clone(view.curve_drives,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
-    profile.curve_materials,ok=clone(view.curve_materials,app.allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.ik,ok=clone(view.ik,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.look,ok=clone(view.look,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.limits,ok=clone(view.limits,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.contacts,ok=clone(view.contacts,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.grounding,ok=clone(view.grounding,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.retarget,ok=clone(view.retarget,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.chain_ik,ok=clone(view.chain_ik,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.twist,ok=clone(view.twist,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.springs,ok=clone(view.springs,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.multi_ik,ok=clone(view.multi_ik,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.retarget_chains,ok=clone(view.retarget_chains,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.spline_ik,ok=clone(view.spline_ik,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.correctives,ok=clone(view.correctives,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.follow,ok=clone(view.follow,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.curve_poses,ok=clone(view.curve_poses,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.curve_drives,ok=clone(view.curve_drives,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
+    profile.curve_materials,ok=clone(view.curve_materials,allocator);if !ok {pose_profile_free(&profile);return {},.Out_Of_Memory}
     return profile,.None
 }
 
@@ -228,13 +228,15 @@ Modifier_Goal :: struct {
 }
 @(storage,queue)
 Modifier_Requests :: struct {queue:core.Queue(Modifier_Goal),controls:core.Queue(Modifier_Control)}
-modifier_goal :: proc(requests:^Modifier_Requests,goal:Modifier_Goal) -> bool {
+modifier_goal :: proc(requests:^Modifier_Requests,goal:Modifier_Goal) {
+    if requests==nil {return}
     goal:=goal
-    if !blend_text_valid(goal.name[:],true) || !blend_text_valid(goal.effector_name[:],true) || goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) {return false}
-    if requests==nil || goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_vector(goal.normal) || !profile_weight(goal.weight) {return false}
-    if cap(requests.queue.items)==0 && reserve(&requests.queue.items,REQUEST_CAPACITY)!=nil {return false}
-    if len(requests.queue.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.queue,goal);return true
+    if !blend_text_valid(goal.name[:],true) || !blend_text_valid(goal.effector_name[:],true) || goal.kind in MODIFIER_TARGETED && !spatial_target_valid(goal.target) ||
+        goal.rig==core.NONE || goal.slot>=POSE_CONSTRAINTS || goal.kind==.Grounding && goal.slot!=0 || goal.kind==.Multi_IK && int(goal.effector)>=RIG_EFFECTORS || goal.kind==.Spline_IK && int(goal.effector)>=len(SPLINE_CONTROLS) || goal.kind>max(Modifier_Kind) || !profile_vector(goal.position) || !profile_vector(goal.normal) || !profile_weight(goal.weight) {
+        core.refuse(&requests.queue)
+        return
+    }
+    core.offer(&requests.queue,goal)
 }
 
 Retarget_Link :: struct {entity,source:core.Entity,profile:base.Asset_Id}
@@ -301,11 +303,7 @@ modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
 modifier_append :: proc(table:^core.Table($T),entity:core.Entity,value:T) -> bool {
     count:=len(table.values)
     if existing:=core.row_of(table,entity);existing>=0 && existing!=count-1 {return false}
-    index:=core.entity_index(entity)
-    if reserve(&table.values,count+1)!=nil || reserve(&table.entities,count+1)!=nil || reserve(&table.stamps,count+1)!=nil || reserve(&table.off,count+1)!=nil || index>=len(table.rows) && resize(&table.rows,index+1)!=nil {return false}
-    append(&table.values,value);append(&table.entities,entity);append(&table.stamps,table.version+1);append(&table.off,false)
-    table.rows[index]=i32(count+1);table.on=count+1;table.version+=1;table.layout+=1
-    return true
+    return core.table_append(table,entity,value)
 }
 
 @(private)
@@ -331,13 +329,13 @@ modifier_sources_changed :: proc(runtime:^Modifier_Runtime,animations:core.Read(
     return false
 }
 
-modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifiers),animations:core.Read(Animation),attachments:core.Read(Bone_Attachment),assets:^Pose_Assets,skeletons:^Skeleton_Assets,playback:^Playback,app:^host.App,problems:^core.Problems) -> bool {
+modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifiers),animations:core.Read(Animation),attachments:core.Read(Bone_Attachment),assets:^Pose_Assets,skeletons:^Skeleton_Assets,playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
     allocation_failed :: proc(cache:^$T,id:base.Asset_Id) -> bool {
         if cache==nil || id=={} {return false}
         for content in cache.contents {if content.id==id {return content.checked==0}}
         return true
     }
-    headers:=[8]u64{core.version(configs),core.layout(configs),core.version(attachments),core.layout(attachments),core.version(animations),core.layout(animations),playback.rigs_stamp,assets_stamp(app)}
+    headers:=[8]u64{core.version(configs),core.layout(configs),core.version(attachments),core.layout(attachments),core.version(animations),core.layout(animations),playback.rigs_stamp,assets_stamp(loaded)}
     if runtime.inputs==headers {return true}
     definitions_changed:=runtime.inputs[0]!=headers[0] || runtime.inputs[1]!=headers[1] || runtime.inputs[2]!=headers[2] || runtime.inputs[3]!=headers[3] || runtime.inputs[6]!=headers[6]
     sources_changed:=modifier_sources_changed(runtime,animations,headers[4],headers[5])
@@ -349,19 +347,19 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifi
     }
     for row in 0..<core.count(configs) {
         id:=configs.table.values[row].profile;revision:u64
-        if content:=pose_content(assets,app,id);content!=nil {revision=content.revision} else if allocation_failed(assets,id) {memory_problem(problems,core.entity_at(configs,row),"its pose profile");return false}
+        if content:=pose_content(assets,loaded,allocator,id);content!=nil {revision=content.revision} else if allocation_failed(assets,id) {memory_problem(problems,core.entity_at(configs,row),"its pose profile");return false}
         compare_revision(runtime,&revision_row,revision,&revisions_changed)
     }
     for row in 0..<(core.count(animations) if sources_changed else len(runtime.sources)) {
         id:base.Asset_Id;entity:core.Entity
         if sources_changed {value:=&animations.table.values[row];if value.source==core.NONE || value.retarget=={} {continue};id,entity=value.retarget,core.entity_at(animations,row)} else {id,entity=runtime.sources[row].profile,runtime.sources[row].entity}
         revision:u64
-        if content:=pose_content(assets,app,id);content!=nil {revision=content.revision} else if allocation_failed(assets,id) {memory_problem(problems,entity,"its retarget profile");return false}
+        if content:=pose_content(assets,loaded,allocator,id);content!=nil {revision=content.revision} else if allocation_failed(assets,id) {memory_problem(problems,entity,"its retarget profile");return false}
         compare_revision(runtime,&revision_row,revision,&revisions_changed)
     }
     for &rig in playback.rigs {
         revision:u64
-        if content:=skeleton_content(skeletons,app,rig.skeleton);content!=nil {revision=content.revision} else if allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false}
+        if content:=skeleton_content(skeletons,loaded,allocator,rig.skeleton);content!=nil {revision=content.revision} else if allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false}
         compare_revision(runtime,&revision_row,revision,&revisions_changed)
     }
     revisions_changed ||= revision_row!=len(runtime.revisions)
@@ -374,10 +372,10 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifi
     next.grounding.layout,next.retargets.layout,next.sockets.layout=runtime.grounding.layout+1,runtime.retargets.layout+1,runtime.sockets.layout+1
     for row in 0..<core.count(configs) {
         entity:=core.entity_at(configs,row);config:=core.at(configs,row)
-        content:=pose_content(assets,app,config.profile);append(&next.revisions,content.revision if content!=nil else 0)
+        content:=pose_content(assets,loaded,allocator,config.profile);append(&next.revisions,content.revision if content!=nil else 0)
         if content==nil {
             if allocation_failed(assets,config.profile) {memory_problem(problems,entity,"its pose profile");return false}
-            if config.profile!={} {asset_problem(problems,entity,app,"animation.pose_profile","Pose_Modifiers.profile",config.profile,content_error(assets.contents[:],config.profile))}
+            if config.profile!={} {asset_problem(problems,entity,loaded,"animation.pose_profile","Pose_Modifiers.profile",config.profile,content_error(assets.contents[:],config.profile))}
             continue
         }
         if !profile_weight(config.weight) {
@@ -407,10 +405,10 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifi
         if config.source==core.NONE || config.retarget=={} {continue}
         if append(&next.sources,Retarget_Link{entity,config.source,config.retarget})!=1 {memory_problem(problems,entity,"its retarget profile");return false}
         index:=core.entity_index(entity);if index>=len(next.source_rows) && resize(&next.source_rows,index+1)!=nil {memory_problem(problems,entity,"its retarget profile");return false};next.source_rows[index]=i32(len(next.sources))
-        content:=pose_content(assets,app,config.retarget);append(&next.revisions,content.revision if content!=nil else 0)
+        content:=pose_content(assets,loaded,allocator,config.retarget);append(&next.revisions,content.revision if content!=nil else 0)
         if content==nil {
             if allocation_failed(assets,config.retarget) {memory_problem(problems,entity,"its retarget profile");return false}
-            asset_problem(problems,entity,app,"animation.retarget_profile","Animation.retarget",config.retarget,content_error(assets.contents[:],config.retarget))
+            asset_problem(problems,entity,loaded,"animation.retarget_profile","Animation.retarget",config.retarget,content_error(assets.contents[:],config.retarget))
             continue
         }
         appended:=true
@@ -419,7 +417,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifi
         if !appended {memory_problem(problems,entity,"its retarget profile");return false}
     }
     for &rig in playback.rigs {
-        content:=skeleton_content(skeletons,app,rig.skeleton);append(&next.revisions,content.revision if content!=nil else 0)
+        content:=skeleton_content(skeletons,loaded,allocator,rig.skeleton);append(&next.revisions,content.revision if content!=nil else 0)
         if content==nil && allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false}
     }
     for row in 0..<core.count(attachments) {
@@ -427,7 +425,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifi
         if !config.enabled {continue}
         definition:^Skeleton_Content
         rigged:=false
-        for rig in playback.rigs {if rig.entity==config.rig {rigged=true;definition=skeleton_content(skeletons,app,rig.skeleton);if definition==nil && allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false};break}}
+        for rig in playback.rigs {if rig.entity==config.rig {rigged=true;definition=skeleton_content(skeletons,loaded,allocator,rig.skeleton);if definition==nil && allocation_failed(skeletons,rig.skeleton) {memory_problem(problems,rig.entity,"its skeleton");return false};break}}
         if !rigged {
             core.report(problems,entity,"animation.attachment_rig","this Bone_Attachment hangs from entity 0x%016x, which shows no mesh with a skeleton; name an entity whose Mesh_Renderer shows a skinned mesh",u64(config.rig))
             continue
@@ -443,7 +441,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,configs:core.Read(Pose_Modifi
         }
         if !attached {
             name:[base.ASSET_ID_TEXT]u8
-            core.report(problems,entity,"animation.attachment_socket","this Bone_Attachment names socket '%s', which skeleton %s of its rig does not have; name one of its sockets (animation.asset.inspect lists them)",base.text_get(config.socket[:]),host.assets_name(app.assets,definition.id,&name))
+            core.report(problems,entity,"animation.attachment_socket","this Bone_Attachment names socket '%s', which skeleton %s of its rig does not have; name one of its sockets (animation.asset.inspect lists them)",base.text_get(config.socket[:]),host.assets_name(loaded,definition.id,&name))
         }
     }
     if !modifier_controls_prepare(&next,runtime) || reserve(&runtime.goals,len(next.controls))!=nil {memory_problem(problems,core.NONE,"the controls of the pose profiles, so none applies");return false}
@@ -508,7 +506,6 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
 }
 modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,configs:core.Read(Pose_Modifiers),problems:^core.Problems,dt:f32=0) {
     #reverse for goal,i in runtime.goals {if !core.has(configs,goal.rig) && goal.kind!=.Chain_Retarget {unordered_remove(&runtime.goals,i)}}
-    if cap(requests.queue.items)==0 && reserve(&requests.queue.items,REQUEST_CAPACITY)!=nil {memory_problem(problems,core.NONE,"the goals of pose profiles asked for")}
     for goal in core.take(&requests.queue) {
         goal:=goal
         if error:=modifier_goal_resolve(runtime,&goal);error!=.None {
@@ -534,13 +531,13 @@ modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Modifier_Requests,conf
 }
 
 @(step="fixed",loops="game editor",stage="apply")
-animation_sample :: proc(animations:core.Read(Animation),progress:^core.Table(Animation_Progress),configs:core.Read(Pose_Modifiers),attachments:core.Read(Bone_Attachment),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),targets:core.Read(Animation_Target),meshes:core.Read(erender.Mesh_Renderer),sources:core.Read(Pose_Source),requests:^Animation_Requests,events:^Animation_Events,goals:^Modifier_Requests,runtime:^Modifier_Runtime,playback:^Playback,assets:^Pose_Assets,skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,problems:^core.Problems,blends:^Blend_Assets,graphs:^Graph_Assets,actions:^Action_Runtime,action_requests:^Action_Requests,action_assets:^Actions_Assets,motion:^Motion_Runtime,motion_requests:^Motion_Requests,motion_assets:^Motion_Assets,content_sources:^Source_Assets,paces:core.Read(core.Own_Pace),clock:core.Clock) {
+animation_sample :: proc(animations:core.Read(Animation),progress:^core.Table(Animation_Progress),configs:core.Read(Pose_Modifiers),attachments:core.Read(Bone_Attachment),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),targets:core.Read(Animation_Target),meshes:core.Read(erender.Mesh_Renderer),sources:core.Read(Pose_Source),requests:^Animation_Requests,events:^Animation_Events,goals:^Modifier_Requests,runtime:^Modifier_Runtime,playback:^Playback,assets:^Pose_Assets,skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,problems:^core.Problems,blends:^Blend_Assets,graphs:^Graph_Assets,actions:^Action_Runtime,action_requests:^Action_Requests,action_assets:^Actions_Assets,motion:^Motion_Runtime,motion_requests:^Motion_Requests,motion_assets:^Motion_Assets,content_sources:^Source_Assets,paces:core.Read(core.Own_Pace),clock:core.Clock,budget:Animation_Budget_Config) {
     if app.assets==nil {playback.frame+=1;clear(&events.items);clear(&events.plays.items);return}
-    if !rigs_update(playback,meshes,sources,app) {memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick");playback.frame+=1;clear(&events.items);clear(&events.plays.items);return}
-    if !modifier_prepare(runtime,configs,animations,attachments,assets,skeletons,playback,app,problems) {playback.frame+=1;clear(&events.items);clear(&events.plays.items);return}
+    if !rigs_update(playback,meshes,sources,app.assets) {memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick");playback.frame+=1;clear(&events.items);clear(&events.plays.items);return}
+    if !modifier_prepare(runtime,configs,animations,attachments,assets,skeletons,playback,app.assets,app.allocator,problems) {playback.frame+=1;clear(&events.items);clear(&events.plays.items);return}
     modifier_take(runtime,goals,configs,problems)
     if time.playing {progress_resume(progress,playback,requests)}
-    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,{},playback,app,time,frame,skeletons,problems,blends,graphs,actions,action_requests,action_assets,motion,motion_requests,motion_assets,content_sources,paces,clock)
+    animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,{},playback,app,time,frame,skeletons,problems,blends,graphs,actions,action_requests,action_assets,motion,motion_requests,motion_assets,content_sources,paces,clock,budget)
     if time.playing {progress_write(progress,animations,playback)}
 }
 

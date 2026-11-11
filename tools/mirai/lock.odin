@@ -49,7 +49,7 @@ build_lock_measured :: proc(root:string) {
 // process is part of a measurement already.
 measure_lock :: proc(root,what:string) -> workspace.Lock {
     if workspace.measuring() {return {}}
-    holder:=fmt.tprintf("pid %d, mirai %s in %s",os.get_pid(),what,root)
+    holder:=workspace.measure_holder(fmt.tprintf("mirai %s in %s",what,root))
     lock,_:=workspace.lock_acquire(workspace.lock_path(root,workspace.MEASURE_LOCK,context.temp_allocator),holder,proc(holder:string) {
         fmt.eprintfln("mirai: waiting for another measurement to finish (%s)",holder!=""?holder:"another process")
     })
@@ -65,7 +65,7 @@ LOCKS_USAGE :: "locks"
 // those of compilations and measurements among them, and since when; and
 // which compilation took its turn last.
 cmd_locks :: proc(root:string,args:[]string) -> int {
-    if len(args)>0 {fmt.eprintfln("Usage: mirai %s",LOCKS_USAGE);return 2}
+    if len(args)>0 {return argument_unknown("locks",args[0])}
     folder:=workspace.cache_folder(root,"locks",context.temp_allocator)
     names:=make([dynamic]string,context.temp_allocator)
     append(&names,workspace.BUILD_LOCK,workspace.MEASURE_LOCK)
@@ -117,6 +117,7 @@ cmd_measure :: proc(root:string,args:[]string) -> int {
     command:=args
     if len(command)>0 && command[0]=="--" {command=command[1:]}
     if len(command)==0 {fmt.eprintfln("Usage: mirai %s",MEASURE_USAGE);return 2}
+    if len(command)==len(args) && !positional(command[0]) {return argument_unknown("measure",command[0])}
     lock:=measure_lock(root,fmt.tprintf("measure %s",strings.join(command," ",context.temp_allocator)))
     defer workspace.lock_release(&lock)
     if !workspace.measuring() {_=os.set_env(workspace.MEASURE_ENV,fmt.tprintf("%d",os.get_pid()))}

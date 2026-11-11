@@ -11,7 +11,6 @@
 #ifndef MIRAI_LIGHT_WEIGHT_SLANG
 #define MIRAI_LIGHT_WEIGHT_SLANG
 
-#define LIGHT_WEIGHT_ROWS 2u
 #define LIGHT_WEIGHT_NONE 0u
 #define LIGHT_WEIGHT_RECT 0xFFFFFFFFu
 // The most lights a cell of the grid lists apart from its table: those the

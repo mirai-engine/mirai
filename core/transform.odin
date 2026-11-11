@@ -60,7 +60,7 @@ jump :: proc(jumps:^Jumps,e:Entity,by:mm.Transform) {push(&jumps.queue,Jump{e,by
 // in the fixed phase before places_drop, in the stage simulate (physics
 // teleports its bodies); what nobody took is reported then and dropped, and
 // what is asked later waits for the next tick.
-Place_Request :: struct {entity:Entity,position:[3]f32,rotation:mm.Quat}
+Place_Request :: struct {entity:Entity,position:[3]f32,rotation:mm.Quat,at_rest:bool}
 
 @(storage,queue)
 Places :: struct {
@@ -81,12 +81,14 @@ Placer :: struct {
 // component owns is asked of its owner. A teleport is a jump: who draws it
 // takes it as coming from where it is put, not from where it was; a place
 // that is not one moves it as it would have moved there (a cinematic).
+// at_rest stops what its owner moves (a body): a respawn or a reset. Without it
+// a body keeps its velocity, as what goes through a portal does.
 // False when the entity has no Transform, or its parents cannot hold that place.
-place :: proc(p:Placer,e:Entity,position:[3]f32,rotation:mm.Quat=1,teleport:=true) -> bool {
+place :: proc(p:Placer,e:Entity,position:[3]f32,rotation:mm.Quat=1,teleport:=true,at_rest:=false) -> bool {
     row:=free(p.transforms,e)
     if row==nil {
         if !has(p.transforms,e) {return false}
-        push(&p.places.queue,Place_Request{e,position,rotation})
+        push(&p.places.queue,Place_Request{e,position,rotation,at_rest})
         return true
     }
     was,_:=world_of(read(p.transforms),p.parents,e)
@@ -165,7 +167,7 @@ transforms_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table
         clear(&p.moving)
         previous_moving=p.spare[:]
     }
-    if p.built_tree!=h.version || p.built_locals!=layout(locals) || len(p.position)!=len(locals.table.rows) {
+    if p.built_tree!=h.version || p.built_locals!=layout(locals) || len(p.position)!=raw_indices(raw(locals.table)) {
         if !propagation_order(locals,h,p) {return}
         for e in p.order {transform_compute(locals,h,worlds,p,e,tick)}
         for i:=len(worlds.entities)-1;i>=0;i-=1 {
@@ -232,7 +234,7 @@ transform_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(
 // without one. False without memory: it is built again on the next pass.
 @(private)
 propagation_order :: proc(locals:Read(Transform),h:Ref(Hierarchy),p:^Propagation) -> bool {
-    size:=len(locals.table.rows)
+    size:=raw_indices(raw(locals.table))
     if resize(&p.order,count(locals))!=nil || resize(&p.worlds,size)!=nil || resize(&p.position,size)!=nil || resize(&p.computed,size)!=nil || resize(&p.listed,size)!=nil {
         p.built_locals=layout(locals)-1
         return false
@@ -252,7 +254,7 @@ propagation_order :: proc(locals:Read(Transform),h:Ref(Hierarchy),p:^Propagation
             at=subtree_next(h,root,at)
         }
     }
-    resize(&p.order,n)
+    base.truncate(&p.order,n)
     p.built_tree=h.version
     p.built_locals=layout(locals)
     return true
@@ -283,6 +285,14 @@ world_of :: proc(locals:Read(Transform),parents:Read(Parent),e:Entity) -> (world
 name_get :: proc(names:Read(Name),e:Entity) -> string {
     if row:=row_of(names,e);row>=0 {return base.text_get(names.table.values[row].text[:])}
     return ""
+}
+
+// The first entity with that name; NONE without one. It walks the names.
+entity_named :: proc(names:Read(Name),text:string) -> Entity {
+    for row in 0..<count(names) {
+        if base.text_equal(names.table.values[row].text[:],text) {return entity_at(names,row)}
+    }
+    return NONE
 }
 
 name_make :: proc(text:string) -> (name:Name) {

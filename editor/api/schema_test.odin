@@ -124,7 +124,7 @@ schema_of_every_kind_of_field :: proc(t:^testing.T) {
         `"flags":{"type":"array","items":{"type":"string","enum":["Fire","Ice","Wind"]},"uniqueItems":true}`,
         `"name":{"type":"string","maxLength":16}`,
         `"entity":{"type":"string","pattern":"^(0x)?[0-9a-fA-F]{1,16}$"}`,
-        `"asset":{"type":"string","pattern":"^[0-9a-fA-F]{32}$"}`,
+        `"asset":{"type":"string","x-asset":"any"}`,
         `"inner":{"type":"object","properties":{"x":{"type":"integer","minimum":0,"maximum":255},"y":{"type":"integer","minimum":-32768,"maximum":32767}},"required":["x"],"additionalProperties":false}`,
         `"wide":{"type":"integer","minimum":0,"maximum":18446744073709551615}`,
         `"signed":{"type":"integer","minimum":-5,"maximum":5}`,
@@ -232,7 +232,7 @@ a_free_form_method_is_described_by_the_schema_written_for_it :: proc(t:^testing.
         w:serial.Writer
         serial.writer_init_fixed(&w,buffer[:])
         method_schema_write(&w,&s,&s.methods[s.method_count-1],result)
-        testing.expect_value(t,string(serial.writer_bytes(&w)),result?`{"type":"array"}`:PARAMS)
+        testing.expect_value(t,string(serial.writer_bytes(&w)),result?`{"type":"array"}`:`{"type":"object","properties":{`+SELECT_SCHEMA+`,"open":{"type":"object"}}}`)
     }
     testing.expect_value(t,method_register(&s,{name="bare",handler=noop}),Register_Error.None)
     w:serial.Writer

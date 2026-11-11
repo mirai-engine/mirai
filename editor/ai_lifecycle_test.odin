@@ -1,15 +1,15 @@
 package editor
 
-import "core:fmt"
 import "core:encoding/json"
 import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 
 @(private="file")
@@ -56,20 +56,18 @@ an_agent_command_is_attributed_to_the_turn_its_agent_runs :: proc(t:^testing.T) 
 }
 
 @(private="file")
-ai_external_test_read :: proc(s:^Session,call:^api.Call) {s.ai.next_id=-1 if s.edits.author==EDIT_AUTHOR_API else int(s.edits.author)}
+ai_external_test_read :: proc(s:^Session,call:^api.Call) {s.ai.next_id=-1 if s.edits.author==history.EDIT_AUTHOR_API else int(s.edits.author)}
 
 // The calls of an agent outside the editor are the turn of a chat of its own,
 // which ends when it says so or stops calling, opens again while its review
 // waits and is followed by the next turn of the chat once it was resolved.
 @(test)
 an_agent_outside_the_editor_works_in_a_turn_of_its_own_until_it_ends :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-external-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-external");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
-    testing.expect_value(t,ai_store_open(&m.store,root),"");defer ai_store_close(&m.store)
+    testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     m.initialized=true
-    edits:Edits
+    edits:history.Edits
     document:Document
     viewport:Viewport
     s:=Session{ai=m,has_project=true,project_root=root,edits=&edits,document=&document,viewport=&viewport}
@@ -147,7 +145,7 @@ cancelled_turn_rejects_mcp_mutations_and_releases_an_unresponsive_worker :: proc
     defer acp.destroy(&worker.client,nil)
     worker.created=true;worker.task=1;worker.client.phase=.Prompting
     app:host.App
-    edits:Edits
+    edits:history.Edits
     document:Document
     s:=Session{ai=m,app=&app,edits=&edits,document=&document,project_root=".mirai/missing-cancel-test"}
     m.permissions[0]={worker=0,count=1};m.permission_count=1
@@ -171,25 +169,23 @@ cancelled_turn_rejects_mcp_mutations_and_releases_an_unresponsive_worker :: proc
 
 @(test)
 project_chat_restore_uses_the_latest_user_message_after_empty_visual_turns :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-empty-turns-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-empty-turns");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
-    testing.expect_value(t,ai_store_open(&m.store,root),"");defer ai_store_close(&m.store)
+    testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     document:Document
     s:=Session{ai=m,project_root=root,document=&document}
     m.task_count=1
     task:=&m.tasks[0]
     task.id=1;task.conversation.id=1;task.state=.Done;task.finish_called=true
-    ai_conversation_set_text(task.conversation.title[:],&task.conversation.title_len,"Visual task")
+    ai_store.conversation_set_text(task.conversation.title[:],&task.conversation.title_len,"Visual task")
     ai_transcript_add(&task.transcript,"Decorate the room",.Prompt)
     ai_transcript_add(&task.transcript,"Move the chair\nunder the window",.Prompt)
     base.text_set(task.name[:],"1-1")
     task.dirty=true;task.dirty_sequence=0;ai_task_persist(&s,task)
-    testing.expect_value(t,ai_store_annotate(&m.store,1,0,"user","user_message","","{}"),"")
-    testing.expect_value(t,ai_store_annotate(&m.store,1,1,"user","user_message","","{}"),"")
+    testing.expect_value(t,ai_store.annotate(&m.store,1,0,"user","user_message","","{}"),"")
+    testing.expect_value(t,ai_store.annotate(&m.store,1,1,"user","user_message","","{}"),"")
     restored:=new(Ai);defer free(restored);ai_connections_reset(restored)
-    testing.expect_value(t,ai_store_open(&restored.store,root),"");defer ai_store_close(&restored.store)
+    testing.expect_value(t,ai_store.open(&restored.store,root),"");defer ai_store.close(&restored.store)
     reopened:=Session{ai=restored,project_root=root,document=&document}
     loaded:=ai_conversation_restore(&reopened,&task.conversation,only_pending=true)
     if !testing.expect(t,loaded!=nil) {return}
@@ -199,7 +195,7 @@ project_chat_restore_uses_the_latest_user_message_after_empty_visual_turns :: pr
     testing.expect(t,error==nil && string(message)=="Move the chair\nunder the window","the message of the turn comes back from the chat")
     testing.expect(t,!loaded.review_finished && loaded.state==.Done)
     restored.task_count=AI_TASK_CAPACITY
-    other:=Ai_Conversation{id=2}
+    other:=ai_store.Conversation{id=2}
     testing.expect(t,ai_conversation_restore(&reopened,&other,only_pending=true)==nil)
     testing.expect_value(t,restored.task_count,AI_TASK_CAPACITY)
     restored.task_count=1
@@ -207,16 +203,14 @@ project_chat_restore_uses_the_latest_user_message_after_empty_visual_turns :: pr
 
 @(test)
 retry_preserves_the_original_model_and_effort_when_connection_defaults_changed :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-retry-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-retry");if root=="" {return}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     m.task_count=1
     task:=&m.tasks[0];task.id=1;task.state=.Done;task.review_finished=true
     base.text_set(task.name[:],"1-0")
     base.text_set(task.agent[:],"codex")
-    ai_conversation_set_text(task.conversation.model[:],&task.conversation.model_len,"gpt-6-luna")
-    ai_conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,"low")
+    ai_store.conversation_set_text(task.conversation.model[:],&task.conversation.model_len,"gpt-6-luna")
+    ai_store.conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,"low")
     base.text_set(m.connections[AI_CODEX].model[:],"gpt-6-astra")
     base.text_set(m.connections[AI_CODEX].effort[:],"high")
     document:Document
@@ -236,7 +230,7 @@ failed_session_setup_stops_its_worker_and_completed_sessions_stay_warm :: proc(t
     task:=&m.tasks[0];task.id=1;task.started=time.tick_now()
     worker:=&m.workers[0]
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=".mirai/missing-setup-test"}
     phases:=[4]acp.Phase{.Initialized,.Opening,.Configuring,.Failed}
     for phase in phases {
@@ -288,7 +282,7 @@ the_usage_an_agent_reports_lands_in_its_conversation :: proc(t:^testing.T) {
     defer acp.destroy(&worker.client,nil)
     base.text_set(worker.client.session[:],"current-session")
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=".mirai/missing-usage-test"}
     callback:=Ai_Callback{session=&s,worker=worker}
     update,_:=json.parse_string(`{"sessionId":"current-session","update":{"sessionUpdate":"usage_update","used":48000,"size":200000,"cost":{"amount":0.25,"currency":"USD"}}}`,allocator=context.temp_allocator)

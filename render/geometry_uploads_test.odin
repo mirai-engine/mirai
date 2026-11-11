@@ -121,9 +121,7 @@ a_mesh_added_over_frames_is_hidden_until_all_its_geometry_went :: proc(t: ^testi
 	testing.expect(t, s.instances[s.desc_instance[2]].meta.w & INSTANCE_FLAG_HIDDEN != 0, "one its description hides stays hidden")
 	testing.expect_value(t, s.hidden_count, 1)
 	testing.expect(t, s.geometry_dirty && !s.batch.built)
-	found := false
-	for index in s.touched {found ||= i32(index) == shown}
-	testing.expect(t, found || s.instances_dirty, "the instance that shows goes to the GPU")
+	testing.expect(t, instance_touched(s, u32(shown)) || s.instances_dirty, "the instance that shows goes to the GPU")
 }
 
 // The levels of textures take half the bytes of a frame while geometry waits

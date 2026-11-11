@@ -164,11 +164,11 @@ The network and physics share only `core` tables, each with one writer:
 `destruct_multiplayer` replicates fractures
 ([networked destruction](../../mirai-physics/references/engine-destruct.md#network)),
 `foliage_multiplayer` the foliage instances taken out in play
-([foliage](../../mirai-plugins/references/foliage.md#instances-removed-in-play)) and
+([foliage](../../mirai-world/references/foliage.md#instances-removed-in-play)) and
 `terrain_multiplayer` terrain edits
-([terrain](../../mirai-plugins/references/terrain.md#network)). The `behavior` minds decide only on
+([terrain](../../mirai-world/references/terrain.md#network)). The `behavior` minds decide only on
 the server, and clients see what each agent does in its replicated `Mind_Presentation`, without
-predicting it ([minds](../../mirai-plugins/references/behavior.md#minds)).
+predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
 
 ## Authority and players
 
@@ -495,10 +495,11 @@ How it lives depends on its role (`wire.Role`) and on who simulates it:
 - On each tick the client keeps a copy of the `World` in a ring as deep as the history, with the
   tick's input and the pose and quantized state of each predicted replica.
   - Each slot copies again only the tables that changed since it was written, and of those the rows
-    whose stamp differs, also after a rollback; storages are always copied
-    ([copy of what changed](../../mirai-core/references/core.md#tables)). Physics copies its
-    state block by block without comparing again the geometry the slot already has, in pools of the
-    size of what it uses (`copy_kept`); a slot of a replaced world copies everything again.
+    whose stamp differs, also after a rollback, and of the storages those a function received to
+    write or code outside the loop asked for
+    ([copy of what changed](../../mirai-core/references/core.md#world-reflection)). Physics copies
+    its state block by block without comparing again the geometry the slot already has, in pools
+    of the size of what it uses (`copy_kept`); a slot of a replaced world copies everything again.
   - The comparison buffers and the authoritative history are reserved on opening, and made again
     only when the server announces a different history on connecting; quantization reuses the
     previous record when the row, the layout or its links do not change.
@@ -509,9 +510,9 @@ How it lives depends on its role (`wire.Role`) and on who simulates it:
   `max_resimulate` in the frame, in `resimulate_budget` and in the history.
   - Critical: one's own, or one that shared a simulation group (`core.Motion`) with what the client
     drives in the last `critical_ticks`: what touched it or is joined to it by a joint.
-  - The return is `host.app_world_replace`, which copies into a separate world and swaps it;
-    without memory the world does not change, the correction is deferred and it is the
-    `net.rollback` problem.
+  - The return is `host.app_world_replace` with the marks of that copy, which copies into a
+    separate world what changed since and swaps it; without memory the world does not change, the
+    correction is deferred and it is the `net.rollback` problem.
   - The `fixed` loop runs again with the saved local input and, at the end of each tick, the pose,
     components and joints of that authoritative tick are applied. Physics takes the pose at the
     start of the next tick, and the record of that tick is the server's state.
@@ -583,7 +584,8 @@ melee swing) where that player aimed.
   Negative, the client is believed within `REWIND_SECONDS`.
 - At the end of every tick, under its number, the server keeps in `Rewind_History` the `Transform`
   it publishes of each entity with the `Rewind` component, in a ring as deep as the history,
-  made when the session opens, and `REWIND_ENTITIES` entities per tick; those that do not fit are a problem. `rewind_record` writes
+  made when the session opens, and `REWIND_ENTITIES` entities per tick; those that do not fit are a
+  problem. `rewind_record` writes
   it before `net_tick_tail`, only on the server; it is not copied with the world.
 - It keeps the pose of the entity, not that of its bones: a hit is tested against shapes placed
   from that pose.
@@ -694,7 +696,6 @@ one set by whoever tests those functions by hand).
   `rewind_pose_interpolates_between_ticks_and_not_across_a_teleport`,
   `rewind_tick_is_what_the_client_showed_within_the_limit` and
   `interpolate_others_shows_bodies_of_others_in_the_past`; in `input_packet_test.odin`,
-  `a_button_held_through_a_late_input_is_pressed_once` and
   `a_claimed_view_far_from_the_latency_takes_the_expected_one`; a state older than the history:
   `a_state_older_than_the_history_puts_the_replica_where_the_server_had_it`; in `physics`,
   `a_following_target_leads_a_character_where_it_says`.
@@ -751,7 +752,7 @@ one set by whoever tests those functions by hand).
   `authoritative_physics_joints_and_inputs_converge_over_real_udp_localhost`.
 - `authority_test.odin` and `players_test.odin`: the role, `core.Remote` on the server and on the
   client, the seat of each connection and its body, and the owner of each body by its seat
-  (`a_server_owns_each_body_to_its_seat_and_a_client_drives_what_it_predicts`).
+  (`a_server_owns_each_body_to_the_connection_of_its_seat`).
 - Players (`players_test.odin`):
   `a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again`,
   `the_seats_of_a_saved_game_wait_for_their_players`, `a_client_keeps_the_seats_of_the_server` and

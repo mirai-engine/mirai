@@ -11,59 +11,37 @@ import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
+// A physics world whose application holds the assets its colliders are made from.
 @(private)
 Geometry_Test :: struct {
-    entities:core.Entities,
-    assets:host.Assets,
-    app:host.App,
-    state:Physics_State,
-    settings:Physics_Settings,
-    meshes:Collider_Meshes,
-    requests:Body_Requests,
-    events:Physics_Events,
-    rigids:core.Table(Rigid_Body),
-    colliders:core.Table(Collider),
-    characters:core.Table(Character),
-    moves:core.Table(Character_Move),
-    joints:core.Table(Joint),
-    statics:core.Table(render.Mesh_Renderer),
-    parents:core.Table(core.Parent),
-    names:core.Table(core.Name),
-    transforms:core.Table(core.Transform),
-    body_states:core.Table(core.Motion),
-    replicas:core.Table(core.Pose_Target),
-    character_states:core.Table(Character_State),
-    joint_states:core.Table(Joint_State),
-    problems:core.Problems,
+    assets:host.Assets, // before f, whose field host hides the package in the fields after it
+    using f:Physics_Test,
 }
 
 @(private)
-geometry_test_init :: proc(g:^Geometry_Test) -> bool {
-    core.entities_init(&g.entities)
+geometry_test_init :: proc(t:^testing.T,g:^Geometry_Test) -> bool {
+    if !physics_test_init(t,&g.f) {return false}
     g.settings={bodies=8,shapes=8,contacts=32,joints=1,characters=1,hulls=2,meshes=2,heightfields=2}
+    g.gravity=sim.world_desc_default().gravity
+    g.whole=true
     g.app.assets=&g.assets
-    return host.assets_init(&g.assets,{root="assets",capacity=8})
+    if !testing.expect(t,host.assets_init(&g.assets,{root="assets",capacity=8})) {
+        physics_test_destroy(&g.f)
+        return false
+    }
+    return true
 }
 
 @(private)
 geometry_test_destroy :: proc(g:^Geometry_Test) {
-    state_destroy(&g.state)
-    collider_meshes_destroy(&g.meshes)
+    physics_test_destroy(&g.f)
     host.assets_destroy(&g.assets)
-    core.table_destroy(&g.rigids);core.table_destroy(&g.colliders);core.table_destroy(&g.characters);core.table_destroy(&g.moves)
-    core.table_destroy(&g.joints);core.table_destroy(&g.statics);core.table_destroy(&g.parents);core.table_destroy(&g.names)
-    core.table_destroy(&g.transforms);core.table_destroy(&g.body_states);core.table_destroy(&g.replicas);core.table_destroy(&g.character_states);core.table_destroy(&g.joint_states)
-    core.value_free(&g.requests,type_info_of(Body_Requests));core.value_free(&g.events,type_info_of(Physics_Events))
-    core.entities_destroy(&g.entities)
 }
 
 @(private)
 geometry_test_step :: proc(g:^Geometry_Test) {
-    core.table_settle(&g.colliders,&g.entities);core.table_settle(&g.statics,&g.entities)
-    core.table_settle(&g.transforms,&g.entities);core.table_settle(&g.parents,&g.entities);core.table_settle(&g.rigids,&g.entities)
-    physics_step(&g.state,{&g.settings},&g.requests,&g.events,&g.meshes,&g.app,{},
-        core.read(&g.rigids),core.read(&g.colliders),core.read(&g.characters),core.read(&g.moves),&g.joints,
-        core.read(&g.statics),core.read(&g.parents),core.read(&g.names),&g.transforms,&g.body_states,core.read(&g.replicas),&g.character_states,&g.joint_states,{},nil,{},{},nil,nil,&g.problems,{},{},{},{},{},{})
+    physics_test_settle(&g.f)
+    physics_test_run(&g.f,0)
 }
 
 @(private)
@@ -102,7 +80,7 @@ geometry_test_volume :: proc(g:^Geometry_Test,grid:geom.Scalar_Grid,low,high:[3]
 @(test)
 generated_heightfield_colliders_preserve_origin_scale_and_the_render_diagonal :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     heights:=[4]f32{0,0,0,2}
     mesh,ok:=geometry_test_mesh(&g,heights[:],{-1,2,-1},{2,1,3})
@@ -142,7 +120,7 @@ generated_heightfield_colliders_preserve_origin_scale_and_the_render_diagonal ::
 @(test)
 a_compound_heightfield_rotates_its_grid_origin_and_ignores_unrelated_asset_changes :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     heights:=[4]f32{0,0,0,0}
     mesh,ok:=geometry_test_mesh(&g,heights[:],{2,0,3})
@@ -233,7 +211,7 @@ copying_physics_gives_the_copy_its_own_heightfield_holes :: proc(t:^testing.T) {
 @(test)
 generated_mesh_collision_cache_prunes_released_chunks_and_reuses_geometry_slots :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     e:=core.create(&g.entities)
     core.add(&g.transforms,e,core.TRANSFORM_IDENTITY)
@@ -259,7 +237,7 @@ generated_mesh_collision_cache_prunes_released_chunks_and_reuses_geometry_slots 
 @(test)
 a_rejected_heightfield_shape_releases_its_geometry_and_an_explicit_edit_can_retry :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     g.settings.shapes=1
     heights:=[4]f32{0,0,0,0}
@@ -290,7 +268,7 @@ a_rejected_heightfield_shape_releases_its_geometry_and_an_explicit_edit_can_retr
 @(test)
 volume_mesh_replacement_excavation_empty_chunks_and_parent_motion_keep_collision_current :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     g.settings.meshes=1
     values:[5*5*5]f32
@@ -347,7 +325,7 @@ volume_mesh_replacement_excavation_empty_chunks_and_parent_motion_keep_collision
 @(test)
 adjacent_heightfield_chunks_with_distinct_origins_share_the_boundary_after_parent_motion :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     left:=[4]f32{-1,1,-1,1}
     right:=[4]f32{1,3,1,3}
@@ -384,7 +362,7 @@ adjacent_heightfield_chunks_with_distinct_origins_share_the_boundary_after_paren
 @(test)
 physics_geometry_budgets_are_applied_once_and_exhausted_heightfields_can_be_reused :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     g.settings.hulls,g.settings.meshes,g.settings.heightfields=3,4,1
     // Two chunks of different heights: the same one would share its slot.
@@ -429,7 +407,7 @@ physics_geometry_budgets_are_applied_once_and_exhausted_heightfields_can_be_reus
 @(test)
 sliding_across_resident_volume_chunk_boundaries_keeps_horizontal_velocity :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     values:[17*3*5]f32
     for z in 0..<5 {for y in 0..<3 {for x in 0..<17 {values[x+17*(y+3*z)]=f32(y)-1+0.35}}}
@@ -462,7 +440,7 @@ sliding_across_resident_volume_chunk_boundaries_keeps_horizontal_velocity :: pro
 @(test)
 sliding_across_resident_heightfield_chunk_boundaries_keeps_horizontal_velocity :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     heights:=[4]f32{}
     masks:=[2][4]u8{{0,1,0,0},{1,0,0,0}}
@@ -519,7 +497,7 @@ physics_copy_replaces_border_metadata_when_heights_vertices_and_generations_matc
 identical_generated_replacements_preserve_contact_warmstart_and_resimulation :: proc(t:^testing.T) {
     for kind in ([2]Collider_Kind{.Heightfield,.Mesh}) {
         g:Geometry_Test
-        testing.expect(t,geometry_test_init(&g))
+        if !geometry_test_init(t,&g) {return}
         defer geometry_test_destroy(&g)
         heights:=[4]f32{0.25,0.25,0.25,0.25}
         values:=kind==.Heightfield?heights[:]:nil
@@ -563,7 +541,7 @@ identical_generated_replacements_preserve_contact_warmstart_and_resimulation :: 
 @(test)
 cylinder_colliders_and_convex_radii_reach_the_simulation_at_the_scale_of_the_entity :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     post,box,hull,too_round:=core.create(&g.entities),core.create(&g.entities),core.create(&g.entities),core.create(&g.entities)
     cylinder:=collider_cylinder(0.4,0.5)
@@ -616,7 +594,7 @@ expect_close :: proc(t:^testing.T,value,expected:f32,loc:=#caller_location) {
 @(test)
 colliders_of_the_same_mesh_and_scale_share_one_slot_of_geometry :: proc(t:^testing.T) {
     g:Geometry_Test
-    testing.expect(t,geometry_test_init(&g))
+    if !geometry_test_init(t,&g) {return}
     defer geometry_test_destroy(&g)
     g.settings.bodies,g.settings.shapes,g.settings.hulls,g.settings.heightfields=16,16,2,1
     cube:geom.Mesh_Buffer
@@ -656,6 +634,9 @@ colliders_of_the_same_mesh_and_scale_share_one_slot_of_geometry :: proc(t:^testi
     copy:Physics_State
     defer state_destroy(&copy)
     testing.expect(t,state_copy(&copy,&g.state))
+    // What links the entities to the simulation is plain data: its copy is a copy of its bytes.
+    testing.expect(t,core.value_flat(type_info_of(Link)) && core.value_flat(type_info_of(Joint_Link)) && core.value_flat(type_info_of(Fluid_Link)))
+    for wall in walls {testing.expect(t,link_find(&copy,wall)!=nil && link_find(&copy,wall)^==link_find(&g.state,wall)^)}
     copied,_:=geometry_budget({&copy},.Hull)
     testing.expect_value(t,copied,2)
     buffer:=make([]byte,sim.world_snapshot_capacity(&g.state.world))
@@ -705,8 +686,8 @@ pieces_mesh :: proc(assets:^host.Assets,boxes:[][2][3]f32) -> (base.Asset_Id,boo
 PIECES_L :: [2][2][3]f32{{{0,0,-1},{2,1,1}},{{0,1,-1},{1,2,1}}}
 
 @(private="file")
-pieces_test_init :: proc(f:^Physics_Test,assets:^host.Assets) -> bool {
-    physics_test_init(f)
+pieces_test_init :: proc(t:^testing.T,f:^Physics_Test,assets:^host.Assets) -> bool {
+    if !physics_test_init(t,f) {return false}
     f.app.assets=assets
     return host.assets_init(assets,{root="assets",capacity=8})
 }
@@ -735,7 +716,7 @@ a_hull_of_convex_pieces_holds_a_sphere_in_its_notch :: proc(t:^testing.T) {
     assets:host.Assets
     defer physics_test_destroy(&f)
     defer host.assets_destroy(&assets)
-    if !testing.expect(t,pieces_test_init(&f,&assets)) {return}
+    if !testing.expect(t,pieces_test_init(t,&f,&assets)) {return}
     f.gravity={0,-9.81,0}
     boxes:=PIECES_L
     mesh,made:=pieces_mesh(&assets,boxes[:])
@@ -777,7 +758,7 @@ the_pieces_of_a_hull_are_shapes_of_every_kind_of_body :: proc(t:^testing.T) {
     assets:host.Assets
     defer physics_test_destroy(&f)
     defer host.assets_destroy(&assets)
-    if !testing.expect(t,pieces_test_init(&f,&assets)) {return}
+    if !testing.expect(t,pieces_test_init(t,&f,&assets)) {return}
     boxes:=PIECES_L
     mesh,made:=pieces_mesh(&assets,boxes[:])
     if !testing.expect(t,made) {return}
@@ -816,7 +797,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     assets:host.Assets
     defer physics_test_destroy(&f)
     defer host.assets_destroy(&assets)
-    if !testing.expect(t,pieces_test_init(&f,&assets)) {return}
+    if !testing.expect(t,pieces_test_init(t,&f,&assets)) {return}
     f.settings.hulls=3
     two:=PIECES_L
     three:=[3][2][3]f32{two[0],two[1],{{1,1,-1},{1.5,1.5,1}}}

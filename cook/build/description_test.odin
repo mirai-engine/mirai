@@ -5,12 +5,12 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(test)
 component_descriptions_preserve_quoted_text_in_both_generated_worlds :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-description-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"description")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
@@ -37,12 +37,12 @@ Commented :: struct {
     description:=fmt.tprintf("%q","Uses a \"pose\".\nShared rig.")
     for text in ([]string{output.game_world,output.editor_world}) {
         testing.expect(t,strings.contains(text,description))
-        testing.expect(t,strings.contains(text,`,false,.None,false,nil,"",nil,false,false}`))
+        testing.expect(t,strings.contains(text,`,false,.None,false,nil,"",nil,false,false,`))
         // A component that draws a far form of its own says so.
-        testing.expect(t,strings.contains(text,`{"Ground","core",`) && strings.contains(text,`,false,.None,false,nil,"",nil,false,true}`))
+        testing.expect(t,strings.contains(text,`{"Ground","core",`) && strings.contains(text,`,false,.None,false,nil,"",nil,false,true,`))
         // The comment on the line of a field is its description.
         testing.expectf(t,strings.contains(text,`fields_commented:=[3]p_core.Field_Description{{"reach","where it \"stops\""},{"a","both"},{"b","both"}}`),"%s",text)
-        testing.expect(t,strings.contains(text,`,false,.None,false,nil,"",fields_commented[:],false,false}`))
+        testing.expect(t,strings.contains(text,`,false,.None,false,nil,"",fields_commented[:],false,false,`))
     }
 }
 
@@ -51,9 +51,8 @@ Commented :: struct {
 // @(storage,scene) is no more: the message says to make it a component.
 @(test)
 settings_are_of_the_project_or_of_the_machine :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-setting-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"setting")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
@@ -71,8 +70,8 @@ Quality :: struct {value:f32}
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expect_value(t,len(output.errors),0) {return}
     for text in ([]string{output.game_world,output.editor_world}) {
-        testing.expect(t,strings.contains(text,`offset_of(World,rules),.World,.Project,nil,false,nil,false,false,"",false}`),text)
-        testing.expect(t,strings.contains(text,`offset_of(World,quality),.World,.Machine,nil,false,nil,false,false,"",false}`),text)
+        testing.expect(t,strings.contains(text,`offset_of(World,rules),.World,.Project,nil,false,nil,false,false,"",false,`),text)
+        testing.expect(t,strings.contains(text,`offset_of(World,quality),.World,.Machine,nil,false,nil,false,false,"",false,`),text)
     }
     testing.expect(t,len(output.machine_settings)==1 && output.machine_settings[0]=="Quality")
 
@@ -83,7 +82,7 @@ Quality :: struct {value:f32}
     for text in ([]string{output.game_world,output.editor_world}) {
         testing.expect(t,strings.contains(text,`import gen_rhi "mirai:rhi"`),text)
         testing.expect(t,strings.contains(text,`for_device_quality :: proc(dst:rawptr,device:rawptr) {(cast(^p_core.Quality)dst)^=p_core.quality_for_device((cast(^gen_rhi.Device_Info)device)^)}`),text)
-        testing.expect(t,strings.contains(text,`.World,.Machine,nil,false,for_device_quality,false,false,"",false}`),text)
+        testing.expect(t,strings.contains(text,`.World,.Machine,nil,false,for_device_quality,false,false,"",false,`),text)
     }
 
     testing.expect(t,os.write_entire_file(file,"package core\n@(storage,setting=\"engine\")\nQuality :: struct {value:f32}\n")==nil)

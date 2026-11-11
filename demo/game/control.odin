@@ -22,12 +22,11 @@ import mm "mirai:std/math"
 
 CONTROL_INTRO :: "Control intro"
 CONTROL_SHARED_CAMERA :: "Shared overhead camera"
-DOG_BEHIND :: [3]f32{1.2,0,1.5} // m from its person, in the frame of the person, where a dog appears
+DOG_BEHIND :: [3]f32{-1.2,0,1.5} // m from its person, in the frame of the person, where a dog appears
 OVERHEAD_BLEND :: cam.Camera_Blend{seconds=0.8,ease=.Cubic_In_Out}
 CAMERA_CYCLE :: [cam.Camera_Preset]cam.Camera_Preset{.Third_Person=.First_Person,.First_Person=.Isometric,.Isometric=.Top_Down,.Top_Down=.Side,.Side=.Third_Person,.Aim=.Third_Person}
 
-PERSON_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x6e6574706572736f}
-DOG_PREFAB :: base.Asset_Id{0x6d69726169646d6f,0x6e6574646f670003}
+DOG_PREFAB :: "control/Dog.prefab"
 
 // An AI that walks its body after the body of its leader while no seat drives it.
 @(component,description="An AI walks this body after the leader body while no player drives it.")
@@ -91,7 +90,7 @@ game_seats :: proc(
         if inp.seat_pressed(actions,seat,.Overhead_View) {
             if cam.camera_overriding(shown.ptr,seat) {
                 cam.camera_override_remove(camera_requests,seat)
-            } else if camera:=entity_named(names,CONTROL_SHARED_CAMERA);camera!=core.NONE {
+            } else if camera:=core.entity_named(names,CONTROL_SHARED_CAMERA);camera!=core.NONE {
                 cam.camera_override(camera_requests,seat,seat,camera,blend=OVERHEAD_BLEND)
             }
         }
@@ -109,7 +108,7 @@ game_seats :: proc(
 // Each person gets a dog behind it.
 @(step="fixed",server)
 game_dogs :: proc(
-    commands:core.Commands,app:^host.App,follows:core.Read(Follow),drivables:core.Read(inp.Drivable),players:core.Read(Player),
+    spawner:scene.Spawner,follows:core.Read(Follow),drivables:core.Read(inp.Drivable),players:core.Read(Player),
     seats:core.Read(inp.Seat),demos:core.Read(Control_Demo),worlds:core.Read(core.World_Transform),
 ) {
     if core.count(demos)==0 {return}
@@ -119,10 +118,10 @@ game_dogs :: proc(
         placed,found:=core.get(worlds,body)
         if !found {continue}
         at:=core.Transform{placed.position+mm.quat_rotate(placed.rotation,DOG_BEHIND),placed.rotation,{1,1,1}}
-        if report,error:=scene.spawn(commands,app,{prefab=DOG_PREFAB,transform=at});error==.None {
+        if dog:=scene.spawn(spawner,DOG_PREFAB,at);dog!=core.NONE {
             follow:=FOLLOW_DEFAULT
             follow.leader=body
-            core.commands_add(commands,report.root,follow)
+            core.commands_add(spawner.commands,dog,follow)
         }
     }
 }
@@ -154,7 +153,7 @@ game_follow :: proc(
         distance:=linalg.length(delta)
         move.move,move.buttons={},{}
         if distance<=max(follow.distance,0.5) {continue}
-        move.look_yaw=math.atan2(-delta.x,-delta.z)
+        move.look_yaw=mm.yaw_of_direction(delta)
         move.move.z=-min(distance-follow.distance,1)
     }
 }
@@ -181,22 +180,22 @@ Actor_Part :: struct {name:string,position,scale:[3]f32,color:[4]f32}
 HUMAN_PARTS :: [?]Actor_Part{
     {"Torso",{0,1.15,0},{0.45,0.6,0.28},{0.05,0.15,0.8,1}},
     {"Head",{0,1.6,0},{0.35,0.35,0.35},{1,0.78,0.12,1}},
-    {"Arm left",{0.32,1.12,0},{0.12,0.6,0.12},{1,0.78,0.12,1}},
-    {"Arm right",{-0.32,1.12,0},{0.12,0.6,0.12},{1,0.78,0.12,1}},
-    {"Leg left",{0.13,0.42,0},{0.16,0.8,0.18},{0.05,0.15,0.8,1}},
-    {"Leg right",{-0.13,0.42,0},{0.16,0.8,0.18},{0.05,0.15,0.8,1}},
+    {"Arm left",{-0.32,1.12,0},{0.12,0.6,0.12},{1,0.78,0.12,1}},
+    {"Arm right",{0.32,1.12,0},{0.12,0.6,0.12},{1,0.78,0.12,1}},
+    {"Leg left",{-0.13,0.42,0},{0.16,0.8,0.18},{0.05,0.15,0.8,1}},
+    {"Leg right",{0.13,0.42,0},{0.16,0.8,0.18},{0.05,0.15,0.8,1}},
 }
 DOG_PARTS :: [?]Actor_Part{
     {"Body",{0,0.5,0},{0.42,0.34,0.7},{0.65,0.43,0.2,1}},
-    {"Head",{0,0.74,0.38},{0.33,0.3,0.35},{0.75,0.52,0.28,1}},
-    {"Nose",{0,0.68,0.6},{0.16,0.14,0.17},{0.15,0.09,0.04,1}},
-    {"Ear left",{0.12,0.94,0.37},{0.09,0.2,0.14},{0.65,0.43,0.2,1}},
-    {"Ear right",{-0.12,0.94,0.37},{0.09,0.2,0.14},{0.65,0.43,0.2,1}},
-    {"Leg front left",{0.15,0.2,0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Leg front right",{-0.15,0.2,0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Leg back left",{0.15,0.2,-0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Leg back right",{-0.15,0.2,-0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
-    {"Tail",{0,0.65,-0.4},{0.08,0.3,0.08},{0.65,0.43,0.2,1}},
+    {"Head",{0,0.74,-0.38},{0.33,0.3,0.35},{0.75,0.52,0.28,1}},
+    {"Nose",{0,0.68,-0.6},{0.16,0.14,0.17},{0.15,0.09,0.04,1}},
+    {"Ear left",{-0.12,0.94,-0.37},{0.09,0.2,0.14},{0.65,0.43,0.2,1}},
+    {"Ear right",{0.12,0.94,-0.37},{0.09,0.2,0.14},{0.65,0.43,0.2,1}},
+    {"Leg front left",{-0.15,0.2,-0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
+    {"Leg front right",{0.15,0.2,-0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
+    {"Leg back left",{-0.15,0.2,0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
+    {"Leg back right",{0.15,0.2,0.22},{0.09,0.4,0.1},{0.6,0.4,0.18,1}},
+    {"Tail",{0,0.65,0.4},{0.08,0.3,0.08},{0.65,0.43,0.2,1}},
 }
 
 Actor_Parts :: struct {items:[len(DOG_PARTS)]Actor_Part,count:int}

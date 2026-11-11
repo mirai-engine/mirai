@@ -42,7 +42,7 @@
   - `host.app_world_draw` draws this way, between frames, a world of its own into a texture: each
     frame it moves its clocks with the `Fixed` phase of the editor loop and draws it with the
     `Render` phase of its game, and returns the window's camera and time as they were. The editor's
-    particle previews use it ([vfx](../../mirai-plugins/references/vfx-editor.md)).
+    particle previews use it ([vfx](../../mirai-world/references/vfx-editor.md)).
 - **`Frame_View.inspection`** (and `Frame_Desc.inspection` for the view of a frame without views):
   what that view shows instead of its lit image
   ([inspection modes](settings.md#inspection-modes)). Changing it keeps targets and histories; a
@@ -127,21 +127,25 @@ discarding them. Zero: there was none.
 - `view_texture_add(r, width, height, name)` adds to the texture table an sRGB RGBA8 entry for what
   a camera sees; a material shows it like any color texture.
 - A `Frame_View` with `texture` nonzero (size in `rect.z/w`) is a complete view of the frame that
-  is drawn **before** those of the window; its LDR is copied to the entry in the same command
-  buffer.
-- The targets of each texture are created the first time a view names it and are kept (up to
-  `TEXTURE_VIEW_CAPACITY` = 16 states; when full, the one drawn longest ago is withdrawn).
-- `host.app_texture_view_add(app, view)` delivers them (up to 8 per frame).
+  is drawn **before** those of the window; its LDR is copied to the entry on the GPU
+  (`rhi.cmd_copy_texture`) in the same command buffer.
+- The targets of each texture are created the first time a view names it and are kept while
+  frames draw it: those no frame drew for `TEXTURE_VIEW_IDLE_FRAMES` are freed, and with all the
+  `TEXTURE_VIEW_CAPACITY` states taken, those of the view drawn longest ago. The entry keeps its
+  last image.
+- What those targets hold of the GPU is counted when each frame ends (`Stats.view_target_bytes`)
+  and comes out of the [texture pool](materials.md#textures).
+- `host.extras_texture_view_add(extras, view)` delivers them (up to 8 per frame).
 - `view_texture_remove(r, texture)` removes the entry and the targets of its view, between frames.
 - With `Frame_View.readback` the image returns to the CPU without waiting for the GPU, through the
   machinery of [reads](#extension-stages): `view_texture_pixels(r, texture)` gives it, with its
   frame, when the frame that copied it finishes (a few frames later). `view_texture_capture` reads
   the last image waiting for the GPU, between frames.
-- In `engine/render`: `view_texture_add(app, ...)`,
-  `view_texture_draw(app, texture, view, width, height, cut, pipeline, readback)` (draws a
+- In `engine/render`: `view_texture_add(renderer, ...)`,
+  `view_texture_draw(extras, texture, view, width, height, cut, pipeline, readback)` (draws a
   `core.View` into the texture in this frame with a [pipeline](#render-pipelines)),
-  `view_texture_pixels(app, texture)`, `view_texture_capture(app, texture)` and
-  `view_texture_remove(app, texture)`.
+  `view_texture_pixels(renderer, texture)`, `view_texture_capture(renderer, texture)` and
+  `view_texture_remove(renderer, texture)`.
 - The standard `Light` pipeline leaves out contact occlusion, traced reflections and the indirect
   light, for views that are shown small.
 - What runs once per frame (probes, the extensions' `Simulate` stage, previews) goes with the first
@@ -203,7 +207,7 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
   reload gives another) and keeps up to `RENDER_PIPELINE_CAPACITY` (16); one that no recent frame
   requested leaves its place.
 - **Standard** (`Standard_Pipeline`, `standard_pipeline_passes`), always present:
-  - `Full`: all the stages ([frame graph](frame-graph.md#frame-graph)).
+  - `Full`: all the stages ([frame graph](frame-graph.md#passes)).
   - `Light`: `Full` without `Reflections` or `Indirect`.
 - **Use.** `Frame_View.pipeline` chooses a view's. 0 is the frame's main one
   (`renderer_main_pipeline`, which lasts that frame) in a window view, and `Full` in a texture one.
@@ -220,7 +224,9 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
     after a view cut and are read without a writer before them in the frame.
 - **Jitter** (`Render_Pipeline_Desc.jitter`): `Resolve` follows the stage (16 phases while TAA is
   on); `Upscale` is that of a temporal upscaler of the pipeline: 8 phases at output size times the
-  square of how much smaller the view is drawn (`upscale_jitter_phases`).
+  square of how much smaller the view is drawn (`upscale_jitter_phases`). A view cut restarts its
+  phases and the frame index the shaders seed their noise with (`View_State.turn`): the frames
+  after a cut do not depend on how many the view drew before it.
 - **Record.** The `record` of a `Custom` pass binds its resources with
   `pass_resource(pass, slot, resource, previous, mip)` and dispatches with
   `stage_pipeline({stage = .Custom, shader})`, which takes `<shader>.comp` from the shaders in use.
@@ -236,8 +242,8 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
     resources with history have the previous frame (`history`, false after a cut, a size change or
     a pipeline change) with how many frames (`history_frames`).
   - `Reactive` is zero in a frame without particles.
-- `engine/render` exposes it as `pipeline(app, desc)`, `pipeline_standard(app, kind)`,
-  `pipeline_main(app, pipeline)` and the `pass_*`.
+- `engine/render` exposes it as `pipeline(renderer, desc)`, `pipeline_standard(renderer, kind)`,
+  `pipeline_main(renderer, pipeline)` and the `pass_*`.
 
 ### Antialiasing techniques
 
@@ -246,7 +252,7 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
 while the setting names it, draws the window views with a pipeline whose passes take the place of
 `Resolve` (`pipeline_main`). Without the plugin, or until its shaders are there, TAA resolves,
 which every name except `off` turns on. Texture views use their own pipeline.
-`antialiasing_offered` lists those of the last frame: the Graphics popup and `graphics.set` offer
+`antialiasing_offered` lists those of the last frame: the Graphics popup offers
 them. The `fsr` plugin is one
 ([render plugins](../../mirai-plugins/references/render-plugins.md#fsr)).
 
@@ -278,17 +284,20 @@ frame and the current one:
 
 - A plugin's runtime uses the renderer only through `engine/render` (`extend.odin`): the `pass_*`
   and types of `render/extend.odin` under another package name.
-- A `@(step="render")` function requests passes for the next frame with
-  `frame_pass(app, stage, record, user)`: up to `FRAME_PASS_CAPACITY` (32), in the requested order;
-  the list lasts that frame and requesting the same pass again (stage, `record` and `user`) is
-  requesting it once.
+- A function that reaches the renderer receives it, `renderer: ^erender.Renderer` (nil without a
+  GPU: each procedure answers its zero), and one that adds to the frame, `extras:
+  ^host.Frame_Extras`; a step gets both
+  [bound](../../mirai-core/references/generator.md#parameters).
+- A `@(step="render")` function requests passes for the next frame with `frame_pass(renderer, stage,
+  record, user)`: up to `FRAME_PASS_CAPACITY` (32), in the requested order; the list lasts that
+  frame and requesting the same pass again (stage, `record` and `user`) is requesting it once.
 - `record(pass: ^Pass, user)` records with `pass_*`. The `Pass` gives the stage, the size of the
   view's targets, the eye (`eye`: position with `w` 1, or direction of an orthographic one with `w`
   0), the matrix without jitter (`view_projection`), the world the frame draws (`world`, the key of
   `scene_world`: an extension records only what belongs to that world), the frame number
   (`frame`), the world seconds (`time`) and, in `Blend`, the glass side (`glass`).
 
-Stages, in frame order:
+## Stages in frame order
 
 - **`Geometry`**: once per frame, after uploading the scene and before the views; its `Pass` has no
   view (size and matrix at zero). It writes vertices of [deformable meshes](#deformable-meshes):
@@ -298,7 +307,7 @@ Stages, in frame order:
   textures-only frame), after its G-buffer and its occlusion; a `ui_only` frame does not run it. It
   dispatches with the scene tables bound: it traces (`hw`), reads the light tree and the probe
   volume, and reads the depth and normal of that view with `pass_surface_read`. The
-  [particles](../../mirai-plugins/references/vfx.md#passes) use it.
+  [particles](../../mirai-world/references/vfx.md#passes) use it.
 - **`Gbuffer`**: each view, after `Simulate` and before `Mask`: surfaces that the extension draws
   in the G-buffer and that are lit like the scene. `pass_gbuffer_begin` opens the view's G-buffer
   targets with its depth; `pass_gbuffer_pipeline(pass, shader)` gives the pipeline of
@@ -311,7 +320,7 @@ Stages, in frame order:
   with `material_vertex_tint`: a program reads the color as data and does not multiply it. With
   `fragment`, `<fragment>.frag` writes the targets instead of the engine, with the `plain` and
   `layers` variants and the packing of `gbuffer.slang`, like the
-  [foliage](../../mirai-plugins/references/foliage.md#far-impostor-and-crown) impostor. Materials
+  [foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown) impostor. Materials
   with a Surface program are drawn with their program's fragment: `program` in
   `pass_gbuffer_pipeline` gives that pipeline, `pass_material_program` says the program of a
   material and `pass_mesh_programs` those of what a mesh shows, for a draw per program in which the
@@ -336,7 +345,7 @@ Stages, in frame order:
   in front (`Front`), over the lit glass; without glass, once (`All`). `.Glass_Depth` gives the
   layer: a medium applies its share of the path on each side, and what only changes opaque surfaces
   does nothing in front. The [fog](../../mirai-plugins/references/render-plugins.md#fog) and the
-  [water](../../mirai-plugins/references/water.md) caustics use it.
+  [water](../../mirai-world/references/water.md) caustics use it.
 - **`Blend`**: each view, over the lit image before TAA, except in a view with an inspection mode.
   With glass in view it runs twice: behind the nearest layer, after its raster and before the glass
   reads what is behind it (`glass` `Behind`), and in front, over the lit glass (`Front`); without
@@ -373,7 +382,7 @@ Stages, in frame order:
   inside `Nested`, `Surface` and `Lit`; `Blend`, inside `Transparency`; `Post`, inside `Output`: one
   without them draws no nested views, decals, fog or particles.
 
-Restrictions of the `pass_*`:
+## Restrictions of the `pass_*`
 
 - `pass_params` and `pass_upload` return `false` if the frame memory is not enough: that draw is
   not made.
@@ -383,14 +392,14 @@ Restrictions of the `pass_*`:
   the renderer's scene: it lasts the frame, it is not the instance's identity. From
   `frame.instance_count` it is an instance of a [batch](scene.md#instance-batches); `scene_instance`
   reads any.
-- `instance_values_set(app, index, values)` gives four numbers to an instance of
-  `Render_Sync.instances` (by its index there), which the shaders read with
+- `instance_values_set(renderer, index, values)` gives four numbers to an instance of the
+  renderer (by its index, that of `instance_object`), which the shaders read with
   `instance_values(instance)` of `scene.slang`: the instance's row carries them, they continue
   while the instance keeps its identity and they change neither its light nor its rays.
-- `instance_wet_set(app, index, wet)` says how wet an instance of `Render_Sync.instances` is, from
-  0 to 1, with the same rules of identity, light and rays; every material applies it
+- `instance_wet_set(renderer, index, wet)` says how wet an instance of the renderer is, from 0
+  to 1, with the same rules of identity, light and rays; every material applies it
   ([wet](materials.md#evaluation)). It has a single writer, the
-  [water](../../mirai-plugins/references/water.md#what-physics-shows) plugin.
+  [water](../../mirai-world/references/water.md#what-physics-shows) plugin.
 - `pass_scissor` limits the pixels (without size: the whole view); `pass_draw` and `pass_dispatch`
   execute. After a stage the renderer binds the scene tables again.
 - `pass_timestamp(pass, name)`: the GPU time of what the pass records from there counts under that
@@ -415,10 +424,10 @@ Restrictions of the `pass_*`:
   - `pass_texture_sample(pass, slot, desc, previous)` binds it so that the draws of the next pass
     read what the earlier dispatches wrote: it goes before `pass_surface_begin` or
     `pass_mask_begin`, which no longer admit barriers.
-- **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in
-  `SLOT_PASS0 + slot` a buffer that the renderer keeps for the extension under that name and the
-  pass's world, until it releases it (`buffer_release(app, world, name)`, in the world's `release`)
-  or the renderer closes (up to `EXTENSION_BUFFER_CAPACITY` = 64):
+- **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in `SLOT_PASS0 +
+  slot` a buffer that the renderer keeps for the extension under that name and the pass's world,
+  until it releases it (`buffer_release(renderer, world, name)`, in the world's `release`) or the
+  renderer closes (up to `EXTENSION_BUFFER_CAPACITY` = 64):
   - it creates it the first time and again if it is requested with another size, and returns
     `made`: what it holds is not known. One larger than what the device binds is not created;
   - a world that is not drawn keeps its own: its state waits, still, for its next frame;
@@ -430,24 +439,24 @@ Restrictions of the `pass_*`:
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
     `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
     and `.Quad`, the six of a quad.
-- **Lights.** `lights_ask(app, with_shadow, without_shadow)` asks for room for lights that
+- **Lights.** `lights_ask(renderer, with_shadow, without_shadow)` asks for room for lights that
   a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like those of the
   scene; those of the first part cast shadows and those of the second trace no rays
   ([GPU lights](lights.md#gpu-lights)).
-- **Table textures.** `table_texture(app, world, Table_Texture_Desc{name, width, height})`, between
-  frames, gives the table place of an RGBA16F texture of the world under that name, which the
-  extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a
+- **Table textures.** `table_texture(renderer, world, Table_Texture_Desc{name, width, height})`,
+  between frames, gives the table place of an RGBA16F texture of the world under that name, which
+  the extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a
   buffer of the world and which the materials read like any other. Making it, or with another size,
   is a transaction; `table_texture_release` frees it (up to `EXTENSION_TABLE_TEXTURE_CAPACITY`). A
   transaction that frees what it brought can take its place: then it is made again.
 - **Rows of a frame.** `pass_rows_upload` copies rows once to the frame memory and `pass_rows` binds
   them in that frame's passes (`Pass.frame` says when to upload them again).
 - **Counters.** `pass_counters(pass, slot, name)` binds four `u32` of a name that the renderer sets
-  to zero every frame and reads with its statistics: `erender.counters(app, name)` and
+  to zero every frame and reads with its statistics: `erender.counters(renderer, name)` and
   `Stats.counters` give those of two frames back (up to `EXTENSION_COUNTER_CAPACITY` = 16 names).
 - **Reads.** `pass_readback(pass, buffer, offset, Buffer_Desc{name, size})`, outside a draw pass,
   copies a part of a world buffer at the end of the frame; when that frame finished, the CPU has it
-  without waiting for the GPU: `erender.readback(app, world, name)` gives the bytes of the last
+  without waiting for the GPU: `erender.readback(renderer, world, name)` gives the bytes of the last
   copied frame and its number, valid until the next frame. Making it, or with another size, is a
   transaction; the extension frees it with `readback_release` in the world's `release` (up to
   `EXTENSION_READBACK_CAPACITY`). What returns arrives frames later and is not deterministic: it is
@@ -456,8 +465,8 @@ Restrictions of the `pass_*`:
 - **Pipelines.** A plugin's stages are sources `name.vert.slang`, `name.frag.slang` or
   `name.comp.slang` in its `shaders/`; the project generation compiles them (`extensions` key of
   the manifest).
-- `stage_pipeline(app, {stage, shader, targets, blend, compute, name, fragment, program})` gives
-  (and `pass_stage_pipeline`, inside a pass):
+- `stage_pipeline(renderer, {stage, shader, targets, blend, compute, name, fragment, program})`
+  gives (and `pass_stage_pipeline`, inside a pass):
   - for `Mask`, `Surface` and `Blend`, the pipeline of `<shader>.vert` and `<shader>.frag` (without
     `.vert`, a three-vertex triangle over the whole view) with the formats and state of the stage
     (`Mask`: those of the mask, with depth test and write; `Surface`: the named targets, with that
@@ -466,9 +475,10 @@ Restrictions of the `pass_*`:
   - for `Geometry`, `Simulate`, `Lit`, `Post`, `Custom` and `Inspect`, and for `Surface` with
     `compute`, that of `<shader>.comp`. `Gbuffer` takes `pass_gbuffer_pipeline`. A stage that traces
     declares the `hw`, `color` and `color_hw` variants (`//! variant`, like
-    `direct_samples.comp`) and receives that of the rays the renderer traces: by hardware, and through the colored-shadow glass
-    filters (`colored_shadows` and some blend instance). Without the variant, the stage itself: one
-    that traces without `hw` does not see the scene with ray queries.
+    `direct_samples.comp`) and receives that of the rays the renderer traces: by hardware, and
+    through the colored-shadow glass filters (`colored_shadows` and some blend instance). Without
+    the variant, the stage itself: one that traces without `hw` does not see the scene with ray
+    queries.
   - with `program`, that of a graphics stage with the fragment of that Surface program, if the stage
     marks it `//! per surface program`; that of the stage without it while it is not made.
 - The renderer creates the pipeline at the first request, keeps it (up to `STAGE_PIPELINE_CAPACITY`
@@ -484,7 +494,8 @@ Restrictions of the `pass_*`:
 What an extension needs **inside** the engine stages is composed when generating the project
 shaders, with lines `//! mirai frame`, `needs nested_views`, `needs instance_ids` and
 `hook ray|lights|probes|vertex` in its Slang sources; the comment in
-`cook/shaders/extensions.odin` lists them. Rules:
+`cook/shaders/extensions.odin` lists them, with `constant`, the line that shares a
+[constant of its Odin code](shaders.md#compilation) with its shaders. Rules:
 
 - A `frame` source is included before `Frame_Data` and uses no engine declarations;
   `pass_extension_data(pass, "<name>")` returns its bytes, zero until the extension writes them. A
@@ -519,9 +530,9 @@ Hooks:
   only what is rasterized: shadows and reflections see the mesh at rest.
 - **Lights** (`mirai_extension_light_count` and an `Extension_Light` per index, in
   `lighting.slang`): they are lights like the others. The
-  [direct filter](lights.md#direct-light-of-a-view) traces their ray (and the optional second) to a point of their disc and adds their unshadowed
-  light; `direct_lighting` adds them in a single loop on thin geometry and on reflection, GI and
-  probe hits.
+  [direct filter](lights.md#direct-light-of-a-view) traces their ray (and the optional second) to
+  a point of their disc and adds their unshadowed light; `direct_lighting` adds them in a single
+  loop on thin geometry and on reflection, GI and probe hits.
 
 ## Batches
 
@@ -530,13 +541,14 @@ Hooks:
 of the calling function: each world publishes its own and those of the displayed world are drawn. A
 batch lasts until `batch_remove` or until `batches_epoch` changes: whoever publishes them keeps
 their handles in a `by_world` storage and removes them in the `release` of its world. The
-[foliage](../../mirai-plugins/references/foliage.md) plugin uses it.
+[foliage](../../mirai-world/references/foliage.md) plugin uses it.
 
 ## Deformable meshes
 
-- `deformable_create(app, source)` registers a copy of a mesh whose vertices an extension writes on
-  the GPU, like a [skinning](scene.md#gpu-skinning) pose: the renderer copies current to previous
-  before the `Geometry` stage and afterwards refits the ray structure; `mesh_remove` frees it.
+- `deformable_create(renderer, source)` registers a copy of a mesh whose vertices an extension
+  writes on the GPU, like a [skinning](scene.md#gpu-skinning) pose: the renderer copies current to
+  previous before the `Geometry` stage and afterwards refits the ray structure; `mesh_remove` frees
+  it.
 - Each frame in which the shape changes, the extension calls `deformable_update` with its box and
   writes the current vertices in `Geometry`; a shape that stops changing makes one last pass to
   equalize current and previous. A box that does not change marks no light.
@@ -560,18 +572,18 @@ their handles in a `by_world` storage and removes them in the `release` of its w
 
 ## Skinned meshes
 
-- `skin_create(app, source, influences, joint_count, morph={})` registers a copy of a skinned mesh
-  that the renderer deforms by joints on the GPU ([skinning](scene.md#gpu-skinning));
+- `skin_create(renderer, source, influences, joint_count, morph={})` registers a copy of a skinned
+  mesh that the renderer deforms by joints on the GPU ([skinning](scene.md#gpu-skinning));
   `influences` (`Skin_Influence`, one per vertex of level 0 or of all levels) name joints of the
   palettes and `morph` (`Morph_Data`) its targets. Load transaction. One larger than what a frame
-  uploads is not drawn until it has been uploaded
-  ([several frames](scene.md#geometry-over-several-frames), `mesh_uploading`): an instance that
-  replaces the world mesh with it leaves the entity undrawn until then.
-- `skin_update(app, handle, palette, reset_motion=false, morph_weights=nil)` gives the palette of
-  the next frame, one matrix per joint, from the bind pose to the mesh space, and the weights of
+  uploads is not drawn until it has been uploaded ([several
+  frames](scene.md#geometry-over-several-frames), `mesh_uploading`): an instance that replaces the
+  world mesh with it leaves the entity undrawn until then.
+- `skin_update(renderer, handle, palette, reset_motion=false, morph_weights=nil)` gives the palette
+  of the next frame, one matrix per joint, from the bind pose to the mesh space, and the weights of
   its targets; `reset_motion` draws no motion since the previous frame.
-- `skin_palette(app, handle, current, previous)` reads the palette that will deform the next frame
-  and that of the previous one, per joint and as rows of a 3x4: what an extension needs to follow
-  the pose (the bones of the particles).
+- `skin_palette(renderer, handle, current, previous)` reads the palette that will deform the next
+  frame and that of the previous one, per joint and as rows of a 3x4: what an extension needs to
+  follow the pose (the bones of the particles).
 - `mesh_remove` frees it; those that remain go with the renderer. This way the `animation` plugin's
   skin deforms without importing `render` or `rhi`.

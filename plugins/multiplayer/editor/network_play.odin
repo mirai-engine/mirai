@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:log"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import wire "mirai:net"
 import "mirai:platform"
@@ -163,11 +164,10 @@ serve :: proc(s:^editor.Session,n:^Net_Play) -> string {
     case n.phase!=.Idle:              return "A network game is running; stop it first"
     case s.mode!=.Edit:               return "A network game starts from Edit"
     case !s.has_project:              return "A network game needs a project"
-    case s.recovery.pending:          return "Recover or discard the scene first"
     case s.build.phase==.Running:     return "A build is running; wait for it"
     }
     editor.tools_release(s)
-    editor.edits_commit(s.edits,editor.edited_world(s),s.selection)
+    history.edits_commit(s.edits,editor.edited_world(s),s.selection)
     if error:=editor.document_write(s,editor.play_copy_file(s,editor.PLAY_SCENE),false);error!=.None {
         return fmt.tprintf("The scene could not be copied: %s",editor.document_error_text(error))
     }
@@ -228,10 +228,24 @@ host_game :: proc(s:^editor.Session) -> (code:string,game:u32,ok,reachable:bool)
     game,_=endian.get_u32(offer[4:8],.Little)
     invite,_:=endian.get_u32(offer[8:12],.Little)
     mapping:=offer[12]!=0
-    outside:=!editor.collab_address_local(target)
+    outside:=!address_local(target)
     target.port=external!=0 && outside?external:port
     code=wire.invite_encode(target,invite,context.temp_allocator)
     return code,game,code!="",!(outside && mapping)
+}
+
+// An address of this machine or of its network: loopback, private, link-local.
+@(private)
+address_local :: proc "contextless" (a:wire.Address) -> bool {
+    ip:=a.ip
+    #partial switch a.kind {
+    case .IP4: return ip[0]==127 || ip[0]==10 || ip[0]==172 && ip[1]&0xf0==16 || ip[0]==192 && ip[1]==168 || ip[0]==169 && ip[1]==254
+    case .IP6:
+        loopback:=ip[15]==1
+        for b in ip[:15] {loopback&&=b==0}
+        return loopback || ip[0]&0xfe==0xfc || ip[0]==0xfe && ip[1]&0xc0==0x80
+    }
+    return false
 }
 
 // What the session tells its guests of the game this editor serves.

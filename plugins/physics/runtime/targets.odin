@@ -25,7 +25,10 @@ physics_pose_targets :: proc(
         // What left the table was not kept: every follow of what no longer has a target ends.
         for &l,at in state.links.values {
             if !core.has(targets,state.links.entities[at]) {
-                if .Target in l.hold.by {hold_end(&state.world,&l,.Target,true)}
+                if .Target in l.hold.by {
+                    hold_end(&state.world,&l,.Target,true)
+                    link_touch(state,&l)
+                }
                 l.followed=false
             }
         }
@@ -35,6 +38,7 @@ physics_pose_targets :: proc(
         if l:=link_find(state,e);l!=nil {
             hold_end(&state.world,l,.Target,true)
             l.followed=false
+            link_touch(state,l)
         }
     }
     for row in 0..<core.count(targets) {
@@ -51,6 +55,7 @@ physics_pose_targets :: proc(
             local.position,local.rotation=target.position,rotation
             continue
         }
+        link_touch(state,l)
         if l.target_placed!=target.placed {
             l.target_placed=target.placed
             target_place(state,l,local,target.position,rotation,target.linear,target.angular,target.rest)

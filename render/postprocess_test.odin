@@ -3,14 +3,14 @@ package mirai_render
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 @(test)
 postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
-    d,error:=shared_device.take(t, hardware_rt = false)
-    testing.expect(t,d!=nil,error);if d==nil {return};
     settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.reflections=false;settings.occlusion_culling=false;settings.trace_mode=.Software
-    r:=new(Renderer);defer free(r);ok:=renderer_init(r, {device = d, width = 8, height = 8, settings = settings});defer renderer_destroy(r);testing.expect(t,ok,r.error);if !ok {return}
+    f:Fixture
+    if !fixture_init(t,&f,8,8,settings,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    r,d:=f.renderer,f.device
     // Embedded ColorGrade: float3 tint at byte0, strength12, contrast16.
     a:=Postprocess_Desc{program=1,enabled=true};a.params[0]={2,2,2,1};a.params[1].x=1
     b:=Postprocess_Desc{program=1,enabled=true};b.params[0]={1,1,1,1};b.params[1].x=2
@@ -75,10 +75,11 @@ postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
 // spreads an edge between black and white and leaves what is far from it.
 @(test)
 postprocess_reads_the_image_around_its_pixel :: proc(t:^testing.T) {
-    d,error:=shared_device.take(t, hardware_rt = false)
-    testing.expect(t,d!=nil,error);if d==nil {return};
     settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.reflections=false;settings.occlusion_culling=false;settings.trace_mode=.Software
-    r:=new(Renderer);defer free(r);ok:=renderer_init(r, {device = d, width = 16, height = 8, settings = settings});defer renderer_destroy(r);testing.expect(t,ok,r.error);if !ok {return}
+    f:Fixture
+    if !fixture_init(t,&f,16,8,settings,hardware_rt=false) {return}
+    defer fixture_destroy(&f)
+    r,d:=f.renderer,f.device
     blur:=program_find(r,"Blur",.Postprocess)
     if !testing.expect(t,blur!=nil,"the Blur program is built in") {return}
     // radius at byte 0, strength at 4.

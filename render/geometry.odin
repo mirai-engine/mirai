@@ -4,7 +4,9 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:rhi"
+import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:render/abi"
 
 // The meshes of the scene in the two word pools (gpu_types.odin): each one a
 // block of the vertex pool (the blocks of its pages one after the other, in
@@ -208,7 +210,7 @@ pages_append :: proc(g: asset.Mesh_Geometry, vertices, indices: ^[dynamic]u32, v
 	for page in g.pages[first:] {words += int(page_words(g, page))}
 	at := len(vertices)
 	if resize(vertices, at + words) != nil || reserve(indices, len(indices) + len(g.pages) * PAGE_ENTRY_WORDS) != nil {
-		resize(vertices, at)
+		base.truncate(vertices, at)
 		return false
 	}
 	for page, k in g.pages {
@@ -378,7 +380,7 @@ mesh_rays_build :: proc(g: asset.Mesh_Geometry, software: bool, allocator := con
 }
 
 // A primitive a ray meets: its cluster among those of the mesh, then its triangle.
-PRIMITIVE_TRIANGLE_BITS :: 7
+PRIMITIVE_TRIANGLE_BITS :: abi.PRIMITIVE_TRIANGLE_BITS
 #assert(1 << PRIMITIVE_TRIANGLE_BITS >= CLUSTER_TRIANGLES)
 
 // The corners of the triangle a primitive names, in the space of the mesh.
@@ -395,8 +397,8 @@ cluster_triangle_positions :: proc "contextless" (g: asset.Mesh_Geometry, cluste
 // The software tree of a cut over its triangles at rest.
 @(private = "file")
 cut_tree :: proc(g: asset.Mesh_Geometry, cut: ^Mesh_Ray_Cut, allocator: mem.Allocator) -> bool {
-	items := make([]Bvh_Item, len(cut.primitives), allocator)
-	if items == nil && len(cut.primitives) > 0 {return false}
+	items, items_error := make([]Bvh_Item, len(cut.primitives), allocator)
+	if items_error != nil {return false}
 	defer delete(items, allocator)
 	for primitive, t in cut.primitives {
 		a, b, c := primitive_positions(g, primitive)
@@ -447,7 +449,9 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 	if !checked && !mesh_geometry_check(g, len(slot_words)) {return 0, false}
 	triangles: u32
 	for level in g.levels {triangles += level.triangle_count}
-	for word in slot_words {materials_reach(r, word & 0xffffff)}
+	for word in slot_words {
+		if !materials_reach(r, word & 0xffffff) {return 0, false}
+	}
 	made: Mesh_Rays
 	given := rays
 	if given == nil || !r.hardware_rt && !given.software {
@@ -488,6 +492,11 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 	record.ray_count = u32(given.count)
 	for cut, k in given.cuts[:given.count] {record.rays[k].error = cut.error}
 	handle: Mesh_Handle
+	// Room first for its record and for its place among the streamed: the mesh is not left without them.
+	if len(s.free_meshes) == 0 && !pool_reserve(&s.meshes, 1) || record.stream != nil && !pool_reserve(&s.pages.streamed, 1) {
+		mesh_stream_free(record.stream)
+		return 0, false
+	}
 	if later != nil {
 		if !mesh_reserve(s, g, stored, slot_words, &record) {
 			mesh_stream_free(record.stream)
@@ -495,11 +504,17 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 		}
 		handle = mesh_place(r, record)
 	} else {
+		// And in the pools for its blocks, its tables and its trees: they are written whole or not at all.
+		vertices, indices, nodes, triangles := mesh_pool_counts(g, stored, len(slot_words), given, r.hardware_rt)
+		if !pool_reserve(&s.vertices, vertices) || !pool_reserve(&s.indices, indices) || !pool_reserve(&s.blas_nodes, nodes) || !pool_reserve(&s.blas_triangles, triangles) {
+			mesh_stream_free(record.stream)
+			return 0, false
+		}
 		vertex_start, index_start := u32(len(s.vertices)), u32(len(s.indices))
 		append(&s.indices, ..mem.slice_data_cast([]u32, g.clusters))
 		record.page_word = u32(len(s.indices)) - index_start
 		if !pages_append(g, &s.vertices, &s.indices, vertex_start, stored) {
-			resize(&s.indices, int(index_start))
+			base.truncate(&s.indices, index_start)
 			mesh_stream_free(record.stream)
 			return 0, false
 		}
@@ -821,13 +836,13 @@ blas_inputs_add :: proc(r: ^Renderer, m: ^Mesh_Record, later := false) -> (words
 		primitives := s.indices[ray.table_word:][:ray.table_count]
 		if !posed {
 			first := len(s.vertices)
-			resize(&s.vertices, first + len(primitives) * 9)
+			if resize(&s.vertices, first + len(primitives) * 9) != nil {return 0, false}
 			for primitive, t in primitives {blas_input_positions(p, primitive, s.vertices[first + t * 9:][:9])}
 			ray.input_vertices = u32(len(s.vertices) - first)
 			ray.input_vertex = pool_store(&s.vertices, &s.pool_free[.Vertex], &s.pool_dirty[.Vertex], u32(first))
 		}
 		first := len(s.indices)
-		resize(&s.indices, first + len(primitives) * 3)
+		if resize(&s.indices, first + len(primitives) * 3) != nil {return 0, false}
 		for primitive, t in primitives {blas_input_indices(p, primitive, u32(t), posed, s.indices[first + t * 3:][:3])}
 		ray.input_indices = u32(len(s.indices) - first)
 		ray.input_index = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], u32(first))

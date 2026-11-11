@@ -114,6 +114,11 @@ float scene_reach(float3 origin, float3 direction) {
     float leave = min(far.x, min(far.y, far.z));
     return leave >= max(max(near.x, max(near.y, near.z)), 0.0) ? leave * 1.001 + 0.01 : 0.0;
 }
+
+// How far a shadow ray goes toward the sun: none (no traversal) while it casts no shadows.
+float sun_reach(float3 origin, float3 direction) {
+    return frame.sun_direction.w >= SUN_UNSHADOWED ? 0.0 : scene_reach(origin, direction);
+}
 float2 project_uv(float3 world) {
     float4 clip = view_clip(world);
     float2 ndc = clip.xy / clip.w;
@@ -307,7 +312,6 @@ int2 reflect_block_pixel(int2 cell) {
 // are and how they are drawn. An instance is BATCH_WORDS words of the pool:
 // its position, its rotation (quat_pack of std/math, 10 bits) and its scale
 // across (x and z) and along y, two half floats.
-#define BATCH_GROUP 64u
 
 bool instance_batched(uint index) { return index >= frame.instance_count; }
 uint batch_of(uint index) { return indices[frame.batches.y + (index - frame.instance_count) / BATCH_GROUP]; }

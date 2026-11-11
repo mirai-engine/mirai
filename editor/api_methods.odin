@@ -12,6 +12,7 @@ import "mirai:cook/build"
 import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import input "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -28,6 +29,8 @@ import "mirai:ui"
 // Build. The scene has its own file (api_scene.odin).
 
 API_STEP_LIMIT :: 3600
+API_NO_GAME :: "No game is playing; play.start first"
+API_FILMSTRIP_CELLS :: 64
 API_DT_MAX :: f32(0.25)
 API_INPUT_EVENTS :: 256
 API_TIMINGS :: 48
@@ -118,6 +121,7 @@ Api_Visible_Kinds :: struct {
 
 Api_Textures :: struct {
     bytes:u64 `mirai:"label=GPU memory of the textures of the renderer"`,
+    view_bytes:u64 `mirai:"label=GPU memory of the targets of the views drawn into textures, which the pool of the textures gives up"`,
     pending:int `mirai:"label=Textures whose levels are not yet those their distance asks for"`,
     reduced:int `mirai:"label=Textures held coarser than their distance asks for to fit the pool"`,
     streamed:int `mirai:"label=Ranges of levels given to textures since the assets loaded"`,
@@ -159,7 +163,7 @@ Api_History_Result :: struct {
 }
 
 Api_Select_Params :: struct {
-    ids:[64]base.Entity_Id `mirai:"optional,label=Entities to select (the last one active); none clears the selection"`,
+    entities:[64][API_ENTITY_TEXT]u8 `mirai:"optional,text,label=Entities to select by name or path Parent/Child or id or handle (the last one active); none clears the selection"`,
     add:bool `mirai:"optional,label=Add to the selection instead of replacing it"`,
 }
 Api_Select_Result :: struct {
@@ -180,26 +184,8 @@ Api_Camera_Result :: struct {
     ev100:f32,
 }
 
-Api_Capture_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made"`,
-    warmup_frames:int `mirai:"optional,min=0,max=3600,label=Frames run before the capture; at least one"`,
-    dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s"`,
-    ui:bool `mirai:"optional,label=The window with the editor; false: the world shown alone through the camera of the viewport without panels or gizmos or grid or selection"`,
-    width:int `mirai:"optional,min=0,max=4096,label=Pixels of the image without the UI; 0 keeps the aspect of the window (its size when height is 0 too)"`,
-    height:int `mirai:"optional,min=0,max=4096,label=Pixels of the image without the UI; 0 keeps the aspect of the window (its size when width is 0 too)"`,
-    region:[4]int `mirai:"optional,min=0,max=16384,label=x y width height of the part written in pixels from the top left of the image (the window with the UI; width by height without it); zeros: all of it"`,
-    seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=The clock of the window when the warmup starts, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
-    generated:bool `mirai:"optional,label=With ui: the image the window showed before that of the last frame, which frame generation drew"`,
-}
-
 // Frames an image without the UI is drawn so that what builds up over time settles.
 API_CAPTURE_SETTLE :: 8
-
-Api_Capture_Result :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the file written"`,
-    frame:u64,
-    width,height:int,
-}
 
 Api_Play_Result :: struct {
     playing,paused:bool,
@@ -211,10 +197,6 @@ Api_Play_Result :: struct {
     ticks_dropped:u64,
     game_camera:bool,
     input_released:bool,
-    building:bool `mirai:"label=An Odin source changed since the last build: the build runs and the game starts once it stands. build.status says when it ends; a failed one leaves the game stopped and its errors in engine.diagnostics"`,
-    ran:int `mirai:"label=play.step: the ticks it ran"`,
-    met:bool `mirai:"label=play.step with until: whether they held when it stopped"`,
-    scripted:int `mirai:"label=Ticks left of the input play.input scheduled: the next ticks without input of their own play them"`,
 }
 
 
@@ -236,27 +218,21 @@ Api_Pause_Params :: struct {
 }
 
 Api_Play_Step_Params :: struct {
-    ticks:int `mirai:"optional,min=1,max=3600,label=Fixed ticks it runs"`,
-    seconds:f32 `mirai:"optional,label=Game time it runs in place of ticks: the nearest whole ticks and at least 1"`,
-    keys:core.Keys `mirai:"optional,label=Keys held in every tick; they go to the local seat with the focus"`,
-    mouse_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons held in every tick"`,
-    tap_keys:core.Keys `mirai:"optional,label=Keys pressed and released inside the first tick: a press shorter than a tick that is never down"`,
-    tap_buttons:core.Mouse_Buttons `mirai:"optional,label=Buttons pressed and released inside the first tick"`,
-    mouse_position:[2]f32 `mirai:"optional,label=Where the pointer is from the first tick on in points of the window from its top left (the image of play.capture over the density): the UI of the game takes it and its clicks; it stays for the next steps"`,
-    mouse_delta:[2]f32 `mirai:"optional,label=Relative motion of the mouse in points spread evenly over the ticks"`,
-    wheel:[2]f32 `mirai:"optional,label=Added to the first tick"`,
-    text:[ui.INPUT_TEXT_CAPACITY]u8 `mirai:"optional,text,label=Printable ASCII typed in the first tick: the field of the UI of the game with the focus takes it"`,
-    gamepads:[core.GAMEPAD_CAPACITY]Api_Play_Gamepad `mirai:"optional,label=The gamepads connected in every tick; gamepad i is that of the local seat of slot i when the game has several"`,
+    using input:Api_Play_Segment `mirai:"inline"`,
     focus:int `mirai:"optional,min=-1,max=3,label=The local seat (by slot) that gets the keys and the mouse from this step on; -1 keeps it"`,
-    until:[8]Api_Play_Condition `mirai:"optional,label=It stops after the first tick at which all hold as play.check reads them; ticks (or those of segments) is the most it runs and none run when they hold already"`,
+    until:[8]Api_Play_Condition `mirai:"optional,label=It stops after the first tick at which all hold as play.check reads them; for (or those of segments) is the most it runs and none run when they hold already"`,
     player:int `mirai:"optional,min=0,max=3,label=The run that gets the input in a game a turn plays on the network; every run of it advances"`,
     segments:[API_STEP_SEGMENTS]Api_Play_Segment `mirai:"optional,label=Input that changes along the step: each segment holds its input for its ticks and the next one follows; in place of ticks and the input fields"`,
     trace:Api_Play_Trace `mirai:"optional,label=Values of a few entities or of a storage read before the first tick and every some ticks and after the last: the trace of the result"`,
+    drive:Api_Play_Drive `mirai:"optional,label=Instead of keys steers the focused player by the move action of the game to a target re-aimed every tick along the navigation meshes when the project has them; jumps at gaps and when blocked and holds the jump as long as it still rises; stops within its distance or standing on a raised target or at for (30 s if not given) or when until holds or when it gets no closer; answers drive with where it ended and why"`,
+    drive_ticks:int `mirai:"transient"`, // of a drive given no for
+    look_at:Api_Play_Look_At `mirai:"optional,label=Turns what the player sees through toward an entity or a point in every tick of the step; instead of mouse_delta; play.view says where it looks with follow.yaw_deg and follow.pitch_deg"`,
 }
 
 Api_Build_Params :: struct {
-    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets"`,
+    target:[8]u8 `mirai:"optional,text,label=editor (the default): the library of the editor, loaded into it; game: the shipped game with its cooked assets; shaders: the shaders of the project published again, answering once the viewport draws with them"`,
     out:[512]u8 `mirai:"optional,text,label=For the game: the folder it is built into; empty: .mirai/game of the project"`,
+    seconds:int `mirai:"optional,min=1,max=3600,unit=s,label=How long it waits for the end of the build; past that it answers building and the build goes on"`,
 }
 
 Api_Play_Gamepad :: struct {
@@ -269,15 +245,26 @@ Api_Play_Gamepad :: struct {
     right_trigger:f32 `mirai:"optional,min=0,max=1"`,
 }
 
+API_BUILD_DIAGNOSTICS :: 32
+
+Api_Build_Diagnostic :: struct {
+    severity:build.Severity,
+    file:[API_PATH_BYTES]u8 `mirai:"text,label=Absolute"`,
+    line,column:int,
+    message:[1024]u8 `mirai:"text"`,
+}
+
 Api_Build_Result :: struct {
-    started:bool,
-    building:bool,
+    building:bool `mirai:"label=It still runs: the wait of build.start ran out or build.status asked while it runs"`,
+    restarting:bool `mirai:"label=The new library needs an engine built after this editor started: the editor starts again now on the new one"`,
+    publishing:bool `mirai:"label=Target shaders: the stages the frames do not run are still being compiled"`,
     target:[8]u8 `mirai:"text,label=editor or game: of the build that runs or ran last"`,
     game:[512]u8 `mirai:"text,label=The executable of the game the last build of the game left; player.start with shipped runs it"`,
     phase:Build_Phase,
     errors:int,
     seconds:f64,
     message:[256]u8 `mirai:"text,label=The first error of the build or what failed"`,
+    diagnostics:[API_BUILD_DIAGNOSTICS]Api_Build_Diagnostic `mirai:"trim,label=What the compiler said with its file and line; errors first"`,
 }
 
 Api_Editor_Inspect :: struct {
@@ -313,6 +300,7 @@ Api_Editor_Camera :: struct {
 Api_Editor_Interactions :: struct {
     captured_by:[8]u8 `mirai:"text,label=What holds the pointer in the viewport: look pan select or gizmo; empty when nothing does"`,
     modal:[16]u8 `mirai:"text,label=The dialog that blocks the editor: confirm save_changes recovery shortcuts settings delete_asset or git_discard; empty when none does"`,
+    recovery_offered:bool `mirai:"label=Whether changes an editor left when it ended wait for editor.recover: they stay set aside until then"`,
     popups:int `mirai:"label=Popups open"`,
     editing_text:bool `mirai:"label=Whether a text field takes the keys"`,
     dialog_pending:bool `mirai:"label=Whether a file dialog of the system waits for an answer"`,
@@ -335,8 +323,8 @@ Api_Editor_Action :: struct {
 @(private)
 api_methods_register :: proc(s:^Session,st:^Api_State) {
     step_default:=Api_Step_Params{frames=1,dt=HEADLESS_DT}
-    capture_default:=Api_Capture_Params{warmup_frames=1,dt=HEADLESS_DT,ui=true,seconds=-1}
-    play_step_default:=Api_Play_Step_Params{ticks=1,focus=-1,trace={every=1}}
+    play_step_default:=Api_Play_Step_Params{focus=-1,trace={every=1},drive={within=API_DRIVE_WITHIN}}
+    build_default:=Api_Build_Params{seconds=API_BUILD_SECONDS}
     pause_default:=Api_Pause_Params{paused=true}
     api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=Api_Status,flags={.Read_Only},run=api_status})
     api_register(s,st,{name="engine.step",summary="Advances whole frames of editor, game and render with a fixed dt. Manual execution only (headless).",params=Api_Step_Params,result=Api_Step_Result,defaults=&step_default,run=api_step})
@@ -344,7 +332,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=Api_Gpu_Lose_Result,flags={.Destructive},run=api_gpu_lose})
     api_register(s,st,{name="editor.inspect",summary="What the editor shows and the actions it can run, to drive it as a person would with editor.input and editor.action.",result=Api_Editor_Inspect,writes_result=true,flags={.Read_Only},run=api_editor_inspect})
     api_register(s,st,{name="editor.action",summary="Runs an action of the editor by name, as its menu entry or its shortcut does.",params=Api_Action_Params,result=Api_Action_Result,run=api_editor_action})
-    api_register(s,st,{name="editor.recover",summary="Recovers the pending scene after an interrupted session, or discards its recovery copy.",params=Api_Recovery_Params,result=Api_File_Result,run=api_recover})
+    api_register(s,st,{name="editor.recover",summary="Recovers what an editor that ended left unsaved, or discards it; until then it stays set aside, whatever is edited or saved meanwhile, and a tab with changes stays as it is. With nothing offered it answers resolved false.",params=Api_Recovery_Params,result=Api_Recovery_Result,flags={.Idempotent},run=api_recover})
     api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=Api_Section_Edit_Params,run=api_section_edit})
     api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=Api_Section_Preview_Params,run=api_section_preview})
     api_register(s,st,{name="editor.sections",summary="The sections of the scene as the World panel maps them: each Scene_Reference with its rule, the state it asks, what the view of the editor asks of it (view; Auto for nothing) and what it shows, its box, and what it costs (entities, meshes and textures of its scene, GPU bytes they hold now and bytes of their files); with the sources the sections stream around and the camera of the editor.",flags={.Read_Only},run=api_sections})
@@ -352,17 +340,16 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="editor.section_travel",summary="Brings the camera of the editor to a section, framing its box (into it when the box is big), and turns it on in the view when what asks for it does not. Returns the section.",params=Api_Section_Id_Params,run=api_section_travel})
     api_register(s,st,{name="editor.select",summary="Sets the selection of the editor: the entities the panels and the tools act on.",params=Api_Select_Params,result=Api_Select_Result,flags={.Idempotent},run=api_editor_select})
     api_register(s,st,{name="editor.input",params_schema=API_INPUT_SCHEMA,summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=Api_Editor_Inspect,writes_result=true,run=api_editor_input})
-    api_register(s,st,{name="editor.capture",flags={.Core},summary="Draws fresh frames and writes the last as a PNG, which MCP also returns as an image: the window with the UI of the editor (an open .ui document as it shows it), or the world alone through the camera of the viewport.",params=Api_Capture_Params,result=Api_Capture_Result,defaults=&capture_default,run=api_editor_capture})
     api_register(s,st,{name="camera.set",params_schema=API_CAMERA_SCHEMA,summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=Api_Camera_Result,flags={.Idempotent},run=api_camera_set})
     api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=Api_History_Result,run=api_undo})
     api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=Api_History_Result,run=api_redo})
-    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers building: the game starts once the build stands.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
-    api_register(s,st,{name="play.stop",summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,flags={.Idempotent},run=api_play_stop})
+    api_register(s,st,{name="play.start",flags={.Core},summary="Plays a copy of the scene: a game the caller already plays goes on and answers its state while the document is as it was when it started, and starts again when it changed. Outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=Api_Play_Start_Params,result=Api_Play_Result,run=api_play_start})
+    api_register(s,st,{name="play.stop",flags={.Core,.Idempotent},summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=Api_Play_Result,run=api_play_stop})
     api_register(s,st,{name="play.pause",summary="Pauses the game, or resumes it with paused false: from the newest tick it played, or with here from the tick play.seek went to.",params=Api_Pause_Params,result=Api_Play_Result,defaults=&pause_default,run=api_play_pause})
-    api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; segments change the input along the ticks and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
-    api_register(s,st,{name="play.status",summary="State of the game.",result=Api_Play_Result,flags={.Core,.Read_Only},run=api_play_status})
-    api_register(s,st,{name="build.start",flags={.Core},summary="Starts the build of the editor of the project, whose new code loads into the running editor when it succeeds, or of the game to ship, which leaves the editor as it is; build.status follows it.",params=Api_Build_Params,result=Api_Build_Result,run=api_build_start})
-    api_register(s,st,{name="build.status",summary="State of the build and its first error.",result=Api_Build_Result,flags={.Core,.Read_Only},run=api_build_status})
+    api_register(s,st,{name="play.step",flags={.Core},summary="Pauses the game and runs exactly the fixed ticks asked for with the input given (keys, mouse, pointer and text for its UI, gamepads of the local seats), or until conditions hold; keys held by consecutive calls stay down and a call that omits one releases it; segments change the input along the ticks, press clicks a button of its UI by name, drive steers the focused player to a target and a trace reads values along them.",params=Api_Play_Step_Params,result=Api_Play_Step_Result,writes_result=true,defaults=&play_step_default,run=api_play_step})
+    api_register(s,st,{name="play.status",summary="State of the game.",result=Api_Play_Result,flags={.Read_Only},run=api_play_status})
+    api_register(s,st,{name="build.start",flags={.Core},summary="Builds the editor of the project, whose new code loads into the running editor when it succeeds, the game to ship, which leaves the editor as it is, or its shaders; answers when it ends, with each error and its file and line.",params=Api_Build_Params,result=Api_Build_Result,defaults=&build_default,run=api_build_start})
+    api_register(s,st,{name="build.status",summary="State of the build and what the compiler said, with file and line.",result=Api_Build_Result,flags={.Core,.Read_Only},run=api_build_status})
     check_defaults:=Api_Build_Check_Params{seconds=300}
     api_register(s,st,{name="build.check",summary="Checks the types of the code of the project, its game, editor and plugins, without building or loading anything; answers when it ends, with each error and its file and line.",params=Api_Build_Check_Params,defaults=&check_defaults,result_schema=API_CHECK_RESULT,flags={.Core,.Read_Only},run=api_build_check})
     test_defaults:=Api_Build_Test_Params{seconds=600}
@@ -374,7 +361,6 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_simulation_register(s,st)
     api_assets_register(s,st)
     unsaved_api_register(s,st)
-    asset_reload_api_register(s,st)
     prefab_api_register(s,st)
     documents_api_register(s,st)
     collab_api_register(s,st)
@@ -420,7 +406,7 @@ api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
 @(private)
 api_manual_required :: proc(s:^Session,call:^api.Call) -> bool {
     if st:=api_state(s);st!=nil && st.manual {return true}
-    api.call_fail(call,api.SERVER_ERROR,"engine.step and editor.input require --headless without --frames")
+    api.call_fail(call,api.SERVER_ERROR,"This editor draws by itself: engine.step and editor.input run only in a manual one, which mirai session start opens. Here play.step drives a game and editor.action runs an action")
     return false
 }
 
@@ -444,7 +430,7 @@ functions_fill :: proc(s:^Session,st:^Api_State,r:^Api_Status) {
         }
         for slot,i in top {
             if slot.index<0 {break}
-            api_text_put(r.functions[i].name[:],s.info.steps[slot.index].name)
+            base.text_set(r.functions[i].name[:],s.info.steps[slot.index].name)
             r.functions[i].ms=f32(f64(slot.ns)/f64(frames)/1e6)
         }
     }
@@ -461,10 +447,10 @@ api_status :: proc(s:^Session,call:^api.Call) {
     r.frame,r.mode=s.frame,s.mode
     r.entities,r.selected=status_value.entities,status_value.selected
     r.dirty,r.headless,r.manual,r.gpu_enabled,r.has_project=status_value.dirty,s.headless,st.manual,app.renderer!=nil,s.has_project
-    api_text_put(r.document[:],status_value.document)
+    base.text_set(r.document[:],status_value.document)
     r.fps=s.app.stats.fps
     r.undo,r.redo=status_value.undo,status_value.redo
-    r.ticks_dropped,r.extras_dropped=app.stats.ticks_dropped,app.stats.extras_dropped
+    r.ticks_dropped,r.extras_dropped=app.stats.ticks_dropped,app.extras.dropped
     a:=api_of(s)
     functions_fill(s,st,r)
     r.cpu={
@@ -488,7 +474,8 @@ api_status :: proc(s:^Session,call:^api.Call) {
         for dropped,k in stats.cull_dropped {r.visible_kinds.dropped[k]=int(dropped)}
         r.gpu_ms,r.ev100=stats.gpu_ms,stats.ev100
         r.probes_traced=int(stats.probes_traced)
-        r.textures.bytes,r.textures.pending,r.textures.reduced=stats.texture_bytes,int(stats.textures_pending),int(stats.textures_reduced)
+        r.textures.bytes,r.textures.view_bytes=stats.texture_bytes,stats.view_target_bytes
+        r.textures.pending,r.textures.reduced=int(stats.textures_pending),int(stats.textures_reduced)
         r.geometry={
             bytes=stats.geometry_bytes,free_bytes=stats.geometry_free,free_largest=stats.geometry_free_largest,ray_bytes=stats.ray_bytes,page_slots=int(stats.page_slots),page_bytes=stats.page_region_bytes,
             pages_resident=int(stats.pages_resident),pages_requested=int(stats.pages_requested),pages_loaded=int(stats.pages_loaded),
@@ -497,18 +484,18 @@ api_status :: proc(s:^Session,call:^api.Call) {
         r.cpu.render_prepare_ms,r.cpu.render_begin_ms=stats.cpu_prepare_ms,stats.cpu_begin_ms
         r.cpu.render_record_ms,r.cpu.render_end_ms=stats.cpu_record_ms,stats.cpu_end_ms
         for timing,i in stats.timings[:min(len(stats.timings),API_TIMINGS)] {
-            api_text_put(r.gpu_timings[i].name[:],timing.name)
+            base.text_set(r.gpu_timings[i].name[:],timing.name)
             r.gpu_timings[i].ms=timing.ms
         }
         backend,_:=reflect.enum_name_from_value(stats.backend)
-        api_text_put(r.backend[:],backend)
-        api_text_put(r.device[:],stats.device_name)
+        base.text_set(r.backend[:],backend)
+        base.text_set(r.device[:],stats.device_name)
         if app.device!=nil {
             r.validation_errors=rhi.device_validation_errors(app.device)
             used,budget:=rhi.device_memory(app.device)
             r.gpu_memory={f32(f64(used)/(1<<20)),f32(f64(budget)/(1<<20))}
         }
-        api_text_put(r.renderer_problem[:],stats.problem)
+        base.text_set(r.renderer_problem[:],stats.problem)
     }
     if a:=app.assets;a!=nil {
         r.asset_errors=len(host.assets_errors(a))+len(a.registry.reassigned)+len(a.registry.duplicates)
@@ -517,8 +504,8 @@ api_status :: proc(s:^Session,call:^api.Call) {
     }
     r.ui_dropped=s.gui.dropped
     r.build,r.build_errors=s.build.phase,len(s.build.diagnostics)
-    if len(s.build.diagnostics)>0 {api_text_put(r.build_message[:],s.build.diagnostics[0].message)}
-    api_text_put(r.collab[:],collab_summary(s))
+    if len(s.build.diagnostics)>0 {base.text_set(r.build_message[:],s.build.diagnostics[0].message)}
+    base.text_set(r.collab[:],collab_summary(s))
     r.api_calls,r.api_errors=st.server.stats.calls,st.server.stats.errors
 }
 
@@ -538,8 +525,11 @@ api_shutdown :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"The scene has unsaved changes; save it first or pass discard")
         return
     }
-    if unsaved:=len(assets_unsaved(s));unsaved>0 && !params.discard {
-        api.call_failf(call,api.SERVER_ERROR,"%d %s unsaved changes; asset.save writes them, or pass discard",unsaved,unsaved==1?"asset has":"assets have")
+    if unsaved:=assets_unsaved(s);len(unsaved)>0 && !params.discard {
+        names:=make([dynamic]string,context.temp_allocator)
+        for held in unsaved[:min(len(unsaved),API_UNSAVED_NAMED)] {append(&names,unsaved_name(s,held.path))}
+        more:=len(unsaved)>API_UNSAVED_NAMED?fmt.tprintf(" and %d more",len(unsaved)-API_UNSAVED_NAMED):""
+        api.call_failf(call,api.SERVER_ERROR,"Unsaved changes in %s%s; asset.save writes them, or pass discard",strings.join(names[:],", ",context.temp_allocator),more)
         return
     }
     if platform.dialog_pending(s.app.platform) {
@@ -570,8 +560,7 @@ api_gpu_lose :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_history_result :: proc(s:^Session,call:^api.Call,kept:=0) {
     if st:=api_state(s);st!=nil && st.manual {api_frames(s,1,0)}
-    prefabs_sync(s,prefabs_of(s))
-    api.call_result(call,Api_History_Result)^={edits_undo_count(s.edits),edits_redo_count(s.edits),kept}
+    api.call_result(call,Api_History_Result)^={history.edits_undo_count(s.edits),history.edits_redo_count(s.edits),kept}
 }
 
 @(private)
@@ -605,19 +594,11 @@ api_editor_select :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Select_Params)
     w:=shown_world(s)
     if s.edits.preview {tools_release(s)}
-    picked:=make([dynamic]core.Entity,call.allocator)
-    for id in params.ids {
-        if id==0 {continue}
-        e:=api_entity(w,id)
-        if e==core.NONE {
-            api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(id))
-            return
-        }
-        append(&picked,e)
-    }
+    picked,known:=api_call_entities(call,w,params.entities[:],"entities",call.allocator)
+    if !known {return}
     tools_release(s)
-    if len(picked)==0 && !params.add {selection_clear(s.selection)} else {selection_set(s.selection,picked[:],params.add)}
-    api.call_result(call,Api_Select_Result)^={len(s.selection.entities),api_entity_id(w,selection_active(s.selection))}
+    if len(picked)==0 && !params.add {history.selection_clear(s.selection)} else {history.selection_set(s.selection,picked,params.add)}
+    api.call_result(call,Api_Select_Result)^={len(s.selection.entities),api_entity_id(w,history.selection_active(s.selection))}
 }
 
 @(private)
@@ -638,11 +619,9 @@ api_editor_action :: proc(s:^Session,call:^api.Call) {
     }
     #partial switch action {
     case .Open,.Save_As,.Quit,.Shortcuts,.Import:
-        api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.load, scene.save or engine.shutdown",name)
+        api.call_failf(call,api.INVALID_PARAMS,"%s opens a dialog: use scene.open, scene.save or engine.shutdown",name)
         return
     }
-    prefabs_sync(s,prefabs_of(s))
-    prefab_observe(s)
     if !action_run(s,action) {
         api.call_failf(call,api.SERVER_ERROR,"%s is disabled now",name)
         return
@@ -670,11 +649,11 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     api.write_key(w,"selection");serial.write_u8(w,'[')
     for e,i in s.selection.entities {
         if i>0 {serial.write_u8(w,',')}
-        api_write_id(w,api_entity_id(world,e))
+        api.write_id(w,api_entity_id(world,e))
     }
     serial.write_u8(w,']')
     api.write_key(w,"active")
-    if active:=api_entity_id(world,selection_active(s.selection));active!=0 {api_write_id(w,active)} else {serial.text_write_raw(w,"null")}
+    if active:=api_entity_id(world,history.selection_active(s.selection));active!=0 {api.write_id(w,active)} else {serial.text_write_raw(w,"null")}
     tool,_:=reflect.enum_name_from_value(v.tool)
     // A plugin tool that holds the scene is the tool; one that lent it to the gizmo is the plugin.
     api.write_key(w,"tool");serial.text_write_string(w,api_lower(tool))
@@ -687,8 +666,8 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     api.write_key(w,"document");serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,document_path(s.document))
     api.write_key(w,"dirty");api.write_flag(w,document_dirty(s))
     api.write_key(w,"entities");serial.text_write_int(w,i64(core.world_entities(world).alive))
-    api.write_key(w,"undo");serial.text_write_int(w,i64(edits_undo_count(s.edits)))
-    api.write_key(w,"redo");serial.text_write_int(w,i64(edits_redo_count(s.edits)))
+    api.write_key(w,"undo");serial.text_write_int(w,i64(history.edits_undo_count(s.edits)))
+    api.write_key(w,"redo");serial.text_write_int(w,i64(history.edits_redo_count(s.edits)))
     serial.write_u8(w,'}')
     position:=orbit_position(v.orbit)
     api.write_key(w,"camera");serial.text_write_raw(w,`{"position":`);api.write_list(w,position[:])
@@ -703,6 +682,7 @@ api_inspect_write :: proc(s:^Session,w:^serial.Writer) {
     serial.text_write_string(w,v.capture==.None?"":api_lower(capture))
     modal,_:=reflect.enum_name_from_value(g.modal)
     api.write_key(w,"modal");serial.text_write_string(w,g.modal==.None?"":api_lower(modal))
+    api.write_key(w,"recovery_offered");api.write_flag(w,s.recovery.pending)
     api.write_key(w,"popups");serial.text_write_int(w,i64(g.ctx.popup.count))
     api.write_key(w,"editing_text");api.write_flag(w,g.ctx.edit.id!=0)
     api.write_key(w,"dialog_pending");api.write_flag(w,platform.dialog_pending(s.app.platform))
@@ -772,35 +752,34 @@ Api_Input_Step :: struct {
 
 @(private)
 api_key_from_name :: proc(name:string) -> (key:platform.Key,ok:bool) {
-    for candidate,index in reflect.enum_field_names(platform.Key) {
-        if strings.equal_fold(candidate,name) {return platform.Key(index),true}
-    }
-    return
+    index,_:=base.name_find(name,reflect.enum_field_names(platform.Key))
+    if index<0 {return}
+    return platform.Key(index),true
 }
 
 @(private)
 api_keys :: proc(a:^Rpc_Args,what:string) -> (keys:platform.Keys,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return {},rpc_fail(a,"%s must be an array of key names",what)}
+    if !serial.text_accept(&a.r,'[') {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
     if serial.text_accept(&a.r,']') {return {},true}
     for {
         name,read:=serial.text_string(&a.r)
-        if !read {return {},rpc_fail(a,"%s must be an array of key names",what)}
+        if !read {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
         key,known:=api_key_from_name(name)
-        if !known {return {},rpc_fail(a,"%s: unknown key %q; keys go by their platform.Key name, such as A, F5, Space, Left_Shift, Left_Control or Left_Super (Command on a Mac)",what,name)}
+        if !known {return {},rpc_fail(a,"%s: %s; keys go by their platform.Key name, such as A, F5, Enter, Space, Left_Shift, Left_Control or Left_Super (Command on a Mac)",what,base.name_problem(name,"a key",reflect.enum_field_names(platform.Key)))}
         keys+={key}
         if serial.text_accept(&a.r,',') {continue}
-        if !serial.text_accept(&a.r,']') {return {},rpc_fail(a,"%s must be an array of key names",what)}
+        if !serial.text_accept(&a.r,']') {return {},rpc_fail_type(a,"%s must be an array of key names",what)}
         return keys,true
     }
 }
 
 @(private)
 api_buttons :: proc(a:^Rpc_Args,what:string) -> (buttons:platform.Mouse_Buttons,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return {},rpc_fail(a,"%s must be an array of left, right or middle",what)}
+    if !serial.text_accept(&a.r,'[') {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
     if serial.text_accept(&a.r,']') {return {},true}
     for {
         name,read:=serial.text_string(&a.r)
-        if !read {return {},rpc_fail(a,"%s must be an array of left, right or middle",what)}
+        if !read {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
         switch {
         case strings.equal_fold(name,"left"):   buttons+={.Left}
         case strings.equal_fold(name,"right"):  buttons+={.Right}
@@ -808,7 +787,7 @@ api_buttons :: proc(a:^Rpc_Args,what:string) -> (buttons:platform.Mouse_Buttons,
         case: return {},rpc_fail(a,"%s: unknown button %q",what,name)
         }
         if serial.text_accept(&a.r,',') {continue}
-        if !serial.text_accept(&a.r,']') {return {},rpc_fail(a,"%s must be an array of left, right or middle",what)}
+        if !serial.text_accept(&a.r,']') {return {},rpc_fail_type(a,"%s must be an array of left, right or middle",what)}
         return buttons,true
     }
 }
@@ -847,7 +826,7 @@ api_input_step :: proc(a:^Rpc_Args,step:^Api_Input_Step) -> bool {
             step.dt=rpc_number(a,key) or_return
             if !api_dt_valid(step.dt) {return rpc_fail(a,"dt must be greater than 0 and at most 0.25 seconds")}
         case:
-            return rpc_fail(a,"unknown field %q of an event",key)
+            return rpc_fail_unknown(a,key,"keys","repeat_keys","mouse_buttons","mouse_position","mouse_delta","wheel","clicks","text","dt")
         }
     }
     if a.failed {return false}
@@ -888,7 +867,7 @@ api_editor_input :: proc(s:^Session,call:^api.Call) {
                 break
             }
         case:
-            rpc_fail(&a,"unknown field %q",key)
+            rpc_fail_unknown(&a,key,"events","dt")
         }
     }
     if a.failed {return}
@@ -935,11 +914,15 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     orbit:=v.orbit
     position,target:[3]f32
     fov:f32
-    entity:base.Entity_Id
+    entity:string
+    entity_text:[API_ENTITY_TEXT]u8
     exposure:core.View_Exposure
     source:=v.exposure_source
     ev100:=v.ev100
-    has_position,has_target,has_angles,has_fov,has_entity,has_source:=false,false,false,false,false,false
+    has_position,has_target,has_angles,has_fov,has_entity,has_source,has_from:=false,false,false,false,false,false,false
+    from:[3]f32
+    frame_texts:[API_SPATIAL_LIMIT][API_ENTITY_TEXT]u8
+    framed:=0
     a:Rpc_Args
     rpc_init(&a,call,call.raw)
     object:Rpc_Object
@@ -959,8 +942,7 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
             if ok && (fov<VIEW_FOV_MIN || fov>VIEW_FOV_MAX) {rpc_fail(&a,"fov must be %v to %v degrees",VIEW_FOV_MIN,VIEW_FOV_MAX)}
             has_fov=true
         case "entity":
-            entity,ok=rpc_id(&a,key)
-            if ok && entity==0 {rpc_fail(&a,"entity must be the id of an entity with a Camera")}
+            entity,ok=rpc_text(&a,key,entity_text[:])
             has_entity=true
         case "exposure":
             buffer:[8]u8
@@ -977,8 +959,18 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
             ev100,ok=rpc_number(&a,key)
             if ok && (ev100<-10 || ev100>24) {rpc_fail(&a,"ev100 must be -10 to 24")}
             if !has_source {source=.Manual}
+        case "from":
+            has_from=rpc_vector(&a,key,from[:])
+        case "frame":
+            if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"frame must be an array of entities");break}
+            for i:=0;!serial.text_accept(&a.r,']') && !a.failed;i+=1 {
+                if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"frame must be an array of entities");break}
+                if framed>=API_SPATIAL_LIMIT {rpc_fail(&a,"frame takes at most %d entities",API_SPATIAL_LIMIT);break}
+                rpc_text(&a,"an entity of frame",frame_texts[framed][:len(frame_texts[0])-1])
+                framed+=1
+            }
         case:
-            rpc_fail(&a,"unknown field %q",key)
+            rpc_fail_unknown(&a,key,"position","target","yaw","pitch","distance","fov","entity","exposure","ev100","frame","from")
         }
     }
     if a.failed {return}
@@ -988,24 +980,24 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
             return
         }
         w:=shown_world(s)
-        e:=api_entity(w,entity)
-        if e==core.NONE {
-            api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x is not an entity of the scene",u64(entity))
+        e,problem:=api_entity_select(w,entity,allocator=call.allocator)
+        if problem!="" {
+            api.call_fail(call,api.INVALID_PARAMS,problem)
             return
         }
         camera,found:=entity_get(w,e,erender.Camera)
         if !found {
-            api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x has no Camera; scene.inspect with component Camera lists those that do",u64(entity))
+            api.call_failf(call,api.INVALID_PARAMS,"entity %q has no Camera; scene.inspect with component Camera lists those that do",entity)
             return
         }
         if camera.projection!=.Perspective {
-            api.call_failf(call,api.INVALID_PARAMS,"entity 0x%016x has an orthographic Camera; the camera of the editor is perspective",u64(entity))
+            api.call_failf(call,api.INVALID_PARAMS,"entity %q has an orthographic Camera; the camera of the editor is perspective",entity)
             return
         }
         orbit_sanitize(&orbit)
         seen,ok:=orbit_of_camera(entity_world(w,e),camera,orbit.distance)
         if !ok {
-            api.call_failf(call,api.SERVER_ERROR,"entity 0x%016x has no usable orientation",u64(entity))
+            api.call_failf(call,api.SERVER_ERROR,"entity %q has no usable orientation",entity)
             return
         }
         orbit=seen
@@ -1018,6 +1010,25 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     } else {
         exposure=v.exposure
         if !has_source && source==.Camera && (has_position || has_target || has_angles) {source=.Scene}
+    }
+    if framed>0 {
+        if has_position || has_target || has_entity {
+            api.call_fail(call,api.INVALID_PARAMS,"frame places the camera: leave out position, target and entity")
+            return
+        }
+        if has_from && from=={} {api.call_fail(call,api.INVALID_PARAMS,"from is the direction from what is framed to the camera: it cannot be zero");return}
+        w:=shown_world(s)
+        entities,known:=api_call_entities(call,w,frame_texts[:framed],"frame",call.allocator)
+        if !known {return}
+        box:=api_entities_box(s,w,entities)
+        if has_from {
+            center:=(box.min+box.max)*0.5
+            if placed,placeable:=orbit_from_points(center+from,center,orbit.fov);placeable {orbit=placed}
+        }
+        free:=free_region(s.gui,v.window)
+        free.x-=v.origin.x
+        free.y-=v.origin.y
+        orbit_frame(&orbit,box.min,box.max,v.size,free)
     }
     if has_target {orbit.target=target}
     if has_position {
@@ -1037,97 +1048,27 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     api.call_result(call,Api_Camera_Result)^={orbit_position(orbit),orbit.target,orbit.yaw,orbit.pitch,orbit.distance,orbit.fov,source,ev100}
 }
 
-@(private)
-api_editor_capture :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Capture_Params)
-    if params.ui && (params.width>0 || params.height>0) {
-        api.call_fail(call,api.INVALID_PARAMS,"width and height size an image without the UI: pass ui false with them, or leave them out for the window")
-        return
-    }
-    if params.generated && !params.ui {
-        api.call_fail(call,api.INVALID_PARAMS,"generated reads the image the window showed: pass ui true with it")
-        return
-    }
-    region:=img.Region{params.region[0],params.region[1],params.region[2],params.region[3]}
-    if region!={} && (region.w==0 || region.h==0) {
-        api.call_fail(call,api.INVALID_PARAMS,"region is x, y, width and height: give it a width and a height, or leave it out for the whole image")
-        return
-    }
-    if s.app.renderer==nil {
-        api.call_fail(call,api.SERVER_ERROR,"editor.capture requires a GPU; start without --no-gpu")
-        return
-    }
-    // The frames drawn below free the temporary memory.
-    file,writable:=api_output_file(s,call,base.text_get(params.path[:]),s.app.allocator)
-    if !writable {return}
-    defer delete(file,s.app.allocator)
-    drawn:=s.app.stats.frames_drawn
-    if params.seconds>=0 {s.app.seconds=params.seconds}
-    api_frames(s,max(params.warmup_frames,1),params.dt)
-    // A frame that drew a program as its rows while its pipelines were made: one more with them.
-    for gpu.renderer_pipelines_pending(s.app.renderer) {
-        gpu.renderer_pipelines_wait(s.app.renderer)
-        api_frames(s,1,params.dt)
-    }
-    // A minimized window draws nothing; the world alone is drawn into an image of its own.
-    minimized:=platform.input_frame(s.app.platform).window.minimized
-    if s.app.stats.frames_drawn==drawn && minimized && params.ui {
-        api.call_fail(call,api.SERVER_ERROR,"The window of the editor is minimized and draws nothing: restore it for the image with the UI, or pass ui false for the world alone through the camera of the viewport")
-        return
-    }
-    if s.app.stats.frames_drawn==drawn && !minimized {
-        api.call_fail(call,api.SERVER_ERROR,fmt.tprintf("The renderer could not draw the frame: %s",s.app.renderer.error))
-        return
-    }
-    size:=api_capture_size(api_capture_viewport(s.app),params.width,params.height)
-    if params.generated {
-        if !gpu.renderer_stats(s.app.renderer).generated {
-            api.call_fail(call,api.SERVER_ERROR,"The last frame showed no generated image: frame generation needs FSR 3.1 as the antialiasing and graphics.set Frame generation on, and a frame with history")
-            return
-        }
-    }
-    pixels,width,height,read:=api_capture_image(s,params.ui,size,params.generated)
-    if !read {
-        api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be drawn or read",size.x,size.y)
-        return
-    }
-    if region!={} {
-        cropped,error:=img.image_crop({pixels=pixels,width=width,height=height},region,s.app.allocator)
-        delete(pixels,s.app.allocator)
-        if error!=.None {
-            if error==.Bad_Region {
-                api.call_failf(call,api.INVALID_PARAMS,"region %d,%d,%d,%d falls outside the image of %dx%d: x plus width may be %d at most and y plus height %d",region.x,region.y,region.w,region.h,width,height,width,height)
-            } else {
-                api.call_fail(call,api.SERVER_ERROR,"The region could not be cut: out of memory")
-            }
-            return
-        }
-        pixels,width,height=cropped.pixels,cropped.width,cropped.height
-    }
-    api_capture_answer(s,call,file,pixels,width,height)
+// Writes pixels of the allocator of the application as the PNG at file, of
+// api_output_file, and answers the call with it as capture does: its path and
+// size and, when shown, the image over MCP.
+api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int,shown:=true,seen:Maybe(Api_Capture_Seen)=nil) {
+    if problem:=api_png_write(s,file,pixels,width,height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
+    api_capture_reply(call,file,width,height,shown,seen)
 }
 
-// Writes pixels of the allocator of the application as the PNG at file, of
-// api_output_file, and answers the call with it as editor.capture does: its
-// path and size, and the image over MCP.
-api_capture_answer :: proc(s:^Session,call:^api.Call,file:string,pixels:[]u8,width,height:int) {
-    if !api_png_write(s,file,pixels,width,height) {
-        api.call_failf(call,api.SERVER_ERROR,"%s could not be written although it could be opened: the disk may be full",file)
-        return
-    }
-    result:=api.call_result(call,Api_Capture_Result)
-    result.frame=s.frame
-    result.width,result.height=width,height
-    api_text_put(result.path[:],file)
-    api.call_image(call,file)
+// The file a capture writes: path as api_output_file takes it, or name under
+// .mirai/captures of the project without one.
+api_capture_file :: proc(s:^Session,call:^api.Call,path,name:string,allocator:=context.allocator) -> (file:string,ok:bool) {
+    if path!="" {return api_output_file(s,call,path,allocator)}
+    if s.project_root=="" {api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return "",false}
+    return api_output_file(s,call,fmt.tprintf(".mirai/captures/%s",name),allocator)
 }
 
 // The file that path names, absolute with forward slashes. path is written
 // as Windows or Git Bash (/c/...) writes it, or relative to root, the folder
 // of the project, or to the working folder without one. problem says what
 // is wrong with path.
-@(private)
-api_output_path :: proc(root,path:string,allocator:=context.allocator) -> (file,problem:string) {
+api_file_path :: proc(root,path:string,allocator:=context.allocator) -> (file,problem:string) {
     inside:=root!=""?fmt.tprintf("the folder of the project, %s",root):"the working folder"
     if path=="" {return "",fmt.tprintf("path is required: a file absolute or relative to %s",inside)}
     native,ok:=project.path_native(path)
@@ -1136,12 +1077,12 @@ api_output_path :: proc(root,path:string,allocator:=context.allocator) -> (file,
     return project.path_absolute(native,allocator),""
 }
 
-// The file a method is about to write, from path (api_output_path), in
+// The file a method is about to write, from path (api_file_path), in
 // allocator: its folder is made, and the call fails saying why when the file
 // cannot be written, before the work that would be lost.
 api_output_file :: proc(s:^Session,call:^api.Call,path:string,allocator:=context.allocator) -> (file:string,ok:bool) {
     problem:string
-    file,problem=api_output_path(s.project_root,path,context.temp_allocator)
+    file,problem=api_file_path(s.project_root,path,context.temp_allocator)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return "",false}
     if problem,code:=api_output_prepare(file);problem!="" {api.call_fail(call,code,problem);return "",false}
     return strings.clone(file,allocator),true
@@ -1149,7 +1090,6 @@ api_output_file :: proc(s:^Session,call:^api.Call,path:string,allocator:=context
 
 // Makes the folder of file, absolute, and opens it to write without
 // changing it; problem says why it cannot be written, with the code of the error.
-@(private)
 api_output_prepare :: proc(file:string) -> (problem:string,code:int) {
     if os.is_dir(file) {return fmt.tprintf("%s is a folder: name the file inside it",file),api.INVALID_PARAMS}
     if folder:=os.dir(file);!os.is_dir(folder) {
@@ -1185,13 +1125,14 @@ api_capture_size :: proc "contextless" (window:[2]i32,width,height:int) -> [2]i3
     return size
 }
 
-// The image editor.capture writes after its frames: the window as the last
+// The image capture writes after its frames: the window as the last
 // one drew it, or the world shown alone at size, through the camera of the
-// viewport. The pixels are of the allocator of the application.
+// viewport. The pixels are of the allocator of the application. wait: as
+// app_capture_world, for the world alone.
 @(private)
-api_capture_image :: proc(s:^Session,ui:bool,size:[2]i32,generated:=false) -> (pixels:[]u8,width,height:int,ok:bool) {
+api_capture_image :: proc(s:^Session,ui:bool,size:[2]i32,generated:=false,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
     if ui {return host.app_capture_pixels(s.app,s.app.allocator,generated)}
-    return host.app_capture_world(s.app,shown_world(s).data,API_CAPTURE_SETTLE,size,s.editor_world,s.app.allocator)
+    return host.app_capture_world(s.app,shown_world(s).data,API_CAPTURE_SETTLE,size,s.editor_world,s.app.allocator,wait)
 }
 
 // ---------------------------------------------------------------- play
@@ -1236,14 +1177,14 @@ api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
     }
     result.entities=core.world_entities(ref).alive
     if view:=core.world_storage_of(ref,core.View);view!=nil {result.game_camera=view.camera!=core.NONE}
-    result.scripted=run_script_ticks(run_script(s,r))
 }
 
 @(private)
 api_play_start :: proc(s:^Session,call:^api.Call) {
     owner:=ai_task_of_call(s,call)
-    if owner==0 && run_find(s,0)!=nil {
-        api.call_fail(call,api.SERVER_ERROR,"A game is already playing")
+    running:=run_find(s,owner)
+    if running!=nil && running.document==history.edits_scene_state(s.edits) {
+        api_play_result(s,call,running)
         return
     }
     params:=api.call_params(call,Api_Play_Start_Params)
@@ -1251,19 +1192,10 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"from places player 1 of the Play of the editor: leave it out in a turn or with simulate")
         return
     }
-    if params.simulate {
-        // Simulate takes over the view of the user; a turn runs its own copy
-        // and steps it without input instead.
-        if owner!=0 {api.call_fail(call,api.SERVER_ERROR,"A turn simulates on its own copy: play.start, then play.step without keys");return}
-        if params.players>0 || params.online>0 {api.call_fail(call,api.INVALID_PARAMS,"A simulation has no players: leave out players and online");return}
-        if !simulation_start(s) {
-            if simulating(s) {play_stop(s,true)}
-            api.call_fail(call,api.SERVER_ERROR,"The simulation could not start")
-            return
-        }
-        api_play_result(s,call,run_find(s,0))
-        return
-    }
+    // Simulate takes over the view of the user; a turn runs its own copy
+    // and steps it without input instead.
+    if params.simulate && owner!=0 {api.call_fail(call,api.SERVER_ERROR,"A turn simulates on its own copy: play.start, then play.step without keys");return}
+    if params.simulate && (params.players>0 || params.online>0) {api.call_fail(call,api.INVALID_PARAMS,"A simulation has no players: leave out players and online");return}
     if plugin:=providers(s);params.online>0 && (!plugin.plays || plugin.play.start==nil || plugin.play.turn==nil) {
         api.call_fail(call,api.INVALID_PARAMS,"Online players need a plugin that plays games on the network: add multiplayer to the plugins of project.mirai")
         return
@@ -1272,14 +1204,28 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"players and online are 4 at most")
         return
     }
+    if running!=nil {
+        if owner==0 {
+            play_stop(s,true)
+            play_plugin_stop(s)
+        } else {run_stop(s,owner)}
+    }
+    if params.simulate {
+        if !simulation_start(s) {
+            if simulating(s) {play_stop(s,true)}
+            api.call_fail(call,api.SERVER_ERROR,"The simulation could not start")
+            return
+        }
+        api_play_result(s,call,run_find(s,0))
+        return
+    }
     switch params.from {
     case .Scene:  s.play_asked={}
     case .Camera: s.play_asked=camera_origin(s);s.play_asked.asked=true
     case .Point:  s.play_asked=point_origin(s,params.point)
     }
     if play_build_first(s,{owner=owner,players=params.players,online=params.online,ping_ms=params.ping_ms,saved_only=params.saved_only}) {
-        api_play_result(s,call,nil)
-        api.call_result(call,Api_Play_Result).building=true
+        api_play_after_build(s,call,owner)
         return
     }
     if error:=play_begin(s,owner,params.players,params.online,params.ping_ms,params.saved_only);error!="" {
@@ -1288,6 +1234,61 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         return
     }
     api_play_result(s,call,run_find(s,owner))
+}
+
+// play.start once its build began: it answers when the game plays, or fails
+// with what kept it from it.
+@(private)
+api_play_after_build :: proc(s:^Session,call:^api.Call,owner:int) {
+    build_play_waits :: proc(s:^Session,user:rawptr) -> bool {return s.build.play.pending}
+    if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits,"building to play") {
+        // Cancelled, the game does not start by itself when the build ends.
+        if api_stop_asked(s) {s.build.play.pending=false;s.play_asked={};return}
+        api.call_failf(call,api.SERVER_ERROR,"The build still runs after %d s: the game starts when it stands and play.status says so",API_BUILD_SECONDS)
+        return
+    }
+    switch {
+    case .Restart in s.requests:
+        api.call_fail(call,api.SERVER_ERROR,"The build needs an engine newer than this editor, which starts again on it now: call play.start again once it answers")
+    case s.build.phase==.Failed:
+        api_build_fail(s,call,"The code does not build, so the game did not start")
+    case base.text_get(s.build.play_error[:])!="":
+        api.call_fail(call,api.SERVER_ERROR,base.text_get(s.build.play_error[:]))
+    case run_find(s,owner)==nil:
+        api.call_fail(call,api.SERVER_ERROR,"The game could not start; engine.diagnostics says why")
+    case:
+        api_play_result(s,call,run_find(s,owner))
+    }
+}
+
+// The call fails with what a build said: the first error in its message and
+// every one, with file and line, in its data.
+api_build_fail :: proc(s:^Session,call:^api.Call,what:string) {
+    message:=api_build_first_error(s)
+    data:=strings.builder_make(call.allocator)
+    strings.write_string(&data,`{"diagnostics":[`)
+    first:=true
+    for d in s.build.diagnostics {
+        if d.severity!=.Error {continue}
+        if !first {strings.write_byte(&data,',')}
+        first=false
+        fmt.sbprintf(&data,`{{"file":%s,"line":%d,"column":%d,"message":%s}}`,serial.text_quote(d.file),d.line,d.column,serial.text_quote(d.message))
+    }
+    strings.write_string(&data,`]}`)
+    api.call_fail(call,api.SERVER_ERROR,fmt.tprintf("%s: %s",what,message),strings.to_string(data))
+}
+
+// The first error of the last build with its place, or what failed when no
+// diagnostic says it.
+@(private)
+api_build_first_error :: proc(s:^Session) -> string {
+    for d in s.build.diagnostics {
+        if d.severity==.Error {return fmt.tprintf("%s(%d:%d) %s",d.file,d.line,d.column,d.message)}
+    }
+    texts:=FAILURE_TEXTS
+    text:=strings.trim_space(s.build.text)
+    if line:=strings.index_byte(text,'\n');line>=0 {text=text[:line]}
+    return text!=""?fmt.tprintf("%s: %s",texts[s.build.failure],text):texts[s.build.failure]
 }
 
 // Starts the run of an owner with its local and online players: "" or what
@@ -1334,7 +1335,7 @@ api_play_status :: proc(s:^Session,call:^api.Call) {
 api_play_pause :: proc(s:^Session,call:^api.Call) {
     r,own:=api_play_run(s,call)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
+    case r==nil: api.call_fail(call,api.SERVER_ERROR,API_NO_GAME)
     case !own: api_play_refused(call)
     case r.owner!=0: api.call_fail(call,api.SERVER_ERROR,"This run advances only with play.step")
     case:
@@ -1348,14 +1349,13 @@ api_play_pause :: proc(s:^Session,call:^api.Call) {
 api_play_step :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Step_Params)
     r,own:=api_play_run(s,call)
-    if r==nil {
-        api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
-        return
-    }
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     if !own {api_play_refused(call);return}
     owner:=r.owner
+    if !api_step_drive_ticks(s,call,params) {return}
     timeline,ok:=api_step_timeline(call,params,s.app.tick_dt)
     if !ok {return}
+    if params.drive_ticks>0 {timeline[0].ticks=params.drive_ticks}
     if owner==0 && simulating(s) && (api_timeline_input(timeline) || params.focus>=0) {
         api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input")
         return
@@ -1365,14 +1365,25 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"That player has no run: play.start with online opens them")
         return
     }
-    if api_timeline_input(timeline) {
-        if problem:=run_script_blocks(s,target);problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    }
-    values:[2]string
-    api.object_values(call.allocator,call.raw,{"until","trace"},values[:])
-    until:=params.until[:api_list_count(values[0])]
+    values:[4]string
+    api.object_values(call.allocator,call.raw,{"until","trace","drive","look_at"},values[:])
+    until:=params.until[:api.json_count(values[0])]
     if _,problem:=api_conditions_read(s,run_ref(s,target),until,nil,"until");problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     run:=Api_Step_Run{owner=owner,player=params.player,timeline=timeline,until=until}
+    drive:^Api_Drive
+    if values[2]!="" {
+        if owner==0 && simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
+        read,ok:=api_drive_read(s,call,run_ref(s,target),&params.drive,values[2])
+        if !ok {return}
+        drive=new_clone(read,call.allocator)
+        run.drive=drive
+    }
+    if values[3]!="" {
+        if owner==0 && simulating(s) {api.call_fail(call,api.INVALID_PARAMS,"A simulation takes no player input");return}
+        read,ok:=api_look_read(s,call,run_ref(s,target),&params.look_at,values[3],timeline)
+        if !ok {return}
+        run.look=new_clone(read,call.allocator)
+    }
     trace:Api_Trace
     traced:=values[1]!=""
     if traced {
@@ -1380,27 +1391,29 @@ api_play_step :: proc(s:^Session,call:^api.Call) {
             api.call_fail(call,api.INVALID_PARAMS,problem)
             return
         }
-        run.sampler={every=params.trace.every,take=api_trace_take,data=&trace}
+        run.sampler,run.every=&trace,params.trace.every
     }
     if params.focus>=0 && !api_seat_focus(s,call,target,params.focus) {return}
     ran,met,problem:=api_step_run(s,&run,api_step_frame)
+    ended:=run_find(s,owner)
+    if drive!=nil {api_drive_finish(s,ended,drive,len(until)>0 && met)}
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    api_play_step_write(s,call,run_find(s,owner),ran,len(until)>0 && met,traced?&trace:nil)
+    api_play_step_write(s,call,ended,ran,len(until)>0 && met,traced?&trace:nil,drive)
 }
 
-// The elements of a JSON array as text; 0 for anything else.
+// A drive runs as long as its step says, 30 s when it does not; it
+// takes no segments and no press, which the steering would fight. false after failing the call.
 @(private)
-api_list_count :: proc(text:string) -> int {
-    if text=="" {return 0}
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,context.temp_allocator)
-    if !serial.text_accept(&r,'[') || serial.text_accept(&r,']') {return 0}
-    count:=0
-    for serial.text_skip(&r) {
-        count+=1
-        if !serial.text_accept(&r,',') {break}
+api_step_drive_ticks :: proc(s:^Session,call:^api.Call,params:^Api_Play_Step_Params) -> bool {
+    values:[4]string
+    api.object_values(call.allocator,call.raw,{"drive","for","segments","press"},values[:])
+    if values[0]=="" {return true}
+    if values[2]!="" || values[3]!="" {
+        api.call_fail(call,api.INVALID_PARAMS,"drive steers along the ticks of the step: give it with for, without segments or press")
+        return false
     }
-    return count
+    if values[1]=="" {params.drive_ticks=clamp(int(f64(API_DRIVE_DEFAULT_SECONDS)/max(f64(s.app.tick_dt),1e-6)+0.5),1,API_STEP_LIMIT)}
+    return true
 }
 
 // The keys and the mouse go to the local seat of slot from the next tick on,
@@ -1418,12 +1431,12 @@ api_seat_focus :: proc(s:^Session,call:^api.Call,r:^Run,slot:int) -> bool {
         return false
     }
     input.focus(requests,slot)
+    run_tell_focus(s,r,slot)
     return true
 }
 
 // One tick of play.step: every run of the game advances; the one of the
-// player gets the input of step, or without one the next tick of its script.
-// at: the tick of its segment; the first takes its pointer, wheel, taps and
+// player gets the input of step. at: the tick of its segment; the first takes its pointer, wheel, taps and
 // text, and the motion of the mouse is spread over all of them.
 @(private)
 api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
@@ -1431,12 +1444,7 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
         if other.world==nil || other.owner!=owner {continue}
         other.step=true
         if other.player!=player {continue}
-        step,at:=step,at
-        scripted:Api_Step_Input
-        if step==nil {
-            scripted,at=run_script_take(run_script(s,&other))
-            step=&scripted
-        }
+        run_tell_input(s,&other,step,at)
         first:=at==0
         if step.placed {other.pointer,other.pointer_set=step.mouse_position,true}
         given:core.Input
@@ -1477,13 +1485,7 @@ api_step_tick :: proc(s:^Session,owner,player:int,step:^Api_Step_Input,at:int) {
 // window takes it (host.ui_input_from_platform), and text typed.
 @(private)
 api_play_ui_input :: proc(given:core.Input,text:string) -> ui.Input {
-    frame:platform.Input_Frame
-    frame.keys_down,frame.keys_pressed,frame.keys_released=given.keys_down,given.keys_pressed,given.keys_released
-    frame.keys_repeated=given.keys_pressed
-    frame.mouse_down,frame.mouse_pressed,frame.mouse_released=given.mouse_down,given.mouse_pressed,given.mouse_released
-    if .Left in given.mouse_pressed {frame.mouse_clicks[.Left]=1}
-    frame.mouse_position,frame.mouse_inside,frame.wheel=given.mouse_position,true,given.wheel
-    frame.gamepads=given.gamepads
+    frame:=host.input_frame_of(given)
     for c,i in text {frame.text[i]=c}
     frame.text_count=len(text)
     return host.ui_input_from_platform(&frame)
@@ -1509,25 +1511,29 @@ run_goes_on :: proc(s:^Session,r:^Run) -> bool {
 // ---------------------------------------------------------------- build
 
 @(private)
-api_build_result :: proc(s:^Session,call:^api.Call,started:bool) {
+api_build_result :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Build_Result)
-    result.started=started
-    result.building=s.build.phase==.Running
-    api_text_put(result.target[:],s.build.target==.Game?"game":"editor")
-    api_text_put(result.game[:],s.build.game)
+    result.building=s.build.phase==.Running || s.build.reload
+    result.restarting=.Restart in s.requests
+    base.text_set(result.target[:],s.build.target==.Game?"game":"editor")
+    base.text_set(result.game[:],s.build.game)
     result.phase=s.build.phase
     result.errors=len(s.build.diagnostics)
     result.seconds=s.build.seconds
-    // The first error, or what failed when no diagnostic says it.
-    for d in s.build.diagnostics {
-        if d.severity==.Error {api_text_put(result.message[:],d.message);return}
+    count:=0
+    for severity in ([2]build.Severity{.Error,.Warning}) {
+        for d in s.build.diagnostics {
+            if d.severity!=severity || count==len(result.diagnostics) {continue}
+            row:=&result.diagnostics[count]
+            count+=1
+            row.severity,row.line,row.column=d.severity,d.line,d.column
+            base.text_set(row.file[:],d.file)
+            base.text_set(row.message[:],d.message)
+        }
     }
-    if s.build.phase==.Failed {
-        texts:=FAILURE_TEXTS
-        text:=strings.trim_space(s.build.text)
-        if line:=strings.index_byte(text,'\n');line>=0 {text=text[:line]}
-        api_text_put(result.message[:],text!=""?fmt.tprintf("%s: %s",texts[s.build.failure],text):texts[s.build.failure])
-    }
+    has_error:=false
+    for d in s.build.diagnostics {has_error||=d.severity==.Error}
+    if has_error || s.build.phase==.Failed {base.text_set(result.message[:],api_build_first_error(s))}
 }
 
 @(private)
@@ -1537,8 +1543,11 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
     switch text:=base.text_get(params.target[:]);text {
     case "","editor": target=.Editor
     case "game":      target=.Game
+    case "shaders":
+        api_build_shaders(s,call,params.seconds)
+        return
     case:
-        api.call_failf(call,api.INVALID_PARAMS,"target %q is editor or game",text)
+        api.call_failf(call,api.INVALID_PARAMS,"target %q is editor, game or shaders",text)
         return
     }
     out:=base.text_get(params.out[:])
@@ -1552,7 +1561,7 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         return
     }
     if s.build.phase==.Running {
-        api.call_fail(call,api.SERVER_ERROR,"A build is running: build.status says when it ends")
+        api.call_fail(call,api.SERVER_ERROR,"Another build is running: build.status says when it ends")
         return
     }
     if !s.has_project || s.engine_root=="" {
@@ -1563,11 +1572,34 @@ api_build_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"The player of the project is being built: wait for it")
         return
     }
-    api_build_result(s,call,build_start(s,target,out))
+    if !build_start(s,target,out) {
+        tool_call_fail(s,call,"The build could not start")
+        return
+    }
+    build_running :: proc(s:^Session,user:rawptr) -> bool {return s.build.phase==.Running || s.build.reload}
+    api_wait(s,f64(params.seconds),nil,build_running,"building")
+    api_build_result(s,call)
 }
 
 @(private)
-api_build_status :: proc(s:^Session,call:^api.Call) {api_build_result(s,call,false)}
+api_build_status :: proc(s:^Session,call:^api.Call) {api_build_result(s,call)}
+
+// build.start with target shaders: published again from their files and what
+// the editor holds unsaved, answering once the viewport has them.
+@(private)
+api_build_shaders :: proc(s:^Session,call:^api.Call,seconds:int) {
+    started:=time.tick_now()
+    programs_publish_request(s)
+    if ok,message:=programs_wait(s,f64(seconds),true);!ok {
+        api.call_fail(call,api.SERVER_ERROR,message)
+        return
+    }
+    api_build_result(s,call)
+    result:=api.call_result(call,Api_Build_Result)
+    result.seconds=time.duration_seconds(time.tick_since(started))
+    result.publishing=programs_publishing(s)
+    base.text_set(result.target[:],"shaders")
+}
 
 Api_Build_Check_Params :: struct {
     seconds:int `mirai:"optional,min=1,max=3600,label=How long it may take before it is stopped"`,
@@ -1669,7 +1701,7 @@ api_probe_write :: proc(out:^serial.Writer,result:^build.Result) {
 
 // The shapes of the params of the methods that read them by hand.
 @(private) API_INPUT_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"events":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"keys":{"type":"array","items":{"type":"string"},"description":"keys held in the frame; they replace the previous set"},"repeat_keys":{"type":"array","items":{"type":"string"},"description":"keys that repeat in the frame"},"mouse_buttons":{"type":"array","items":{"type":"string","enum":["left","right","middle"]},"description":"buttons held in the frame; they replace the previous set"},"mouse_position":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"points; excludes mouse_delta"},"mouse_delta":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"points; excludes mouse_position"},"wheel":{"oneOf":[{"type":"number"},{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}]},"text":{"type":"string","description":"printable ASCII typed in the frame"},"clicks":{"type":"integer","minimum":1,"maximum":3},"dt":{"type":"number","exclusiveMinimum":0,"maximum":0.25,"description":"seconds"}}}},"dt":{"type":"number","exclusiveMinimum":0,"maximum":0.25,"description":"seconds"}}}`
-@(private) API_CAMERA_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"yaw":{"type":"number","description":"radians"},"pitch":{"type":"number","description":"radians"},"distance":{"type":"number","exclusiveMinimum":0},"fov":{"type":"number","minimum":1,"maximum":170,"description":"degrees, vertical"},"entity":{"type":"string","description":"id of an entity with a perspective Camera, in hexadecimal: the camera takes its eye, where it looks and its fov, without changing the scene; excludes position, target, yaw and pitch"},"exposure":{"enum":["scene","camera","manual"],"description":"how the view exposes: as the Sky that is on, as the Camera of entity, or at ev100"},"ev100":{"type":"number","minimum":-10,"maximum":24,"description":"exposure value at ISO 100 of manual; alone, it chooses manual"}}}`
+@(private) API_CAMERA_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"target":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"yaw":{"type":"number","description":"radians"},"pitch":{"type":"number","description":"radians"},"distance":{"type":"number","exclusiveMinimum":0},"fov":{"type":"number","minimum":1,"maximum":170,"description":"degrees, vertical"},"entity":{"type":"string","description":"an entity with a perspective Camera by its name, a path Parent/Child, its id or its handle: the camera takes its eye, where it looks and its fov, without changing the scene; excludes position, target, yaw and pitch"},"exposure":{"enum":["scene","camera","manual"],"description":"how the view exposes: as the Sky that is on, as the Camera of entity, or at ev100"},"ev100":{"type":"number","minimum":-10,"maximum":24,"description":"exposure value at ISO 100 of manual; alone, it chooses manual"},"frame":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"entities by name, path or id the camera frames with what hangs from them, looking the way it looks now; excludes position, target and entity"},"from":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"with frame: the direction from what is framed to the camera"}}}`
 
 // The runs of a turn: its own, with players local ones, and those a plugin
 // adds for online players (multiplayer: a run per online player that joins

@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:rhi"
 import "mirai:std/base"
+import "mirai:render/abi"
 
 // What an extension of the renderer records with. A plugin reaches all of it
 // through engine/render: it imports neither this package nor the RHI.
@@ -93,7 +94,7 @@ Frame_Pass :: struct {
 }
 
 FRAME_PASS_CAPACITY :: 32
-NESTED_VIEW_CAPACITY :: 4
+NESTED_VIEW_CAPACITY :: abi.NESTED_VIEW_CAPACITY
 
 // A view drawn inside some pixels of another, with its projection and its
 // jitter: what the camera of that view would see carried by a transform that

@@ -2,8 +2,8 @@ package foliage
 
 import "core:slice"
 import "mirai:core"
-import "mirai:host"
 import "mirai:std/base"
+import "base:runtime"
 
 // Instances taken out in play (harvested, cut, burnt) are what the world
 // says of its foliage beyond its source: an entity with Foliage_Removed for
@@ -41,22 +41,31 @@ Removed_Instance :: struct {
 
 // What the game asks: take an instance of a Foliage out.
 @(storage,queue)
-Foliage_Requests :: struct {removes:core.Queue(Foliage_Remove)}
-Foliage_Remove :: struct {
+Foliage_Requests :: struct {removes:core.Queue(Foliage_Plant)}
+
+// An instance of a Foliage: its cell and its id there (Placed.id).
+Foliage_Plant :: struct {
     foliage:core.Entity,
     coord:[2]i32,
     instance:u64,
 }
-REMOVES_MAX :: 1024 // asked between two calls at most
 
-// Asks to take out an instance of a Foliage: its cell and its id, as a pick
-// of its batches or a hit of its collision (foliage_hit) give them. False
-// when it was not asked: REMOVES_MAX wait already, or no memory.
-foliage_remove :: proc(requests:^Foliage_Requests,foliage:core.Entity,coord:[2]i32,instance:u64) -> bool {
-    if cap(requests.removes.items)==0 {if reserve(&requests.removes.items,REMOVES_MAX)!=nil {return false}}
-    if len(requests.removes.items)>=REMOVES_MAX {return false}
-    core.push(&requests.removes,Foliage_Remove{foliage,coord,instance})
-    return true
+// Asks to take out an instance of a Foliage, as a hit of its collision
+// (hit_of) or a pick of its batches gives it.
+foliage_remove :: proc(requests:^Foliage_Requests,instance:Foliage_Plant) {core.offer(&requests.removes,instance)}
+
+@(storage,setting)
+Foliage_Settings :: struct {
+    removes:u32 `mirai:"advanced"`,         // instances a tick can ask to take out; past it they are dropped and reported
+    ground_requests:u32 `mirai:"advanced"`, // cells a tick can ask the ground of; as many
+}
+FOLIAGE_SETTINGS_DEFAULT :: Foliage_Settings{removes=1024,ground_requests=256}
+
+// The room of the requests of a tick, and what did not fit in it.
+@(step="input fixed",loops="game editor",stage="begin")
+foliage_requests_serve :: proc(requests:^Foliage_Requests,ground:^Foliage_Ground_Requests,settings:Foliage_Settings,problems:^core.Problems) {
+    core.queue_serve(&requests.removes,int(settings.removes),problems,"foliage.requests","instances asked to be taken out","Foliage_Settings.removes")
+    core.queue_serve(&ground.cells,int(settings.ground_requests),problems,"foliage.requests","cells asked of the ground","Foliage_Settings.ground_requests")
 }
 
 // The instances taken out of each Foliage, by cell, from the entities that
@@ -130,7 +139,8 @@ removals_destroy :: proc(r:^Foliage_Removals) {
 
 // Makes the instances taken out of each Foliage again from the entities
 // that name them, when they or the Foliage changed.
-removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),foliages:core.Read(Foliage),es:^core.Entities) {
+removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),foliages:core.Read(Foliage),es:^core.Entities) -> (enough:bool) {
+    enough=true
     key:=[2]u64{core.version(removed),core.version(foliages)}
     if r.made && key==r.seen {return}
     r.made,r.seen=true,key
@@ -141,7 +151,7 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
         if e==core.NONE || !core.has(foliages,e) {continue}
         owner:=removed_owner(r,e)
         if owner==nil {
-            append(&r.owners,Removed_Owner{entity=e})
+            if _,error:=append(&r.owners,Removed_Owner{entity=e});error!=nil {enough=false;continue}
             owner=&r.owners[len(r.owners)-1]
         }
         // What came from the network is not trusted to fit.
@@ -165,14 +175,21 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
             owner.items[kept]=item
             kept+=1
         }
-        resize(&owner.items,kept)
-        resize(&owner.ids,kept)
+        base.truncate(&owner.items,kept)
+        // Without its ids an owner has nothing taken out, and the index is made again.
+        if resize(&owner.ids,kept)!=nil {
+            clear(&owner.items);clear(&owner.ids)
+            owner.hash,enough=0,false
+            continue
+        }
         owner.hash=0
         for item,k in owner.items {
             owner.ids[k]=item.instance
             owner.hash=base.hash_u64(owner.hash~base.hash_u64(u64(u32(item.coord.x))|u64(u32(item.coord.y))<<32)~item.instance)
         }
     }
+    r.made=enough
+    return
 }
 
 // Takes what the game asked out, on the end that decides: the ids of the
@@ -182,15 +199,17 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
 @(step="fixed frame",loops="game editor",stage="simulate",after="foliage_load",before="physics_prepare")
 foliage_removals :: proc(
     r:^Foliage_Removals,requests:^Foliage_Requests,removed:^core.Table(Foliage_Removed),foliages:core.Read(Foliage),ids:core.Read(core.Id),
-    data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,app:^host.App,problems:^core.Problems,
+    data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.removes)
-    context.allocator=app.allocator
-    removals_index(r,core.read(removed),foliages,commands.entities)
+    context.allocator=allocator
+    if !removals_index(r,core.read(removed),foliages,commands.entities) {
+        memory_problem(problems,core.NONE,"the instances taken out of the foliage: some show again")
+    }
     if len(asked)==0 || authority.ptr!=nil && authority.role==.Client || data.ptr==nil {return}
     // By Foliage and cell: each cell is built once and its entities filled together.
     order:=slice.clone(asked,context.temp_allocator)
-    slice.stable_sort_by(order,proc(a,b:Foliage_Remove) -> bool {return a.foliage<b.foliage || a.foliage==b.foliage && coord_before(a.coord,b.coord)})
+    slice.stable_sort_by(order,proc(a,b:Foliage_Plant) -> bool {return a.foliage<b.foliage || a.foliage==b.foliage && coord_before(a.coord,b.coord)})
     shown:=make([dynamic]u64,context.temp_allocator)
     taken:=make([dynamic]u64,context.temp_allocator)
     work:Build_Work
@@ -211,7 +230,11 @@ foliage_removals :: proc(
         entry:=data_find(data.ptr,f.source)
         cell:=entry!=nil?source_cell(&entry.source,coord):nil
         if cell==nil {continue}
-        cell_build(&entry.source,cell,{},&work)
+        if !cell_build(&entry.source,cell,{},&work) {
+            for request in group {core.offer(&requests.removes,request)}
+            memory_problem(problems,e,"taking instances out of this Foliage")
+            continue
+        }
         clear(&shown)
         for p in work.placed {append(&shown,p.id)}
         slice.sort(shown[:])

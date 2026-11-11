@@ -6,6 +6,7 @@ import "core:mem"
 import "core:reflect"
 import "core:slice"
 import "core:strings"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
@@ -22,25 +23,25 @@ import "mirai:std/serial"
 // when any part of it fails.
 
 API_BATCH_LIMIT :: 64
-API_INSPECT_DEFAULT :: 256
+API_INSPECT_DEFAULT :: 256 // entities an inspect gives when a filter narrows it
+API_INSPECT_BRIEF :: 24     // and when none does
 
 Api_Inspect_Params :: struct {
-    root:base.Entity_Id `mirai:"optional,label=This entity and what hangs from it nested by children: the document scene.write takes"`,
-    id:base.Entity_Id `mirai:"optional,label=Only this entity"`,
+    root:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=By its name or a path Parent/Child or its id: this entity and what hangs from it nested by children; the document scene.write takes"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=By its name or a path Parent/Child or its id or handle: only this entity"`,
     name:[128]u8 `mirai:"optional,text,label=Only the entities with this name; * stands for any run of characters"`,
     component:[64]u8 `mirai:"optional,text,label=Only the entities that have this component"`,
-    summary:bool `mirai:"optional,label=Only the id and name and parent of each entity and the names of its components; no values"`,
-    components:bool `mirai:"optional,label=Include the values of the components"`,
+    components:u8 `mirai:"any,optional,label=true: the values of every component; a list of names: only those; omitted: id, name, parent, position and the names of the components"`,
     include_runtime:bool `mirai:"optional,label=Include hidden fields and transient component state for inspection"`,
     offset:int `mirai:"optional,min=0"`,
-    limit:int `mirai:"optional,min=1,max=4096"`,
+    limit:int `mirai:"optional,min=0,max=4096,clamp,label=Entities it gives at most; 0 or omitted: a few when no entity or name or component narrows them"`,
     player:int `mirai:"optional,min=0,max=3,label=play.inspect: the run of that player of a game a turn plays on the network"`,
     storages:bool `mirai:"optional,label=Include the storages of the world by name with their values: in play.inspect the score or the state of a match"`,
-    storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages"`,
+    storage:[64]u8 `mirai:"optional,text,label=Only the storages with this name (* stands for any run of characters); implies storages; without entity or name or component it answers no entities"`,
 }
 
-Api_Id_Params :: struct {
-    id:base.Entity_Id,
+Api_Entity_Params :: struct {
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,entity,label=The entity by its name or a path Parent/Child or its id"`,
 }
 
 Api_Edit_Result :: struct {
@@ -60,13 +61,14 @@ Api_File_Result :: struct {
 Api_Inspect_Result :: struct {
     path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=The file of the document; empty before it has one"`,
     dirty:bool `mirai:"label=Whether the document has unsaved changes"`,
-    playing:bool `mirai:"label=Whether the editor is out of Edit mode"`,
+    playing:bool `mirai:"label=scene.inspect: whether the editor is out of Edit mode; play.inspect: true"`,
     total:int `mirai:"label=Entities alive in the world"`,
     offset:int,
     entities:[1]Api_Inspect_Entity `mirai:"list,label=Parents before their children and siblings in their order"`,
     shown:int,
     matched:int `mirai:"label=Entities the filters take"`,
     omitted:int `mirai:"label=Entities matched past the limit"`,
+    left_out:[256]u8 `mirai:"text,optional,label=What the answer leaves out and how to ask for it"`,
     storages:u8 `mirai:"any,optional,label=With storages: by name the value of each storage of the world that is plain data with Entity fields as the entities are named"`,
 }
 Api_Inspect_Entity :: struct {
@@ -83,7 +85,7 @@ Api_Inspect_Entity :: struct {
     active:bool `mirai:"optional,label=Whether it runs: false when it or a parent is disabled"`,
     off:[1][64]u8 `mirai:"text,list,optional,label=The components turned off by themselves"`,
     prefab:Api_Inspect_Prefab `mirai:"optional,label=scene.inspect: the link of a member of an instance of a prefab"`,
-    components:u8 `mirai:"any,optional,label=By name the value of each component as component.list describes it with Entity fields holding ids (in play.inspect handles); with summary the list of their names; with root only the fields that differ from the value it starts with"`,
+    components:u8 `mirai:"any,optional,label=By name the value of each component as component.list describes it with Entity fields holding ids (in play.inspect handles); without components in the params the list of their names; with root only the fields that differ from the value it starts with"`,
     children:u8 `mirai:"any,optional,label=With root: the entities that hang from it in their order nested the same way"`,
 }
 Api_Inspect_Prefab :: struct {
@@ -103,8 +105,8 @@ Api_Play_Player_Result :: struct {
     camera:Api_Play_Player_Entity `mirai:"label=The camera the view shows; that of the body when the view names none"`,
 }
 Api_Play_Player_Entity :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle in hexadecimal; empty when there is no entity"`,
-    id:[16]u8 `mirai:"text,label=The id in hexadecimal; empty for an entity without one"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle in hexadecimal; empty when there is no entity"`,
+    id:[API_HANDLE_TEXT]u8 `mirai:"text,label=The id in hexadecimal; empty for an entity without one"`,
     name:[64]u8 `mirai:"text"`,
     position:[3]f32 `mirai:"label=Local to the parent"`,
     rotation_deg:[3]f32 `mirai:"label=Local to the parent in degrees"`,
@@ -121,18 +123,17 @@ Api_Batch_Entry :: struct {
 
 @(private)
 api_scene_register :: proc(s:^Session,st:^Api_State) {
-    inspect:=Api_Inspect_Params{components=true,limit=API_INSPECT_DEFAULT}
-    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their transforms, prefab links and component values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,defaults=&inspect,flags={.Core,.Read_Only},run=api_scene_inspect})
-    api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,defaults=&inspect,flags={.Core,.Read_Only},run=api_play_inspect})
+    api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_scene_inspect})
+    api_register(s,st,{name="play.inspect",summary="As scene.inspect, on the world of the game that plays, whose entities are named by their handle; with storages, also its storages: the score or the state of a match.",params=Api_Inspect_Params,result=Api_Inspect_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_inspect})
     api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. play.inspect with include_runtime reads the rest.",params=Api_Play_Player_Params,result=Api_Play_Player_Result,writes_result=true,flags={.Read_Only},run=api_play_player})
     api_register(s,st,{name="scene.add",flags={.Core},params_schema=API_ADD_SCHEMA,summary="Creates an entity from a preset or the card of a plugin.",result=Api_Edit_Result,run=api_scene_add})
     api_register(s,st,{name="scene.set",flags={.Core},params_schema=API_SET_SCHEMA,summary="Changes an entity; what the params leave out stays as it is.",result=Api_Edit_Result,run=api_scene_set})
-    api_register(s,st,{name="scene.delete",summary="Destroys an entity with what hangs from it.",params=Api_Id_Params,result=Api_Edit_Result,flags={.Core,.Destructive},run=api_scene_delete})
-    api_register(s,st,{name="scene.duplicate",flags={.Core},summary="Copies an entity and what hangs from it with new ids.",params=Api_Id_Params,result=Api_Edit_Result,run=api_scene_duplicate})
+    api_register(s,st,{name="scene.delete",summary="Destroys an entity with what hangs from it.",params=Api_Entity_Params,result=Api_Edit_Result,flags={.Core,.Destructive},run=api_scene_delete})
+    api_register(s,st,{name="scene.duplicate",summary="Copies an entity and what hangs from it with new ids.",params=Api_Entity_Params,result=Api_Edit_Result,run=api_scene_duplicate})
     api_scene_write_register(s,st)
     api_register(s,st,{name="scene.batch",flags={.Core},params_schema=API_BATCH_SCHEMA,summary="Runs scene.add, scene.set, scene.delete and scene.duplicate operations as one transaction: one step of undo, undone whole when one fails.",result=Api_Batch_Result,writes_result=true,run=api_scene_batch})
-    api_register(s,st,{name="scene.save",summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
-    api_register(s,st,{name="scene.load",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_load})
+    api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=Api_Path_Params,result=Api_File_Result,run=api_scene_save})
+    api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=Api_Path_Params,result=Api_File_Result,flags={.Destructive},run=api_scene_open})
 }
 
 // ---------------------------------------------------------------- scene.inspect
@@ -140,7 +141,7 @@ api_scene_register :: proc(s:^Session,st:^Api_State) {
 // The component values the API names: what a scene saves, besides the identity and the place of an entity.
 @(private)
 api_component_listed :: proc(s:^Session,t:^core.Table_Info,include_runtime:=false) -> bool {
-    if t.place!=.World || (!inspector_listed(s,t) && !(include_runtime && !type_saved(t.info))) {return false}
+    if t.place!=.World || (!inspector_listed(s,t) && !(include_runtime && !author.type_saved(t.info))) {return false}
     st:=api_state(s)
     return st.types[api_table_index(s,t)]!=serial.TYPE_NONE
 }
@@ -158,14 +159,52 @@ api_value_out :: proc(w:core.World_Ref,type:^runtime.Type_Info,value:rawptr,byte
     }
 }
 
-// summary leaves out the place, the prefab link and the values: the
-// components are the list of their names.
+// Which components of an entity an inspect gives the values of.
 @(private)
-api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,components:bool,scratch:[]u8,play:bool,include_runtime:=false,summary:=false) {
+Api_Inspect_Values :: struct {
+    every,listed:bool, // listed: the param gave a list of names, perhaps empty
+    only:[]^core.Table_Info,
+}
+
+// What the param components of an inspect asks: true, every component; a
+// list of names or one name, those; left out, none. false after failing the
+// call.
+@(private)
+api_inspect_values :: proc(s:^Session,call:^api.Call,w:core.World_Ref,include_runtime:bool) -> (values:Api_Inspect_Values,ok:bool) {
+    given:[1]string
+    if !api.object_values(call.allocator,call.raw,{"components"},given[:]) || given[0]=="" {return {},true}
+    if given[0]=="true" {return {every=true},true}
+    names,is_list:=api.json_elements(given[0],call.allocator)
+    if !is_list {
+        names=make([dynamic]string,call.allocator)
+        append(&names,given[0])
+    }
+    only:=make([dynamic]^core.Table_Info,call.allocator)
+    for each in names {
+        name,is_text:=api.json_string(each)
+        if !is_text {api.call_fail(call,api.INVALID_PARAMS,"components must be true or a list of names of components");return}
+        t,problem:=api_component_named(w,name)
+        if t==nil {api.call_failf(call,api.INVALID_PARAMS,"components: %s; component.list lists them",problem);return}
+        if !api_component_listed(s,t,include_runtime) {api.call_failf(call,api.INVALID_PARAMS,"components: %s has no values an inspect gives: Transform, Name, Parent, Hidden and Disabled have their own fields, and include_runtime gives the state of a game",name);return}
+        append(&only,t)
+    }
+    return {listed=true,only=only[:]},true
+}
+
+@(private)
+api_inspect_wants :: proc(values:Api_Inspect_Values,t:^core.Table_Info) -> bool {
+    return values.every || slice.contains(values.only,t)
+}
+
+// components false writes only the id, the name, the parent, the local
+// position and the names of its components. only: with components, those of
+// these tables and no others.
+@(private)
+api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.Entity,components:bool,scratch:[]u8,play:bool,include_runtime:=false,only:[]^core.Table_Info=nil) {
     st:=api_state(s)
     id:=api_entity_id(w,e)
     serial.text_write_raw(out,`{"id":`)
-    if id!=0 {api_write_id(out,id)} else {serial.text_write_raw(out,"null")}
+    if id!=0 {api.write_id(out,id)} else {serial.text_write_raw(out,"null")}
     if play {
         api.write_key(out,"entity")
         serial.write_u8(out,'"');serial.text_write_hex(out,u64(e));serial.write_u8(out,'"')
@@ -174,9 +213,11 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
     api.write_key(out,"parent")
     parent:=entity_parent(w,e)
     if play && parent!=core.NONE {serial.write_u8(out,'"');serial.text_write_hex(out,u64(parent));serial.write_u8(out,'"')}
-    else if parent!=core.NONE && api_entity_id(w,parent)!=0 {api_write_id(out,api_entity_id(w,parent))}
+    else if parent!=core.NONE && api_entity_id(w,parent)!=0 {api.write_id(out,api_entity_id(w,parent))}
     else {serial.text_write_raw(out,"null")}
-    if summary {
+    local:=entity_local(w,e)
+    if !components {
+        api.write_key(out,"position");api.write_list(out,local.position[:])
         api.write_key(out,"components");serial.write_u8(out,'[')
         first:=true
         for &t in s.info.tables {
@@ -188,7 +229,6 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
         serial.text_write_raw(out,"]}")
         return
     }
-    local:=entity_local(w,e)
     angles:=mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD
     api.write_key(out,"position");api.write_list(out,local.position[:])
     api.write_key(out,"rotation_deg");api.write_list(out,angles[:])
@@ -208,36 +248,33 @@ api_entity_write :: proc(s:^Session,w:core.World_Ref,out:^serial.Writer,e:core.E
     }
     if !off_first {serial.write_u8(out,']')}
     if !play {
-        if link,linked:=prefab_link_of(s,id);linked {
-            api.write_key(out,"prefab");serial.text_write_raw(out,`{"instance":`);serial.text_write_uint(out,u64(link.instance))
+        if link,linked:=prefab_link_of(w,e);linked {
+            api.write_key(out,"prefab");serial.text_write_raw(out,`{"instance":`);api.write_id(out,api_entity_id(w,link.instance))
             api.write_key(out,"asset");api_asset_write(out,link.asset)
-            api.write_key(out,"source");api_write_id(out,link.source)
+            api.write_key(out,"source");api.write_id(out,link.source)
             api.write_key(out,"root");api.write_flag(out,link.root)
             serial.write_u8(out,'}')
         }
     }
-    if components {
-        api.write_key(out,"components");serial.write_u8(out,'{')
-        first:=true
-        for &t,i in s.info.tables {
-            if !api_component_listed(s,&t,include_runtime) {continue}
-            table:=core.world_table_at(w,&t)
-            value:=core.raw_find(table,t.info,e)
-            if value==nil {continue}
-            api_value_out(w,t.info,value,scratch,play)
-            api.write_key(out,t.name,first)
-            first=false
-            size:=t.info.size
-            omitted:=serial.Field_Flags{.Transient,.Hidden} if !include_runtime else serial.Field_Flags{}
-            serial.text_write(out,&st.schema,st.types[i],scratch[:size],.Line,omit_fields=omitted)
-        }
-        serial.write_u8(out,'}')
+    api.write_key(out,"components");serial.write_u8(out,'{')
+    first:=true
+    for &t,i in s.info.tables {
+        if !api_component_listed(s,&t,include_runtime) || only!=nil && !slice.contains(only,&t) {continue}
+        table:=core.world_table_at(w,&t)
+        value:=core.raw_find(table,t.info,e)
+        if value==nil {continue}
+        api_value_out(w,t.info,value,scratch,play)
+        api.write_key(out,t.name,first)
+        first=false
+        size:=t.info.size
+        omitted:=serial.Field_Flags{.Transient,.Hidden} if !include_runtime else serial.Field_Flags{}
+        serial.text_write(out,&st.schema,st.types[i],scratch[:size],.Line,omit_fields=omitted)
     }
+    serial.write_u8(out,'}')
     serial.write_u8(out,'}')
 }
 
 // The entities of a world depth first, parents before children, siblings in their order.
-@(private)
 api_entities_ordered :: proc(w:core.World_Ref,allocator:=context.temp_allocator) -> []core.Entity {
     transforms:=core.world_table_of(w,core.Transform)
     parents:=core.world_table_of(w,core.Parent)
@@ -254,7 +291,9 @@ api_entities_ordered :: proc(w:core.World_Ref,allocator:=context.temp_allocator)
 @(private)
 api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     params:=api.call_params(call,Api_Inspect_Params)
-    if params.root!=0 {
+    narrowed:=base.text_get(params.entity[:])!="" || base.text_get(params.name[:])!="" || base.text_get(params.component[:])!=""
+    if params.limit==0 {params.limit=narrowed || base.text_get(params.root[:])!=""?API_INSPECT_DEFAULT:API_INSPECT_BRIEF}
+    if base.text_get(params.root[:])!="" {
         if play {api.call_fail(call,api.INVALID_PARAMS,"root is of scene.inspect: the document scene.write takes");return}
         api_inspect_tree(s,call,w,params)
         return
@@ -267,21 +306,21 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
         return
     }
     only:core.Entity
-    if params.id!=0 {
-        only=api_entity(w,params.id)
-        if only==core.NONE {
-            api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(params.id))
-            return
-        }
+    if base.text_get(params.entity[:])!="" {
+        known:bool
+        if only,known=api_call_entity(call,w,params.entity[:],game=play);!known {return}
     }
     pattern:=base.text_get(params.name[:])
     component:^core.Table_Info
     if name:=base.text_get(params.component[:]);name!="" {
-        if _,component=core.world_table_named(w,name);component==nil {
-            api.call_failf(call,api.INVALID_PARAMS,"component %q is not a component of the world; component.list lists them",name)
+        problem:string
+        if component,problem=api_component_named(w,name);component==nil {
+            api.call_failf(call,api.INVALID_PARAMS,"component: %s; component.list lists them",problem)
             return
         }
     }
+    values,read:=api_inspect_values(s,call,w,params.include_runtime)
+    if !read {return}
     storages:=base.text_get(params.storage[:])
     if storages!="" && !api_storage_named(s,storages) {
         api.call_failf(call,api.INVALID_PARAMS,"storage %q names no storage of the world the API shows; leave it out with storages true to list them all",storages)
@@ -289,13 +328,16 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
     }
     entities:=core.world_entities(w)
     offset:=only!=core.NONE?0:params.offset
+    // Naming a storage asks for it alone, unless the entities are named too.
     serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(s.document))
     api.write_key(out,"dirty");api.write_flag(out,document_dirty(s))
-    api.write_key(out,"playing");api.write_flag(out,s.mode!=.Edit)
+    api.write_key(out,"playing");api.write_flag(out,play || s.mode!=.Edit)
     api.write_key(out,"total");serial.text_write_int(out,i64(entities.alive))
     api.write_key(out,"offset");serial.text_write_int(out,i64(offset))
     api.write_key(out,"entities");serial.write_u8(out,'[')
+    only_storages:=storages!="" && !narrowed
     candidates:=[]core.Entity{only} if only!=core.NONE else api_entities_ordered(w)
+    if only_storages {candidates=nil}
     matched,shown:=0,0
     for e in candidates {
         if pattern!="" && !api_name_match(pattern,entity_name(w,e)) {continue}
@@ -303,13 +345,21 @@ api_inspect_run :: proc(s:^Session,call:^api.Call,w:core.World_Ref,play:bool) {
         matched+=1
         if matched<=offset || shown>=params.limit {continue}
         if shown>0 {serial.write_u8(out,',')}
-        api_entity_write(s,w,out,e,params.components,scratch,play,params.include_runtime,params.summary)
+        api_entity_write(s,w,out,e,values.every || len(values.only)>0,scratch,play,params.include_runtime,values.only)
         shown+=1
     }
     serial.write_u8(out,']')
     api.write_key(out,"shown");serial.text_write_int(out,i64(shown))
     api.write_key(out,"matched");serial.text_write_int(out,i64(matched))
-    api.write_key(out,"omitted");serial.text_write_int(out,i64(max(matched-offset-shown,0)))
+    omitted:=max(matched-offset-shown,0)
+    api.write_key(out,"omitted");serial.text_write_int(out,i64(omitted))
+    if omitted>0 {
+        api.write_key(out,"left_out")
+        serial.text_write_string(out,fmt.tprintf("%d more entities: ask for them with entity, name or component, or with offset and limit",omitted))
+    } else if only_storages {
+        api.write_key(out,"left_out")
+        serial.text_write_string(out,"the entities: with storages they come only with entity, name or component")
+    }
     if params.storages || storages!="" {
         api.write_key(out,"storages")
         api_storages_write(s,w,out,storages,scratch,play,params.include_runtime)
@@ -347,7 +397,6 @@ api_storage_named :: proc(s:^Session,pattern:string) -> bool {
 }
 
 // Whether a name is the pattern, where * stands for any run of characters.
-@(private)
 api_name_match :: proc "contextless" (pattern,name:string) -> bool {
     p,n:=0,0
     star,resume:=-1,0
@@ -375,29 +424,19 @@ api_scene_inspect :: proc(s:^Session,call:^api.Call) {api_inspect_run(s,call,edi
 @(private)
 api_play_inspect :: proc(s:^Session,call:^api.Call) {
     r,_:=api_play_run(s,call,api.call_params(call,Api_Inspect_Params).player)
-    if r==nil {
-        api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first")
-        return
-    }
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     api_inspect_run(s,call,core.world_ref(r.world,s.info),true)
 }
 
 // ---------------------------------------------------------------- edits
-
-@(private)
-api_known :: proc(a:^Rpc_Args,w:core.World_Ref,id:base.Entity_Id,what:string) -> (e:core.Entity,ok:bool) {
-    e=api_entity(w,id)
-    if e!=core.NONE {return e,true}
-    return core.NONE,rpc_fail(a,"%s 0x%016x is not an entity of the scene",what,u64(id))
-}
 
 // Sets, adds or removes one component from the value at the reader: an
 // object with the fields to change, or null to remove it.
 @(private)
 api_component_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entity,name:string) -> bool {
     st:=api_state(s)
-    t:=component_table(s,name)
-    if t==nil || t.place!=.World {return rpc_fail(a,"components: %q is not a registered component",name)}
+    t,problem:=api_component_named(shown_world(s),name)
+    if t==nil || t.place!=.World {return rpc_fail(a,"components: %s; component.list lists them",problem)}
     if !api_component_listed(s,t) {return rpc_fail(a,"components: %s is not edited as a component: Transform, Name, Parent, Hidden and Disabled have their own fields (position, name, parent, visible, enabled)",name)}
     at:=api_table_index(s,t)
     type:=st.types[at]
@@ -426,18 +465,7 @@ api_component_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entit
 // The path of the first read-only field whose bytes the reader changed; "" when none did.
 @(private)
 read_only_written :: proc(schema:^serial.Schema,type:serial.Type_Index,before,after:[]u8,prefix:string) -> string {
-    for field in serial.schema_fields(schema,type) {
-        inner:=serial.schema_type(schema,field.type)
-        if inner==nil || int(field.offset+inner.size)>len(after) {continue}
-        path:=prefix==""?field.name:strings.concatenate({prefix,".",field.name},context.temp_allocator)
-        at:=before[field.offset:][:inner.size]
-        now:=after[field.offset:][:inner.size]
-        if .Read_Only in field.flags && !slice.equal(at,now) {return path}
-        if inner.kind==.Struct {
-            if found:=read_only_written(schema,field.type,at,now,path);found!="" {return found}
-        }
-    }
-    return ""
+    return author.read_only_written(schema,type,before,after,prefix)
 }
 
 // The value a component starts with, as the API shows it: Entity fields hold no id.
@@ -451,16 +479,7 @@ component_start :: proc(t:^core.Table_Info,bytes:[]u8) {
 // Copies from kept the fields the API neither shows nor changes: hidden, transient and read-only ones.
 @(private)
 fields_kept :: proc(schema:^serial.Schema,type:serial.Type_Index,bytes,kept:[]u8) {
-    for field in serial.schema_fields(schema,type) {
-        inner:=serial.schema_type(schema,field.type)
-        if inner==nil || int(field.offset+inner.size)>len(bytes) {continue}
-        part:=bytes[field.offset:][:inner.size]
-        if field.flags&{.Hidden,.Transient,.Read_Only}!={} {
-            copy(part,kept[field.offset:][:inner.size])
-        } else if inner.kind==.Struct {
-            fields_kept(schema,field.type,part,kept[field.offset:][:inner.size])
-        }
-    }
+    author.fields_kept(schema,type,bytes,kept)
 }
 
 // The value of a component with the JSON object at r applied over it: the
@@ -526,8 +545,8 @@ api_off_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entity) -> 
         count:=copy(name[:],key)
         given:=string(name[:count])
         off:=rpc_bool(a,"off") or_return
-        t:=component_table(s,given)
-        if t==nil || t.place!=.World {return rpc_fail(a,"off: %q is not a registered component",given)}
+        t,problem:=api_component_named(shown_world(s),given)
+        if t==nil || t.place!=.World {return rpc_fail(a,"off: %s; component.list lists them",problem)}
         table:=core.world_table_at(w,t)
         if table.base {return rpc_fail(a,"off: %s is the base of every entity and does not turn off; enabled:false turns the whole entity off",given)}
         if core.raw_row(table,e)<0 {return rpc_fail(a,"off: the entity has no %s; add it with components first",given)}
@@ -625,14 +644,6 @@ api_common_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref,e:core.Entity,e
     return true
 }
 
-@(private)
-api_preset_find :: proc(name:string) -> (preset:Preset,found:bool) {
-    for candidate,index in reflect.enum_field_names(Preset) {
-        if strings.equal_fold(candidate,name) {return Preset(index),true}
-    }
-    return
-}
-
 // One scene.add inside the open transaction, from the params at the reader.
 @(private)
 api_add_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entity_Id,ok:bool) {
@@ -657,12 +668,11 @@ api_add_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
             given:=rpc_text(a,key,text[:]) or_return
             found:bool
             card,found=card_named(s,given)
-            if !found {return 0,rpc_fail(a,"unknown preset %q",given)}
+            if !found {return 0,rpc_fail(a,"preset: %s",cards_problem(s,given))}
         case "parent":
-            parent_id:=rpc_id(a,key) or_return
-            if parent_id!=0 {parent=api_known(a,w,parent_id,"parent") or_return}
+            parent=rpc_entity(a,w,key) or_return
         case:
-            return 0,rpc_fail(a,"unknown field %q",key)
+            return 0,rpc_fail_unknown(a,key,"name","position","rotation_deg","scale","visible","enabled","components","off","preset","parent")
         }
     }
     if a.failed {return 0,false}
@@ -684,7 +694,8 @@ api_add_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
 @(private)
 api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entity_Id,ok:bool) {
     parent:core.Entity
-    has_parent,has_name,has_id:=false,false,false
+    has_parent,has_name:=false,false
+    e:core.Entity
     edit:Api_Transform_Edit
     name:[64]u8
     name_text:string
@@ -698,24 +709,22 @@ api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
             continue
         }
         switch key {
-        case "id":
-            id=rpc_id(a,key) or_return
-            has_id=true
+        case "entity":
+            e=rpc_entity(a,w,key) or_return
         case "parent":
-            parent_id:=rpc_id(a,key) or_return
-            if parent_id!=0 {parent=api_known(a,w,parent_id,"parent") or_return} else {parent=core.NONE}
+            parent=rpc_entity(a,w,key) or_return
             has_parent=true
         case:
-            return 0,rpc_fail(a,"unknown field %q",key)
+            return 0,rpc_fail_unknown(a,key,"entity","name","position","rotation_deg","scale","visible","enabled","components","off","parent")
         }
     }
     if a.failed {return 0,false}
-    if !has_id {return 0,rpc_fail(a,"id is required")}
-    e:=api_known(a,w,id,"id") or_return
-    if text:=section_lock_text(s,w,e,true);text!="" {return 0,rpc_fail(a,"id: %s",text)}
+    if e==core.NONE {return 0,rpc_fail(a,"entity is required: its name, a path Parent/Child or its id")}
+    id=api_entity_id(w,e)
+    if text:=section_lock_text(s,w,e,true);text!="" {return 0,rpc_fail(a,"entity: %s",text)}
     if has_parent && entity_parent(w,e)!=parent {
         if _,reason:=section_target_texts(s,w,parent);reason!="" {return 0,rpc_fail(a,"%s",reason)}
-        if prefab_member_locked(s,e) {
+        if prefab_member_locked(s,w,e) {
             return 0,rpc_fail(a,"parent: the entity is a member of an instance of a prefab and keeps the place its prefab gives it; edit the prefab or unlink the instance")
         }
         if !entity_reparent(s,e,parent) {return 0,rpc_fail(a,"parent: the parent is the entity or hangs from it, or has no size in some axis")}
@@ -726,18 +735,13 @@ api_set_apply :: proc(s:^Session,a:^Rpc_Args,w:core.World_Ref) -> (id:base.Entit
 }
 
 @(private)
-api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,id:base.Entity_Id) -> bool {
-    e:=api_entity(w,id)
-    if e==core.NONE {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(id))
-        return false
-    }
+api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> bool {
     if e==document_root(s,w) {api.call_fail(call,api.SERVER_ERROR,"The root of the prefab document cannot be deleted");return false}
     if text:=section_lock_text(s,w,e,true);text!="" {
         api.call_failf(call,api.SERVER_ERROR,"scene.delete: %s",text)
         return false
     }
-    if prefab_member_locked(s,e) {
+    if prefab_member_locked(s,w,e) {
         api.call_fail(call,api.SERVER_ERROR,"scene.delete: the entity is a member of an instance of a prefab; turn it off with scene.set enabled false to leave it out of this instance, delete the instance, or unlink it")
         return false
     }
@@ -747,12 +751,7 @@ api_delete_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,id:base.Enti
 }
 
 @(private)
-api_duplicate_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,id:base.Entity_Id) -> (copy:base.Entity_Id,ok:bool) {
-    e:=api_entity(w,id)
-    if e==core.NONE {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity of the scene",u64(id))
-        return 0,false
-    }
+api_duplicate_apply :: proc(s:^Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> (copy:base.Entity_Id,ok:bool) {
     if text:=section_lock_text(s,w,e,true);text!="" {
         api.call_failf(call,api.SERVER_ERROR,"scene.duplicate: %s",text)
         return 0,false
@@ -788,18 +787,23 @@ api_scene_set :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_scene_delete :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Id_Params)
+    params:=api.call_params(call,Api_Entity_Params)
     if !api_edit_begin(s,call,"Delete entity") {return}
     w:=edited_world(s)
-    if api_edit_end(s,call,api_delete_apply(s,call,w,params.id)) {api.call_result(call,Api_Edit_Result).id=params.id}
+    e,known:=api_call_entity(call,w,params.entity[:])
+    id:=api_entity_id(w,e)
+    if api_edit_end(s,call,known && api_delete_apply(s,call,w,e)) {api.call_result(call,Api_Edit_Result).id=id}
 }
 
 @(private)
 api_scene_duplicate :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Id_Params)
+    params:=api.call_params(call,Api_Entity_Params)
     if !api_edit_begin(s,call,"Duplicate entity") {return}
     w:=edited_world(s)
-    copied,applied:=api_duplicate_apply(s,call,w,params.id)
+    e,known:=api_call_entity(call,w,params.entity[:])
+    copied:base.Entity_Id
+    applied:=false
+    if known {copied,applied=api_duplicate_apply(s,call,w,e)}
     if api_edit_end(s,call,applied) {api.call_result(call,Api_Edit_Result).id=copied}
 }
 
@@ -836,7 +840,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
                         text:[32]u8
                         if name,ok:=rpc_text(&a,field,text[:]);ok {operation.method=strings.clone(name,call.allocator)}
                     case "params": operation.params,_=rpc_raw(&a)
-                    case:          rpc_fail(&a,"unknown field %q of an operation",field)
+                    case:          rpc_fail_unknown(&a,field,"method","params")
                     }
                 }
                 count+=1
@@ -845,10 +849,18 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
                 break
             }
         case:
-            rpc_fail(&a,"unknown field %q",key)
+            rpc_fail_unknown(&a,key,"operations")
         }
     }
     if a.failed {return}
+    for &operation,i in operations[:count] {
+        if call.server==nil {break}
+        method:=api.method_find(call.server,operation.method)
+        if method==nil {continue}
+        shaped,problem:=api.params_shape(call.server,api.params_schema_text(call.server,method),operation.params)
+        if problem!="" {api.call_failf(call,api.INVALID_PARAMS,"operations[%d].params: %s",i,problem);return}
+        operation.params=shaped
+    }
     if count==0 {
         api.call_failf(call,api.INVALID_PARAMS,"operations must have 1 to %d entries",API_BATCH_LIMIT)
         return
@@ -873,22 +885,21 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
         case "scene.add": ids[at],applied=api_add_apply(s,&inner,world)
         case "scene.set": ids[at],applied=api_set_apply(s,&inner,world)
         case "scene.delete","scene.duplicate":
-            target:base.Entity_Id
-            has_id:=false
+            target:core.Entity
             fields:Rpc_Object
             applied=rpc_object_begin(&inner,"params")
             for field in rpc_next(&inner,&fields) {
                 switch field {
-                case "id": target,has_id=rpc_id(&inner,field)
-                case:      rpc_fail(&inner,"unknown field %q",field)
+                case "entity": target,_=rpc_entity(&inner,world,field)
+                case:          rpc_fail_unknown(&inner,field,"entity")
                 }
             }
             applied=applied && !inner.failed
-            if applied && !has_id {applied=rpc_fail(&inner,"id is required")}
+            if applied && target==core.NONE {applied=rpc_fail(&inner,"entity is required")}
             if applied {
                 if operation.method=="scene.delete" {
+                    ids[at]=api_entity_id(world,target)
                     applied=api_delete_apply(s,call,world,target)
-                    ids[at]=target
                 } else {
                     ids[at],applied=api_duplicate_apply(s,call,world,target)
                 }
@@ -907,7 +918,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(w,`{"results":[`)
     for id,at in ids {
         if at>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"id":`);api_write_id(w,id);serial.write_u8(w,'}')
+        serial.text_write_raw(w,`{"id":`);api.write_id(w,id);serial.write_u8(w,'}')
     }
     serial.text_write_raw(w,"]}")
 }
@@ -918,7 +929,7 @@ api_scene_batch :: proc(s:^Session,call:^api.Call) {
 api_file_result :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_File_Result)
     result.entities,result.dirty=core.world_entities(edited_world(s)).alive,document_dirty(s)
-    api_text_put(result.path[:],document_path(s.document))
+    base.text_set(result.path[:],document_path(s.document))
 }
 
 @(private)
@@ -929,7 +940,7 @@ api_document_fail :: proc(call:^api.Call,error:Document_Error,path:string) {
 @(private)
 api_scene_save :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Path_Params)
-    if !api_guard_edit(s,call) {return}
+    if !api_guard(s,call) {return}
     if !collab_can_save(s) {
         api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")
         return
@@ -948,13 +959,9 @@ api_scene_save :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-api_scene_load :: proc(s:^Session,call:^api.Call) {
+api_scene_open :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"replace the document and its history") {return}
     params:=api.call_params(call,Api_Path_Params)
-    if s.recovery.pending {
-        api.call_fail(call,api.SERVER_ERROR,"Resolve the pending recovery with editor.recover before opening another scene")
-        return
-    }
     if !collab_can_open(s) {
         api.call_fail(call,api.SERVER_ERROR,"Leave the session before opening another scene (collab.leave)")
         return
@@ -971,14 +978,11 @@ api_scene_load :: proc(s:^Session,call:^api.Call) {
         api_document_fail(call,error,target)
         return
     }
-    following:=host.load_phase_begin(s.app,.Editor)
-    prefabs_follow(s,prefabs_of(s))
-    host.load_phase_end(s.app,following)
     host.load_ready(s.app,.Scene,core.world_entities(edited_world(s)).alive)
     api_file_result(s,call)
 }
 
 // The shapes of the params of the methods that read them by hand.
-@(private) API_ADD_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"preset":{"type":"string","description":"empty, cube, sphere, cylinder, cone, capsule, plane, prism, pyramid, point_light, spot_light, rect_light, sun, camera, spawn, particles, or the card of a plugin by its label"},"name":{"type":"string"},"parent":{"type":["string","null"],"description":"id of the parent; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by component name, the fields to set"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
-@(private) API_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","description":"id of an entity of the document, in hexadecimal"},"name":{"type":"string"},"parent":{"type":["string","null"],"description":"id of the parent; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":["object","null"]},"description":"by component name, the fields to change, or null to remove it"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
+@(private) API_ADD_SCHEMA :: `{"type":"object","additionalProperties":false,"properties":{"preset":{"type":"string","description":"empty, cube, sphere, cylinder, cone, capsule, plane, prism, pyramid, point_light, spot_light, rect_light, sun, camera, spawn, particles, or the card of a plugin by its label"},"name":{"type":"string"},"parent":{"type":["string","null"],"description":"the parent by its name, a path Parent/Child or its id; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":"object"},"description":"by component name, the fields to set"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
+@(private) API_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entity"],"properties":{"entity":{"type":"string","description":"the entity by its name, a path Parent/Child or its id; a name several entities have is an error listing them"},"name":{"type":"string","description":"its new name"},"parent":{"type":["string","null"],"description":"the parent by its name, a path Parent/Child or its id; null: a root"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"visible":{"type":"boolean"},"enabled":{"type":"boolean","description":"false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":["object","null"]},"description":"by component name, the fields to change, or null to remove it"},"off":{"type":"object","additionalProperties":{"type":"boolean"},"description":"by component name, true turns the component off by itself and false on; it keeps its values"}}}`
 @(private) API_BATCH_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["operations"],"properties":{"operations":{"type":"array","minItems":1,"maxItems":64,"items":{"type":"object","required":["method"],"additionalProperties":false,"properties":{"method":{"type":"string","enum":["scene.add","scene.set","scene.delete","scene.duplicate"]},"params":{"type":"object","description":"the params of that method"}}}}}}`

@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
+import "mirai:render/abi"
 
 // The local lights as a binary tree, for a point to add up the far ones by
 // groups and the near ones one by one (lighting.slang). The lights are
@@ -27,18 +28,18 @@ Gpu_Light_Node :: struct {
 	child:         u32,  // a leaf: its light; a group: its second child
 	flags:         u32,  // GPU_LIGHT_NODE_*, and the number of its lights from GPU_LIGHT_NODE_COUNT_SHIFT
 }
-GPU_LIGHT_NODE_LEAF :: 1
-GPU_LIGHT_NODE_SPOT :: 2 // it is a spot or holds one: it opens before the others, and stands for its spots by the cone of their directions
-GPU_LIGHT_NODE_COUNT_SHIFT :: 2
+GPU_LIGHT_NODE_LEAF :: abi.GPU_LIGHT_NODE_LEAF
+GPU_LIGHT_NODE_SPOT :: abi.GPU_LIGHT_NODE_SPOT // it is a spot or holds one: it opens before the others, and stands for its spots by the cone of their directions
+GPU_LIGHT_NODE_COUNT_SHIFT :: abi.GPU_LIGHT_NODE_COUNT_SHIFT
 
 // Below this depth the runs are split where the curve says; deeper, in
 // halves. A traversal never holds more than LIGHT_TREE_DEPTH nodes.
 LIGHT_TREE_CURVE_DEPTH :: 32
-LIGHT_TREE_DEPTH :: 48
+LIGHT_TREE_DEPTH :: abi.LIGHT_TREE_DEPTH
 LIGHTS_MAX :: 1 << (LIGHT_TREE_DEPTH - LIGHT_TREE_CURVE_DEPTH)
 
 // The most lights or groups a point lights through their shadow rays (light_cut of lighting.slang).
-LIGHT_CUT_MAX :: 32
+LIGHT_CUT_MAX :: abi.LIGHT_CUT_MAX
 
 Light_Key :: struct {
 	place: u64,
@@ -112,22 +113,31 @@ light_region_lights :: proc "contextless" (region: Light_Region) -> int {
 	return int(region.lights) + 1 + (int(region.shadowless) + 1 if region.shadowless > 0 else 0)
 }
 
+// The memory a tree of that many lights after the room of region takes at
+// most: with it light_tree_build does not fail. False without memory.
+light_tree_reserve :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_Key, leaves: ^[dynamic]u32, lights: int, region: Light_Region = {}) -> bool {
+	placed := min(lights, LIGHTS_MAX)
+	return reserve(leaves, lights) == nil && reserve(keys, placed) == nil && reserve(nodes, int(light_region_first(region)) + max(2 * placed - 1, 0)) == nil
+}
+
 // Builds the tree into nodes, after the room of region, with the leaf of
-// each light in leaves, and returns what it costs (light_tree_cost).
-light_tree_build :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_Key, leaves: ^[dynamic]u32, lights: []Gpu_Light, region: Light_Region = {}) -> f64 {
+// each light in leaves, and returns what it costs (light_tree_cost). False
+// without memory for it: the three stay as they were.
+light_tree_build :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_Key, leaves: ^[dynamic]u32, lights: []Gpu_Light, region: Light_Region = {}) -> (cost: f64, ok: bool) {
+	if !light_tree_reserve(nodes, keys, leaves, len(lights), region) {return 0, false}
 	clear(nodes)
 	clear(keys)
-	resize(leaves, len(lights))
-	for &leaf in leaves {leaf = LIGHT_TREE_NONE}
 	first := light_region_first(region)
-	resize(nodes, int(first))
+	// Reserved: neither asks for memory.
+	if resize(leaves, len(lights)) != nil || resize(nodes, int(first)) != nil {return 0, false}
+	for &leaf in leaves {leaf = LIGHT_TREE_NONE}
 	for l, i in lights {
 		if light_placed(l) && len(keys) < LIGHTS_MAX {append(keys, Light_Key{light_curve_place(l), u32(i)})}
 	}
 	if len(keys) > 0 {
 		slice.sort_by(keys[:], proc(a, b: Light_Key) -> bool {return a.place < b.place || (a.place == b.place && a.light < b.light)})
-		reserve(nodes, int(first) + 2 * len(keys) - 1)
-		light_tree_node(nodes, keys[:], leaves[:], lights, 0)
+		// Reserved too: it finds the room of its nodes.
+		if _, built := light_tree_node(nodes, keys[:], leaves[:], lights, 0); !built {return 0, false}
 	}
 	if region.lights > 0 {
 		empty := light_region_empty(u32(len(lights)) + region.lights)
@@ -138,7 +148,7 @@ light_tree_build :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: ^[dynamic]Light_
 		}
 		light_region_root(nodes[:], region)
 	}
-	return light_tree_cost(nodes[first:])
+	return light_tree_cost(nodes[first:]), true
 }
 
 // A leaf of no light: the light it names is the one after those of its part.
@@ -162,13 +172,13 @@ light_region_root :: proc(nodes: []Gpu_Light_Node, region: Light_Region) {
 }
 
 @(private = "file")
-light_tree_node :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: []Light_Key, leaves: []u32, lights: []Gpu_Light, depth: int) -> u32 {
-	at := u32(len(nodes))
+light_tree_node :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: []Light_Key, leaves: []u32, lights: []Gpu_Light, depth: int) -> (at: u32, ok: bool) {
+	at = u32(len(nodes))
 	if len(keys) == 1 {
 		light := keys[0].light
 		leaves[light] = at
-		append(nodes, light_tree_leaf(lights[light], light))
-		return at
+		_, err := append(nodes, light_tree_leaf(lights[light], light))
+		return at, err == nil
 	}
 	first, last := keys[0].place, keys[len(keys) - 1].place
 	split := len(keys) / 2
@@ -183,11 +193,11 @@ light_tree_node :: proc(nodes: ^[dynamic]Gpu_Light_Node, keys: []Light_Key, leav
 		}
 		split = high
 	}
-	append(nodes, Gpu_Light_Node{})
-	light_tree_node(nodes, keys[:split], leaves, lights, depth + 1)
-	second := light_tree_node(nodes, keys[split:], leaves, lights, depth + 1)
+	if _, err := append(nodes, Gpu_Light_Node{}); err != nil {return at, false}
+	light_tree_node(nodes, keys[:split], leaves, lights, depth + 1) or_return
+	second := light_tree_node(nodes, keys[split:], leaves, lights, depth + 1) or_return
 	nodes[at] = light_tree_group(nodes[at + 1], nodes[second], second)
-	return at
+	return at, true
 }
 
 @(private = "file")

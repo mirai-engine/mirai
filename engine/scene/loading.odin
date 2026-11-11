@@ -134,7 +134,8 @@ load_begin :: proc(app:^host.App,id:base.Asset_Id,request:Scene_Request={},salt:
     if file.kind!=asset.KIND_SCENE {return nil,.Invalid}
     // What the jobs write is of the heap, which any thread can use.
     heap:=runtime.heap_allocator()
-    job=new(Load_Job,heap)
+    no_job:runtime.Allocator_Error
+    if job,no_job=new(Load_Job,heap);no_job!=nil {return nil,.Out_Of_Memory}
     job^={app=app,request=request,root=id,salt=salt,cooked=a.indexed,far=far,phase=.Reading,started=time.tick_now()}
     if salt==0 && !far {job.record=host.load_open(app,.Scene,file.path)}
     job.queue=make([dynamic]host.Assets_Source,heap)
@@ -214,9 +215,11 @@ load_documents :: proc(job:^Load_Job) -> Documents {
 load_read :: proc(job:^Load_Job,worker:int) {
     context.allocator=runtime.heap_allocator()
     reading:=host.load_phase_begin(job.app,.Read,worker)
+    exhausted:=false
     for &source in job.queue {
-        document:=new(asset.Asset)
-        if host.assets_source_open(&source,document)!=.None {
+        document,no_document:=new(asset.Asset)
+        if no_document!=nil || host.assets_source_open(&source,document)!=.None {
+            exhausted||=no_document!=nil
             free(document)
             intrinsics.atomic_add(&job.read,1)
             continue
@@ -241,6 +244,10 @@ load_read :: proc(job:^Load_Job,worker:int) {
     for &source in job.queue {host.assets_source_free(&source)}
     clear(&job.queue)
     host.load_phase_end(job.app,reading,documents_read,&job.tally)
+    if exhausted {
+        job.error=.Out_Of_Memory
+        return
+    }
     if job.documents[job.root]==nil {
         job.error=.Corrupt
         return
@@ -348,7 +355,12 @@ load_named :: proc(job:^Load_Job) {
         append(&pending,..asset.registry_dependencies(&a.registry,file))
     }
     count:=len(lists[0])+len(lists[1])+len(lists[2])
-    job.items=make([]Load_Item,count,runtime.heap_allocator())
+    items,no_items:=make([]Load_Item,count,runtime.heap_allocator())
+    if no_items!=nil {
+        job.error=.Out_Of_Memory
+        return
+    }
+    job.items=items
     count=0
     for list in lists {
         for id in list {
@@ -380,9 +392,9 @@ load_prepare :: proc(job:^Load_Job,worker:int) {
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    decoder:=new(asset.Decoder)
+    decoder,no_decoder:=new(asset.Decoder)
     defer free(decoder)
-    lent:=decoder if decoder!=nil && asset.decoder_init(decoder)==.None else nil
+    lent:=decoder if no_decoder==nil && asset.decoder_init(decoder)==.None else nil
     defer if decoder!=nil {asset.decoder_destroy(decoder)}
     if lent!=nil && job.pieces.decoders!=nil {lent.pieces,lent.worker=&job.pieces,worker}
     for {
@@ -499,9 +511,11 @@ load_end :: proc(job:^Load_Job,w:core.World_Ref) -> (report:Report,error:Error) 
         core.world_settle(loaded)
     }
     root_set(loaded,job.root)
-    w.info.swap(w.data,job.world)
-    // A swap moves the versions of the tables on: the records look at them after it.
-    records_look(w)
+    core.world_swap(w.info,w.data,job.world)
+    // A swap moves the versions of the tables on: the records look at them
+    // after it. One without memory for it stays asked for: scene_sections
+    // looks again, and reports it.
+    _=records_look(w)
     return job.report,.None
 }
 
@@ -589,8 +603,9 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         }
     }
     // Records, each with the shapes of its entities as they joined: of each section that loaded with it, and its own.
-    record_fill :: proc(record:^Section_Record,apart:core.World_Ref,section:core.Entity,of,made:[]core.Entity,fresh:[]bool,took:[]core.Entity) {
-        record.fresh=slice.clone(fresh)
+    record_fill :: proc(record:^Section_Record,apart:core.World_Ref,section:core.Entity,of,made:[]core.Entity,fresh:[]bool,took:[]core.Entity) -> bool {
+        no_fresh:runtime.Allocator_Error
+        if record.fresh,no_fresh=slice.clone(fresh);no_fresh!=nil {return false}
         es:=core.world_entities(apart)
         mine:=make([dynamic]core.Entity,context.temp_allocator)
         into:=make([dynamic]core.Entity,context.temp_allocator)
@@ -603,14 +618,18 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         shapes_take(apart,&record.shapes,mine[:],into[:])
         record.shaped=true
         for x in took {if of[core.entity_index(x)]==section {append(&record.changed,made[core.entity_index(x)])}}
+        return true
     }
+    recorded:=true
     if inners:=core.world_storage_of(apart,Section_Records);inners!=nil {
         for &record in inners.items {
-            if added:=records_add(w,joined(made[:],record.reference),record.locals);added!=nil {record_fill(added,apart,record.reference,of,made[:],fresh,sleepers.took[:])}
+            added,listed:=records_add(w,joined(made[:],record.reference),record.locals)
+            recorded&&=listed && (added==nil || record_fill(added,apart,record.reference,of,made[:],fresh,sleepers.took[:]))
         }
     }
-    if own:=records_add(w,e,locals);own!=nil {record_fill(own,apart,core.NONE,of,made[:],fresh,sleepers.took[:])}
-    return job.report,.None
+    own,listed:=records_add(w,e,locals)
+    recorded&&=listed && (own==nil || record_fill(own,apart,core.NONE,of,made[:],fresh,sleepers.took[:]))
+    return job.report,.None if recorded else .Out_Of_Memory
 }
 
 // The record of a section load that ended (host.load_section).

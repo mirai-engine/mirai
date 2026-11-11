@@ -51,9 +51,9 @@ a `Begin_Layer`/`End_Layer` that delimits an isolated group.
 ## Offscreen UI
 
 - `ui_texture_add(r, width, height, name, effects)` adds to the texture table an sRGB entry that a
-  material or the UI show like any color texture, and what draws it: an RGBA8 target and its
-  copy; with `effects`, also the targets of an effects view. Up to `UI_TEXTURE_CAPACITY`, created
-  in a transaction between frames; `ui_texture_remove` removes them.
+  material or the UI show like any color texture, and what draws it: an RGBA8 target, copied
+  into the entry on the GPU; with `effects`, also the targets of an effects view. Up to
+  `UI_TEXTURE_CAPACITY`, created in a transaction between frames; `ui_texture_remove` removes them.
 - **`Frame_Desc.ui_textures`**: a `Ui_Texture_Draw` is UI in units of `size`, which covers its
   texture: a world panel on a mesh or an interface captured alone. Its layer is drawn before the
   views, over `clear`, with the same pass as the screen layers (`Ui_Surface`): scissors, isolated
@@ -64,7 +64,7 @@ a `Begin_Layer`/`End_Layer` that delimits an isolated group.
 - **`Frame_Desc.effect_views`**: an `Effect_View` draws in its texture what the extensions draw in
   the [`Effect`](views.md#extension-stages) stage seen by its camera, over nothing, after the
   frame's simulation and before the UI that shows it: the particles of a `Particles` node
-  ([vfx](../../mirai-plugins/references/vfx.md#ui-effects)). Its light, with exposure 1,
+  ([vfx](../../mirai-world/references/vfx.md#ui-effects)). Its light, with exposure 1,
   goes through the display transform (`ui_particles.frag`) and the part of the pixel they cover
   is the alpha.
 - **`Frame_Desc.probes`**: a `Depth_Probe` asks for the linear depth of the opaque scene in a patch

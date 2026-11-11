@@ -37,8 +37,9 @@ packhuff8_runlen :: #force_inline proc "contextless" (b:^Bits) -> u32 {
 
 @(private="file")
 decode_hufflens :: proc "contextless" (
-    vb:^Bits,syms:[^]u8,last:^[HUFF_CODELEN_LIMIT+1]u32,
-) -> int #no_bounds_check {
+    vb:^Bits,syms:^[HUFF_SYMS_SIZE+256]u8,last:^[HUFF_CODELEN_LIMIT+1]u32,
+) -> int {
+    syms,last:=view(syms),view(last)
     b:=vb^
     got:=-1
     if bits_get1(&b)!=0 {
@@ -102,8 +103,9 @@ decode_hufflens :: proc "contextless" (
 
 @(private="file")
 decode_hufflens2 :: proc "contextless" (
-    vb:^Bits,syms:[^]u8,last:^[HUFF_CODELEN_LIMIT+1]u32,
-) -> int #no_bounds_check {
+    vb:^Bits,syms:^[HUFF_SYMS_SIZE+256]u8,last:^[HUFF_CODELEN_LIMIT+1]u32,
+) -> int {
+    syms,last:=view(syms),view(last)
     b:=vb^
     rice_bits:=int(bits_get(&b,2))
     got:=int(bits_get(&b,8))+1
@@ -149,11 +151,13 @@ decode_hufflens2 :: proc "contextless" (
         if intrinsics.simd_reduce_and(intrinsics.simd_lanes_eq(worst,top))==0 {return -1}
     }
     intrinsics.unaligned_store((^V)(up[got:]),saved)
-    run_lens:[128*2+8+1]u16 = ---
-    pairs:=decode_alphabet_shape_runlens(&run_lens[0],u32(got),u32(num_eg),up[got:],vb)
+    run_lens_table:[128*2+8+1]u16 = ---
+    run_lens:=view(&run_lens_table)
+    pairs:=decode_alphabet_shape_runlens(&run_lens_table,u32(got),u32(num_eg),up[got:],vb)
     if pairs<0 {return -1}
     // The symbol at each position, then per length the positions in order.
-    sym_of:[256+16]u8 = ---
+    sym_of_table:[256+16]u8 = ---
+    sym_of:=view(&sym_of_table)
     {
         IOTA :: V{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}
         li:=0
@@ -174,7 +178,8 @@ decode_hufflens2 :: proc "contextless" (
     // chains of count updates; positions past got have length 0 and write
     // into the spare tail of syms.
     masks:[HUFF_CODELEN_LIMIT+1][4]u64
-    lens:[256]u8 = ---
+    lens_table:[256]u8 = ---
+    lens:=view(&lens_table)
     {
         IOTA :: V{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}
         for i:=0;i<256;i+=16 {
@@ -184,17 +189,18 @@ decode_hufflens2 :: proc "contextless" (
             #unroll for len in 1..=HUFF_CODELEN_LIMIT {
                 m:=u64(transmute(u16)intrinsics.simd_extract_msbs(intrinsics.simd_lanes_eq(v,
                     V(len))))
-                masks[len][i>>6]|=m<<uint(i&63)
+                view(&masks[len])[i>>6]|=m<<uint(i&63)
             }
         }
     }
     at:[4][HUFF_CODELEN_LIMIT+1]u32 = ---
-    for w in 0..<4 {at[w][0]=HUFF_SYMS_SIZE+u32(w)*64}
+    #unroll for w in 0..<4 {at[w][0]=HUFF_SYMS_SIZE+u32(w)*64}
+    mask_rows:=view(&masks)
     for len in 1..=HUFF_CODELEN_LIMIT {
         count:=last[len]
         #unroll for w in 0..<4 {
-            at[w][len]=count
-            count+=u32(intrinsics.count_ones(masks[len][w]))
+            view(&at[w])[len]=count
+            count+=u32(intrinsics.count_ones(mask_rows[len][w]))
         }
         last[len]=count
     }
@@ -202,10 +208,11 @@ decode_hufflens2 :: proc "contextless" (
     for k in 0..<64 {
         #unroll for w in 0..<4 {
             if w<ranges {
+                row:=view(&at[w])
                 l:=lens[w*64+k]
-                n:=at[w][l]
+                n:=row[l]
                 syms[n]=sym_of[w*64+k]
-                at[w][l]=n+1
+                row[l]=n+1
             }
         }
     }
@@ -226,8 +233,9 @@ sloppy_fill :: #force_inline proc "contextless" (p:[^]u8,v:u8,n:u32) #no_bounds_
 // whose rows and columns are taken in reversed order.
 @(private="file")
 build_table :: proc "contextless" (
-    first,last:^[HUFF_CODELEN_LIMIT+1]u32,syms:[^]u8,table:^Huff_Table,
-) -> bool #no_bounds_check {
+    first,last:^[HUFF_CODELEN_LIMIT+1]u32,syms:^[HUFF_SYMS_SIZE+256]u8,table:^Huff_Table,
+) -> bool {
+    first,last,syms:=view(first),view(last),view(syms)
     lens:[HUFF_TABLE_SIZE+16]u8 = ---
     msb:[HUFF_TABLE_SIZE+16]u8 = ---
     lp:=([^]u8)(&lens[0])
@@ -249,7 +257,8 @@ build_table :: proc "contextless" (
     if num:=last[HUFF_CODELEN_LIMIT]-first[HUFF_CODELEN_LIMIT];num>0 {
         if code+num>HUFF_TABLE_SIZE {return false}
         sloppy_fill(lp[code:],HUFF_CODELEN_LIMIT,num)
-        intrinsics.mem_copy_non_overlapping(sp[code:],syms[first[HUFF_CODELEN_LIMIT]:],num)
+        intrinsics.mem_copy_non_overlapping(sp[code:],
+            raw_data(syms[first[HUFF_CODELEN_LIMIT]:][:num]),num)
         code+=num
     }
     if code!=HUFF_TABLE_SIZE {return false}
@@ -500,35 +509,6 @@ huff64 :: #force_inline proc "contextless" (
     return true
 }
 
-@(private="file")
-huff_sym_lane :: #force_inline proc "contextless" (tb:[^]u8,w:^u64) -> u8 #no_bounds_check {
-    at:=tb[w^&HUFF_INDEX_MASK:]
-    w^>>=uint(at[0])&63
-    return at[1]
-}
-
-@(private="file")
-huff_last_lane_fwd :: #force_inline proc "contextless" (
-    tb:[^]u8,w:u64,c:^Huff_Cursor,
-) -> u8 #no_bounds_check {
-    at:=tb[w&HUFF_INDEX_MASK:]
-    t:=uint(intrinsics.count_leading_zeros(w))+uint(at[0])
-    c.p=c.p[t>>3:]
-    c.k=t&7
-    return at[1]
-}
-
-@(private="file")
-huff_last_lane_back :: #force_inline proc "contextless" (
-    tb:[^]u8,w:u64,c:^Huff_Cursor,
-) -> u8 #no_bounds_check {
-    at:=tb[w&HUFF_INDEX_MASK:]
-    t:=uint(intrinsics.count_leading_zeros(w))+uint(at[0])
-    c.p=c.p[-int(t>>3):]
-    c.k=t&7
-    return at[1]
-}
-
 // Both halves of a 6-stream array at once, for twice the independent work
 // of the 3-stream loop; leaves the state for huff64 to finish each half.
 @(private="file")
@@ -589,16 +569,16 @@ get_array_huff :: proc "contextless" (
         got:int
         if bits_get1(&vb)!=0 {
             if bits_get1(&vb)!=0 {return -1}
-            got=decode_hufflens2(&vb,&syms[0],&last)
+            got=decode_hufflens2(&vb,&syms,&last)
         } else {
-            got=decode_hufflens(&vb,&syms[0],&last)
+            got=decode_hufflens(&vb,&syms,&last)
         }
         if got<1 {return -1}
         if got==1 {
             fill(to,syms[0],to_len)
             return ptr_diff(bits_end_ptr(&vb),comp)
         }
-        if !build_table(&first,&last,&syms[0],&table) {return -1}
+        if !build_table(&first,&last,&syms,&table) {return -1}
     }
     start:=bits_end_ptr(&vb)
     s:Huff_State = ---

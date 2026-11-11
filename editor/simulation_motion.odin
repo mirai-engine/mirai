@@ -26,7 +26,7 @@ simulation_body_release :: proc(s:^Session,e:core.Entity) -> bool {
 }
 
 Api_Simulation_Move_Params :: struct {
-    id:base.Entity_Id,
+    entity:Api_Entity_Text `mirai:"text,entity"`,
     position:[3]f32,
     rotation:[4]f32 `mirai:"optional"`,
     release:bool `mirai:"optional,label=Release the body after reaching this target"`,
@@ -36,9 +36,10 @@ Api_Simulation_Move_Params :: struct {
 api_simulation_move :: proc(s:^Session,call:^api.Call) {
     if !api_simulation_guard(s,call) {return}
     params:=api.call_params(call,Api_Simulation_Move_Params)
-    e:=api_entity(shown_world(s),params.id)
+    e,named:=api_call_entity(call,shown_world(s),params.entity[:],game=true)
+    if !named {return}
     q:=params.rotation
-    if e==core.NONE || !simulation_body_target(s,e,params.position,quaternion(x=q.x,y=q.y,z=q.z,w=q.w)) {
+    if !simulation_body_target(s,e,params.position,quaternion(x=q.x,y=q.y,z=q.z,w=q.w)) {
         api.call_fail(call,api.INVALID_PARAMS,"Give a body's entity and a finite pose; compound children and characters are not independent bodies")
         return
     }

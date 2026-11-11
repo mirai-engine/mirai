@@ -6,7 +6,6 @@ import "mirai:core"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
-import "mirai:host"
 import mm "mirai:std/math"
 
 // The wind of a type that casts shadows sways a few variants of its meshes,
@@ -84,8 +83,8 @@ wind_variants :: proc "contextless" (t:Foliage_Type) -> u32 {
 // whose turn about up is nearest the turn of its forward.
 wind_variant :: proc "contextless" (rotation:mm.Quat,count:u32) -> u32 {
     if count<=1 {return 0}
-    forward:=mm.quat_rotate(rotation,{0,0,1})
-    turn:=math.atan2(forward.x,forward.z)
+    forward:=mm.quat_forward(rotation)
+    turn:=mm.yaw_of_direction(forward)
     step:=2*math.PI/f32(count)
     at:=int(math.round(turn/step))%int(count)
     return u32(at+int(count) if at<0 else at)
@@ -124,27 +123,27 @@ Wind_Set :: struct {
 // The set of a mesh, swayed by this many variants this much; made the first
 // time, with the levels of the mesh (a load transaction). -1 when the
 // renderer cannot make them: the type is drawn at rest.
-wind_set :: proc(resident:^Foliage_Resident,app:^host.App,source:render.Mesh_Handle,count:u32,amount:f32) -> int {
+wind_set :: proc(resident:^Foliage_Resident,renderer:^render.Renderer,source:render.Mesh_Handle,count:u32,amount:f32) -> int {
     for &set,i in resident.winds {if set.source==source && set.count==count && set.amount==amount {return set.made?i:-1}}
     set:=Wind_Set{source=source,count=min(count,WIND_VARIANTS_MAX),amount=amount}
-    low,high,known:=render.mesh_bounds(app,source)
+    low,high,known:=render.mesh_bounds(renderer,source)
     if known {
         set.low,set.high=wind_bounds(low,high,amount)
         set.made=true
         for k in 0..<set.count {
-            mesh,made:=render.deformable_create(app,source,true)
+            mesh,made:=render.deformable_create(renderer,source,true)
             if !made {set.made=false;break}
             set.variants[k]=mesh
-            render.deformable_update(app,mesh,set.low,set.high)
+            render.deformable_update(renderer,mesh,set.low,set.high)
         }
     }
-    if !set.made {wind_set_free(app,&set)}
+    if !set.made {wind_set_free(renderer,&set)}
     append(&resident.winds,set)
     return len(resident.winds)-1 if set.made else -1
 }
 
-wind_set_free :: proc(app:^host.App,set:^Wind_Set) {
-    for mesh in set.variants[:set.count] {if mesh!=0 {render.mesh_remove(app,mesh)}}
+wind_set_free :: proc(renderer:^render.Renderer,set:^Wind_Set) {
+    for mesh in set.variants[:set.count] {if mesh!=0 {render.mesh_remove(renderer,mesh)}}
     set.variants={}
     set.made=false
 }
@@ -154,13 +153,13 @@ wind_set_free :: proc(app:^host.App,set:^Wind_Set) {
 // sway with the wind at the first streaming source. The benders nearest that
 // source go to the hook too.
 @(step="render",loops="game editor")
-foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),benders:core.Read(Foliage_Bender),frame:core.Frame_Time,app:^host.App) {
+foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),benders:core.Read(Foliage_Bender),frame:core.Frame_Time,renderer:^render.Renderer) {
     if resident==nil || len(resident.owners)==0 {return}
     resident.wind=volume.gpu_wind(winds,volumes,worlds)
     at:=[3]f32{}
     if sources.ptr!=nil && sources.ptr.count>0 {at=sources.ptr.items[0].position} else if len(resident.owners)>0 {at=resident.owners[0].transform.position}
     benders_gather(resident,benders,worlds,frame,at)
-    render.frame_pass(app,.Mask,foliage_wind_record,resident)
+    render.frame_pass(renderer,.Mask,foliage_wind_record,resident)
     if len(resident.winds)>0 {
         value:=volume.wind_at(winds,volumes,worlds,at)
         velocity:=value.xyz
@@ -170,13 +169,13 @@ foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),vol
         sway:=false
         for &set in resident.winds {
             if !set.made || still && set.still {continue}
-            for mesh in set.variants[:set.count] {render.deformable_update(app,mesh,set.low,set.high)}
+            for mesh in set.variants[:set.count] {render.deformable_update(renderer,mesh,set.low,set.high)}
             set.still=still
             sway=true
         }
-        if sway {render.frame_pass(app,.Geometry,foliage_sway_record,resident)}
+        if sway {render.frame_pass(renderer,.Geometry,foliage_sway_record,resident)}
     }
-    if resident.impostors.count>0 {render.frame_pass(app,.Gbuffer,foliage_impostors_record,resident)}
+    if resident.impostors.count>0 {render.frame_pass(renderer,.Gbuffer,foliage_impostors_record,resident)}
 }
 
 // The BENDERS benders nearest `at` where they are drawn this frame, each
@@ -229,7 +228,7 @@ foliage_wind_record :: proc(pass:^render.Pass,user:rawptr) {
 foliage_sway_record :: proc(pass:^render.Pass,user:rawptr) {
     resident:=cast(^Foliage_Resident)user
     if pass.world!=render.world_key(resident.world) {return}
-    pipeline:=render.stage_pipeline(resident.app,{stage=.Geometry,shader="foliage_sway",name="foliage wind"})
+    pipeline:=render.stage_pipeline(resident.app.renderer,{stage=.Geometry,shader="foliage_sway",name="foliage wind"})
     if pipeline==0 || !render.pass_vertices_begin(pass,"foliage wind") {return}
     render.pass_pipeline(pass,pipeline)
     Params :: struct {written,rest,count,mesh:u32,wind,sway:[4]f32}

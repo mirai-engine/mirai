@@ -5,13 +5,18 @@ import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
+@(private="file")
 Create_Test_Provider :: struct {provider:Asset_Document_Provider}
-create_test_provider :: proc(dst:rawptr) {(^Create_Test_Provider)(dst)^={provider={kinds={0=asset.KIND_UI},count=1,creates={0},create=create_test_file}}}
+@(private="file")
+create_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    append(types,core.test_type(Create_Test_Provider,default=proc(dst:^Create_Test_Provider) {dst^={provider={kinds={0=asset.KIND_UI},count=1,creates={0},create=create_test_file}}}))
+}
 // The empty .ui of the test plugin; none for the id that stands for a failure.
 @(private="file")
 create_test_file :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 {
@@ -30,7 +35,7 @@ create_test_file :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 
 @(test)
 create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-asset-create")
+    if !files_test_open(t,&f,"asset-create") {return}
     defer files_test_close(&f)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
@@ -54,10 +59,10 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     // A folder only an unsaved file is in is taken too.
     testing.expect_value(t,asset_create_path(r,"","Materials",""),"Materials 2")
     // Undo takes it away: it was only memory.
-    testing.expect(t,undo(&f.edits,edited_world(s),&f.selection))
+    testing.expect(t,history.undo(&f.edits,edited_world(s),&f.selection))
     _,found=asset.registry_find(r,material)
     testing.expect(t,!found)
-    testing.expect(t,redo(&f.edits,edited_world(s),&f.selection))
+    testing.expect(t,history.redo(&f.edits,edited_world(s),&f.selection))
 
     // A folder is made at once and the registry knows it without files.
     testing.expect_value(t,asset_create(s,ASSET_CREATE_FOLDER,"Empty",{}),"")
@@ -84,10 +89,6 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     testing.expect(t,clean=="Materials/Deep" && refusal=="")
     _,refusal=asset_folder_clean(r,"Materials/../out")
     testing.expect(t,refusal!="")
-    // Nothing is made while the user plays: the entries are off.
-    s.mode=.Play
-    testing.expect(t,asset_create_refusal(s)!="" && asset_create(s,asset.KIND_MATERIAL,"Other.mat",asset_id_new(s))!="")
-    s.mode=.Edit
     // A kind no plugin creates is refused.
     testing.expect(t,!slice.contains(asset_create_kinds(s),asset.KIND_UI))
     testing.expect(t,asset_create(s,asset.KIND_UI,"hud.ui",asset_id_new(s))!="")
@@ -98,10 +99,12 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
 @(test)
 a_plugin_gives_the_empty_file_of_a_kind_it_creates :: proc(t:^testing.T) {
     f:Files_Test
-    files_test_open(&f,"mirai-asset-create-plugin")
+    if !files_test_open(t,&f,"asset-create-plugin") {return}
     defer files_test_close(&f)
-    storages:=[1]core.Storage_Info{{info=type_info_of(Create_Test_Provider),place=.Editor,default=create_test_provider}}
-    f.info.storages=storages[:]
+    info,made:=core.test_info(t,Files_Test_World,core.Test_None,struct {provider:Create_Test_Provider},create_test_types)
+    if !made {return}
+    defer core.test_info_destroy(&info)
+    f.s.info=&info
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=project.path(f.root,"assets",allocator=context.temp_allocator),capacity=8})) {return}
     defer host.assets_destroy(&assets)

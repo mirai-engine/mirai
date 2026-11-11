@@ -147,13 +147,16 @@ Protocol :: struct {
     allocator:runtime.Allocator,
 }
 
-protocol_init :: proc(p:^Protocol,allocator:=context.allocator) {
+// False without memory.
+protocol_init :: proc(p:^Protocol,allocator:=context.allocator) -> bool {
     p^={allocator=allocator}
+    error:runtime.Allocator_Error
+    if p.types,error=make([]Object_Type,TYPE_CAPACITY,allocator);error!=nil {return false}
     p.fragments=make([dynamic]Fragment_Record,allocator)
-    p.types=make([]Object_Type,TYPE_CAPACITY,allocator)
     p.events=make([dynamic]Event_Type,allocator)
     p.leaves=make([dynamic]Leaf,allocator)
     p.choices=make([dynamic]i64,allocator)
+    return true
 }
 protocol_destroy :: proc(p:^Protocol) {
     for &type in p.types[:p.type_count] {
@@ -173,13 +176,18 @@ protocol_destroy :: proc(p:^Protocol) {
 // MAX_STATE_BYTES.
 fragment_register :: proc(p:^Protocol,name:string,desc:Fragment_Desc) -> (Fragment_Id,bool) {
     if p.sealed || len(p.fragments)>=int(FRAGMENT_NONE) {return FRAGMENT_NONE,false}
+    leaves,choices:=len(p.leaves),len(p.choices)
     alone,ok:=descriptor_build(p,name,{desc},MAX_STATE_BYTES,parts=true)
     if !ok {return FRAGMENT_NONE,false}
     delete(alone.name,p.allocator)
-    append(&p.fragments,Fragment_Record{
+    record:=Fragment_Record{
         hash=alone.hash,first_leaf=alone.first_leaf,leaf_count=alone.leaf_count,
         units=fragment_units(desc),words=alone.words,size=alone.fragments[0].size,condition=desc.condition,
-    })
+    }
+    if _,error:=append(&p.fragments,record);error!=nil {
+        base.truncate(&p.leaves,leaves);base.truncate(&p.choices,choices)
+        return FRAGMENT_NONE,false
+    }
     return Fragment_Id(len(p.fragments)-1),true
 }
 
@@ -196,14 +204,19 @@ type_register :: proc(p:^Protocol,name:string,fragments:[]Fragment_Desc) -> (Typ
     leaves:=0
     for kind in kinds[:len(fragments)] {leaves+=p.fragments[kind].leaf_count}
     type:=&p.types[p.type_count]
-    type.leaves=make([]Leaf,leaves,p.allocator)
+    error:runtime.Allocator_Error
+    if type.leaves,error=make([]Leaf,leaves,p.allocator);error!=nil {return TYPE_NONE,false}
     type.owned=true
     if !type_build(p,type,kinds[:len(fragments)]) {
         delete(type.leaves,p.allocator)
         type^={}
         return TYPE_NONE,false
     }
-    type.name=strings.clone(name,p.allocator)
+    if type.name,error=strings.clone(name,p.allocator);error!=nil {
+        delete(type.leaves,p.allocator)
+        type^={}
+        return TYPE_NONE,false
+    }
     type.name_hash=base.name_hash(name)
     p.type_count+=1
     return Type_Id(p.type_count-1),true
@@ -253,9 +266,14 @@ type_kinds :: proc(p:^Protocol,type:Type_Id) -> []Fragment_Id {
 // nobody in particular, once. The name identifies it in the protocol hash.
 event_register :: proc(p:^Protocol,name:string,schema:^serial.Schema,type:serial.Type_Index,flags:Event_Flags={}) -> (Event_Id,bool) {
     if p.sealed || len(p.events)>=int(EVENT_NONE) {return EVENT_NONE,false}
+    leaves,choices:=len(p.leaves),len(p.choices)
     desc,ok:=descriptor_build(p,name,{{schema=schema,type=type}},EVENT_MAX_BYTES)
     if !ok {return EVENT_NONE,false}
-    append(&p.events,Event_Type{name_hash=desc.name_hash,flags=flags,desc=desc})
+    if _,error:=append(&p.events,Event_Type{name_hash=desc.name_hash,flags=flags,desc=desc});error!=nil {
+        delete(desc.name,p.allocator)
+        base.truncate(&p.leaves,leaves);base.truncate(&p.choices,choices)
+        return EVENT_NONE,false
+    }
     return Event_Id(len(p.events)-1),true
 }
 
@@ -272,18 +290,17 @@ input_register :: proc(p:^Protocol,schema:^serial.Schema,type:serial.Type_Index)
 
 // Closes the protocol, makes room for the types to compose and returns the
 // hash both ends compare when connecting: of its fragments, events and input.
-protocol_seal :: proc(p:^Protocol) -> u64 {
-    if p.sealed {return p.hash}
-    hash:=u64(len(p.fragments))<<32|u64(len(p.events))
-    total,smallest:=0,MAX_STATE_WORDS
+// False without memory for that room: the protocol stays open.
+protocol_seal :: proc(p:^Protocol) -> (hash:u64,ok:bool) {
+    if p.sealed {return p.hash,true}
+    hash=u64(len(p.fragments))<<32|u64(len(p.events))
+    total,words,smallest:=0,0,MAX_STATE_WORDS
     for record in p.fragments {
         hash=base.hash_combine(hash,record.hash)
         total+=record.leaf_count
-        p.object_words+=record.words
+        words+=record.words
         smallest=min(smallest,record.words)
     }
-    p.object_words=clamp(p.object_words,1,MAX_STATE_WORDS)
-    p.smallest_words=max(smallest,1)
     for &event in p.events {
         event.desc.leaves=p.leaves[event.desc.first_leaf:][:event.desc.leaf_count]
         hash=base.hash_combine(hash,base.hash_combine(event.desc.hash,u64(transmute(u8)event.flags)))
@@ -292,9 +309,12 @@ protocol_seal :: proc(p:^Protocol) -> u64 {
         p.input.leaves=p.leaves[p.input.first_leaf:][:p.input.leaf_count]
         hash=base.hash_combine(hash,p.input.hash)
     }
-    p.type_leaves=make([]Leaf,min(total*TYPE_CAPACITY,TYPE_LEAVES),p.allocator)
+    error:runtime.Allocator_Error
+    if p.type_leaves,error=make([]Leaf,min(total*TYPE_CAPACITY,TYPE_LEAVES),p.allocator);error!=nil {return 0,false}
+    p.object_words=clamp(words,1,MAX_STATE_WORDS)
+    p.smallest_words=max(smallest,1)
     p.hash,p.sealed=hash,true
-    return hash
+    return hash,true
 }
 
 type_find :: proc(p:^Protocol,name:string) -> (Type_Id,bool) {
@@ -303,13 +323,6 @@ type_find :: proc(p:^Protocol,name:string) -> (Type_Id,bool) {
         if type.name_hash==hash {return Type_Id(i),true}
     }
     return TYPE_NONE,false
-}
-event_find :: proc(p:^Protocol,name:string) -> (Event_Id,bool) {
-    hash:=base.name_hash(name)
-    for event,i in p.events {
-        if event.name_hash==hash {return Event_Id(i),true}
-    }
-    return EVENT_NONE,false
 }
 // Change bits of the fields of one fragment of a type.
 type_fragment_mask :: proc(p:^Protocol,type:Type_Id,fragment:int) -> u64 {
@@ -389,7 +402,7 @@ descriptor_build :: proc(p:^Protocol,name:string,fragments:[]Fragment_Desc,max_b
     if len(fragments)==0 || len(fragments)>MAX_FRAGMENTS {return}
     first:=len(p.leaves)
     choices:=len(p.choices)
-    defer if !ok {resize(&p.leaves,first);resize(&p.choices,choices)}
+    defer if !ok {base.truncate(&p.leaves,first);base.truncate(&p.choices,choices)}
     fields:=0
     units:[MAX_FRAGMENTS]int
     for fragment,index in fragments {
@@ -435,7 +448,8 @@ descriptor_build :: proc(p:^Protocol,name:string,fragments:[]Fragment_Desc,max_b
     type.words=words
     if words>MAX_STATE_WORDS {return}
     type_finish(p,&type,p.leaves[first:],max_bytes,parts) or_return
-    type.name=strings.clone(name,p.allocator)
+    no_name:runtime.Allocator_Error
+    if type.name,no_name=strings.clone(name,p.allocator);no_name!=nil {return}
     return type,true
 }
 
@@ -575,7 +589,9 @@ leaves_add :: proc(p:^Protocol,s:^serial.Schema,index:serial.Type_Index,field:^s
         if type.size>8 || type.count==0 {return false}
         leaf.kind,leaf.choices,leaf.count=.Enum,u32(len(p.choices)),type.count
         leaf.bits=u8(max(serial.bit_count_for(u64(type.count-1)),1))
-        for choice in serial.schema_choices(s,index) {append(&p.choices,choice.value)}
+        for choice in serial.schema_choices(s,index) {
+            if _,error:=append(&p.choices,choice.value);error!=nil {return false}
+        }
     case .Bit_Set:
         if type.size>8 {return false}
         top:=i64(0)
@@ -591,7 +607,7 @@ leaves_add :: proc(p:^Protocol,s:^serial.Schema,index:serial.Type_Index,field:^s
             part.kind,part.bits,part.words,part.size,part.source=.Unsigned,64,2,8,offset+half*8
             part.word=u16(words^)
             words^+=2
-            append(&p.leaves,part)
+            if _,error:=append(&p.leaves,part);error!=nil {return false}
         }
         return true
     case .Struct:
@@ -623,8 +639,8 @@ leaves_add :: proc(p:^Protocol,s:^serial.Schema,index:serial.Type_Index,field:^s
     if leaf.kind!=.Text && leaf.kind!=.Rotation && (leaf.bits>32 || leaf.kind==.Quaternion) {leaf.words=2}
     leaf.word=u16(words^)
     words^+=int(leaf.words)
-    append(&p.leaves,leaf)
-    return true
+    _,error:=append(&p.leaves,leaf)
+    return error==nil
 }
 
 @(private)

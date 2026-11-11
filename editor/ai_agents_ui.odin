@@ -5,6 +5,8 @@ import "core:math"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -30,7 +32,7 @@ ai_agent_glyph :: proc "contextless" (task:^Ai_Task) -> ui.Icon {
 
 // The glyph and color of a saved conversation that is not loaded: those of
 // its agent, the color as a new session takes it.
-ai_conversation_glyph :: proc(m:^Ai,c:^Ai_Conversation) -> (glyph:ui.Icon,color:ui.Color) {
+ai_conversation_glyph :: proc(m:^Ai,c:^ai_store.Conversation) -> (glyph:ui.Icon,color:ui.Color) {
     icon:=u8(c.id%AI_AGENT_ICON_COUNT)
     if glyph,ok:=ai_external_glyph(ai_external_client(string(c.provider[:c.provider_len])));ok {
         icon=glyph
@@ -45,10 +47,27 @@ ai_conversation_glyph :: proc(m:^Ai,c:^Ai_Conversation) -> (glyph:ui.Icon,color:
 
 ai_agent_visible :: proc "contextless" (task:^Ai_Task) -> bool {return !ai_task_finished(task) || ai_task_reviewable(task)}
 
-// A session has a row over the chat while it works or waits for review, and
-// while it is the one shown.
+// A unit is listed under the status line while it works or waits for review.
+// The main chat is not one: it is what the panel shows.
 ai_session_row_shown :: proc(s:^Session,task:^Ai_Task) -> bool {
-    return ai_task_current(s,task) && (ai_agent_visible(task) || task.id==s.ai.selected)
+    return task.id!=s.ai.main && ai_task_current(s,task) && ai_agent_visible(task)
+}
+
+// A finished subagent of the main chat, as the clock lists them.
+ai_finished_agent :: proc(m:^Ai,task:^Ai_Task) -> bool {
+    return ai_task_subagent(task) && task.conversation.parent==u64(m.main) && ai_task_finished(task)
+}
+
+// How many units work and how many changes wait for review, and the rows of the list.
+@(private)
+ai_units_count :: proc(s:^Session) -> (working,changes,rows:int) {
+    for &task in s.ai.tasks[:s.ai.task_count] {
+        if !ai_session_row_shown(s,&task) {continue}
+        rows+=1
+        if !ai_task_finished(&task) {working+=1}
+        else if ai_task_reviewable(&task) {changes+=ai_review_count(&task)}
+    }
+    return
 }
 
 // The glyph of a turn: the mark of Claude or Codex, or one of the others for
@@ -150,8 +169,9 @@ ai_chat_settings_button :: proc(s:^Session) {
     g:=s.gui;ctx:=g.ctx
     popup:=shell_id(g,"ai_settings_popup")
     id:=shell_id(g,"library_settings")
-    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Gear)),icon_color=ctx.theme.text_muted,style=.Ghost,width=22,height=22,active=ui.popup_is_open(ctx,popup)}).clicked {
+    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Gear)),icon_color=ctx.theme.text_muted,icon_size=15,style=.Ghost,width=24,height=24,active=ui.popup_is_open(ctx,popup)}).clicked {
         anchor,_:=ui.widget_rect(ctx,id)
+        ai_memory_ui_refresh(s)
         ui.popup_open(ctx,popup,anchor)
     }
 }
@@ -159,8 +179,12 @@ ai_chat_settings_button :: proc(s:^Session) {
 @(private)
 ai_chat_settings_build :: proc(s:^Session) {
     ctx:=s.gui.ctx;m:=s.ai
-    if ui.popup(ctx,shell_id(s.gui,"ai_settings_popup"),{align_right=true}) {
+    if ui.popup(ctx,shell_id(s.gui,"ai_settings_popup"),{align_right=true,width=AI_POPUP_WIDTH,padding=12,gap=10}) {
         ui.id_push(ctx,shell_id(s.gui,"ai_settings_popup"))
+        ai_settings_agents_build(s)
+        ui.divider(ctx)
+        ai_settings_memory_build(s)
+        ui.divider(ctx)
         if ui.menu_item(ctx,ui.id(ctx,"connections"),"Connections",{icon=ui.icon_user(u8(User_Icon.Connection)),disabled=!s.has_project}) {ai_connections_open(s)}
         if ui.menu_item(ctx,ui.id(ctx,"scene_agents"),"Show agents in scene",{icon=.Eye,checked=m.show_agents_in_scene}) {
             m.show_agents_in_scene=!m.show_agents_in_scene
@@ -172,12 +196,47 @@ ai_chat_settings_build :: proc(s:^Session) {
 
 AI_AGENT_ROW :: f32(32)
 
+AI_STATUS_HEIGHT :: f32(28)
+AI_STATUS_DOTS :: 6 // dots of the status line; more agents do not fit beside its text
+
 @(private)
 ai_chat_agents_height :: proc(s:^Session,width,height:f32) -> f32 {
-    count:=0
-    for &task in s.ai.tasks[:s.ai.task_count] {if ai_session_row_shown(s,&task) {count+=1}}
-    if count==0 {return 0}
-    return min(f32(count)*(AI_AGENT_ROW+3)-3,max(height-255,AI_AGENT_ROW))
+    working,changes,rows:=ai_units_count(s)
+    if working==0 && changes==0 {return 0}
+    if !s.ai.agents_open {return AI_STATUS_HEIGHT}
+    return AI_STATUS_HEIGHT+3+min(f32(rows)*(AI_AGENT_ROW+3)-3,max(height-255-AI_STATUS_HEIGHT,AI_AGENT_ROW))
+}
+
+// What the agents are doing, on one line, under the bar of the panel:
+// the dots of those that work and how many changes wait.
+@(private)
+ai_chat_status_build :: proc(s:^Session,working,changes:int) {
+    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    id:=ui.id(ctx,"agent_status")
+    it:=ui.interact(ctx,id)
+    if it.clicked {m.agents_open=!m.agents_open}
+    text:=""
+    if working>0 {text=working==1?"1 agent working":fmt.tprintf("%d agents working",working)}
+    if changes>0 {
+        part:=changes==1?"1 change to review":fmt.tprintf("%d changes to review",changes)
+        text=text!=""?fmt.tprintf("%s · %s",text,part):part
+    }
+    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_STATUS_HEIGHT),gap=8,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
+        if working>0 {
+            dots:=min(working,AI_STATUS_DOTS)
+            if ui.box(ctx,{width=ui.fixed(f32(dots-1)*12+15),height=ui.fixed(15)}) {
+                drawn:=0
+                for &task in m.tasks[:m.task_count] {
+                    if drawn==dots {break}
+                    if !ai_session_row_shown(s,&task) || ai_task_finished(&task) {continue}
+                    if ui.box(ctx,{width=ui.fixed(15),height=ui.fixed(15),align_x=.Center,align_y=.Center,fill=th.panel,radius=7.5,float={to=.Parent,offset={f32(drawn)*12,0}}}) {pulse_dot(ctx,ai_agent_color(&task),true,11)}
+                    drawn+=1
+                }
+            }
+        }
+        ui.label(ctx,text,th.font_small,th.text_muted,0)
+        ui.icon(ctx,m.agents_open?.Chevron_Up:.Chevron_Down,th.text_muted,11)
+    }
 }
 
 // What a session waits for from the user, at the right end of its row: an
@@ -203,14 +262,17 @@ ai_session_badge_build :: proc(ctx:^ui.Context,text:string,color:ui.Color) {
     }
 }
 
-// One row per session that works, waits for the user or is the one shown:
-// the color of its agent, its glyph, its title and what it waits for, or the
-// dot while it works. A click shows it.
+// The status line and, unfolded, one row per unit that works or waits for the
+// user: the color of its agent, its glyph, its title and what it waits for, or
+// the dot while it works. A click inspects it.
 @(private)
 ai_chat_agents_build :: proc(s:^Session,width,panel_height:f32) {
     m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
-    height:=ai_chat_agents_height(s,width,panel_height)
-    if height==0 {return}
+    working,changes,_:=ai_units_count(s)
+    if working==0 && changes==0 {m.agents_open=false;return}
+    ai_chat_status_build(s,working,changes)
+    if !m.agents_open {return}
+    height:=ai_chat_agents_height(s,width,panel_height)-AI_STATUS_HEIGHT-3
     if ui.scroll_area(ctx,ui.id(ctx,"agent_tasks"),&m.list_scroll,{width=ui.GROW,height=ui.fixed(height),gap=3}) {
         for &task in m.tasks[:m.task_count] {
             if !ai_session_row_shown(s,&task) {continue}
@@ -285,13 +347,13 @@ ai_review_card_height :: proc(count:int,open:bool) -> f32 {
 }
 
 // A dot that fades out and in while what it stands for works, lit otherwise.
-pulse_dot :: proc(ctx:^ui.Context,color:ui.Color,working:bool) {
+pulse_dot :: proc(ctx:^ui.Context,color:ui.Color,working:bool,side:f32=7) {
     alpha:=u8(255)
     if working {
         phase:=math.sin(f32(ctx.time)*2*math.PI/PULSE_SECONDS)
         alpha=u8(70+185*(0.5+0.5*phase))
     }
-    if ui.box(ctx,{width=ui.fixed(7),height=ui.fixed(7),fill=ui.color_alpha(color,alpha),radius=3.5}) {}
+    if ui.box(ctx,{width=ui.fixed(side),height=ui.fixed(side),fill=ui.color_alpha(color,alpha),radius=side*.5}) {}
 }
 
 // The one review of a session, over the composer: how many changes wait,
@@ -301,8 +363,10 @@ ai_chat_task_actions :: proc(s:^Session,task:^Ai_Task,width:f32) {
     ctx:=s.gui.ctx;m:=s.ai;th:=&ctx.theme
     if !ai_task_reviewable(task) && !task.needs_build {return}
     count:=ai_review_count(task)
-    if m.review_task!=task.id {m.review_task=task.id;m.review_at=-1}
-    if m.review_at>=count {m.review_at=-1}
+    // A walk through the changes of another unit, from its card, is left alone.
+    walked:=ai_task_find(m,m.review_task)
+    if m.review_task!=task.id && (walked==nil || !ai_task_reviewable(walked) || m.review_at<0) {m.review_task=task.id;m.review_at=-1}
+    if m.review_task==task.id && m.review_at>=count {m.review_at=-1}
     if ai_task_reviewable(task) && count>0 {
         buffer:[64]u8
         card:=ui.id(ctx,"review_card")
@@ -318,12 +382,11 @@ ai_chat_task_actions :: proc(s:^Session,task:^Ai_Task,width:f32) {
                 if it.clicked {m.review_open=!m.review_open}
                 ui.spacer(ctx)
                 if ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,icon_color=th.text_muted,style=.Ghost,width=22,height=22,icon_size=12,disabled=task.files_changed || !ai_review_revertible(s,&task.review)}).clicked {
-                    if message:=ai_task_revert(s,m,task);message!="" {notify(s,message)}
-                    else if task.review.skipped>0 {notify(s,fmt.bprintf(buffer[:],"%d newer edits were kept",task.review.skipped))}
+                    ai_review_revert_all(s,task)
                     return
                 }
                 if ui.button(ctx,ui.id(ctx,"finish"),{label="Accept all",style=.Accent,height=22,size=th.font_small,padding=10}).clicked {
-                    if ai_task_finish(s,m,task) {ai_chat_new(s)}
+                    ai_task_finish(s,m,task)
                     return
                 }
             }
@@ -369,7 +432,7 @@ ai_review_change_row :: proc(s:^Session,task:^Ai_Task,index:int) -> (changed:boo
         if ai_review_deleted(w,task,id) {
             name,status=ai_review_deleted_name(w,task,id),'D'
         } else {
-            name=entity_name(w,change_entity(w,id))
+            name=entity_name(w,history.change_entity(w,id))
             added,kept:=false,false
             for &transaction in task.review.transactions {
                 for &row in transaction.rows {
@@ -464,7 +527,7 @@ ai_review_bar :: proc(s:^Session,task:^Ai_Task,id:base.Entity_Id,width:f32) {
             if message:=ai_review_entity_revert(s,m,task,id);message!="" {notify(s,message);return}
             ai_review_resolved(s,task,id,walked)
         }
-        if ui.button(ctx,ui.id(ctx,"accept_entity"),{icon=.Check,icon_color=color,style=.Ghost,width=24,height=24,use_appearance=true,appearance={fill=ui.color_alpha(color,32),stroke=ui.color_alpha(color,65),radius=th.radius_control}}).clicked {
+        if ui.button(ctx,ui.id(ctx,"accept_entity"),{icon=.Check,icon_color=color,style=.Ghost,width=24,height=24,look=&ui.Node_Style{fill=ui.color_alpha(color,32),stroke=ui.color_alpha(color,65),radius=th.radius_control}}).clicked {
             ai_review_entity_accept(s,m,task,id)
             ai_review_resolved(s,task,id,walked)
         }
@@ -485,11 +548,11 @@ ai_review_walk :: proc(s:^Session,task:^Ai_Task,step:=1) {
     m.review_shown=0
     if m.review_at>=len(ids) {return}
     w:=edited_world(s)
-    if e:=change_entity(w,ids[m.review_at]);e!=core.NONE {
-        selection_set(s.selection,{e})
+    if e:=history.change_entity(w,ids[m.review_at]);e!=core.NONE {
+        history.selection_set(s.selection,{e})
         library_select(s,.Ai)
     } else if place,deleted:=ai_review_deleted_world(w,task,ids[m.review_at],0);deleted {
-        selection_clear(s.selection)
+        history.selection_clear(s.selection)
         m.review_shown,m.review_selection=ids[m.review_at],s.selection.serial
         s.viewport.orbit.target=place.position
         viewport_camera(s.viewport)
@@ -507,7 +570,7 @@ ai_review_resolved :: proc(s:^Session,task:^Ai_Task,id:base.Entity_Id,walked:boo
         m.review_at-=1
         if ai_task_reviewable(task) && task.review.pending {ai_review_walk(s,task);return}
     }
-    if e:=change_entity(edited_world(s),id);e!=core.NONE && len(s.selection.entities)==0 {selection_set(s.selection,{e})}
+    if e:=history.change_entity(edited_world(s),id);e!=core.NONE && len(s.selection.entities)==0 {history.selection_set(s.selection,{e})}
 }
 
 // The deletion Details shows: the one the walk brought into sight, while the
@@ -528,7 +591,7 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
     ctx:=s.gui.ctx;th:=&ctx.theme
     transaction:=ai_review_deletion(w,task,id)
     if transaction==nil {return}
-    before:=make([]^Change_Row,len(w.info.tables),context.temp_allocator)
+    before:=make([]^history.Change_Row,len(w.info.tables),context.temp_allocator)
     for &row in transaction.rows {
         if row.id==id && row.before_present && !row.after_present && row.table>=0 && row.table<len(before) {before[row.table]=&row}
     }
@@ -566,7 +629,7 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
             for &t,index in w.info.tables {
                 row:=before[index]
                 if row==nil || t.place!=.World || !inspector_visible(s,&t) || inspector_primary(&t)!=(pass==0) {continue}
-                value:=change_materialize(w,t.info,row.before)
+                value:=history.change_materialize(w,t.info,row.before)
                 c:=Inspect{s=s,w=w,t=&t,index=index,table=core.world_table_at(w,&t),name=t.name,type=t.type,value=raw_data(value),size=t.info.size}
                 component_section(&c,width)
             }
@@ -643,14 +706,14 @@ ai_chat_question_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
         for label,index in ([2]string{"Yes","No"}) {
             size:=ui.text_width(&ctx.font,label,th.font_small)+22
             place(ctx,&open,&used,width,size)
-            if ui.button(ctx,ui.id(ctx,"confirm",index+1),{label=label,width=size,height=ctx.theme.control,size=th.font_small,center=true,use_appearance=true,appearance=appearance}).clicked {answer(s,task,label)}
+            if ui.button(ctx,ui.id(ctx,"confirm",index+1),{label=label,width=size,height=ctx.theme.control,size=th.font_small,center=true,look=&appearance}).clicked {answer(s,task,label)}
         }
     case .Single:
         for index in 0..<count {
             label:=string(options[index])
             size:=min(ui.text_width(&ctx.font,label,th.font_small)+22,width)
             place(ctx,&open,&used,width,size)
-            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-22),width=size,height=ctx.theme.control,size=th.font_small,center=true,use_appearance=true,appearance=appearance}).clicked {answer(s,task,label)}
+            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-22),width=size,height=ctx.theme.control,size=th.font_small,center=true,look=&appearance}).clicked {answer(s,task,label)}
         }
     case .Multi:
         for index in 0..<count {
@@ -660,7 +723,7 @@ ai_chat_question_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
             picked:=&m.picked[index]
             style:=appearance
             if !picked^ {style={fill=ui.color_alpha(color,8),stroke=ui.color_alpha(color,40),radius=13,text=appearance.text}}
-            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-34),icon=picked^?.Checkbox_Checked:.Checkbox,icon_color=color,icon_size=12,width=size,height=ctx.theme.control,size=th.font_small,use_appearance=true,appearance=style}).clicked {picked^=!picked^}
+            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-34),icon=picked^?.Checkbox_Checked:.Checkbox,icon_color=color,icon_size=12,width=size,height=ctx.theme.control,size=th.font_small,look=&style}).clicked {picked^=!picked^}
         }
         chosen:[AI_QUESTION_BYTES]u8
         length:=0

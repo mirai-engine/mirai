@@ -3,6 +3,7 @@ package editor
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -15,21 +16,11 @@ Clipboard_Test_Lamp :: struct {
 }
 
 Clipboard_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     lamps:core.Table(Clipboard_Test_Lamp),
-}
-
-@(private="file")
-clipboard_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Clipboard_Test_World)data
-    core.table_settle(&w.ids,&w.entities)
-    core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.lamps,&w.entities)
-    core.entities_settle(&w.entities)
 }
 
 Clipboard_Test_Board :: struct {text:[4096]u8,length:int}
@@ -48,24 +39,10 @@ clipboard_test_set :: proc(user:rawptr,text:string) {
 @(test)
 inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) {
     world:Clipboard_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    core.table_init(&world.lamps,"Clipboard_Test_Lamp")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    defer core.table_destroy(&world.lamps)
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Clipboard_Test_World,ids)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Clipboard_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Clipboard_Test_World,parents)},
-        {name="Clipboard_Test_Lamp",type=Clipboard_Test_Lamp,info=type_info_of(Clipboard_Test_Lamp),offset=offset_of(Clipboard_Test_World,lamps)},
-    }
+    if !core.test_world_init(t,&world) {return}
+    defer core.test_world_destroy(&world)
     LAMP :: 3
-    info:=core.World_Info{entities=offset_of(Clipboard_Test_World,entities),tables=tables[:],settle=clipboard_test_settle}
+    info:=core.test_world_info(&world)
     a,b,c:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     for e,i in ([3]core.Entity{a,b,c}) {
         core.add(&world.ids,e,core.Id{base.Entity_Id(i+1)})
@@ -73,26 +50,26 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     }
     core.add(&world.lamps,a,Clipboard_Test_Lamp{color={1,0.5,0.25},intensity=3,target=c,mesh={7,9}})
     core.add(&world.lamps,b,Clipboard_Test_Lamp{})
-    clipboard_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
 
     board:Clipboard_Test_Board
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{no_font=true,clipboard_get=clipboard_test_get,clipboard_set=clipboard_test_set,clipboard_user=&board}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx}
-    edits:Edits
-    selection:Selection
+    edits:history.Edits
+    selection:history.Selection
     viewport:Viewport
     inspector:Inspector
-    s:=Session{info=&info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,inspector=&inspector}
+    s:=Session{info=info,edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,inspector=&inspector}
     w:=edited_world(&s)
-    edits_reset(&edits,w)
-    defer edits_free(&edits)
+    history.edits_reset(&edits,w)
+    defer history.edits_free(&edits)
     defer delete(selection.entities)
     // A paste, and the end of its frame that records the step.
     paste :: proc(s:^Session,menu:Value_Menu) -> string {
         message:=value_paste(s,edited_world(s),menu)
-        edits_flush(s.edits,edited_world(s),s.selection)
+        history.edits_flush(s.edits,edited_world(s),s.selection)
         return message
     }
     clipboard :: proc(b:^Clipboard_Test_Board) -> string {return string(b.text[:b.length])}
@@ -104,22 +81,22 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
 
     // A component goes under its name, as `components` of the API, with the
     // entity it names by its id.
-    selection_set(&selection,{a})
+    history.selection_set(&selection,{a})
     testing.expect_value(t,value_copy(&s,w,component),"Copied ")
     text:=clipboard(&board)
     testing.expectf(t,strings.has_prefix(text,`{"Clipboard_Test_Lamp":{`) && strings.contains(text,"intensity"),"component text: %s",text)
-    selection_set(&selection,{b})
+    history.selection_set(&selection,{b})
     testing.expect_value(t,paste(&s,component),"")
     testing.expect_value(t,lamp(&world,b),lamp(&world,a))
     testing.expect_value(t,edits.cursor,1)
-    testing.expect(t,undo(&edits,w,&selection))
+    testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect_value(t,lamp(&world,b),Clipboard_Test_Lamp{})
 
     // A field is its value, and goes to a field of the same type.
-    selection_set(&selection,{a})
+    history.selection_set(&selection,{a})
     value_copy(&s,w,color)
     testing.expect_value(t,clipboard(&board),"[1, 0.5, 0.25]")
-    selection_set(&selection,{b})
+    history.selection_set(&selection,{b})
     testing.expect_value(t,paste(&s,color),"")
     testing.expect_value(t,lamp(&world,b).color,[3]f32{1,0.5,0.25})
     testing.expect(t,paste(&s,intensity)!="","three numbers are not an intensity")
@@ -142,11 +119,11 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     testing.expect_value(t,edits.cursor,cursor)
 
     // The Transform reads as the API writes an entity, rotation in degrees.
-    selection_set(&selection,{a})
+    history.selection_set(&selection,{a})
     value_copy(&s,w,{kind=.Transform})
     text=clipboard(&board)
     testing.expectf(t,strings.has_prefix(text,`{"position":[1,2,3],"rotation_deg":[`) && strings.has_suffix(text,`"scale":[2,2,2]}`),"transform text: %s",text)
-    selection_set(&selection,{b,c})
+    history.selection_set(&selection,{b,c})
     cursor=edits.cursor
     testing.expect_value(t,paste(&s,{kind=.Transform}),"")
     testing.expect_value(t,edits.cursor,cursor+1)
@@ -161,7 +138,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     testing.expect_value(t,entity_local(w,c).position,[3]f32{1,2,3})
 
     // Add component adds what the text names to the entities without it.
-    selection_set(&selection,{c})
+    history.selection_set(&selection,{c})
     put(&board,`{"Clipboard_Test_Lamp":{"intensity":5}}`)
     testing.expect_value(t,paste(&s,{kind=.Components}),"")
     testing.expect(t,core.has(core.read(&world.lamps),c) && lamp(&world,c).intensity==5)

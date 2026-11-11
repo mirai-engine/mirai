@@ -10,6 +10,7 @@ import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import lib "mirai:std/anim"
+import "base:runtime"
 
 // A mesh that shows the pose of a rig of its skeleton instead of posing its own;
 // with a skeleton of its own it is a rig that follows that one (Rig.leader).
@@ -122,12 +123,12 @@ skeleton_assets_free :: proc(cache:^Skeleton_Assets) {
 // of the registry, on disk or unsaved in its memory, or what the host gave out
 // of one. A content looks at its record again only then. Never 0.
 @(private)
-assets_stamp :: proc "contextless" (app:^host.App) -> u64 {return app.assets.revision+app.assets.registry.revision+1}
+assets_stamp :: proc "contextless" (assets:^host.Assets) -> u64 {return assets.revision+assets.registry.revision+1}
 
-skeleton_content :: proc(cache:^Skeleton_Assets,app:^host.App,id:base.Asset_Id) -> ^Skeleton_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
-    if cache.rows==nil {cache.rows=make(map[base.Asset_Id]u32,app.allocator)}
+skeleton_content :: proc(cache:^Skeleton_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Skeleton_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
+    if cache.rows==nil {cache.rows=make(map[base.Asset_Id]u32,allocator)}
     row,found:=cache.rows[id]
     if !found {
         row=u32(len(cache.contents))
@@ -135,41 +136,41 @@ skeleton_content :: proc(cache:^Skeleton_Assets,app:^host.App,id:base.Asset_Id) 
         if map_insert(&cache.rows,id,row)==nil {pop(&cache.contents);return nil}
     }
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if len(content.bones)>0 else nil}
-    record,exists:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if len(content.bones)>0 else nil}
+    record,exists:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if exists {stamp={record.size,record.time}}
-    if found && content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app);return content if len(content.bones)>0 else nil}
+    if found && content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(assets);return content if len(content.bones)>0 else nil}
     bones:[]asset.Skeleton_Bone
     sockets:[]asset.Skeleton_Socket
     mirror:[]i32
     body:=lib.body_map_empty()
     error:=asset.Error.Not_Found
-    if exists {bones,sockets,body,error=skeleton_read(app,id)}
+    if exists {bones,sockets,body,error=skeleton_read(assets,allocator,id)}
     if error==.None {
         paired:bool
-        if mirror,paired=skeleton_mirror_pairs(bones,app.allocator);!paired {delete(bones);delete(sockets);bones,sockets=nil,nil;error=.Out_Of_Memory}
+        if mirror,paired=skeleton_mirror_pairs(bones,allocator);!paired {delete(bones);delete(sockets);bones,sockets=nil,nil;error=.Out_Of_Memory}
     }
     if error==.None && len(bones)==0 {error=.Invalid}
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     delete(content.bones);delete(content.sockets);delete(content.mirror);content.bones,content.sockets,content.mirror=bones,sockets,mirror
     content.body=body if error==.None else lib.body_map_empty()
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
     return content if error==.None else nil
 }
 
 @(private)
-skeleton_read :: proc(app:^host.App,id:base.Asset_Id) -> ([]asset.Skeleton_Bone,[]asset.Skeleton_Socket,lib.Body_Map,asset.Error) {
+skeleton_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ([]asset.Skeleton_Bone,[]asset.Skeleton_Socket,lib.Body_Map,asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,asset.KIND_SKELETON,&file);error!=.None {return nil,nil,{},error}
+    if error:=host.assets_file(assets,id,asset.KIND_SKELETON,&file);error!=.None {return nil,nil,{},error}
     defer asset.asset_close(&file)
-    view,error:=asset.skeleton_view(&file,&app.assets.types)
+    view,error:=asset.skeleton_view(&file,&assets.types)
     if error!=.None {return nil,nil,{},error}
-    bones,allocation:=make([]asset.Skeleton_Bone,len(view.bones),app.allocator)
+    bones,allocation:=make([]asset.Skeleton_Bone,len(view.bones),allocator)
     if allocation!=nil {return nil,nil,{},.Out_Of_Memory}
     copy(bones,view.bones)
-    sockets,socket_allocation:=make([]asset.Skeleton_Socket,len(view.sockets),app.allocator)
+    sockets,socket_allocation:=make([]asset.Skeleton_Socket,len(view.sockets),allocator)
     if socket_allocation!=nil {delete(bones);return nil,nil,{},.Out_Of_Memory}
     copy(sockets,view.sockets)
     return bones,sockets,asset.skeleton_body_map(view.bones,view.body,view.body_parts),.None
@@ -234,6 +235,8 @@ skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Conten
         if resize(&next.regions,count)!=nil {return false}
         if !lib.body_regions(next.parents[:],body,next.regions[:]) {clear(&next.regions);next.body={}}
     }
+    if !tracks_bind(playback,&next,clip) {return false}
+    tracks_release(playback,state);state.tracks,next.tracks=next.tracks,0
     delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases)
     delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled);delete(state.previous)
     delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions)
@@ -331,23 +334,20 @@ animation_bone_transform :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Re
 Bone_Handle :: struct {rig:core.Entity,index:i32,revision:u64}
 Pose_Request :: struct {rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32,binding:Bone_Handle}
 
-animation_pose :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32=1) -> bool {
-    if requests==nil || rig==core.NONE {return false}
-    if _,valid:=bone_ref_hash(bone);!valid {return false}
-    return pose_request_push(&requests.poses,{rig=rig,bone=bone,transform=transform,weight=weight})
+animation_pose :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,transform:mm.Transform,weight:f32=1) {
+    if requests==nil {return}
+    if _,valid:=bone_ref_hash(bone);rig==core.NONE || !valid {core.refuse(&requests.poses);return}
+    pose_request_offer(&requests.poses,{rig=rig,bone=bone,transform=transform,weight=weight})
 }
 
 @(private)
-pose_request_push :: proc(queue:^core.Queue(Pose_Request),request:Pose_Request) -> bool {
+pose_request_offer :: proc(queue:^core.Queue(Pose_Request),request:Pose_Request) {
     transform,weight:=request.transform,request.weight
-    if !finite(weight) || weight<0 || weight>1 {return false}
-    for value in transform.position {if !finite(value) {return false}}
-    for value in transform.scale {if !finite(value) {return false}}
-    if !(abs(linalg.dot(transform.rotation,transform.rotation)-1)<0.002) {return false}
-    if cap(queue.items)==0 && reserve(&queue.items,REQUEST_CAPACITY)!=nil {return false}
-    if len(queue.items)>=cap(queue.items) {return false}
-    core.push(queue,request)
-    return true
+    valid:=finite(weight) && weight>=0 && weight<=1 && abs(linalg.dot(transform.rotation,transform.rotation)-1)<0.002
+    for value in transform.position {valid&&=finite(value)}
+    for value in transform.scale {valid&&=finite(value)}
+    if !valid {core.refuse(queue);return}
+    core.offer(queue,request)
 }
 
 animation_bone_bind :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Ref) -> (Bone_Handle,bool) {
@@ -369,22 +369,24 @@ animation_sample_pose :: proc(playback:^Playback,rig:core.Entity,out:[]mm.Transf
     return
 }
 
-animation_requests_reserve :: proc(requests:^Animation_Requests,poses:int=REQUEST_CAPACITY,final_poses:int=REQUEST_CAPACITY) -> bool {
-    if requests==nil || poses<0 || final_poses<0 || poses>65536 || final_poses>65536 {return false}
-    return reserve(&requests.poses.items,poses)==nil && reserve(&requests.final_poses.items,final_poses)==nil
+// Room for final_poses in a tick, past the room of Animation_Settings: what a library that sends one per bone keeps.
+animation_requests_reserve :: proc(requests:^Animation_Requests,final_poses:int) -> bool {
+    if requests==nil || final_poses<0 || final_poses>65536 {return false}
+    return final_poses<=cap(requests.final_poses.items) || reserve(&requests.final_poses.items,final_poses)==nil
 }
 
 animation_pose_final :: proc{animation_pose_final_ref,animation_pose_final_binding}
 
-animation_pose_final_ref :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,world:mm.Transform,weight:f32=1) -> bool {
-    if requests==nil || rig==core.NONE {return false}
-    if _,valid:=bone_ref_hash(bone);!valid {return false}
-    return pose_request_push(&requests.final_poses,{rig=rig,bone=bone,transform=world,weight=weight})
+animation_pose_final_ref :: proc(requests:^Animation_Requests,rig:core.Entity,bone:Bone_Ref,world:mm.Transform,weight:f32=1) {
+    if requests==nil {return}
+    if _,valid:=bone_ref_hash(bone);rig==core.NONE || !valid {core.refuse(&requests.final_poses);return}
+    pose_request_offer(&requests.final_poses,{rig=rig,bone=bone,transform=world,weight=weight})
 }
 
-animation_pose_final_binding :: proc(requests:^Animation_Requests,binding:Bone_Handle,world:mm.Transform,weight:f32=1) -> bool {
-    if requests==nil || binding.rig==core.NONE || binding.index<0 || binding.revision==0 {return false}
-    return pose_request_push(&requests.final_poses,{rig=binding.rig,transform=world,weight=weight,binding=binding})
+animation_pose_final_binding :: proc(requests:^Animation_Requests,binding:Bone_Handle,world:mm.Transform,weight:f32=1) {
+    if requests==nil {return}
+    if binding.rig==core.NONE || binding.index<0 || binding.revision==0 {core.refuse(&requests.final_poses);return}
+    pose_request_offer(&requests.final_poses,{rig=binding.rig,transform=world,weight=weight,binding=binding})
 }
 
 @(private)

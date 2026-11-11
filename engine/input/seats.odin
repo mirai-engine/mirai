@@ -2,6 +2,7 @@ package input
 
 import "mirai:core"
 import "mirai:host"
+import mm "mirai:std/math"
 
 // Who drives what. A seat is someone who plays: at this machine (a slot), or
 // at another end of the network (a peer, which the network seats on a
@@ -28,7 +29,7 @@ BLOCK_CAPACITY :: 64
 @(component,shared,description="What the body is asked this tick: from the seat that drives it, an AI, the network or a replay.")
 Move_Input :: struct {
     move:[3]f32 `mirai:"readonly"`,                // in the axes of the look yaw: +X right, +Y up (modes that fly), -Z forward; up to 1 long
-    look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // yaw turns left about the up of the body (core.Vertical), pitch looks up; at 0 it looks along -Z, as a camera. A physics Character's body faces it with +Z: ground that turns adds to it through whoever writes it
+    look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // yaw turns left about the up of the body (core.Vertical), pitch looks up; at 0 it looks along -Z, as everything does. Ground that turns adds to it through whoever writes it
     buttons:Action_Mask `mirai:"readonly"`,        // the button actions held
 }
 #assert(size_of(Move_Input)==32)
@@ -153,6 +154,14 @@ body_of :: proc(drivables:core.Read(Drivable),seat:core.Entity) -> core.Entity {
 seat_of :: proc(drivables:core.Read(Drivable),body:core.Entity) -> core.Entity {
     value,ok:=core.get(drivables,body)
     return ok?value.seat:core.NONE
+}
+
+// The ray of the view of a body: from its Drivable.camera, where it looks, as
+// the player sees it, whatever the mode of the camera. False without a camera.
+aim :: proc(drivables:core.Read(Drivable),worlds:core.Read(core.World_Transform),body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
+    drivable:=core.get(drivables,body) or_return
+    placed:=core.get(worlds,drivable.camera) or_return
+    return placed.position,mm.quat_forward(placed.rotation),true
 }
 
 // The seat of a local slot; none without one.
@@ -315,10 +324,10 @@ Apply :: struct {
 // blocks take.
 @(step="fixed",stage="input")
 input_drive :: proc(
-    es:^core.Entities,drivables:^core.Table(Drivable),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
+    es:core.Ref(core.Entities),drivables:^core.Table(Drivable),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
     network:core.Ref(core.Network),elsewhere:core.Read(core.Remote),problems:^core.Problems,
 ) {
-    a:=Apply{es=es,drivables=drivables,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
+    a:=Apply{es=es.ptr,drivables=drivables,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
     for request in core.take(&requests.queue) {request_apply(&a,request)}
     upkeep(&a)
     blocks_apply(seats,state)

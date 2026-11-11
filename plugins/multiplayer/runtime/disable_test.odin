@@ -9,19 +9,21 @@ import wire "mirai:net"
 // with its value, and on again when the server turns it on.
 @(test)
 components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T) {
-    info:=net_test_info();defer delete(info.tables);defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
     sessions:[2]Net_Session
     entities:[2]core.Entity
     for &world,index in worlds {
-        net_test_init(&world,context.allocator)
-        entities[index]=net_test_body(&world,1)
+        net_test_init(&world,&info)
+        entities[index]=net_test_body(&world,&info,1)
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
     }
-    defer for &world in worlds {net_test_destroy(&world)}
+    defer for &world in worlds {core.world_destroy(&info,.World,&world)}
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=11,endpoints=2,packets=1024})) {return}
     defer wire.sim_network_destroy(&network)
@@ -42,9 +44,9 @@ components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T)
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
         server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
-        client_commands(&sessions[1],core.world_ref(client,&info),&apps[1],wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
         client_place(&sessions[1],core.world_ref(client,&info),wire.clock_interpolation_tick(&sessions[1].host,u32(tick)),nil)
-        net_test_settle(client,nil,nil)
+        core.settle(&info,client,nil)
         switch tick {
         case 21: core.add(&server.objects,entities[0],net_test_replicate(audience=.Always))
         case 50:
@@ -61,8 +63,8 @@ components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T)
             on,_,_:=client_state(client,entities[1])
             testing.expect(t,on,"on again")
         }
-        net_test_settle(server,nil,nil)
-        server_publish(&sessions[0],core.world_ref(server,&info),&apps[0],&outbox,u32(tick))
+        core.settle(&info,server,nil)
+        server_publish(&sessions[0],core.world_ref(server,&info),&outbox,u32(tick))
     }
     testing.expect_value(t,problems[0].count,0)
 }

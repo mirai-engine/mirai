@@ -9,7 +9,9 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
@@ -296,7 +298,7 @@ ai_context_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool 
             if text:=ai_entity_id_text(w,e);text!="" {append(&selection,text)}
         }
     }
-    document:=Ai_Context_Document{path=document_path(s.document),state=edits_scene_state(s.edits),dirty=document_dirty(s),entities=core.world_entities(w).alive}
+    document:=Ai_Context_Document{path=document_path(s.document),state=history.edits_scene_state(s.edits),dirty=document_dirty(s),entities=core.world_entities(w).alive}
     context_value:=Ai_Context{
         task=base.text_get(task.name[:]),mode=task.play?"play":"edit",instructions=ai_instructions_read(s),
         region={rect={task.region.x,task.region.y,task.region.w,task.region.h},window=task.window},
@@ -366,58 +368,86 @@ ai_state_write :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref) -> bool {
 }
 
 // The methods a turn uses most, named in the instructions by their MCP tool.
-AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","play.start","play.step","play.inspect","play.check","play.set","play.capture","play.stop","view.viewport","editor.capture","panel.save","asset.import","finish","engine.describe"}
+AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","play.start","play.step","scene.save","asset.save","play.inspect","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
 // The methods whose parameters go in the instructions, from the live
 // registry: most of what a turn does, without looking their schemas up.
 AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","finish"}
 
-// The instructions of a turn. The agent works on the game of the project:
-// the open scene through the API, Play to test it, and game code in the
-// project folder, which it builds. The engine is not its work: of it, it only
-// gets the declarations the project compiles against and the gameplay skill.
+// The instructions that hold for every turn: who the agent is, its rules, the
+// tools and their schemas and the memory of the project. The agent works on the
+// game of the project: the open scene through the API, Play to test it, and game
+// code in the project folder, which it builds. Nothing here is about one turn:
+// the same text goes out while the project does not change, so that the prompt
+// cache of the agent holds. A subagent adds what it is.
 @(private)
-ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
+ai_prompt_stable :: proc(s:^Session,kind:ai_store.Conversation_Kind) -> string {
     b:=strings.builder_make(context.temp_allocator)
     engine:=s.engine_root
-    turn:=base.text_get(task.name[:])
     fmt.sbprintf(&b,"You are the game agent of the Mirai project at %s, working from inside its editor, which is running.\n",s.project_root)
     strings.write_string(&b,"Respond in English. Do not narrate tool use, progress, or collection of automatically supplied context. Do not write assistant chat messages before or after completing the task.\n")
     strings.write_string(&b,"Call the `mirai` MCP tool `finish` exactly once when this request is complete. For questions or explanations, put the final English answer in its optional `response` field. For tasks whose result is visible in the editor, omit `response`. This is the only way to send a response to the user; finish with an empty assistant response afterward.\n")
     strings.write_string(&b,"When `response` names entities of the scene, write each one as [Name](entity:ID) with the id the API gives it: the chat shows it as a pill that selects it. Name an asset you created or changed as [Name](asset:path), with its path under the assets folder (materials/Wet stone.mat): the pill opens its document.\n")
     fmt.sbprint(&b,"When you need the user to decide instead of guessing, finish with a `question` instead of closing the subject; their answer arrives as the next message of this conversation.\n")
     strings.write_string(&b,"- Your work is the game of this project: edit the open scene through the editor API, play it when the user asks to try or test something, and write game code (components, storages and loop functions) in the project folder when the request needs it. Do only what the request asks. The engine is not part of your work: do not read or change its source or its documentation, and do not write outside the project folder.\n")
-    fmt.sbprintf(&b,"- You build the code you write; the user never does. `%s` compiles it and a build that succeeds loads it into the running editor, new components and storages too, without closing it or ending this turn; `%s` says when it ends, and `%s` lists its errors (`build`, with file and line). `%s` checks the types without building, and `%s` runs the @(test) procedures of the project. `play_start` builds first by itself when an Odin source changed.\n",ai_tool_name("build.start"),ai_tool_name("build.status"),ai_tool_name("engine.diagnostics"),ai_tool_name("build.check"),ai_tool_name("build.test"))
+    fmt.sbprintf(&b,"- You build the code you write; the user never does. `%s` compiles it, answers when it ends with each error and its file and line, and a build that succeeds loads it into the running editor, new components and storages too, without closing it or ending this turn. `%s` checks the types without building, and `%s` runs the @(test) procedures of the project. `play_start` builds first by itself when an Odin source changed and answers when the game plays. Assets and shaders you change on disk are picked up by the editor at its next call.\n",ai_tool_name("build.start"),ai_tool_name("build.check"),ai_tool_name("build.test"))
     if decl,plugins:=code_api_folders(s);decl!="" {
         fmt.sbprintf(&b,"- The public API the code of the project compiles against is in %s (the collection `mirai`)",decl)
         if plugins!="" {fmt.sbprintf(&b," and %s (the collection `plugins`)",plugins)}
         strings.write_string(&b,": read the declarations there for the types and procedures you use, not the sources of the engine.\n")
     }
-    strings.write_string(&b,"- You may read files outside the project only to import them, as when the user names a model in Downloads or an image in Pictures: `asset_import` takes the path wherever it is and writes the assets into the project, in `folder` when given; it runs in the background and `asset_import_status` says when it ended and what it wrote. Deleting a file asks the user first and moving one does not; delete an asset with `asset_delete`, which moves it to the trash, after `asset_users` says what uses it.\n")
+    strings.write_string(&b,"- You may read files outside the project only to import them, as when the user names a model in Downloads or an image in Pictures: `asset_import` takes the path wherever it is and writes the assets into the project, in `folder` when given; it answers when it ends with what it wrote. Deleting a file asks the user first and moving one does not; delete an asset with `asset_delete`, which moves it to the trash, after `asset_users` says what uses it.\n")
     strings.write_string(&b,"- When the game is slow or the user asks about performance, measure instead of guessing: `profile.capture` records frames and answers with what bounds them, the costliest functions, GPU passes and notes on how to read them; `profile.frames` and `profile.zone` explain a spike or a function, and `profile.compare` says whether a change helped. With VSync or a frame limit on it refuses and says how to turn them off; `allow_limited` measures anyway, and then read `cpu_ms` and the functions rather than the frame time.\n")
-    strings.write_string(&b,"- Saved games of the project: `save.list` and `save.inspect` read their slots and `save.delete` removes one; `save.write` and `save.load` save and load your run of the game as the game asks for it, so start it with `play.start` first.\n")
+    strings.write_string(&b,"- Saved games of the project: `save.list` reads their slots and `save.delete` removes one; `save.write` and `save.load` save and load your run of the game as the game asks for it, so start it with `play.start` first.\n")
     if gameplay:=project.path(engine,".agents/skills/mirai-gameplay/SKILL.md",allocator=context.temp_allocator);engine!="" && os.is_file(gameplay) {
         fmt.sbprintf(&b,"- Only when you write game code, read %s and the references it links; it is the only engine documentation you need. Editing the scene does not need it.\n",gameplay)
     }
-    fmt.sbprintf(&b,"- The memory of this project is yours to keep, in its folder, versioned with the game: %s says how this game is made (what each system does, its conventions, what the user decided) and %s holds the procedures you repeat, one SKILL.md per folder with a name and a description. Read AGENTS.md when a chat starts, if it exists. Write there only what matters and holds beyond this request: a decision of the user, a convention of this game, how one of its systems works, a trap that cost you time. Not the details of a task, nothing trivial, nothing the code or the scene already says. Each one is a line under its topic that replaces what it changes: the file describes the game as it is now, not a log of what was done.\n",project.path(s.project_root,AI_PROJECT_MEMORY,allocator=context.temp_allocator),project.path(s.project_root,AI_PROJECT_SKILLS,allocator=context.temp_allocator))
+    fmt.sbprintf(&b,"- The memory of this project is yours to keep, versioned with the game, and what it says comes with these instructions, at the end. `%s` keeps a decision of the user, a convention of this game, how one of its systems works or a trap that cost you time, one per `topic` (a slug), with `scope` `project`: each save replaces the whole topic, so write it as the topic is now, not as a log. Without a `topic` it replaces %s, the short index of what each topic holds (at most %d bytes), and `scope` `user` replaces what holds for this user in every project (at most %d bytes). `%s` finds the topics by their words and `%s` gives one; the topics are in %s. Write there only what matters and holds beyond this request: not the details of a task, nothing trivial, nothing the code or the scene already says. What only this chat needs, the work under way and what comes next, goes with `%s`, whose notes replace the ones before and outlive this context. %s holds the procedures you repeat, one SKILL.md per folder with a name and a description.\n",ai_tool_name("memory.save"),project.path(s.project_root,AI_PROJECT_MEMORY,allocator=context.temp_allocator),AI_MEMORY_INDEX_BYTES,AI_MEMORY_USER_BYTES,ai_tool_name("memory.search"),ai_tool_name("memory.read"),ai_memory_topics_folder(s),ai_tool_name("chat.note"),project.path(s.project_root,AI_PROJECT_SKILLS,allocator=context.temp_allocator))
     strings.write_string(&b,"- The earlier chats of this project are its raw memory: `ai.history.search`, through `call`, finds what was asked, answered or done in them by words, an entity id or an asset path, and `ai.history` with the `id` of a hit's conversation and `before` reads the messages around it.\n")
     strings.write_string(&b,"- The MCP server `mirai` of the editor has one tool per API method, named after it with `_` for `.`; call them directly:")
     for method,i in AI_PROMPT_TOOLS {fmt.sbprintf(&b,"%s `%s`",i==0?"":",",ai_tool_name(method))}
     strings.write_string(&b,".\n")
-    strings.write_string(&b,"- Entity ids are 16 hex digits in strings. An edit changes only the fields it names, and the user may edit meanwhile: read again before you rely on what you read earlier. Edits that belong together go in one `scene_batch` (up to 64, one undo step). To build or rewrite a group of entities, `scene_write` declares an entity and what hangs from it as one nested document in one step; `scene_inspect` with `root` gives that document to edit and write back. A method that fails changes nothing.\n")
+    strings.write_string(&b,"- An entity is named by `entity` with its name, a path Parent/Child, its id or its handle; a name that several have fails listing them. An asset is named by its path under assets/ or its id. An edit changes only the fields it names, and the user may edit meanwhile: read again before you rely on what you read earlier. Edits that belong together go in one `scene_batch` (up to 64, one undo step). To build or rewrite a group of entities, `scene_write` declares an entity and what hangs from it as one nested document in one step; `scene_inspect` with `root` gives that document to edit and write back. A method that fails changes nothing.\n")
     if st:=api_state(s);st!=nil {
         listed:=false
         for name in AI_PROMPT_SCHEMAS {
             method:=api.method_find(&st.server,name)
             if method==nil {continue}
-            if !listed {strings.write_string(&b,"- Parameters of the tools used most, as JSON Schema; they are complete, so call those tools without looking them up (`engine_describe` has the others: without params it lists the methods and the plugins, and `methods`, `plugin` or `prefix` give the schemas of a few):\n");listed=true}
+            if !listed {strings.write_string(&b,"- Parameters of the tools used most, as JSON Schema; they are complete, so call those tools without looking them up (`engine_describe` has the others: without params it is a short index of the methods and the plugins, and `methods` gives the schemas of a few):\n");listed=true}
             w:serial.Writer
             serial.writer_init(&w,0,context.temp_allocator)
             api.method_schema_write(&w,&st.server,method,false)
             fmt.sbprintf(&b,"  - `%s`: %s\n",name,string(serial.writer_bytes(&w)))
         }
     }
+    strings.write_string(&b,"- To let the user try a scene in Play, write a link to it in your response as `[What to try](play:path of the scene under the assets folder)`: the chat draws it as a button that opens the scene and plays it.\n")
+    strings.write_string(&b,"- The tools of the server `mirai` are the basics of a scene. Every other method, of the editor or of a plugin (animation, terrain, navigation, physics, particles, interfaces and the rest), goes through the tool `call` with its name as `method` and its `params`; `engine_describe` with `methods` (several names at once), `prefix` or `plugin` gives their schemas. The methods named below by their tool name (such as `panel_save`) go through `call` too when they are not tools.\n")
+    if tool:=ai_client_path(engine);tool!="" {fmt.sbprintf(&b,"- For many calls, write and run a script instead of calling tools one by one, with `%s rpc <method> '<json>'` (or `--file params.json`) for each call, never with requests of your own to the editor.\n",tool)}
+    strings.write_string(&b,"- Do not edit scene files while the editor has them open.\n")
+    strings.write_string(&b,"- To test the game, `play_start` opens a copy of your own that only `play_step` advances, with keys, the pointer (`mouse_position` clicks its UI), `text`, gamepads of local seats, `segments` that change them along the ticks (each held `for` a number of ticks or a text like `1.5s`, `tap_keys` for a press shorter than a tick, `mouse_delta` spread over the segment), `until` to run until conditions hold and a `trace` that returns values every some ticks; test as a player does: a click is a press of a few ticks then a release, a double click two of them with a gap, `press` clicks a button of its UI by name; `drive` walks the focused player to an entity or a position and says where it ended and why (a raised platform it arrives at standing on it), `look_at` turns the view at an entity or a position with no ratio of mouse to degrees, and a key named in consecutive `play_step` calls stays held. `play_view` says what the player sees (camera, mode and blend, its live yaw and pitch, distance to what it follows, where entities show on the screen); `view` in a `trace` or a `play_check` condition asserts on it. Change your copy between steps with `play_set` (component values and teleports), `play_spawn`, `play_destroy` and `play_push` (requests to its queues); read it with `play_inspect` (`storages` gives score and match state) and assert with `play_check`; `play_ui` gives its live interface with the rectangle of each node to click and `play_audio` the voices that sound. With the `playtest` plugin in the project, `play.observe` through `call` answers what one decision needs in little text, and `play.qa.start`, `play.explore` and `play.qa.report` find bugs and write repros to `tests/scenarios/`. `capture` without `path` returns the image of your copy (with `every` and `count`, one filmstrip of it stepping, around an entity it `follow`s), and `capture` without `path` that of the editor or of an open `.ui`; with `path` they only write that file. In the scene, `scene_raycast`, `scene_bounds` and `scene_ground` (rests entities on what is under them) answer where things are. A test to play again after each change is a scenario file in `tests/scenarios/` (its scene, the params of play.start and its steps as play methods with their params) that `play.scenario.run` plays from tick 0 and reports step by step.\n")
+    strings.write_string(&b,"- When the user asks for an interface, panel or controls of their own (to try the sky, the post process or the lights, to compare configurations), make it with `panel.save` through `call` instead of writing editor code: for variants to try, give it buttons, each setting its fields to its values (on one entity, or with `where` on every entity whose fields match, found when it is pressed), without rows for those fields; buttons are pressed in any order, so every button that sets a target sets all the fields the others set there (an Off button sets intensity 0, so the others set their intensity too); rows show fields the user tunes by hand with the controls of the editor (with `where`, every matching entity at once, as to soften what a button set), and headings group them; the panel has Restore. It is kept in the project, opens at once in place of Details and stays in the Tools menu; `panel_list` gives the saved ones to change, and saving with the same id replaces one.\n")
+    strings.write_string(&b,"- When something does not play, move, spawn or show, read `engine.diagnostics`: its `problems` list, by world and entity, what the functions of the game could not do and how to fix it. After fixing one, step again: it is fixed when its `last` stops passing the `serial` you read.\n")
+    strings.write_string(&b,"- engine_describe with `plugin` (such as animation, cinematics, physics or paint) or with a `prefix` (such as material.program) gives those methods with a guide to them: read it before using them.\n")
+    if kind==.Agent {
+        strings.write_string(&b,"- You are a subagent of the main chat of this project, working on one assignment: the message you receive, and nothing else of the chat. Stay on it and on its document. What you pass to `finish` as `response` is your report to the main chat, so say what you did, what you found and what is left. You cannot start subagents.\n")
+    } else {
+        fmt.sbprintf(&b,"- This is the one chat of the project and it goes on across contexts: a block that starts with %q says what an earlier context of it left. Work that can go on in parallel goes to a subagent with `%s`: each is a chat of its own with its own review, and what it ends with reaches you in a later turn. `agent.list` says how they go, `agent.message` writes to one and `agent.stop` stops it.\n",AI_HANDOFF_HEADER,ai_tool_name("agent.spawn"))
+    }
+    if instructions:=ai_instructions_read(s);instructions!="" {fmt.sbprintf(&b,"\nAdditional editor instructions:\n%s\n",instructions)}
+    ai_memory_stable_write(s,&b)
+    return strings.to_string(b)
+}
+
+// What is about this turn alone, as it stands when the message is sent. It waits
+// in prompt.md for what only the start of the turn knows (ai_delta_build), and
+// prompt.md then keeps what was sent.
+@(private)
+ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity,detached:bool) -> bool {
+    b:=strings.builder_make(context.temp_allocator)
+    turn:=base.text_get(task.name[:])
+    if document:=document_path(s.document);document!="" {fmt.sbprintf(&b,"- The open document is %s.\n",document)}
+    if !detached {fmt.sbprintf(&b,"- The message is about the region %.0f %.0f %.0f %.0f of a window of %.0f by %.0f points.\n",task.region.x,task.region.y,task.region.w,task.region.h,task.window.x,task.window.y)}
     if len(entities)>0 {
-        strings.write_string(&b,"- Entities the user had in view when they sent this message, the selected ones first; one per line: id | name | parent | world position | world scale | components. `scene_inspect` lists the whole scene and the values of the components.\n")
+        strings.write_string(&b,"- Entities the user had in view when they sent this message, the selected ones first; one per line: id | name | parent | world position | world scale | components. `scene_inspect` lists the scene (a few entities at a time: `name`, `component`, `offset` and `limit` give the rest) and the values of the components.\n")
         for &entity in entities {
             selected:=false
             if s.selection!=nil {for e in s.selection.entities {if ai_entity_id_text(shown_world(s),e)==entity.id {selected=true;break}}}
@@ -428,18 +458,16 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
         if task.entities_total>len(entities) {fmt.sbprintf(&b,"  - and %d more in view\n",task.entities_total-len(entities))}
     }
     if task.image {
-        fmt.sbprintf(&b,"- `view_viewport` with request `%s` shows what the user was looking at when they sent this message.\n",turn)
+        strings.write_string(&b,"- `view_viewport` shows what the user was looking at when they sent this message.\n")
     }
     if task.references>0 {
         fmt.sbprintf(&b,"- The user attached %d reference image%s to this message, after its text, to show what they want the result to look like. Look at them before you start.\n",task.references,task.references>1?"s":"")
     }
     ai_attachments_prompt(s,task,&b)
+    if !detached {ai_annotation_groups_prompt(s.ai,&b)}
     ai_range_prompt(task,&b)
+    if task.about!=0 {fmt.sbprintf(&b,"- %s\n",ai_about_note(s.ai,task.about))}
     fmt.sbprintf(&b,"- %s has the region, the camera, the selection and the open scene.\n",ai_task_path(s,task,AI_FILE_CONTEXT))
-    strings.write_string(&b,"- To let the user try a scene in Play, write a link to it in your response as `[What to try](play:path of the scene under the assets folder)`: the chat draws it as a button that opens the scene and plays it.\n")
-    strings.write_string(&b,"- The tools of the server `mirai` are the basics of a scene. Every other method, of the editor or of a plugin (animation, terrain, navigation, physics, particles, interfaces and the rest), goes through the tool `call` with its name as `method` and its `params`; `engine_describe` with `methods` (several names at once), `prefix` or `plugin` gives their schemas. The methods named below by their tool name (such as `panel_save`) go through `call` too when they are not tools.\n")
-    if tool:=ai_client_path(engine);tool!="" {fmt.sbprintf(&b,"- For many calls, write and run a script instead of calling tools one by one, with `%s rpc <method> '<json>'` (or `--file params.json`) for each call, never with requests of your own to the editor.\n",tool)}
-    strings.write_string(&b,"- Do not edit scene files while the editor has them open.\n")
     if tick,paused:=ai_paused_tick(s,task);paused {
         fmt.sbprintf(&b,"- The game of the user is paused at tick %d. Answer questions about it using read-only observations: `play.player`, `play.status` and `play.inspect` with `include_runtime=true`. Do not edit files or scenes, resume, step or stop the game, or mutate the paused world.\n",tick)
         if os.exists(ai_task_path(s,task,AI_FILE_STATE)) {
@@ -448,12 +476,8 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
     } else if task.play {
         strings.write_string(&b,"- The game is playing. Answer questions about the live game and player using read-only observations. The context includes a player snapshot; use `play.player`, `play.status` and `play.inspect` with `include_runtime=true` for current values, components of the body it drives and runtime storage. Do not edit files or scenes, stop or pause the game, or mutate the playing world.\n")
     }
-    strings.write_string(&b,"- To test the game, `play_start` opens a copy of your own that only `play_step` advances, with keys, the pointer (`mouse_position` clicks its UI), `text`, gamepads of local seats, `segments` that change them along the ticks (each held for `ticks` or `seconds`, `tap_keys` for a press shorter than a tick, `mouse_delta` spread over the segment), `until` to run until conditions hold and a `trace` that returns values every some ticks; test as a player does: a click is a press of a few ticks then a release, a double click two of them with a gap, and `play_input` with `segments` schedules that input for the next steps so you look between them. `play_view` says what the player sees (camera, mode and blend, distance to what it follows, where entities show on the screen); `view` in a `trace` or a `play_check` condition asserts on it. Change your copy between steps with `play_set` (component values and teleports), `play_spawn`, `play_destroy` and `play_push` (requests to its queues); read it with `play_inspect` (`storages` gives score and match state) and assert with `play_check`; `play_ui` gives its live interface with the rectangle of each node to click and `play_audio` the voices that sound. `play_capture` returns the image of your copy (with `every` and `count`, one filmstrip of it stepping, around an entity it `follow`s), and `editor_capture` that of the editor or of an open `.ui`. In the scene, `scene_raycast`, `scene_bounds` and `scene_ground` (rests entities on what is under them) answer where things are. A test to play again after each change is a scenario file in `tests/scenarios/` (its scene, the params of play.start and its steps as play methods with their params) that `play.scenario.run` plays from tick 0 and reports step by step.\n")
-    strings.write_string(&b,"- When the user asks for an interface, panel or controls of their own (to try the sky, the post process or the lights, to compare configurations), make it with `panel_save` instead of writing editor code: for variants to try, give it buttons, each setting its fields to its values (on one entity, or with `where` on every entity whose fields match, found when it is pressed), without rows for those fields; buttons are pressed in any order, so every button that sets a target sets all the fields the others set there (an Off button sets intensity 0, so the others set their intensity too); rows show fields the user tunes by hand with the controls of the editor (with `where`, every matching entity at once, as to soften what a button set), and headings group them; the panel has Restore. It is kept in the project, opens at once in place of Details and stays in the Tools menu; `panel_list` gives the saved ones to change, and saving with the same id replaces one.\n")
-    strings.write_string(&b,"- When something does not play, move, spawn or show, read `engine.diagnostics`: its `problems` list, by world and entity, what the functions of the game could not do and how to fix it. After fixing one, step again: it is fixed when its `last` stops passing the `serial` you read.\n")
     // How to use the methods of a plugin goes with them, in engine_describe;
     // here only when the message comes from a document of that plugin.
-    strings.write_string(&b,"- engine_describe with `plugin` (such as animation, cinematics, physics or paint) or with a `prefix` (such as material.program) gives those methods with a guide to them: read it before using them.\n")
     if topic:=ai_guide_topic_in_front(s);topic!="" {
         if guide:=ai_guide(topic);guide!="" {fmt.sbprintf(&b,"- %s\n",guide)}
     }
@@ -490,7 +514,6 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool {
             }
         }
     }
-    if instructions:=ai_instructions_read(s);instructions!="" {fmt.sbprintf(&b,"\nAdditional editor instructions:\n%s\n",instructions)}
     return os.write_entire_file(ai_task_path(s,task,AI_FILE_PROMPT),strings.to_string(b))==nil
 }
 
@@ -509,7 +532,7 @@ ai_material_context :: proc(s:^Session,task:^Ai_Task) -> (out:Ai_Context_Materia
     if task.image {out.preview=AI_FILE_IMAGE}
     out.parameters=ai_material_values(s,m)
     if out.program=="" {return out,true}
-    if path,_,found:=program_locate(s,out.program);found {out.file=file_relative(s,path)}
+    if path,_,found:=program_locate(s,out.program);found {out.file=history.file_relative(s.project_root,path)}
     return out,true
 }
 
@@ -567,9 +590,11 @@ ai_mcp_write :: proc(s:^Session,task:^Ai_Task) -> bool {
 // when no agent runs. The last frame drawn is the window the region is about,
 // so whoever calls draws a frame first. Between frames only;
 // message says why there is none.
-ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,continuing:int=0,model:string="",effort:string="") -> (task:^Ai_Task,message:string) {
+// Without a conversation to continue it is a turn of the main chat, which the
+// first one creates, unless it starts a subagent.
+ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,continuing:int=0,model:string="",effort:string="",turn:Ai_Turn={}) -> (task:^Ai_Task,message:string) {
     text:=strings.trim_space(prompt)
-    if text=="" {return nil,"The task needs a prompt"}
+    if text=="" && !turn.system {return nil,"The task needs a prompt"}
     if len(text)>=AI_MESSAGE_BYTES {return nil,"The prompt is too long"}
     if api_port(s)==0 {return nil,"The editor serves no API for the agent to use"}
     clamped,ok:=ai_region_clamp(region,s.viewport.window)
@@ -577,6 +602,9 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
     if !s.has_project {return nil,"The editor has no project folder"}
     ai_initialize(s)
     if m.store.folder=="" {return nil,"The project chat history is unavailable"}
+    continuing:=continuing
+    if continuing==0 && turn.parent==0 {continuing=m.main}
+    detached:=turn.detached || turn.system || turn.parent!=0
     chosen_agent:=agent
     if chosen_agent=="" && continuing!=0 {
         if previous:=ai_task_find(m,continuing);previous!=nil {
@@ -593,9 +621,10 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
     if chosen_agent!="" && !known {return nil,"Unknown AI connection"}
     chosen:=ai_connection_id(m,provider)
     connection:=&m.connections[provider]
-    // A session keeps its own model and effort; a new one takes those of its agent.
+    // A chat keeps its own model and effort while it keeps its agent; another
+    // agent starts with those of its connection.
     chosen_model,chosen_effort:=base.text_get(connection.model[:]),base.text_get(connection.effort[:])
-    if previous:=ai_task_find(m,continuing);continuing!=0 && previous!=nil {
+    if previous:=ai_task_find(m,continuing);continuing!=0 && previous!=nil && string(previous.conversation.provider[:previous.conversation.provider_len])==chosen {
         c:=&previous.conversation
         if c.model_len>0 {chosen_model=string(c.model[:c.model_len])}
         if c.effort_len>0 {chosen_effort=string(c.effort[:c.effort_len])}
@@ -609,13 +638,21 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
     if continuing!=0 {
         task=ai_task_find(m,continuing)
         if task==nil {return nil,"The selected conversation is not loaded"}
+        if task.conversation.kind==.Archived {return nil,"An archived conversation cannot be continued: write to the main chat"}
         if !ai_task_finished(task) {return nil,"The selected conversation is still running"}
+        // The main chat follows the document of its latest turn; a subagent stays on its own.
         previous_document:=string(task.conversation.document[:task.conversation.document_len])
-        if previous_document!=document || document=="" && task.world!=nil && task.world!=s.edit_world {
-            return nil,"The selected conversation belongs to another document"}
+        if task.conversation.kind==.Main {
+            ai_store.conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document)
+        } else if previous_document!=document || document=="" && task.world!=nil && task.world!=s.edit_world {
+            return nil,"The selected conversation belongs to another document"
+        }
         if string(task.conversation.provider[:task.conversation.provider_len])!=chosen {
-            return nil,"Start a new chat to use a different agent"}
+            ai_store.conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,chosen)
+            ai_context_drop(task)
+        }
         if !task.review_finished {ai_task_finish(s,m,task)}
+        task.review_deferred=false
         task.state=.Queued;task.stop=false;task.exit_code=0;task.pid=0;task.seconds=0
         task.question=.None;task.options_length=0
         task.state_before=0;task.state_after=0;task.step_count=0;task.undone=false;task.declined=false;task.needs_build=false;task.files_changed=false
@@ -623,27 +660,33 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
         task.review_finished=false
         task.stream_open=false;task.finish_called=false;task.document_closed=false
     } else {
-        id,error:=ai_store_next_id(&m.store)
+        id,error:=ai_store.next_id(&m.store)
         if error!="" {return nil,error}
         if id>u64(max(int)) {return nil,"Chat identifiers are exhausted"}
         task=ai_task_slot(m)
         if task==nil {return nil,"Too many tasks are waiting or running"}
         task.id=int(id)
         task.conversation.id=id
+        task.conversation.kind=turn.parent!=0?.Agent:.Main
+        task.conversation.parent=u64(turn.parent)
         task.conversation.created_at=time.time_to_unix_nano(time.now())/1_000_000
-        title:=text
+        if turn.parent==0 {
+            m.main=task.id
+            if m.selected==0 {m.selected=task.id}
+        }
+        title:=turn.title!=""?turn.title:text
         if split:=strings.index_byte(title,'\n');split>=0 {title=title[:split]}
         title=title[:min(len(title),len(task.conversation.title))]
-        ai_conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
-        ai_conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document)
-        ai_conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,chosen)
+        ai_store.conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
+        ai_store.conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document)
+        ai_store.conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,chosen)
         connection:=&m.connections[provider]
-        ai_conversation_set_text(task.conversation.model[:],&task.conversation.model_len,base.text_get(connection.model[:]))
-        ai_conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,base.text_get(connection.effort[:]))
+        ai_store.conversation_set_text(task.conversation.model[:],&task.conversation.model_len,base.text_get(connection.model[:]))
+        ai_store.conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,base.text_get(connection.effort[:]))
         base.text_set(task.title[:],title[:min(len(title),len(task.title)-1)])
     }
-    ai_conversation_set_text(task.conversation.model[:],&task.conversation.model_len,chosen_model)
-    ai_conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,chosen_effort)
+    ai_store.conversation_set_text(task.conversation.model[:],&task.conversation.model_len,chosen_model)
+    ai_store.conversation_set_text(task.conversation.effort[:],&task.conversation.effort_len,chosen_effort)
     if continuing==0 {
         task.icon=u8(base.hash_combine(u64(task.id),u64(time.time_to_unix_nano(time.now()))))%AI_AGENT_ICON_COUNT
         task.color_index=u8((task.id-1)%len(AGENT_COLORS))
@@ -655,11 +698,12 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
         }
     }
     base.text_set(task.agent[:],chosen)
+    if m.selected==task.id {base.text_set(m.agent[:],chosen)}
     ai_task_glyph_set(m,task)
     task.world=s.edit_world
     task.play=s.mode!=.Edit
     task.context_count=0
-    if s.selection!=nil {
+    if s.selection!=nil && !detached {
         w:=shown_world(s)
         for e in s.selection.entities {
             if task.context_count==len(task.context_ids) {break}
@@ -669,7 +713,7 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
             task.context_count+=1
         }
     }
-    task.material=m.material.open?m.material:{}
+    task.material=m.material.open && !detached?m.material:{}
     // A figure in the scene keeps its place through a message that gives it nothing new to work on.
     if task.context_count>0 || !task.figure_shown {task.anchor_set=false}
     ai_scene_anchor(s,task)
@@ -679,30 +723,38 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
     base.text_set(task.agent[:],chosen)
     base.text_format(task.name[:],"%d-%d",task.id,task.transcript.dropped+task.transcript.count)
     prompt_sequence:=task.transcript.dropped+task.transcript.count
-    ai_task_prompt_add(s,task,text)
+    task.system_turn=turn.system
+    if !turn.system {ai_task_prompt_add(s,task,text)}
     if os.make_directory_all(ai_task_path(s,task,""))!=nil || os.write_entire_file(ai_task_path(s,task,AI_FILE_MESSAGE),text)!=nil {
         ai_task_fail(task,"The folder of the task could not be created")
         ai_task_persist(s,task)
         return task,""
     }
-    task.image=ai_capture_write(s,task)
-    task.references=ai_references_write(s,m,task)
-    task.attachments=m.attachments
-    task.attachment_count=m.attachment_count
-    task.range=m.range
+    if detached {
+        task.image,task.references,task.attachment_count,task.range=false,0,0,{}
+        task.about=0
+    } else {
+        task.image=ai_capture_write(s,task)
+        task.references=ai_references_write(s,m,task)
+        task.attachments=m.attachments
+        task.attachment_count=m.attachment_count
+        task.range=m.range
+        task.about=m.about
+    }
     entities:=ai_entities_gather(s,task)
-    if !ai_context_write(s,task,entities) || !ai_prompt_write(s,task,entities) || !ai_mcp_write(s,task) {
+    if !ai_context_write(s,task,entities) || !ai_prompt_write(s,task,entities,detached) || !ai_mcp_write(s,task) {
         ai_task_fail(task,"The files of the task could not be written")
         ai_task_persist(s,task)
         return task,""
     }
     ai_task_persist(s,task)
-    if !task.dirty {
+    ai_working_agents_save(s,m)
+    if !task.dirty && !turn.system {
         if snapshot,error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_CONTEXT),context.temp_allocator);error==nil {
-            if error:=ai_store_annotate(&m.store,task.conversation.id,u64(prompt_sequence),"user","user_message","",string(snapshot));error!="" {notify(s,error)}
+            if error:=ai_store.annotate(&m.store,task.conversation.id,u64(prompt_sequence),"user","user_message","",string(snapshot));error!="" {notify(s,error)}
         }
     }
-    ai_history_refresh(s)
+    if message:=ai_history_refresh(m);message!="" {notify(s,message)}
     ai_queue_advance(s,m)
     return task,""
 }

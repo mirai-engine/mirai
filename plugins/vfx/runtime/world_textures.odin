@@ -5,7 +5,6 @@ import "core:mem"
 import "core:slice"
 import "mirai:core"
 import erender "mirai:engine/render"
-import "mirai:host"
 
 // The textures of the world: layers of grids that materials read
 // (Particle_World_Texture). After the steps of each frame a pass packs each
@@ -22,14 +21,14 @@ world_texture_key :: proc(name:u64) -> string {return fmt.tprintf("vfx world tex
 // The grids of the world with a texture, and the textures of those that no
 // longer have one released.
 @(private)
-world_textures_keep :: proc(sync:^Particle_Sync,app:^host.App,id:core.World_Id) {
+world_textures_keep :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,id:core.World_Id) {
     kept:=0
     for name in sync.world_textures[:sync.world_texture_count] {
         if at:=grid_find(&sync.grids,name);at>=0 && sync.grids.entries[at].has_texture {
             sync.world_textures[kept]=name
             kept+=1
         } else {
-            erender.table_texture_release(app,id,world_texture_key(name))
+            erender.table_texture_release(renderer,id,world_texture_key(name))
         }
     }
     for &entry in sync.grids.entries {
@@ -42,10 +41,10 @@ world_textures_keep :: proc(sync:^Particle_Sync,app:^host.App,id:core.World_Id) 
 
 // The textures of the grids that have one, made between frames.
 @(private)
-world_textures_make :: proc(sync:^Particle_Sync,app:^host.App) {
+world_textures_make :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) {
     for &entry in sync.grids.entries {
         if !entry.has_texture {continue}
-        index,_,ok:=erender.table_texture(app,sync.world,{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z})
+        index,_,ok:=erender.table_texture(renderer,sync.world,{name=world_texture_key(entry.name),width=entry.cells.x,height=entry.cells.z})
         entry.texture_index=index
         if !ok {entry.has_texture=false}
     }

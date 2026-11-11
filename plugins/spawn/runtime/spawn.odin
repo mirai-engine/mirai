@@ -65,7 +65,7 @@ Spawn_Request :: struct {
     seat:core.Entity,
     entity:core.Entity,
     point:core.Entity,     // none: the next one in turn
-    prefab:base.Asset_Id,  // none: the one of the point
+    path:[scene.SCENE_PATH_CAPACITY]u8 `mirai:"text"`, // of the prefab; empty: the one of the point
 }
 
 @(storage,queue)
@@ -73,9 +73,12 @@ Spawn_Requests :: struct {
     using queue:core.Queue(Spawn_Request),
 }
 
-// A body for seat at point (none: the next one in turn), of prefab (none: the one of the point).
-spawn :: proc(r:^Spawn_Requests,seat:core.Entity,prefab:base.Asset_Id={},point:=core.NONE) {
-    core.push(&r.queue,Spawn_Request{kind=.Spawn,seat=seat,point=point,prefab=prefab})
+// A body for seat at point (none: the next one in turn), of the prefab at
+// path of the assets ("": the one of the point).
+spawn :: proc(r:^Spawn_Requests,seat:core.Entity,path:="",point:=core.NONE) {
+    request:=Spawn_Request{kind=.Spawn,seat=seat,point=point}
+    base.text_set(request.path[:],path)
+    core.push(&r.queue,request)
 }
 // Places body at point (none: the next one in turn).
 respawn :: proc(r:^Spawn_Requests,body:core.Entity,point:=core.NONE) {
@@ -85,7 +88,7 @@ respawn :: proc(r:^Spawn_Requests,body:core.Entity,point:=core.NONE) {
 @(private)
 Apply :: struct {
     commands:core.Commands,
-    app:^host.App,
+    assets:^host.Assets,
     bodies:^core.Table(Seat_Body),
     seats:core.Read(input.Seat),
     points:core.Read(Spawn_Point),
@@ -114,12 +117,12 @@ spawn_seat_bodies :: proc(es:^core.Entities,hierarchy:core.Ref(core.Hierarchy),b
 // appear to their seats in the same tick.
 @(step="fixed",stage="input",after="input_seats",before="input_drive")
 spawn_step :: proc(
-    commands:core.Commands,app:^host.App,drivables:core.Read(input.Drivable),bodies:^core.Table(Seat_Body),
+    commands:core.Commands,assets:^host.Assets,drivables:core.Read(input.Drivable),bodies:^core.Table(Seat_Body),
     seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
     core.queue_clear(&at_origin.queue)
-    a:=Apply{commands=commands,app=app,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
+    a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
     if settings.ptr!=nil {a.settings=settings.ptr^}
     if origin.ptr!=nil {a.origin=origin.ptr^}
     client:=network.role==.Client
@@ -192,28 +195,29 @@ spawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
         return false
     }
     point,asked:=spawn_where(a,r) or_return
-    prefab:=r.prefab
-    if prefab=={} && point!=core.NONE {prefab=core.at(a.points,core.row_of(a.points,point)).prefab}
-    if prefab=={} {prefab=a.settings.prefab}
-    if prefab=={} {
-        core.report(a.problems,point!=core.NONE?point:r.seat,"spawn.no_prefab","a body was asked without a prefab where no point has one; give the point a prefab, Spawn_Settings.prefab the body of the project, or spawn with one")
-        return false
+    path:=r.path
+    prefab:base.Asset_Id
+    if path[0]==0 {
+        if point!=core.NONE {prefab=core.at(a.points,core.row_of(a.points,point)).prefab}
+        if prefab=={} {prefab=a.settings.prefab}
+        if prefab=={} {
+            core.report(a.problems,point!=core.NONE?point:r.seat,"spawn.no_prefab","a body was asked without a prefab where no point has one; give the point a prefab, Spawn_Settings.prefab the body of the project, or spawn with one")
+            return false
+        }
     }
     placed:=mm.Transform{a.origin.position,a.origin.rotation,{1,1,1}}
     if point!=core.NONE && !asked {placed=spawn_place(a,point) or_return}
-    report,error:=scene.spawn(a.commands,a.app,scene.Spawn{prefab=prefab,transform=core.Transform{placed.position,placed.rotation,{1,1,1}},transient=true})
-    if error!=.None {
-        name:[base.ASSET_ID_TEXT]u8
-        core.report(a.problems,point,"spawn.spawn_prefab","the prefab %s did not spawn at this Spawn_Point: %s; give it a .prefab of the assets that opens in the editor",host.assets_name(a.app.assets,prefab,&name),scene.error_text(error))
-        return false
-    }
-    if asked || point==core.NONE {core.push(&a.at_origin.queue,report.root)}
+    spawner:=scene.Spawner{a.commands,a.assets,a.problems}
+    at:=core.Transform{placed.position,placed.rotation,{1,1,1}}
+    root:=path[0]==0?scene.spawn(spawner,prefab,at,transient=true):scene.spawn(spawner,base.text_get(path[:]),at,transient=true)
+    if root==core.NONE {return false}
+    if asked || point==core.NONE {core.push(&a.at_origin.queue,root)}
     if asked {a.spawning.asked_given=true}
     if r.seat!=core.NONE {
         a.given[a.given_count]=r.seat
         a.given_count+=1
-        input.drive(a.driving,r.seat,report.root)
-        core.add(a.bodies,report.root,Seat_Body{})
+        input.drive(a.driving,r.seat,root)
+        core.add(a.bodies,root,Seat_Body{})
     }
     return true
 }
@@ -236,7 +240,7 @@ respawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
 // gives it there (the point only lends its prefab; none with a prefab of its own).
 @(private)
 spawn_where :: proc(a:^Apply,r:Spawn_Request) -> (point:core.Entity,asked,ok:bool) {
-    needs_prefab:=r.prefab=={} && a.settings.prefab=={}
+    needs_prefab:=r.path[0]==0 && a.settings.prefab=={}
     if a.origin.asked && !a.spawning.asked_given && r.point==core.NONE && seat_first(a.seats,r.seat) {
         if !needs_prefab {return core.NONE,true,true}
         point,ok=spawn_pick(a,r.seat,core.NONE,true)

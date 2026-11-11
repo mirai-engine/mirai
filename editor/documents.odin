@@ -5,6 +5,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:ui"
 
@@ -12,13 +13,12 @@ import "mirai:ui"
 Document_Tab :: struct {
     world:rawptr,
     document:Document,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     viewport:Viewport,
     inspector:Inspector,
     outliner:Outliner,
     prefabs:Prefabs,
-    ai:Ai_Document_State,
     recovery:Recovery_Chain,
     quit_approved:bool,
 }
@@ -39,14 +39,13 @@ document_tab_exchange :: proc(s:^Session,tab:^Document_Tab) {
     // Who edits stays with the document in front.
     author:=s.edits.author
     swap_values(s.edits,&tab.edits)
-    s.edits.author,tab.edits.author=author,EDIT_AUTHOR_USER
+    s.edits.author,tab.edits.author=author,history.EDIT_AUTHOR_USER
     swap_values(s.selection,&tab.selection)
     preferences:=s.viewport.preferences
     swap_values(s.viewport,&tab.viewport)
     s.viewport.preferences=preferences
     swap_values(s.inspector,&tab.inspector)
     swap_values(s.outliner,&tab.outliner)
-    if s.ai!=nil {swap_values(&s.ai.document,&tab.ai)}
     if p:=prefabs_of(s);p!=nil {swap_values(p,&tab.prefabs)}
     swap_values(&s.recovery.chain,&tab.recovery)
 }
@@ -57,9 +56,9 @@ document_tab_free :: proc(s:^Session,tab:^Document_Tab) {
     recovery_chain_close(s,&tab.recovery,false)
     host.app_world_free(s.app,tab.world)
     document_previous_free(&tab.document)
-    edits_free(&tab.edits)
+    history.edits_free(&tab.edits)
     prefabs_state_free(&tab.prefabs)
-    core.value_free(&tab.selection,type_info_of(Selection))
+    core.value_free(&tab.selection,type_info_of(history.Selection))
     viewport_free(&tab.viewport)
     core.value_free(&tab.inspector,type_info_of(Inspector))
     core.value_free(&tab.outliner,type_info_of(Outliner))
@@ -78,19 +77,11 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     if !collab_can_open(s) {return false}
     runs_stop(s)
     tools_release(s)
-    if s.ai!=nil {
-        if s.ai.pending {s.ai.pending=false}
-        for &task in s.ai.tasks[:s.ai.task_count] {
-            if task.state!=.Running && task.state!=.Queued {continue}
-            ai_note(&task,"Stopped when switching documents")
-            ai_task_cancel(s,s.ai,&task)
-        }
-    }
+    ai_turns_stop(s,s.ai,"Stopped when switching documents")
     if s.gui.ctx!=nil {s.gui.ctx.edit={};s.gui.ctx.scrub={}}
     s.inspector.gesture=0
     settings_flush(s)
-    edits_commit(s.edits,edited_world(s),s.selection)
-    prefab_observe(s)
+    history.edits_commit(s.edits,edited_world(s),s.selection)
     document_tab_exchange(s,&s.documents[s.active_document])
     document_tab_exchange(s,&s.documents[index])
     s.active_document=index
@@ -107,12 +98,12 @@ document_activate :: proc(s:^Session,index:int) -> bool {
         assets_rescan(s)
         if file,found:=asset.registry_find(&s.app.assets.registry,s.document.id);found && s.document.source_stamp!=([2]i64{file.size,file.time}) {
             selected:=selected_ids(s)
-            if scene_open(s,document_file(s.document))==.None {prefabs_follow(s,prefabs_of(s));select_ids(s,selected)}
+            if scene_open(s,document_file(s.document))==.None {select_ids(s,selected)}
         }
     }
     if prefab_linked(s) {
         for state in prefab_instances(s) {
-            if state.stale {prefab_refresh(s,{},true);break}
+            if state.stale {prefab_refresh(s,{});break}
         }
     }
     return true
@@ -137,7 +128,6 @@ document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
             document_activate(s,previous)
             return error
         }
-        prefabs_follow(s,prefabs_of(s))
         return .None
     }
     previous:=s.active_document
@@ -146,11 +136,10 @@ document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
         document_tab_drop_last(s,previous)
         return error
     }
-    prefabs_follow(s,prefabs_of(s))
     if document_is_prefab(s) {
         w:=edited_world(s)
         for e in core.world_table_of(w,core.Id).entities {
-            if entity_parent(w,e)==core.NONE {selection_add(s.selection,e)}
+            if entity_parent(w,e)==core.NONE {history.selection_add(s.selection,e)}
         }
         focus_selection(s,w)
     }
@@ -238,7 +227,7 @@ document_uses_unsaved :: proc(s:^Session,index:int) -> bool {
     active:=index==s.active_document
     if !active && (index>=len(s.documents) || s.documents[index].world==nil) {return false}
     world:=active?s.edit_world:s.documents[index].world
-    key:=[2]u64{s.app.assets.registry.revision,edits_state(active?s.edits:&s.documents[index].edits)}
+    key:=[2]u64{s.app.assets.registry.revision,history.edits_state(active?s.edits:&s.documents[index].edits)}
     g:=s.gui
     for &known in g.unsaved_uses {
         if known.world==world && known.key==key {return known.uses}
@@ -268,10 +257,17 @@ document_close_active :: proc(s:^Session) {
 
 documents_dirty :: proc(s:^Session) -> bool {
     if document_dirty(s) {return true}
-    for &tab,index in s.documents {
-        if index!=s.active_document && (tab.document.unsaved || edits_scene_state(&tab.edits)!=tab.document.saved) {return true}
+    for index in 0..<len(s.documents) {
+        if document_tab_dirty(s,index) {return true}
     }
     return false
+}
+
+// Whether the document of a tab has changes its file does not.
+document_tab_dirty :: proc(s:^Session,index:int) -> bool {
+    if index==s.active_document {return document_dirty(s)}
+    tab:=&s.documents[index]
+    return tab.document.unsaved || history.edits_scene_state(&tab.edits)!=tab.document.saved
 }
 
 documents_quit_next :: proc(s:^Session) {
@@ -281,7 +277,7 @@ documents_quit_next :: proc(s:^Session) {
         d:=index==s.active_document?s.document:&tab.document
         e:=index==s.active_document?s.edits:&tab.edits
         // Agents work only on the active document: quitting asks while they do.
-        if !d.unsaved && edits_scene_state(e)==d.saved && (index!=s.active_document || ai_working_count(s)==0) {continue}
+        if !d.unsaved && history.edits_scene_state(e)==d.saved && (index!=s.active_document || ai_working_count(s)==0) {continue}
         // The first question lists every unsaved asset too, so none is asked twice.
         document_activate(s,index)
         confirm_open(s,.Quit,assets_unsaved_paths(s))
@@ -323,7 +319,7 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
     if index!=s.active_document && index<len(s.documents) {d,e=&s.documents[index].document,&s.documents[index].edits}
     tab.label=document_title(d)
     tab.icon=d.previous!=nil && d.previous.doc.kind==asset.KIND_PREFAB?.Prefab:.Scene
-    tab.dirty=d.unsaved || edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
+    tab.dirty=d.unsaved || history.edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
     tab.active=index==s.active_document && !scene_covered(s)
     return
 }
@@ -404,14 +400,14 @@ documents_build :: proc(s:^Session) {
                         if active {
                             if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(4),fill=fill,float={to=.Parent,anchor=.Bottom_Left,pivot=.Bottom_Left,layer=ui.LAYER_BAR}}) {}
                         }
-                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ctx.theme.control,size=ctx.theme.font,icon_size=12,use_appearance=true,appearance=appearance}).clicked || surface.clicked {
+                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ctx.theme.control,size=ctx.theme.font,icon_size=12,look=&appearance}).clicked || surface.clicked {
                             switch {
                             case tab.asset>=0: asset_document_request(s,tab.asset)
                             case:              s.document_request=index;s.requests+={.Document_Switch}
                             }
                         }
                         close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ctx.theme.text,65):ui.Color{},radius=12,text={color=text_color}}
-                        if ui.button(ctx,close_id,{icon=.Cross,width=19,height=19,icon_size=10,icon_color=text_color,use_appearance=true,appearance=close}).clicked {
+                        if ui.button(ctx,close_id,{icon=.Cross,width=19,height=19,icon_size=10,icon_color=text_color,look=&close}).clicked {
                             switch {
                             case tab.asset>=0: s.asset_request=tab.asset;s.requests+={.Asset_Close}
                             case:              s.document_request=index;s.requests+={.Document_Close}

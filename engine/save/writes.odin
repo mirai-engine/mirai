@@ -9,6 +9,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:core"
+import inp "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -60,6 +61,9 @@ Save_Work :: struct {
     section_count:int,
     sections_seen:bool, // some Manual section was on since a scene last replaced the world
     due:bool,           // an autosave waits for room
+    watching:bool,      // the files of the player have been looked at (kept_watch)
+    look:f32,           // s since the last look
+    kept:[Kept_File]Kept,
 }
 
 work_free :: proc(work:^Save_Work) {
@@ -78,14 +82,21 @@ write_free :: proc(w:^Write) {
 
 // Queues the bytes of a slot captured now, which it takes, to be written to path.
 @(private)
-write_queue :: proc(work:^Save_Work,app:^host.App,result:Result,path:string,data:[]u8) -> Error {
+write_queue :: proc(work:^Save_Work,renderer:^erender.Renderer,allocator:runtime.Allocator,result:Result,path:string,data:[]u8) -> Error {
     if len(work.writes)>=WRITES_CAPACITY {
-        mem.free_bytes(data,app.allocator)
+        mem.free_bytes(data,allocator)
         return .Busy
     }
-    if work.writes==nil {work.writes=make([dynamic]^Write,app.allocator)}
-    w:=new(Write,app.allocator)
-    w^={result=result,phase=app.renderer!=nil?.Thumbnail:.Ready,path=strings.clone(path,app.allocator),data=data,asked=work.frame,allocator=app.allocator}
+    if work.writes==nil {work.writes=make([dynamic]^Write,allocator)}
+    w,no_write:=new(Write,allocator)
+    kept,no_path:=strings.clone(path,allocator)
+    if no_write!=nil || no_path!=nil || reserve(&work.writes,len(work.writes)+1)!=nil {
+        delete(kept,allocator)
+        free(w,allocator)
+        mem.free_bytes(data,allocator)
+        return .Failed
+    }
+    w^={result=result,phase=renderer!=nil?.Thumbnail:.Ready,path=kept,data=data,asked=work.frame,allocator=allocator}
     append(&work.writes,w)
     return .None
 }
@@ -101,14 +112,17 @@ writes_of :: proc(work:^Save_Work,path:string) -> bool {
 // Takes the thumbnail that came back, starts the next write and collects the
 // one that ended, pushing its Result.
 @(private)
-writes_step :: proc(work:^Save_Work,app:^host.App,results:^Save_Results) {
+writes_step :: proc(work:^Save_Work,renderer:^erender.Renderer,job_system:^jobs.Job_System,results:^Save_Results,problems:^core.Problems) {
     if work.drawn!=0 {
-        pixels,frame,came:=erender.view_texture_pixels(app,work.texture)
+        pixels,frame,came:=erender.view_texture_pixels(renderer,work.texture)
         came&&=frame>work.seen
         if came {
             for w in work.writes {
                 if w.phase!=.Thumbnail || w.asked>work.drawn {continue}
-                w.pixels=slice.clone(pixels,w.allocator)
+                no_pixels:runtime.Allocator_Error
+                if w.pixels,no_pixels=slice.clone(pixels,w.allocator);no_pixels!=nil {
+                    core.report(problems,core.NONE,"save.thumbnail","the slot %s is written without its thumbnail: there is no memory for the image; free memory and save again",base.text_get(w.result.slot[:]))
+                }
                 w.phase=.Ready
             }
         }
@@ -124,7 +138,7 @@ writes_step :: proc(work:^Save_Work,app:^host.App,results:^Save_Results) {
         case .Thumbnail: return
         case .Ready:
             w.phase=.Writing
-            if jobs.worker_count(&app.jobs)>1 {jobs.run(&app.jobs,jobs.OWNER,write_job,w,&w.counter)} else {write_job(w,0)}
+            if jobs.worker_count(job_system)>1 {jobs.run(job_system,jobs.OWNER,write_job,w,&w.counter)} else {write_job(w,0)}
         case .Writing:
             if jobs.pending(&w.counter) {return}
             write_end(work,w,results)
@@ -134,13 +148,13 @@ writes_step :: proc(work:^Save_Work,app:^host.App,results:^Save_Results) {
 
 // Writes what is pending now, the thumbnails it still waits for aside, and
 // pushes their Results: for a world whose next frames may not come.
-writes_flush :: proc(work:^Save_Work,app:^host.App,results:^Save_Results) {
+writes_flush :: proc(work:^Save_Work,job_system:^jobs.Job_System,results:^Save_Results) {
     if work==nil {return}
     for len(work.writes)>0 {
         w:=work.writes[0]
         switch w.phase {
         case .Thumbnail,.Ready: write_job(w,0)
-        case .Writing: if jobs.pending(&w.counter) {jobs.wait(&app.jobs,jobs.OWNER,&w.counter)}
+        case .Writing: if jobs.pending(&w.counter) {jobs.wait(job_system,jobs.OWNER,&w.counter)}
         }
         write_end(work,w,results)
     }
@@ -165,7 +179,11 @@ write_job :: proc(w:^Write,worker:int) {
 // (RGBA8 at twice THUMBNAIL_SIZE) after the header, replacing the file.
 @(private)
 slot_file_write :: proc(path:string,data:[]u8,pixels:[]u8) -> Error {
-    png:=thumbnail_png(pixels,context.temp_allocator) if pixels!=nil else nil
+    png:[]u8
+    if pixels!=nil {
+        made:bool
+        if png,made=thumbnail_png(pixels,context.temp_allocator);!made {return .Write_Failed}
+    }
     out:serial.Writer
     serial.writer_init(&out,len(data)+len(png)+2*serial.WRITER_ALIGNMENT,context.temp_allocator)
     header:=(cast(^Header)raw_data(data))^
@@ -182,12 +200,14 @@ slot_file_write :: proc(path:string,data:[]u8,pixels:[]u8) -> Error {
 }
 
 // The PNG of the thumbnail: the pixels halved, averaging each four in a
-// gamma of 2, which keeps the light of their edges, and without alpha.
+// gamma of 2, which keeps the light of their edges, and without alpha. None,
+// and made, for pixels of another size; not made without memory for it.
 @(private)
-thumbnail_png :: proc(pixels:[]u8,allocator:runtime.Allocator) -> []u8 {
+thumbnail_png :: proc(pixels:[]u8,allocator:runtime.Allocator) -> (png:[]u8,made:bool) {
     width,height:=int(THUMBNAIL_SIZE.x),int(THUMBNAIL_SIZE.y)
-    if len(pixels)!=width*height*16 {return nil}
-    image:=make([]u8,width*height*3,allocator)
+    if len(pixels)!=width*height*16 {return nil,true}
+    image,no_image:=make([]u8,width*height*3,allocator)
+    if no_image!=nil {return nil,false}
     for y in 0..<height {
         for x in 0..<width {
             for channel in 0..<3 {
@@ -200,44 +220,47 @@ thumbnail_png :: proc(pixels:[]u8,allocator:runtime.Allocator) -> []u8 {
             }
         }
     }
-    Sink :: struct {bytes:[dynamic]u8}
+    Sink :: struct {bytes:[dynamic]u8,cut:bool}
     sink:=Sink{bytes=make([dynamic]u8,allocator)}
     sink_write :: proc "c" (user,data:rawptr,size:c.int) {
         sink:=cast(^Sink)user
         context=runtime.default_context()
-        append(&sink.bytes,..([^]u8)(data)[:size])
+        if _,error:=append(&sink.bytes,..([^]u8)(data)[:size]);error!=nil {sink.cut=true}
     }
-    if stbi.write_png_to_func(sink_write,&sink,c.int(width),c.int(height),3,raw_data(image),c.int(width*3))==0 {return nil}
-    return sink.bytes[:]
+    if stbi.write_png_to_func(sink_write,&sink,c.int(width),c.int(height),3,raw_data(image),c.int(width*3))==0 {return nil,true}
+    if sink.cut {return nil,false}
+    return sink.bytes[:],true
 }
 
 // Draws the view of the player for the slots that wait for their thumbnail:
 // into a texture of the save library, without the interfaces of the scene,
 // as a cut: it owes nothing to its last image, and meters its exposure at once.
 @(step="render",loops="game")
-saves_thumbnail :: proc(app:^host.App,work:^Save_Work,view:core.Ref(core.View)) {
+saves_thumbnail :: proc(renderer:^erender.Renderer,extras:^host.Frame_Extras,work:^Save_Work,view:core.Ref(core.View)) {
     if work==nil || work.drawn!=0 {return}
     waiting:=false
     for w in work.writes {waiting||=w.phase==.Thumbnail}
     if !waiting {return}
     size:=THUMBNAIL_SIZE*2
-    if work.texture==0 {work.texture,_=erender.view_texture_add(app,size.x,size.y,"save thumbnail")}
+    if work.texture==0 {work.texture,_=erender.view_texture_add(renderer,size.x,size.y,"save thumbnail")}
     seen:=view.ptr^
     seen.size={f32(size.x),f32(size.y)}
-    _,work.seen,_=erender.view_texture_pixels(app,work.texture)
-    if work.texture==0 || !erender.view_texture_draw(app,work.texture,seen,size.x,size.y,cut=true,readback=true) {
+    _,work.seen,_=erender.view_texture_pixels(renderer,work.texture)
+    if work.texture==0 || !erender.view_texture_draw(extras,work.texture,seen,size.x,size.y,cut=true,readback=true) {
         for w in work.writes {if w.phase==.Thumbnail {w.phase=.Ready}}
         return
     }
     work.drawn=work.frame
 }
 
-// A world that goes writes the slots it holds and lets go of the thumbnails it showed.
+// A world that goes writes the slots it holds and what the files of the player
+// have not got yet, and lets go of the thumbnails it showed.
 @(step="release")
-saves_release :: proc(work:^Save_Work,thumbnails:^Save_Thumbnails,app:^host.App) {
-    thumbnails_release(thumbnails,app)
+saves_release :: proc(world:core.World_Ref,work:^Save_Work,thumbnails:^Save_Thumbnails,app:^host.App,state:^Save_State,bindings:core.Ref(inp.Input_Map),problems:^core.Problems) {
+    thumbnails_release(thumbnails,app.assets)
     if work==nil {return}
-    writes_flush(work,app,nil)
-    if work.texture!=0 {erender.view_texture_remove(app,work.texture)}
+    writes_flush(work,&app.jobs,nil)
+    kept_flush(work,world,app,state,bindings.ptr,problems)
+    if work.texture!=0 {erender.view_texture_remove(app.renderer,work.texture)}
     work.texture=0
 }

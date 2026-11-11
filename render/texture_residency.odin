@@ -20,8 +20,13 @@ import "mirai:rhi"
 // keep TEXTURE_KEEP_LEVELS of hysteresis, and while the pool of textures
 // has no room every streamed texture takes the same share of a level more
 // (texture_targets). The estimate runs between frames and only when the
-// views, the sources or the scene changed; giving a range of levels is a
-// transaction: a texture of its own replaces the entry, whose handle stays.
+// views, the sources or what the scene shows changed. An instance that only
+// moves asks again alone (textures_touched): nearer, its textures take the
+// finer level at once; farther, the scene is estimated again only if a
+// texture was at the level that instance asked and it went TEXTURE_FAR_STEP
+// past where it asked it, so a level is never coarser than its distance asks.
+// Giving a range of levels is a transaction: a texture of its own replaces
+// the entry, whose handle stays.
 
 // Texels of side of the levels a streamed texture holds whatever its
 // distance: what a load brings first (assets of a section) and what a texture
@@ -37,6 +42,11 @@ TEXTURE_KEEP_LEVELS :: f32(0.32192809)
 TEXTURE_FILTER_LEVELS :: f32(1)
 // Metres a view or a source moves before the levels are looked at again.
 TEXTURE_VIEW_MOVE :: f32(0.25)
+// Levels an instance goes away from where it asked a level before the textures
+// only it holds that fine are looked at again: 2^0.25 times farther.
+TEXTURE_FAR_STEP :: f32(0.25)
+// What an instance that shows nothing asks its textures at (instance_near).
+TEXTURE_NEAR_NONE :: max(f32)
 TEXTURE_SOURCES_MAX :: 128
 TEXTURE_VIEWS_MAX :: VIEW_CAPACITY + TEXTURE_VIEW_CAPACITY + 1
 
@@ -61,6 +71,7 @@ Texture_Stream :: struct {
 	top:    u8,  // the level of its source its first resident level is
 	target: u8,  // the one it should have (texture_targets)
 	shown:  bool, // an instance or a batch of the scene shows it
+	span:   f32, // log2 of the larger side of its source
 	lod:    f32, // the level of its source whose texel is a pixel of its nearest view
 	stamp:  u32, // grows with each texture that takes its entry and each range of levels it gets
 }
@@ -89,7 +100,9 @@ Texture_Residency :: struct {
 	seen_views:    [TEXTURE_VIEWS_MAX]Texture_Viewer, // those of the last estimate
 	seen_count:    int,
 	seen_batches:  u64, // Batch_State.revision of the last estimate
+	seen_near:     [dynamic]f32, // what each instance of the scene last asked its textures at (instance_near)
 	stale:         bool, // the estimate runs again before the next requests
+	retarget:      bool, // a texture is asked a finer level without an estimate: the targets are chosen again
 	pending:       int,  // streamed textures whose levels are not their target
 	reduced:       int,  // shown streamed textures held coarser than their distance asks by the pool
 	uploads:       [TEXTURE_UPLOADS]Texture_Upload,
@@ -119,10 +132,10 @@ Texture_Upload :: struct {
 // or its camera alone, before their places become relative to the origin.
 // A view that moved TEXTURE_VIEW_MOVE, or sees at another scale, marks the
 // estimate. An offscreen frame (a capture, a preview of another world) does
-// not move what the window shows.
+// not move what the window shows, unless it asks for it (Frame_Desc.streamed).
 @(private)
 textures_views_record :: proc(r: ^Renderer, frame: Frame_Desc) {
-	if frame.ui_only || frame.offscreen {return}
+	if frame.ui_only || frame.offscreen && !frame.streamed {return}
 	t := &r.textures.residency
 	count := 0
 	add :: proc(t: ^Texture_Residency, count: ^int, camera: Camera, width, height: i32) {
@@ -179,6 +192,27 @@ texture_sources :: proc(r: ^Renderer, places: []Vec3) {
 	t.stale = true
 }
 
+// The places the last estimate saw textures from, relative to the origin:
+// its views, and the sources as from the view that sees the most of the world.
+@(private = "file")
+texture_viewers :: proc(r: ^Renderer, viewers: ^[TEXTURE_VIEWS_MAX + TEXTURE_SOURCES_MAX]Texture_Viewer) -> (count: int) {
+	t := &r.textures.residency
+	widest := f32(-1e30)
+	for view in t.seen_views[:t.seen_count] {
+		viewers[count] = view
+		viewers[count].position = origin_point(view.position, r.origin)
+		if !view.ortho {widest = max(widest, view.scale)}
+		count += 1
+	}
+	if widest > -1e30 {
+		for place in t.sources[:t.source_count] {
+			viewers[count] = {position = origin_point(place, r.origin), scale = widest}
+			count += 1
+		}
+	}
+	return
+}
+
 // Looks again, between frames, at the levels each streamed texture should
 // have, if the views, the sources or the scene changed since. The streamed
 // textures whose levels are not their target.
@@ -186,31 +220,22 @@ textures_update :: proc(r: ^Renderer) -> int {
 	t := &r.textures.residency
 	if len(t.streams) == 0 {return 0}
 	if r.scene.batch.revision != t.seen_batches {t.stale = true}
-	if !t.stale {return t.pending}
-	t.stale = false
-	t.seen_batches = r.scene.batch.revision
-	t.seen_views, t.seen_count = t.views, t.view_count
-	viewers: [TEXTURE_VIEWS_MAX + TEXTURE_SOURCES_MAX]Texture_Viewer
-	count, widest := 0, f32(-1e30)
-	for view in t.views[:t.view_count] {
-		viewers[count] = view
-		viewers[count].position = origin_point(view.position, r.origin)
-		if !view.ortho {widest = max(widest, view.scale)}
-		count += 1
-	}
-	// A source is seen as from the view that sees the most of the world.
-	if widest > -1e30 {
-		for place in t.sources[:t.source_count] {
-			viewers[count] = {position = origin_point(place, r.origin), scale = widest}
-			count += 1
-		}
-	}
+	if !t.stale && !t.retarget {return t.pending}
 	streams := t.streams[:r.textures.count]
-	textures_estimate(streams, &r.scene, renderer_programs(r), viewers[:count])
+	if t.stale {
+		t.seen_batches = r.scene.batch.revision
+		t.seen_views, t.seen_count = t.views, t.view_count
+		viewers: [TEXTURE_VIEWS_MAX + TEXTURE_SOURCES_MAX]Texture_Viewer
+		count := texture_viewers(r, &viewers)
+		// Without memory for what each instance asked, one touched estimates the scene again.
+		if resize(&t.seen_near, len(r.scene.instances)) != nil {clear(&t.seen_near)}
+		textures_estimate(streams, &r.scene, renderer_programs(r), viewers[:count], t.seen_near[:])
+	}
+	t.stale, t.retarget = false, false
 	streamed: u64
 	for &stream, index in streams {if stream.levels > 0 {streamed += r.textures.stored[index]}}
 	room := max(u64)
-	if pool := u64(r.settings.texture_pool_megabytes) * 1024 * 1024; pool > 0 {
+	if pool, limited := texture_pool_room(r); limited {
 		fixed := r.textures.bytes - min(streamed, r.textures.bytes)
 		room = pool - min(fixed, pool)
 	}
@@ -279,17 +304,15 @@ texture_level_range :: proc "contextless" (stream: ^Texture_Stream, max_size: in
 
 // The level of its source each streamed texture shows at its nearest
 // viewer, over the instances and the batches of the scene; a texture of a
-// Surface program, whose uv its source decides, asks for its largest.
-textures_estimate :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: []Program, viewers: []Texture_Viewer) {
+// Surface program, whose uv its source decides, asks for its largest. seen
+// takes what each instance asked its textures at.
+textures_estimate :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: []Program, viewers: []Texture_Viewer, seen: []f32 = nil) {
 	for &stream in streams {stream.lod, stream.shown = max(f32), false}
 	if len(viewers) == 0 {return}
-	for &inst, i in s.instances {
-		if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED) != 0 || int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
-		mesh := &s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
-		if mesh.vertex_count == 0 {continue}
-		near := viewers_near(viewers, inst.bounds_min.xyz, inst.bounds_max.xyz) - math.log2(max(rows_scale(inst.world), 1e-12))
-		overlays := s.overlays[i] if i < len(s.overlays) else Instance_Overlays{}
-		mesh_lods(streams, s, programs, mesh, inst.meta.y, &inst.slot_materials, overlays, near)
+	for i in 0 ..< len(s.instances) {
+		near := instance_near(s, i, viewers)
+		if i < len(seen) {seen[i] = near}
+		if near != TEXTURE_NEAR_NONE {instance_lods(streams, s, programs, i, near, .Give)}
 	}
 	b := &s.batch
 	for row, i in b.rows {
@@ -298,60 +321,150 @@ textures_estimate :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: 
 		if mesh.vertex_count == 0 {continue}
 		near := viewers_near(viewers, row.bounds_min.xyz, row.bounds_max.xyz) - math.log2(max(b.records[b.drawn[i]].scale, 1e-12))
 		slots := row.slot_materials
-		mesh_lods(streams, s, programs, mesh, row.meta.y, &slots, {}, near)
+		mesh_lods(streams, s, programs, mesh, row.meta.y, &slots, {}, near, .Give)
 	}
-	for &stream in streams {
-		if stream.shown && stream.lod < max(f32) {stream.lod += math.log2(f32(max(stream.size.x, stream.size.y, 1)))}
-	}
-	// What the materials of a mesh ask of their textures at `near`: log2 of
-	// the metres a pixel spans at the instance, less the log2 of its scale.
-	mesh_lods :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: []Program, mesh: ^Mesh_Record, material: u32, palette: ^[32]u32, overlays: Instance_Overlays, near: f32) {
-		densest := [2]f32{MESH_UV_NONE, MESH_UV_NONE}
-		for e in 0 ..< mesh.slot_count {
-			density := mesh.uv_density[min(int(e), MESH_UV_ENTRIES - 1)]
-			densest = linalg.max(densest, density)
-			row := instance_row(s.indices[mesh.slot_word + e], material, palette)
-			if int(row) < len(s.materials) {row_lods(streams, programs, &s.materials[row], density, near)}
+}
+
+// What the instances touched since the frame before ask of their textures
+// now, before they go to the GPU. One that came nearer gives its textures the
+// finer level at once. One that went TEXTURE_FAR_STEP farther than where it
+// last asked, or shows nothing any more, marks the estimate only if a texture
+// is at the level it asked: the others keep theirs. A scene that changed what
+// it shows (the whole table, a material) marks it too.
+@(private)
+textures_touched :: proc(r: ^Renderer) {
+	t := &r.textures.residency
+	s := &r.scene
+	if s.instances_dirty || s.materials_dirty || len(s.material_ranges) > 0 {t.stale = true}
+	if t.stale || s.touched_count == 0 || len(t.streams) == 0 {return}
+	if len(t.seen_near) != len(s.instances) {t.stale = true;return}
+	viewers: [TEXTURE_VIEWS_MAX + TEXTURE_SOURCES_MAX]Texture_Viewer
+	count := texture_viewers(r, &viewers)
+	if count == 0 {return}
+	streams := t.streams[:r.textures.count]
+	programs := renderer_programs(r)
+	for range, ok := touched_range(s, 0); ok; range, ok = touched_range(s, range.first + range.count) {
+		for index in int(range.first) ..< int(range.first + range.count) {
+			near := instance_near(s, index, viewers[:count])
+			seen := &t.seen_near[index]
+			if near < seen^ {
+				seen^ = near
+				if instance_lods(streams, s, programs, index, near, .Give) {t.retarget = true}
+			} else if near - seen^ >= TEXTURE_FAR_STEP {
+				mesh := s.instances[index].meta.x & INSTANCE_MESH_MASK
+				gone := int(mesh) >= len(s.meshes) || s.meshes[mesh].vertex_count == 0
+				if gone || instance_lods(streams, s, programs, index, seen^, .Leave if near == TEXTURE_NEAR_NONE else .Hold) {t.stale = true;return}
+				seen^ = near
+			}
 		}
-		// A layer covers the same triangles as any of the entries.
-		for at in 0 ..< min(int(overlays.count), OVERLAY_CAPACITY) {
-			layer := overlays.entries[at]
-			if layer.enabled && int(layer.material) < len(s.materials) {row_lods(streams, programs, &s.materials[layer.material], densest, near)}
+	}
+}
+
+// What an instance asks its textures at: log2 of the metres a pixel of the
+// nearest viewer spans at its box, less the log2 of its scale.
+// TEXTURE_NEAR_NONE for one that shows nothing.
+@(private = "file")
+instance_near :: proc(s: ^Scene_State, index: int, viewers: []Texture_Viewer) -> f32 {
+	inst := &s.instances[index]
+	mesh := inst.meta.x & INSTANCE_MESH_MASK
+	if inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED) != 0 || int(mesh) >= len(s.meshes) || s.meshes[mesh].vertex_count == 0 {return TEXTURE_NEAR_NONE}
+	return viewers_near(viewers, inst.bounds_min.xyz, inst.bounds_max.xyz) - math.log2(max(rows_scale(inst.world), 1e-12))
+}
+
+@(private = "file")
+Texture_Ask :: enum u8 {
+	Give,  // the textures take the level asked at `near`, if finer than theirs: whether one changed
+	Hold,  // whether a texture is at the level asked at `near`
+	Leave, // or may be shown by what asked alone
+}
+
+@(private = "file")
+instance_lods :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: []Program, index: int, near: f32, ask: Texture_Ask) -> bool {
+	inst := &s.instances[index]
+	overlays := s.overlays[index] if index < len(s.overlays) else Instance_Overlays{}
+	return mesh_lods(streams, s, programs, &s.meshes[inst.meta.x & INSTANCE_MESH_MASK], inst.meta.y, &inst.slot_materials, overlays, near, ask)
+}
+
+// What the materials of a mesh ask of their textures at `near`: log2 of
+// the metres a pixel spans at the instance, less the log2 of its scale.
+@(private = "file")
+mesh_lods :: proc(streams: []Texture_Stream, s: ^Scene_State, programs: []Program, mesh: ^Mesh_Record, material: u32, palette: ^[32]u32, overlays: Instance_Overlays, near: f32, ask: Texture_Ask) -> (found: bool) {
+	densest := [2]f32{MESH_UV_NONE, MESH_UV_NONE}
+	for e in 0 ..< mesh.slot_count {
+		density := mesh.uv_density[min(int(e), MESH_UV_ENTRIES - 1)]
+		densest = linalg.max(densest, density)
+		row := instance_row(s.indices[mesh.slot_word + e], material, palette)
+		if int(row) < len(s.materials) && row_lods(streams, programs, &s.materials[row], density, near, ask) {
+			if ask != .Give {return true}
+			found = true
 		}
 	}
-	// The texture of an entry of the table a material names (texture_index), by handle - 1.
-	texture_of_entry :: proc(entry: u32, count: int) -> (index: int, held: bool) {
-		index = int(entry) - TEXTURE_RESERVED
-		return index, entry != GPU_NONE && index >= 0 && index < count
+	// A layer covers the same triangles as any of the entries.
+	for at in 0 ..< min(int(overlays.count), OVERLAY_CAPACITY) {
+		layer := overlays.entries[at]
+		if layer.enabled && int(layer.material) < len(s.materials) && row_lods(streams, programs, &s.materials[layer.material], densest, near, ask) {
+			if ask != .Give {return true}
+			found = true
+		}
 	}
-	row_lods :: proc(streams: []Texture_Stream, programs: []Program, row: ^Gpu_Material_Row, density: [2]f32, near: f32) {
-		for entry, kind in row.textures {
-			index, held := texture_of_entry(entry, len(streams))
-			if !held {continue}
-			transform := row.map_transforms[kind]
-			set := min(int(transform.uv_set), 1)
-			stream := &streams[index]
-			stream.shown = true
-			if density[set] <= MESH_UV_NONE {continue}
+	return
+}
+
+// The texture of an entry of the table a material names (texture_index), by handle - 1.
+@(private = "file")
+texture_of_entry :: proc(entry: u32, count: int) -> (index: int, held: bool) {
+	index = int(entry) - TEXTURE_RESERVED
+	return index, entry != GPU_NONE && index >= 0 && index < count
+}
+
+@(private = "file")
+row_lods :: proc(streams: []Texture_Stream, programs: []Program, row: ^Gpu_Material_Row, density: [2]f32, near: f32, ask: Texture_Ask) -> (found: bool) {
+	for entry, kind in row.textures {
+		index, held := texture_of_entry(entry, len(streams))
+		if !held {continue}
+		transform := row.map_transforms[kind]
+		set := min(int(transform.uv_set), 1)
+		stream := &streams[index]
+		// Where its uv do not change it is shown and asks for no level.
+		lod := max(f32)
+		if density[set] > MESH_UV_NONE {
 			// The longer axis of the map transform: how many of its uv one of the mesh spans.
 			l := transform.linear
 			scale := 0.5 * math.log2(max(l.x * l.x + l.z * l.z, l.y * l.y + l.w * l.w, 1e-24))
-			stream.lod = min(stream.lod, near + density[set] + scale)
+			lod = near + density[set] + scale + stream.span
 		}
-		if row.program_id == 0 {return}
-		words := transmute([PROGRAM_PARAMETER_BYTES / 4]u32)row.custom_params
-		for &program in programs {
-			if program.id != row.program_id || program.domain != .Surface {continue}
-			for parameter in program.parameters {
-				if parameter.kind != .Texture {continue}
-				if index, held := texture_of_entry(words[parameter.offset / 4], len(streams)); held {
-					streams[index].shown = true
-					streams[index].lod = -max(f32)
-				}
-			}
-			break
+		switch ask {
+		case .Give:
+			found ||= !stream.shown || lod < stream.lod
+			stream.shown = true
+			stream.lod = min(stream.lod, lod)
+		case .Hold:
+			if lod < max(f32) && lod <= stream.lod {return true}
+		case .Leave:
+			if lod <= stream.lod {return true}
 		}
 	}
+	if row.program_id == 0 {return}
+	words := transmute([PROGRAM_PARAMETER_BYTES / 4]u32)row.custom_params
+	for &program in programs {
+		if program.id != row.program_id || program.domain != .Surface {continue}
+		for parameter in program.parameters {
+			if parameter.kind != .Texture {continue}
+			index, held := texture_of_entry(words[parameter.offset / 4], len(streams))
+			if !held {continue}
+			switch ask {
+			case .Give:
+				found ||= !streams[index].shown || streams[index].lod != -max(f32)
+				streams[index].shown = true
+				streams[index].lod = -max(f32)
+			case .Hold:
+			case .Leave:
+				return true
+			}
+		}
+		break
+	}
+	return
 }
 
 // log2 of the metres a pixel of the nearest viewer spans at a box: the
@@ -428,7 +541,7 @@ texture_requests :: proc(r: ^Renderer, out: []Texture_Request, busy: []Texture_H
 	t := &r.textures.residency
 	if t.pending == 0 || len(out) == 0 {return 0}
 	shrink_first := false
-	if pool := u64(r.settings.texture_pool_megabytes) * 1024 * 1024; pool > 0 {shrink_first = r.textures.bytes > pool}
+	if pool, limited := texture_pool_room(r); limited {shrink_first = r.textures.bytes > pool}
 	urgency :: proc "contextless" (stream: ^Texture_Stream, shrink_first: bool) -> int {
 		grow := stream.target < stream.top
 		steps := abs(int(stream.top) - int(stream.target))
@@ -664,6 +777,7 @@ texture_stream_set :: proc(stream: ^Texture_Stream, data: Texture_Data, dropped:
 	stream^ = {stamp = stream.stamp + 1}
 	if data.source.x <= 0 || data.source.y <= 0 || data.layers > 1 || data.cube || data.level + len(data.levels) > rhi.MAX_TEXTURE_MIPS {return}
 	stream.size = {u32(data.source.x), u32(data.source.y)}
+	stream.span = math.log2(f32(max(stream.size.x, stream.size.y, 1)))
 	stream.format = data.format
 	stream.levels = u8(data.level + len(data.levels))
 	stream.top = u8(data.level + dropped)

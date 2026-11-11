@@ -13,21 +13,21 @@ import wire "mirai:net"
 bench_publish_run :: proc(t:^testing.T,changed:bool,hz:f32) {
     OBJECTS :: 2000
     SAMPLES :: 600
-    info:=net_test_info()
-    defer delete(info.tables)
-    defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
+    net_test_init(&world,&info)
+    defer core.world_destroy(&info,.World,&world)
     first:=core.NONE
     for i in 0..<OBJECTS {
-        entity:=core.create(&world.es)
+        entity:=core.create(&world.entities)
         if i==0 {first=entity}
         core.add(&world.transforms,entity,core.TRANSFORM_IDENTITY)
         core.add(&world.values,entity,{force=1,target=first})
         core.add(&world.objects,entity,net_test_replicate(audience=.Always,update_hz=hz))
     }
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     ref:=core.world_ref(&world,&info)
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=3,endpoints=2,packets=64})) {return}
@@ -58,9 +58,9 @@ bench_publish_run :: proc(t:^testing.T,changed:bool,hz:f32) {
             for row in 0..<len(world.values.values) {core.at(&world.values,row).force=f32(tick)}
         }
         started:=time.tick_now()
-        server_publish(&session,ref,&app,&outbox,u32(tick))
+        server_publish(&session,ref,&outbox,u32(tick))
         elapsed:=time.duration_seconds(time.tick_diff(started,time.tick_now()))*1000
-        net_test_settle(&world,nil,nil)
+        core.settle(&info,&world,nil)
         wire.host_update(&session.host,f64(tick)/60)
         if tick>96 {samples[tick-97]=elapsed;mean+=elapsed}
     }

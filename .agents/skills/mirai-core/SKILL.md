@@ -38,14 +38,15 @@ A game is a struct in memory and a list of functions that transform it
   of a row): [game data](references/core.md#game-data).
 - What a function could not do, with its entity and how to fix it:
   [problems](references/core.md#problems).
+- The world of a test, and what a library gives the tests of others (`core.Test_World`,
+  `test_types`): [test worlds](references/core.md#test-worlds).
 - Attributes and their rules: [generator](references/generator.md#attributes).
 - Parameter types of a function: [parameters](references/generator.md#parameters).
 - Grouping parameters in a struct that several functions or a helper receive (`@(params)`,
   `core.Placer`): [groups](references/generator.md#parameter-groups).
 - Settle and call of the functions: [generated
   functions](references/generator.md#generated-functions); in which order they run (stages, `after`,
-  `before`): [order](references/generator.md#order); which ones run at the same time: [concurrent
-  functions](references/generator.md#concurrent-functions).
+  `before`): [order](references/generator.md#order).
 - A function that only runs where the rules are decided (`server`):
   [attributes](references/generator.md#attributes).
 - Application, frame, several views and profiling: [host](references/host.md#the-application); a GPU
@@ -102,6 +103,11 @@ A game is a struct in memory and a list of functions that transform it
 
 ## Invariants
 
+- **One coordinate convention for the whole engine:** right-handed, +Y up, +X right, -Z forward for
+  every entity (bodies, characters, cameras, lights, spawn points, input axes, view space).
+  Models reach it at import. A world panel or screen (`World_Widget`) is placed with that same
+  forward and the engine resolves the side it shows; a game never adds a half turn. A portal or a
+  mirror shows its face toward +Z.
 - The generator does not detect mutable package variables: check for them when reading.
 - **One table per component, not archetypes.** The world stores a dense table per component, without
   a query engine, and `core.changes` makes each reader process only what changed.
@@ -109,10 +115,14 @@ A game is a struct in memory and a list of functions that transform it
   (`stage`) and, within it, which ones it waits for (`after`, `before`), naming only functions of
   the engine or of the plugins it depends on; `order=` is an error. Between plugins that do not know
   each other the stage orders ([order](references/generator.md#order)).
-- **A function touches only what it receives.** Its parameters say what it reads and writes, and
-  from them comes which functions of a phase run at the same time; what it reached by another path
-  (a stored pointer, the application from a `World` storage) would run alongside its writer
-  ([concurrent functions](references/generator.md#concurrent-functions)).
+- **A function touches only what it receives.** Its parameters say what it reads and writes:
+  from them come the settle after it, the revisions of the storages a rollback copies again and
+  the single writer of each datum ([parameters](references/generator.md#parameters)).
+- **Of the application, a function receives the part it reaches** (its assets, its renderer, the
+  extras of the frame, its mixer, its job system, its allocator), in a step and in the helpers it
+  calls; `^host.App` only for the application itself.
+- **Steps run in order; spread work inside a step.** A phase calls its functions one after another
+  on the thread of the loop; what is heavy spreads its own work with `std/jobs`.
 - **What decides the rules is `server`.** A function whose whole body belongs to the server or to a
   lone game is marked `@(step="fixed",server)` instead of asking `core.Network` and returning: a
   client neither runs nor resimulates it. One that also does something at every end is split or
@@ -152,6 +162,9 @@ A game is a struct in memory and a list of functions that transform it
 - **The clock of a world is `core.Time`**, the only one: it is copied with it, so a Play and a
   rollback carry it with the copy, and a save stores its tick and its seconds. `core.time_advance`
   advances it after each tick; there is no other per-world clock in `host`.
+- **Outside `fixed` the input of the tick is stale, and frame events do not reach `fixed`.** In the
+  game loop `core.Input` and `Input_Of` outside `fixed`, and a `fixed` reader of an `events` storage
+  only other phases fill, are generator errors.
 - **What belongs to the frame is not simulation and is not copied.** `core.Frame_Time` and
   `core.Frame_Input` are `copy=false`: a Play, a correction and opening a document do not overwrite
   them, and nobody saves them or restores them by hand. A function reads `Time` to simulate and
@@ -160,19 +173,23 @@ A game is a struct in memory and a list of functions that transform it
   the project live in its library. `Table_Info.info`, `Storage_Info.info`, `raw_*`, `value_copy`,
   `value_free` and `serial.schema_add_type_info` receive that pointer; `serial.schema_add($T)` is
   for types the engine knows.
-- **Copying a world can fail.** `init`, `copy` and every `copy="f"` return `bool`; a world that is
-  shown or simulated is replaced with `host.app_world_replace` (separate copy and swap without
-  allocating), never with `clear` and `copy` on top.
-- **A copy that is kept copies only what changed.** `info.copy_changed` serves a destination that is
-  a copy of the same world (the rollback history and the Play one); it relies on the stamps: a world
-  into which another one of a different origin was copied is copied whole
-  ([tables](references/core.md#tables)). That destination is only copied back with `copy`, it never
-  runs: the storages with `copy_kept` keep there only what that return trip needs
-  ([attributes](references/generator.md#attributes)).
+- **Copying a world can fail.** `core.world_init`, `world_copy` and every `copy="f"` return
+  `bool`; a world that is shown or simulated is replaced with `host.app_world_replace` (separate
+  copy and swap without allocating), never with `world_clear` and `world_copy` on top.
+- **A copy that is kept copies only what changed.** `core.world_copy_changed` serves a destination
+  that is a copy of the same world (the rollback history and the Play one); it relies on the
+  stamps of the rows and on the revisions of the storages: a world into which another one of a
+  different origin was copied is copied whole ([tables](references/core.md#tables)). That
+  destination is only copied back with `world_copy`, it never runs: the storages with `copy_kept`
+  keep there only what that return trip needs ([attributes](references/generator.md#attributes)).
+- **A storage of a `World` is written by whoever received it with `^S` or asked `core` for it**
+  (`world_storage*`): that moves its revision, and a copy of what changed takes it again. Reaching
+  one by its offset, or writing through a `core.Ref`, leaves a rollback with the value of another
+  tick ([reflection](references/core.md#world-reflection)).
 - **Clearing a world takes its derived storages to their start.** Loading a scene or a save and
-  opening a document call `info.clear`; what remains is only what `@(storage,keep)` says (state of
-  the run), the settings and what is not copied. What a save must keep goes in a component, never
-  in a storage ([classes](references/generator.md#attributes)).
+  opening a document call `core.world_clear`; what remains is only what `@(storage,keep)` says
+  (state of the run), the settings and what is not copied. What a save must keep goes in a
+  component, never in a storage ([classes](references/generator.md#attributes)).
 - **`World` is plain data copied in blocks.** What the application stores for each world that is
   not copied with it (sockets, pointers, mirrors of its state: voices, interfaces, derived meshes,
   its problems) is `@(storage,host,by_world)`: each function receives the value of its world (nil in
@@ -208,7 +225,7 @@ A game is a struct in memory and a list of functions that transform it
 - CPU copies of meshes (`host/assets_geometry_test.odin`, `assets_generated_test.odin`): repeat with
   `--release` only if a failure may depend on optimization.
 - Fonts, texts and prompts of the content: `host/content_interface_test.odin`.
-- GPU failure: `a_lost_gpu_leaves_the_frames_running_without_drawing` (`host`, with GPU).
+- GPU failure: `host/gpu_failure_test.odin` (with GPU).
 - Entity pool: also `mirai test plugins/physics/runtime` (scene reload with physics storage).
 - `Id` index or new `Id`s: also `mirai test engine/save` (borrowed `Id`s),
   `plugins/multiplayer/runtime` (rollback and adoption), `plugins/destruct/runtime` (groups) and
@@ -217,21 +234,20 @@ A game is a struct in memory and a list of functions that transform it
   `plugins/multiplayer/runtime` (`authority_test.odin`).
 - Indices and schema of the `World_Info`: `mirai test core`; the generated `info()`, with a real
   build of the demo.
+- What a test world says of its types: `mirai test core` (`test_world_test.odin`) and, for a new
+  attribute or a change in how one is written, `mirai test cook/build` (`declared_test.odin`).
 - `single` tables: `mirai test core` (`table_test.odin`) and `engine/render` (`sky_test.odin`).
 - Copy, swap or replacement of worlds: `mirai test core`, `host` and `cook/build` (cases without
   memory), `plugins/multiplayer/runtime` (rollback), `plugins/physics/runtime` and
   `plugins/terrain/runtime` (their `copy` and `swap`) and `editor` (opening a document and edit
-  transaction). The copy of what changed:
-  `a_copy_of_what_changed_equals_a_whole_copy_after_writes_layout_changes_and_a_swap` (`core`) and
-  `history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_and_corrections`
-  (`plugins/multiplayer/runtime`).
+  transaction). The copy of what changed: `core/world_copy_test.odin` and
+  `plugins/multiplayer/runtime/world_copy_test.odin`.
 - Game data: `mirai test core`, `asset`, `cook/build` and `host` (their `records_test.odin`) and
   `editor` (`api_records_test.odin`: CSV and references by name); the grid and `records.*`, with a
   project that declares a `@(record)`, in a session.
 - Meshes with UV1 on GPU: `mirai test engine/render` in the
   [GPU environment](../mirai-rendering/references/verification.md#gpu-environment).
 - Generator or build: [project verification](../mirai-projects/SKILL.md#verification).
-- Concurrent functions: `mirai test cook/build` (`graph_test.odin`: collisions, barriers, stages,
-  `after`/`before`, `main`), `host` (`steps_test.odin`: the same `World` with one and with several
-  workers) and `std/jobs` (fixed nodes to the one that runs the graph); also
-  `plugins/multiplayer/runtime` (rollback).
+- Order of the functions: `mirai test cook/build` (`stages_test.odin`: stages, `after`/`before`,
+  the settle before the next function) and `host` (`steps_test.odin`: a phase in order, with a
+  function that spreads its work with `std/jobs`); also `plugins/multiplayer/runtime` (rollback).

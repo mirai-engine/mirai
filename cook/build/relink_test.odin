@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 // A change inside a procedure of a plugin library renames it, and what links
 // against it links its objects again against the new name instead of
@@ -15,10 +16,8 @@ a_change_inside_a_procedure_links_what_links_against_it_again :: proc(t:^testing
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-relink-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"relink")
+    if folder=="" {return}
     base_source:="engine/plugins/base_thing/runtime/base.odin"
     files:=[][2]string{
         {"engine/core/data.odin","package core\n"},

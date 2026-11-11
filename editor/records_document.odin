@@ -7,9 +7,9 @@ import "core:reflect"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/records"
 import "mirai:host"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // The document of a table of game data (.records): a grid with a row per
@@ -37,7 +37,7 @@ records_document_create :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -
     if s.app.info==nil || len(s.app.info.records)==0 || s.app.info.schema==nil {return nil}
     index:=clamp(s.content.create_record if s.content!=nil else 0,0,len(s.app.info.records)-1)
     ws:=s.app.info.schema
-    desc:=asset.Records_Desc{id=id,type=records_type_name(s.app.info,index),schema=&ws.schema,value_type=ws.records[index].type}
+    desc:=asset.Records_Desc{id=id,type=records.type_name(s.app.info,index),schema=&ws.schema,value_type=ws.records[index].type}
     bytes,error:=asset.records_bytes(&s.app.assets.types,desc,context.temp_allocator)
     return bytes if error==.None else nil
 }
@@ -45,7 +45,7 @@ records_document_create :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -
 @(storage,free="records_document_free")
 Records_Document :: struct {
     id:base.Asset_Id,
-    edit:Records_Edit,
+    edit:records.Edit,
     read:bool,
     stamp:u64,        // the content hash of the file the copy was read from or written to
     changed:bool,     // the copy changed since: it is written once nothing holds it
@@ -71,7 +71,7 @@ Records_Column :: struct {
 }
 
 records_document_free :: proc(r:^Records_Document) {
-    if r.read {records_edit_destroy(&r.edit)}
+    if r.read {records.destroy(&r.edit)}
     delete(r.defaults)
     for c in r.columns {delete(c.label)}
     delete(r.columns)
@@ -87,7 +87,7 @@ records_document_ui :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     ctx:=g.ctx
     records_document_sync(s,r,d.id)
     if part:=base.text_get(d.part[:]);part!="" && r.read {
-        if row:=records_find(&r.edit,part);row>=0 {r.selected,r.reveal=row,true}
+        if row:=records.row_find(&r.edit,part);row>=0 {r.selected,r.reveal=row,true}
         d.part={}
     }
     id:=ui.id(ctx,"records_document")
@@ -100,7 +100,7 @@ records_document_ui :: proc(s:^Session,r:^Records_Document,app:^host.App) {
                 asset_column_end(ctx)
             }
             asset_column_divider(ctx)
-            if asset_column_begin(ctx,ui.fixed(RECORDS_DETAILS_WIDTH),r.read && r.selected>=0 ? records_name(&r.edit,r.selected) : "Row") {
+            if asset_column_begin(ctx,ui.fixed(RECORDS_DETAILS_WIDTH),r.read && r.selected>=0 ? records.row_name(&r.edit,r.selected) : "Row") {
                 records_details(s,r,app)
                 asset_column_end(ctx)
             }
@@ -118,7 +118,7 @@ records_title :: proc(s:^Session,r:^Records_Document) -> string {
 @(private="file")
 records_note :: proc(r:^Records_Document) -> string {
     if !r.read {return ""}
-    count:=records_count(&r.edit)
+    count:=records.row_count(&r.edit)
     return fmt.tprintf("%d %s",count,count==1?"row":"rows")
 }
 
@@ -132,7 +132,7 @@ records_document_sync :: proc(s:^Session,r:^Records_Document,id:base.Asset_Id) {
     if !found {return}
     if r.id==id && (r.changed || file.content_hash==r.stamp) {return}
     selected:=r.read && r.id==id ? r.selected : -1
-    if r.read {records_edit_destroy(&r.edit)}
+    if r.read {records.destroy(&r.edit)}
     r.read,r.changed,r.id,r.stamp=false,false,id,file.content_hash
     r.problem={}
     if problem:=records_edit_load(s,id,&r.edit);problem!="" {
@@ -140,7 +140,7 @@ records_document_sync :: proc(s:^Session,r:^Records_Document,id:base.Asset_Id) {
         return
     }
     r.read=true
-    r.selected=min(selected,records_count(&r.edit)-1)
+    r.selected=min(selected,records.row_count(&r.edit)-1)
     records_columns_make(s,r)
 }
 
@@ -225,8 +225,8 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
         if r.selected>=0 {
             if ui.button(ctx,ui.id(ctx,"duplicate"),{label="Duplicate",style=.Field,height=th.control}).clicked {records_grid_duplicate(s,r)}
             if ui.button(ctx,ui.id(ctx,"remove"),{label="Delete",style=.Field,height=th.control}).clicked {
-                records_row_remove(e,r.selected)
-                r.selected=min(r.selected,records_count(e)-1)
+                records.row_remove(e,r.selected)
+                r.selected=min(r.selected,records.row_count(e)-1)
                 r.changed=true
             }
         }
@@ -252,7 +252,7 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
     area_id:=ui.id(ctx,"rows")
     area,_:=ui.widget_rect(ctx,area_id)
-    count:=records_count(e)
+    count:=records.row_count(e)
     if r.reveal && r.selected>=0 {
         top:=f32(r.selected)*row_height
         if top<r.scroll[1] {r.scroll[1]=top}
@@ -294,10 +294,10 @@ records_name_cell :: proc(s:^Session,r:^Records_Document,row:int) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     buffer:[asset.RECORDS_NAME]u8
-    length:=copy(buffer[:asset.RECORDS_NAME-1],records_name(&r.edit,row))
+    length:=copy(buffer[:asset.RECORDS_NAME-1],records.row_name(&r.edit,row))
     result:=ui.text_field(ctx,ui.id(ctx,"name"),buffer[:asset.RECORDS_NAME-1],&length,{height=th.row,size=th.font_small})
     if !result.changed {return}
-    if problem:=records_row_rename(&r.edit,row,string(buffer[:length]));problem!="" {notify(s,problem)} else {r.changed=true}
+    if problem:=records.row_rename(&r.edit,row,string(buffer[:length]));problem!="" {notify(s,problem)} else {r.changed=true}
 }
 
 // A cell of a row: true when it changed the value.
@@ -306,7 +306,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
     ctx:=s.gui.ctx
     th:=&ctx.theme
     e:=&r.edit
-    value:=records_row(e,row)[c.offset:][:c.info.size]
+    value:=records.row_bytes(e,row)[c.offset:][:c.info.size]
     p:=raw_data(value)
     id:=ui.id(ctx,"cell",at+1)
     switch {
@@ -327,7 +327,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
             options[i]=n.name
             if n.value==current {selected=i}
         }
-        if ui.dropdown(ctx,id,options,&selected,{width=-1,height=th.row,searchable=true}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true}) && selected>=0 {
             number_write(p,c.info,f64(names[selected].value))
             return true
         }
@@ -351,7 +351,7 @@ records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Rec
             options[i]=readable(name)
             if i64(v.values[i])==current {selected=i}
         }
-        if ui.dropdown(ctx,id,options,&selected,{width=-1,height=th.row}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row}) && selected>=0 {
             number_write(p,v.base,f64(v.values[selected]))
             return true
         }
@@ -372,12 +372,12 @@ records_text_cell :: proc(s:^Session,r:^Records_Document,row:int,c:^Records_Colu
     ctx:=s.gui.ctx
     th:=&ctx.theme
     e:=&r.edit
-    text:=(cast(^core.Text)&records_row(e,row)[c.offset]).id
-    shown,_:=records_text_get(e,text,"")
+    text:=(cast(^core.Text)&records.row_bytes(e,row)[c.offset]).id
+    shown,_:=records.text_get(e,text,"")
     buffer:[1024]u8
     length:=copy(buffer[:],shown)
     if !ui.text_field(ctx,id,buffer[:],&length,{height=th.row,size=th.font_small}).changed {return false}
-    records_text_set(s,e,row,c.offset,"",strings.clone(string(buffer[:length]),context.temp_allocator))
+    records.text_set(e,&s.id_state,row,c.offset,"",strings.clone(string(buffer[:length]),context.temp_allocator))
     return true
 }
 
@@ -386,8 +386,8 @@ records_grid_add :: proc(s:^Session,r:^Records_Document) {
     e:=&r.edit
     base_name:=strings.to_lower(s.app.info.records[e.record].name,context.temp_allocator)
     name:=base_name
-    for n:=2;records_find(e,name)>=0;n+=1 {name=fmt.tprintf("%s_%d",base_name,n)}
-    row,problem:=records_row_add(s,e,name,nil,r.selected)
+    for n:=2;records.row_find(e,name)>=0;n+=1 {name=fmt.tprintf("%s_%d",base_name,n)}
+    row,problem:=records.row_add(e,&s.id_state,name,nil,r.selected,s.app.info.records[e.record].default)
     if problem!="" {notify(s,problem);return}
     r.selected,r.reveal,r.changed=row,true,true
 }
@@ -395,10 +395,10 @@ records_grid_add :: proc(s:^Session,r:^Records_Document) {
 @(private="file")
 records_grid_duplicate :: proc(s:^Session,r:^Records_Document) {
     e:=&r.edit
-    original:=records_name(e,r.selected)
+    original:=records.row_name(e,r.selected)
     name:=fmt.tprintf("%s_copy",original)
-    for n:=2;records_find(e,name)>=0;n+=1 {name=fmt.tprintf("%s_copy_%d",original,n)}
-    row,problem:=records_row_duplicate(s,e,r.selected,name)
+    for n:=2;records.row_find(e,name)>=0;n+=1 {name=fmt.tprintf("%s_copy_%d",original,n)}
+    row,problem:=records.row_duplicate(e,&s.id_state,r.selected,name)
     if problem!="" {notify(s,problem);return}
     r.selected,r.reveal,r.changed=row,true,true
 }
@@ -409,12 +409,12 @@ records_grid_duplicate :: proc(s:^Session,r:^Records_Document) {
 @(private="file")
 records_details :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     ctx:=s.gui.ctx
-    if !r.read || r.selected<0 || r.selected>=records_count(&r.edit) {return}
+    if !r.read || r.selected<0 || r.selected>=records.row_count(&r.edit) {return}
     e:=&r.edit
     info:=e.info
     fields,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if !is_struct {return}
-    row:=records_row(e,r.selected)
+    row:=records.row_bytes(e,r.selected)
     record:=&s.app.info.records[e.record]
     h:=Held_Values{key=KEY_RECORDS_ROW~e.ids[r.selected],info=info,value=raw_data(row),defaults=raw_data(r.defaults),width=RECORDS_DETAILS_WIDTH-16}
     if ui.scroll_area(ctx,ui.id(ctx,"details"),&r.details_scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=3,padding={8,8,10,8}}) {
@@ -471,7 +471,7 @@ record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^
         if entry.table==table^ && entry.row==row^ {selected=i+1}
     }
     if ui.box(ctx,{width=width,height=ui.fixed(th.row),gap=2,align_y=.Center}) {
-        if ui.dropdown(ctx,id,options,&selected,{width=-1,height=th.row,searchable=true,empty="Missing"}) && selected>=0 {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true,empty="Missing"}) && selected>=0 {
             if selected==0 {
                 table^,row^={},0
             } else {

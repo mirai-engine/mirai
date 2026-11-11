@@ -38,9 +38,9 @@ Session_Record :: api.Session_Record
 //   status   says whether one answers, and which editors of this checkout no
 //            port file names
 //   sync     brings only the files named from the project into a copy and
-//            restarts its session, or has it read the assets again
-//            (session_sync.odin)
-// The editor names its port in <proyecto>/.mirai/api.json (api.PORT_FILE). An
+//            restarts its session when code or the manifest changed; its
+//            editor reads assets again by itself (session_sync.odin)
+// The editor names its port in <project>/.mirai/api.json (api.PORT_FILE). An
 // editor with a window is never reused, replaced nor closed.
 cmd_session :: proc(root:string,args:[]string) -> int {
     if len(args)==0 {fmt.eprintfln("Usage: mirai %s",SESSION_USAGE);return 2}
@@ -105,25 +105,49 @@ session_options :: proc(args:[]string) -> (options:Session_Options,problem:strin
     return options,""
 }
 
+// The log of the session of the project at folder.
+session_log_path :: proc(folder:string) -> string {
+    return project.path(folder,".mirai","session.log",allocator=context.temp_allocator)
+}
+
 // The port file of the editor of the project at folder, when its process is alive.
 session_find :: proc(folder:string) -> (file:api.Port_File,alive:bool) {
     path:=project.path(folder,".mirai",api.PORT_FILE,allocator=context.temp_allocator)
     data,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {return}
     if json.unmarshal(data,&file,allocator=context.temp_allocator)!=nil || file.port<=0 || file.pid<=0 {return}
-    return file,workspace.process_alive(file.pid)
+    return file,subprocess.process_alive(file.pid)
 }
 
 // Waits up to wait for a process to end, and ends it when it does not.
 process_end :: proc(pid:int,wait:time.Duration) {
     start:=time.tick_now()
-    for workspace.process_alive(pid) {
+    for subprocess.process_alive(pid) {
         if time.tick_since(start)>=wait {
             process_kill_pid(pid)
             return
         }
         time.sleep(250*time.Millisecond)
     }
+}
+
+// The session of the project that answers, or one opened for a command, which
+// closes it when reused is false; code is not 0 after saying why there is none.
+session_borrow :: proc(root,folder:string,mode:Build_Mode,command:string) -> (file:api.Port_File,reused:bool,code:int) {
+    alive:bool
+    file,alive=session_find(folder)
+    reused=alive && session_answers(file.port)
+    if reused && !session_reusable(root,folder,mode,file,command) {return file,reused,1}
+    if !reused {file,code=session_open(root,folder,mode,false,180,{})}
+    return
+}
+
+// One call of a command to its session; what fails goes to stderr.
+session_call :: proc(command:string,port:int,method:string,params:any,timeout_ms:=600000) -> (result:string,ok:bool) {
+    text,_:=json.marshal(params,allocator=context.temp_allocator)
+    response,err,called:=api.rpc_call(port,method,string(text),1,timeout_ms,context.allocator)
+    if !called {fmt.eprintfln("mirai %s: %s: %s",command,method,api.error_text(err,context.temp_allocator))}
+    return response,called
 }
 
 session_answers :: proc(port:int) -> bool {
@@ -163,8 +187,7 @@ session_port_remove :: proc(folder:string,pid:int) {
 
 @(private="file")
 session_print :: proc(folder:string,file:api.Port_File) {
-    log:=project.path(folder,".mirai","session.log",allocator=context.temp_allocator)
-    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "log": %q}}`,folder,file.port,file.pid,log)
+    fmt.printfln(`{{"project": %q, "port": %d, "pid": %d, "log": %q}}`,folder,file.port,file.pid,session_log_path(folder))
 }
 
 @(private="file")
@@ -252,7 +275,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     if found_file,found_code,found:=open(root,folder,mode);found {return found_file,found_code}
     _=os.remove(project.path(folder,".mirai",api.PORT_FILE,allocator=context.temp_allocator))
     layers_isolate(root)
-    log:=project.path(folder,".mirai","session.log",allocator=context.temp_allocator)
+    log:=session_log_path(folder)
     engine:=build.engine_mode_resolve(root,mode)
     editor_args:=session_api_args(editor_args)
     command:=make([dynamic]string)
@@ -296,7 +319,7 @@ session_reusable :: proc(root,folder:string,mode:Build_Mode,file:api.Port_File,c
     paths:=build.engine_paths(root,engine,context.temp_allocator)
     stale:string
     switch {
-    case !path_same(file.engine,paths.folder): stale=fmt.tprintf("runs the binaries of %s, not those of %s",file.engine,paths.folder)
+    case !project.path_same(file.engine,paths.folder): stale=fmt.tprintf("runs the binaries of %s, not those of %s",file.engine,paths.folder)
     case file.stamp!=build.engine_stamp_of(paths.folder,context.temp_allocator): stale="runs engine binaries older than the last build"
     case !build.engine_current(root,engine): stale="runs an engine whose sources changed afterwards"
     case file.library!=build.target_stamp_of(folder,.Editor,context.temp_allocator): stale="runs a project library older than the last one built"
@@ -328,7 +351,9 @@ session_close :: proc(folder:string,file:api.Port_File,discard:bool,command:="se
         if discarded==0 {params="{}"}
     }
     _,err,called:=api.rpc_call(file.port,"engine.shutdown",params,1,10000,context.temp_allocator)
-    if !called && !discard {
+    // An editor that shuts down may close the connection before it answers.
+    if !called {for at:=time.tick_now();subprocess.process_alive(file.pid) && time.tick_since(at)<3*time.Second; {time.sleep(50*time.Millisecond)}}
+    if !called && !discard && subprocess.process_alive(file.pid) {
         fmt.eprintfln("mirai %s: the editor (pid %d) did not close: %s; `%s` closes it anyway and loses what it did not save",command,file.pid,api.error_text(err,context.temp_allocator),retry)
         return false,0
     }
@@ -495,11 +520,11 @@ session_copy_live :: proc(copy:string) -> bool {
 // Whether pid is a program that runs and opens the copy: a pid reused by another
 // process does not keep a copy. One whose arguments cannot be read does.
 session_copy_editor :: proc(copy:string,pid:int) -> bool {
-    if pid<=0 || !workspace.process_alive(pid) {return false}
+    if pid<=0 || !subprocess.process_alive(pid) {return false}
     info,error:=os.process_info_by_pid(pid,{.Command_Args,.Working_Dir},context.temp_allocator)
     if error!=nil || .Command_Args not_in info.fields {return true}
     opened,_:=engine_arguments(info.command_args,info.working_dir)
-    return path_same(opened,copy)
+    return project.path_same(opened,copy)
 }
 
 // The editor arguments of a headless session: a free API port, never api.DEFAULT_PORT, which
@@ -535,7 +560,7 @@ session_copy_remove :: proc(copy,command:string) -> bool {
 path_inside :: proc(path,folder:string) -> bool {
     p,_:=strings.replace_all(path,"\\","/",context.temp_allocator)
     f,_:=strings.replace_all(strings.trim_right(folder,"/\\"),"\\","/",context.temp_allocator)
-    return len(f)>0 && len(p)>len(f) && p[len(f)]=='/' && path_same(p[:len(f)],f)
+    return len(f)>0 && len(p)>len(f) && p[len(f)]=='/' && project.path_same(p[:len(f)],f)
 }
 
 @(private="file")
@@ -553,7 +578,7 @@ session_stop :: proc(root,folder:string,args:[]string) -> int {
         switch arg {
         case "--discard": discard=true
         case "--orphans": orphans=true
-        case: fmt.eprintfln("Usage: mirai %s",SESSION_USAGE);return 2
+        case: return argument_unknown("session stop",arg)
         }
     }
     if orphans {return session_stop_orphans(root,folder)}
@@ -619,7 +644,7 @@ session_stop_orphans :: proc(root,folder:string) -> int {
     closed,kept,failed:=0,0,0
     for p in engine_processes(engine_folder(root)) {
         if !program_is_editor(p.program) || engine_process_role(p)!=.Orphan {continue}
-        if folder!="" && !path_same(p.project,folder) {continue}
+        if folder!="" && !project.path_same(p.project,folder) {continue}
         if !p.headless {
             kept+=1
             fmt.eprintfln("mirai session: not closing %s",engine_process_text(p,.Orphan))
@@ -762,7 +787,7 @@ engine_release :: proc(root,folder:string,mode:Build_Mode,command:string) -> (cl
     session:=0
     for p,i in running {
         roles[i]=engine_process_role(p)
-        if roles[i]==.Session && folder!="" && path_same(p.project,folder) {session=p.pid}
+        if roles[i]==.Session && folder!="" && project.path_same(p.project,folder) {session=p.pid}
     }
     others:=0
     for p,i in running {

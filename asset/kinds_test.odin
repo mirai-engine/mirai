@@ -3,7 +3,7 @@ package asset
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:os"
+import "core:fmt"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -61,8 +61,7 @@ mesh_round_trips_its_clusters_compressed :: proc(t:^testing.T) {
     source.index,source.source_size,source.importer_version=2,1234,3
     g:=test_geometry(vertices,indices,skin,{.Has_Uv1})
     desc:=Mesh_Desc{id={0xaaaa,0xbbbb},geometry=g,slots=slots[:],skeleton={7,7},joints=joints[:],colliders=colliders[:],collision_points=points[:],collision_indices=hull_indices[:],source=&source}
-    path:=test_path("grid.mesh")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/grid.mesh",base.test_folder(t,"asset"))
     testing.expect_value(t,mesh_save(path,&types,desc),Error.None)
 
     a:Asset
@@ -270,8 +269,7 @@ texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
     testing.expect_value(t,texture_mip_count(1,1),1)
     testing.expect_value(t,texture_mip_count(5,3),3)
 
-    path:=test_path("image.tex")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/image.tex",base.test_folder(t,"asset"))
     for format in Texture_Format {
         levels:[4][]u8
         state:=u64(1+int(format))
@@ -380,17 +378,6 @@ a_read_of_the_small_levels_decodes_only_the_start_of_the_texels :: proc(t:^testi
     free_all(context.temp_allocator)
 }
 
-// The texture of a file written before textures had layers.
-@(private="file")
-Texture_Info_One_Layer :: struct {
-    width:u32,
-    height:u32,
-    mip_count:u32,
-    format:Texture_Format,
-    flags:Texture_Flags,
-    alpha_coverage:f32,
-}
-
 @(test)
 texture_layers_keep_each_image_of_every_level :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
@@ -424,25 +411,6 @@ texture_layers_keep_each_image_of_every_level :: proc(t:^testing.T) {
     refuse(t,&types,{width=4,height=4,layers=6,format=.RGBA8,mips={face[:4*4*4*5]}})
     refuse(t,&types,{width=1,height=1,layers=TEXTURE_MAX_LAYERS+1,format=.RGBA8,mips={make([]u8,4*(TEXTURE_MAX_LAYERS+1),context.temp_allocator)}})
     refuse(t,&types,{width=1,height=1,layers=-1,format=.RGBA8,mips={face[:4]}})
-
-    // A file without layers holds one.
-    document_init(&doc,KIND_TEXTURE,{7,8})
-    doc.kind_version=TEXTURE_VERSION
-    old:=Texture_Info_One_Layer{width=2,height=1,mip_count=1,format=.RGBA8,flags={.Srgb}}
-    _,row_error:=document_put_row(&doc,&types,"texture",&old)
-    _,mips_error:=document_put(&doc,&types,"mips",[]Texture_Mip{{2,1,0,8}})
-    testing.expect(t,row_error==.None && mips_error==.None)
-    texels,_:=document_table_add(&doc,"texels",{.Bulk})
-    document_resize(&doc,texels,8)
-    byte,_:=document_type(&doc,&types,u8)
-    document_column_add(&doc,texels,"",byte,{},.None,TEXTURE_BULK_ALIGNMENT)
-    serial.writer_reset(&w)
-    document_write(&doc,&w)
-    document_destroy(&doc)
-    testing.expect_value(t,asset_open(&a,serial.writer_bytes(&w)),Error.None)
-    defer asset_close(&a)
-    view,error=texture_view(&a,&types)
-    testing.expect(t,error==.None && view.info.layers==1 && len(texture_layer(view,0,0))==8)
     free_all(context.temp_allocator)
 }
 
@@ -465,8 +433,7 @@ material_keeps_values_parameters_and_overlays :: proc(t:^testing.T) {
     hidden:[2]Material_Name
     text_set(hidden[0].name[:],"pbr")
     text_set(hidden[1].name[:],"foam")
-    path:=test_path("ocean.mat")
-    defer os.remove(path)
+    path:=fmt.tprintf("%s/ocean.mat",base.test_folder(t,"asset"))
     desc:=Material_Desc{id={8,8},info=info,parameters=parameters[:],overlays=overlays[:],hidden=hidden[:]}
     testing.expect_value(t,material_save(path,&types,desc),Error.None)
 
@@ -591,33 +558,6 @@ material_parameters_follow_their_source_and_keep_what_was_changed :: proc(t:^tes
     testing.expect(t,followed[0]==now[0],"the source's new value")
     testing.expect(t,followed[1]==current[1],"the value changed after the import")
     testing.expect(t,followed[2]==current[3],"a parameter a person added")
-}
-
-@(test)
-material_written_before_a_field_existed_reads_its_default :: proc(t:^testing.T) {
-    Old_Map :: struct {texture:base.Asset_Id,scale:[2]f32}
-    Old_Maps :: struct {base_color,normal:Old_Map}
-    Old_Material :: struct {base_color:[3]f64,roughness:f32,alpha_mode:enum u8 {Opaque,Blend,Mask},maps:Old_Maps,legacy_tint:u32}
-    types:Types;types_init(&types);defer types_destroy(&types)
-    // The same version: a field added with a default does not change it.
-    doc:Document;document_init(&doc,KIND_MATERIAL,{4,4});defer document_destroy(&doc)
-    doc.kind_version=MATERIAL_VERSION
-    old:=Old_Material{base_color={0.5,0.25,1},roughness=0.2,alpha_mode=.Mask,maps={base_color={{1,1},{3,3}},normal={{2,2},{1,1}}},legacy_tint=7}
-    document_put_row(&doc,&types,"material",&old)
-    w:serial.Writer;serial.writer_init(&w);defer serial.writer_destroy(&w)
-    testing.expect_value(t,document_write(&doc,&w),Error.None)
-    a:Asset
-    testing.expect_value(t,asset_open(&a,serial.writer_bytes(&w)),Error.None)
-    defer asset_close(&a)
-    view,error:=material_view(&a,&types)
-    testing.expect_value(t,error,Error.None)
-    expected:=MATERIAL_DEFAULTS
-    expected.base_color,expected.roughness,expected.alpha_mode={0.5,0.25,1},0.2,.Mask
-    expected.maps.base_color.texture,expected.maps.base_color.scale={1,1},{3,3}
-    expected.maps.normal.texture={2,2}
-    testing.expect(t,view.info^==expected)
-    testing.expect(t,len(view.parameters)==0 && len(view.overlays)==0 && view.source==nil)
-    testing.expect(t,!inside(&a,view.info))
 }
 
 @(test)

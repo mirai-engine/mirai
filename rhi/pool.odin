@@ -20,11 +20,19 @@ Pool :: struct($T: typeid) {
 }
 
 pool_init :: proc(p: ^Pool($T), capacity: int, allocator: runtime.Allocator) -> bool {
-	p.items = make([]T, capacity, allocator)
-	p.generations = make([]u32, capacity, allocator)
-	p.alive = make([]bool, capacity, allocator)
-	p.free = make([]u32, capacity, allocator)
-	return capacity == 0 || (p.items != nil && p.generations != nil && p.alive != nil && p.free != nil)
+	items, items_error := make([]T, capacity, allocator)
+	generations, generations_error := make([]u32, capacity, allocator)
+	alive, alive_error := make([]bool, capacity, allocator)
+	free, free_error := make([]u32, capacity, allocator)
+	if items_error != nil || generations_error != nil || alive_error != nil || free_error != nil {
+		delete(items, allocator)
+		delete(generations, allocator)
+		delete(alive, allocator)
+		delete(free, allocator)
+		return false
+	}
+	p.items, p.generations, p.alive, p.free = items, generations, alive, free
+	return true
 }
 
 pool_has_room :: proc "contextless" (p: ^Pool($T)) -> bool {

@@ -2,8 +2,8 @@
 
 The solver (`plugins/physics/runtime/sim`, package `mirai_physics`; [physics](physics.md),
 [character](character.md)) does not know the data world; the plugin library
-(`plugins/physics/runtime`) connects it with the tables, in the same dynamic library. Imports:
-`phys "plugins:physics/runtime"` and, for the model, `sim "plugins:physics/runtime/sim"`.
+(`plugins/physics/runtime`) connects it with the tables, in the same dynamic library. A game or
+another plugin imports `phys "plugins:physics/runtime"`, never the solver.
 Destruction is the [destruct](engine-destruct.md) plugin; the [editor part](#editor-part) is
 `plugins/physics/editor`. Fields, defaults and constructors (`collider_*`, `joint_*`,
 `character_default`) are in `components.odin` and in `engine.describe`.
@@ -24,8 +24,8 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
 - `Character`: moves the entity's `Capsule` `Collider` like the solver's
   [physical character](character.md), which supports itself, climbs steps and pushes.
   - Its `Transform` is the position of the feet and the rotation, whose +Y is its
-    [vertical](character.md#the-vertical) and whose +Z faces the yaw of its move, its look (-Z at
-    yaw 0); the capsule rests on the feet (the controller sets its `center` and its surface).
+    [vertical](character.md#the-vertical) and whose -Z faces the yaw of its move, its look; the
+    capsule rests on the feet (the controller sets its `center` and its surface).
   - `up_speed` (degrees per second): how fast its vertical turns toward the opposite of its
     gravity, to walk around a planet; with 0 it stays fixed. Changing it does not recreate the
     character.
@@ -51,7 +51,8 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   supported and the ground that the end of the step found (walkable, distance, normal, velocity and
   `ground_turn`), which is the one the next step will use, the normal of the wall it leans on
   (`wall_normal`, zero without one), and how much it is in a fluid (`fluid`, `submersion`,
-  `head_depth`, `depth` and the current). Only the simulation writes them; a save
+  `head_depth`, `depth` and the current), and its `velocity`. Only the simulation writes them; a
+  save
   restores them. Whoever writes the `Character_Move` adds `ground_turn` (how much the ground turned
   the character) to the yaw every step.
 - `core.Vertical`: the vertical frame of each character, for whoever reads it outside physics (the
@@ -154,7 +155,7 @@ exposes the criterion to classify with neighboring geometry.
   prefab names its preset: in the inspector, with `asset set` on the prefab, or in the tool that
   writes it. A spawned prefab (the player of a spawn point, an enemy) then collides as its kind
   with no game code, and the navmesh class of those agents names the same preset
-  ([navigation](../../mirai-plugins/references/navigation.md#meshes)). A step that rewrites
+  ([navigation](../../mirai-world/references/navigation.md#meshes)). A step that rewrites
   `belongs`/`collides` of a `Collider` at run time to give it its kind is a workaround: change the
   prefab instead.
 
@@ -257,7 +258,9 @@ gives the [world queries](#queries). `physics_step` (`fixed`, `simulate` stage),
 4. Hands the `Character_Move` to the characters.
 5. **Advances the simulation** with `time.dt` (only if `Time.playing`, with the application's
    threads) and writes the poses into `Transform` and the states into `core.Motion` and
-   `Character_State`.
+   `Character_State`: of the bodies the step moved or woke, of what the reconciliation, a request
+   or a pose target addressed in the tick, of the proxies and of the characters. The rows of a
+   body that sleeps already say so and are not looked at.
 6. Forwards the events.
 
 In the editor loop nothing is simulated: bodies follow the `World_Transform` of their entity.
@@ -308,7 +311,7 @@ zone; `gravity.odin` applies it to the simulation.
 - `gravity` gives the world's; `gravity_of_entity`, the one the body of an entity feels. The
   character takes its length from it for its jumps, and its vertical turns toward the opposite
   ([vertical](character.md#the-vertical)). Particles fall with the same fields
-  ([vfx](../../mirai-plugins/references/vfx.md#game)).
+  ([vfx](../../mirai-world/references/vfx.md#game)).
 - Pushing is not gravity: a force in newtons that weighs the mass (a fan, an explosion) is a field
   of [physics_fields](../../mirai-plugins/references/physics-fields.md).
 
@@ -317,7 +320,8 @@ zone; `gravity.odin` applies it to the simulation.
 `^phys.Body_Requests` is taken at the start of the next step:
 
 - `move_kinematic` gives the body the velocity that takes it to the pose in one tick, and pushes
-  what it touches. `launch` adds velocity to a character or replaces its own.
+  what it touches. On a character `set_velocity` replaces its own velocity and `apply_impulse`
+  adds impulse / mass.
 - **Teleporting is only `core.place`**
   ([requested places](../../mirai-core/references/core.md#requested-places)), also for the game:
   `physics_places` takes the requests on an entity with `Rigid_Body`, `Character` or proxy and
@@ -325,7 +329,7 @@ zone; `gravity.odin` applies it to the simulation.
   caring about physics. It is a jump: the drawing does not interpolate the path (`core.jump`,
   [transform and hierarchy](../../mirai-core/references/core.md#transform-and-hierarchy)).
 - A request that does nothing (non-finite values, without a body of its own, kinematic or
-  manipulation of a character, `launch` to a body) is a `physics.request_*` problem of its entity.
+  manipulation of a character) is a `physics.request_*` problem of its entity.
 - Forces: `apply_force` and `apply_torque` accumulate during one tick; the area ones
   (`apply_radial_*`, `apply_sphere_force`, `apply_box_*`, `apply_plane_force`) follow the model's
   [volume forces](physics.md#volume-forces) in world coordinates and also affect characters (a
@@ -385,8 +389,8 @@ writes.
   - Walking (with `Walk`): velocity over the ground plane relative to it, with acceleration or
     braking. Holding the `sprint` action (or always, with `Walk.sprint_default`, Fortnite's
     "Sprint by Default"; the action then only asks for a `Tactical_Sprint`) raises the top speed
-    to `sprint_speed` while the move points within 60° of where it looks, and moving back loses `backward_slowdown` of it; both
-    apply in the air as well.
+    to `sprint_speed` while the move points within 60° of where it looks, and moving back loses
+    `backward_slowdown` of it; both apply in the air as well.
   - Jumping: the edge of the `jump` action among the buttons of the `Move_Input`, supported or
     during the coyote time after leaving an edge, gives the `launch` that reaches `Walk.jump_height`
     and makes `MODE_FALLING` the mode. While the button stays down, for up to `Walk.jump_rise`, each
@@ -395,12 +399,13 @@ writes.
   - Tactical sprint (with `Tactical_Sprint`, `locomotion_moves.odin`): sprinting forward on the
     ground with `min_energy` starts it (`Character.sprint_active`, energy left by
     `tactical_energy`). Its top speed and jump speed grow exponentially to their multipliers over
-    `speed_ramp` and `jump_ramp` (`tactical_boost`), which also the animation bridge reads; the acceleration
-    multiplier acts only on the ground. Energy is spent per second (not in the air with
+    `speed_ramp` and `jump_ramp` (`tactical_boost`), which also the animation bridge reads; the
+    acceleration multiplier acts only on the ground. Energy is spent per second (not in the air with
     `pause_falling`), per jump and per slide start, and comes back `recharge_delay` after it was
-    last spent. It ends without energy, going down in the air past `fall_grace` (`Character.fall_time`: a jump still rising does not count), crouched, sliding or out of
-    walking and falling, as soon as sprint is let go, or after `grace` with sprint held and the move off
-    forward; back within `grace` it keeps its ramp.
+    last spent. It ends without energy, going down in the air past `fall_grace`
+    (`Character.fall_time`: a jump still rising does not count), crouched, sliding or out of
+    walking and falling, as soon as sprint is let go, or after `grace` with sprint held and the move
+    off forward; back within `grace` it keeps its ramp.
     Without energy it sprints as `Walk` says.
   - Ledge jump (with `Ledge_Jump`): standing at `min_speed` for `min_time`, `locomotion_step`
     checks the ground ahead before the move (`ledge_drop_ahead`, own rule): a sphere almost as
@@ -585,6 +590,27 @@ Filters:
   ancestor ([model drawing](physics.md#debug-draw)); `collider_bounds` gives its world box, which
   the [editor preview](../../mirai-editor/references/panels.md#previews) uses when the full drawing
   does not fit.
+
+## Owned bodies
+
+A library that makes collision from its own data, as `foliage` does for the instances of its
+cells, makes static bodies of its own in the simulation (`owned.odin`) instead of entities.
+
+- It declares a `Body_Owner` and makes each body with `owned_body_create`, with the entity its
+  hits name and its own index of the body, and each shape with `owned_shape_create` from a
+  primitive `Collider`, a pose in the frame of the body and its own index of the shape. What is
+  not made says why: no room in `Physics_Settings`, or no memory.
+- It keeps the handles in a storage of the world, so a copy for Play or a rollback carries them
+  with the simulation, and moves and ends them itself (`owned_body_place`, `owned_body_destroy`,
+  `owned_shape_destroy`): physics never makes, moves or ends an owned body.
+- `owned_body_of` and `owned_shape_user` say from the body and the shape of a `Hit` whose they are
+  and which ones, without the owner searching its own lists.
+- `body_info` reads any body of the simulation: of an entity, of a hit, owned or of a fracture.
+- A bake or a test that simulates without a world makes the simulation with `state_make` and
+  advances it with `simulate`, which applies only the requests of areas.
+- A cache outside the world that keeps bodies asks `simulation_replaced` whether they are still
+  of this simulation. `settings_capacities` gives the capacities a world is made with, for a
+  library that shares them out, as `terrain` does with the colliders of its chunks.
 
 ## For networking and saves
 

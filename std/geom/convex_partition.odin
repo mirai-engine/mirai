@@ -2,6 +2,7 @@ package geom
 
 import "base:runtime"
 import "core:slice"
+import "mirai:std/base"
 
 // Convex partition of a polygon with holes (Hertel and Mehlhorn, 1983): the
 // triangles of polygon_triangulate become faces of half-edges, and the
@@ -62,7 +63,8 @@ import "core:slice"
     clear(kept)
     n:=len(ring)
     for i in 0..<n {
-        if turn(points[ring[(i+n-1)%n]],points[ring[i]],points[ring[(i+1)%n]])!=0 {append(kept,ring[i])}
+        if turn(points[ring[(i+n-1)%n]],points[ring[i]],points[ring[(i+1)%n]])==0 {continue}
+        if _,err:=append(kept,ring[i]);err!=nil {return false}
     }
     m:=len(kept)
     if m<3 {return false}
@@ -83,7 +85,8 @@ import "core:slice"
 
 // Splits the polygon of polygon_triangulate (First_Outline loops) into convex pieces whose
 // union is the polygon. Appends to `indices` the points of each piece counter-clockwise, and to
-// `sizes` how many points each piece has; returns how many pieces. Invalid input gives none.
+// `sizes` how many points each piece has; returns how many pieces. Invalid input, or no memory
+// for the pieces, gives none and appends nothing.
 polygon_convex_partition :: proc(points:[]Vec2,loop_sizes:[]int,indices:^[dynamic]u32,sizes:^[dynamic]u32) -> int #no_bounds_check {
     total:=0
     for size in loop_sizes {
@@ -186,8 +189,10 @@ polygon_convex_partition :: proc(points:[]Vec2,loop_sizes:[]int,indices:^[dynami
 
     ring:=make([dynamic]u32,scratch)
     kept:=make([dynamic]u32,scratch)
+    held:=[2]int{len(indices),len(sizes)}
     pieces:=0
-    for t in 0..<count {
+    roomy:=true
+    fill: for t in 0..<count {
         if !alive[t] || parent[t]!=i32(t) {continue}
         clear(&ring)
         for e:=head[t];len(ring)<=edges; {
@@ -196,18 +201,24 @@ polygon_convex_partition :: proc(points:[]Vec2,loop_sizes:[]int,indices:^[dynami
             if e==head[t] {break}
         }
         if piece_clean(d,ring[:],&kept) {
-            append(indices,..kept[:])
-            append(sizes,u32(len(kept)))
+            _,no_indices:=append(indices,..kept[:])
+            _,no_size:=append(sizes,u32(len(kept)))
+            if no_indices!=nil || no_size!=nil {roomy=false;break fill}
             pieces+=1
             continue
         }
         for s:=i32(t);s>=0;s=chain[s] {
             a,b,c:=origin[3*s],origin[3*s+1],origin[3*s+2]
             if !alive[s] || turn(d[a],d[b],d[c])<=0 {continue}
-            append(indices,a,b,c)
-            append(sizes,3)
+            _,no_indices:=append(indices,a,b,c)
+            _,no_size:=append(sizes,3)
+            if no_indices!=nil || no_size!=nil {roomy=false;break fill}
             pieces+=1
         }
+    }
+    if !roomy {
+        base.truncate(indices,held[0]);base.truncate(sizes,held[1])
+        return 0
     }
     return pieces
 }

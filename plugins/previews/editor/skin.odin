@@ -3,8 +3,9 @@ package previews_editor
 import "base:runtime"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -19,8 +20,8 @@ Skin_Geometry :: struct {
     pages:[]asset.Mesh_Page, // those of level 0, which come first
     level:asset.Mesh_Level,
     position_step,uv_step,uv1_step:f32,
-    posed:[]gpu.Gpu_Posed_Vertex,
-    influences:[]gpu.Skin_Influence,
+    posed:[]editor.Posed_Vertex,
+    influences:[]erender.Skin_Influence,
     indices:[]u32, // into posed: the corners of the triangles, in the order asset.mesh_level_decode gives them
     joints:[]asset.Rig_Joint,
     skeleton:base.Asset_Id,
@@ -28,13 +29,13 @@ Skin_Geometry :: struct {
 
 Subject_Skin :: struct {
     geometry:Skin_Geometry,
-    buffers:gpu.Skin_Preview_GPU,
+    buffers:editor.Skin_Preview,
     rig:core.Entity,
     part,rig_part:int,
     parents:[]i32,
     names:[]u64,
     rest,local,world:[]mm.Transform,
-    palette:[]gpu.Mat4,
+    palette:[]mm.Mat4,
 }
 
 @(private)
@@ -73,8 +74,8 @@ skin_geometry_load :: proc(skin:^Skin_Geometry,view:asset.Mesh_View)->bool {
     for pages<len(view.pages) && view.pages[pages].level==0 {pages+=1}
     next.pages,err=make([]asset.Mesh_Page,pages);if err!=nil {return false}
     copy(next.pages,view.pages[:pages])
-    next.posed,err=make([]gpu.Gpu_Posed_Vertex,vertices);if err!=nil {return false}
-    next.influences,err=make([]gpu.Skin_Influence,vertices);if err!=nil {return false}
+    next.posed,err=make([]editor.Posed_Vertex,vertices);if err!=nil {return false}
+    next.influences,err=make([]erender.Skin_Influence,vertices);if err!=nil {return false}
     next.indices,err=make([]u32,3*level.triangle_count);if err!=nil {return false}
     next.joints,err=make([]asset.Rig_Joint,len(view.joints));if err!=nil {return false}
     copy(next.clusters,clusters);copy(next.vertices,view.vertices);copy(next.triangles,view.triangles)
@@ -95,7 +96,7 @@ skin_geometry_load :: proc(skin:^Skin_Geometry,view:asset.Mesh_View)->bool {
 
 // A vertex of a triangle where the skin posed it.
 @(private)
-skin_vertex_place :: proc(placed:^gpu.Thumbnail_Vertex,vertex:gpu.Gpu_Posed_Vertex) {
+skin_vertex_place :: proc(placed:^editor.Thumbnail_Vertex,vertex:editor.Posed_Vertex) {
     placed.position=vertex.position
     placed.normal=mm.normal_unpack(vertex.normal)
     tangent,sign:=mm.tangent_unpack(vertex.tangent)
@@ -113,8 +114,8 @@ skin_geometry_read :: proc(skin:^Skin_Geometry,a:^host.Assets,mesh:base.Asset_Id
 }
 
 @(private)
-subject_skin_free :: proc(renderer:^gpu.Renderer,skin:^Subject_Skin) {
-    if renderer!=nil {gpu.skin_preview_destroy(renderer.device,&skin.buffers)}
+subject_skin_free :: proc(renderer:^erender.Renderer,skin:^Subject_Skin) {
+    editor.skin_preview_destroy(renderer,&skin.buffers)
     skin_geometry_free(&skin.geometry)
     delete(skin.parents);delete(skin.names);delete(skin.rest);delete(skin.local);delete(skin.world);delete(skin.palette)
     skin^={}
@@ -131,7 +132,7 @@ subject_skin_ready :: proc(app:^host.App,w:core.World_Ref,skin:^Subject_Skin)->b
     if app.shared==nil {return false}
     cache:=core.world_storage_of(core.world_ref(app.shared,w.info,.Shared),eanim.Skeleton_Assets)
     if app.renderer==nil || cache==nil || skin.geometry.skeleton=={} {return false}
-    content:=eanim.skeleton_content(cache,app,skin.geometry.skeleton)
+    content:=eanim.skeleton_content(cache,app.assets,app.allocator,skin.geometry.skeleton)
     if content==nil {return false}
     count:=len(content.bones)
     err:runtime.Allocator_Error
@@ -140,19 +141,19 @@ subject_skin_ready :: proc(app:^host.App,w:core.World_Ref,skin:^Subject_Skin)->b
     skin.rest,err=make([]mm.Transform,count);if err!=nil {return false}
     skin.local,err=make([]mm.Transform,count);if err!=nil {return false}
     skin.world,err=make([]mm.Transform,count);if err!=nil {return false}
-    skin.palette,err=make([]gpu.Mat4,len(skin.geometry.joints));if err!=nil {return false}
+    skin.palette,err=make([]mm.Mat4,len(skin.geometry.joints));if err!=nil {return false}
     for joint in skin.geometry.joints {if int(joint.node)>=count {return false}}
     for bone,i in content.bones {
         skin.parents[i],skin.names[i]=bone.parent,bone.target
         skin.rest[i]={position=bone.translation,rotation=bone.rotation,scale=bone.scale}
     }
-    return gpu.skin_preview_init(app.renderer,&skin.buffers,skin_geometry_level(&skin.geometry),skin.geometry.influences,u32(len(skin.palette)))
+    return editor.skin_preview_init(app.renderer,&skin.buffers,skin_geometry_level(&skin.geometry),skin.geometry.influences,u32(len(skin.palette)))
 }
 
 // The bones of a skin at rest with what pose puts over them, from root, and
 // its vertices skinned on the GPU into geometry.posed.
 @(private)
-skin_pose :: proc(renderer:^gpu.Renderer,skin:^Subject_Skin,pose:^anim.Pose,root:mm.Transform)->bool {
+skin_pose :: proc(renderer:^erender.Renderer,skin:^Subject_Skin,pose:^anim.Pose,root:mm.Transform)->bool {
     for rest,i in skin.rest {
         skin.local[i]=rest
         if pose!=nil {pose_put(pose,skin.names[i],&skin.local[i])}
@@ -161,12 +162,12 @@ skin_pose :: proc(renderer:^gpu.Renderer,skin:^Subject_Skin,pose:^anim.Pose,root
     if !anim.skeleton_world(skeleton,skin.local,skin.world,root) {return false}
     // Thumbnail vertices are already in subject space, so mesh world and its inverse cancel.
     for joint,i in skin.geometry.joints {skin.palette[i]=mm.transform_matrix(skin.world[joint.node])*joint.inverse_bind}
-    return gpu.skin_preview_sample(renderer,&skin.buffers,skin.palette,skin.geometry.posed)
+    return editor.skin_preview_sample(renderer,&skin.buffers,skin.palette,skin.geometry.posed)
 }
 
 // The skinned vertices of a skin where its triangles are, one per index.
 @(private)
-skin_place :: proc(skin:^Subject_Skin,vertices:[]gpu.Thumbnail_Vertex)->bool {
+skin_place :: proc(skin:^Subject_Skin,vertices:[]editor.Thumbnail_Vertex)->bool {
     if len(vertices)!=len(skin.geometry.indices) {return false}
     for index,i in skin.geometry.indices {skin_vertex_place(&vertices[i],skin.geometry.posed[index])}
     return true

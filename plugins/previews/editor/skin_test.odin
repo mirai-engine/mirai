@@ -12,10 +12,16 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import eanim "plugins:animation/runtime"
 
+@(private="file")
+Skin_World :: struct {
+    using world:core.Test_World,
+    skins:core.Table(eanim.Pose_Source),
+}
+
 @(test)
 preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_poses :: proc(t:^testing.T) {
-    device,message:=shared_device.take(t, hardware_rt = false)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,message)};return}
+    device:=shared_device.take_or_skip(t,hardware_rt=false)
+    if device==nil {return}
     renderer:gpu.Renderer
     settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
     if !testing.expect(t,gpu.renderer_init(&renderer,{device=device,width=64,height=64,settings=settings}),renderer.error) {return}
@@ -27,8 +33,10 @@ preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_pose
     if !testing.expect(t,anim.pose_init(&p.pose,1)) {return}
     target:=base.name_hash("root/foot")
     clip,_:=anim.clip_add(&p.lib,{tracks={{target=target,property=.Position,keys={{time=0,value={0,1,0,0}},{time=1,value={0,2,0,0}}}}}})
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    root,body:=core.create(&entities),core.create(&entities)
+    w:Skin_World
+    if !core.test_world_init(t,&w,eanim.test_types) {return}
+    defer core.test_world_destroy(&w)
+    root,body:=core.create(&w.entities),core.create(&w.entities)
     sub:=&p.subject
     sub.part_count=2
     sub.parts[0]={entity=root,parent=-1,local={position={2,1,0},rotation=1,scale={1,1,1}}}
@@ -62,10 +70,9 @@ preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_pose
     subject_pose(&p,0,0);subject_place(sub)
     testing.expect(t,subject_skins_place(&p))
     testing.expect(t,linalg.length(sub.posed[1].position-[3]f32{2,1,0})<0.0001)
-    skins:core.Table(eanim.Pose_Source);defer core.table_destroy(&skins)
-    core.add(&skins,body,{rig=root})
-    core.table_settle(&skins,&entities)
-    testing.expect_value(t,animation_subject({skins=&skins},body),root)
+    core.add(&w.skins,body,{rig=root})
+    core.test_world_settle(&w)
+    testing.expect_value(t,animation_subject({skins=&w.skins},body),root)
     testing.expect_value(t,animation_subject({},root),root)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }

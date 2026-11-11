@@ -1,6 +1,7 @@
 package ui_inspector_editor
 
 import "core:fmt"
+import "mirai:cook/author"
 import "mirai:editor"
 import "mirai:host"
 import "mirai:std/base"
@@ -53,7 +54,7 @@ variant_names :: proc(list:[]ui.Tree_Style_Variant,style:int) -> []string {
     names:=make([dynamic]string,context.temp_allocator)
     for &v in list {
         name:=serial.text_field(v.variant[:])
-        if int(v.style)!=style || name=="" || slice_has(names[:],name) {continue}
+        if int(v.style)!=style || name=="" || author.slice_has(names[:],name) {continue}
         append(&names,name)
     }
     return names[:]
@@ -108,6 +109,8 @@ look_begin :: proc(p:^Pane,n:^ui.Tree_Node,states:ui.Style_States) {
     if .Radius not_in f {v.radius=under.radius}
     if .Stroke_Width not_in f {v.stroke_width=under.stroke_width}
     if .Shadow not_in f {v.shadow,v.shadow_color,v.shadow_blur,v.shadow_offset=under.shadow,under.shadow_color,under.shadow_blur,under.shadow_offset}
+    if .Move not_in f {v.move=under.move}
+    if .Scale not_in f {v.scale=under.scale}
     if .Text_Font not_in f {v.text.font=under.text.font}
     if .Text_Size not_in f {v.text.size=under.text.size}
     if .Text_Color not_in f {v.text.color=under.text.color}
@@ -144,6 +147,8 @@ look_changed :: proc(p:^Pane,label:string,field:ui.Style_Field,changes:bool) {
     case .Radius:       differs=v.radius!=w.radius
     case .Stroke_Width: differs=v.stroke_width!=w.stroke_width
     case .Shadow:       differs=v.shadow!=w.shadow || v.shadow_color!=w.shadow_color || v.shadow_blur!=w.shadow_blur || v.shadow_offset!=w.shadow_offset
+    case .Move:         differs=v.move!=w.move
+    case .Scale:        differs=v.scale!=w.scale
     case .Text_Font:    differs=v.text.font!=w.text.font
     case .Text_Size:    differs=v.text.size!=w.text.size
     case .Text_Color:   differs=v.text.color!=w.text.color;look.patch.tokens.text=.Literal
@@ -187,7 +192,7 @@ look_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     choices:=make([dynamic]string,context.temp_allocator)
     append(&choices,"Default")
     append(&choices,..names)
-    if variant!="" && !slice_has(names,variant) {append(&choices,variant)}
+    if variant!="" && !author.slice_has(names,variant) {append(&choices,variant)}
     chosen:=0
     for name,i in choices[1:] {if name==variant {chosen=i+1}}
     icon :: proc(ctx:^ui.Context,name:string,icon:ui.Icon,tip:string,disabled:=false) -> bool {
@@ -202,18 +207,18 @@ look_head :: proc(p:^Pane,n:^ui.Tree_Node) {
                 if ctx.edit.id!=field {ui.edit_request(ctx,field)}
                 result:=ui.text_field(ctx,field,u.variant_name[:len(u.variant_name)-1],&u.variant_name_length,{width=ui.GROW})
                 renamed:=string(u.variant_name[:u.variant_name_length])
-                if result.committed && renamed!="" && renamed!=variant && !slice_has(names,renamed) {
+                if result.committed && renamed!="" && renamed!=variant && !author.slice_has(names,renamed) {
                     // A copy of a named style becomes the override of this node alone.
                     if p.style.draft {
                         for &v in list {
                             if int(v.style)==style && serial.text_field(v.variant[:])==variant {ui.tree_text_set(v.variant[:],renamed)}
                         }
                         ui.tree_text_set(n.variant[:],renamed)
-                    } else {records_variant_rename(&u.records,style,variant,renamed)}
+                    } else {author.records_variant_rename(&u.records,style,variant,renamed)}
                     style_changed(p,"Rename variant",true)
                 }
                 if result.committed || result.cancelled {u.variant_rename=false}
-            } else if ui.dropdown(ctx,ui.id(ctx,"variant"),choices[:],&chosen,{width=-1}) {
+            } else if ui.dropdown(ctx,ui.id(ctx,"variant"),{list=choices[:]},&chosen,{width=-1}) {
                 ui.tree_text_set(n.variant[:],choices[chosen] if chosen>0 else "")
                 changed(u,"Variant")
             }
@@ -221,7 +226,7 @@ look_head :: proc(p:^Pane,n:^ui.Tree_Node) {
                 name:=""
                 for i:=len(names)+1;;i+=1 {
                     name=fmt.tprintf("variant%d",i)
-                    if !slice_has(names,name) {break}
+                    if !author.slice_has(names,name) {break}
                 }
                 append(list,ui.tree_variant_record(u16(style),name,{},{}))
                 ui.tree_text_set(n.variant[:],name)
@@ -229,11 +234,11 @@ look_head :: proc(p:^Pane,n:^ui.Tree_Node) {
                 u.variant_name_length=copy(u.variant_name[:len(u.variant_name)-1],name)
                 style_changed(p,"Add variant",true)
             }
-            if icon(ctx,"variant_rename",.Edit,"Rename the variant",variant=="" || !slice_has(names,variant)) {
+            if icon(ctx,"variant_rename",.Edit,"Rename the variant",variant=="" || !author.slice_has(names,variant)) {
                 u.variant_rename=true
                 u.variant_name_length=copy(u.variant_name[:len(u.variant_name)-1],variant)
             }
-            if icon(ctx,"variant_remove",.Cross,"Remove the variant from the style",variant=="" || !slice_has(names,variant)) {
+            if icon(ctx,"variant_remove",.Cross,"Remove the variant from the style",variant=="" || !author.slice_has(names,variant)) {
                 for i:=len(list)-1;i>=0;i-=1 {
                     if int(list[i].style)==style && serial.text_field(list[i].variant[:])==variant {ordered_remove(list,i)}
                 }
@@ -431,7 +436,7 @@ section_events :: proc(p:^Pane,n:^ui.Tree_Node) {
         none:=Sound_Pick{d.sounds[cue]}
         key:=base.hash_combine(u64(0x736f756e64),u64(n.style)<<8|u64(cue))|1
         // The style the node shares: it is asked whether the sound goes there.
-        base_row:=records_style_base(r,p.style.row)
+        base_row:=author.records_style_base(r,p.style.row)
         shared:=base_row if base_row>=0 else p.style.row if p.style.draft && !p.style.own else -1
         if editor.held_field_row(p.s,{key=key,info=type_info_of(Sound_Pick),value=&values,defaults=&none},"sound","Sound",about) {
             if shared>=0 {
@@ -451,7 +456,7 @@ section_events :: proc(p:^Pane,n:^ui.Tree_Node) {
                 style_changed(p,"Sound",true)
                 x.sound={}
             }
-            if ui.button(ctx,ui.id(ctx,"sound_style"),{label=records_style_name(r,shared),style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
+            if ui.button(ctx,ui.id(ctx,"sound_style"),{label=author.records_style_name(r,shared),style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
                 r.styles[shared].sounds[cue]=x.sound.sound
                 // An override that had what the style had follows it.
                 if base_row>=0 && st.sounds[cue]==d.sounds[cue] {st.sounds[cue]=x.sound.sound}
@@ -503,7 +508,7 @@ section_events :: proc(p:^Pane,n:^ui.Tree_Node) {
     band_close(p)
     ui.id_pop(ctx)
     if set==before {return}
-    if at:=records_anim_set(r,n);at>=0 {
+    if at:=author.records_anim_set(r,n);at>=0 {
         r.anim_sets[at]=set
         changed(u,"Animations")
     }

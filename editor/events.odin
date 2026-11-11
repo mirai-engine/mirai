@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:reflect"
 import "core:strings"
+import "mirai:editor/history"
 import "mirai:platform"
 
 // The events the crash report names before a fault (platform.crash_event):
@@ -46,7 +47,7 @@ events_steps :: proc(s:^Session) {
     for &step in edits.steps {
         if step.turned<=s.events_turns {continue}
         kind:=step.kind==.Edit?(step.swapped?"undo":"step"):step.kind==.Undo?"undo by id":"redo by id"
-        event(s,"step",fmt.bprintf(line[:],"%s %q by %d",kind,edits_label(&step),step.author))
+        event(s,"step",fmt.bprintf(line[:],"%s %q by %d",kind,history.edits_label(&step),step.author))
     }
     s.events_turns=edits.turns
 }

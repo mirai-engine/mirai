@@ -6,6 +6,7 @@ import "core:slice"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import "mirai:editor/history"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
@@ -17,10 +18,8 @@ import "mirai:ui"
 @(test)
 stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-editor-%d-thumbnails",directory,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"thumbnails")
+    if root=="" {return}
     assets,folder:=fmt.tprintf("%s/assets",root),fmt.tprintf("%s/.mirai/thumbs",root)
     os.make_directory_all(fmt.tprintf("%s/textures",assets))
     texture,material,other:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3}
@@ -85,7 +84,7 @@ stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^tes
     testing.expect(t,len(held)>0 && len(changed)>0)
     testing.expect_value(t,asset.registry_memory_set(&r,"other.mat",changed),asset.Error.None)
     testing.expect(t,thumbnail_store_key(&r,other,subject,.Small,PROGRAMS)!=other_key)
-    testing.expect(t,asset.registry_memory_drop(&r,"other.mat"))
+    {dropped,_:=asset.registry_memory_drop(&r,"other.mat");testing.expect(t,dropped)}
     testing.expect_value(t,thumbnail_store_key(&r,other,subject,.Small,PROGRAMS),other_key)
 
     // An asset that no file is any more loses its previews; the others keep theirs.
@@ -118,7 +117,7 @@ a_provider_image_is_drawn_between_frames_after_the_frame_that_asked :: proc(t:^t
     assets.renderer=(^gpu.Renderer)(uintptr(16))
     app:host.App
     app.assets=&assets
-    edits:Edits
+    edits:history.Edits
     s:=new(Session)
     defer free(s)
     s.app,s.thumbnails,s.edits,s.frame=&app,&p,&edits,10

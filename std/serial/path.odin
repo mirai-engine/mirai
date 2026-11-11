@@ -150,7 +150,6 @@ enum_value :: proc(s:^Schema,type:Type,bytes:[]u8) -> i64 {
     return i64(scalar_unsigned(bytes))
 }
 // Sets the low bytes of an integer and extends a 16-byte one with its sign.
-@(private)
 scalar_store :: proc(bytes:[]u8,value:u64,negative:=false) {
     value:=value
     mem.set(raw_data(bytes),negative?0xff:0,len(bytes))

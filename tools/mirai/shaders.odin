@@ -11,20 +11,7 @@ import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
 
-// The value of `--name value` or `--name=value` at args[index^]; advances the index past it.
-@(private="file")
-option_value :: proc(args:[]string,index:^int,name:string) -> (value:string,matched,ok:bool) {
-    argument:=args[index^]
-    if argument==name {
-        if index^+1>=len(args) {return "",true,false}
-        index^+=1
-        return args[index^],true,true
-    }
-    if strings.has_prefix(argument,name) && len(argument)>len(name) && argument[len(name)]=='=' {return argument[len(name)+1:],true,true}
-    return "",false,false
-}
-
-SHADERS_EDITOR_MS :: 610_000 // the 600 s build.shaders waits by default, and the answer
+SHADERS_EDITOR_MS :: 610_000 // the 600 s build.start waits by default, and the answer
 
 SHADERS_USAGE :: "shaders [--project <path> [--whole]] [--output <path>] [--no-odin] [--cache <path>] [--workers <n>] [--backends vulkan|metal|all] | shaders check <program.slang> [--project <path>]"
 
@@ -60,8 +47,7 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
             }
             continue
         }
-        fmt.eprintfln("mirai shaders: unknown argument '%s'\nUsage: mirai %s",args[i],SHADERS_USAGE)
-        return 2
+        return argument_unknown("shaders",args[i])
     }
     if options.project=="" && project.engine_installed(root) {
         fmt.eprintln("mirai shaders: an installed engine carries its shaders already generated; --project generates those of a project")
@@ -96,7 +82,7 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
 // others go on compiling in the editor. --whole generates them all here.
 @(private="file")
 shaders_publish_editor :: proc(folder:string,port:int) -> int {
-    result,err,called:=api.rpc_call(port,"build.shaders","{}",1,SHADERS_EDITOR_MS,context.temp_allocator)
+    result,err,called:=api.rpc_call(port,"build.start",`{"target":"shaders"}`,1,SHADERS_EDITOR_MS,context.temp_allocator)
     if !called || err.code!=0 {
         fmt.eprintfln("mirai shaders: the editor of %s did not publish them: %s",folder,err.message!=""?err.message:"it did not answer")
         return 1
@@ -128,7 +114,7 @@ shaders_check :: proc(root:string,args:[]string) -> int {
             folder=value
             continue
         }
-        if path!="" || strings.has_prefix(args[i],"--") {fmt.eprintfln("Usage: mirai %s",SHADERS_USAGE);return 2}
+        if path!="" || !positional(args[i]) {return argument_unknown("shaders check",args[i])}
         path=args[i]
     }
     if path=="" {fmt.eprintfln("Usage: mirai %s",SHADERS_USAGE);return 2}
@@ -186,15 +172,17 @@ engine_shaders_report :: proc(result:shaders.Result,out:=os.stdout) -> bool {
     return true
 }
 
-SETUP_USAGE :: "setup slang|rg [--archive <file>] | setup path"
+SETUP_USAGE :: "setup slang|rg [--archive <file>] | setup path | setup git [folder]"
 
 cmd_setup :: proc(root:string,args:[]string) -> int {
     if len(args)==1 && args[0]=="path" {return setup_path(root)}
+    if len(args)>0 && args[0]=="git" {return setup_git(root,args[1:])}
     if len(args)==0 || args[0]!="slang" && args[0]!="rg" && args[0]!="ripgrep" {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
     archive:string
     for i:=1;i<len(args);i+=1 {
         value,matched,ok:=option_value(args,&i,"--archive")
-        if !matched || !ok || value=="" {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
+        if !matched {return argument_unknown("setup",args[i])}
+        if !ok || value=="" {fmt.eprintfln("Usage: mirai %s",SETUP_USAGE);return 2}
         archive=value
     }
     if args[0]!="slang" {return setup_ripgrep(root,archive)}
@@ -212,7 +200,7 @@ cmd_setup :: proc(root:string,args:[]string) -> int {
 plugin_test_shaders :: proc(root,folder:string) -> bool {
     plugins:=project.path_absolute(join(root,"plugins"),context.temp_allocator)
     absolute:=project.path_absolute(folder,context.temp_allocator)
-    if len(absolute)<=len(plugins) || absolute[len(plugins)]!='/' || !path_same(absolute[:len(plugins)],plugins) {return true}
+    if len(absolute)<=len(plugins) || absolute[len(plugins)]!='/' || !project.path_same(absolute[:len(plugins)],plugins) {return true}
     rest:=absolute[len(plugins)+1:]
     name:=rest
     if slash:=strings.index_byte(rest,'/');slash>=0 {name=rest[:slash]}
@@ -241,12 +229,8 @@ plugin_test_shaders :: proc(root,folder:string) -> bool {
 
 @(private="file")
 takes_shared_device :: proc(folder:string) -> bool {
-    entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return false}
-    for entry in entries {
-        if !strings.has_suffix(entry.name,"_test.odin") {continue}
-        text,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-        if strings.contains(string(text),`"mirai:rhi/shared_device"`) {return true}
+    for test in test_declared(folder,device=true,allocator=context.temp_allocator) {
+        if test.device {return true}
     }
     return false
 }

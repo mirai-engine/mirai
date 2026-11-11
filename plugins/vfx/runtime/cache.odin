@@ -34,10 +34,10 @@ Grid_Bake :: struct {
 // The states the grids of the world start from in this frame, read from
 // their files, in the order the grids keep their cells. A file that is not
 // one of the cells and layers of its grid is a problem of the grid.
-grids_load_prepare :: proc(sync:^Particle_Sync,app:^host.App,problems:^core.Problems=nil) {
+grids_load_prepare :: proc(sync:^Particle_Sync,assets:^host.Assets,problems:^core.Problems=nil) {
     clear(&sync.loads)
     clear(&sync.load_bytes)
-    a:=app.assets
+    a:=assets
     if a==nil {return}
     for &entry in sync.grids.entries {
         if entry.cached=={} || entry.loaded==entry.cached {continue}
@@ -55,7 +55,10 @@ grids_load_prepare :: proc(sync:^Particle_Sync,app:^host.App,problems:^core.Prob
         }
         size:=len(cells)*4
         at:=len(sync.load_bytes)
-        resize(&sync.load_bytes,at+size)
+        if resize(&sync.load_bytes,at+size)!=nil {
+            core.report(problems,entry.entity,"vfx.memory","out of memory for the cached state of this grid; it is read again in the next frame: free memory, or bake fewer cells")
+            continue
+        }
         out:=mem.slice_data_cast([]f32,sync.load_bytes[at:])
         phase:=grid_phase(entry.first,entry.cells)
         floats:=int(entry.layers)*4
@@ -117,8 +120,8 @@ grid_bake_read :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
 // back: the copy its last stage left, from the first cell of its region, in
 // allocator, once: the bake is done. False while nothing came back, or the
 // grid changed since.
-grid_bake_take :: proc(sync:^Particle_Sync,app:^host.App,world:core.World_Id,allocator:=context.allocator) -> (info:gridfile.Grid_Info,cells:[]f32,ok:bool) {
-    data,frame,read:=erender.readback(app,world,GRID_BAKE_READBACK)
+grid_bake_take :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,world:core.World_Id,allocator:=context.allocator) -> (info:gridfile.Grid_Info,cells:[]f32,ok:bool) {
+    data,frame,read:=erender.readback(renderer,world,GRID_BAKE_READBACK)
     if !read || sync.bake.grid==0 || sync.bake.frame==0 || frame<sync.bake.frame {return}
     at:=grid_find(&sync.grids,sync.bake.grid)
     if at<0 {return}
@@ -130,7 +133,9 @@ grid_bake_take :: proc(sync:^Particle_Sync,app:^host.App,world:core.World_Id,all
     parity:=(cast(^u32)&data[at*4])^&1
     copy_at:=int(entry.offset)+int(parity)*int(count)*floats*4
     kept:=mem.slice_data_cast([]f32,data[copy_at:][:int(count)*floats*4])
-    cells=make([]f32,int(count)*floats,allocator)
+    allocated,allocation_error:=make([]f32,int(count)*floats,allocator)
+    if allocation_error!=nil {return}
+    cells=allocated
     phase:=grid_phase(entry.first,entry.cells)
     for z in 0..<entry.cells.z {
         for y in 0..<entry.cells.y {

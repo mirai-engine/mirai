@@ -113,9 +113,15 @@ collision_settings_reject_repeated_presets_custom_entries_and_bad_pushes :: proc
 // code declares, and keep the numbers.
 @(test)
 categories_and_presets_take_the_names_the_code_declares_in_text :: proc(t:^testing.T) {
+    Named_World :: struct {
+        using world:core.Test_World,
+        colliders:core.Table(Collider),
+    }
     names,types,bits:=collision_test_names()
-    tables:=[1]core.Table_Info{{name="Collider",type=Collider,info=type_info_of(Collider)}}
-    info:=core.World_Info{tables=tables[:],names=names[:],named_types=types[:],name_bits=bits[:]}
+    info,described:=core.test_info(t,Named_World,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    info.names,info.named_types,info.name_bits=names[:],types[:],bits[:]
     ws:=core.world_schema_make(&info,context.temp_allocator)
     if !testing.expect(t,ws!=nil) {return}
     defer core.world_schema_destroy(ws)
@@ -151,7 +157,7 @@ categories_and_presets_take_the_names_the_code_declares_in_text :: proc(t:^testi
 @(test)
 a_setting_or_a_collider_of_an_undeclared_value_is_a_problem :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     names,types,bits:=collision_test_names()
     info:=core.World_Info{names=names[:],named_types=types[:],name_bits=bits[:]}
@@ -183,7 +189,7 @@ a_setting_or_a_collider_of_an_undeclared_value_is_a_problem :: proc(t:^testing.T
 @(test)
 a_wall_blocks_the_player_reports_a_sensor_and_a_new_collision_keeps_the_shape :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.collision=collision_test_settings()
     wall:=core.create(&f.entities)
@@ -236,7 +242,7 @@ a_wall_blocks_the_player_reports_a_sensor_and_a_new_collision_keeps_the_shape ::
 @(test)
 a_character_takes_its_capsule_and_its_collision_from_its_collider :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.collision=collision_test_settings()
     e:=core.create(&f.entities)
@@ -270,7 +276,7 @@ a_character_takes_its_capsule_and_its_collision_from_its_collider :: proc(t:^tes
 @(test)
 contact_rules_of_a_collider_reach_its_shape_without_making_it_again :: proc(t:^testing.T) {
     f:Physics_Test
-    physics_test_init(&f)
+    if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
     f.gravity={0,-9.81,0}
     belt:=core.create(&f.entities)

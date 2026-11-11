@@ -22,7 +22,6 @@ import "mirai:std/serial"
 KIND :: asset.Fourcc(u32('F')|u32('O')<<8|u32('L')<<16|u32('I')<<24)
 EXTENSION :: ".foliage"
 VERSION :: 3
-OLDEST :: VERSION
 CELL_SIZE :: f32(32)    // metres across x and z of a cell
 TYPES_MAX :: 1024
 CELLS_MAX :: 1 << 20
@@ -149,14 +148,15 @@ source_type :: proc "contextless" (s:^Source,id:u32) -> (^Foliage_Type,int) {
     return nil,-1
 }
 
-// A new type with the next id; its defaults are FOLIAGE_TYPE_DEFAULT.
+// A new type with the next id; its defaults are FOLIAGE_TYPE_DEFAULT. nil
+// without memory, with the source as it was.
 source_type_add :: proc(s:^Source,name:string,mesh:base.Asset_Id) -> ^Foliage_Type {
     t:=FOLIAGE_TYPE_DEFAULT
     t.id=s.info.next_type
-    s.info.next_type+=1
     t.mesh=mesh
     base.text_set(t.name[:],name)
-    append(&s.types,t)
+    if _,err:=append(&s.types,t);err!=nil {return nil}
+    s.info.next_type+=1
     return &s.types[len(s.types)-1]
 }
 
@@ -170,7 +170,7 @@ source_type_remove :: proc(s:^Source,id:u32) -> bool {
     for &cell in s.cells {
         kept:=0
         for instance in cell.manual {if instance.type!=id {cell.manual[kept]=instance;kept+=1}}
-        resize(&cell.manual,kept)
+        base.truncate(&cell.manual,kept)
         kept=0
         for override in cell.overrides {
             if override.type==id {continue}
@@ -178,7 +178,7 @@ source_type_remove :: proc(s:^Source,id:u32) -> bool {
             if o.kind==.Replaced && o.instance.type==id {o.kind,o.instance=.Deleted,{}}
             cell.overrides[kept]=o;kept+=1
         }
-        resize(&cell.overrides,kept)
+        base.truncate(&cell.overrides,kept)
     }
     return true
 }
@@ -213,6 +213,20 @@ source_cell :: proc(s:^Source,coord:[2]i32,make_it:=false) -> ^Cell {
     if !make_it {return nil}
     inject_at(&s.cells,low,Cell{coord=coord})
     return &s.cells[low]
+}
+
+// Turns the generator on or off in the cells whose square meets a disc around
+// center, in x and z. True when one changed.
+source_generate_area :: proc(s:^Source,center:[3]f32,radius:f32,on:bool) -> (changed:bool) {
+    low,_:=cell_of(center-{radius,0,radius})
+    high,_:=cell_of(center+{radius,0,radius})
+    for z in low.y..=high.y {for x in low.x..=high.x {
+        corner:=cell_corner({x,z})
+        nearest:=[2]f32{clamp(center.x,corner.x,corner.x+CELL_SIZE),clamp(center.z,corner.z,corner.z+CELL_SIZE)}
+        d:=nearest-center.xz
+        if d.x*d.x+d.y*d.y<=radius*radius {changed|=source_cell_generate(s,{x,z},on)}
+    }}
+    return
 }
 
 // Turns the generator of a cell on or off: on makes the cell, and off takes
@@ -511,7 +525,7 @@ rows_or_none :: proc(file:^asset.Asset,types:^asset.Types,name:string,$T:typeid)
 // The source an open .foliage holds, checked whole: s is replaced only by a
 // valid one. Its id, or false.
 source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator) -> (id:base.Asset_Id,ok:bool) {
-    if asset.kind_check(file,KIND,OLDEST,VERSION)!=.None {return}
+    if asset.kind_check(file,KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"foliage",Foliage_Info)
     if error!=.None || info==nil {return}
     kinds:=rows_or_none(file,types,"types",Foliage_Type) or_return
@@ -544,7 +558,11 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
             source_destroy(&temporary)
             return
         }
-        append(&temporary.cells,held)
+        if _,err:=append(&temporary.cells,held);err!=nil {
+            delete(held.manual);delete(held.overrides)
+            source_destroy(&temporary)
+            return
+        }
         added:=&temporary.cells[len(temporary.cells)-1]
         manual_planes.in_cell,override_planes.in_cell=false,false
         for i in cell.manual_first..<cell.manual_first+cell.manual_count {

@@ -223,9 +223,6 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
     return filter_make(&n.settings,agent_avoids(agent,swims),agent_can(n,class,agent,walk,gravity))
 }
 
-@(private)
-yaw_of_direction :: #force_inline proc "contextless" (d:mm.Vec3) -> f32 {return math.atan2(-d.x,-d.z)}
-
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
     n:core.Ref(Navigation),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),
@@ -274,6 +271,8 @@ navigation_agents :: proc(
         }
     }
     if !n.ready || n.count==0 || !time.playing || time.dt<=0 {return}
+    // Without an agent, near or far, nothing searches, steps aside or steers: no memory for it and no look at the characters.
+    if len(paths.entities)==0 {return}
     budget:=int(n.settings.path_iterations) if n.settings.path_iterations>0 else 2048
     if a.uid!=n.uid {
         // Another copy of the world: the search under way was in the other.
@@ -297,7 +296,10 @@ navigation_agents :: proc(
         core.report(problems,core.NONE,"navigation.memory","No memory to search ways through the coarse graph")
         return
     }
-    if len(a.refs)==0 {resize(&a.refs,4096)}
+    if len(a.refs)==0 && resize(&a.refs,4096)!=nil || len(a.space_links)==0 && resize(&a.space_links,ai.NAV_QUERY_SPACE_LINKS)!=nil {
+        core.report(problems,core.NONE,"navigation.memory","No memory to search paths")
+        return
+    }
     clear(&a.near)
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
@@ -422,7 +424,7 @@ navigation_agents :: proc(
     }
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,events,problems)
-    agents_avoid(n.ptr,a,paths,time.dt)
+    agents_avoid(n.ptr,a,paths,time.dt,problems)
     agents_steer(n.ptr,agents,paths,inputs,drivables,characters,grounds,worlds,flights,swims,time.dt)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
@@ -586,7 +588,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 a.head=0
             } else if a.head>=64 && a.head*2>=len(a.waiting) {
                 copy(a.waiting[:],a.waiting[a.head:])
-                resize(&a.waiting,len(a.waiting)-a.head)
+                base.truncate(&a.waiting,len(a.waiting)-a.head)
                 a.head=0
             }
             p:=core.get(paths,e)
@@ -740,7 +742,6 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
 // take-off of the air (the Nav_Link rows of LINK_FLY).
 @(private)
 agent_space_links :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,mesh_class,volume_class:int,from,to:mm.Vec3) -> []ai.Nav_Space_Link {
-    resize(&a.space_links,ai.NAV_QUERY_SPACE_LINKS)
     count:=0
     c:=n.classes[volume_class].class
     switch c.space {
@@ -859,11 +860,13 @@ agent_medium_path :: proc(n:^Navigation,a:^Navigation_Agents,p:^Nav_Path,e:core.
 // on the plane, among those at its height, for an agent that walks; in three
 // axes, every neighbor a sphere, for one that flies.
 @(private)
-agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),dt:f32) {
+agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),dt:f32,problems:^core.Problems) {
     count:=len(a.near)
     if count<2 {return}
-    resize(&a.sorted,count)
-    resize(&a.scratch,count)
+    if resize(&a.sorted,count)!=nil || resize(&a.scratch,count)!=nil {
+        core.report(problems,core.NONE,"navigation.memory","No memory for %d agents and obstacles to step aside from each other: they do not in this tick; free memory, or give fewer agents avoidance",count)
+        return
+    }
     cell :: #force_inline proc "contextless" (p:mm.Vec3,dx,dz:i32) -> u64 {
         x:=i32(math.floor(p.x/NAV_AGENT_CELL))+dx
         z:=i32(math.floor(p.z/NAV_AGENT_CELL))+dz
@@ -977,8 +980,8 @@ agents_steer :: proc(n:^Navigation,agents:core.Read(Nav_Agent),paths:^core.Table
         if p.looking {
             to:=p.look-pose.position
             to.y=0
-            if linalg.length(to)>1e-3 {want=yaw_of_direction(to)}
-        } else if speed>0.05 {want=yaw_of_direction(flat)}
+            if linalg.length(to)>1e-3 {want=mm.yaw_of_direction(to)}
+        } else if speed>0.05 {want=mm.yaw_of_direction(flat)}
         turn:=math.remainder(want-yaw,2*math.PI)
         step:=character.turn_speed*dt
         if character.turn_speed>0 && abs(turn)>step {turn=math.copy_sign(step,turn)}
@@ -1041,7 +1044,7 @@ navigation_crossing :: proc(
                 next.value.flags={.Airborne}
             }
             next.value.air={velocity=flat,force=traction}
-            if linalg.length(flat)>0.05 {next.value.yaw=yaw_of_direction(flat)}
+            if linalg.length(flat)>0.05 {next.value.yaw=mm.yaw_of_direction(flat)}
         case:
             speed:=max(walk.max_speed*0.5,0.5)
             d:=p.to-pose.position

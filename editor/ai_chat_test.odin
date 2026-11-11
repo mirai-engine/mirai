@@ -4,6 +4,8 @@ import "core:testing"
 import "core:strings"
 import "core:time"
 import "mirai:core"
+import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
@@ -14,7 +16,7 @@ ai_chat_test_paint :: proc(ctx:^ui.Context,text:string) -> ^ui.Paint {
 }
 
 @(test)
-ai_chat_agent_icons_select_tasks_finish_review_and_keep_new_chat_available :: proc(t:^testing.T) {
+ai_chat_agent_icons_select_tasks_and_finish_review :: proc(t:^testing.T) {
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
@@ -32,6 +34,7 @@ ai_chat_agent_icons_select_tasks_finish_review_and_keep_new_chat_available :: pr
     m.workers[0].task=1;m.workers[1].task=3
     m.connections[AI_CODEX].configured=true
     base.text_set(m.connections[AI_CODEX].model[:],"gpt-6-luna")
+    m.agents_open=true
     frame :: proc(s:^Session,pointer:[2]f32={},pressed:bool=false,height:f32=560) {
         ui.frame_begin(s.gui.ctx,{size={800,600},pointer=pointer,pointer_absent=!pressed,pressed={.Left} if pressed else {},down={.Left} if pressed else {}})
         ai_chat_bar_buttons(s)
@@ -64,17 +67,17 @@ ai_chat_agent_icons_select_tasks_finish_review_and_keep_new_chat_available :: pr
     testing.expect(t,finish_found && !retry_found,"completed work has Finish without Retry")
     frame(&s,{finish.x+finish.w*.5,finish.y+finish.h*.5},true)
     testing.expect(t,m.tasks[1].review_finished && ai_agent_icon(&m.tasks[1])!=before,"Finish clears the completion badge")
-    testing.expect(t,m.selected==0 && m.prompt_length==0 && ctx.edit.id!=0,"Finish opens a fresh conversation")
-    frame(&s)
+    testing.expect(t,m.selected==2,"Finish stays on the chat it finished")
+    m.selected=1
+    frame(&s);frame(&s)
     _,found=ui.widget_rect(&ctx,agent_id)
     testing.expect(t,!found,"finished reviews leave the active agents deck")
-    fresh,_:=ui.widget_rect(&ctx,new_id)
-    frame(&s,{fresh.x+fresh.w*.5,fresh.y+fresh.h*.5},true)
-    testing.expect(t,m.selected==0 && m.prompt_length==0 && ctx.edit.id!=0)
-    testing.expect(t,m.tasks[0].state==.Running && m.tasks[2].state==.Running,"New chat preserves other agents' work")
+    _,new_found:=ui.widget_rect(&ctx,new_id)
+    testing.expect(t,!new_found,"there is no other chat to open")
+    m.selected=2
     m.prompt_length=copy(m.prompt[:],"Another independent question")
     ai_chat_submit(&s)
-    testing.expect(t,m.pending,"a new conversation can send while two other agents are working")
+    testing.expect(t,m.pending,"a chat that finished can send while two other agents are working")
     frame(&s)
     ui.id_push(&ctx,shell_id(&g,"ai_chat"))
     _,composer_found:=ui.widget_rect(&ctx,ui.id(&ctx,"prompt"))
@@ -94,14 +97,13 @@ ai_chat_agent_icons_select_tasks_finish_review_and_keep_new_chat_available :: pr
     send,_:=ui.widget_rect(&ctx,ui.id(&ctx,"send"))
     ui.id_pop(&ctx)
     testing.expectf(t,send.y+send.h<=560.01 && send.y+send.h>=560-8,"a running turn shown by the deck leaves no room under the composer: %v",send.y+send.h)
-    // Ask agent of a menu asks in a new chat beside a turn that works, and in the open one otherwise.
+    // Ask agent of a menu asks the main chat, whatever is being inspected.
     m.chat_open=false
+    m.main=1
     asset_id:=base.Asset_Id{1,2}
+    m.selected=2
     ai_ask(&s,{asset_id,asset_id})
-    testing.expect(t,m.selected==0 && m.chat_open && m.focus && m.attachment_count==1 && m.attachments[0]==asset_id)
-    m.selected,m.attachment_count=2,0
-    ai_ask(&s)
-    testing.expect(t,m.selected==2 && m.chat_open,"a chat that finished is asked again")
+    testing.expect(t,m.selected==1 && m.chat_open && m.focus && m.attachment_count==1 && m.attachments[0]==asset_id)
 }
 
 @(test)
@@ -136,8 +138,7 @@ asking_the_agent_about_a_range_of_the_play_attaches_it_to_the_next_message :: pr
     testing.expect(t,!strings.contains(line,":/"),"No path outside the project")
     said:=ai_context_range(&task.range)
     testing.expect(t,said==Ai_Context_Range{"play",130,190,4,0,"scenes/main.scene",""},"context.json says what Copy range says")
-    ai_chat_new(&s)
-    testing.expect(t,m.range=={},"A new chat takes no range")
+    m.range={}
     timeline_range_use(&s,{ask=true},{from=10,to=10})
     testing.expect(t,m.range=={},"An empty range is not attached")
 }
@@ -225,6 +226,7 @@ ai_chat_keeps_partial_failed_changes_available_for_review :: proc(t:^testing.T) 
     append(&task.review.changed_files,strings.clone("notes.txt"))
     base.text_set(task.title[:],"Adjust the proportions")
     ai_transcript_add(&task.transcript,"The connection ended early",.Note)
+    m.agents_open=true
     frame :: proc(s:^Session,pointer:[2]f32={},pressed:bool=false) {
         ui.frame_begin(s.gui.ctx,{size={800,600},pointer=pointer,pointer_absent=!pressed,pressed={.Left} if pressed else {},down={.Left} if pressed else {}})
         ai_chat_content_build(s,280,560)
@@ -257,7 +259,7 @@ ai_chat_keeps_partial_failed_changes_available_for_review :: proc(t:^testing.T) 
     _,agent_found=ui.widget_rect(&ctx,agent_id)
     _,finish_found=ui.widget_rect(&ctx,finish_id)
     _,retry_found=ui.widget_rect(&ctx,retry_id)
-    testing.expect(t,!agent_found && !finish_found && !retry_found && m.selected==0,"Finish clears the failed review and starts another conversation")
+    testing.expect(t,!agent_found && !finish_found && !retry_found && m.selected==7,"Finish clears the failed review and the unit leaves the list")
 }
 
 @(test)
@@ -282,6 +284,7 @@ ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents :: proc(t:
     ui.popup_open(&ctx,shell_id(&g,"ai_settings_popup"),gear)
     frame(&s)
     testing.expect(t,ai_chat_test_paint(&ctx,"Connections")!=nil && ai_chat_test_paint(&ctx,"Show agents in scene")!=nil)
+    testing.expect(t,ai_chat_test_paint(&ctx,"Agents")!=nil && ai_chat_test_paint(&ctx,"Agent picks")!=nil && ai_chat_test_paint(&ctx,"Memory")!=nil,"the gear also says what the agents run with and remember")
     eye,connection,check:=false,false,false
     for &p in ctx.paints[:ctx.paint_count] {
         if p.kind!=.Icon {continue}
@@ -323,7 +326,7 @@ ai_chat_hides_tools_and_viewport_context_and_only_lists_supported_codex_models :
     testing.expect(t,!strings.contains(visible_text,"Viewport region") && strings.contains(visible_text,"Done"))
     _,history_found:=ui.widget_rect(&ctx,shell_id(&g,"ai_history"))
     _,new_found:=ui.widget_rect(&ctx,shell_id(&g,"ai_new_chat"))
-    testing.expect(t,history_found && new_found,"History and New chat sit in the bar of the panel")
+    testing.expect(t,history_found && !new_found,"History sits in the bar of the panel, and no New chat")
     ui.id_push(&ctx,shell_id(&g,"ai_chat"))
     models_id:=ui.id_derive(&ctx,ui.id(&ctx,"agent"),"menu")
     ui.id_pop(&ctx)
@@ -337,38 +340,17 @@ ai_chat_hides_tools_and_viewport_context_and_only_lists_supported_codex_models :
     for label in AI_CODEX_MODEL_NAMES {testing.expect(t,ai_chat_test_paint(&ctx,label)!=nil)}
     testing.expect(t,ai_chat_test_paint(&ctx,"Unavailable model")==nil)
     testing.expect(t,ai_connection_configure(&s,AI_CODEX,"gpt-5","")!="" && base.text_get(m.connections[AI_CODEX].model[:])=="gpt-6-luna")
-    ui.popup_close(&ctx)
-    m.has_region=true;m.prompt_length=copy(m.prompt[:],"A draft")
-    new_rect,found:=ui.widget_rect(&ctx,shell_id(&g,"ai_new_chat"))
-    testing.expect(t,found)
-    ui.frame_begin(&ctx,{size={800,600},pointer={new_rect.x+new_rect.w*0.5,new_rect.y+new_rect.h*0.5},pressed={.Left},down={.Left}})
-    ai_chat_bar_buttons(&s)
-    ai_chat_content_build(&s,280,420)
-    ui.frame_end(&ctx)
-    testing.expect(t,m.selected==0 && m.prompt_length==0 && ctx.edit.id!=0,"New chat starts a focused empty draft")
 }
 
 @(test)
 ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testing.T) {
     world:Shell_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.names,"Name")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.names)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    tables:=[3]core.Table_Info{
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Shell_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Shell_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Shell_Test_World,parents)},
-    }
-    info:=core.World_Info{tables=tables[:],settle=shell_test_settle}
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
     entity:=core.create(&world.entities)
     core.add(&world.names,entity,core.name_make("Selected entity"))
     core.add(&world.transforms,entity,core.TRANSFORM_IDENTITY)
-    shell_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     ctx:ui.Context
     testing.expect(t,ui.context_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
@@ -377,10 +359,10 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     defer free(ai)
     app:host.App
     viewport:Viewport
-    selection:Selection
+    selection:history.Selection
     defer delete(selection.entities)
-    session:=Session{info=&info,edit_world=&world,app=&app,gui=&g,viewport=&viewport,selection=&selection,ai=ai}
-    selection_set(&selection,{entity})
+    session:=Session{info=core.test_world_info(&world),edit_world=&world,app=&app,gui=&g,viewport=&viewport,selection=&selection,ai=ai}
+    history.selection_set(&selection,{entity})
     for _ in 0..<3 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
         ai_chat_content_build(&session,280,420)
@@ -428,8 +410,8 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     second:=core.create(&world.entities)
     core.add(&world.names,second,core.name_make("A"))
     core.add(&world.transforms,second,core.TRANSFORM_IDENTITY)
-    shell_test_settle(&world,nil,nil)
-    selection_set(&selection,{entity,second})
+    core.test_world_settle(&world)
+    history.selection_set(&selection,{entity,second})
     for _ in 0..<2 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
         ai_chat_content_build(&session,280,420)
@@ -454,7 +436,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     context_send,_:=ui.widget_rect(&ctx,ui.id(&ctx,"send"))
     ui.id_pop(&ctx)
     testing.expect(t,second_chip.y>first_chip.y && second_chip.w<=240 && context_send.y+context_send.h<=420,"long chips wrap and truncate within the available panel")
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
     ai_chat_content_build(&session,280,420)
     frame:=ui.frame_end(&ctx)
@@ -471,7 +453,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     ai_transcript_add(&ai.tasks[0].transcript,"Make the selected entity larger",.Prompt)
     ai_transcript_add(&ai.tasks[0].transcript,"Done",.Output)
     ai_transcript_add(&ai.tasks[0].transcript,"/Users/example/a-project-with-a-long-directory/.agents/skills/mirai-agent-api/SKILL.md",.Output)
-    selection_set(&selection,{entity})
+    history.selection_set(&selection,{entity})
     for _ in 0..<3 {
         ui.frame_begin(&ctx,{size={800,420},pointer_absent=true})
         ai_chat_content_build(&session,280,300)
@@ -491,9 +473,9 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
         extra:=core.create(&world.entities)
         core.add(&world.names,extra,core.name_make("Another selected entity"))
         core.add(&world.transforms,extra,core.TRANSFORM_IDENTITY)
-        selection_add(&selection,extra)
+        history.selection_add(&selection,extra)
     }
-    shell_test_settle(&world,nil,nil)
+    core.test_world_settle(&world)
     for height in ([2]f32{300,390}) {
         for region in ([2]bool{false,true}) {
             ai.has_region=region
@@ -629,9 +611,9 @@ ai_history_lists_only_chats_without_a_row_and_says_how_long_ago :: proc(t:^testi
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
     m.task_count=2
-    m.tasks[0].id=1;m.tasks[0].state=.Running
+    m.tasks[0].id=1;m.tasks[0].state=.Running;m.tasks[0].conversation.kind=.Agent
     base.text_set(m.tasks[0].title[:],"Still working")
-    m.tasks[1].id=2;m.tasks[1].state=.Done;m.tasks[1].review_finished=true
+    m.tasks[1].id=2;m.tasks[1].state=.Done;m.tasks[1].review_finished=true;m.tasks[1].conversation.kind=.Agent
     base.text_set(m.tasks[1].title[:],"Long finished")
     ai_transcript_add(&m.tasks[1].transcript,"Long finished",.Prompt)
     ai_transcript_add(&m.tasks[1].transcript,"Moved [Crate](entity:3) aside.",.Output)
@@ -682,6 +664,7 @@ ai_sessions_say_what_they_wait_for_and_are_answered_in_their_thread :: proc(t:^t
         assert(!painted.overflow && s.gui.ctx.stats.layout_errors==0)
     }
     m.selected=4
+    m.agents_open=true
     frame(&s);frame(&s)
     testing.expect(t,ai_chat_test_paint(&ctx,"!")!=nil && ai_chat_test_paint(&ctx,"?")!=nil && ai_chat_test_paint(&ctx,"2")!=nil,"the rows say a permission, a question and how many changes wait")
     testing.expect(t,ai_chat_test_paint(&ctx,"Allow")!=nil && ai_chat_test_paint(&ctx,"Reject")!=nil,"the permission is answered in the thread")
@@ -722,9 +705,9 @@ ai_sessions_keep_their_own_model_and_a_new_one_takes_that_of_its_agent :: proc(t
     m.task_count=1
     task:=&m.tasks[0];task.id=1;task.state=.Done
     c:=&task.conversation;c.id=1
-    ai_conversation_set_text(c.provider[:],&c.provider_len,"codex")
-    ai_conversation_set_text(c.model[:],&c.model_len,"gpt-6.1-sol")
-    ai_conversation_set_text(c.effort[:],&c.effort_len,"high")
+    ai_store.conversation_set_text(c.provider[:],&c.provider_len,"codex")
+    ai_store.conversation_set_text(c.model[:],&c.model_len,"gpt-6.1-sol")
+    ai_store.conversation_set_text(c.effort[:],&c.effort_len,"high")
     m.selected=1
     model,effort:=ai_chat_model(m)
     testing.expect(t,model=="gpt-6.1-sol" && effort=="high","a session shows its own model")
@@ -732,6 +715,131 @@ ai_sessions_keep_their_own_model_and_a_new_one_takes_that_of_its_agent :: proc(t
     m.selected=0
     model,effort=ai_chat_model(m)
     testing.expect(t,model=="gpt-6-luna" && effort=="low","a new session takes those of its agent")
+}
+
+@(private="file")
+ai_chat_test_frame :: proc(s:^Session,pointer:[2]f32={},pressed:=false,height:f32=560) {
+    ui.frame_begin(s.gui.ctx,{size={800,600},pointer=pointer,pointer_absent=pointer=={},pressed={.Left} if pressed else {},down={.Left} if pressed else {}})
+    ai_chat_bar_buttons(s)
+    ai_chat_content_build(s,280,height)
+    painted:=ui.frame_end(s.gui.ctx)
+    assert(!painted.overflow && s.gui.ctx.stats.layout_errors==0)
+}
+
+// A main chat and a running and a finished subagent, the second with two changes.
+@(private="file")
+ai_chat_test_units :: proc(m:^Ai) {
+    m.task_count,m.main,m.selected=3,1,1
+    titles:=[3]string{"The arena","Cover","Wood texture"}
+    for &task,index in m.tasks[:m.task_count] {
+        task.id=index+1;task.color_index=u8(index);task.state=index==1?.Running:.Done
+        task.conversation.id=u64(index+1)
+        base.text_set(task.title[:],titles[index])
+        base.text_set(task.agent[:],"codex")
+        if index>0 {task.conversation.kind,task.conversation.parent=.Agent,1}
+        ai_transcript_add(&task.transcript,titles[index],.Prompt)
+    }
+    m.workers[0].task=2
+    m.connections[AI_CODEX].configured=true
+    base.text_set(m.connections[AI_CODEX].model[:],"gpt-6-luna")
+    ai_transcript_add(&m.tasks[2].transcript,"Both crates use Dark oak.",.Output)
+    for path in ([2]string{"crate.mat","floor.mat"}) {append(&m.tasks[2].review.changed_files,strings.clone(path))}
+    m.tasks[2].review.pending=true
+}
+
+@(test)
+ai_chat_has_one_status_line_and_no_new_chat_button :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    g:=Editor_Ui{ctx=&ctx}
+    m:=new(Ai);defer free(m);ai_connections_reset(m)
+    s:=Session{gui=&g,ai=m,has_project=true}
+    ai_chat_test_units(m)
+    defer for &task in m.tasks[:m.task_count] {ai_review_free(&task.review)}
+    ai_chat_test_frame(&s);ai_chat_test_frame(&s)
+    testing.expect(t,ai_chat_test_paint(&ctx,"1 agent working · 2 changes to review")!=nil,"one line says what the agents do")
+    for &paint in ctx.paints[:ctx.paint_count] {testing.expect(t,paint.icon!=.Plus,"there is nothing to start")}
+    ui.id_push(&ctx,shell_id(&g,"ai_chat"))
+    status_id:=ui.id(&ctx,"agent_status")
+    row_id:=ui.id(&ctx,"agent_task",3)
+    ui.id_pop(&ctx)
+    _,row_found:=ui.widget_rect(&ctx,row_id)
+    testing.expect(t,!row_found,"the list starts folded")
+    status,_:=ui.widget_rect(&ctx,status_id)
+    ai_chat_test_frame(&s,ui.rect_center(status),true);ai_chat_test_frame(&s);ai_chat_test_frame(&s)
+    row,found:=ui.widget_rect(&ctx,row_id)
+    testing.expect(t,found && m.agents_open,"the line unfolds to the units")
+    ai_chat_test_frame(&s,ui.rect_center(row),true)
+    testing.expect(t,m.selected==3,"a click on a finished one inspects it")
+    m.selected=1;m.tasks[1].state=.Done;m.tasks[2].review_finished=true;m.tasks[1].review_finished=true
+    ai_chat_test_frame(&s);ai_chat_test_frame(&s)
+    _,found=ui.widget_rect(&ctx,status_id)
+    testing.expect(t,!found,"with nothing to say the line goes")
+}
+
+@(test)
+ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    g:=Editor_Ui{ctx=&ctx}
+    m:=new(Ai);defer free(m);ai_connections_reset(m)
+    s:=Session{gui=&g,ai=m,has_project=true}
+    ai_chat_test_units(m)
+    defer for &task in m.tasks[:m.task_count] {ai_review_free(&task.review)}
+    ai_transcript_add(&m.tasks[0].transcript,"3",.Report)
+    ai_transcript_add(&m.tasks[0].transcript,"Editor reopened",.Divider)
+    ai_chat_test_frame(&s);ai_chat_test_frame(&s)
+    testing.expect(t,ai_chat_test_paint(&ctx,"Wood texture finished")!=nil,"its title")
+    testing.expect(t,ai_chat_test_paint(&ctx,"Both crates use Dark oak.")!=nil,"its answer")
+    testing.expect(t,ai_chat_test_paint(&ctx,"2 changes")!=nil && ai_chat_test_paint(&ctx,"Reply")!=nil && ai_chat_test_paint(&ctx,"Request changes")==nil,"what is done about it")
+    testing.expect(t,ai_chat_test_paint(&ctx,"Editor reopened")!=nil,"a divider is drawn")
+    testing.expect(t,ai_chat_test_paint(&ctx,"Accept all")==nil,"a subagent has no bar over the composer")
+    ui.id_push(&ctx,shell_id(&g,"ai_chat"))
+    ui.id_push(&ctx,ui.id(&ctx,"report",3))
+    ask_id:=ui.id(&ctx,"reply")
+    finish_id:=ui.id(&ctx,"finish")
+    ui.id_pop(&ctx)
+    ui.id_pop(&ctx)
+    ask,_:=ui.widget_rect(&ctx,ask_id)
+    ai_chat_test_frame(&s,ui.rect_center(ask),true)
+    testing.expect(t,m.about==3,"Reply attaches the unit to the next message")
+    ai_chat_test_frame(&s);ai_chat_test_frame(&s)
+    finish,_:=ui.widget_rect(&ctx,finish_id)
+    ai_chat_test_frame(&s,ui.rect_center(finish),true)
+    testing.expect(t,m.tasks[2].review_finished,"its card keeps what it changed")
+    // Without the subagent in memory the card still says what it was.
+    m.tasks[2].id,m.tasks[2].state=9,.Done
+    base.text_set(m.reports[0].text[:],"Kept from the conversation")
+    m.reports[0].id,m.reports[0].length=3,len("Kept from the conversation")
+    ai_chat_test_frame(&s);ai_chat_test_frame(&s)
+    testing.expect(t,ai_chat_test_paint(&ctx,"Kept from the conversation")!=nil,"the answer survives the task")
+}
+
+@(test)
+ai_a_subagent_is_inspected_from_its_own_view_and_written_to :: proc(t:^testing.T) {
+    ctx:ui.Context
+    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    g:=Editor_Ui{ctx=&ctx}
+    m:=new(Ai);defer free(m);ai_connections_reset(m)
+    s:=Session{gui=&g,ai=m,has_project=true}
+    ai_chat_test_units(m)
+    defer for &task in m.tasks[:m.task_count] {ai_review_free(&task.review)}
+    ai_transcript_add(&m.tasks[1].transcript,"Moving the blocks",.Output)
+    m.selected=2
+    ai_chat_test_frame(&s);ai_chat_test_frame(&s)
+    testing.expect(t,ai_chat_test_paint(&ctx,"Main chat")!=nil && ai_chat_test_paint(&ctx,"Working")!=nil,"the way back and its state")
+    named:=false
+    for &paint in ctx.paints[:ctx.paint_count] {named|=paint.placeholder=="Message Cover..."}
+    testing.expect(t,named,"the composer names it")
+    testing.expect(t,ai_chat_test_paint(&ctx,"Luna 6")==nil,"no selector of the model")
+    ui.id_push(&ctx,shell_id(&g,"ai_chat"))
+    _,stop_found:=ui.widget_rect(&ctx,ui.id(&ctx,"stop"))
+    ui.id_pop(&ctx)
+    testing.expect(t,stop_found,"empty and busy it stops")
+    m.prompt_length=copy(m.prompt[:],"Keep the cover low")
+    testing.expect(t,ai_chat_send(&s)==false || m.prompt_length==0,"a running subagent takes the message")
+    testing.expect_value(t,ai_transcript_line_last(&m.tasks[1].transcript),"Keep the cover low")
+    testing.expect(t,m.tasks[1].state==.Running,"it does not interrupt the agent")
 }
 
 @(private="file")

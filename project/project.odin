@@ -256,7 +256,9 @@ plugins_order :: proc(plugins:[]Plugin,wanted:[]string,allocator:=context.alloca
         append(&walk.order,index)
         return {}
     }
-    walk:=Walk{plugins,make([]Visit,len(plugins),context.temp_allocator),make([dynamic]int,0,len(plugins),allocator)}
+    listed,allocation:=make([dynamic]int,0,len(plugins),allocator)
+    if allocation!=nil {return nil,{code=.Out_Of_Memory}}
+    walk:=Walk{plugins,make([]Visit,len(plugins),context.temp_allocator),listed}
     for name in wanted {
         index,found:=plugin_find(plugins,name)
         if !found {error=error_about(.Plugin_Missing,name)}
@@ -267,17 +269,6 @@ plugins_order :: proc(plugins:[]Plugin,wanted:[]string,allocator:=context.alloca
         }
     }
     return walk.order[:],{}
-}
-
-// The folder has at least one Odin source: it is a package the compiler accepts.
-package_exists :: proc(folder:string) -> bool {
-    if !os.is_dir(folder) {return false}
-    entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return false}
-    for entry in entries {
-        if entry.type==.Regular && strings.has_suffix(entry.name,".odin") {return true}
-    }
-    return false
 }
 
 // The parts joined with forward slashes, the only separator the manifests,
@@ -292,6 +283,7 @@ path :: proc(parts:..string,allocator:=context.allocator) -> string {
     return strings.to_string(b)
 }
 
+EXECUTABLE_SUFFIX :: ".exe" when ODIN_OS==.Windows else ""
 when ODIN_OS==.Windows {
     LIBRARY_PREFIX :: ""
     LIBRARY_SUFFIX :: ".dll"
@@ -303,9 +295,12 @@ when ODIN_OS==.Windows {
     LIBRARY_SUFFIX :: ".so"
 }
 
-// The file of a dynamic library on this system: mirai-engine.dll, libmirai-engine.so.
+// The file of a dynamic library on this system: mirai-engine.dll,
+// libmirai-engine.so. "" without memory for it.
 library_file :: proc(name:string,allocator:=context.allocator) -> string {
-    return strings.concatenate({LIBRARY_PREFIX,name,LIBRARY_SUFFIX},allocator)
+    file,error:=strings.concatenate({LIBRARY_PREFIX,name,LIBRARY_SUFFIX},allocator)
+    if error!=nil {return ""}
+    return file
 }
 
 // A library of the project, in .mirai: editor, which the editor loads, or
@@ -336,15 +331,32 @@ folder_path :: proc(root:string,folder:Folder,allocator:=context.allocator) -> s
 start_scene :: proc(root:string,allocator:=context.allocator) -> string {
     m,error:=manifest_read(path(root,PROJECT_FILE,allocator=context.temp_allocator))
     if error.code!=.None {return ""}
-    return strings.clone(base.text_get(m.start_scene[:]),allocator)
+    scene,scene_error:=strings.clone(base.text_get(m.start_scene[:]),allocator)
+    if scene_error!=nil {return ""}
+    return scene
 }
 
-// Whether two absolute paths name the same file: without case on Windows and macOS.
+// Whether two paths written from the same folder name the same file: without
+// case on Windows and macOS, whose file systems fold it, with either slash on
+// Windows, and with or without a slash at the end.
 path_same :: proc(a,b:string) -> bool {
-    when ODIN_OS==.Windows || ODIN_OS==.Darwin {return strings.equal_fold(a,b)} else {return a==b}
+    SEPARATORS :: "/\\" when ODIN_OS==.Windows else "/"
+    a,b:=strings.trim_right(a,SEPARATORS),strings.trim_right(b,SEPARATORS)
+    for {
+        i,j:=strings.index_any(a,SEPARATORS),strings.index_any(b,SEPARATORS)
+        if (i<0)!=(j<0) {return false}
+        x,y:=a[:i] if i>=0 else a,b[:j] if j>=0 else b
+        when ODIN_OS==.Windows || ODIN_OS==.Darwin {
+            if !strings.equal_fold(x,y) {return false}
+        } else {
+            if x!=y {return false}
+        }
+        if i<0 {return true}
+        a,b=a[i+1:],b[j+1:]
+    }
 }
 
-// Absolute, with forward slashes and no trailing one.
+// Absolute, with forward slashes and no trailing one. "" without memory for it.
 path_absolute :: proc(location:string,allocator:=context.allocator) -> string {
     absolute,error:=os.get_absolute_path(location,context.temp_allocator)
     if error!=nil {
@@ -357,7 +369,9 @@ path_absolute :: proc(location:string,allocator:=context.allocator) -> string {
     }
     result,_:=strings.replace_all(absolute,"\\","/",context.temp_allocator)
     for len(result)>1 && result[len(result)-1]=='/' {result=result[:len(result)-1]}
-    return strings.clone(result,allocator)
+    copy,copy_error:=strings.clone(result,allocator)
+    if copy_error!=nil {return ""}
+    return copy
 }
 
 // A folder of assets of a project, and the path its files have among the

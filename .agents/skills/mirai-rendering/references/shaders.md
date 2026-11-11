@@ -12,7 +12,7 @@
 
 ## Shader toolchain
 
-### Tools
+## Tools
 
 - `mirai setup slang [--archive <file>]` installs in `.deps/slang/` the pinned precompiled Slang
   (`SLANG_VERSION`, with SHA-256 per platform) and keeps the previous installation until the new
@@ -28,7 +28,7 @@
 - `mirai shaders --project <path>` adds the `shaders/` of the active plugins that declare them,
   the same ones the build passes (`build.shader_sources`).
 
-### Compilation
+## Compilation
 
 - Column-major matrices, profile `sm_6_5`, SPIR-V 1.5 for Vulkan 1.2. Slang runs with `-O0` and
   the spirv-opt passes of its `-O3` without its first redundancy elimination (`SLANG_FLAGS`).
@@ -50,12 +50,30 @@
   `batches`: what follows belongs to the generation.
 - **Material schema.** `include/material_schema.slang` is generated from `mirai:asset`
   (`Material_Map_Kind`, `Alpha_Mode`, `MATERIAL_DEFAULTS`). No shader writes those values.
+- **Shared constants.** A constant the shaders share with the CPU (a binding slot, a flag bit, the
+  words of a layout of a pool, a limit both size arrays with) is declared once in Odin and
+  `include/shared_constants.slang` is generated from it (`shared_constants` of
+  `cook/shaders/schema.odin`, which lists them). Those of the renderer live in `render/abi`, which
+  `render` uses under the same names; those of a format or of the RHI, in `asset` and `rhi`. No
+  `.slang` source defines one (`no_shader_source_defines_a_constant_the_generation_writes`). A
+  plugin's shaders take them from the engine includes.
+- Both includes are part of every fingerprint and of the stamp of a generation: changing one of
+  those constants compiles the stages again.
+- **Constants of a plugin.** A constant between the Odin code of a plugin, or of the project, and
+  its own shaders is also declared once, in that Odin code, with its number (`NAME :: 8`). A
+  `//! mirai constant <NAME> <int|uint|float> <file.odin>` line in a source of its `shaders/`
+  names it, the type of its Slang literal and the Odin source, from the folder of the line's
+  source; the generation writes them into `include/constants/plugins/<name>.slang` (named
+  `project` instead of `plugins/<name>` for the project), which those shaders include
+  (`owned_constants` of `cook/shaders/extensions.odin`). Only the stages that include it follow
+  it, and the stamp follows the Odin source. The same test forbids a plugin's `.slang` from
+  defining a name its Odin declares.
 - The resources of a stage stay within the `rhi` limits. `//! variant <name> <DEFINE>...` adds
   another compilation of a stage.
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software
   BVH. Validating SPIR-V does not certify GPU execution on any backend.
 
-### Backends of a generation
+## Backends of a generation
 
 - Each backend is a separate compilation of the stage (`Options.backends`, `--backends`). Every
   generation has by default only `HOST_BACKEND`, the only one the executable, `host` and
@@ -65,7 +83,7 @@
   that asks for `mirai shaders --backends all`. The code of a backend is the same, byte for byte,
   whether compiled alone or with the other.
 
-### Programs
+## Programs
 
 - Each program declares `//! mirai surface Name`, `postprocess`, `vfx` or `ui`, and metadata
   `//! parameter field {json}`; `group` is the Details card that shows the parameter in the
@@ -80,7 +98,7 @@
   program alone. `mirai_vfx_texture(index, uv, level)` reads the texture of a parameter and
   `mirai_vfx_random(seed)` gives a number from 0 to 1. The domain belongs to the generation (like
   Surface and PostProcess); the stages that evaluate its programs belong to the
-  [`vfx` plugin](../../mirai-plugins/references/vfx.md#vfx-programs), and `Orbit`
+  [`vfx` plugin](../../mirai-world/references/vfx.md#vfx-programs), and `Orbit`
   (`plugins/vfx/shaders/orbit.slang`) is its own.
 - A Vfx program declares what it reads besides its parameters with `//! resource name surface`,
   `channel`, `bones`, `grid`, `emitter` or `data words` (up to `PROGRAM_RESOURCES`). The
@@ -97,13 +115,13 @@
   normal and whether it started inside a closed mesh) in `initialize`, `update` and the stages,
   which include `trace.slang` and declare the `hw` variant; in `render` it finds nothing. Which
   mesh, which skin, which channel or which grid each one is is resolved by the
-  [plugin](../../mirai-plugins/references/vfx.md#surfaces-bones-and-resources).
+  [plugin](../../mirai-world/references/vfx.md#surfaces-bones-and-resources).
 - Its stages (`//! stage name over particles|resource [iterations N] [neighbors radius]`, up to
   `MAX_STAGES`) are functions of the namespace: over particles with the signature of `update` (and
   `mirai_vfx_neighbors` with `mirai_vfx_neighbor_next` if it declares `neighbors`), over the cells
   of a grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
   `mirai_vfx_particle_stage` and `mirai_vfx_cell_stage` and the catalog lists them in `stages`; the
-  [plugin](../../mirai-plugins/references/vfx.md#grids-and-stages) runs them.
+  [plugin](../../mirai-world/references/vfx.md#grids-and-stages) runs them.
 - A Surface program that moves vertices says `//! vertex [animated] [reach <metres>|reach
   <parameter>]` and declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is
   a number from 0 or a parameter of one float; another word, a reach of another type or the line
@@ -134,7 +152,7 @@
   texture at its finest resident level: a program asks for all the levels of its textures.
 - `ctx.particle_data`, `ctx.particle_given`, `ctx.particle_random` and `ctx.particle_radius` are
   what the particle of a sprite that draws the point gives, which also gives its color in
-  `ctx.vertex_color` ([`vfx` sprites](../../mirai-plugins/references/vfx.md#passes)); in
+  `ctx.vertex_color` ([`vfx` sprites](../../mirai-world/references/vfx.md#passes)); in
   everything else, nothing given and zero.
 - A PostProcess program reads outside its pixel, at a `uv` from 0 to 1 from the top-left corner:
   `mirai_scene_color(ctx, uv)` is the image the previous effect left, exposed like `ctx.color`;
@@ -152,7 +170,7 @@
   `Ui_Gradient_Sweep` (a gradient toward another color that shifts). Selector and registration:
   [UI](ui.md#ui-world-panels-and-debug-lines).
 
-### Programs and stages
+## Programs and stages
 
 - The generation writes one include per domain:
   - `include/surface_programs.slang`: that of the stages without a program, whose
@@ -194,7 +212,7 @@
 - Program ids are consecutive across the domains, in file order (engine, project, plugins): adding
   a program of one domain changes the other's dispatcher if it comes before any of its programs.
 
-### Inputs and outputs
+## Inputs and outputs
 
 - `--project <path>` incorporates the programs of `<path>/shaders`. `Options.sources`
   (`{name, folder}` per plugin) adds the `shaders/` of plugins, copied to
@@ -208,7 +226,7 @@
   and `rhi/shaders_gen_test.odin`, `@(rodata)` tables.
 - The `render` table embeds the code of its stages and then of its program stages as one LZ
   stream per backend (`shaders/build/shaders.spv.lz`, `.metal.lz`), each stage an
-  `Embedded_Shader` with its size in it. It is packed `Edit`, and `Ship` when the generation is
+  `Embedded_Shader` with its size in it. It is packed `PACK_EDIT`, and `SHIP` when the generation is
   asked to ship (`Options.ship`: the release builds of the engine); either serves every build.
   `renderer_init` decodes it once (`embedded_shaders_decode`) unless it starts with a loaded
   generation. The `rhi` test table loads each stage as it is.
@@ -219,7 +237,7 @@
 - `renderer_init` receives a loaded generation in `Renderer_Desc.shaders`;
   `renderer_reload_shaders` replaces it at once ([loading in host](#loading-in-host)).
 
-### Cache and fingerprints
+## Cache and fingerprints
 
 - **Shared cache** (`cache.odin`): `<main checkout>/.mirai/cache/shaders`
   (`workspace.cache_folder`), the same for all the repository's worktrees, branches and projects.
@@ -263,6 +281,9 @@
   (`<fingerprint>.refused.txt`, with what Slang said): it is not compiled again while its sources
   do not change. A compiler that ends without diagnostics (a cancelled generation) leaves nothing
   in the cache.
+- A program of a project or of a plugin that does not compile is left out of the catalog, which
+  names it (`Result.refused`), and the others are published; one of the engine fails the
+  generation.
 - `Sources` reads each source once and stores two hashes: the full one (catalog, engine identity,
   stamp) and the compilation one (stages and reflection).
 - The compilation hash omits only whole `//! parameter` lines that are line comments in code,
@@ -283,7 +304,7 @@
 - A stage that fails does not stop the others: what compiles stays in the cache for the next
   generation.
 
-### Early stages and cancellation
+## Early stages and cancellation
 
 - `Options.first` names stages (`thumbnail.frag`) that the workers take first. When they all
   compile, `Options.first_output` receives a generation that loads by itself: the catalog and those
@@ -296,7 +317,7 @@
 - `cancel(&progress)`, from another thread, stops the generation: no more stages start, the running
   tools are killed and it ends with `Result.cancelled`, without publishing.
 
-### In-memory sources
+## In-memory sources
 
 - `Options.overlay` gives sources that the generation reads instead of their files: what an editor
   has unsaved. It goes through `Sources`, so fingerprints, stamp, listings and the copy of the
@@ -309,7 +330,7 @@
   stage fails (`it includes ..., which has unsaved changes`) instead of storing in the cache the
   code of the file with the fingerprint of the memory.
 
-### Generation without changes
+## Generation without changes
 
 - A published generation leaves `generation.json` with the request, the tools, the hash of each
   source, the includes not found and what was published. If everything matches, it starts no
@@ -317,7 +338,7 @@
   `up to date`); `shaders.current` answers the same without lock or writes. If not, the full path
   checks each stage by its fingerprint.
 
-### Publication
+## Publication
 
 - The whole directory and the Odin tables that change are prepared in staging; the renames keep the
   previous generation until finished and a failure reverts them: the visible output always
@@ -327,7 +348,7 @@
   fingerprint of the engine sources (`SHADERS_FINGERPRINT`) and `shader_assets_load` rejects
   shaders from other sources.
 
-### Diagnostics
+## Diagnostics
 
 - `slang_diagnostics` reads Slang's machine-readable diagnostics into `Diagnostic`, with the files
   named by the source (also the copy of a program). A generation that fails leaves them in
@@ -411,11 +432,12 @@ does not publish again
 - Another change while the job runs cancels it and abandons its loads, which would compete for the
   driver. If the job fails, or ends without changes after the renderer took early stages from
   another, the renderer loads the published generation again.
-- A shader changed outside the editor is published the same with `build.shaders`, which answers
-  when the viewport draws with it. `mirai shaders --project P` with the editor of `P` open asks
-  it instead of generating on its own; `--whole` generates everything on the command line. A
+- A shader changed outside the editor is published at the next call of the API, and a call that
+  draws waits for it (`api_disk_sync`). `mirai shaders --project P` with the editor of `P` open
+  asks it (`build.start` with `target:"shaders"`, which answers when the viewport draws with it)
+  instead of generating on its own; `--whole` generates everything on the command line. A
   change in the engine sources does not load in an already compiled editor (`Stale`, by the
-  executable's fingerprint): `build.shaders` says so and asks to compile the editor again.
+  executable's fingerprint): the call says so and asks to compile the editor again.
 
 ### Loading in `host`
 

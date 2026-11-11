@@ -116,7 +116,6 @@ App_Stats :: struct {
     frames:u64,
     frames_drawn:u64,
     frames_skipped:u64,
-    extras_dropped:u64,
     watch_slices:u64,
     ticks:u64,
     ticks_dropped:u64, // ticks a slow frame could not simulate
@@ -146,6 +145,7 @@ App :: struct {
     worlds:[dynamic]World_Slot, // the Worlds it made, by the index of their core.World_Id
     reserved:map[rawptr]int,    // the address space of each struct of a place it made (world_alloc)
     scratch:rawptr,  // a World app_world_replace prepares the replacements in; made the first time
+    scratch_mixed:bool, // it holds parts of several Worlds, which a replacement of what changed left: to copy over or to clear, never to run
     root,engine_root,options:string, // those of App_Desc
     animation_cache:string,          // App_Desc.animation_cache
     start_ns:u64,
@@ -158,7 +158,6 @@ App :: struct {
     texture_streaming:Texture_Streaming, // the reads of the levels of textures under way
     asset_releases:Assets_Releases, // what jobs read for the loads, freed in jobs
     step_ns:[]u64, // the time of each function of info.steps since whoever reads it last cleared it, settle included
-    step_graphs:[core.Loop][core.Phase]Step_Graph, // the functions of each loop and phase as jobs (steps.odin)
     profiler:Profiler, // the frames someone asked to record (profile.odin)
     load_profile:Load_Profile, // what the last loads took (load_profile.odin)
 
@@ -186,7 +185,6 @@ App :: struct {
     // The part of the drawable the camera draws in, in pixels: what is not
     // always covered (the editor leaves out its bars). Zero: all of it.
     scene:[4]i32,
-    scene_view_width:i32, // of the whole view scene is the visible part of, in pixels; 0: the width of scene
     scene_shift:[2]f32, // where the center of the view of the camera is, in halves of scene: what surrounds scene is part of the view, not drawn
     time:f32,                 // seconds of the world the next frame shows: the render library sets it
     views:[render.VIEW_CAPACITY]render.Frame_View,
@@ -200,16 +198,12 @@ App :: struct {
     // editor shows); none: they split the drawable among them.
     player_tiles:[PLAYER_TILES][4]i32,
     player_tile_count:int,
-    texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
-    texture_view_count:int,
     ui_font_sizes:[]i32,
     // The font every UI context of the application borrows, on demand: the
     // application rasterizes what they ask for (app_ui_font_sync).
     ui_font:ui.Font,
     font:Font_Key,
     extras:Frame_Extras,
-    slots_shown:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Shown, // of the last frame: render_sync writes them
-    slots_shown_count:int,
     ui_input:ui.Input,    // of the pointer and the keyboard this frame, for the UI of the game
 
     mixer:^audio.Mixer, // nil without audio
@@ -227,6 +221,7 @@ App :: struct {
     has_script_input:bool,
     script_devices:bool, // script_input holds the pointer, the gamepads and the device: they replace those of the window
     game_input_blocked:bool, // the pointer is on the editor: the game gets no input this frame
+    game_mouse_off:bool,     // the editor has the mouse (Play paused or released, Simulate, Watch): the game does not capture it
     game_input_excluded:core.Keys,
 }
 
@@ -244,12 +239,25 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
     if app,allocation_error=new(App,allocator);allocation_error!=nil {return nil,.Out_Of_Memory}
     app.allocator=allocator
     app.info=desc.info
-    if app.info!=nil {app.step_ns=make([]u64,len(app.info.steps),allocator)}
+    if app.info!=nil {
+        if app.step_ns,allocation_error=make([]u64,len(app.info.steps),allocator);allocation_error!=nil {
+            app_destroy(app)
+            return nil,.Out_Of_Memory
+        }
+    }
     app.density=1
     app.pixel_density=1
-    app.root,app.engine_root=strings.clone(desc.root,allocator),strings.clone(desc.engine_root,allocator)
-    app.options=strings.clone(desc.options,allocator)
-    app.animation_cache=strings.clone(desc.animation_cache,allocator)
+    texts:[4]runtime.Allocator_Error
+    app.root,texts[0]=strings.clone(desc.root,allocator)
+    app.engine_root,texts[1]=strings.clone(desc.engine_root,allocator)
+    app.options,texts[2]=strings.clone(desc.options,allocator)
+    app.animation_cache,texts[3]=strings.clone(desc.animation_cache,allocator)
+    for text in texts {
+        if text!=nil {
+            app_destroy(app)
+            return nil,.Out_Of_Memory
+        }
+    }
     app.paced=desc.window && desc.fixed_dt<=0
     app.game_window=desc.window && desc.game_window
     app.window=desc.window_desc
@@ -257,7 +265,10 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
     app.tick_dt=1/f32(core.SIMULATION_SETTINGS_DEFAULT.tick_rate)
     app.max_ticks=desc.max_ticks_per_frame>0?desc.max_ticks_per_frame:8
     app.worlds=make([dynamic]World_Slot,allocator)
-    app.extras.instances=make([dynamic]render.Instance_Desc,0,FRAME_INSTANCE_RESERVE,allocator)
+    if app.extras.instances,allocation_error=make([dynamic]render.Instance_Desc,0,FRAME_INSTANCE_RESERVE,allocator);allocation_error!=nil {
+        app_destroy(app)
+        return nil,.Out_Of_Memory
+    }
     platform_desc:=platform.Platform_Desc{
         headless=!desc.window,window=desc.window_desc,video_driver=desc.video_driver,
         fixed_dt=desc.fixed_dt,allocator=allocator,
@@ -322,7 +333,6 @@ app_destroy :: proc(app:^App) {
     delete(app.reserved)
     delete(app.step_ns,app.allocator)
     load_profile_destroy(app)
-    steps_free(app)
     delete(app.ui_font_sizes,app.allocator)
     ui.font_destroy(&app.ui_font)
     if app.mixer!=nil {
@@ -339,7 +349,7 @@ app_destroy :: proc(app:^App) {
     if app.platform!=nil {platform.destroy(app.platform)}
     delete(app.root,app.allocator);delete(app.engine_root,app.allocator);delete(app.options,app.allocator)
     delete(app.animation_cache,app.allocator)
-    app_extras_free(app)
+    extras_free(&app.extras)
     free(app,app.allocator)
 }
 
@@ -436,14 +446,14 @@ world_register :: proc(app:^App,at:int,data:rawptr) -> bool {
     if slot.generation==0 {slot.generation=1}
     slot.data=data
     if id:=core.world_storage_of(app_world_ref(app,data),core.World_Id);id!=nil {id^={u32(at),slot.generation}}
-    return app.info.attach==nil || app.info.attach(data,app.shared,app.allocator)
+    return core.world_attach(app.info,data,app.shared,app.allocator)
 }
 
 // Takes the World out of its slot with the values of its by_world storages.
 @(private)
 world_unregister :: proc(app:^App,data:rawptr) {
     if app.allocator.procedure!=nil {context.allocator=app.allocator}
-    if app.info.detach!=nil {app.info.detach(data,app.shared)}
+    core.world_detach(app.info,data,app.shared)
     if at:=world_slot_of(app,data);at>=0 {app.worlds[at].data=nil}
 }
 
@@ -452,25 +462,31 @@ world_unregister :: proc(app:^App,data:rawptr) {
 // without allocating. False when memory ran out: dst stays as it was. What
 // the World does not copy (copy=false) stays in dst. The traded contents wait
 // in that World for the next replacement, which copies over them without
-// allocating when they fit.
-app_world_replace :: proc(app:^App,dst,src:rawptr) -> bool {
+// allocating when they fit. marks: when src is a copy core.world_copy_changed
+// keeps of dst, its marks: only what dst changed since that copy is copied
+// and traded, and the readers of the rest see no change (core.world_restore).
+app_world_replace :: proc(app:^App,dst,src:rawptr,marks:[]core.Copy_Mark=nil) -> bool {
     if dst==src {return true}
     if dst==nil || src==nil {return false}
     if app.scratch==nil {
         if app.scratch=app_world_create(app);app.scratch==nil {return false}
     }
     context.allocator=app.allocator
-    if !app.info.copy(app.scratch,src) {return false}
-    app.info.swap(dst,app.scratch)
-    return true
+    ok,mixed:=core.world_restore(app.info,dst,src,app.scratch,marks)
+    app.scratch_mixed=mixed
+    return ok
 }
 
 // Frees the World app_world_replace keeps: what a replacement that happens
 // seldom, as opening a scene, need not hold until the next one.
 app_world_scratch_free :: proc(app:^App) {
     if app.scratch==nil {return}
-    app_world_free(app,app.scratch)
-    app.scratch=nil
+    // Parts of several Worlds are no World to run a release phase on: it runs on it cleared.
+    if app.scratch_mixed && !core.world_clear(app.info,app.scratch) {
+        world_unregister(app,app.scratch)
+        world_free(app,app.scratch,.World)
+    } else {app_world_free(app,app.scratch)}
+    app.scratch,app.scratch_mixed=nil,false
 }
 
 // An Editor_World of the project, initialized.
@@ -499,7 +515,7 @@ world_alloc :: proc(app:^App,place:core.Place) -> rawptr {
     }
     app.reserved.allocator=app.allocator
     app.reserved[data]=reserved
-    if !info.init[place](data,app.allocator) {
+    if !core.world_init(info,place,data,app.allocator) {
         world_free(app,data,place)
         return nil
     }
@@ -510,7 +526,7 @@ world_alloc :: proc(app:^App,place:core.Place) -> rawptr {
 @(private)
 world_free :: proc(app:^App,data:rawptr,place:core.Place) {
     context.allocator=app.allocator
-    app.info.destroy[place](data)
+    core.world_destroy(app.info,place,data)
     _,reserved:=delete_key(&app.reserved,data)
     virtual.release(data,uint(reserved))
     if len(app.reserved)==0 {
@@ -565,17 +581,17 @@ app_worlds_migrate :: proc(app:^App,m:^core.World_Migration,editor:rawptr) -> bo
 place_replace :: proc(app:^App,m:^core.World_Migration,place:core.Place,data:rawptr) {
     size:=max(m.to.sizes[place],1)
     fresh,error:=mem.alloc(size,max(m.to.aligns[place],1),app.allocator)
-    if error!=nil || !m.to.init[place](fresh,app.allocator) {
+    if error!=nil || !core.world_init(m.to,place,fresh,app.allocator) {
         // Without memory for it, the struct starts as the new library makes it.
-        if fresh!=nil {m.to.destroy[place](fresh);mem.free(fresh,app.allocator)}
-        m.from.destroy[place](data)
+        if fresh!=nil {core.world_destroy(m.to,place,fresh);mem.free(fresh,app.allocator)}
+        core.world_destroy(m.from,place,data)
         mem.zero(data,size)
-        _=m.to.init[place](data,app.allocator)
+        _=core.world_init(m.to,place,data,app.allocator)
         return
     }
     if place!=.Editor {app_settings_load(app,fresh,place)}
     core.place_migrate(m,place,data,fresh,app.allocator)
-    m.from.destroy[place](data)
+    core.world_destroy(m.from,place,data)
     old:=max(m.from.sizes[place],1)
     if page_round(size)>page_round(old) {_=virtual.commit(data,uint(page_round(size)))}
     mem.copy(data,fresh,size)

@@ -1,7 +1,7 @@
 # Animation gallery
 
-`demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that the
-player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
+`demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that
+the player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
 on each side of the walkway. `tools/demo_content --animation-only` writes it with its clips,
 programs and profiles ([generated content](demo.md#generated-content)).
 
@@ -54,25 +54,26 @@ programs and profiles ([generated content](demo.md#generated-content)).
 
 ## API walkthrough
 
-Open the editor with `--scene animation_gallery/animation.scene`, query `engine.describe` for the schemas and
-`scene.inspect` for the ids of the stations, which are named after what they show. Start
+Open the editor with `--scene animation_gallery/animation.scene`, query `engine.describe` for the
+schemas and `scene.inspect` for the ids of the stations, which are named after what they show. Start
 `play.start`, pause and advance with `play.step`.
 
 1. `Mirai warp to a target`: `animation.request` with
-   `{"id":"<rig>","motion":[{"name":"Reach","target":t}]}`, where `t` is
+   `{"entity":"<rig>","motion":[{"name":"Reach","target":t}]}`, where `t` is
    `{"kind":"Entity","entity":"<Reach goal>"}`, then `animation.play` of `stride`. Its gallery
    restarts the stride every few seconds with the goal at another distance. `animation.inspect`
    part `Motion` publishes the window and the predicted error; `play.inspect` reports the position
    reached by physics.
-2. `Mirai named actions`: `animation.request` with `{"id":"<rig>","actions":[{"name":"Greet"}]}`
+2. `Mirai named actions`: `animation.request` with `{"entity":"<rig>","actions":[{"name":"Greet"}]}`
    starts the `Greeting` section; `Step` emits `Movement` windows. `animation.inspect` part
    `Actions` after one tick reads state and events.
 3. `Mirai matching by speed`: `animation.request` with
-   `{"id":"<rig>","plays":[{"clip":"wave","fade":0.35}]}` plays the greeting and matching resumes at
+   `{"entity":"<rig>","plays":[{"clip":"wave","fade":0.35}]}` plays the greeting and matching
+   resumes at
    the end; `animation.inspect` part `Match` gives the clip, whether it is forced, and the jumps.
    `priority` or `wait` reject or delay an interruption.
 4. A physical Mirai: `animation.request` with
-   `{"id":"<rig>","locomotion":{"velocity":[1.5,0,1.5],"source_velocity":[0,0,2.9154]}}` adapts
+   `{"entity":"<rig>","locomotion":{"velocity":[1.5,0,1.5],"source_velocity":[0,0,2.9154]}}` adapts
    orientation and stride; `source_velocity` is a manual calibration because the walk does not
    extract displacement, and both velocities are in world space.
 5. `Mirai presentation every 4 frames`: `Animation_Budget` presents it every fourth frame while the

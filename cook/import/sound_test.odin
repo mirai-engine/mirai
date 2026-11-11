@@ -9,6 +9,7 @@ import "core:testing"
 import "core:time"
 import "mirai:asset"
 import audio "mirai:audio"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file") SINE_OGG :: #load("../../audio/testdata/sine_mono.ogg")           // 0.5 s of 440 Hz at 44.1 kHz, amplitude 0.5
@@ -53,8 +54,8 @@ sound_open :: proc(t:^testing.T,path:string,types:^asset.Types,a:^asset.Asset) -
 @(test)
 a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
-    folder:=temp_folder("sound")
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"sound")
+    if folder=="" {return}
     out:=fmt.tprintf("%s/out",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
 

@@ -4,12 +4,12 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(test)
 release_steps_run_from_the_game_loop_with_the_id_of_the_world :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-release-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"release")
+    if folder=="" {return}
     engine:=project.path(folder,"engine",allocator=context.temp_allocator)
     game:=project.path(folder,"project",allocator=context.temp_allocator)
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(engine,"editor",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
@@ -32,7 +32,7 @@ later_release :: proc(pools:^Pools) {}
         testing.expect(t,strings.contains(text,"game_release :: proc"))
         testing.expect(t,strings.contains(text,"info.loops[.Game][.Release],info.order[.Game][.Release]=game_release,order_game_release[:]"))
         testing.expect(t,strings.contains(text,"p_core.pools_release(&s.pools,w.world_id,app)"))
-        testing.expect(t,strings.contains(text,"game_release :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_pools_release(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n    call_later_release(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n}"))
+        testing.expect(t,strings.contains(text,"game_release :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_pools_release(world,shared,editor,app_data)\n    call_later_release(world,shared,editor,app_data)\n}"))
         testing.expect(t,!strings.contains(text,"&dst.world_id") && !strings.contains(text,"a.world_id,b.world_id="))
     }
     // The application runs release from the game loop alone: an editor package has none.

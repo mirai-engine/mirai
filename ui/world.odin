@@ -10,7 +10,7 @@ import "core:math/linalg"
 // reaches it as a ray.
 
 World_Facing :: enum u8 {
-    Fixed,             // rotation orients it: +X right, +Y up, +Z out of its front
+    Fixed,             // rotation orients it: +X right, +Y up, its face toward +Z, so a camera with no rotation sees it head on
     Billboard,         // parallel to the screen
     Billboard_Upright, // turns around the world's up axis to face the camera
 }
@@ -40,7 +40,7 @@ World_Panel :: struct {
 // How the renderer places the commands of one surface.
 World_Placement :: struct {
     id:Id,
-    transform:matrix[4,4]f32, // layout units of the panel (x right, y down, z out of its front) to world
+    transform:matrix[4,4]f32, // layout units of the panel (x right, y down, z out of its face) to world
     size:[2]f32,
     position:[3]f32,          // of the pivot
     pivot:[2]f32,             // the point at position, in layout units
@@ -191,10 +191,10 @@ panels_resolve :: proc(ctx:^Context) {
 }
 
 // Opens a panel of the world; what is built until world_panel_end is laid out
-// in its surface. Returns false, building nothing, when no panel is left.
+// in its surface. Returns false, building nothing, when no panel is left or
+// one is open: panels do not nest.
 world_panel_begin :: proc(ctx:^Context,id:Id,p:World_Panel) -> bool {
-    assert(ctx.surface==0,"World panels do not nest")
-    if ctx.panel_count>=len(ctx.panels) || ctx.skipped>0 {ctx.stats.dropped_panels+=1;return false}
+    if ctx.surface!=0 || ctx.panel_count>=len(ctx.panels) || ctx.skipped>0 {ctx.stats.dropped_panels+=1;return false}
     panel:=panel_place(ctx,id,p)
     if previous:=previous_panel(ctx,id);previous!=nil {panel.pointer,panel.pointed=previous.pointer,previous.pointed}
     index:=ctx.panel_count

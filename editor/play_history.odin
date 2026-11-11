@@ -113,7 +113,7 @@ history_free :: proc(s:^Session,r:^Run) {
 @(private)
 history_slot_free :: proc(s:^Session,h:^Run_History,slot:^History_Slot) {
     if slot.world!=nil {
-        s.info.destroy[.World](slot.world)
+        core.world_destroy(s.info,.World,slot.world)
         mem.free(slot.world,mem.tracking_allocator(&h.tracker))
     }
     delete(slot.marks,mem.tracking_allocator(&h.tracker))
@@ -131,6 +131,32 @@ history_frame_at :: proc "contextless" (h:^Run_History,n:int) -> ^History_Frame 
 history_frame_of :: proc "contextless" (h:^Run_History,serial:u64) -> ^History_Frame {
     if h==nil || h.frame_count==0 || serial==0 || serial>h.serial || serial+u64(h.frame_count)<=h.serial {return nil}
     return history_frame_at(h,h.frame_count-1-int(h.serial-serial))
+}
+
+// A walk over the frames kept after a first one, up to a tick: what looking at
+// the past plays, a sample every some ticks.
+History_Walk :: struct {
+    h:^Run_History,
+    at:u64, // the serial of the frame it gave last
+    to:u64,
+    every:u64,
+    last:u64, // the tick of the frame that was due last
+}
+
+history_walk :: proc "contextless" (h:^Run_History,first,to,every:u64) -> History_Walk {
+    return {h=h,at=first,to=to,every=every,last=history_frame_of(h,first).tick}
+}
+
+// The next frame up to the tick to, and whether it is due: every ticks past
+// the last that was.
+history_walk_next :: proc "contextless" (walk:^History_Walk) -> (f:^History_Frame,due,more:bool) {
+    walk.at+=1
+    if walk.at>walk.h.serial {return}
+    f=history_frame_of(walk.h,walk.at)
+    if f==nil || f.tick>walk.to {return nil,false,false}
+    due=f.tick>=walk.last+walk.every
+    if due {walk.last=f.tick}
+    return f,due,true
 }
 
 // What says that a replay left the World as the frame did.
@@ -252,13 +278,13 @@ history_key :: proc(s:^Session,h:^Run_History,w:core.World_Ref,t:^core.Time,edit
             data,error:=mem.alloc(max(s.info.sizes[.World],1),max(s.info.aligns[.World],1),allocator)
             if error==nil && data!=nil {
                 slot.world=data
-                marks,marks_error:=make([]core.Copy_Mark,len(s.info.tables),allocator)
+                marks,marks_error:=make([]core.Copy_Mark,core.copy_marks_count(s.info),allocator)
                 slot.marks=marks
-                if marks_error!=nil || !s.info.init[.World](data,allocator) {history_slot_free(s,h,slot)}
+                if marks_error!=nil || !core.world_init(s.info,.World,data,allocator) {history_slot_free(s,h,slot)}
             }
         }
         if slot.world!=nil {
-            copied=s.info.copy_changed!=nil?s.info.copy_changed(slot.world,w.data,slot.marks):s.info.copy(slot.world,w.data)
+            copied=core.world_copy_changed(s.info,slot.world,w.data,slot.marks)
         }
     }
     if !copied {
@@ -397,8 +423,8 @@ history_save :: proc(s:^Session,r:^Run) -> (saved:History_Saved,ok:bool) {
     context.allocator=allocator
     data,error:=mem.alloc(max(s.info.sizes[.World],1),max(s.info.aligns[.World],1),allocator)
     if error!=nil || data==nil {return}
-    if !s.info.init[.World](data,allocator) || !s.info.copy(data,r.world) {
-        s.info.destroy[.World](data)
+    if !core.world_init(s.info,.World,data,allocator) || !core.world_copy(s.info,data,r.world) {
+        core.world_destroy(s.info,.World,data)
         mem.free(data,allocator)
         return
     }
@@ -411,8 +437,8 @@ history_save :: proc(s:^Session,r:^Run) -> (saved:History_Saved,ok:bool) {
 // Puts back the World history_save kept, without allocating.
 history_restore :: proc(s:^Session,r:^Run,saved:^History_Saved) {
     if saved.world==nil {return}
-    s.info.swap(r.world,saved.world)
-    s.info.destroy[.World](saved.world)
+    core.world_swap(s.info,r.world,saved.world)
+    core.world_destroy(s.info,.World,saved.world)
     mem.free(saved.world,s.app.allocator)
     w:=run_ref(s,r)
     if f:=core.world_storage_of(w,core.Frame_Time);f!=nil {f^=saved.frame}

@@ -164,7 +164,7 @@ layout_paint :: proc(ctx:^Context) {
                 draw_text_decorated(ctx,text,line.x,line.y+text_leading(run.size,run.line_height),p.style)
             }
         case .Scissor_Start:
-            if depth>=SCISSOR_DEPTH {excess+=1;continue}
+            if depth>=SCISSOR_DEPTH {excess+=1;ctx.stats.dropped_clips+=1;continue}
             kinds[depth]=.None
             if clip:=cast(^Clip)n.user_data;clip!=nil {
                 paint_select(ctx,clip.surface,clip.scope)
@@ -178,6 +178,8 @@ layout_paint :: proc(ctx:^Context) {
             layout_paint_unclip(ctx,kinds[depth])
         }
     }
+    // A layer whose end marker did not fit in the commands of the layout.
+    compositions_close(ctx)
     for depth>0 {
         depth-=1
         layout_paint_unclip(ctx,kinds[depth])

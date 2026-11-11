@@ -5,50 +5,14 @@ import "mirai:std/compressor"
 import "mirai:std/compressor/lz/entropy"
 
 // Match finders of the LZ encoder: the hash-cache tables the greedy and lazy parses drive
-// directly (Ctmf, Ctmf2, Fast_Ctmf), the find-all finders the optimal parses read through
-// Incremental_Finder (cache table and suffix trie) and the long range matcher (Lrm_*).
-// Offsets are positive distances back from the current position.
+// directly (Ctmf, Fast_Ctmf). The find-all finders of the optimal parses and the long range
+// matcher are in cook/compressor/lz. Offsets are positive distances back from the current
+// position.
 
 Unpacked_Match_Pair :: struct {length,offset:i32}
 
-// Which finder fills the match pairs of an optimal parse; None means the codec runs its own Ctmf.
-Finder_Kind :: enum u8 {None, Ctmf_Find_All, Suffix_Trie}
-
 // Match pairs per position the optimal parses ask for.
 NEWLZ_MATCH_NUM_PAIRS :: 4
-
-// Longest first, then lowest offset.
-match_pair_less :: #force_inline proc "contextless" (a,b:Unpacked_Match_Pair) -> bool {
-    if a.length!=b.length {return a.length>b.length}
-    return a.offset<b.offset
-}
-match_pair_equals :: #force_inline proc "contextless" (a,b:Unpacked_Match_Pair) -> bool {
-    return a.offset==b.offset && a.length==b.length
-}
-match_pair_equal_length :: #force_inline proc "contextless" (a,b:Unpacked_Match_Pair) -> bool {
-    return a.length==b.length
-}
-
-// Smallest multiple of an offset below MIN_OFFSET that is at least MIN_OFFSET.
-round_up_small_offset :: #force_inline proc "contextless" (offset:u32) -> u32 {
-    @(static,rodata) rounded_up:=[8]u32{0,8,8,9,8,10,12,14}
-    return rounded_up[offset&7]
-}
-
-// Keeps the first of each run of pairs that `equal` says are the same; returns the new count.
-match_pairs_unique :: proc "contextless" (pairs:[]Unpacked_Match_Pair,
-    equal:proc "contextless" (a,b:Unpacked_Match_Pair) -> bool) -> int {
-    n:=len(pairs)
-    it:=0
-    for it<n-1 && !equal(pairs[it],pairs[it+1]) {it+=1}
-    if it>=n-1 {return n}
-    out:=it
-    it+=2
-    for ;it<n;it+=1 {
-        if !equal(pairs[out],pairs[it]) {out+=1;pairs[out]=pairs[it]}
-    }
-    return out+1
-}
 
 //===================================================================
 // Pointer helpers. A [^]u8 with a byte offset that may be negative.
@@ -85,11 +49,6 @@ getmatchlen_mml1 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int
     return l
 }
 
-getmatchlen_mml2 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int {
-    r:=getmatchlen_mml1(p1,p2,ptrend)
-    return r==1?0:r
-}
-
 getmatchlen_after4 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int {
     return 4+getmatchlen_mml1(padd(p1,4),padd(p2,4),ptrend)
 }
@@ -120,22 +79,6 @@ getmatchlen_mml4_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptre
     return getmatchlen_mml4_two32(p1_32,load32(p2),p1,p2,ptrend)
 }
 
-getmatchlen_mml3_no32 :: #force_inline proc "contextless" (p1,p2,ptrend:[^]u8) -> int {
-    return getmatchlen_mml3_one32(load32(p1),p1,p2,ptrend)
-}
-
-getmatchlen_mml2_two32 :: #force_inline proc "contextless" (p1_32,p2_32:u32,p1,p2,
-    ptrend:[^]u8) -> int {
-    if u16(p1_32)!=u16(p2_32) {return 0}
-    diff:=p1_32~p2_32
-    if diff!=0 {return diff&0x00FFFFFF!=0?2:3}
-    return getmatchlen_after4(p1,p2,ptrend)
-}
-
-getmatchlen_mml2_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8) -> int {
-    return getmatchlen_mml2_two32(p1_32,load32(p2),p1,p2,ptrend)
-}
-
 havematch_mml2_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8,
     outml:^int) -> bool {
     p2_32:=load32(p2)
@@ -147,32 +90,6 @@ havematch_mml2_one32 :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend
     }
     outml^=getmatchlen_after4(p1,p2,ptrend)
     return true
-}
-
-// Match length only if it beats prevml, else 0.
-getmatchlen_mml3_one32_better :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8,
-    prevml:int) -> int {
-    if prevml>=3 {
-        if load32(p2)!=p1_32 {return 0}
-        if prevml>=pdiff(ptrend,p1) {return 0}
-        if p1[prevml]!=p2[prevml] {return 0}
-        l:=getmatchlen_after4(p1,p2,ptrend)
-        if l<=prevml {return 0}
-        return l
-    }
-    return getmatchlen_mml3_one32(p1_32,p1,p2,ptrend)
-}
-
-getmatchlen_mml4_one32_better :: #force_inline proc "contextless" (p1_32:u32,p1,p2,ptrend:[^]u8,
-    prevml:int) -> int {
-    if load32(p2)!=p1_32 {return 0}
-    if prevml>=4 {
-        if prevml>=pdiff(ptrend,p1) {return 0}
-        if p1[prevml]!=p2[prevml] {return 0}
-    }
-    l:=getmatchlen_after4(p1,p2,ptrend)
-    if l<=prevml {return 0}
-    return l
 }
 
 // A match longer than prevml, if there is one.

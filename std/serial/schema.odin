@@ -70,8 +70,11 @@ Field :: struct {
     bits:u8,       // replication width of an integer; 0 sends it whole
     label,unit:string,
     description:string, // what the comment on the line of the field says; not in the binary schema
+    asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=); not in the binary schema
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
+    any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
+    entity_name:bool, // a text that names an entity: the API says so in its schema
 }
 
 Choice :: struct {name:string,value:i64}
@@ -91,7 +94,7 @@ Schema :: struct {
     choices:[dynamic]Choice,
     lookup:map[typeid]Type_Index,
     named:map[typeid]Named, // whoever builds it sets and keeps it before adding types; the schema copies the names it takes
-    error:string, // set when schema_add fails: the path of the field that is not plain data
+    error:string, // set when schema_add fails: the path of the field that is not plain data; empty when it had no memory
     allocator:runtime.Allocator,
 }
 
@@ -105,7 +108,7 @@ schema_init :: proc(s:^Schema,allocator:=context.allocator) {
 
 schema_destroy :: proc(s:^Schema) {
     for type in s.types {delete(type.name,s.allocator)}
-    for field in s.fields {delete(field.name,s.allocator);delete(field.label,s.allocator);delete(field.unit,s.allocator);delete(field.description,s.allocator)}
+    for field in s.fields {delete(field.name,s.allocator);delete(field.label,s.allocator);delete(field.unit,s.allocator);delete(field.description,s.allocator);delete(field.asset_kinds,s.allocator)}
     for choice in s.choices {delete(choice.name,s.allocator)}
     delete(s.error,s.allocator)
     delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup)
@@ -138,12 +141,56 @@ schema_field :: proc(s:^Schema,index:Type_Index,name_hash:u64) -> ^Field {
     }
     return nil
 }
-// Gives a field of a struct the description of its line in the source.
-schema_describe :: proc(s:^Schema,index:Type_Index,name,text:string) {
+// Gives a field of a struct the description of its line in the source. False,
+// with the field without one, when there is no memory for it.
+schema_describe :: proc(s:^Schema,index:Type_Index,name,text:string) -> bool {
     field:=schema_field(s,index,base.name_hash(name))
-    if field==nil || text=="" {return}
+    if field==nil || text=="" {return true}
+    return schema_text_keep(s,&field.description,text)
+}
+
+// Puts a copy of text in target, which lets go of what it held.
+@(private)
+schema_text_keep :: proc(s:^Schema,target:^string,text:string) -> bool {
+    delete(target^,s.allocator)
+    error:runtime.Allocator_Error
+    target^,error=strings.clone(text,s.allocator)
+    return error==nil
+}
+
+@(private)
+schema_field_free :: proc(s:^Schema,field:Field) {
+    delete(field.name,s.allocator)
+    delete(field.label,s.allocator)
+    delete(field.unit,s.allocator)
     delete(field.description,s.allocator)
-    field.description=strings.clone(text,s.allocator)
+    delete(field.asset_kinds,s.allocator)
+}
+
+// A choice with a copy of its name, after the others. False without memory for it.
+@(private)
+schema_choice_add :: proc(s:^Schema,name:string,value:i64) -> bool {
+    copied,error:=strings.clone(name,s.allocator)
+    if error!=nil {return false}
+    if _,no_room:=append(&s.choices,Choice{copied,value});no_room!=nil {
+        delete(copied,s.allocator)
+        return false
+    }
+    return true
+}
+
+// Lets go of what a type that was not added took: its name, and its fields
+// or its choices, which are the last of the schema.
+@(private)
+schema_type_drop :: proc(s:^Schema,type:Type) {
+    delete(type.name,s.allocator)
+    if type.kind==.Struct && int(type.first)<=len(s.fields) {
+        for field in s.fields[type.first:] {schema_field_free(s,field)}
+        base.truncate(&s.fields,type.first)
+    } else if (type.kind==.Enum || type.kind==.Bit_Set || type.named!=.None) && int(type.first)<=len(s.choices) {
+        for choice in s.choices[type.first:] {delete(choice.name,s.allocator)}
+        base.truncate(&s.choices,type.first)
+    }
 }
 schema_find :: proc(s:^Schema,name_hash:u64) -> (Type_Index,bool) {
     for type,index in s.types {
@@ -176,7 +223,8 @@ schema_choice_rename :: proc(s:^Schema,old,name:string) -> (renamed:int) {
 }
 
 // Adds T and every type it contains. Fails, with s.error set, when T holds
-// anything that is not plain data: pointers, slices, strings, maps, unions.
+// anything that is not plain data: pointers, slices, strings, maps, unions;
+// and without memory, with the types it had added before kept whole.
 schema_add :: proc(s:^Schema,$T:typeid) -> (index:Type_Index,ok:bool) {
     return schema_add_type_info(s,type_info_of(T))
 }
@@ -254,16 +302,26 @@ type_label :: proc(info:^runtime.Type_Info) -> string {
 
 @(private)
 schema_fail :: proc(s:^Schema,path:string,info:^runtime.Type_Info) -> (Type_Index,bool) {
-    if s.error=="" {s.error=fmt.aprintf("%s: %s is not plain data",path==""?"<root>":path,type_label(info),allocator=s.allocator)}
+    if s.error=="" {
+        if text,error:=strings.clone(fmt.tprintf("%s: %s is not plain data",path==""?"<root>":path,type_label(info)),s.allocator);error==nil {s.error=text}
+    }
     return TYPE_NONE,false
 }
 
+// Adds a type, which owns its name and the fields or choices it put last in
+// the schema; without memory for it they go with it.
 @(private)
 schema_push :: proc(s:^Schema,id:typeid,type:Type) -> (Type_Index,bool) {
     index:=Type_Index(len(s.types))
-    append(&s.types,type)
-    s.lookup[id]=index
-    return index,true
+    // The type goes in first and comes out when the map has no room for it:
+    // delete_key on a map[typeid] keeps odin -o:speed from ending (ODIN_WORKAROUNDS).
+    if _,error:=append(&s.types,type);error==nil {
+        s.lookup[id]=index
+        if id in s.lookup {return index,true}
+        pop(&s.types)
+    }
+    schema_type_drop(s,type)
+    return TYPE_NONE,false
 }
 
 @(private)
@@ -277,9 +335,11 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
     }
     type:=Type{size=size,align=align,elem=TYPE_NONE}
     if named,is_named:=info.variant.(runtime.Type_Info_Named);is_named {
-        type.name=strings.clone(named.name,s.allocator)
+        no_name:runtime.Allocator_Error
+        if type.name,no_name=strings.clone(named.name,s.allocator);no_name!=nil {return TYPE_NONE,false}
         type.name_hash=base.name_hash(named.name)
     }
+    listed:=true
     core:=runtime.type_info_base(info)
     #partial switch variant in core.variant {
     case runtime.Type_Info_Boolean:
@@ -290,22 +350,20 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
             type.named=names.bits?.Bits:.Values
             type.by_name=names.by_name
             type.first,type.count=u32(len(s.choices)),u32(len(names.choices))
-            for choice in names.choices {append(&s.choices,Choice{strings.clone(choice.name,s.allocator),choice.value})}
+            for choice in names.choices {listed&&=schema_choice_add(s,choice.name,choice.value)}
         }
     case runtime.Type_Info_Float:
         type.kind=.Float
     case runtime.Type_Info_Enum:
         type.kind=.Enum
         type.first,type.count=u32(len(s.choices)),u32(len(variant.names))
-        for name,i in variant.names {append(&s.choices,Choice{strings.clone(name,s.allocator),i64(variant.values[i])})}
+        for name,i in variant.names {listed&&=schema_choice_add(s,name,i64(variant.values[i]))}
     case runtime.Type_Info_Bit_Set:
         type.kind=.Bit_Set
         type.first=u32(len(s.choices))
         if elem:=runtime.type_info_base(variant.elem);elem!=nil {
             if enumeration,is_enum:=elem.variant.(runtime.Type_Info_Enum);is_enum {
-                for name,i in enumeration.names {
-                    append(&s.choices,Choice{strings.clone(name,s.allocator),i64(enumeration.values[i])-variant.lower})
-                }
+                for name,i in enumeration.names {listed&&=schema_choice_add(s,name,i64(enumeration.values[i])-variant.lower)}
             }
         }
         type.count=u32(len(s.choices))-type.first
@@ -331,18 +389,10 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
             return schema_fail(s,path,info)
         }
         fields:=make([dynamic]Field,0,int(variant.field_count),context.temp_allocator)
-        for i in 0..<int(variant.field_count) {
-            field_path:=path==""?variant.names[i]:fmt.tprintf("%s.%s",path,variant.names[i])
-            field_type,ok:=schema_add_info(s,variant.types[i],field_path)
-            if !ok {
-                for added in fields {delete(added.name,s.allocator);delete(added.label,s.allocator);delete(added.unit,s.allocator)}
-                delete(type.name,s.allocator)
-                return TYPE_NONE,false
-            }
-            field:=Field{name=strings.clone(variant.names[i],s.allocator),name_hash=base.name_hash(variant.names[i]),type=field_type,offset=u32(variant.offsets[i])}
-            if _,is_quaternion:=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Quaternion);is_quaternion {field.flags+={.Rotation}}
-            schema_field_tag(s,&field,variant.tags[i])
-            append(&fields,field)
+        if !schema_fields_add(s,variant,0,path,&fields) || reserve(&s.fields,len(s.fields)+len(fields))!=nil {
+            for added in fields {schema_field_free(s,added)}
+            delete(type.name,s.allocator)
+            return TYPE_NONE,false
         }
         type.kind=.Struct
         type.first,type.count=u32(len(s.fields)),u32(len(fields))
@@ -351,7 +401,49 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
         delete(type.name,s.allocator)
         return schema_fail(s,path,info)
     }
+    if !listed {
+        schema_type_drop(s,type)
+        return TYPE_NONE,false
+    }
     return schema_push(s,info.id,type)
+}
+
+// A field tagged inline holds a struct whose fields stand in place of it, as
+// if they were declared there: what an API answers flat and shares with other
+// answers. No struct with saved data is tagged: its fields would move.
+field_inlined :: proc(variant:runtime.Type_Info_Struct,i:int) -> (nested:runtime.Type_Info_Struct,inlined:bool) {
+    options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(variant.tags[i]),"mirai")
+    if !found {return}
+    rest:=options
+    for option in strings.split_iterator(&rest,",") {
+        if strings.trim_space(option)=="inline" {
+            nested,inlined=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Struct)
+            return
+        }
+    }
+    return
+}
+
+// The fields of a struct at offset of the one that holds them, in order.
+@(private)
+schema_fields_add :: proc(s:^Schema,variant:runtime.Type_Info_Struct,offset:uintptr,path:string,fields:^[dynamic]Field) -> bool {
+    for i in 0..<int(variant.field_count) {
+        at:=offset+variant.offsets[i]
+        if nested,inlined:=field_inlined(variant,i);inlined {
+            schema_fields_add(s,nested,at,path,fields) or_return
+            continue
+        }
+        field_path:=path==""?variant.names[i]:fmt.tprintf("%s.%s",path,variant.names[i])
+        field_type:=schema_add_info(s,variant.types[i],field_path) or_return
+        field:=Field{name_hash=base.name_hash(variant.names[i]),type=field_type,offset=u32(at)}
+        if _,is_quaternion:=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Quaternion);is_quaternion {field.flags+={.Rotation}}
+        if schema_text_keep(s,&field.name,variant.names[i]) && schema_field_tag(s,&field,variant.tags[i]) {
+            if _,no_room:=append(fields,field);no_room==nil {continue}
+        }
+        schema_field_free(s,field)
+        return false
+    }
+    return true
 }
 
 @(private)
@@ -375,12 +467,13 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // Field options come from the struct tag `mirai:"..."`: a comma separated
-// list of flags (transient, local, readonly, hidden, color, angle, text, trim) and
-// of key=value pairs (min, max, step, precision, bits, label, unit).
+// list of flags (transient, local, readonly, hidden, color, angle, text, trim, any, inline) and
+// of key=value pairs (min, max, step, precision, bits, label, unit, name: the
+// key of a param whose word is reserved in Odin). False without memory for a text.
 @(private)
-schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
+schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) -> bool {
     options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
-    if !found {return}
+    if !found {return true}
     rest:=options
     for option in strings.split_iterator(&rest,",") {
         key,value:=strings.trim_space(option),""
@@ -394,14 +487,22 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) {
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
         case "trim":      field.trim=true
+        case "any":       field.any_value=true
+        case "entity":    field.entity_name=true
         case "min":       field.min,field.has_min=strconv.parse_f64(value)
         case "max":       field.max,field.has_max=strconv.parse_f64(value)
         case "step":      field.step,_=strconv.parse_f64(value)
         case "precision": precision,_:=strconv.parse_f64(value);field.precision=f32(precision)
         case "bits":      bits,_:=strconv.parse_int(value);field.bits=u8(bits)
-        case "label":     field.label=strings.clone(value,s.allocator)
-        case "unit":      field.unit=strings.clone(value,s.allocator)
+        case "label":     schema_text_keep(s,&field.label,value) or_return
+        case "name":
+            if value=="" {continue} // a comma inside a label
+            schema_text_keep(s,&field.name,value) or_return
+            field.name_hash=base.name_hash(value)
+        case "unit":      schema_text_keep(s,&field.unit,value) or_return
+        case "kind":      schema_text_keep(s,&field.asset_kinds,value) or_return
         case "requires":  if value!="" {field.required_component=base.name_hash(value)}
         }
     }
+    return true
 }

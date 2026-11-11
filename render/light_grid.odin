@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math"
 import "core:math/linalg"
+import "mirai:render/abi"
 import "mirai:rhi"
 
 // The local lights in a grid of the world, for the samples of the direct
@@ -32,8 +33,7 @@ Light_Grid :: struct {
 // LIGHT_GRID_ROWS_MAX rows of 16 bytes hold.
 LIGHT_GRID_CELL :: f32(1)
 LIGHT_GRID_ROWS_MAX :: 1 << 21
-// LIGHT_WEIGHT_ROWS of shaders/include/light_weight.slang.
-LIGHT_GRID_WEIGHT_ROWS :: 2
+LIGHT_GRID_WEIGHT_ROWS :: abi.LIGHT_WEIGHT_ROWS
 
 // The grid around the ranges of the lights; `count`, the lights the GPU holds,
 // those that a pass writes on it included, each with its record.

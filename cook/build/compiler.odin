@@ -15,9 +15,6 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
 
-@(private)
-EXECUTABLE_EXTENSION :: ".exe" when ODIN_OS==.Windows else ""
-
 Severity :: enum u8 {Error,Warning}
 
 // A message of the compiler about a place in a source.
@@ -33,7 +30,7 @@ Diagnostic :: struct {
 // multiple assignment of a large value makes it do (odin-lang/Odin#7937).
 // COMPILER_MEMORY_ENV sets it in GiB, 0 for none; by default it is half the
 // memory of the machine within COMPILER_MEMORY_LEAST and COMPILER_MEMORY_MOST,
-// above the 3.2 GB of the largest build (the runtime library at -o:speed).
+// above the 3.2 GB of the largest build (a library of the engine at -o:speed).
 // macOS has no reliable cap for another process: there it is none.
 COMPILER_MEMORY_ENV :: "MIRAI_COMPILER_MEMORY"
 COMPILER_MEMORY_LEAST :: 4<<30
@@ -147,7 +144,7 @@ compiler_find :: proc(root:string,allocator:=context.allocator) -> (path:string,
     directories,_:=os.split_path_list(search,context.temp_allocator)
     for directory in directories {
         if directory=="" {continue}
-        for extension in ([2]string{"",EXECUTABLE_EXTENSION}) {
+        for extension in ([2]string{"",project.EXECUTABLE_SUFFIX}) {
             candidate:=strings.concatenate({strings.trim_right(directory,"/\\"),"/",name,extension},context.temp_allocator)
             if os.is_file(candidate) {return slashes(candidate,allocator),true}
         }
@@ -222,18 +219,18 @@ dependencies_read :: proc(file:string,allocator:runtime.Allocator) -> (sources:[
 
 // Whether an Odin file of a folder under root that the build of output read a
 // source from, or a file it loaded, changed after output was written, or a
-// source it read is gone. Test files count only in tests, the folder whose
-// tests the build compiled ("" for none). known is false when the list the
-// compiler exported for it cannot be read or output does not exist.
-sources_newer :: proc(sources_file,output,root:string,tests:="") -> (newer,known:bool) {
+// source it read is gone. Test files count only for a build of tests, which
+// reads those of every package it imports: the helpers a package gives the
+// tests of others are there. known is false when the list the compiler
+// exported for it cannot be read or output does not exist.
+sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,known:bool) {
     // The compiler lists its sources with forward slashes, whatever the root was given with.
     root:=slashes(root,context.temp_allocator)
-    tests:=slashes(tests,context.temp_allocator)
     built,stat_error:=os.modification_time_by_path(output)
     if stat_error!=nil {return false,false}
     sources:=dependencies_read(sources_file,context.temp_allocator) or_return
     inside :: proc(file,root:string) -> bool {
-        return len(file)>len(root) && file[len(root)]=='/' && path_equal(file[:len(root)],root)
+        return len(file)>len(root) && file[len(root)]=='/' && project.path_same(file[:len(root)],root)
     }
     folders:=make(map[string]bool,context.temp_allocator)
     for source in sources {
@@ -249,9 +246,8 @@ sources_newer :: proc(sources_file,output,root:string,tests:="") -> (newer,known
     for folder in folders {
         entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
         if error!=nil {return true,true}
-        tested:=tests!="" && path_equal(folder,tests)
         for entry in entries {
-            if !strings.has_suffix(entry.name,".odin") || !tested && strings.has_suffix(entry.name,"_test.odin") {continue}
+            if !strings.has_suffix(entry.name,".odin") || !tests && strings.has_suffix(entry.name,"_test.odin") {continue}
             if time.diff(built,entry.modification_time)>0 {return true,true}
         }
     }
@@ -284,7 +280,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
         for b in data {
             if b!='\r' {data[kept]=b;kept+=1}
         }
-        if masked!="" && len(path)>len(masked) && path[len(masked)]=='/' && path_equal(path[:len(masked)],masked) {link_names_mask(data[:kept])}
+        if masked!="" && len(path)>len(masked) && path[len(masked)]=='/' && project.path_same(path[:len(masked)],masked) {link_names_mask(data[:kept])}
         return base.hash_combine(hash,xxhash.XXH3_64_default(data[:kept]))
     }
     // The compiler counts by its file, wherever it is reached from.
@@ -298,7 +294,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
     folders:=make(map[string]bool,context.temp_allocator)
     compiler_folder:=compiler[:max(strings.last_index_byte(compiler,'/'),0)]
     for source in sources {
-        if compiler_folder!="" && len(source)>len(compiler_folder) && source[len(compiler_folder)]=='/' && path_equal(source[:len(compiler_folder)],compiler_folder) {continue}
+        if compiler_folder!="" && len(source)>len(compiler_folder) && source[len(compiler_folder)]=='/' && project.path_same(source[:len(compiler_folder)],compiler_folder) {continue}
         if slash:=strings.last_index_byte(source,'/');slash>0 && strings.has_suffix(source,".odin") {
             folders[source[:slash]]=true
             continue
@@ -327,7 +323,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
 // it brings were built with that compiler.
 @(private)
 compiler_date :: proc(root,compiler:string,modified:time.Time) -> u64 {
-    if len(compiler)>len(root) && compiler[len(root)]=='/' && path_equal(compiler[:len(root)],root) && project.engine_installed(root) {
+    if len(compiler)>len(root) && compiler[len(root)]=='/' && project.path_same(compiler[:len(root)],root) && project.engine_installed(root) {
         if manifest,error:=os.read_entire_file(project.path(root,project.ENGINE_FILE,allocator=context.temp_allocator),context.temp_allocator);error==nil {
             return xxhash.XXH3_64_default(manifest)
         }

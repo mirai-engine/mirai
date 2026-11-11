@@ -74,7 +74,8 @@ smooth_image :: proc(size:int,alpha:bool) -> []u8 {
 a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^testing.T) {
     SIZE :: 64
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
+    folder:=base.test_folder(t,"bc")
+    if folder=="" {return}
     cases:=[?]struct{name:string,options:Build_Options,alpha:bool,format:asset.Texture_Format,channels:int,tolerance:int}{
         {"color",{srgb=true},false,.BC7,4,12},
         {"color with alpha",{srgb=true},true,.BC7,4,12},
@@ -93,8 +94,7 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
         defer built_destroy(&again)
         for level,i in built.mips {testing.expectf(t,string(level)==string(again.mips[i]),"%s: level %d is not the same in a second build",entry.name,i)}
 
-        path:=fmt.tprintf("%s/mirai-bc-%d-%d.tex",directory,os.get_pid(),index)
-        defer os.remove(path)
+        path:=fmt.tprintf("%s/%d.tex",folder,index)
         testing.expect_value(t,asset.texture_save(path,&types,built_desc(&built,base.Asset_Id{9,u64(index)+1},nil)),asset.Error.None)
         a:asset.Asset
         if !testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None) {continue}
@@ -166,7 +166,8 @@ psnr :: proc(format:asset.Texture_Format,blocks,pixels:[]u8,size,channels:int) -
 the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T) {
     SIZE :: 128
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    directory,_:=os.temp_directory(context.temp_allocator)
+    folder:=base.test_folder(t,"rdo")
+    if folder=="" {return}
     pixels:=smooth_image(SIZE,true);defer delete(pixels)
     r:=Random{state=5}
     for &p in pixels {p=u8(clamp(int(p)+next(&r,9)-4,0,255))}
@@ -180,8 +181,7 @@ the_rdo_lambda_trades_error_for_files_that_compress_smaller :: proc(t:^testing.T
         exact.rdo_lambda,rdo.rdo_lambda,off.rdo_lambda=-1,40,RDO_LAMBDA_MAX+1
         least,_:=build(rgba8(pixels,SIZE,SIZE),exact);defer built_destroy(&least)
         traded,_:=build(rgba8(pixels,SIZE,SIZE),rdo);defer built_destroy(&traded)
-        path:=fmt.tprintf("%s/mirai-rdo-%d.tex",directory,os.get_pid())
-        defer os.remove(path)
+        path:=fmt.tprintf("%s/rdo.tex",folder)
         least_bytes,traded_bytes:=file_bytes(t,&types,path,&least),file_bytes(t,&types,path,&traded)
         testing.expectf(t,traded_bytes<least_bytes,"%v: RDO writes %d bytes and the least error %d",least.format,traded_bytes,least_bytes)
         least_db,traded_db:=psnr(least.format,least.mips[0],pixels,SIZE,4),psnr(least.format,traded.mips[0],pixels,SIZE,4)

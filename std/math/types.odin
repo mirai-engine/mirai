@@ -23,6 +23,9 @@ QUAT_IDENTITY :Quat: 1
 MAT3_IDENTITY :Mat3: 1
 MAT4_IDENTITY :Mat4: 1
 
+// Where something unrotated looks: bodies, cameras and lights face their -Z.
+FORWARD :Vec3: {0,0,-1}
+
 // Affine transform of a point (w=1) and of a vector (w=0).
 mat4_point :: #force_inline proc "contextless" (m:Mat4,p:Vec3) -> Vec3 {
     return {m[0,0]*p.x+m[0,1]*p.y+m[0,2]*p.z+m[0,3],m[1,0]*p.x+m[1,1]*p.y+m[1,2]*p.z+m[1,3],m[2,0]*p.x+m[2,1]*p.y+m[2,2]*p.z+m[2,3]}
@@ -75,6 +78,10 @@ quat_angle :: proc "contextless" (a,b:Quat) -> f32 {
     r:=conj(a)*b
     return 2*math.atan2(math.sqrt(r.x*r.x+r.y*r.y+r.z*r.z),abs(r.w))
 }
+// Where a rotation looks.
+quat_forward :: #force_inline proc "contextless" (q:Quat) -> Vec3 {return quat_rotate(q,FORWARD)}
+// The yaw around +Y that turns FORWARD toward a direction, seen from above.
+yaw_of_direction :: #force_inline proc "contextless" (direction:Vec3) -> f32 {return math.atan2(-direction.x,-direction.z)}
 // Rotation of something that looks down its -Z with +Y up, so that it faces
 // `forward` with its up as close to `up` as that allows.
 quat_look :: proc "contextless" (forward,up:Vec3) -> Quat {
@@ -86,13 +93,22 @@ quat_look :: proc "contextless" (forward,up:Vec3) -> Quat {
     m[0,2],m[1,2],m[2,2]=back.x,back.y,back.z
     return linalg.normalize(quat_from_mat3(m))
 }
-// Orthonormal axes of a view along `forward`. A zero forward becomes -Z and an
-// up that is zero or parallel to it is replaced, so the result is always finite.
+// The unit vector along v, also when its length overflows a float; the
+// fallback when it has no direction: zero, or with a NaN or an infinity.
 @(private)
+direction_or :: proc "contextless" (v,fallback:Vec3) -> Vec3 {
+    length:=linalg.length(v)
+    if length>1e-6 && length<=math.F32_MAX {return v/length}
+    largest:=max(abs(v.x),abs(v.y),abs(v.z))
+    if v!=v || !(largest>1e-6) || largest>math.F32_MAX {return fallback}
+    return linalg.normalize(v/largest)
+}
+// Orthonormal axes of a view along `forward`. A zero forward becomes FORWARD
+// and an up that is zero or parallel to it is replaced, so the result is
+// always finite.
 look_basis :: proc "contextless" (forward,up:Vec3) -> (back,right,actual_forward:Vec3) {
-    actual_forward=forward
-    actual_forward=linalg.normalize(actual_forward) if linalg.length(actual_forward)>1e-6 else Vec3{0,0,-1}
-    hint:=up if linalg.length(up)>1e-6 else Vec3{0,1,0}
+    actual_forward=direction_or(forward,FORWARD)
+    hint:=direction_or(up,{0,1,0})
     right=linalg.cross(actual_forward,hint)
     if linalg.length(right)<1e-5 {right=linalg.cross(actual_forward,Vec3{0,0,1} if abs(actual_forward.y)>0.9 else Vec3{0,1,0})}
     right=linalg.normalize(right)

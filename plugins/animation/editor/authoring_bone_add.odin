@@ -27,7 +27,6 @@ Skeleton_Bone_Add_Params :: struct {
 Skeleton_Bone_Add_Result :: struct {
     asset:base.Asset_Id,
     path:[1024]u8 `mirai:"text"`,
-    index:u32 `mirai:"label=The new bone: after the others so their indices stay"`,
     bone:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Its canonical path: the target its tracks name"`,
     clips:[1]Skeleton_Bone_Add_Clip `mirai:"list,label=The clips given: how many tracks now drive the bone"`,
     dry_run:bool `mirai:"optional,label=Only on a dry run: nothing was written"`,
@@ -106,12 +105,12 @@ authoring_bone_add :: proc(s:^editor.Session,call:^api.Call) {
     for &bone in view.bones {
         if base.text_get(bone.path[:])==path {authoring_failure(call,"path","Already_Exists","a path no bone has",path,"The skeleton has a bone at that path",fix="skeleton.bone.set changes its name and rest pose");return}
     }
-    value:=Authoring_Bone{name=p.bone.name,parent=parent,position=p.bone.position,rotation=p.bone.rotation,scale=p.bone.scale}
+    value:=Authoring_Bone{name=p.bone.name,parent=p.parent,position=p.bone.position,rotation=p.bone.rotation,scale=p.bone.scale}
     base.text_set(value.path[:],path)
     bones,error:=make([]aa.Skeleton_Bone,len(view.bones)+1,call.allocator)
     if error!=nil {authoring_failure(call,"bone","Out_Of_Memory","memory for the bone rows","allocation failed","The bone could not be added",api.INTERNAL_ERROR);return}
     copy(bones,view.bones)
-    bones[len(view.bones)]=authoring_bone(value)
+    bones[len(view.bones)]=authoring_bone(value,parent)
     view.bones=bones
 
     // Every document is prepared before anything is written.
@@ -156,7 +155,6 @@ authoring_bone_add :: proc(s:^editor.Session,call:^api.Call) {
     out:=call.out
     serial.text_write_raw(out,"{")
     authoring_result(call,p.asset,file.path)
-    api.write_uint(out,"index",u64(len(view.bones)-1))
     api.write_text(out,"bone",path)
     api.write_key(out,"clips");serial.text_write_raw(out,"[")
     for entry,i in written[1:] {

@@ -10,12 +10,14 @@
   `.deps/vulkan-sdk-windows`). Metal: `MTL_DEBUG_LAYER=1`.
 - The `_hw` variants need a GPU with ray queries or Mesa lavapipe (`VK_DRIVER_FILES` pointing to
   its ICD). `MIRAI_RT=software` forces the software BVH.
-- A GPU test takes its device with `shared_device.take` (`rhi/shared_device`): the tests of a
+- A GPU test takes its device with `shared_device.take_or_skip` (`rhi/shared_device`), and one of
+  `render` its renderer with `fixture_init` (`render/fixture_test.odin`): the tests of a
   process share one per variant (with and without hardware ray tracing) and run one at a time
   even if there are several threads. It fails if it leaves alive anything it made or if the
   device or the validation report errors. Only a test that exercises a device (capacities, ring,
-  messages, loss) or measures without validation makes its own device, and calls
-  `shared_device.hold` beforehand to run alone. The GPU tests of `rhi` are in `rhi/tests`
+  messages, loss) or measures without validation makes its own device, with
+  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone. The GPU tests of
+  `rhi` are in `rhi/tests`
   (`mirai test rhi/tests`), which can import it; those of `rhi` do not touch the GPU.
 - The GPU tests of a plugin load the shaders that `mirai test` generates before compiling them in
   `.mirai/tmp/<plugin>-test-shaders`: those of the plugin and, as `<plugin>_test`, the programs of
@@ -32,7 +34,7 @@
   synchronization error.
 - `render`: passes, scene, materials, UI, extension stages, without allocations in stable frames.
   The particles, in `plugins/vfx/runtime`
-  ([verification](../../mirai-plugins/references/vfx.md#verification)).
+  ([verification](../../mirai-world/references/vfx.md#verification)).
 - `engine/render`: world extraction and visual instances.
 - `cook/shaders`: generation, cache, catalog and transactions; the programs require `slangc`.
 
@@ -122,21 +124,29 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
   references), `MIRAI_GI_DUMP=<folder>`, `MIRAI_GI_CASES`, `MIRAI_GI_SETTINGS=name=value,...` and
   `MIRAI_GI_WINDOW=from,to` for ablations.
 - Blotches in an editor scene: the deviation of the luminance against its blur on a smooth wall,
-  in `mirai capture` or in `editor.capture` with `ui` after hundreds of frames: they measure the
+  in `mirai capture` or in `capture` with `ui` after hundreds of frames: they measure the
   same.
 
 ## Render check
 
-`mirai render check demo` measures what the user sees: the fixed views of
-`demo/render_check.mirai` in a windowless editor compiled at `--dev`, measured only between
-checkouts (it takes the `mirai measure` turn), against the `main` build measured the same way. A
-change of light, GI, materials, exposure or render cost is accepted only with this check without
-regressions, besides the reference metrics of `gi_test`: synthetic fixtures are not enough to
-assert quality or cost. A change that cannot move the cost (a constant, a value of a scene, an
-asset of the same size and format) is accepted with `--quality`, and one that changes nothing the
-GPU receives (how assets are stored or loaded when they decode to the same data) needs no render
-check: captures against `main` are enough. The full check measures cost, so it runs only on a
-machine with no other GPU load.
+`mirai render check demo` measures what the user sees: the fixed views of `demo/render_check.mirai`
+in a windowless editor compiled at `--dev`, measured only between checkouts (it takes the `mirai
+measure` turn), against the `main` build measured the same way. A global change of the image or its
+cost (GI, light, shadows, TAA, exposure, tonemap, demo materials, a pass that runs in every scene)
+is accepted only with this check, without regressions, besides the reference metrics of `gi_test`:
+synthetic fixtures are not enough to assert quality or cost. It runs once, at the end; which variant
+depends on what the GPU receives and does:
+
+- **Nothing the GPU receives changes**: how assets are stored, compressed or loaded when they
+  decode to the same data, tools, editor UI. No render check; captures against `main` if the
+  image could differ.
+- **Only the image changes**: a constant, a value of a scene, an asset of the same size and
+  format, an encoding setting such as the RDO lambda. `--quality`, which measures no cost.
+- **The work can change**: a pass, a resource, a shader that does more or less work, a texture
+  format or resolution. The full one, which measures cost: only on a machine with no other load.
+  With a game or another GPU job running its times are not valid, so it waits for the machine.
+
+While working, `--views` and `--quality`.
 
 - **`--dev` or `--release`.** Both builds of a check are built in the same mode, `--dev` unless it
   says otherwise. The image, the frame and the GPU of each pass come out the same in the two modes;
@@ -156,8 +166,10 @@ machine with no other GPU load.
   - Stability: luma MAE (like `mirai image diff`) between consecutive captures, over the window
     without the bar or the panels, and that of the worst block. A still and settled view does not
     change: what changes is boiling of the GI, the shadows or TAA. The windowless editor draws
-    with the fixed `dt` of `engine.step`, so the histories do not depend on how long each capture
-    takes.
+    with the fixed `dt` of `engine.step`, and the captures come a fixed count of frames after
+    `camera.set`, a cut that restarts the jitter of the view, and before the cost, whose
+    `profile.capture` runs frames by the clock: a view gives the same image whatever was measured
+    before it and however long anything took.
   - Mean luminance of that region in the first capture.
   - In a flying view: the trail, how much brighter the image is on stopping than settled
     (`excess` of `mirai image diff`), and the light blotches on smooth surfaces
@@ -204,6 +216,9 @@ machine with no other GPU load.
   `engine.status`); past `RENDER_MEMORY_SHARE` of the budget, the system evicts GPU memory, the
   passes that read what was evicted cost several times more and the view warns that its cost does
   not count. With an open `mirai session` of the project it does not start.
+- **Settings**: the editors of a check read no file of the machine
+  (`project.SETTINGS_NO_MACHINE_ENV`): both builds measure what the project asks for, whatever
+  preset was chosen on this computer.
 - **Quality only** (`--quality`): without `profile.capture`, without the `mirai measure` turn and
   without waiting for the other programs, with the captures at the same frames as the full check.
   It asserts nothing about cost; a saved base of the full one serves it, and one of its own does

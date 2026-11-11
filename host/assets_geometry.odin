@@ -190,8 +190,8 @@ assets_collision :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,kind:Collision
             if failed==.None {geom.hull_append_mesh(hull,buffer)}
         }
         if len(buffer.positions)>positions && (kind==.Hull || len(buffer.indices)>indices) {return true,true}
-        resize(&buffer.positions,positions)
-        resize(&buffer.indices,indices)
+        base.truncate(&buffer.positions,positions)
+        base.truncate(&buffer.indices,indices)
     }
     return false,assets_geometry(a,mesh,shape,buffer)
 }
@@ -209,13 +209,13 @@ assets_collision_hulls :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,points:^
     if a==nil || mesh=={} || points==nil || sizes==nil {return false}
     held_points,held_sizes:=len(points),len(sizes)
     defer if len(sizes)==held_sizes {
-        resize(points,held_points)
+        base.truncate(points,held_points)
     }
     if assets_mesh_generated(a,mesh) {
         entry:=&a.meshes[a.index[mesh].index]
         if len(entry.hull_sizes)==0 {return false}
         if append(points,..entry.hull_points)!=len(entry.hull_points) || append(sizes,..entry.hull_sizes)!=len(entry.hull_sizes) {
-            resize(sizes,held_sizes)
+            base.truncate(sizes,held_sizes)
             return false
         }
         return true
@@ -238,7 +238,7 @@ assets_collision_hulls :: proc(a:^Assets,mesh:base.Asset_Id,shape:Shape,points:^
             for value in point {valid=valid && value-value==0}
         }
         if !valid || append(sizes,u32(made))!=1 {
-            resize(sizes,held_sizes)
+            base.truncate(sizes,held_sizes)
             return false
         }
     }

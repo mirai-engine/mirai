@@ -4,7 +4,9 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // The influences of a vertex as a mesh stores them: eight joints and their
 // weights in 255ths that add up to 255.
@@ -38,8 +40,7 @@ SKIN_REBUILD_INTERVAL :: 120
 // bounds: where the box and the cone of each cluster posed go (POSED_BOUNDS_WORDS each), GPU_NONE for none;
 // reach: how far programs move the vertices after the skin (Skin_State.reach), which grows the boxes.
 @(private) Skin_Params :: struct {mesh,clusters,output,previous,morph_count:u32,morph_step:f32,bounds:u32,reach:f32}
-// The words of the box and the cone of a cluster of a pose (geometry.slang, posed_bounds).
-POSED_BOUNDS_WORDS :: 8
+POSED_BOUNDS_WORDS :: abi.POSED_BOUNDS_WORDS
 // How far the deltas of a target move the vertices of a joint, at weight 1.
 @(private) Morph_Joint_Bounds :: struct {joint,target:u32,lo,hi:Vec3}
 // The threads of a batched pass from start on work on one pose. Triangles:
@@ -261,7 +262,8 @@ skin_binding_create :: proc(r:^Renderer,original:Mesh_Record,influences:[]Skin_I
 @(private)
 skin_binding_upload :: proc(r:^Renderer,binding:^Skin_Binding) -> bool {
     if !binding.uploading {return true}
-    copies:=make([dynamic]Geometry_Copy,0,3,r.allocator)
+    copies,copies_error:=make([dynamic]Geometry_Copy,0,3,r.allocator)
+    if copies_error!=nil {set_error(r,"skin binding: out of memory for its upload");return false}
     defer delete(copies)
     append(&copies,Geometry_Copy{binding.source,0,slice_bytes(binding.influences)})
     if binding.morph_ranges!=0 {append(&copies,Geometry_Copy{binding.morph_ranges,0,slice_bytes(binding.morph.ranges)})}
@@ -302,7 +304,8 @@ pose_tree_breadth_first :: proc(r:^Renderer,m:^Mesh_Record)->bool {
     ray:=&m.rays[0]
     if ray.bvh_node_count==0 || m.skin==nil {return true}
     nodes:=s.blas_nodes[ray.bvh_root:][:ray.bvh_node_count]
-    depth_first:=make([]Gpu_Bvh_Node,len(nodes),r.allocator)
+    depth_first,depth_first_error:=make([]Gpu_Bvh_Node,len(nodes),r.allocator)
+    if depth_first_error!=nil {set_error(r,"pose tree of %d nodes: out of memory",len(nodes));return false}
     defer delete(depth_first,r.allocator)
     copy(depth_first,nodes)
     if !bvh_breadth_first(depth_first,nodes,&m.skin.binding.levels) {return false}
@@ -391,14 +394,14 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
         for &page,k in table {
             size:=original.stream.pages[k].words
             block:=pooled_page_block(p,u32(k))
-            if block==nil {resize(&s.vertices,int(vertex_start));resize(&s.indices,int(index_start));return 0,false}
+            if block==nil {base.truncate(&s.vertices,vertex_start);base.truncate(&s.indices,index_start);return 0,false}
             page.base=u32(len(s.vertices))-vertex_start
             append(&s.vertices,..block[:size])
         }
     }
     // The rest of every vertex posed, as a pose holds it before the GPU first writes it.
-    rest:=make([]Gpu_Posed_Vertex,posed,r.allocator)
-    if rest==nil && posed>0 {resize(&s.vertices,int(vertex_start));resize(&s.indices,int(index_start));return 0,false}
+    rest,rest_error:=make([]Gpu_Posed_Vertex,posed,r.allocator)
+    if rest_error!=nil {base.truncate(&s.vertices,vertex_start);base.truncate(&s.indices,index_start);return 0,false}
     defer delete(rest,r.allocator)
     p:=record_pooled(s,original)
     for whole,ordinal in p.clusters {
@@ -416,7 +419,7 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
     record.posed_word,record.previous_word=first,first+u32(words)
     // The boxes and cones, none known until the skin writes them.
     record.bounds_word=u32(len(s.vertices))-vertex_start
-    resize(&s.vertices,len(s.vertices)+bounds)
+    if resize(&s.vertices,len(s.vertices)+bounds)!=nil {base.truncate(&s.vertices,vertex_start);base.truncate(&s.indices,index_start);return 0,false}
     record.part_word,record.rest_word=GPU_NONE,GPU_NONE
     if skin.part_joints!=nil {record.part_word=first+2*u32(words)}
     if skin.external {record.rest_word=first+2*u32(words)}
@@ -424,9 +427,9 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
     source:=original.rays[0]
     if source.bvh_node_count>0 {
         nodes:=len(s.blas_nodes)
-        resize(&s.blas_nodes,nodes+int(source.bvh_node_count))
-        if !bvh_breadth_first(s.blas_nodes[source.bvh_root:][:source.bvh_node_count],s.blas_nodes[nodes:],&skin.binding.levels) {
-            resize(&s.blas_nodes,nodes);resize(&s.vertices,int(vertex_start));resize(&s.indices,int(index_start))
+        if resize(&s.blas_nodes,nodes+int(source.bvh_node_count))!=nil ||
+           !bvh_breadth_first(s.blas_nodes[source.bvh_root:][:source.bvh_node_count],s.blas_nodes[nodes:],&skin.binding.levels) {
+            base.truncate(&s.blas_nodes,nodes);base.truncate(&s.vertices,vertex_start);base.truncate(&s.indices,index_start)
             return 0,false
         }
         triangles:=u32(len(s.blas_triangles))
@@ -680,7 +683,7 @@ pose_instance_box :: proc(s:^Scene_State,index:u32) -> bool {
     instance_resized(s,int(index),lo,hi)
     occluder_moved(s,index,before,inst^)
     s.tlas_items[index]={bounds_min=lo,bounds_max=hi,center=(lo+hi)*0.5}
-    if len(s.touched)<cap(s.touched) {append(&s.touched,index)} else {s.instances_dirty=true}
+    instance_touch(s, index)
     return true
 }
 

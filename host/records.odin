@@ -52,7 +52,7 @@ app_record_set :: proc(app:^App,index:int) -> ^core.Record_Set {
         r.sets=sets
         r.files=make([dynamic]Record_File,app.allocator)
     }
-    if !r.scanned || r.revision!=app.assets.registry.revision {records_scan(app)}
+    if (!r.scanned || r.revision!=app.assets.registry.revision) && !records_scan(app) {return nil}
     load:=&r.sets[index]
     if load.loaded && load.revision==r.revision {return &load.set}
     load.revision=r.revision
@@ -104,12 +104,14 @@ record_set_free :: proc(app:^App,set:^core.Record_Set) {
 }
 
 // The .records of the registry and the type of each: a file read before
-// with the same content keeps the type it had.
+// with the same content keeps the type it had. False without memory: the
+// files stay as they were, to be scanned again.
 @(private="file")
-records_scan :: proc(app:^App) {
+records_scan :: proc(app:^App) -> bool {
     r:=&app.records
     registry:=&app.assets.registry
-    kept:=make([dynamic]Record_File,0,len(r.files),app.allocator)
+    kept,error:=make([dynamic]Record_File,0,len(r.files),app.allocator)
+    if error!=nil {return false}
     for &file in registry.files {
         if file.kind!=asset.KIND_RECORDS || file.id=={} {continue}
         entry:Record_File
@@ -131,6 +133,7 @@ records_scan :: proc(app:^App) {
     delete(r.files)
     r.files=kept
     r.revision,r.scanned=registry.revision,true
+    return true
 }
 
 @(private="file")
@@ -219,7 +222,7 @@ records_load :: proc(app:^App,index:int) -> bool {
         at:=len(values)
         if resize(&values,at+len(view.ids)*size)!=nil {failed+=1;continue}
         if asset.records_values(&a,view,&schema.schema,value_type,values[at:],default)!=.None {
-            resize(&values,at)
+            base.truncate(&values,at)
             failed+=1
             continue
         }

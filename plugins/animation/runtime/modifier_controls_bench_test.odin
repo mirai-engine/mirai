@@ -20,7 +20,7 @@ bench_modifier_controls_idle_and_sparse_fades :: proc(t:^testing.T) {
                 if !testing.expect(t,modifier_append(&modifiers.ik,entity,IK_Constraint{rig=entity,weight=1,enabled=true})) {return}
             }
             if !testing.expect(t,modifier_controls_prepare(&modifiers,&previous)) {return}
-            for i in 0..<active {testing.expect(t,modifier_control(&requests,{rig=core.entity_make(i+1,1),kind=.IK,weight=.5,enabled=true,fade=1000000}))}
+            for i in 0..<active {modifier_control(&requests,{rig=core.entity_make(i+1,1),kind=.IK,weight=.5,enabled=true,fade=1000000})}
             modifier_controls_take(&modifiers,&requests,&problems,1.0/60)
             best:=max(time.Duration);sink:f32
             saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()

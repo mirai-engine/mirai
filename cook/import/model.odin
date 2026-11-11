@@ -16,7 +16,7 @@ import mm "mirai:std/math"
 
 IMPORTER_NAME :: "mirai-import"
 // Of the writer: raise it when import_write gives other bytes for the same model.
-IMPORTER_VERSION :: 8
+IMPORTER_VERSION :: 10
 
 // What Import_Info.importer_version holds: the version of the writer in the
 // low 16 bits and the one of the format the source was read with in the high

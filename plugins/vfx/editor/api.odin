@@ -9,7 +9,6 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
-import gpu "mirai:render"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -28,7 +27,7 @@ import "plugins:vfx/runtime/effect"
 PARTICLE_PARAMS_SCHEMA :: `{"type":"object","properties":{"particle":{"type":"string","description":"An effect: its path under the assets folder, or its id"},"path":{"type":"string","description":"particle.create: where the new effect goes, under the assets folder"},"values":{"type":"object","description":"Fields of the effect to change, as particle.inspect shows them"},"parameters":{"type":"object","description":"Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"},"hidden":{"type":"array","items":{"type":"string"},"description":"The fields its instances do not show; replaces the list"},"resources":{"type":"object","description":"What each resource of its Vfx program reads when an instance binds nothing else, by name: a mesh by its path or id; null takes one away"}},"additionalProperties":false}`
 
 @(private)
-PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"id":{"type":"string","description":"The entity with the Particle_Emitter, by its id"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["id"],"additionalProperties":false}`
+PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["entity"],"additionalProperties":false}`
 
 // The keys of the params of an effect besides its name, path and values.
 @(private)
@@ -39,13 +38,13 @@ Particle_World :: enum u8 {Edit,Play}
 
 @(private)
 Api_Particle_Instance_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     world:Particle_World `mirai:"optional,label=Edit: the document; Play: the Play of the caller"`,
 }
 
 @(private)
 Api_Particle_Id_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
 }
 
 @(private)
@@ -53,7 +52,7 @@ Particle_Action :: enum u8 {Start,Stop,Restart,Pause,Resume,Authored,Burst}
 
 @(private)
 Api_Particle_Control_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     world:Particle_World `mirai:"optional,label=Edit: the preview of the document; Play: the Play of the caller"`,
     action:Particle_Action `mirai:"label=Start and Stop emit or not whatever active says; Restart drops its particles and starts its cycle; Authored gives it back to its fields; Burst starts count particles at once"`,
     count:u32 `mirai:"optional,max=1048576,label=Particles of a Burst"`,
@@ -70,7 +69,7 @@ api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.inspect",params_schema=PARTICLE_PARAMS_SCHEMA,summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},run=api_particle_inspect})
     editor.api_method_register(s,{name="particle.set",params_schema=PARTICLE_PARAMS_SCHEMA,summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},run=api_particle_set})
     bake:=Api_Grid_Bake_Params{}
-    editor.api_method_register(s,{name="particle.grid.bake",params=Api_Grid_Bake_Params,params_info=type_info_of(Api_Grid_Bake_Params),defaults=&bake,summary="Asks for the cells of the grid of an entity of the edited world as the steps of the next frame leave them, written as a .grid at path (one there takes the new state) in an undo step of its own once they come back from the GPU, a few frames later: a Particle_Grid that names it in cached starts from that state. The result names the file and its id, pending.",run=api_grid_bake})
+    editor.api_method_register(s,{name="particle.grid.bake",params=Api_Grid_Bake_Params,params_info=type_info_of(Api_Grid_Bake_Params),defaults=&bake,summary="Writes the cells of the grid of an entity of the edited world, as the steps of the next frame leave them, as a .grid at path (one there takes the new state) in an undo step of its own: a Particle_Grid that names it in cached starts from that state. The call holds until the cells come back from the GPU and names the file and its id, or fails when they do not come back.",run=api_grid_bake})
     editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
@@ -379,7 +378,7 @@ api_particle_programs :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(out,`{"programs":[`)
     first:=true
     if s.app.renderer!=nil {
-        for &program in gpu.renderer_programs(s.app.renderer) {
+        for &program in erender.programs(s.app.renderer) {
             if program.domain!=.Vfx {continue}
             if !first {serial.write_u8(out,',')}
             first=false
@@ -445,7 +444,7 @@ particle_world :: proc(s:^editor.Session,call:^api.Call,world:Particle_World) ->
     if world==.Edit {return editor.edited_world(s),true}
     r,_:=editor.api_play_run(s,call)
     if r==nil {
-        api.call_fail(call,api.SERVER_ERROR,"Start a Play (play.start) before addressing its emitters, or use world Edit")
+        api.call_fail(call,api.INVALID_PARAMS,"Start a Play (play.start) before addressing its emitters, or use world Edit")
         return
     }
     return editor.run_ref(s,r),true
@@ -453,10 +452,10 @@ particle_world :: proc(s:^editor.Session,call:^api.Call,world:Particle_World) ->
 
 // The entity of an id in a world, which must have a Particle_Emitter.
 @(private)
-particle_entity :: proc(w:core.World_Ref,call:^api.Call,id:base.Entity_Id) -> (e:core.Entity,ok:bool) {
-    e=editor.api_entity(w,id)
-    if e==core.NONE || !editor.entity_has(w,e,vfx.Particle_Emitter) {
-        api.call_failf(call,api.INVALID_PARAMS,"id 0x%016x is not an entity with a Particle_Emitter in this world",u64(id))
+particle_entity :: proc(w:core.World_Ref,call:^api.Call,named:[]u8) -> (e:core.Entity,ok:bool) {
+    e=editor.api_call_entity(call,w,named) or_return
+    if !editor.entity_has(w,e,vfx.Particle_Emitter) {
+        api.call_failf(call,api.INVALID_PARAMS,"entity %q has no Particle_Emitter",base.text_get(named))
         return
     }
     return e,true
@@ -527,11 +526,11 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     // What the GPU copied back of its particles, and the editor watches it from now on.
     if sync:=host.app_world_storage(s.app,s.edit_world,vfx.Particle_Sync);sync!=nil {
         sync.watch=u64(e)
-        if list,frame,ok:=vfx.watched(sync,s.app);ok {
+        if list,frame,ok:=vfx.watched(sync,s.app.renderer);ok {
             api.write_key(out,"gpu")
             serial.write_u8(out,'{')
             api.write_uint(out,"alive",u64(len(list)),first=true)
-            if state,read:=vfx.watched_state(sync,s.app);read {
+            if state,read:=vfx.watched_state(sync,s.app.renderer);read {
                 api.write_uint(out,"dead",u64(state.dead))
                 api.write_uint(out,"births",u64(state.births))
                 api.write_uint(out,"born",u64(state.born))
@@ -574,38 +573,37 @@ api_particle_instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Instance_Params)
     w,ok:=particle_world(s,call,p.world)
     if !ok {return}
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity[:])
     if found {particle_instance_write(s,call,w,e,p.world)}
 }
 
 @(private)
 api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     if editor.watching(s) {
-        api.call_fail(call,api.SERVER_ERROR,"Stop watching another run before editing the document")
+        api.call_fail(call,api.INVALID_PARAMS,"Stop watching another run before editing the document")
         return
     }
     request:editor.Rpc_Args
     editor.rpc_init(&request,call,call.raw)
     if !editor.rpc_object_begin(&request,"params") {return}
     fields:editor.Rpc_Object
-    id:base.Entity_Id
+    named:editor.Api_Entity_Text
     values,parameters:string
     has_id:bool
     for key in editor.rpc_next(&request,&fields) {
         switch key {
-        case "id": id,has_id=editor.rpc_id(&request,"id")
+        case "entity": _,has_id=editor.rpc_text(&request,"entity",named[:])
         case "values": values,_=editor.rpc_raw(&request)
         case "parameters": parameters,_=editor.rpc_raw(&request)
-        case: editor.rpc_fail(&request,"%s is not a parameter: id, values, parameters",key)
         }
     }
     if request.failed {return}
     if !has_id {
-        api.call_fail(call,api.INVALID_PARAMS,"id is required")
+        api.call_fail(call,api.INVALID_PARAMS,"entity is required")
         return
     }
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,id)
+    e,found:=particle_entity(w,call,named[:])
     if !found {return}
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
@@ -667,7 +665,7 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
 api_particle_instance_revert :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Id_Params)
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity[:])
     if !found {return}
     if !editor.api_edit_begin(s,call,"Revert particle") {return}
     instance_clear(editor.edited_world(s),e)
@@ -687,7 +685,7 @@ instance_clear :: proc(w:core.World_Ref,e:core.Entity) {
 api_particle_instance_apply :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Api_Particle_Id_Params)
     w:=editor.edited_world(s)
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity[:])
     if !found {return}
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     if emitter.particle=={} {
@@ -727,7 +725,7 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     if p.world==.Play {
         if _,own:=editor.api_play_run(s,call);!own {editor.api_play_refused(call);return}
     }
-    e,found:=particle_entity(w,call,p.id)
+    e,found:=particle_entity(w,call,p.entity[:])
     if !found {return}
     requests:=core.world_storage_of(w,vfx.Particle_Requests)
     if requests==nil {
@@ -743,5 +741,5 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     case .Authored: vfx.authored(requests,e)
     case .Burst: vfx.burst(requests,e,p.count)
     }
-    api.call_result(call,Api_Particle_Control_Result)^={id=p.id,queued=true}
+    api.call_result(call,Api_Particle_Control_Result)^={id=editor.api_entity_id(w,e),queued=true}
 }

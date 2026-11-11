@@ -154,6 +154,37 @@ bindings_choose_the_image_the_tint_and_the_variant :: proc(t:^testing.T) {
 }
 
 @(test)
+a_text_draws_what_its_style_fills_behind_it_with_its_padding :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    pill,_:=tree_style(&s.tree,{fill={10,20,30,200},radius={6,6,6,6},text={size=12,color={255,255,255,255}}})
+    plain,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="root",layout={direction=.Column,width=fixed(300),height=fixed(200)}})
+    tree_node(&s.tree,root,{kind=.Text,name="pill",style=pill,text="Coconut 1 of 10",layout={padding=padding_xy(10,4)}})
+    tree_node(&s.tree,root,{kind=.Text,name="bare",style=plain,text="Plain text"})
+    testing.expect(t,test_game_instance(&s))
+    ctx:Context
+    test_game_context(t,&ctx,&s)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    test_frame(&ctx,&input,test_game_build,&s)
+    fills:=0
+    for &p in ctx.paints[:ctx.paint_count] {
+        if (p.kind==.Rect || p.kind==.Panel) && (p.fill==Color{10,20,30,200}) {
+            fills+=1
+            testing.expect_value(t,p.corners,[4]f32{6,6,6,6})
+        }
+    }
+    testing.expect(t,fills>0,"the fill of the style is behind the text")
+    words:=test_paint(&ctx,"Coconut 1 of 10")
+    if !testing.expect(t,words!=nil && test_paint(&ctx,"Plain text")!=nil) {return}
+    area:=test_rect(t,&ctx,tree_element_id(&ctx,"pill"))
+    testing.expect(t,area.w>=text_width(&ctx.font,"Coconut 1 of 10",12,int(FONT_TREE)) && area.h>=24,"the box holds the text and its padding")
+}
+
+@(test)
 links_wraps_and_orders_decide_where_the_focus_goes :: proc(t:^testing.T) {
     s:Test_Game
     test_game_init(t,&s)
@@ -204,6 +235,45 @@ links_wraps_and_orders_decide_where_the_focus_goes :: proc(t:^testing.T) {
     test_key(&input,.Tab)
     test_frame(&ctx,&input,test_game_build,&s)
     testing.expect_value(t,ctx.focus,Id(0))
+    // In a Modal, under a pointer that never moved, the keys work from its first frame; a page of
+    // a Switcher that replaces the one with the focus takes it in the frame it comes back.
+    m:Test_Game
+    test_game_init(t,&m)
+    defer test_game_destroy(&m)
+    button:=Layout{width=fixed(40),height=fixed(20)}
+    modal:=tree_node(&m.tree,-1,{kind=.Modal,name="pause",layout={width=fixed(200),height=fixed(200)}})
+    pages:=tree_node(&m.tree,modal,{kind=.Switcher,name="pages",bind_value="Test.level"})
+    first_page:=tree_node(&m.tree,pages,{kind=.Box,name="main",layout={direction=.Column,gap=4}})
+    tree_node(&m.tree,first_page,{kind=.Button,name="play",text="Play",flags={.Focus_First},layout=button})
+    tree_node(&m.tree,first_page,{kind=.Button,name="options",text="Options",layout=button})
+    second_page:=tree_node(&m.tree,pages,{kind=.Box,name="paused"})
+    tree_node(&m.tree,second_page,{kind=.Button,name="quit",text="Quit",flags={.Focus_First},layout=button})
+    testing.expect(t,test_game_instance(&m))
+    menu:Context
+    test_game_context(t,&menu,&m)
+    defer context_destroy(&menu)
+    keys:=test_input()
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect_value(t,menu.focus,tree_element_id(&menu,"play"))
+    test_key(&keys,.Down)
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect_value(t,menu.focus,tree_element_id(&menu,"options"))
+    test_key(&keys,.Up)
+    test_frame(&menu,&keys,test_game_build,&m)
+    test_key(&keys,.Enter)
+    test_frame(&menu,&keys,test_game_build,&m)
+    _,clicked:=test_game_events(&m,.Clicked,"play")
+    testing.expect_value(t,clicked,1)
+    m.values.level=1
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect_value(t,menu.focus,tree_element_id(&menu,"quit"))
+    m.values.level=0
+    test_frame(&menu,&keys,test_game_build,&m)
+    testing.expect(t,menu.focus==tree_element_id(&menu,"play") && menu.focus_ring,"the page that came back has the focus at once")
+    test_key(&keys,.Enter)
+    test_frame(&menu,&keys,test_game_build,&m)
+    _,clicked=test_game_events(&m,.Clicked,"play")
+    testing.expect_value(t,clicked,1)
 }
 
 @(test)
@@ -545,7 +615,7 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
         test_point(&input,test_rect(t,&ctx,tree_element_id(&ctx,name)))
         for _ in 0..<3 {test_frame(&ctx,&input,test_game_build,&s)}
         found:=false
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.style.color==red {found=true}}
+        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {found=true}}
         testing.expectf(t,found,"%s draws its text red under the pointer",name)
     }
     // Pressed over a Text, the rule of Pressed applies.
@@ -571,12 +641,92 @@ hovering_applies_the_hovered_rule_of_its_style :: proc(t:^testing.T) {
         input.pointer={-100,-100}
         for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
         reds:=0
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.style.color==red {reds+=1}}
+        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {reds+=1}}
         testing.expect_value(t,reds,1)
         s.shown=3
         for _ in 0..<2 {test_frame(&ctx,&input,test_game_build,&s)}
         reds=0
-        for p in ctx.paints[:ctx.paint_count] {if p.kind==.Text_Block && p.style.color==red {reds+=1}}
+        for p in ctx.paints[:ctx.paint_count] {if (p.kind==.Text_Block || p.kind==.Box) && p.style.color==red {reds+=1}}
         testing.expect_value(t,reds,1)
     }
+}
+
+// Options written Label=Value bind what they name, a number or a text, and a
+// value no option has shows none of them until a step moves it.
+@(test)
+options_written_label_equals_value_bind_that_value :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={direction=.Column,gap=4}})
+    tree_node(&s.tree,root,{kind=.Selector,name="scale",style=style,bind_value="Test.volume",text="Half = 0.5|Full=1",layout={width=fixed(160),height=fixed(24)}})
+    tree_node(&s.tree,root,{kind=.Selector,name="mood",style=style,bind_value="Test.mood",text="Calm=calm|Angry=angry",layout={width=fixed(160),height=fixed(24)}})
+    testing.expect(t,test_game_instance(&s))
+    s.values.volume=0.5
+    copy(s.values.mood[:],"angry")
+    ctx:Context
+    test_game_context(t,&ctx,&s,font=true)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,test_paint(&ctx,"Half")!=nil && test_paint(&ctx,"Angry")!=nil)
+    ctx.focus,ctx.focus_ring=tree_element_id(&ctx,"scale"),true
+    test_key(&input,.Right)
+    test_frame(&ctx,&input,test_game_build,&s)
+    event,count:=test_game_events(&s,.Changed,"scale")
+    testing.expect(t,count==1 && event.value==1)
+    testing.expect_value(t,test_game_number(&s,1),1.0)
+    ctx.focus=tree_element_id(&ctx,"mood")
+    test_key(&input,.Right)
+    test_frame(&ctx,&input,test_game_build,&s)
+    event,count=test_game_events(&s,.Changed,"mood")
+    testing.expect(t,count==1 && base.text_get(event.text[:])=="calm")
+    testing.expect(t,bound_bytes(raw_data(s.instance.values),s.instance.bounds[2].value)=="calm")
+    // A value no option has shows none, and stepping left takes the last.
+    s.values.volume=0.75
+    ctx.focus=tree_element_id(&ctx,"scale")
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,test_paint(&ctx,"Full")==nil && test_paint(&ctx,"Half")==nil)
+    test_key(&input,.Left)
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect_value(t,test_game_number(&s,1),1.0)
+    // A value on a text field needs its options to name it.
+    bad:Test_Game
+    test_game_init(t,&bad)
+    defer test_game_destroy(&bad)
+    tree_node(&bad.tree,-1,{kind=.Selector,name="plain",bind_value="Test.mood",text="Calm|Angry"})
+    testing.expect(t,!test_game_instance(&bad) && bad.instance.failure.binding==.Value)
+}
+
+// A control bound to a storage its host commits writes the game itself, for a
+// text as for a number; a host that does not leaves the event to the game.
+@(test)
+a_commit_writes_the_field_of_a_storage_the_host_lets_write :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={direction=.Column,gap=4}})
+    tree_node(&s.tree,root,{kind=.Slider,name="volume",style=style,bind_value="Test.volume",range={0,1,0.25},layout={width=fixed(112),height=fixed(20)}})
+    tree_node(&s.tree,root,{kind=.Selector,name="mood",style=style,bind_value="Test.mood",text="Calm=calm|Angry=angry",layout={width=fixed(160),height=fixed(24)}})
+    host:=test_host(&s.host,&s.schema,s.type,&s.values)
+    host.source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
+        if name!=base.name_hash("Test") {return}
+        return (^Test_Host)(user).type,true,true
+    }
+    host.commits=proc(user:rawptr,name:u64) -> bool {return name==base.name_hash("Test")}
+    testing.expect(t,tree_instance_init(&s.instance,&s.tree,host,TEST_LANGUAGE))
+    tree_values_refresh(&s.instance,host,0)
+    node:=[2]i32{1,2}
+    testing.expect(t,tree_commit_event(&s.instance,{node=node[0],kind=.Changed,value=0.5},host))
+    testing.expect_value(t,s.values.volume,f32(0.5))
+    event:=Tree_Event{node=node[1],kind=.Changed}
+    base.text_set(event.text[:],"angry")
+    testing.expect(t,tree_commit_event(&s.instance,event,host))
+    testing.expect(t,string(s.values.mood[:5])=="angry")
+    testing.expect(t,!tree_commit_event(&s.instance,{node=-1,kind=.Changed,value=9},host))
+    host.commits=nil
+    testing.expect(t,!tree_commit_event(&s.instance,{node=node[0],kind=.Changed,value=0.75},host))
+    testing.expect_value(t,s.values.volume,f32(0.5))
 }

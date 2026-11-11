@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:engine/gui"
@@ -50,25 +51,25 @@ language_name :: proc(language:gui.Language) -> string {
 
 // The text of a node in a language: its own in the source, or its translation.
 @(private)
-node_text_in :: proc(r:^Records,n:^ui.Tree_Node,language,source:gui.Language) -> string {
-    if language==source {return records_text(r,n.text)}
+node_text_in :: proc(r:^author.Records,n:^ui.Tree_Node,language,source:gui.Language) -> string {
+    if language==source {return author.records_text(r,n.text)}
     codes:=gui.LANGUAGE_CODES
-    if at:=records_translation(r,n.text_id,codes[language]);at>=0 {return records_text(r,r.translations[at].text)}
+    if at:=author.records_translation(r,n.text_id,codes[language]);at>=0 {return author.records_text(r,r.translations[at].text)}
     return ""
 }
 
 // Sets the text of a node in a language; in another than the source it
 // becomes localized. An empty translation goes.
 @(private)
-node_text_set :: proc(r:^Records,n:^ui.Tree_Node,row:int,language,source:gui.Language,text:string) {
+node_text_set :: proc(r:^author.Records,n:^ui.Tree_Node,row:int,language,source:gui.Language,text:string) {
     if language==source {
-        records_text_set(r,&n.text,text)
+        author.records_text_set(r,&n.text,text)
         return
     }
-    if n.text_id==0 {n.text_id=records_text_id(r,row)}
+    if n.text_id==0 {n.text_id=author.records_text_id(r,row)}
     n.flags+={.Localized}
     codes:=gui.LANGUAGE_CODES
-    at:=records_translation(r,n.text_id,codes[language])
+    at:=author.records_translation(r,n.text_id,codes[language])
     if text=="" {
         if at>=0 {ordered_remove(&r.translations,at)}
         return
@@ -79,7 +80,7 @@ node_text_set :: proc(r:^Records,n:^ui.Tree_Node,row:int,language,source:gui.Lan
         append(&r.translations,t)
         at=len(r.translations)-1
     }
-    records_text_set(r,&r.translations[at].text,text)
+    author.records_text_set(r,&r.translations[at].text,text)
 }
 
 // The bubble at the end of the row of the text of a node: filled when it is
@@ -134,7 +135,7 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
             if ui.toggle_switch(ctx,ui.id(ctx,"texts_localized"),&localized) {
                 if localized {
                     n.flags+={.Localized}
-                    if n.text_id==0 {n.text_id=records_text_id(r,u.selected)}
+                    if n.text_id==0 {n.text_id=author.records_text_id(r,u.selected)}
                 } else {n.flags-={.Localized}}
                 changed(u,"Localized")
             }
@@ -144,7 +145,7 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
                 ui.column_label(ctx,language_name(language))
                 buffer:=e.values[language][:]
-                result:=ui.text_field(ctx,ui.id(ctx,"text",int(language)+1),buffer[:len(buffer)-1],&e.lengths[language],{width=ui.GROW,placeholder="" if language==source else records_text(r,n.text)})
+                result:=ui.text_field(ctx,ui.id(ctx,"text",int(language)+1),buffer[:len(buffer)-1],&e.lengths[language],{width=ui.GROW,placeholder="" if language==source else author.records_text(r,n.text)})
                 if result.committed {
                     node_text_set(r,n,u.selected,language,source,string(buffer[:e.lengths[language]]))
                     changed(u,"Text")
@@ -215,7 +216,7 @@ api_language :: proc(call:^api.Call,named:string) -> (language:gui.Language,ok:b
 @(private)
 api_texts :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Ui_Texts_Params)
-    records:Records
+    records:author.Records
     row,ok:=api_node(s,call,p.asset,serial.text_field(p.node[:]),&records)
     if !ok {return}
     n:=&records.nodes[row]
@@ -247,7 +248,7 @@ api_text_set :: proc(s:^editor.Session,call:^api.Call) {
     languages,source:=texts_languages(s)
     if language not_in languages {api.call_failf(call,api.INVALID_PARAMS,"the game is not in %s: add it to the languages of Project Settings > UI first",language_name(language));return}
     text:=serial.text_field(p.text[:])
-    records:Records
+    records:author.Records
     row,ok:=api_node(s,call,p.asset,serial.text_field(p.node[:]),&records)
     if !ok {return}
     node_text_set(&records,&records.nodes[row],row,language,source,text)
@@ -320,7 +321,7 @@ texts_csv_header :: proc(b:^strings.Builder,order:[]gui.Language) {
 
 // The rows of the localized texts of one .ui, in the columns of order; how many.
 @(private)
-texts_csv_file :: proc(b:^strings.Builder,path:string,id:base.Asset_Id,records:^Records,order:[]gui.Language,source:gui.Language) -> (count:int) {
+texts_csv_file :: proc(b:^strings.Builder,path:string,id:base.Asset_Id,records:^author.Records,order:[]gui.Language,source:gui.Language) -> (count:int) {
     text:[32]u8
     for &n in records.nodes {
         if .Localized not_in n.flags || n.text_id==0 {continue}
@@ -376,7 +377,7 @@ texts_csv_row :: proc(registry:^asset.Registry,row:[]string,line,width:int) -> (
 // changes nothing); a row without its localized node goes to rejected.
 // Whether a cell set a text.
 @(private)
-texts_csv_apply :: proc(records:^Records,id:base.Asset_Id,rows:[]Texts_Row,columns:[]gui.Language,source:gui.Language,rejected:^[dynamic]Texts_Rejected) -> (touched:bool) {
+texts_csv_apply :: proc(records:^author.Records,id:base.Asset_Id,rows:[]Texts_Row,columns:[]gui.Language,source:gui.Language,rejected:^[dynamic]Texts_Rejected) -> (touched:bool) {
     for row in rows {
         if row.asset!=id {continue}
         at:=-1
@@ -403,11 +404,11 @@ api_texts_export :: proc(s:^editor.Session,call:^api.Call) {
     api_flush(s)
     for &file in a.registry.files {
         if file.kind!=asset.KIND_UI || file.id=={} {continue}
-        records:Records
-        if !records_read(a,file.id,&records,context.temp_allocator) {continue}
+        records:author.Records
+        if !author.records_read(author.assets_of(a),file.id,&records,context.temp_allocator) {continue}
         count+=texts_csv_file(&b,file.path,file.id,&records,order,source)
     }
-    if os.write_entire_file(path,transmute([]u8)strings.to_string(b))!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written",path);return}
+    if serial.file_write_atomic(path,transmute([]u8)strings.to_string(b))!=.None {api.call_failf(call,api.SERVER_ERROR,"%s could not be written",path);return}
     api.call_result(call,Ui_Texts_Exported)^={path=p.path,texts=count}
 }
 
@@ -440,8 +441,8 @@ api_texts_import :: proc(s:^editor.Session,call:^api.Call) {
     serial.text_write_raw(out,`{"files":[`)
     first:=true
     for id in assets {
-        records:Records
-        if !records_read(a,id,&records,context.temp_allocator) {
+        records:author.Records
+        if !author.records_read(author.assets_of(a),id,&records,context.temp_allocator) {
             for row in accepted {if row.asset==id {append(&rejected,Texts_Rejected{row.line,"its .ui does not load"})}}
             continue
         }

@@ -1,6 +1,7 @@
 # Review of agent changes
 
-Each turn has its own record of scene and project file changes, `Ai_Task.review`:
+Each unit (the main chat and each subagent) has its own record of scene and project file changes,
+`Ai_Task.review`, of its last turn:
 
 - The server attributes each request by the turn's `X-Mirai-Ai-Task` header and, after the
   handler, copies only the rows of its new undo steps
@@ -12,6 +13,8 @@ Each turn has its own record of scene and project file changes, `Ai_Task.review`
   the turn: the agent's `history.undo` undoes only its own
   ([undo by author](document.md#undo-by-author)).
 - Handlers run one at a time on the main thread; the ACP workers work in parallel.
+- Each recorded transaction also says who last changed every entity and asset it touched
+  (`ai_provenance_record`), which [Details](panels.md#ai-panel) and `ai.provenance` read.
 - Per authoring component it keeps the previous and the later value, whether it was off by itself
   before and after, the entity's `core.Id`, the component's name and the hash of its schema.
   Turning a component off or on without changing its value is a change of the turn. Turning the
@@ -42,8 +45,9 @@ Each turn has its own record of scene and project file changes, `Ai_Task.review`
 
 ## Change sets
 
-`editor/changes.odin`, shared with the undo of an author who reverts a step of theirs after steps
-of others:
+`editor/history/changes.odin`, shared with the undo of an author who reverts a step of theirs
+after steps of others; `editor/changes.odin` puts the files of a set, which are edits of the
+session:
 
 - `Change_Set` (`state`, `rows`, `files`) is a transaction: `Change_Row` by id and component and
   `Change_File` by project path. `change_set_take(s, set, step, history, limit)` adds to it what a
@@ -56,8 +60,9 @@ of others:
 ## Finish, Revert and Retry
 
 **Finish.** The `finish` MCP tool closes the agent's work. The Finish action confirms the result:
-it keeps the scene, releases the record and outlines and opens a new chat with the composer
-focused, without asking the model anything or creating an undo step. `ai.review.accept` confirms
+it keeps the scene, releases the record and outlines and keeps the chat, without asking the model
+anything or creating an undo step. Resolving a review lets the main chat take the reports that
+waited for it ([deliveries](ai-tasks.md#deliveries-and-reports)). `ai.review.accept` confirms
 without changing the chosen conversation; a question without changes is also confirmed.
 
 **Revert** declines the turn, walking its transactions in reverse order (`ai_review_apply`
@@ -129,9 +134,11 @@ saved with the chat.
   walkthrough arrows with which of the changes it is, ✕ (reverts the entity) and ✓ (accepts it).
 - Accepting or reverting the entity in view moves to the next change (`ai_review_resolved`);
   without more changes, a returned deletion stays selected.
-- **Over the composer**, the session's review, folded, says how many changes remain, with Revert
-  all and Accept all. Unfolded, one row per change with git's letter (A created, M changed, D
-  deleted), up to `AI_CHANGE_ROWS` and the rest with scroll. A click on a row walks to it; with the
+- **Over the composer**, the review of the unit shown, folded, says how many changes remain, with
+  Revert all and Accept all. A finished subagent also offers it in its report card, and the
+  status line, the bar and the expanded chat count it. Unfolded, one row per change with git's
+  letter (A created, M changed, D deleted), up to `AI_CHANGE_ROWS` and the rest with scroll. A click
+  on a row walks to it; with the
   pointer over the row or with the walkthrough on it appear its ↶, which reverts only that change,
   and its ✓, which accepts it. Reverting an entity the turn created takes it out of the scene with
   what hangs from it. Without changes to review the review is not shown and ends as with Accept
@@ -139,8 +146,8 @@ saved with the chat.
 - On finishing, the thread says how: `Reviewed · N kept · M reverted` (or only one of the counts),
   with what was accepted and reverted one by one (`Ai_Task.kept`, `rejected`) plus what remained on
   accepting all; Revert all leaves "Rejected changes" with Restore.
-- The session's row says how many changes await review; while the agent works, it carries the
-  beating dot.
+- The unit's row in the status line says how many changes await review; while the agent works, it
+  carries the beating dot.
 
 **Retry**, API-only: it reverts an unconfirmed review and repeats the request in the same chat; if
 it was already confirmed, it repeats without reverting. It also reverts the record's files; with
@@ -172,8 +179,9 @@ it was already confirmed, it repeats without reverting. It also reverts the reco
   state) and the files it is read with: with what the turn had before (it was closed without
   saving) it is left declined with `AI_UNSAVED_NOTE` and Restore; with what the turn left it
   returns to review even if it was declined; with part, it stays as the record says.
-- A `running` or `queued` turn returns as `failed` and starts no process. If the editor closed with
-  the dialog, its changes reach as far as Save or Discard stopped it
+- A `running` or `queued` turn returns as `failed` and starts no process; a subagent the editor
+  closed on returns `interrupted` ([reopening](ai-tasks.md#compaction-and-handoff)). If the editor
+  closed with the dialog, its changes reach as far as Save or Discard stopped it
   ([exiting](document.md#exiting-with-changes-or-agents-working)).
 - The record has a cap of rows and bytes (`AI_REVIEW_ROW_CAPACITY`, `AI_REVIEW_BYTE_CAPACITY`; a
   file counts as one row). On reaching it the review is left incomplete, and the turn keeps the

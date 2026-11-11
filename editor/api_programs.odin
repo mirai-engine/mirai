@@ -9,6 +9,7 @@ import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/shaders"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -115,8 +116,6 @@ programs_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="material.program.create",params_schema=PROGRAM_CREATE_SCHEMA,summary="Makes a new program in the shaders folder of the project once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_create})
     api_register(s,st,{name="material.program.edit",params_schema=PROGRAM_PARAMS_SCHEMA,summary="Changes the source of a program once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=Api_Program_Result,writes_result=true,run=api_program_edit})
     api_register(s,st,{name="material.program.inspect",params_schema=PROGRAM_PARAMS_SCHEMA,summary="The source of a program, the fields of its struct Parameters and the graph derived from the source.",result=Api_Program_Inspect,writes_result=true,flags={.Read_Only,.Idempotent},run=api_program_inspect})
-    shaders_defaults:=Api_Shaders_Params{seconds=600}
-    api_register(s,st,{name="build.shaders",summary="Publishes the shaders of the project again, from their files and what the editor holds unsaved, after a shader changed outside the editor: the stages the frames run first. Answers once the viewport draws with them; the stages it does not run go on compiling.",params=Api_Shaders_Params,defaults=&shaders_defaults,result=Api_Shaders_Result,run=api_build_shaders})
 }
 
 @(private)
@@ -129,9 +128,8 @@ program_params :: proc(call:^api.Call,create:=false) -> (p:Program_Params,ok:boo
     for key in rpc_next(&a,&o) {
         switch key {
         case "program","material","source","kind":
-            if (create && key=="material") || (!create && key=="kind") {rpc_fail(&a,"%s is not a parameter: %s",key,create?"program, kind or source":"program, material, source or edits");return}
             text,read:=serial.text_string(&a.r)
-            if !read {rpc_fail(&a,"%s must be a string",key);return}
+            if !read {rpc_fail_type(&a,"%s must be a string",key);return}
             text=strings.clone(text,call.allocator)
             switch key {
             case "program":  p.program=text
@@ -140,7 +138,6 @@ program_params :: proc(call:^api.Call,create:=false) -> (p:Program_Params,ok:boo
             case:            p.source,p.has_source=text,true
             }
         case "edits":
-            if create {rpc_fail(&a,"edits is not a parameter: program, kind or source");return}
             if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"edits must be an array of {old, new}");return}
             for i:=0;!serial.text_accept(&a.r,']');i+=1 {
                 if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"edits must be an array of {old, new}");return}
@@ -160,9 +157,6 @@ program_params :: proc(call:^api.Call,create:=false) -> (p:Program_Params,ok:boo
                 if edit[0]=="" {rpc_fail(&a,"edits[%d].old is empty: give the text to replace",i);return}
                 append(&p.edits,edit)
             }
-        case:
-            rpc_fail(&a,"%s is not a parameter: %s",key,create?"program, kind or source":"program, material, source or edits")
-            return
         }
     }
     if a.failed {return}
@@ -206,7 +200,7 @@ program_file :: proc(s:^Session,call:^api.Call,p:Program_Params) -> (domain,name
         id,found:=asset_named(s,call,p.material,asset.KIND_MATERIAL,".mat","a material")
         if !found {return}
         info,read:=material_file(s,id)
-        if !read {api.call_fail(call,api.SERVER_ERROR,"The material could not be read");return}
+        if !read {api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"material"));return}
         wanted=strings.clone(base.text_get(info.program[:]),context.temp_allocator)
         if wanted=="" {api.call_failf(call,api.INVALID_PARAMS,"%s has no program: it uses the standard model (material.set changes its values)",p.material);return}
     }
@@ -313,7 +307,7 @@ api_program_check :: proc(s:^Session,call:^api.Call) {
     if !found {return}
     text,read:=p.has_source?p.source:"",true
     if !p.has_source {text,read=program_text(s,path)}
-    if !read {api.call_fail(call,api.SERVER_ERROR,"The program could not be read");return}
+    if !read {api.call_failf(call,api.SERVER_ERROR,"%s could not be read: the file is missing or locked",path);return}
     result:=program_check_run(s,path,text,sources)
     if result.error!="" {api.call_fail(call,api.SERVER_ERROR,result.error);return}
     serial.write_u8(call.out,'{')
@@ -351,7 +345,7 @@ api_program_edit :: proc(s:^Session,call:^api.Call) {
     domain,name,path,sources,found:=program_file(s,call,p)
     if !found {return}
     current,read:=program_text(s,path)
-    if !read {api.call_fail(call,api.SERVER_ERROR,"The program could not be read");return}
+    if !read {api.call_failf(call,api.SERVER_ERROR,"%s could not be read: the file is missing or locked",path);return}
     text,edited:=program_edited(call,p,current)
     if !edited {return}
     if said:=shaders.program_directives(text);said.domain!=domain || said.name!=name {
@@ -392,7 +386,7 @@ api_program_create :: proc(s:^Session,call:^api.Call) {
     }
     path:=project.path(s.project_root,"shaders",strings.concatenate({strings.to_lower(name,context.temp_allocator),".slang"},context.temp_allocator),allocator=context.temp_allocator)
     if file_exists(s,path) {
-        api.call_failf(call,api.INVALID_PARAMS,"%s is there already and declares no program %s: give the new one another name",file_relative(s,path),name)
+        api.call_failf(call,api.INVALID_PARAMS,"%s is there already and declares no program %s: give the new one another name",history.file_relative(s.project_root,path),name)
         return
     }
     _,sources:=program_folders(s)
@@ -419,7 +413,7 @@ program_write :: proc(s:^Session,call:^api.Call,name,path,text:string,changed:bo
     }
     if !api_edit_begin(s,call,label) {return}
     written:=!changed || file_write(s,path,transmute([]u8)text,label)
-    if !written {api.call_fail(call,api.SERVER_ERROR,"The program could not be written")}
+    if !written {api.call_fail(call,api.SERVER_ERROR,api_asset_write_problem(s,path))}
     if !api_edit_end(s,call,written) {return}
     serial.write_u8(call.out,'{')
     check_fields_write(call.out,name,&result)
@@ -463,14 +457,14 @@ api_program_inspect :: proc(s:^Session,call:^api.Call) {
     domain,name,path,_,found:=program_file(s,call,p)
     if !found {return}
     text,read:=program_text(s,path)
-    if !read {api.call_fail(call,api.SERVER_ERROR,"The program could not be read");return}
+    if !read {api.call_failf(call,api.SERVER_ERROR,"%s could not be read: the file is missing or locked",path);return}
     src:=shaders.surface_parse(text,context.temp_allocator)
     graph:=shaders.surface_graph(&src,context.temp_allocator)
     w:=call.out
     serial.write_u8(w,'{')
     api.write_text(w,"program",name,true)
     api.write_text(w,"kind",domain)
-    api.write_text(w,"file",file_relative(s,path))
+    api.write_text(w,"file",history.file_relative(s.project_root,path))
     api.write_text(w,"source",text)
     api.write_key(w,"parameters");serial.write_u8(w,'[')
     for field,i in src.parameters {
@@ -530,26 +524,3 @@ programs_wait :: proc(s:^Session,seconds:f64,viewport:=false) -> (ok:bool,messag
     return true,""
 }
 
-Api_Shaders_Params :: struct {
-    seconds:int `mirai:"optional,min=1,max=3600,label=How long the viewport may wait for them"`,
-}
-
-@(private)
-Api_Shaders_Result :: struct {
-    seconds:f64 `mirai:"label=Until the viewport drew with them"`,
-    publishing:bool `mirai:"label=The stages the frames do not run are still being compiled"`,
-}
-
-// The shaders of the project published again from their files and what the
-// editor holds unsaved, as an edit of a program publishes them; it answers
-// once the viewport has them.
-@(private)
-api_build_shaders :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Shaders_Params)
-    started:=time.tick_now()
-    programs_publish_request(s)
-    if ok,message:=programs_wait(s,f64(params.seconds),true);!ok {api.call_fail(call,api.SERVER_ERROR,message);return}
-    result:=api.call_result(call,Api_Shaders_Result)
-    result.seconds=time.duration_seconds(time.tick_since(started))
-    result.publishing=programs_publishing(s)
-}

@@ -3,9 +3,14 @@
 Plugin `ui_inspector` (`Editor` only, enabled in the demo): it opens a `.ui` as an editor
 document, with its tab like that of a material, shows it as the game builds it and edits
 everything the file stores. Code in `plugins/ui_inspector/editor/`: the provider and the reading
-and writing of the file in `ui_inspector_editor.odin`, each operation on the records in
-`records.odin` and `records_ux.odin`, the hierarchy, the stage, the properties, the states, the
-texts and the paths in their own file, and the authoring API in `api_tree.odin`.
+and writing of the file in `ui_inspector_editor.odin`, the hierarchy, the stage, the properties,
+the states, the texts and the paths in their own file, and the methods of the authoring API in
+`api_tree.odin`. What is no editor lives below it, in `cook/author`: each operation on the records
+(`records.odin`, `records_ux.odin`), the document (`ui_document.odin`), the check of the paths
+(`ui_bindings.odin`) and what the uses of a widget give when its parameters move
+(`ui_follow.odin`). It fails a `Reading` with what is wrong and finds files through a registry
+and the types of its tables, so the methods here and
+[`mirai ui`](../../mirai-agent-api/references/api.md#mirai-ui-and-mirai-scene) run the same code.
 
 ## Document
 
@@ -33,7 +38,8 @@ texts and the paths in their own file, and the authoring API in `api_tree.odin`.
   itself. The nodes of an unfolded instance are read-only (their own document changes them).
 - Copy, Paste, Duplicate and Delete act on all the chosen ones (a node inside another chosen one
   goes with it). **Make widget** moves a Box and what it has into a new `.ui` next to the file,
-  unsaved, and puts an instance in its place: what is reusable is another `.ui`.
+  unsaved, with a parameter per named text or binding, and puts a use in its place: what is
+  reusable is another `.ui`.
 - Copy stores the nodes as records of their own (`Clip_Nodes`) with the rows and texts that they
   use, so they paste into any `.ui` (`records_paste_rows`, `merge_put`): a named style of the same
   family, an animation with the same name, a font or a widget are those of the destination if it
@@ -76,12 +82,13 @@ texts and the paths in their own file, and the authoring API in `api_tree.odin`.
   on the node's first change.
 - **The file says which style the new nodes of each type take** (`Tree_Style_Info.defaults`, a type
   in one style at most, of its family): the **Default** row of the Style card, or `defaults` of
-  `ui.style.set`. Without one, the first node of a type brings the look of its type
+  a style in `ui.write`. Without one, the first node of a type brings the look of its type
   (`node_default_look`) and that look stays as that of the following ones; a box has no look and
   is left without style. Nothing is deduced from the neighboring nodes, and pasting into another
   file does not bring the `defaults` of the source.
-- A named style does not change from a node: the first change makes the node an override (a row
-  with `base`, marked with `*`). **Apply to style** writes it into the style, with its variants,
+- A named style does not change from a node: the first change makes the node an override (an
+  unnamed style that `extends` it, marked with `*`), which says only what differs and follows later
+  changes of the style in the rest. **Apply to style** writes it into the style, with its variants,
   and its nodes return to it (`records_style_save`); **Revert** discards it. Save only writes the
   file.
 - Choosing a sound in Events on a node whose style is shared asks whether it goes to the node (an
@@ -172,25 +179,45 @@ made by hand, nothing is saved until Save, and one that would leave a tree that 
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
-  `ui.write` takes back (`api_document.odin`): the nodes nested by `children`, each with what
-  differs from a new node of its type, the named style it takes or its own look (`look`, with its
-  rules), and the styles and animations they take; beside it, the widgets and fonts.
-- `ui.write` makes the file, or `node`, say what the document declares, in one step:
+  `ui.write` takes back (`cook/author/ui_document.odin`): tokens, the files it `use`s, its `params`,
+  named styles with `extends` and their states, layouts, named animations, and the nodes
+  nested by `children`, each with what differs from a new node of its type and what its style does
+  not give. Reading back names: what is written and read back is the same, and what the visual
+  editor changed reads back by name too.
+- `ui.write` makes the file, or `node`, say what the document declares, in one step; a path that
+  does not exist yet makes the `.ui` and `save=true` writes the file (what an agent passes; a
+  person saves with Save). On the command line `document=@file` reads it from a file:
   - The document's nodes replace those of the part: they are matched by name and type (an unnamed
     one, by place among the unnamed ones of its type in the same container) and keep what ties
-    them to the file (translations by `text_id`, the overrides of an instance); the others are
+    them to the file (the `text_id` of their text, the overrides of an instance); the others are
     made and those that the document does not declare go away. What a node does not give is that
     of a new node of its type; without `style` or `look` it takes the style of its type
-    ([styles](#styles)), and an empty `style` is none.
-  - The styles and animations it names become what it says, `null` removes them (a style that some
-    node takes is not removed) and those it does not name stay. Without `nodes`, no node changes.
-  - A name of the part cannot be outside it; an error says where
-    (`nodes[0].children[2].fields.layout: …`) and changes nothing.
-- `ui.node.*` changes a node and what the call does not name stays. `fields` does not accept what
-  has another key or its own method (parent, type, text, style, image, events): the error says
-  which to use. `children` of `ui.node.add` adds a whole subtree in the same call: each child
-  carries the keys of `ui.node.add` except `asset`, `parent` and `before`, and goes last inside its
-  own; an error says through which child it passes (`children[1]: children[0]: …`).
+    ([styles](#styles)), and an empty `style` is none. A `look` is a style without family; with
+    `extends` it is the override of that style, and the node says it instead of `style`.
+  - A node with `translations` (language code to text) is `Localized` and its translations become
+    those; one without is not, and what the file had under its `text_id` stays there, as when a
+    person turns Localized off. A node gets its `text_id` when it becomes localized or takes its
+    first translation, unless the document gives one; two nodes never share one.
+  - The tokens, styles and animations it names become what it says, `null` removes them
+    (a style that some node takes is not removed) and those it does not name stay. Without
+    `nodes`, no node changes.
+  - `use` lists the files a whole document takes names from: a file it no longer lists goes, what
+    it lent that nothing takes with it, and it fails while a node or a style still takes from it.
+    Without `use`, none goes; a file stays in `use` after its last use goes.
+  - A name of the part cannot be outside it, and a name that resolves to nothing (style, token,
+    component, parameter) fails: an error says where (`nodes[0].children[2]: …`) and changes
+    nothing. `ui.check` says the same for every `.ui` of the project.
+  - A path that the nodes it declares bind (`bind_*`, `fields`, the `data` and the parameters of a
+    use) and the game of the open build lacks fails the same way, with what the game has there
+    (`document_paths_check`, on the resolver of the game: `bind_check`). Not checked, because
+    only a use knows them: a path that starts with `@`, what a `List` of one holds and a text
+    with one in its braces; and no path is while the editor has no game types.
+  - A use says the parameters of its widget by name (`Tree_Param`, flat after `tree_link`): one
+    that goes to a node of it, also past another use, is an override of that node, one that goes
+    to its root is the use's; a use that does not say one takes it away. The visual editor shows
+    them in the Widget card and the widget's own in the Parameters card of its root (add, rename,
+    remove, the node and field each drives, the slot); a parameter moved or removed follows in the
+    files that use it (`widget_params_follow`).
 - `ui.capture` draws a `.ui` alone, as the stage builds it (game samples, device prompts and
   language chosen) but in a context of its own at the size at which the game designs it, in a UI
   texture and in a frame without the scene, and writes a PNG with the pixels of that size times the
@@ -199,11 +226,10 @@ changes nothing and says why.
   show a node in states and choose the screen's variant; what the nodes touch when appearing runs
   `seconds` before. It is what an agent looks at after writing an interface: the document's stage
   shows it scaled to its place.
-- `ui.style.set`, `ui.variant.set` and `ui.anim.set` create or change a named style, a variant and
-  states rule, or an animation (the keys are sorted by time); what they do not name stays.
-- `ui.paths` lists what a node can take at a point of the path; `ui.bind` binds or removes and
-  rejects a path that does not work saying what it takes; `ui.check` returns the problems of all
-  the `.ui`s; `ui.path.rename` rewrites a path prefix in all of them, also in the templates.
+- `ui.paths` lists what a node can take at a point of the path; `ui.write` binds it with the keys
+  `bind_*`, `data` and `fields` of the node; `ui.check` returns the problems of all the `.ui`s, the
+  paths the game lacks included; `ui.path.rename` rewrites a path prefix in all of them, also in the
+  templates.
 - The per-language texts: `ui.texts`, `ui.text.set` and the CSV ones.
 
 ## Document bar
@@ -231,16 +257,20 @@ that faces the camera) cards create the entity with the `.ui` chosen in the cont
 
 ## Verification
 
-`mirai test plugins/ui_inspector/editor`: insertion, deletion and drag in preorder, overrides that
-follow their instances, duplicating and pasting into another `.ui` with its rows, Make widget,
-unused rows, keys in order, renames, override fields, problems of a check and the preview.
+`mirai test cook/author`: insertion, deletion and drag in preorder, overrides that follow their
+instances, duplicating a node, unused rows, keys in order, renames, override fields, problems of
+a check, the document (`ui_document_test.odin`, and over files `ui_files_test.odin`) and the
+commands on a copy of the game template (`command_test.odin`).
+`mirai test plugins/ui_inspector/editor`: pasting into another `.ui` with its rows, Make widget,
+the texts of a copy and the preview.
 Over a project in the registry's memory, `project_files_test.odin`: the texts CSV
 (`texts_go_to_a_csv_and_back_with_commas_quotes_and_lines`,
 `a_csv_of_texts_says_why_it_refuses_a_language_the_game_lacks_and_rows_of_no_text`), the rename in
 the `.ui`s that use the widget
-(`a_renamed_node_renames_the_overrides_of_the_interfaces_that_use_its_widget`) and the incremental
+(`a_renamed_node_renames_the_overrides_of_the_interfaces_that_use_its_widget`), the incremental
 check
-(`the_check_of_interfaces_reads_again_only_what_changed_and_finds_what_the_full_check_finds`).
+(`the_check_of_interfaces_reads_again_only_what_changed_and_finds_what_the_full_check_finds`) and
+the paths `ui.write` refuses (`a_write_refuses_the_paths_the_game_lacks_and_changes_nothing`).
 The document is checked in the demo editor by API: `editor.document` opens a `.ui`,
-`editor.capture` shows it; the gestures (choosing in the preview, editing in place, Try) are tested
+`capture` shows it; the gestures (choosing in the preview, editing in place, Try) are tested
 by a person.

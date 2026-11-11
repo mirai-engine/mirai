@@ -12,6 +12,7 @@ import "core:sync"
 import "core:time"
 import "mirai:asset"
 import anim "mirai:std/anim"
+import lz_optimal "mirai:cook/compressor/lz"
 import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
@@ -22,9 +23,10 @@ import "mirai:std/subprocess"
 // The assets a game ships: of the assets folder of a project, the ones the
 // game can reach, as the runtime loads them fastest.
 //
-// What is reached starts at the roots: every scene and every table of game
-// data (.records, which the code reads by the type of its rows) of the
-// project and what cook.mirai names, the assets only code refers to. From them, everything an
+// What is reached starts at the roots: every scene, every prefab (code reaches
+// one only by instantiating it) and every table of game data (.records, which
+// the code reads by the type of its rows) of the project and what cook.mirai
+// names, the other assets only code refers to. From them, everything an
 // asset depends on, and so on. The rest stays behind and is listed in the
 // report. A texture that stores RGBA8 is written in the blocks of its use,
 // unless only interfaces show it, and the blocks are kept in the texture
@@ -57,7 +59,7 @@ Cook_Desc :: struct {
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
-    quick:bool,  // a cook that checks a change (a --dev game): asset.Pack.Quick in place of Ship
+    quick:bool,  // a cook that checks a change (a --dev game): lz_optimal.QUICK in place of SHIP
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
 
@@ -68,7 +70,7 @@ Cook_Import :: #type proc(source,folder:string,desc:^Cook_Desc,worker:jobs.Worke
 
 // How the assets of a cook are compressed.
 @(private="file")
-cook_pack :: proc(desc:Cook_Desc) -> asset.Pack {return .Quick if desc.quick else .Ship}
+cook_pack :: proc(desc:Cook_Desc) -> asset.Pack {return lz_optimal.QUICK if desc.quick else lz_optimal.SHIP}
 
 Cook_Error :: enum u8 {
     None,
@@ -205,7 +207,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         append(pending,at)
     }
     for file,at in files {
-        if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS) {root_add(reached,&pending,&report,u32(at))}
+        if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB || file.kind==asset.KIND_RECORDS) {root_add(reached,&pending,&report,u32(at))}
         // What a plugin brings is for its code, which no scene names.
         for folder in desc.plugins {
             if strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
@@ -604,7 +606,7 @@ scene_cook :: proc(resolver:^asset.Prefab_Resolver,types:^asset.Types,data:[]u8)
     file:asset.Asset
     if asset.asset_open(&file,data,context.temp_allocator)!=.None {return nil,false}
     defer asset.asset_close(&file)
-    if !asset.resolver_stale(resolver,&file) {return nil,true}
+    if !asset.resolver_stale(resolver,&file) {return nil,resolver.error==.None}
     scene:asset.Scene
     if asset.scene_from_asset(&scene,types,&file,context.temp_allocator)!=.None {return nil,false}
     defer asset.scene_destroy(&scene)

@@ -5,26 +5,43 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "mirai:project"
 
-// A test the sources of a package declare. here: its file builds for this system.
-Test_Declared :: struct {name,file:string,here:bool}
+// A test the sources of a package declare. here: its file builds for this
+// system. device: it reaches the device of the GPU tests (device_mark), told
+// only when asked.
+Test_Declared :: struct {name,file:string,here,device:bool}
 
 // The tests the sources of a folder declare, by file in the order of their
-// names; only those of file when it is given.
-test_declared :: proc(folder,file:string,allocator:=context.allocator) -> [dynamic]Test_Declared {
+// names; only those of files when some are given.
+test_declared :: proc(folder:string,files:[]string={},device:=false,allocator:=context.allocator) -> [dynamic]Test_Declared {
     declared:=make([dynamic]Test_Declared,allocator)
+    declarations:=make([dynamic]Declaration,context.temp_allocator)
     entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
     slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
     for entry in entries {
-        if entry.type!=.Regular || !strings.has_suffix(entry.name,".odin") || (file!="" && entry.name!=file) {continue}
+        if entry.type!=.Regular || !strings.has_suffix(entry.name,".odin") {continue}
+        listed:=len(files)==0 || test_file_among(files,entry.name)
+        if !listed && !device {continue}
         data,error:=os.read_entire_file(entry.fullpath,context.temp_allocator)
         if error!=nil {continue}
         here:=source_for_system(entry.name,string(data))
+        if device && here && strings.has_suffix(entry.name,"_test.odin") {declarations_add(&declarations,code_only(string(data)))}
+        if !listed {continue}
         for name in test_procedures(string(data),context.temp_allocator) {
             append(&declared,Test_Declared{name=strings.clone(name,allocator),file=strings.clone(entry.name,allocator),here=here})
         }
     }
+    if device {device_mark(declared[:],declarations[:])}
     return declared
+}
+
+// Whether a file of a package is one of those asked, as the system tells names apart.
+test_file_among :: proc(files:[]string,name:string) -> bool {
+    for file in files {
+        if project.path_same(file,name) {return true}
+    }
+    return false
 }
 
 // The procedures of an Odin source with the attribute test: @(test), @test or
@@ -34,23 +51,8 @@ test_procedures :: proc(text:string,allocator:=context.allocator) -> [dynamic]st
     marked:=false
     rest:=code_only(text)
     for line in strings.split_lines_iterator(&rest) {
-        code:=strings.trim_space(line)
-        for strings.has_prefix(code,"@") {
-            attributes:string
-            if strings.has_prefix(code,"@(") {
-                close:=strings.index_byte(code,')')
-                if close<0 {break}
-                attributes,code=code[2:close],code[close+1:]
-            } else {
-                end:=1
-                for end<len(code) && identifier_byte(code[end]) {end+=1}
-                attributes,code=code[1:end],code[end:]
-            }
-            for attribute in strings.split_iterator(&attributes,",") {
-                if strings.trim_space(attribute)=="test" {marked=true}
-            }
-            code=strings.trim_space(code)
-        }
+        code,test:=attributes_skip(strings.trim_space(line))
+        marked||=test
         if !marked || code=="" || strings.has_prefix(code,"//") {continue}
         marked=false
         name,_,declaration:=strings.partition(code,"::")
@@ -58,6 +60,128 @@ test_procedures :: proc(text:string,allocator:=context.allocator) -> [dynamic]st
         if name!="" && strings.has_prefix(strings.trim_space(declaration),"proc") && identifier(name) {append(&names,strings.clone(name,allocator))}
     }
     return names
+}
+
+// A line of code without the attributes it begins with. test: one of them is test.
+@(private="file")
+attributes_skip :: proc(line:string) -> (code:string,test:bool) {
+    code=line
+    for strings.has_prefix(code,"@") {
+        attributes:string
+        if strings.has_prefix(code,"@(") {
+            close:=strings.index_byte(code,')')
+            if close<0 {break}
+            attributes,code=code[2:close],code[close+1:]
+        } else {
+            end:=1
+            for end<len(code) && identifier_byte(code[end]) {end+=1}
+            attributes,code=code[1:end],code[end:]
+        }
+        for attribute in strings.split_iterator(&attributes,",") {
+            if strings.trim_space(attribute)=="test" {test=true}
+        }
+        code=strings.trim_space(code)
+    }
+    return
+}
+
+// What a source names to reach the device of the GPU tests: the package of
+// the one they share, and the procedure of rhi that makes one.
+DEVICE_PACKAGE :: "shared_device"
+DEVICE_CREATE :: "device_create"
+
+// A declaration at the top of a source and its code, from the attributes
+// above its name to the next declaration.
+@(private="file")
+Declaration :: struct {name,code:string}
+
+// Adds the declarations at the top of a source, and those of the when blocks
+// there. code: the source with its comments and literals blanked.
+@(private="file")
+declarations_add :: proc(declarations:^[dynamic]Declaration,code:string) {
+    // whens: the when blocks at the top that are open; a declaration is at their depth.
+    depth,whens:=0,0
+    name:=""
+    start:=-1
+    at:=0
+    for at<len(code) {
+        end:=strings.index_byte(code[at:],'\n')
+        end=len(code) if end<0 else at+end+1
+        line:=strings.trim_space(code[at:end])
+        opens:=false
+        if depth==whens {
+            declared:=""
+            if rest,_:=attributes_skip(line);rest!="" {
+                size:=0
+                for size<len(rest) && identifier_byte(rest[size]) {size+=1}
+                if identifier(rest[:size]) && strings.has_prefix(strings.trim_space(rest[size:]),":") {declared=rest[:size]}
+            }
+            switch {
+            case strings.has_prefix(line,"when "):
+                opens=true
+            case whens>0 && strings.has_prefix(line,"}"):
+                whens-=1
+                opens=strings.has_suffix(line,"{")
+            case declared!="" || strings.has_prefix(line,"@"):
+                if name!="" {
+                    append(declarations,Declaration{name,code[start:at]})
+                    name,start="",-1
+                }
+                if start<0 {start=at}
+                name=declared
+            }
+        }
+        for c in transmute([]u8)line {
+            switch c {
+            case '{','(','[': depth+=1
+            case '}',')',']': depth-=1
+            }
+        }
+        if opens && depth==whens+1 {whens+=1}
+        at=end
+    }
+    if name!="" {append(declarations,Declaration{name,code[start:]})}
+}
+
+// Marks the tests that reach the device of the GPU tests: those whose
+// declaration names DEVICE_PACKAGE or DEVICE_CREATE, or a declaration of the
+// test files of their folder that does. What is no test file does not count:
+// a program makes a device or not by what it is asked at run time, and a test
+// that asks it for one holds the shared one. Told from the text, like the
+// tests themselves: a name stands for every declaration with it, and a member
+// of something else (x.name) names none.
+@(private="file")
+device_mark :: proc(declared:[]Test_Declared,declarations:[]Declaration) {
+    reaching:=make(map[string]bool,context.temp_allocator)
+    reaching[DEVICE_PACKAGE]=true
+    reaching[DEVICE_CREATE]=true
+    for grew:=true;grew; {
+        grew=false
+        for declaration in declarations {
+            if declaration.name in reaching || !code_names(declaration.code,reaching) {continue}
+            reaching[declaration.name]=true
+            grew=true
+        }
+    }
+    for &test in declared {test.device=test.name in reaching}
+}
+
+// Whether code names one of names, or the procedure of rhi that makes a device.
+@(private="file")
+code_names :: proc(code:string,names:map[string]bool) -> bool {
+    i:=0
+    for i<len(code) {
+        if !identifier_byte(code[i]) {i+=1;continue}
+        start:=i
+        for i<len(code) && identifier_byte(code[i]) {i+=1}
+        token:=code[start:i]
+        if start>0 && code[start-1]=='.' {
+            if token==DEVICE_CREATE && strings.has_suffix(code[:start],"rhi.") {return true}
+            continue
+        }
+        if token in names {return true}
+    }
+    return false
 }
 
 // An Odin source with what is inside its comments and literals blanked and

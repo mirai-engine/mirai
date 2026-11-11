@@ -10,9 +10,9 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-Morph_Inspect_Params :: struct {id:base.Entity_Id,entity:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256"`,diagnostics:bool `mirai:"optional"`}
+Morph_Inspect_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,handle:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
 Morph_Set_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     name:[64]u8 `mirai:"text,label=A target of the mesh; an instance weights up to 16"`,
     value:f32 `mirai:"optional,label=Any finite weight"`,
     mode:anim.Morph_Weight_Mode `mirai:"optional"`,
@@ -41,7 +41,7 @@ morph_register :: proc(s:^editor.Session) {
 @(private)
 morph_mesh_open :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity,file:^asset.Asset) -> (view:asset.Mesh_View,id:base.Asset_Id,ok:bool) {
     mesh,present:=editor.entity_get(w,e,erender.Mesh_Renderer)
-    if !present || mesh.mesh=={} {authoring_failure(call,"id","Missing_Mesh","an entity with a Mesh_Renderer and a mesh asset","missing mesh","Select the mesh instance whose targets should be weighted");return}
+    if !present || mesh.mesh=={} {authoring_failure(call,"entity","Missing_Mesh","an entity with a Mesh_Renderer and a mesh asset","missing mesh","Select the mesh instance whose targets should be weighted");return}
     if !asset_open(s,call,mesh.mesh,file) {return}
     error:asset.Error;view,error=asset.mesh_view(file,&s.app.assets.types)
     if error!=.None {authoring_failure(call,"mesh","Invalid_Asset","a valid .mesh asset",fmt.tprintf("%v",error),"The mesh asset is invalid");return}
@@ -65,7 +65,7 @@ morph_instance_source :: proc(w:core.World_Ref,e:core.Entity,config:anim.Morph_W
 @(private)
 morph_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Morph_Inspect_Params)
-    w,e,okay:=subject(s,call,p.id,p.entity);if !okay {return}
+    w,e,okay:=subject(s,call,p.entity[:],p.handle);if !okay {return}
     file:asset.Asset;defer asset.asset_close(&file)
     view,id,loaded:=morph_mesh_open(s,call,w,e,&file);if !loaded {return}
     config,_:=editor.entity_get(w,e,anim.Morph_Weights)
@@ -76,7 +76,7 @@ morph_inspect :: proc(s:^editor.Session,call:^api.Call) {
     state,available:=anim.animation_morph_state(core.world_storage_of(w,anim.Morph_Playback),e)
     error,unknown:=anim.morph_weights_check(config,view.morphs)
     evaluated:=available && state.mesh==id && state.stamp==stamp && len(state.weights)==len(view.morphs) && error!=.Invalid_Weights
-    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.id)
+    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))
     api.write_key(out,"mesh");serial.write_u8(out,'"');serial.text_write_asset_id(out,id);serial.write_u8(out,'"')
     api.write_key(out,"source");api.write_id(out,morph_entity_id(w,source))
     api.write_key(out,"source_kind");authoring_write_value(call,&kind,type_info_of(Morph_Source_Kind))
@@ -117,11 +117,11 @@ morph_inspect :: proc(s:^editor.Session,call:^api.Call) {
 @(private)
 morph_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Morph_Set_Params)
-    if editor.watching(s) {authoring_failure(call,"mode","Edit_Blocked","Edit, Play or Simulation","Watch","A watched world cannot be changed",api.SERVER_ERROR);return}
+    if editor.watching(s) {authoring_failure(call,"mode","Edit_Blocked","Edit, Play or Simulation","Watch","A watched world cannot be changed",fix="Stop watching the run first");return}
     name:=base.text_get(p.name[:])
     if name=="" {authoring_failure(call,"name","Required","the name of a target","empty","Use animation.inspect parts Morphs to choose a target by name");return}
     if !finite(p.value) || p.mode>max(anim.Morph_Weight_Mode) {authoring_failure(call,"value","Invalid_Value","a finite weight and a valid mode",fmt.tprintf("%v",p.value),"The target weight or mode is invalid");return}
-    w,e,okay:=subject(s,call,p.id);if !okay {return}
+    w,e,okay:=subject(s,call,p.entity[:]);if !okay {return}
     table:=core.world_table_of(w,anim.Morph_Weights)
     if table==nil {authoring_failure(call,"Morph_Weights","Unavailable","the Morph_Weights table","missing table","The project does not have the animation plugin's morph weights",api.SERVER_ERROR);return}
     config,present:=editor.entity_get(w,e,anim.Morph_Weights)
@@ -141,5 +141,5 @@ morph_set :: proc(s:^editor.Session,call:^api.Call) {
     if !edit_begin(s,call,"Set morph weight") {return}
     if changed {core.add(table,e,config)}
     if !edit_end(s,call,w,true) {return}
-    api.call_result(call,Morph_Set_Result)^={id=p.id,name=p.name,value=p.value,mode=p.mode,removed=p.remove}
+    api.call_result(call,Morph_Set_Result)^={id=editor.api_entity_id(w,e),name=p.name,value=p.value,mode=p.mode,removed=p.remove}
 }

@@ -131,7 +131,7 @@ pose_stride_warp_scales_each_foot_from_its_hip_and_preserves_the_source_knee_sid
 pose_stride_warp_keeps_nearly_straight_knees_on_the_source_side_when_shortening_the_step :: proc(t:^testing.T) {
     parents:=[4]i32{-1,0,1,2};names:=[4]u64{1,2,3,4}
     rest:=[4]math.Transform{math.TRANSFORM_IDENTITY,math.TRANSFORM_IDENTITY,math.TRANSFORM_IDENTITY,math.TRANSFORM_IDENTITY}
-    rest[0].position={3,1,-2};rest[2].position={.002,-.5,-.02};rest[3].position={-.002,-.5,-.08}
+    rest[0].position={3,1,-2};rest[2].position={-.002,-.5,.02};rest[3].position={.002,-.5,.08}
     legs:=[1]Pose_Warp_Limb{{hip=1,knee=2,foot=3}}
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator
     valid,front:=true,true
@@ -139,7 +139,7 @@ pose_stride_warp_keeps_nearly_straight_knees_on_the_source_side_when_shortening_
     for angle,i in ([2]f32{1.3,-.9}) {
         rest[0].rotation=math.quat_axis_angle({0,1,0},angle)
         skeleton:=Skeleton{parents[:],names[:],rest[:]};local:=rest;world:[4]math.Transform
-        forward:=math.quat_rotate(rest[0].rotation,{0,0,1})
+        forward:=math.quat_forward(rest[0].rotation)
         valid &&=pose_warp(skeleton,local[:],world[:],{pelvis=0,legs=legs[:],up={0,1,0},direction=forward,stride=.05,weight=1})
         sides[i]=linalg.dot(world[2].position-world[1].position,forward)
         front &&=sides[i]>.02

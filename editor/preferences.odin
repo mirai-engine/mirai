@@ -1,11 +1,11 @@
 package editor
 
 import "base:runtime"
-import "core:hash"
 import "core:mem"
 import "core:strings"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -71,8 +71,8 @@ marks_list :: proc(s:^Session,navigation:^Content_Navigation) -> []project.Setti
 
 @(private)
 preferences_hash :: proc(list:[]project.Setting) -> (h:u64) {
-    h=0xcbf29ce484222325
-    for setting in list {h=hash.fnv64a(([^]u8)(setting.value)[:setting.info.size],h)}
+    h=base.HASH_SEED
+    for setting in list {h=base.hash64(([^]u8)(setting.value)[:setting.info.size],h)}
     return
 }
 
@@ -152,6 +152,10 @@ preferences_close :: proc(s:^Session) {
 
 // ---------------------------------------------------------------- API
 
+Api_Preferences_Get_Params :: struct {
+    sections:[API_SECTIONS][64]u8 `mirai:"text,optional,label=Only these areas, by the names preferences gives them; none: every area"`,
+}
+
 Api_Preferences :: struct {
     file:[512]u8 `mirai:"text,label=The file that keeps them; empty: this editor keeps none (--headless without --preferences) and a change lasts until it closes"`,
     preferences:u8 `mirai:"any,label=Every value in effect: a section per area of the editor with its fields"`,
@@ -163,12 +167,20 @@ API_PREFERENCES_SET_SCHEMA :: `{"type":"object","properties":{"preferences":{"ty
 
 @(private)
 preferences_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",result=Api_Preferences,writes_result=true,flags={.Read_Only},run=api_preferences_get})
-    api_register(s,st,{name="preferences.set",params_schema=API_PREFERENCES_SET_SCHEMA,summary="Changes preferences of the editor; they take effect at once and the file keeps what differs from the values of the code.",result=Api_Preferences,writes_result=true,run=api_preferences_set})
+    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=Api_Preferences_Get_Params,result=Api_Preferences,writes_result=true,flags={.Read_Only},run=api_preferences_get})
+    api_register(s,st,{name="preferences.set",params_schema=API_PREFERENCES_SET_SCHEMA,summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=Api_Preferences,writes_result=true,run=api_preferences_set})
 }
 
 @(private)
 api_preferences_get :: proc(s:^Session,call:^api.Call) {
+    keep,named:=api_sections_kept(call,api.call_params(call,Api_Preferences_Get_Params).sections[:],preferences_list(s),"preference area")
+    if named {api_preferences_write(s,call,keep)}
+}
+
+// The answer of preferences.get for the areas of a mask (nil: all), and of
+// preferences.set for those it changed.
+@(private)
+api_preferences_write :: proc(s:^Session,call:^api.Call,keep:[]bool) {
     list:=preferences_list(s)
     code:=project.settings_clone(list,context.temp_allocator)
     if len(code)!=len(list) {
@@ -180,9 +192,10 @@ api_preferences_get :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(out,`{"file": `)
     serial.text_write_string(out,s.preferences!=nil?s.preferences.file:"")
     serial.text_write_raw(out,`, "preferences": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(list,{},{},context.temp_allocator)))
+    shown:=settings_kept(list,keep)
+    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,{},{},context.temp_allocator)))
     serial.text_write_raw(out,`, "kept": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(list,code,{},context.temp_allocator)))
+    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,settings_kept(code,keep),{},context.temp_allocator)))
     serial.write_u8(out,'}')
 }
 
@@ -239,5 +252,5 @@ api_preferences_set :: proc(s:^Session,call:^api.Call) {
     }
     for area,i in next {mem.copy(list[i].value,area.value,area.info.size)}
     preferences_save(s)
-    api_preferences_get(s,call)
+    api_preferences_write(s,call,settings_touched(list,sections))
 }

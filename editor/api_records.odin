@@ -13,6 +13,7 @@ import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/records"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -50,7 +51,7 @@ Records_Api_Context :: struct {
     text:serial.Type_Index,  // of core.Text; TYPE_NONE when the schema has none
     refs:[]Records_Api_Ref_Type,
     tables:[]Records_Api_Rows,
-    edit:^Records_Edit,      // the table that changes: its rows stand for those of its file in tables
+    edit:^records.Edit,      // the table that changes: its rows stand for those of its file in tables
     registry:^asset.Registry, // nil: assets go by id only
     default:[]u8,            // a new row of the type; nil: zeros
 }
@@ -171,18 +172,17 @@ Api_Records_Export :: struct {
 @(private) RECORDS_API_SET_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,` + RECORDS_API_P_VALUES + `,` + RECORDS_API_P_TEXTS + `,"name":{"type":"string","description":"A new name for the row"}},"required":["records","row"],"additionalProperties":false}`
 @(private) RECORDS_API_ADD_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"name":{"type":"string","description":"The name of the new row: a word of ASCII letters, digits and _, unique in the table"},` + RECORDS_API_P_VALUES + `,` + RECORDS_API_P_TEXTS + `,"after":{"type":"string","description":"The row it goes after; without it, at the end"}},"required":["records","name"],"additionalProperties":false}`
 @(private) RECORDS_API_REMOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"rows":{"type":"array","items":{"type":"string"},"description":"The names of the rows to remove"}},"required":["records","rows"],"additionalProperties":false}`
-@(private) RECORDS_API_RENAME_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,"name":{"type":"string","description":"Its new name: a word of ASCII letters, digits and _, unique in the table"}},"required":["records","row","name"],"additionalProperties":false}`
-@(private) RECORDS_API_MOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,"to":{"type":"integer","minimum":0,"description":"The place it goes to, from 0, in the order records.inspect lists the rows"}},"required":["records","row","to"],"additionalProperties":false}`
+@(private) RECORDS_API_MOVE_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,` + RECORDS_API_P_ROW + `,"after":{"type":"string","description":"The row it goes right after; empty: it goes first"}},"required":["records","row","after"],"additionalProperties":false}`
 @(private) RECORDS_API_IMPORT_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"file":{"type":"string","description":"A CSV file (UTF-8, comma separated, its first row the columns as records.export writes them): its path from the root of the project, or absolute"}},"required":["records","file"],"additionalProperties":false}`
 @(private) RECORDS_API_EXPORT_SCHEMA :: `{"type":"object","properties":{` + RECORDS_API_P_RECORDS + `,"file":{"type":"string","description":"The CSV file to write: its path from the root of the project, or absolute; an existing one is replaced"}},"required":["records","file"],"additionalProperties":false}`
 
-Records_Api_Key :: enum u8 {Records,Path,Type,Row,Name,After,To,File,Values,Texts,Rows}
+Records_Api_Key :: enum u8 {Records,Path,Type,Row,Name,After,File,Values,Texts,Rows}
 Records_Api_Keys :: bit_set[Records_Api_Key;u16]
 
 @(private)
 RECORDS_API_KEY_NAMES :: [Records_Api_Key]string{
     .Records="records",.Path="path",.Type="type",.Row="row",.Name="name",.After="after",
-    .To="to",.File="file",.Values="values",.Texts="texts",.Rows="rows",
+    .File="file",.Values="values",.Texts="texts",.Rows="rows",
 }
 
 @(private)
@@ -193,7 +193,6 @@ RECORDS_API_KEY_HINTS :: [Records_Api_Key]string{
     .Row="the name of the row; records.inspect lists them",
     .Name="the name of the row, a word of ASCII letters, digits and _",
     .After="the row it goes after",
-    .To="the place the row goes to, from 0",
     .File="the CSV file, by its path from the root of the project or absolute",
     .Values="the fields of the row",
     .Texts="the texts of its core.Text fields",
@@ -202,7 +201,6 @@ RECORDS_API_KEY_HINTS :: [Records_Api_Key]string{
 
 Records_Api_Params :: struct {
     records,path,type,row,name,after,file:string,
-    to:int,
     values,texts:string, // the text of the object
     rows:[]string,
     given:Records_Api_Keys,
@@ -227,7 +225,7 @@ records_api_params :: proc(call:^api.Call,method:string,keys,required:Records_Ap
         if !known {
             taken:=make([dynamic]string,context.temp_allocator)
             for each in keys {append(&taken,names[each])}
-            rpc_fail(&a,"%s is not a parameter of %s: it takes %s",key,method,strings.join(taken[:],", ",context.temp_allocator))
+            rpc_fail_type(&a,"%s is not a parameter of %s: it takes %s",key,method,strings.join(taken[:],", ",context.temp_allocator))
             return
         }
         p.given+={k}
@@ -235,9 +233,6 @@ records_api_params :: proc(call:^api.Call,method:string,keys,required:Records_Ap
         case .Values,.Texts:
             text:=rpc_raw(&a) or_return
             if k==.Values {p.values=text} else {p.texts=text}
-        case .To:
-            n:=rpc_unsigned(&a,"to") or_return
-            p.to=int(min(n,u64(max(i32))))
         case .Rows:
             list:=make([dynamic]string,context.temp_allocator)
             if !serial.text_accept(&a.r,'[') {return p,rpc_fail(&a,"rows must be a list of names of rows")}
@@ -254,7 +249,7 @@ records_api_params :: proc(call:^api.Call,method:string,keys,required:Records_Ap
             p.rows=list[:]
         case:
             text,read:=serial.text_string(&a.r)
-            if !read {return p,rpc_fail(&a,"%s must be a string: %s",names[k],hints[k])}
+            if !read {return p,rpc_fail_type(&a,"%s must be a string: %s",names[k],hints[k])}
             text=strings.clone(text,context.temp_allocator)
             #partial switch k {
             case .Records: p.records=text
@@ -672,7 +667,7 @@ records_api_row_cells :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf,c
 // Updates the rows of the table c.edit that the records of a CSV name and adds
 // the others at the end, a row at a time: a record with a cell that does not
 // read changes nothing. default: the bytes of a new row.
-records_api_import_rows :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Records_Api_Leaf,columns:[]Records_Api_Column,records:[][]string,lines:[]int,default:[]u8) -> (updated,added:int,rejected:[]Records_Api_Rejected) {
+records_api_import_rows :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Records_Api_Leaf,columns:[]Records_Api_Column,parsed:[][]string,lines:[]int,default:[]u8) -> (updated,added:int,rejected:[]Records_Api_Rejected) {
     e:=c.edit
     out:=make([dynamic]Records_Api_Rejected,context.temp_allocator)
     name_column:=0
@@ -680,7 +675,7 @@ records_api_import_rows :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Recor
         if column.leaf<0 {name_column=i}
     }
     scratch:=make([]u8,e.info.size,context.temp_allocator)
-    for record,at in records {
+    for record,at in parsed {
         line:=lines[at]
         name:=strings.trim_space(record[name_column]) if name_column<len(record) else ""
         if name=="" {
@@ -691,26 +686,26 @@ records_api_import_rows :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Recor
             append(&out,Records_Api_Rejected{line,name,fmt.tprintf("it has %d cells and the first row %d: put the text of a cell with commas in double quotes",len(record),len(columns))})
             continue
         }
-        row:=records_find(e,name)
-        if row>=0 {copy(scratch,records_row(e,row))} else {copy(scratch,default)}
+        row:=records.row_find(e,name)
+        if row>=0 {copy(scratch,records.row_bytes(e,row))} else {copy(scratch,default)}
         if message:=records_api_row_cells(c,leaves,columns,record,scratch);message!="" {
             append(&out,Records_Api_Rejected{line,name,message})
             continue
         }
         if row<0 {
             message:string
-            if row,message=records_row_add(s,e,name,scratch);message!="" {
+            if row,message=records.row_add(e,&s.id_state,name,scratch);message!="" {
                 append(&out,Records_Api_Rejected{line,name,message})
                 continue
             }
             added+=1
         } else {
-            copy(records_row(e,row),scratch)
+            copy(records.row_bytes(e,row),scratch)
             updated+=1
         }
         for column,i in columns {
             if column.leaf<0 || i>=len(record) || record[i]=="" || leaves[column.leaf].kind!=.Text {continue}
-            records_text_set(s,e,row,leaves[column.leaf].offset,column.language,record[i])
+            records.text_set(e,&s.id_state,row,leaves[column.leaf].offset,column.language,record[i])
         }
     }
     return updated,added,out[:]
@@ -730,7 +725,7 @@ records_api_csv_cell :: proc(b:^strings.Builder,cell:string) {
 }
 
 // The languages of the translations of a table, in order.
-records_api_languages :: proc(e:^Records_Edit) -> []string {
+records_api_languages :: proc(e:^records.Edit) -> []string {
     out:=make([dynamic]string,context.temp_allocator)
     for &entry in e.texts {
         language:=serial.text_field(entry.language[:])
@@ -761,9 +756,9 @@ records_api_csv :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf) -> (te
         }
     }
     strings.write_byte(&b,'\n')
-    for row in 0..<records_count(e) {
-        bytes:=records_row(e,row)
-        records_api_csv_cell(&b,records_name(e,row))
+    for row in 0..<records.row_count(e) {
+        bytes:=records.row_bytes(e,row)
+        records_api_csv_cell(&b,records.row_name(e,row))
         for &leaf in leaves {
             strings.write_byte(&b,',')
             if leaf.kind!=.Text {
@@ -771,12 +766,12 @@ records_api_csv :: proc(c:^Records_Api_Context,leaves:[]Records_Api_Leaf) -> (te
                 continue
             }
             id:=(cast(^core.Text)&bytes[leaf.offset]).id
-            source,_:=records_text_get(e,id,"")
+            source,_:=records.text_get(e,id,"")
             if id!=0 {records_api_csv_cell(&b,source)}
             for language in languages {
                 strings.write_byte(&b,',')
                 if id==0 {continue}
-                translated,_:=records_text_get(e,id,language)
+                translated,_:=records.text_get(e,id,language)
                 records_api_csv_cell(&b,translated)
             }
         }
@@ -995,7 +990,7 @@ records_api_texts_put :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Records
     for text in texts {
         at:=records_api_leaf_find(leaves,text.path)
         if at<0 {continue}
-        records_text_set(s,c.edit,row,leaves[at].offset,text.language,text.text)
+        records.text_set(c.edit,&s.id_state,row,leaves[at].offset,text.language,text.text)
     }
 }
 
@@ -1004,7 +999,7 @@ records_api_texts_put :: proc(s:^Session,c:^Records_Api_Context,leaves:[]Records
 // The table the params name: its path under the assets folder, with or
 // without .records, or its id; loaded as it is now into e.
 @(private)
-records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^Records_Edit) -> bool {
+records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^records.Edit) -> bool {
     a:=s.app.assets
     if a==nil || s.app.info==nil || s.app.info.schema==nil {
         api.call_fail(call,api.SERVER_ERROR,"The editor has no project with a world: open one to edit its tables")
@@ -1034,14 +1029,14 @@ records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^Records_Edit) 
 // What the rows of e read and write by: the schema of the world and the
 // tables of every type a field of them names.
 @(private)
-records_api_context :: proc(s:^Session,e:^Records_Edit) -> (c:Records_Api_Context,leaves:[]Records_Api_Leaf) {
+records_api_context :: proc(s:^Session,e:^records.Edit) -> (c:Records_Api_Context,leaves:[]Records_Api_Leaf) {
     info:=s.app.info
     ws:=info.schema
-    c={schema=&ws.schema,type=ws.records[e.record].type,name=records_type_name(info,e.record),text=serial.TYPE_NONE,edit=e,registry=&s.app.assets.registry}
+    c={schema=&ws.schema,type=ws.records[e.record].type,name=records.type_name(info,e.record),text=serial.TYPE_NONE,edit=e,registry=&s.app.assets.registry}
     if t,found:=ws.schema.lookup[core.Text];found {c.text=t}
     refs:=make([dynamic]Records_Api_Ref_Type,context.temp_allocator)
     for &r,i in info.records {
-        if t,found:=ws.schema.lookup[r.ref];found {append(&refs,Records_Api_Ref_Type{t,i,records_type_name(info,i)})}
+        if t,found:=ws.schema.lookup[r.ref];found {append(&refs,Records_Api_Ref_Type{t,i,records.type_name(info,i)})}
     }
     c.refs=refs[:]
     c.default=records_api_default(s,e)
@@ -1057,7 +1052,7 @@ records_api_context :: proc(s:^Session,e:^Records_Edit) -> (c:Records_Api_Contex
         for &file in records_tables(s,leaf.record) {
             entry:=Records_Api_Rows{record=leaf.record,id=file.id,path=file.path}
             if file.id!=e.id {
-                loaded:Records_Edit
+                loaded:records.Edit
                 if records_edit_load(s,file.id,&loaded,context.temp_allocator)!="" {continue}
                 entry.ids,entry.names=loaded.ids[:],loaded.names[:]
             }
@@ -1070,7 +1065,7 @@ records_api_context :: proc(s:^Session,e:^Records_Edit) -> (c:Records_Api_Contex
 
 // The bytes of a new row of the table's type: its default, or zeros.
 @(private)
-records_api_default :: proc(s:^Session,e:^Records_Edit) -> []u8 {
+records_api_default :: proc(s:^Session,e:^records.Edit) -> []u8 {
     default:=make([]u8,e.info.size,context.temp_allocator)
     if r:=&s.app.info.records[e.record];r.default!=nil {
         aligned,_:=mem.alloc_bytes(max(e.info.size,1),max(e.info.align,16),context.temp_allocator)
@@ -1089,7 +1084,7 @@ records_api_table_write :: proc(s:^Session,out:^serial.Writer,c:^Records_Api_Con
     api.write_text(out,"type",c.name)
     api.write_key(out,"rows")
     serial.write_u8(out,'[')
-    count:=all ? records_count(e) : len(rows)
+    count:=all ? records.row_count(e) : len(rows)
     for i in 0..<count {
         if i>0 {serial.write_u8(out,',')}
         records_api_row_write(out,c,leaves,all ? i : rows[i])
@@ -1099,10 +1094,10 @@ records_api_table_write :: proc(s:^Session,out:^serial.Writer,c:^Records_Api_Con
 
 records_api_row_write :: proc(out:^serial.Writer,c:^Records_Api_Context,leaves:[]Records_Api_Leaf,row:int) {
     e:=c.edit
-    bytes:=records_row(e,row)
+    bytes:=records.row_bytes(e,row)
     serial.text_write_raw(out,`{"id":`)
     serial.text_write_uint(out,e.ids[row])
-    api.write_text(out,"name",records_name(e,row))
+    api.write_text(out,"name",records.row_name(e,row))
     api.write_key(out,"values")
     serial.text_write(out,c.schema,c.type,bytes,.Line)
     first:=true
@@ -1137,7 +1132,7 @@ records_api_row_write :: proc(out:^serial.Writer,c:^Records_Api_Context,leaves:[
 
 // Writes the table as one step of the history; false with the call failed.
 @(private)
-records_api_publish :: proc(s:^Session,call:^api.Call,e:^Records_Edit,label:string) -> bool {
+records_api_publish :: proc(s:^Session,call:^api.Call,e:^records.Edit,label:string) -> bool {
     if !api_edit_begin(s,call,label) {return false}
     problem:=records_edit_publish(s,e,label)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem)}
@@ -1145,8 +1140,8 @@ records_api_publish :: proc(s:^Session,call:^api.Call,e:^Records_Edit,label:stri
 }
 
 @(private)
-records_api_row_named :: proc(call:^api.Call,e:^Records_Edit,name:string) -> int {
-    row:=records_find(e,name)
+records_api_row_named :: proc(call:^api.Call,e:^records.Edit,name:string) -> int {
+    row:=records.row_find(e,name)
     if row<0 {api.call_failf(call,api.INVALID_PARAMS,"the table has no row %q: records.inspect lists its rows",name)}
     return row
 }
@@ -1170,7 +1165,6 @@ records_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="records.set",params_schema=RECORDS_API_SET_SCHEMA,summary="Changes the values, the texts or the name of a row of a table of game data.",result=Api_Records_Table,writes_result=true,run=api_records_set})
     api_register(s,st,{name="records.add",params_schema=RECORDS_API_ADD_SCHEMA,summary="Adds a row to a table of game data with the defaults of its type and the values and texts given.",result=Api_Records_Table,writes_result=true,run=api_records_add})
     api_register(s,st,{name="records.remove",params_schema=RECORDS_API_REMOVE_SCHEMA,summary="Removes rows of a table of game data by name; the references to them are left as they are.",result=Api_Records_Removed,writes_result=true,flags={.Destructive},run=api_records_remove})
-    api_register(s,st,{name="records.rename",params_schema=RECORDS_API_RENAME_SCHEMA,summary="Renames a row of a table of game data; its id, which references keep, stays.",result=Api_Records_Table,writes_result=true,run=api_records_rename})
     api_register(s,st,{name="records.move",params_schema=RECORDS_API_MOVE_SCHEMA,summary="Moves a row of a table of game data to another place of its order; its id stays.",result=Api_Records_Table,writes_result=true,run=api_records_move})
     api_register(s,st,{name="records.import",params_schema=RECORDS_API_IMPORT_SCHEMA,summary="Updates the rows of a table of game data from a CSV file by their names and adds the rows it lacks, as one step of the history.",result=Api_Records_Import,writes_result=true,run=api_records_import})
     api_register(s,st,{name="records.export",params_schema=RECORDS_API_EXPORT_SCHEMA,summary="Writes the rows of a table of game data to a CSV file that records.import reads back.",result=Api_Records_Export,writes_result=true,flags={.Idempotent},run=api_records_export})
@@ -1187,7 +1181,7 @@ api_records_types :: proc(s:^Session,call:^api.Call) {
         for &r,index in info.records {
             if index>0 {serial.write_u8(out,',')}
             serial.text_write_raw(out,`{"type":`)
-            serial.text_write_string(out,records_type_name(info,index))
+            serial.text_write_string(out,records.type_name(info,index))
             if r.description!="" {api.write_text(out,"description",r.description)}
             api.write_key(out,"fields")
             serial.write_u8(out,'[')
@@ -1212,7 +1206,7 @@ api_records_types :: proc(s:^Session,call:^api.Call) {
                         }
                         break
                     }
-                    if named:=core.record_of_ref(info,v.types[i].id);named>=0 {api.write_text(out,"records",records_type_name(info,named))}
+                    if named:=core.record_of_ref(info,v.types[i].id);named>=0 {api.write_text(out,"records",records.type_name(info,named))}
                     for description in r.fields {
                         if description.name==name && description.text!="" {api.write_text(out,"description",description.text)}
                     }
@@ -1229,9 +1223,9 @@ api_records_types :: proc(s:^Session,call:^api.Call) {
                     serial.text_write_asset_id(out,file.id)
                     serial.write_u8(out,'"')
                     api.write_text(out,"path",file.path)
-                    loaded:Records_Edit
+                    loaded:records.Edit
                     rows:=0
-                    if records_edit_load(s,file.id,&loaded,context.temp_allocator)=="" {rows=records_count(&loaded)}
+                    if records_edit_load(s,file.id,&loaded,context.temp_allocator)=="" {rows=records.row_count(&loaded)}
                     api.write_int(out,"rows",i64(rows))
                     serial.write_u8(out,'}')
                 }
@@ -1251,7 +1245,7 @@ api_records_create :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,"The editor has no project with a world: open one to make tables")
         return
     }
-    index:=records_type_index(info,p.type)
+    index:=records.type_index(info,p.type)
     if index<0 {
         api.call_failf(call,api.INVALID_PARAMS,"%q is not a record type of the project: records.types lists them as library.Name; a struct marked @(record) is one once the project builds",p.type)
         return
@@ -1266,8 +1260,8 @@ api_records_create :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"%s already exists: records.set and records.add change it",path)
         return
     }
-    e:Records_Edit
-    records_edit_new(s,index,asset_id_new(s),file,&e,context.temp_allocator)
+    e:records.Edit
+    records.create(s.app.info,index,asset_id_new(s),file,&e,context.temp_allocator)
     if !records_api_publish(s,call,&e,"Create records") {return}
     host.assets_scan(s.app.assets)
     c,leaves:=records_api_context(s,&e)
@@ -1278,7 +1272,7 @@ api_records_create :: proc(s:^Session,call:^api.Call) {
 api_records_inspect :: proc(s:^Session,call:^api.Call) {
     p,read:=records_api_params(call,"records.inspect",{.Records,.Rows},{.Records})
     if !read {return}
-    e:Records_Edit
+    e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
     c,leaves:=records_api_context(s,&e)
     rows:=make([dynamic]int,context.temp_allocator)
@@ -1294,15 +1288,15 @@ api_records_inspect :: proc(s:^Session,call:^api.Call) {
 @(private)
 records_api_row_put :: proc(s:^Session,call:^api.Call,c:^Records_Api_Context,leaves:[]Records_Api_Leaf,row:int,p:^Records_Api_Params) -> bool {
     texts:=make([dynamic]Records_Api_Text,context.temp_allocator)
-    value:=slice.clone(records_row(c.edit,row),context.temp_allocator)
+    value:=slice.clone(records.row_bytes(c.edit,row),context.temp_allocator)
     message:=records_api_values_put(c,value,p.values,&texts)
     if message=="" {message=records_api_texts_read(p.texts,&texts)}
     if message=="" {message=records_api_texts_check(c,leaves,texts[:])}
     if message!="" {
-        api.call_failf(call,api.INVALID_PARAMS,"row %s: %s",records_name(c.edit,row),message)
+        api.call_failf(call,api.INVALID_PARAMS,"row %s: %s",records.row_name(c.edit,row),message)
         return false
     }
-    copy(records_row(c.edit,row),value)
+    copy(records.row_bytes(c.edit,row),value)
     records_api_texts_put(s,c,leaves,row,texts[:])
     return true
 }
@@ -1311,14 +1305,14 @@ records_api_row_put :: proc(s:^Session,call:^api.Call,c:^Records_Api_Context,lea
 api_records_set :: proc(s:^Session,call:^api.Call) {
     p,read:=records_api_params(call,"records.set",{.Records,.Row,.Values,.Texts,.Name},{.Records,.Row})
     if !read {return}
-    e:Records_Edit
+    e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
     row:=records_api_row_named(call,&e,p.row)
     if row<0 {return}
     c,leaves:=records_api_context(s,&e)
     if !records_api_row_put(s,call,&c,leaves,row,&p) {return}
     if .Name in p.given && p.name!=p.row {
-        if message:=records_row_rename(&e,row,p.name);message!="" {
+        if message:=records.row_rename(&e,row,p.name);message!="" {
             api.call_fail(call,api.INVALID_PARAMS,message)
             return
         }
@@ -1331,13 +1325,13 @@ api_records_set :: proc(s:^Session,call:^api.Call) {
 api_records_add :: proc(s:^Session,call:^api.Call) {
     p,read:=records_api_params(call,"records.add",{.Records,.Name,.Values,.Texts,.After},{.Records,.Name})
     if !read {return}
-    e:Records_Edit
+    e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
     after:=-1
     if .After in p.given {
         if after=records_api_row_named(call,&e,p.after);after<0 {return}
     }
-    row,message:=records_row_add(s,&e,p.name,nil,after)
+    row,message:=records.row_add(&e,&s.id_state,p.name,nil,after,s.app.info.records[e.record].default)
     if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
@@ -1352,13 +1346,13 @@ api_records_add :: proc(s:^Session,call:^api.Call) {
 api_records_remove :: proc(s:^Session,call:^api.Call) {
     p,read:=records_api_params(call,"records.remove",{.Records,.Rows},{.Records,.Rows})
     if !read {return}
-    e:Records_Edit
+    e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
     for name in p.rows {
         if records_api_row_named(call,&e,name)<0 {return}
     }
     for name in p.rows {
-        if row:=records_find(&e,name);row>=0 {records_row_remove(&e,row)}
+        if row:=records.row_find(&e,name);row>=0 {records.row_remove(&e,row)}
     }
     if len(p.rows)>0 && !records_api_publish(s,call,&e,"Remove records") {return}
     out:=call.out
@@ -1372,46 +1366,39 @@ api_records_remove :: proc(s:^Session,call:^api.Call) {
     serial.text_write_raw(out,"]}")
 }
 
+// The index a row ends at, moved right after the row at another index.
 @(private)
-api_records_rename :: proc(s:^Session,call:^api.Call) {
-    p,read:=records_api_params(call,"records.rename",{.Records,.Row,.Name},{.Records,.Row,.Name})
-    if !read {return}
-    e:Records_Edit
-    if !records_api_open(s,call,p.records,&e) {return}
-    row:=records_api_row_named(call,&e,p.row)
-    if row<0 {return}
-    if message:=records_row_rename(&e,row,p.name);message!="" {
-        api.call_fail(call,api.INVALID_PARAMS,message)
-        return
-    }
-    if !records_api_publish(s,call,&e,"Rename record") {return}
-    c,leaves:=records_api_context(s,&e)
-    records_api_table_write(s,call.out,&c,leaves,[]int{row},false)
-}
+records_move_place :: proc "contextless" (row,after:int) -> int {return after+1 if after<row else after}
 
 @(private)
 api_records_move :: proc(s:^Session,call:^api.Call) {
-    p,read:=records_api_params(call,"records.move",{.Records,.Row,.To},{.Records,.Row,.To})
+    p,read:=records_api_params(call,"records.move",{.Records,.Row,.After},{.Records,.Row,.After})
     if !read {return}
-    e:Records_Edit
+    e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
     row:=records_api_row_named(call,&e,p.row)
     if row<0 {return}
-    if p.to>=records_count(&e) {
-        api.call_failf(call,api.INVALID_PARAMS,"to %d is past the last row: the table has %d, from 0",p.to,records_count(&e))
-        return
+    to:=0
+    if p.after!="" {
+        after:=records_api_row_named(call,&e,p.after)
+        if after<0 {return}
+        if after==row {
+            api.call_failf(call,api.INVALID_PARAMS,"after names the row that moves: %q",p.after)
+            return
+        }
+        to=records_move_place(row,after)
     }
-    records_row_move(&e,row,p.to)
+    records.row_move(&e,row,to)
     if !records_api_publish(s,call,&e,"Move record") {return}
     c,leaves:=records_api_context(s,&e)
-    records_api_table_write(s,call.out,&c,leaves,[]int{p.to},false)
+    records_api_table_write(s,call.out,&c,leaves,[]int{to},false)
 }
 
 @(private)
 api_records_import :: proc(s:^Session,call:^api.Call) {
     p,read:=records_api_params(call,"records.import",{.Records,.File},{.Records,.File})
     if !read {return}
-    e:Records_Edit
+    e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
     file:=records_api_file(s,p.file)
     if file=="" {
@@ -1428,22 +1415,22 @@ api_records_import :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not UTF-8: save it from the spreadsheet as CSV UTF-8",file)
         return
     }
-    records,lines,failure:=importer.csv_records(text,context.temp_allocator)
+    parsed,lines,failure:=importer.csv_records(text,context.temp_allocator)
     if failure!="" {
         api.call_failf(call,api.INVALID_PARAMS,"%s: %s",file,failure)
         return
     }
-    if len(records)==0 {
+    if len(parsed)==0 {
         api.call_failf(call,api.INVALID_PARAMS,"%s is empty: its first row names the columns, as records.export writes them",file)
         return
     }
     c,leaves:=records_api_context(s,&e)
-    columns,message:=records_api_header(&c,leaves,records[0])
+    columns,message:=records_api_header(&c,leaves,parsed[0])
     if message!="" {
         api.call_failf(call,api.INVALID_PARAMS,"%s, line %d: %s",file,lines[0],message)
         return
     }
-    updated,added,rejected:=records_api_import_rows(s,&c,leaves,columns,records[1:],lines[1:],c.default)
+    updated,added,rejected:=records_api_import_rows(s,&c,leaves,columns,parsed[1:],lines[1:],c.default)
     if updated+added>0 && !records_api_publish(s,call,&e,"Import records") {return}
     out:=call.out
     asset_named_write(s,out,"records",e.id)
@@ -1466,7 +1453,7 @@ api_records_import :: proc(s:^Session,call:^api.Call) {
 api_records_export :: proc(s:^Session,call:^api.Call) {
     p,read:=records_api_params(call,"records.export",{.Records,.File},{.Records,.File})
     if !read {return}
-    e:Records_Edit
+    e:records.Edit
     if !records_api_open(s,call,p.records,&e) {return}
     file:=records_api_file(s,p.file)
     if file=="" {
@@ -1475,14 +1462,14 @@ api_records_export :: proc(s:^Session,call:^api.Call) {
     }
     c,leaves:=records_api_context(s,&e)
     text,columns:=records_api_csv(&c,leaves)
-    if error:=os.write_entire_file(file,text);error!=nil {
-        api.call_failf(call,api.INVALID_PARAMS,"%s could not be written: %v; its folder has to exist",file,error)
+    if serial.file_write_atomic(file,transmute([]u8)text)!=.None {
+        api.call_failf(call,api.INVALID_PARAMS,"%s could not be written; its folder has to exist",file)
         return
     }
     out:=call.out
     asset_named_write(s,out,"records",e.id)
     api.write_text(out,"file",file)
-    api.write_int(out,"rows",i64(records_count(&e)))
+    api.write_int(out,"rows",i64(records.row_count(&e)))
     api.write_int(out,"columns",i64(columns))
     serial.write_u8(out,'}')
 }

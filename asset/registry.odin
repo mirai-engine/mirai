@@ -113,10 +113,17 @@ Registry :: struct {
     allocator:runtime.Allocator,
 }
 
-registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.allocator) {
+// False, with a registry of no folder that registry_destroy takes, without memory for it.
+registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.allocator) -> bool {
     r^={allocator=allocator}
-    r.root=strings.clone(root,allocator)
-    r.cache=strings.clone(cache,allocator)
+    no_root,no_cache:runtime.Allocator_Error
+    r.root,no_root=strings.clone(root,allocator)
+    r.cache,no_cache=strings.clone(cache,allocator)
+    if no_root!=nil || no_cache!=nil {
+        delete(r.root,allocator)
+        delete(r.cache,allocator)
+        r.root,r.cache="",""
+    }
     r.files=make([dynamic]Registry_File,allocator)
     r.folders=make([dynamic]string,allocator)
     r.dependencies=make([dynamic]base.Asset_Id,allocator)
@@ -130,12 +137,26 @@ registry_init :: proc(r:^Registry,root:string,cache:="",allocator:=context.alloc
     r.memory=make([dynamic]Registry_Memory,allocator)
     r.removed=make([dynamic]base.Asset_Id,allocator)
     r.refused=make([dynamic]string,allocator)
+    return no_root==nil && no_cache==nil
+}
+
+@(private="file")
+registry_mount_add :: proc(r:^Registry,folder,prefix:string,guest:bool) -> bool {
+    kept_folder,no_folder:=strings.clone(folder,r.allocator)
+    kept_prefix,no_prefix:=strings.clone(prefix,r.allocator)
+    if no_folder==nil && no_prefix==nil {
+        if _,no_room:=append(&r.mounts,Registry_Mount{kept_folder,kept_prefix,guest});no_room==nil {return true}
+    }
+    delete(kept_folder,r.allocator)
+    delete(kept_prefix,r.allocator)
+    return false
 }
 
 // Adds folder to what the next scan sees, its files under prefix/. The prefix
-// is a relative path with '/' that names no folder of the root.
-registry_mount :: proc(r:^Registry,folder,prefix:string) {
-    append(&r.mounts,Registry_Mount{strings.clone(folder,r.allocator),strings.clone(prefix,r.allocator),false})
+// is a relative path with '/' that names no folder of the root. False without
+// memory for it.
+registry_mount :: proc(r:^Registry,folder,prefix:string) -> bool {
+    return registry_mount_add(r,folder,prefix,false)
 }
 
 // Mounts now a folder the program did not ship (what a player saved or
@@ -155,14 +176,14 @@ registry_mount_guest :: proc(r:^Registry,folder,prefix:string) -> (refused:int,e
     }
     if os.exists(strings.concatenate({r.root,"/",prefix},context.temp_allocator)) {return 0,.Invalid}
     if !os.is_directory(folder) {return 0,.Not_Found}
+    if !registry_mount_add(r,folder,prefix,true) {return 0,.Out_Of_Memory}
     r.revision+=1
-    mount:=Registry_Mount{strings.clone(folder,r.allocator),strings.clone(prefix,r.allocator),true}
-    append(&r.mounts,mount)
+    mount:=r.mounts[len(r.mounts)-1]
     if error=registry_walk(r,mount,nil,nil,nil);error!=.None {
         registry_unmount(r,prefix)
         return
     }
-    registry_index(r)
+    error=registry_index(r)
     slice.sort(r.folders[:])
     if r.cache!="" {registry_cache_write(r)}
     for path in r.refused {
@@ -195,21 +216,21 @@ registry_unmount :: proc(r:^Registry,prefix:string) -> Error {
         r.files[kept]=file
         kept+=1
     }
-    resize(&r.files,kept)
+    base.truncate(&r.files,kept)
     kept=0
     for folder in r.folders {
         if registry_under(folder,prefix) {delete(folder,r.allocator);continue}
         r.folders[kept]=folder
         kept+=1
     }
-    resize(&r.folders,kept)
+    base.truncate(&r.folders,kept)
     registry_refused_clear(r,prefix)
     delete(r.mounts[at].folder,r.allocator);delete(r.mounts[at].prefix,r.allocator)
     ordered_remove(&r.mounts,at)
-    registry_index(r)
+    indexed:=registry_index(r)
     if r.cache!="" {registry_cache_write(r)}
     for id in gone {registry_note_removed(r,id)}
-    return .None
+    return indexed
 }
 
 // Whether a path of the registry is in a guest mount.
@@ -247,25 +268,32 @@ registry_refused_clear :: proc(r:^Registry,prefix:string) {
         r.refused[kept]=path
         kept+=1
     }
-    resize(&r.refused,kept)
+    base.truncate(&r.refused,kept)
 }
 
 // The file a path of the registry is: under the root, under the folder of
 // the mount whose prefix it starts with, or itself when it is outside them.
+// "" without memory for it.
 registry_file_path :: proc(r:^Registry,path:string,allocator:=context.allocator) -> string {
-    if registry_outside(path) {return strings.clone(path,allocator)}
-    for mount in r.mounts {
-        if registry_under(path,mount.prefix) {return strings.concatenate({mount.folder,path[len(mount.prefix):]},allocator)}
+    parts:=[3]string{r.root,"/",path}
+    if registry_outside(path) {
+        parts={path,"",""}
+    } else {
+        for mount in r.mounts {
+            if registry_under(path,mount.prefix) {parts={mount.folder,path[len(mount.prefix):],""};break}
+        }
     }
-    return strings.concatenate({r.root,"/",path},allocator)
+    file,error:=strings.concatenate(parts[:],allocator)
+    if error!=nil {return ""}
+    return file
 }
 
 // The path in the registry of a file, the inverse of registry_file_path: under
 // the folder of a mount or under the root. False for a file outside them.
-registry_relative :: proc(r:^Registry,file:string,allocator:=context.temp_allocator) -> (path:string,ok:bool) {
+registry_relative :: proc(r:^Registry,file:string) -> (path:string,ok:bool) {
     if r==nil {return}
     for mount in r.mounts {
-        if registry_under(file,mount.folder) {return strings.concatenate({mount.prefix,file[len(mount.folder):]},allocator),true}
+        if registry_under(file,mount.folder) {return strings.concatenate({mount.prefix,file[len(mount.folder):]},context.temp_allocator),true}
     }
     if registry_under(file,r.root) {return file[len(r.root)+1:],true}
     return
@@ -357,8 +385,9 @@ registry_missing :: proc(r:^Registry,out:^[dynamic]Registry_Missing) {
 
 // What the first bytes of a file say: of the file at full, or of data, a
 // whole file held in memory. dependencies receives its ids, sorted and once.
+// Out_Of_Memory when it had none to read them: the file stays Broken.
 @(private)
-registry_probe :: proc(r:^Registry,full:string,file:^Registry_File,dependencies:^[dynamic]base.Asset_Id,data:[]u8=nil) {
+registry_probe :: proc(r:^Registry,full:string,file:^Registry_File,dependencies:^[dynamic]base.Asset_Id,data:[]u8=nil) -> (error:Error) {
     head:[REGISTRY_HEAD]u8
     bytes,size:=data,i64(len(data))
     if data==nil {
@@ -366,13 +395,13 @@ registry_probe :: proc(r:^Registry,full:string,file:^Registry_File,dependencies:
         bytes,size,head_error=serial.file_read_head(full,head[:])
         if head_error!=.None {return}
     }
-    header,error:=header_read(bytes)
-    if error==.Not_An_Asset || error==.Truncated && (len(bytes)<4 || intrinsics.unaligned_load((^u32)(raw_data(bytes)))!=MAGIC) {return}
+    header,header_error:=header_read(bytes)
+    if header_error==.Not_An_Asset || header_error==.Truncated && (len(bytes)<4 || intrinsics.unaligned_load((^u32)(raw_data(bytes)))!=MAGIC) {return}
     file.state=.Broken
-    if error!=.None || header.total_size!=u64(size) {return}
+    if header_error!=.None || header.total_size!=u64(size) {return}
     file.id,file.owner,file.kind,file.kind_version,file.flags,file.content_hash=header.id,header.owner,header.kind,header.kind_version,header.flags,header.content_hash
     entries,directory_error:=directory_read(full,bytes,header,r.allocator)
-    if directory_error!=.None {return}
+    if directory_error!=.None {return .Out_Of_Memory if directory_error==.Out_Of_Memory else .None}
     defer delete(entries,r.allocator)
     for entry in entries {
         if entry.tag!=TAG_DEPS {continue}
@@ -380,12 +409,13 @@ registry_probe :: proc(r:^Registry,full:string,file:^Registry_File,dependencies:
         if entry.uncompressed_size%size_of(base.Asset_Id)!=0 || count>REGISTRY_MAX_DEPENDENCIES {return}
         // Writers store the dependencies as they are, so a scan reads them without decoding.
         if entry.compression!=.None {return}
-        stored:=make([]u8,int(entry.size),r.allocator)
+        stored,no_stored:=make([]u8,int(entry.size),r.allocator)
         defer delete(stored,r.allocator)
+        if no_stored!=nil {return .Out_Of_Memory}
         if entry.offset+entry.size<=u64(len(bytes)) {copy(stored,bytes[entry.offset:])}
         else if serial.file_read_range(full,i64(entry.offset),stored)!=.None {return}
         first:=len(dependencies)
-        resize(dependencies,first+int(count))
+        if resize(dependencies,first+int(count))!=nil {return .Out_Of_Memory}
         target:=mem.slice_to_bytes(dependencies[first:])
         copy(target,stored)
         listed:=dependencies[first:]
@@ -396,10 +426,11 @@ registry_probe :: proc(r:^Registry,full:string,file:^Registry_File,dependencies:
             listed[unique]=id
             unique+=1
         }
-        resize(dependencies,first+unique)
+        base.truncate(dependencies,first+unique)
         file.dependency_count=u32(unique)
     }
     file.state=.Asset
+    return
 }
 
 // Walks the folder and brings the registry up to date. Files and folders
@@ -430,20 +461,22 @@ registry_scan :: proc(r:^Registry) -> Error {
         if !os.is_directory(mount.folder) {continue}
         if error:=registry_walk(r,mount,known,previous[:],previous_dependencies[:]);error!=.None {return error}
     }
-    registry_index(r)
+    indexed:=registry_index(r)
     slice.sort(r.folders[:])
     if r.cache!="" && (r.stats.opened>0 || len(previous)!=len(r.files)) {registry_cache_write(r)}
     // The copies given an id in memory are what their files are now; resolving gives it again.
     for at:=len(r.reassigned)-1;at>=0;at-=1 {registry_reassigned_forget(r,r.reassigned[at].path)}
     if len(r.memory)>0 {
-        for &held in r.memory {registry_memory_record(r,&held)}
-        registry_index(r)
+        for &held in r.memory {
+            if registry_memory_record(r,&held)!=.None {indexed=.Out_Of_Memory}
+        }
+        if again:=registry_index(r);again!=.None {indexed=again}
     }
     if r.resolve_duplicates {registry_duplicates_resolve(r)}
     for file in previous {
         if file.state==.Asset {registry_note_removed(r,file.id)}
     }
-    return .None
+    return indexed
 }
 
 // Appends the files and folders of a folder under its prefix; a file that
@@ -479,7 +512,12 @@ registry_walk :: proc(r:^Registry,folder:Registry_Mount,known:map[string]u32,pre
             }
             path:=strings.trim_left(string(relative[:]),"/")
             if directory {
-                append(&r.folders,strings.concatenate({path,"/"},r.allocator))
+                listed,no_folder:=strings.concatenate({path,"/"},r.allocator)
+                if no_folder!=nil {return .Out_Of_Memory}
+                if _,no_room:=append(&r.folders,listed);no_room!=nil {
+                    delete(listed,r.allocator)
+                    return .Out_Of_Memory
+                }
                 continue
             }
             file:=Registry_File{size=info.size,time=time.time_to_unix_nano(info.modification_time)}
@@ -491,11 +529,10 @@ registry_walk :: proc(r:^Registry,folder:Registry_Mount,known:map[string]u32,pre
                 r.stats.reused+=1
             } else {
                 file.first_dependency=u32(len(r.dependencies))
-                registry_probe(r,info.fullpath,&file,&r.dependencies)
+                registry_probe(r,info.fullpath,&file,&r.dependencies) or_return
                 r.stats.opened+=1
             }
-            file.path=strings.clone(path,r.allocator)
-            append(&r.files,file)
+            registry_file_add(r,file,path) or_return
         }
     }
     return .None
@@ -554,8 +591,28 @@ registry_duplicates_resolve :: proc(r:^Registry) {
         error=registry_memory_set(r,pair.copy,bytes)
         mem.free_bytes(bytes,r.allocator)
         if error!=.None {continue}
-        append(&r.reassigned,Registry_Reassigned{strings.clone(pair.copy,r.allocator),strings.clone(pair.original,r.allocator),pair.id,doc.id,header.content_hash})
+        copied,no_copy:=strings.clone(pair.copy,r.allocator)
+        original,no_original:=strings.clone(pair.original,r.allocator)
+        if no_copy==nil && no_original==nil {
+            if _,no_room:=append(&r.reassigned,Registry_Reassigned{copied,original,pair.id,doc.id,header.content_hash});no_room==nil {continue}
+        }
+        delete(copied,r.allocator)
+        delete(original,r.allocator)
     }
+}
+
+// Lists file under a copy of path. Out_Of_Memory, with the files as they
+// were, without memory for it.
+@(private)
+registry_file_add :: proc(r:^Registry,file:Registry_File,path:string) -> Error {
+    file:=file
+    no_path:runtime.Allocator_Error
+    if file.path,no_path=strings.clone(path,r.allocator);no_path!=nil {return .Out_Of_Memory}
+    if _,no_room:=append(&r.files,file);no_room!=nil {
+        delete(file.path,r.allocator)
+        return .Out_Of_Memory
+    }
+    return .None
 }
 
 @(private)
@@ -605,7 +662,7 @@ registry_copy_id :: proc(r:^Registry,id:base.Asset_Id,path:string) -> base.Asset
 // says, and names a scan leaves out are ignored.
 registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
     if !os.is_directory(r.root) {return .Not_Found}
-    changed:=false
+    changed,exhausted:=false,false
     r.stats.opened,r.stats.reused=0,0
     gone:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for path in paths {
@@ -638,16 +695,15 @@ registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
         }
         if !changed {r.revision+=1;changed=true}
         file.first_dependency=u32(len(r.dependencies))
-        registry_probe(r,full,&file,&r.dependencies)
+        if registry_probe(r,full,&file,&r.dependencies)!=.None {exhausted=true}
         r.stats.opened+=1
         if known {
             if r.files[at].state==.Asset {append(&gone,r.files[at].id)}
             file.path=r.files[at].path
             r.files[at]=file
         } else {
-            file.path=strings.clone(path,r.allocator)
-            append(&r.files,file)
-            r.by_path[file.path]=u32(len(r.files)-1)
+            if registry_file_add(r,file,path)!=.None {exhausted=true;continue}
+            r.by_path[r.files[len(r.files)-1].path]=u32(len(r.files)-1)
             r.stats.files+=1
         }
     }
@@ -658,12 +714,12 @@ registry_refresh :: proc(r:^Registry,paths:[]string) -> Error {
         r.files[kept]=file
         kept+=1
     }
-    resize(&r.files,kept)
-    registry_index(r)
+    base.truncate(&r.files,kept)
+    indexed:=registry_index(r)
     if r.cache!="" {registry_cache_write(r)}
     if r.resolve_duplicates {registry_duplicates_resolve(r)}
     for id in gone {registry_note_removed(r,id)}
-    return .None
+    return .Out_Of_Memory if exhausted else indexed
 }
 
 // An id that no file of the registry is now goes to the removed ones, with a cache.
@@ -688,7 +744,7 @@ registry_skipped :: proc(path:string) -> bool {
 // files that depend on each asset. The dependencies of files that went away
 // are dropped once they are as many as the ones in use.
 @(private)
-registry_index :: proc(r:^Registry) {
+registry_index :: proc(r:^Registry) -> (error:Error) {
     slice.sort_by(r.files[:],proc(a,b:Registry_File) -> bool {return a.path<b.path})
     registry_guests_refuse(r)
     clear(&r.by_id);clear(&r.by_path);clear(&r.duplicates)
@@ -703,15 +759,17 @@ registry_index :: proc(r:^Registry) {
         if first,taken:=r.by_id[file.id];taken {append(&r.duplicates,Registry_Duplicate{file.id,first,u32(at)})}
         else {r.by_id[file.id]=u32(at)}
     }
+    // Packing them only gives memory back: without memory for it they stay as they are.
     if len(r.dependencies)>2*used+64 {
-        packed:=make([dynamic]base.Asset_Id,0,used,r.allocator)
-        for &file in r.files {
-            first:=u32(len(packed))
-            append(&packed,..registry_dependencies(r,&file))
-            file.first_dependency=first
+        if packed,no_packed:=make([dynamic]base.Asset_Id,0,used,r.allocator);no_packed==nil {
+            for &file in r.files {
+                first:=u32(len(packed))
+                append(&packed,..registry_dependencies(r,&file))
+                file.first_dependency=first
+            }
+            delete(r.dependencies)
+            r.dependencies=packed
         }
-        delete(r.dependencies)
-        r.dependencies=packed
     }
     // A count per asset, the start of each run, and the runs filled in file order.
     for &file in r.files {
@@ -725,7 +783,10 @@ registry_index :: proc(r:^Registry) {
         total+=run.count
         run.count=0
     }
-    resize(&r.dependent_files,int(total))
+    if resize(&r.dependent_files,int(total))!=nil {
+        clear(&r.dependents)
+        return .Out_Of_Memory
+    }
     for &file,at in r.files {
         for id in registry_dependencies(r,&file) {
             if _,run,_,error:=map_entry(&r.dependents,id);error==nil && run.first+run.count<total {
@@ -734,6 +795,7 @@ registry_index :: proc(r:^Registry) {
             }
         }
     }
+    return
 }
 
 // Leaves out the files of guest mounts whose id a file outside them has, or
@@ -762,7 +824,7 @@ registry_guests_refuse :: proc(r:^Registry) {
         r.files[kept]=file
         kept+=1
     }
-    resize(&r.files,kept)
+    base.truncate(&r.files,kept)
 }
 
 // Writes what the registry holds as a packed index or a cache: the files with
@@ -824,9 +886,9 @@ registry_load :: proc(r:^Registry,path:string) -> Error {
     for mount in r.mounts {
         if mount.guest && os.is_directory(mount.folder) {registry_walk(r,mount,nil,nil,nil)}
     }
-    registry_index(r)
+    indexed:=registry_index(r)
     slice.sort(r.folders[:])
-    return state
+    return state if state!=.None else indexed
 }
 
 // Reads a cache into files and dependencies. Anything wrong with it leaves
@@ -841,6 +903,7 @@ registry_cache_read :: proc(path:string,files:^[dynamic]Registry_File,dependenci
     // container version, as an older build writes it, is read again from the files.
     ok:=serial.read_u32(&r)==REGISTRY_CACHE_MAGIC && serial.read_u32(&r)==REGISTRY_CACHE_VERSION && serial.read_u32(&r)==VERSION
     count:=serial.read_count(&r,4)
+    exhausted:=false
     for _ in 0..<count {
         if !ok {break}
         file:Registry_File
@@ -860,16 +923,21 @@ registry_cache_read :: proc(path:string,files:^[dynamic]Registry_File,dependenci
             bytes:=serial.read_bytes(&r,needed*size_of(base.Asset_Id))
             if r.failed {ok=false;break}
             file.first_dependency,file.dependency_count=u32(len(dependencies)),u32(needed)
-            resize(dependencies,len(dependencies)+needed)
+            if resize(dependencies,len(dependencies)+needed)!=nil {ok,exhausted=false,true;break}
             copy(mem.slice_to_bytes(dependencies[file.first_dependency:]),bytes)
         }
-        file.path=strings.clone(path_text,allocator)
-        append(files,file)
+        no_path:runtime.Allocator_Error
+        if file.path,no_path=strings.clone(path_text,allocator);no_path!=nil {ok,exhausted=false,true;break}
+        if _,no_room:=append(files,file);no_room!=nil {
+            delete(file.path,allocator)
+            ok,exhausted=false,true
+            break
+        }
     }
     if !ok || r.failed || serial.reader_remaining(&r)!=0 {
         for file in files {delete(file.path,allocator)}
         clear(files);clear(dependencies)
-        return .Corrupt
+        return .Out_Of_Memory if exhausted else .Corrupt
     }
     return .None
 }

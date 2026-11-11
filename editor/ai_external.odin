@@ -3,7 +3,9 @@ package editor
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
 
@@ -97,17 +99,18 @@ ai_external_turn :: proc(s:^Session,client:string) -> ^Ai_Task {
         task.review_finished=false
         task.stream_open=false;task.finish_called=false;task.document_closed=false
     } else {
-        id,error:=ai_store_next_id(&m.store)
+        id,error:=ai_store.next_id(&m.store)
         if error!="" || id>u64(max(int)) {return nil}
         task=ai_task_slot(m)
         if task==nil {return nil}
         task.id=int(id)
         task.conversation.id=id
+        task.conversation.kind=.Archived
         task.conversation.created_at=time.time_to_unix_nano(time.now())/1_000_000
         title:=ai_external_title(agent[len(AI_EXTERNAL_PREFIX):])
-        ai_conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
-        ai_conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document_path(s.document))
-        ai_conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,agent)
+        ai_store.conversation_set_text(task.conversation.title[:],&task.conversation.title_len,title)
+        ai_store.conversation_set_text(task.conversation.document[:],&task.conversation.document_len,document_path(s.document))
+        ai_store.conversation_set_text(task.conversation.provider[:],&task.conversation.provider_len,agent)
         base.text_set(task.title[:],title)
         base.text_set(task.agent[:],agent)
         task.icon=u8(task.id)%AI_AGENT_ICON_COUNT
@@ -123,7 +126,7 @@ ai_external_turn :: proc(s:^Session,client:string) -> ^Ai_Task {
     base.text_format(task.name[:],"%d-%d",task.id,task.transcript.dropped+task.transcript.count)
     ai_external_begin(s,task)
     task.heard=now
-    ai_history_refresh(s)
+    if message:=ai_history_refresh(m);message!="" {notify(s,message)}
     return task
 }
 
@@ -142,7 +145,7 @@ ai_external_running :: proc(s:^Session,client:string) -> ^Ai_Task {
 ai_external_begin :: proc(s:^Session,task:^Ai_Task) {
     task.state=.Running
     task.started=time.tick_now()
-    if task.state_before==0 {task.state_before=edits_state(s.edits)}
+    if task.state_before==0 {task.state_before=history.edits_state(s.edits)}
     s.ai.scene_serial+=1
     ai_task_dirty(task);ai_task_persist(s,task)
 }
@@ -155,7 +158,7 @@ ai_external_end :: proc(s:^Session,task:^Ai_Task) -> bool {
     task.stop=false
     task.seconds=f32(time.duration_seconds(time.tick_since(task.started)))
     task.conversation.seconds+=task.seconds
-    task.state_after=edits_state(s.edits)
+    task.state_after=history.edits_state(s.edits)
     if ai_review_waiting(&task.review)==0 && !task.declined {task.review_finished=true}
     s.ai.scene_serial+=1
     ai_task_dirty(task);ai_task_persist(s,task)

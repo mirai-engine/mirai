@@ -11,6 +11,7 @@ import sim "plugins:physics/runtime/sim"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 import "mirai:host"
+import "mirai:std/jobs"
 
 // Capacities of the simulation, read when its world is made; zero takes the
 // default. Where things fall is a Gravity of the world. Changing a capacity afterwards has no effect.
@@ -49,6 +50,14 @@ Physics_State :: struct {
     transforms_seen:core.Seen, // of Transform, at the end of the last tick that left the bodies as their rows
     unmade:bool, // the last sync left a body or character unmade, which a whole sync tries again
     sealed:[dynamic]Sealed_Body, // scratch of sealed_sync, as long as the rows of the bodies
+    proxies:[dynamic]core.Entity, // the entities of the Proxy links
+    owned:[dynamic]Owned, // by slot of the bodies of the world: those another library owns (owned.odin)
+    // The links, by where they are, whose rows the next step brings back besides those of the bodies it moves
+    // (link_touch); with touched_all, every link.
+    touched:[dynamic]u32,
+    touched_all:bool,
+    characters_at:[2]u64, // the version and the layout of Character that characters_hash is of
+    characters_hash:u64,
     collision:Collision_Settings, // those the filters of the shapes were made with
     pushes_set:bool, // the simulation has the push rules of collision
     own_gravity:bool, // the bodies fall with the gravity of their place (gravity_apply)
@@ -175,7 +184,6 @@ Body_Request_Kind :: enum u8 {
     Box_Radial_Force,
     Plane_Force, // in a box, strongest at its local +Y face and falling with the depth below it
     Kinematic, // the pose a kinematic body reaches in the tick
-    Launch,    // a character: velocity added, or replacing its own with override
     Manipulate,
     Release_Manipulation,
 }
@@ -259,10 +267,6 @@ manipulation_target :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f3
 manipulation_end :: proc(requests:^Body_Requests,e:core.Entity,preserve_velocity:=false) {
     core.push(&requests.queue,Body_Request{entity=e,kind=.Release_Manipulation,override=preserve_velocity})
 }
-// Adds velocity to a character, or replaces its own.
-launch :: proc(requests:^Body_Requests,e:core.Entity,velocity:[3]f32,override:=false) {
-    core.push(&requests.queue,Body_Request{entity=e,kind=.Launch,linear=velocity,override=override})
-}
 
 // a and b are the entities of the bodies; collider_a and collider_b those of the colliders that touched,
 // another entity when the collider is a child of the body.
@@ -327,6 +331,35 @@ body_of :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> sim.Body_Handl
     if link==nil {return {}}
     if link.kind==.Character {return sim.character_body(&physics.world,link.character)}
     return link.body
+}
+
+// What the simulation holds of a body: that of an entity (body_of), of a Hit, of a library.
+Body_Info :: struct {
+    type:Body_Type, // Kinematic also while another owner or a manipulation holds it
+    pose:mm.Transform, // rigid
+    linear:[3]f32 `mirai:"unit=m/s"`,
+    angular:[3]f32 `mirai:"unit=rad/s"`,
+    awake:bool,
+    contacts:int, // the shapes an awake body touches after the last step
+}
+
+// False for a body that is gone, or while the simulation is not ready.
+body_info :: proc(physics:core.Ref(Physics_State),body:Body_Handle) -> (info:Body_Info,ok:bool) {
+    if physics.ptr==nil || !physics.ready || !sim.body_valid(&physics.world,body) {return}
+    w:=&physics.world
+    pose:=sim.body_transform(w,body)
+    return {
+        type=sim.body_type(w,body),pose={pose.p,pose.q,{1,1,1}},
+        linear=sim.body_linear_velocity(w,body),angular=sim.body_angular_velocity(w,body),
+        awake=sim.body_is_awake(w,body),contacts=sim.body_contacts(w,body,nil),
+    },true
+}
+
+// The hash of the whole simulation, the one core.Simulation_Hash records: two worlds whose simulations would
+// step alike give the same. Zero while it is not ready.
+state_hash :: proc(physics:core.Ref(Physics_State)) -> u64 {
+    if physics.ptr==nil || !physics.ready {return 0}
+    return sim.world_hash(&physics.world)
 }
 
 collider_debug_draw :: proc(physics:core.Ref(Physics_State),e:core.Entity,out:^sim.Debug_Draw) -> bool {
@@ -552,10 +585,12 @@ state_copy_kept :: proc(dst,src:^Physics_State) -> bool {return state_copy_as(ds
 @(private)
 state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
     if dst==src {return true}
-    if !core.value_copy(&dst.links,&src.links,type_info_of(core.Entity_Map(Link))) || !core.value_copy(&dst.joints,&src.joints,type_info_of(core.Entity_Map(Joint_Link))) {return false}
-    if !core.value_copy(&dst.fluids,&src.fluids,type_info_of(core.Entity_Map(Fluid_Link))) {return false}
+    if !core.entity_map_copy(&dst.links,&src.links) || !core.entity_map_copy(&dst.joints,&src.joints) || !core.entity_map_copy(&dst.fluids,&src.fluids) {return false}
     if !core.value_copy(&dst.sources,&src.sources,type_info_of([dynamic]Geometry_Source)) {return false}
     if !core.value_copy(&dst.pieces,&src.pieces,type_info_of([dynamic]Piece)) {return false}
+    if !core.value_copy(&dst.proxies,&src.proxies,type_info_of([dynamic]core.Entity)) {return false}
+    if !core.value_copy(&dst.owned,&src.owned,type_info_of([dynamic]Owned)) {return false}
+    dst.touched_all=true
     dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen
     dst.forwarded={}
     if !src.ready {
@@ -605,7 +640,7 @@ state_swap :: proc(a,b:^Physics_State) {
 state_destroy :: proc(state:^Physics_State) {
     if state.ready {sim.world_destroy(&state.world)}
     core.entity_map_destroy(&state.links);core.entity_map_destroy(&state.joints);core.entity_map_destroy(&state.fluids);delete(state.geometry);delete(state.sources);delete(state.pieces)
-    delete(state.sealed)
+    delete(state.sealed);delete(state.proxies);delete(state.touched);delete(state.owned)
     volume.index_destroy(&state.gravity.index)
     state^={}
 }
@@ -617,6 +652,9 @@ state_reset :: proc(state:^Physics_State) {
     clear(&state.geometry)
     clear(&state.sources)
     clear(&state.pieces)
+    clear(&state.proxies)
+    clear(&state.touched)
+    clear(&state.owned)
     core.entity_map_clear(&state.links);core.entity_map_clear(&state.joints);core.entity_map_clear(&state.fluids)
     state.world_body={}
     state.forwarded={}
@@ -763,26 +801,22 @@ physics_parallel_for :: proc(count,grain:int,data:rawptr,body:proc(data:rawptr,f
     jobs_parallel_for(link,count,grain,data,body)
 }
 
-@(private)
-state_make :: proc(state:^Physics_State,settings:^Physics_Settings,app:^host.App,problems:^core.Problems) -> bool {
+// Makes the simulation of state with the capacities of settings, as the first physics_step of a world does;
+// true once it is ready. A tool or a test that simulates without a world (simulate) makes it here.
+state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^jobs.Job_System,problems:^core.Problems) -> bool {
     if state.ready {return true}
     desc:=sim.world_desc_default()
     desc.allocator=context.allocator
-    if settings.bodies>0 {desc.body_capacity=int(settings.bodies)}
-    if settings.shapes>0 {desc.shape_capacity=int(settings.shapes)}
-    if settings.contacts>0 {desc.contact_capacity=int(settings.contacts)}
-    if settings.joints>0 {desc.joint_capacity=int(settings.joints)}
-    if settings.characters>0 {desc.character_capacity=int(settings.characters)}
-    if settings.fluids>0 {desc.fluid_capacity=int(settings.fluids)}
-    if settings.hulls>0 {desc.hull_capacity=int(settings.hulls)}
-    if settings.meshes>0 {desc.mesh_capacity=int(settings.meshes)}
-    if settings.heightfields>0 {desc.heightfield_capacity=int(settings.heightfields)}
-    if settings.events>0 {desc.event_capacity=int(settings.events)}
-    if settings.substeps>0 {desc.substeps=int(settings.substeps)}
-    desc.worker_count=jobs_workers(app)
+    made:=settings_capacities(settings^)
+    desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=int(made.bodies),int(made.shapes),int(made.contacts),int(made.joints)
+    desc.character_capacity,desc.fluid_capacity=int(made.characters),int(made.fluids)
+    desc.hull_capacity,desc.mesh_capacity,desc.heightfield_capacity=int(made.hulls),int(made.meshes),int(made.heightfields)
+    desc.event_capacity,desc.substeps=int(made.events),int(made.substeps)
+    desc.worker_count=jobs_workers(job_system)
     desc.parallel_for=physics_parallel_for
     clear(&state.geometry)
     clear(&state.sources)
+    clear(&state.owned)
     if !sim.world_init(&state.world,desc) {
         core.report(problems,core.NONE,"physics.world","the simulation of this world was not made: out of memory for the capacities of Physics_Settings (%d bodies, %d shapes, %d contacts), or one of them is not valid; lower them, or free memory",desc.body_capacity,desc.shape_capacity,desc.contact_capacity)
         return false
@@ -790,5 +824,6 @@ state_make :: proc(state:^Physics_State,settings:^Physics_Settings,app:^host.App
     state.ready=true
     state.synced,state.fluids_synced,state.pushes_set,state.own_gravity=0,0,false,false
     state.sealed_key=0
+    state.touched_all=true
     return true
 }

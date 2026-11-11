@@ -10,7 +10,12 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 ## Map
 
 - Package contract (units, context, layout, drawing, font, widgets, data tree, world panels):
-  [references/ui.md](references/ui.md).
+  [units](references/ui.md#units), [context and frame](references/ui.md#context-and-frame),
+  [ids and layout](references/ui.md#ids-and-layout), [draw list](references/ui.md#draw-list),
+  [font](references/ui.md#font), [interaction](references/ui.md#interaction),
+  [widgets](references/ui.md#widgets), [game interfaces](references/ui.md#game-interfaces),
+  [data tree](references/ui.md#data-tree), [world panels](references/ui.md#world-panels) and
+  [known limits](references/ui.md#known-limits).
 - Files of `ui/` by topic:
   - Frame and layout: `context.odin`, `layout.odin` (`Box`), `element.odin` (elements and their
     drawing in order), `layout_tree.odin` (sizes, text, placement and commands), `retain.odin`
@@ -25,13 +30,14 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
     game gives the interface).
   - Data tree: `tree.odin` (instance and construction), `tree_widgets.odin` (each node type),
     `tree_bind.odin` (paths, copy plan and templates), `tree_data.odin` (records and loading),
-    `component.odin` (component expansion), `tree_link.odin` (widgets from another `.ui`).
+    `component.odin` (how a use expands), `tree_link.odin` (what comes from the `.ui` it uses),
+    `tree_names.odin` (what the names of a `.ui` leave in its records: `tree_settle`).
 - How a game shows `.ui` interfaces (`UI_Screen`, `World_Widget`) and draws its own:
   [game libraries](../mirai-gameplay/references/libraries.md#gui). Bridge with the renderer:
   [host](../mirai-core/references/host.md#bridge-with-ui).
 - Inspecting and editing a `.ui` in the editor: the
-  [`ui_inspector`](../mirai-plugins/references/ui-inspector.md) plugin. Format of the `.ui` asset:
-  [kinds.md](../mirai-assets/references/kinds.md#interface).
+  [`ui_inspector`](../mirai-plugins/references/ui-inspector.md#document) plugin.
+  Format of the `.ui` asset: [kinds.md](../mirai-assets/references/kinds.md#interface).
 
 ## Workflow
 
@@ -61,7 +67,8 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **The layout is built again every frame** (immediate), when the frame opens its first element: a
   frame that only draws shapes and text builds no layout. The id and measure tables are emptied by
   generation, so starting a frame does not depend on how many ids the previous one had; the
-  previous frame's rectangles live in the widget registry.
+  previous frame's rectangles live in the widget registry, which `frame_end` indexes by id: a
+  lookup by id (`widget_rect`) does not go through the widgets.
 - **The only thing the layout keeps between frames is the text measure**: a paragraph that did not
   change is not measured again (`Stats.text_measured` and `text_reused`), and one that does not fit
   in `max_text_words` is measured again when split into lines, without being discarded.
@@ -83,6 +90,10 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 - **Containers with clip up to `Context_Desc.max_clips`**; the others are built without clip and
   counted in `dropped_clips`. Containers nest up to `LAYOUT_DEPTH`: a deeper one is discarded with
   its content and counted in `dropped_elements`.
+- **No order of calls ends the process.** An id scope, a float, a layer, a clip or a scissor nested
+  deeper than its stack holds is not applied and is counted (`dropped_nesting`, `dropped_clips`),
+  and its end takes nothing off. An end without its begin does nothing, and `frame_end` closes what
+  a frame left open and counts it in `layout_errors`.
 - **Editable text is US-keyboard ASCII**, one line, without shaping or IME. Displayed text is UTF-8
   within the glyphs of `FONT_RANGES` (Latin, Greek, Cyrillic and `FONT_EXTRA`); the rest is shown
   as `?`. GPOS kerning moves the pen; nothing substitutes glyphs.
@@ -93,41 +104,54 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
   only between frames, because they move the tables that the contexts copy in `frame_begin`, and the
   atlas grows only between frames. An added font or face is not removed.
 - **The editor theme is not changed for a game**: a game passes its own `Theme` or uses the widgets
-  with their own style (`text`, `image`, `skin_button`, game controls, tree nodes).
+  with their own style (`text`, `image`, a control with a `look`, game controls, tree nodes).
+- **One procedure per kind of control.** `button`, `checkbox`, `slider`, `number_field` and
+  `dropdown` serve the editor and a game: each takes a `look`, the `Node_Style` resolved for the
+  state it is in (`style_resolve` with `widget_states`, or `skin_look`), and without one draws what
+  the theme gives it. A change to how one behaves reaches both.
+- **A `.ui` is written by names**, by one route: the document `ui.inspect` gives and `ui.write`
+  takes; the human edits the same file in the visual editor and neither regenerates over the other.
+  Tokens, `extends`, states that extend states, the layout of a style and the parameters of a
+  widget live in the file and resolve when it is written and linked (`tree_settle`,
+  `tree_nodes_take_styles`, `tree_link`, at load): a stable frame reads the flat `Tree_Node`,
+  `Node_Style` and `Tree_Style_Variant` rows as ever.
+- **A component is a widget: a `.ui` of its own**, one root, with its `params` and its `slot`, used
+  by `use` and named by its file. A local form does not exist; `component_nodes` and `first,count`
+  are only what `tree_link` expands uses into, and no file holds them.
+- **One component row per file a `.ui` uses**, whether nodes are uses of it or styles and tokens
+  come from it; a file stays in `use` until someone removes it, also after its last use is removed.
+- **The override of a style by a node is an unnamed style with `extends`**: it says what differs
+  and follows later changes of the style in the rest.
+- **The first control of each page takes the focus** when it shows (a flag set the first time a
+  tree is built by `tree_pages_focus`, not inside a `List`); a node can still ask with
+  `Focus_First`.
 
 ## Verification
 
 - `mirai test ui` covers context, text, numbers, popups, scroll, navigation, tree, components,
   animation and world panels without a GPU. For GPU composition: `render/ui_composition_test.odin`.
-- Font: `font_has_greek_and_cyrillic_glyphs_of_their_own`,
-  `font_reads_cff_outlines_and_the_kerning_of_greek_and_cyrillic`,
-  `fonts_are_added_between_frames_keeping_what_was_rasterized`, `font_kerning_comes_from_gpos`,
-  `font_hints_heights_to_the_pixel_grid`, `font_faces_keep_subpixel_phases_of_small_glyphs`,
-  `a_font_on_demand_rasterizes_what_the_contexts_that_borrow_it_draw`,
-  `a_context_that_asks_its_owner_draws_new_glyphs_in_the_same_frame` and, in `host`,
-  `fonts_of_interfaces_join_the_font_of_the_application_between_frames`. The editor's Latin text
-  does not change: `the_editor_widgets_match_the_current_reference`.
+- Font: `ui/font_test.odin` (glyphs and kerning of Latin, Greek and Cyrillic, hinting, subpixel
+  phases, fonts added between frames, a font on demand) and, in `host`,
+  `host/content_interface_test.odin` (the fonts of interfaces join the application's between
+  frames). The editor's Latin text does not change: `ui/reference_test.odin`.
 - Layout and scroll: `layout_flow_test.odin` (wrap, stack, own alignment, aspect, weights, tracks
   and span, floats inside the surface) and `scroll_axes_test.odin`.
 - Game interfaces: `tree_kinds_test.odin`, `tree_containers_test.odin`, `tree_game_test.odin`,
-  `tree_controls_test.odin`, `game_controls_test.odin` and `retain_test.odin`. Paths:
-  `paths_reach_components_through_entities_and_copy_only_what_is_read`,
-  `a_widget_reads_with_at_the_data_its_instance_gives_it` and, in `engine/gui`,
-  `paths_read_the_components_and_storages_of_the_world_by_name`.
+  `tree_controls_test.odin`, `game_controls_test.odin`, `tree_names_test.odin` (tokens, extends,
+  states, layouts of styles, the first control of a page) and `retain_test.odin`. Paths:
+  `tree_kinds_test.odin` and, in `engine/gui`, `gui_test.odin`.
 - Markdown: `markdown_test.odin` (height equal to what was built, each block, whole pills, click on
   a link, code split by characters, code copy and a stable frame without allocating).
-- Cases with fine behavior: `password_fields_mask_paint_and_keep_the_editable_value`,
-  `text_caret_blinks_at_text_height_and_restarts_on_input_without_allocating`,
-  `a_number_shows_that_it_drags_and_a_double_click_places_the_caret`,
-  `paragraph_height_matches_the_lines_the_layout_wraps`,
-  `rows_of_different_heights_build_only_those_in_sight_and_keep_the_range`.
-- `.ui` file, in `host` (`ui_check_test.odin`):
-  `ui_records_come_back_from_their_file_row_by_row` (roundtrip of `host.ui_tree_document` and
-  `ui_tree_view`), `ui_check_refuses_what_tree_load_refuses_case_by_case` and
-  `ui_check_refuses_what_tree_load_refuses_at_the_depth_limit` (`asset.ui_check` against
-  `ui.tree_load`). In `ui_asset_test.odin`,
-  `a_ui_written_to_its_file_reads_back_the_same_records_and_tree` and
-  `the_check_of_a_ui_refuses_rows_outside_their_tables_as_the_tree_does`.
+- Cases with fine behavior: `password_test.odin`, `caret_test.odin` (the caret blinks and restarts
+  without allocating), `number_test.odin`, `widgets_test.odin` (paragraph height) and
+  `scroll_test.odin` (rows of different heights).
+- The document of a `.ui` (`ui.inspect`, `ui.write`, tokens, roundtrip):
+  `cook/author/ui_document_test.odin`; widgets (use, params, reach through, slot, cycles):
+  `ui_files_test.odin` in that package; follow and Make widget: `project_files_test.odin` in
+  `plugins/ui_inspector/editor`.
+- `.ui` file, in `host`: `ui_check_test.odin` (roundtrip of `host.ui_tree_document` and
+  `ui_tree_view`; `asset.ui_check` refuses what `ui.tree_load` refuses) and `ui_asset_test.odin`
+  (a `.ui` written to its file reads back the same records and tree).
 - Benchmark of a frame: `mirai test ui benchmark_a_frame_of_a_large_panel
   benchmark_a_frame_of_a_long_transcript --release -define:UI_BENCHMARK=true
   -define:ODIN_TEST_THREADS=1`. The atlas and the text are measured with

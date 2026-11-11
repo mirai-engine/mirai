@@ -8,6 +8,7 @@ import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
 import erender "mirai:engine/render"
@@ -249,7 +250,7 @@ orbit_from_points :: proc "contextless" (position,target:[3]f32,fov:=VIEW_FOV) -
 // the limit of the pitch the eye stays where it is and the target moves.
 orbit_of_camera :: proc "contextless" (pose:mm.Transform,camera:erender.Camera,distance:f32) -> (o:Orbit,ok:bool) {
     fov:=camera.fov>0?camera.fov:erender.CAMERA_DEFAULT.fov
-    o=orbit_from_points(pose.position,pose.position+mm.quat_rotate(pose.rotation,[3]f32{0,0,-1})*distance,fov*mm.DEG_PER_RAD) or_return
+    o=orbit_from_points(pose.position,pose.position+mm.quat_forward(pose.rotation)*distance,fov*mm.DEG_PER_RAD) or_return
     o.target=pose.position-orbit_offset(o)*o.distance
     return o,true
 }
@@ -318,9 +319,6 @@ orbit_frame :: proc "contextless" (o:^Orbit,low,high:[3]f32,size:[2]f32,region:u
 }
 
 // "x,y,z,yaw,pitch,distance": what a restart passes on.
-view_text :: proc(o:Orbit,allocator:=context.temp_allocator) -> string {
-    return fmt.aprintf("%f,%f,%f,%f,%f,%f",o.target.x,o.target.y,o.target.z,o.yaw,o.pitch,o.distance,allocator=allocator)
-}
 view_parse :: proc(o:^Orbit,text:string) -> bool {
     parts:=strings.split(text,",",context.temp_allocator)
     if len(parts)!=6 {return false}
@@ -395,20 +393,6 @@ view_write :: proc(s:^Session,w:core.World_Ref) {
         if s.viewport.game_detail && s.paused_view.camera!=core.NONE && s.app!=nil {
             s.app.detail={camera=host.camera_from_view(s.paused_view),on=true}
         }
-    }
-    // The Play of the host arrives with the view the host sees. The camera of
-    // the viewport follows it, so what the editor draws over the scene and
-    // what it picks line up with the image.
-    if s.mode==.Watch && s.watch.host {
-        v:=s.viewport
-        if o,ok:=orbit_from_points(view.position,view.position+core.view_forward(view^)*v.orbit.distance,view.fov*mm.DEG_PER_RAD);ok {
-            v.orbit=o
-            viewport_camera(v)
-        }
-        view.size=host.app_scene_size(s.app)
-        view.cut=s.view_cut
-        s.view_cut=false
-        return
     }
     v:=s.viewport
     forward,_,up:=orbit_basis(v.orbit)
@@ -523,8 +507,7 @@ tool_on :: proc(s:^Session,name:string) -> bool {
 tool_preview_begin :: proc(s:^Session,name,label:string) -> bool {
     if s.mode!=.Edit || !tool_on(s,name) || s.edits.preview {return false}
     tools_release(s)
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {return false}
-    if p:=prefabs_of(s);p!=nil {prefabs_sync(s,p)}
+    if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {return false}
     _,edit_ready:=edit_open(s,label)
     if !edit_ready {return false}
     s.edits.preview=true
@@ -539,9 +522,8 @@ tool_preview_end :: proc(s:^Session,name:string,apply:bool) -> bool {
     if !tool_preview_active(s,name) {return false}
     if !apply {tool_preview_cancel(s);return true}
     s.edits.preview=false
-    edits_end(s.edits)
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {s.edits.preview=true;return false}
-    if p:=prefabs_of(s);p!=nil {prefabs_sync(s,p)}
+    history.edits_end(s.edits)
+    if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {s.edits.preview=true;return false}
     return true
 }
 
@@ -549,9 +531,8 @@ tool_preview_end :: proc(s:^Session,name:string,apply:bool) -> bool {
 tool_preview_cancel :: proc(s:^Session) {
     if s.edits==nil || !s.edits.preview {return}
     w:=edited_world(s)
-    edits_cancel(s.edits,w)
-    selection_restore(s.selection,w,s.edits.selection[:])
-    prefabs_pending_cancel(s)
+    history.edits_cancel(s.edits,w)
+    history.selection_restore(s.selection,w,s.edits.selection[:])
 }
 
 // The tool that holds the pointer goes on or lets go; with none, a press on
@@ -661,10 +642,10 @@ tools_update :: proc(s:^Session,w:core.World_Ref) {
         }
         entity:=selection_click_target(s,w,hit.entity,v.individual)
         switch {
-        case v.toggle:          if entity!=core.NONE {selection_toggle(s.selection,entity)}
-        case v.add:             if entity!=core.NONE {selection_add(s.selection,entity)}
-        case entity!=core.NONE: selection_set(s.selection,{entity})
-        case:                   selection_clear(s.selection)
+        case v.toggle:          if entity!=core.NONE {history.selection_toggle(s.selection,entity)}
+        case v.add:             if entity!=core.NONE {history.selection_add(s.selection,entity)}
+        case entity!=core.NONE: history.selection_set(s.selection,{entity})
+        case:                   history.selection_clear(s.selection)
         }
         if entity!=core.NONE {outliner_reveal(s.outliner,w,entity)}
     }
@@ -688,10 +669,10 @@ rect_from_points :: proc "contextless" (a,b:[2]f32) -> ui.Rect {
 
 // Selects what has its origin, or its whole box on the screen, inside a rectangle.
 marquee_select :: proc(s:^Session,w:core.World_Ref,rect:ui.Rect,add:bool) {
-    if !add {selection_clear(s.selection)}
+    if !add {history.selection_clear(s.selection)}
     items:=scene_items(s,w,ghosts_shown(s))
     for item in scene_item_next(&items) {
-        if e:=marquee_entity(s,w,item,rect);e!=core.NONE {selection_add(s.selection,e)}
+        if e:=marquee_entity(s,w,item,rect);e!=core.NONE {history.selection_add(s.selection,e)}
     }
 }
 
@@ -751,16 +732,13 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     point:=placement_point(s,d,hit)
     if d.kind==.Asset {content_used(s,d.asset_id)}
     if d.kind==.Asset && d.asset_kind==asset.KIND_PREFAB {
-        // Placing an instance replaces the World (prefab_world_replace); in this frame its
-        // fixed phase already ran, and its render would draw the new World before it: the
-        // poses of every skinned mesh at their start.
-        s.prefab_place={prefab=d.asset_id,point=point,select=select}
-        s.requests+={.Prefab_Place}
+        root:=prefab_place_linked(s,d.asset_id,point)
+        if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
     }
     if d.kind==.Asset && d.asset_kind==asset.KIND_SCENE {
         root:=section_place(s,d.asset_id,point,asset_label(&d))
-        if select && root!=core.NONE {selection_set(s.selection,{root})}
+        if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
     }
     card:=d.kind==.Preset?d.card:int(Preset.Empty)
@@ -773,7 +751,7 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     } else if d.kind==.Asset {
         if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{mesh=d.asset_id})}
     }
-    if select {selection_set(s.selection,{e})}
+    if select {history.selection_set(s.selection,{e})}
 }
 
 // Where something dropped on the scene goes: on the surface under the
@@ -796,31 +774,16 @@ ground_point :: proc(ray:mm.Ray) -> (point:[3]f32,ok:bool) {
     return mm.ray_at(ray,t),true
 }
 
-Prefab_Place_Request :: struct {
-    prefab:base.Asset_Id,
-    point:[3]f32,
-    select:bool,
-}
-
-// The prefab let go on the scene in the last frame, placed between frames.
-@(private)
-prefab_place_run :: proc(s:^Session) {
-    request:=s.prefab_place
-    s.prefab_place={}
-    root:=prefab_place_linked(s,request.prefab,request.point)
-    if request.select && root!=core.NONE {selection_set(s.selection,{root})}
-}
-
 // A prefab of the assets placed in the scene as an instance linked to it, as one step.
 prefab_place :: proc(s:^Session,w:core.World_Ref,prefab:base.Asset_Id,point:[3]f32) -> core.Entity {
     root:=prefab_place_linked(s,prefab,point)
-    if root!=core.NONE {selection_set(s.selection,{root})}
+    if root!=core.NONE {history.selection_set(s.selection,{root})}
     return root
 }
 
 // Gives a material to the first slot of the meshes of some entities, as one step.
 material_assign :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity,material:base.Asset_Id) {
-    if watching(s) || edit_held(s,..entities) || section_refused(s,..entities) {return}
+    if watching(s) || section_refused(s,..entities) {return}
     t:=core.world_table_of(w,erender.Mesh_Renderer)
     if t==nil {return}
     opened,edit_ready:=edit_open(s,"Material")
@@ -876,7 +839,7 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         hidden:=entity_hidden(w,e) || core.entity_off(es,e)
         radius:=INDICATOR_RADIUS
         if spots!=nil && core.has(core.read(spots),e) {
-            tip,tip_front:=viewport_screen(v,world.position+mm.quat_rotate(world.rotation,{0,0,-1}))
+            tip,tip_front:=viewport_screen(v,world.position+mm.quat_forward(world.rotation))
             if length:=linalg.distance(tip,p);tip_front && length>radius {
                 direction:=(tip-p)/length
                 ui.draw_line(ctx,p+direction*radius,p+direction*min(length,radius+48),1.6,ui.color_alpha(base_color,hidden?110:200))
@@ -938,7 +901,7 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
     play:=play_viewed(s) || camera_previewing(s)
     marquee:=v.capture==.Select && v.moved && !play
     ids:=core.world_table_of(w,core.Id)
-    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),parents!=nil?parents.layout+parents.version:0,meshes!=nil?meshes.layout:0,u64(len(es.generation)),0,0,0,0,0,0,s.ai!=nil?s.ai.scene_serial:0,ids!=nil?ids.layout+ids.version:0,collab_highlights_key(s)},marquee=marquee,play=play,isolated=play_shown(s)}
+    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),parents!=nil?parents.layout+parents.version:0,meshes!=nil?meshes.layout:0,u64(len(es.generation)),0,0,0,0,0,0,ai_scene_serial(s.ai),ids!=nil?ids.layout+ids.version:0,collab_highlights_key(s)},marquee=marquee,play=play,isolated=play_shown(s)}
     if marquee {
         transforms:=core.world_table_of(w,core.Transform)
         worlds:=core.world_table_of(w,core.World_Transform)
@@ -1038,7 +1001,7 @@ grid_lines :: proc(s:^Session) {
         for e in suns.entities[:core.count(suns)] {
             if entity_hidden(w,e) {continue}
             world:=entity_world(w,e)
-            to:=mm.quat_rotate(world.rotation,[3]f32{0,0,-1})
+            to:=mm.quat_forward(world.rotation)
             side:=linalg.normalize(linalg.cross(to,abs(to.y)<0.9?[3]f32{0,1,0}:[3]f32{1,0,0}))
             up:=linalg.cross(side,to)
             color:=[4]f32{1,0.84,0.47,0.9}
@@ -1095,7 +1058,7 @@ reach_draw :: proc(s:^Session,w:core.World_Ref) {
         if spot,ok:=entity_get(w,e,erender.Spot_Light);ok && spot.range>0 {
             // Its cone out to its range: the circle of its edge, lines from its
             // place to that circle, and fainter, the circle where it starts to fade.
-            axis:=mm.quat_rotate(world.rotation,[3]f32{0,0,-1})
+            axis:=mm.quat_forward(world.rotation)
             side:=linalg.normalize(linalg.cross(axis,abs(axis.y)<0.9?[3]f32{0,1,0}:[3]f32{1,0,0}))
             up:=linalg.cross(side,axis)
             edge:=world.position+axis*(spot.range*math.cos(spot.angle))

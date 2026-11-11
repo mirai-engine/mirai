@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -232,11 +231,11 @@ volume_chunks_of_mixed_levels_join_closed_without_cracks :: proc(t:^testing.T) {
 @(test)
 far_mesh_and_volume_chunks_show_coarser_levels_and_collide_at_level_0 :: proc(t:^testing.T) {
     for kind in ([2]Source_Kind{.Mesh,.Volume}) {
+        root:=base.test_folder(t,"terrain")
         allocator:=Terrain_Test_Allocator{owner=context.allocator}
         temporary:=Terrain_Test_Allocator{owner=context.temp_allocator}
         context.allocator={terrain_test_allocator,&allocator}
         context.temp_allocator={terrain_test_allocator,&temporary}
-        root:=source_test_path(fmt.tprintf("lod-%v",kind));os.make_directory_all(root);defer os.remove_all(root)
         source:Source;defer source_destroy(&source)
         if kind==.Mesh {lod_mesh_source(t,&source,64,1,16,20)} else {lod_volume_source(t,&source,49,16)}
         source.revision=1
@@ -245,12 +244,14 @@ far_mesh_and_volume_chunks_show_coarser_levels_and_collide_at_level_0 :: proc(t:
         testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
         assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
         app:=host.App{assets=&assets,allocator=context.allocator}
-        w:Terrain_Test_World;terrain_test_world_init(&w);defer terrain_test_world_free(&w)
+        w:Terrain_Test_World
+        if !terrain_test_world_init(t,&w) {return}
+        defer terrain_test_world_free(&w)
         resident:Terrain_Resident;defer terrain_resident_free(&resident)
         owner:=core.create(&w.entities)
-        core.add(&w.locals,owner,core.TRANSFORM_IDENTITY)
+        core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
         core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-        terrain_test_world_settle(&w)
+        core.test_world_settle(&w.w)
         s:=&source
         low,high:[3]f32
         if kind==.Mesh {low,high=geom.mesh_bounds(s.mesh_chunks[0].geometry.positions[:]);for &chunk in s.mesh_chunks {a,b:=geom.mesh_bounds(chunk.geometry.positions[:]);low,high=linalg.min(low,a),linalg.max(high,b)}} else {low=source_origin(s);high=-low}
@@ -280,7 +281,7 @@ far_mesh_and_volume_chunks_show_coarser_levels_and_collide_at_level_0 :: proc(t:
         far:=[3]f32{high.x-3.3,high.y+5,high.z-4.7}
         if kind==.Volume {far={6.3,high.y+5,7.7}}
         expected,_,found:=source_ray(loaded,far,{0,-1,0})
-        hit,ok:=phys.raycast({&w.physics},far,{0,-1,0})
+        hit,ok:=phys.raycast({&w.state},far,{0,-1,0})
         testing.expectf(t,found && ok && abs(hit.point.y-expected.y)<1e-4,"%v: the collider is at %v, the source at %v",kind,hit.point,expected)
         // Near a boundary the levels hold, and a frame that changes nothing builds and allocates nothing.
         built:=resident.stats.built
@@ -298,7 +299,7 @@ far_mesh_and_volume_chunks_show_coarser_levels_and_collide_at_level_0 :: proc(t:
         last:=len(chunks)-1
         testing.expect_value(t,chunks[last].built.lod.level,u8(0))
         testing.expect(t,chunks[0].built.lod.level>0)
-        hit,ok=phys.raycast({&w.physics},far,{0,-1,0})
+        hit,ok=phys.raycast({&w.state},far,{0,-1,0})
         testing.expect(t,ok && abs(hit.point.y-expected.y)<1e-4)
         testing.expect_value(t,w.problems.count,0)
     }

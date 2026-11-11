@@ -57,7 +57,7 @@ Refusal :: struct {
 // path is of the registry (a level under a host.assets_mount) or absolute.
 // What failed is in report.refused; untrusted_text says it with its fix.
 load_untrusted :: proc(w:core.World_Ref,app:^host.App,path:string,rules:Untrusted) -> (report:Report,error:Error) {
-    if app==nil || app.assets==nil {return {},.No_Assets}
+    if app.assets==nil {return {},.No_Assets}
     if app.info==nil || w.info!=app.info || w.place!=.World {return {},.Invalid}
     limit:=u64(rules.max_bytes>0?rules.max_bytes:UNTRUSTED_BYTES)
     registry:=&app.assets.registry
@@ -82,13 +82,13 @@ load_untrusted :: proc(w:core.World_Ref,app:^host.App,path:string,rules:Untruste
     defer asset.asset_close(&document)
     if !asset.blob_verify_hash(&document.blob) {return {},.Corrupt}
     if document.blob.header.kind!=asset.KIND_SCENE {return {},.Invalid}
-    if error=untrusted_check(w,app,&document,rules,&report.refused);error!=.None {return}
+    if error=untrusted_check(w,app.assets,&document,rules,&report.refused);error!=.None {return}
     return replace(w,app,&document,&app.assets.types)
 }
 
 // The refusal of a load_untrusted that failed and how to fix it, for the
 // player; "" when it did not fail.
-untrusted_text :: proc(report:Report,error:Error,allocator:=context.temp_allocator) -> string {
+untrusted_text :: proc(report:Report,error:Error) -> string {
     r:=report.refused
     field:=base.text_get(r.field[:])
     name:[base.ASSET_ID_TEXT]u8
@@ -96,40 +96,40 @@ untrusted_text :: proc(report:Report,error:Error,allocator:=context.temp_allocat
     case .None:
         return ""
     case .Too_Large:
-        if r.number>0 {return fmt.aprintf("the level has %v entities, more than the %v it may have: remove some",r.number,r.limit,allocator=allocator)}
-        return fmt.aprintf("the level takes more than %v bytes: make it smaller",r.limit,allocator=allocator)
+        if r.number>0 {return fmt.tprintf("the level has %v entities, more than the %v it may have: remove some",r.number,r.limit)}
+        return fmt.tprintf("the level takes more than %v bytes: make it smaller",r.limit)
     case .Not_Allowed:
-        if r.asset!={} {return fmt.aprintf("entity %v references the scene %s, which the game does not ship: remove the reference",r.entity,base.asset_id_format(r.asset,name[:]),allocator=allocator)}
-        return fmt.aprintf("entity %v has %s, which a level may not hold: remove it from the entity",r.entity,r.component,allocator=allocator)
+        if r.asset!={} {return fmt.tprintf("entity %v references the scene %s, which the game does not ship: remove the reference",r.entity,base.asset_id_format(r.asset,name[:]))}
+        return fmt.tprintf("entity %v has %s, which a level may not hold: remove it from the entity",r.entity,r.component)
     case .Out_Of_Range:
         switch r.fault {
-        case .Below_Min:  return fmt.aprintf("entity %v: %s.%s is %v, below its min %v: raise it",r.entity,r.component,field,r.number,r.limit,allocator=allocator)
-        case .Above_Max:  return fmt.aprintf("entity %v: %s.%s is %v, above its max %v: lower it",r.entity,r.component,field,r.number,r.limit,allocator=allocator)
-        case .Not_Finite: return fmt.aprintf("entity %v: %s.%s is not a finite number: set a number",r.entity,r.component,field,allocator=allocator)
+        case .Below_Min:  return fmt.tprintf("entity %v: %s.%s is %v, below its min %v: raise it",r.entity,r.component,field,r.number,r.limit)
+        case .Above_Max:  return fmt.tprintf("entity %v: %s.%s is %v, above its max %v: lower it",r.entity,r.component,field,r.number,r.limit)
+        case .Not_Finite: return fmt.tprintf("entity %v: %s.%s is not a finite number: set a number",r.entity,r.component,field)
         case .None,.Not_A_Choice,.Refused:
         }
-        return fmt.aprintf("entity %v: %s.%s is %v, none of its values: pick one",r.entity,r.component,field,r.number,allocator=allocator)
+        return fmt.tprintf("entity %v: %s.%s is %v, none of its values: pick one",r.entity,r.component,field,r.number)
     case .Unknown_Reference:
-        if r.asset!={} {return fmt.aprintf("entity %v: %s.%s names the asset %s, which is not there: pick one the game has or none",r.entity,r.component,field,base.asset_id_format(r.asset,name[:]),allocator=allocator)}
-        return fmt.aprintf("entity %v: %s.%s names entity %v, which is not in the level: pick one of the level or none",r.entity,r.component,field,r.target,allocator=allocator)
+        if r.asset!={} {return fmt.tprintf("entity %v: %s.%s names the asset %s, which is not there: pick one the game has or none",r.entity,r.component,field,base.asset_id_format(r.asset,name[:]))}
+        return fmt.tprintf("entity %v: %s.%s names entity %v, which is not in the level: pick one of the level or none",r.entity,r.component,field,r.target)
     }
-    return fmt.aprintf("the level did not load: %s",error_text(error),allocator=allocator)
+    return fmt.tprintf("the level did not load: %s",error_text(error))
 }
 
 // What a document holds against the rules, before anything is instantiated.
 @(private="file")
-untrusted_check :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,rules:Untrusted,refused:^Refusal) -> Error {
-    registry:=&app.assets.registry
-    view,view_error:=asset.scene_view(a,&app.assets.types)
+untrusted_check :: proc(w:core.World_Ref,assets:^host.Assets,a:^asset.Asset,rules:Untrusted,refused:^Refusal) -> Error {
+    registry:=&assets.registry
+    view,view_error:=asset.scene_view(a,&assets.types)
     if view_error!=.None {return view_error==.Out_Of_Memory?.Out_Of_Memory:.Corrupt}
-    if !asset.scene_view_check(view,context.temp_allocator) {return .Corrupt}
+    if checked:=asset.scene_view_check(view,context.temp_allocator);checked!=.None {return .Out_Of_Memory if checked==.Out_Of_Memory else .Corrupt}
     if rules.max_entities>0 && len(view.ids)>rules.max_entities {
         refused^={number=f64(len(view.ids)),limit=f64(rules.max_entities)}
         return .Too_Large
     }
-    for instance in view.instances {
+    for instance,at in view.instances {
         if file,found:=asset.registry_find(registry,instance.prefab);!found || file.kind!=asset.KIND_PREFAB {
-            refused^={entity=instance.root,asset=instance.prefab}
+            refused^={entity=view.ids[view.instance_rows[at]],asset=instance.prefab}
             return .Unknown_Reference
         }
     }
@@ -180,7 +180,7 @@ untrusted_check :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,rules:Untr
 
 @(private="file")
 untrusted_allowed :: proc(allowed:[]typeid,type:typeid) -> bool {
-    return len(allowed)==0 || type==core.Transform || slice.contains(allowed,type)
+    return len(allowed)==0 || type==core.Transform || type==Prefab_Instance || type==Prefab_Member || slice.contains(allowed,type)
 }
 
 // The entities of the document and the registry, against which its

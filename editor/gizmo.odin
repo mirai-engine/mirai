@@ -3,6 +3,7 @@ package editor
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:platform"
 import mm "mirai:std/math"
 import "mirai:ui"
@@ -93,7 +94,7 @@ scale_limit :: proc "contextless" (value:f32) -> f32 {
 
 // Where the gizmo stands: the active entity, or the mean of the origins of several.
 selection_pivot :: proc(s:^Session,w:core.World_Ref) -> (pivot:[3]f32,found:bool) {
-    active:=selection_active(s.selection)
+    active:=history.selection_active(s.selection)
     if active==core.NONE || !entity_alive(w,active) {return}
     pivot=entity_world(w,active).position
     if len(s.selection.entities)>1 {
@@ -111,8 +112,8 @@ selection_pivot :: proc(s:^Session,w:core.World_Ref) -> (pivot:[3]f32,found:bool
 
 gizmo_frame :: proc(s:^Session,w:core.World_Ref,tool:Tool) -> (g:Gizmo) {
     v:=s.viewport
-    if v.pick.active || selection_held(s) || selection_section_locked(s,w) {return}
-    active:=selection_active(s.selection)
+    if v.pick.active || selection_section_locked(s,w) {return}
+    active:=history.selection_active(s.selection)
     origin,found:=selection_pivot(s,w)
     if !found || !finite3(origin) {return}
     return gizmo_at(s,w,origin,active,tool)
@@ -327,7 +328,7 @@ gizmo_begin :: proc(s:^Session,w:core.World_Ref,g:Gizmo,handle:Handle) -> bool {
     drag.group=len(s.selection.entities)>1
     gz:=&v.gizmo
     clear(&gz.items)
-    for e in selection_roots(s.selection,w) {
+    for e in history.selection_roots(s.selection,w) {
         item:=Gizmo_Item{entity=e,local=entity_local(w,e),world=entity_world(w,e),parent=entity_parent_world(w,e)}
         if simulating(s) && providers(s).simulates {
             owner:=simulation_owner(s,w,e)
@@ -475,7 +476,7 @@ gizmo_cancel :: proc(s:^Session,w:core.World_Ref) {
     }
     if play_paused(s) && simulating(s) {simulation_settle(s,w)}
     gz.drag={}
-    edits_end(s.edits)
+    history.edits_end(s.edits)
 }
 
 // The release: one step, or none when nothing moved.
@@ -486,7 +487,7 @@ gizmo_end :: proc(s:^Session) {
     for item in gz.items {if item.physical {simulation_body_release(s,item.entity)}}
     if play_paused(s) && simulating(s) {simulation_settle(s,shown_world(s))}
     gz.drag={}
-    edits_end(s.edits)
+    history.edits_end(s.edits)
 }
 
 @(private)

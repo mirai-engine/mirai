@@ -137,14 +137,14 @@ crosses_plane :: proc "contextless" (state:^Water_Gpu,dry:int) -> bool {
 // The grid of the plane `body` of the frame around the camera: as it is generated while the plane is still
 // and no dry box crosses it, else through its sheet.
 @(private)
-sheet_place :: proc(state:^Water_Gpu,app:^host.App,view:core.View,body:int,e:core.Entity,material:u32) {
+sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,view:core.View,body:int,e:core.Entity,material:u32) {
     top:=state.bodies[body].surface.x
     middle:=[3]f32{math.round(view.position.x/SURFACE_STEP)*SURFACE_STEP,top,math.round(view.position.z/SURFACE_STEP)*SURFACE_STEP}
-    instance,usable:=render.mesh_instance(app.assets,{mesh=state.surface},mm.transform_matrix({middle,1,1}))
+    instance,usable:=render.mesh_instance(assets,{mesh=state.surface},mm.transform_matrix({middle,1,1}))
     if !usable {return}
     instance.material=render.Material_Handle(material)
     instance.object_id,instance.copy_owner=u64(e),base.name_hash("water")
-    defer render.instance_add(app,instance)
+    defer render.instance_add(extras,instance)
     moving:=state.waves[body].count>0
     lowest:=f32(0)
     cut:=false
@@ -157,7 +157,7 @@ sheet_place :: proc(state:^Water_Gpu,app:^host.App,view:core.View,body:int,e:cor
         key=base.hash64(mem.ptr_to_bytes(&state.bodies[j]),key)
     }
     if !moving && !cut {return}
-    if state.sheet_pipeline==0 {state.sheet_pipeline=render.stage_pipeline(app,{stage=.Geometry,shader="water_sheet",name="water sheet"})}
+    if state.sheet_pipeline==0 {state.sheet_pipeline=render.stage_pipeline(renderer,{stage=.Geometry,shader="water_sheet",name="water sheet"})}
     if state.sheet_pipeline==0 {return}
     at:=-1
     for &sheet,i in state.sheets {
@@ -167,23 +167,23 @@ sheet_place :: proc(state:^Water_Gpu,app:^host.App,view:core.View,body:int,e:cor
     if at<0 {return}
     sheet:=&state.sheets[at]
     if sheet.valid && (sheet.entity!=e || sheet.source!=instance.mesh) {
-        render.mesh_remove(app,sheet.mesh)
+        render.mesh_remove(renderer,sheet.mesh)
         sheet^={}
     }
     if !sheet.valid {
-        mesh,created:=render.deformable_create(app,instance.mesh)
+        mesh,created:=render.deformable_create(renderer,instance.mesh)
         if !created {return}
         sheet^={entity=e,source=instance.mesh,mesh=mesh,valid=true}
     }
     sheet.seen,sheet.write=state.frame,false
-    made:=render.vertices_made(app)
+    made:=render.vertices_made(renderer)
     if moving || key!=sheet.key || made!=sheet.made || body!=sheet.body {
-        rest_min,rest_max,known:=render.mesh_bounds(app,sheet.source)
+        rest_min,rest_max,known:=render.mesh_bounds(renderer,sheet.source)
         if !known {return}
         reach:=phys.waves_reach(state.waves[body])
         bounds_min:=[3]f32{rest_min.x-reach,min(lowest,-reach),rest_min.z-reach}
         bounds_max:=[3]f32{rest_max.x+reach,reach,rest_max.z+reach}
-        if !render.deformable_update(app,sheet.mesh,bounds_min,bounds_max) {return}
+        if !render.deformable_update(renderer,sheet.mesh,bounds_min,bounds_max) {return}
         sheet.key,sheet.made,sheet.middle,sheet.body,sheet.write=key,made,middle,body,true
         sheet.eye={view.position.x-middle.x,view.position.z-middle.z}
     }
@@ -194,18 +194,18 @@ sheet_place :: proc(state:^Water_Gpu,app:^host.App,view:core.View,body:int,e:cor
 
 // The sheets no plane drew in this frame go; those written in it get the pass that writes them.
 @(private)
-sheets_release :: proc(state:^Water_Gpu,app:^host.App) {
+sheets_release :: proc(state:^Water_Gpu,renderer:^render.Renderer) {
     writing:=false
     for &sheet in state.sheets {
         if !sheet.valid {continue}
         if sheet.seen!=state.frame {
-            render.mesh_remove(app,sheet.mesh)
+            render.mesh_remove(renderer,sheet.mesh)
             sheet={}
             continue
         }
         writing||=sheet.write
     }
-    if writing && app.renderer!=nil {render.frame_pass(app,.Geometry,sheet_record,state)}
+    if writing && renderer!=nil {render.frame_pass(renderer,.Geometry,sheet_record,state)}
 }
 
 @(private)

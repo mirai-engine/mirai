@@ -19,7 +19,7 @@ simulation starts.
 - The game uses the public helpers, without manipulating the `sim.World`.
 - A terrain is not a destructible: what is dug from it goes out through `terrain.Terrain_Digs`, and
   its pieces with physics are per-layer prefabs of `terrain_debris`
-  ([what can be dug](../../mirai-plugins/references/terrain.md#what-digging-leaves)).
+  ([what can be dug](../../mirai-world/references/terrain.md#what-digging-leaves)).
 
 ## Components
 

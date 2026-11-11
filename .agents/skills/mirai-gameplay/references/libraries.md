@@ -27,7 +27,7 @@ the name of their type) and a world (handles and tables).
     `missing` in the `Report`); `load` and `replace` do it except for a saved game.
 - `load(world, app, path|id)` replaces the world with a scene from the assets using `replace`, all
   or nothing: it instantiates in another `World` of the application, a copy of the world cleaned
-  (`info.clear`: entities, rows and the storages derived from them,
+  (`core.world_clear`: entities, rows and the storages derived from them,
   [classes](../../mirai-core/references/generator.md#attributes)), and only if everything went in
   does it swap its content with the world. It leaves settle and transform propagation done.
   `replace` is also used by loading a save and by the scene a collaboration guest receives.
@@ -39,27 +39,27 @@ the name of their type) and a world (handles and tables).
   registry. Prefab instances are not resolved against their prefabs. A `Scene_Reference` may name
   only a scene the game ships: what hangs from it loads unchecked. `report.refused` says what
   failed and `untrusted_text` how to fix it.
-- `spawn(commands, app, Spawn{...})` places a prefab while playing; its rows wait for the end of
-  the function that requested it. The root receives `Prefab_Source`, which a server sends with what
-  it replicates so that the client instantiates that prefab
-  ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)). One
-  requested through the `Spawns` queue that fails is the problem `scene.spawn` of its `parent` (or
-  of the world).
+- `spawn(spawner, path_or_id, at)` is the one way to place a prefab while playing and returns its
+  root; one that fails returns `NONE` and is the problem `scene.spawn` of its `parent` (or of the
+  world). A zero rotation is none and a zero scale is 1; its rows wait for the end of the function
+  that spawned it. The root receives `Prefab_Source`, which a server sends with what it replicates
+  so that the client instantiates that prefab
+  ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)).
+  A World keeps the form of each prefab it spawned (`Prefab_Forms`): spawning it again reads no
+  file and gives the world reading it anew gives, until the prefab or a prefab it places changes.
+  The forms are of their World and are not copied with it.
 - With a project's assets, `load` and `spawn` instantiate a copy in which outdated prefab instances
   follow their current prefab
   ([resolution](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab));
   without any, the file as is. With cooked assets (`Assets.indexed`) they load the file, which
   cooking already resolved.
-- `scene_spawns` takes `Spawns.queue` in `fixed` and `frame`; one that fails is the problem
-  `scene.spawn` of its `parent` (or of the world), with the prefab's path, the cause and the fix.
 - `capture(world, &scene, types, {root, previous, kind, id, entities, sections})` writes a document
   with the entities that have `Id`, in depth, without what hangs from a reference, which stores its
   scene; with `sections` (a save), everything. With `entities`, only those, as roots, without what
   hangs from them, and their `Entity` fields store the `Id` of an entity left outside: the values
   of some entities, to compare them.
   - From `previous` (the document the world was loaded from) come the order of the roots,
-    components of libraries the project does not have, prefab instance records and tables that are
-    not components.
+    components of libraries the project does not have and tables that are not components.
   - `transient` fields go as zero; `Entity` ones store the `Id` of their target.
 - `save(world, app, path, previous)` captures and writes.
 - **Changing scene** is a request: `scene.request(&r, id)` or `request_path(&r, path)` in
@@ -67,6 +67,7 @@ the name of their type) and a world (handles and tables).
   time and leaves a `Scene_Result{scene, path, error}` in `Scene_Results` (`events`, `keep`) in the
   frame in which the scene replaces the world, cleared in the next; `result_of` looks it up. One
   that fails is also the problem `scene.load` of the world, with the cause and the fix.
+  `request_restart(&r)` loads again the scene the world is (`Scene_Root`).
 - **Phased load** (`loading.odin`): jobs read and decompress the scene in rounds: each one reads
   what the main thread found in the registry for it (at the start, the scene) and asks for what
   that brings (the scenes of its `With_Document` references and the prefabs of its instances; the
@@ -353,9 +354,18 @@ Functions and rules:
   table or a general asset invalidation. `Render_Sync` is one per application: it reflects the
   renderer's single scene, which another displayed world replaces entirely, and `render_release`
   empties it when the world it shows is released.
+  - It keeps no copy of the instances: only what the renderer cannot answer, the entity of each
+    one and what it was made from (`drawn`), and the visual instances of the application it was
+    last given (`extras`). The instances of the renderer are those of `drawn`, at the same index,
+    then those of `extras` (`instance_count`, `instance_object`); what an instance shows and where
+    it is are asked of the renderer (`instance_placed`).
   - A mesh that appears adds its instance at the end of the world's and one that goes away leaves
-    its place to the last. A row with changed appearance redoes its instance; moving only updates
-    transforms. Without memory the scene stays empty and is redone in the next frame.
+    its place to the last. A row with changed appearance redoes its instance; moving and tinting
+    give the renderer the rows written, and it leaves as they are those that say the same.
+    Without memory the scene stays empty and is redone in the next frame.
+  - A round of derived rows keeps those of the instances that derive theirs (`Drawn.derives`),
+    read from the renderer, of the visual instances and of the batches: the others show rows of
+    assets, which no round frees.
   - Hiding, showing, changing parent or `Draw_Offset` redoes the instances of the entity and of
     what hangs from it (through `core.Hierarchy`): a hidden instance stays in the scene with
     `hidden`.
@@ -460,7 +470,7 @@ the reverb of the room where the listener is and what covers each source.
     sends all by default and `play_asset` none.
 - **Medium.** `Audio_Medium` is what surrounds the listener besides air, like the water they are
   under: a low-pass and a reverb with their weight. A single plugin writes it
-  ([water](../../mirai-plugins/references/water.md#sound)) before `audio_reverb` and
+  ([water](../../mirai-world/references/water.md#sound)) before `audio_reverb` and
   `audio_buses`, from where the listener is (`listener_position`); at zeros it is air.
   `audio_reverb` mixes its reverb by its weight over that of the room, with the same fade, and
   `audio_buses` gives the master the lower cutoff between that of `Audio_Settings` and that of the
@@ -484,10 +494,9 @@ the reverb of the room where the listener is and what covers each source.
     gain in dB, its low-pass, who ducks it and its own reverb, over everything it touches. The gain
     is in dB so that an entry at zeros says "as it arrives": in linear, the master at volume 0
     would be an empty entry. `audio_bus_setting_set` writes or removes the entry and
-    `volume_db`/`db_volume` convert.
-  - `Audio_Volumes` (machine setting) is the volume the player chose per bus, in dB over the
-    game's gain: the options menu writes it (`audio_volume_set`) and `save` stores it in the
-    player's options.
+    `db_volume` converts inside the mixer.
+  - `Audio_Volumes` (machine setting) is the volume the player chose per bus, 0 to 1 over the
+    game's gain: a slider binds its field and `save` stores it in the player's options.
   - `Audio_Output` (machine setting) is the output the player chose, by its name in
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
     it changes, without losing its voices, and only if the application has an open output. A name
@@ -507,11 +516,12 @@ the reverb of the room where the listener is and what covers each source.
   `.sound_set`; `play_source` plays an `Audio_Source` as configured, without a place, and
   `play_source_at` at a point of the world with its curve (a loop that follows something:
   `source_place` moves it); `source_tune` passes either its changes; `stop` and `playing` on the
-  voice they return. `buses_apply`
+  voice they return. Playing takes `^host.App`, which loads the sound; what acts on a voice
+  (`stop`, `playing`, `source_place`, `source_tune`) takes the mixer, `^audio.Mixer`. `buses_apply`
   is what `audio_buses` does every frame, for whoever sounds outside the game (the editor). They
   return zero if there is no mixer, the asset does not load or there is no free voice, or if a
   rollback repeats the tick (`time.resimulating`): it already sounded the first time. They belong
-  to the game thread: only from functions that receive `^host.App`.
+  to the game thread: only from the functions of the loop.
 
 ## `anim`
 
@@ -598,9 +608,10 @@ one per local player that has screens or sees a `World_Widget`.
   has shows its image (`host.prompts_find`); one it does not have is drawn.
 - **Events.** `UI_Events` brings those of `ui.Tree_Event_Kind` (`Clicked`, `Changed`, `Submitted`,
   `Hovered`, `Unhovered`, `Focused`, `Unfocused`, `Dragged`, `Dropped`, `Finished`) and `Back`
-  (Escape or East on the top screen with `back`, if the UI did not use them), with the entity of
-  the screen or the panel, the node's `base.name_hash`, its `rect` (window pixels for a screen, panel
-  units for a world panel), `item`, `on`, `value`, `text` (of a field),
+  (Escape or East on the top screen with `back`, if the UI did not use them), `Menu` (the action,
+  `gui.menu_pressed`), with the entity of
+  the screen or the panel, the node's `base.name_hash`, its `rect` (window pixels for a screen,
+  panel units for a world panel), `item`, `on`, `value`, `text` (of a field),
   `from`, `from_item` and `from_entity`: in a `Dropped`, the entity of the interface it came from
   (`Context.owner` is the entity while each tree is built). They are those of the last drawn frame,
   delivered to the first following tick and to no other (`gui_events_deliver`, `fixed`, stage
@@ -634,7 +645,8 @@ one per local player that has screens or sees a `World_Widget`.
   (`World_Widget`s in view that did not fit: the farthest are left out; `Gui.dropped_widgets`
   counts them), `gui.mesh` (the renderer did not give the texture of a `Mesh`), `gui.events` (more
   than `EVENT_BATCH` events in a frame), `gui.play` and `gui.request` (a request that was not
-  applied); what does not fit in the renderer is `gui.draws` of the world.
+  applied); what does not fit in the renderer is `gui.draws` of the world, and what an interface
+  nests deeper than a frame holds (`ui.Stats.dropped_nesting`), `gui.nesting`.
 - `pointer_consumed`/`keyboard_consumed` say whether the UI had the pointer or the keyboard.
 - Flow: `gui_frame_begin` (`ui`, stage `begin`: plan, copies, rays and which contexts are built),
   `gui_widgets` (the first of `intent`), `gui_frame_end` (`end`: passes layers, panels and textures
@@ -655,8 +667,8 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 
 - Requests: `request_save` and `request_checkpoint` (with an optional label),
   `request_autosave`, `request_load`, `request_load_checkpoint`, `request_delete`,
-  `request_new_game`, `request_end_game`, `request_label`, `request_profile_save` and
-  `request_options_save` push into `Save_Requests` (up to 8 per frame; `Busy` if they do not fit).
+  `request_new_game`, `request_end_game` and `request_label` push into `Save_Requests` and return
+  nothing; each gets its `Result`, and what is not valid is also the problem `save.request`.
   - `Invalid_Slot`: the name is not letters, digits, spaces, `-` or `_`, or is a Windows device
     name. `Invalid_Label`: the label does not fit in `LABEL_CAPACITY`.
   - `saves_serve` (`input`, game only) serves them at the start of the next frame with what the
@@ -713,8 +725,9 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
     leaves its `Result` with `kind=.Autosave`, also those the game did not request.
 - **Checkpoints:** `request_checkpoint` writes the slot `CHECKPOINT` and `request_load_checkpoint`
   loads it.
-- Loading replaces the world with `scene.replace`, like a scene: it is left clean (`info.clear`:
-  derived storages return to their start, also the physics simulation) with the slot's entities.
+- Loading replaces the world with `scene.replace`, like a scene: it is left clean
+  (`core.world_clear`: derived storages return to their start, also the physics simulation) with
+  the slot's entities.
   - Handles change and the in-flight events name entities that are no longer there.
   - A slot that does not load entirely leaves the world as it was (`Failed`).
   - The world's clock returns to the saved tick and seconds.
@@ -730,13 +743,14 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 - **Player profile** (`profile.save`, in the folder that contains the slots' one): the
   `@(storage,persist)` of all libraries, the progress that is not a save's (achievements,
   unlocks, the last level). It belongs to the player on this machine: `saves_serve` reads it the
-  first time a world runs (`Profile_State`) and `request_profile_save` writes it, also with
-  networking.
+  first time a world runs (`Profile_State`) and writes it by itself, also with networking
+  (`kept_watch`: hashes of what the file holds, looked at every `KEPT_LOOK`; a change is written
+  when it rests, after `KEPT_LOOKS` of never resting, and in `saves_release`).
   - A document with one table per storage (`library/type`); written atomically. A storage stored
     with another layout migrates by field name and one the file does not have keeps its value.
   - A `persist` that is not flat data or has `Entity` fields is not written (`Failed`). A profile
     that is not read is the problem `save.profile` and the progress stays at its initial values.
-- **Player options** (`request_options_save`): the machine settings of the world and the
+- **Player options**, kept the same way as the profile: the machine settings of the world and the
   application (`Graphics_Settings`, `Display_Settings`, `Audio_Volumes`, `Audio_Output`,
   `UI_Preferences`) go to the `settings.mirai` of `App.options` (`host.app_options_save`) and the
   changed bindings to its `input.mirai`. The player reads them over the project's; without
@@ -775,9 +789,9 @@ its weight goes from 1 to 0.
   linear toward the center inside; with `radius` 0, the same at any distance. Without any,
   `GRAVITY_WORLD` applies. `gravity_of` is the value of a field at a point, the same for the bodies
   of [physics](../../mirai-physics/references/engine.md#gravity) and for the particles of
-  [vfx](../../mirai-plugins/references/vfx.md#game), which do not depend on physics.
+  [vfx](../../mirai-world/references/vfx.md#game), which do not depend on physics.
 
 ## `vfx`
 
-Particles are the [`vfx`](../../mirai-plugins/references/vfx.md#game) plugin: emitters, `.particle`
+Particles are the [`vfx`](../../mirai-world/references/vfx.md#game) plugin: emitters, `.particle`
 effects, instance values, world clocks and requests.

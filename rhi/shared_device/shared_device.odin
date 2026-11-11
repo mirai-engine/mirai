@@ -1,6 +1,7 @@
 package shared_device
 
 import "base:runtime"
+import "core:fmt"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -53,6 +54,32 @@ take :: proc(t: ^testing.T, hardware_rt := true) -> (device: ^rhi.Device, messag
 		shared.taken[i], shared.before[i] = true, alive(d)
 	}
 	return d, ""
+}
+
+// The device of a GPU test, or nil with the test told why: without a device
+// a test is skipped where MIRAI_ALLOW_GPU_SKIP allows it and fails elsewhere.
+take_or_skip :: proc(t: ^testing.T, hardware_rt := true, loc := #caller_location) -> ^rhi.Device {
+	device, message := take(t, hardware_rt)
+	if device == nil {skip(t, message, loc)}
+	return device
+}
+
+// A device of its own for a test of a device itself, which destroys it, with
+// the GPU of the process held as hold does; or nil as take_or_skip.
+create_or_skip :: proc(t: ^testing.T, desc: rhi.Device_Desc, loc := #caller_location) -> ^rhi.Device {
+	hold(t)
+	device, message := rhi.device_create(desc)
+	if device == nil {skip(t, message, loc)}
+	return device
+}
+
+@(private)
+skip :: proc(t: ^testing.T, message: string, loc: runtime.Source_Code_Location) {
+	if rhi.gpu_skip_allowed() {
+		fmt.eprintfln("%s skipped: %s", loc.procedure, message)
+	} else {
+		testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", message, loc = loc)
+	}
 }
 
 // Holds the GPU of the process until the test ends, for a test that makes its

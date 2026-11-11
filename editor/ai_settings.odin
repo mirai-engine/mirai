@@ -57,7 +57,8 @@ Ai_Connection_Disk :: struct {
     command:string `json:"command,omitempty"`,
     arguments:[]string `json:"arguments,omitempty"`,
 }
-Ai_Settings_Disk :: struct {version:int, connections:[]Ai_Connection_Disk}
+Ai_Subagent_Disk :: struct {mode,connection,model,effort:string}
+Ai_Settings_Disk :: struct {version:int, connections:[]Ai_Connection_Disk, subagent:Ai_Subagent_Disk}
 
 ai_connections :: proc(m:^Ai) -> []Ai_Connection {return m.connections[:m.connection_count]}
 ai_connection_id :: proc(m:^Ai,provider:Ai_Provider) -> string {return base.text_get(m.connections[provider].id[:])}
@@ -169,7 +170,7 @@ ai_codex_model_supported :: proc(model:string) -> bool {
 // in PATH or a usual folder, where Anthropic's installer puts it, or in the
 // package npm installs. Empty when missing.
 ai_claude_binary :: proc(allocator:=context.temp_allocator) -> string {
-    name:="claude"+(".exe" when ODIN_OS==.Windows else "")
+    name:="claude"+project.EXECUTABLE_SUFFIX
     for folder in ai_user_folders(allocator) {
         if path:=project.path(folder,name,allocator=allocator);os.is_file(path) {return path}
         // On Windows npm puts a script in the folder and the program in its package.
@@ -230,7 +231,7 @@ ai_agent_entry :: proc(m:^Ai,agent:Ai_Agent,runtime:Ai_Runtime,allocator:=contex
     ids,packages:=AI_AGENT_IDS,AI_AGENT_PACKAGES
     folder:=ai_agents_folder(m,ids[agent],allocator)
     if folder=="" {return ""}
-    if runtime==.Bundled {return project.path(folder,"agent"+(".exe" when ODIN_OS==.Windows else ""),allocator=allocator)}
+    if runtime==.Bundled {return project.path(folder,"agent"+project.EXECUTABLE_SUFFIX,allocator=allocator)}
     return project.path(folder,"node_modules",packages[agent],"dist","index.js",allocator=allocator)
 }
 ai_runtime_path :: proc(s:^Session,runtime:Ai_Runtime) -> (path:string,found:bool) {
@@ -241,7 +242,7 @@ ai_runtime_path :: proc(s:^Session,runtime:Ai_Runtime) -> (path:string,found:boo
     if found {return}
     home:=ai_agents_home(s.ai)
     if home=="" {return "",false}
-    path=project.path(home,"runtime","bun"+(".exe" when ODIN_OS==.Windows else ""),allocator=context.temp_allocator)
+    path=project.path(home,"runtime","bun"+project.EXECUTABLE_SUFFIX,allocator=context.temp_allocator)
     return path,os.is_file(path)
 }
 ai_runtime_resolve :: proc(s:^Session,requested:Ai_Runtime) -> (runtime:Ai_Runtime,found:bool) {
@@ -261,6 +262,7 @@ ai_settings_initialize :: proc(s:^Session) {
     m.default_runtime=.Automatic
     home:=ai_agents_home(m)
     ai_connections_reset(m)
+    m.subagent={}
     if home=="" {home=project.agents_folder(context.temp_allocator)}
     if len(home)<len(m.agents_home) {base.text_set(m.agents_home[:],home)}
     file:=project.path(s.project_root,".mirai","ai","connections.json",allocator=context.temp_allocator)
@@ -286,6 +288,11 @@ ai_settings_initialize :: proc(s:^Session) {
             if len(item.model)<len(c.model) && (c.agent!=.Codex || ai_codex_model_supported(item.model)) {base.text_set(c.model[:],item.model)}
             if len(item.effort)<len(c.effort) {base.text_set(c.effort[:],item.effort)}
         }
+        modes:=AI_SUBAGENT_MODES
+        for name,mode in modes {if disk.subagent.mode==name {m.subagent.mode=mode}}
+        if len(disk.subagent.connection)<len(m.subagent.connection) {base.text_set(m.subagent.connection[:],disk.subagent.connection)}
+        if len(disk.subagent.model)<len(m.subagent.model) {base.text_set(m.subagent.model[:],disk.subagent.model)}
+        if len(disk.subagent.effort)<len(m.subagent.effort) {base.text_set(m.subagent.effort[:],disk.subagent.effort)}
     }
     ai_agents_read(m)
     ai_agents_refresh(s)
@@ -301,7 +308,9 @@ ai_settings_save :: proc(s:^Session) -> bool {
         for i in 0..<c.argument_count {arguments[index][i]=base.text_get(c.arguments[i][:])}
         entries[index].name,entries[index].command,entries[index].arguments=base.text_get(c.name[:]),base.text_get(c.command[:]),arguments[index][:c.argument_count]
     }
-    disk:=Ai_Settings_Disk{version=2,connections=entries[:s.ai.connection_count]}
+    modes:=AI_SUBAGENT_MODES
+    defaults:=&s.ai.subagent
+    disk:=Ai_Settings_Disk{version=2,connections=entries[:s.ai.connection_count],subagent={mode=modes[defaults.mode],connection=base.text_get(defaults.connection[:]),model=base.text_get(defaults.model[:]),effort=base.text_get(defaults.effort[:])}}
     data,error:=json.marshal(disk,{pretty=true},context.temp_allocator)
     if error!=nil {return false}
     folder:=project.path(s.project_root,".mirai","ai",allocator=context.temp_allocator)

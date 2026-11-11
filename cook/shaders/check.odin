@@ -595,8 +595,12 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
     for source in options.sources {staged&&=copy_sources(&files,path_clean(source.folder,context.temp_allocator),path_join(copied,"plugins",source.name,allocator=context.temp_allocator))==""}
     for folder in ([]string{"builtin","project"}) {os.make_directory_all(path_join(copied,folder,allocator=context.temp_allocator))}
     os.make_directory_all(path_parent(copy_path))
-    if !staged || !write_file(copy_path,transmute([]u8)text) || !write_file(path_join(include,SCHEMA_INCLUDE,allocator=context.temp_allocator),transmute([]u8)material_schema(context.temp_allocator)) {
+    if !staged || !write_file(copy_path,transmute([]u8)text) || !schema_write(include) {
         result.error=strings.clone("the program could not be staged for the check",allocator)
+        return
+    }
+    if _,problem:=owned_constants_write(&files,include,options.project,options.sources,allocator);problem!="" {
+        result.error=problem
         return
     }
     copies:=[]Base{{path_parent(path),path_parent(copy_path)}}

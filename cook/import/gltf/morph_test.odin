@@ -48,7 +48,8 @@ morph_delta :: proc(mesh:importer.Imported_Mesh,target:int,vertex:u32) -> asset.
 
 @(test)
 gltf_morphs_keep_sparse_named_targets_node_weights_and_every_weight_interpolation :: proc(t:^testing.T) {
-    folder:=temp_folder("morph-import");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"morph-import")
+    if folder=="" {return}
     model,ok:=import_ok(t,morph_fixture(folder));defer importer.model_destroy(&model)
     if !ok {return}
     testing.expect_value(t,len(model.meshes),1)
@@ -88,7 +89,8 @@ gltf_morphs_keep_sparse_named_targets_node_weights_and_every_weight_interpolatio
 
 @(test)
 glb_morphs_decode_sparse_accessors :: proc(t:^testing.T) {
-    folder:=temp_folder("sparse-morph-glb");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"sparse-morph-glb")
+    if folder=="" {return}
     path:=morph_fixture(folder)
     json_bytes,_:=os.read_entire_file(path,context.temp_allocator)
     original,_:=os.read_entire_file(fmt.tprintf("%s/morph.bin",folder),context.temp_allocator)
@@ -103,7 +105,7 @@ glb_morphs_decode_sparse_accessors :: proc(t:^testing.T) {
     model,ok:=import_ok(t,file);defer importer.model_destroy(&model)
     if !ok {return}
     testing.expect_value(t,len(model.meshes[0].morph_deltas),2)
-    testing.expect_value(t,model.meshes[0].morph_deltas[0].position,[3]f32{2,0,0})
+    testing.expect_value(t,model.meshes[0].morph_deltas[0].position,[3]f32{-2,0,0})
 }
 
 // Two panels: the first without normals, the second with them and a normal target.
@@ -132,14 +134,15 @@ flat_fixture :: proc(folder:string,glb:bool) -> string {
 
 @(test)
 gltf_and_glb_morphs_follow_each_face_without_normals_and_keep_stated_normals :: proc(t:^testing.T) {
-    folder:=temp_folder("morph-flat-normals");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"morph-flat-normals")
+    if folder=="" {return}
     for glb in ([2]bool{false,true}) {
         model,ok:=import_ok(t,flat_fixture(folder,glb));defer importer.model_destroy(&model)
         if !ok {return}
         mesh:=model.meshes[0]
         testing.expect_value(t,len(mesh.indices),12)
         testing.expect(t,mesh.indices[0]!=mesh.indices[3] && mesh.indices[2]!=mesh.indices[4],"flat corners of coplanar faces that morph stay apart")
-        faces:=[2][2][3]f32{{linalg.normalize([3]f32{0,-1,1}),linalg.normalize([3]f32{-1,0,1})},{linalg.normalize([3]f32{-1,1,1}),{0,0,1}}}
+        faces:=[2][2][3]f32{{linalg.normalize([3]f32{0,-1,-1}),linalg.normalize([3]f32{1,0,-1})},{linalg.normalize([3]f32{1,1,-1}),{0,0,-1}}}
         weights:=[5][2]f32{{0,0},{1,0},{0,1},{.35,.65},{-1,.5}}
         for face in 0..<2 {
             for vertex in mesh.indices[face*3:][:3] {
@@ -147,13 +150,13 @@ gltf_and_glb_morphs_follow_each_face_without_normals_and_keep_stated_normals :: 
                 a,b:=morph_delta(mesh,0,vertex),morph_delta(mesh,1,vertex)
                 for weight in weights {
                     actual:=linalg.normalize(rest+a.normal*weight[0]+b.normal*weight[1])
-                    expected:=linalg.normalize([3]f32{0,0,1}*(1-weight[0]-weight[1])+faces[0][face]*weight[0]+faces[1][face]*weight[1])
+                    expected:=linalg.normalize([3]f32{0,0,-1}*(1-weight[0]-weight[1])+faces[0][face]*weight[0]+faces[1][face]*weight[1])
                     testing.expect(t,linalg.length(actual-expected)<1e-4)
                 }
             }
         }
         for vertex in mesh.indices[6:] {
-            testing.expect_value(t,morph_delta(mesh,0,vertex).normal,[3]f32{.2,0,0})
+            testing.expect_value(t,morph_delta(mesh,0,vertex).normal,[3]f32{-.2,0,0})
             testing.expect_value(t,morph_delta(mesh,1,vertex).normal,[3]f32{})
         }
     }
@@ -161,7 +164,8 @@ gltf_and_glb_morphs_follow_each_face_without_normals_and_keep_stated_normals :: 
 
 @(test)
 gltf_morph_tangents_are_read_where_the_file_states_the_tangents :: proc(t:^testing.T) {
-    folder:=temp_folder("morph-tangents");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"morph-tangents")
+    if folder=="" {return}
     values:=[48]f32{
         0,0,0, 1,0,0, 0,1,0,
         0,0,1, 0,0,1, 0,0,1,

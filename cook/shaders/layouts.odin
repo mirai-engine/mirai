@@ -128,9 +128,8 @@ layouts_compare :: proc(stage,probe:[]Shared_Layout,allocator:=context.allocator
 }
 
 // The assertions of the Odin table: the size of each mirror and the offset of
-// each of its fields as the probe laid them out, and the limits of the
-// catalog of programs. An error for a struct the probe should have and does
-// not, after the assertions of the others.
+// each of its fields as the probe laid them out. An error for a struct the
+// probe should have and does not, after the assertions of the others.
 @(private)
 layouts_assertions :: proc(b:^strings.Builder,probe:[]Shared_Layout) -> (error:string) {
     strings.write_string(b,"\n// The structs shaders share with the CPU, as Slang lays them out.\n")
@@ -151,13 +150,5 @@ layouts_assertions :: proc(b:^strings.Builder,probe:[]Shared_Layout) -> (error:s
         }
         fmt.sbprintf(b,"#assert(size_of(%s) == %d)\n",shared.odin,size)
     }
-    // Written here and not checked by importing render: the tool, which writes
-    // these tables, must build while they are stale.
-    strings.write_string(b,"\n// The limits the catalog of programs is written with.\n")
-    limits:=[?]struct{name:string,value:int}{
-        {"PROGRAM_PARAMETER_BYTES",PARAMETER_BYTES},{"PARTICLE_ATTRIBUTE_BYTES",ATTRIBUTE_BYTES},
-        {"PROGRAM_RESOURCES",MAX_RESOURCES},{"PROGRAM_STAGES",MAX_STAGES},{"PROGRAM_DATA_WORDS",DATA_WORDS},
-    }
-    for limit in limits {fmt.sbprintf(b,"#assert(%s == %d)\n",limit.name,limit.value)}
     return
 }

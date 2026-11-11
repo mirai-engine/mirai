@@ -134,7 +134,7 @@ scene_sections :: proc(
                 continue
             }
             scene:=job.root
-            if _,error:=section_load_end(job,world,e);error!=.None {section_failed(world,app,references,e,scene,error,problems)}
+            if _,error:=section_load_end(job,world,e);error!=.None {section_failed(world,app.assets,references,e,scene,error,problems)}
         }
         for &l in loads.far {
             if l.job==nil || !load_step(l.job) {continue}
@@ -172,7 +172,7 @@ scene_sections :: proc(
             if free<0 {break}
             job,error:=section_load_begin(app,world,e)
             if error!=.None {
-                section_failed(world,app,references,e,reference.scene,error,problems)
+                section_failed(world,app.assets,references,e,reference.scene,error,problems)
                 break
             }
             // With libraries to wait for, it joins once what they prepare of it is ready.
@@ -195,11 +195,15 @@ scene_sections :: proc(
         }
         // Loaded and off: what hangs from it under Disabled; on, without it.
         if held:=state==.Loaded;reference.loaded!={} && held!=reference.held {
-            section_hold(world,e,held)
+            if section_hold(world,e,held)!=.None {
+                core.report(problems,e,"scene.memory","out of memory to tell what this section turned on from what changed in it: a save holds it all as changed; free memory")
+            }
             core.at(references,row).held=held
         }
     }
-    records_look(world)
+    if records_look(world)!=.None {
+        core.report(problems,core.NONE,"scene.memory","out of memory to follow what changes in the sections: they are looked at again next frame; free memory")
+    }
     if loads!=nil && loading!=nil {sections_progress(loading,loads)}
     // What loads with the world is resident once its sections joined.
     busy:=false
@@ -213,13 +217,13 @@ scene_sections :: proc(
 // A section that did not load says why, and is not tried again until it is
 // asked again; one whose scene is inside itself names the scenes around it.
 @(private)
-section_failed :: proc(w:core.World_Ref,app:^host.App,references:^core.Table(Scene_Reference),e:core.Entity,scene:base.Asset_Id,error:Error,problems:^core.Problems) {
+section_failed :: proc(w:core.World_Ref,assets:^host.Assets,references:^core.Table(Scene_Reference),e:core.Entity,scene:base.Asset_Id,error:Error,problems:^core.Problems) {
     if reference:=core.get(references,e);reference!=nil {reference.failed=scene}
     if error==.Cycle {
         path:=make([dynamic]base.Asset_Id,context.temp_allocator)
         append(&path,..section_path(w,e))
         append(&path,scene)
-        core.report(problems,e,"scene.section","the section did not load: its scene is inside itself (%s); take out the reference that closes the loop, or move what both share to a scene of its own",path_text(app,path[:]))
+        core.report(problems,e,"scene.section","the section did not load: its scene is inside itself (%s); take out the reference that closes the loop, or move what both share to a scene of its own",path_text(assets,path[:]))
         return
     }
     core.report(problems,e,"scene.section","the section did not load: %s; %s",error_text(error),load_fix(error))
@@ -242,16 +246,17 @@ section_drop :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) {
 // off, its dormant entities and tombstones aside, and what hangs from it and
 // draws a far form of its own, which stays on. Turning it on stamps the
 // rows it turns on: its record takes what changed until then and looks again
-// past them once that settles.
+// past them once that settles. Out_Of_Memory when it could not list those
+// rows: they count as changes.
 @(private)
-section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) {
+section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) -> Error {
     hierarchy:=core.world_storage_of(world,core.Hierarchy)
     disabled:=core.world_table_of(world,core.Disabled)
     marks:=core.world_table_of(world,Section_Held)
     parents:=core.world_table_of(world,core.Parent)
     dormants:=core.world_table_of(world,Dormant)
     tombstones:=core.world_table_of(world,Tombstone)
-    if hierarchy==nil || disabled==nil || marks==nil || parents==nil {return}
+    if hierarchy==nil || disabled==nil || marks==nil || parents==nil {return .None}
     h:=core.ref(hierarchy)
     fars:=far_tables(world)
     turned:=make([dynamic]core.Entity,context.temp_allocator)
@@ -270,7 +275,7 @@ section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) {
     }
     records:=core.world_storage_of(world,Section_Records)
     record:=records_find(records,e)
-    if held || record==nil {return}
+    if held || record==nil {return .None}
     content:=make([dynamic]core.Entity,context.temp_allocator)
     section_content(world,e,&content)
     records_fold(world,record,content[:])
@@ -294,9 +299,10 @@ section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) {
     }
     // The tables in which it has rows that turn on: the next settle stamps them.
     delete(record.fresh)
-    record.fresh=make([]bool,len(world.info.tables))
+    fresh,no_fresh:=make([]bool,len(world.info.tables))
+    record.fresh=fresh
     for &info,at in world.info.tables {
-        if info.place!=world.place {continue}
+        if info.place!=world.place || no_fresh!=nil {continue}
         t:=core.world_table_at(world,&info)
         for x in on {
             if row:=core.raw_row(t,x);row>=0 && !t.off[row] {record.fresh[at]=true;break}
@@ -306,6 +312,7 @@ section_hold :: proc(world:core.World_Ref,e:core.Entity,held:bool) {
         record.look=true
         records.looks+=1
     }
+    return .Out_Of_Memory if no_fresh!=nil else .None
 }
 
 

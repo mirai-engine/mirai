@@ -17,8 +17,11 @@ schema_failure_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,al
     return state.owner.procedure(state.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
+// A schema read, cloned or added to with the memory ending at each request in
+// turn: Out_Of_Memory, nothing of it kept (an add keeps whole the types it had
+// added), and with memory enough the schema whole.
 @(test)
-schema_read_releases_every_partial_allocation_and_hashes_retry_without_memory :: proc(t:^testing.T) {
+schema_read_and_clone_release_every_partial_allocation_and_hashes_retry_without_memory :: proc(t:^testing.T) {
     Kind :: enum u8 {First,Second}
     Sample :: struct {kind:Kind,values:[3]f32 `mirai:"label=Values,unit=m"`}
     original:Schema;schema_init(&original);defer schema_destroy(&original)
@@ -27,30 +30,51 @@ schema_read_releases_every_partial_allocation_and_hashes_retry_without_memory ::
     schema_write(&bytes,&original)
     failure:=Schema_Allocation_Failure{owner=context.allocator}
     allocator:=runtime.Allocator{schema_failure_allocator,&failure}
-    succeeded:=false
-    for budget in 0..<128 {
-        failure.remaining=budget
-        reader:=reader_init(writer_bytes(&bytes))
-        loaded:Schema
-        error:=schema_read(&reader,&loaded,allocator)
-        if error!=.None {
-            testing.expect_value(t,error,Schema_Error.Out_Of_Memory)
-            testing.expect(t,loaded.types==nil && loaded.fields==nil && loaded.choices==nil)
-            continue
+    Call :: enum {Read,Clone,Add}
+    for call in Call {
+        succeeded,refused:=false,false
+        for budget in 0..<128 {
+            failure.remaining=budget
+            loaded:Schema
+            error:Schema_Error
+            switch call {
+            case .Read:
+                reader:=reader_init(writer_bytes(&bytes))
+                error=schema_read(&reader,&loaded,allocator)
+            case .Clone:
+                error=schema_clone(&loaded,&original,allocator)
+            case .Add:
+                schema_init(&loaded,allocator)
+                if _,added:=schema_add(&loaded,Sample);!added {error=.Out_Of_Memory}
+            }
+            if error!=.None {
+                refused=true
+                testing.expectf(t,error==.Out_Of_Memory,"%v with %d requests served: %v",call,budget,error)
+                if call==.Add {
+                    failure.remaining=128
+                    testing.expectf(t,schema_validate(&loaded)==.None,"an add with %d requests served left a type cut short",budget)
+                    schema_destroy(&loaded)
+                    continue
+                }
+                testing.expectf(t,loaded.types==nil && loaded.fields==nil && loaded.choices==nil,"%v with %d requests served kept a part",call,budget)
+                continue
+            }
+            succeeded=true
+            testing.expectf(t,len(loaded.types)==len(original.types) && len(loaded.fields)==len(original.fields) && len(loaded.choices)==len(original.choices),"%v: the schema whole",call)
+            for field,i in loaded.fields {testing.expect(t,field.name==original.fields[i].name && field.label==original.fields[i].label && field.unit==original.fields[i].unit)}
+            failure.remaining=0
+            testing.expect_value(t,schema_validate(&loaded),Schema_Error.Out_Of_Memory)
+            hashes:=make([dynamic]u64,allocator)
+            testing.expect(t,!schema_hashes_update(&loaded,&hashes))
+            testing.expect_value(t,len(hashes),0)
+            failure.remaining=128
+            testing.expect(t,schema_hashes_update(&loaded,&hashes))
+            testing.expect_value(t,len(hashes),len(loaded.types))
+            delete(hashes);schema_destroy(&loaded)
+            break
         }
-        succeeded=true
-        failure.remaining=0
-        testing.expect_value(t,schema_validate(&loaded),Schema_Error.Out_Of_Memory)
-        hashes:=make([dynamic]u64,allocator)
-        testing.expect(t,!schema_hashes_update(&loaded,&hashes))
-        testing.expect_value(t,len(hashes),0)
-        failure.remaining=128
-        testing.expect(t,schema_hashes_update(&loaded,&hashes))
-        testing.expect_value(t,len(hashes),len(loaded.types))
-        delete(hashes);schema_destroy(&loaded)
-        break
+        testing.expectf(t,succeeded && refused,"%v: refused without memory, and with it it goes through",call)
     }
-    testing.expect(t,succeeded)
 }
 
 @(test)
@@ -94,6 +118,15 @@ migration_refuses_incomplete_hashes_and_retries_without_writing_the_destination 
     schema_init(&destination);defer schema_destroy(&destination)
     from,_:=schema_add(&source,Before)
     to,_:=schema_add(&destination,After)
+    Kind_Before :: enum u8 {Low,High}
+    Kind_After :: enum u8 {High,Low,Other}
+    Wide_Before :: struct {kind:Kind_Before,values:[3]i32,on:bool}
+    Wide_After :: struct {kind:Kind_After,values:[3]f64,on:bool}
+    wide_source,wide_destination:Schema
+    schema_init(&wide_source);defer schema_destroy(&wide_source)
+    schema_init(&wide_destination);defer schema_destroy(&wide_destination)
+    wide_from,_:=schema_add(&wide_source,Wide_Before)
+    wide_to,_:=schema_add(&wide_destination,Wide_After)
     failure:=Schema_Allocation_Failure{owner=context.allocator}
     context.temp_allocator=runtime.Allocator{schema_failure_allocator,&failure}
     for budget in 0..<3 {
@@ -114,4 +147,31 @@ migration_refuses_incomplete_hashes_and_retries_without_writing_the_destination 
     input:=Before{42};output:=After{91}
     migration_apply(&migration,mem.ptr_to_bytes(&output),mem.ptr_to_bytes(&input),1)
     testing.expect_value(t,output.value,f64(42))
+
+    // The ops and the pairs of a migration, with the memory of its allocator
+    // ending at each request in turn: Out_Of_Memory and nothing kept or
+    // converted, and with memory enough every field converted.
+    failure.remaining=max(int)
+    limit:=Schema_Allocation_Failure{owner=context.allocator}
+    limited:=runtime.Allocator{schema_failure_allocator,&limit}
+    built,refused:=false,false
+    for budget:=0;!built && budget<64;budget+=1 {
+        limit.remaining=budget
+        wide:Migration
+        error:=migration_init(&wide,&wide_source,wide_from,&wide_destination,wide_to,limited)
+        limit.remaining=max(int)
+        before:=Wide_Before{.High,{1,2,3},true}
+        after:=Wide_After{.Other,{9,9,9},false}
+        migration_apply(&wide,mem.ptr_to_bytes(&after),mem.ptr_to_bytes(&before),1)
+        if error!=.None {
+            refused=true
+            testing.expectf(t,error==.Out_Of_Memory && wide.ops==nil && wide.pairs==nil,"with %d requests served: %v, and a part kept",budget,error)
+            testing.expectf(t,after==Wide_After{.Other,{9,9,9},false},"with %d requests served: a migration that was refused converted",budget)
+            continue
+        }
+        built=true
+        testing.expectf(t,after==Wide_After{.High,{1,2,3},true},"with %d requests served: %v",budget,after)
+        migration_destroy(&wide)
+    }
+    testing.expect(t,built && refused,"refused without memory, and with it the migration is whole")
 }

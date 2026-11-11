@@ -2,6 +2,7 @@ package main
 
 import "core:os"
 import "core:testing"
+import "mirai:std/base"
 
 // A checkout whose C library is in the shared cache, built from the same
 // sources elsewhere, copies it instead of compiling it; another source is
@@ -9,9 +10,8 @@ import "core:testing"
 @(test)
 a_c_library_built_from_the_same_sources_comes_from_the_shared_cache :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root,error:=os.make_directory_temp("","mirai-c-library-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"c-library")
+    if root=="" {return}
     sources:=[]string{"fake.c"}
     definitions:=[]string{"FAKE=1"}
     library:=C_Library{name="fake",sources=sources,definitions=definitions}

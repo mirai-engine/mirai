@@ -22,15 +22,16 @@ The optional `ragdoll` plugin depends on `animation` and `physics`. Its Runtime
 
 `ragdoll.setup` builds the ragdoll of a rig from the
 [skeleton body](../../mirai-animation/references/animation-authoring.md#skeleton-body)
-stored in the `.skeleton`, like the one the demo's ragdoll station builds by hand.
+of its `.skeleton`, like the one the demo's ragdoll station builds by hand; one that stores none
+is detected in memory for the call and the `.skeleton` does not change.
 
 - The rig is the entity with `Animation` whose `Mesh_Renderer` shows a skeletal mesh; a skin with
-  `Pose_Source` leads to its rig. Without a stored body it fails and the `fix` asks for
-  `skeleton.body.detect` (or `skeleton.body.set`); without a pelvis, which is the root, it fails
-  too.
-- Only in Edit. It validates rig, skeleton, scale, joints and masses before writing; bodies,
+  `Pose_Source` leads to its rig. A body that cannot be detected, or one without a pelvis, which
+  is the root, fails and the `fix` asks for `skeleton.body.set`.
+- On the document, also while a game plays. It validates rig, skeleton, scale, joints and masses
+  before writing; bodies,
   components and the rig's `Ragdoll` (from `RAGDOLL_DEFAULT`, with `mode`) enter a single undo
-  step, or nothing remains.
+  step, or nothing remains. The ragdoll the rig had leaves in that same step.
 - One body per part: pelvis, spine and chest (the chain between pelvis and neck split at its
   first bone and the middle one; with a single bone, chest only), head, arms, forearms, hands,
   thighs, legs and feet. Neck, clavicles and fingers have no body: they follow the animated pose
@@ -85,16 +86,17 @@ stored in the `.skeleton`, like the one the demo's ragdoll station builds by han
 
 ## Verification
 
-- `plugins/ragdoll/runtime` with `-collection:plugins=plugins`; `--release` only if a failure may depend on optimization.
+- `plugins/ragdoll/runtime` with `-collection:plugins=plugins`; `--release` only if a failure may
+  depend on optimization.
 - `plugins/ragdoll/editor` (no GPU), for `ragdoll.setup`:
   `ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step_of_undo`,
-  `ragdoll_setup_without_a_body_map_fails_with_how_to_detect_it_and_changes_nothing` and
-  `ragdoll_setup_refuses_a_rig_with_a_ragdoll_unless_replace_removes_its_bodies`. In a session,
+  `ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_as_it_is` and
+  `ragdoll_setup_replaces_the_ragdoll_of_a_rig_in_one_step_of_undo`. In a session,
   `ragdoll.setup` on a character with a body and Simulate: it falls whole, with no bodies
   exploding.
 - `plugins/animation/runtime`:
   `final_world_poses_update_skin_and_sockets_in_the_same_tick_without_stable_allocations` and
   `partial_final_world_poses_blend_once_and_do_not_stretch_a_translated_chain`.
-- The ragdoll station of `physics_gallery/physics.scene` alternates Animated, Driven and Simulated until
-  the first E, which then changes the mode; interaction and graphics validation in
+- The ragdoll station of `physics_gallery/physics.scene` alternates Animated, Driven and Simulated
+  until the first E, which then changes the mode; interaction and graphics validation in
   [the demo](../../mirai-gameplay/references/demo.md).

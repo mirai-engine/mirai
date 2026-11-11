@@ -1,5 +1,6 @@
 package api
 
+import "base:intrinsics"
 import "core:encoding/json"
 import "core:fmt"
 import "core:mem"
@@ -8,7 +9,9 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:thread"
 import "core:time"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 mcp :: proc(t:^testing.T,f:^Fixture,body:string) -> json.Value {
@@ -23,9 +26,8 @@ tool_text :: proc(t:^testing.T,reply:json.Value) -> json.Value {
 
 @(private)
 mcp_image_handler :: proc(call:^Call) {
-    raw(call.out,`{"content":[{"type":"image","data":"`)
-    raw(call.out,call.user!=nil?(^string)(call.user)^:"c2F2ZWQ=")
-    raw(call.out,`","mimeType":"image/png"}],"isError":false}`)
+    raw(call.out,`{"shown":true}`)
+    call_image(call,(^string)(call.user)^)
 }
 
 @(test)
@@ -35,7 +37,13 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
     defer server_destroy(&server)
     payload:=strings.repeat("AQID",230*1024,context.allocator)
     defer delete(payload)
-    testing.expect_value(t,method_register(&server,{name="view.viewport",handler=mcp_image_handler,mcp_content=true,user=&payload}),Register_Error.None)
+    folder:=base.test_folder(t,"image")
+    if folder=="" {return}
+    file:=fmt.tprintf("%s/large.png",folder)
+    bytes:=make([]u8,230*1024*3,context.temp_allocator)
+    for i in 0..<len(bytes) {bytes[i]=u8(i%3+1)}
+    testing.expect(t,os.write_entire_file(file,bytes)==nil)
+    testing.expect_value(t,method_register(&server,{name="view.viewport",handler=mcp_image_handler,user=&file}),Register_Error.None)
     // The receiver window must be negotiated before the TCP handshake.
     receiver,listen_error:=net.listen_tcp({address=net.IP4_Loopback,port=0},1)
     if !testing.expect(t,listen_error==nil) {return}
@@ -43,12 +51,7 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
     testing.expect(t,net.set_option(receiver,.Receive_Buffer_Size,8192)==nil)
     endpoint,endpoint_error:=net.bound_endpoint(receiver)
     if !testing.expect(t,endpoint_error==nil) {return}
-    paths:=[2]string{"/rpc","/mcp"}
-    requests:=[2]string{
-        `{"jsonrpc":"2.0","id":1,"method":"view.viewport"}`,
-        `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"view_viewport","arguments":{}}}`,
-    }
-    for path,index in paths {
+    for _ in 0..<2 {
         writer,dial_error:=net.dial_tcp_from_address_and_port(net.IP4_Loopback,endpoint.port)
         if !testing.expect(t,dial_error==nil) {return}
         socket,_,accept_error:=net.accept_tcp(receiver)
@@ -58,7 +61,7 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
         testing.expect(t,net.set_blocking(writer,false)==nil)
         conn:=&server.conns[0]
         conn^={socket=writer,state=.Reading,buffer=conn.buffer,started=time.tick_now()}
-        request:=http_request(path,requests[index])
+        request:=http_request("/mcp",`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"view_viewport","arguments":{}}}`)
         _,send_error:=net.send_tcp(socket,transmute([]u8)request)
         testing.expect(t,send_error==nil)
         testing.expect(t,net.set_blocking(socket,false)==nil)
@@ -89,36 +92,18 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
         head:=strings.index(text,"\r\n\r\n")
         if !testing.expect(t,head>=0) {return}
         body:=text[head+4:]
-        _,declared_length:=response_head(text[:head])
+        _,declared_length,_:=response_head(text[:head])
         testing.expect_value(t,len(body),declared_length)
         if !testing.expect(t,!strings.contains(body,"HTTP/1.1"),"a partial send never repeats the HTTP header") {return}
         reply,parse_error:=json.parse(transmute([]u8)body,parse_integers=true,allocator=context.temp_allocator)
         if !testing.expect_value(t,parse_error,json.Error.None) {return}
-        testing.expect_value(t,string_of(at(reply,"result","content",0,"type")),"image")
-        received:=string_of(at(reply,"result","content",0,"data"))
+        testing.expect_value(t,string_of(at(reply,"result","content",1,"type")),"image")
+        received:=string_of(at(reply,"result","content",1,"data"))
         testing.expect_value(t,len(received),len(payload))
         testing.expect(t,received==payload,"the complete image data matches")
-        testing.expect_value(t,string_of(at(reply,"result","content",0,"mimeType")),"image/png")
+        testing.expect_value(t,string_of(at(reply,"result","content",1,"mimeType")),"image/png")
         testing.expect(t,is_bool(at(reply,"result","isError"),false))
     }
-}
-
-@(test)
-mcp_image_results_remain_content_and_failures_remain_tool_errors :: proc(t:^testing.T) {
-    f:Fixture;if !fixture_start(&f,t) {return}
-    defer fixture_finish(&f)
-    testing.expect_value(t,method_register(&f.server,{name="view.viewport",handler=mcp_image_handler,mcp_content=true}),Register_Error.None)
-    testing.expect_value(t,method_register(&f.server,{name="view.error",params=Fail_Params,handler=fail_handler,mcp_content=true}),Register_Error.None)
-    reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"view_viewport","arguments":{}}}`)
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"type")),"image")
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"data")),"c2F2ZWQ=")
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"mimeType")),"image/png")
-    testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    direct:=rpc(t,&f,`{"jsonrpc":"2.0","id":2,"method":"view.viewport"}`)
-    testing.expect_value(t,string_of(at(direct,"result","content",0,"type")),"image")
-    failed:=mcp(t,&f,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"view_error","arguments":{}}}`)
-    testing.expect(t,is_bool(at(failed,"result","isError"),true))
-    testing.expect_value(t,integer(at(tool_text(t,failed),"error","code")),SERVER_ERROR)
 }
 
 Image_Params :: struct {path:[256]u8 `mirai:"text"`}
@@ -135,8 +120,8 @@ a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: p
     f:Fixture;if !fixture_start(&f,t,{max_response=MIN_RESPONSE}) {return}
     defer fixture_finish(&f)
     testing.expect_value(t,method_register(&f.server,{name="shot.take",params=Image_Params,result=Add_Result,handler=image_handler}),Register_Error.None)
-    folder,_:=os.make_directory_temp("","mirai-image-*",context.allocator)
-    defer {os.remove_all(folder);delete(folder)}
+    folder:=base.test_folder(t,"image")
+    if folder=="" {return}
     small:=fmt.tprintf("%s/small.png",folder)
     large:=fmt.tprintf("%s/large.png",folder)
     testing.expect(t,os.write_entire_file(small,[]u8{1,2,3,4})==nil)
@@ -144,15 +129,17 @@ a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: p
     call :: proc(path:string) -> string {return fmt.tprintf(`{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"shot_take","arguments":{{"path":%q}}}}}}`,path)}
     reply:=mcp(t,&f,call(small))
     testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),7)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),7)
     testing.expect_value(t,string_of(at(reply,"result","content",1,"type")),"image")
     testing.expect_value(t,string_of(at(reply,"result","content",1,"data")),"AQIDBA==")
     testing.expect_value(t,string_of(at(reply,"result","content",1,"mimeType")),"image/png")
+    selected:=mcp(t,&f,fmt.tprintf(`{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"shot_take","arguments":{{"path":%q,"_select":"sum"}}}}}}`,small))
+    testing.expect_value(t,integer(at(tool_text(t,selected),"sum")),7)
+    testing.expect_value(t,string_of(at(selected,"result","content",1,"type")),"image")
     direct:=rpc(t,&f,fmt.tprintf(`{{"jsonrpc":"2.0","id":2,"method":"shot.take","params":{{"path":%q}}}}`,small))
     testing.expect_value(t,integer(at(direct,"result","sum")),7)
     // One that does not fit says where it is, and the result stays.
     big:=mcp(t,&f,call(large))
-    testing.expect_value(t,integer(at(big,"result","structuredContent","sum")),7)
+    testing.expect_value(t,integer(at(tool_text(t,big),"sum")),7)
     testing.expect(t,strings.contains(string_of(at(big,"result","content",1,"text")),"large.png"))
     missing:=mcp(t,&f,call(fmt.tprintf("%s/none.png",folder)))
     testing.expect(t,strings.contains(string_of(at(missing,"result","content",1,"text")),"could not be read"))
@@ -167,36 +154,48 @@ fixture_plugins :: proc(t:^testing.T,f:^Fixture) {
 }
 
 @(test)
-describe_without_params_lists_each_method_with_its_plugin_and_the_plugins_found :: proc(t:^testing.T) {
+describe_without_params_is_an_index_of_names_short_summaries_and_plugins :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
     fixture_plugins(t,&f)
     reply:=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe"}`)
-    methods,ok:=at(reply,"result","methods").(json.Array)
-    testing.expect(t,ok && len(methods)==9,"the built-in method, the seven samples and the one of the plugin")
+    testing.expect(t,at(reply,"result","methods")==nil,"no entries with schemas")
     testing.expect_value(t,string_of(at(reply,"result","server","name")),"mirai")
-    testing.expect_value(t,string_of(at(methods[0],"name")),"engine.describe")
-    testing.expect_value(t,string_of(at(methods[0],"plugin")),"editor")
-    testing.expect_value(t,string_of(at(methods[1],"summary")),"Adds two integers.")
-    testing.expect(t,at(methods[1],"params")==nil && at(methods[1],"flags")==nil && at(methods[1],"tool")==nil,"only the name, the summary and the plugin")
-    testing.expect_value(t,string_of(at(methods[8],"name")),"anim.play")
-    testing.expect_value(t,string_of(at(methods[8],"plugin")),"animation")
-    testing.expect_value(t,len(at(reply,"result","plugins").(json.Array)),2)
-    testing.expect_value(t,string_of(at(reply,"result","plugins",0,"name")),"animation")
-    testing.expect(t,is_bool(at(reply,"result","plugins",0,"active"),true))
-    testing.expect(t,is_bool(at(reply,"result","plugins",1,"active"),false),"a plugin the project does not use is listed too")
+    core_methods,ok:=at(reply,"result","core").(json.Array)
+    testing.expect(t,ok && len(core_methods)>=2,"the methods used most")
+    testing.expect_value(t,string_of(at(core_methods[0],"name")),"engine.describe")
+    testing.expect(t,len(string_of(at(core_methods[0],"summary")))<=DESCRIBE_BRIEF,"a short summary")
+    testing.expect(t,at(core_methods[1],"params")==nil && at(core_methods[1],"flags")==nil && at(core_methods[1],"tool")==nil,"only the name and the summary")
+    groups:=at(reply,"result","others").(json.Array)
+    found:=false
+    for group in groups {
+        if string_of(at(group,"plugin"))=="animation" {found=strings.contains(string_of(at(group,"methods")),"anim.play")}
+    }
+    testing.expect(t,found,"the other methods go by name under their plugin")
+    testing.expect_value(t,string_of(at(reply,"result","active_plugins",0)),"animation")
+    testing.expect_value(t,string_of(at(reply,"result","other_plugins",0)),"terrain")
+    testing.expect(t,strings.contains(string_of(at(reply,"result","more")),"methods"),"it says how to ask for the rest")
+}
+
+// The first sentence or clause, and a word boundary when that is too long.
+@(test)
+a_brief_summary_keeps_its_first_clause_and_cuts_at_a_word :: proc(t:^testing.T) {
+    testing.expect_value(t,summary_brief("Lists them; methods gives more."),"Lists them")
+    testing.expect_value(t,summary_brief("Moves scene.add around. Then more."),"Moves scene.add around")
+    testing.expect_value(t,summary_brief("one two three four",9),"one two")
 }
 
 @(test)
-describe_gives_whole_entries_of_named_methods_a_prefix_or_a_plugin :: proc(t:^testing.T) {
+describe_gives_schemas_of_named_methods_and_summaries_of_a_prefix_or_a_plugin :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
     fixture_plugins(t,&f)
     reply:=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"prefix":"test."}}`)
     methods:=at(reply,"result","methods").(json.Array)
     testing.expect_value(t,len(methods),7)
-    for method in methods {testing.expect(t,strings.has_prefix(string_of(at(method,"name")),"test.") && at(method,"params")!=nil)}
-    testing.expect(t,at(reply,"result","plugins")==nil,"the plugins come only with the list")
+    for method in methods {testing.expect(t,strings.has_prefix(string_of(at(method,"name")),"test.") && at(method,"summary")!=nil && at(method,"params")==nil,"an area gives its summaries")}
+    testing.expect(t,at(reply,"result","core")==nil && at(reply,"result","active_plugins")==nil,"the index comes only without params")
+    reply=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"methods":["test.add","test.raw"]}}`)
     add:=at(reply,"result","methods",0)
     testing.expect_value(t,string_of(at(add,"tool")),"test_add")
     testing.expect_value(t,string_of(at(add,"plugin")),"editor")
@@ -206,7 +205,7 @@ describe_gives_whole_entries_of_named_methods_a_prefix_or_a_plugin :: proc(t:^te
     testing.expect_value(t,string_of(at(add,"params","required",1)),"b")
     testing.expect(t,is_bool(at(add,"params","additionalProperties"),false),"boolean flag")
     testing.expect_value(t,string_of(at(add,"result","properties","sum","type")),"integer")
-    raw_method:=at(reply,"result","methods",4)
+    raw_method:=at(reply,"result","methods",1)
     testing.expect_value(t,string_of(at(raw_method,"name")),"test.raw")
     testing.expect(t,at(raw_method,"result")!=nil,"a free-form result is described as any JSON")
     reply=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"methods":["test.echo","test.add","test.echo"]}}`)
@@ -233,7 +232,7 @@ describe_gives_whole_entries_of_named_methods_a_prefix_or_a_plugin :: proc(t:^te
     testing.expect(t,strings.contains(string_of(at(reply,"error","message")),"without params"),"the error says how to list the names")
     reply=rpc(t,&f,`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":{"methods":["test.echo","missing","gone"]}}`)
     testing.expect(t,strings.contains(string_of(at(reply,"error","message")),`"missing", "gone"`),"the error names every unknown method")
-    for params in ([]string{`{"methods":["test.echo"],"prefix":"test."}`,`{"methods":["test.echo"],"plugin":"editor"}`,`{"compact":true}`,`{"schemas":false}`,`{"methods":["missing"]}`,`{"method":"test.echo"}`,`{"verbose":true}`}) {
+    for params in ([]string{`{"methods":["test.echo"],"prefix":"test."}`,`{"methods":["test.echo"],"plugin":"editor"}`,`{"compact":true}`,`{"schemas":false}`,`{"methods":["missing"]}`,`{"verbose":true}`}) {
         reply=rpc(t,&f,strings.concatenate({`{"jsonrpc":"2.0","id":1,"method":"engine.describe","params":`,params,"}"},context.temp_allocator))
         testing.expectf(t,integer(at(reply,"error","code"))==INVALID_PARAMS,"%s is refused",params)
     }
@@ -303,10 +302,7 @@ mcp_lists_each_method_as_a_tool_with_its_input_and_object_output_schemas :: proc
     testing.expect_value(t,string_of(at(add,"description")),"Adds two integers.")
     testing.expect_value(t,string_of(at(add,"inputSchema","type")),"object")
     testing.expect_value(t,integer(at(add,"inputSchema","properties","a","maximum")),2147483647)
-    testing.expect_value(t,string_of(at(add,"outputSchema","type")),"object")
-    testing.expect_value(t,string_of(at(add,"outputSchema","properties","sum","type")),"integer")
-    testing.expect_value(t,string_of(at(add,"outputSchema","required",0)),"sum")
-    testing.expect(t,at(reply,"result","tools",5,"outputSchema")==nil,"free-form results do not promise a schema")
+    testing.expect(t,at(add,"outputSchema")==nil,"a model reads a result as text")
     testing.expect(t,is_bool(at(add,"annotations","readOnlyHint"),true),"boolean flag")
     testing.expect(t,is_bool(at(add,"annotations","destructiveHint"),false),"boolean flag")
     testing.expect(t,is_bool(at(add,"annotations","idempotentHint"),true),"boolean flag")
@@ -341,7 +337,7 @@ mcp_lists_the_tools_of_the_plugins_that_x_mirai_plugins_names :: proc(t:^testing
     testing.expect_value(t,len(two),11)
     testing.expect_value(t,len(names(t,&f,"*")),11)
     reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"anim_play","arguments":{"a":1,"b":2}}}`)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),3)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),3)
     status,_,_:=client_post(server_port(&f.server),"/mcp",`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`,3000,context.temp_allocator,"","anim;rm")
     testing.expect_value(t,status,400)
 }
@@ -376,7 +372,7 @@ mcp_lists_tools_in_pages_when_they_do_not_fit :: proc(t:^testing.T) {
 }
 
 @(test)
-mcp_calls_a_tool_and_returns_object_results_as_text_and_structured_content :: proc(t:^testing.T) {
+mcp_calls_a_tool_and_returns_results_as_text :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
     reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":"c1","method":"tools/call","params":{"name":"test_add","arguments":{"a":40,"b":2}}}`)
@@ -384,16 +380,12 @@ mcp_calls_a_tool_and_returns_object_results_as_text_and_structured_content :: pr
     testing.expect_value(t,string_of(at(reply,"result","content",0,"type")),"text")
     testing.expect(t,is_bool(at(reply,"result","isError"),false),"boolean flag")
     testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),42)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),42)
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_echo","arguments":{"text":"say \"hi\"\n","times":2}}}`)
     testing.expect_value(t,string_of(at(tool_text(t,reply),"text")),"say \"hi\"\nsay \"hi\"\n")
-    testing.expect_value(t,string_of(at(reply,"result","structuredContent","text")),"say \"hi\"\nsay \"hi\"\n")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"engine_describe","arguments":{"methods":["test.add"]}}}`)
     testing.expect_value(t,string_of(at(tool_text(t,reply),"methods",0,"name")),"test.add")
-    testing.expect_value(t,string_of(at(reply,"result","structuredContent","methods",0,"name")),"test.add")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"test_raw"}}`)
     testing.expect_value(t,integer(at(tool_text(t,reply),"bytes")),2)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","bytes")),2)
     reply=mcp(t,&f,`[{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"test_add","arguments":{"a":1,"b":1}}},{"jsonrpc":"2.0","method":"notifications/initialized"}]`)
     testing.expect_value(t,len(reply.(json.Array)),1)
 }
@@ -406,7 +398,6 @@ mcp_failures_are_tool_errors_and_misuse_is_a_protocol_error :: proc(t:^testing.T
     testing.expect(t,is_bool(at(reply,"result","isError"),true),"boolean flag")
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),SERVER_ERROR)
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","data","attempt")),4)
-    testing.expect(t,at(reply,"result","structuredContent")==nil,"tool errors do not claim to conform to the success schema")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_add","arguments":{"a":"x","b":1}}}`)
     testing.expect(t,is_bool(at(reply,"result","isError"),true),"boolean flag")
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INVALID_PARAMS)
@@ -437,48 +428,46 @@ mcp_process_reply :: proc(t:^testing.T,s:^Server,body:string) -> json.Value {
     return parse_json(t,string(serial.writer_bytes(&s.out)))
 }
 
+// The editor serves the docs tool itself, from the documentation of its
+// engine, the same one mirai mcp answers without an editor.
 @(test)
-mcp_explicit_object_output_schemas_share_the_method_contract :: proc(t:^testing.T) {
+mcp_serves_the_game_documentation_of_its_engine :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"mcp-docs")
+    if root=="" {return}
+    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/%s",root,DOCS_FOLDER))==nil)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s/core.md",root,DOCS_FOLDER),transmute([]u8)string("---\ndescription: Entities and tables.\n---\n# Core\n\nBody.\n"))==nil)
+    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/%s/core",root,DOCS_FOLDER))==nil)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s/core/prefabs.md",root,DOCS_FOLDER),transmute([]u8)string("# Prefabs and spawning\n\nPage.\n"))==nil)
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
-    OBJECT :: `{"type":"object","properties":{"value":{"type":"integer"}},"required":["value"],"additionalProperties":false}`
-    text:=` {"value":7} `
-    testing.expect_value(t,method_register(&s,{name="object",result_schema=OBJECT,handler=mcp_json_handler,user=&text,flags={.Core}}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="array",result_schema=`{"type":"array"}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="any",result_schema=`{}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="invalid",result_schema=`{"type":`,handler=mcp_json_handler,user=&text}),Register_Error.Invalid_Schema)
+    s.docs_root=strings.clone(root,s.allocator)
     reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-    schema:=at(reply,"result","tools",1,"outputSchema")
-    testing.expect_value(t,string_of(at(schema,"type")),"object")
-    testing.expect_value(t,string_of(at(schema,"properties","value","type")),"integer")
-    testing.expect_value(t,string_of(at(schema,"required",0)),"value")
-    testing.expect(t,is_bool(at(schema,"additionalProperties"),false))
-    testing.expect(t,at(reply,"result","tools",2,"outputSchema")==nil)
-    testing.expect(t,at(reply,"result","tools",3,"outputSchema")==nil)
-    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"object"}}`)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","value")),7)
-    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),7)
-    testing.expect_value(t,string_of(at(reply,"result","content",0,"text")),text)
+    testing.expect_value(t,string_of(at(reply,"result","tools",0,"name")),MCP_DOCS_TOOL)
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"docs","arguments":{"topic":"core"}}}`)
+    testing.expect(t,strings.contains(string_of(at(reply,"result","content",0,"text")),"Body."),string_of(at(reply,"result","content",0,"text")))
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"docs","arguments":{"topic":"nope"}}}`)
+    testing.expect(t,is_bool(at(reply,"result","isError"),true))
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`)
+    instructions:=string_of(at(reply,"result","instructions"))
+    testing.expect(t,strings.contains(instructions,DOCS_INSTRUCTION))
+    testing.expect(t,strings.contains(instructions,"- core: Entities and tables.\n  - core prefabs: Prefabs and spawning"),instructions)
+    reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"docs","arguments":{}}}`)
+    index:=string_of(at(reply,"result","content",0,"text"))
+    testing.expect(t,strings.contains(index,"Entities and tables.\n  core prefabs: Prefabs and spawning"),index)
 }
 
 @(test)
-mcp_rejects_malformed_results_and_object_schema_type_mismatches :: proc(t:^testing.T) {
+mcp_rejects_malformed_results :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
     text:=`{"value":7}`
     testing.expect_value(t,method_register(&s,{name="free",handler=mcp_json_handler,user=&text}),Register_Error.None)
-    testing.expect_value(t,method_register(&s,{name="object",result_schema=`{"type":"object"}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
     values:=[]string{`[1,2]`,`"hello"`,`3`,`true`,`null`}
     for value in values {
         text=value
         reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"free"}}`)
         testing.expect(t,is_bool(at(reply,"result","isError"),false))
-        testing.expect(t,at(reply,"result","structuredContent")==nil,"MCP 2025 structured content is an object")
         testing.expect_value(t,string_of(at(reply,"result","content",0,"text")),value)
-        reply=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"object"}}`)
-        testing.expect(t,is_bool(at(reply,"result","isError"),true))
-        testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
-        testing.expect(t,at(reply,"result","structuredContent")==nil)
     }
     malformed:=[]string{`{"value":`,`{"value":7} false`,`not json`}
     for value in malformed {
@@ -486,19 +475,18 @@ mcp_rejects_malformed_results_and_object_schema_type_mismatches :: proc(t:^testi
         reply:=mcp_process_reply(t,&s,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"free"}}`)
         testing.expect(t,is_bool(at(reply,"result","isError"),true))
         testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
-        testing.expect(t,at(reply,"result","structuredContent")==nil)
     }
 }
 
 @(test)
-mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_allocations :: proc(t:^testing.T) {
+mcp_results_remain_bounded_and_recover_after_scratch_failure_without_allocations :: proc(t:^testing.T) {
     s,ok:=test_server(t,{max_request=1024,max_response=4096});if !ok {return}
     defer server_destroy(&s)
     buffer:[3600]u8
     w:serial.Writer
     serial.writer_init_fixed(&w,buffer[:])
     raw(&w,`{"value":"`)
-    for _ in 0..<1300 {raw(&w,`\n`)}
+    for _ in 0..<1700 {raw(&w,`\n`)}
     raw(&w,`"}`)
     text:=string(serial.writer_bytes(&w))
     testing.expect_value(t,method_register(&s,{name="object",result_schema=`{"type":"object"}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
@@ -510,7 +498,7 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     reply:=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect_value(t,integer(at(reply,"id")),8)
     testing.expect_value(t,integer(at(reply,"error","code")),SERVER_ERROR)
-    testing.expect(t,at(reply,"result")==nil,"a partial structured result is never sent")
+    testing.expect(t,at(reply,"result")==nil,"a partial result is never sent")
     saved_scratch:=s.scratch.arena.data
     s.scratch.arena.data=saved_scratch[:64]
     context.allocator=mem.nil_allocator()
@@ -521,7 +509,6 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     reply=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect(t,is_bool(at(reply,"result","isError"),true))
     testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),INTERNAL_ERROR)
-    testing.expect(t,at(reply,"result","structuredContent")==nil)
     testing.expect_value(t,s.stats.scratch_failures,1)
     text=`{"value":42}`
     context.allocator=mem.nil_allocator()
@@ -532,29 +519,7 @@ mcp_structured_results_remain_bounded_and_recover_after_scratch_failure_without_
     context.allocator=saved_allocator
     reply=parse_json(t,string(serial.writer_bytes(&s.out)))
     testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","value")),42)
-    serial.writer_reset(&w)
-    raw(&w,`{"type":"object","description":"`)
-    for _ in 0..<1300 {raw(&w,`\n`)}
-    raw(&w,`"}`)
-    testing.expect_value(t,method_register(&s,{name="schema",result_schema=string(serial.writer_bytes(&w)),handler=mcp_json_handler,user=&text,flags={.Core}}),Register_Error.None)
-    s.scratch.arena.data=saved_scratch[:64]
-    context.allocator=mem.nil_allocator()
-    serial.writer_reset(&s.out)
-    testing.expect(t,process(&s,`{"jsonrpc":"2.0","id":12,"method":"tools/list"}`,.Mcp))
-    context.allocator=saved_allocator
-    s.scratch.arena.data=saved_scratch
-    reply=parse_json(t,string(serial.writer_bytes(&s.out)))
-    testing.expect_value(t,integer(at(reply,"id")),12)
-    testing.expect_value(t,integer(at(reply,"error","code")),INTERNAL_ERROR)
-    testing.expect_value(t,s.stats.scratch_failures,2)
-    context.allocator=mem.nil_allocator()
-    serial.writer_reset(&s.out)
-    testing.expect(t,process(&s,`{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"schema"}}`,.Mcp))
-    context.allocator=saved_allocator
-    reply=parse_json(t,string(serial.writer_bytes(&s.out)))
-    testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","value")),42)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"value")),42)
 }
 
 is_bool :: proc(value:json.Value,want:bool) -> bool {
@@ -574,9 +539,9 @@ mcp_lists_the_core_and_call_runs_any_other_method_by_its_name :: proc(t:^testing
     testing.expect(t,string_of(at(call,"name"))==MCP_CALL_TOOL && string_of(at(call,"inputSchema","required",0))=="method")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"call","arguments":{"method":"rare.sum","params":{"a":2,"b":3}}}}`)
     testing.expect(t,is_bool(at(reply,"result","isError"),false))
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),5)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),5)
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"rare_sum","arguments":{"a":1,"b":1}}}`)
-    testing.expect_value(t,integer(at(reply,"result","structuredContent","sum")),2)
+    testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),2)
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"call","arguments":{"method":"missing.thing"}}}`)
     testing.expect(t,strings.contains(string_of(at(reply,"error","message")),"engine_describe lists the methods"),"an unknown method says where the methods are")
     reply=mcp(t,&f,`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"call","arguments":{"params":{}}}}`)
@@ -598,4 +563,186 @@ describe_gives_the_guides_of_the_methods_it_gives :: proc(t:^testing.T) {
     testing.expect(t,at(reply,"result","guides")==nil,"a method without a guide comes alone")
     reply=rpc(t,&f,`{"jsonrpc":"2.0","id":4,"method":"engine.describe"}`)
     testing.expect(t,at(reply,"result","guides")==nil,"the list of every method carries no guide")
+}
+
+// Works for a little more than a second, telling its progress and stopping when cancelled.
+@(private="file")
+slow_handler :: proc(call:^Call) {
+    s:=call.server
+    for i in 0..<130 {
+        if server_cancelled(s) {return}
+        server_progress(s,"working",i,130)
+        time.sleep(10*time.Millisecond)
+    }
+    raw(call.out,`{"done":true}`)
+}
+
+@(private="file")
+Slow_Events :: struct {lines:[dynamic]string}
+
+@(private="file")
+slow_event :: proc(user:rawptr,line:string) {
+    events:=(^Slow_Events)(user)
+    append(&events.lines,strings.clone(line,context.temp_allocator))
+}
+
+@(private="file")
+slow_call :: proc(meta:string) -> string {
+    return strings.concatenate({`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"test_slow","arguments":{}`,meta,`}}`},context.temp_allocator)
+}
+
+// A call with a token answers as a stream of its progress and its answer last;
+// without one, or without an Accept for it, it is one JSON as any other.
+@(test)
+a_call_with_a_progress_token_streams_its_progress_and_one_without_answers_as_always :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",handler=slow_handler,flags={.Core}}),Register_Error.None)
+    port:=server_port(&f.server)
+    events:Slow_Events
+    events.lines.allocator=context.temp_allocator
+    body:=slow_call(`,"_meta":{"progressToken":"t1"}`)
+    status,bytes,err:=client_post(port,"/mcp",body,5000,context.temp_allocator,events={&events,slow_event})
+    testing.expectf(t,err.code==0 && status==200,"%d %v",status,err)
+    testing.expectf(t,len(events.lines)>=2,"%v",events.lines)
+    if len(events.lines)>0 {
+        first:=parse_json(t,events.lines[0])
+        testing.expect_value(t,string_of(at(first,"method")),"notifications/progress")
+        testing.expect_value(t,string_of(at(first,"params","progressToken")),"t1")
+        testing.expect_value(t,integer(at(first,"params","total")),130)
+    }
+    testing.expectf(t,strings.contains(string(bytes),`done`),"the answer comes last: %s",string(bytes))
+    plain:=slow_call("")
+    status,bytes,err=client_post(port,"/mcp",plain,5000,context.temp_allocator)
+    testing.expectf(t,err.code==0 && status==200 && strings.contains(string(bytes),`done`),"%d %v %s",status,err,string(bytes))
+    noted:=slow_call(`,"_meta":{"progressToken":"t2"}`)
+    status,bytes,err=client_post(port,"/mcp",noted,5000,context.temp_allocator)
+    testing.expectf(t,err.code==0 && status==200 && !strings.contains(string(bytes),"data:"),"no Accept, no stream: %s",string(bytes))
+}
+
+// A notifications/cancelled that arrives on another connection ends the wait at
+// its safe point, and the call answers that it was cancelled.
+@(test)
+a_cancelled_call_stops_at_its_safe_point_and_says_so :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",handler=slow_handler,flags={.Core}}),Register_Error.None)
+    Canceller :: struct {port:int}
+    canceller:=Canceller{server_port(&f.server)}
+    cancel :: proc(c:^Canceller) {
+        time.sleep(200*time.Millisecond)
+        client_post(c.port,"/mcp",`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7,"reason":"enough"}}`,3000,context.temp_allocator)
+    }
+    th:=thread.create_and_start_with_poly_data(&canceller,cancel)
+    defer {thread.join(th);thread.destroy(th)}
+    began:=time.tick_now()
+    status,bytes,err:=client_post(canceller.port,"/mcp",slow_call(""),5000,context.temp_allocator)
+    testing.expectf(t,err.code==0 && status==200,"%d %v",status,err)
+    testing.expect(t,time.duration_seconds(time.tick_since(began))<1,"it did not run to its end")
+    reply:=parse_json(t,string(bytes))
+    testing.expect(t,at(reply,"result","isError").(json.Boolean),string(bytes))
+    testing.expect_value(t,integer(at(tool_text(t,reply),"error","code")),CANCELLED)
+}
+
+// What a handler that waits and a request that arrives meanwhile leave of their order.
+@(private="file")
+Wait_Order :: struct {
+    waiting:bool,     // the handler is in its wait
+    ended:bool,
+    during,after:int, // times the other request ran while it waited, and after it ended
+}
+
+// Waits for half a second as a handler that holds the server does, looking for its cancellation.
+@(private="file")
+waiting_handler :: proc(call:^Call) {
+    order:=(^Wait_Order)(call.user)
+    intrinsics.atomic_store(&order.waiting,true)
+    began:=time.tick_now()
+    for time.tick_since(began)<500*time.Millisecond {
+        if server_cancelled(call.server) {return}
+        time.sleep(10*time.Millisecond)
+    }
+    intrinsics.atomic_store(&order.waiting,false)
+    order.ended=true
+    raw(call.out,`{"done":true}`)
+}
+
+@(private="file")
+meanwhile_handler :: proc(call:^Call) {
+    order:=(^Wait_Order)(call.user)
+    if intrinsics.atomic_load(&order.waiting) {order.during+=1}
+    if order.ended {order.after+=1}
+    raw(call.out,`{"echo":`);raw(call.out,call.raw);raw(call.out,"}")
+}
+
+@(private="file")
+Meanwhile :: struct {
+    order:^Wait_Order,
+    port:int,
+    path,body:string,
+    status:int,
+    response:[512]u8,
+    length:int,
+}
+
+// Posts its request once the handler waits, and keeps the answer.
+@(private="file")
+meanwhile_post :: proc(m:^Meanwhile) {
+    began:=time.tick_now()
+    for !intrinsics.atomic_load(&m.order.waiting) && time.tick_since(began)<5*time.Second {time.sleep(time.Millisecond)}
+    status,bytes,_:=client_post(m.port,m.path,m.body,5000,context.temp_allocator)
+    m.status,m.length=status,copy(m.response[:],bytes)
+}
+
+// While a handler waits the server reads what arrives, to hear a cancellation,
+// and runs none of it: a request of either route stays as it came and is
+// answered once the handler ended, and the cancellation of another call is
+// accepted and stops nothing.
+@(test)
+a_request_that_arrives_during_a_wait_is_answered_after_it_intact :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t,{timeout_ms=5000}) {return}
+    defer fixture_finish(f)
+    order:Wait_Order
+    testing.expect_value(t,method_register(&f.server,{name="test.wait",summary="Waits.",handler=waiting_handler,user=&order,flags={.Core}}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="test.meanwhile",summary="Wraps its params.",handler=meanwhile_handler,user=&order,flags={.Core}}),Register_Error.None)
+    port:=server_port(&f.server)
+    cases:=[?]struct{path,body:string,status:int,says:string,runs:int}{
+        {"/mcp",`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"test_meanwhile","arguments":{"text":"kept whole"}}}`,200,"kept whole",1},
+        {"/rpc",`{"jsonrpc":"2.0","id":8,"method":"test.meanwhile","params":{"text":"kept whole"}}`,200,"kept whole",1},
+        {"/mcp",`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}`,202,"",0},
+    }
+    for c in cases {
+        order={}
+        late:=Meanwhile{order=&order,port=port,path=c.path,body=c.body}
+        th:=thread.create_and_start_with_poly_data(&late,meanwhile_post)
+        status,bytes,err:=client_post(port,"/mcp",`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"test_wait","arguments":{}}}`,5000,context.temp_allocator)
+        thread.join(th);thread.destroy(th)
+        testing.expectf(t,err.code==0 && status==200 && strings.contains(string(bytes),"done"),"%s: the wait ran to its end: %d %v %s",c.body,status,err,string(bytes))
+        answer:=string(late.response[:late.length])
+        testing.expectf(t,late.status==c.status && strings.contains(answer,c.says),"%s: %d %s",c.body,late.status,answer)
+        testing.expectf(t,order.during==0 && order.after==c.runs,"%s: it ran %d times during the wait and %d after it",c.body,order.during,order.after)
+    }
+}
+
+// initialize says which editor answers, and the bridge what it knows without one.
+@(test)
+initialize_says_which_editor_answers_under_meta :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_start(f,t) {return}
+    defer fixture_finish(f)
+    f.server.instance={process=321,engine="9.9",project="demo",folder="C:/demo"}
+    reply:=mcp(t,f,`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
+    meta:=at(reply,"result","_meta")
+    testing.expect_value(t,integer(at(meta,"process_id")),321)
+    testing.expect_value(t,string_of(at(meta,"engine_version")),"9.9")
+    testing.expect_value(t,string_of(at(meta,"project")),"demo")
+    testing.expect_value(t,string_of(at(meta,"project_folder")),"C:/demo")
+    text,_:=bridge_absent(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,{instructions="none",instance={engine="9.9",project="demo",folder="C:/demo"}},context.temp_allocator)
+    absent:=parse_json(t,text)
+    testing.expect_value(t,string_of(at(absent,"result","_meta","project")),"demo")
+    _,has_process:=at(absent,"result","_meta").(json.Object)["process_id"]
+    testing.expect(t,!has_process,"no process while no editor answers")
 }

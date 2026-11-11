@@ -123,6 +123,26 @@ putting_a_body_to_sleep_takes_only_what_still_touches_it :: proc(t:^testing.T) {
     testing.expect_value(t,world_stats(&w).islands,2)
 }
 
+// A body asleep on another and under a third changes type: it leaves its island with its contacts, and wakes
+// as what it becomes with what rested on it.
+@(test)
+a_body_asleep_between_others_changes_type :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    test_ground(&w)
+    a:=test_body(&w,Box{{0.5,0.5,0.5}},{0,0.5,0})
+    b:=test_body(&w,Box{{0.5,0.5,0.5}},{0,1.5,0})
+    for type in ([3]Body_Type{.Kinematic,.Dynamic,.Static}) {
+        test_steps(&w,10)
+        body_set_awake(&w,a,false)
+        testing.expect(t,!body_is_awake(&w,a))
+        body_set_type(&w,a,type)
+        testing.expect_value(t,body_type(&w,a),type)
+        testing.expect(t,body_is_awake(&w,a)==(type!=.Static) && body_is_awake(&w,b))
+    }
+}
+
 // Sixty boxes on a plank: the plank cannot take a color for each of its manifolds, and the rest run in order
 // on single lanes. They hold the boxes as firmly, and the same with any number of workers.
 @(test)

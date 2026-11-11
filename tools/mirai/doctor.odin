@@ -16,6 +16,8 @@ DOCTOR_USAGE :: "doctor [project]"
 // What is wrong on this machine or in a project, and what to do about it.
 cmd_doctor :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="--probe-gpu" {return gpu_probe()}
+    if code:=positionals_only("doctor",args);code!=0 {return code}
+    if len(args)>1 {return argument_unknown("doctor",args[1])}
     folder:=len(args)>0?args[0]:(os.is_file(project.PROJECT_FILE)?".":"")
     errors:=0
     report :: proc(errors:^int,ok:bool,what,fix:string) {
@@ -34,7 +36,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         report(&errors,manifest_error.code==.None && platform==project.ENGINE_PLATFORM,fmt.tprintf("installed engine %s of %s, built from %s",base.text_get(m.version[:]),platform,base.text_get(m.commit[:])),fmt.tprintf("unpack the package of the engine for %s again",project.ENGINE_PLATFORM))
     }
     shared:=project.shared_root(root,context.temp_allocator)
-    if !path_same(shared,root) {fmt.printfln("  info   worktree of %s: uses its .deps and its binary cache",shared)}
+    if !project.path_same(shared,root) {fmt.printfln("  info   worktree of %s: uses its .deps and its binary cache",shared)}
     deps:=workspace.deps_folder(root,context.temp_allocator)
     report(&errors,os.is_dir(deps),fmt.tprintf("dependencies in %s",deps),"download the pinned dependencies into .deps of the main checkout (README); a worktree takes them from there")
     compiler,found:=build.compiler_find(root)
@@ -55,6 +57,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         fmt.printfln("  info   no memory limit per build (%s=0)",build.COMPILER_MEMORY_ENV)
     }
     toolchain,has_c:=c_toolchain_find()
+    engine_clone:="" // the clone of a checkout of the engine, which a project inside it shares
     if installed {
         // The engine comes built; the code of a project is linked with the toolchain of the system.
         report(&errors,has_c,fmt.tprintf("C toolchain, which links the code of projects (%s)",toolchain),"install Visual Studio Build Tools with C++ on Windows, clang on Linux or the Xcode Command Line Tools on macOS")
@@ -65,6 +68,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         _,symlinks,_,_:=subprocess.exec({command={"git","-C",root,"config","--get","core.symlinks"}},context.temp_allocator)
         report(&errors,strings.trim_space(string(symlinks))=="true","git with core.symlinks","git config core.symlinks true (on Windows, with developer mode on) and then git checkout -- .claude/skills")
         report(&errors,link_to_folder(join(root,".claude","skills")),".claude/skills links to the folder .agents/skills","with core.symlinks on, delete .claude/skills and git checkout -- .claude/skills: a link git made before the folder existed stays a link to a file")
+        engine_clone=doctor_git(&errors,root,root)
     }
     for tool in shaders.Tool {
         path,present:=shaders.tool_find(root,tool)
@@ -140,6 +144,7 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         return 1
     }
     defer project.close(&p)
+    doctor_git(&errors,root,folder,engine_clone)
     out:=build.world_generate(&p,context.temp_allocator)
     for e in out.errors {report(&errors,false,e,"fix the attributes; mirai generate lists them")}
     if len(out.errors)==0 {report(&errors,true,"the world of the project generates","")}

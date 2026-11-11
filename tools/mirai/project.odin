@@ -50,20 +50,22 @@ cmd_new :: proc(root:string,args:[]string) -> int {
             for found in build.templates_list(root) {fmt.printfln("  %-12s %s",found.name,found.summary)}
             return 0
         }
-        if value,matched,ok:=project_option(args,&i,"--name");matched {
+        if value,matched,ok:=option_value(args,&i,"--name");matched {
             if !ok || value=="" {fmt.eprintln("mirai new: --name needs a name");return 2}
             name=value
-        } else if value,matched,ok=project_option(args,&i,"--template");matched {
+        } else if value,matched,ok=option_value(args,&i,"--template");matched {
             if !ok || value=="" {fmt.eprintln("mirai new: --template needs a name; mirai new --list shows them");return 2}
             template=value
+        } else if !positional(args[i]) {
+            return argument_unknown("new",args[i])
         } else if folder=="" {
             folder=args[i]
         } else {
-            fmt.eprintfln("Usage: mirai %s",NEW_USAGE);return 2
+            return argument_unknown("new",args[i])
         }
     }
     if folder=="" {fmt.eprintfln("Usage: mirai %s",NEW_USAGE);return 2}
-    switch build.project_create(build.template_folder(root,template),folder,name) {
+    switch build.project_create(build.template_folder(root,template),folder,name,root) {
     case .None:
     case .Template_Missing: fmt.eprintfln("mirai new: there is no template %q in %s; mirai new --list shows them",template,build.template_folder(root,template));return 1
     case .Folder_Not_Empty: fmt.eprintfln("mirai new: %s already exists and is not an empty folder",folder);return 1
@@ -83,13 +85,6 @@ cmd_new :: proc(root:string,args:[]string) -> int {
 cmd_build_project :: proc(root:string,args:[]string) -> int {
     mode,rest,ok:=build_mode_take(args[1:])
     if !ok {fmt.eprintfln("mirai build: --dev and --release do not go together. Usage: mirai %s",BUILD_PROJECT_USAGE);return 2}
-    for i:=0;i<len(rest);i+=1 {
-        if rest[i]=="--out" {i+=1;continue}
-        if strings.has_prefix(rest[i],"--") {
-            fmt.eprintfln("mirai build: %s is not an option: the mode is --dev or --release, and --out is the folder of the game. Usage: mirai %s",rest[i],BUILD_PROJECT_USAGE)
-            return 2
-        }
-    }
     code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server")
     return code!=0?code:shaders_failed?1:0
 }
@@ -100,8 +95,8 @@ cmd_build_engine :: proc(root:string,args:[]string) -> int {
     mode,rest,ok:=build_mode_take(args)
     force:=false
     for arg in rest {
-        if arg=="--force" {force=true;continue}
-        ok=false
+        if arg!="--force" {return argument_unknown("build engine",arg)}
+        force=true
     }
     if !ok {fmt.eprintfln("Usage: mirai %s",BUILD_ENGINE_USAGE);return 2}
     mode=build.engine_mode_resolve(root,mode)
@@ -139,6 +134,8 @@ engine_report :: proc(result:build.Engine_Result,root:string,out:=os.stdout) -> 
 
 // mirai generate [project]: writes the generated packages and says what the attributes have wrong.
 cmd_generate :: proc(root:string,args:[]string) -> int {
+    if code:=positionals_only("generate",args);code!=0 {return code}
+    if len(args)>1 {return argument_unknown("generate",args[1])}
     folder:=len(args)>0?args[0]:"."
     p,error:=project.open(folder,root)
     if error.code!=.None {
@@ -207,23 +204,47 @@ cmd_play :: proc(root:string,args:[]string) -> int {
     rest:=len(args)>0 && folder==args[0]?args[1:]:args
     code,_,_:=build_project(root,.Play,{folder},mode)
     if code!=0 {return code}
-    if slice.contains(rest,"--headless") {layers_isolate(root)}
+    if play_runs_headless(rest) {layers_isolate(root)}
     command:=make([dynamic]string)
     append(&command,build.engine_paths(root,mode).player_program,"--project",project.path_absolute(folder))
-    append(&command,..rest)
+    append(&command,..play_arguments(rest))
     return run(root,command[:])
+}
+
+// Whether the player runs these arguments without a window: asked for, or
+// implied by what automates it (the player does the same with its options).
+@(private)
+play_runs_headless :: proc(args:[]string) -> bool {
+    if slice.contains(args,"--show-window") {return false}
+    return slice.contains(args,"--headless") || slice.contains(args,"--frames") || slice.contains(args,"--input") || slice.contains(args,"--capture")
+}
+
+// The arguments of the player with --capture and --input made absolute: they
+// are paths of whoever runs the command, and the player runs in the engine.
+play_arguments :: proc(args:[]string) -> []string {
+    out:=slice.clone(args)
+    for i:=0;i+1<len(out);i+=1 {
+        if (out[i]=="--capture" || out[i]=="--input") && out[i+1]!="" {
+            out[i+1]=project.path_absolute(out[i+1])
+            i+=1
+        }
+    }
+    return out
 }
 
 // Builds a target of a project. shaders_failed: the generation of its shaders
 // failed and the library was built with the ones it had.
 build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_Mode=.Keep,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     folder,out:=".",""
+    named:=false
     for i:=0;i<len(args);i+=1 {
-        if value,matched,ok:=project_option(args,&i,"--out");matched {
+        if value,matched,ok:=option_value(args,&i,"--out");matched {
             if !ok || value=="" || target!=.Game {fmt.eprintfln("Usage: mirai %s",BUILD_PROJECT_USAGE);return 2,"",false}
             out=value
+        } else if !positional(args[i]) || named {
+            return argument_unknown("build",args[i]),"",false
         } else {
-            folder=args[i]
+            folder,named=args[i],true
         }
     }
     // The plugins from git at the commits the project names: a fresh clone has none.
@@ -306,7 +327,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
     {
-        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine})
+        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine,incremental=target==.Game && mode!=.Release})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {
@@ -315,6 +336,12 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if compiled:=result.plugins_built-result.plugins_restored-result.plugins_relinked;compiled>0 {fmt.printfln("%s: %d plugin libraries built.",build.plugins_libraries_folder(p.root),compiled)}
         if result.plugins_relinked>0 {fmt.printfln("%s: %d plugin libraries linked again.",build.plugins_libraries_folder(p.root),result.plugins_relinked)}
         if result.plugins_restored>0 {fmt.printfln("%s: %d plugin libraries copied from the shared cache.",build.plugins_libraries_folder(p.root),result.plugins_restored)}
+        switch result.shipped_engine {
+        case .None:
+        case .Current:  fmt.println("Engine library of the game unchanged.")
+        case .Restored: fmt.println("Engine library of the game copied from the shared cache.")
+        case .Built:    fmt.println("Engine library of the game built.")
+        }
         switch result.status {
         case .Running:
         case .Built:      fmt.printfln("%s ready (%.1f s%s).",result.output,result.seconds,result.relinked?", linked again":"")
@@ -366,13 +393,22 @@ library_current :: proc(root:string,p:^project.Project,target:build.Target,engin
     return c_libraries_current(root) && build.shaders_current(p) && build.target_state(p,target,"",dev,engine)==.Current
 }
 
-// The value of `--name value` at args[index^]; advances the index past it.
-@(private="file")
-project_option :: proc(args:[]string,index:^int,name:string) -> (value:string,matched,ok:bool) {
-    if args[index^]!=name {return "",false,false}
-    if index^+1>=len(args) {return "",true,false}
+// The value after args[index^], advancing the index past it; false at their end.
+option_next :: proc(args:[]string,index:^int) -> (value:string,ok:bool) {
+    if index^+1>=len(args) {return "",false}
     index^+=1
-    return args[index^],true,true
+    return args[index^],true
+}
+
+// The value of `--name value` or `--name=value` at args[index^]; advances the index past it.
+option_value :: proc(args:[]string,index:^int,name:string) -> (value:string,matched,ok:bool) {
+    argument:=args[index^]
+    if argument==name {
+        value,ok=option_next(args,index)
+        return value,true,ok
+    }
+    if strings.has_prefix(argument,name) && len(argument)>len(name) && argument[len(name)]=='=' {return argument[len(name)+1:],true,true}
+    return "",false,false
 }
 
 project_error_text :: proc(folder:string,error:project.Error) -> string {return project.error_text(folder,error)}
@@ -393,7 +429,7 @@ shipped_report :: proc(job:^build.Job) -> bool {
         for file in result.cook.files {
             if file.id=={} {continue}
             path:=fmt.tprintf("%s/%s",job.cook.output,file.path)
-            if reason,_:=verify(path,&types);reason!="" {
+            if reason:=verify(path,&types);reason!="" {
                 bad+=1
                 fmt.eprintfln("FAIL %s: %s",path,reason)
             } else {

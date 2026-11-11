@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:mem"
 import "core:os"
 import "core:strings"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // The settings of a project: a section per setting, named by its type and
@@ -29,6 +30,22 @@ import "mirai:std/serial"
 // field the type no longer has is left out.
 
 SETTINGS_FILE :: "settings.mirai" // next to PROJECT_FILE, in the machine_folder of the engine and in the folder of the player
+
+// The format of the files of the machine (Engine and Player layers), their
+// first member: a file of another version is not read and the next save
+// writes it anew. The file of a project has none: it is read by its fields.
+SETTINGS_VERSION :: 3
+@(private) SETTINGS_VERSION_KEY :: "version"
+
+// Set in a process, the file of the machine is not read: what mirai render
+// check measures does not depend on what was chosen on this computer.
+SETTINGS_NO_MACHINE_ENV :: "MIRAI_NO_MACHINE_SETTINGS"
+
+// The layers this process reads.
+settings_layers_of_process :: proc() -> Settings_Layers {
+    if value,found:=os.lookup_env(SETTINGS_NO_MACHINE_ENV,context.temp_allocator);found && value!="" && value!="0" {return {.Player,.Project}}
+    return {.Player,.Project,.Engine}
+}
 
 // The files of the settings: SETTINGS_FROM_TOP gives their order.
 Settings_Layer :: enum u8 {Project,Engine,Player}
@@ -93,10 +110,26 @@ settings_parse :: proc(text:string,settings:[]Setting,strict:=false) -> Error {
     return {}
 }
 
-// A missing file leaves the settings as they are.
-settings_read :: proc(path:string,settings:[]Setting) -> Error {
+// The version a file of the machine says it is; 0 when it says none.
+settings_version_of :: proc(text:string) -> u64 {
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,text,context.temp_allocator)
+    defer serial.text_reader_destroy(&r)
+    if !serial.text_accept(&r,'{') {return 0}
+    serial.text_space(&r)
+    name,named:=serial.text_string(&r)
+    if !named || name!=SETTINGS_VERSION_KEY || !serial.text_expect(&r,':') {return 0}
+    serial.text_space(&r)
+    negative,magnitude,ok:=serial.text_integer(&r)
+    return !ok || negative?0:magnitude
+}
+
+// A missing file leaves the settings as they are, and so does a file of the
+// machine of another version.
+settings_read :: proc(path:string,settings:[]Setting,versioned:=false) -> Error {
     data,file_error:=serial.file_read(path,context.temp_allocator)
     if file_error!=.None {return {code=file_error==.Not_Found?.None:.Read_Failed}}
+    if versioned && settings_version_of(string(data))!=SETTINGS_VERSION {return {}}
     return settings_parse(string(data),settings)
 }
 
@@ -124,7 +157,7 @@ settings_load :: proc(settings:[]Setting,root,engine_root:string,layers:=Setting
         layer=at
         if layer not_in layers {continue}
         if file:=settings_file(layer,root,engine_root,context.temp_allocator,player);file!="" {
-            if error=settings_read(file,settings_held(settings,layer));error.code!=.None {return}
+            if error=settings_read(file,settings_held(settings,layer),layer!=.Project);error.code!=.None {return}
         }
     }
     return {},.Project
@@ -133,7 +166,7 @@ settings_load :: proc(settings:[]Setting,root,engine_root:string,layers:=Setting
 // The sections of the file of the engine that name a setting of the project:
 // that file holds only the settings of the machine, so they are not read. They
 // belong in the file of the project.
-settings_misplaced :: proc(settings:[]Setting,root,engine_root:string,allocator:=context.temp_allocator) -> []string {
+settings_misplaced :: proc(settings:[]Setting,root,engine_root:string) -> []string {
     file:=settings_file(.Engine,root,engine_root,context.temp_allocator)
     if file=="" {return nil}
     data,file_error:=serial.file_read(file,context.temp_allocator)
@@ -143,10 +176,10 @@ settings_misplaced :: proc(settings:[]Setting,root,engine_root:string,allocator:
     serial.text_reader_init(&r,string(data),context.temp_allocator)
     sections_read(&r,settings_held(settings,.Engine),&kept,false)
     serial.text_reader_destroy(&r)
-    misplaced:=make([dynamic]string,allocator)
+    misplaced:=make([dynamic]string,context.temp_allocator)
     for section in kept {
         for setting in settings {
-            if setting.name==section.name {append(&misplaced,strings.clone(section.name,allocator));break}
+            if setting.name==section.name {append(&misplaced,strings.clone(section.name,context.temp_allocator));break}
         }
     }
     return misplaced[:]
@@ -185,11 +218,18 @@ settings_clone :: proc(settings:[]Setting,allocator:=context.allocator) -> []Set
 // The text of the settings. With below, the same settings with the values of
 // the layers under the file, each writes only the fields that differ from it,
 // and none when nothing does; without it, every field.
-settings_text :: proc(settings:[]Setting,below:[]Setting={},kept:[]Kept_Section={},allocator:=context.allocator) -> string {
+settings_text :: proc(settings:[]Setting,below:[]Setting={},kept:[]Kept_Section={},allocator:=context.allocator,version:=0) -> string {
     w:serial.Writer
     serial.writer_init(&w,4096,allocator)
     serial.write_u8(&w,'{')
     count:=0
+    if version>0 {
+        serial.text_write_break(&w,1)
+        serial.text_write_string(&w,SETTINGS_VERSION_KEY)
+        serial.text_write_raw(&w,": ")
+        serial.text_write_uint(&w,u64(version))
+        count+=1
+    }
     for setting,i in settings {
         schema:serial.Schema
         serial.schema_init(&schema,context.temp_allocator)
@@ -224,7 +264,7 @@ settings_text :: proc(settings:[]Setting,below:[]Setting={},kept:[]Kept_Section=
 
 // Writes the settings over the file as settings_text does, keeping the
 // sections of it that none of them names.
-settings_write :: proc(path:string,settings,below:[]Setting) -> Error {
+settings_write :: proc(path:string,settings,below:[]Setting,version:=0) -> Error {
     kept:=make([dynamic]Kept_Section,context.temp_allocator)
     if data,file_error:=serial.file_read(path,context.temp_allocator);file_error==.None {
         r:serial.Text_Reader
@@ -232,7 +272,7 @@ settings_write :: proc(path:string,settings,below:[]Setting) -> Error {
         sections_read(&r,settings,&kept,false)
         serial.text_reader_destroy(&r)
     }
-    text:=settings_text(settings,below,kept[:],context.temp_allocator)
+    text:=settings_text(settings,below,kept[:],context.temp_allocator,version)
     if cut:=strings.last_index_byte(path,'/');cut>0 {_=os.make_directory_all(path[:cut])}
     return {code=serial.file_write_atomic(path,transmute([]u8)text)==.None?.None:.Write_Failed}
 }
@@ -247,7 +287,7 @@ settings_save :: proc(settings:[]Setting,layer:Settings_Layer,root,engine_root:s
     below:=settings_clone(held,context.temp_allocator)
     if len(below)!=len(held) {return {code=.Write_Failed},layer}
     if error,failed=settings_load(below,root,engine_root,settings_under(layer),player);error.code!=.None {return}
-    return settings_write(file,held,below),layer
+    return settings_write(file,held,below,layer==.Project?0:SETTINGS_VERSION),layer
 }
 
 // The files of the project and of the engine as one, for a game that ships
@@ -266,9 +306,11 @@ settings_merge :: proc(root,engine_root:string,machine:[]string,allocator:=conte
         data,file_error:=serial.file_read(file,context.temp_allocator)
         if file_error==.Not_Found {continue}
         if file_error!=.None {return "",{code=.Read_Failed},layer}
+        if layer==.Engine && settings_version_of(string(data))!=SETTINGS_VERSION {continue}
         r:serial.Text_Reader
         serial.text_reader_init(&r,string(data),context.temp_allocator)
         if !merge_read(&r,&merged,0) || !serial.text_end(&r) {
+            if r.error.code==.None {return "",{code=.Out_Of_Memory},layer}
             line,column:=serial.text_position(r.text,r.error.offset)
             return "",{code=.Text,text=r.error.code,line=line,column=column,detail=serial.text_error_message(&r,allocator=context.temp_allocator)},layer
         }
@@ -280,7 +322,7 @@ settings_merge :: proc(root,engine_root:string,machine:[]string,allocator:=conte
                     if name==field.name {merged.fields[held]=field;held+=1;break}
                 }
             }
-            resize(&merged.fields,held)
+            base.truncate(&merged.fields,held)
         }
     }
     w:serial.Writer
@@ -325,7 +367,7 @@ sections_read :: proc(r:^serial.Text_Reader,settings:[]Setting,kept:^[dynamic]Ke
             }
         } else {
             serial.text_skip(r) or_return
-            if found<0 && kept!=nil {append(kept,Kept_Section{name,strings.clone(r.text[start:r.offset],context.temp_allocator)})}
+            if found<0 && kept!=nil && name!=SETTINGS_VERSION_KEY {append(kept,Kept_Section{name,strings.clone(r.text[start:r.offset],context.temp_allocator)})}
         }
         if serial.text_accept(r,',') {continue}
         return serial.text_expect(r,'}')
@@ -355,7 +397,8 @@ Merge_Node :: struct {
 }
 
 // Reads an object over the one in into: a field it has replaces the same one,
-// and an object merges into an object.
+// and an object merges into an object. False with no error of the text:
+// there was no memory for a field.
 @(private="file")
 merge_read :: proc(r:^serial.Text_Reader,into:^Merge_Node,depth:int) -> bool {
     if depth>serial.TEXT_MAX_DEPTH {return serial.text_fail(r,.Too_Deep)}
@@ -371,7 +414,7 @@ merge_read :: proc(r:^serial.Text_Reader,into:^Merge_Node,depth:int) -> bool {
             if field.name==name {found=&field;break}
         }
         if found==nil {
-            append(&into.fields,Merge_Node{name=name})
+            if _,err:=append(&into.fields,Merge_Node{name=name});err!=nil {return false}
             found=&into.fields[len(into.fields)-1]
         }
         if serial.text_peek(r)=='{' {

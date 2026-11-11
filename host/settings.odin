@@ -19,7 +19,7 @@ app_settings :: proc(info:^core.World_Info,data:rawptr,place:core.Place,device:^
     list:=make([dynamic]project.Setting,allocator)
     named:map[typeid]serial.Named
     if info.schema!=nil {named=info.schema.schema.named}
-    for s in info.storages {
+    for s,index in info.storages {
         if s.setting==.None || s.place!=place {continue}
         base:rawptr
         if s.for_device!=nil && device!=nil {
@@ -28,7 +28,7 @@ app_settings :: proc(info:^core.World_Info,data:rawptr,place:core.Place,device:^
                 s.for_device(base,rhi.device_info(device))
             }
         }
-        append(&list,project.Setting{s.name,s.info,rawptr(uintptr(data)+s.offset),s.default,s.setting==.Machine,base,named})
+        append(&list,project.Setting{s.name,s.info,core.world_storage_at({data,info,place},index),s.default,s.setting==.Machine,base,named})
     }
     return list[:]
 }
@@ -40,15 +40,15 @@ app_settings_load :: proc(app:^App,data:rawptr,place:core.Place) {
     if app.root=="" {return}
     settings:=app_settings(app.info,data,place,app.device)
     if len(settings)==0 {return}
-    if error,layer:=project.settings_load(settings,app.root,app.engine_root,player=app.options);error.code!=.None {
+    if error,layer:=project.settings_load(settings,app.root,app.engine_root,layers=project.settings_layers_of_process(),player=app.options);error.code!=.None {
         log.warnf("%s: %v, line %d",project.settings_file(layer,app.root,app.engine_root,context.temp_allocator,app.options),error.code,error.line)
     }
 }
 
 // A file of the options of the player; "" without them.
-app_options_file :: proc(app:^App,name:string,allocator:=context.temp_allocator) -> string {
+app_options_file :: proc(app:^App,name:string) -> string {
     if app.options=="" {return ""}
-    return strings.concatenate({app.options,"/",name},allocator)
+    return strings.concatenate({app.options,"/",name},context.temp_allocator)
 }
 
 // Writes the settings of the machine of the application and of a world, as

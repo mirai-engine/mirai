@@ -68,7 +68,7 @@ Each technique states its status; what is listed as prepared is not implemented.
   ray, chosen by a deterministic light tree ([local lights](lights.md#local-lights)), and each
   pixel its [samples](lights.md#direct-light-of-a-view) of fixed places. There is no ReSTIR.
 - **Culling and LOD** (implemented). Frustum, normal cone and two-phase occlusion on the GPU, per
-  instance and per cluster ([frame graph](frame-graph.md#frame-graph)). The cut of the DAG or of
+  instance and per cluster ([frame graph](frame-graph.md#passes)). The cut of the DAG or of
   the whole levels takes each cluster whose projected error falls within `lod_error_pixels` and
   that of what replaces it does not; rays trace the instance's cut (above), with an origin bias
   that grows with distance.
@@ -191,9 +191,8 @@ keeps `Renderer_Desc.worlds` (edit and play).
   it; a world that returns recovers its own and its `scene_set` marks no changes. Beyond the
   capacity, the one displayed longest ago loses its own. `render_sync` calls it when the
   `World_Id` changes or when it rebuilds the scene in a frame whose view is cut.
-- A world that returns is `fresh` when its transforms are other rows than those `render_sync` left
-  it with (`world_shown`): a scene loaded into it while another world was drawn, or loaded and
-  played at once without a frame of its own, does not take the light of the scene before.
+- A world not shown that takes another scene (a document opened right after Play) drops what was
+  kept of it with `world_light_forget`: when it returns it starts without light and warms up.
 - Each view starts another history and takes its exposure at once
   ([exposure](display.md#exposure)); the next frame keeps the `delta_time` of the previous one.
 - **Warm-up.** The frame that shows a world without light (and the one that follows

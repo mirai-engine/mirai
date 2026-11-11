@@ -35,14 +35,14 @@ Sequence_Editor :: struct {owner,source,reference:core.Entity,frame:int}
 
 Sequence_Frame_Params :: struct {pose:mm.Transform `mirai:"optional"`,duration:f32 `mirai:"optional,min=0,unit=s,label=To arrive at the pose"`,hold:f32 `mirai:"optional,min=0,unit=s"`,ease:mm.Ease `mirai:"optional"`,interpolation:lib.Sequence_Interpolation `mirai:"optional"`}
 Sequence_Value_Params :: struct {frames:[anim.KEYFRAME_PATH_FRAMES]Sequence_Frame_Params `mirai:"label=1 to 16; their count is the length"`,speed:f32 `mirai:"optional"`,loop:lib.Loop `mirai:"optional"`,playing,relative:bool `mirai:"optional"`}
-Sequence_Set_Params :: struct {id:base.Entity_Id,value:Sequence_Value_Params}
+Sequence_Set_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,value:Sequence_Value_Params}
 Sequence_Capture_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     frame:u32 `mirai:"min=0,max=15"`,
-    source:base.Entity_Id `mirai:"optional,label=The entity whose transform it captures; omitted is the owner"`,
-    reference:base.Entity_Id `mirai:"optional,label=Required by a relative sequence"`,
+    source:editor.Api_Entity_Text `mirai:"text,entity,optional,label=The entity whose transform it captures; omitted is the owner"`,
+    reference:editor.Api_Entity_Text `mirai:"text,entity,optional,label=Required by a relative sequence"`,
 }
-Sequence_Preview_Params :: struct {id:base.Entity_Id,time:f32}
+Sequence_Preview_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,time:f32}
 Sequence_Preview_Result :: struct {pose:mm.Transform,duration:f32}
 Sequence_Edit_Result :: struct {id:base.Entity_Id,queued:bool}
 
@@ -70,17 +70,17 @@ sequence_valid :: proc(value:^anim.Keyframe_Path) -> bool {
 @(private)
 sequence_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Sequence_Set_Params)
-    text,_:=authoring_json_field(call.raw,"value",call.allocator);nested:=api.Call{raw=text,allocator=call.allocator};count,_:=api.params_array_count(&nested,"frames")
+    text:=api.json_member(call.raw,"value");nested:=api.Call{raw=text,allocator=call.allocator};count,_:=api.params_array_count(&nested,"frames")
     if count==0 || count>anim.KEYFRAME_PATH_FRAMES {authoring_failure(call,"value.frames","Capacity","1 to 16 frames",fmt.tprintf("%d",count),"The sequence requires frames");return}
     value:=anim.Keyframe_Path{count=u8(count),speed=p.value.speed,loop=p.value.loop,playing=p.value.playing,relative=p.value.relative}
     for frame,i in p.value.frames[:count] {value.frames[i]={pose=frame.pose,duration=frame.duration,hold=frame.hold,ease=frame.ease,interpolation=frame.interpolation}}
     if !sequence_valid(&value) {authoring_failure(call,"value","Invalid_Definition","valid transform frames and finite playback settings","invalid sequence","The sequence definition is invalid");return}
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     table:=core.world_table_of(w,anim.Keyframe_Path)
     if table==nil {authoring_failure(call,"Keyframe_Path","Unavailable","the sequence runtime table","missing table","The sequence runtime is unavailable",api.SERVER_ERROR);return}
     if !edit_begin(s,call,"Set animation sequence") {return}
     core.add(table,e,value)
-    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=p.id}}
+    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=editor.api_entity_id(w,e)}}
 }
 
 sequence_capture_pose :: proc(w:core.World_Ref,owner,source,reference:core.Entity,relative:bool) -> (pose:mm.Transform,ok:bool) {
@@ -95,28 +95,35 @@ sequence_capture_pose :: proc(w:core.World_Ref,owner,source,reference:core.Entit
 @(private)
 sequence_capture :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Sequence_Capture_Params)
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     value,present:=editor.entity_get(w,e,anim.Keyframe_Path)
     if !present || p.frame>=u32(value.count) || p.frame>=anim.KEYFRAME_PATH_FRAMES {authoring_failure(call,"frame","Out_Of_Range","an existing frame in a Keyframe_Path component",fmt.tprintf("%d",p.frame),"The sequence frame does not exist");return}
     source:=e
-    if p.source!=0 {source=find_entity(w,p.source)}
-    reference:=find_entity(w,p.reference)
+    if p.source[0]!=0 {
+        named:bool
+        if source,named=editor.api_call_entity(call,w,p.source[:],"source");!named {return}
+    }
+    reference:=core.NONE
+    if p.reference[0]!=0 {
+        named:bool
+        if reference,named=editor.api_call_entity(call,w,p.reference[:],"reference");!named {return}
+    }
     pose,captured:=sequence_capture_pose(w,e,source,reference,value.relative)
     if !captured {authoring_failure(call,"source","Invalid_Reference","a valid source and invertible parent; distinct reference for relative capture","missing or noninvertible reference","The sequence pose could not be captured");return}
     value.frames[p.frame].pose=pose
     if !sequence_valid(&value) {authoring_failure(call,"frame","Invalid_Value","a valid transform pose","invalid captured transform","The captured pose is invalid");return}
     if !edit_begin(s,call,"Capture animation frame") {return}
     core.add(core.world_table_of(w,anim.Keyframe_Path),e,value)
-    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=p.id}}
+    if edit_end(s,call,w,true) {api.call_result(call,Sequence_Edit_Result)^={id=editor.api_entity_id(w,e)}}
 }
 
 
 @(private)
 sequence_preview :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Sequence_Preview_Params)
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     value,present:=editor.entity_get(w,e,anim.Keyframe_Path)
-    if !present {authoring_failure(call,"id","Missing_Component","a Keyframe_Path component","missing component","The entity has no Keyframe_Path component");return}
+    if !present {authoring_failure(call,"entity","Missing_Component","a Keyframe_Path component","missing component","The entity has no Keyframe_Path component");return}
     pose,sampled:=lib.sequence_sample(anim.keyframe_path_frames(&value),p.time,value.loop)
     if !sampled {authoring_failure(call,"time","Invalid_Value","a valid sequence and sample time",fmt.tprintf("%v",p.time),"The sequence or sample time is invalid");return}
     if value.relative {
@@ -142,7 +149,7 @@ sequence_entity_choice :: proc(s:^editor.Session,w:core.World_Ref,label:string,v
     }
     ctx:=s.gui.ctx
     if ui.property(ctx,label) {
-        if ui.dropdown(ctx,ui.id(ctx,label),names,&selected,{width=-1}) {value^=selected==0?core.NONE:table.entities[selected-1]}
+        if ui.dropdown(ctx,ui.id(ctx,label),{list=names},&selected,{width=-1}) {value^=selected==0?core.NONE:table.entities[selected-1]}
     }
 }
 
@@ -169,7 +176,7 @@ sequence_inspector :: proc(c:editor.Inspector_Context) -> bool {
     ctx:=s.gui.ctx
     names:[anim.KEYFRAME_PATH_FRAMES]string
     for i in 0..<count {names[i]=fmt.tprintf("Frame %d",i+1)}
-    if ui.property(ctx,"Frame") {ui.dropdown(ctx,ui.id(ctx,"frame"),names[:count],&state.frame,{width=-1})}
+    if ui.property(ctx,"Frame") {ui.dropdown(ctx,ui.id(ctx,"frame"),{list=names[:count]},&state.frame,{width=-1})}
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
         if ui.button(ctx,ui.id(ctx,"append"),{label="Add",style=.Field,width=-1,disabled=count>=anim.KEYFRAME_PATH_FRAMES}).clicked {
             value.frames[count]=value.frames[state.frame];value.count=u8(count+1);state.frame=count;sequence_write(c,value)

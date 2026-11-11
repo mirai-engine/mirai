@@ -39,8 +39,8 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     tick :: proc(f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),graphs:^anim.Graph_Assets,progress:^core.Table(anim.Animation_Progress),problems:^core.Problems,time:core.Time,mode:=phys.MODE_WALKING) -> (anim.Animation_Match,bool) {
         entity:=core.entity_at(gallery,0)
         speed:=core.at(gallery,0).speed
-        anim.match_goal(&f.requests,{rig=entity,mode=u16(mode),velocity={0,0,speed},desired={0,0,speed},facing={0,0,1},acceleration=20,braking=20})
-        anim.animation_sample(core.read(&f.animations),progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},problems,nil,graphs,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT)
+        anim.match_goal(&f.requests,{rig=entity,mode=u16(mode),velocity={0,0,-speed},desired={0,0,-speed},facing={0,0,-1},acceleration=20,braking=20})
+        anim.animation_sample(core.read(&f.animations),progress,core.read(&f.pose_configs),core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifiers,&f.playback,&f.pose_assets,&f.skeletons,&f.app,time,{},problems,nil,graphs,nil,nil,nil,nil,nil,nil,nil,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
         return anim.animation_match(&f.playback,core.entity_at(gallery,0))
     }
     // The rig binds its skeleton in its first ticks; then its database says how fast each clip walks.

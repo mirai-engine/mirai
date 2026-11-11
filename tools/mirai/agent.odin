@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
 
@@ -64,16 +65,18 @@ agent_version_valid :: proc(version:string) -> bool {
 
 agent_bun :: proc(operation:^Agent_Operation,home:string,download:bool) -> (path:string,ok:bool) {
     if path,ok=path_find("bun");ok {return}
-    private:=join(home,"runtime","bun"+EXE)
+    private:=join(home,"runtime","bun"+project.EXECUTABLE_SUFFIX)
     if os.is_file(private) {return private,true}
     if !download {return "",false}
     folder:=join(home,"runtime")
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return "",false}
-    target,checksum:string
-    when ODIN_OS==.Darwin && ODIN_ARCH==.arm64 {target,checksum="bun-darwin-aarch64","80afd4c069b46a6fa8f3ec520bebc750a7843e4a8d5b9583d29ad436c00a3403"}
-    else when ODIN_OS==.Windows && ODIN_ARCH==.amd64 {target,checksum="bun-windows-x64","0bf84e808552beea67bf1202a287a35c6c825d837b287b3f8e9dd513dba35d3d"}
-    else when ODIN_OS==.Linux && ODIN_ARCH==.amd64 {target,checksum="bun-linux-x64","3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18"}
-    else {fmt.eprintln("No Bun package_name for this platform");return "",false}
+    packages:=#partial [workspace.Target][2]string{
+        .Macos_Arm64={"bun-darwin-aarch64","80afd4c069b46a6fa8f3ec520bebc750a7843e4a8d5b9583d29ad436c00a3403"},
+        .Windows_X64={"bun-windows-x64","0bf84e808552beea67bf1202a287a35c6c825d837b287b3f8e9dd513dba35d3d"},
+        .Linux_X64={"bun-linux-x64","3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18"},
+    }
+    target,checksum:=packages[workspace.TARGET][0],packages[workspace.TARGET][1]
+    if target=="" {fmt.eprintln("No Bun package_name for this platform");return "",false}
     stage,error:=os.make_directory_temp(folder,".bun-*",context.allocator)
     if error!=nil {return "",false}
     defer os.remove_all(stage)
@@ -90,19 +93,16 @@ agent_bun :: proc(operation:^Agent_Operation,home:string,download:bool) -> (path
     } else {
         if !agent_exec(operation,stage,{"tar","-xf",zip,"-C",stage}) {return "",false}
     }
-    source:=join(stage,target,"bun"+EXE)
+    source:=join(stage,target,"bun"+project.EXECUTABLE_SUFFIX)
     if !os.is_file(source) || !agent_exec(operation,stage,{source,"--version"}) {return "",false}
     if agent_cancelled(operation) || os.rename(source,private)!=nil {return "",false}
     return private,true
 }
 
 agent_codex_binary :: proc(stage:string) -> string {
-    suffix,triple:string
-    when ODIN_OS==.Darwin && ODIN_ARCH==.arm64 {suffix,triple="darwin-arm64","aarch64-apple-darwin"}
-    else when ODIN_OS==.Windows && ODIN_ARCH==.amd64 {suffix,triple="win32-x64","x86_64-pc-windows-msvc"}
-    else when ODIN_OS==.Linux && ODIN_ARCH==.amd64 {suffix,triple="linux-x64","x86_64-unknown-linux-musl"}
-    else {return ""}
-    relative:=join("node_modules","@openai",fmt.aprintf("codex-%s",suffix),"vendor",triple,"bin","codex"+EXE)
+    target:=workspace.target_names()
+    if target.node=="" {return ""}
+    relative:=join("node_modules","@openai",fmt.aprintf("codex-%s",target.node),"vendor",target.triple,"bin","codex"+project.EXECUTABLE_SUFFIX)
     if os.is_file(join(stage,relative)) {return relative}
     return ""
 }
@@ -123,6 +123,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
     packages,versions:=AGENT_PACKAGES,AGENT_VERSIONS
     if len(args)<2 {fmt.eprintfln("Usage: mirai %s",AGENT_USAGE);return 2}
     operation,name:=args[0],args[1]
+    if code:=positionals_only("agent",args[:2]);code!=0 {return code}
     index:=-1
     for known,i in AGENT_NAMES {if name==known {index=i;break}}
     if index<0 && !(name=="all"&&operation=="updates") && !(name=="bun"&&operation=="runtime") {fmt.eprintln("Unknown agent");return 2}
@@ -136,7 +137,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         case "--cancel-file": i+=1;if i>=len(args) {return 2};operation_state.cancel_file=args[i]
         case "--home": i+=1;if i>=len(args) {return 2};home=args[i]
         case "--claude-code": claude_code=true
-        case:return 2
+        case: return argument_unknown("agent",args[i])
         }
     }
     if claude_code && name!="claude" {fmt.eprintln("--claude-code installs only with claude");return 2}
@@ -219,7 +220,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         entry:=join(stage,"node_modules",packages[index],"dist","index.js")
         if !os.is_file(entry) {fmt.eprintln("Package has no ACP entry point");return 1}
         if runtime=="Bundled" {
-            executable:=join(stage,"agent"+EXE)
+            executable:=join(stage,"agent"+project.EXECUTABLE_SUFFIX)
             if !agent_exec(&operation_state,stage,{bun,"build",entry,"--compile","--outfile",executable}) {return 1}
             when ODIN_OS==.Darwin {
                 if !agent_exec(&operation_state,stage,{"codesign","--force","--sign","-",executable}) {return 1}

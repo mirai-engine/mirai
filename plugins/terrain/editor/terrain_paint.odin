@@ -31,7 +31,7 @@ terrain_holes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool) {
 // list what the chosen one has; the brush paints it. The program that blends
 // them shows only when it is not the one of the plugin.
 @(private)
-terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
     ctx:=s.gui.ctx
     source:=&tool.stroke.source
     count:=int(source.layer_count)
@@ -39,22 +39,22 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
     if len(source.slots)>0 {
         ui.section(ctx,"Materials","",80)
         for material,i in source.slots {
-            if chosen,changed:=material_field(s,u64(i+1),fmt.tprintf("Slot %d",i+1),material);changed {terrain_material_commit(s,tool,world,app,i+1,chosen)}
+            if chosen,changed:=material_field(s,u64(i+1),fmt.tprintf("Slot %d",i+1),material);changed {terrain_material_commit(s,tool,world,assets,i+1,chosen)}
         }
     }
     add,remove:=layers_heading(ctx,count)
-    if source.layers_material!={} {if material,changed:=material_field(s,0x200,"Blend",source.layers_material);changed {terrain_material_commit(s,tool,world,app,LAYERS_SLOT,material)}}
+    if source.layers_material!={} {if material,changed:=material_field(s,0x200,"Blend",source.layers_material);changed {terrain_material_commit(s,tool,world,assets,LAYERS_SLOT,material)}}
     for i in 0..<count {
-        if editor.asset_list_row_begin(s,ui.id(ctx,"layer",i+1),source.layers[i].material,asset.KIND_MATERIAL,layer_name(app.assets,source.layers[i],i),i==tool.layer).clicked {tool.layer=i}
+        if editor.asset_list_row_begin(s,ui.id(ctx,"layer",i+1),source.layers[i].material,asset.KIND_MATERIAL,layer_name(assets,source.layers[i],i),i==tool.layer).clicked {tool.layer=i}
         editor.asset_list_row_end(s)
     }
-    if add && count<terrain.LAYERS_MAX && terrain_layer_commit(s,tool,world,app,count,terrain.LAYER_DEFAULT,false) {tool.layer=count}
-    if remove && count>1 {terrain_layer_commit(s,tool,world,app,tool.layer,{},true)}
+    if add && count<terrain.LAYERS_MAX && terrain_layer_commit(s,tool,world,assets,count,terrain.LAYER_DEFAULT,false) {tool.layer=count}
+    if remove && count>1 {terrain_layer_commit(s,tool,world,assets,tool.layer,{},true)}
     count=int(source.layer_count)
     tool.layer=clamp(tool.layer,0,count-1)
     layer:=source.layers[tool.layer]
-    if layer_fields(s,tool,&layer) {terrain_layer_commit(s,tool,world,app,tool.layer,layer,false)}
-    if source.kind==.Volume {terrain_interior_panel(s,tool,world,app)}
+    if layer_fields(s,tool,&layer) {terrain_layer_commit(s,tool,world,assets,tool.layer,layer,false)}
+    if source.kind==.Volume {terrain_interior_panel(s,tool,world,assets)}
     ui.section(ctx,"Brush","",80)
     selected:=-1 if editor.tool_aside(s,"terrain") else 1 if tool.brush==.Erase else 0
     if ui.tabs(ctx,ui.id(ctx,"paint"),{"Paint","Erase"},&selected) {tool.brush=selected==1?.Erase:.Paint;editor.tool_take(s,"terrain")}
@@ -165,21 +165,20 @@ LAYERS_SLOT :: -1
 // Sets the material of a slot of a Mesh past slot 0, which shows the layers,
 // or the one that blends them, as one step of undo.
 @(private)
-terrain_material_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,slot:int,material:base.Asset_Id) -> bool {
+terrain_material_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,slot:int,material:base.Asset_Id) -> bool {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} || slot<LAYERS_SLOT || slot==0 || slot>len(stroke.source.slots) {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to change its materials");return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
     if slot==LAYERS_SLOT {stroke.source.layers_material=material} else {stroke.source.slots[slot-1]=material}
     stroke.changed=true;stroke.dirty_all=true
-    stroke_end(s,tool,world,app,label="Terrain material")
+    stroke_end(s,tool,world,assets,label="Terrain material")
     return true
 }
 
 // What a Volume holds under its surface, as its layers: the rows of the
 // interior the tool holds, and Apply writes it into every sample.
 @(private)
-terrain_interior_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+terrain_interior_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
     ctx:=s.gui.ctx
     stroke:=&tool.stroke
     of:=Interior_Of{stroke.id,stroke.revision}
@@ -190,7 +189,7 @@ terrain_interior_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
     for name in ([?]string{"strata_count","strata","vein_count","veins","wave","wave_scale","seed"}) {editor.held_field_row(s,held,name)}
     valid:=terrain.interior_valid(tool.interior,stroke.source.layer_count)
     if ui.button(ctx,ui.id(ctx,"interior_apply"),{label="Apply",style=.Field,width=-1,center=true,disabled=!valid}).clicked {
-        if !terrain_interior_commit(s,tool,world,app,tool.interior) {return}
+        if !terrain_interior_commit(s,tool,world,assets,tool.interior) {return}
         tool.interior_of={stroke.id,stroke.revision}
     }
 }
@@ -198,7 +197,7 @@ terrain_interior_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
 // Sets the interior of the selected Volume and writes it into its samples, as
 // one step of undo.
 @(private)
-terrain_interior_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,interior:terrain.Interior) -> bool {
+terrain_interior_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,interior:terrain.Interior) -> bool {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} {return false}
     if stroke.source.kind!=.Volume {editor.notify(s,"Only a Volume has an interior");return false}
@@ -208,20 +207,19 @@ terrain_interior_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.
     stroke.source.interior=interior
     if !terrain.source_interior_apply(&stroke.source) {stroke.source.interior=previous;editor.notify(s,"Out of memory for the interior of the terrain");return false}
     stroke.changed=true;stroke.dirty_all=true
-    stroke_end(s,tool,world,app,label="Terrain interior")
+    stroke_end(s,tool,world,assets,label="Terrain interior")
     return true
 }
 
-// Sets, adds or removes a layer of the selected terrain as one step of undo.
+// Sets, adds or removes a layer of the terrain of the stroke as one step of undo.
 @(private)
-terrain_layer_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,index:int,layer:terrain.Terrain_Layer,remove:bool) -> bool {
+terrain_layer_commit :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,index:int,layer:terrain.Terrain_Layer,remove:bool) -> bool {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to change its layers");return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
     done:=remove?terrain.source_layer_remove(&stroke.source,index):terrain.source_layer_set(&stroke.source,index,layer)
     if !done {editor.notify(s,remove?"A terrain keeps one layer at least":"The terrain layer is invalid");return false}
     stroke.changed=true;stroke.dirty_all=true
-    stroke_end(s,tool,world,app,label=remove?"Remove terrain layer":"Terrain layer")
+    stroke_end(s,tool,world,assets,label=remove?"Remove terrain layer":"Terrain layer")
     return true
 }

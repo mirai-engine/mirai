@@ -1,9 +1,11 @@
 # `host`: the application
 
-`host` (layer 4) is what the loop functions receive as `^host.App` and what runs the loops that the
-generator wrote. It imports `core`, `asset`, `audio`, `platform`, `project`, `render`, `rhi`, `ui`
-and `std/*`; the `engine/*` libraries import it, never the other way around. It does not know which
-components exist: it works with `core.World_Info`.
+`host` (layer 4) is the application: the loop functions receive the part of it they reach
+(`^host.Assets`, `^host.Frame_Extras`, the renderer, the mixer, the job system, its allocator:
+[parameters](generator.md#parameters)) or, for the application itself, `^host.App`, and it runs the
+loops that the generator wrote. It imports `core`, `asset`, `audio`, `platform`, `project`,
+`render`, `rhi`, `ui` and `std/*`; the `engine/*` libraries import it, never the other way around.
+It does not know which components exist: it works with `core.World_Info`.
 
 ## The application
 
@@ -67,17 +69,21 @@ its `exit_code` and `script_hold`.
   what they kept for it) and frees it.
 - `app_world_id(app, data)`, `app_world_of(app, id)` (`nil` if it was already released) and
   `app_world_count`.
-- Creating a world also gives it its values of the `by_world` storages (`info.attach`); if there is
-  no memory, it is not created. Releasing it removes them after its `release`.
+- Creating a world also gives it its values of the `by_world` storages (`core.world_attach`); if
+  there is no memory, it is not created. Releasing it removes them after its `release`.
 - `app_world_storage(app, data, T)`: the storage `T` of a world as its functions receive it: in the
   `World`, or its value of a `by_world` of the `Shared` (the network session of a run, its
   [problems](core.md#problems)). `nil` without it or without a loaded game (`app.info` empty).
-- `app_world_replace(app, dst, src) -> bool`: `dst` becomes a copy of `src`, whole or nothing. It
-  copies into a separate `World` of the application (made the first time) and swaps it with `dst`
-  without allocating; what is not copied (`copy=false`) stays in `dst`. `false` without memory, with
-  `dst` as it was. Opening a document and the network rollback use it. The swapped-out content stays
-  in that world for the next replacement, which does not allocate if it fits;
+- `app_world_replace(app, dst, src, marks) -> bool`: `dst` becomes a copy of `src`, whole or
+  nothing. It copies into a separate `World` of the application (made the first time) and swaps it
+  with `dst` without allocating; what is not copied (`copy=false`) stays in `dst`. `false` without
+  memory, with `dst` as it was. Opening a document and the network rollback use it. The swapped-out
+  content stays in that world for the next replacement, which does not allocate if it fits;
   `app_world_scratch_free` releases it when the next one is far off (opening a scene).
+  - With the `marks` of a `src` that `core.world_copy_changed` keeps as a copy of `dst` (a tick of
+    the rollback history), only the tables and storages `dst` changed since that copy are copied
+    and swapped (`core.world_restore`): the rest stays where it is, and its readers see no change.
+    That separate world is then left with parts of several, and is cleared before it is released.
 - `app_world_ref(app, data)` gives the `core.World_Ref`.
 - `app_user_folder(root)`: `<user data>/Mirai/<project name>`, created if missing; empty without a
   project. It stores the saves (`save`) and `pipelines.bin`, the pipeline cache that `app_create`
@@ -117,9 +123,9 @@ app_frame_end     mixer, drawing, pacing
 
 `app_frame` does the three for the player's world.
 
-Each phase runs its functions as a job graph on the workers of `app.jobs` (`steps.odin`), with the
-loop thread as one more and owner of those that touch the application; the graph and when it runs in
-order: [concurrent functions](generator.md#concurrent-functions).
+Each phase calls its functions one after another on the thread of the loop, in
+[the order of the generator](generator.md#order). The workers of `app.jobs` sleep until a function
+spreads its work with `std/jobs`, as their owner (`jobs.OWNER`).
 
 **Game loop.**
 
@@ -156,10 +162,11 @@ order: [concurrent functions](generator.md#concurrent-functions).
 `Time`, its `Frame_Time` and its input, and its `Fixed` phase is only that of the game.
 
 **What a frame adds.** `host` does not know what an editor is: the owner of the application adds its
-own through the `app_*_add` (screen layers, panels in the world, debug lines, visual instances,
-panels and particles in textures, pixels whose depth is read:
-[offscreen UI](../../mirai-rendering/references/ui.md#offscreen-ui)). They last one frame
-with fixed capacity; what does not fit adds to `stats.extras_dropped`. Visual instances create no
+own through the `extras_*` of `Frame_Extras` (screen layers, panels in the world, debug lines,
+visual instances, panels and particles in textures, views into a texture, pixels whose depth is
+read: [offscreen UI](../../mirai-rendering/references/ui.md#offscreen-ui)); a function that adds to
+the frame receives `^host.Frame_Extras`. They last one frame with fixed capacity; what does not fit
+adds to `Frame_Extras.dropped`. Visual instances create no
 entities or persistent data.
 
 - When running the `render` phase of a world, `host` takes the camera and the frame time from its
@@ -174,8 +181,8 @@ entities or persistent data.
   always covered, like the editor bars, is not drawn.
 
 **Profiling (`profile.odin`).** `profile_start(app, frames)` records the following frames: zones of
-the main thread, one per loop function in the ring of the worker that runs it, the tasks of each
-worker and what the renderer measures. The first `profile_start` reserves the memory: recording does
+the main thread, one per loop function, the tasks of each worker and what the renderer
+measures. The first `profile_start` reserves the memory: recording does
 not allocate, without recording a zone costs one branch and what does not fit is counted in `lost`.
 Whoever reads the zones as they happen (a profiling plugin) calls `profile_request` in every frame
 and reads them with its own cursor; without a recording or a request, the device writes no
@@ -287,12 +294,12 @@ player is heard. The end of stdin terminates it.
 
 ## Loaded assets
 
-`Assets` (`app.assets`, `host/assets.odin`) loads by `base.Asset_Id` meshes, textures, materials,
-scenes and prefabs, and the primitives (`Shape`). An asset is loaded the first time it is asked for,
-as a transaction between frames; asking again is a lookup. Id zero is "none". The tables of each
-type reserve address space for `Assets_Desc.capacity` (by default, a million) and take memory as
-loads fill them: the quantity a world asks for (a terrain of thousands of pieces) is not a fixed
-cap, and a frame that does not load does not allocate.
+`Assets` (a function receives it as `^host.Assets`; `host/assets.odin`) loads by `base.Asset_Id`
+meshes, textures, materials, scenes and prefabs, and the primitives (`Shape`). An asset is loaded
+the first time it is asked for, as a transaction between frames; asking again is a lookup. Id zero
+is "none". The tables of each type reserve address space for `Assets_Desc.capacity` (by default, a
+million) and take memory as loads fill them: the quantity a world asks for (a terrain of thousands
+of pieces) is not a fixed cap, and a frame that does not load does not allocate.
 
 - `assets_mesh(a, id)`, `assets_shape(a, shape)`: `^Assets_Mesh` with a renderer handle
   (`ASSETS_MESH_NONE` without a renderer), bounds, counts, slots and the material of each slot.
@@ -489,7 +496,8 @@ row.
 - `prompts_find` gives the `ui.Prompt` of the texture part of the pack; keys and mouse are of the
   `Keyboard` family whichever one is asked for.
 - An `.anim` is published compressed with `asset.animation_compress` (a cooked one, as it comes);
-  if the preparation fails, the previous load stays ([animation storage](../../mirai-std/references/anim-storage.md)).
+  if the preparation fails, the previous load stays ([animation
+  storage](../../mirai-std/references/anim-storage.md)).
 - **An `.anim` is compressed once per input** (`host/content_animation.odin`).
   `App_Desc.animation_cache` (the editor and the player pass `project.ANIMATION_CACHE` of the
   project) keeps the compression as the cooked document a shipped game carries, named by the asset

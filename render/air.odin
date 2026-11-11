@@ -3,6 +3,7 @@ package mirai_render
 import "core:math"
 import "core:math/linalg"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // The air of an atmosphere (air.slang, after Hillaire 2020): its tables are
 // entries of the texture table, made the first time a sky is an atmosphere.
@@ -17,15 +18,15 @@ import "mirai:rhi"
 AIR_SKY_ALTITUDE_TOLERANCE :: 1
 
 // AIR_* of air.slang.
-AIR_TRANSMITTANCE_TEXTURE :: 1
-AIR_SCATTERING_TEXTURE :: 2
-AIR_SKY_TEXTURE :: 3
-AIR_TRANSMITTANCE_SIZE :: [2]u32{256, 64}
-AIR_SCATTERING_SIZE :: 32
-AIR_SKY_SIZE :: [2]u32{256, 128}
-AIR_SKY_ROWS :: VIEW_CAPACITY
-AIR_AERIAL_SIZE :: 32
-AIR_AERIAL_SLICES :: 32
+AIR_TRANSMITTANCE_TEXTURE :: abi.AIR_TRANSMITTANCE_TEXTURE
+AIR_SCATTERING_TEXTURE :: abi.AIR_SCATTERING_TEXTURE
+AIR_SKY_TEXTURE :: abi.AIR_SKY_TEXTURE
+AIR_TRANSMITTANCE_SIZE :: abi.AIR_TRANSMITTANCE_SIZE
+AIR_SCATTERING_SIZE :: abi.AIR_SCATTERING_SIZE
+AIR_SKY_SIZE :: abi.AIR_SKY_SIZE
+AIR_SKY_ROWS :: abi.AIR_SKY_ROWS
+AIR_AERIAL_SIZE :: abi.AIR_AERIAL_SIZE
+AIR_AERIAL_SLICES :: abi.AIR_AERIAL_SLICES
 
 // The air of a planet, metres. Rayleigh and Mie thin with altitude by e every
 // their height; the ozone is a layer that thins to nothing at ozone_width from its middle.

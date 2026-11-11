@@ -9,7 +9,6 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
@@ -83,6 +82,7 @@ Desc :: struct {
     server:bool,                 // Game: a dedicated server, the same executable without what is only shown or heard: no icon or shaders, and its cook leaves those kinds behind
     force:bool,                  // build even when nothing changed
     dev:bool,                   // -o:minimal whatever the manifest says: for checking a change, not for shipping
+    incremental:bool,           // Game: the engine and its plugins come from one library compiled once per version (shipped.odin), next to the executable; the game alone compiles. Not for what ships: unset, they compile whole with the game
     engine:Engine_Mode,          // the binaries of the engine a library is built against. Keep: ENGINE_MODE_HERE
     action:Action,               // Check and Test: of the Editor or Play target
     test_package:string,         // Test: the folder of the package, absolute
@@ -103,6 +103,7 @@ Result :: struct {
     plugins_restored:int,     // of those, the ones copied from the cache
     plugins_relinked:int,     // of those, the ones whose objects were linked again (relink.odin)
     relinked:bool,            // the output was linked again from the objects of its last compile
+    shipped_engine:Shipped_Engine_State, // Game with Desc.incremental: what became of its engine library
     tests:Test_Report,        // Test
     seconds:f64,
 }
@@ -142,6 +143,7 @@ Job :: struct {
     plugin_cache:bool,           // the libraries go to and come from the shared cache: without debug information, which names the build that made it
     plugin_stored:bool,          // it stored libraries in the shared cache, which it trims once they are all published
     engine_decl:string,
+    shipped:Shipped_Engine,      // Game with Desc.incremental (shipped.odin)
     masked:string,               // the declarations of the plugin libraries, which the target reads with their names masked (relink.odin)
     link_file:string,            // the record of the last compile of the target
     compiled:bool,               // linking the target again failed, and it compiles
@@ -220,8 +222,8 @@ job_start :: proc(desc:Desc) -> ^Job {
         return job_fail(job,.Write_Failed)
     }
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
-    if desc.target==.Game && path_equal(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
-    job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?EXECUTABLE_EXTENSION:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
+    if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
+    job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
     job.result.output=job.published
 
     if desc.compiler!="" {job.compiler=slashes(desc.compiler,a)}
@@ -237,6 +239,10 @@ job_start :: proc(desc:Desc) -> ^Job {
             return job_fail(job,.Settings_Invalid)
         }
         job.copies=game_copies(p,folder,job.compiler,a,desc.server)
+        if desc.incremental {
+            job.shipped=shipped_engine_paths(p.root,a)
+            job.copies=shipped_engine_copies(&job.shipped,folder,job.copies,a)
+        }
         job.development=make([dynamic]string,a)
         for index in p.active {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
@@ -251,11 +257,13 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
     }
 
-    job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine)
+    job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine,desc.incremental)
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
         if failure:=job_plugins_plan(job,p,desc);failure!=.None {return job_fail(job,failure)}
+    } else if desc.incremental {
+        if failure:=job_shipped_start(job,p,desc.force);failure!=.None {return job_fail(job,failure)}
     }
     return job_schedule(job)
 }
@@ -284,7 +292,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     engine:=engine_paths(p.engine_root,desc.engine==.Keep?ENGINE_MODE_HERE:desc.engine,context.temp_allocator)
     job.engine_decl=strings.clone(engine.decl,a)
     for &lib,i in job.plugins {
-        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine.stamp)
+        job.plugin_hashes[i]=plugin_library_hash(p,&lib,job.compiler,job.plugin_flags,engine)
         plugin_library_name(p.root,&lib,job.plugin_hashes[i],a)
         saved,_,stamped:=stamp_read(lib.stamp)
         if !desc.force && stamped && saved==job.plugin_hashes[i] && os.is_file(lib.library) {
@@ -304,7 +312,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         // are the ones just written, and the library is copied.
         if !desc.force && job.plugin_cache && job_plugin_restore(job,i) {continue}
         // The declarations of what it links against are written by now.
-        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine.stamp)
+        job.plugin_compile_hashes[i]=plugin_library_compile_hash(p,&lib,job.compiler,job.plugin_flags,engine)
         if !desc.force {
             record,recorded:=link_record_read(plugin_link_file(&lib),context.temp_allocator)
             job.plugin_relink[i]=recorded && link_record_stands(record,job.plugin_compile_hashes[i])
@@ -511,7 +519,7 @@ job_project_start :: proc(job:^Job) -> ^Job {
                 current,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources)
                 present:=current==saved && os.is_file(job.published)
                 // The game built for another folder is the same executable.
-                if current==saved && !present && job.target==.Game && built!="" && !path_equal(built,job.published) && os.is_file(built) {
+                if current==saved && !present && job.target==.Game && built!="" && !project.path_same(built,job.published) && os.is_file(built) {
                     folder:=job.published[:strings.last_index_byte(job.published,'/')]
                     present=(os.make_directory_all(folder)==nil || os.is_dir(folder)) && os.copy_file(job.published,built)==nil
                 }
@@ -594,6 +602,34 @@ job_probe_start :: proc(job:^Job) -> ^Job {
     return job
 }
 
+// What a compiler left in the files of its streams: job.result.diagnostics,
+// the text it wrote besides them, whether a diagnostic is an error and all it
+// wrote to its error stream, for the frame. links: the text goes without the
+// calls to the linker it printed.
+@(private)
+job_compile_read :: proc(job:^Job,files:[2]string,links:=false) -> (text:string,errors:bool,output:string) {
+    a:=virtual.arena_allocator(&job.arena)
+    streams:[2]string
+    for file,i in files {
+        data,_:=os.read_entire_file(file,context.temp_allocator)
+        streams[i]=string(data)
+    }
+    rest:string
+    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
+    text=strings.trim_space(strings.concatenate({links?link_calls_strip(rest,context.temp_allocator):rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
+    for diagnostic in job.result.diagnostics {
+        if diagnostic.severity==.Error {errors=true}
+    }
+    return text,errors,streams[0]
+}
+
+// Ends the job with what its compiler said, or says that it said nothing.
+@(private)
+job_compile_fail :: proc(job:^Job,exit_code:int) {
+    if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,virtual.arena_allocator(&job.arena))}
+    job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+}
+
 // Takes what the compiler of a check or of the tests left.
 @(private)
 job_probe_finish :: proc(job:^Job,exit_code:int) {
@@ -616,16 +652,10 @@ job_probe_finish :: proc(job:^Job,exit_code:int) {
         job_done(job)
         return
     }
-    rest:string
-    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
-    job.result.text=strings.trim_space(strings.concatenate({rest,rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-    failed:=exit_code!=0
-    for diagnostic in job.result.diagnostics {
-        if diagnostic.severity==.Error {failed=true}
-    }
-    if failed {
-        if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
-        job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+    errors:bool
+    job.result.text,errors,_=job_compile_read(job,job.stream_files)
+    if errors || exit_code!=0 {
+        job_compile_fail(job,exit_code)
         return
     }
     job.result.status=.Built
@@ -669,18 +699,11 @@ tests_report_read :: proc(path,log:string,report:^Test_Report,allocator:runtime.
 job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     a:=virtual.arena_allocator(&job.arena)
     lib:=&job.plugins[compile.library]
-    streams:[2]string
-    for file,i in compile.streams {
-        data,_:=os.read_entire_file(file,context.temp_allocator)
-        streams[i]=string(data)
-    }
-    rest:string
-    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
+    text,errors,output:=job_compile_read(job,compile.streams,links=true)
     sources:=project.path(job.engine_root,"plugins",allocator=context.temp_allocator)
-    failed:=exit_code!=0 || !os.is_file(compile.staged)
+    failed:=errors || exit_code!=0 || !os.is_file(compile.staged)
     for &diagnostic in job.result.diagnostics {
         if strings.has_prefix(diagnostic.file,lib.stage) {diagnostic.file=project.path(sources,diagnostic.file[len(lib.stage):],allocator=a)}
-        if diagnostic.severity==.Error {failed=true}
     }
     if failed && compile.relink {
         // The objects do not link again: it compiles.
@@ -692,9 +715,8 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     }
     if failed {
         remove_later({compile.folder})
-        job.result.text=strings.trim_space(strings.concatenate({link_calls_strip(rest,context.temp_allocator),rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-        if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
-        job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+        job.result.text=text
+        job_compile_fail(job,exit_code)
         return
     }
     job.result.diagnostics=nil
@@ -704,7 +726,7 @@ job_plugin_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     }
     if compile.relink {
         job.result.plugins_relinked+=1
-    } else if command,found:=link_command_find(streams[0]);found {
+    } else if command,found:=link_command_find(output);found {
         link_folder_trim(compile.folder)
         link_record_write(plugin_link_file(lib),{hash=job.plugin_compile_hashes[compile.library],folder=compile.folder,command=command})
     } else {
@@ -741,7 +763,8 @@ job_advance :: proc(job:^Job,wait:bool) -> bool {
         }
         compile:=job.compiles[i]
         ordered_remove(&job.compiles,i)
-        if compile.library<0 && job.action!=.Build {job_probe_finish(job,state.exit_code)}
+        if compile.library==SHIPPED_ENGINE_COMPILE {job_shipped_finish(job,compile,state.exit_code)}
+        else if compile.library<0 && job.action!=.Build {job_probe_finish(job,state.exit_code)}
         else if compile.library<0 {job_finish(job,compile,state.exit_code)}
         else {job_plugin_finish(job,compile,state.exit_code)}
     }
@@ -758,26 +781,33 @@ target_output :: proc(p:^project.Project,target:Target,output:string,a:runtime.A
     }
     folder:=output!=""?project.path_absolute(output,context.temp_allocator):project.path(project.folder_path(p.root,.Generated,context.temp_allocator),server?"server":"game",allocator=context.temp_allocator)
     buffer:[len(project.Name)]u8
-    file:=strings.concatenate({project.executable_name(&p.manifest,buffer[:]),EXECUTABLE_EXTENSION},context.temp_allocator)
+    file:=strings.concatenate({project.executable_name(&p.manifest,buffer[:]),project.EXECUTABLE_SUFFIX},context.temp_allocator)
     return project.path(folder,file,allocator=a)
 }
 
 // What the compiler is given for a target besides where it writes: what
 // identifies the build next to its sources.
 @(private)
-target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Keep) -> []string {
+target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.Allocator,dev:=false,engine:=Engine_Mode.Keep,incremental:=false) -> []string {
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
-    // A library sees the engine through its declarations; the game, whole.
-    mirai:=target==.Game?p.engine_root:engine_paths(p.engine_root,engine==.Keep?ENGINE_MODE_HERE:engine,context.temp_allocator).decl
+    shipped:=shipped_engine_paths(p.root,context.temp_allocator)
+    // A library sees the engine through its declarations; the game, whole, or through those of its library.
+    mirai:=target==.Game?(incremental?shipped.decl:p.engine_root):engine_paths(p.engine_root,engine==.Keep?ENGINE_MODE_HERE:engine,context.temp_allocator).decl
     append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root,allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
-    plugins:=target==.Game?project.path(p.engine_root,"plugins",allocator=context.temp_allocator):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
+    plugins:=target==.Game?(incremental?shipped.decl_plugins:project.path(p.engine_root,"plugins",allocator=context.temp_allocator)):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
     append(&flags,fmt.aprintf("-collection:plugins=%s",plugins,allocator=a))
     generated:=generated_flags(p.root,a)
     append(&flags,..generated[:])
     if target==.Game {
         append(&flags,dev?"-o:minimal":"-o:speed")
+        if incremental {
+            // What -o:minimal would split only costs the inlining of what the declarations copied.
+            if dev {append(&flags,"-use-single-module")}
+            when ODIN_OS==.Linux {linker_flags_append(&flags,`-Wl,-rpath,"\$ORIGIN"`,a)}
+            else when ODIN_OS==.Darwin {linker_flags_append(&flags,"-Wl,-rpath,@executable_path",a)}
+        }
     } else {
         // The engine runs optimized whole in its own binary; what a project
         // compiles is little, and one module per package builds it in parallel.
@@ -901,7 +931,7 @@ job_files_remove :: proc(job:^Job) {
             remove=!built || !debug
         } else {
             stale:=built && time.diff(entry.modification_time,job.started)>STALE_AFTER
-            remove=strings.has_suffix(entry.name,".old") || stale && (debug || !workspace.process_alive(job_file_pid(entry.name[len(target):])))
+            remove=strings.has_suffix(entry.name,".old") || stale && (debug || !subprocess.process_alive(job_file_pid(entry.name[len(target):])))
         }
         if !remove {continue}
         if entry.type==.Directory {_=os.remove_all(entry.fullpath)}
@@ -924,18 +954,10 @@ job_file_pid :: proc(name:string) -> int {
 @(private)
 job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     a:=virtual.arena_allocator(&job.arena)
-    streams:[2]string
-    for file,i in job.stream_files {
-        data,_:=os.read_entire_file(file,context.temp_allocator)
-        streams[i]=string(data)
-    }
-    rest:string
-    job.result.diagnostics,rest=diagnostics_parse(streams[0],a)
-    job.result.text=strings.trim_space(strings.concatenate({link_calls_strip(rest,context.temp_allocator),rest!=""?"\n":"",strings.trim_space(streams[1])},a))
-    failed:=exit_code!=0 || !os.is_file(compile.staged)
-    for diagnostic in job.result.diagnostics {
-        if diagnostic.severity==.Error {failed=true}
-    }
+    errors:bool
+    output:string
+    job.result.text,errors,output=job_compile_read(job,job.stream_files,links=true)
+    failed:=errors || exit_code!=0 || !os.is_file(compile.staged)
     if failed && compile.relink {
         // The objects do not link again: it compiles.
         job.result.diagnostics,job.result.text=nil,""
@@ -946,8 +968,7 @@ job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     }
     if failed {
         if compile.folder!="" {remove_later({compile.folder})}
-        if job.result.text=="" && len(job.result.diagnostics)==0 && exit_code!=0 {job.result.text=compiler_silent_failure(exit_code,a)}
-        job_fail(job,.Out_Of_Memory if compiler_out_of_memory(job.result.text) else .Compile)
+        job_compile_fail(job,exit_code)
         return
     }
     sources,_:=dependencies_read(compile.relink?job.sources_file:job.sources_staged,context.temp_allocator)
@@ -979,7 +1000,7 @@ job_finish :: proc(job:^Job,compile:Compile,exit_code:int) {
     if !stamped {_=os.remove(job.stamp_file)}
     job.result.relinked=compile.relink
     if compile.folder!="" && !compile.relink {
-        command,found:=link_command_find(streams[0])
+        command,found:=link_command_find(output)
         if stamped && found {
             masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked)
             link_folder_trim(compile.folder)
@@ -1020,8 +1041,3 @@ stamp_read :: proc(file:string) -> (hash:u64,output:string,ok:bool) {
     return
 }
 
-@(private)
-path_equal :: proc(a,b:string) -> bool {
-    when ODIN_OS==.Windows {return strings.equal_fold(a,b)}
-    else {return a==b}
-}

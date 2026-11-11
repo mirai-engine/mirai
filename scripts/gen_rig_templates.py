@@ -8,9 +8,10 @@
 """Writes the animal templates of cook/rig from the rigs of Mesh2Motion (CC0 1.0) at the commit
 fetch_mesh2motion.py pins: cook/rig/animals.odin with the bones of each rig, as its skeleton.glb
 has them (the rest its clips animate), and cook/rig/animals/<rig>.samples with points of the
-surface of its model.glb and their weights to those bones, the shape a registration deforms.
+surface of its model.glb and their weights to those bones, the shape a registration deforms. The
+rigs face +Z in their files; what is written is turned half a turn about +Y, the engine's space.
 
-Each sample is 20 bytes, little endian: the position (3 f32, meters, +Y up, facing +Z), then 4
+Each sample is 20 bytes, little endian: the position (3 f32, meters, +Y up, facing -Z), then 4
 bone rows (u8) and their 4 weights (u8, summing to 255), as cook/rig.Sample reads them.
 
 Usage: uv run scripts/gen_rig_templates.py [--assets <mesh2motion-app/static/assets>]
@@ -87,7 +88,9 @@ def bones(document: dict) -> tuple[str, list]:
     out = []
     for i in order:
         n = nodes[i]
-        out.append((n["name"], row[parent[i]] if i != root else -1, n.get("translation", [0, 0, 0]), n.get("rotation", [0, 0, 0, 1])))
+        tx, ty, tz = n.get("translation", [0, 0, 0])
+        rx, ry, rz, rw = n.get("rotation", [0, 0, 0, 1])
+        out.append((n["name"], row[parent[i]] if i != root else -1, [-tx, ty, -tz], [-rx, ry, -rz, rw]))
     return top["name"], out
 
 
@@ -135,7 +138,7 @@ def samples(document: dict, binary: bytes, rows: dict, rng: random.Random) -> li
         q[0] += 255 - sum(q)
         b = [r for _, r in pairs] + [0] * (4 - len(pairs))
         q += [0] * (4 - len(q))
-        out.append(struct.pack("<3f4B4B", *point, *b, *q))
+        out.append(struct.pack("<3f4B4B", -point[0], point[1], -point[2], *b, *q))
     return out
 
 

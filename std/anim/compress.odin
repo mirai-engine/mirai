@@ -57,7 +57,6 @@ Compress_Bone :: struct {
     // precision of the bone that point belongs to; over the clip and over the segment searched.
     shell,precision,segment_shell,segment_precision:f32,
 }
-@(private) COMPRESS_SLOTS :: [3]Property{.Rotation,.Position,.Scale}
 
 // What one clip needs while its tracks are compressed: per track and fine sample (the samples and
 // COMPRESS_SUBDIVISIONS-1 points between each two) its exact value, per bone and fine sample its

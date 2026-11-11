@@ -2,7 +2,6 @@ package scene
 
 import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -13,13 +12,14 @@ import "mirai:std/base"
 
 @(private="file") Section_Test_Lamp :: struct {range:f32}
 @(private="file") Section_Test_Link :: struct {target:core.Entity}
-// Draws a far form of its own, as a terrain does: @(component,far).
+// Draws a far form of its own, as a terrain does.
+@(component,far)
 @(private="file") Section_Test_Ground :: struct {height:f32}
 
 // A World with what sections need, as the generator makes one.
 @(private="file")
 Section_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -43,85 +43,12 @@ Section_World :: struct {
     root:Scene_Root,
 }
 
-@(private="file")
-section_world_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Section_World)data
-    w^={}
-    core.entities_init(&w.entities,allocator)
-    core.table_init(&w.ids,"Id",allocator);core.table_init(&w.names,"Name",allocator);core.table_init(&w.transforms,"Transform",allocator)
-    core.table_init(&w.parents,"Parent",allocator);core.table_init(&w.disabled,"Disabled",allocator);core.table_init(&w.keeps,"Keep",allocator)
-    core.table_init(&w.references,"Scene_Reference",allocator);core.table_init(&w.members,"Section_Member",allocator);core.table_init(&w.held,"Section_Held",allocator)
-    core.table_init(&w.dormants,"Dormant",allocator);core.table_init(&w.tombstones,"Tombstone",allocator)
-    core.table_init(&w.roaming,"Roaming",allocator);core.table_init(&w.lamps,"Section_Test_Lamp",allocator);core.table_init(&w.links,"Section_Test_Link",allocator);core.table_init(&w.sources,"Prefab_Source",allocator)
-    core.table_init(&w.grounds,"Section_Test_Ground",allocator);core.table_init(&w.kept,"Far_Kept",allocator)
-    w.ids.base,w.names.base,w.transforms.base,w.parents.base,w.disabled.base,w.keeps.base=true,true,true,true,true,true
-    return len(w.entities.generation)>0
-}
-
-@(private="file")
-section_world_destroy :: proc(data:rawptr) {
-    w:=cast(^Section_World)data
-    core.table_destroy(&w.ids);core.table_destroy(&w.names);core.table_destroy(&w.transforms)
-    core.table_destroy(&w.parents);core.table_destroy(&w.disabled);core.table_destroy(&w.keeps)
-    core.table_destroy(&w.references);core.table_destroy(&w.members);core.table_destroy(&w.held)
-    core.table_destroy(&w.dormants);core.table_destroy(&w.tombstones)
-    core.table_destroy(&w.roaming);core.table_destroy(&w.lamps);core.table_destroy(&w.links);core.table_destroy(&w.sources)
-    core.table_destroy(&w.grounds);core.table_destroy(&w.kept)
-    core.value_free(&w.hierarchy,type_info_of(core.Hierarchy))
-    core.value_free(&w.unresolved,type_info_of(Unresolved_References))
-    core.value_free(&w.records,type_info_of(Section_Records))
-    core.entities_destroy(&w.entities)
-}
-
-@(private="file")
-section_world_copy :: proc(dst,src:rawptr) -> bool {return core.value_copy(dst,src,type_info_of(Section_World))}
-
-@(private="file")
-section_world_swap :: proc(a,b:rawptr) {
-    x,y:=cast(^Section_World)a,cast(^Section_World)b
-    x^,y^=y^,x^
-}
-
-// As the generator settles: Disabled, Parent and the hierarchy first, which say what is off.
-@(private="file")
-section_world_settle :: proc(world,shared,editor:rawptr) {
-    w:=cast(^Section_World)world
-    es:=&w.entities
-    core.table_settle(&w.disabled,es);core.table_settle(&w.parents,es)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),es)
-    core.entities_activity(es,core.read(&w.disabled),core.ref(&w.hierarchy))
-    core.table_settle(&w.ids,es);core.table_settle(&w.names,es);core.table_settle(&w.transforms,es)
-    core.table_settle(&w.parents,es);core.table_settle(&w.disabled,es);core.table_settle(&w.keeps,es)
-    core.table_settle(&w.references,es);core.table_settle(&w.members,es);core.table_settle(&w.held,es)
-    core.table_settle(&w.dormants,es);core.table_settle(&w.tombstones,es)
-    core.table_settle(&w.roaming,es);core.table_settle(&w.lamps,es);core.table_settle(&w.links,es);core.table_settle(&w.sources,es)
-    core.table_settle(&w.grounds,es);core.table_settle(&w.kept,es)
-    core.entities_settle(es)
-}
-
-@(private="file")
-section_world_clear :: proc(data:rawptr) {
-    w:=cast(^Section_World)data
-    core.table_clear(&w.ids);core.table_clear(&w.names);core.table_clear(&w.transforms)
-    core.table_clear(&w.parents);core.table_clear(&w.disabled);core.table_clear(&w.keeps)
-    core.table_clear(&w.references);core.table_clear(&w.members);core.table_clear(&w.held)
-    core.table_clear(&w.dormants);core.table_clear(&w.tombstones)
-    core.table_clear(&w.roaming);core.table_clear(&w.lamps);core.table_clear(&w.links);core.table_clear(&w.sources)
-    core.table_clear(&w.grounds);core.table_clear(&w.kept)
-    core.entities_clear(&w.entities)
-    core.hierarchy_clear(&w.hierarchy)
-    core.value_free(&w.unresolved,type_info_of(Unresolved_References))
-    core.value_free(&w.records,type_info_of(Section_Records))
-}
-
 // A project with that World and its assets in a temporary folder, and the
 // loads and requests of its sections.
 @(private="file")
 Section_Fixture :: struct {
     folder:string,
     types:asset.Types,
-    tables:[17]core.Table_Info,
-    storages:[4]core.Storage_Info,
     info:core.World_Info,
     assets:host.Assets,
     app:host.App,
@@ -135,34 +62,10 @@ Section_Fixture :: struct {
 
 @(private="file")
 section_fixture_open :: proc(t:^testing.T,f:^Section_Fixture,name:string) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.folder=fmt.tprintf("%s/mirai-sections-%s-%d",directory,name,os.get_pid())
-    os.remove_all(f.folder)
-    if !testing.expect(t,os.make_directory_all(f.folder)==nil) {return false}
+    f.folder=base.test_folder(t,fmt.tprintf("sections-%s",name))
+    if f.folder=="" {return false}
+    f.info=core.test_info(t,Section_World,test_types) or_return
     asset.types_init(&f.types)
-    table :: proc($T:typeid,name:string,offset:uintptr) -> core.Table_Info {return {name=name,type=T,info=type_info_of(T),offset=offset}}
-    f.tables={
-        table(core.Id,"Id",offset_of(Section_World,ids)),table(core.Name,"Name",offset_of(Section_World,names)),
-        table(core.Transform,"Transform",offset_of(Section_World,transforms)),table(core.Parent,"Parent",offset_of(Section_World,parents)),
-        table(core.Disabled,"Disabled",offset_of(Section_World,disabled)),table(core.Keep,"Keep",offset_of(Section_World,keeps)),
-        table(Scene_Reference,"Scene_Reference",offset_of(Section_World,references)),table(Section_Member,"Section_Member",offset_of(Section_World,members)),
-        table(Section_Held,"Section_Held",offset_of(Section_World,held)),
-        table(Dormant,"Dormant",offset_of(Section_World,dormants)),table(Tombstone,"Tombstone",offset_of(Section_World,tombstones)),
-        table(Roaming,"Roaming",offset_of(Section_World,roaming)),table(Section_Test_Lamp,"Section_Test_Lamp",offset_of(Section_World,lamps)),
-        table(Section_Test_Link,"Section_Test_Link",offset_of(Section_World,links)),table(Prefab_Source,"Prefab_Source",offset_of(Section_World,sources)),
-        {name="Section_Test_Ground",type=Section_Test_Ground,info=type_info_of(Section_Test_Ground),offset=offset_of(Section_World,grounds),far=true},
-        table(Far_Kept,"Far_Kept",offset_of(Section_World,kept)),
-    }
-    f.storages={
-        {name="Hierarchy",type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Section_World,hierarchy)},
-        {name="Unresolved_References",type=Unresolved_References,info=type_info_of(Unresolved_References),offset=offset_of(Section_World,unresolved)},
-        {name="Section_Records",type=Section_Records,info=type_info_of(Section_Records),offset=offset_of(Section_World,records)},
-        {name="Scene_Root",type=Scene_Root,info=type_info_of(Scene_Root),offset=offset_of(Section_World,root),keep=true},
-    }
-    f.info={entities=offset_of(Section_World,entities),tables=f.tables[:],storages=f.storages[:],copy=section_world_copy,swap=section_world_swap,settle=section_world_settle,clear=section_world_clear}
-    f.info.sizes[.World],f.info.aligns[.World]=size_of(Section_World),align_of(Section_World)
-    f.info.init[.World],f.info.destroy[.World]=section_world_init,section_world_destroy
-    core.world_info_index(&f.info)
     if !testing.expect(t,host.assets_init(&f.assets,{root=f.folder,capacity=8})) {return false}
     f.app={info=&f.info,assets=&f.assets,allocator=context.allocator}
     f.world=cast(^Section_World)host.app_world_create(&f.app)
@@ -180,9 +83,7 @@ section_fixture_close :: proc(f:^Section_Fixture) {
     delete(f.app.worlds)
     host.assets_destroy(&f.assets)
     asset.types_destroy(&f.types)
-    core.world_schema_destroy(f.info.schema)
-    delete(f.info.tables_by_type);delete(f.info.storages_by_type)
-    os.remove_all(f.folder)
+    core.test_info_destroy(&f.info)
 }
 
 @(private="file")
@@ -740,7 +641,7 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     if _,error:=load(w,&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
     before:=core.raw_count(core.raw(&f.world.lamps))
     at:=core.Transform{position={3,4,5},rotation=1,scale={1,1,1}}
-    report,error:=spawn_member(core.commands_of(w),&f.app,SECTION_ROOM,1,id_in(1,11),at)
+    report,error:=spawn_member(core.commands_of(w),f.app.assets,SECTION_ROOM,1,id_in(1,11),at)
     if !testing.expect_value(t,error,Error.None) {return}
     core.world_settle(w)
     testing.expect_value(t,report.entities,2)
@@ -751,6 +652,73 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     lamp,_:=core.get(core.read(&f.world.lamps),chest)
     testing.expect_value(t,lamp.range,2)
     testing.expect_value(t,core.raw_count(core.raw(&f.world.lamps)),before+2)
-    _,error=spawn_member(core.commands_of(w),&f.app,SECTION_ROOM,1,id_in(1,99),at)
+    _,error=spawn_member(core.commands_of(w),f.app.assets,SECTION_ROOM,1,id_in(1,99),at)
     testing.expect_value(t,error,Error.Not_Found)
 }
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// A record that has no memory to look at the tables, or to list what its
+// section turns on, says so and waits: the look that finds memory takes it.
+@(test)
+a_record_without_memory_to_look_waits_for_the_next_look :: proc(t:^testing.T) {
+    f:Section_Fixture
+    if !section_fixture_open(t,&f,"memory") {return}
+    defer section_fixture_close(&f)
+    section_level_write(t,&f)
+    w:=section_ref(&f)
+    if _,error:=load(w,&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
+    room:=section_entity(&f,1)
+    section_stream(&f.requests,room,.Active)
+    section_frame(&f)
+    section_frame(&f)
+    records:=core.world_storage_of(w,Section_Records)
+    record:=records_find(records,room)
+    if !testing.expect(t,record!=nil && records.looks==0) {return}
+    limit:=Memory_Limit{owner=context.allocator}
+    Step :: enum {Look,Hold}
+    for step in Step {
+        done,refused:=false,false
+        for served in 0..<64 {
+            error:Error
+            switch step {
+            case .Look:
+                delete(record.seen)
+                record.seen=nil
+                if !record.look {record.look=true;records.looks+=1}
+            case .Hold:
+                if !testing.expect_value(t,section_hold(w,room,true),Error.None) {return}
+                core.world_settle(w)
+            }
+            {
+                limit.remaining=served
+                context.allocator={memory_limit_proc,&limit}
+                error=records_look(w) if step==.Look else section_hold(w,room,false)
+            }
+            core.world_settle(w)
+            done=error==.None
+            if !done {
+                testing.expect_value(t,error,Error.Out_Of_Memory)
+                testing.expect(t,record.look && records.looks==1,"it still waits for a look")
+            }
+            if done {break}
+            refused=true
+        }
+        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",step)
+        testing.expect_value(t,records_look(w),Error.None)
+        testing.expect(t,!record.look && records.looks==0 && len(record.seen)==len(w.info.tables))
+    }
+}
+

@@ -4,10 +4,11 @@ import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
 import "core:mem"
-import "core:reflect"
 import "core:strconv"
 import "core:strings"
+import "mirai:cook/author"
 import "mirai:core"
+import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
 import ecamera "mirai:engine/camera"
@@ -21,7 +22,7 @@ import "mirai:ui"
 // the engine that every scene entity has: Id, Name, Transform and Parent.
 
 // What the Create panel and the API make: recipes of components, not kinds.
-Preset :: enum u8 {Empty,Cube,Sphere,Cylinder,Cone,Capsule,Plane,Prism,Pyramid,Point_Light,Spot_Light,Sun,Camera,Rect_Light,Isometric_Camera,Top_Down_Camera,Side_Camera,First_Person_Camera,Third_Person_Camera,Aim_Camera,Sound,Reverb_Zone}
+Preset :: author.Preset
 
 Preset_Card :: struct {
     label:string,
@@ -66,15 +67,7 @@ PRESETS :: [Preset]Preset_Card{
 // The mode of engine/camera a camera preset follows the player in.
 @(private)
 preset_camera_mode :: proc "contextless" (preset:Preset) -> (ecamera.Camera_Preset,bool) {
-    #partial switch preset {
-    case .Isometric_Camera:    return .Isometric,true
-    case .Top_Down_Camera:     return .Top_Down,true
-    case .Side_Camera:         return .Side,true
-    case .First_Person_Camera: return .First_Person,true
-    case .Third_Person_Camera: return .Third_Person,true
-    case .Aim_Camera:          return .Aim,true
-    }
-    return {},false
+    return author.preset_camera_mode(preset)
 }
 
 SHAPE_ICONS :: [erender.Shape]ui.Icon{.None=.Mesh,.Cube=.Cube,.Sphere=.Sphere,.Cylinder=.Cylinder,.Cone=.Cone,.Capsule=.Cylinder,.Plane=.Plane,.Prism=.Prism,.Pyramid=.Pyramid}
@@ -179,7 +172,7 @@ entity_hidden :: proc(w:core.World_Ref,e:core.Entity) -> bool {
 // The icon of what the components of an entity make of it: that of the card
 // of a plugin whose component it has, before those of the engine.
 entity_icon :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (icon:ui.Icon,color:ui.Color) {
-    if link,linked:=prefab_link_of(s,api_entity_id(w,e));linked && link.root {return .Prefab,PREFAB_COLOR}
+    if link,linked:=prefab_link_of(w,e);linked && link.root {return .Prefab,PREFAB_COLOR}
     if card,found:=card_of_entity(s,w,e);found {return card.icon,card.color}
     icons:=SHAPE_ICONS
     if mesh,ok:=entity_get(w,e,erender.Mesh_Renderer);ok {return mesh.mesh!={}?.Mesh:icons[mesh.shape],MESH_COLOR}
@@ -251,7 +244,7 @@ entity_create :: proc(s:^Session,desc:Create_Desc) -> core.Entity {
     opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",all[index].label))
     if !edit_ready {return core.NONE}
     defer edit_close(s,opened)
-    return entity_make(s,shown_world(s),desc)
+    return entity_make(s,editing_world(s),desc)
 }
 
 // entity_create without a step of undo.
@@ -292,96 +285,51 @@ entity_make :: proc(s:^Session,w:core.World_Ref,desc:Create_Desc) -> core.Entity
 
 @(private)
 preset_components :: proc(w:core.World_Ref,e:core.Entity,preset:Preset) {
-    if shape:=preset_shape(preset);shape!=.None {
-        if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{shape=shape})}
-        return
-    }
-    #partial switch preset {
-    case .Point_Light: if t:=core.world_table_of(w,erender.Point_Light);t!=nil {core.add(t,e,erender.POINT_LIGHT_DEFAULT)}
-    case .Spot_Light:  if t:=core.world_table_of(w,erender.Spot_Light);t!=nil {core.add(t,e,erender.SPOT_LIGHT_DEFAULT)}
-    case .Rect_Light:  if t:=core.world_table_of(w,erender.Rect_Light);t!=nil {core.add(t,e,erender.RECT_LIGHT_DEFAULT)}
-    case .Sun:         if t:=core.world_table_of(w,erender.Sun);t!=nil {core.add(t,e,erender.SUN_DEFAULT)}
-    case .Camera:      if t:=core.world_table_of(w,erender.Camera);t!=nil {core.add(t,e,erender.CAMERA_DEFAULT)}
-    case .Isometric_Camera,.Top_Down_Camera,.Side_Camera,.First_Person_Camera,.Third_Person_Camera,.Aim_Camera:
-        mode,_:=preset_camera_mode(preset)
-        setup:=ecamera.camera_preset(mode)
-        if t:=core.world_table_of(w,erender.Camera);t!=nil {
-            camera:=erender.CAMERA_DEFAULT
-            ecamera.camera_lens_set(&camera,setup.lens)
-            core.add(t,e,camera)
-        }
-        if t:=core.world_table_of(w,ecamera.Camera_Follow);t!=nil {core.add(t,e,setup.follow)}
-        if preset==.Aim_Camera {
-            if t:=core.world_table_of(w,ecamera.Camera_Activation);t!=nil {core.add(t,e,ecamera.CAMERA_ACTIVATION_DEFAULT)}
-        }
-    case .Sound:       sound_components(w,e,{})
-    case .Reverb_Zone:
-        if t:=core.world_table_of(w,eaudio.Audio_Reverb);t!=nil {core.add(t,e,eaudio.AUDIO_REVERB_DEFAULT)}
-        if t:=core.world_table_of(w,evolume.Volume);t!=nil {core.add(t,e,evolume.Volume{shape=.Box,extents={5,3,5},blend=1})}
-    }
+    author.preset_components(w,e,preset)
 }
 
 // A sound placed in the scene: a spatial source in a loop that the room
 // reverberates and walls hide.
 sound_components :: proc(w:core.World_Ref,e:core.Entity,sound:base.Asset_Id) {
-    if t:=core.world_table_of(w,eaudio.Audio_Source);t!=nil {
-        source:=eaudio.AUDIO_SOURCE_DEFAULT
-        source.sound,source.loop,source.spatial,source.reverb=sound,true,true,1
-        core.add(t,e,source)
-    }
-    if t:=core.world_table_of(w,eaudio.Audio_Occlusion);t!=nil {core.add(t,e,eaudio.AUDIO_OCCLUSION_DEFAULT)}
+    author.sound_components(w,e,sound)
 }
 
 // How a preset turns what it makes when no rotation is given: a sun shines
 // from the morning of SUN_DIRECTION and a spot down. Lights shine toward -Z.
 preset_rotation :: proc(preset:Preset) -> mm.Quat {
-    #partial switch preset {
-    case .Sun:        return mm.quat_between([3]f32{0,0,1},linalg.normalize(erender.SUN_DIRECTION))
-    case .Spot_Light: return mm.quat_between([3]f32{0,0,-1},[3]f32{0,-1,0})
-    }
-    return 1
+    return author.preset_rotation(preset)
 }
 
 // The primitive a preset shows; None for one without a body.
 preset_shape :: proc "contextless" (preset:Preset) -> erender.Shape {
-    #partial switch preset {
-    case .Cube:     return .Cube
-    case .Sphere:   return .Sphere
-    case .Cylinder: return .Cylinder
-    case .Cone:     return .Cone
-    case .Capsule:  return .Capsule
-    case .Plane:    return .Plane
-    case .Prism:    return .Prism
-    case .Pyramid:  return .Pyramid
-    }
-    return .None
+    return author.preset_shape(preset)
 }
 
 // Destroys entities and everything under them.
 entities_delete :: proc(s:^Session,entities:[]core.Entity) {
-    if watching(s) || edit_held(s,..entities) || section_refused(s,..section_alone(s,entities)) {return}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,..section_alone(s,entities)) {return}
+    w:=editing_world(s)
     if len(entities)==0 {return}
     opened,edit_ready:=edit_open(s,"Delete")
     if !edit_ready {return}
     defer edit_close(s,opened)
-    links:=prefab_links(s)
     kept:=false
     for e in entities {
         // What a section holds goes with its reference, which is among them.
         if section_locked(s,w,e) {continue}
-        if prefab_member_locked_in(s,links,w,e) {kept=true;continue}
+        if prefab_member_locked(s,w,e) {kept=true;continue}
         if e==document_root(s,w) {continue}
         core.world_destroy_tree(w,e)
     }
     if kept {notify(s,"A member of a prefab instance stays: turn it off, or unlink the instance")}
+    selection:=w.data==s.edit_world?document_selection(s):s.selection
     for e in entities {
-        if e==document_root(s,w) || prefab_member_locked_in(s,links,w,e) {continue}
-        for i:=len(s.selection.entities)-1;i>=0;i-=1 {
-            if entity_under(w,s.selection.entities[i],e) {ordered_remove(&s.selection.entities,i)}
+        if e==document_root(s,w) || prefab_member_locked(s,w,e) {continue}
+        for i:=len(selection.entities)-1;i>=0;i-=1 {
+            if entity_under(w,selection.entities[i],e) {ordered_remove(&selection.entities,i)}
         }
     }
-    s.selection.serial+=1
+    selection.serial+=1
 }
 
 // Copies entities with everything under them, next to their originals:
@@ -389,7 +337,7 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
 // copy. Returns the copies of the entities given, in their order.
 entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",allocator:=context.temp_allocator) -> []core.Entity {
     if watching(s) || section_refused(s,..entities) {return nil}
-    w:=shown_world(s)
+    w:=editing_world(s)
     es:=core.world_entities(w)
     if len(entities)==0 {return nil}
     if root:=document_root(s,w);root!=core.NONE {
@@ -429,11 +377,11 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
         return false
     }
     for &t in w.info.tables {
-        if t.place!=.World || !type_saved(t.info) {continue}
+        if t.place!=.World || !author.type_saved(t.info) {continue}
         table:=core.world_table_at(w,&t)
         info:=t.info
         offsets:=entity_offsets(t.info)
-        transient:=transient_ranges(t.info)
+        transient:=history.transient_ranges(t.info)
         buffer:=make([]u8,max(info.size,1),context.temp_allocator)
         for source,at in sources {
             value:=core.raw_find(table,t.info,source)
@@ -471,7 +419,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
             }
             core.world_settle(w)
         }
-        prefab_copied(s,sources[:],copies)
+        prefab_copies_settle(w,copies)
     }
     result:=make([]core.Entity,len(roots),allocator)
     for r,i in roots {result[i]=copies[r]}
@@ -479,8 +427,8 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
 }
 
 entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return false}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return false}
+    w:=editing_world(s)
     names:=core.world_table_of(w,core.Name)
     text:=strings.trim_space(name)
     if names==nil || text=="" || !entity_alive(w,e) {return false}
@@ -499,10 +447,10 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
 // the world. False when the parent is the entity or under it, or a parent
 // without size on an axis cannot hold it there.
 entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
-    if watching(s) || edit_held(s,e) {return false}
-    w:=shown_world(s)
+    if watching(s) {return false}
+    w:=editing_world(s)
     parent:=parent
-    if root:=document_root(s,w);root!=core.NONE && !playing(s) {
+    if root:=document_root(s,w);root!=core.NONE && w.data==s.edit_world {
         if e==root {return parent==core.NONE}
         if parent==core.NONE {parent=root}
     }
@@ -510,7 +458,7 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     transforms:=core.world_table_of(w,core.Transform)
     if parents==nil || !entity_alive(w,e) || parent!=core.NONE && (!entity_alive(w,parent) || entity_under(w,parent,e)) {return false}
     if entity_parent(w,e)==parent {return true}
-    if section_refused(s,e) || section_target_refused(s,parent) || prefab_member_locked(s,e) {return false}
+    if section_refused(s,e) || section_target_refused(s,parent) || prefab_member_locked(s,w,e) {return false}
     local:=mm.TRANSFORM_IDENTITY
     if transforms!=nil {local=core.local_under(core.read(transforms),core.read(parents),parent,entity_world(w,e)) or_return}
     opened,edit_ready:=edit_open(s,"Parent")
@@ -525,8 +473,8 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
 
 // Places an entity among the children of its parent: order says where.
 entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return}
+    w:=editing_world(s)
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return}
     current,placed:=core.get(core.read(parents),e)
@@ -538,8 +486,8 @@ entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
 }
 
 entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return}
+    w:=editing_world(s)
     table:=core.world_table_of(w,erender.Hidden)
     if table==nil || entity_has(w,e,erender.Hidden)==hidden {return}
     opened,edit_ready:=edit_open(s,hidden?"Hide":"Show")
@@ -551,14 +499,14 @@ entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
 // Writes the Transform of an entity. While a Play runs, a row another
 // component owns (a body) is left to it.
 transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return false}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return false}
+    w:=editing_world(s)
     transforms:=core.world_table_of(w,core.Transform)
     if transforms==nil {return false}
     opened,edit_ready:=edit_open(s,"Transform")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    row:=s.mode==.Edit?core.get(transforms,e):core.free(transforms,e)
+    row:=w.data==s.edit_world?core.get(transforms,e):core.free(transforms,e)
     if row==nil {return false}
     row^=core.from_math(t)
     return true
@@ -566,15 +514,31 @@ transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
 
 // The table of a component of the World shown, by its name as scenes and the API name it.
 component_table :: proc(s:^Session,name:string) -> ^core.Table_Info {
-    _,info:=core.world_table_named(shown_world(s),name)
+    _,info:=core.world_table_named(editing_world(s),name)
     return info
+}
+
+// The table of the component a text of the API names in a world, as
+// base.name_find takes it; nil and what is wrong with the name otherwise.
+api_component_named :: proc(w:core.World_Ref,name:string) -> (table:^core.Table_Info,problem:string) {
+    for &t in w.info.tables {
+        if t.place==w.place && t.name==name {return &t,""}
+    }
+    names:=make([dynamic]string,context.temp_allocator)
+    tables:=make([dynamic]^core.Table_Info,context.temp_allocator)
+    for &t in w.info.tables {
+        if t.place==w.place {append(&names,t.name);append(&tables,&t)}
+    }
+    index,_:=base.name_find(name,names[:])
+    if index>=0 {return tables[index],""}
+    return nil,base.name_problem(name,"a component of the world",names[:])
 }
 
 // Gives an entity a component, or replaces its value: value nil gives the
 // one it starts with (component_default).
 component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=nil) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return}
+    w:=editing_world(s)
     if t==nil || t.place!=.World || !entity_alive(w,e) {return}
     opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",readable(t.name)))
     if !edit_ready {return}
@@ -590,8 +554,8 @@ component_add :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,value:rawptr=n
 }
 
 component_remove :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return}
+    w:=editing_world(s)
     if t==nil || t.place!=.World {return}
     opened,edit_ready:=edit_open(s,fmt.tprintf("Remove %s",readable(t.name)))
     if !edit_ready {return}
@@ -601,8 +565,8 @@ component_remove :: proc(s:^Session,e:core.Entity,t:^core.Table_Info) {
 
 // Turns a component of an entity off by itself, or on: it keeps its values.
 component_turn :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,off:bool) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return}
+    w:=editing_world(s)
     if t==nil || t.place!=.World {return}
     table:=core.world_table_at(w,t)
     _,turned_off,found:=core.raw_state(table,e)
@@ -615,8 +579,8 @@ component_turn :: proc(s:^Session,e:core.Entity,t:^core.Table_Info,off:bool) {
 
 // Turns an entity and everything under it off, or on (core.Disabled).
 entity_enabled_set :: proc(s:^Session,e:core.Entity,enabled:bool) {
-    if watching(s) || edit_held(s,e) || section_refused(s,e) {return}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,e) {return}
+    w:=editing_world(s)
     table:=core.world_table_of(w,core.Disabled)
     if table==nil || entity_has(w,e,core.Disabled)!=enabled {return}
     opened,edit_ready:=edit_open(s,enabled?"Enable":"Disable")
@@ -628,8 +592,8 @@ entity_enabled_set :: proc(s:^Session,e:core.Entity,enabled:bool) {
 // Writes bytes at an offset of the component of every entity given that has
 // it. The step is the gesture that is open, or one of its own.
 field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:int,bytes:[]u8) -> bool {
-    if watching(s) || edit_held(s,..entities) || section_refused(s,..entities) {return false}
-    w:=shown_world(s)
+    if watching(s) || section_refused(s,..entities) {return false}
+    w:=editing_world(s)
     if t==nil || offset<0 || offset+len(bytes)>t.info.size {return false}
     table:=core.world_table_at(w,t)
     opened,edit_ready:=edit_open(s,readable(t.name))
@@ -648,58 +612,12 @@ field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:
 
 // The value a component starts with when the editor adds it.
 component_default :: proc(type:typeid,out:[]u8) {
-    put :: proc(out:[]u8,value:$T) {
-        value:=value
-        if len(out)>=size_of(T) {mem.copy(raw_data(out),&value,size_of(T))}
-    }
-    mem.zero_slice(out)
-    switch type {
-    case core.Transform:          put(out,core.TRANSFORM_IDENTITY)
-    case erender.Mesh_Renderer:     put(out,erender.Mesh_Renderer{shape=.Cube})
-    case erender.Tint:            put(out,erender.TINT_DEFAULT)
-    case erender.Camera:          put(out,erender.CAMERA_DEFAULT)
-    case erender.Exposure:        put(out,erender.EXPOSURE_DEFAULT)
-    case erender.Draw_Offset:     put(out,erender.Draw_Offset{rotation=1})
-    }
+    author.component_default(type,out)
 }
 
 // Offsets of the Entity fields of a type, nested ones included.
 entity_offsets :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator) -> []uintptr {
-    out:=make([dynamic]uintptr,allocator)
-    walk :: proc(info:^runtime.Type_Info,at:uintptr,out:^[dynamic]uintptr) {
-        if info.id==core.Entity {append(out,at);return}
-        #partial switch v in runtime.type_info_base(info).variant {
-        case runtime.Type_Info_Struct:
-            for i in 0..<int(v.field_count) {walk(v.types[i],at+v.offsets[i],out)}
-        case runtime.Type_Info_Array:
-            for i in 0..<v.count {walk(v.elem,at+uintptr(i*v.elem_size),out)}
-        }
-    }
-    walk(type,0,&out)
-    return out[:]
-}
-
-// Byte ranges of the transient fields of a type: what a copy leaves zero.
-transient_ranges :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator,error:^runtime.Allocator_Error=nil) -> [][2]int {
-    walk :: proc(info:^runtime.Type_Info,at:uintptr,out:[][2]int,index:^int) {
-        value,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-        if !is_struct {return}
-        for field in 0..<int(value.field_count) {
-            offset:=at+value.offsets[field]
-            if _,transient:=core.field_option(reflect.Struct_Tag(value.tags[field]),"transient");transient {
-                if out!=nil {out[index^]={int(offset),value.types[field].size}}
-                index^+=1
-            } else {walk(value.types[field],offset,out,index)}
-        }
-    }
-    count:=0
-    walk(type,0,nil,&count)
-    ranges,failed:=make([][2]int,count,allocator)
-    if error!=nil {error^=failed}
-    if failed!=nil {return nil}
-    index:=0
-    walk(type,0,ranges,&index)
-    return ranges
+    return author.entity_offsets(type,allocator)
 }
 
 // "linear_damping" and "Mesh_Renderer" as people read them: "Linear damping", "Static mesh".

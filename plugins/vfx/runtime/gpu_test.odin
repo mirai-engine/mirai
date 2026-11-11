@@ -44,23 +44,20 @@ gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, width, height: u32, set
 	output := fmt.tprintf("%s/.mirai/tmp/vfx-test-shaders", root)
 	loaded, problem := gpu.shader_assets_load(output)
 	if !testing.expect(t, problem == "", problem) {return false}
-	device, message := shared_device.take(t)
+	device := shared_device.take_or_skip(t)
 	if device == nil {
 		gpu.shader_assets_destroy(&loaded)
-		if rhi.gpu_skip_allowed() {fmt.eprintln("vfx GPU tests skipped:", message)} else {testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", message)}
 		return false
 	}
 	f.device = device
 	if !testing.expect(t, gpu.renderer_init(&f.renderer, {device = device, width = width, height = height, settings = settings, shaders = &loaded}), f.renderer.error) {return false}
-	directory, _ := os.temp_directory(context.temp_allocator)
-	f.folder = fmt.aprintf("%s/mirai-vfx-gpu-%d-%p", directory, os.get_pid(), f)
-	os.make_directory_all(f.folder)
+	f.folder = base.test_folder(t, "vfx-gpu")
 	if !testing.expect(t, host.assets_init(&f.assets, {root = f.folder, renderer = &f.renderer})) {return false}
 	f.app = host.App{allocator = context.allocator, renderer = &f.renderer, assets = &f.assets, device = device}
 	cube := host.assets_shape(&f.assets, .Cube)
 	if !testing.expect(t, cube != nil) {return false}
 	f.cube = cube.handle
-	f.cube_range.x, _ = erender.mesh_draw_range(&f.app, f.cube)
+	f.cube_range.x, _ = erender.mesh_draw_range(f.app.renderer, f.cube)
 	f.cube_range.y = u32(f.cube)
 	f.sync.world = 1
 	gpu.scene_world(&f.renderer, f.sync.world)
@@ -73,8 +70,6 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	particle_sync_free(&f.sync)
 	host.assets_destroy(&f.assets)
 	gpu.renderer_destroy(&f.renderer)
-	os.remove_all(f.folder)
-	delete(f.folder)
 }
 
 // The emitters of a world for the next frame, as particles_sync gives them.
@@ -89,7 +84,7 @@ frame_emitters :: proc(f: ^Gpu_Fixture, sync: ^Particle_Sync, emitters: []Emitte
 // What the finish pass counted two frames ago.
 @(private = "file")
 particles_alive :: proc(f: ^Gpu_Fixture) -> u32 {
-	values, _ := erender.counters(&f.app, "particles")
+	values, _ := erender.counters(f.app.renderer, "particles")
 	return values[0]
 }
 
@@ -641,9 +636,9 @@ particle_worlds_keep_their_own_pools :: proc(t: ^testing.T) {
 	for _ in 0 ..< 3 {draw(t, f, &f.sync, edit, camera)}
 	rhi.device_wait_idle(f.device)
 	testing.expect_value(t, particles_alive(f), u32(11))
-	testing.expect(t, erender.buffer_release(&f.app, edit_world, "vfx particles"))
-	testing.expect(t, !erender.buffer_release(&f.app, edit_world, "vfx particles"))
-	pool_release(&f.app, edit_world, &f.sync.pool)
+	testing.expect(t, erender.buffer_release(f.app.renderer, edit_world, "vfx particles"))
+	testing.expect(t, !erender.buffer_release(f.app.renderer, edit_world, "vfx particles"))
+	pool_release(f.app.renderer, edit_world, &f.sync.pool)
 	pool_free(&f.sync.pool)
 	for _ in 0 ..< 3 {draw(t, f, &f.sync, edit, camera)}
 	rhi.device_wait_idle(f.device)
@@ -837,7 +832,7 @@ particle_reports_tell_the_game_of_deaths :: proc(t: ^testing.T) {
 		brief.spawns = test_burst(9) if i == 0 else {}
 		testing.expect(t, frame_emitters(f, &f.sync, {brief}, DT))
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-		reports_read(&reports, &f.sync, &f.app, core.World_Id{index = 1})
+		reports_read(&reports, &f.sync, f.app.renderer, core.World_Id{index = 1})
 		for report in reports.reports {
 			testing.expect(t, report.entity == core.Entity(77) && report.kind == .Death)
 			heard += 1
@@ -889,13 +884,13 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	testing.expect_value(t, asset.skeleton_save(fmt.tprintf("%s/rig.skeleton", f.folder), types, {id = skeleton_id, bones = bones[:]}), asset.Error.None)
 	testing.expect_value(t, asset.mesh_save(fmt.tprintf("%s/rig.mesh", f.folder), types, {id = mesh_id, geometry = rig_geometry, joints = joints[:], skeleton = skeleton_id}), asset.Error.None)
 	testing.expect(t, host.assets_scan(&f.assets))
-	rig := bone_rig(&f.sync.rigs, &f.app, mesh_id)
+	rig := bone_rig(&f.sync.rigs, f.app.assets, mesh_id)
 	if !testing.expect(t, rig != nil && len(rig.joints) == 2) {return}
 	testing.expect(t, rig.joints[0].parent == -1 && rig.joints[1].parent == 0, "the arm starts no bone; the hand's goes from the arm")
 	testing.expect(t, linalg.length(rig.joints[1].bind - hand) < 1e-4)
 	// In the bind pose, from the file.
 	identity: matrix[4, 4]f32 = 1
-	bind := asset_bones(&f.sync, &f.app, mesh_id, identity)
+	bind := asset_bones(&f.sync, f.app.assets,f.app.renderer, mesh_id, identity)
 	testing.expect(t, bind.kind == .Bones && bind.count == 1)
 	if bind.count == 1 {
 		segment := f.sync.segments[bind.first]
@@ -905,12 +900,12 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	cube := host.assets_shape(&f.assets, .Cube)
 	influences := make([]erender.Skin_Influence, cube.vertex_count, context.temp_allocator)
 	for &influence in influences {influence.weights[0] = 255}
-	posed, made := erender.skin_create(&f.app, f.cube, influences, 2)
+	posed, made := erender.skin_create(f.app.renderer, f.cube, influences, 2)
 	if !testing.expect(t, made, r.error) {return}
 	up := moved({0, 1, 0})
-	testing.expect(t, erender.skin_update(&f.app, posed, {up, up}, reset_motion = true))
+	testing.expect(t, erender.skin_update(f.app.renderer, posed, {up, up}, reset_motion = true))
 	clear(&f.sync.segments)
-	bone := bones_of(&f.sync, &f.app, rig, posed, identity, true)
+	bone := bones_of(&f.sync, f.app.renderer, rig, posed, identity, true)
 	testing.expect(t, bone.kind == .Bones && bone.count == 1)
 	if bone.count == 1 {
 		segment := f.sync.segments[bone.first]
@@ -986,7 +981,7 @@ test_frame_read :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc
 	r := &f.renderer
 	testing.expect(t, frame_emitters(f, &f.sync, emitters, dt))
 	reader := Test_Read{sync = &f.sync, buffers = buffers}
-	erender.frame_pass(&f.app, .Simulate, test_read_pass, &reader)
+	erender.frame_pass(f.app.renderer, .Simulate, test_read_pass, &reader)
 	testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = time}), r.error)
 	for i in 0 ..< rhi.MAX_FRAMES_IN_FLIGHT + 1 {
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = time}), r.error)
@@ -1524,7 +1519,7 @@ particle_grids_bake_their_state_and_start_from_it :: proc(t: ^testing.T) {
 	for i in 3 ..< 7 {frame(t, f, tally, i, camera)}
 	rhi.device_wait_idle(f.device)
 	for i in 7 ..< 9 {frame(t, f, tally, i, camera)}
-	info, cells, ok := grid_bake_take(&f.sync, &f.app, core.World_Id{index = 1}, context.temp_allocator)
+	info, cells, ok := grid_bake_take(&f.sync, f.app.renderer, core.World_Id{index = 1}, context.temp_allocator)
 	if !testing.expect(t, ok, "the bake came back") {return}
 	testing.expect(t, info.cells == {4, 1, 3} && info.layers == 1 && info.cell_size == 0.5)
 	baked := cells[0]

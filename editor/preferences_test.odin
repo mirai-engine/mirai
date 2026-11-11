@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -40,8 +41,8 @@ preferences_test_open :: proc(f:^Preferences_Test,engine:string) {
 // from the code, and the next editor finds it there.
 @(test)
 preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-preferences",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"preferences")
+    if folder=="" {return}
     f:=new(Preferences_Test);defer free(f)
     defer free(f.ai)
     preferences_test_open(f,folder)
@@ -87,8 +88,8 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
 // the user out of what it does, unless it is asked to keep them.
 @(test)
 a_headless_editor_neither_reads_nor_writes_preferences_unless_asked :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-preferences",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"preferences")
+    if folder=="" {return}
     f:=new(Preferences_Test);defer free(f)
     defer free(f.ai)
     preferences_test_open(f,folder)
@@ -114,8 +115,8 @@ a_headless_editor_neither_reads_nor_writes_preferences_unless_asked :: proc(t:^t
 // file in the .mirai of the project keeps them for the next editor.
 @(test)
 the_marks_of_the_browser_are_kept_in_the_project :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-marks",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"marks")
+    if folder=="" {return}
     project:=strings.concatenate({folder,"/game"},context.temp_allocator)
     testing.expect(t,os.make_directory_all(strings.concatenate({project,"/.mirai"},context.temp_allocator))==nil)
     f:=new(Preferences_Test);defer free(f)
@@ -139,8 +140,8 @@ the_marks_of_the_browser_are_kept_in_the_project :: proc(t:^testing.T) {
 // is open, comes back in the next editor with its marks; the search does not.
 @(test)
 the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-navigation",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"navigation")
+    if folder=="" {return}
     project:=strings.concatenate({folder,"/game"},context.temp_allocator)
     testing.expect(t,os.make_directory_all(strings.concatenate({project,"/.mirai"},context.temp_allocator))==nil)
     f:=new(Preferences_Test);defer free(f)
@@ -182,31 +183,34 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     testing.expect_value(t,f.p.marks_written,written)
 }
 
-@(private="file") Preferences_World :: struct {entities:core.Entities}
+@(private="file") Preferences_World :: struct {using world:core.Test_World}
+@(private="file") Preferences_Editor :: struct {api:Api}
 
 // preferences.set changes the areas it names at once and the file keeps what
 // differs from the code; preferences.get says both.
 @(test)
 preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
-    folder,_:=os.make_directory_temp("","mirai-preferences",context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"preferences")
+    if folder=="" {return}
     f:=new(Preferences_Test);defer free(f)
     defer free(f.ai)
     preferences_test_open(f,folder)
     preferences_open(&f.s,{})
     defer delete(f.p.file)
+    info,made:=core.test_info(t,Preferences_World,core.Test_None,Preferences_Editor,test_types)
+    if !made {return}
+    defer core.test_info_destroy(&info)
     world:Preferences_World
-    core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
-    storages:=[1]core.Storage_Info{{type=Api,info=type_info_of(Api),place=.Editor}}
-    info:=core.World_Info{entities=offset_of(Preferences_World,entities),storages=storages[:],settle=proc(data,shared,editor:rawptr) {core.entities_settle(&(^Preferences_World)(data).entities)}}
-    selection:Selection;defer delete(selection.entities)
-    edits:Edits;defer edits_free(&edits)
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
     inspector:Inspector
-    api_storage:Api
+    editor:Preferences_Editor
     app:host.App
-    f.s.info,f.s.edit_world,f.s.editor_world,f.s.app=&info,&world,&api_storage,&app
+    f.s.info,f.s.edit_world,f.s.editor_world,f.s.app=&info,&world,&editor,&app
     f.s.selection,f.s.edits,f.s.inspector=&selection,&edits,&inspector
-    edits_reset(&edits,edited_world(&f.s))
+    history.edits_reset(&edits,edited_world(&f.s))
     if !testing.expect(t,api_open(&f.s,0,true)==.None) {return};defer api_close(&f.s)
     state:=api_state(&f.s);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"preferences.get")==nil {preferences_api_register(&f.s,state)}
@@ -230,7 +234,7 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     for refusal in ([?][2]string{
         {`{"preferences":{"Viewports":{"snap":false}}}`,"Viewports is not an area of the preferences: they are Layout, Content_View"},
         {`{"preferences":{"Viewport_Preferences":{"zoom":1}}}`,`"zoom" is not a field`},
-        {`{"Viewport_Preferences":{"snap":false}}`,`params are {"preferences"`},
+        {`{"Viewport_Preferences":{"snap":false}}`,`"Viewport_Preferences" is not a field: the fields are preferences`},
     }) {
         error=execute(state,&out,"preferences.set",refusal[0])
         testing.expect_value(t,error.code,api.INVALID_PARAMS)

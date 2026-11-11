@@ -5,13 +5,13 @@ import "mirai:asset"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "base:runtime"
 
 // An .agraph composes poses: clips, blends by a weight, layers over a branch or a mask, and
 // additive poses, among them the aim offsets and additive spaces of a .blend. It has no states:
 // locomotion is a .match, and what a character does on top of it are actions and match_play.
 GRAPH_KIND :: asset.Fourcc(u32('A')|u32('G')<<8|u32('R')<<16|u32('F')<<24)
 GRAPH_VERSION :: 3
-GRAPH_OLDEST :: GRAPH_VERSION
 GRAPH_NODES :: 64
 GRAPH_PARAMETERS :: 16
 PROGRAM_GROUPS :: GRAPH_NODES*2
@@ -125,7 +125,7 @@ graph_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,profile:Graph
     return asset.document_save(&doc,path)
 }
 graph_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Graph_Profile,error:asset.Error) {
-    asset.kind_check(file,GRAPH_KIND,GRAPH_OLDEST,GRAPH_VERSION) or_return
+    asset.kind_check(file,GRAPH_KIND,GRAPH_VERSION) or_return
     info:=asset.asset_row(file,types,"graph",Graph_Info) or_return
     profile.info=info^
     profile.parameters=asset.asset_rows(file,types,"parameters","",Graph_Parameter) or_return
@@ -172,33 +172,33 @@ graph_clone :: proc(source:[]$T,allocator:mem.Allocator) -> ([]T,bool) {
     out,error:=make([]T,len(source),allocator);if error!=nil {return nil,false};copy(out,source);return out,true
 }
 @(private)
-graph_read :: proc(app:^host.App,id:base.Asset_Id) -> (profile:Graph_Profile,error:asset.Error) {
+graph_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (profile:Graph_Profile,error:asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,GRAPH_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
-    view,read:=graph_view(&file,&app.assets.types);if read!=.None {return {},read}
+    if error:=host.assets_file(assets,id,GRAPH_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
+    view,read:=graph_view(&file,&assets.types);if read!=.None {return {},read}
     profile.info=view.info
     ok:bool
-    defer if !ok {graph_profile_free(&profile,app.allocator)}
-    profile.parameters,ok=graph_clone(view.parameters,app.allocator);if !ok {return profile,.Out_Of_Memory}
-    profile.nodes,ok=graph_clone(view.nodes,app.allocator);if !ok {return profile,.Out_Of_Memory}
-    profile.masks,ok=graph_clone(view.masks,app.allocator);if !ok {return profile,.Out_Of_Memory}
-    profile.mask_bones,ok=graph_clone(view.mask_bones,app.allocator);if !ok {return profile,.Out_Of_Memory}
+    defer if !ok {graph_profile_free(&profile,allocator)}
+    profile.parameters,ok=graph_clone(view.parameters,allocator);if !ok {return profile,.Out_Of_Memory}
+    profile.nodes,ok=graph_clone(view.nodes,allocator);if !ok {return profile,.Out_Of_Memory}
+    profile.masks,ok=graph_clone(view.masks,allocator);if !ok {return profile,.Out_Of_Memory}
+    profile.mask_bones,ok=graph_clone(view.mask_bones,allocator);if !ok {return profile,.Out_Of_Memory}
     return profile,.None
 }
-graph_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Graph_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
+graph_content :: proc(cache:^Graph_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> ^Graph_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
     row:=-1
     for content,i in cache.contents {if content.id==id {row=i;break}}
     if row<0 {row=len(cache.contents);if append(&cache.contents,Graph_Content{id=id})!=1 {return nil}}
     content:=&cache.contents[row]
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{}
     if found {stamp={record.size,record.time}}
-    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && stamp==content.stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     profile:Graph_Profile;error:=asset.Error.Not_Found
-    if found {profile,error=graph_read(app,id)}
+    if found {profile,error=graph_read(assets,allocator,id)}
     if error==.Out_Of_Memory {content.error=error;content.checked=0;return nil}
     graph_profile_free(&content.profile)
     content.profile,content.valid,content.error=profile,error==.None,error
@@ -206,6 +206,6 @@ graph_content :: proc(cache:^Graph_Assets,app:^host.App,id:base.Asset_Id) -> ^Gr
         for _,i in profile.nodes {content.plans[i],_=graph_plan(profile,i)}
         for &parameter,i in profile.parameters {content.parameter_names[i]=base.name_hash(base.text_get(parameter.name[:]))}
     }
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
     return content if content.valid else nil
 }

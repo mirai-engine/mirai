@@ -4,8 +4,10 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
+import "core:strings"
 import "mirai:core"
 import erender "mirai:engine/render"
+import "mirai:project"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -13,9 +15,8 @@ import "mirai:ui"
 
 // The Graphics popup of the bar: the Graphics_Settings of the project, which
 // the game draws with and the editor too. An option is a row of named
-// choices; a preset (erender.GRAPHICS_PRESETS) is one choice for each option
-// of GRAPHICS_QUALITY, and settings that match none are custom. Antialiasing
-// offers Off, TAA and the techniques active plugins offer
+// choices; a preset (erender.GRAPHICS_PRESETS) sets the quality ones, and the
+// one on is erender.graphics_quality_of, what the fields are at. Antialiasing offers Off, TAA and the techniques active plugins offer
 // (erender.antialiasing_offer), and a plugin adds rows of its own: the fields
 // of its @(storage,setting="machine") tagged `graphics=Label`, an enum or a
 // bool. A choice is written to the edited World and to the settings at once,
@@ -29,14 +30,12 @@ Graphics_Option :: enum u8 {Resolution,Antialiasing,Frame_Generation,Indirect_Li
 // The choice each option is at; -1 when its values are none of the choices.
 Graphics_Choices :: [Graphics_Option]i8
 
-GRAPHICS_QUALITY :: bit_set[Graphics_Option]{.Frame_Generation,.Indirect_Light,.Probes,.Reflections,.Light_Samples,.Light_Resolution,.Glass_Shadows,.Glass_Layers,.Textures,.Detail}
-
 GRAPHICS_OPTION_LABELS :: [Graphics_Option]string{
     .Resolution="Resolution",.Antialiasing="Antialiasing",.Frame_Generation="Frame generation",.Indirect_Light="Indirect light",.Probes="Light probes",.Reflections="Reflections",
     .Light_Samples="Light samples",.Light_Resolution="Light resolution",.Glass_Shadows="Glass shadows",.Glass_Layers="Glass layers",.Textures="Textures",.Detail="Detail",.Frame_Limit="Frame limit",.Vsync="VSync",.Fps="Show FPS",
 }
 GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
-    .Resolution={"720p","900p","1080p","1440p","Native"},
+    .Resolution={"Auto","50%","75%","100%"},
     .Antialiasing={"Off","TAA"},
     .Frame_Generation={"Off","On"},
     .Indirect_Light={"Off","Probes"},
@@ -52,11 +51,11 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
     .Vsync={"Off","On"},
     .Fps={"Off","On"},
 }
-// Megapixels of a 16:9 image of each height; 0: one per point of the window.
-GRAPHICS_RESOLUTIONS :: [?]f32{0.9216,1.44,2.0736,3.6864,0}
+// The render_scale of each choice; 0: the target of the preset (Auto).
+GRAPHICS_RESOLUTIONS :: [?]f32{0,0.5,0.75,1}
 GRAPHICS_LIGHT_SAMPLES_MAX :: erender.GRAPHICS_LIGHT_SAMPLES_MAX
 GRAPHICS_FRAME_LIMITS :: [?]u32{30,60,120,144,240,0}
-GRAPHICS_PRESET_LABELS :: [erender.Graphics_Preset]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra"}
+GRAPHICS_QUALITY_LABELS :: [erender.Graphics_Quality]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra",.Custom="Custom"}
 
 @(storage)
 Graphics :: struct {
@@ -68,8 +67,8 @@ Graphics :: struct {
 graphics_choices :: proc(g:erender.Graphics_Settings,offered:[]erender.Antialiasing_Desc=nil) -> (c:Graphics_Choices) {
     resolutions,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_FRAME_LIMITS
     for &choice in c {choice=-1}
-    for megapixels,i in resolutions {
-        if g.render_megapixels==megapixels {c[.Resolution]=i8(i)}
+    for scale,i in resolutions {
+        if g.render_scale==scale {c[.Resolution]=i8(i)}
     }
     technique:=g.antialiasing
     name:=base.text_get(technique[:])
@@ -116,7 +115,7 @@ graphics_choose :: proc(g:^erender.Graphics_Settings,option:Graphics_Option,choi
     }
     if choice<0 || choice>=len(graphics_labels(option,offered)) {return false}
     switch option {
-    case .Resolution:     g.render_megapixels=resolutions[choice]
+    case .Resolution:     g.render_scale=resolutions[choice]
     case .Antialiasing:
         g.antialiasing={}
         switch choice {
@@ -141,23 +140,32 @@ graphics_choose :: proc(g:^erender.Graphics_Settings,option:Graphics_Option,choi
     return true
 }
 
-// The preset the quality options are at; found is false when they match none.
-graphics_preset :: proc(c:Graphics_Choices) -> (preset:erender.Graphics_Preset,found:bool) {
-    candidates: for candidate in erender.Graphics_Preset {
-        g:=erender.GRAPHICS_SETTINGS_DEFAULT
-        erender.graphics_preset_apply(&g,candidate)
-        choices:=graphics_choices(g)
-        for option in GRAPHICS_QUALITY {
-            if c[option]!=choices[option] {continue candidates}
-        }
-        return candidate,true
-    }
-    return .Low,false
+// The name of a quality: of its preset, or Custom.
+graphics_quality_label :: proc(quality:erender.Graphics_Quality) -> string {
+    labels:=GRAPHICS_QUALITY_LABELS
+    return labels[quality]
 }
 
 // The graphics settings of the edited World; nil for a project without the render library.
 graphics_settings :: proc(s:^Session) -> ^erender.Graphics_Settings {
     return core.world_storage_of(edited_world(s),erender.Graphics_Settings)
+}
+
+// Applies a preset, by its name, to the graphics settings among list; message
+// says what is wrong.
+settings_graphics_preset :: proc(list:[]project.Setting,name:string) -> (message:string) {
+    labels:=GRAPHICS_QUALITY_LABELS
+    for label,preset in labels {
+        if preset==.Custom || !strings.equal_fold(label,name) {continue}
+        for setting in list {
+            if setting.name=="Graphics_Settings" {
+                erender.graphics_preset_apply((^erender.Graphics_Settings)(setting.value),preset)
+                return ""
+            }
+        }
+        return "The project has no graphics settings"
+    }
+    return fmt.tprintf("%q is not a preset: Low, Medium, High or Ultra",name)
 }
 
 // What the settings of a project that fixes none are on the device of the editor.
@@ -208,13 +216,13 @@ graphics_build :: proc(s:^Session) {
     popup:=graphics_popup(g)
     current:=graphics_settings(s)
     if !ui.popup_is_open(ctx,popup) || current==nil {return}
-    offered:=erender.antialiasing_offered(s.app)
+    offered:=erender.antialiasing_offered(s.app.renderer)
     choices:=graphics_choices(current^,offered)
-    preset,found:=graphics_preset(choices)
     defaults:=graphics_choices(graphics_base(s),offered)
     next:=current^
     changed:=false
-    option_labels,preset_labels:=GRAPHICS_OPTION_LABELS,GRAPHICS_PRESET_LABELS
+    option_labels,preset_labels:=GRAPHICS_OPTION_LABELS,GRAPHICS_QUALITY_LABELS
+    shown:=erender.graphics_quality_of(current^)
     row:=ui.Box{width=ui.GROW,height=ui.fixed(GRAPHICS_ROW),gap=7,align_y=.Center}
     segment:=ui.Button{style=.Tab,width=-1,height=th.row-4,size=th.font_small,center=true,padding=2}
     if ui.popup(ctx,popup,{width=GRAPHICS_WIDTH,align_right=true,flush=true}) {
@@ -237,16 +245,17 @@ graphics_build :: proc(s:^Session) {
                         defer ui.box_end(ctx,{})
                         ui.label(ctx,"Preset",th.font_small,th.text_label,GRAPHICS_LABEL_WIDTH)
                         if ui.segments(ctx,ui.GROW,th.row) {
-                            for candidate in erender.Graphics_Preset {
+                            for candidate in erender.Graphics_Quality {
+                                if candidate==.Custom {continue}
                                 button:=segment
-                                button.label,button.active=preset_labels[candidate],found && preset==candidate
+                                button.label,button.active=preset_labels[candidate],shown==candidate
                                 if ui.button(ctx,ui.id(ctx,"preset",int(candidate)+1),button).clicked {
                                     erender.graphics_preset_apply(&next,candidate)
                                     changed=true
                                 }
                             }
                             custom:=segment
-                            custom.label,custom.active="Custom",!found
+                            custom.label,custom.active=preset_labels[.Custom],shown==.Custom
                             ui.button(ctx,ui.id(ctx,"preset_custom"),custom)
                         }
                         ui.spacer(ctx,REVERT_SIDE,1)

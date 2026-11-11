@@ -123,14 +123,14 @@ box_scope_end :: proc(ctx:^Context,b:Box) {box_end(ctx,b)}
 
 box_begin :: proc(ctx:^Context,b:Box) {
     identifier:=b.id
-    if b.layer.enabled && identifier==0 {identifier=id(ctx,"composition",ctx.effect_count)}
+    if b.layer.enabled && identifier==0 {identifier=id(ctx,"composition",ctx.elements+1)}
     element:=Element{id=identifier,layout=b.layout,float=b.float,contain=b.contain}
     if b.float.to!=.None {layer_push(ctx,float_layer(b.float,ctx.layer))}
     paint:Paint
     if b.image.kind!=.Solid {
         paint=image_paint({quad=b.image,tint=b.fill,border=b.image_border,border_uv=b.image_border_uv,fit=b.image_fit,size=b.image_size})
     } else {
-        paint={kind=.Bar if b.fill2[3]>0 && b.radius==0 && b.corners=={} else .Panel if b.stroke[3]>0 || b.shadow else .Rect,fill=b.fill,fill2=b.fill2,stroke=b.stroke,radius=b.radius,corners=b.corners,shadow=b.shadow,stroke_width=b.stroke_width,shadow_color=b.shadow_color,shadow_blur=b.shadow_blur,shadow_offset=b.shadow_offset,
+        paint={kind=.Bar if b.fill2[3]>0 && b.radius==0 && b.corners=={} && b.stroke_width==0 && !b.shadow else .Panel if b.stroke[3]>0 || b.shadow else .Rect,fill=b.fill,fill2=b.fill2,stroke=b.stroke,radius=b.radius,corners=b.corners,shadow=b.shadow,stroke_width=b.stroke_width,shadow_color=b.shadow_color,shadow_blur=b.shadow_blur,shadow_offset=b.shadow_offset,
             program=b.program,program_values=b.program_values}
     }
     pp:^Paint
@@ -161,12 +161,9 @@ box_begin :: proc(ctx:^Context,b:Box) {
         }
     } else {clips=false}
     own_effect:u16
-    if b.layer.enabled || b.float.to!=.None {
-        assert(ctx.effect_depth<ID_STACK_DEPTH,"UI composition authoring stack capacity exceeded")
-        ctx.effect_stack[ctx.effect_depth]={ctx.effect_clip,ctx.effect_refused};ctx.effect_depth+=1
-        if b.float.to!=.None {ctx.effect_clip=0;ctx.effect_refused=0}
-    }
-    if b.layer.enabled {
+    kept:=(b.layer.enabled || b.float.to!=.None) && effect_push(ctx)
+    if kept && b.float.to!=.None {ctx.effect_clip=0;ctx.effect_refused=0}
+    if kept && b.layer.enabled {
         if ctx.effect_count<len(ctx.effects) {
             index:=u16(ctx.effect_count);ctx.effect_count+=1
             ctx.effects[index]={id=identifier,parent=ctx.effect_clip,scope=ctx.scope,radius=b.layer.radius,opacity=b.layer.opacity,suppressed=ctx.surface!=0 || pp==nil}
@@ -193,7 +190,7 @@ box_end :: proc(ctx:^Context,b:Box) {
     element_close(ctx)
     if (b.clip_x || b.clip_y) && b.id!=0 && !skipped && ctx.clip_depth>0 && ctx.clips[ctx.clip_stack[ctx.clip_depth-1]].id==b.id {ctx.clip_depth-=1}
     if b.float.to!=.None {layer_pop(ctx)}
-    if b.layer.enabled || b.float.to!=.None {ctx.effect_depth-=1;e:=ctx.effect_stack[ctx.effect_depth];ctx.effect_clip=e.clip;ctx.effect_refused=e.refused}
+    if b.layer.enabled || b.float.to!=.None {effect_pop(ctx)}
 }
 
 // Room between elements: a negative size grows to take what is left.

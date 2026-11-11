@@ -7,6 +7,7 @@ import "core:strings"
 import build "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:project"
@@ -73,7 +74,7 @@ engine_folder_here :: proc(s:^Session) -> string {
 
 // The program of the engine named beside this editor: the player, the importer.
 engine_program_here :: proc(s:^Session,name:string) -> string {
-    file:=strings.concatenate({name,".exe" when ODIN_OS==.Windows else ""},context.temp_allocator)
+    file:=strings.concatenate({name,project.EXECUTABLE_SUFFIX},context.temp_allocator)
     return project.path(engine_folder_here(s),file,allocator=context.temp_allocator)
 }
 
@@ -104,11 +105,11 @@ session_record_follow :: proc(s:^Session,pid:int) {
 }
 
 // What keeps the worlds from migrating now: a call of the API that runs
-// frames holds them on its stack, and a scene or a section that loads fills
-// one over frames.
+// frames holds them on its stack (one in api_wait does not), and a scene or a
+// section that loads fills one over frames.
 @(private)
 library_busy :: proc(s:^Session) -> bool {
-    if st:=api_state(s);st!=nil && (st.in_call>0 || st.stepping) {return true}
+    if st:=api_state(s);st!=nil && st.waiting==0 && (st.in_call>0 || st.stepping) {return true}
     app:=s.app
     if loads:=core.world_storage_of(core.world_ref(app.shared,s.info,.Shared),scene.Scene_Loads);loads!=nil && loads.job!=nil {return true}
     for slot in app.worlds {
@@ -153,7 +154,7 @@ library_migrate :: proc(s:^Session,library:^host.Project_Library) -> bool {
     }
     replay_free(s)
     collab_leave(s)
-    edits_commit(s.edits,edited_world(s),s.selection)
+    history.edits_commit(s.edits,edited_world(s),s.selection)
     for slot in s.app.worlds {
         if slot.data!=nil {core.world_settle(core.world_ref(slot.data,s.info))}
     }
@@ -170,10 +171,8 @@ library_migrate :: proc(s:^Session,library:^host.Project_Library) -> bool {
         if i==s.active_document || tab.world==nil {continue}
         edits_relayout(&tab.edits,core.world_ref(tab.world,info),&m)
     }
-    if s.ai!=nil {
-        for &task in s.ai.tasks[:s.ai.task_count] {
-            for &set in task.review.transactions {change_rows_relayout(&set,&m)}
-        }
+    for &task in ai_tasks(s.ai) {
+        for &set in task.review.transactions {change_rows_relayout(&set,&m)}
     }
     sections_relayout(s,&m)
     log.infof("the layout of the world changed: its worlds moved to it")

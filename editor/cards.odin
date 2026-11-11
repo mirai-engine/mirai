@@ -1,6 +1,11 @@
 package editor
 
+import "base:runtime"
+import "core:reflect"
+import "core:strings"
+import "mirai:cook/author"
 import "mirai:core"
+import "mirai:std/base"
 import erender "mirai:engine/render"
 import "mirai:ui"
 
@@ -85,24 +90,42 @@ card_of_table :: proc(s:^Session,t:^core.Table_Info) -> (card:^Card,found:bool) 
     return
 }
 
-// The card a name of the API means: a preset of the editor by its name in
-// snake case, or a card of a plugin by its label, without minding case and
-// with spaces or underscores.
+// The labels of the cards of plugins, in the temporary allocator.
+@(private)
+cards_plugin_names :: proc(s:^Session) -> []string {
+    labels:=cards(s)[len(Preset):]
+    names:=make([]string,len(labels),context.temp_allocator)
+    for card,i in labels {names[i]=card.label}
+    return names
+}
+
+// What is wrong with a name card_named does not take, with the nearest ones.
+cards_problem :: proc(s:^Session,name:string) -> string {
+    return author.recipe_problem(name,cards_plugin_names(s))
+}
+
+// The card a name of the API means, as base.name_find takes it: a preset of
+// the editor, or a card of a plugin by its label.
 @(private)
 card_named :: proc(s:^Session,name:string) -> (index:int,found:bool) {
-    if preset,is_preset:=api_preset_find(name);is_preset {return int(preset),true}
-    for card,at in cards(s)[len(Preset):] {
-        if len(card.label)!=len(name) {continue}
-        same:=true
-        for i in 0..<len(name) {
-            a,b:=card.label[i],name[i]
-            if a>='A' && a<='Z' {a+=32}
-            if b>='A' && b<='Z' {b+=32}
-            if a==' ' {a='_'}
-            if b==' ' {b='_'}
-            if a!=b {same=false;break}
-        }
-        if same {return len(Preset)+at,true}
+    return author.recipe_named(name,cards_plugin_names(s))
+}
+
+// The cards of the plugins of a library as recipes for a document written
+// with no editor (cook/author): each makes its entity with a nil session, so
+// the make of a card tells no session from one that has nothing chosen.
+plugin_recipes :: proc(info:^core.World_Info,allocator:runtime.Allocator) -> author.Plugin_Recipes {
+    list:=new([dynamic]Card,allocator)
+    list^=make([dynamic]Card,allocator)
+    found:[PROVIDER_CAPACITY]Card_Provider
+    for &provider in found[:provided_in(info,found[:])] {
+        for card in provider.cards[:clamp(provider.count,0,len(provider.cards))] {append(list,card)}
     }
-    return
+    labels:=make([]string,len(list),allocator)
+    scales:=make([][3]f32,len(list),allocator)
+    for card,i in list {labels[i],scales[i]=card.label,card.scale}
+    return {labels=labels,scales=scales,user=list,make=proc(user:rawptr,index:int,w:core.World_Ref,e:core.Entity) {
+        cards:=(^[dynamic]Card)(user)
+        if index<len(cards) && cards[index].make!=nil {cards[index].make(nil,w,e)}
+    }}
 }

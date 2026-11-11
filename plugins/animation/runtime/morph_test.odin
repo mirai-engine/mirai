@@ -112,25 +112,35 @@ morph_weights_report_unknown_targets_and_refuse_invalid_entries_keeping_their_we
 }
 
 @(private="file")
-morph_test_step :: proc(meshes:^core.Table(erender.Mesh_Renderer),configs:^core.Table(Morph_Weights),animations:^core.Table(Animation),targets:^core.Table(Animation_Target),sources:^core.Table(Pose_Source),parents:^core.Table(core.Parent),playback:^Playback,cache:^Skin_Runtime,state:^Morph_Playback,app:^host.App) {
-    animation_morph(core.read(meshes),core.read(configs),core.read(animations),core.read(targets),core.read(sources),core.read(parents),{playback},{},cache,state,nil,app,{playing=true},nil)
+Morph_World :: struct {
+    using world:core.Test_World,
+    meshes:core.Table(erender.Mesh_Renderer),
+    configs:core.Table(Morph_Weights),
+    animations:core.Table(Animation),
+    targets:core.Table(Animation_Target),
+    sources:core.Table(Pose_Source),
+    parents:core.Table(core.Parent),
+}
+
+@(private="file")
+morph_test_step :: proc(w:^Morph_World,playback:^Playback,cache:^Skin_Runtime,state:^Morph_Playback,app:^host.App) {
+    animation_morph(core.read(&w.meshes),core.read(&w.configs),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),{playback},{},cache,state,nil,app,{playing=true},nil)
 }
 
 @(test)
 animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig :: proc(t:^testing.T) {
     problems:core.Problems
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    rig_entity,entity,plain:=core.create(&entities),core.create(&entities),core.create(&entities)
-    meshes:core.Table(erender.Mesh_Renderer);configs:core.Table(Morph_Weights);animations:core.Table(Animation)
-    targets:core.Table(Animation_Target);sources:core.Table(Pose_Source);parents:core.Table(core.Parent)
-    defer {core.table_destroy(&meshes);core.table_destroy(&configs);core.table_destroy(&animations);core.table_destroy(&targets);core.table_destroy(&sources);core.table_destroy(&parents)}
+    w:Morph_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    rig_entity,entity,plain:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     id,other:=base.Asset_Id{71,73},base.Asset_Id{79,83}
     target:=asset.Morph_Target{weight=.25}
     base.text_set(target.name[:],"Smile")
-    core.add(&meshes,entity,erender.Mesh_Renderer{mesh=id});core.add(&meshes,plain,erender.Mesh_Renderer{mesh=other})
-    core.add(&parents,entity,core.Parent{entity=rig_entity});core.add(&animations,rig_entity,ANIMATION_DEFAULT)
-    face:Animation_Target;base.text_set(face.path[:],"Face");core.add(&targets,entity,face)
-    core.table_settle(&meshes,&entities);core.table_settle(&parents,&entities);core.table_settle(&animations,&entities);core.table_settle(&targets,&entities)
+    core.add(&w.meshes,entity,erender.Mesh_Renderer{mesh=id});core.add(&w.meshes,plain,erender.Mesh_Renderer{mesh=other})
+    core.add(&w.parents,entity,core.Parent{entity=rig_entity});core.add(&w.animations,rig_entity,ANIMATION_DEFAULT)
+    face:Animation_Target;base.text_set(face.path[:],"Face");core.add(&w.targets,entity,face)
+    core.test_world_settle(&w)
     cache:Skin_Runtime
     cache.rig_rows=make(map[base.Asset_Id]u32)
     append(&cache.rigs,Skin_Rig{id=id,checked=1,revision=1,morphs={target}},Skin_Rig{id=other,checked=1,revision=1})
@@ -140,27 +150,27 @@ animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig
     app:=host.App{assets=&assets,allocator=context.allocator}
     playback:Playback;defer playback_free(&playback)
     state:Morph_Playback;defer morph_playback_free(&state)
-    morph_test_step(&meshes,&configs,&animations,&targets,&sources,&parents,&playback,&cache,&state,&app)
+    morph_test_step(&w,&playback,&cache,&state,&app)
     if !testing.expect(t,len(state.states)==1 && state.states[0].entity==entity && state.states[0].source==rig_entity) {return}
     testing.expect_value(t,state.states[0].current[0],f32(.25))
     // The curves of the animated ancestor drive it.
     pose:=state_get(&playback,rig_entity)
     pose.seen,pose.curves_ready=playback.frame,true
     append(&pose.curves,Curve_Output{target=base.name_hash("Face/@morph/Smile"),property=.Float,value={.9,0,0,0},weight=1})
-    morph_test_step(&meshes,&configs,&animations,&targets,&sources,&parents,&playback,&cache,&state,&app)
+    morph_test_step(&w,&playback,&cache,&state,&app)
     testing.expect_value(t,state.states[0].current[0],f32(.9))
     testing.expect_value(t,state.states[0].previous[0],f32(.25))
     config:Morph_Weights
     testing.expect(t,morph_weight_set(&config,"Smile",-.75))
-    core.add(&configs,entity,config);core.table_settle(&configs,&entities)
-    morph_test_step(&meshes,&configs,&animations,&targets,&sources,&parents,&playback,&cache,&state,&app)
+    core.add(&w.configs,entity,config);core.test_world_settle(&w)
+    morph_test_step(&w,&playback,&cache,&state,&app)
     testing.expect_value(t,state.states[0].current[0],f32(-.75))
     // A changed weight binds again without memory and without asking for the mesh.
     cache.rigs[0].checked=0
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
-    morph_weight_set(core.get(&configs,entity),"Smile",-.5)
-    morph_test_step(&meshes,&configs,&animations,&targets,&sources,&parents,&playback,&cache,&state,&app)
-    morph_test_step(&meshes,&configs,&animations,&targets,&sources,&parents,&playback,&cache,&state,&app)
+    morph_weight_set(core.get(&w.configs,entity),"Smile",-.5)
+    morph_test_step(&w,&playback,&cache,&state,&app)
+    morph_test_step(&w,&playback,&cache,&state,&app)
     context=saved;app.allocator=context.allocator
     testing.expect(t,cache.rigs[0].checked==0 && state.states[0].current[0]==-.5 && problems.count==0)
     cache.rigs[0].checked=1
@@ -170,19 +180,16 @@ animation_morph_follows_its_mesh_and_its_weights_and_reads_the_curves_of_its_rig
     next:=[2]asset.Morph_Target{target,{weight=.1}}
     base.text_set(next[1].name[:],"Blink")
     cache.rigs[0].morphs=next[:];cache.rigs[0].revision+=1;cache.rigs[0].checked=1
-    morph_test_step(&meshes,&configs,&animations,&targets,&sources,&parents,&playback,&cache,&state,&app)
+    morph_test_step(&w,&playback,&cache,&state,&app)
     testing.expect(t,len(state.states[0].current)==2 && state.states[0].current[0]==-.5 && state.states[0].current[1]==.1)
-    core.remove(&meshes,entity);core.table_settle(&meshes,&entities)
-    morph_test_step(&meshes,&configs,&animations,&targets,&sources,&parents,&playback,&cache,&state,&app)
+    core.remove(&w.meshes,entity);core.test_world_settle(&w)
+    morph_test_step(&w,&playback,&cache,&state,&app)
     testing.expect(t,len(state.states)==0 && morph_playing(&state,entity)==nil)
 }
 
 @(test)
 skin_rigs_pack_the_influences_and_morph_deltas_of_every_level_in_the_order_the_renderer_stores_them :: proc(t:^testing.T) {
-    temp,_:=os.temp_directory(context.temp_allocator)
-    directory:=fmt.tprintf("%s/mirai-animation-skin-levels-%d",temp,os.get_pid())
-    os.make_directory_all(directory)
-    defer os.remove_all(directory)
+    directory:=base.test_folder(t,"animation-skin-levels")
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
@@ -206,7 +213,7 @@ skin_rigs_pack_the_influences_and_morph_deltas_of_every_level_in_the_order_the_r
     app:=host.App{assets=&assets,allocator=context.allocator}
     state:Skin_Runtime
     defer skin_runtime_free(&state)
-    row:=skin_rig_load(&state,&app,id,nil,core.NONE)
+    row:=skin_rig_load(&state,app.assets,app.allocator,id,nil,core.NONE)
     if !testing.expect(t,row!=max(u32)) {return}
     rig:=&state.rigs[row]
     testing.expect(t,len(rig.influences)==7 && len(rig.morph.ranges)==7 && len(rig.morph.deltas)==3 && rig.morph.count==1)
@@ -227,10 +234,7 @@ skin_rigs_pack_the_influences_and_morph_deltas_of_every_level_in_the_order_the_r
 // the frame that first shows it.
 @(test)
 a_rigid_mesh_the_assets_loaded_is_not_read_again_for_its_rig :: proc(t:^testing.T) {
-    temp,_:=os.temp_directory(context.temp_allocator)
-    directory:=fmt.tprintf("%s/mirai-animation-rigid-%d",temp,os.get_pid())
-    os.make_directory_all(directory)
-    defer os.remove_all(directory)
+    directory:=base.test_folder(t,"animation-rigid")
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
@@ -248,7 +252,39 @@ a_rigid_mesh_the_assets_loaded_is_not_read_again_for_its_rig :: proc(t:^testing.
     state:Skin_Runtime
     defer skin_runtime_free(&state)
     problems:core.Problems
-    row:=skin_rig_load(&state,&app,id,&problems,core.NONE)
+    row:=skin_rig_load(&state,app.assets,app.allocator,id,&problems,core.NONE)
     testing.expect(t,row!=max(u32) && len(state.rigs[row].morphs)==0 && len(state.rigs[row].influences)==0)
     testing.expect_value(t,problems.count,0)
+}
+
+// The rooms of the morph targets of a rig, with the memory ending at each
+// request in turn: the bind is refused whole with Out_Of_Memory, and with
+// memory enough it goes through.
+@(test)
+morph_bind_without_memory_is_refused_whole :: proc(t:^testing.T) {
+    targets:[3]asset.Morph_Target
+    names:=[3]string{"Smile","Blink","Frown"}
+    for &target,i in targets {
+        target.weight=f32(i)*.25
+        base.text_set(target.name[:],names[i])
+    }
+    saved:=context.allocator
+    failure:=Runtime_Allocation_Failure{owner=saved}
+    for count in 1..=len(targets) {
+        rig:=Skin_Rig{id={5,7},revision=1,morphs=targets[:count]}
+        state:=Morph_Playing{entity=core.Entity(1),source=core.Entity(2),curve_count=-1}
+        bound,refused:=false,false
+        for budget in 0..<16 {
+            failure.remaining=budget
+            context.allocator={runtime_failure_allocator,&failure}
+            bound=morph_bind(&state,&rig,{},"Face",1)
+            context.allocator=saved
+            failure.remaining=1000
+            if bound {break}
+            refused=true
+            testing.expectf(t,state.error==.Out_Of_Memory && len(state.current)==0 && len(state.names)==0 && state.mesh=={},"%d targets with %d requests served: %v, %d bound",count,budget,state.error,len(state.current))
+        }
+        testing.expectf(t,bound && refused && state.error==.None && len(state.current)==count && len(state.curve_rows)==count,"%d targets: refused without memory, and bound with it",count)
+        morph_playing_free(&state)
+    }
 }

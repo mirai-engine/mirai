@@ -79,13 +79,14 @@ Walk :: struct {
     air_control:f32 `mirai:"min=0,max=1"`,  // share of the acceleration and of the traction left in the air
     jump_height:f32 `mirai:"min=0,unit=m"`,     // of a jump let go at once
     jump_rise:f32 `mirai:"min=0,unit=s"`,       // a jump held keeps rising at the speed it started with for up to this long, then falls as it would
+    jump_cut:f32 `mirai:"min=0,max=1"`,         // share of its speed up a jump keeps when it is let go while it rises; 1 or 0: all of it
     coyote_time:f32 `mirai:"min=0,unit=s"`, // after walking off a ledge, in which a jump still starts
     crouch_speed:f32 `mirai:"min=0,unit=m/s"`,  // top speed while crouched
     crouch_height:f32 `mirai:"min=0,unit=m"`,   // of its capsule crouched or sliding, from the feet to the top of the head; 0: it does not crouch
     crouch_toggle:bool,                         // crouch turns crouching on and off; otherwise it crouches while crouch is held
 }
 
-WALK_DEFAULT :: Walk{max_speed=5,acceleration=30,braking=40,air_control=0.3,jump_height=1.2,coyote_time=0.1,crouch_speed=2.5,crouch_height=1.2}
+WALK_DEFAULT :: Walk{max_speed=5,acceleration=30,braking=40,air_control=0.3,jump_height=1.2,jump_cut=1,coyote_time=0.1,crouch_speed=2.5,crouch_height=1.2}
 
 @(component,replicated,description="The character can fly (mode flying of its Character): toward the move in the axes of the look, without gravity.")
 Fly :: struct {
@@ -225,7 +226,7 @@ locomotion_step :: proc(
             if wanted,from_ground:=mantle_wanted(c,mantle,ground,given,jump);wanted {
                 l:=link_find(physics.ptr,e)
                 if placed,ok:=core.world_of(locals,parents,e);ok && l!=nil && l.kind==.Character {
-                    facing:=mm.quat_rotate(frame*mm.quat_axis_angle({0,1,0},given.look_yaw),{0,0,-1})
+                    facing:=mm.quat_forward(frame*mm.quat_axis_angle({0,1,0},given.look_yaw))
                     if to,height,found_ledge:=ledge_find(&physics.world,l.character,facing,mantle,from_ground);found_ledge {mantle_start(c,placed.position,to,height)}
                 }
             }
@@ -324,6 +325,7 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
     traction:=loco.traction_force
     held:=move_input.buttons&input.action_bit(jump)!=0
     pressed:=held && !loco.jump_held && walk.jump_height>0
+    released:=!held && loco.jump_held
     loco.jump_held=held
     v:=velocity-additive_delivered(velocity,loco.added,loco.driven)
     wish:=move_wish(move_input,frame)
@@ -406,6 +408,9 @@ locomotion_move :: proc(loco:^Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(S
                     move.launch+=up*(loco.jump_speed-rising)
                     loco.jump_rise=max(loco.jump_rise-dt,0)
                 } else {loco.jump_rise=0}
+            }
+            if released && loco.jumped && !loco.ledge_jumping && walk.jump_cut>0 && walk.jump_cut<1 {
+                if rising:=linalg.dot(v,up);rising>0 {move.launch-=up*rising*(1-walk.jump_cut)}
             }
             if (was==MODE_WALKING || was==MODE_CROUCHING || was==MODE_SLIDING) && !loco.jumped {
                 loco.coyote=walk.coyote_time

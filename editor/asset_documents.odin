@@ -5,6 +5,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -29,8 +30,8 @@ ASSET_DOCUMENT_KINDS :: 8         // of a provider
 ASSET_HISTORY_BYTES :: 64<<20     // the steps of a document may hold
 
 Asset_Step :: struct {
-    label:[EDIT_LABEL_BYTES]u8,
-    files:[dynamic]Edit_File,
+    label:[history.EDIT_LABEL_BYTES]u8,
+    files:[dynamic]history.Edit_File,
     bytes:int,
 }
 
@@ -39,8 +40,8 @@ Asset_History :: struct {
     steps:[dynamic]Asset_Step,
     cursor:int,                // undo goes back through steps[:cursor], redo forward through steps[cursor:]
     open:bool,                 // a gesture is open: what it changes is one step
-    label:[EDIT_LABEL_BYTES]u8,
-    files:[dynamic]Edit_File,  // the open gesture changed them
+    label:[history.EDIT_LABEL_BYTES]u8,
+    files:[dynamic]history.Edit_File,  // the open gesture changed them
     registry:^asset.Registry,
     touched:[dynamic]string,   // changed since files_settle loaded them again
     files_kept:int,            // changed outside the editor, they kept their content
@@ -94,7 +95,7 @@ Asset_Document_Provider :: struct {
 
 @(private)
 asset_step_free :: proc(step:^Asset_Step) {
-    for &file in step.files {edit_file_free(&file)}
+    for &file in step.files {history.edit_file_free(&file)}
     delete(step.files)
     step^={}
 }
@@ -102,7 +103,7 @@ asset_step_free :: proc(step:^Asset_Step) {
 asset_history_free :: proc(h:^Asset_History) {
     for &step in h.steps {asset_step_free(&step)}
     delete(h.steps)
-    files_free(&h.files,&h.touched)
+    history.files_free(&h.files,&h.touched)
     h^={}
 }
 
@@ -111,7 +112,7 @@ asset_history_free :: proc(h:^Asset_History) {
 asset_history_begin :: proc(h:^Asset_History,label:string) -> bool {
     if h.open {return false}
     h.open=true
-    text_put(h.label[:],label)
+    history.text_put(h.label[:],label)
     return true
 }
 
@@ -126,7 +127,7 @@ asset_history_end :: proc(h:^Asset_History) {
     }
     resize(&h.steps,h.cursor)
     step:=Asset_Step{label=h.label,files=h.files}
-    for &file in step.files {step.bytes+=edit_file_bytes(&file)}
+    for &file in step.files {step.bytes+=history.edit_file_bytes(&file)}
     h.files=nil
     if _,error:=append(&h.steps,step);error!=nil {
         asset_step_free(&step)
@@ -134,7 +135,7 @@ asset_history_end :: proc(h:^Asset_History) {
     }
     h.cursor=len(h.steps)
     h.bytes+=step.bytes
-    for len(h.steps)>1 && (len(h.steps)>EDITS_STEP_CAPACITY || h.bytes>ASSET_HISTORY_BYTES) {
+    for len(h.steps)>1 && (len(h.steps)>history.EDITS_STEP_CAPACITY || h.bytes>ASSET_HISTORY_BYTES) {
         h.bytes-=h.steps[0].bytes
         asset_step_free(&h.steps[0])
         ordered_remove(&h.steps,0)
@@ -144,7 +145,7 @@ asset_history_end :: proc(h:^Asset_History) {
 
 // Puts back what the open gesture changed and closes it.
 asset_history_cancel :: proc(h:^Asset_History) {
-    files_restore(h.registry,&h.files,&h.touched,&h.files_kept)
+    history.files_restore(h.registry,&h.files,&h.touched,&h.files_kept)
     h.open=false
 }
 
@@ -152,7 +153,7 @@ asset_history_undo :: proc(h:^Asset_History) -> bool {
     if h.open {asset_history_cancel(h)}
     if h.cursor==0 {return false}
     step:=&h.steps[h.cursor-1]
-    files_swap(h.registry,step.files[:],&h.touched,&h.files_kept)
+    history.files_swap(h.registry,step.files[:],&h.touched,&h.files_kept)
     h.cursor-=1
     return true
 }
@@ -161,7 +162,7 @@ asset_history_redo :: proc(h:^Asset_History) -> bool {
     if h.open {asset_history_cancel(h)}
     if h.cursor>=len(h.steps) {return false}
     step:=&h.steps[h.cursor]
-    files_swap(h.registry,step.files[:],&h.touched,&h.files_kept)
+    history.files_swap(h.registry,step.files[:],&h.touched,&h.files_kept)
     h.cursor+=1
     return true
 }
@@ -169,11 +170,11 @@ asset_history_redo :: proc(h:^Asset_History) -> bool {
 // The label of the step undo would take back; empty without one.
 asset_history_undo_label :: proc(h:^Asset_History) -> string {
     if h.cursor==0 {return ""}
-    return cstring_text(h.steps[h.cursor-1].label[:])
+    return history.cstring_text(h.steps[h.cursor-1].label[:])
 }
 asset_history_redo_label :: proc(h:^Asset_History) -> string {
     if h.cursor>=len(h.steps) {return ""}
-    return cstring_text(h.steps[h.cursor].label[:])
+    return history.cstring_text(h.steps[h.cursor].label[:])
 }
 
 // The history that takes a file an edit writes now: that of the asset
@@ -190,17 +191,17 @@ asset_history_front :: proc(s:^Session) -> ^Asset_History {
 @(private)
 asset_history_write :: proc(s:^Session,h:^Asset_History,path:string,bytes:[]u8,label:string,remove:bool) -> bool {
     r:=files_registry(s)
-    before,present,readable:=file_contents(r,path,context.temp_allocator)
+    before,present,readable:=history.file_contents(r,path,context.temp_allocator)
     if !readable {
         notify(s,"The file could not be read before changing it")
         return false
     }
     h.registry=r
     opened:=asset_history_begin(h,label)
-    written:=file_put(r,path,!remove,bytes)
+    written:=history.file_put(r,path,!remove,bytes)
     if written {
         file_changed(s,path)
-        if !files_record(&h.files,path,present,before,!remove,remove?nil:bytes) {notify(s,"The file changed without a step of undo")}
+        if !history.files_record(&h.files,path,present,before,!remove,remove?nil:bytes) {notify(s,"The file changed without a step of undo")}
     }
     if opened {asset_history_end(h)}
     return written
@@ -209,7 +210,7 @@ asset_history_write :: proc(s:^Session,h:^Asset_History,path:string,bytes:[]u8,l
 // file_write into the history of a document, in front or not: what its
 // plugin held unwritten when another came to the front.
 asset_document_write :: proc(s:^Session,d:^Asset_Document,path:string,bytes:[]u8,label:string) -> bool {
-    if len(bytes)>EDITS_FILE_BYTES {return file_set(s,path,bytes)}
+    if len(bytes)>history.EDITS_FILE_BYTES {return file_set(s,path,bytes)}
     return asset_history_write(s,&d.history,path,bytes,label,false)
 }
 
@@ -274,7 +275,7 @@ asset_document_paths :: proc(s:^Session,d:^Asset_Document) -> []string {
     append(&paths,path)
     if s.app==nil || s.app.assets==nil {return paths[:]}
     r:=&s.app.assets.registry
-    add :: proc(paths:^[dynamic]string,r:^asset.Registry,files:[]Edit_File) {
+    add :: proc(paths:^[dynamic]string,r:^asset.Registry,files:[]history.Edit_File) {
         for &file in files {
             relative,ok:=asset.registry_relative(r,file.path)
             if !ok || slice.contains(paths[:],relative) {continue}
@@ -504,7 +505,7 @@ asset_document_activate :: proc(s:^Session,index:int) {
     if shown==s.asset_shown {return}
     if s.inspector!=nil && s.inspector.gesture!=0 {gesture_end(s,s.inspector.gesture)}
     if d:=asset_document_active(s);d!=nil {asset_history_end(&d.history)}
-    if s.edits!=nil && s.edits.commit {edits_commit(s.edits,edited_world(s),s.selection)}
+    if s.edits!=nil && s.edits.commit {history.edits_commit(s.edits,edited_world(s),s.selection)}
     if shown>0 {
         if s.mode==.Watch {watch_stop(s)}
         if playing(s) {play_stop(s)}

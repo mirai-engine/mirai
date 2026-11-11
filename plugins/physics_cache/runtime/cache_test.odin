@@ -3,7 +3,6 @@ package physics_cache
 import "core:math/linalg"
 import "core:mem"
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -151,15 +150,18 @@ truncated_cache_files_are_rejected_without_leaking :: proc(t:^testing.T) {
     }
 }
 
+@(private="file")
+Player_World :: struct {
+    using world:core.Test_World,
+    players:core.Table(Geometry_Playback),
+    requests:Geometry_Requests,
+}
+
 @(test)
 cache_content_reloads_releases_old_geometry_and_obeys_public_player_requests :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-cache-player-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"cache-player")
+    if root=="" {return}
     path:=fmt.tprintf("%s/play.physics_cache",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root)
-    defer os.remove(path)
     record:Cache_Recorder
     testing.expect_value(t,record_init(&record,{frames=3,tracks=2,samples=6,vertices=64,indices=128,origin=mm.TRANSFORM_IDENTITY}),Cache_Error.None)
     defer record_destroy(&record)
@@ -177,27 +179,26 @@ cache_content_reloads_releases_old_geometry_and_obeys_public_player_requests :: 
     app:=host.App{allocator=context.allocator,assets=&assets}
     library:Cache_Library
     defer cache_library_free(&library)
-    players:core.Table(Geometry_Playback)
-    defer core.table_destroy(&players)
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    e:=core.create(&entities)
-    core.add(&players,e,Geometry_Playback{source=id,rate=1,playing=true})
-    core.table_settle(&players,&entities)
-    requests:Geometry_Requests
-    defer core.value_free(&requests,type_info_of(Geometry_Requests))
-    physics_cache_update(&players,&requests,&library,{dt=.5},&app)
-    state,_:=core.get(core.read(&players),e)
+    w:Player_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    players,requests:=&w.players,&w.requests
+    e:=core.create(&w.entities)
+    core.add(players,e,Geometry_Playback{source=id,rate=1,playing=true})
+    core.test_world_settle(&w)
+    physics_cache_update(players,requests,&library,{dt=.5},app.assets,app.allocator)
+    state,_:=core.get(core.read(players),e)
     testing.expect_value(t,state.time,f32(.5))
     testing.expect_value(t,len(assets.meshes)-len(assets.free_meshes),1)
     prior_mesh:=library.contents[0].meshes[0]
-    pause(&requests,e);physics_cache_update(&players,&requests,&library,{dt=.5},&app)
-    state,_=core.get(core.read(&players),e)
+    pause(requests,e);physics_cache_update(players,requests,&library,{dt=.5},app.assets,app.allocator)
+    state,_=core.get(core.read(players),e)
     testing.expect(t,!state.playing && state.time==.5)
-    play(&requests,e,-1,true);physics_cache_update(&players,&requests,&library,{dt=.5},&app)
-    state,_=core.get(core.read(&players),e)
+    play(requests,e,-1,true);physics_cache_update(players,requests,&library,{dt=.5},app.assets,app.allocator)
+    state,_=core.get(core.read(players),e)
     testing.expect(t,state.playing && state.rate==-1 && state.time==1.5)
-    seek(&requests,e,.25);pause(&requests,e);physics_cache_update(&players,&requests,&library,{},&app)
-    state,_=core.get(core.read(&players),e)
+    seek(requests,e,.25);pause(requests,e);physics_cache_update(players,requests,&library,{},app.assets,app.allocator)
+    state,_=core.get(core.read(players),e)
     testing.expect(t,state.time==.25 && !state.playing)
     second,added:=record_mesh(&record,0,1,geom.mesh_buffer_view(&cube))
     testing.expect_value(t,added,Cache_Error.None)
@@ -205,7 +206,7 @@ cache_content_reloads_releases_old_geometry_and_obeys_public_player_requests :: 
     record_frame(&record,3,samples[:])
     testing.expect_value(t,cache_save(path,&types,id,record_view(&record)),asset.Error.None)
     testing.expect_value(t,asset.registry_scan(&assets.registry),asset.Error.None)
-    view:=cache_content(&library,&app,id)
+    view:=cache_content(&library,app.assets,app.allocator,id)
     if !testing.expect(t,view!=nil) {return}
     testing.expect(t,view.info.duration==3 && len(view.tracks)==2)
     testing.expect(t,!host.assets_mesh_generated(&assets,prior_mesh))

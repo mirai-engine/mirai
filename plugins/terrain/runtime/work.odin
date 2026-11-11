@@ -55,15 +55,15 @@ Work_Slot :: struct {
 // the job system its jobs run on: none for a single thread, where each runs
 // when it is made.
 @(private)
-work_ready :: proc(data:^Terrain_Data,app:^host.App) -> bool {
-    workers:=jobs.worker_count(&app.jobs)
-    data.jobs=workers>1?&app.jobs:nil
+work_ready :: proc(data:^Terrain_Data,job_system:^jobs.Job_System,allocator:runtime.Allocator) -> bool {
+    workers:=jobs.worker_count(job_system)
+    data.jobs=workers>1?job_system:nil
     if len(data.work)>0 {return true}
-    slots,error:=make([]Work_Slot,clamp(2*workers,WORK_SLOTS_MIN,WORK_SLOTS_MAX),app.allocator)
+    slots,error:=make([]Work_Slot,clamp(2*workers,WORK_SLOTS_MIN,WORK_SLOTS_MAX),allocator)
     if error!=nil {return false}
     for &slot in slots {
-        chunk_mesh_init(&slot.mesh,app.allocator);slot.allocator=app.allocator
-        for i in 0..<4 {slot.border.sides[i]=make([dynamic]u8,app.allocator);slot.border.corners[i]=make([dynamic]u8,app.allocator)}
+        chunk_mesh_init(&slot.mesh,allocator);slot.allocator=allocator
+        for i in 0..<4 {slot.border.sides[i]=make([dynamic]u8,allocator);slot.border.corners[i]=make([dynamic]u8,allocator)}
     }
     data.work=slots
     return true
@@ -117,14 +117,16 @@ work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
 // The build of a chunk or a node, from its source as it is now; a node of a
 // Heightfield takes a copy of its border.
 @(private)
-work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil) {
+work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:core.Entity,index:int,key:Chunk_Key,urgent:bool,phase:core.Phase,limits:host.Assets_Limits,border:^Piece_Border=nil,join:^Terrain_Join=nil) -> bool {
+    // Before the slot is taken: without room for the border it stays free.
+    if border!=nil {for i in 0..<4 {
+        if resize(&slot.border.sides[i],len(border.sides[i]))!=nil || resize(&slot.border.corners[i],len(border.corners[i]))!=nil {return false}
+        copy(slot.border.sides[i][:],border.sides[i][:])
+        copy(slot.border.corners[i][:],border.corners[i][:])
+    }}
     slot.owner=owner
     slot.kind,slot.urgent,slot.phase,slot.epoch,slot.limits=.Build,urgent,phase,data.epoch,limits
     slot.source,slot.id,slot.index,slot.version,slot.key,slot.ok=&entry.source,entry.id,index,data_version(entry,index),key,false
-    if border!=nil {for i in 0..<4 {
-        resize(&slot.border.sides[i],len(border.sides[i]));copy(slot.border.sides[i][:],border.sides[i][:])
-        resize(&slot.border.corners[i],len(border.corners[i]));copy(slot.border.corners[i][:],border.corners[i][:])
-    }}
     slot.join={}
     clear(&slot.cuts)
     if join!=nil && key.join!=0 {
@@ -134,6 +136,7 @@ work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:c
     }
     slot.join.cuts=slot.cuts[:]
     work_start(data,slot)
+    return true
 }
 
 // The reading of page index of a grid of a source from its block. False

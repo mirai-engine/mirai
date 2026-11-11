@@ -1,74 +1,56 @@
 package destruct_multiplayer
 
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import destruct "plugins:destruct/runtime"
 import multiplayer "plugins:multiplayer/runtime"
-import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import "mirai:engine/scene"
 import "mirai:host"
 import sim "plugins:physics/runtime/sim"
 import fr "plugins:destruct/runtime/fracture"
+import "mirai:std/base"
 import "mirai:std/geom"
 import "mirai:std/jobs"
 
 // One end of a session with one destructible: its tables, its simulation and
 // what this library keeps, stepped as the fixed loop does.
 @(private="file")
-End :: struct {
-    entities:core.Entities,
-    configs:core.Table(destruct.Destructible),
-    colliders:core.Table(phys.Collider),
-    states:core.Table(destruct.Destructible_State),
-    groups:core.Table(destruct.Destructible_Group),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-    meshes:core.Table(render.Mesh_Renderer),
-    tints:core.Table(render.Tint),
-    elsewhere:core.Table(render.Drawn_Elsewhere),
-    ids:core.Table(core.Id),
+End_World :: struct {
+    using world:core.Test_World,
+    using rows:destruct.Test_Destruct,
     objects:core.Table(multiplayer.Replicate),
-    physics:phys.Physics_State,
-    fractures:destruct.Fracture_State,
-    settings:destruct.Destruct_Settings,
-    assets:host.Assets,
-    app:host.App,
-    cache:destruct.Destruct_Cache,
-    problems:core.Problems,
-    requests:destruct.Destruct_Requests,
-    events:destruct.Destruct_Events,
-    net:Destruct_Net,
-    session:multiplayer.Net_Session,
-    authority:core.Network,
     adoptions:multiplayer.Net_Adoptions,
     outbox:multiplayer.Net_Outbox,
     connections:multiplayer.Net_Connections,
     root:scene.Scene_Root,
-    info:core.World_Info,
-    tables:[3]core.Table_Info,
-    tick:u64,
-    folder:string,
 }
 
 @(private="file")
-end_init :: proc(f:^End,name:string,role:core.Network_Role) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.folder=fmt.tprintf("%s/mirai-destruct-net-%s-%d",directory,name,os.get_pid())
-    if os.make_directory_all(f.folder)!=nil {return false}
+End :: struct {
+    using w:End_World,
+    using application:destruct.Test_Destruct_Host,
+    net:Destruct_Net,
+    session:multiplayer.Net_Session,
+    tick:u64,
+}
+
+@(private="file")
+end_init :: proc(t:^testing.T,f:^End,name:string,role:core.Network_Role) -> bool {
+    folder:=base.test_folder(t,fmt.tprintf("destruct-net-%s",name))
+    if folder=="" {return false}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     b:asset.Fracture_Builder;asset.fracture_builder_init(&b);defer asset.fracture_builder_destroy(&b)
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
     for part in 0..<2 {asset.fracture_piece_add(&b,geom.mesh_buffer_view(&cube),{{f32(part)*1.02-.51,0,0},1,{1,1,1}},anchor=part==0)}
     if asset.fracture_connect_proximity(&b,.03,.5,10)!=.None {return false}
-    if asset.fracture_save(fmt.tprintf("%s/source.fracture",f.folder),&types,asset.fracture_builder_desc(&b,{1,2}))!=.None {return false}
-    core.entities_init(&f.entities)
+    if asset.fracture_save(fmt.tprintf("%s/source.fracture",folder),&types,asset.fracture_builder_desc(&b,{1,2}))!=.None {return false}
+    if !core.test_world_init(t,&f.w,test_types) {return false}
     f.app.assets,f.app.allocator=&f.assets,context.allocator
     if !jobs.system_init(&f.app.jobs,{threads=0}) {return false}
-    if !host.assets_init(&f.assets,{root=f.folder,capacity=32}) {return false}
+    if !host.assets_init(&f.assets,{root=folder,capacity=32}) {return false}
     desc:=sim.world_desc_default();desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=16,32,64,4
     desc.hull_capacity=8
     f.settings={destructibles=2,pieces=32,connections=64}
@@ -76,101 +58,56 @@ end_init :: proc(f:^End,name:string,role:core.Network_Role) -> bool {
     if !sim.world_init(&f.physics.world,desc) {return false}
     f.physics.ready=true
     f.authority.role=role
-    f.tables={
-        {type=core.Parent,offset=offset_of(End,parents)},
-        {type=render.Mesh_Renderer,offset=offset_of(End,meshes)},
-        {type=multiplayer.Replicate,offset=offset_of(End,objects)},
-    }
-    f.info.tables=f.tables[:]
     return true
 }
 
 @(private="file")
 end_destroy :: proc(f:^End) {
-    destruct.cache_destroy(&f.app,&f.cache);jobs.system_destroy(&f.app.jobs);destruct.fracture_state_destroy(&f.fractures);phys.state_destroy(&f.physics);host.assets_destroy(&f.assets)
-    core.table_destroy(&f.configs);core.table_destroy(&f.colliders);core.table_destroy(&f.states);core.table_destroy(&f.groups)
-    core.table_destroy(&f.transforms);core.table_destroy(&f.parents);core.table_destroy(&f.meshes);core.table_destroy(&f.tints)
-    core.table_destroy(&f.elsewhere);core.table_destroy(&f.ids);core.table_destroy(&f.objects);core.entities_destroy(&f.entities)
-    core.value_free(&f.requests,type_info_of(destruct.Destruct_Requests));core.value_free(&f.events,type_info_of(destruct.Destruct_Events))
-    delete(f.outbox.queue.items);delete(f.adoptions.queue.items);delete(f.connections.events.items);net_free(&f.net)
-    os.remove(fmt.tprintf("%s/source.fracture",f.folder));os.remove(f.folder)
-}
-
-@(private="file")
-end_settle :: proc(f:^End) {
-    core.table_settle(&f.configs,&f.entities);core.table_settle(&f.colliders,&f.entities);core.table_settle(&f.states,&f.entities);core.table_settle(&f.groups,&f.entities)
-    core.table_settle(&f.transforms,&f.entities);core.table_settle(&f.parents,&f.entities);core.table_settle(&f.meshes,&f.entities)
-    core.table_settle(&f.tints,&f.entities);core.table_settle(&f.elsewhere,&f.entities);core.table_settle(&f.ids,&f.entities)
-    core.table_settle(&f.objects,&f.entities)
-    core.entities_settle(&f.entities)
+    destruct.cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs)
+    core.test_world_destroy(&f.w)
+    host.assets_destroy(&f.assets)
+    net_free(&f.net)
 }
 
 // A tick: the simulation, what this library asks of destruct, destruct, and what it sends.
 @(private="file")
 end_tick :: proc(f:^End,resimulating:=false) {
     sim.world_step(&f.physics.world,1.0/60)
-    end_settle(f)
+    core.test_world_settle(&f.w)
     f.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating}
+    commands:=core.commands_of(core.test_world_ref(&f.w))
     destruct_net_follow(core.ref(&f.authority),&f.net,time,&f.requests,core.ref(&f.fractures),core.read(&f.configs),core.read(&f.states),core.read(&f.ids),core.ref(&f.root))
-    destruct.destruct_step(&f.physics,&f.fractures,core.ref(&f.settings),&f.cache,&f.requests,&f.events,core.ref(&f.authority),&f.app,time,core.commands(f,&f.info),
-        core.read(&f.configs),&f.meshes,&f.tints,core.read(&f.parents),&f.states,&f.groups,&f.elsewhere,&f.transforms,&f.ids,core.read(&f.colliders),{},&f.problems)
-    end_settle(f)
-    destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.adoptions,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),core.ref(&f.fractures),core.commands(f,&f.info),
-        core.read(&f.states),core.read(&f.ids),core.read(&f.objects),core.ref(&f.entities),core.ref(&f.root))
-    end_settle(f)
+    destruct.test_step(&f.rows,&f.application,commands,time)
+    core.test_world_settle(&f.w)
+    destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.adoptions,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),core.ref(&f.fractures),commands,
+        core.read(&f.states),core.read(&f.ids),core.read(&f.objects),core.ref(&f.entities),core.ref(&f.root),&f.problems)
+    core.test_world_settle(&f.w)
 }
 
-// What a correction brings back of an end: its entities, its rows and its
-// simulation, at the tick it was saved.
+// What a correction brings back of an end: its World, at the tick it was saved.
 @(private="file")
 Saved :: struct {
-    entities:core.Entities,
-    configs:core.Table(destruct.Destructible),
-    colliders:core.Table(phys.Collider),
-    states:core.Table(destruct.Destructible_State),
-    groups:core.Table(destruct.Destructible_Group),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
-    meshes:core.Table(render.Mesh_Renderer),
-    tints:core.Table(render.Tint),
-    elsewhere:core.Table(render.Drawn_Elsewhere),
-    ids:core.Table(core.Id),
-    objects:core.Table(multiplayer.Replicate),
-    physics:phys.Physics_State,
-    fractures:destruct.Fracture_State,
+    w:End_World,
     tick:u64,
 }
 
 @(private="file")
-saved_copy :: proc(dst:^$D,src:^$S) -> bool {
-    return core.entities_copy(&dst.entities,&src.entities) && core.table_copy(&dst.configs,&src.configs) && core.table_copy(&dst.colliders,&src.colliders) &&
-        core.table_copy(&dst.states,&src.states) && core.table_copy(&dst.groups,&src.groups) && core.table_copy(&dst.transforms,&src.transforms) &&
-        core.table_copy(&dst.parents,&src.parents) && core.table_copy(&dst.meshes,&src.meshes) && core.table_copy(&dst.tints,&src.tints) &&
-        core.table_copy(&dst.elsewhere,&src.elsewhere) && core.table_copy(&dst.ids,&src.ids) && core.table_copy(&dst.objects,&src.objects) &&
-        phys.state_copy(&dst.physics,&src.physics) && destruct.fracture_state_copy(&dst.fractures,&src.fractures)
-}
-
-@(private="file")
-end_save :: proc(saved:^Saved,f:^End) -> bool {
-    end_settle(f)
+end_save :: proc(t:^testing.T,saved:^Saved,f:^End) -> bool {
+    if !core.test_world_init(t,&saved.w,test_types) {return false}
+    core.test_world_settle(&f.w)
     saved.tick=f.tick
-    return saved_copy(saved,f)
+    return core.test_world_copy(&saved.w,&f.w)
 }
 
 @(private="file")
 end_restore :: proc(f:^End,saved:^Saved) -> bool {
     f.tick=saved.tick
-    return saved_copy(f,saved)
+    return core.test_world_copy(&f.w,&saved.w)
 }
 
 @(private="file")
-saved_destroy :: proc(saved:^Saved) {
-    core.table_destroy(&saved.configs);core.table_destroy(&saved.colliders);core.table_destroy(&saved.states);core.table_destroy(&saved.groups)
-    core.table_destroy(&saved.transforms);core.table_destroy(&saved.parents);core.table_destroy(&saved.meshes);core.table_destroy(&saved.tints)
-    core.table_destroy(&saved.elsewhere);core.table_destroy(&saved.ids);core.table_destroy(&saved.objects)
-    phys.state_destroy(&saved.physics);destruct.fracture_state_destroy(&saved.fractures);core.entities_destroy(&saved.entities)
-}
+saved_destroy :: proc(saved:^Saved) {core.test_world_destroy(&saved.w)}
 
 // The destructible of an end, whole, with the Id both ends give it.
 @(private="file")
@@ -185,8 +122,8 @@ end_whole :: proc(f:^End) -> core.Entity {
 // A server and a client of one destructible that falls apart when the server strains it at tick 3.
 @(private="file")
 end_pair :: proc(t:^testing.T,a,b:^End,name:string) -> (server,client:core.Entity,ok:bool) {
-    if !testing.expect(t,end_init(a,fmt.tprintf("%s-server",name),.Server)) {return}
-    if !testing.expect(t,end_init(b,fmt.tprintf("%s-client",name),.Client)) {return}
+    if !testing.expect(t,end_init(t,a,fmt.tprintf("%s-server",name),.Server)) {return}
+    if !testing.expect(t,end_init(t,b,fmt.tprintf("%s-client",name),.Client)) {return}
     server,client=end_whole(a),end_whole(b)
     for _ in 0..<2 {end_tick(a);end_tick(b)}
     destruct.strain(&a.requests,server,{},4,1000)
@@ -205,7 +142,6 @@ end_received :: proc(a:^End) -> (events:multiplayer.Net_Events) {
 
 @(test)
 a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     a,b:End
     defer end_destroy(&a)
     defer end_destroy(&b)
@@ -215,7 +151,7 @@ a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     testing.expect_value(t,len(rewinds.queue.items),0)
     end_tick(&b)
     testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
@@ -226,7 +162,6 @@ a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
 
 @(test)
 a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_applied :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     a,b:End
     defer end_destroy(&a)
     defer end_destroy(&b)
@@ -234,13 +169,13 @@ a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_appl
     if !ok {return}
     saved:Saved
     defer saved_destroy(&saved)
-    testing.expect(t,end_save(&saved,&b))
+    testing.expect(t,end_save(t,&saved,&b))
     for _ in 3..=7 {end_tick(&b)}
     events:=end_received(&a)
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     for _ in 8..=12 {end_tick(&b)}
     testing.expect_value(t,core.get(&b.states,client).sequence,u32(1))
     hash:=sim.world_hash(&b.physics.world)~fr.fracture_hash(&b.fractures.fracture)
@@ -252,7 +187,6 @@ a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_appl
 
 @(test)
 a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_tick :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     a,b:End
     defer end_destroy(&a)
     defer end_destroy(&b)
@@ -260,13 +194,13 @@ a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_
     if !ok {return}
     saved:Saved
     defer saved_destroy(&saved)
-    testing.expect(t,end_save(&saved,&b))
+    testing.expect(t,end_save(t,&saved,&b))
     for _ in 3..=7 {end_tick(&b)}
     events:=end_received(&a)
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     asked:=core.take(&rewinds.queue)
     if !testing.expect_value(t,len(asked),1) || !testing.expect_value(t,asked[0],u32(3)) {return}
     // The correction it asked for: from the world as tick 3 found it.
@@ -285,7 +219,6 @@ a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_
 // read it in the tick, gets the state of the broken destructibles.
 @(test)
 a_connection_that_enters_the_world_gets_the_state_of_what_is_broken :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     a,b:End
     defer end_destroy(&a)
     defer end_destroy(&b)
@@ -319,7 +252,6 @@ a_connection_that_enters_the_world_gets_the_state_of_what_is_broken :: proc(t:^t
 // its state to each connection that enters its world.
 @(test)
 a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_broken :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
     a,b,c:End
     defer end_destroy(&a)
     defer end_destroy(&b)
@@ -330,12 +262,12 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     defer core.value_free(&events,type_info_of(multiplayer.Net_Events))
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
-    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root))
+    destruct_net_receive(core.ref(&events),core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
     end_tick(&b)
     if !testing.expect_value(t,core.get(&b.states,client).sequence,u32(1)) {return}
 
     // The same scene again on the client: a new World, and what the application keeps for it goes on.
-    if !testing.expect(t,end_init(&c,"scene-again",.Client)) {return}
+    if !testing.expect(t,end_init(t,&c,"scene-again",.Client)) {return}
     again:=end_whole(&c)
     c.net,b.net=b.net,{}
     c.root.changes=b.root.changes+1
@@ -354,7 +286,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     for item in a.outbox.queue.items {testing.expect_value(t,item.to,connection)}
     chunks:=end_received(&a)
     defer core.value_free(&chunks,type_info_of(multiplayer.Net_Events))
-    destruct_net_receive(core.ref(&chunks),core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root))
+    destruct_net_receive(core.ref(&chunks),core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root),&c.problems)
     for _ in 0..<2 {end_tick(&c)}
     testing.expect_value(t,core.get(&c.states,again).sequence,u32(1))
     testing.expect_value(t,fr.destructible_check(&c.fractures.fracture,core.get(&c.states,again).handle),fr.destructible_check(&a.fractures.fracture,core.get(&a.states,server).handle))

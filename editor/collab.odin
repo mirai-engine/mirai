@@ -1,12 +1,13 @@
 package editor
 
-import "base:runtime"
 import "core:log"
 import "core:mem"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
 import wire "mirai:net"
@@ -20,19 +21,22 @@ import "mirai:ui"
 // owns the file and orders the edits; a guest receives the whole scene when
 // it enters and keeps its own copy in memory. What travels is what the
 // journal of the document (journal.odin) says changed since the others were
-// told, by component and entity, identified by Id: the bytes of every row
-// that changed (its Entity fields as Ids), whether it turned off or on, and
-// the Ids of the rows that went. A guest sends what it edited to the host,
-// which applies it, and sends it to everybody, the sender included, so the
-// ends converge to the order of the host. Edits made by others do not enter
-// the history of undo. Each end also sends its camera and selection at 12 Hz,
-// which the others draw as avatars.
+// told, by component and entity, identified by Id: the fields of every row
+// that changed (its Entity fields as Ids), the whole row when it is new to
+// the others, whether it turned off or on, and the Ids of the rows that went.
+// Whoever receives it writes those fields alone: two ends that change
+// different fields of a row both keep theirs. A guest sends what it edited to
+// the host, which applies it, and sends it to everybody, the sender included,
+// so the ends converge to the order of the host, which decides a field two
+// of them changed. Edits made by others do not enter the history of undo.
+// Each end also sends its camera and selection at 12 Hz, which the others
+// draw as avatars and outlines: selecting holds nothing.
 //
 // A guest joins with the code of the invitation of the host (net/invite.odin):
 // its address on the router, or on its network, and the token of the session.
 
 COLLAB_PORT :: 7950
-COLLAB_VERSION :: 4 // of the messages: an editor of another one has another version of the project
+COLLAB_VERSION :: 5 // of the messages: an editor of another one has another version of the project
 COLLAB_PEERS :: 8 // the host and seven guests
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
@@ -77,16 +81,18 @@ collab_error_text :: proc(error:Collab_Error) -> string {
 @(private)
 Collab_Message :: enum u8 {
     Hello=1,Welcome,Snapshot,Ready,Edit,Presence,Roster,Reject,
-    Watch,Watch_Begin,Watch_Rows,Watch_View,Watch_End, // the Play of the host to the guests that watch it
-    Play_Mark,Play_Scene_Request,Play_Scene,           // the scene of a game of the host on the network
+    Play_Mark,Play_Scene_Request,Play_Scene,           // the scene of a game of the host on the network (collab_play.odin)
     Agents,                                            // the agents of an editor (collab_agents.odin)
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
     File,                                              // an asset file an editor changed, in chunks (collab_files.odin)
-    Prefab,                                            // what a step changed of the prefab records, in chunks (collab_prefabs.odin)
+    File_Unsent,                                       // an asset file an editor changed that is too large to travel
 }
 
+// Set: the whole row, for whoever has none. Fields: runs of bytes of a row,
+// each its offset and its size as u16 and then its bytes. Turn: one byte, 1
+// when the component is turned off by itself.
 @(private)
-Collab_Op :: enum u8 {Set=1,Remove,Turn} // Turn: one byte, 1 when the component is turned off by itself
+Collab_Op :: enum u8 {Set=1,Remove,Turn,Fields}
 
 @(private)
 Collab_Peer :: struct {
@@ -102,26 +108,24 @@ Collab_Peer :: struct {
     in_game:bool,        // plays the game the host serves
     offer:[COLLAB_OFFER_BYTES]u8,
     offer_size:int,
-    watching,watch_fresh:bool, // the host sends it its Play; fresh: from the start
     seen:f64,
     selection:[COLLAB_SELECTION]base.Entity_Id,
     selection_count:int,
     agents:Collab_Agents,
     file_bytes:[dynamic]u8, // a file it sends, as it arrives
     file_total:int,
-    prefab_bytes:[dynamic]u8, // a change of the prefab records it sends, as it arrives
-    prefab_total:int,
     out:[dynamic][]u8,   // reliable messages not sent yet
     head:int,
     connected_at:f64,
 }
 
-// What a component needs to travel: its size, the transient bytes that stay local and its Entity fields.
+// What a component needs to travel: its size, the fields a scene saves of it, the transient bytes that stay local and its Entity fields.
 @(private)
 Collab_Table :: struct {
     used:bool,
     size:int,
     hash:u64,
+    fields:[][2]int,
     transient:[][2]int,
     entities:[]uintptr,
 }
@@ -130,7 +134,11 @@ Collab_Table :: struct {
 @(private)
 Collab_Key :: struct {table:i32,entity:core.Entity}
 @(private)
-Collab_Told :: struct {id:base.Entity_Id,present,off:bool}
+Collab_Told :: struct {
+    id:base.Entity_Id,
+    present,off:bool,
+    value:int, // where its bytes as they were told are in told_values, when present
+}
 // A row by its Id. An entity made again under its Id (an operation of prefabs
 // replaces the World) keeps it: the rows of its old handle do not remove it.
 @(private)
@@ -160,6 +168,8 @@ Collab_State :: struct {
     tables:[]Collab_Table,
     cursor:u64,                         // in the changes of the journal of the document
     told:map[Collab_Key]Collab_Told,    // the rows of edits not in the journal yet, as the others were told them
+    told_values:[dynamic]u8,
+    crossed:map[Collab_Key]struct{},    // a guest: the rows other ends wrote while edits of its own were on their way to the host
     by_hash:map[u64]int,
     snapshot:[dynamic]u8, // a guest assembling the scene
     snapshot_total:int,
@@ -173,7 +183,6 @@ Collab_State :: struct {
     guest_name:[COLLAB_NAME_BYTES]u8,
     guest_name_length:int,
     echoed_edits:u64,     // a guest: its Edit messages the host sent back
-    watch:Collab_Watch,
     play_serial:u32,      // a guest: the last game of the host it saw the mark of
     play_copied:bool,     // and its copy of the scene of that game is written
     play_bytes:[dynamic]u8,
@@ -184,7 +193,8 @@ Collab_State :: struct {
     agents_at:f64,
     files_out:[dynamic]string, // asset files changed here since the last update, by their paths in the registry
     applying_file:bool,        // a file of another end is being put: its change is not this end's
-    prefabs_out:[dynamic][]u8, // what the steps here changed of the prefab records since the last update
+    unsent:[COLLAB_UNSENT]Collab_Unsent, // the files that did not travel; the first unsent_count
+    unsent_count:int,
 }
 
 @(storage)
@@ -198,8 +208,6 @@ Collab :: struct {
     joining:bool,
     error:Collab_Error,
     client:u64,   // who this editor is in every session: one that joins again takes its place back
-    held:[256]u8, // why the last edit did not happen: something another editor holds, or of a section that reads only (collab_hold.odin)
-    held_length:int,
     pings:[COLLAB_PEERS]Collab_Ping, // the last of each editor, by its place in the session; this one alone is 0
 }
 
@@ -281,27 +289,28 @@ collab_tables_build :: proc(s:^Session,st:^Collab_State) {
     st.tables=make([]Collab_Table,len(s.info.tables))
     st.by_hash=make(map[u64]int)
     st.told=make(map[Collab_Key]Collab_Told)
+    st.crossed=make(map[Collab_Key]struct{})
     for &t,i in s.info.tables {
         if t.place!=.World || i>=len(s.edits.saved) || !s.edits.saved[i] {continue}
         size:=t.info.size
-        ranges:=transient_ranges(t.info,context.allocator)
+        ranges:=history.transient_ranges(t.info,context.allocator)
         offsets:=entity_offsets(t.info,context.allocator)
-        st.tables[i]={used=true,size=size,hash=base.name_hash(t.name),transient=ranges,entities=offsets}
+        st.tables[i]={used=true,size=size,hash=base.name_hash(t.name),fields=history.saved_fields(t.info,context.allocator),transient=ranges,entities=offsets}
         st.by_hash[st.tables[i].hash]=i
     }
-    st.watch.seen=make([]Collab_Watch_Seen,len(s.info.tables))
 }
 
 @(private)
 collab_tables_free :: proc(st:^Collab_State) {
     for &t in st.tables {
-        delete(t.transient);delete(t.entities)
+        delete(t.fields);delete(t.transient);delete(t.entities)
     }
     delete(st.tables)
-    delete(st.watch.seen)
     delete(st.by_hash)
     delete(st.told)
-    st.tables,st.watch.seen,st.by_hash,st.told=nil,nil,nil,nil
+    delete(st.told_values)
+    delete(st.crossed)
+    st.tables,st.by_hash,st.told,st.told_values,st.crossed=nil,nil,nil,nil,nil
 }
 
 // ---------------------------------------------------------------- start and end
@@ -407,10 +416,6 @@ collab_destroy :: proc(s:^Session) {
     c:=collab_of(s)
     st:=c.state
     if st==nil {return}
-    if s.mode==.Watch && s.watch.host {watch_stop(s)}
-    collab_watch_drop(s,st)
-    delete(st.watch.entities)
-    delete(st.watch.rows)
     delete(st.play_bytes)
     if st.mapping_on {wire.mapping_close(&st.mapping)}
     wire.host_destroy(&st.host)
@@ -419,16 +424,13 @@ collab_destroy :: proc(s:^Session) {
         for message in peer.out[peer.head:] {delete(message)}
         delete(peer.out)
         delete(peer.file_bytes)
-        delete(peer.prefab_bytes)
     }
     for path in st.files_out {delete(path)}
     delete(st.files_out)
-    for payload in st.prefabs_out {delete(payload)}
-    delete(st.prefabs_out)
     delete(st.snapshot)
     collab_tables_free(st)
-    journal_reading(s.edits,false)
-    for &tab in s.documents {journal_reading(&tab.edits,false)}
+    history.journal_reading(s.edits,false)
+    for &tab in s.documents {history.journal_reading(&tab.edits,false)}
     free(st)
     c.state=nil
 }
@@ -514,6 +516,85 @@ collab_broadcast :: proc(st:^Collab_State,bytes:[]u8,except:int=-1) {
     }
 }
 
+// The operations as messages of a kind, each within the size of a message:
+// the kind, the author, the count and the operations.
+@(private)
+collab_ops_pack :: proc(ops:^Collab_Ops,kind:Collab_Message,author:u8) -> [][]u8 {
+    messages:=make([dynamic][]u8,context.temp_allocator)
+    if ops.count==0 {return messages[:]}
+    all:=make([dynamic]u8,context.temp_allocator)
+    append(&all,..serial.writer_bytes(&ops.head))
+    append(&all,..serial.writer_bytes(&ops.body))
+    append(&all,..serial.writer_bytes(&ops.tail))
+    at:=0
+    for at<len(all) {
+        m:serial.Writer
+        collab_begin(&m,kind,COLLAB_MESSAGE)
+        serial.write_scalar(&m,author)
+        count_at:=m.count
+        serial.write_scalar(&m,u16(0))
+        count:=0
+        for at<len(all) {
+            size:=int(intrinsic_u16(all[at+17:]))
+            length:=19+size
+            if count>0 && m.count+length>COLLAB_MESSAGE {break}
+            serial.write_bytes(&m,all[at:][:length])
+            at+=length
+            count+=1
+        }
+        patched:=u16(count)
+        serial.writer_patch(&m,count_at,mem.ptr_to_bytes(&patched))
+        append(&messages,serial.writer_bytes(&m))
+    }
+    return messages[:]
+}
+
+// Bytes too long for one message, in chunks of a kind: the tag, the total,
+// the offset and the chunk.
+@(private)
+collab_chunks_queue :: proc(peer:^Collab_Peer,kind:Collab_Message,data:[]u8,tag:u32=0) {
+    offset:=0
+    for {
+        size:=min(COLLAB_CHUNK,len(data)-offset)
+        m:serial.Writer
+        collab_begin(&m,kind,size+16)
+        serial.write_scalar(&m,tag)
+        serial.write_scalar(&m,u32(len(data)))
+        serial.write_scalar(&m,u32(offset))
+        serial.write_bytes(&m,data[offset:][:size])
+        collab_queue(peer,serial.writer_bytes(&m))
+        offset+=size
+        if offset>=len(data) {break}
+    }
+}
+
+// Adds a chunk to what is being assembled; true when the last one arrived.
+@(private)
+collab_chunk_take :: proc(r:^serial.Reader,into:^[dynamic]u8,total:^int) -> (tag:u32,complete:bool) {
+    tag=serial.read_u32(r)
+    whole:=int(serial.read_u32(r))
+    offset:=int(serial.read_u32(r))
+    chunk:=serial.read_bytes(r,serial.reader_remaining(r))
+    if r.failed || whole<=0 || whole>1<<30 {return}
+    if offset==0 {
+        clear(into)
+        total^=whole
+    }
+    if offset!=len(into) || whole!=total^ {return}
+    append(into,..chunk)
+    if len(into)<total^ {return}
+    total^=0
+    return tag,true
+}
+
+// The name an editor of the session gave.
+collab_peer_name :: proc(s:^Session,id:int) -> string {
+    st:=collab_state(s)
+    if st==nil || id<0 || id>=COLLAB_PEERS {return ""}
+    peer:=&st.peers[id]
+    return string(peer.name[:peer.name_length])
+}
+
 // ---------------------------------------------------------------- the loop
 
 // Called every frame between frames, after the editor: network, edits, presence.
@@ -543,7 +624,6 @@ collab_update :: proc(s:^Session) {
     if st.phase==.Joined && now-st.edit_at>=COLLAB_EDIT_INTERVAL {
         st.edit_at=now
         collab_edits_send(s,st)
-        collab_prefabs_send(s,st)
         collab_files_send(s,st)
     }
     if st.phase==.Joined && now-st.presence_at>=COLLAB_PRESENCE_INTERVAL {
@@ -551,7 +631,6 @@ collab_update :: proc(s:^Session) {
         collab_presence_send(s,st)
         collab_agents_send(s,st,now)
     }
-    if st.phase==.Joined {collab_watch_send(s,st,now)}
     if st.role==.Guest && st.phase==.Connecting && now-st.peers[0].connected_at>COLLAB_HELLO_TIMEOUT {
         collab_end(st,"the host did not answer; on its network, join with its Same network code")
         return
@@ -609,7 +688,6 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
                 for message in peer.out[peer.head:] {delete(message)}
                 delete(peer.out)
                 delete(peer.file_bytes)
-                delete(peer.prefab_bytes)
                 peer={}
                 collab_roster_send(st)
             }
@@ -652,7 +730,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             for message in other.out[other.head:] {delete(message)}
             delete(other.out)
             delete(other.file_bytes)
-            delete(other.prefab_bytes)
             other=st.peers[from]
             st.peers[from]={}
             from=i
@@ -691,11 +768,11 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
     case .Edit:
         if st.role==.Host && (from<0 || !st.peers[from].joined) {return}
         if st.role==.Guest && st.phase!=.Joined {return}
-        if st.role==.Guest && len(data)>1 && data[1]==st.self {st.echoed_edits+=1}
+        own:=st.role==.Guest && len(data)>1 && data[1]==st.self
+        if own {st.echoed_edits+=1}
         // What this end edited goes before what it applies, so the edits of the others are not taken for its own.
         collab_edits_send(s,st)
-        collab_prefabs_send(s,st)
-        collab_edit_apply(s,st,data)
+        collab_edit_apply(s,st,data,own)
         // The host sends what a guest edited to everybody, the sender included.
         if st.role==.Host {
             for &peer,i in st.peers {
@@ -742,7 +819,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         count:=int(serial.read_u8(&r))
         for i in 1..<COLLAB_PEERS {
             st.peers[i].used=false
-            // Who is not on the list holds nothing any more.
+            // Who is not on the list selects nothing any more.
             st.peers[i].has_pose,st.peers[i].selection_count,st.peers[i].agents.count=false,0,0
         }
         st.peers[0].used=true
@@ -754,6 +831,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             peer.used,peer.joined=true,true
             peer.name_length=copy(peer.name[:COLLAB_NAME_BYTES-1],name)
         }
+        collab_unsent_prune(st)
     case .Reject:
         if st.role==.Guest {collab_end(st,"the host ended the session");return}
         // A guest that leaves frees its place now, and what it selected with it.
@@ -763,30 +841,8 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             for message in peer.out[peer.head:] {delete(message)}
             delete(peer.out)
             delete(peer.file_bytes)
-            delete(peer.prefab_bytes)
             peer^={}
             collab_roster_send(st)
-        }
-    case .Watch:
-        if st.role!=.Host || from<0 {return}
-        on:=serial.read_u8(&r)
-        if r.failed {return}
-        peer:=&st.peers[from]
-        peer.watching=on!=0
-        peer.watch_fresh=peer.watching
-    case .Watch_Begin:
-        if st.role==.Guest {collab_watch_begin(s,st)}
-    case .Watch_Rows:
-        if st.role==.Guest {collab_watch_apply(s,st,data)}
-    case .Watch_View:
-        if st.role==.Guest {collab_watch_view_apply(s,st,data)}
-    case .Watch_End:
-        if st.role==.Guest && st.watch.world!=nil {
-            host.app_world_free(s.app,st.watch.world)
-            st.watch.world=nil
-            clear(&st.watch.entities)
-            clear(&st.watch.rows)
-            if s.mode==.Watch && s.watch.host {selection_clear(s.selection)}
         }
     case .Play_Mark:
         if st.role!=.Guest {return}
@@ -804,14 +860,15 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_ping_receive(s,st,from,data)}
     case .File:
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,&r)}
-    case .Prefab:
-        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_prefab_receive(s,st,from,&r)}
+    case .File_Unsent:
+        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
     }
 }
 
 @(private)
 collab_roster_send :: proc(st:^Collab_State) {
     if st.role!=.Host {return}
+    collab_unsent_prune(st)
     w:serial.Writer
     collab_begin(&w,.Roster)
     count:=0
@@ -854,7 +911,7 @@ collab_snapshot_load :: proc(s:^Session,st:^Collab_State,data:[]u8) -> bool {
     if asset.asset_open(&source,data)!=.None {return false}
     defer asset.asset_close(&source)
     view,view_error:=asset.scene_view(&source,&a.types)
-    if view_error!=.None || !asset.scene_view_check(view,context.temp_allocator) {return false}
+    if view_error!=.None || asset.scene_view_check(view,context.temp_allocator)!=.None {return false}
     runs_stop(s)
     tools_release(s)
     if _,error:=scene.replace(edited_world(s),s.app,&source,&a.types);error!=.None {return false}
@@ -894,66 +951,115 @@ collab_op_write :: proc(ops:^Collab_Ops,into:^serial.Writer,kind:Collab_Op,hash:
     ops.count+=1
 }
 
-// The bytes of a row as they travel: transient bytes zero, Entity fields as
-// Ids, or as they are when rows are keyed by entity.
+// The bytes of a row as they travel: transient bytes zero, Entity fields as Ids.
 @(private)
-collab_normalize :: proc(w:core.World_Ref,t:^Collab_Table,value:rawptr,out:[]u8,by_entity:bool) {
+collab_normalize :: proc(w:core.World_Ref,t:^Collab_Table,value:rawptr,out:[]u8) {
     if t.size>0 {mem.copy(raw_data(out),value,t.size)}
     for range in t.transient {
         if range[1]>0 {mem.zero(&out[range[0]],range[1])}
     }
-    if by_entity {return}
     for offset in t.entities {
         field:=cast(^u64)&out[offset]
         field^=u64(api_entity_id(w,core.Entity(field^)))
     }
 }
 
+// The fields of a row that differ from what it was, as the runs of a Fields
+// operation out of its bytes as they travel; fields that touch are one run.
+@(private)
+collab_fields_write :: proc(t:^Collab_Table,before:[]u8,value:rawptr,travels:[]u8,into:^serial.Writer) {
+    start,end:=0,0
+    for field in t.fields {
+        if mem.compare_ptrs(&before[field[0]],rawptr(uintptr(value)+uintptr(field[0])),field[1])==0 {continue}
+        if end>start && field[0]==end {
+            end+=field[1]
+            continue
+        }
+        collab_run_write(travels,start,end,into)
+        start,end=field[0],field[0]+field[1]
+    }
+    collab_run_write(travels,start,end,into)
+}
+
+@(private)
+collab_run_write :: proc(travels:[]u8,start,end:int,into:^serial.Writer) {
+    if end<=start {return}
+    serial.write_scalar(into,u16(start))
+    serial.write_scalar(into,u16(end-start))
+    serial.write_bytes(into,travels[start:end])
+}
+
 // The others have the World as it is: what changes from now on is what they are told.
 @(private)
 collab_journal_reset :: proc(s:^Session,st:^Collab_State) {
-    st.cursor=journal_reading(s.edits,true)
+    st.cursor=history.journal_reading(s.edits,true)
     clear(&st.told)
+    clear(&st.told_values)
+    clear(&st.crossed)
+}
+
+// A row as the others have it: what they were told of it last.
+@(private)
+Collab_Before :: struct {
+    id:base.Entity_Id,
+    present,off:bool,
+    value:[]u8, // its bytes then; nil when they were not kept
 }
 
 // What changed since the others were told, as messages for them: the rows
 // the journal took since this end read it, the rows the World and the
 // journal disagree on (edits not committed yet), and those the others were
-// told of while they disagreed, each as it is now. A row turns when its off
-// state is not the one the others have.
+// told of while they disagreed, each as it is now against what the others
+// have of it: the journal kept what it held before it took it, and this end
+// what it told of a row not committed yet. Of a row the others have, the
+// fields that differ go; of one they do not, all of it. A row turns when its
+// off state is not the one the others have.
 @(private)
 collab_edits_send :: proc(s:^Session,st:^Collab_State) {
     w:=edited_world(s)
     edits:=s.edits
     if w.data!=edits.world || core.world_table_of(w,core.Id)==nil {return}
     core.world_settle(w)
-    if !journal_ranges(edits,w) {return}
+    if !history.journal_ranges(edits,w) {return}
     edits.reading=true
-    keys:=make(map[Collab_Key]Collab_Told,context.temp_allocator)
-    for key,told in st.told {keys[key]=told}
-    for change in journal_read(edits,&st.cursor) {
-        key:=Collab_Key{change.table,change.entity}
-        if key not_in keys {keys[key]={change.id,change.present,change.off}}
+    keys:=make(map[Collab_Key]Collab_Before,context.temp_allocator)
+    told:=slice.clone(st.told_values[:],context.temp_allocator)
+    for key,was in st.told {
+        before:=Collab_Before{id=was.id,present=was.present,off=was.off}
+        if size:=st.tables[key.table].size;was.present && was.value+size<=len(told) {before.value=told[was.value:][:size]}
+        keys[key]=before
     }
-    journal_read_done(edits,st.cursor)
+    for change in history.journal_read(edits,&st.cursor) {
+        key:=Collab_Key{change.table,change.entity}
+        if key in keys {continue}
+        before:=Collab_Before{id=change.id,present=change.present,off=change.off}
+        if value,kept:=history.journal_change_value(edits,change,st.tables[change.table].size);kept {before.value=value}
+        keys[key]=before
+    }
     clear(&st.told)
-    authors,only_authors:=history_authors(edits,w)
-    id_table:=journal_id_table(w)
+    clear(&st.told_values)
+    authors,only_authors:=history.history_authors(edits,w)
+    id_table:=history.journal_id_table(w)
     for &info,i in w.info.tables {
         if !st.tables[i].used || i>=len(edits.image) {continue}
         table:=core.world_table_at(w,&info)
         image:=&edits.image[i]
-        if !journal_moved(table,image) {continue}
-        d:=journal_diff(table,image,info.info.size,edits.ranges[i].ranges,authors,only_authors && i!=id_table)
-        for r in journal_diff_next(&d) {
+        if !history.journal_moved(table,image) {continue}
+        size:=info.info.size
+        d:=history.journal_diff(table,image,size,edits.ranges[i].ranges,authors,only_authors && i!=id_table)
+        for r in history.journal_diff_next(&d) {
             key:=Collab_Key{i32(i),r.entity}
-            if key not_in keys {keys[key]={journal_id(edits,w,id_table,r.entity),r.image_row>=0,r.image_row>=0 && image.off[r.image_row]}}
+            if key not_in keys {
+                before:=Collab_Before{id=history.journal_id(edits,w,id_table,r.entity),present=r.image_row>=0,off=r.image_row>=0 && image.off[r.image_row]}
+                if before.present {before.value=([^]u8)(history.journal_value(image,size,r.image_row))[:size]}
+                keys[key]=before
+            }
             st.told[key]={}
         }
     }
     present:=make(map[Collab_Row]bool,len(keys),context.temp_allocator)
     for key,before in keys {
-        id:=journal_id(edits,w,id_table,key.entity)
+        id:=history.journal_id(edits,w,id_table,key.entity)
         if id==0 {id=before.id}
         if core.raw_row(core.world_table_at(w,&w.info.tables[key.table]),key.entity)>=0 {present[{key.table,id}]=true}
     }
@@ -963,25 +1069,38 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
         info:=&w.info.tables[key.table]
         t:=&st.tables[key.table]
         table:=core.world_table_at(w,info)
-        id:=journal_id(edits,w,id_table,key.entity)
+        id:=history.journal_id(edits,w,id_table,key.entity)
         if id==0 {id=before.id}
         if id==0 {continue}
         is_ids:=info.type==core.Id
         row:=core.raw_row(table,key.entity)
-        now:=Collab_Told{id,row>=0,row>=0 && table.off[row]}
+        now:=Collab_Told{id=id,present=row>=0,off=row>=0 && table.off[row]}
         if row>=0 {
+            value:=core.raw_value(table,info.info,row)
             current:=make([]u8,max(t.size,1),context.temp_allocator)
-            collab_normalize(w,t,core.raw_value(table,info.info,row),current,false)
-            collab_op_write(&ops,is_ids?&ops.head:&ops.body,.Set,t.hash,id,current[:t.size])
+            collab_normalize(w,t,value,current)
+            if is_ids || !before.present || len(before.value)!=t.size || t.size>int(max(u16)) {
+                collab_op_write(&ops,is_ids?&ops.head:&ops.body,.Set,t.hash,id,current[:t.size])
+            } else {
+                runs:serial.Writer
+                serial.writer_init(&runs,0,context.temp_allocator)
+                collab_fields_write(t,before.value,value,current,&runs)
+                if changed:=serial.writer_bytes(&runs);len(changed)>0 {collab_op_write(&ops,&ops.body,.Fields,t.hash,id,changed)}
+            }
             if now.off!=(before.present && before.off) {
                 turn:=[1]u8{u8(now.off)}
                 collab_op_write(&ops,&ops.body,.Turn,t.hash,id,turn[:])
+            }
+            if key in st.told {
+                now.value=len(st.told_values)
+                append(&st.told_values,..([^]u8)(value)[:t.size])
             }
         } else if before.present && !present[{key.table,id}] {
             collab_op_write(&ops,is_ids?&ops.tail:&ops.body,.Remove,t.hash,id,nil)
         }
         if key in st.told {st.told[key]=now}
     }
+    history.journal_read_done(edits,st.cursor)
     if ops.count==0 {return}
     if st.role==.Host {s.document.unsaved=true}
     for message in collab_ops_pack(&ops,.Edit,st.self) {
@@ -996,23 +1115,74 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
 collab_unsent :: proc(s:^Session,st:^Collab_State) -> bool {
     edits:=s.edits
     w:=edited_world(s)
-    return len(st.told)>0 || edits.changes_first+u64(len(edits.changes))!=st.cursor || !journal_settled(edits,w)
+    return len(st.told)>0 || edits.changes_first+u64(len(edits.changes))!=st.cursor || !history.journal_settled(edits,w)
 }
 
 @(private)
 intrinsic_u16 :: proc(bytes:[]u8) -> u16 {return u16(bytes[0])|u16(bytes[1])<<8}
 
-// Applies the operations of an Edit message to the World, without a step of undo.
+// What an operation of another end wrote of a row: all of it, a run of its
+// bytes, or whether it is turned off.
 @(private)
-collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8) {
+Collab_Touch :: struct {
+    table:int,
+    entity:core.Entity,
+    id:base.Entity_Id,
+    kind:Collab_Op,
+    offset,size:int, // Fields: the run
+}
+
+// Writes a run of bytes as they travel into a row: its Entity fields become
+// the entities of this World and its transient bytes stay. False when the
+// run is not of the row or cuts an Entity field.
+@(private)
+collab_run_put :: proc(es:^core.Entities,t:^Collab_Table,row:rawptr,offset:int,bytes:[]u8) -> bool {
+    end:=offset+len(bytes)
+    if end>t.size {return false}
+    for at in t.entities {
+        if int(at)<end && int(at)+size_of(core.Entity)>offset && (int(at)<offset || int(at)+size_of(core.Entity)>end) {return false}
+    }
+    value:=make([]u8,max(len(bytes),1),context.temp_allocator)
+    copy(value,bytes)
+    for at in t.entities {
+        if int(at)<offset || int(at)>=end {continue}
+        field:=cast(^u64)&value[int(at)-offset]
+        field^=u64(core.entity_of(es,base.Entity_Id(field^)))
+    }
+    for range in t.transient {
+        from,to:=max(range[0],offset),min(range[0]+range[1],end)
+        if to>from {mem.copy(&value[from-offset],rawptr(uintptr(row)+uintptr(from)),to-from)}
+    }
+    if len(bytes)>0 {mem.copy(rawptr(uintptr(row)+uintptr(offset)),raw_data(value),len(bytes))}
+    return true
+}
+
+// Whether this end has an edit of its own in a run of a row: its World and
+// its journal disagree there.
+@(private)
+collab_run_edited :: proc(edits:^history.Edits,w:core.World_Ref,table:int,e:core.Entity,row:rawptr,offset,size,width:int) -> bool {
+    if w.data!=edits.world || table>=len(edits.image) || offset+size>width {return false}
+    image:=&edits.image[table]
+    image_row:=history.journal_row(image,e)
+    if image_row<0 {return true}
+    return mem.compare_ptrs(rawptr(uintptr(row)+uintptr(offset)),rawptr(uintptr(history.journal_value(image,width,image_row))+uintptr(offset)),size)!=0
+}
+
+// Applies the operations of an Edit message to the World, without a step of
+// undo: a Fields writes its runs and leaves the rest of the row as it is here.
+// own: a message of this end, back from the host. This end has what it says
+// or something newer, except in the rows another end wrote while it was on
+// its way: there the host put it after theirs, so it is written again, but
+// for the runs this end is editing now.
+@(private)
+collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8,own:=false) {
     r:=serial.reader_init(data)
     serial.read_u8(&r)
     serial.read_u8(&r)
     count:=int(serial.read_u16(&r))
     w:=edited_world(s)
     es:=core.world_entities(w)
-    Touch :: struct {table:int,entity:core.Entity,id:base.Entity_Id}
-    touched:=make([dynamic]Touch,context.temp_allocator)
+    touched:=make([dynamic]Collab_Touch,context.temp_allocator)
     // The sets of Id come first: the entities they make are found by Id once they settle.
     created:=false
     for _ in 0..<count {
@@ -1032,6 +1202,11 @@ collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8) {
             created=false
         }
         e:=core.entity_of(es,id)
+        if e!=core.NONE {
+            key:=Collab_Key{i32(i),e}
+            if own && key not_in st.crossed {continue}
+            if !own && st.role==.Guest && st.sent_edits!=st.echoed_edits {st.crossed[key]={}}
+        }
         switch kind {
         case .Set:
             if size!=t.size {continue}
@@ -1040,25 +1215,29 @@ collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8) {
                     e=core.create(es)
                     created=true
                     core.raw_add(table,info.info,e,raw_data(bytes))
-                    append(&touched,Touch{i,e,id})
+                    append(&touched,Collab_Touch{table=i,entity=e,id=id,kind=.Set})
                 }
                 continue
             }
             if e==core.NONE {continue}
             value:=make([]u8,max(size,1),context.temp_allocator)
-            if size>0 {copy(value,bytes)}
-            for offset in t.entities {
-                field:=cast(^u64)&value[offset]
-                field^=u64(core.entity_of(es,base.Entity_Id(field^)))
-            }
-            if current:=core.raw_find(table,info.info,e);current!=nil {
-                // What a library derives stays as it is here.
-                for range in t.transient {
-                    if range[1]>0 {mem.copy(&value[range[0]],rawptr(uintptr(current)+uintptr(range[0])),range[1])}
-                }
-            }
+            if current:=core.raw_find(table,info.info,e);current!=nil && size>0 {mem.copy(raw_data(value),current,size)}
+            if !collab_run_put(es,t,raw_data(value),0,bytes) {continue}
             core.raw_add(table,info.info,e,raw_data(value))
-            append(&touched,Touch{i,e,id})
+            append(&touched,Collab_Touch{table=i,entity=e,id=id,kind=.Set})
+        case .Fields:
+            if e==core.NONE || info.type==core.Id {continue}
+            row:=core.raw_staged(table,info.info,e)
+            if row==nil {continue}
+            runs:=serial.reader_init(bytes)
+            for serial.reader_remaining(&runs)>0 {
+                offset:=int(serial.read_u16(&runs))
+                run:=serial.read_bytes(&runs,int(serial.read_u16(&runs)))
+                if runs.failed {break}
+                if own && collab_run_edited(s.edits,w,i,e,row,offset,len(run),t.size) {continue}
+                if !collab_run_put(es,t,row,offset,run) {break}
+                append(&touched,Collab_Touch{table=i,entity=e,id=id,kind=.Fields,offset=offset,size=len(run)})
+            }
         case .Remove:
             if e==core.NONE {continue}
             if info.type==core.Id {
@@ -1066,45 +1245,66 @@ collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8) {
             } else {
                 core.raw_remove(table,e)
             }
-            append(&touched,Touch{i,e,id})
+            append(&touched,Collab_Touch{table=i,entity=e,id=id,kind=.Remove})
         case .Turn:
             if e==core.NONE || size!=1 || info.type==core.Id {continue}
             if bytes[0]!=0 {core.raw_disable(table,e)} else {core.raw_enable(table,e)}
-            append(&touched,Touch{i,e,id})
+            append(&touched,Collab_Touch{table=i,entity=e,id=id,kind=.Turn})
         }
         st.received_ops+=1
     }
     core.world_settle(w)
+    if st.sent_edits==st.echoed_edits {clear(&st.crossed)}
     // What was applied is what both ends agree on, and not an edit of this one:
-    // the journal takes it without a step, and the others were told it.
+    // the journal takes it without a step, and the others were told it. Of a
+    // row this end is editing it takes those bytes alone: the rest is still
+    // an edit of this end.
     edits:=s.edits
     if w.data==edits.world {
-        id_table:=journal_id_table(w)
+        id_table:=history.journal_id_table(w)
         for touch in touched {
-            if touch.table==id_table {
-                for i in 0..<len(edits.image) {journal_take(edits,w,i,touch.entity)}
-                journal_take_entity(edits,w,touch.entity)
-            } else {journal_take(edits,w,touch.table,touch.entity)}
-            key:=Collab_Key{i32(touch.table),touch.entity}
-            if key in st.told {
-                table:=core.world_table_at(w,&s.info.tables[touch.table])
-                row:=core.raw_row(table,touch.entity)
-                st.told[key]={journal_id(edits,w,id_table,touch.entity),row>=0,row>=0 && table.off[row]}
+            switch {
+            case touch.table==id_table:
+                for i in 0..<len(edits.image) {history.journal_take(edits,w,i,touch.entity)}
+                history.journal_take_entity(edits,w,touch.entity)
+            case touch.kind==.Fields: history.journal_take_field(edits,w,touch.table,touch.entity,touch.offset,touch.size)
+            case touch.kind==.Turn:   history.journal_take_off(edits,w,touch.table,touch.entity)
+            case:                     history.journal_take(edits,w,touch.table,touch.entity)
             }
+            collab_told_take(st,w,touch)
         }
     }
-    // What others changed of the members of an instance is observed as what this end changes.
-    if s.editor_world!=nil {
-        ids:=make([]base.Entity_Id,len(touched),context.temp_allocator)
-        places:=false
-        for touch,at in touched {
-            ids[at]=touch.id
-            places||=s.info.tables[touch.table].type==core.Id || s.info.tables[touch.table].type==core.Parent
-        }
-        prefabs_remote_edited(s,ids,places)
-    }
-    selection_prune(s.selection,w)
+    // What the others changed is no step of this history: the overrides derived before it are of before it.
+    if s.editor_world!=nil && len(touched)>0 {prefabs_changed(s)}
+    history.selection_prune(s.selection,w)
     if st.role==.Host {s.document.unsaved=true}
+}
+
+// What the others were told of a row this end is editing takes what another
+// end wrote of it.
+@(private)
+collab_told_take :: proc(st:^Collab_State,w:core.World_Ref,touch:Collab_Touch) {
+    key:=Collab_Key{i32(touch.table),touch.entity}
+    told,telling:=&st.told[key]
+    if !telling {return}
+    info:=&w.info.tables[touch.table]
+    table:=core.world_table_at(w,info)
+    size:=info.info.size
+    row:=core.raw_row(table,touch.entity)
+    had:=told.present
+    told.id,told.present,told.off=touch.id,row>=0,row>=0 && table.off[row]
+    if row<0 {return}
+    value:=([^]u8)(core.raw_value(table,info.info,row))
+    switch {
+    case !had:
+        told.value=len(st.told_values)
+        append(&st.told_values,..value[:size])
+    case touch.kind==.Fields:
+        copy(st.told_values[told.value+touch.offset:][:touch.size],value[touch.offset:][:touch.size])
+    case touch.kind==.Set:
+        copy(st.told_values[told.value:][:size],value[:size])
+    case touch.kind==.Remove,touch.kind==.Turn:
+    }
 }
 
 // ---------------------------------------------------------------- presence
@@ -1163,8 +1363,8 @@ collab_in_game :: proc(s:^Session) -> bool {
 
 // The others as the figure of the agents, its eyes where their camera is and
 // turned to where it looks, under their initial and their name; what they
-// select is outlined (collab_hold.odin). Whoever is playing has a ring under
-// it and no selection: what they had selected belongs to the editor they left.
+// select is outlined (collab_highlights). Whoever is playing has a ring under
+// it and no selection.
 collab_draw :: proc(s:^Session) {
     st:=collab_state(s)
     if st==nil || st.role==.None || st.phase!=.Joined || !presence_in_scene(s) {return}
@@ -1182,7 +1382,7 @@ collab_draw :: proc(s:^Session) {
         yaw:=presence_yaw(forward)
         name:=string(peer.name[:peer.name_length])
         if loaded {
-            if presence_prepare(s,&st.figures[i],eyes,yaw,color,agent_level(i),u64(COLLAB_PEERS+i)) {host.app_instance_add(s.app,st.figures[i].instance)}
+            if presence_prepare(s,&st.figures[i],eyes,yaw,color,agent_level(i),u64(COLLAB_PEERS+i)) {host.extras_instance_add(&s.app.extras,st.figures[i].instance)}
             if rect,shown:=presence_glyph_rect(s,presence_shown(&st.figures[i],eyes)+{0,high.y,0},s.viewport.view_projection);shown {
                 presence_initial_draw(s,rect,name,color)
                 presence_name_draw(s,rect,name,color)
@@ -1203,3 +1403,45 @@ collab_draw :: proc(s:^Session) {
     host.assets_commit(s.app.assets)
 }
 
+
+// Another editor that is in the session now and edits the document.
+@(private)
+collab_peer_live :: proc(st:^Collab_State,i:int,now:f64) -> bool {
+    peer:=&st.peers[i]
+    return i!=int(st.self) && peer.used && peer.has_pose && !peer.playing && now-peer.seen<=COLLAB_PRESENCE_SEEN
+}
+
+// The selections of the others, outlined in their colors: who works on what.
+// It holds nothing: what another editor selected is edited like the rest.
+@(private)
+collab_highlights :: proc(s:^Session,w:core.World_Ref,levels:[]u8) {
+    st:=collab_state(s)
+    if st==nil || st.phase!=.Joined || w.data!=s.edit_world || s.mode!=.Edit {return}
+    es:=core.world_entities(w)
+    now:=wire.host_time(&st.host)
+    for &peer,i in st.peers {
+        if !collab_peer_live(st,i,now) {continue}
+        for id in peer.selection[:peer.selection_count] {
+            e:=api_entity(w,id)
+            if e==core.NONE || !core.alive(es,e) {continue}
+            // Their color shows over the selection of this end too: both work on it.
+            if at:=core.entity_index(e);at<len(levels) && (levels[at]==0 || levels[at]==HIGHLIGHT_SELECTED || levels[at]==HIGHLIGHT_DESCENDANT) {levels[at]=agent_level(i)}
+        }
+    }
+    collab_agents_highlights(s,st,w,levels,now)
+}
+
+// What the outlines of the others depend on: who is in and what they select.
+@(private)
+collab_highlights_key :: proc(s:^Session) -> u64 {
+    st:=collab_state(s)
+    if st==nil || st.phase!=.Joined {return 0}
+    now:=wire.host_time(&st.host)
+    key:=u64(1)
+    for &peer,i in st.peers {
+        if !collab_peer_live(st,i,now) {continue}
+        key=base.hash_combine(key,u64(i+1))
+        for id in peer.selection[:peer.selection_count] {key=base.hash_combine(key,u64(id))}
+    }
+    return base.hash_combine(key,collab_agents_key(s,st,now))
+}

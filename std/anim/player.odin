@@ -26,6 +26,7 @@ Player :: struct {
 }
 
 MAX_PASSES_PER_ADVANCE :: 1024
+@(private) PASS_LIMIT :: 1<<40
 
 player_make :: proc "contextless" (clip:Clip,speed:f32=1,weight:f32=1) -> Player {
     return {clip=clip,speed=speed,weight=weight,fresh=true}
@@ -78,7 +79,13 @@ fire_markers :: proc "contextless" (lib:^Library,clip:Clip,weight:f32,data:Clip_
     duration:=data.duration
     forward:=to>=from
     low,high:=min(from,to),max(from,to)
-    first_pass,last_pass:=int(cmath.floor(low/duration)),int(cmath.floor(high/duration))
+    // A span of more passes than PASS_LIMIT counts as that many: beyond it a float does not tell one pass
+    // from the next, and what it converts to as an integer is not a number of passes.
+    pass_of :: proc "contextless" (position,duration:f32) -> int {
+        pass:=cmath.floor(position/duration)
+        return int(clamp(pass,-PASS_LIMIT,PASS_LIMIT)) if pass==pass else 0
+    }
+    first_pass,last_pass:=pass_of(low,duration),pass_of(high,duration)
     if data.loop==.Once {first_pass,last_pass=0,0}
     if last_pass-first_pass>=MAX_PASSES_PER_ADVANCE {
         skipped:=last_pass-first_pass-MAX_PASSES_PER_ADVANCE+1

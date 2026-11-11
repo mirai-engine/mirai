@@ -5,34 +5,43 @@ import "core:mem"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
 import gpu "mirai:render"
 import mm "mirai:std/math"
 import fields "plugins:physics_fields/runtime"
 
+@(private="file")
+Preview_World :: struct {
+    using world:core.Test_World,
+    regions:core.Table(fields.Physics_Field),
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+}
+
 @(test)
 selected_physics_fields_preview_world_regions_force_direction_and_parent_changes :: proc(t:^testing.T) {
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    regions:core.Table(fields.Physics_Field);transforms:core.Table(core.Transform);parents:core.Table(core.Parent)
-    defer core.table_destroy(&regions);defer core.table_destroy(&transforms);defer core.table_destroy(&parents)
-    parent,entity,other:=core.create(&entities),core.create(&entities),core.create(&entities)
+    w:Preview_World
+    if !core.test_world_init(t,&w,fields.test_types) {return}
+    defer core.test_world_destroy(&w)
+    parent,entity,other:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     field:=fields.PHYSICS_FIELD_DEFAULT
     field.shape,field.direction,field.force,field.half_extents,field.vector=.Box,.Directional,-20,{1,2,3},{1,0,0}
-    core.add(&regions,entity,field);core.add(&regions,other,fields.PHYSICS_FIELD_DEFAULT)
-    core.add(&transforms,parent,core.Transform{{3,4,5},mm.quat_axis_angle({0,1,0},mm.PI*.5),{2,1,.5}})
-    core.add(&transforms,entity,core.Transform{{1,0,0},1,{1,2,3}})
-    core.add(&transforms,other,core.TRANSFORM_DEFAULT);core.add(&parents,entity,{entity=parent})
-    core.table_settle(&regions,&entities);core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities)
-    selection:editor.Selection;defer delete(selection.entities)
-    editor.selection_set(&selection,{entity})
+    core.add(&w.regions,entity,field);core.add(&w.regions,other,fields.PHYSICS_FIELD_DEFAULT)
+    core.add(&w.transforms,parent,core.Transform{{3,4,5},mm.quat_axis_angle({0,1,0},mm.PI*.5),{2,1,.5}})
+    core.add(&w.transforms,entity,core.Transform{{1,0,0},1,{1,2,3}})
+    core.add(&w.transforms,other,core.TRANSFORM_DEFAULT);core.add(&w.parents,entity,{entity=parent})
+    core.test_world_settle(&w)
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{entity})
     session:=editor.Session{selection=&selection}
     preview:=new(Physics_Field_Preview);defer free(preview)
     app:host.App
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     testing.expect_value(t,app.extras.debug_count,1)
     lines:=app.extras.debug[0]
     testing.expect(t,!lines.depth_test && lines.count==34 && lines.dropped==0)
-    pose,placed:=core.world_of(core.read(&transforms),core.read(&parents),entity);testing.expect(t,placed)
+    pose,placed:=core.world_of(core.read(&w.transforms),core.read(&w.parents),entity);testing.expect(t,placed)
     for vertex in lines.vertices[:24] {
         point:=mm.quat_rotate(conj(pose.rotation),vertex.position-pose.position)
         for extent,axis in (mm.Vec3{2,4,4.5}) {testing.expect(t,abs(abs(point[axis])-extent)<1e-4)}
@@ -41,63 +50,63 @@ selected_physics_fields_preview_world_regions_force_direction_and_parent_changes
     direction:=mm.quat_rotate(pose.rotation,mm.Vec3{-1,0,0})
     testing.expect(t,linalg.length(lines.vertices[25].position-pose.position-direction*2)<1e-4)
     app.extras.debug_count=0
-    core.get(&transforms,parent).position.x+=10
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    core.get(&w.transforms,parent).position.x+=10
+    physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     testing.expect_value(t,app.extras.debug[0].vertices[24].position,pose.position+mm.Vec3{10,0,0})
     app.extras.debug_count=0
     field.shape,field.direction,field.radius=.Sphere,.Radial,2
-    core.get(&regions,entity)^=field
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    core.get(&w.regions,entity)^=field
+    physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     lines=app.extras.debug[0]
     testing.expect_value(t,lines.count,252)
-    pose,_=core.world_of(core.read(&transforms),core.read(&parents),entity)
+    pose,_=core.world_of(core.read(&w.transforms),core.read(&w.parents),entity)
     for vertex in lines.vertices[:192] {testing.expect(t,abs(linalg.length(vertex.position-pose.position)-4)<1e-4)}
     for arrow in 0..<6 {
         from,to:=lines.vertices[192+arrow*10].position,lines.vertices[193+arrow*10].position
         testing.expect(t,abs(linalg.length(from-pose.position)-3)<1e-4 && abs(linalg.length(to-pose.position)-1)<1e-4)
     }
     app.extras.debug_count=0
-    editor.selection_clear(&selection)
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    history.selection_clear(&selection)
+    physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     testing.expect_value(t,app.extras.debug_count,0)
-    editor.selection_set(&selection,{entity})
-    versions:=[3]u64{regions.version,transforms.version,parents.version}
+    history.selection_set(&selection,{entity})
+    versions:=[3]u64{w.regions.version,w.transforms.version,w.parents.version}
     for mode in ([2]editor.Mode{.Simulate,.Simulation_Paused}) {
         session.mode=mode
         app.extras.debug_count=0
-        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+        physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
         testing.expect_value(t,app.extras.debug_count,1)
         testing.expect_value(t,app.extras.debug[0].count,252)
-        testing.expect_value(t,([3]u64{regions.version,transforms.version,parents.version}),versions)
+        testing.expect_value(t,([3]u64{w.regions.version,w.transforms.version,w.parents.version}),versions)
     }
     app.extras.debug_count=0
     for mode in ([2]editor.Mode{.Play,.Paused}) {
         session.mode=mode
-        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+        physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
         testing.expect_value(t,app.extras.debug_count,0)
     }
 }
 
 @(test)
 physics_field_preview_reuses_vertices_without_allocations_and_omits_incomplete_regions :: proc(t:^testing.T) {
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    regions:core.Table(fields.Physics_Field);transforms:core.Table(core.Transform);parents:core.Table(core.Parent)
-    defer core.table_destroy(&regions);defer core.table_destroy(&transforms);defer core.table_destroy(&parents)
-    entity:=core.create(&entities)
+    w:Preview_World
+    if !core.test_world_init(t,&w,fields.test_types) {return}
+    defer core.test_world_destroy(&w)
+    entity:=core.create(&w.entities)
     field:=fields.PHYSICS_FIELD_DEFAULT;field.force=10
-    core.add(&regions,entity,field);core.add(&transforms,entity,core.TRANSFORM_DEFAULT)
-    core.table_settle(&regions,&entities);core.table_settle(&transforms,&entities)
-    selection:editor.Selection;defer delete(selection.entities)
-    editor.selection_set(&selection,{entity})
+    core.add(&w.regions,entity,field);core.add(&w.transforms,entity,core.TRANSFORM_DEFAULT)
+    core.test_world_settle(&w)
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{entity})
     session:=editor.Session{selection=&selection}
     preview:=new(Physics_Field_Preview);defer free(preview)
     app:host.App
-    physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+    physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
     tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
     previous:=context.allocator;context.allocator=mem.tracking_allocator(&tracking)
     for _ in 0..<128 {
         app.extras.debug_count=0
-        physics_fields_preview(&session,preview,{},core.read(&regions),core.read(&transforms),core.read(&parents),&app)
+        physics_fields_preview(&session,preview,{},core.read(&w.regions),core.read(&w.transforms),core.read(&w.parents),&app.extras)
         testing.expect_value(t,app.extras.debug_count,1)
         testing.expect_value(t,app.extras.debug[0].count,252)
     }

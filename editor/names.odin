@@ -7,6 +7,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import input "mirai:engine/input"
 import "mirai:project"
 import "mirai:std/base"
@@ -27,7 +28,7 @@ import "mirai:std/serial"
 NAMES_FILE :: "names.odin"
 NAME_CAPACITY :: 32
 
-Names_Error :: enum u8 {None,Not_A_Type,Invalid_Name,Taken,Full,Unknown,Not_Of_Project,No_Game,Write_Failed,Action_In_Code,Action_Not_Declared,Action_Still_Declared}
+Names_Error :: enum u8 {None,Not_A_Type,Invalid_Name,Taken,Full,Unknown,Not_Of_Project,No_Game,Write_Failed,Source_Changed,Action_In_Code,Action_Not_Declared,Action_Still_Declared}
 
 names_error_text :: proc(e:Names_Error,type,name:string) -> string {
     switch e {
@@ -40,6 +41,7 @@ names_error_text :: proc(e:Names_Error,type,name:string) -> string {
     case .Not_Of_Project: return fmt.tprintf("%q of %s is declared by the engine or a plugin: rename only the values the project declares",name,type)
     case .No_Game:        return "the project has no game folder to declare the name in"
     case .Write_Failed:   return "the code of the name could not be written"
+    case .Source_Changed: return "the line that declares the name changed since the last build: build, then rename it again"
     case .Action_In_Code: return fmt.tprintf("an input action is a member of the enum @(actions) of the game: add %s to it, with its default in the field [Action]input.Action_Default of its storage",action_member(name))
     case .Action_Not_Declared: return fmt.tprintf("the code built does not declare the action %q: rename the member of the enum @(actions) to %s in code (the rename of your editor of code renames its uses), build, and rename again to follow it",name,action_member(name))
     case .Action_Still_Declared: return "the code built still declares the old name of the action: rename the member in code and build first; this rename follows it in input.mirai and the documents"
@@ -109,7 +111,7 @@ names_create :: proc(s:^Session,info:^core.World_Info,type:typeid,text:string) -
     ident:=strings.to_upper(fmt.tprintf("%s%s",t.prefix,name),context.temp_allocator)
     if !strings.has_suffix(source,"\n") {source=strings.concatenate({source,"\n"},context.temp_allocator)}
     source=fmt.tprintf("%s%s :: %s%s(%d)\n",source,ident,qualifier,t.name,value)
-    if os.write_entire_file(file,transmute([]u8)source)!=nil {return 0,.Write_Failed}
+    if serial.file_write_atomic(file,transmute([]u8)source)!=.None {return 0,.Write_Failed}
     build_start(s)
     return value,.None
 }
@@ -162,6 +164,9 @@ names_rename :: proc(s:^Session,info:^core.World_Info,type:typeid,old,text:strin
     lines:=strings.split(string(bytes),"\n",context.temp_allocator)
     if found.line<1 || found.line>len(lines) {return .Write_Failed}
     line:=lines[found.line-1]
+    // The line is the one of the last build: the file may have changed since.
+    declared:=strings.contains(line,fmt.tprintf("@(name=%q)",old)) if found.named else !strings.contains(line,"@(name=") && strings.contains(line,core.named_type_of(info,type).name)
+    if !declared {return .Source_Changed}
     attribute:=fmt.tprintf("@(name=%q)",name)
     if at:=strings.index(line,"@(name=");at>=0 {
         end:=strings.index_byte(line[at:],')')
@@ -172,7 +177,7 @@ names_rename :: proc(s:^Session,info:^core.World_Info,type:typeid,old,text:strin
         line=strings.concatenate({line[:indent],attribute," ",line[indent:]},context.temp_allocator)
     }
     lines[found.line-1]=line
-    if os.write_entire_file(file,transmute([]u8)strings.join(lines,"\n",context.temp_allocator))!=nil {return .Write_Failed}
+    if serial.file_write_atomic(file,transmute([]u8)strings.join(lines,"\n",context.temp_allocator))!=.None {return .Write_Failed}
     build_start(s)
     return .None
 }
@@ -221,7 +226,7 @@ action_documents_rename :: proc(s:^Session,old,name:string) {
         append(&paths,path)
     }
     for path in paths {
-        data,present,readable:=file_contents(r,path,context.temp_allocator)
+        data,present,readable:=history.file_contents(r,path,context.temp_allocator)
         if !present || !readable {continue}
         doc:asset.Document
         if asset.document_read(&doc,data,context.temp_allocator)!=.None {continue}

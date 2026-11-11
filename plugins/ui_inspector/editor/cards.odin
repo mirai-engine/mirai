@@ -5,6 +5,7 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:engine/gui"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:ui"
 
 // The cards of Create that put interfaces in the scene: one over the screen,
@@ -49,7 +50,7 @@ ui_cards_default :: proc() -> (cards:Ui_Cards) {
 // The .ui chosen in the content browser; none otherwise.
 @(private)
 chosen_interface :: proc(s:^editor.Session) -> base.Asset_Id {
-    if s.content==nil || s.app==nil || s.app.assets==nil {return {}}
+    if s==nil || s.content==nil || s.app==nil || s.app.assets==nil {return {}}
     if record,found:=asset.registry_find(&s.app.assets.registry,s.content.selected);found && record.kind==asset.KIND_UI {return record.id}
     return {}
 }
@@ -65,6 +66,15 @@ panel_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
         widget:=gui.WORLD_WIDGET_DEFAULT
         widget.asset,widget.facing=chosen_interface(s),.Fixed
         core.add(t,e,widget)
+    }
+    // It keeps the rotation it starts with: turned to whoever adds it, its
+    // forward toward the view.
+    if t:=core.world_table_of(w,core.Transform);t!=nil && s!=nil && s.viewport!=nil {
+        if placed:=core.get(t,e);placed!=nil {
+            toward:=editor.orbit_position(s.viewport.orbit)-placed.position
+            toward.y=0
+            if toward!={} {placed.rotation=mm.quat_look(toward,{0,1,0})}
+        }
     }
 }
 

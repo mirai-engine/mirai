@@ -8,7 +8,10 @@ import "mirai:std/serial"
 // JSON Schema (2020-12) of a type of the registry. Types are written inline:
 // plain data has no cycles. Integers carry the range of their type narrowed by
 // the field's min and max; enums are their member names; bit sets are lists of
-// names; ids are strings; a text field is a string of at most N bytes; an
+// names; ids are strings, and a param that names an entity is a string that
+// says with x-entity how it names the entity; an asset is a string, its id or
+// its path, with x-asset the extensions its field holds; a text field is a
+// string of at most N bytes; an
 // array of numbers has exactly its length and any other array at most that.
 // An array has no default of its own: its items carry the default of an
 // element when every element has the same one. A list (an array tagged list)
@@ -78,8 +81,9 @@ array_element :: proc(sc:^serial.Schema,type:serial.Type,image:[]u8) -> []u8 {
 // field: the field that holds the value; it gives the bounds, the text flag
 // and, when decor is set, the description. image: the value of a struct or
 // an array as the defaults hold it. default: the value to show as the
-// default of an optional field. list: an array of any length.
-schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,list:=false) {
+// default of an optional field. list: an array of any length. params: the
+// value is of the params of a method.
+schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,list:=false,params:=false) {
     sc:=&s.schema
     type:=sc.types[index]
     count:=0
@@ -124,7 +128,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
     case .Asset:
         entry(w,&count,"type");raw(w,`"string"`)
-        entry(w,&count,"pattern");raw(w,`"^[0-9a-fA-F]{32}$"`)
+        entry(w,&count,"x-asset");serial.text_write_string(w,field!=nil && field.asset_kinds!=""?field.asset_kinds:"any")
     case .Struct:
         entry(w,&count,"type");raw(w,`"object"`)
         fields:=sc.fields[type.first:][:type.count]
@@ -145,7 +149,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             if image!=nil {part=image[f.offset:][:sc.types[f.type].size]}
             value:[]u8
             if part!=nil && .Optional in tags && sc.types[f.type].kind!=.Struct && !all_zero(part) {value=part}
-            schema_write(w,s,f.type,&f,part,true,value,.List in tags)
+            schema_write(w,s,f.type,&f,part,true,value,.List in tags,params)
         }
         raw(w,"}")
         required:=0
@@ -160,6 +164,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
     case .Array:
         if decor && field!=nil && .Text in field.flags && serial.type_is_bytes(sc,index) {
             entry(w,&count,"type");raw(w,`"string"`)
+            if field.entity_name {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
             entry(w,&count,"maxLength");serial.text_write_uint(w,u64(type.count))
         } else if field!=nil && .Text in field.flags && serial.type_is_texts(sc,index) {
             shown=nil
@@ -173,7 +178,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             element_default:[]u8
             if default!=nil && elem.kind!=.Struct && value!=nil && !all_zero(value) {element_default=value}
             entry(w,&count,"type");raw(w,`"array"`)
-            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default)
+            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default,false,params)
             if !list {
                 if elem.kind==.Float || elem.kind==.Int || elem.kind==.Uint {
                     entry(w,&count,"minItems");serial.text_write_uint(w,u64(type.count))
@@ -202,11 +207,52 @@ write_names :: proc(w:^serial.Writer,choices:[]serial.Choice) {
 
 // The schema of the params or result of a method; free-form JSON when there is no type.
 method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:bool) {
+    start:=w.count
+    defer if !result {
+        properties_add(w,start,.Read_Only in method.flags?SELECT_SCHEMA+","+WAIT_SCHEMA:SELECT_SCHEMA)
+    } else if method.clamps {
+        properties_add(w,start,CLAMPED_SCHEMA)
+    }
     index:=result?method.result:method.params
     if index==serial.TYPE_NONE {
         written:=result?method.result_schema:method.params_schema
         raw(w,written!=""?written:result?"{}":`{"type":"object"}`)
         return
     }
-    schema_write(w,s,index,nil,result?nil:method.defaults)
+    schema_write(w,s,index,nil,result?nil:method.defaults,params=!result)
+}
+
+// x-entity says of a param what it takes; a schema written by hand spreads
+// ENTITY_SCHEMA into the object of the param.
+@(private="file") ENTITY_NAMES :: `"a name, a path Parent/Child or an id"`
+ENTITY_SCHEMA :: `"type":"string","x-entity":` + ENTITY_NAMES
+
+// The key of a result that says which params took their maximum.
+@(private) CLAMPED_SCHEMA :: `"_clamped":{"type":"object","description":"The params past their maximum by name: what was asked and what was used"}`
+
+// Adds members to the properties of the object schema written from start. One
+// without properties takes anything already.
+@(private)
+properties_add :: proc(w:^serial.Writer,start:int,members:string) {
+    if w.overflow>0 {return}
+    r:serial.Text_Reader
+    serial.text_reader_init(&r,string(w.data[start:w.count]),context.temp_allocator)
+    defer serial.text_reader_destroy(&r)
+    if !serial.text_accept(&r,'{') {return}
+    at:=-1
+    for at<0 && !serial.text_accept(&r,'}') {
+        key,ok:=serial.text_string(&r)
+        if !ok || !serial.text_expect(&r,':') {return}
+        serial.text_peek(&r)
+        if key=="properties" {at=start+r.offset+1}
+        if !serial.text_skip(&r) {return}
+        if !serial.text_accept(&r,',') {break}
+    }
+    if at<0 {return}
+    end:=w.count
+    empty:=w.data[at]=='}'
+    raw(w,members)
+    if !empty {raw(w,",")}
+    if w.overflow>0 {return}
+    slice.rotate_left(w.data[at:w.count],end-at)
 }

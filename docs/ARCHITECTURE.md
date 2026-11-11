@@ -7,8 +7,10 @@ code and API/MCP. The general rules are in [AGENTS.md](../AGENTS.md).
 
 A game is an in-memory struct and a list of functions that transform it.
 
-- **A piece of data lives in one place.** There are no synchronized copies or bridges:
-  the pose of a body is in the physics table and the renderer reads it from there.
+- **A piece of data has one owner.** What several functions read is written by one of them, once.
+  The physics solver owns the pose of a body: its step writes the pose to `Transform` and the
+  velocity to `Motion` once per tick, for the bodies that moved, and the renderer reads them there.
+  Nobody else writes them: the game moves a body with a request.
 - **A function receives exactly what it uses.** The compiler prevents touching anything else.
 - **The rules are verified.** What an agent might not know becomes a type error, a build error or
   a runtime failure with a message that says how to fix it.
@@ -63,11 +65,13 @@ Each `world` has:
   not step on each other, and it is released in that world's `release` phase.
   `World` stays plain data copied in blocks; sockets and pointers live outside.
 - `Editor` (only in `editor_world`): the components and storages of the editor packages.
-- `init_*`, `destroy_*`, `copy_world`, `swap_world`, `clear_world` (entities, rows and derived
-  storages), `settle`, the loops per phase and `info()`. `init_*` and `copy_world` return `false`
-  without memory and leave a world that `destroy_*` frees.
+- The call of each function, the loops per phase and `info()`.
   `info()` returns the `core.World_Info`, which describes types, tables, storages, functions and
   loops for generic code (editor, scenes, network, saving) without knowing the game's types.
+  With it `core` makes, frees, copies, swaps and clears any world (`core.world_init`,
+  `world_destroy`, `world_copy`, `world_swap`, `world_clear`: entities, rows and derived
+  storages); `world_init` and `world_copy` return `false` without memory and leave a world that
+  `world_destroy` frees.
 
 **Reflection.** The engine cannot find a project's types with `type_info_of(typeid)`: they live in
 a library the project compiled.
@@ -166,7 +170,8 @@ door_move :: proc(
 | `core.Ref(core.Entities)` | Reads which entities are alive |
 | `core.Commands` | Creates entities with rows of any component |
 | `core.World_Ref` | The whole world by reflection: scenes, saving, network, editor |
-| `^host.App` | The application: window, renderer, mixer, assets |
+| `^host.Assets`, `^host.Frame_Extras`, `^render.Renderer`, `^audio.Mixer`, `^jobs.Job_System`, `runtime.Allocator` | A part of the application: its assets, what is added to the frame, its renderer, its mixer, its job system, its allocator |
+| `^host.App` | The application itself: its worlds, its window and views, its clock, its content |
 
 The generator rejects with a message:
 
@@ -276,13 +281,15 @@ entities that have it:
 
 ## Build
 
-The engine is compiled into dynamic runtime and editor libraries, with declarations that allow
-compiling the project separately. The editor and the player load the project's world through
+The engine is compiled into dynamic libraries, one per group of layers, with declarations that
+allow compiling each library and the project separately. The editor and the player load the
+project's world through
 `World_Info`. The distributed game is compiled from source and excludes the engine-time packages.
 
 - Targets, collections, outputs and binary updates:
   [projects](../.agents/skills/mirai-projects/references/projects.md#engine-binaries).
-- Usage commands: [AGENTS.md](../AGENTS.md#common-commands).
+- Usage commands:
+  [common commands](../.agents/skills/mirai-projects/references/projects.md#common-commands).
 - Reload of an open project and its relation to the layout:
   [Build and reload](../.agents/skills/mirai-editor/references/editor.md#build-and-reload).
 
@@ -301,11 +308,10 @@ compiling the project separately. The editor and the player load the project's w
 
 ## Threads
 
-- Each phase runs at once the functions that do not clash in what they read and write, with the
-  same result as in order
-  ([concurrency](../.agents/skills/mirai-core/references/generator.md#concurrent-functions)),
-  and a function's parallelism goes inside it (`std/jobs`): physics, destructible cutting and asset
-  loading use the application's threads.
+- Each phase runs its functions one after another on the thread of the loop
+  ([order](../.agents/skills/mirai-core/references/generator.md#order)), and a function's
+  parallelism goes inside it (`std/jobs`): physics, destructible cutting and asset loading use the
+  application's threads.
 - Background threads (audio, network, asset loading) only talk to the world through queues that a
   loop function drains.
 
@@ -314,14 +320,19 @@ compiling the project separately. The editor and the player load the project's w
 Numbered layers; a package only imports lower layers.
 
 - **0** `std/*`: standard library (base, math, serial, compressor, jobs, spatial, geom, anim, ai,
-  input, subprocess). It does not depend on the engine. `std/compressor` decodes LZ streams and
-  `std/compressor/bc7split` restores BC7Split blocks; `std/compressor/lz` encodes the streams with
-  `std/compressor/lz/entropy`, `match` and `lz`, on top of the decoder's format.
+  input, subprocess, ui_format). It does not depend on the engine. `std/compressor` decodes LZ
+  streams and `std/compressor/bc7split` restores BC7Split blocks; `std/compressor/lz` encodes the
+  streams with `std/compressor/lz/entropy`, `match` and `parse`, on top of the decoder's format,
+  at the levels a program saves with. `std/ui_format` is what the structure of a `.ui` is judged
+  by (node kinds, override fields, limits), which `ui` builds and `asset` checks without
+  importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.
 - **1** `net`, `asset`, `ui`, `audio`, `rhi`: network transport, asset formats, UI, mixer and GPU;
   independent of each other. `rhi/shared_device` is the device the GPU tests share; only tests
   import it, also the GPU tests of `rhi`, in `rhi/tests`.
-- **2** `render`, `platform`: hybrid renderer and SDL3.
+- **2** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
+  renderer shares with its shaders, on top of `asset` alone: `cook/shaders` imports it to write
+  them for the shaders, since the tool cannot import `render`.
 - **3** `core`: entities, tables, queues, owners, transforms and hierarchy, `Time`, `Input`,
   `View`, world reflection, the authority of this end (`Network`, `Remote`, `owned`), the motion
   and pose that another owner requests (`Motion`, `Pose_Target`), the requested places (`Places`,
@@ -333,7 +344,8 @@ Numbered layers; a package only imports lower layers.
   they combine, and wind), `render`, `audio`, `gui`, `input` (devices, actions, seats, driving and
   `Move_Input`), `camera` (each seat's camera and the game view), `save`.
 - **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
-  stored by what makes it), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7, and
+  stored by what makes it), `cook/compressor/lz` (the optimal levels of the LZ encoder, which only
+  a cook writes with), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7, and
   `cook/compressor/bc7split`), importers, shaders, `cook/workspace` (a worktree's main
   checkout, the dependencies folder, shared cache and locks between processes), `cook/image` (PNG
   to RGBA8, difference, statistics, montage, crop, enlargement and pixels of captures),
@@ -341,29 +353,24 @@ Numbered layers; a package only imports lower layers.
   project's plugins that come from git, and the catalog). The importers are `cook/import` (core,
   no formats), one package per format (`cook/import/obj`, `gltf`, `usd`, `fbx`, which reads with
   the C library of `third_party/ufbx`) and `cook/import/sources` (the table of formats and
-  `import_source`, on top of `cook/prefab`).
+  `import_source`, on top of `cook/prefab`). `cook/author` is what an interface, a scene or a
+  prefab is authored with as a nested document, between its text and the file of the asset, on
+  top of `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui`
+  and `mirai scene` go through it, and the presets an entity is made from are there.
 - **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
 - **7** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
-  `plugins:<name>/editor`. Physics, game networking and player spawning are plugins:
-  - `physics`: the integration with the world, the solver as its own package
-    (`plugins:physics/runtime/sim`, without `core`), character locomotion and its editor part;
-    `destruct` depends on it.
-  - `multiplayer`: replicas, prediction, rollback, connection seats and the player's network
-    arguments, without physics; with `physics` they understand each other through `core` tables
-    (`Pose_Target`, `Motion`).
-  - Automatic bridges, active when their dependencies are present: `destruct_multiplayer`
-    (replicated fractures), `animation_physics` (each `Character`'s mode and speed feed its motion
-    matching) and `spawn_physics` (the body that the editor's Play places at a spot, resting on
-    its collider).
-  - `navigation` (automatic navmesh, links and agents; depends on `physics`) and `behavior`
-    (minds, perception, smart objects, places and influence; depends on `navigation`).
-  - `spawn` (spawn points and player bodies) and `cinematics`.
-  - `vfx`: GPU particles, the `.particle` format and its editor; it extends the renderer through
-    `engine/render` (a world's buffers and the `Simulate`, `Gbuffer` and `Blend` stages).
-- **no layer** `tools/mirai`: CLI with `generate`, `build` (`tools`, `engine`, `editor`, `game`),
-  `edit`, `play`, `new`, `worktree`, `doctor`, `test`, `check`, `deps`, `setup`, `shaders`,
-  `asset`, `image`, `import`, `session`, `capture`, `record`, `rpc`, `mcp`.
+  `plugins:<name>/editor`. What only some games use is a plugin and adds nothing to the core, so
+  physics, game networking and player spawning are plugins too. A plugin imports the layers below
+  and only the plugins in the `dependencies` of its `plugin.mirai`, which the generator enforces;
+  one that only joins two others is an automatic bridge and neither of them knows the other. A
+  plugin extends the renderer through `engine/render`, never by importing `render`. The solver is
+  its own package (`plugins:physics/runtime/sim`, without `core`), and `physics` and `multiplayer`
+  understand each other only through `core` tables (`Pose_Target`, `Motion`).
+  `plugins/*/plugin.mirai` lists the plugins with their parts and dependencies;
+  [first-party plugins](../.agents/skills/mirai-plugins/references/plugins.md#first-party-plugins)
+  says what each one does.
+- **no layer** `tools/mirai`: the `mirai` CLI; `mirai --help` lists its commands.
 - **no layer** `demo`, `templates`, `tools/demo_content`: the demo project, the `mirai new`
   templates and the generator of the demo's assets.
 - **no layer** `shaders/`: the single Slang source.
@@ -371,4 +378,6 @@ Numbered layers; a package only imports lower layers.
 The low-level packages `render`, `audio` and `std/anim`, and the `physics` solver, are declared
 `mirai_render`, `mirai_audio`, `mirai_anim` and `mirai_physics` so they do not clash with the
 libraries that use them; these import them with aliases (`gpu`, `mixer`, `lib`, `sim`). For the
-same reason `cook/compressor/bc7split` is declared `bc7split_encode`, apart from `std/compressor/bc7split`.
+same reason `cook/compressor/bc7split` is declared `bc7split_encode`, apart from
+`std/compressor/bc7split`, and `cook/compressor/lz` is declared `lz_optimal`, apart from
+`std/compressor/lz`.

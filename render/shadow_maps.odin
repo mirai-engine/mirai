@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math"
 import "core:math/linalg"
+import "mirai:render/abi"
 import "mirai:rhi"
 
 // Shadow maps in place of the rays of the direct light for the lights that
@@ -14,23 +15,23 @@ import "mirai:rhi"
 // view; the atlas is shared among them by how much of the view each lights.
 // The other lights, small on the screen, trace rays (shadow_maps.slang,
 // shadow_maps.comp, shadow_map.vert, direct_samples.comp).
-SHADOW_ATLAS :: u32(4096)
+SHADOW_ATLAS :: abi.SHADOW_ATLAS
 SHADOW_MAPS_MAX :: 96
-SHADOW_MAP_ROWS :: 6
-SHADOW_ENTRIES :: u32(1 << 18)
+SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
+SHADOW_ENTRIES :: abi.SHADOW_ENTRIES
 SHADOW_DRAWS :: 2 // the clusters that hide whole, and those of masked or blended materials
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
 SHADOW_MAP_SMALLEST :: u32(128)
 SHADOW_MAP_LARGEST :: u32(2048)
-SHADOW_LIGHT_FACES :: 16
+SHADOW_LIGHT_FACES :: abi.SHADOW_LIGHT_FACES
 SHADOW_RASTER_SHARE :: f32(0.02)
 SHADOW_RASTER_KEEP :: f32(0.01)
 SHADOW_RASTER_LIGHTS :: 32 // the most lights rasterized in a frame, those that light most of the view
 // The far end of each cascade of the sun, metres from the eye, and the side
 // of its map: the nearest, the sharpest.
-SHADOW_SUN_CASCADES :: [3]f32{8, 32, 128}
-SHADOW_SUN_SIDES :: [3]u32{2048, 2048, 1024}
-SHADOW_MAP_ORTHOGRAPHIC :: 1
+SHADOW_SUN_CASCADES :: [abi.SHADOW_SUN_MAPS]f32{8, 32, 128}
+SHADOW_SUN_SIDES :: [abi.SHADOW_SUN_MAPS]u32{2048, 2048, 1024}
+SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 
 Gpu_Shadow_Map :: struct {
 	origin:  Vec3,
@@ -276,7 +277,7 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	wants: [SHADOW_MAPS_MAX]Shadow_Want
 	count := 0
 	sun := s.sun
-	if sun.enabled && !orthographic {
+	if sun.enabled && r.settings.sun_shadows && !orthographic {
 		shadow_sun_cascades(&wants, &count, sun.direction, eye, forward, right, up, tan_x, tan_y, near, camera.far, s.bounds_min, s.bounds_max, s.has_bounds)
 	}
 	suns := count

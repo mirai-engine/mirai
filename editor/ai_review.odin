@@ -11,6 +11,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -21,7 +22,7 @@ AI_REVIEW_ROW_CAPACITY :: 4096
 AI_REVIEW_SCRATCH_CAPACITY :: AI_REVIEW_BYTE_CAPACITY*24
 
 Ai_Review :: struct {
-    transactions:[dynamic]Change_Set,
+    transactions:[dynamic]history.Change_Set,
     changed_ids:[dynamic]base.Entity_Id,
     changed_files:[dynamic]string, // project paths, in the order the turn changed them
     states:[dynamic]u64, // of the steps of the history the turn committed, oldest first
@@ -44,7 +45,7 @@ ai_review_add_file :: proc(review:^Ai_Review,path:string) {
 }
 
 ai_review_free :: proc(review:^Ai_Review) {
-    for &transaction in review.transactions {change_set_free(&transaction)}
+    for &transaction in review.transactions {history.change_set_free(&transaction)}
     for path in review.changed_files {delete(path)}
     delete(review.transactions);delete(review.changed_ids);delete(review.changed_files);delete(review.states)
     review^={}
@@ -57,7 +58,7 @@ ai_review_waiting :: proc(review:^Ai_Review) -> int {return len(review.changed_i
 // The transactions of the turn as one: what each file held before the first
 // one that changed it and what the last one left.
 @(private)
-Ai_File_Span :: struct {first,last:^Change_File}
+Ai_File_Span :: struct {first,last:^history.Change_File}
 
 @(private)
 ai_review_file_span :: proc(review:^Ai_Review,path:string) -> (span:Ai_File_Span,ok:bool) {
@@ -82,22 +83,23 @@ ai_review_record :: proc(s:^Session,task:^Ai_Task,serial_before:u64) {
         task.declined,task.undone=false,false
     }
     review:=&task.review
-    transaction:Change_Set
-    history:=s.edits.steps[:s.edits.cursor]
-    limit:=Change_Limit{review.rows,review.bytes,AI_REVIEW_ROW_CAPACITY,AI_REVIEW_BYTE_CAPACITY}
-    for &step in history {
+    transaction:history.Change_Set
+    steps:=s.edits.steps[:s.edits.cursor]
+    limit:=history.Change_Limit{review.rows,review.bytes,AI_REVIEW_ROW_CAPACITY,AI_REVIEW_BYTE_CAPACITY}
+    for &step in steps {
         if step.state<=serial_before {continue}
         append(&review.states,step.state)
-        if !change_set_take(s,&transaction,&step,history,&limit) {review.incomplete=true}
+        if !history.change_set_take(edited_world(s),s.project_root,&transaction,&step,steps,&limit) {review.incomplete=true}
     }
     review.rows,review.bytes=limit.rows,limit.bytes
-    if change_set_empty(&transaction) {
-        change_set_free(&transaction)
+    if history.change_set_empty(&transaction) {
+        history.change_set_free(&transaction)
         return
     }
     for row in transaction.rows {ai_review_add_id(review,row.id)}
     for file in transaction.files {ai_review_add_file(review,file.path)}
     append(&review.transactions,transaction)
+    ai_provenance_record(s,task,&review.transactions[len(review.transactions)-1])
     review.pending=true;task.review_finished=false;s.ai.scene_serial+=1
     ai_scene_follow(s,task,w,transaction.rows[:])
 }
@@ -120,6 +122,7 @@ ai_task_finish :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> bool {
     task.question=.None
     ai_task_dirty(task)
     m.scene_serial+=1
+    m.deliveries_due=true
     return true
 }
 
@@ -140,6 +143,7 @@ ai_task_revert :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     ai_transcript_add(&task.transcript,AI_DECLINED_NOTE,.Note)
     ai_task_dirty(task)
     m.scene_serial+=1
+    m.deliveries_due=true
     return ""
 }
 
@@ -170,9 +174,9 @@ ai_review_apply :: proc(s:^Session,task:^Ai_Task,forward:bool) -> bool {
     w:=edited_world(s)
     label:=forward?"Restore agent task":"Revert agent task"
     sets:=task.review.transactions[:]
-    taken:[dynamic]Change_Set
+    taken:[dynamic]history.Change_Set
     defer {
-        for &set in taken {change_set_free(&set)}
+        for &set in taken {history.change_set_free(&set)}
         delete(taken)
     }
     if task.review.incomplete {
@@ -180,12 +184,12 @@ ai_review_apply :: proc(s:^Session,task:^Ai_Task,forward:bool) -> bool {
         sets=taken[:]
     }
     tools_release(s)
-    edits_cancel(s.edits,w)
-    edits_begin(s.edits,s.selection,label)
+    history.edits_cancel(s.edits,w)
+    history.edits_begin(s.edits,s.selection,label)
     task.review.skipped+=change_sets_apply(s,sets,forward,label)
-    edits_end(s.edits)
-    edits_commit(s.edits,w,s.selection)
-    selection_prune(s.selection,w)
+    history.edits_end(s.edits)
+    history.edits_commit(s.edits,w,s.selection)
+    history.selection_prune(s.selection,w)
     return true
 }
 
@@ -195,19 +199,19 @@ ai_review_apply :: proc(s:^Session,task:^Ai_Task,forward:bool) -> bool {
 ai_review_revertible :: proc(s:^Session,review:^Ai_Review) -> bool {
     if !review.incomplete {return true}
     if s.edits==nil || len(review.states)==0 {return false}
-    for state in review.states {if edits_step_index(s.edits,state)<0 {return false}}
+    for state in review.states {if history.edits_step_index(s.edits,state)<0 {return false}}
     return true
 }
 
 // The changes of a turn whose record outgrew the journal, one set per step,
 // taken again from the history without the limits of the record.
 @(private="file")
-ai_review_history_sets :: proc(s:^Session,review:^Ai_Review,sets:^[dynamic]Change_Set) -> bool {
+ai_review_history_sets :: proc(s:^Session,review:^Ai_Review,sets:^[dynamic]history.Change_Set) -> bool {
     for state in review.states {
-        index:=edits_step_index(s.edits,state)
+        index:=history.edits_step_index(s.edits,state)
         if index<0 {return false}
-        set:Change_Set
-        complete:=change_set_take(s,&set,&s.edits.steps[index],s.edits.steps[:])
+        set:history.Change_Set
+        complete:=history.change_set_take(edited_world(s),s.project_root,&set,&s.edits.steps[index],s.edits.steps[:])
         append(sets,set)
         if !complete {return false}
     }
@@ -264,7 +268,8 @@ ai_review_path :: proc(s:^Session,task:^Ai_Task) -> string {
 }
 
 ai_review_save :: proc(s:^Session,task:^Ai_Task) -> string {
-    if task==nil || task.conversation.id==0 || s.project_root=="" {return ""}
+    // What it found on the disk is still there, and not in memory yet.
+    if task==nil || task.conversation.id==0 || s.project_root=="" || task.review_deferred {return ""}
     scratch:vmem.Arena
     if vmem.arena_init_static(&scratch,uint(AI_REVIEW_SCRATCH_CAPACITY),64<<10)!=nil {return "No memory for project scene review storage"}
     defer vmem.arena_destroy(&scratch)
@@ -340,19 +345,19 @@ ai_review_load :: proc(s:^Session,task:^Ai_Task) -> string {
     w:=edited_world(s)
     for transaction in disk.transactions {
         if len(transaction.rows)==0 && len(transaction.files)==0 {return "Stored scene review transaction is empty"}
-        append(&loaded.transactions,Change_Set{state=transaction.state})
+        append(&loaded.transactions,history.Change_Set{state=transaction.state})
         out:=&loaded.transactions[len(loaded.transactions)-1]
         for row in transaction.rows {
             table:=-1
             for descriptor,i in w.info.tables {if descriptor.place==.World && descriptor.name==row.component {table=i;break}}
             if table<0 || row.id==0 {return "Stored scene review component is unavailable"}
             descriptor:=&w.info.tables[table]
-            if !core.value_flat(descriptor.info) || change_layout(descriptor.info)!=row.layout {return "Stored scene review component layout changed"}
+            if !core.value_flat(descriptor.info) || history.change_layout(descriptor.info)!=row.layout {return "Stored scene review component layout changed"}
             if row.before_present && len(row.before)!=descriptor.info.size || row.after_present && len(row.after)!=descriptor.info.size || !row.before_present && len(row.before)!=0 || !row.after_present && len(row.after)!=0 {return "Stored scene review row is invalid"}
             // Only a component there turns off by itself, and never the base of an entity.
             if !row.before_present && row.before_off || !row.after_present && row.after_off || (row.before_off || row.after_off) && core.world_table_at(w,descriptor).base {return "Stored scene review row is invalid"}
             if loaded.rows>=AI_REVIEW_ROW_CAPACITY || loaded.bytes>AI_REVIEW_BYTE_CAPACITY-len(row.before)-len(row.after) {return "Stored project scene review exceeds capacity"}
-            copy_row:=Change_Row{table=table,layout=row.layout,id=row.id,before_present=row.before_present,after_present=row.after_present,before_off=row.before_off,after_off=row.after_off}
+            copy_row:=history.Change_Row{table=table,layout=row.layout,id=row.id,before_present=row.before_present,after_present=row.after_present,before_off=row.before_off,after_off=row.after_off}
             if row.before_present {copy_row.before=make([]u8,len(row.before));copy(copy_row.before,row.before)}
             if row.after_present {copy_row.after=make([]u8,len(row.after));copy(copy_row.after,row.after)}
             append(&out.rows,copy_row)
@@ -365,7 +370,7 @@ ai_review_load :: proc(s:^Session,task:^Ai_Task) -> string {
             after,after_error:=base64.decode(file.after,allocator=context.temp_allocator)
             if before_error!=nil || after_error!=nil || !file.before_present && len(before)>0 || !file.after_present && len(after)>0 {return "Stored review file is invalid"}
             if loaded.rows>=AI_REVIEW_ROW_CAPACITY || loaded.bytes>AI_REVIEW_BYTE_CAPACITY-len(before)-len(after) {return "Stored project scene review exceeds capacity"}
-            append(&out.files,Change_File{path=strings.clone(file.path),before_present=file.before_present,after_present=file.after_present,before=slice.clone(before),after=slice.clone(after)})
+            append(&out.files,history.Change_File{path=strings.clone(file.path),before_present=file.before_present,after_present=file.after_present,before=slice.clone(before),after=slice.clone(after)})
             loaded.bytes+=len(before)+len(after);loaded.rows+=1
             ai_review_add_file(&loaded,file.path)
         }
@@ -403,8 +408,8 @@ ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     if len(task.review.transactions)==0 || task.world==nil || task.world!=s.edit_world || !ai_task_current(s,task) {return}
     w:=edited_world(s)
     Key :: struct {id:base.Entity_Id,table:int}
-    first:=make(map[Key]^Change_Row,context.temp_allocator)
-    last:=make(map[Key]^Change_Row,context.temp_allocator)
+    first:=make(map[Key]^history.Change_Row,context.temp_allocator)
+    last:=make(map[Key]^history.Change_Row,context.temp_allocator)
     for &transaction in task.review.transactions {
         for &row in transaction.rows {
             key:=Key{row.id,row.table}
@@ -413,20 +418,20 @@ ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
         }
     }
     holds :: proc(info:^runtime.Type_Info,has,off:bool,canonical:[]u8,present,expected_off:bool,value:[]u8) -> bool {
-        return has==present && (!has || off==expected_off && change_equal(info,raw_data(canonical),raw_data(value)))
+        return has==present && (!has || off==expected_off && history.change_equal(info,raw_data(canonical),raw_data(value)))
     }
     before,after:=true,true
     for key,oldest in first {
         descriptor:=&w.info.tables[key.table]
         current:rawptr
         off:bool
-        if e:=change_entity(w,key.id);e!=core.NONE {
+        if e:=history.change_entity(w,key.id);e!=core.NONE {
             table:=core.world_table_at(w,descriptor)
             current=core.raw_find(table,descriptor.info,e)
             _,off,_=core.raw_state(table,e)
         }
         canonical:[]u8
-        if current!=nil {canonical=change_canonical(w,nil,descriptor.info,current,context.temp_allocator)}
+        if current!=nil {canonical=history.change_canonical(w,nil,descriptor.info,current,context.temp_allocator)}
         newest:=last[key]
         before&&=holds(descriptor.info,current!=nil,off,canonical,oldest.before_present,oldest.before_off,oldest.before)
         after&&=holds(descriptor.info,current!=nil,off,canonical,newest.after_present,newest.after_off,newest.after)
@@ -434,8 +439,8 @@ ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     for path in task.review.changed_files {
         span,_:=ai_review_file_span(&task.review,path)
         full:=project.path(s.project_root,path,allocator=context.temp_allocator)
-        before&&=file_holds(files_registry(s),full,span.first.before_present,span.first.before)
-        after&&=file_holds(files_registry(s),full,span.last.after_present,span.last.after)
+        before&&=history.file_holds(files_registry(s),full,span.first.before_present,span.first.before)
+        after&&=history.file_holds(files_registry(s),full,span.last.after_present,span.last.after)
     }
     switch {
     case after && task.declined:
@@ -480,7 +485,7 @@ ai_review_marks :: proc(m:^Ai,id:base.Entity_Id) -> []Ai_Review_Mark {
 
 // The task and the row of a mark, checked against what the review holds now.
 @(private)
-ai_review_mark_row :: proc(s:^Session,m:^Ai,mark:Ai_Review_Mark,id:base.Entity_Id) -> (task:^Ai_Task,row:^Change_Row,ok:bool) {
+ai_review_mark_row :: proc(s:^Session,m:^Ai,mark:Ai_Review_Mark,id:base.Entity_Id) -> (task:^Ai_Task,row:^history.Change_Row,ok:bool) {
     task=ai_task_find(m,mark.task)
     if task==nil || !ai_task_reviewable(task) || !ai_task_current(s,task) || mark.transaction>=len(task.review.transactions) {return}
     rows:=&task.review.transactions[mark.transaction].rows
@@ -555,7 +560,7 @@ ai_review_field_revert :: proc(s:^Session,m:^Ai,w:core.World_Ref,t:^core.Table_I
     review:=&task.review
     // What the field had before the first change of the turn and what the
     // last one left.
-    first,last:^Change_Row
+    first,last:^history.Change_Row
     for &transaction in review.transactions {
         for &row in transaction.rows {
             if row.id!=id || row.table!=table {continue}
@@ -576,7 +581,7 @@ ai_review_field_revert :: proc(s:^Session,m:^Ai,w:core.World_Ref,t:^core.Table_I
             row:=&transaction.rows[i]
             if row.id!=id || row.table!=table {continue}
             copy(row.after[offset:][:size],row.before[offset:][:size])
-            if row.before_off==row.after_off && change_equal(t.info,raw_data(row.before),raw_data(row.after)) {ai_review_row_remove(review,&transaction,i)}
+            if row.before_off==row.after_off && history.change_equal(t.info,raw_data(row.before),raw_data(row.after)) {ai_review_row_remove(review,&transaction,i)}
         }
     }
     ai_review_settle(s,m,task)
@@ -585,7 +590,7 @@ ai_review_field_revert :: proc(s:^Session,m:^Ai,w:core.World_Ref,t:^core.Table_I
 
 // Whether the turn deleted an entity and it is still gone: kept or undone, it is not.
 ai_review_deleted :: proc(w:core.World_Ref,task:^Ai_Task,id:base.Entity_Id) -> bool {
-    if change_entity(w,id)!=core.NONE {return false}
+    if history.change_entity(w,id)!=core.NONE {return false}
     #reverse for &transaction in task.review.transactions {
         for &row in transaction.rows {
             if row.id!=id || row.table<0 || row.table>=len(w.info.tables) || w.info.tables[row.table].type!=core.Id {continue}
@@ -619,7 +624,7 @@ ai_review_deleted_world :: proc(w:core.World_Ref,task:^Ai_Task,id:base.Entity_Id
     if parent,child:=ai_review_deleted_value(w,task,id,core.Parent);child {
         parent_id:base.Entity_Id
         mem.copy(&parent_id,&parent.entity,size_of(parent_id))
-        if e:=change_entity(w,parent_id);e!=core.NONE {
+        if e:=history.change_entity(w,parent_id);e!=core.NONE {
             place=mm.transform_compose(entity_world(w,e),place)
         } else if outer,found:=ai_review_deleted_world(w,task,parent_id,depth+1);found {
             place=mm.transform_compose(outer,place)
@@ -631,7 +636,7 @@ ai_review_deleted_world :: proc(w:core.World_Ref,task:^Ai_Task,id:base.Entity_Id
 // The last transaction of the turn that deleted an entity: its rows hold
 // what the entity was.
 @(private)
-ai_review_deletion :: proc(w:core.World_Ref,task:^Ai_Task,id:base.Entity_Id) -> ^Change_Set {
+ai_review_deletion :: proc(w:core.World_Ref,task:^Ai_Task,id:base.Entity_Id) -> ^history.Change_Set {
     #reverse for &transaction in task.review.transactions {
         for &row in transaction.rows {
             if row.id!=id || row.table<0 || row.table>=len(w.info.tables) || w.info.tables[row.table].type!=core.Id {continue}
@@ -659,13 +664,13 @@ ai_review_entity_restore :: proc(s:^Session,m:^Ai,task:^Ai_Task,id:base.Entity_I
     if parent,child:=ai_review_deleted_value(w,task,id,core.Parent);child {
         parent_id:base.Entity_Id
         mem.copy(&parent_id,&parent.entity,size_of(parent_id))
-        if parent_id!=0 && change_entity(w,parent_id)==core.NONE {
+        if parent_id!=0 && history.change_entity(w,parent_id)==core.NONE {
             return fmt.tprintf("Put back %s first: it was the parent of this entity",ai_review_deleted_name(w,task,parent_id))
         }
     }
     transaction:=ai_review_deletion(w,task,id)
     opened,edit_ready:=edit_open(s,"Restore agent deletion")
-    if !edit_ready {return edits_error_text(s.edits.error)}
+    if !edit_ready {return history.edits_error_text(s.edits.error)}
     defer edit_close(s,opened)
     e:=core.create(core.world_entities(w))
     core.add(core.world_table_of(w,core.Id),e,core.Id{id})
@@ -674,7 +679,7 @@ ai_review_entity_restore :: proc(s:^Session,m:^Ai,task:^Ai_Task,id:base.Entity_I
         if row.id!=id || !row.before_present || row.after_present || row.table<0 || row.table>=len(w.info.tables) {continue}
         descriptor:=&w.info.tables[row.table]
         if descriptor.type==core.Id {continue}
-        restored:=change_materialize(w,descriptor.info,row.before)
+        restored:=history.change_materialize(w,descriptor.info,row.before)
         table:=core.world_table_at(w,descriptor)
         core.raw_add(table,descriptor.info,e,raw_data(restored))
         if row.before_off {core.raw_disable(table,e)}
@@ -710,7 +715,7 @@ ai_review_entity_put_back :: proc(s:^Session,m:^Ai,task:^Ai_Task,id:base.Entity_
     if !ai_task_current(s,task) {return "Open the task's document before reverting"}
     w:=edited_world(s)
     if ai_review_deleted(w,task,id) {return ai_review_entity_restore(s,m,task,id)}
-    e:=change_entity(w,id)
+    e:=history.change_entity(w,id)
     if e==core.NONE {return "That entity is no longer in the scene"}
     for &transaction in task.review.transactions {
         for &row in transaction.rows {
@@ -718,13 +723,13 @@ ai_review_entity_put_back :: proc(s:^Session,m:^Ai,task:^Ai_Task,id:base.Entity_
         }
     }
     opened,edit_ready:=edit_open(s,"Revert agent entity")
-    if !edit_ready {return edits_error_text(s.edits.error)}
+    if !edit_ready {return history.edits_error_text(s.edits.error)}
     defer edit_close(s,opened)
     #reverse for &transaction in task.review.transactions {
         for &row in transaction.rows {
             if row.id!=id {continue}
             if row.table<0 || row.table>=len(w.info.tables) {task.review.skipped+=1;continue}
-            change_row_put(w,&row,e,false,&task.review.skipped)
+            history.change_row_put(w,&row,e,false,&task.review.skipped)
         }
         core.world_settle(w)
     }
@@ -774,14 +779,14 @@ ai_review_file_forget :: proc(review:^Ai_Review,path:string) {
             if file.path!=path {continue}
             review.bytes-=len(file.before)+len(file.after)
             review.rows-=1
-            change_file_free(file)
+            history.change_file_free(file)
             ordered_remove(&transaction.files,i)
         }
     }
 }
 
 @(private)
-ai_review_row_remove :: proc(review:^Ai_Review,transaction:^Change_Set,index:int) {
+ai_review_row_remove :: proc(review:^Ai_Review,transaction:^history.Change_Set,index:int) {
     row:=&transaction.rows[index]
     review.bytes-=len(row.before)+len(row.after)
     review.rows-=1
@@ -796,12 +801,12 @@ ai_review_entity_take_out :: proc(s:^Session,m:^Ai,task:^Ai_Task,id:base.Entity_
     w:=edited_world(s)
     alive:=make([dynamic]base.Entity_Id,context.temp_allocator)
     for changed in task.review.changed_ids {
-        if change_entity(w,changed)!=core.NONE {append(&alive,changed)}
+        if history.change_entity(w,changed)!=core.NONE {append(&alive,changed)}
     }
     entities_delete(s,{e})
-    if change_entity(w,id)!=core.NONE {return "The entity could not be taken out: it is held by a prefab or by another editor"}
+    if history.change_entity(w,id)!=core.NONE {return "The entity could not be taken out: it is held by a prefab or by another editor"}
     for changed in alive {
-        if change_entity(w,changed)==core.NONE {ai_review_entity_forget(&task.review,changed)}
+        if history.change_entity(w,changed)==core.NONE {ai_review_entity_forget(&task.review,changed)}
     }
     ai_review_settle(s,m,task)
     return ""
@@ -825,8 +830,8 @@ ai_review_entity_forget :: proc(review:^Ai_Review,id:base.Entity_Id) {
 ai_review_settle :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     review:=&task.review
     for i:=len(review.transactions)-1;i>=0;i-=1 {
-        if !change_set_empty(&review.transactions[i]) {continue}
-        change_set_free(&review.transactions[i])
+        if !history.change_set_empty(&review.transactions[i]) {continue}
+        history.change_set_free(&review.transactions[i])
         ordered_remove(&review.transactions,i)
     }
     for i:=len(review.changed_files)-1;i>=0;i-=1 {

@@ -24,8 +24,8 @@ DIG_ORE :: 3
 dig_material :: proc(o:^Out,name:string,color:[3]f32,roughness:f32,metallic:f32=0) -> base.Asset_Id {
     info:=asset.MATERIAL_DEFAULTS
     info.base_color,info.roughness,info.metallic=color,roughness,metallic
-    id:=id_of("material",name)
-    check(o,name,asset.material_save(path(o,fmt.tprintf("assets/dig/%s.mat",name)),&o.types,{id=id,info=info}))
+    id:=asset.content_id(PROJECT,"material",name)
+    asset.content_check(&o.content,name,asset.material_save(path(o,fmt.tprintf("assets/dig/%s.mat",name)),&o.content.types,{id=id,info=info}))
     return id
 }
 
@@ -33,25 +33,24 @@ dig_material :: proc(o:^Out,name:string,color:[3]f32,roughness:f32,metallic:f32=
 // up. Its shape hangs from the body, scaled: a spawn places the root.
 @(private="file")
 dig_prefab :: proc(o:^Out,name,file:string,shape:render.Shape,material:base.Asset_Id,size:[3]f32,pickup:bool) -> base.Asset_Id {
-    id:=id_of("prefab",file)
-    s:Scene_Out
-    asset.scene_init(&s.scene,&o.types,asset.KIND_PREFAB,id)
-    defer asset.scene_destroy(&s.scene)
-    e:=entity(&s,name)
+    id:=asset.content_id(PROJECT,"prefab",file)
+    s:asset.Scene_Builder
+    asset.builder_init(&s,&o.content,asset.KIND_PREFAB,id)
+    defer asset.builder_destroy(&s)
+    e:=asset.builder_entity(&s,name)
     body:=phys.RIGID_BODY_DYNAMIC
-    put(&s,e,"Rigid_Body",&body)
-    look:=entity(&s,"Shape",{},size,e)
+    asset.builder_set(&s,e,body)
+    look:=asset.builder_entity(&s,"Shape",{scale=size},e)
     mesh:=render.Mesh_Renderer{shape=shape}
     mesh.materials[0]=material
-    put(&s,look,"Mesh_Renderer",&mesh)
+    asset.builder_set(&s,look,mesh)
     collider:=shape==.Sphere?phys.collider_sphere(0.5):phys.collider_box({0.5,0.5,0.5})
-    put(&s,look,"Collider",&collider)
+    asset.builder_set(&s,look,collider)
     if pickup {
-        put(&s,e,"Dig_Pickup",&game.Dig_Pickup{material=material})
+        asset.builder_set(&s,e,game.Dig_Pickup{material=material})
         tinted(&s,look,{1,1,1},{2.5,1.4,0.4})
     }
-    if s.failed {o.failed=true;return id}
-    check(o,file,asset.scene_save(&s.scene,path(o,fmt.tprintf("assets/dig/%s.prefab",file))))
+    asset.builder_save(&s,path(o,fmt.tprintf("assets/dig/%s.prefab",file)))
     return id
 }
 
@@ -69,21 +68,21 @@ write_dig_scene :: proc(o:^Out) {
     // 32 by 16 by 32 m: solid from 7.5 m under the surface, at 0, up to it.
     source:terrain.Source
     defer terrain.source_destroy(&source)
-    if !terrain.source_make(&source,.Volume,{65,33,65},0.5,16) {fmt.eprintln("demo_content: the dig terrain could not be made");o.failed=true;return}
+    if !terrain.source_make(&source,.Volume,{65,33,65},0.5,16) {fmt.eprintln("demo_content: the dig terrain could not be made");o.content.failed=true;return}
     layers:=[4]base.Asset_Id{grass,soil,rock,ore}
     for material,i in layers {
         layer:=terrain.LAYER_DEFAULT
         layer.material,layer.tiling=material,i==DIG_ROCK?2:4
-        if !terrain.source_layer_set(&source,i,layer) {o.failed=true;return}
+        if !terrain.source_layer_set(&source,i,layer) {o.content.failed=true;return}
     }
     source.interior={
         strata_count=3,strata={{layer=DIG_GRASS,depth=0.4},{layer=DIG_SOIL,depth=2.2},{layer=DIG_ROCK,depth=100},{}},
         vein_count=1,veins={{layer=DIG_ORE,shape=.Pocket,scale=1.6,amount=0.45,depth={2.8,100},seed=7},{},{},{}},
         wave=0.5,wave_scale=6,seed=3,
     }
-    if !terrain.source_interior_apply(&source) {fmt.eprintln("demo_content: the interior of the dig could not be written");o.failed=true;return}
-    terrain_id:=id_of("terrain","dig")
-    check(o,"dig terrain",terrain.source_save(&source,path(o,"assets/dig/dig.terrain"),terrain_id,&o.types))
+    if !terrain.source_interior_apply(&source) {fmt.eprintln("demo_content: the interior of the dig could not be written");o.content.failed=true;return}
+    terrain_id:=asset.content_id(PROJECT,"terrain","dig")
+    asset.content_check(&o.content,"dig terrain",terrain.source_save(&source,path(o,"assets/dig/dig.terrain"),terrain_id,&o.content.types))
 
     dust:=effect.PARTICLE_DEFAULTS
     dust.duration,dust.max_particles,dust.rate=1,4000,0
@@ -91,50 +90,45 @@ write_dig_scene :: proc(o:^Out) {
     dust.lifetime,dust.speed,dust.size=[2]f32{1.6,3.2},[2]f32{0.2,1.1},[2]f32{0.2,0.55}
     dust.gravity,dust.drag=0.05,1.4
     dust.colors={{0.85,0.8,0.7,0.6},{0.8,0.76,0.68,0}}
-    dust_id:=id_of("particle","dig_dust")
-    check(o,"dig dust",effect.particle_save(path(o,"assets/dig/dig_dust.particle"),&o.types,{id=dust_id,info=dust}))
+    dust_id:=asset.content_id(PROJECT,"particle","dig_dust")
+    asset.content_check(&o.content,"dig dust",effect.particle_save(path(o,"assets/dig/dig_dust.particle"),&o.content.types,{id=dust_id,info=dust}))
 
     soil_piece:=dig_prefab(o,"Soil piece","dig_soil_piece",.Cube,soil,{0.22,0.16,0.2},false)
     rock_piece:=dig_prefab(o,"Rock piece","dig_rock_piece",.Cube,rock,{0.26,0.2,0.24},false)
     ore_drop:=dig_prefab(o,"Ore","dig_ore_drop",.Sphere,ore,{0.3,0.3,0.3},true)
 
-    s:Scene_Out
-    asset.scene_init(&s.scene,&o.types,asset.KIND_SCENE,id_of("scene","dig"))
-    defer asset.scene_destroy(&s.scene)
+    s:asset.Scene_Builder
+    asset.builder_init(&s,&o.content,asset.KIND_SCENE,asset.content_id(PROJECT,"scene","dig"))
+    defer asset.builder_destroy(&s)
     u:=daylight(3)
     environment,turn,to_sun,disc:=sky_of(o,.Day,mm.quat_rotate(mm.quat_from_euler({-0.75,0.6,0}),render.SUN_DIRECTION),u,3)
     sky_set(&s,&environment,turn)
-    sun:=entity(&s,"Sun")
+    sun:=asset.builder_entity(&s,"Sun")
     pose:=sun_pose(to_sun)
-    put(&s,sun,"Transform",&pose)
-    put(&s,sun,"Sun",&render.Sun{color={1,0.95,0.86},illuminance=lux(u,3),disc=disc})
+    asset.builder_set(&s,sun,pose)
+    asset.builder_set(&s,sun,render.Sun{color={1,0.95,0.86},illuminance=lux(u,3),disc=disc})
 
-    site:=entity(&s,"Dig site")
-    put(&s,site,"Terrain",&terrain.Terrain{source=terrain_id,solid=true})
+    site:=asset.builder_entity(&s,"Dig site")
+    asset.builder_set(&s,site,terrain.Terrain{source=terrain_id,solid=true})
     site_dig:=game.DIG_SITE_DEFAULT
-    put(&s,site,"Dig_Site",&site_dig)
+    asset.builder_set(&s,site,site_dig)
     raised:=terrain_vfx.TERRAIN_DUST_DEFAULT
     raised.layers[DIG_GRASS].color={0.62,0.66,0.45,1}
     raised.layers[DIG_SOIL].color={0.78,0.62,0.45,1}
     raised.layers[DIG_ROCK].color={0.8,0.8,0.78,1}
     raised.layers[DIG_ORE].color={1,0.72,0.42,1}
-    put(&s,site,"Terrain_Dust",&raised)
+    asset.builder_set(&s,site,raised)
     left:=debris.TERRAIN_DEBRIS_DEFAULT
     left.layers={}
     left.layers[DIG_SOIL]={piece=soil_piece,piece_volume=1}
     left.layers[DIG_ROCK]={piece=rock_piece,piece_volume=0.8}
     left.layers[DIG_ORE]={piece=rock_piece,piece_volume=1,drop=ore_drop,drop_volume=0.6}
-    put(&s,site,"Terrain_Debris",&left)
+    asset.builder_set(&s,site,left)
 
-    dust_entity:=entity(&s,"Dig dust")
-    put(&s,dust_entity,"Particle_Emitter",&vfx.Particle_Emitter{particle=dust_id,active=true,loop=true})
+    dust_entity:=asset.builder_entity(&s,"Dig dust")
+    asset.builder_set(&s,dust_entity,vfx.Particle_Emitter{particle=dust_id,active=true,loop=true})
     channel:=vfx.Particle_Channel{name=terrain_vfx.CHANNEL_DUST}
-    put(&s,dust_entity,"Particle_Channel",&channel)
+    asset.builder_set(&s,dust_entity,channel)
     spawn_point(&s,{0,0.2,7})
-    if s.failed {
-        fmt.eprintln("demo_content: the dig scene could not be built")
-        o.failed=true
-        return
-    }
-    check(o,"assets/dig/dig.scene",asset.scene_save(&s.scene,path(o,"assets/dig/dig.scene")))
+    asset.builder_save(&s,path(o,"assets/dig/dig.scene"))
 }

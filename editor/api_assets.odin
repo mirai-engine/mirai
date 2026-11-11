@@ -1,8 +1,10 @@
 package editor
 
 import "core:reflect"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
@@ -11,18 +13,21 @@ import "mirai:std/serial"
 // What the API tells of the building blocks of the project: the components
 // of its world with their fields, and the assets of its registry.
 
+API_COMPONENT_NAMES :: 16 // components component.list gives whole in one call
+
 Api_Component_Params :: struct {
-    name:[64]u8 `mirai:"text,optional,label=Only this component"`,
+    names:[API_COMPONENT_NAMES][64]u8 `mirai:"text,optional,label=The components to give with defaults and fields (name for one); without any: all their names with what each is"`,
     include_runtime:bool `mirai:"optional,label=Include the components the engine derives and the hidden and transient fields with their defaults"`,
 }
 
 Api_Component_List :: struct {
     components:[1]Api_Component_Entry `mirai:"list"`,
+    left_out:[256]u8 `mirai:"text,optional,label=What the answer leaves out and how to ask for it"`,
 }
 Api_Component_Entry :: struct {
     name:[64]u8 `mirai:"text"`,
     library:[64]u8 `mirai:"text,label=The package that declares it"`,
-    description:[1024]u8 `mirai:"text"`,
+    description:[1024]u8 `mirai:"text,optional"`,
     plain_data:bool `mirai:"optional,label=Present and false when the component is not plain data: it has no default nor fields"`,
     default:u8 `mirai:"any,optional,label=The value of a new component"`,
     fields:[1]Api_Component_Field `mirai:"list,optional,label=Every field down to those of nested structs"`,
@@ -45,7 +50,7 @@ Api_Asset_Params :: struct {
     kind:[32]u8 `mirai:"text,optional,label=Only the assets of this kind as the results name it (mesh; material; sound set or one of a plugin); empty or all: every kind"`,
     folder:[256]u8 `mirai:"text,optional,label=Only the assets under this folder"`,
     offset:int `mirai:"optional,min=0,max=1000000"`,
-    limit:int `mirai:"optional,min=1,max=1024"`,
+    limit:int `mirai:"optional,min=1,max=1024,clamp"`,
 }
 
 Api_Asset_List :: struct {
@@ -93,9 +98,7 @@ api_assets_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="asset.convert",summary="Turns a scene into a prefab or a prefab into a scene, keeping its id; a scene needs one root and no Scene_Reference to become a prefab. At once, not an edit.",params=Api_Asset_Convert_Params,run=api_asset_convert})
     api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=Api_Asset_Users_Params,result=Api_Asset_Users_Result,writes_result=true,flags={.Read_Only},run=api_asset_users})
     api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=Api_Asset_Delete_Params,result=Api_Asset_Delete_Result,writes_result=true,flags={.Destructive},run=api_asset_delete})
-    api_register(s,st,{name="asset.rename",summary="Renames an asset or a folder at once and without undo; an asset keeps its id and its extension and what uses it keeps the reference. Fails for files of plugins, the engine or the editor, open tabs, unsaved changes and outside Edit.",params=Api_Asset_Rename_Params,result=Api_Asset_Moved_Result,run=api_asset_rename})
-    api_register(s,st,{name="asset.move",summary="Moves an asset with the parts it owns, or a folder with all it holds, to another folder of the assets at once and without undo; ids and references stay. Fails as asset.rename does and for a folder into itself.",params=Api_Asset_Move_Params,result=Api_Asset_Moved_Result,run=api_asset_move})
-    api_register(s,st,{name="asset.duplicate",summary="Copies an asset with the parts it owns, or a folder with all it holds, beside itself with a free name and new ids; the copies name each other and are no output of an import.",params=Api_Asset_Duplicate_Params,result=Api_Asset_Moved_Result,run=api_asset_duplicate})
+    api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, unsaved changes, a folder into itself and outside Edit.",params=Api_Asset_Move_Params,result=Api_Asset_Moved_Result,run=api_asset_move})
 }
 
 // ---------------------------------------------------------------- component.list
@@ -161,31 +164,41 @@ api_schema_derived :: proc(schema:^serial.Schema,type:serial.Type_Index) -> bool
 @(private)
 api_component_list :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Component_Params)
-    name:=base.text_get(params.name[:])
     st:=api_state(s)
     w:=call.out
-    if name!="" {
-        named:=component_table(s,name)
-        if named==nil {
-            api.call_failf(call,api.INVALID_PARAMS,"%q is not a component of the world",name)
+    named:[API_COMPONENT_NAMES]^core.Table_Info
+    count:=0
+    for &entry in params.names {
+        name:=base.text_get(entry[:])
+        if name=="" {continue}
+        table,problem:=api_component_named(shown_world(s),name)
+        if table==nil {
+            api.call_failf(call,api.INVALID_PARAMS,"%s; component.list without a name lists them",problem)
             return
         }
-        if type:=st.types[api_table_index(s,named)];!params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {
-            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, play.inspect reads it; include_runtime=true lists it",named.name)
+        if type:=st.types[api_table_index(s,table)];!params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {
+            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, play.inspect reads it; include_runtime=true lists it",table.name)
             return
         }
+        named[count]=table
+        count+=1
     }
     serial.text_write_raw(w,`{"components":[`)
     first:=true
     for &t,i in s.info.tables {
-        if t.place!=.World || name!="" && !strings.equal_fold(t.name,name) {continue}
+        if t.place!=.World || count>0 && !slice.contains(named[:count],&t) {continue}
         type:=st.types[i]
         // A derived component is not added nor written: play.inspect reads it.
         if !params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {continue}
         if !first {serial.write_u8(w,',')}
         first=false
-        size:=t.info.size
         serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,t.name)
+        if count==0 {
+            if brief:=api.summary_brief(t.description);brief!="" {api.write_key(w,"description");serial.text_write_string(w,brief)}
+            serial.write_u8(w,'}')
+            continue
+        }
+        size:=t.info.size
         api.write_key(w,"library");serial.text_write_string(w,t.library)
         api.write_key(w,"description");serial.text_write_string(w,t.description)
         if type==serial.TYPE_NONE {
@@ -204,7 +217,12 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
         serial.write_u8(w,']')
         serial.write_u8(w,'}')
     }
-    serial.text_write_raw(w,"]}")
+    serial.write_u8(w,']')
+    if count==0 {
+        api.write_key(w,"left_out")
+        serial.text_write_string(w,"the library, default and fields of each: ask for them with name or names (up to 16)")
+    }
+    serial.write_u8(w,'}')
 }
 
 // ---------------------------------------------------------------- asset.list

@@ -18,6 +18,17 @@ they share.
   `DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD`, which inside a job also releases
   ([jobs](jobs.md#temporary-memory)). `Slicer`, `Fracture` and `Mesh_Surface_Workspace` keep their
   memory between calls: after the first ones, an operation of the same size does not allocate.
+- An operation takes the memory of its caller's allocator before it writes. The tables of the
+  package (`Key_Map`, `Point_Set`) grow only when they are reset for the entries they will hold,
+  and the slicer, the fracture and the triangulation reserve for a bound computed from their input
+  (vertices, split triangles, border edges, sites) and then fill without growing: a write without
+  bounds check is inside what was reserved. A new array filled in such a loop gets its bound first.
+- Without that memory the operation returns the `Out_Of_Memory` of its error (`polygon_triangulate`
+  and `delaunay_triangulate` give no triangles and `polygon_convex_partition` no pieces;
+  `mesh_tangents`, `mesh_weld`, `hull_append_mesh`, the built-in shapes and those of `shapes.odin`
+  give false and append nothing), leaves its outputs empty and keeps nothing; its
+  workspace gives, with memory again, what a new one gives. The temporary allocator is not covered:
+  `positions_weld` gives 0 and `mesh_topology` an open mesh without it, and the rest assume it.
 
 ## Determinism, precision and tolerance
 
@@ -26,7 +37,7 @@ they share.
     without the platform libm (the angles of the primitives come from `turn_sincos`, a polynomial
     with exact quadrants; the icosphere uses `math.atan2`, implemented in Odin).
   - Walks have a fixed order, ties are resolved by index and no hash table is iterated. The
-    fracture sites come from its own PCG32 that depends only on the seed.
+    fracture sites come from a `base.Rng` that depends only on the seed.
   - Equality across architectures depends on the compiler not contracting `a*b+c` (Odin does not by
     default).
 - **Precision.** Coordinates enter and leave as `f32`. The predicates (side of a plane,
@@ -139,6 +150,10 @@ surfaces (an interior cavity has opposite orientation).
 
 - The `*_build` of `primitives.odin` fit, with their default arguments, in the centered unit cube
   with +Y up, and are closed by position except the plane.
+- The shapes of `shapes.odin` (`tube_build`, `lathe_build`, `extrude_build`, `blade_build`,
+  `fan_build`, `blob_build`) append to the same `Mesh_Buffer`, closed except the blade, whose
+  triangles face their normals; `mesh_buffer_paint` colors what has none yet, `mesh_buffer_place`
+  moves a part and `mesh_buffer_flatten` gives every triangle its own vertices.
 - `polygon_triangulate` leaves each loop edge in exactly one triangle and always terminates;
   `delaunay_triangulate` omits repeated points and gives no triangles with collinear or non-finite
   points.
@@ -232,8 +247,12 @@ decomposition.
 
 ## Verification
 
+- `shapes_test.odin`: the shapes of props are closed and face outwards; blades, fans and parts.
 - `hostile_test.odin` calls each public function with random inputs
   (`-define:GEOM_HOSTILE_ROUNDS=n`; 20,000 with `--release` when changing validation).
+- `calls_without_memory_fail_whole_and_their_workspaces_work_again` ends the memory at each request
+  of each operation. When changing what an operation reserves, run the package once over a copy
+  without `#no_bounds_check` whose `push` and tables assert their room.
 - When changing an algorithm, keep the walk order and the tie-breaks: they are part of the
   replication contract.
 - `isosurface_regions_of_mixed_levels_join_closed_without_cracks`: regions of random levels close,

@@ -47,8 +47,7 @@ import "mirai:std/serial"
 // Skin vertices are immutable bind-space geometry. The palette transforms them
 // by inverse(mesh_node_world) * joint_world * inverse_bind.
 
-MESH_VERSION :: 10
-MESH_OLDEST :: MESH_VERSION
+MESH_VERSION :: 11
 MESH_MAX_SLOTS :: 32
 MESH_MAX_LEVELS :: 32
 MESH_RAY_LEVELS :: 4 // the level 0 rays trace near, and up to three coarser cuts of the DAG for far away
@@ -419,7 +418,7 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
         document_resize(doc,vertices,len(view.skin)) or_return
         document_column_put(doc,types,vertices,"skin",view.skin,{},.LZ,MESH_BULK_ALIGNMENT) or_return
     }
-    pages,data:=pages_compress(view.geometry,.Edit,doc.allocator) or_return
+    pages,data:=pages_compress(view.geometry,PACK_EDIT,doc.allocator) or_return
     defer {delete(pages,doc.allocator);delete(data)}
     bulk(doc,types,"pages",pages) or_return
     _,error:=document_put(doc,types,"page_data",data[:],{.Bulk},.None,MESH_BULK_ALIGNMENT)
@@ -431,7 +430,7 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
 // root is not every page as it does one of a file. In allocator, with
 // scratch from the temporary allocator; false without memory.
 mesh_pages_pack :: proc(g:^Mesh_Geometry,allocator:=context.allocator) -> bool {
-    pages,data,error:=pages_compress(g^,.Edit,allocator)
+    pages,data,error:=pages_compress(g^,PACK_EDIT,allocator)
     if error!=.None {return false}
     delete(g.pages,allocator)
     g.pages,g.page_data=pages,data[:]
@@ -445,7 +444,7 @@ mesh_pages_repack :: proc(doc:^Document,p:Pack) -> Error {
     pages_table,has_pages:=document_table(doc,"pages")
     data_table,has_data:=document_table(doc,"page_data")
     if !has_pages || !has_data {return .None}
-    if kind_age(doc.kind_version,MESH_OLDEST,MESH_VERSION)>=.Too_Old {return .Version}
+    if doc.kind_version!=MESH_VERSION {return .Version}
     info_table,has_info:=document_table(doc,"mesh")
     clusters_table,has_clusters:=document_table(doc,"clusters")
     if !has_info || !has_clusters {return .Corrupt}
@@ -488,7 +487,7 @@ mesh_save :: proc(path:string,types:^Types,desc:Mesh_Desc,allocator:=context.all
 // the asset. Everything a range refers to is inside what the file holds;
 // mesh_check_indices looks at the indices and the weights themselves.
 mesh_view :: proc(a:^Asset,types:^Types) -> (view:Mesh_View,error:Error) {
-    kind_check(a,KIND_MESH,MESH_OLDEST,MESH_VERSION) or_return
+    kind_check(a,KIND_MESH,MESH_VERSION) or_return
     view.info=asset_row(a,types,"mesh",Mesh_Info) or_return
     view.clusters=table_rows(a,types,"clusters",Cluster) or_return
     view.levels=table_rows(a,types,"levels",Mesh_Level) or_return
@@ -727,7 +726,8 @@ skin_weights_quantize :: proc "contextless" (weights:[8]f32) -> (bytes:[8]u8) {
 // corners take different tangents is repeated, with its skin when skin has
 // one per vertex. indices are rewritten in place. False without memory or
 // for indices outside the vertices.
-mesh_tangents :: proc(vertices:^[dynamic]Vertex,indices:[]u32,skin:^[dynamic]Skin_Vertex=nil,scratch:=context.temp_allocator) -> bool {
+mesh_tangents :: proc(vertices:^[dynamic]Vertex,indices:[]u32,skin:^[dynamic]Skin_Vertex=nil) -> bool {
+    scratch:=context.temp_allocator
     count:=len(vertices)
     for index in indices {if int(index)>=count {return false}}
     positions:=make([][3]f32,count,scratch)
@@ -751,8 +751,10 @@ mesh_tangents :: proc(vertices:^[dynamic]Vertex,indices:[]u32,skin:^[dynamic]Ski
         target:=index
         if vertices[index].tangent!=0 {
             target=u32(len(vertices))
-            append(vertices,vertices[index])
-            if skinned {append(skin,skin[index])}
+            _,no_vertex:=append(vertices,vertices[index])
+            no_skin:mem.Allocator_Error
+            if skinned {_,no_skin=append(skin,skin[index])}
+            if no_vertex!=nil || no_skin!=nil {return false}
         }
         vertices[target].tangent=packed
         known[key]=target

@@ -27,7 +27,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
         input,_:=core.get(inputs,entity)
         placed,_:=core.get(worlds,entity)
         wish:=phys.move_wish(input,mm.QUAT_IDENTITY)
-        facing:=mm.quat_rotate(placed.rotation,mm.Vec3{0,0,1}) if character.move_relative_to==.Look else wish
+        facing:=mm.quat_forward(placed.rotation) if character.move_relative_to==.Look else wish
         state,_:=core.get(found,entity)
         goal:=anim.Match_Goal{rig=entity,mode=u16(character.mode),velocity=going.linear,facing=facing,wall=state.wall_normal,turn_rate=character.turn_speed}
         playing,matching:=anim.animation_match(playback.ptr,entity)
@@ -52,14 +52,11 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),found:core.Rea
                 goal.desired,goal.acceleration,goal.braking=walk_goal(walk,character.mode==phys.MODE_FALLING,wish,going.linear,phys.walk_speed(walk,input,sprinting,character.mode==phys.MODE_CROUCHING,boost))
             }
         }
-        if !anim.match_goal(requests,goal) {
-            core.report(problems,entity,"animation.match_goal","the locomotion of this Character was not told to its motion matching: a value of its body is not finite, its mode is past 31, or more than %d characters animate in one tick; fix its Character, or animate fewer of them",anim.MATCH_GOAL_CAPACITY)
-            continue
-        }
+        anim.match_goal(requests,goal)
         if animation.motion=={} || !matching {continue}
         // The warping corrects what the clip travels, in its own direction, toward the body: a clip
         // that strafes or backs off is not turned as if it went forward.
-        along:=playing.travel if playing.travel!={} else mm.Vec3{0,0,1}
+        along:=playing.travel if playing.travel!={} else mm.FORWARD
         anim.motion_locomotion(warps,{rig=entity,velocity={playing.velocity.x,0,playing.velocity.z},source_velocity=mm.quat_rotate(placed.rotation,along*playing.speed),weight=1,enabled=(character.mode==phys.MODE_WALKING || character.mode==phys.MODE_CROUCHING) && !playing.forced && playing.speed>0})
     }
 }

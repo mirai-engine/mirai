@@ -7,6 +7,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:cook/textures"
 import "mirai:editor"
+import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -17,6 +18,7 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:ui"
+import "base:runtime"
 
 @(private) HEIGHTMAP_DIALOG :: u32(0x74657268)
 
@@ -31,7 +33,7 @@ terrain_creation_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
     ctx:=s.gui.ctx
     kinds:=[3]terrain.Source_Kind{.Heightfield,.Mesh,.Volume}
     kind:=tool.create_kind==.Heightfield?0:tool.create_kind==.Mesh?1:2
-    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{"Heightfield Terrain","3D Terrain","Volumetric Terrain"},&kind,{width=-1,height=ctx.theme.row}) {tool.create_kind=kinds[kind]}
+    if ui.dropdown(ctx,ui.id(ctx,"source_kind"),{list={"Heightfield Terrain","3D Terrain","Volumetric Terrain"}},&kind,{width=-1,height=ctx.theme.row}) {tool.create_kind=kinds[kind]}
     if tool.create_kind!=.Volume {
         if tool.create_kind==.Heightfield && tool.create_source==.Selection {tool.create_source=.Plane}
         source:=int(tool.create_source)
@@ -70,12 +72,12 @@ terrain_creation_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
         solid:=f64(tool.solid_depth)
         if ui.property(ctx,"Base depth") {if ui.number_field(ctx,ui.id(ctx,"create_solid"),&solid,{min=0,max=10000,has_min=true,has_max=true,speed=0.1}).changed {tool.solid_depth=f32(solid)}}
     }
-    if ui.button(ctx,ui.id(ctx,"create"),{label=selection?"Convert selected mesh":"New terrain",style=.Field,width=-1,center=true}).clicked {terrain_create(s,tool,world,app)}
+    if ui.button(ctx,ui.id(ctx,"create"),{label=selection?"Convert selected mesh":"New terrain",style=.Field,width=-1,center=true}).clicked {terrain_create(s,tool,world,app.assets,app.allocator)}
 }
 
 @(private)
-terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,at:=[3]f32{},placed:=false,ground:=core.NONE) -> (made:core.Entity) {
-    a:=app.assets;terrains:=core.world_table_of(world,terrain.Terrain);meshes:=core.world_table_of(world,erender.Mesh_Renderer)
+terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,at:=[3]f32{},placed:=false,ground:=core.NONE,name:="") -> (made:core.Entity) {
+    a:=assets;terrains:=core.world_table_of(world,terrain.Terrain);meshes:=core.world_table_of(world,erender.Mesh_Renderer)
     if a==nil || terrains==nil || meshes==nil {editor.notify(s,"The project has no terrain library");return}
     source:terrain.Source
     defer terrain.source_destroy(&source)
@@ -84,18 +86,18 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     if ground!=core.NONE {
         if tool.create_kind!=.Volume {editor.notify(s,"Only a Volume joins a Heightfield");return}
         ok:bool
-        if over,ok=volume_over_ground(s,world,app,ground,at,placed,tool,&source);!ok {return}
+        if over,ok=volume_over_ground(s,world,assets,allocator,ground,at,placed,tool,&source);!ok {return}
     } else if tool.create_kind==.Heightfield && tool.create_source==.Selection {
         editor.notify(s,"Heightfield Terrain requires a plane or heightmap");return
     } else if tool.create_kind==.Mesh && tool.create_source==.Selection {
-        converted=editor.selection_active(s.selection)
+        converted=history.selection_active(s.selection)
         static,found:=core.get(core.read(meshes),converted)
         if !found || core.has(core.read(terrains),converted) {editor.notify(s,"Select a static mesh to convert");return}
         if bodies:=core.world_table_of(world,phys.Rigid_Body);bodies!=nil {
             if body,ok:=core.get(core.read(bodies),converted);ok && body.type!=.Static {editor.notify(s,"Terrain requires a static entity");return}
         }
         geometry:geom.Mesh_Buffer
-        geom.mesh_buffer_init(&geometry,app.allocator);defer geom.mesh_buffer_destroy(&geometry)
+        geom.mesh_buffer_init(&geometry,allocator);defer geom.mesh_buffer_destroy(&geometry)
         if !host.assets_geometry(a,static.mesh,static.shape,&geometry,true) {editor.notify(s,"The selected mesh could not be read");return}
         // The materials it shows, its own over those of its mesh, are those of the source.
         held:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
@@ -103,16 +105,16 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         count:=0
         if held!=nil {count=copy(slots[:],held.slot_materials[:held.slot_count])}
         for material,i in static.materials {if material!={} {slots[i]=material;count=max(count,i+1)}}
-        if !terrain.source_from_mesh(&source,geom.mesh_buffer_view(&geometry),tool.cell,tool.chunk_cells,slots[:count],app.allocator) {editor.notify(s,"The selected mesh exceeds the terrain budget");return}
+        if !terrain.source_from_mesh(&source,geom.mesh_buffer_view(&geometry),tool.cell,tool.chunk_cells,slots[:count],allocator) {editor.notify(s,"The selected mesh exceeds the terrain budget");return}
     } else if tool.create_kind!=.Volume && tool.create_source==.Heightmap {
         path:=string(tool.heightmap_path[:tool.heightmap_length])
-        bytes,error:=serial.file_read(path,app.allocator,limit=64*1024*1024)
-        if error!=.None {editor.notify(s,"The heightmap could not be read");return}
-        defer delete(bytes,app.allocator)
-        heightmap,decode:=textures.heightmap_decode(bytes,tool.create_kind==.Mesh?terrain.MESH_SAMPLES_MAX:terrain.HEIGHT_SAMPLES_MAX,app.allocator)
+        bytes,error:=serial.file_read(path,allocator,limit=64*1024*1024)
+        if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return}
+        defer delete(bytes,allocator)
+        heightmap,decode:=textures.heightmap_decode(bytes,tool.create_kind==.Mesh?terrain.MESH_SAMPLES_MAX:terrain.HEIGHT_SAMPLES_MAX,allocator)
         if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return}
         defer textures.heightmap_destroy(&heightmap)
-        if !terrain.source_make(&source,.Heightfield,{heightmap.width,1,heightmap.height},tool.cell,tool.chunk_cells,app.allocator) {editor.notify(s,"The heightmap dimensions exceed their budget");return}
+        if !terrain.source_make(&source,.Heightfield,{heightmap.width,1,heightmap.height},tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The heightmap dimensions exceed their budget");return}
         if !terrain.grid_prepare(&source.heights,{0,0,0},{heightmap.width-1,0,heightmap.height-1},source.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return}
         for value,i in heightmap.values {
             height:=value*tool.height_scale+tool.height_offset
@@ -121,26 +123,25 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         }
     } else {
         samples:=[3]int{tool.samples,tool.create_kind==.Volume?tool.depth:1,tool.samples}
-        if !terrain.source_make(&source,tool.create_kind==.Volume?.Volume:.Heightfield,samples,tool.cell,tool.chunk_cells,app.allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
+        if !terrain.source_make(&source,tool.create_kind==.Volume?.Volume:.Heightfield,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
     }
     if tool.create_kind==.Mesh && source.kind==.Heightfield {
         mesh:terrain.Source
         defer terrain.source_destroy(&mesh)
-        if !terrain.source_convert_heightfield(&mesh,&source,tool.solid_depth,app.allocator) {editor.notify(s,"The terrain could not be converted");return}
+        if !terrain.source_convert_heightfield(&mesh,&source,tool.solid_depth,allocator) {editor.notify(s,"The terrain could not be converted");return}
         source,mesh=mesh,source
     }
     if !terrain_budget(s,world,&source) {return}
-    prefix:=terrain_kind_name(source.kind);label,path:="",""
-    for number:=1;;number+=1 {label=number==1?prefix:fmt.tprintf("%s %d",prefix,number);path=fmt.tprintf("%s/terrain/%s%s",a.registry.root,label,terrain.EXTENSION);if !editor.file_exists(s,path) {break}}
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.EXTENSION,name!="")
     source.revision=1;seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Terrain"))}
-    bytes,error:=terrain.source_bytes(&source,id,&a.types,app.allocator)
+    bytes,error:=terrain.source_bytes(&source,id,&a.types,allocator)
     if error!=.None {editor.notify(s,"The terrain could not be written");return}
-    defer delete(bytes,app.allocator)
+    defer delete(bytes,allocator)
     // The new file is part of the step: undo takes it away, and it stays in
     // the memory of the registry until it is saved.
-    editor.edits_begin(s.edits,s.selection,converted!=core.NONE?"Convert to terrain":"Add terrain")
-    if !editor.file_write(s,path,bytes,"Add terrain") {editor.edits_cancel(s.edits,world);editor.notify(s,"The terrain could not be written");return}
+    history.edits_begin(s.edits,editor.document_selection(s),converted!=core.NONE?"Convert to terrain":"Add terrain")
+    if !editor.file_write(s,path,bytes,"Add terrain") {history.edits_cancel(s.edits,world);editor.notify(s,"The terrain could not be written");return}
     e:=converted
     if e==core.NONE {
         position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
@@ -153,7 +154,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         core.remove(meshes,e)
     }
     core.add(terrains,e,terrain.Terrain{source=id,revision=1,solid=true,ground=over.id})
-    editor.edits_end(s.edits);editor.selection_set(s.selection,{e})
+    history.edits_end(s.edits);history.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=terrain.terrain_stamp(a,id)})
     stroke_free(tool)
     return e
@@ -166,7 +167,7 @@ Ground_Placement :: struct {transform:core.Transform,id:base.Entity_Id}
 // of the view without it) with the ground at its middle, its field the ground
 // to dig into.
 @(private)
-volume_over_ground :: proc(s:^editor.Session,world:core.World_Ref,app:^host.App,ground:core.Entity,at:[3]f32,placed:bool,tool:^Terrain_Tool,source:^terrain.Source) -> (over:Ground_Placement,ok:bool) {
+volume_over_ground :: proc(s:^editor.Session,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,ground:core.Entity,at:[3]f32,placed:bool,tool:^Terrain_Tool,source:^terrain.Source) -> (over:Ground_Placement,ok:bool) {
     terrains:=core.world_table_of(world,terrain.Terrain)
     marker,is:=core.get(core.read(terrains),ground)
     place:=editor.entity_world(world,ground)
@@ -174,7 +175,7 @@ volume_over_ground :: proc(s:^editor.Session,world:core.World_Ref,app:^host.App,
     if !is || over.id==0 {editor.notify(s,"The ground to join is no terrain with an Id");return}
     g:terrain.Source
     defer terrain.source_destroy(&g)
-    if !terrain.terrain_read(&g,app.assets,marker.source,app.allocator) || g.kind!=.Heightfield {editor.notify(s,"A Volume joins a Heightfield terrain");return}
+    if !terrain.terrain_read(&g,assets,marker.source,allocator) || g.kind!=.Heightfield {editor.notify(s,"A Volume joins a Heightfield terrain");return}
     n:=[2]int{tool.samples,tool.samples}
     if n.x>int(g.samples.x) || n.y>int(g.samples.z) {editor.notify(s,"The Volume is larger than the Heightfield it joins");return}
     target:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
@@ -182,7 +183,7 @@ volume_over_ground :: proc(s:^editor.Session,world:core.World_Ref,app:^host.App,
     origin:=terrain.source_origin(&g)
     center:=[2]int{int(linalg.round((local.x-origin.x)/g.cell)),int(linalg.round((local.z-origin.z)/g.cell))}
     offset:=[2]int{clamp(center.x-(n.x-1)/2,0,int(g.samples.x)-n.x),clamp(center.y-(n.y-1)/2,0,int(g.samples.z)-n.y)}
-    if !terrain.source_make(source,.Volume,{n.x,tool.depth,n.y},g.cell,tool.chunk_cells,app.allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
+    if !terrain.source_make(source,.Volume,{n.x,tool.depth,n.y},g.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
     middle:=terrain.grid_get(&g.heights,offset.x+(n.x-1)/2,offset.y+(n.y-1)/2)
     lift:=middle-f32(tool.depth-1)*0.5*g.cell
     if !terrain.source_volume_ground(source,{ground=&g,offset=offset,lift=lift}) {editor.notify(s,"There is not enough memory for the Volume");return}
@@ -205,20 +206,20 @@ edit_error :: proc(s:^editor.Session,error:terrain.Edit_Error) {
 }
 
 @(private)
-terrain_convert :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+terrain_convert :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} || stroke.source.kind==.Mesh {return}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to convert");return}
+    if !history.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to convert");return}
     source:terrain.Source
     defer terrain.source_destroy(&source)
     if stroke.source.kind==.Volume {
-        if !terrain.source_convert_volume(&source,&stroke.source,app.allocator) {editor.notify(s,"The terrain could not be converted: it has no surface, or more triangles than a 3D Terrain holds");return}
+        if !terrain.source_convert_volume(&source,&stroke.source,allocator) {editor.notify(s,"The terrain could not be converted: it has no surface, or more triangles than a 3D Terrain holds");return}
     } else if tool.solid_depth>0 && len(stroke.source.holes.pages)>0 {
         for z in 0..<stroke.source.holes.size.z {for x in 0..<stroke.source.holes.size.x {
             if terrain.source_hole(&stroke.source,x,z) {editor.notify(s,"Fill the holes of the terrain before converting it to a solid mesh");return}
         }}
     }
-    if stroke.source.kind==.Heightfield && !terrain.source_convert_heightfield(&source,&stroke.source,tool.solid_depth,app.allocator) {editor.notify(s,"The terrain could not be converted");return}
+    if stroke.source.kind==.Heightfield && !terrain.source_convert_heightfield(&source,&stroke.source,tool.solid_depth,allocator) {editor.notify(s,"The terrain could not be converted");return}
     if !terrain_budget(s,world,&source,stroke.id) {return}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return}
     // A swap by single stores until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
@@ -226,14 +227,14 @@ terrain_convert :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     stroke.source=source
     source=previous
     stroke.changed=true;stroke.dirty_all=true
-    stroke_end(s,tool,world,app,label="Convert terrain")
+    stroke_end(s,tool,world,assets,label="Convert terrain")
 }
 
 @(private)
-terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator) {
     stroke:=&tool.stroke
     if stroke.active || stroke.id=={} || stroke.source.kind!=.Mesh {return}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain and a closed mesh operand");return}
+    if !history.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain and a closed mesh operand");return}
     meshes:=core.world_table_of(world,erender.Mesh_Renderer);worlds:=core.world_table_of(world,core.World_Transform)
     if meshes==nil || worlds==nil {return}
     operand:=core.NONE
@@ -241,14 +242,14 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     static,found:=core.get(core.read(meshes),operand)
     placed,positioned:=core.get(core.read(worlds),operand)
     if !found || !positioned {editor.notify(s,"Select the terrain and a closed mesh operand");return}
-    if editor.prefab_member_locked(s,operand) {editor.notify(s,"Unpack the mesh operand before applying it");return}
+    if editor.prefab_member_locked(s,world,operand) {editor.notify(s,"Unpack the mesh operand before applying it");return}
     if terrains:=core.world_table_of(world,terrain.Terrain);terrains!=nil && core.has(core.read(terrains),operand) {editor.notify(s,"The operand must be a static mesh");return}
     if parents:=core.world_table_of(world,core.Parent);parents!=nil {
         for parent in parents.values {if parent.entity==operand {editor.notify(s,"The mesh operand must have no children");return}}
     }
     geometry:geom.Mesh_Buffer
-    geom.mesh_buffer_init(&geometry,app.allocator);defer geom.mesh_buffer_destroy(&geometry)
-    if !host.assets_geometry(app.assets,static.mesh,static.shape,&geometry,true) {editor.notify(s,"The selected mesh could not be read");return}
+    geom.mesh_buffer_init(&geometry,allocator);defer geom.mesh_buffer_destroy(&geometry)
+    if !host.assets_geometry(assets,static.mesh,static.shape,&geometry,true) {editor.notify(s,"The selected mesh could not be read");return}
     transform:=stroke.to_local*mm.transform_matrix(placed.transform)
     normals:=linalg.transpose(linalg.inverse(transform))
     for &p in geometry.positions {p=(transform*[4]f32{p.x,p.y,p.z,1}).xyz}
@@ -259,7 +260,7 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     slots[0]=stroke.source.layers[0].material
     count:=1+copy(slots[1:],stroke.source.slots)
     if tool.brush==.Union {
-        held:=static.mesh!={}?host.assets_mesh(app.assets,static.mesh):host.assets_shape(app.assets,static.shape)
+        held:=static.mesh!={}?host.assets_mesh(assets,static.mesh):host.assets_shape(assets,static.shape)
         remap:[asset.MESH_MAX_SLOTS]u32
         mapped:[asset.MESH_MAX_SLOTS]bool
         for &slot in geometry.materials {
@@ -278,10 +279,10 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
             remap[i]=u32(existing);mapped[i]=true;slot=remap[i]
         }
     } else {for &slot in geometry.materials {slot=0}}
-    allocator:=stroke.source.allocator
-    materials,error:=make([]base.Asset_Id,count-1,allocator)
+    source_allocator:=stroke.source.allocator
+    materials,error:=make([]base.Asset_Id,count-1,source_allocator)
     if error!=nil {editor.notify(s,"The terrain materials could not be stored");return}
-    defer delete(materials,allocator)
+    defer delete(materials,source_allocator)
     copy(materials,slots[1:count])
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return}
     stroke.source.slots,materials=materials,stroke.source.slots
@@ -289,7 +290,7 @@ terrain_operand :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     if change.error!=.None || !change.changed {stroke.source.slots,materials=materials,stroke.source.slots}
     if change.error!=.None {edit_error(s,change.error);return}
     stroke.changed,stroke.dirty_all=change.changed,true
-    stroke_end(s,tool,world,app,consume=operand,label="Boolean terrain")
+    stroke_end(s,tool,world,assets,consume=operand,label="Boolean terrain")
 }
 
 // The outline of the terrain Create makes, where it makes it: around the

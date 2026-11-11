@@ -28,7 +28,6 @@ USER_HITS :: 16
 USER_BUFFER :: 4
 USER_COOLDOWNS :: 8
 USER_TIMERS :: 8
-REQUEST_CAPACITY :: 1024
 EVENT_CAPACITY :: 1024
 HITBOX_RESULTS :: 32
 // The layered moves of the windows of an ability use these ids, plus the window index.
@@ -274,35 +273,44 @@ Ability_Event :: struct {
 Ability_Events :: struct {queue:core.Queue(Ability_Event)}
 
 // Asks entity to start ability as if its input fired: it waits for a moment it is valid as its
-// input.wait says (the kit's buffer, or also while the running ability goes on). False when the queue is full or the request names nothing.
-ability_use :: proc(requests:^Ability_Requests,entity:core.Entity,ability:core.Record(Ability)) -> bool {
-    if ability=={} {return false}
-    return request_push(requests,{kind=.Use,entity=entity,ability=ability})
+// input.wait says (the kit's buffer, or also while the running ability goes on).
+ability_use :: proc(requests:^Ability_Requests,entity:core.Entity,ability:core.Record(Ability)) {
+    if ability=={} {core.refuse(&requests.queue);return}
+    request_offer(requests,{kind=.Use,entity=entity,ability=ability})
 }
 
 // Ends the ability entity runs (Canceled).
-ability_cancel :: proc(requests:^Ability_Requests,entity:core.Entity) -> bool {
-    return request_push(requests,{kind=.Cancel,entity=entity})
+ability_cancel :: proc(requests:^Ability_Requests,entity:core.Entity) {
+    request_offer(requests,{kind=.Cancel,entity=entity})
 }
 
 // Applies effect to target on the next tick, where this end decides target (core.owned).
-ability_effect :: proc(requests:^Ability_Requests,target:core.Entity,effect:Ability_Effect,source:=core.NONE) -> bool {
-    return request_push(requests,{kind=.Effect,entity=target,source=source,effect=effect})
+ability_effect :: proc(requests:^Ability_Requests,target:core.Entity,effect:Ability_Effect,source:=core.NONE) {
+    request_offer(requests,{kind=.Effect,entity=target,source=source,effect=effect})
 }
 
 // Gives entity another kit (a weapon it takes); the running ability goes on.
-ability_kit_set :: proc(requests:^Ability_Requests,entity:core.Entity,kit:core.Record(Ability_Kit)) -> bool {
-    return request_push(requests,{kind=.Kit,entity=entity,kit=kit})
+ability_kit_set :: proc(requests:^Ability_Requests,entity:core.Entity,kit:core.Record(Ability_Kit)) {
+    request_offer(requests,{kind=.Kit,entity=entity,kit=kit})
 }
 
 @(private)
-request_push :: proc(requests:^Ability_Requests,request:Ability_Request) -> bool {
-    if requests==nil || request.entity==core.NONE || len(requests.queue.items)>=REQUEST_CAPACITY {return false}
-    if cap(requests.queue.items)==0 {
-        if reserve(&requests.queue.items,REQUEST_CAPACITY)!=nil {return false}
-    }
-    core.push(&requests.queue,request)
-    return true
+request_offer :: proc(requests:^Ability_Requests,request:Ability_Request) {
+    if requests==nil {return}
+    if request.entity==core.NONE {core.refuse(&requests.queue);return}
+    core.offer(&requests.queue,request)
+}
+
+@(storage,setting)
+Ability_Settings :: struct {
+    requests:u32 `mirai:"advanced"`, // uses, cancels, effects and kits a tick can ask for; past it they are dropped and reported
+}
+ABILITY_SETTINGS_DEFAULT :: Ability_Settings{requests=1024}
+
+// The room of the requests of a tick, and what did not fit in it.
+@(step="input fixed",loops="game",stage="begin")
+ability_requests_serve :: proc(requests:^Ability_Requests,settings:Ability_Settings,problems:^core.Problems) {
+    core.queue_serve(&requests.queue,int(settings.requests),problems,"abilities.requests","ability requests","Ability_Settings.requests","name an entity, and an ability to use")
 }
 
 // The current value of an attribute of a user and whether it has it.

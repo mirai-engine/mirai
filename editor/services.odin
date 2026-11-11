@@ -29,7 +29,6 @@ services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
         }
         api_ok=opened==.None
     }
-    prefabs_follow(s,prefabs_of(s))
     if options.share!=0 {
         if error:=collab_host(s,max(options.share,0),options.name);error!=.None {
             log.errorf("the scene could not be shared: %s",collab_error_text(error))

@@ -7,6 +7,7 @@ import "core:reflect"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
 import "mirai:rhi"
@@ -85,7 +86,7 @@ settings_plugins_load :: proc(s:^Session) {
 }
 
 @(private)
-API_SETTINGS_SET_SCHEMA :: `{"type":"object","properties":{"layer":{"enum":["project","engine"],"description":"project, the default, may set any setting; engine holds only the settings of the machine (machine in settings.get), which every project follows in what it does not set"},"settings":{"type":"object","additionalProperties":{"type":"object"},"description":"{\"<Section>\": {\"<field>\": value}}: an object of sections, each with the fields to change"}},"required":["settings"],"additionalProperties":false}`
+API_SETTINGS_SET_SCHEMA :: `{"type":"object","properties":{"graphics_preset":{"enum":["Low","Medium","High","Ultra"],"description":"Sets every field of the quality of Graphics_Settings as that preset of the Graphics popup does, before what settings says"},"layer":{"enum":["project","engine"],"description":"project, the default, may set any setting; engine holds only the settings of the machine (machine in settings.get), which every project follows in what it does not set"},"settings":{"type":"object","additionalProperties":{"type":"object"},"description":"{\"<Section>\": {\"<field>\": value}}: an object of sections, each with the fields to change"}},"additionalProperties":false}`
 
 // The settings of the edited World and of the application, as the file names them.
 @(private)
@@ -109,24 +110,17 @@ settings_open :: proc(s:^Session,name:string) {
     }
 }
 
-// The settings of the edited World and of the application as the code and the files of the layers leave them.
+// The settings of the edited World and of the application as the code and the files of the layers this process reads leave them.
 @(private)
 settings_load :: proc(s:^Session) {
     if !s.has_project {return}
     all:=settings_all(s)
-    if error,layer:=project.settings_load(all,s.project_root,s.engine_root);error.code!=.None {notify(s,settings_error_text(s,error,layer))}
+    layers:=project.settings_layers_of_process()
+    if error,layer:=project.settings_load(all,s.project_root,s.engine_root,layers);error.code!=.None {notify(s,settings_error_text(s,error,layer))}
+    if .Engine not_in layers {return}
     if misplaced:=project.settings_misplaced(all,s.project_root,s.engine_root);len(misplaced)>0 {
         notify(s,fmt.tprintf("%s: settings of the project, which %s does not read; move them to the settings of the project",strings.join(misplaced,", ",context.temp_allocator),project.settings_file(.Engine,s.project_root,s.engine_root,context.temp_allocator)))
     }
-}
-
-// Whether the project has settings of the machine: the engine layer holds only those.
-@(private)
-settings_machine_any :: proc(s:^Session) -> bool {
-    for info in s.info.storages {
-        if info.setting==.Machine {return true}
-    }
-    return false
 }
 
 // The names of the settings of the machine, as settings.get and its errors list them.
@@ -296,7 +290,7 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     d:=&s.settings_dialog
     needle:=string(d.search[:d.search_length])
     // The editor goes first in both layers: its preferences are of the machine.
-    if needle=="" || contains_fold("Editor Panels Floating Docked",needle) {
+    if needle=="" || base.contains_fold("Editor Panels Floating Docked",needle) {
         append(&list,Settings_Category{storage=SETTINGS_CATEGORY_EDITOR,name="Editor",group="Editor",sections=[]string{"Panels"}})
     }
     if s.settings_layer==.Project && s.has_project {
@@ -306,8 +300,8 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     }
     if s.settings_layer==.Project && s.settings_plugins.count>0 {
         plugins:=Settings_Category{storage=SETTINGS_CATEGORY_PLUGINS,name="Plugins",group="Project"}
-        found:=needle=="" || contains_fold("Plugins",needle) || contains_fold("Git",needle) || contains_fold("Catalog",needle)
-        for i in 0..<s.settings_plugins.count {found|=!s.settings_plugins.automatic[i] && contains_fold(base.text_get(s.settings_plugins.names[i][:]),needle)}
+        found:=needle=="" || base.contains_fold("Plugins",needle) || base.contains_fold("Git",needle) || base.contains_fold("Catalog",needle)
+        for i in 0..<s.settings_plugins.count {found|=!s.settings_plugins.automatic[i] && base.contains_fold(base.text_get(s.settings_plugins.names[i][:]),needle)}
         if found {append(&list,plugins)}
     }
     if s.settings_layer==.Project && s.has_project {
@@ -409,7 +403,7 @@ settings_sections :: proc(info:^runtime.Type_Info,name,needle:string) -> []strin
     titles:=make([dynamic]string,context.temp_allocator)
     v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if !is_struct {return titles[:]}
-    every:=needle=="" || contains_fold(name,needle)
+    every:=needle=="" || base.contains_fold(name,needle)
     current:=""
     found:=false
     for i in 0..<int(v.field_count) {
@@ -422,7 +416,7 @@ settings_sections :: proc(info:^runtime.Type_Info,name,needle:string) -> []strin
         if _,transient:=core.field_option(tag,"transient");transient {continue}
         label:=readable(v.names[i])
         if custom,labeled:=core.field_option(tag,"label");labeled && custom!="" {label=custom}
-        found|=every || contains_fold(current,needle) || contains_fold(label,needle)
+        found|=every || base.contains_fold(current,needle) || base.contains_fold(label,needle)
     }
     if found {append(&titles,current)}
     return titles[:]
@@ -441,7 +435,7 @@ settings_section_fields :: proc(info:^runtime.Type_Info,title,needle:string) -> 
         if current!=title || core_has(tag,"hidden") || core_has(tag,"transient") {continue}
         label:=readable(v.names[i])
         if custom,labeled:=core.field_option(tag,"label");labeled && custom!="" {label=custom}
-        if needle!="" && !contains_fold(label,needle) {continue}
+        if needle!="" && !base.contains_fold(label,needle) {continue}
         if core_has(tag,"advanced") {advanced=true} else {plain=true}
     }
     return
@@ -466,7 +460,7 @@ settings_plugins_rows :: proc(s:^Session,needle:string) {
         for i in 0..<list.count {
             name:=base.text_get(list.names[i][:])
             in_group:Group=list.origin[i]==.Engine?.Engine:list.from_git[i]?.Git:.Project
-            if in_group!=group || list.automatic[i] || needle!="" && !contains_fold(name,needle) && !contains_fold("Plugins",needle) {continue}
+            if in_group!=group || list.automatic[i] || needle!="" && !base.contains_fold(name,needle) && !base.contains_fold("Plugins",needle) {continue}
             if !titled {
                 open=fold_section(s,ui.id(ctx,"origin",int(group)+1),base.hash_combine(0x706c7567696e73,u64(group)),titles[group])
                 if open {fold_band_begin(s)}
@@ -488,7 +482,7 @@ settings_plugins_rows :: proc(s:^Session,needle:string) {
             }
         }
     }
-    if needle=="" || contains_fold("Plugins",needle) || contains_fold("Git",needle) || contains_fold("Catalog",needle) {settings_plugins_git(s)}
+    if needle=="" || base.contains_fold("Plugins",needle) || base.contains_fold("Git",needle) || base.contains_fold("Catalog",needle) {settings_plugins_git(s)}
 }
 
 // How the right panel sits: the mode of every document, and under it each
@@ -682,7 +676,7 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
             changed:=settings_changed(s)
             appearance:=ui.Node_Style{text={size=th.font_label,color=changed?th.accent_hover:th.text_faint}}
             reset,confirm:=shell_id(g,"settings_reset"),shell_id(g,"settings_reset_confirm")
-            if ui.button(ctx,reset,{label="Reset to default",width=0,height=th.row,size=th.font_label,padding=0,disabled=!changed,use_appearance=true,appearance=appearance}).clicked {
+            if ui.button(ctx,reset,{label="Reset to default",width=0,height=th.row,size=th.font_label,padding=0,disabled=!changed,look=&appearance}).clicked {
                 anchor,_:=ui.widget_rect(ctx,reset)
                 ui.popup_open(ctx,confirm,anchor)
             }
@@ -745,7 +739,7 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
         }
         if category.storage==SETTINGS_CATEGORY_PROJECT {
             for title,k in category.sections {
-                if section_card(s,settings_card_id(s,category.storage,k),title) {settings_project_card(s,title,needle,needle=="" || contains_fold(category.name,needle))}
+                if section_card(s,settings_card_id(s,category.storage,k),title) {settings_project_card(s,title,needle,needle=="" || base.contains_fold(category.name,needle))}
             }
             return
         }
@@ -759,13 +753,13 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
         for title,k in category.sections {
             storage:=category.storages[k]
             info:=&s.info.storages[storage]
-            every:=needle=="" || contains_fold(category.name,needle) || contains_fold(settings_storage_name(info),needle)
+            every:=needle=="" || base.contains_fold(category.name,needle) || base.contains_fold(settings_storage_name(info),needle)
             if section_card(s,settings_card_id(s,category.storage,k),settings_section_title(s,category,k) if grouped || title!="" else "") {
                 // The ids of the rows are those of their setting: two of a category do not share them.
                 ui.id_push(ctx,ui.id(ctx,info.name))
                 defer ui.id_pop(ctx)
                 c:=Inspect{s=s,w=w,index=SETTING_INDEX+storage,storage=storage+1,name=info.name,type=info.type,value=cast([^]u8)setting_data(s,storage),size=info.info.size,width=SETTINGS_SIZE.x-SETTINGS_NAV-60,sections=true,section=title,ruled=true}
-                if !every && !contains_fold(title,needle) {c.needle=needle}
+                if !every && !base.contains_fold(title,needle) {c.needle=needle}
                 defaults:[INSPECTOR_COMPONENT_BYTES]u8
                 c.defaults=settings_defaults(s,info,&defaults)
                 fields_rows(&c,info.info,0,0,"")
@@ -797,8 +791,14 @@ project_name :: proc(s:^Session) -> string {
 
 // ---------------------------------------------------------------- API
 
+API_SECTIONS :: 32 // how many sections, areas or actions a get names
+
+Api_Settings_Get_Params :: struct {
+    sections:[API_SECTIONS][64]u8 `mirai:"text,optional,label=Only these sections, by the names settings gives them; none: every section"`,
+}
+
 Api_Settings :: struct {
-    machine:[1][64]u8 `mirai:"text,list,label=The settings of the machine: the only ones the file of the engine holds"`,
+    machine:[1][64]u8 `mirai:"text,list,optional,label=The settings of the machine: the only ones the file of the engine holds; only without sections"`,
     settings:u8 `mirai:"any,label=Every value in effect: a section per setting with its fields"`,
     engine:u8 `mirai:"any,label=The sections and fields the file of the engine sets over the values of the code"`,
     project:u8 `mirai:"any,label=The sections and fields the file of the project sets over the engine and the code"`,
@@ -806,12 +806,66 @@ Api_Settings :: struct {
 
 @(private)
 settings_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",result=Api_Settings,writes_result=true,flags={.Read_Only},run=api_settings_get})
-    api_register(s,st,{name="settings.set",params_schema=API_SETTINGS_SET_SCHEMA,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World takes the result at once.",result=Api_Settings,writes_result=true,run=api_settings_set})
+    api_register(s,st,{name="settings.get",summary="The settings of the engine, the active plugins and the game: the values in effect and what the file of each layer sets over the layers under it.",params=Api_Settings_Get_Params,result=Api_Settings,writes_result=true,flags={.Read_Only},run=api_settings_get})
+    api_register(s,st,{name="settings.set",params_schema=API_SETTINGS_SET_SCHEMA,summary="Changes settings in a layer, whose file keeps what differs from the layers under it; the edited World and the games that play take the result at once and it answers with the sections changed.",result=Api_Settings,writes_result=true,run=api_settings_set})
 }
 
 @(private)
 api_settings_get :: proc(s:^Session,call:^api.Call) {
+    keep,named:=api_sections_kept(call,api.call_params(call,Api_Settings_Get_Params).sections[:],settings_all(s),"setting")
+    if named {api_settings_write(s,call,keep)}
+}
+
+// The settings each mask entry keeps of a list: every one with no mask.
+@(private)
+settings_kept :: proc(list:[]project.Setting,keep:[]bool) -> []project.Setting {
+    if keep==nil {return list}
+    kept:=make([dynamic]project.Setting,context.temp_allocator)
+    for setting,i in list {
+        if keep[i] {append(&kept,setting)}
+    }
+    return kept[:]
+}
+
+// The sections a get of settings or preferences names, as a mask over list:
+// nil for every section. False after failing the call.
+@(private)
+api_sections_kept :: proc(call:^api.Call,given:[][64]u8,list:[]project.Setting,what:string) -> (keep:[]bool,named:bool) {
+    for &name in given {
+        wanted:=base.text_get(name[:])
+        if wanted=="" {continue}
+        if keep==nil {keep=make([]bool,len(list),context.temp_allocator)}
+        found:=false
+        for setting,i in list {
+            if setting.name==wanted {keep[i],found=true,true}
+        }
+        if !found {
+            names:=make([dynamic]string,context.temp_allocator)
+            for setting in list {append(&names,setting.name)}
+            api.call_failf(call,api.INVALID_PARAMS,"%s is not a %s: they are %s",wanted,what,strings.join(names[:],", ",context.temp_allocator))
+            return
+        }
+    }
+    return keep,true
+}
+
+// The mask of a change: the sections of its text.
+@(private)
+settings_touched :: proc(list:[]project.Setting,sections:string,also:="") -> []bool {
+    keep:=make([]bool,len(list),context.temp_allocator)
+    for setting,i in list {keep[i]=also!="" && setting.name==also}
+    for name in settings_section_names(sections) {
+        for setting,i in list {
+            if setting.name==name {keep[i]=true}
+        }
+    }
+    return keep
+}
+
+// The answer of settings.get for the sections of a mask (nil: all), and of
+// settings.set for those it changed.
+@(private)
+api_settings_write :: proc(s:^Session,call:^api.Call,keep:[]bool) {
     current:=settings_all(s)
     code:=project.settings_clone(current,context.temp_allocator)
     engine:=project.settings_clone(current,context.temp_allocator)
@@ -825,57 +879,66 @@ api_settings_get :: proc(s:^Session,call:^api.Call) {
         return
     }
     out:=call.out
-    serial.text_write_raw(out,`{"machine": [`)
-    count:=0
-    for info in s.info.storages {
-        if info.setting!=.Machine {continue}
-        serial.text_write_raw(out,count>0?", ":"")
-        serial.text_write_string(out,info.name)
-        count+=1
+    serial.write_u8(out,'{')
+    if keep==nil {
+        serial.text_write_raw(out,`"machine": [`)
+        count:=0
+        for info in s.info.storages {
+            if info.setting!=.Machine {continue}
+            serial.text_write_raw(out,count>0?", ":"")
+            serial.text_write_string(out,info.name)
+            count+=1
+        }
+        serial.text_write_raw(out,`], `)
     }
-    serial.text_write_raw(out,`], "settings": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(current,{},{},context.temp_allocator)))
+    shown,under,top:=settings_kept(current,keep),settings_kept(engine,keep),settings_kept(code,keep)
+    serial.text_write_raw(out,`"settings": `)
+    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,{},{},context.temp_allocator)))
     serial.text_write_raw(out,`, "engine": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(engine,code,{},context.temp_allocator)))
+    serial.text_write_raw(out,strings.trim_space(project.settings_text(under,top,{},context.temp_allocator)))
     serial.text_write_raw(out,`, "project": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(current,engine,{},context.temp_allocator)))
+    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,under,{},context.temp_allocator)))
     serial.write_u8(out,'}')
 }
 
 // The layer and the sections of the params of settings.set; message says what is wrong with them.
 @(private)
-api_settings_params :: proc(raw:string,allocator:runtime.Allocator) -> (layer:project.Settings_Layer,sections,message:string) {
-    USAGE :: `params are {"layer": "project" or "engine", "settings": {"<Section>": {"<field>": value}}}`
+api_settings_params :: proc(raw:string,allocator:runtime.Allocator) -> (layer:project.Settings_Layer,sections,preset,message:string) {
+    USAGE :: `params are {"layer": "project" or "engine", "graphics_preset": "Low", "Medium", "High" or "Ultra", "settings": {"<Section>": {"<field>": value}}}`
     r:serial.Text_Reader
     serial.text_reader_init(&r,raw,allocator)
-    if !serial.text_accept(&r,'{') {return .Project,"",USAGE}
+    if !serial.text_accept(&r,'{') {return .Project,"","",USAGE}
     if !serial.text_accept(&r,'}') {
         for {
             key,named:=serial.text_string(&r)
-            if !named || !serial.text_expect(&r,':') {return .Project,"",USAGE}
+            if !named || !serial.text_expect(&r,':') {return .Project,"","",USAGE}
             switch key {
             case "layer":
                 name,_:=serial.text_string(&r)
                 switch name {
                 case "project": layer=.Project
                 case "engine":  layer=.Engine
-                case:           return .Project,"",`layer is "project" or "engine"`
+                case:           return .Project,"","",`layer is "project" or "engine"`
                 }
+            case "graphics_preset":
+                name,given:=serial.text_string(&r)
+                if !given {return .Project,"","",USAGE}
+                preset=strings.clone(name,allocator)
             case "settings":
-                if serial.text_peek(&r)!='{' {return .Project,"",`settings is an object of sections: {"<Section>": {"<field>": value}}`}
+                if serial.text_peek(&r)!='{' {return .Project,"","",`settings is an object of sections: {"<Section>": {"<field>": value}}`}
                 start:=r.offset
-                if !serial.text_skip(&r) {return .Project,"",USAGE}
+                if !serial.text_skip(&r) {return .Project,"","",USAGE}
                 sections=r.text[start:r.offset]
             case:
-                return .Project,"",fmt.tprintf("unknown key %q: %s",key,USAGE)
+                return .Project,"","",fmt.tprintf("unknown key %q: %s",key,USAGE)
             }
             if serial.text_accept(&r,',') {continue}
-            if !serial.text_expect(&r,'}') {return .Project,"",USAGE}
+            if !serial.text_expect(&r,'}') {return .Project,"","",USAGE}
             break
         }
     }
-    if !serial.text_end(&r) {return .Project,"",USAGE}
-    if sections=="" {return .Project,"",fmt.tprintf("settings is missing: %s",USAGE)}
+    if !serial.text_end(&r) {return .Project,"","",USAGE}
+    if sections=="" && preset=="" {return .Project,"","",fmt.tprintf("settings is missing: %s",USAGE)}
     return
 }
 
@@ -900,7 +963,7 @@ settings_section_names :: proc(text:string) -> []string {
 // a change that fails leaves every setting as it was.
 @(private)
 api_settings_set :: proc(s:^Session,call:^api.Call) {
-    layer,sections,message:=api_settings_params(call.raw,call.allocator)
+    layer,sections,preset,message:=api_settings_params(call.raw,call.allocator)
     if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
@@ -943,9 +1006,21 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not a setting of the project: they are %s",name,strings.join(names[:],", ",context.temp_allocator))
         return
     }
-    if error:=project.settings_parse(sections,next,strict=true);error.code!=.None {
-        api.call_failf(call,api.INVALID_PARAMS,"settings: %s at line %d, column %d",error.detail,error.line,error.column)
-        return
+    if preset!="" {
+        if layer==.Engine && !strings.contains(settings_machine_names(s),"Graphics_Settings") {
+            api.call_fail(call,api.INVALID_PARAMS,`Graphics_Settings is not a setting of this machine: set it with "layer": "project"`)
+            return
+        }
+        if problem:=settings_graphics_preset(next,preset);problem!="" {
+            api.call_fail(call,api.INVALID_PARAMS,problem)
+            return
+        }
+    }
+    if sections!="" {
+        if error:=project.settings_parse(sections,next,strict=true);error.code!=.None {
+            api.call_failf(call,api.INVALID_PARAMS,"settings: %s at line %d, column %d",error.detail,error.line,error.column)
+            return
+        }
     }
     for setting in next {
         if problem:=setting_problem(s,setting.info,setting.value);problem!="" {
@@ -975,5 +1050,26 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
             if value:=setting_engine_value(s,setting.name);value!=nil {mem.copy(value,setting.value,setting.info.size)}
         }
     }
-    api_settings_get(s,call)
+    touched:=settings_touched(settings_all(s),sections,preset!=""?"Graphics_Settings":"")
+    settings_runs_take(s,touched)
+    api_settings_write(s,call,touched)
+}
+
+// The sections settings.set changed, in the games that play: each run holds
+// its own copy of the settings of the World, and the edited World already has
+// the new values. keep is settings_touched over settings_all.
+@(private)
+settings_runs_take :: proc(s:^Session,keep:[]bool) {
+    list:=settings_all(s)
+    for &r in s.runs {
+        if r.world==nil {continue}
+        for setting,i in list {
+            if !keep[i] {continue}
+            for info,index in s.info.storages {
+                if info.name==setting.name && info.setting!=.None && info.place==.World {
+                    mem.copy(core.world_storage_at(core.world_ref(r.world,s.info),index),rawptr(uintptr(s.edit_world)+info.offset),info.info.size)
+                }
+            }
+        }
+    }
 }

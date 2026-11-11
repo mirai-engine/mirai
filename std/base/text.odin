@@ -1,5 +1,6 @@
 package base
 
+import "core:strings"
 import "core:fmt"
 
 // Text stored inline in a fixed byte array, the form the schema flag .Text
@@ -15,9 +16,9 @@ text_fit :: proc "contextless" (text:string,room:int) -> int {
     for cut>0 && text[cut]&0xc0==0x80 {cut-=1}
     return cut
 }
-// False when the text had to be cut to fit.
+// False when the text had to be cut: to fit, or at its first NUL, which a text cannot hold.
 text_set :: proc "contextless" (buffer:[]u8,text:string) -> bool {
-    kept:=text_fit(text,len(buffer)-1)
+    kept:=text_fit(text[:text_len(transmute([]u8)text)],len(buffer)-1)
     copy(buffer,text[:kept])
     for &b in buffer[kept:] {b=0}
     return kept==len(text)
@@ -53,7 +54,7 @@ text_format :: proc(buffer:[]u8,format:string,args:..any) -> bool {
     // fmt stops at the end of the array: reaching it means there was more to write, or no room for the NUL.
     complete:=written<len(buffer)
     kept:=written if complete else text_valid_prefix(buffer[:len(buffer)-1])
-    for &b in buffer[kept:] {b=0}
+    for &b in buffer[text_len(buffer[:kept]):] {b=0}
     return complete
 }
 
@@ -72,4 +73,13 @@ text_valid_prefix :: proc "contextless" (bytes:[]u8) -> int {
     case lead>=0xc0: needed=2
     }
     return end if end-(start-1)==needed else start-1
+}
+
+// True when text holds part, without minding upper and lower case.
+contains_fold :: proc(text,part:string) -> bool {
+    if len(part)>len(text) {return false}
+    for i in 0..=len(text)-len(part) {
+        if strings.equal_fold(text[i:][:len(part)],part) {return true}
+    }
+    return false
 }

@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/base64"
 import "core:encoding/json"
 import "core:fmt"
 import "core:math/linalg"
@@ -9,6 +8,7 @@ import "core:os"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
@@ -20,9 +20,8 @@ import "mirai:std/serial"
 
 @(test)
 view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-view-viewport-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"view-viewport")
+    if root=="" {return}
     saved:=[2]string{"first message image","second message image"}
     requests:=[2]string{"12-0","12-2"}
     for request,index in requests {
@@ -31,7 +30,7 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
         testing.expect(t,os.write_entire_file(project.path(folder,AI_FILE_IMAGE,allocator=context.temp_allocator),saved[index])==nil)
     }
     s:=Session{project_root=root}
-    server:=api.Server{max_response=1024}
+    server:=api.Server{}
     method:=api.Method{params_id=Api_Viewport_Params}
     params:Api_Viewport_Params
     buffer:[1024]u8
@@ -42,16 +41,12 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
         call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
         testing.expect(t,!call.failed && w.overflow==0)
-        value:json.Value
+        value:Api_Viewport_Result_Text
         testing.expect(t,json.unmarshal(serial.writer_bytes(&w),&value,allocator=context.temp_allocator)==nil)
-        result:=value.(json.Object)
-        contents:=result["content"].(json.Array)
-        image:=contents[0].(json.Object)
-        testing.expect_value(t,image["type"].(string),"image")
-        testing.expect_value(t,image["mimeType"].(string),"image/png")
-        decoded,error:=base64.decode(image["data"].(string),allocator=context.temp_allocator)
-        testing.expect(t,error==nil)
-        testing.expect_value(t,string(decoded),saved[index])
+        testing.expect_value(t,call.image,value.path)
+        shown,read:=os.read_entire_file(call.image,context.temp_allocator)
+        testing.expect(t,read==nil)
+        testing.expect_value(t,string(shown),saved[index])
     }
     for request in ([]string{"../12-0","12-0/../../secret","12--2","0-0","12-3"}) {
         base.text_set(params.request[:],request)
@@ -61,48 +56,41 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
         testing.expect(t,call.failed)
         testing.expect_value(t,w.count,0)
     }
-    server.max_response=512
-    base.text_set(params.request[:],requests[0])
+    // Without a request it is the turn of the caller; outside a turn it says so.
+    base.text_set(params.request[:],"")
     serial.writer_init_fixed(&w,buffer[:])
-    bounded:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
-    api_view_viewport(&s,&bounded)
-    testing.expect(t,bounded.failed && bounded.error.code==api.SERVER_ERROR)
-    testing.expect_value(t,w.count,0)
+    outside:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+    api_view_viewport(&s,&outside)
+    testing.expect(t,outside.failed && outside.error.code==api.INVALID_PARAMS,outside.error.message)
+    m:=new(Ai,context.temp_allocator)
+    m.task_count=1
+    base.text_set(m.tasks[0].name[:],requests[1])
+    s.ai=m
+    serial.writer_init_fixed(&w,buffer[:])
+    turn:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator,client_tag=requests[1]}
+    api_view_viewport(&s,&turn)
+    testing.expect(t,!turn.failed && w.count>0,turn.error.message)
 }
+
+@(private="file")
+Api_Viewport_Result_Text :: struct {path:string}
 
 @(private="file")
 Camera_World :: struct {
-    entities:core.Entities,
-    ids:core.Table(core.Id),
-    transforms:core.Table(core.Transform),
-    parents:core.Table(core.Parent),
+    using world:core.Test_World,
+    using scene_tables:Test_Scene,
     cameras:core.Table(erender.Camera),
 }
-
-@(private="file")
-camera_world_settle :: proc(data,shared,editor:rawptr) {
-    w:=cast(^Camera_World)data
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.transforms,&w.entities)
-    core.table_settle(&w.parents,&w.entities);core.table_settle(&w.cameras,&w.entities)
-    core.entities_settle(&w.entities)
-}
+@(private="file") Camera_Editor :: struct {api:Api}
 
 @(test)
 camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_it :: proc(t:^testing.T) {
+    info,described:=core.test_info(t,Camera_World,core.Test_None,Camera_Editor,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Camera_World
-    core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids);defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents);defer core.table_destroy(&world.cameras)
-    tables:=[4]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Camera_World,ids)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Camera_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Camera_World,parents)},
-        {name="Camera",type=erender.Camera,info=type_info_of(erender.Camera),offset=offset_of(Camera_World,cameras)},
-    }
-    storages:=[1]core.Storage_Info{
-        {type=Api,info=type_info_of(Api),place=.Editor},
-    }
-    info:=core.World_Info{entities=offset_of(Camera_World,entities),tables=tables[:],storages=storages[:],settle=camera_world_settle}
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     rig,eye,cube,flat:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     forward:=linalg.normalize([3]f32{-1,-0.5,0})
     core.add(&world.ids,rig,{value=1});core.add(&world.ids,eye,{value=2});core.add(&world.ids,cube,{value=3});core.add(&world.ids,flat,{value=4})
@@ -113,16 +101,16 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     core.add(&world.parents,eye,core.Parent{entity=rig})
     core.add(&world.cameras,eye,erender.Camera{fov=40*mm.RAD_PER_DEG,near=0.1,active=true})
     core.add(&world.cameras,flat,erender.Camera{projection=.Orthographic,height=10,active=true})
-    camera_world_settle(&world,nil,nil)
-    selection:Selection;defer delete(selection.entities)
+    core.settle(&info,&world,nil)
+    selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport
     viewport_init(&viewport);defer viewport_free(&viewport)
     viewport.size={1280,720}
-    gui:Editor_Ui;edits:Edits;defer edits_free(&edits)
+    gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     document:Document
-    api_storage:Api
-    session:=Session{info=&info,edit_world=&world,editor_world=&api_storage,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
-    edits_reset(&edits,edited_world(&session))
+    editor:Camera_Editor
+    session:=Session{info=&info,edit_world=&world,editor_world=&editor,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
+    history.edits_reset(&edits,edited_world(&session))
     if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -133,7 +121,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
         return
     }
     near :: proc(a,b:[3]f32) -> bool {return linalg.length(a-b)<1e-3}
-    history,transforms,cameras:=edits_scene_state(&edits),world.transforms.version,world.cameras.version
+    scene_state,transforms,cameras:=history.edits_scene_state(&edits),world.transforms.version,world.cameras.version
 
     error,result:=execute(state,&out,"{}")
     testing.expect_value(t,error.code,0)
@@ -161,7 +149,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
         testing.expectf(t,error.code==api.INVALID_PARAMS,"%s: %v",wrong,error)
     }
     testing.expect_value(t,viewport.orbit.fov,f32(70))
-    testing.expect_value(t,edits_scene_state(&edits),history)
+    testing.expect_value(t,history.edits_scene_state(&edits),scene_state)
     testing.expect_value(t,world.transforms.version,transforms)
     testing.expect_value(t,world.cameras.version,cameras)
     testing.expect_value(t,len(edits.steps),0)
@@ -169,15 +157,17 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
 
 @(test)
 capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testing.T) {
+    Shown_World :: struct {using world:core.Test_World}
+    shown:Shown_World
+    if !core.test_world_init(t,&shown) {return}
+    defer core.test_world_destroy(&shown)
     settings:=gpu.DEFAULT_SETTINGS
     settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={128,96}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
-    info:core.World_Info
-    app.info=&info
-    shown:struct{entities:core.Entities}
-    session:=Session{app=app,info=&info,edit_world=&shown}
+    app.info=core.test_world_info(&shown)
+    session:=Session{app=app,info=app.info,edit_world=&shown}
     cube,made:=erender.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({position={0,0.5,0},rotation=1,scale={1,1,1}}),{color={0.2,0.9,0.5,1},emission={0.05,0.3,0.15}})
     if !testing.expect(t,made) {return}
     cube.uniform_color,cube.highlight=true,HIGHLIGHT_SELECTED
@@ -189,7 +179,7 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     panel:=[6]gpu.Ui_Vertex{{position={0,0,0},color=red},{position={32,0,0},color=red},{position={32,24,0},color=red},{position={0,0,0},color=red},{position={32,24,0},color=red},{position={0,24,0},color=red}}
     for _ in 0..<3 {
         host.app_frame_begin(app)
-        host.app_ui_layer_add(app,{vertices=panel[:]})
+        host.extras_ui_layer_add(&app.extras,{vertices=panel[:]})
         host.app_frame_end(app)
     }
     at :: proc(pixels:[]u8,width,x,y:int) -> [3]int {i:=(y*width+x)*4;return {int(pixels[i]),int(pixels[i+1]),int(pixels[i+2])}}
@@ -207,6 +197,8 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     sized,sized_width,sized_height,sized_read:=api_capture_image(&session,false,api_capture_size(app.drawable,64,0))
     defer delete(sized,app.allocator)
     if !testing.expect(t,ui_read && read && sized_read,app.renderer.error) {return}
+    seen:=api_capture_seen(app)
+    testing.expectf(t,seen.instances_drawn>0 && seen.instances_culled==0,"the camera sees the cube: %v",seen)
     testing.expect_value(t,[2]int{ui_width,ui_height},[2]int{128,96})
     testing.expect_value(t,[2]int{width,height},[2]int{128,96})
     testing.expect_value(t,[2]int{sized_width,sized_height},[2]int{64,48})
@@ -220,6 +212,11 @@ capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testin
     testing.expect_value(t,count(alone,outline_pixel),0)
     testing.expectf(t,count(alone,cube_pixel)>200,"the world is drawn through the camera: %d pixels",count(alone,cube_pixel))
     testing.expectf(t,count(sized,cube_pixel)>50,"and at the size asked for: %d pixels",count(sized,cube_pixel))
+    host.app_camera_set(app,{position={0,1.2,4},forward={0,0,1},up={0,1,0},fov_y=40,near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE},true)
+    away,_,_,away_read:=api_capture_image(&session,false,{64,48})
+    defer delete(away,app.allocator)
+    seen=api_capture_seen(app)
+    testing.expectf(t,away_read && seen.instances_drawn==0 && seen.instances_culled>0,"the camera looks away from what is there: %v",seen)
     testing.expect_value(t,api_capture_size({1280,720},0,360),[2]i32{640,360})
     testing.expect_value(t,api_capture_size({1280,720},0,0),[2]i32{1280,720})
     app.scene={0,24,app.drawable.x,app.drawable.y-24}

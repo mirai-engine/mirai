@@ -2,6 +2,7 @@ package geom
 
 import "core:math"
 import mm "mirai:std/math"
+import "mirai:std/base"
 
 // How a brush weakens from its center to its radius.
 Falloff :: enum u8 {Smooth,Sphere,Linear,Sharp,Constant}
@@ -76,12 +77,7 @@ mesh_surface_workspace_destroy :: proc(w:^Mesh_Surface_Workspace) {
 
 @(private="file")
 surface_map_reset :: proc(m:^Key_Map,expected:int) -> bool {
-    if expected<0 || expected>max(int)/4 {return false}
-    capacity:=64
-    for capacity<expected*2 {capacity*=2}
-    if reserve(&m.keys,capacity)!=nil || reserve(&m.values,capacity)!=nil {return false}
-    key_map_reset(m,expected)
-    return true
+    return key_map_reset(m,expected)==nil
 }
 
 @(private="file")
@@ -125,11 +121,10 @@ surface_copy :: proc(mesh:Mesh,out:^Mesh_Buffer,extra_vertices,triangles:int) ->
 @(private="file")
 surface_prepare :: proc(w:^Mesh_Surface_Workspace,mesh:Mesh) -> bool {
     n,corners:=len(mesh.positions),len(mesh.indices)
-    if reserve(&w.representatives,n)!=nil || reserve(&w.next,n)!=nil || reserve(&w.sums,n)!=nil ||
-        reserve(&w.counts,n)!=nil || reserve(&w.locked,n)!=nil || reserve(&w.corner_edges,corners)!=nil ||
+    if resize(&w.representatives,n)!=nil || resize(&w.next,n)!=nil || resize(&w.sums,n)!=nil ||
+        resize(&w.counts,n)!=nil || resize(&w.locked,n)!=nil || resize(&w.corner_edges,corners)!=nil ||
         reserve(&w.edges,corners)!=nil || !surface_map_reset(&w.points,n) || !surface_map_reset(&w.edge_map,corners) {return false}
-    resize(&w.representatives,n);resize(&w.next,n);resize(&w.sums,n);resize(&w.counts,n);resize(&w.locked,n)
-    resize(&w.corner_edges,corners);clear(&w.edges)
+    clear(&w.edges)
     for p,i in mesh.positions {
         w.sums[i]={};w.counts[i]=0;w.locked[i]=false;w.next[i]=NONE
         key:=position_hash(p)
@@ -192,8 +187,7 @@ mesh_surface_edit :: proc(w:^Mesh_Surface_Workspace,mesh:Mesh,brush:Mesh_Surface
     neighbors:=brush.kind==.Smooth || brush.lock_boundary
     if neighbors && !surface_prepare(w,mesh) {return {},.Out_Of_Memory}
     if len(mesh.normals)>0 {
-        if reserve(&w.sums,len(mesh.positions))!=nil || reserve(&w.locked,len(mesh.positions))!=nil {return {},.Out_Of_Memory}
-        resize(&w.sums,len(mesh.positions));resize(&w.locked,len(mesh.positions))
+        if resize(&w.sums,len(mesh.positions))!=nil || resize(&w.locked,len(mesh.positions))!=nil {return {},.Out_Of_Memory}
     }
     if !surface_copy(mesh,out,0,len(mesh.indices)/3) {return {},.Out_Of_Memory}
     append(&out.indices,..mesh.indices);append(&out.materials,..mesh.materials)
@@ -222,12 +216,11 @@ mesh_surface_edit :: proc(w:^Mesh_Surface_Workspace,mesh:Mesh,brush:Mesh_Surface
     result.triangles=len(mesh.indices)/3
     if result.changed && len(out.normals)>0 {
         n:=len(mesh.positions)
-        if reserve(&w.representatives,n)!=nil || reserve(&w.next,n)!=nil || !surface_map_reset(&w.points,n) {
+        if resize(&w.representatives,n)!=nil || resize(&w.next,n)!=nil || !surface_map_reset(&w.points,n) {
             mesh_buffer_clear(out);return {},.Out_Of_Memory
         }
-        resize(&w.representatives,n);resize(&w.next,n)
         for p,i in mesh.positions {
-            key:=hash_u64(position_hash(p)~position_hash(mesh.normals[i]))
+            key:=base.hash_u64(position_hash(p)~position_hash(mesh.normals[i]))
             if key==KEY_EMPTY {key=0}
             head,inserted:=key_map_entry(&w.points,key,u32(i))
             w.representatives[i]=u32(i);w.next[i]=NONE

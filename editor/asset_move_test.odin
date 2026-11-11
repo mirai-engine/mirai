@@ -9,6 +9,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -23,7 +24,7 @@ Move_Test :: struct {
 
 @(private="file")
 move_test_open :: proc(t:^testing.T,m:^Move_Test,name:string) -> bool {
-    files_test_open(&m.files,name)
+    files_test_open(t,&m.files,name) or_return
     if !testing.expect(t,host.assets_init(&m.assets,{root=project.path(m.root,"assets",allocator=context.temp_allocator),capacity=16})) {return false}
     m.app=host.App{assets=&m.assets}
     m.s.app=&m.app
@@ -96,7 +97,7 @@ move_test_import :: proc(m:^Move_Test,path:string) -> (source:string,found:bool)
 @(test)
 moving_and_renaming_an_asset_keep_its_id_and_what_names_it :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move") {return}
+    if !move_test_open(t,m,"asset-move") {return}
     defer move_test_close(m)
     s:=&m.s
     r:=&m.assets.registry
@@ -146,11 +147,6 @@ moving_and_renaming_an_asset_keep_its_id_and_what_names_it :: proc(t:^testing.T)
     last:=move_test_last_file(m)
     testing.expect_value(t,last,moved)
 
-    // Nothing moves while the user plays, nor a file of a plugin.
-    s.mode=.Play
-    _,message=asset_move(s,MOVE_TEST_USER,"Moved","")
-    testing.expect(t,message!="" && move_test_path(m,MOVE_TEST_USER)=="user.mat")
-    s.mode=.Edit
 }
 
 @(private="file")
@@ -171,7 +167,7 @@ move_test_last_file :: proc(m:^Move_Test) -> string {
 @(test)
 an_import_moves_and_copies_with_its_parts :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move-import") {return}
+    if !move_test_open(t,m,"asset-move-import") {return}
     defer move_test_close(m)
     s:=&m.s
     r:=&m.assets.registry
@@ -232,7 +228,7 @@ an_import_moves_and_copies_with_its_parts :: proc(t:^testing.T) {
 @(test)
 a_folder_moves_and_copies_with_all_it_holds :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move-folder") {return}
+    if !move_test_open(t,m,"asset-move-folder") {return}
     defer move_test_close(m)
     s:=&m.s
     r:=&m.assets.registry
@@ -294,7 +290,7 @@ a_folder_moves_and_copies_with_all_it_holds :: proc(t:^testing.T) {
 @(test)
 the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
     m:=new(Move_Test,context.temp_allocator)
-    if !move_test_open(t,m,"mirai-asset-move-api") {return}
+    if !move_test_open(t,m,"asset-move-api") {return}
     defer move_test_close(m)
     s:=&m.s
     move_test_texture(t,m,"Rocks/rock.tex",MOVE_TEST_TEXTURE)
@@ -306,10 +302,10 @@ the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
         call.method,call.result=nil,nil
         return
     }
-    rename:Api_Asset_Rename_Params
+    rename:Api_Asset_Move_Params
     base.text_set(rename.asset[:],"Rocks/rock.tex")
     base.text_set(rename.name[:],"granite")
-    result,call:=run(s,api_asset_rename,&rename)
+    result,call:=run(s,api_asset_move,&rename)
     testing.expect(t,!call.failed,call.error.message)
     testing.expect_value(t,base.text_get(result.path[:]),"Rocks/granite.tex")
     id_text:[base.ASSET_ID_TEXT]u8
@@ -327,15 +323,35 @@ the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
     result,call=run(s,api_asset_move,&move)
     testing.expect(t,!call.failed && base.text_get(result.path[:])=="Nature/Stone" && base.text_get(result.id[:])=="",call.error.message)
 
-    duplicate:Api_Asset_Duplicate_Params
+    // No folder keeps the one it is in, and / is the root.
+    move={}
+    base.text_set(move.asset[:],"Nature/Stone/granite.tex")
+    base.text_set(move.folder[:],"/")
+    result,call=run(s,api_asset_move,&move)
+    testing.expect(t,!call.failed && base.text_get(result.path[:])=="granite.tex",call.error.message)
+    base.text_set(move.asset[:],"granite.tex")
+    base.text_set(move.folder[:],"Nature/Stone")
+    result,call=run(s,api_asset_move,&move)
+    testing.expect(t,!call.failed && base.text_get(result.path[:])=="Nature/Stone/granite.tex",call.error.message)
+
+    duplicate:Api_Asset_Move_Params
+    duplicate.copy=true
     base.text_set(duplicate.asset[:],"Nature/Stone/granite.tex")
-    result,call=run(s,api_asset_duplicate,&duplicate)
+    result,call=run(s,api_asset_move,&duplicate)
     testing.expect(t,!call.failed && base.text_get(result.path[:])=="Nature/Stone/granite 2.tex",call.error.message)
     testing.expect(t,base.text_get(result.id[:])!="" && base.text_get(result.id[:])!=base.asset_id_format(MOVE_TEST_TEXTURE,id_text[:]))
+    base.text_set(duplicate.folder[:],"Copies")
+    base.text_set(duplicate.name[:],"basalt")
+    result,call=run(s,api_asset_move,&duplicate)
+    testing.expect(t,!call.failed && base.text_get(result.path[:])=="Copies/basalt.tex",call.error.message)
+    nothing:Api_Asset_Move_Params
+    base.text_set(nothing.asset[:],"Copies/basalt.tex")
+    result,call=run(s,api_asset_move,&nothing)
+    testing.expect(t,call.failed && strings.contains(call.error.message,"changes nothing"),call.error.message)
 
     // What it cannot find, or cannot do, it says.
     base.text_set(rename.asset[:],"Nowhere/missing.tex")
-    result,call=run(s,api_asset_rename,&rename)
+    result,call=run(s,api_asset_move,&rename)
     testing.expect(t,call.failed && strings.contains(call.error.message,"asset.list"),call.error.message)
     base.text_set(move.asset[:],"Nature")
     base.text_set(move.folder[:],"Nature/Stone")
@@ -347,10 +363,8 @@ the_api_renames_moves_and_copies_by_path_or_id :: proc(t:^testing.T) {
 // renames it. A card let go on the header of a folder moves there.
 @(test)
 the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: proc(t:^testing.T) {
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-content-rename-%d",temporary,os.get_pid())
-    os.remove_all(root)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"content-rename")
+    if root=="" {return}
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil))
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Archive",root)),os.Error(nil))
     ctx:ui.Context
@@ -365,7 +379,7 @@ the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: p
     g:=Editor_Ui{ctx=&ctx}
     c:=CONTENT_DEFAULT
     defer core.value_free(&c,type_info_of(Content))
-    selection:Selection
+    selection:history.Selection
     info:core.World_Info
     session:=Session{app=&app,gui=&g,content=&c,selection=&selection,info=&info,headless=true}
     defer delete(session.asset_documents)

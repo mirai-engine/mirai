@@ -8,10 +8,10 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import eanim "plugins:animation/runtime"
 import erender "mirai:engine/render"
 import "mirai:host"
-import gpu "mirai:render"
 import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -50,11 +50,11 @@ Subject :: struct {
     parts:[PART_CAPACITY]Part,
     part_count:int,
     worlds:[PART_CAPACITY]mm.Transform, // of the parts in the pose last sampled, in the space of the parent of the root
-    locals:[dynamic]gpu.Thumbnail_Vertex, // in the space of their part
-    posed:[dynamic]gpu.Thumbnail_Vertex,
-    materials:[dynamic]gpu.Material_Desc,
+    locals:[dynamic]editor.Thumbnail_Vertex, // in the space of their part
+    posed:[dynamic]editor.Thumbnail_Vertex,
+    materials:[dynamic]erender.Material_Desc,
     skins:[dynamic]Subject_Skin,
-    renderer:^gpu.Renderer,
+    renderer:^erender.Renderer,
     short:bool, // parts or triangles were left out
     fit:[2][3]f32,
     fit_key:u64,
@@ -354,9 +354,9 @@ subject_node :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,paren
 }
 
 @(private)
-subject_begin :: proc(app:^host.App,sub:^Subject,root:core.Entity,key:u64) {
+subject_begin :: proc(renderer:^erender.Renderer,sub:^Subject,root:core.Entity,key:u64) {
     subject_skins_clear(sub)
-    sub.renderer=app.renderer
+    sub.renderer=renderer
     clear(&sub.locals);clear(&sub.posed);clear(&sub.materials)
     sub.root,sub.key,sub.part_count,sub.short,sub.fit_key=root,key,0,false,0
 }
@@ -378,7 +378,7 @@ subject_end :: proc(app:^host.App,w:core.World_Ref,sub:^Subject) {
 @(private)
 subject_gather :: proc(app:^host.App,w:core.World_Ref,scene:Scene,sub:^Subject,root:core.Entity,key:u64) {
     context.allocator=app.allocator
-    subject_begin(app,sub,root,key)
+    subject_begin(app.renderer,sub,root,key)
     if !core.alive(core.world_entities(w),root) || app.assets==nil {return}
     subject_node(app.assets,scene,sub,root,-1)
     subject_end(app,w,sub)
@@ -388,7 +388,7 @@ subject_gather :: proc(app:^host.App,w:core.World_Ref,scene:Scene,sub:^Subject,r
 @(private)
 subject_gather_mesh :: proc(app:^host.App,w:core.World_Ref,sub:^Subject,mesh:base.Asset_Id,key:u64) {
     context.allocator=app.allocator
-    subject_begin(app,sub,core.NONE,key)
+    subject_begin(app.renderer,sub,core.NONE,key)
     if app.assets==nil || mesh=={} {return}
     part:=&sub.parts[0]
     sub.part_count=1
@@ -416,7 +416,7 @@ animation_scene_subject :: proc(s:^editor.Session,scene:Scene,chosen:base.Asset_
             if value.asset==chosen {return animation_subject(scene,scene.animations.entities[row])}
         }
     }
-    return animation_subject(scene,editor.selection_active(s.selection))
+    return animation_subject(scene,history.selection_active(s.selection))
 }
 
 // Reads the subject again when it changed and draws the pose of the time when the image does not show it.
@@ -534,7 +534,7 @@ animation_toolbar :: proc(s:^editor.Session,p:^Animation,clip:anim.Clip) {
         names:=make([]string,len(p.clips),context.temp_allocator)
         for &info,i in p.clips {names[i]=base.text_get(info.name[:])}
         selected:=max(int(clip)-1,0)
-        if ui.dropdown(ctx,ui.id(ctx,"clip"),names,&selected,{width=200,height=th.control,searchable=len(names)>10}) {
+        if ui.dropdown(ctx,ui.id(ctx,"clip"),{list=names},&selected,{width=200,height=th.control,searchable=len(names)>10}) {
             base.text_set(p.clip_name[:],names[selected])
             p.time,p.playing=0,false
         }
@@ -674,7 +674,8 @@ animation_details :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Model
         title:=clip!=0?base.text_get(p.clips[clip-1].name[:]):editor.asset_name_of(a,p.chosen)
         ui.label(ctx,title,th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
     }
-    if ui.scroll_area(ctx,ui.id(ctx,"details"),&p.details_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD,40),padding={8,7,8,8},gap=7,fade=th.panel}) {animation_cards(s,p,models,a,clip,width)}
+    origin:=editor.ai_provenance_asset_row(s)
+    if ui.scroll_area(ctx,ui.id(ctx,"details"),&p.details_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=th.panel}) {animation_cards(s,p,models,a,clip,width)}
 }
 
 @(private)
@@ -711,7 +712,7 @@ animation_cards :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,
             if candidate.mesh==p.mesh {selected=i+1}
         }
         editor.row_begin(ctx,"Subject")
-        if ui.dropdown(ctx,ui.id(ctx,"subject"),names,&selected,{width=-1,height=th.row,searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
+        if ui.dropdown(ctx,ui.id(ctx,"subject"),{list=names},&selected,{width=-1,height=th.row,searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
         editor.row_end(ctx)
         if p.subject.short {ui.label(ctx,"Part of the subject is left out",th.font_small,th.text_muted)}
     }

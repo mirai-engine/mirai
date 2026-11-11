@@ -8,7 +8,9 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -16,32 +18,12 @@ import foliage "plugins:foliage/runtime"
 
 @(private="file")
 Foliage_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     foliages:core.Table(foliage.Foliage),
-}
-
-@(private="file")
-test_tables :: proc() -> [5]core.Table_Info {
-    return {
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Foliage_Test_World,ids)},
-        {name="Name",type=core.Name,info=type_info_of(core.Name),offset=offset_of(Foliage_Test_World,names)},
-        {name="Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Foliage_Test_World,transforms)},
-        {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Foliage_Test_World,parents)},
-        {name="Foliage",type=foliage.Foliage,info=type_info_of(foliage.Foliage),offset=offset_of(Foliage_Test_World,foliages)},
-    }
-}
-
-@(private="file")
-test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Foliage_Test_World)world
-    core.table_settle(&w.ids,&w.entities);core.table_settle(&w.names,&w.entities)
-    core.table_settle(&w.transforms,&w.entities);core.table_settle(&w.parents,&w.entities)
-    core.table_settle(&w.foliages,&w.entities)
-    core.entities_settle(&w.entities)
 }
 
 // The source the registry holds for a foliage, unsaved or on disk.
@@ -65,12 +47,9 @@ override_count :: proc(s:^foliage.Source,kind:foliage.Override_Kind) -> (count:i
 
 @(test)
 foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-foliage-tool-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"foliage-tool")
     path:=fmt.tprintf("%s/meadow.foliage",root)
     relative:="meadow.foliage"
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
@@ -90,37 +69,30 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     disk,_:=serial.file_read(path)
     defer delete(disk)
     world:Foliage_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id");core.table_init(&world.names,"Name");core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent");core.table_init(&world.foliages,"Foliage")
-    defer {
-        core.table_destroy(&world.ids);core.table_destroy(&world.names);core.table_destroy(&world.transforms)
-        core.table_destroy(&world.parents);core.table_destroy(&world.foliages);core.entities_destroy(&world.entities)
-    }
-    tables:=test_tables()
-    info:=core.World_Info{entities=offset_of(Foliage_Test_World,entities),tables=tables[:],settle=test_settle}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     meadow:=core.create(&world.entities)
     core.add(&world.ids,meadow,core.Id{value=base.Entity_Id(100)})
     core.add(&world.transforms,meadow,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,meadow,foliage.Foliage{source=id,revision=1})
-    core.world_settle(ref)
-    selection:editor.Selection;defer delete(selection.entities)
-    edits:editor.Edits;defer editor.edits_free(&edits)
-    editor.edits_reset(&edits,ref)
+    core.test_world_settle(&world)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
-    editor.selection_set(&selection,{meadow})
+    history.selection_set(&selection,{meadow})
     foliages:=core.read(&world.foliages)
     owner:=mm.Transform{rotation=1,scale={1,1,1}}
     prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,foliages:core.Read(foliage.Foliage),e:core.Entity) -> bool {
-        foliage_sync(s,tool,foliages,s.app)
-        return testing.expect(t,edit_prepare(tool,s.app,foliages,e))
+        foliage_sync(s,tool,foliages,s.app.assets)
+        return testing.expect(t,edit_prepare(tool,s.app.assets,s.app.allocator,foliages,e))
     }
     step :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,ref:core.World_Ref,label:string) {
-        testing.expect(t,edit_commit(s,tool,ref,s.app,label))
-        testing.expect(t,editor.edits_commit(s.edits,ref,s.selection))
+        testing.expect(t,edit_commit(s,tool,ref,s.app.assets,label))
+        testing.expect(t,history.edits_commit(s.edits,ref,s.selection))
     }
     random:=mm.rng_make(9,1)
 
@@ -185,8 +157,8 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
 
     // Undo goes back through each step, and redo forward.
     for revision:=u32(5);revision>=1;revision-=1 {
-        testing.expect(t,editor.undo(&edits,ref,&selection))
-        foliage_sync(&s,&tool,foliages,&app)
+        testing.expect(t,history.undo(&edits,ref,&selection))
+        foliage_sync(&s,&tool,foliages,app.assets)
         testing.expect_value(t,core.at(foliages,0).revision,revision)
         held=held_source(t,&assets,id)
         testing.expect_value(t,held.info.revision,revision)
@@ -196,8 +168,8 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     testing.expect_value(t,manual_count(&held),0)
     testing.expect_value(t,len(held.cells[0].overrides),0)
     foliage.source_destroy(&held)
-    testing.expect(t,editor.redo(&edits,ref,&selection))
-    foliage_sync(&s,&tool,foliages,&app)
+    testing.expect(t,history.redo(&edits,ref,&selection))
+    foliage_sync(&s,&tool,foliages,app.assets)
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),3)
     foliage.source_destroy(&held)
@@ -205,11 +177,8 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
 
 @(test)
 a_canceled_stroke_puts_back_what_the_file_held :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-foliage-cancel-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"foliage-cancel")
     path:=fmt.tprintf("%s/patch.foliage",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
@@ -231,11 +200,11 @@ a_canceled_stroke_puts_back_what_the_file_held :: proc(t:^testing.T) {
     edit_baseline(&tool)
     random:=mm.rng_make(3,1)
     paint_instance(&tool.edit.source,&tool.edit.source.types[0],{1,0,1},{0,1,0},&random,nil)
-    testing.expect(t,edit_preview(&s,&tool,&app))
+    testing.expect(t,edit_preview(&s,&tool,app.assets))
     held:=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),1)
     foliage.source_destroy(&held)
-    edit_cancel(&s,&tool,&app)
+    edit_cancel(&s,&tool,app.assets)
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),0)
     foliage.source_destroy(&held)
@@ -272,11 +241,8 @@ the_brush_fills_to_its_density_with_spacing_and_stands_on_the_ground :: proc(t:^
 // back to 0, the runtime keeps it there and the tool puts back what the file held.
 @(test)
 a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-foliage-zero-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"foliage-zero")
     path:=fmt.tprintf("%s/imported.foliage",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
@@ -291,36 +257,29 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     delete(bytes)
     host.assets_scan(&assets)
     world:Foliage_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id");core.table_init(&world.names,"Name");core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent");core.table_init(&world.foliages,"Foliage")
-    defer {
-        core.table_destroy(&world.ids);core.table_destroy(&world.names);core.table_destroy(&world.transforms)
-        core.table_destroy(&world.parents);core.table_destroy(&world.foliages);core.entities_destroy(&world.entities)
-    }
-    tables:=test_tables()
-    info:=core.World_Info{entities=offset_of(Foliage_Test_World,entities),tables=tables[:],settle=test_settle}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     patch:=core.create(&world.entities)
     core.add(&world.ids,patch,core.Id{value=base.Entity_Id(200)})
     core.add(&world.transforms,patch,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,patch,foliage.Foliage{source=id})
-    core.world_settle(ref)
-    selection:editor.Selection;defer delete(selection.entities)
-    edits:editor.Edits;defer editor.edits_free(&edits)
-    editor.edits_reset(&edits,ref)
+    core.test_world_settle(&world)
+    selection:history.Selection;defer delete(selection.entities)
+    edits:history.Edits;defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    s:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
-    editor.selection_set(&selection,{patch})
+    history.selection_set(&selection,{patch})
     foliages:=core.read(&world.foliages)
     data:foliage.Foliage_Data
     defer {for &entry in data.entries {foliage.source_destroy(&entry.source)};delete(data.entries)}
     problems:core.Problems
     // A frame: the runtime reads the source before the tool syncs.
     frame :: proc(s:^editor.Session,tool:^Foliage_Tool,data:^foliage.Foliage_Data,foliages:core.Read(foliage.Foliage),problems:^core.Problems) {
-        foliage.foliage_load(data,foliages,s.app,problems)
-        foliage_sync(s,tool,foliages,s.app)
+        foliage.foliage_load(data,foliages,s.app.assets,s.app.allocator,problems)
+        foliage_sync(s,tool,foliages,s.app.assets)
     }
     x_of :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> f32 {
         held:=held_source(t,a,id)
@@ -331,27 +290,27 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     }
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(0))
-    if !testing.expect(t,edit_prepare(&tool,&app,foliages,patch)) {return}
+    if !testing.expect(t,edit_prepare(&tool,app.assets,app.allocator,foliages,patch)) {return}
     edit_baseline(&tool)
     instance,placed,found:=instance_of_batch(&tool.edit.source,nil,{0,0},fern.id,0,&tool.work)
     if !testing.expect(t,found) {return}
     placed.position.x+=3
     _,moved:=instance_set(&tool.edit.source,nil,instance,placed)
     testing.expect(t,moved)
-    testing.expect(t,edit_commit(&s,&tool,ref,&app,"Move foliage instance"))
-    testing.expect(t,editor.edits_commit(&edits,ref,&selection))
+    testing.expect(t,edit_commit(&s,&tool,ref,app.assets,"Move foliage instance"))
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(1))
     testing.expect(t,abs(x_of(t,&assets,id)-5)<1e-4)
 
-    testing.expect(t,editor.undo(&edits,ref,&selection))
+    testing.expect(t,history.undo(&edits,ref,&selection))
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(0))
     testing.expect(t,abs(x_of(t,&assets,id)-2)<1e-4,"undo puts the instance back")
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(0))
 
-    testing.expect(t,editor.redo(&edits,ref,&selection))
+    testing.expect(t,history.redo(&edits,ref,&selection))
     frame(&s,&tool,&data,foliages,&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(1))
     testing.expect(t,abs(x_of(t,&assets,id)-5)<1e-4,"redo moves it again")
@@ -514,4 +473,12 @@ instances_are_counted_by_cell_and_again_only_where_a_cell_or_its_ground_changed 
     testing.expect_value(t,total(&c,fern_id),3+generated)
     testing.expect_value(t,count_text(1234567),"1,234,567")
     testing.expect_value(t,count_text(12),"12")
+}
+
+// What git and the tools know of the kinds of the plugin without loading it.
+@(test)
+the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
+    m,error:=project.plugin_read(#directory+"../plugin.mirai")
+    testing.expect_value(t,error.code,project.Error_Code.None)
+    testing.expect_value(t,editor.asset_kinds_differ(FOLIAGE_KINDS_DEFAULT.provider,&m),"")
 }

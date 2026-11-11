@@ -1,6 +1,5 @@
 package previews_editor
 
-import "core:encoding/base64"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -10,8 +9,6 @@ import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
-import "mirai:project"
-import gpu "mirai:render"
 import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -26,7 +23,7 @@ CAPTURE_FRAMES :: 16
 CAPTURE_RATE :: 60
 
 Animation_Capture_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     frames:u32 `mirai:"optional,min=1,max=16,label=Frames of the strip spread over seconds"`,
     seconds:f32 `mirai:"optional,min=0,max=60,unit=s"`,
     time:f32 `mirai:"optional,min=0,unit=s,label=Where it starts"`,
@@ -51,14 +48,20 @@ Animation_Capture_Params :: struct {
 Previews_Api :: struct {provider:editor.Api_Provider}
 PREVIEWS_API_DEFAULT :: Previews_Api{provider={register=previews_register}}
 
-@(private)
-CAPTURE_RESULT :: `{"type":"object","properties":{"content":{"type":"array"},"structuredContent":{"type":"object"},"isError":{"const":false}},"required":["content","isError"]}`
+Animation_Capture_Result :: struct {
+    id:base.Entity_Id,
+    image:[1024]u8 `mirai:"text,label=The PNG written; MCP also returns the image"`,
+    size:int `mirai:"label=Pixels of a side of a frame"`,
+    short:bool `mirai:"label=The copy of the character shows only part of what the entity does"`,
+    frames:[1]f32 `mirai:"list,unit=s,label=The time of each frame of the strip"`,
+    views:[1][16]u8 `mirai:"text,list,label=The view of each row"`,
+}
 
 @(private)
 previews_register :: proc(s:^editor.Session) {
     defaults:=Animation_Capture_Params{frames=6,seconds=1,size=256,views={.Three_Quarter}}
     aed.request_rows_defaults(&defaults)
-    editor.api_method_register(s,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",params=Animation_Capture_Params,params_info=type_info_of(Animation_Capture_Params),result_schema=CAPTURE_RESULT,defaults=&defaults,flags={.Read_Only},mcp_content=true,run=capture})
+    editor.api_method_register(s,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",params=Animation_Capture_Params,params_info=type_info_of(Animation_Capture_Params),result=Animation_Capture_Result,result_info=type_info_of(Animation_Capture_Result),writes_result=true,defaults=&defaults,flags={.Read_Only},run=capture})
 }
 
 @(private)
@@ -116,7 +119,7 @@ capture_pose :: proc(st:^Capture_State,frame:int) -> bool {
             for i in 0..<len(skin.world) {skin.world[i]=bones[i] if i<len(bones) else skin.world[i]}
         }
         for joint,i in skin.geometry.joints {skin.palette[i]=mm.transform_matrix(skin.world[joint.node])*joint.inverse_bind}
-        if !gpu.skin_preview_sample(sub.renderer,&skin.buffers,skin.palette,skin.geometry.posed) {return false}
+        if !editor.skin_preview_sample(sub.renderer,&skin.buffers,skin.palette,skin.geometry.posed) {return false}
         part:=sub.parts[skin.part]
         for index,i in skin.geometry.indices {
             placed:=&sub.posed[int(part.first)+i]
@@ -127,20 +130,12 @@ capture_pose :: proc(st:^Capture_State,frame:int) -> bool {
     return true
 }
 
-// The way the character faces: the body of its skeleton turned with the rig.
+// The way the character faces: the -Z of its rig.
 @(private)
-capture_facing :: proc(app:^host.App,st:^Capture_State) -> mm.Vec3 {
-    forward:=mm.Vec3{0,0,1}
-    if len(st.sub.skins)>0 && app.assets!=nil {
-        file:asset.Asset
-        if host.assets_file(app.assets,st.sub.skins[0].geometry.skeleton,asset.KIND_SKELETON,&file)==.None {
-            if view,error:=asset.skeleton_view(&file,&app.assets.types);error==.None && view.body!=nil {forward=view.body.forward}
-            asset.asset_close(&file)
-        }
-    }
-    facing:=mm.quat_rotate(st.parts[0][0].rotation,forward)
+capture_facing :: proc(st:^Capture_State) -> mm.Vec3 {
+    facing:=mm.quat_rotate(st.parts[0][0].rotation,mm.FORWARD)
     facing.y=0
-    return linalg.normalize0(facing) if linalg.length(facing)>1e-4 else {0,0,1}
+    return linalg.normalize0(facing) if linalg.length(facing)>1e-4 else mm.FORWARD
 }
 
 @(private)
@@ -155,20 +150,22 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     for i in 0..<frames {st.ticks[i]=u32(math.round(f32(i)*f32(ticks)/f32(max(frames-1,1)))) if frames>1 else 0}
     context.allocator=app.allocator
     defer {subject_skins_clear(&st.sub);delete(st.sub.skins);delete(st.sub.locals);delete(st.sub.posed);delete(st.sub.materials)}
-    if !aed.preview_run(s,call,p.id,p,p.time,ticks,1.0/CAPTURE_RATE,capture_frame,st) {return}
+    captured,_:=editor.api_entity_find(editor.shown_world(s),base.text_get(p.entity[:]))
+    captured_id:=editor.api_entity_id(editor.shown_world(s),captured)
+    if !aed.preview_run(s,call,p.entity[:],p,p.time,ticks,1.0/CAPTURE_RATE,capture_frame,st) {return}
     if st.taken<frames {api.call_fail(call,api.SERVER_ERROR,"The copy stopped before the last frame");return}
     host.assets_commit(app.assets)
     views:=make([dynamic]Capture_View,call.allocator)
     for view in Capture_View {if view in (p.views if p.views!={} else Capture_Views{.Three_Quarter}) {append(&views,view)}}
     // Every view turns the character about its root so the camera sees that side.
-    toward:=linalg.normalize(mm.Vec3{.55,0,.75})
-    facing:=capture_facing(app,st)
+    toward:=linalg.normalize(mm.Vec3{-.55,0,-.75})
+    facing:=capture_facing(st)
     pivot:=st.parts[0][0].position
     front:=math.atan2(linalg.cross(facing,toward).y,linalg.dot(facing,toward))
     turns:=[Capture_View]f32{.Three_Quarter=front+35*mm.RAD_PER_DEG,.Front=front,.Side=front+90*mm.RAD_PER_DEG,.Back=front+180*mm.RAD_PER_DEG}
     fits:=make([][2]mm.Vec3,len(views),call.allocator)
     for &fit in fits {fit={{max(f32),max(f32),max(f32)},{-max(f32),-max(f32),-max(f32)}}}
-    turn :: proc(posed,out:[]gpu.Thumbnail_Vertex,rotation:mm.Quat,pivot:mm.Vec3) {
+    turn :: proc(posed,out:[]editor.Thumbnail_Vertex,rotation:mm.Quat,pivot:mm.Vec3) {
         for vertex,i in posed {
             out[i]=vertex
             out[i].position=pivot+mm.quat_rotate(rotation,vertex.position-pivot)
@@ -188,21 +185,23 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     }
     side:=int(p.size)
     width,height:=side*frames,side*len(views)
+    path,writable:=editor.api_capture_file(s,call,base.text_get(p.path[:]),fmt.tprintf("animation-%x.png",u64(captured_id)),call.allocator)
+    if !writable {return}
     // The vertices and images outgrow the scratch of a call.
-    turned,turned_error:=make([]gpu.Thumbnail_Vertex,len(st.sub.posed),app.allocator)
+    turned,turned_error:=make([]editor.Thumbnail_Vertex,len(st.sub.posed),app.allocator)
     defer delete(turned,app.allocator)
     pixels,pixels_error:=make([]u8,side*side*4,app.allocator)
     defer delete(pixels,app.allocator)
     image,allocated:=make([]u8,width*height*4,app.allocator)
     if allocated!=nil || turned_error!=nil || pixels_error!=nil {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"The image could not be allocated");return}
     for i in 0..<width*height {image[i*4],image[i*4+1],image[i*4+2],image[i*4+3]=38,40,46,255}
-    thumbnail:gpu.Thumbnail_GPU
-    defer gpu.thumbnail_destroy(app.renderer.device,&thumbnail)
+    thumbnail:editor.Thumbnail_Targets
+    defer editor.thumbnail_targets_destroy(app.renderer,&thumbnail)
     for frame in 0..<frames {
         if !capture_pose(st,frame) {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"The skin of the character could not be posed");return}
         for view,v in views {
             turn(st.sub.posed[:],turned,mm.quat_axis_angle({0,1,0},turns[view]),pivot)
-            if !gpu.renderer_thumbnail(app.renderer,&thumbnail,turned,st.sub.materials[:],u32(side),u32(side),pixels,fits[v]) {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"A frame could not be drawn");return}
+            if !editor.thumbnail_draw(app.renderer,&thumbnail,turned,st.sub.materials[:],u32(side),u32(side),pixels,fits[v]) {delete(image,app.allocator);api.call_fail(call,api.SERVER_ERROR,"A frame could not be drawn");return}
             for y in 0..<side {
                 for x in 0..<side {
                     from:=(y*side+x)*4
@@ -213,36 +212,17 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
             }
         }
     }
-    path:=base.text_get(p.path[:])
-    if path=="" {
-        if s.project_root=="" {delete(image,app.allocator);api.call_fail(call,api.INVALID_PARAMS,"path is required without a project");return}
-        folder:=project.path(s.project_root,".mirai","captures",allocator=context.temp_allocator)
-        os.make_directory_all(folder)
-        path=project.path(folder,fmt.tprintf("animation-%x.png",p.id),allocator=context.temp_allocator)
-    }
     write:host.Png_Write
     host.app_png_write_start(app,&write,path,image,width,height)
-    if !host.app_png_write_wait(app,&write) {api.call_fail(call,api.SERVER_ERROR,"The capture could not be written");return}
-    report:serial.Writer;serial.writer_init(&report,0,context.temp_allocator)
-    serial.write_u8(&report,'{');api.write_key(&report,"id",true);api.write_id(&report,p.id);api.write_text(&report,"image",path)
-    api.write_int(&report,"size",i64(side));api.write_bool(&report,"short",st.sub.short)
-    api.write_key(&report,"frames");serial.write_u8(&report,'[')
-    for frame in 0..<frames {if frame>0 {serial.write_u8(&report,',')};api.write_number(&report,p.time+f32(st.ticks[frame])/CAPTURE_RATE)}
-    serial.write_u8(&report,']')
-    api.write_key(&report,"views");serial.write_u8(&report,'[')
-    for view,v in views {if v>0 {serial.write_u8(&report,',')};serial.write_u8(&report,'"');serial.text_write_raw(&report,fmt.tprintf("%v",view));serial.write_u8(&report,'"')}
-    serial.text_write_raw(&report,"]}")
-    data,error:=os.read_entire_file(path,context.temp_allocator)
-    if error!=nil {api.call_fail(call,api.SERVER_ERROR,"The capture could not be read");return}
-    encoded,encode_error:=base64.encode(data,allocator=context.temp_allocator)
-    if encode_error!=nil {api.call_fail(call,api.INTERNAL_ERROR,"The capture could not be encoded");return}
-    text:=string(serial.writer_bytes(&report))
-    if len(encoded)+2*len(text)+256>call.server.max_response {api.call_fail(call,api.SERVER_ERROR,"The capture exceeds the response limit: ask for fewer frames, views or a smaller size");return}
-    serial.text_write_raw(call.out,`{"content":[{"type":"image","data":"`)
-    serial.text_write_raw(call.out,encoded)
-    serial.text_write_raw(call.out,`","mimeType":"image/png"},{"type":"text","text":`)
-    serial.text_write_string(call.out,text)
-    serial.text_write_raw(call.out,`}],"structuredContent":`)
-    serial.text_write_raw(call.out,text)
-    serial.text_write_raw(call.out,`,"isError":false}`)
+    if error:=host.app_png_write_wait(app,&write);error!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written: %s",path,os.error_string(error));return}
+    report:=call.out
+    serial.write_u8(report,'{');api.write_key(report,"id",true);api.write_id(report,captured_id);api.write_text(report,"image",path)
+    api.write_int(report,"size",i64(side));api.write_bool(report,"short",st.sub.short)
+    api.write_key(report,"frames");serial.write_u8(report,'[')
+    for frame in 0..<frames {if frame>0 {serial.write_u8(report,',')};api.write_number(report,p.time+f32(st.ticks[frame])/CAPTURE_RATE)}
+    serial.write_u8(report,']')
+    api.write_key(report,"views");serial.write_u8(report,'[')
+    for view,v in views {if v>0 {serial.write_u8(report,',')};serial.write_u8(report,'"');serial.text_write_raw(report,fmt.tprintf("%v",view));serial.write_u8(report,'"')}
+    serial.text_write_raw(report,"]}")
+    api.call_image(call,path)
 }

@@ -8,10 +8,10 @@ import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
+import "base:runtime"
 
 MOTION_KIND :: asset.Fourcc(u32('M')|u32('O')<<8|u32('T')<<16|u32('N')<<24)
 MOTION_VERSION :: 2
-MOTION_OLDEST :: MOTION_VERSION
 MOTION_WINDOWS :: 64
 MOTION_KEYS :: 4096
 Pose_Warp_Leg :: struct {hip,knee,foot:Bone_Ref}
@@ -92,7 +92,7 @@ motion_profile_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,prof
     return asset.document_save(&doc,path)
 }
 motion_profile_view :: proc(file:^asset.Asset,types:^asset.Types) -> (profile:Motion_Profile,error:asset.Error) {
-    asset.kind_check(file,MOTION_KIND,MOTION_OLDEST,MOTION_VERSION) or_return
+    asset.kind_check(file,MOTION_KIND,MOTION_VERSION) or_return
     info:=asset.asset_rows(file,types,"info","",Motion_Info) or_return
     if len(info)!=1 {return {},.Corrupt};profile.info=info[0]
     profile.windows=asset.asset_rows(file,types,"windows","",Motion_Window) or_return
@@ -124,37 +124,37 @@ motion_cached_content :: proc(cache:^Motion_Assets,id:base.Asset_Id,hint:^i32=ni
     if hint!=nil {hint^=i32(row+1)}
     return &cache.contents[row]
 }
-motion_content :: proc(cache:^Motion_Assets,app:^host.App,id:base.Asset_Id,hint:^i32=nil) -> ^Motion_Content {
-    if cache==nil || app==nil || app.assets==nil || id=={} {return nil}
-    context.allocator=app.allocator;cache.allocator=app.allocator
+motion_content :: proc(cache:^Motion_Assets,assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id,hint:^i32=nil) -> ^Motion_Content {
+    if cache==nil || assets==nil || id=={} {return nil}
+    context.allocator=allocator;cache.allocator=allocator
     content:=motion_cached_content(cache,id,hint)
-    if content==nil {if !program_array_reserve(&cache.contents,len(cache.contents)+1) {return nil};append(&cache.contents,Motion_Content{id=id});content=&cache.contents[len(cache.contents)-1];if hint!=nil {hint^=i32(len(cache.contents))}}
-    if content.checked==assets_stamp(app) {return content if content.valid else nil}
-    record,found:=asset.registry_find(&app.assets.registry,id)
+    if content==nil {if !program_array_reserve(&cache.contents,len(cache.contents)+1) || append(&cache.contents,Motion_Content{id=id})!=1 {return nil};content=&cache.contents[len(cache.contents)-1];if hint!=nil {hint^=i32(len(cache.contents))}}
+    if content.checked==assets_stamp(assets) {return content if content.valid else nil}
+    record,found:=asset.registry_find(&assets.registry,id)
     stamp:=[2]i64{};if found {stamp={record.size,record.time}}
-    if content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(app);return content if content.valid else nil}
+    if content.checked!=0 && content.stamp==stamp {content.checked=assets_stamp(assets);return content if content.valid else nil}
     profile:Motion_Profile;error:=asset.Error.Not_Found
     if found {
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        read,read_error:=motion_profile_read(app,id)
+        read,read_error:=motion_profile_read(assets,allocator,id)
         profile=read;error=read_error
     }
     content.error=error
     if error==.Out_Of_Memory {content.checked=0;return nil}
     motion_profile_free(&content.profile);content.profile=profile;content.valid=error==.None
-    content.stamp,content.checked=stamp,assets_stamp(app);content.revision+=1
+    content.stamp,content.checked=stamp,assets_stamp(assets);content.revision+=1
     return content if content.valid else nil
 }
 @(private)
-motion_profile_read :: proc(app:^host.App,id:base.Asset_Id) -> (profile:Motion_Profile,error:asset.Error) {
+motion_profile_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.Asset_Id) -> (profile:Motion_Profile,error:asset.Error) {
     file:asset.Asset
-    if error:=host.assets_file(app.assets,id,MOTION_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
-    view,read:=motion_profile_view(&file,&app.assets.types);if read!=.None {return {},read}
+    if error:=host.assets_file(assets,id,MOTION_KIND,&file);error!=.None {return {},error};defer asset.asset_close(&file)
+    view,read:=motion_profile_view(&file,&assets.types);if read!=.None {return {},read}
     profile.info=view.info
     ok:bool
-    profile.windows,ok=graph_clone(view.windows,app.allocator);if !ok {return {},.Out_Of_Memory}
-    profile.distances,ok=graph_clone(view.distances,app.allocator);if !ok {motion_profile_free(&profile,app.allocator);return {},.Out_Of_Memory}
-    profile.keys,ok=graph_clone(view.keys,app.allocator);if !ok {motion_profile_free(&profile,app.allocator);return {},.Out_Of_Memory}
+    profile.windows,ok=graph_clone(view.windows,allocator);if !ok {return {},.Out_Of_Memory}
+    profile.distances,ok=graph_clone(view.distances,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
+    profile.keys,ok=graph_clone(view.keys,allocator);if !ok {motion_profile_free(&profile,allocator);return {},.Out_Of_Memory}
     return profile,.None
 }
 
@@ -170,19 +170,18 @@ MOTION_LOCOMOTION_DEFAULT :: Motion_Locomotion{weight=1,enabled=true}
 @(storage,queue)
 Motion_Requests :: struct {targets:core.Queue(Motion_Target_Request),locomotion:core.Queue(Motion_Locomotion)}
 
-motion_target :: proc(requests:^Motion_Requests,rig:core.Entity,name:string,target:Spatial_Target,enabled:bool=true) -> bool {
-    if requests==nil || rig==core.NONE || len(name)==0 || len(name)>=32 || !spatial_target_valid(target) {return false}
-    for byte in name {if byte==0 {return false}}
-    if !program_array_reserve(&requests.targets.items,REQUEST_CAPACITY) {return false}
-    if len(requests.targets.items)>=REQUEST_CAPACITY {return false}
+motion_target :: proc(requests:^Motion_Requests,rig:core.Entity,name:string,target:Spatial_Target,enabled:bool=true) {
+    if requests==nil {return}
+    valid:=rig!=core.NONE && len(name)>0 && len(name)<32 && spatial_target_valid(target)
+    for byte in name {valid&&=byte!=0}
+    if !valid {core.refuse(&requests.targets);return}
     value:=Motion_Target{target=target,enabled=enabled};copy(value.name[:],transmute([]u8)name)
-    core.push(&requests.targets,{rig=rig,target=value});return true
+    core.offer(&requests.targets,Motion_Target_Request{rig=rig,target=value})
 }
-motion_locomotion :: proc(requests:^Motion_Requests,value:Motion_Locomotion) -> bool {
-    if requests==nil || value.rig==core.NONE || !profile_vector(value.velocity) || !profile_vector(value.source_velocity) || !profile_weight(value.weight) {return false}
-    if !program_array_reserve(&requests.locomotion.items,REQUEST_CAPACITY) {return false}
-    if len(requests.locomotion.items)>=REQUEST_CAPACITY {return false}
-    core.push(&requests.locomotion,value);return true
+motion_locomotion :: proc(requests:^Motion_Requests,value:Motion_Locomotion) {
+    if requests==nil {return}
+    if value.rig==core.NONE || !profile_vector(value.velocity) || !profile_vector(value.source_velocity) || !profile_weight(value.weight) {core.refuse(&requests.locomotion);return}
+    core.offer(&requests.locomotion,value)
 }
 
 Motion_Instance :: struct {
@@ -224,13 +223,13 @@ motion_inspect :: proc(runtime:^Motion_Runtime,entity:core.Entity) -> (Motion_In
 }
 
 // Reports why the motion profile of a rig did not apply in a tick.
-motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error,app:^host.App=nil,assets:^Motion_Assets=nil,profile:base.Asset_Id={}) {
+motion_problem :: proc(problems:^core.Problems,e:core.Entity,error:Motion_Error,loaded:^host.Assets=nil,assets:^Motion_Assets=nil,profile:base.Asset_Id={}) {
     switch error {
     case .None,.Unsupported_Clock:
     case .Invalid:
         core.report(problems,e,"animation.motion_invalid","the motion profile of this rig could not warp it: a value of the profile, of its targets, of the locomotion asked or of the root motion is not finite or is out of range; check them (animation.inspect)")
     case .Missing_Profile:
-        if assets!=nil {asset_problem(problems,e,app,"animation.motion_asset","Animation.motion",profile,content_error(assets.contents[:],profile))}
+        if assets!=nil {asset_problem(problems,e,loaded,"animation.motion_asset","Animation.motion",profile,content_error(assets.contents[:],profile))}
     case .Unbound_Bone:
         core.report(problems,e,"animation.motion_bones","the motion profile of this rig names a pelvis, spine or leg bone its skeleton does not have, or legs that are not chains (hip, knee, foot) or that share bones; fix the profile (animation.asset.inspect lists the bones)")
     case .Missing_Target:
@@ -280,7 +279,8 @@ motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,p
         if found<0 {
             if len(instance.targets)>=MOTION_WINDOWS {instance.error=.Capacity;motion_problem(problems,request.rig,.Capacity);continue}
             if !program_array_reserve(&instance.targets,len(instance.targets)+1) || len(instance.bindings)<=len(instance.targets) && !program_array_resize(&instance.bindings,len(instance.targets)+1) {instance.error=.Out_Of_Memory;motion_problem(problems,request.rig,.Out_Of_Memory);continue}
-            found=len(instance.targets);append(&instance.targets,request.target)
+            found=len(instance.targets)
+            if append(&instance.targets,request.target)!=1 {instance.error=.Out_Of_Memory;motion_problem(problems,request.rig,.Out_Of_Memory);continue}
         } else {instance.targets[found]=request.target}
         target:=&instance.targets[found]
         target.resolved=target.target.kind==.World
@@ -311,7 +311,10 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     for row in 0..<core.count(animations) {
         if !layout && core.stamp(animations,row)<=runtime.animation_version || animations.table.values[row].motion=={} {continue}
         entity:=core.entity_at(animations,row);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
-        if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {slot=len(runtime.instances);append(&runtime.instances,Motion_Instance{entity=entity,window=-1})} else if runtime.instances[slot].entity!=entity {
+        if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {
+            slot=len(runtime.instances)
+            if append(&runtime.instances,Motion_Instance{entity=entity,window=-1})!=1 {memory_problem(problems,core.NONE,"the entities with a motion profile, so none applies");return false}
+        } else if runtime.instances[slot].entity!=entity {
             // A new entity in the slot keeps the memory of its targets.
             reused:=&runtime.instances[slot];targets,bindings:=reused.targets,reused.bindings
             clear(&targets);reused^={entity=entity,window=-1};reused.targets=targets;reused.bindings=bindings
@@ -322,9 +325,9 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     return true
 }
 
-motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animations:core.Read(Animation),playback:^Playback,assets:^Motion_Assets,app:^host.App,problems:^core.Problems) -> bool {
+motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animations:core.Read(Animation),playback:^Playback,assets:^Motion_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
     if runtime==nil || playback==nil || animations.table==nil {return false}
-    if app!=nil {context.allocator=app.allocator}
+    if allocator.procedure!=nil {context.allocator=allocator}
     runtime.frame+=1
     if !motion_discover(runtime,animations,problems) {return false}
     kept:=0
@@ -334,16 +337,16 @@ motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Motion_Requests,animati
         instance.seen=runtime.frame
         state:=constraint_playing(playback,instance.entity)
         id:=animations.table.values[row].motion
-        content:=motion_content(assets,app,id,&instance.content)
+        content:=motion_content(assets,loaded,allocator,id,&instance.content)
         if content==nil {
             instance.error=.Missing_Profile
-            motion_problem(problems,instance.entity,.Missing_Profile,app,assets,id)
+            motion_problem(problems,instance.entity,.Missing_Profile,loaded,assets,id)
         } else if state!=nil && !motion_bind(&instance,state,content) {
             motion_problem(problems,instance.entity,instance.error)
         }
         if kept!=i {runtime.instances[kept]=instance};runtime.rows[index]=i32(kept+1);kept+=1
     }
-    resize(&runtime.instances,kept)
+    base.truncate(&runtime.instances,kept)
     motion_take_requests(runtime,requests,problems)
     return true
 }
@@ -361,10 +364,10 @@ motion_resolve_targets :: proc(runtime:^Motion_Runtime,playback:^Playback,skelet
     }}
 }
 
-motion_apply_root :: proc(runtime:^Motion_Runtime,assets:^Motion_Assets,app:^host.App,state:^Playing,profile:base.Asset_Id,content:^host.Content_Animation,actor:mm.Transform,dt:f32,seeking:bool=false,clock:Motion_Clock={},base_weight:f32=1) -> bool {
+motion_apply_root :: proc(runtime:^Motion_Runtime,assets:^Motion_Assets,loaded:^host.Assets,allocator:mem.Allocator,state:^Playing,profile:base.Asset_Id,content:^host.Content_Animation,actor:mm.Transform,dt:f32,seeking:bool=false,clock:Motion_Clock={},base_weight:f32=1) -> bool {
     if state==nil || profile=={} {return true}
     instance:=motion_instance(runtime,state.entity);if instance==nil {return false}
-    definition:=motion_content(assets,app,profile,&instance.content)
+    definition:=motion_content(assets,loaded,allocator,profile,&instance.content)
     if definition==nil {return false}
     if !motion_bind(instance,state,definition) {return false}
     instance.window=-1;instance.remaining_error=0;instance.error=.None;instance.source_velocity={}

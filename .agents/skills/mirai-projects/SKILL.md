@@ -1,12 +1,13 @@
 ---
 name: mirai-projects
-description: Mirai projects and plugins - `project` (manifests, plugin discovery and order,
-  layout), `cook/build` (generated world, engine binaries, libraries and shipped game, project
-  shaders, fingerprint, cooking and engine-time exclusion), the installed engine (`mirai package
-  engine`, binary package and release workflow), the `tools/mirai` commands, the external scripts
-  and the templates. Use when changing a manifest, the layout or how a project or the engine is
-  generated, compiled or distributed, when investigating why something does not compile or what
-  went into the game, or when taking reference frames or sound from a YouTube or X video.
+description: Mirai projects and plugins - `project` (manifests, plugin discovery and order, layout),
+  `cook/build` (generated world, engine binaries, libraries and shipped game, project shaders,
+  fingerprint, cooking and engine-time exclusion), `cook/workspace` (worktrees, dependencies, shared
+  cache and locks), the installed engine (`mirai package engine`, binary package and release
+  workflow), the `tools/mirai` commands, the external scripts and the `templates`. Use when changing
+  a manifest, the layout or how a project or the engine is generated, compiled or distributed, when
+  investigating why something does not compile or what went into the game, or when taking reference
+  frames or sound from a YouTube or X video.
 ---
 
 # Mirai projects and build
@@ -19,7 +20,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Plugin discovery and order: [package](references/projects.md#the-project-package); which folders
   go into each binary: [packages](references/projects.md#which-packages-go-in).
 - Targets, flags, jobs, outputs and [fingerprint](references/build.md#fingerprint) of `cook/build`:
-  [build](references/build.md); own shaders:
+  [targets](references/build.md#targets), [flags](references/build.md#flags-and-environment),
+  [jobs](references/build.md#jobs) and [outputs](references/build.md#outputs); own shaders:
   [project shaders](references/build.md#project-shaders).
 - Shipping and cooking: [shipped game](references/build.md#shipped-game),
   [dedicated server](references/build.md#dedicated-server) and
@@ -40,10 +42,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   [tool and machine](references/projects.md#tool-and-machine).
 - `mirai` subcommands (their usage, with `mirai <command>` without arguments):
   [commands](references/projects.md#commands) and
-  [common commands](../../../AGENTS.md#common-commands).
+  [common commands](references/projects.md#common-commands).
 - Headless editor in the background, `rpc`, `mcp`, `capture`:
   [sessions](../mirai-agent-api/references/api.md#sessions); comparing captures:
-  [images](../mirai-agent-api/references/image.md).
+  [images](../mirai-agent-api/references/image.md#comparing-images-mirai-image).
 - `scripts/*.py`, and reference frames from a YouTube or X video:
   [external scripts](references/projects.md#external-scripts).
 - Templates: [demo and templates](../mirai-gameplay/references/demo.md#templates); attributes that
@@ -65,8 +67,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 
 1. A new manifest field goes into the struct, with its default in `manifest_default` and its check
    in `manifest_validate` or `plugin_validate`.
-2. A new engine package goes into `ENGINE_RUNTIME_PACKAGES` or `ENGINE_EDITOR_PACKAGES` and, if it
-   is engine-time, into `engine_time_packages`.
+2. A new engine package goes into `ENGINE_PACKAGES`, in the lowest
+   [library](references/projects.md#engine-binaries) that has what it imports, and, if it is
+   engine-time, into `engine_time_packages`.
 3. A change in what `declare` writes bumps `DECLARE_VERSION`.
 4. Update [projects.md](references/projects.md) or [build.md](references/build.md) in the same task
    if an invariant or a workflow changes.
@@ -76,15 +79,17 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - `project` imports only `std/*`: the editor, the player and the tools use it.
 - `tools/mirai` and everything it imports, counting its `_test.odin` files (the compiler reads them
   too), do not reach `render`, `host`, `platform`, `editor` or `engine/*`: the tool writes
-  `render/shaders_gen.odin` and has to compile with those old tables to regenerate them. A `render`
-  value that is fixed from `cook` goes as an `#assert` in the generated table. It is guarded by
-  `the_tool_imports_no_package_of_the_engine`.
+  `render/shaders_gen.odin` and has to compile with those old tables to regenerate them. A value
+  that `render` and `cook` share is declared in `render/abi`, which reads no generated table and
+  the tool imports. It is guarded by `the_tool_imports_no_package_of_the_engine`.
 - The generator reads syntax (`core:odin/parser`) and writes text. The generated packages are the
   only source of what goes into each binary: `gen/game` imports `host` and the libraries, nothing
   from the editor; `gen/editor` and `gen/play` only export `mirai_project_info`.
 - A generic procedure, an `inline` one, one with `deferred_*` or one with an `any` in its
   signature is compiled in its caller: it is not exported. An `any` crossing into a library would
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
+- A private procedure is declared and exported only when the declarations of its package name it:
+  what `declare` copies as text and what it looks for names in are the same set.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.
@@ -130,14 +135,15 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Cache: changing an engine source and opening the editor rebuilds; repeating without changes
   reuses both builds ([reload](../mirai-editor/references/editor.md#build-and-reload)).
 - Fingerprint and shared cache: `mirai build engine --dev` twice (the second says "unchanged"
-  without waiting for a turn), a change only in `editor/` (rebuilds only `mirai-editor`) and in a
-  worktree from `mirai worktree new` (reports "copied from the shared cache").
+  without waiting for a turn), a change in the body of a procedure (rebuilds only the library of
+  its package) and in a worktree from `mirai worktree new` (reports "copied from the shared
+  cache").
 - Environment: `mirai doctor` from a worktree without its own `.deps` finds Odin and the
   dependencies of the main checkout.
-- Installed engine: `mirai test project an_installed_engine_is_told_by_its_manifest`, and in
-  `cook/build` `an_installed_engine_builds_nothing_and_says_what_it_lacks`,
-  `the_compiler_of_an_installed_engine_counts_by_its_manifest_not_its_date` and
-  `a_plugin_library_is_the_same_in_every_project`. If the package changes, by hand:
+- Installed engine: `project/project_test.odin` (told by its manifest) and, in `cook/build`,
+  `engine_test.odin` (builds nothing and says what it lacks), `compiler_test.odin` (the compiler
+  counts by its manifest, not its date) and `plugins_test.odin` (a plugin library is the same in
+  every project). If the package changes, by hand:
   `mirai package engine --out <short folder>`, compress it, decompress it into another folder and,
   with its `bin/mirai`, `new` of each template and `build editor --dev`, which does not compile
   plugin libraries; then `edit --dev` opens the editor. The workflow YAML is validated with

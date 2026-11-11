@@ -6,36 +6,7 @@ import "core:testing"
 import "mirai:core"
 
 @(private) Id_Trace :: struct {released:[dynamic]core.World_Id,destroyed:int,ordered:bool}
-@(private) Id_World :: struct {entities:core.Entities,id:core.World_Id,frame:core.Frame_Time,values:[dynamic]u32}
-
-@(private)
-id_world_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^Id_World)data
-    if !core.entities_init(&w.entities,allocator) {return false}
-    w.values=make([dynamic]u32,allocator)
-    return true
-}
-
-@(private)
-id_world_destroy :: proc(data:rawptr) {
-    w:=cast(^Id_World)data
-    delete(w.values)
-    core.entities_destroy(&w.entities)
-}
-
-// copy=false leaves the id and the frame where they are, as the generated world does.
-@(private)
-id_world_copy :: proc(dst,src:rawptr) -> bool {
-    d,s:=cast(^Id_World)dst,cast(^Id_World)src
-    return core.entities_copy(&d.entities,&s.entities) && core.value_copy(&d.values,&s.values,type_info_of([dynamic]u32))
-}
-
-@(private)
-id_world_swap :: proc(a,b:rawptr) {
-    a,b:=cast(^Id_World)a,cast(^Id_World)b
-    a.entities,b.entities=b.entities,a.entities
-    a.values,b.values=b.values,a.values
-}
+@(private) Id_World :: struct {using world:core.Test_World,id:core.World_Id,frame:core.Frame_Time,values:[dynamic]u32}
 
 @(private)
 id_world_release :: proc(world,shared,editor,app_data:rawptr) {
@@ -45,24 +16,12 @@ id_world_release :: proc(world,shared,editor,app_data:rawptr) {
     trace.ordered=w.frame.phase==.Release
 }
 
-@(private)
-id_world_info :: proc(storages:[]core.Storage_Info) -> (info:core.World_Info) {
-    info.sizes={.World=size_of(Id_World),.Shared=0,.Editor=0}
-    info.aligns={.World=align_of(Id_World),.Shared=1,.Editor=1}
-    info.storages=storages
-    info.init[.World],info.destroy[.World]=id_world_init,id_world_destroy
-    info.copy,info.swap=id_world_copy,id_world_swap
-    info.loops[.Game][.Release]=id_world_release
-    return
-}
-
 @(test)
 world_ids_are_stable_and_a_freed_one_names_no_other_world :: proc(t:^testing.T) {
-    storages:=[2]core.Storage_Info{
-        {name="World_Id",type=core.World_Id,info=type_info_of(core.World_Id),offset=offset_of(Id_World,id)},
-        {name="Frame_Time",type=core.Frame_Time,info=type_info_of(core.Frame_Time),offset=offset_of(Id_World,frame)},
-    }
-    info:=id_world_info(storages[:])
+    info,described:=core.test_info(t,Id_World)
+    if !described {return}
+    defer core.test_info_destroy(&info)
+    info.loops[.Game][.Release]=id_world_release
     trace:Id_Trace;defer delete(trace.released)
     app:=App{info=&info,allocator=context.allocator,shared=&trace}
     defer delete(app.worlds)
@@ -86,7 +45,8 @@ world_ids_are_stable_and_a_freed_one_names_no_other_world :: proc(t:^testing.T) 
     // A replacement keeps the id of the live world; the World it traded with
     // releases what was kept for its own id, never for the live one.
     source:Id_World
-    testing.expect(t,id_world_init(&source,context.allocator));defer id_world_destroy(&source)
+    if !testing.expect(t,core.world_init(&info,.World,&source,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&source)
     append(&source.values,7)
     testing.expect(t,app_world_replace(&app,shown,&source))
     testing.expect_value(t,(cast(^Id_World)shown).id,shown_id)
@@ -101,18 +61,12 @@ world_ids_are_stable_and_a_freed_one_names_no_other_world :: proc(t:^testing.T) 
     testing.expect_value(t,app_world_count(&app),0)
 }
 
-@(private) By_World_Shared :: struct {values:core.By_World(u32),seen_at_release:bool}
+@(private) By_World_Held :: struct {value:u32}
+@(private) By_World_Shared :: struct {values:core.By_World(By_World_Held),seen_at_release:bool}
 
 @(private)
-by_world_test_attach :: proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool {
-    w,s:=cast(^Id_World)world,cast(^By_World_Shared)shared
-    return core.by_world_attach(&s.values,w.id,u32(w.id.index)+10,allocator)
-}
-
-@(private)
-by_world_test_detach :: proc(world,shared:rawptr) {
-    w,s:=cast(^Id_World)world,cast(^By_World_Shared)shared
-    core.by_world_release(&s.values,core.by_world_detach(&s.values,w.id))
+by_world_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    append(types,core.test_type(By_World_Held,default=proc(dst:^By_World_Held) {dst.value=10}))
 }
 
 @(private)
@@ -123,15 +77,12 @@ by_world_test_release :: proc(world,shared,editor,app_data:rawptr) {
 
 @(test)
 each_world_gets_its_by_world_value_when_made_and_loses_it_after_its_release :: proc(t:^testing.T) {
-    storages:=[2]core.Storage_Info{
-        {name="World_Id",type=core.World_Id,info=type_info_of(core.World_Id),offset=offset_of(Id_World,id)},
-        {name="Frame_Time",type=core.Frame_Time,info=type_info_of(core.Frame_Time),offset=offset_of(Id_World,frame)},
-    }
-    info:=id_world_info(storages[:])
-    info.attach,info.detach=by_world_test_attach,by_world_test_detach
+    info,described:=core.test_info(t,Id_World,By_World_Shared,core.Test_None,by_world_test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     info.loops[.Game][.Release]=by_world_test_release
     succeeded,failed:=false,false
-    for budget in 0..<12 {
+    for budget in 0..<64 {
         tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator)
         allocation:=World_Create_Allocation{owner=mem.tracking_allocator(&tracking),remaining=budget}
         shared:By_World_Shared
@@ -145,7 +96,8 @@ each_world_gets_its_by_world_value_when_made_and_loses_it_after_its_release :: p
             allocation.remaining=-1
             second:=app_world_create(&app)
             a,b:=app_world_id(&app,first),app_world_id(&app,second)
-            testing.expect(t,core.by_world_get(&shared.values,a)^==u32(a.index)+10 && core.by_world_get(&shared.values,b)^==u32(b.index)+10)
+            held_a,held_b:=core.by_world_get(&shared.values,a),core.by_world_get(&shared.values,b)
+            testing.expect(t,held_a!=held_b && held_a.value==10 && held_b.value==10)
             app_world_free(&app,first)
             testing.expect(t,shared.seen_at_release && core.by_world_get(&shared.values,a)==nil)
             testing.expect(t,core.by_world_get(&shared.values,b)!=nil)

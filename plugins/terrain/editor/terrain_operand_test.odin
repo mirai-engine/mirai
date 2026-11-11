@@ -2,11 +2,11 @@ package terrain_editor
 
 import "core:fmt"
 import "core:math/linalg"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import terrain "plugins:terrain/runtime"
@@ -15,35 +15,17 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-@(private)
-Operand_Test_World :: struct {using base:Create_Test_World,worlds:core.Table(core.World_Transform),overrides:core.Table(erender.Material_Override)}
-
-@(private)
-operand_test_tables :: proc() -> [8]core.Table_Info {
-    tables:[8]core.Table_Info
-    shared:=create_test_tables()
-    copy(tables[:],shared[:])
-    for &table in tables[:6] {table.offset+=offset_of(Operand_Test_World,base)}
-    tables[6]={name="World_Transform",type=core.World_Transform,info=type_info_of(core.World_Transform),offset=offset_of(Operand_Test_World,worlds)}
-    tables[7]={name="Material_Override",type=erender.Material_Override,info=type_info_of(erender.Material_Override),offset=offset_of(Operand_Test_World,overrides)}
-    return tables
-}
-
 @(test)
 terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-convert-selection-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/heightfield.terrain",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    create_test_world_init(&world);defer create_test_world_destroy(&world)
-    tables:=create_test_tables()
-    info:=core.World_Info{entities=offset_of(Create_Test_World,entities),tables=tables[:],settle=create_test_settle}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{5,1,5},1,4)) {return}
     id:=base.Asset_Id{61,62};source.revision=1
@@ -59,36 +41,36 @@ terrain_conversion_requires_its_owner_to_remain_selected :: proc(t:^testing.T) {
     }
     core.add(&world.terrains,owner,terrain.Terrain{source=id,revision=1})
     core.world_settle(ref)
-    selection:editor.Selection;defer delete(selection.entities)
-    editor.selection_set(&selection,{other})
-    edits:editor.Edits;defer editor.edits_free(&edits)
-    editor.edits_reset(&edits,ref)
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{other})
+    edits:history.Edits;defer history.edits_free(&edits)
+    history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    session:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    session:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.assets=&assets;tool.stroke.id,tool.stroke.entity,tool.stroke.revision=id,owner,1
     if !testing.expect(t,terrain.source_clone(&tool.stroke.source,&source)) {return}
-    terrain_sync(&session,&tool,core.read(&world.terrains),&app)
-    terrain_convert(&session,&tool,ref,&app)
+    terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
+    terrain_convert(&session,&tool,ref,app.assets,app.allocator)
     testing.expect(t,!edits.open && !edits.commit)
     testing.expect_value(t,edits.cursor,0)
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(1))
     testing.expect_value(t,tool.stroke.source.kind,terrain.Source_Kind.Heightfield)
     testing.expect_value(t,len(tool.steps),0)
-    testing.expect_value(t,editor.selection_active(&selection),other)
+    testing.expect_value(t,history.selection_active(&selection),other)
     untouched,untouched_error:=serial.file_read(path,context.allocator);defer delete(untouched)
     testing.expect_value(t,untouched_error,serial.File_Error.None)
     testing.expect_value(t,len(untouched),len(before))
     if len(untouched)==len(before) {for value,i in untouched {testing.expect_value(t,value,before[i])}}
-    editor.selection_set(&selection,{owner})
-    terrain_convert(&session,&tool,ref,&app)
-    testing.expect(t,editor.edits_commit(&edits,ref,&selection))
+    history.selection_set(&selection,{owner})
+    terrain_convert(&session,&tool,ref,app.assets,app.allocator)
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect_value(t,tool.stroke.source.kind,terrain.Source_Kind.Mesh)
     testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
     _,unsaved:=asset.registry_memory_find(&assets.registry,"heightfield.terrain")
     testing.expect(t,unsaved)
-    testing.expect(t,editor.undo(&edits,ref,&selection))
-    terrain_sync(&session,&tool,core.read(&world.terrains),&app)
+    testing.expect(t,history.undo(&edits,ref,&selection))
+    terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
     undone:=test_held(t,&assets,"heightfield.terrain");defer delete(undone)
     testing.expect(t,string(undone)==string(before))
     _,unsaved=asset.registry_memory_find(&assets.registry,"heightfield.terrain")
@@ -103,34 +85,20 @@ test_held :: proc(t:^testing.T,assets:^host.Assets,relative:string) -> []u8 {
     return data
 }
 
-@(private)
-operand_test_settle :: proc(world,shared,ed:rawptr) {
-    w:=cast(^Operand_Test_World)world
-    create_test_settle(&w.base,shared,ed)
-    core.table_settle(&w.worlds,&w.entities)
-    core.table_settle(&w.overrides,&w.entities)
-}
-
 @(test)
 terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materials_and_selection :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-terrain-operand-%d",directory,os.get_pid())
+    root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/solid.terrain",root)
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove(root);defer os.remove(path)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=16})) {return}
     defer host.assets_destroy(&assets)
     for scenario in 0..<3 {
         brush:=scenario==1?terrain.Brush_Kind.Subtract:.Union
         shared_overrides:=scenario==2
-        world:Operand_Test_World
-        create_test_world_init(&world.base);defer create_test_world_destroy(&world.base)
-        core.table_init(&world.worlds,"World_Transform");defer core.table_destroy(&world.worlds)
-        core.table_init(&world.overrides,"Material_Override");defer core.table_destroy(&world.overrides)
-        tables:=operand_test_tables()
-        info:=core.World_Info{entities=offset_of(Operand_Test_World,base)+offset_of(Create_Test_World,entities),tables=tables[:],settle=operand_test_settle}
-        ref:=core.world_ref(&world,&info)
+        world:Create_Test_World
+        if !core.test_world_init(t,&world,test_types) {return}
+        defer core.test_world_destroy(&world)
+        ref:=core.test_world_ref(&world)
         geometry:geom.Mesh_Buffer
         geom.mesh_buffer_init(&geometry);defer geom.mesh_buffer_destroy(&geometry)
         geom.cube_build(&geometry,{8,6,8})
@@ -178,19 +146,19 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
             core.add(&world.terrains,shared,terrain.Terrain{source=id,revision=1})
         }
         core.world_settle(ref)
-        selection:editor.Selection;defer delete(selection.entities)
-        editor.selection_set(&selection,{owner,operand})
-        edits:editor.Edits;defer editor.edits_free(&edits)
-        editor.edits_reset(&edits,ref)
+        selection:history.Selection;defer delete(selection.entities)
+        history.selection_set(&selection,{owner,operand})
+        edits:history.Edits;defer history.edits_free(&edits)
+        history.edits_reset(&edits,ref)
         app:=host.App{allocator=context.allocator,assets=&assets}
         document:editor.Document
-        session:=editor.Session{app=&app,info=&info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
+        session:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
         tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
         tool.brush=brush
-        terrain_sync(&session,&tool,core.read(&world.terrains),&app)
-        if !testing.expect(t,stroke_prepare(&tool,&app,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
-        editor.selection_set(&selection,{operand})
-        terrain_operand(&session,&tool,ref,&app)
+        terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
+        if !testing.expect(t,stroke_prepare(&tool,app.assets,app.allocator,core.read(&world.terrains),core.read(&world.worlds),editor.Pick{entity=owner})) {return}
+        history.selection_set(&selection,{operand})
+        terrain_operand(&session,&tool,ref,app.assets,app.allocator)
         testing.expect(t,core.alive(&world.entities,operand))
         testing.expect(t,!edits.open && !edits.commit)
         testing.expect_value(t,edits.cursor,0)
@@ -204,13 +172,13 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         testing.expect_value(t,untouched_error,serial.File_Error.None)
         testing.expect_value(t,len(untouched),len(before))
         if len(untouched)==len(before) {for value,i in untouched {testing.expect_value(t,value,before[i])}}
-        editor.selection_set(&selection,{owner,operand})
-        terrain_operand(&session,&tool,ref,&app)
+        history.selection_set(&selection,{owner,operand})
+        terrain_operand(&session,&tool,ref,app.assets,app.allocator)
         if !testing.expectf(t,edits.commit,"%v rejected: %s",brush,string(session.toast[:session.toast_length])) {continue}
-        testing.expect(t,editor.edits_commit(&edits,ref,&selection))
+        testing.expect(t,history.edits_commit(&edits,ref,&selection))
         testing.expect_value(t,edits.cursor,1)
         testing.expect(t,!core.alive(&world.entities,operand))
-        testing.expect_value(t,editor.selection_active(&selection),owner)
+        testing.expect_value(t,history.selection_active(&selection),owner)
         testing.expect_value(t,len(selection.entities),1)
         testing.expect_value(t,world.terrains.values[0].revision,u32(2))
         on_disk,_:=serial.file_read(path,context.allocator);defer delete(on_disk)
@@ -244,13 +212,13 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         }
         committed:=test_held(t,&assets,"solid.terrain")
         defer delete(committed)
-        testing.expect(t,editor.undo(&edits,ref,&selection))
-        terrain_sync(&session,&tool,core.read(&world.terrains),&app)
+        testing.expect(t,history.undo(&edits,ref,&selection))
+        terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         testing.expect(t,core.alive(&world.entities,operand))
         testing.expect_value(t,core.get(&world.meshes,operand)^,operand_static)
         testing.expect_value(t,core.get(&world.transforms,operand)^,core.Transform(operand_pose))
         testing.expect_value(t,len(selection.entities),2)
-        testing.expect_value(t,editor.selection_active(&selection),operand)
+        testing.expect_value(t,history.selection_active(&selection),operand)
         if shared_overrides {
             testing.expect_value(t,core.get(&world.overrides,shared)^,shared_override)
             testing.expect_value(t,core.get(&world.terrains,shared).revision,u32(1))
@@ -259,8 +227,8 @@ terrain_boolean_consumes_a_transformed_operand_and_undo_restores_geometry_materi
         defer delete(undone)
         testing.expect_value(t,len(undone),len(before))
         if len(undone)==len(before) {for value,i in undone {testing.expect_value(t,value,before[i])}}
-        testing.expect(t,editor.redo(&edits,ref,&selection))
-        terrain_sync(&session,&tool,core.read(&world.terrains),&app)
+        testing.expect(t,history.redo(&edits,ref,&selection))
+        terrain_sync(&session,&tool,core.read(&world.terrains),app.assets)
         testing.expect(t,!core.alive(&world.entities,operand))
         if shared_overrides {
             testing.expect_value(t,core.get(&world.overrides,shared)^,shared_override)

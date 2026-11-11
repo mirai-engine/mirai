@@ -29,6 +29,7 @@ MAX_PLUGINS :: 32      // plugins a project names; their dependencies come besid
 MAX_DEPENDENCIES :: 16
 MAX_DEFINES :: 16
 MAX_SOURCES :: 16
+MAX_ASSET_KINDS :: 16
 
 Name :: [64]u8
 Path :: [256]u8
@@ -109,6 +110,13 @@ Engine_Range :: struct {
     max:Version `mirai:"text"`,
 }
 
+// A kind of asset a plugin adds, by the extension of its files. It is what
+// says of the kind what is known without loading the plugin.
+Asset_Kind :: struct {
+    extension:[32]u8 `mirai:"text"`, // with the dot, in lowercase: ".particle"
+    merged:bool,                     // a document of rows that are edited, which git merges row by row and diffs by value through mirai, as asset.Kind_Info.merged says of a kind of the engine; false: bulk that an import, a bake or a recording makes, a whole file to git
+}
+
 Plugin_Manifest :: struct {
     name:Name `mirai:"text"`,                       // the name of its folder
     version:Version `mirai:"text"`,                 // major.minor.patch
@@ -119,6 +127,7 @@ Plugin_Manifest :: struct {
     development:bool,                               // a tool for making the game: in the editor and the player, never in a published game
     automatic:bool,                                 // active exactly when all its dependencies are: what joins them; no project names it
     icon:Path `mirai:"text"`,                       // a PNG the lists of plugins of the editor show it with, relative to its folder, with forward slashes, PLUGIN_ICON_MAX wide and tall at most. Empty: the generic one
+    asset_kinds:[MAX_ASSET_KINDS]Asset_Kind `mirai:"trim"`, // the kinds of asset it adds: exactly the ones its editor part registers
 }
 
 Origin :: enum u8 {Project,Engine}
@@ -154,7 +163,9 @@ Error_Code :: enum u8 {
     Automatic_Named,    // the project names subject, an automatic plugin: it is active when its dependencies are
     Automatic_Alone,    // subject is automatic and depends on nothing
     Source_Invalid,     // the source subject has no url, or its commit is not the full hash of one
+    Asset_Kind_Invalid, // the extension subject of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
+    Out_Of_Memory,      // nothing of the files is wrong
 }
 
 Error :: struct {
@@ -292,6 +303,17 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
     if error:=names_validate(m.dependencies[:],name);error.code!=.None {return error}
     if error:=names_validate(m.test_dependencies[:],name);error.code!=.None {return error}
     if icon:=base.text_get(m.icon[:]);icon!="" && !png_path_valid(icon) {return error_about(.Icon_Invalid,icon)}
+    for &kind,i in m.asset_kinds {
+        extension:=base.text_get(kind.extension[:])
+        if extension=="" {
+            if kind.merged {return error_about(.Asset_Kind_Invalid,extension)}
+            continue
+        }
+        if extension[0]!='.' || !name_valid(extension[1:]) {return error_about(.Asset_Kind_Invalid,extension)}
+        for &other in m.asset_kinds[:i] {
+            if other.extension==kind.extension {return error_about(.Asset_Kind_Invalid,extension)}
+        }
+    }
     if m.automatic {
         alone:=true
         for &dependency in m.dependencies {
@@ -366,50 +388,54 @@ executable_name :: proc(m:^Manifest,buffer:[]u8) -> string {
 }
 
 // What is wrong with the manifests of a project, for whoever has to fix
-// them; folder is the project as it is named to them.
+// them; folder is the project as it is named to them. "" without memory for it.
 error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> string {
-    context.allocator=allocator
     error:=error
     subject:=base.text_get(error.subject[:])
     plugin:=base.text_get(error.plugin[:])
-    file:=path(folder,PROJECT_FILE)
+    file:=path(folder,PROJECT_FILE,allocator=context.temp_allocator)
     if plugin!="" {
-        file=fmt.aprintf("%s/%s (%s)",plugin,PLUGIN_FILE,error.origin==.Engine?"engine plugin":"project plugin")
+        file=fmt.tprintf("%s/%s (%s)",plugin,PLUGIN_FILE,error.origin==.Engine?"engine plugin":"project plugin")
     }
+    text:string
     switch error.code {
-    case .None:               return ""
-    case .Not_Found:          return fmt.aprintf("%s does not exist: the folder is not a Mirai project",file)
-    case .Read_Failed:        return fmt.aprintf("could not read %s",file)
-    case .Write_Failed:       return fmt.aprintf("could not write %s",file)
-    case .Text:               return fmt.aprintf("%s(%d:%d) %s",file,error.line,error.column,error.detail)
-    case .Name_Missing:       return fmt.aprintf("%s: the name is missing",file)
-    case .Name_Invalid:       return fmt.aprintf("%s: '%s' is not a plugin name (lowercase letters, digits and '_' after a letter)",file,subject)
-    case .Name_Repeated:      return fmt.aprintf("%s: '%s' is repeated",file,subject)
-    case .Identifier_Invalid: return fmt.aprintf("%s: the identifier '%s' is not a reverse domain name like com.studio.game: parts of letters, digits, '-' and '_' separated by dots",file,subject)
-    case .Icon_Invalid:       return fmt.aprintf("%s: the icon '%s' must be a .png file relative to the %s, with '/'",file,subject,plugin!=""?"folder of the plugin":"project")
-    case .Thumbnail_Invalid:  return fmt.aprintf("%s: the thumbnail '%s' must be a .png file relative to the project, with '/'",file,subject)
-    case .Version_Invalid:    return fmt.aprintf("%s: the version '%s' is not major.minor.patch",file,subject)
-    case .Engine_Invalid:     return fmt.aprintf("%s: '%s' is not a valid bound of engine (major, major.minor or major.minor.patch, with min up to max)",file,subject)
-    case .Engine_Old:         return fmt.aprintf("%s: needs engine %s or later and this one is %s",file,subject,ENGINE_VERSION)
-    case .Engine_New:         return fmt.aprintf("%s: works up to engine %s and this one is %s",file,subject,ENGINE_VERSION)
-    case .Scene_Invalid:      return fmt.aprintf("%s: start_scene must be a path relative to assets/ with '/'",file)
-    case .Executable_Invalid: return fmt.aprintf("%s: the executable '%s' may only have letters, digits, '_' and '-'",file,subject)
-    case .Define_Invalid:     return fmt.aprintf("%s: '%s' is neither NAME nor NAME=value",file,subject)
-    case .Window_Invalid:     return fmt.aprintf("%s: the width and height of the window go from 1 to %d",file,MAX_WINDOW_SIDE)
-    case .Depends_On_Itself:  return fmt.aprintf("%s: '%s' depends on itself",file,subject)
-    case .Folder_Mismatch:    return fmt.aprintf("%s: it is named '%s' and its folder '%s'",file,subject,plugin)
-    case .Part_Missing:       return fmt.aprintf("%s: declares %s/ and the folder does not exist",file,subject)
-    case .Part_Undeclared:    return fmt.aprintf("%s: the folder %s/ exists and is not in parts",file,subject)
-    case .Plugin_Repeated:    return fmt.aprintf("two folders provide the plugin '%s', in the project or in the engine; rename one",subject)
-    case .Plugin_Missing:     return fmt.aprintf("%s: enables the plugin '%s', which exists neither in the project nor in the engine",file,subject)
-    case .Dependency_Missing: return fmt.aprintf("%s: depends on '%s', which exists neither in the project nor in the engine",file,subject)
-    case .Dependency_Cycle:   return fmt.aprintf("%s: depends on '%s', which depends on it",file,subject)
-    case .Automatic_Named:    return fmt.aprintf("%s: enables the plugin '%s', which is automatic: it is enabled by itself when its dependencies are; remove it from plugins",file,subject)
-    case .Automatic_Alone:    return fmt.aprintf("%s: '%s' is automatic and depends on nothing; name in dependencies the plugins it joins or remove automatic",file,subject)
-    case .Source_Invalid:     return fmt.aprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
-    case .Schema_Failed:      return fmt.aprintf("%s: std/serial does not describe the type %s; it is a defect of the engine, not of the file",file,subject)
+    case .None:
+    case .Not_Found:          text=fmt.tprintf("%s does not exist: the folder is not a Mirai project",file)
+    case .Read_Failed:        text=fmt.tprintf("could not read %s",file)
+    case .Write_Failed:       text=fmt.tprintf("could not write %s",file)
+    case .Text:               text=fmt.tprintf("%s(%d:%d) %s",file,error.line,error.column,error.detail)
+    case .Name_Missing:       text=fmt.tprintf("%s: the name is missing",file)
+    case .Name_Invalid:       text=fmt.tprintf("%s: '%s' is not a plugin name (lowercase letters, digits and '_' after a letter)",file,subject)
+    case .Name_Repeated:      text=fmt.tprintf("%s: '%s' is repeated",file,subject)
+    case .Identifier_Invalid: text=fmt.tprintf("%s: the identifier '%s' is not a reverse domain name like com.studio.game: parts of letters, digits, '-' and '_' separated by dots",file,subject)
+    case .Icon_Invalid:       text=fmt.tprintf("%s: the icon '%s' must be a .png file relative to the %s, with '/'",file,subject,plugin!=""?"folder of the plugin":"project")
+    case .Thumbnail_Invalid:  text=fmt.tprintf("%s: the thumbnail '%s' must be a .png file relative to the project, with '/'",file,subject)
+    case .Version_Invalid:    text=fmt.tprintf("%s: the version '%s' is not major.minor.patch",file,subject)
+    case .Engine_Invalid:     text=fmt.tprintf("%s: '%s' is not a valid bound of engine (major, major.minor or major.minor.patch, with min up to max)",file,subject)
+    case .Engine_Old:         text=fmt.tprintf("%s: needs engine %s or later and this one is %s",file,subject,ENGINE_VERSION)
+    case .Engine_New:         text=fmt.tprintf("%s: works up to engine %s and this one is %s",file,subject,ENGINE_VERSION)
+    case .Scene_Invalid:      text=fmt.tprintf("%s: start_scene must be a path relative to assets/ with '/'",file)
+    case .Executable_Invalid: text=fmt.tprintf("%s: the executable '%s' may only have letters, digits, '_' and '-'",file,subject)
+    case .Define_Invalid:     text=fmt.tprintf("%s: '%s' is neither NAME nor NAME=value",file,subject)
+    case .Window_Invalid:     text=fmt.tprintf("%s: the width and height of the window go from 1 to %d",file,MAX_WINDOW_SIDE)
+    case .Depends_On_Itself:  text=fmt.tprintf("%s: '%s' depends on itself",file,subject)
+    case .Folder_Mismatch:    text=fmt.tprintf("%s: it is named '%s' and its folder '%s'",file,subject,plugin)
+    case .Part_Missing:       text=fmt.tprintf("%s: declares %s/ and the folder does not exist",file,subject)
+    case .Part_Undeclared:    text=fmt.tprintf("%s: the folder %s/ exists and is not in parts",file,subject)
+    case .Plugin_Repeated:    text=fmt.tprintf("two folders provide the plugin '%s', in the project or in the engine; rename one",subject)
+    case .Plugin_Missing:     text=fmt.tprintf("%s: enables the plugin '%s', which exists neither in the project nor in the engine",file,subject)
+    case .Dependency_Missing: text=fmt.tprintf("%s: depends on '%s', which exists neither in the project nor in the engine",file,subject)
+    case .Dependency_Cycle:   text=fmt.tprintf("%s: depends on '%s', which depends on it",file,subject)
+    case .Automatic_Named:    text=fmt.tprintf("%s: enables the plugin '%s', which is automatic: it is enabled by itself when its dependencies are; remove it from plugins",file,subject)
+    case .Automatic_Alone:    text=fmt.tprintf("%s: '%s' is automatic and depends on nothing; name in dependencies the plugins it joins or remove automatic",file,subject)
+    case .Source_Invalid:     text=fmt.tprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
+    case .Asset_Kind_Invalid: text=fmt.tprintf("%s: the extension '%s' of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice",file,subject)
+    case .Schema_Failed:      text=fmt.tprintf("%s: std/serial does not describe the type %s; it is a defect of the engine, not of the file",file,subject)
+    case .Out_Of_Memory:      text=fmt.tprintf("%s: there is not enough memory to read the project and its plugins; free memory and try again",file)
     }
-    return ""
+    copy,copy_error:=strings.clone(text,allocator)
+    if copy_error!=nil {return ""}
+    return copy
 }
 
 // The title of the window: what the manifest says, or the name of the project.

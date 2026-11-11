@@ -5,7 +5,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 
 ## RHI contract
 
-### Resources and capacities
+## Resources and capacities
 
 - **Generational handles** (`Buffer`, `Texture`, `Sampler`, `Pipeline`, `Accel`), zero is
   invalid. A destroyed handle returns `nil`; destruction is deferred until the GPU has finished
@@ -14,12 +14,22 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   allocated once with `Device_Desc.allocator`. Creating one more, or a `frame_alloc` with no room
   in the ring, returns the zero handle, leaves the message in `device_error` and adds to
   `device_stats().exhausted`. The live counts of `device_stats` are those the user made: what the
-  device does for itself (rings, scratch, structure blocks, the table default) does not count.
+  device does for itself (rings, scratch, upload staging, structure blocks, the table default)
+  does not count.
+- **Device memory.** On Vulkan, buffers and textures take ranges of blocks of memory, per memory
+  type (`rhi/vulkan_memory.odin`), with the range allocator of the acceleration structures
+  (`rhi/arena.odin`). Only a resource too large for a block, or one the driver prefers alone,
+  takes an allocation of the driver, and their count never passes `maxMemoryAllocationCount`; a
+  refusal says in `device_error` whether the memory or that count ran out.
+- **New contents.** A new buffer reads zero on both backends; the texels of a new texture are
+  undefined until something writes them (`Buffer_Desc`, `Texture_Desc`). On Vulkan a range held
+  another resource before, so the device zeroes a buffer of `GPU` memory with a fill in the next
+  command list, which an upload of the whole buffer spares.
 - Each frame slot keeps up to `deletions` destroyed objects. Between frames, a full slot waits
   for the GPU and frees them; within a frame the list grows and is counted in
   `deletion_overflows`.
 
-### Device
+## Device
 
 - **Selection.** Discrete, integrated, virtual GPU and finally CPU. `Device_Desc.preferred_device`
   selects by part of the name; `MIRAI_GPU=<text>` overrides it. Without a GPU, Linux can use
@@ -41,7 +51,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   `device_validation_messages` reads the last ones (`VALIDATION_HISTORY`). On Metal both counts
   are 0.
 
-### Device loss
+## Device loss
 
 - **A single path.** Every point where the API reports a loss (submit, present, acquiring an
   image, waits, fences, queries, maps) passes its result through `device_fail`
@@ -66,7 +76,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   (`provoked by device_lose`). What the application does afterwards:
   [host](../../mirai-core/references/host.md#gpu-that-stops-working).
 
-### Frames and presentation
+## Frames and presentation
 
 - Two frames in flight (`MAX_FRAMES_IN_FLIGHT`); the CPU does not wait for the GPU on every
   frame. Each frame has an upload ring for constants and dynamic data, which a GPU copy
@@ -79,7 +89,7 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 - **Vulkan swapchain.** Without `VK_EXT_swapchain_maintenance1`: the presentation semaphores are
   recycled after `vkDeviceWaitIdle`.
 
-### Paced presentation
+## Paced presentation
 
 For a renderer that generates frames (`rhi/present.odin`):
 
@@ -105,7 +115,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   with its GPU work finished. Without the thread, the GPU is assumed to start each frame when it
   is submitted and when the previous one finishes.
 
-### Bindings and texture table
+## Bindings and texture table
 
 - **Bindings by slot.** Binding N of a shader is binding N of set 0 on Vulkan (push
   descriptors) and index N of buffer, texture or sampler on Metal. Parameters go in uniform
@@ -134,6 +144,10 @@ For a renderer that generates frames (`rhi/present.odin`):
   layers, one after another in the data; `texture_read` leaves in shader-read state a texture that
   has only the `Sampled` usage. BC1, BC3, BC5, BC6H and BC7 are uploaded by blocks where
   `Features.texture_bc` says the device samples them.
+- `cmd_copy_texture` copies mip 0 of a texture into another on the GPU, with its bytes as they
+  are: the two have one size and layers, and one format or two that differ only in the sRGB
+  encoding (`texture_copy_problem`). Metal blits between textures of one pixel format, so its
+  source is read through a view with the encoding of the destination, made by the first such copy.
 - **Arrays and cubes** (`Texture_Desc.layers`, `cube`): a single 2D texture with layers, with an
   array, cube or cube-array view (on Vulkan, the latter with `imageCubeArray`). A cube is square
   and has six faces per cube; the layers do not exceed `Device_Info.max_texture_layers`
@@ -142,7 +156,7 @@ For a renderer that generates frames (`rhi/present.odin`):
 - **3D textures** (`Texture_Desc.depth` greater than 1): only shaders write them (usage
   `Storage`); they are not targets, do not receive `texture_upload` and do not enter the table.
 
-### Synchronization and commands
+## Synchronization and commands
 
 - **Hazards.** Each resource keeps its last access; barriers are derived from the bindings before
   each dispatch and `cmd_barrier_*` emits only the necessary ones. Inside a render pass there are
@@ -153,7 +167,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   before the frame, from a shader or by copying a buffer that has it (the GPU-counted indirect
   dispatches copy the renderer's `dispatch_start`).
 
-### Textures shared between processes
+## Textures shared between processes
 
 - `texture_create_shared` creates a one-level texture of 4 bytes per texel that another process
   of the same machine and GPU opens with `texture_open_shared`; `device_shares_textures` says
@@ -167,7 +181,7 @@ For a renderer that generates frames (`rhi/present.odin`):
 - No shared semaphores: whoever draws waits for the GPU before announcing which texture is ready
   and leaves it in shader-read layout.
 
-### Hardware ray tracing
+## Hardware ray tracing
 
 - Vulkan: `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`; Metal: `MTLAccelerationStructure`
   instanced with user IDs.
@@ -182,7 +196,7 @@ For a renderer that generates frames (`rhi/present.odin`):
   column-wise transform, where flags and index go). The shader travels in the renderer's
   generation, which provides it with `tlas_translator_set` before the self-test.
 - **Structure memory.** BLAS and TLAS live in ranges of large blocks (`ACCEL_BLOCK_BYTES`, or a
-  dedicated one for a larger structure), with a common range allocator (`rhi/accel_arena.odin`):
+  dedicated one for a larger structure), with a common range allocator (`rhi/arena.odin`):
   on Vulkan each block is a buffer, on Metal a placement heap with tracked hazards. A structure
   does not occupy a buffer of the device pool; its range returns to the block when the frames
   that could use it finish, and an empty block goes away with the next creation.
@@ -192,26 +206,37 @@ For a renderer that generates frames (`rhi/present.odin`):
   `Stats.problem`, which `engine.status` (`renderer_problem`) and `engine.diagnostics`
   (`renderer`) show.
 
-### Pipeline cache
+## Pipeline cache
 
-- Vulkan saves the `VkPipelineCache` in `Device_Desc.pipeline_cache_path` when destroying the
-  device, replacing the whole file: several processes share it. `host` uses `pipelines.bin` in the
+- Vulkan keeps in `Device_Desc.pipeline_cache_path` one driver blob per pipeline
+  (`rhi/pipeline_store.odin`), under a key of the code and state it compiles, never its name: each
+  pipeline is created with a `VkPipelineCache` of its own, because a driver cache returns every
+  entry it was ever given and grows without end. Blobs are stored as chunks cut by their content,
+  each once: a driver repeats in every blob what they all share (NVIDIA a dictionary of megabytes).
+- The file belongs to one device, driver and cache UUID, and is read whole or not at all: another
+  device, another version or a file that does not read back exactly is ignored and replaced.
+- Destroying the device rewrites it in one rename: the blobs this run used, the last used first,
+  then those of earlier runs that are still young; a pipeline no run asks for (its shader changed)
+  ages out, and nothing past `PIPELINE_STORE_BYTES` goes in. Several processes share the file and
+  the last to end writes it.
+- Reading it removes the staging files of writers that ended (`serial.file_remove_stale`); that
+  of a process that runs stays. `host` uses `pipelines.bin` in the
   [project user folder](../../mirai-core/references/host.md#the-application).
 - Metal shares library and function between identical sources; the caller may free `Shader_Code`
   after creating the pipeline.
 
-### Pipelines from other threads
+## Pipelines from other threads
 
 - The device is used from the thread that records the frames, except `pipeline_create_compute`
   and `pipeline_create_graphics`, which run on other threads, several at a time, while that one
   records: the driver takes seconds for a shader generation
-  ([loading in host](shaders.md#loading-in-host)). The Vulkan pipeline cache is created without
+  ([loading in host](shaders.md#loading-in-host)). The Vulkan pipeline caches are created without
   `EXTERNALLY_SYNCHRONIZED`: the driver synchronizes it.
 - `Device.pipeline_lock` guards the pipeline pool and `message_lock` the messages; `pool_get`
   reads only the slot of its handle, so a new pipeline does not touch the ones the frame uses.
   Destroying stays on the frame thread.
 
-### Limits
+## Limits
 
 - Metal compiles MSL with fast math, which can cancel the NaN protections: NaN sources are
   eliminated without relying on them.

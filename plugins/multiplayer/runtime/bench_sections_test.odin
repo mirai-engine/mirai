@@ -14,15 +14,15 @@ import "mirai:engine/scene"
 @(private)
 bench_sections_run :: proc(t:^testing.T,sections,objects:int) {
     SAMPLES :: 200
-    info:=net_test_info()
-    defer delete(info.tables)
-    defer delete(info.storages)
+    info,described:=net_test_info(t)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Net_Test_World
-    net_test_init(&world,context.allocator)
-    defer net_test_destroy(&world)
+    net_test_init(&world,&info)
+    defer core.world_destroy(&info,.World,&world)
     references:=make([]core.Entity,sections,context.temp_allocator)
     for &r,i in references {
-        r=core.create(&world.es)
+        r=core.create(&world.entities)
         position:=[3]f32{f32(i)*20,0,0}
         core.add(&world.transforms,r,core.Transform{position=position,rotation=1,scale={1,1,1}})
         core.add(&world.worlds,r,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
@@ -30,13 +30,13 @@ bench_sections_run :: proc(t:^testing.T,sections,objects:int) {
     }
     things:=make([]core.Entity,objects,context.temp_allocator)
     for &e,i in things {
-        e=core.create(&world.es)
+        e=core.create(&world.entities)
         home:=references[i%sections]
         position:=[3]f32{f32(i%sections)*20+f32(i%7)*1.5,0,0}
         core.add(&world.parents,e,core.Parent{home,0})
         core.add(&world.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
     }
-    net_test_settle(&world,nil,nil)
+    core.settle(&info,&world,nil)
     session:Net_Session
     problems:core.Problems
     session.problems=&problems

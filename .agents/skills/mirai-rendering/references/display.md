@@ -41,12 +41,14 @@ Render units:
 
 `Camera.exposure` (`render.Exposure`; in the world, the `Exposure` component of the camera)
 decides how much the light of the view is worth on the display. With an EV100 exposure, the
-luminance that a reflected-light meter calls average gives the mid gray, 0.18, times
-`EXPOSURE_BIAS` (`exposure_of_ev100`).
+luminance that a reflected-light meter calls average gives the mid gray, 0.18, raised by the bias
+of the display transform (`exposure_of_ev100`).
 
-- **Bias.** Every view is exposed `EXPOSURE_BIAS` EV above what its meter or its camera gives, as
-  Unreal's default exposure bias: ACES 2.0 shows the meter's mid gray dim on an SDR display.
-  `ev100` and `compensation` do not include it.
+- **Bias.** Every view is exposed `display_exposure_bias` EV above what its meter or its camera
+  gives, by the display transform. Under ACES 2.0 it is `EXPOSURE_BIAS`, as Unreal's default
+  exposure bias: ACES 2.0 shows the meter's mid gray dim on an SDR display. Another transform
+  calibrates to show that gray with the same light, so choosing one changes the color of a scene
+  and not how bright it is. `ev100` and `compensation` do not include it.
 
 - **Manual.** `ev100` of the camera; the component computes it from `aperture`, `shutter` and
   `iso` (`ev100_of`).
@@ -65,6 +67,10 @@ luminance that a reflected-light meter calls average gives the mid gray, 0.18, t
   - The background (`use_background`), the pixels without light and the almost black surfaces do
     not count. A view that sees nothing that counts keeps its exposure; the first time it starts
     at mid gray under the strongest light.
+  - **In daylight the shade does not count.** With the sun up and much of the view out of shade
+    (lit by the sun or the open sky, as `sky_card` measures), the pixels in shade leave the meter:
+    a tree's shadow in view does not burn what is lit. A dark room with a window stays below that
+    share and meters as before.
   - `exposure_adapt.comp` brings to mid gray the geometric mean without the extremes of the
     histogram, limits it to `range` (`AUTO_EXPOSURE_RANGE`) and approaches according to
     `adaptation_mode`: `Time` (default) exponential in EV, 95 % of any change in `adaptation`
@@ -87,7 +93,8 @@ luminance that a reflected-light meter calls average gives the mid gray, 0.18, t
 - **Agreed tolerance.** The ACES 2.0 calibration is not touched: the brightness of a scene is
   decided by its exposure. A view of the demo or the template stays within half a step of the mean
   luminance its art direction gives it; if the meter moves it further away, it is corrected with
-  the compensation of its scene (its `View_Volume` without bounds), never in its camera: the `Exposure` of a camera is for a view that exposes differently
+  the compensation of its scene (its `View_Volume` without bounds), never in its camera: the
+  `Exposure` of a camera is for a view that exposes differently
   from its scene (a monitor, a cinematic), and the viewport does not use it except when looking
   through it.
 - **Pools of light in the dark.** The meter brings to mid gray the light it sees, and in a night
@@ -115,14 +122,15 @@ GPU flow:
   one frame behind the tonemap. The CPU writes its own when there is no copy (manual exposure,
   after a discontinuity, when the compensation or the light scale changes): the last one it read
   from that generation or `exposure_first`.
-- PostProcess before the tonemap sees the exposed image (the meter's mid gray at 0.18 times
-  `EXPOSURE_BIAS`). The debug views are not exposed.
+- PostProcess before the tonemap sees the exposed image (the meter's mid gray at 0.18 raised by
+  the bias). The debug views are not exposed.
 
 ### Exposure-relative emission
 
 `Material_Info.emission_mode`: `Physical` (nits) or `Relative`, the value the exposed image shows
 whatever the exposure: 1 is a white surface under the light the meter takes, before
-`EXPOSURE_BIAS`, and each doubling is one more EV. It is the one of unlits and the one that comes from glTF.
+the bias, and each doubling is one more EV. It is the one of unlits and the one that comes from
+glTF.
 
 - In render units it is worth `emission / frame.exposure` (`emission_render_units`); that of
   `Tint` takes the mode of its material. The G-buffer marks the pixel
@@ -137,17 +145,24 @@ one scene-linear unit) or `TUNED_EXPOSURE`, with which the light limits were set
 
 ## Display transform
 
-The tonemap takes the exposed image (scene-linear Rec.709) to the display with a read of the
-**display LUT** (`display_encode`) and then the dither. The debug views show sRGB in [0, 1].
+The tonemap takes the exposed image (scene-linear Rec.709) to the display with `display_encode`
+and then the dither. The debug views show sRGB in [0, 1].
 
-- **Transform.** ACES 2.0 Output Transform (`aces.slang`, adapted from OpenColorIO:
-  [license](../../../../THIRD_PARTY_NOTICES.md#adapted-code)) for a `Display_Desc`
-  (`DISPLAY_SDR`: Rec.709, D65, 100 nits, sRGB): tone scale on the J of its CAM16 model, with the
-  mid gray at 10 nits, and chroma and gamut compression that preserves hue. A gray stays gray and
-  a very bright color goes toward white.
-- **Baking.** `display_build`, when the renderer starts, on the GPU (`display_tables.comp`,
-  `display_lut.comp`) into `Renderer.display_lut`, which the tonemap and the UI particles read.
-  Its axes are log2 around the mid gray (`display_shaper`); outside its range it is clipped.
+- **Choice.** `Display_Transform_Settings.transform` (`render` library), a setting of the project
+  (`settings.set`, `settings.mirai`), never of the machine. The world step
+  `display_transform_apply` brings the renderer to it when it changes.
+- **Neutral** (default): Khronos PBR Neutral (`pbr_neutral`), which leaves the colors of a material
+  as authored up to their highlights: what most games want. The pass computes it
+  (`FRAME_FLAG_NEUTRAL`): its curve bends over the gray axis, and a LUT shows that in rings.
+- **ACES_2**: the ACES 2.0 Output Transform (`aces.slang`, adapted from OpenColorIO:
+  [license](../../../../THIRD_PARTY_NOTICES.md#adapted-code)) for a `Display_Desc` (`DISPLAY_SDR`:
+  Rec.709, D65, 100 nits, sRGB): tone scale on the J of its CAM16 model, with the mid gray at 10
+  nits, and chroma and gamut compression that preserves hue. A gray stays gray and a very bright
+  color goes toward white: for filmic images and strong emissive light.
+- **Baking.** `display_build` bakes ACES 2.0 on the GPU (`display_tables.comp`, `display_lut.comp`)
+  into `Renderer.display_lut` once, when the renderer starts; the tonemap and the UI particles
+  read it when the project chooses ACES 2.0. Its axes are log2 around the mid gray
+  (`display_shaper`); outside its range it is clipped.
 - **Grading.** A grading LUT would go in the shaper space, before the display LUT; none exists.
 - **HDR.** The swapchain is SDR sRGB; PQ or scRGB are pending (issue #53). Another display is
   another `Display_Desc` and another bake.
@@ -157,4 +172,5 @@ The tonemap takes the exposed image (scene-linear Rec.709) to the display with a
   background. The studio exposes by its main light (`STUDIO_EXPOSURE`); a preview with sun and
   sky, like its frame ([previews](materials.md#material-previews-and-thumbnails)).
 
-Tests: `render/display_test.odin`.
+Tests: `render/display_test.odin`, `render/display_calibration_test.odin` and
+`engine/render/display_transform_test.odin`.

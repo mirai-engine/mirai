@@ -11,18 +11,9 @@
 #define MIRAI_SHADOW_MAPS_SLANG
 #include "scene.slang"
 
-#define SHADOW_ATLAS 4096u
-// The buffer of the maps (uint4 rows): a word for each light, four to a row,
-// 0 for a light without maps, else its first map + 1 and, from bit
-// SHADOW_LIGHT_FACES, which faces of its cube have one; then SHADOW_MAP_ROWS
-// for each map.
-#define SHADOW_MAP_ROWS 6u
-#define SHADOW_LIGHT_FACES 16u
-#define SHADOW_MAP_ORTHOGRAPHIC 1u
-// The most clusters the maps draw in a frame, and of them those of the
-// instances with masked or blended materials, listed from the end.
-#define SHADOW_ENTRIES (1u << 18u)
-#define SHADOW_TESTED_ENTRIES (1u << 16u)
+// SHADOW_ATLAS, SHADOW_MAP_ROWS, SHADOW_LIGHT_FACES, SHADOW_ENTRIES: the
+// buffer of the maps and the clusters they draw (render/abi); those of the
+// instances with masked or blended materials are listed from the end.
 // The width of what a ray reads of a material over how far it came
 // (hit_covers): a fragment of a map reads its material as coarsely as a texel.
 #define SHADOW_TESTED_FOOTPRINT 0.004

@@ -76,75 +76,107 @@ Button :: struct {
     disabled:bool,    // shown, but does nothing
     width:f32,        // 0: fit the content, negative: grow
     height:f32,       // the row of the theme when 0
-    size:f32,         // text size; the font of the theme when 0
+    size:f32,         // text size; that of its look, or the font of the theme, when 0
     center:bool,
     quad:Quad,        // preview or thumbnail before the label
     icon_size:f32,    // 16 when 0
     icon_after:bool,  // the icon follows the label: a menu that opens below
     padding:f32,      // 0: automatic, negative: no inset
-    use_appearance:bool,
-    appearance:Node_Style,
-    variants:[]Style_Variant,
-    appearance_style:u16,
-    variant:u64,
+    // What it is drawn with, resolved for the state it is in: fill, stroke,
+    // corners, shadow and text. nil: what the theme gives its style (button_look).
+    look:^Node_Style,
+    // Its size and padding as an element says them, instead of width, height
+    // and padding: without a size it fits its label.
+    layout:^Layout,
+    image:Node_Image, // behind it instead of its fill, which tints it
+    block:bool,       // the label takes the lines, the outline and the shadow of the text of its look, centered
 }
 
-// A clickable box with an optional icon, preview, label and right aligned detail.
+// What the theme draws a button of a style with in a state. Disabled, a
+// button that has no fill of its own shows neither fill nor border, not even
+// under the pointer, and every other one keeps its fill faded: only its glyph
+// says it is there.
+button_look :: proc "contextless" (th:^Theme,style:Button_Style,hot,active,disabled:bool) -> (look:Node_Style) {
+    fill,stroke:Color;text:=th.text
+    switch style {
+    case .Ghost:if hot {fill=th.field_hover;stroke=th.border}
+    case .Field:fill=th.field_hover if hot else th.field;stroke=th.well_stroke_hover if hot else th.border
+    case .Accent:fill=th.accent_hover if hot else th.accent;text=th.on_accent
+    case .Tab:
+        if active {fill=th.accent;text=th.on_accent} else if hot {fill=th.field_hover} else {text=th.text_label}
+    case .Well:fill=th.well;stroke=th.accent if active else (th.well_stroke_hover if hot else th.well_stroke)
+    case .Danger:fill=th.danger_soft if hot else th.danger;text=th.well
+    case .Toggle:
+        if active {fill=th.toggle_on;stroke=th.toggle_on_stroke} else if hot {fill=th.field_hover;stroke=th.border}
+    }
+    if style==.Ghost && active {fill=th.field_active;stroke=th.border}
+    if disabled {
+        switch style {
+        case .Ghost,.Tab,.Toggle: fill,stroke={},{}
+        case .Field,.Accent: fill=color_faded(th.field if style==.Field else th.accent);if style==.Field {stroke=color_faded(th.border)}
+        case .Danger: fill=color_faded(th.danger)
+        case .Well: stroke=th.well_stroke
+        }
+        text=color_faded(text)
+    }
+    look.fill,look.stroke,look.radius,look.text.color=fill,stroke,th.radius_control,text
+    return
+}
+
+// A clickable box with an optional icon, preview, label and right aligned
+// detail: every button of the editor and of a game. Disabled, the pointer goes
+// through it unless it has a tooltip to show.
 button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     b:=b
     b.disabled|=ctx.disabled_depth>0
     th:=&ctx.theme
     it:=interact(ctx,id,{.Focusable} if !b.disabled else ({.Block} if b.tip!="" else {.Passive}))
     if b.disabled {it={hot=ctx.hot==id && id!=0}}
-    hot:=it.hot
-    if hot && b.tip!="" {tooltip(ctx,b.tip)}
-    size:=b.size if b.size>0 else th.font
-    fill,stroke:Color;text_color:=th.text
-    switch b.style {
-    case .Ghost:if hot {fill=th.field_hover;stroke=th.border}
-    case .Field:fill=th.field_hover if hot else th.field;stroke=th.well_stroke_hover if hot else th.border
-    case .Accent:fill=th.accent_hover if hot else th.accent;text_color=th.on_accent
-    case .Tab:
-        if b.active {fill=th.accent;text_color=th.on_accent} else if hot {fill=th.field_hover} else {text_color=th.text_label}
-    case .Well:fill=th.well;stroke=th.accent if b.active else (th.well_stroke_hover if hot else th.well_stroke)
-    case .Danger:fill=th.danger_soft if hot else th.danger;text_color=th.well
-    case .Toggle:
-        if b.active {fill=th.toggle_on;stroke=th.toggle_on_stroke} else if hot {fill=th.field_hover;stroke=th.border}
+    if it.hot && b.tip!="" {tooltip(ctx,b.tip)}
+    themed:Node_Style
+    look:=b.look
+    if look==nil {
+        themed=button_look(th,b.style,it.hot,b.active,b.disabled)
+        look=&themed
     }
-    if b.style==.Ghost && b.active {fill=th.field_active;stroke=th.border}
-    // Disabled, a button that has no fill of its own shows neither fill nor
-    // border, not even under the pointer, and every other one keeps its fill
-    // faded: only its glyph says it is there.
-    if b.disabled {
-        switch b.style {
-        case .Ghost,.Tab,.Toggle: fill,stroke={},{}
-        case .Field,.Accent: fill=color_faded(th.field if b.style==.Field else th.accent);if b.style==.Field {stroke=color_faded(th.border)}
-        case .Danger: fill=color_faded(th.danger)
-        case .Well: stroke=th.well_stroke
-        }
-        text_color=color_faded(text_color)
-    }
-    appearance:=Node_Style{fill=fill,stroke=stroke,stroke_width=1 if stroke[3]>0 else 0,radius=th.radius_control,text={size=size,color=text_color}}
-    if b.use_appearance {appearance=style_resolve(th,b.appearance,b.variants,b.appearance_style,b.variant,style_states(it,b.active,b.disabled));fill=appearance.fill;text_color=appearance.text.color;if b.size<=0 && appearance.text.size>0 {size=appearance.text.size}}
+    size:=b.size if b.size>0 else (look.text.size if look.text.size>0 else th.font)
+    text_color:=look.text.color
     icon_color:=b.icon_color if b.icon_color[3]>0 else text_color
     if b.style==.Tab && b.active {icon_color=th.on_accent}
     if b.disabled && b.icon_color[3]>0 {icon_color=color_faded(icon_color)}
-    height:=b.height if b.height>0 else th.row
     icon_size:=b.icon_size if b.icon_size>0 else 16
-    width:=fixed(b.width)
-    padding:=f32(10) if b.label!="" else (height-16)/2
-    if b.padding!=0 {padding=max(b.padding,0)}
-    if b.width==0 {
-        content:=f32(0)
-        if b.icon!=.None {content+=icon_size}
-        if b.quad.kind!=.Solid {content+=height-8+6}
-        if b.label!="" {content+=text_width(&ctx.font,b.label,size);if b.icon!=.None {content+=6}}
-        if b.detail!="" {content+=text_width(&ctx.font,b.detail,th.font_small)+(16 if b.label!="" else 6)}
-        width=fixed(content+2*padding)
-    } else if b.width<0 {width=GROW}
+    width,height:Size
+    padding:f32
+    if l:=b.layout;l!=nil {
+        width,height,padding=l.width,l.height,l.padding[0]
+        if width=={} {width=fixed(text_width(&ctx.font,b.label,size,int(look.text.font))+l.padding[0]+l.padding[2]+1)}
+        if height=={} {height=fixed(size*TEXT_LINE+l.padding[1]+l.padding[3])}
+    } else {
+        row:=b.height if b.height>0 else th.row
+        width,height=fixed(b.width),fixed(row)
+        padding=f32(10) if b.label!="" else (row-16)/2
+        if b.padding!=0 {padding=max(b.padding,0)}
+        if b.width==0 {
+            content:=f32(0)
+            if b.icon!=.None {content+=icon_size}
+            if b.quad.kind!=.Solid {content+=row-8+6}
+            if b.label!="" {content+=text_width(&ctx.font,b.label,size);if b.icon!=.None {content+=6}}
+            if b.detail!="" {content+=text_width(&ctx.font,b.detail,th.font_small)+(16 if b.label!="" else 6)}
+            width=fixed(content+2*padding)
+        } else if b.width<0 {width=GROW}
+    }
+    style:=look.text
+    style.size,style.color=size,text_color
+    if b.block {style.align_x,style.align_y=.Center,.Center}
+    fill:=look.fill
+    if b.image.quad.kind!=.Solid && fill=={} {fill={255,255,255,255}}
     detail_color:=color_alpha(th.on_accent,170) if text_color==th.on_accent else th.text_faint
-    paint:=paint_add(ctx,{kind=.Box,fill=fill,fill2=appearance.fill2,stroke=appearance.stroke,radius=appearance.radius[0],stroke_width=appearance.stroke_width,shadow=appearance.shadow,shadow_color=appearance.shadow_color,shadow_blur=appearance.shadow_blur,shadow_offset=appearance.shadow_offset,style=appearance.text,text=b.label,detail=b.detail,text_color=text_color,detail_color=detail_color,size=size,center=b.center||(b.label==""&&b.detail==""),padding=padding,icon=b.icon,icon_color=icon_color,icon_size=icon_size,icon_after=b.icon_after,quad=b.quad})
-    element_leaf(ctx,{id=id,layout={width=width,height=fixed(height)},custom=paint})
+    paint:=paint_add(ctx,{kind=.Box,fill=fill,fill2=look.fill2,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
+        shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset,
+        style=style,text=b.label,detail=b.detail,text_color=text_color,detail_color=detail_color,size=size,center=b.center||(b.label==""&&b.detail==""),padding=padding,
+        icon=b.icon,icon_color=icon_color,icon_size=icon_size,icon_after=b.icon_after,quad=b.quad,
+        quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv,multiline=b.block})
+    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint})
     return it
 }
 
@@ -161,17 +193,33 @@ toggle :: proc(ctx:^Context,id:Id,text:string,value:^bool,width:f32=-1,disabled:
     return
 }
 
-// A box with a check while value is true.
-checkbox :: proc(ctx:^Context,id:Id,value:^bool,disabled:bool=false) -> (changed:bool) {
+// A box with a check while value is true; a click flips it. look: what it is
+// drawn with, resolved for the state it is in: its fill, stroke and corners,
+// and a tick of its mark three quarters of its side; nil: that of the theme.
+// Without a size it is a line of the text of its look square.
+checkbox :: proc(ctx:^Context,id:Id,value:^bool,disabled:bool=false,look:^Node_Style=nil,width:Size={},height:Size={}) -> (changed:bool) {
     disabled:=disabled || ctx.disabled_depth>0
-    th:=&ctx.theme
     it:=interact(ctx,id,{.Focusable}+({.Disabled} if disabled else {}))
     if it.clicked {value^=!value^;changed=true}
     on:=value^
-    paint:=paint_add(ctx,{kind=.Box,fill=th.well,stroke=th.accent if on else (th.well_stroke_hover if it.hot else th.well_stroke),radius=th.radius_control,center=true,icon=.Check if on else .None,icon_color=th.text_faint if disabled else th.accent,icon_size=12})
-    element_leaf(ctx,{id=id,layout={width=fixed(16),height=fixed(16)},custom=paint})
+    themed:Node_Style
+    look:=look
+    line:=CHECKBOX_SIDE
+    if look==nil {
+        th:=&ctx.theme
+        themed={fill=th.well,stroke=th.accent if on else (th.well_stroke_hover if it.hot else th.well_stroke),radius=th.radius_control,mark=th.text_faint if disabled else th.accent}
+        look=&themed
+    } else {line=control_em(ctx,look)*TEXT_LINE}
+    w:=width if width!={} else fixed(line)
+    h:=height if height!={} else fixed(line)
+    side:=line if h==fixed(line) else control_height(ctx,id,h,line)
+    paint:=paint_add(ctx,{kind=.Box,fill=look.fill,fill2=look.fill2,stroke=look.stroke,stroke_width=look.stroke_width,corners=look.radius,center=true,
+        shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset,
+        icon=.Check if on else .None,icon_color=look.mark,icon_size=side*0.75})
+    element_leaf(ctx,{id=id,layout={width=w,height=h},custom=paint})
     return
 }
+CHECKBOX_SIDE :: f32(16) // of a checkbox of the theme
 
 // A switch for a value that is on or off: the track fills with the accent while it is on.
 toggle_switch :: proc(ctx:^Context,id:Id,value:^bool,disabled:bool=false) -> (changed:bool) {
@@ -361,7 +409,7 @@ Row :: struct {
     checked:bool,    // shows a check before the label
     check_room:bool, // unchecked rows leave the room of the check
     accent:bool,     // under the pointer it fills with the accent, as menu items do
-    quiet:bool,      // the pointer does not tint it: its list moves the selection instead
+    quiet:bool,      // its list moves the current row instead: the pointer neither tints it nor gives it the focus
     disabled:bool,
     height:f32,
     depth:int,       // indentation of a row of a tree
@@ -370,7 +418,7 @@ Row :: struct {
 // A row of a list, a menu or a tree.
 row :: proc(ctx:^Context,id:Id,r:Row) -> Interaction {
     th:=&ctx.theme
-    it:=interact(ctx,id,{.Focusable} if !r.disabled else {.Passive})
+    it:=interact(ctx,id,{.Passive} if r.disabled else ({} if r.quiet else {.Focusable}))
     if r.disabled {it={}}
     // In a popup the keys move over: the row of its cursor shows as pointed at, and Enter takes it.
     keyed:=false

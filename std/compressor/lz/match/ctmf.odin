@@ -24,7 +24,6 @@ hash_n_bytes :: #force_inline proc "contextless" (ptr:[^]u8,$LEN:int,bits:int) -
 
 CACHE_LINE :: 64
 
-@(private)
 alloc_aligned :: proc(arena:^entropy.Arena,$T:typeid,n:int) -> (mem:[]u8,data:[]T) {
     mem=entropy.arena_alloc(arena,u8,n*size_of(T)+CACHE_LINE)
     if mem==nil {return}
@@ -53,14 +52,6 @@ Ctmf :: struct($H:typeid,$DEPTH_BITS:int,$SECOND_HASH_LEN:int,$MML:int) where H=
     next_row_second:[^]H,
     hash_mul:u64,
     next_hash:u32, // check bits only; the second hash row uses the same value
-}
-
-ctmf_table_depth :: #force_inline proc "contextless" (c:^Ctmf($H,$D,$S,
-    $M)) -> int {return 1<<uint(D)}
-
-ctmf_get_mem_size :: proc "contextless" ($T:typeid/Ctmf($H,$D,$S,$M),table_size_bits,hash2_bits,
-    chain_bits:int) -> int {
-    return size_of(H)*(1<<uint(table_size_bits))
 }
 
 // Smallest negative offset whose low CTMF_POS_BITS match the entry; in [-2^CTMF_POS_BITS,-1].
@@ -167,24 +158,6 @@ ctmf_step_and_insert :: proc "contextless" (c:^Ctmf($H,$D,$S,$M),ptr:[^]u8,len:i
     ctmf_set_next(c,end)
 }
 
-// Fewer inserts: next_ptr and ptr+len-2 only.
-ctmf_step_and_insert_partial :: proc "contextless" (c:^Ctmf($H,$D,$S,$M),ptr:[^]u8,len:int) {
-    end:=padd(ptr,len)
-    if uintptr(c.next_ptr)>=uintptr(end) {
-        if c.next_ptr!=end {ctmf_set_next(c,end)}
-        return
-    }
-    zero:=c.base_ptr
-    ctmf_insert(c,c.next_row,u32(pdiff(c.next_ptr,zero)),c.next_hash)
-    when S>0 {ctmf_insert(c,c.next_row_second,u32(pdiff(c.next_ptr,zero)),c.next_hash)}
-    p:=padd(ptr,len-2)
-    if uintptr(p)>uintptr(c.next_ptr) {
-        h:=ctmf_hash(c,p)
-        ctmf_insert(c,&raw_data(c.hash_table)[h&c.hash_row_mask],u32(pdiff(p,zero)),h)
-    }
-    ctmf_set_next(c,end)
-}
-
 // Shifts the row down one slot and puts the new entry first. A u16 table stores the position only.
 ctmf_insert :: #force_inline proc "contextless" (c:^Ctmf($H,$D,$S,$M),row:[^]H,pos,
     check:u32) #no_bounds_check {
@@ -272,158 +245,7 @@ ctmf_hash :: #force_inline proc "contextless" (c:^Ctmf($H,$D,$S,$M),ptr:[^]u8) -
 }
 
 //===================================================================
-// Ctmf2: direct hash of MML1 bytes with an optional chain of 16-bit links (CHAIN_STEPS > 1) and an
-// optional second hash of MML2 bytes whose entries keep a CTMF2_HASH_CHECK_BITS check.
-
-CTMF2_HASH_CHECK_BITS :: 6
-CTMF2_HASH_CHECK_MASK :: u32(1<<CTMF2_HASH_CHECK_BITS-1)
-CTMF2_HASH_POS_BITS :: 32-CTMF2_HASH_CHECK_BITS
-
-Ctmf2 :: struct($H1:typeid,$MML1:int,$MML2:int,$CHAIN_STEPS:int) where H1==u32 || H1==u16 {
-    hash1_mem,hash2_mem,chain_mem:[]u8,
-    hash1:[]H1,
-    hash2:[]u32,
-    chain:[]u16,
-    base_ptr:[^]u8,
-    next_ptr:[^]u8,
-    hash1_mask,hash2_mask,chain_mask:u32,
-    hash1_bits,hash2_bits:int,
-}
-
-ctmf2_get_mem_size :: proc "contextless" ($T:typeid/Ctmf2($H,$M1,$M2,$C),hash1_bits,hash2_bits,
-    chain_bits:int) -> int {
-    r:=size_of(H)<<uint(hash1_bits)
-    when M2>0 {r+=size_of(u32)<<uint(hash2_bits)}
-    when C>1 {r+=size_of(u16)<<uint(chain_bits)}
-    return r
-}
-
-ctmf2_allocate :: proc(c:^Ctmf2($H,$M1,$M2,$C),hash1_bits,hash2_bits,chain_bits:int,
-    arena:^entropy.Arena,hash_len_override:int) -> bool {
-    if chain_bits<0 || chain_bits>16 || hash1_bits<1 || hash2_bits<1 {return false}
-    h1:=min(hash1_bits,19)
-    h2:=min(hash2_bits,19)
-    c.hash1_bits=h1
-    c.hash2_bits=h2
-    c.hash1_mask=u32(1<<uint(h1)-1)
-    c.hash2_mask=u32(1<<uint(h2)-1)
-    c.chain_mask=u32(1<<uint(chain_bits)-1)
-    c.hash1_mem,c.hash1=alloc_aligned(arena,H,int(c.hash1_mask)+1)
-    if c.hash1_mem==nil {return false}
-    when M2>0 {
-        c.hash2_mem,c.hash2=alloc_aligned(arena,u32,int(c.hash2_mask)+1)
-        if c.hash2_mem==nil {return false}
-    }
-    when C>1 {
-        c.chain_mem,c.chain=alloc_aligned(arena,u16,int(c.chain_mask)+1)
-        if c.chain_mem==nil {return false}
-    }
-    ctmf2_reset(c)
-    return true
-}
-
-ctmf2_release :: proc(c:^Ctmf2($H,$M1,$M2,$C),arena:^entropy.Arena) {
-    entropy.arena_free(arena,c.chain_mem)
-    entropy.arena_free(arena,c.hash2_mem)
-    entropy.arena_free(arena,c.hash1_mem)
-    c.hash1_mem,c.hash2_mem,c.chain_mem=nil,nil,nil
-    c.hash1,c.hash2,c.chain=nil,nil,nil
-}
-
-ctmf2_reset :: proc(c:^Ctmf2($H,$M1,$M2,$C)) {
-    if len(c.hash1)>0 {runtime.mem_zero(raw_data(c.hash1),len(c.hash1)*size_of(H))}
-    if len(c.hash2)>0 {runtime.mem_zero(raw_data(c.hash2),len(c.hash2)*size_of(u32))}
-    if len(c.chain)>0 {runtime.mem_zero(raw_data(c.chain),len(c.chain)*size_of(u16))}
-}
-
-ctmf2_set_base :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),
-    base:[^]u8) {c.base_ptr=base}
-
-ctmf2_set_base_and_preload :: proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),base,preload_upto:[^]u8,
-    max_preload_len:int) #no_bounds_check {
-    c.base_ptr=base
-    if preload_upto==base {return}
-    ptr:=base
-    end:=preload_upto
-    preload_len:=pdiff(end,ptr)
-    if preload_len<=0 {return}
-    if preload_len>max_preload_len {
-        preload_len=max_preload_len
-        ptr=padd(end,-max_preload_len)
-    }
-    step:=max(preload_len>>18,2)
-    num:=(preload_len/2)/step
-    for {
-        num-=1
-        if num<=0 {
-            if uintptr(ptr)>=uintptr(end) {break}
-            step>>=1
-            if step<1 {break}
-            num=pdiff(end,ptr)/step
-            if step>1 {num/=2}
-        }
-        pos:=u32(pdiff(ptr,c.base_ptr))
-        h1:=ctmf2_hash1(c,ptr)
-        c.hash1[h1]=H(pos)
-        when M2>0 {ctmf2_insert2(c,ptr)}
-        ptr=padd(ptr,step)
-    }
-}
-
-ctmf2_set_next :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),
-    ptr:[^]u8) {c.next_ptr=ptr}
-
-ctmf2_insert1 :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),ptr:[^]u8,
-    h1:uint) #no_bounds_check {
-    pos:=u32(pdiff(ptr,c.base_ptr))
-    when C>1 {c.chain[pos&c.chain_mask]=u16(c.hash1[h1])}
-    c.hash1[h1]=H(pos)
-    c.next_ptr=padd(ptr,1)
-}
-
-ctmf2_step_and_insert :: proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),ptr:[^]u8,len:int) {
-    end:=padd(ptr,len)
-    when M2>0 {
-        for i:=0;i<len;i+=i+1 {ctmf2_insert2(c,padd(ptr,i))}
-    }
-    p:=c.next_ptr
-    for uintptr(p)<uintptr(end) {
-        ctmf2_insert1(c,p,ctmf2_hash1(c,p))
-        p=padd(p,1)
-    }
-}
-
-ctmf2_step_and_insert_partial :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),
-    ptr:[^]u8,len:int) {
-    ctmf2_step_and_insert(c,ptr,len)
-}
-
-ctmf2_hash1 :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),ptr:[^]u8) -> uint {
-    return hash_n_bytes(ptr,M1,c.hash1_bits)
-}
-
-ctmf2_insert2 :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),
-    ptr:[^]u8) #no_bounds_check {
-    when M2>0 {
-        check:u32
-        h2:=ctmf2_hash2(c,ptr,&check)
-        pos:=u32(pdiff(ptr,c.base_ptr))
-        c.hash2[h2]=(pos<<CTMF2_HASH_CHECK_BITS)|(check&CTMF2_HASH_CHECK_MASK)
-    }
-}
-
-// Index from the high bits; check gets the whole hash (callers mask the low bits).
-ctmf2_hash2 :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,$C),ptr:[^]u8,
-    check:^u32) -> u32 {
-    h2:=u32(hash_n_bytes(ptr,M2,32))
-    check^=h2
-    return h2>>uint(32-c.hash2_bits)
-}
-
-//===================================================================
 // Fast_Ctmf: one entry per slot, no check bits, for the HyperFast levels.
-
-FAST_CTMF_MAX_PRELOAD_POS_BITS :: 24
 
 Fast_Ctmf :: struct($H:typeid) where H==u32 || H==u16 {
     hash_table_mem:[]u8,
@@ -452,11 +274,6 @@ fast_ctmf_insert_ptr :: #force_inline proc "contextless" (hash_table:[^]$H,ptr:[
 }
 fast_ctmf_insert :: proc{fast_ctmf_insert_u64,fast_ctmf_insert_ptr}
 
-fast_ctmf_get_mem_size :: proc "contextless" ($T:typeid/Fast_Ctmf($H),table_size_bits,hash2_bits,
-    chain_bits:int) -> int {
-    return size_of(H)*(1<<uint(table_size_bits))
-}
-
 fast_ctmf_allocate :: proc(c:^Fast_Ctmf($H),table_size_bits,hash2_bits,chain_bits:int,
     arena:^entropy.Arena,hash_len:int) -> bool {
     if table_size_bits<1 || table_size_bits>30 {return false}
@@ -483,9 +300,6 @@ fast_ctmf_release :: proc(c:^Fast_Ctmf($H),arena:^entropy.Arena) {
 fast_ctmf_reset :: proc(c:^Fast_Ctmf($H)) {
     if len(c.hash_table)>0 {runtime.mem_zero(raw_data(c.hash_table),len(c.hash_table)*size_of(H))}
 }
-
-fast_ctmf_set_base :: #force_inline proc "contextless" (c:^Fast_Ctmf($H),
-    base:[^]u8) {c.base_ptr=base}
 
 fast_ctmf_set_base_and_preload :: proc "contextless" (c:^Fast_Ctmf($H),base,preload_upto:[^]u8,
     max_preload_len:int) {
@@ -516,25 +330,9 @@ fast_ctmf_set_base_and_preload :: proc "contextless" (c:^Fast_Ctmf($H),base,prel
 }
 
 //===================================================================
-// The member names of the three tables, for parses written once over all of them.
+// The member names of the two tables, for parses written once over both.
 
-allocate :: proc{ctmf_allocate,ctmf2_allocate,fast_ctmf_allocate}
-release :: proc{ctmf_release,ctmf2_release,fast_ctmf_release}
-reset :: proc{ctmf_reset,ctmf2_reset,fast_ctmf_reset}
-set_base :: proc{ctmf_set_base,ctmf2_set_base,fast_ctmf_set_base}
-set_base_and_preload :: proc{ctmf_set_base_and_preload,ctmf2_set_base_and_preload,
-    fast_ctmf_set_base_and_preload}
-set_next :: proc{ctmf_set_next,ctmf2_set_next}
-step_and_insert :: proc{ctmf_step_and_insert,ctmf2_step_and_insert}
-step_and_insert_partial :: proc{ctmf_step_and_insert_partial,ctmf2_step_and_insert_partial}
-get_mem_size :: proc{ctmf_get_mem_size,ctmf2_get_mem_size,fast_ctmf_get_mem_size}
-
-max_preload_pos_bits_ctmf :: #force_inline proc "contextless" (c:^Ctmf($H,$D,$S,
-    $M)) -> int {return CTMF_POS_BITS}
-max_preload_pos_bits_ctmf2 :: #force_inline proc "contextless" (c:^Ctmf2($H,$M1,$M2,
-    $C)) -> int {return CTMF2_HASH_POS_BITS}
-max_preload_pos_bits_fast :: #force_inline proc "contextless" (c:^Fast_Ctmf($H)) -> int {
-    return FAST_CTMF_MAX_PRELOAD_POS_BITS
-}
-max_preload_pos_bits :: proc{max_preload_pos_bits_ctmf,max_preload_pos_bits_ctmf2,
-    max_preload_pos_bits_fast}
+allocate :: proc{ctmf_allocate,fast_ctmf_allocate}
+release :: proc{ctmf_release,fast_ctmf_release}
+reset :: proc{ctmf_reset,fast_ctmf_reset}
+set_base_and_preload :: proc{ctmf_set_base_and_preload,fast_ctmf_set_base_and_preload}

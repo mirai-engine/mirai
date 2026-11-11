@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:os"
 import "core:testing"
 import "mirai:asset"
+import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
@@ -52,7 +53,8 @@ morph_delta_of :: proc(mesh:Imported_Mesh,target,vertex:int) -> asset.Morph_Delt
 
 @(test)
 morph_targets_turn_with_the_space_and_make_flat_normals_and_tangents_of_their_shape :: proc(t:^testing.T) {
-    folder:=temp_folder("morph-space");defer os.remove_all(folder)
+    folder:=base.test_folder(t,"morph-space")
+    if folder=="" {return}
     path:=fmt.tprintf("%s/quad.morph",folder);_=os.write_entire_file(path,"quad")
     formats:=[1]Format{MORPH_FORMAT}
     model,error:=import_model(path,formats[:]);defer model_destroy(&model)

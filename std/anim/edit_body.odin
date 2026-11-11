@@ -109,10 +109,9 @@ edit_offset :: proc "contextless" (rig:Body_Rig,e:Offset,input,output:Frames,scr
         spine_count,spine_ok=body_spine(rig.parents,rig.body,spine[:])
         if !spine_ok || spine_count==0 {return {error=.Missing_Part,part=.Neck}}
     }
-    forward,up_ok:=anim_unit(rig.body.forward)
-    up,_:=anim_unit(rig.body.up)
-    if !up_ok || up=={} {forward,up={0,0,1},{0,1,0}}
-    axes:=rig.body;axes.forward,axes.up=forward,up
+    up,up_ok:=anim_unit(rig.body.up)
+    if !up_ok {up={0,1,0}}
+    axes:=rig.body;axes.up=up
     turns,swings,moves:=OFFSET_TURNS,OFFSET_SWINGS,OFFSET_MOVES
     turn,swing,move:=turns[e.amount],swings[e.amount],moves[e.amount]*height
     root:=frames_root(rig,input)
@@ -127,7 +126,7 @@ edit_offset :: proc "contextless" (rig:Body_Rig,e:Offset,input,output:Frames,scr
         direction:=math.quat_rotate(facing,body_direction_vector(axes,e.direction))
         switch kind {
         case .Face:
-            face:=math.quat_rotate(facing,forward)
+            face:=math.quat_rotate(facing,math.FORWARD)
             if e.direction==.Forward || e.direction==.Back {face=math.quat_rotate(facing,up)}
             axis,valid:=anim_unit(linalg.cross(face,direction))
             if !valid {return {error=.Along_Part}}

@@ -93,7 +93,12 @@ audio_device_names :: proc(p:^Platform,allocator:=context.allocator) -> []string
     defer sdl.free(devices)
     names,error:=make([]string,int(count),allocator)
     if error!=nil {return nil}
-    for &name,i in names {name=strings.clone_from_cstring(sdl.GetAudioDeviceName(devices[i]),allocator)}
+    for &name,i in names {
+        if name,error=strings.clone_from_cstring(sdl.GetAudioDeviceName(devices[i]),allocator);error==nil {continue}
+        for taken in names[:i] {delete(taken,allocator)}
+        delete(names,allocator)
+        return nil
+    }
     return names
 }
 

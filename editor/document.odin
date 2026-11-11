@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -17,7 +18,7 @@ import "mirai:std/base"
 
 // The scene being edited: the file the World was opened from or saved to,
 // the document it was read as (what the World cannot hold: the order of its
-// roots, tables of libraries the project does not have, prefab records) and
+// roots, tables of libraries the project does not have) and
 // the state of the history it was saved at. Opening and creating replace the
 // World and start a new history.
 
@@ -33,6 +34,8 @@ Document_Error :: enum u8 {
     Not_A_Scene, // unreadable, or not a scene nor a prefab
     Rejected,    // the World could not take it
     Write_Failed,
+    Out_Of_Memory, // the World could not be copied out to be written
+    Capture_Failed,
     Bad_Path,    // rooted without a drive on Windows: it names no folder
     Importing,   // an import writes assets now
 }
@@ -54,7 +57,18 @@ Document :: struct {
 document_path :: proc(d:^Document) -> string {return string(d.path[:d.path_length])}
 document_file :: proc(d:^Document) -> string {return string(d.file[:d.file_length])}
 
-document_dirty :: proc(s:^Session) -> bool {return s.document.unsaved || edits_scene_state(s.edits)!=s.document.saved}
+// The folder of the file of the open scene, absolute: a new asset of the scene
+// goes beside it, so assets stay together by what they belong to. otherwise
+// while the scene has no file.
+scene_folder :: proc(s:^Session,otherwise:string) -> string {
+    if s.document!=nil {
+        file:=document_file(s.document)
+        if at:=strings.last_index_byte(file,'/');at>0 {return file[:at]}
+    }
+    return otherwise
+}
+
+document_dirty :: proc(s:^Session) -> bool {return s.document.unsaved || history.edits_scene_state(s.edits)!=s.document.saved}
 
 // The name a person reads for the scene.
 document_title :: proc(d:^Document) -> string {
@@ -73,6 +87,8 @@ document_error_text :: proc(error:Document_Error) -> string {
     case .Not_A_Scene:  return "not a scene nor a prefab"
     case .Rejected:     return "the world could not take it"
     case .Write_Failed: return "the file could not be written"
+    case .Out_Of_Memory: return "there is not enough memory to copy the scene out of the World; the file was not changed"
+    case .Capture_Failed: return "the scene could not be copied out of the World: engine.diagnostics says why; the file was not changed"
     case .Bad_Path:     return "the path has a root and no drive, so it names no folder; write it with its drive, as C:/..."
     case .Importing:    return "an import writes assets now; save when it ends (asset.import_status)"
     }
@@ -92,9 +108,7 @@ scene_file :: proc(s:^Session,path:string,allocator:=context.temp_allocator) -> 
 // A file as the document names it: relative to the assets folder when it is inside.
 scene_path :: proc(s:^Session,file:string) -> string {
     root:=s.assets_root
-    when ODIN_OS==.Windows {inside:=len(file)>len(root) && strings.equal_fold(file[:len(root)],root)}
-    else {inside:=len(file)>len(root) && file[:len(root)]==root}
-    if inside && file[len(root)]=='/' {return file[len(root)+1:]}
+    if len(file)>len(root) && file[len(root)]=='/' && project.path_same(file[:len(root)],root) {return file[len(root)+1:]}
     return file
 }
 
@@ -122,7 +136,7 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     d:=s.document
     if document_file(d)!=file {
         ai_document_closed(s,s.edit_world)
-        if s.ai!=nil {s.ai.document={};s.ai.pending=false}
+        if s.ai!=nil {s.ai.pending=false}
     }
     document_previous_free(d)
     d.previous=loaded
@@ -138,10 +152,13 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
 scene_new :: proc(s:^Session) {
     runs_stop(s)
     tools_release(s)
-    ai_document_closed(s,s.edit_world)
-    if s.ai!=nil {s.ai.document={};s.ai.pending=false}
     w:=edited_world(s)
-    w.info.clear(w.data)
+    if !core.world_clear(w.info,w.data) {
+        notify(s,"There is not enough memory for a new scene; this one stays open")
+        return
+    }
+    ai_document_closed(s,s.edit_world)
+    if s.ai!=nil {s.ai.pending=false}
     sky:=entity_make(s,w,{preset=.Empty,name="Sky",named=true})
     if t:=core.world_table_of(w,erender.Sky);t!=nil && sky!=core.NONE {core.add(t,sky,erender.SKY_DEFAULT)}
     entity_make(s,w,{preset=.Sun,name="Sun",named=true})
@@ -165,9 +182,13 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
     file:=scene_file(s,target)
     if file=="" {return .Bad_Path}
     if !strings.has_suffix(file,SCENE_EXTENSION) && !strings.has_suffix(file,PREFAB_EXTENSION) {file=strings.concatenate({file,document_is_prefab(s)?PREFAB_EXTENSION:SCENE_EXTENSION},context.temp_allocator)}
-    if !edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {return .Rejected}
+    if !history.edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
     if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
     if error:=document_write(s,file,true);error!=.None {return error}
+    // What memory held of the file, unsaved (a prefab an operation made), is of before this save.
+    if r:=files_registry(s);r!=nil {
+        if relative,inside:=asset.registry_relative(r,file);inside {_,_=asset.registry_memory_drop(r,relative)}
+    }
     // A section that could not be written keeps the document unsaved.
     if !sections_save(s) {d.unsaved=true}
     owned:=make([dynamic]string,context.temp_allocator)
@@ -181,22 +202,25 @@ scene_save :: proc(s:^Session,path:="") -> Document_Error {
 }
 
 // The edited World as a scene, with the overrides of its prefab instances
-// observed.
+// as a file keeps them.
 @(private)
 document_capture :: proc(s:^Session,captured:^asset.Scene,id:base.Asset_Id,recovery:^Recovery_Info=nil,allocator:=context.allocator) -> Document_Error {
     tool_preview_cancel(s)
     a:=s.app.assets
     if a==nil {return .No_Assets}
-    if error:=prefab_observe(s);error!=.None {
-        log.errorf("the overrides of the prefab instances could not be marked: %s",prefab_error_text(error))
-        return .Write_Failed
-    }
     if _,error:=scene.capture(edited_world(s),captured,&a.types,{previous=s.document.previous,id=id},allocator);error!=.None {
         log.errorf("the scene could not be captured: %s",scene.error_text(error))
-        return .Write_Failed
+        return error==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
+    }
+    kept:[]asset.Override
+    if previous:=s.document.previous;previous!=nil {kept=previous.overrides[:]}
+    if error:=prefab_overrides_put(s,captured,kept);error!=.None {
+        log.errorf("the overrides of the prefab instances could not be derived: %s",prefab_error_text(error))
+        asset.scene_destroy(captured)
+        return error==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
     }
     if recovery!=nil {
-        if _,error:=asset.document_put_row(&captured.doc,&a.types,RECOVERY_TABLE,recovery);error!=.None {asset.scene_destroy(captured);return .Write_Failed}
+        if _,error:=asset.document_put_row(&captured.doc,&a.types,RECOVERY_TABLE,recovery);error!=.None {asset.scene_destroy(captured);return .Capture_Failed}
     }
     return .None
 }
@@ -225,7 +249,7 @@ document_write :: proc(s:^Session,file:string,as_document:bool) -> Document_Erro
         free(saved)
     }
     d.id=id
-    d.saved=edits_scene_state(s.edits)
+    d.saved=history.edits_scene_state(s.edits)
     d.unsaved=false
     return .None
 }
@@ -261,7 +285,7 @@ document_reset :: proc(s:^Session) {
     document_previous_free(d)
     d.id={}
     d.unsaved=false
-    d.saved=edits_scene_state(s.edits)
+    d.saved=history.edits_scene_state(s.edits)
     document_name(d,"","")
 }
 
@@ -329,7 +353,7 @@ save_all :: proc(s:^Session) {
         tab:=&s.documents[index]
         d:=index==active?s.document:&tab.document
         e:=index==active?s.edits:&tab.edits
-        if !d.unsaved && edits_scene_state(e)==d.saved {continue}
+        if !d.unsaved && history.edits_scene_state(e)==d.saved {continue}
         if document_path(d)=="" {untitled+=1;continue}
         document_activate(s,index)
         if scene_save(s)!=.None {notify(s,"A scene could not be saved")}
@@ -511,11 +535,30 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
         free(loaded)
         return nil,.Not_A_Scene
     }
+    // Its instances follow their prefabs before the World takes them: no step holds that, and the
+    // document is as its file until it is saved.
+    resolved:asset.Asset
+    defer asset.asset_close(&resolved)
+    document:=&source
+    {
+        reader:Prefab_Reader
+        prefab_reader_begin(s,&reader)
+        defer prefab_reader_end(&reader)
+        if changed,_:=asset.scene_resolve(&reader.resolver,loaded);changed {
+            data,encoded:=asset.scene_bytes(loaded)
+            if encoded!=.None || asset.asset_take(&resolved,data)!=.None {
+                asset.scene_destroy(loaded)
+                free(loaded)
+                return nil,.Not_A_Scene
+            }
+            document=&resolved
+        }
+    }
     host.load_phase_end(s.app,reading,1)
     read=true
     tools_release(s)
     w:=edited_world(s)
-    if _,replaced:=scene.replace(w,s.app,&source,&a.types);replaced!=.None {
+    if _,replaced:=scene.replace(w,s.app,document,&a.types);replaced!=.None {
         log.errorf("%s: %s",file,scene.error_text(replaced))
         return loaded,.Rejected
     }
@@ -530,17 +573,20 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
 @(private)
 document_opened :: proc(s:^Session) {
     w:=edited_world(s)
-    edits_reset(s.edits,w)
-    s.document.saved=edits_scene_state(s.edits)
+    history.edits_reset(s.edits,w)
+    prefabs_opened(s)
+    s.document.saved=history.edits_scene_state(s.edits)
     s.document.unsaved=false
     s.document.sections={}
     if views:=core.world_storage_of(w,scene.Section_Views);views!=nil {clear(&views.items)}
     if u:=core.world_storage_of(w,scene.Unresolved_References);u!=nil {s.edits.resolved=u.written}
-    selection_clear(s.selection)
+    history.selection_clear(s.selection)
     outliner_reset(s.outliner)
     s.viewport.exposure={}
     if s.viewport.exposure_source==.Camera {s.viewport.exposure_source=.Scene}
     s.view_cut=true
+    // Opened with another world on screen, what was kept of this one's light is not of this scene.
+    erender.world_light_forget(s.app.renderer,host.app_world_id(s.app,w.data))
     document_source_stamp(s)
     // What Play will play compresses meanwhile.
     play_animations_load(s,wait=false)
@@ -565,13 +611,6 @@ document_name :: proc(d:^Document,path,file:string) {
 
 // A new id for an asset made in the editor.
 asset_id_new :: proc(s:^Session) -> base.Asset_Id {
-    next :: proc(state:^u64) -> u64 {
-        state^+=0x9e3779b97f4a7c15
-        z:=state^
-        z=(z~(z>>30))*0xbf58476d1ce4e5b9
-        z=(z~(z>>27))*0x94d049bb133111eb
-        return z~(z>>31)
-    }
     s.id_state~=platform.clock_ns()
-    return {next(&s.id_state),next(&s.id_state)}
+    return {base.splitmix_next(&s.id_state),base.splitmix_next(&s.id_state)}
 }

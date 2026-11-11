@@ -9,8 +9,8 @@ import "core:slice"
 // rule. Writes counter-clockwise triangles as indices into points and returns
 // how many; `halfedges`, when given, gets for every triangle edge (3*triangle
 // + corner, from that corner to the next) the opposite edge, or NONE on the
-// hull. Repeated points are left out; points on one line, or a point that is
-// not finite, give no triangles.
+// hull. Repeated points are left out; points on one line, a point that is
+// not finite, or no memory give no triangles.
 delaunay_triangulate :: proc(points:[]Vec2,triangles:^[dynamic]u32,halfedges:^[dynamic]u32=nil) -> int #no_bounds_check {
     clear(triangles)
     if halfedges!=nil {clear(halfedges)}
@@ -138,8 +138,14 @@ delaunay_triangulate :: proc(points:[]Vec2,triangles:^[dynamic]u32,halfedges:^[d
         d.hash[hash_key(&d,p)]=i
         d.hash[hash_key(&d,d.points[e])]=e
     }
-    append(triangles,..d.triangles[:d.count])
-    if halfedges!=nil {append(halfedges,..d.halfedges[:d.count])}
+    if d.refused {return 0}
+    if _,err:=append(triangles,..d.triangles[:d.count]);err!=nil {return 0}
+    if halfedges!=nil {
+        if _,err:=append(halfedges,..d.halfedges[:d.count]);err!=nil {
+            clear(triangles)
+            return 0
+        }
+    }
     return d.count/3
 }
 
@@ -155,6 +161,7 @@ delaunay_triangulate :: proc(points:[]Vec2,triangles:^[dynamic]u32,halfedges:^[d
     hull_start:u32,
     hash:     []u32, // a hull vertex per direction from the center
     stack:    [dynamic]u32,
+    refused:  bool, // the stack found no memory: edges were left unflipped
 }
 
 @(private="file") orient2 :: #force_inline proc "contextless" (a,b,c:DVec2) -> f64 {
@@ -254,7 +261,7 @@ delaunay_triangulate :: proc(points:[]Vec2,triangles:^[dynamic]u32,halfedges:^[d
             link(d,a,hbl)
             link(d,b,d.halfedges[ar])
             link(d,ar,bl)
-            append(&d.stack,b0+(b+1)%3)
+            if _,err:=append(&d.stack,b0+(b+1)%3);err!=nil {d.refused=true}
         } else {
             if len(d.stack)==0 {break}
             a=pop(&d.stack)

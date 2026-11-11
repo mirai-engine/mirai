@@ -43,20 +43,19 @@ terrain_heightmap_dialogs :: proc(s:^editor.Session,tool:^Terrain_Tool,world:cor
     result:=platform.dialog_result(app.platform)
     if result.state!=.Accepted || result.path=="" || tool.stroke.id=={} || tool.stroke.active {return}
     switch result.tag {
-    case REIMPORT_DIALOG: heightmap_import(s,tool,world,app,result.path)
+    case REIMPORT_DIALOG: heightmap_import(s,tool,world,app.assets,result.path)
     case EXPORT_DIALOG:   heightmap_export(s,tool,result.path)
     }
 }
 
-// The heights of a heightmap in the selected Heightfield as one step of undo:
+// The heights of a heightmap in the Heightfield of the stroke as one step of undo:
 // one of another size gives the terrain its size, with its layers and without
 // what was painted or cut.
-heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,path:string) -> bool {
+heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,path:string) -> bool {
     stroke:=&tool.stroke
     if stroke.id=={} || stroke.active || stroke.source.kind!=.Heightfield {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to import its heightmap");return false}
     bytes,error:=serial.file_read(path,context.temp_allocator,limit=64*1024*1024)
-    if error!=.None {editor.notify(s,"The heightmap could not be read");return false}
+    if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return false}
     heightmap,decode:=textures.heightmap_decode(bytes,terrain.HEIGHT_SAMPLES_MAX,context.temp_allocator)
     if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
@@ -82,7 +81,7 @@ heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_R
     stroke.source=next
     next=previous
     stroke.changed,stroke.dirty_all=true,true
-    stroke_end(s,tool,world,app,label="Import heightmap")
+    stroke_end(s,tool,world,assets,label="Import heightmap")
     // Another size: the previews are made again for it.
     if !same {stroke_free(tool)}
     return true
@@ -114,7 +113,7 @@ heightmap_export :: proc(s:^editor.Session,tool:^Terrain_Tool,path:string) -> bo
 // The samples Resize gives, on each side an even number more or less than
 // the terrain has: its center stays a sample.
 @(private)
-resize_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App) {
+resize_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
     ctx:=s.gui.ctx
     stroke:=&tool.stroke
     current:=[2]int{int(stroke.source.samples.x),int(stroke.source.samples.z)}
@@ -122,7 +121,7 @@ resize_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     x,z:=f64(tool.resize.x),f64(tool.resize.y)
     if ui.property(ctx,"Samples X") {if ui.number_field(ctx,ui.id(ctx,"resize_x"),&x,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.x=resize_even(int(x),current.x)}}
     if ui.property(ctx,"Samples Z") {if ui.number_field(ctx,ui.id(ctx,"resize_z"),&z,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.y=resize_even(int(z),current.y)}}
-    if tool.resize!=current && ui.button(ctx,ui.id(ctx,"resize"),{label="Resize",style=.Field,width=-1,center=true}).clicked {terrain_resize(s,tool,world,app,tool.resize)}
+    if tool.resize!=current && ui.button(ctx,ui.id(ctx,"resize"),{label="Resize",style=.Field,width=-1,center=true}).clicked {terrain_resize(s,tool,world,assets,tool.resize)}
 }
 
 @(private)
@@ -133,10 +132,9 @@ resize_even :: proc "contextless" (wanted,current:int) -> int {
 }
 
 // Resize as one step of undo.
-terrain_resize :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,app:^host.App,samples:[2]int) -> bool {
+terrain_resize :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,samples:[2]int) -> bool {
     stroke:=&tool.stroke
     if stroke.id=={} || stroke.active || stroke.source.kind!=.Heightfield {return false}
-    if !editor.selection_has(s.selection,stroke.entity) {editor.notify(s,"Select the terrain to resize it");return false}
     next:terrain.Source
     defer terrain.source_destroy(&next)
     if !terrain.source_resize(&next,&stroke.source,samples,stroke.source.allocator) {editor.notify(s,"The terrain cannot take that size: an even number of samples more or less on each side, within the budget");return false}
@@ -145,7 +143,7 @@ terrain_resize :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     stroke.source=next
     next=previous
     stroke.changed,stroke.dirty_all=true,true
-    stroke_end(s,tool,world,app,label="Resize terrain")
+    stroke_end(s,tool,world,assets,label="Resize terrain")
     stroke_free(tool)
     tool.resize={}
     return true

@@ -74,7 +74,8 @@ a_jump_carries_where_an_entity_and_what_hangs_from_it_were :: proc(t:^testing.T)
 
 @(private="file")
 Hierarchy_Fixture :: struct {
-    es:Entities,
+    using world:Test_World,
+    disabled:Table(Disabled),
     locals:Table(Transform),
     parents:Table(Parent),
     worlds:Table(World_Transform),
@@ -84,40 +85,20 @@ Hierarchy_Fixture :: struct {
 }
 
 @(private="file")
-fixture_init :: proc(f:^Hierarchy_Fixture) {
-    entities_init(&f.es)
-    table_init(&f.locals,"Transform");table_init(&f.parents,"Parent");table_init(&f.worlds,"World_Transform")
-}
-
-@(private="file")
-fixture_destroy :: proc(f:^Hierarchy_Fixture) {
-    table_destroy(&f.locals);table_destroy(&f.parents);table_destroy(&f.worlds)
-    value_free(&f.hierarchy,type_info_of(Hierarchy));value_free(&f.propagation,type_info_of(Propagation));value_free(&f.jumps,type_info_of(Jumps))
-    entities_destroy(&f.es)
-}
-
-@(private="file")
-fixture_settle :: proc(f:^Hierarchy_Fixture) {
-    table_settle(&f.locals,&f.es);table_settle(&f.parents,&f.es);table_settle(&f.worlds,&f.es)
-    hierarchy_settle(&f.hierarchy,read(&f.parents),&f.es)
-    entities_settle(&f.es)
-}
-
-@(private="file")
 fixture_propagate :: proc(f:^Hierarchy_Fixture,phase:Phase) {
     transforms_propagate(read(&f.locals),ref(&f.hierarchy),&f.worlds,&f.propagation,&f.jumps,Frame_Time{phase=phase})
-    fixture_settle(f)
+    test_world_settle(f)
 }
 
 @(test)
 propagating_writes_only_the_world_transforms_that_change :: proc(t:^testing.T) {
     f:Hierarchy_Fixture
-    fixture_init(&f)
-    defer fixture_destroy(&f)
-    body,hand,bystander:=create(&f.es),create(&f.es),create(&f.es)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
+    body,hand,bystander:=create(&f.entities),create(&f.entities),create(&f.entities)
     add(&f.locals,body,TRANSFORM_IDENTITY);add(&f.locals,hand,TRANSFORM_IDENTITY);add(&f.locals,bystander,TRANSFORM_IDENTITY)
     add(&f.parents,hand,Parent{entity=body})
-    fixture_settle(&f)
+    test_world_settle(&f)
     fixture_propagate(&f,.Fixed)
     fixture_propagate(&f,.Fixed)
     seen:=version(&f.worlds)
@@ -137,22 +118,22 @@ propagating_writes_only_the_world_transforms_that_change :: proc(t:^testing.T) {
 @(test)
 a_chain_of_parents_that_goes_round_ends_and_a_deep_one_composes_whole :: proc(t:^testing.T) {
     f:Hierarchy_Fixture
-    fixture_init(&f)
-    defer fixture_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     // a and b are each other's parent, c hangs from a, and the tree under root goes 200 deep.
-    a,b,c,root,other:=create(&f.es),create(&f.es),create(&f.es),create(&f.es),create(&f.es)
+    a,b,c,root,other:=create(&f.entities),create(&f.entities),create(&f.entities),create(&f.entities),create(&f.entities)
     step:=TRANSFORM_IDENTITY
     step.position={1,0,0}
     for e in ([]Entity{a,b,c,root,other}) {add(&f.locals,e,step)}
     add(&f.parents,a,Parent{entity=b});add(&f.parents,b,Parent{entity=a});add(&f.parents,c,Parent{entity=a})
     deepest:=root
     for _ in 0..<200 {
-        child:=create(&f.es)
+        child:=create(&f.entities)
         add(&f.locals,child,step)
         add(&f.parents,child,Parent{entity=deepest})
         deepest=child
     }
-    fixture_settle(&f)
+    test_world_settle(&f)
     fixture_propagate(&f,.Fixed)
     get(&f.locals,a).position={2,0,0}
     fixture_propagate(&f,.Late)
@@ -165,10 +146,10 @@ a_chain_of_parents_that_goes_round_ends_and_a_deep_one_composes_whole :: proc(t:
     testing.expect(t,placed)
 
     // The Parent of b closed the cycle, so b is the root of the tree above a.
-    destroy_tree(&f.es,ref(&f.hierarchy),a)
-    testing.expect(t,!alive(&f.es,a) && !alive(&f.es,c) && alive(&f.es,b))
-    testing.expect(t,alive(&f.es,root) && alive(&f.es,other))
-    fixture_settle(&f)
-    destroy_tree(&f.es,ref(&f.hierarchy),root)
-    testing.expect(t,!alive(&f.es,deepest) && alive(&f.es,other))
+    destroy_tree(&f.entities,ref(&f.hierarchy),a)
+    testing.expect(t,!alive(&f.entities,a) && !alive(&f.entities,c) && alive(&f.entities,b))
+    testing.expect(t,alive(&f.entities,root) && alive(&f.entities,other))
+    test_world_settle(&f)
+    destroy_tree(&f.entities,ref(&f.hierarchy),root)
+    testing.expect(t,!alive(&f.entities,deepest) && alive(&f.entities,other))
 }

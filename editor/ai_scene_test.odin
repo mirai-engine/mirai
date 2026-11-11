@@ -5,7 +5,7 @@ import "core:mem"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
-import erender "mirai:engine/render"
+import "mirai:editor/history"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
@@ -15,35 +15,14 @@ import mm "mirai:std/math"
 @(test)
 ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_allocations :: proc(t:^testing.T) {
     world:Pick_Test_World
-    core.entities_init(&world.entities)
-    core.table_init(&world.ids,"Id")
-    core.table_init(&world.transforms,"Transform")
-    core.table_init(&world.parents,"Parent")
-    core.table_init(&world.meshes,"Mesh_Renderer")
-    core.table_init(&world.highlights,"Highlight")
-    defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids)
-    defer core.table_destroy(&world.transforms)
-    defer core.table_destroy(&world.parents)
-    defer core.value_free(&world.hierarchy,type_info_of(core.Hierarchy))
-    defer core.table_destroy(&world.meshes)
-    defer core.table_destroy(&world.highlights)
-    tables:=[5]core.Table_Info{
-        {type=core.Id,offset=offset_of(Pick_Test_World,ids)},
-        {type=core.Transform,offset=offset_of(Pick_Test_World,transforms)},
-        {type=core.Parent,offset=offset_of(Pick_Test_World,parents)},
-        {type=erender.Mesh_Renderer,offset=offset_of(Pick_Test_World,meshes)},
-        {type=erender.Highlight,offset=offset_of(Pick_Test_World,highlights)},
-    }
-    storages:=[1]core.Storage_Info{{type=core.Hierarchy,info=type_info_of(core.Hierarchy),offset=offset_of(Pick_Test_World,hierarchy)}}
-    info:=core.World_Info{entities=offset_of(Pick_Test_World,entities),tables=tables[:],storages=storages[:]}
-    ref:=core.world_ref(&world,&info)
+    if !core.test_world_init(t,&world,test_types) {return}
+    defer core.test_world_destroy(&world)
+    ref:=core.test_world_ref(&world)
     owner,derived,other,selected:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,owner,{value=1});core.add(&world.ids,other,{value=2});core.add(&world.ids,selected,{value=3})
     core.add(&world.parents,derived,{entity=owner})
     for e in ([4]core.Entity{owner,derived,other,selected}) {core.add(&world.meshes,e,{shape=.Cube});core.add(&world.transforms,e,core.TRANSFORM_IDENTITY)}
-    core.table_settle(&world.ids,&world.entities);core.table_settle(&world.parents,&world.entities);core.table_settle(&world.meshes,&world.entities);core.table_settle(&world.transforms,&world.entities)
-    core.hierarchy_settle(&world.hierarchy,core.read(&world.parents),&world.entities)
+    core.test_world_settle(&world)
     m:=new(Ai);defer free(m)
     m.task_count=2
     m.tasks[0].world,m.tasks[1].world=&world,&world
@@ -56,8 +35,8 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     append(&m.tasks[0].review.changed_ids,1);append(&m.tasks[1].review.changed_ids,2)
     defer delete(m.tasks[0].review.changed_ids);defer delete(m.tasks[1].review.changed_ids)
     v:Viewport;defer viewport_free(&v)
-    selection:Selection;defer delete(selection.entities)
-    selection_set(&selection,{selected})
+    selection:history.Selection;defer delete(selection.entities)
+    history.selection_set(&selection,{selected})
     app:host.App
     g:Editor_Ui
     session:=Session{ai=m,app=&app,viewport=&v,selection=&selection,gui=&g,edit_world=&world}
@@ -66,10 +45,10 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     testing.expect_value(t,entity_level(&v,derived),u8(9))
     testing.expect_value(t,entity_level(&v,other),u8(10))
     testing.expect(t,entity_level(&v,selected)==u8(9),"what a working turn was given takes its color over the selection")
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     highlight_sync(&session,ref)
     testing.expect(t,entity_level(&v,selected)==u8(9),"and keeps it after deselection")
-    selection_set(&selection,{selected})
+    history.selection_set(&selection,{selected})
     highlight_sync(&session,ref)
     version:=world.highlights.version
     tracker:mem.Tracking_Allocator
@@ -93,7 +72,7 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     m.tasks[0].state=.Done;m.scene_serial+=1
     highlight_sync(&session,ref)
     testing.expect_value(t,entity_level(&v,selected),HIGHLIGHT_SELECTED)
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     highlight_sync(&session,ref)
     testing.expect(t,entity_level(&v,selected)==AI_CONTEXT_LEVEL,"sent context keeps a soft outline of its own after deselection")
     m.show_agents_in_scene=true
@@ -103,7 +82,7 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     testing.expect(t,ai_scene_task_visible(&session,ref,&m.tasks[0]),"closing the browser does not hide scene figures")
     testing.expect(t,!ai_scene_task_visible(&session,ref,&m.tasks[1]),"Finish removes a scene figure")
     other_world:Pick_Test_World
-    testing.expect(t,!ai_scene_task_visible(&session,core.world_ref(&other_world,&info),&m.tasks[0]),"a task never appears on another document")
+    testing.expect(t,!ai_scene_task_visible(&session,core.world_ref(&other_world,core.test_world_info(&world)),&m.tasks[0]),"a task never appears on another document")
     m.task_count=3
     m.tasks[2].world,m.tasks[2].state=&world,.Running
     testing.expect(t,!ai_scene_task_visible(&session,ref,&m.tasks[2]),"a turn without context that changed nothing is not in the scene")
@@ -126,7 +105,7 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     m.task_count=2
     m.tasks[0].state=.Done
     testing.expect(t,ai_task_finish(&session,m,&m.tasks[0]))
-    selection_clear(&selection)
+    history.selection_clear(&selection)
     highlight_sync(&session,ref)
     testing.expect(t,entity_level(&v,selected)==0,"Finish removes sent context outlines")
 }

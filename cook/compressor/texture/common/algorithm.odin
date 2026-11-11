@@ -221,18 +221,3 @@ lower_bound :: proc(values:[]$T,x:$U,$less:proc(v:T,x:U)->bool) -> int {
     }
     return first
 }
-
-// The same answer by a branch-free search whose sequence of steps depends only on the count.
-branchless_lower_bound_idx :: proc "contextless" (values:[]$T,x:T) -> int {
-    base:=0
-    nleft:=len(values)
-    for {
-        half:=nleft>>1
-        if half<=0 {break}
-        mid:=base+half
-        if values[mid]<x {base=mid}
-        nleft-=half
-    }
-    if nleft==1 && values[base]<x {base+=1}
-    return base
-}

@@ -65,7 +65,6 @@ Editor steps, in order; a plugin step orders itself against them with `after`
   the queue to the workers ([chats](ai-tasks.md)).
 - `editor_begin` (`input`): opens the UI with the frame's input, computes `Viewport.hovered` and
   runs shortcuts.
-- `prefabs_follow` (`input`): brings the prefab records up to date with the history.
 - `editor_tools` (`frame`, stage `begin`): camera, gizmo and selection; writes the `core.View` of
   the shown world.
 - `editor_panels` (`ui`): bar, panels, popups and dialogs.
@@ -79,8 +78,8 @@ Editor steps, in order; a plugin step orders itself against them with `after`
 - Play and Simulate run a copy of the `World` in the editor process, with the same application,
   GPU and library. Each run has an owner: the user or an AI turn.
 - `play_start` ends the open edit, writes the recovery copy if there are unsaved changes, creates
-  the world with `info.copy` (which brings the clock of `edit_world`, at zero: the editor loop
-  does not advance it) and keeps camera and selection for Stop. Document and history stay in
+  the world with `core.world_copy` (which brings the clock of `edit_world`, at zero: the editor
+  loop does not advance it) and keeps camera and selection for Stop. Document and history stay in
   `edit_world`. If it cannot write the recovery or create the world, memory included, it does not
   start ([recovery](document.md#recovery-and-failures)).
 - Opening a scene starts the first compression of the `.anim` its world can play, and
@@ -122,14 +121,14 @@ Agent runs:
 - `game_frame` advances the user's game first, with the window's input, and then the ticks asked
   for by the turns, with input blocked except that of each `play.step` (`run_input_give`). The UI
   of a turn's game takes `Run.ui` and `Run.pointer` (`run_ui_input`) instead of the window's
-  input, also when drawn with `play.capture`.
+  input, also when drawn with `capture`.
 - A turn acts only on its own run: it reads the user's Play it started in, but does not pause,
   advance or stop it. If the user leaves that Play and the turn has no run of its own, the run
   passes to the agent: view, camera and selection return to Edit and the user can open another
   Play.
 - A turn's run ends with the turn; all end with a document change (`runs_stop`).
 - Turn runs are not drawn in the window unless the user [watches](#watching-another-run) them;
-  `play.capture` from a turn draws its own off screen (`host.app_capture_world`).
+  `capture` from a turn draws its own off screen (`host.app_capture_world`).
 - A game that asks to quit (`app.quit`) stops the Play, not the editor; while the user watches
   another run the request is discarded. What a run that is not shown adds to the frame (UI layers,
   panels, lines, instances, views) is discarded after its loop (`extras_mark`, `extras_drop`).
@@ -207,25 +206,23 @@ fallback. How the game uses it:
 
 ## Watching another run
 
-The `Watch` mode shows in the viewport the run of another without stopping any: that of a turn
-(`watch_start(s, task, false)`) or the host's Play (`watch_start(s, 0, true)`,
-[collaboration](collaboration.md#watching-the-hosts-play)). `watch_stop`, Stop, Esc, F5 and the
-bar chip return to the previous mode and camera.
+The `Watch` mode shows in the viewport the run of a turn without stopping any
+(`watch_start(s, task)`). `watch_stop`, Stop, Esc, F5 and the bar chip return to the previous mode
+and camera.
 
 - From Edit it keeps the document's selection in `edit_selection` and restores it on return. From
   a user Play it releases input; that game keeps running without being seen or receiving input
   (`game_frame` advances it according to `watch.from`) and, if it ends in the meantime, on
   stopping watching it returns to Edit.
 - What is watched receives no user input. A turn's run advances only with its `play.step` and is
-  seen with its game camera or the editor's; the host's Play, with the host's view.
+  seen with its game camera or the editor's.
 - What is watched is not edited: the
   [edit procedures](document.md#world-edit-procedures) do nothing, the gizmo and the
   tools do not act, Details is disabled and Paste, Duplicate, Delete, Group, Rename and Pause are
   turned off. Selection, Hierarchy and camera work on the watched world; document editing by API
   stays the same.
-- `watch_update`, between frames, stops watching with a toast when the run ended or the host
-  stopped playing. A document change ends the runs and what is watched; the user's `play_start`
-  stops watching before starting.
+- `watch_update`, between frames, stops watching with a toast when the run ended. A document
+  change ends the runs and what is watched; the user's `play_start` stops watching before starting.
 
 ## Networked Play
 
@@ -268,7 +265,7 @@ Screen and input of the processes:
 A turn plays with online players inside the editor (`Play_Provider.turn`): the plugin creates a
 run per player (`Run.player` from 1), without compiling or opening processes; `play.step` advances
 them together and gives the input to that of `player`, which `play.inspect`, `play.player` and
-`play.capture` read.
+`capture` read.
 
 In a shared session, the host's presence carries what its plugin offers of the game it serves
 (`Play_Provider.offer`, opaque to the editor), and the menu of its figure, the plugin's rows for a
@@ -326,7 +323,7 @@ Each agent ([in scene](ai-tasks.md#agents-in-scene-and-review)) and each other e
 session ([collaboration](collaboration.md#what-travels)) is drawn with the same figure
 (`presence.odin`):
 
-- The dog of `editor/assets/presence`, a transient visual instance (`host.app_instance_add`,
+- The dog of `editor/assets/presence`, a transient visual instance (`host.extras_instance_add`,
   `copy_owner` `PRESENCE_OWNER`) without entities or a place in the scene. It faces -Z rotated only
   around +Y: without a rig, it does not look up or down.
 - La malla separa pelaje, piezas neutras y los slots del arnés, la franja de la nave, la pantalla,
@@ -337,8 +334,8 @@ session ([collaboration](collaboration.md#what-travels)) is drawn with the same 
   of the bar) and its name.
 - A click on the glyph or the figure of an agent opens its chat; that of another editor, or the
   right click on a bar glyph, opens its menu (`presence_menu.odin`): **Go to**, **Follow** (follows
-  its camera until one's own moves), **Watch Play** and **Join game** of the host for a guest, and
-  **Open chat** and **Watch** of one's own agent.
+  its camera until one's own moves), **Join game** of the host for a guest, and **Open chat** and
+  **Watch** of one's own agent.
 - A palette, `AGENT_COLORS`, for agents and editors, with an outline level per color from
   `AGENT_LEVEL`; `AI_CONTEXT_LEVEL` is what a turn only read. The glyph and the name distinguish
   an agent and an editor of the same color.
@@ -355,11 +352,11 @@ session ([collaboration](collaboration.md#what-travels)) is drawn with the same 
 `prefab.list` and the selectors omit them (`asset.registry_listed`): they are not dragged into a
 scene nor enter a game. An open session does not reload them if they change.
 
-La fuente `editor/assets/presence/source/pup.glb` se prepara en Blender como una sola malla,
-de 0,9 m de alto, con origen entre los ojos y mirando hacia -Z. Sus primitivas 0 a 5 son,
-respectivamente, pelaje, arnés, franja, pantalla, lentes y estrellas; las siguientes conservan
-las piezas neutras. La fuente no se guarda en git. `mirai import` con `--root editor/assets` usa
-los ajustes junto a ella y escribe los assets del editor, reduciendo la malla a `max_triangles`.
+The source `editor/assets/presence/source/pup.glb` is prepared in Blender as a single mesh, 0.9 m
+tall, with its origin between the eyes and facing +Z of the file, which the import turns to -Z. Its
+primitives 0 to 5 are fur, harness, stripe, screen, lenses and stars; the following ones keep the
+neutral pieces. The source is not kept in git. `mirai import` with `--root editor/assets` uses the
+settings next to it and writes the assets of the editor, reducing the mesh to `max_triangles`.
 
 ### Pings
 

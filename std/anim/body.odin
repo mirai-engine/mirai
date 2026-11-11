@@ -24,16 +24,16 @@ BODY_PART_NAMES :: [Body_Part]string{
 
 // Where the parts of a body are in a skeleton. bones holds the bone of each
 // part, -1 when it has none; the spine is the chain between the pelvis and the
-// neck. forward and up are where the body faces and its up at rest, in the
-// space of the roots. A confidence goes from 0 (a guess) to 1 (certain);
-// manual marks what a person set, which detection keeps.
+// neck. up is where the body stands at rest in the space of the roots; it
+// faces math.FORWARD, as every model does (cook/import turns a rig to it), so
+// up is perpendicular to it. A confidence goes from 0 (a guess) to 1
+// (certain); manual marks what a person set, which detection keeps.
 Body_Map :: struct {
     bones:[Body_Part]i32,
     confidence:[Body_Part]f32,
-    forward,up:math.Vec3,
-    axes_confidence:f32,
+    up:math.Vec3,
+    axes_confidence:f32, // of where detection found the body standing and facing
     manual:Body_Parts,
-    manual_axes:bool,
 }
 
 // What a mask covers: each region is the branch of its first bone, the spine
@@ -95,7 +95,7 @@ body_map_empty :: proc "contextless" () -> Body_Map {
 }
 
 // Bones inside the skeleton and each one in a single part, confidences
-// between 0 and 1, and the axes unit and perpendicular, or zero without parts.
+// between 0 and 1, and up unit and across the forward, or zero without parts.
 body_map_valid :: proc "contextless" (map_:Body_Map,bone_count:int) -> bool {
     any:=false
     for bone,part in map_.bones {
@@ -106,19 +106,19 @@ body_map_valid :: proc "contextless" (map_:Body_Map,bone_count:int) -> bool {
         for other,other_part in map_.bones {if other_part!=part && other==bone {return false}}
     }
     if !anim_finite(map_.axes_confidence) || map_.axes_confidence<0 || map_.axes_confidence>1 {return false}
-    if !any && map_.forward=={} && map_.up=={} {return true}
-    return body_axes_valid(map_.forward,map_.up)
+    if !any && map_.up=={} {return true}
+    return body_up_valid(map_.up)
 }
-body_axes_valid :: proc "contextless" (forward,up:math.Vec3) -> bool {
-    if !anim_vec3_valid(forward) || !anim_vec3_valid(up) {return false}
-    return abs(linalg.dot(forward,forward)-1)<1e-3 && abs(linalg.dot(up,up)-1)<1e-3 && abs(linalg.dot(forward,up))<1e-3
+body_up_valid :: proc "contextless" (up:math.Vec3) -> bool {
+    if !anim_vec3_valid(up) {return false}
+    return abs(linalg.dot(up,up)-1)<1e-3 && abs(linalg.dot(math.FORWARD,up))<1e-3
 }
-// The left of the body: with Y up and +Z forward it is +X.
-body_left :: #force_inline proc "contextless" (map_:Body_Map) -> math.Vec3 {return linalg.cross(map_.up,map_.forward)}
+// The left of the body: with Y up it is -X.
+body_left :: #force_inline proc "contextless" (map_:Body_Map) -> math.Vec3 {return linalg.cross(map_.up,math.FORWARD)}
 body_direction_vector :: proc "contextless" (map_:Body_Map,direction:Body_Direction) -> math.Vec3 {
     switch direction {
-    case .Forward: return map_.forward
-    case .Back: return -map_.forward
+    case .Forward: return math.FORWARD
+    case .Back: return -math.FORWARD
     case .Left: return body_left(map_)
     case .Right: return -body_left(map_)
     case .Up: return map_.up
@@ -441,10 +441,12 @@ body_limb :: proc "contextless" (parents:[]i32,names:[]string,world:[]math.Trans
 
 // Finds the parts of a body in a skeleton from the names of its bones, their
 // hierarchy and where they are at rest. A part keeps its bone when the map
-// marks it manual, and so do the axes. world receives the rest pose. False,
-// with the map unchanged, for buffers of other sizes or an invalid skeleton;
-// parts that are not found stay at -1.
-body_detect :: proc "contextless" (parents:[]i32,names:[]string,rest:[]math.Transform,world:[]math.Transform,map_:^Body_Map) -> bool {
+// marks it manual. world receives the rest pose. facing, when given, receives
+// where the body was found facing, which is math.FORWARD for one that stands
+// as the map says; the map of one that lies along the forward keeps +Y as its
+// up, as a guess. False, with the map unchanged, for buffers of other sizes
+// or an invalid skeleton; parts that are not found stay at -1.
+body_detect :: proc "contextless" (parents:[]i32,names:[]string,rest:[]math.Transform,world:[]math.Transform,map_:^Body_Map,facing:^math.Vec3=nil) -> bool {
     n:=len(parents)
     if n==0 || len(names)!=n || len(rest)!=n || len(world)!=n || n>int(max(i32)) || !pose_world(parents,rest,world) {return false}
     previous:=map_^
@@ -533,7 +535,7 @@ body_detect :: proc "contextless" (parents:[]i32,names:[]string,rest:[]math.Tran
     } else if direction,ok=anim_unit(toes);ok {
         forward=direction
     } else {
-        forward=math.Vec3{0,0,1} if abs(up.z)<.9 else math.Vec3{1,0,0}
+        forward=math.FORWARD if abs(up.z)<.9 else math.Vec3{1,0,0}
         axes_confidence=.1
     }
     forward=body_snap(forward)
@@ -609,16 +611,18 @@ body_detect :: proc "contextless" (parents:[]i32,names:[]string,rest:[]math.Tran
         }
     }
 
-    result.forward,result.up,result.axes_confidence=forward,up,axes_confidence
+    // The map faces math.FORWARD: its up is what the body has of it across that axis.
+    result.up,result.axes_confidence={0,1,0},min(axes_confidence,.1)
+    if across,stands:=anim_unit(up-math.FORWARD*linalg.dot(up,math.FORWARD));stands && linalg.dot(across,up)>.5 {result.up,result.axes_confidence=across,axes_confidence}
     for part in previous.manual {
         bone:=previous.bones[part]
         for &value,other in result.bones {if value==bone && other!=part {value=-1;result.confidence[other]=0}}
         result.bones[part],result.confidence[part]=bone,previous.confidence[part]
         result.manual+={part}
     }
-    if previous.manual_axes {result.forward,result.up,result.axes_confidence,result.manual_axes=previous.forward,previous.up,previous.axes_confidence,true}
     if !body_map_valid(result,n) {return false}
     map_^=result
+    if facing!=nil {facing^=forward}
     return true
 }
 

@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -13,7 +14,7 @@ import "mirai:std/serial"
 @(private="file") Collision_Test_Nested :: struct {region:Collision_Test_Filter}
 @(private="file") Collision_Test_Wrong :: struct {layers,mask:u32}
 @(private="file") Collision_Test_World :: struct {
-    entities:core.Entities,
+    using world:core.Test_World,
     ids:core.Table(core.Id),
     colliders:core.Table(phys.Collider),
     filters:core.Table(Collision_Test_Filter),
@@ -22,21 +23,16 @@ import "mirai:std/serial"
     settings:phys.Collision_Settings,
 }
 
-@(private="file")
-collision_test_settle :: proc(data,shared,ed:rawptr) {
-    world:=cast(^Collision_Test_World)data
-    core.table_settle(&world.ids,&world.entities);core.table_settle(&world.colliders,&world.entities)
-    core.table_settle(&world.filters,&world.entities);core.table_settle(&world.nested,&world.entities);core.table_settle(&world.wrong,&world.entities)
-    core.entities_settle(&world.entities)
-}
+@(private="file") Collision_Test_Editor :: struct {api:editor.Api}
 
 @(test)
 collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step :: proc(t:^testing.T) {
+    info,described:=core.test_info(t,Collision_Test_World,core.Test_None,Collision_Test_Editor,test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     world:Collision_Test_World
-    core.entities_init(&world.entities);defer core.entities_destroy(&world.entities)
-    defer core.table_destroy(&world.ids);defer core.table_destroy(&world.colliders)
-    defer core.table_destroy(&world.filters);defer core.table_destroy(&world.nested);defer core.table_destroy(&world.wrong)
-    world.settings=phys.COLLISION_SETTINGS_DEFAULT
+    if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&world)
     world.settings.presets[4]={preset=9,belongs=1,collides=2}
     names:=[7]core.Name_Info{
         {type=phys.Collision_Category,value=0,name="default"},{type=phys.Collision_Category,value=1,name="player"},
@@ -45,29 +41,20 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
         {type=phys.Collision_Preset,value=255,name="custom"},
     }
     named_types:=[2]core.Named_Type_Info{{type=phys.Collision_Category,name="Collision_Category",prefix="CATEGORY_",limit=32},{type=phys.Collision_Preset,name="Collision_Preset",prefix="PRESET_",limit=256}}
-    tables:=[5]core.Table_Info{
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Collision_Test_World,ids)},
-        {name="Collider",type=phys.Collider,info=type_info_of(phys.Collider),offset=offset_of(Collision_Test_World,colliders)},
-        {name="Collision_Test_Filter",type=Collision_Test_Filter,info=type_info_of(Collision_Test_Filter),offset=offset_of(Collision_Test_World,filters)},
-        {name="Collision_Test_Nested",type=Collision_Test_Nested,info=type_info_of(Collision_Test_Nested),offset=offset_of(Collision_Test_World,nested)},
-        {name="Collision_Test_Wrong",type=Collision_Test_Wrong,info=type_info_of(Collision_Test_Wrong),offset=offset_of(Collision_Test_World,wrong)},
-    }
-    storages:=[2]core.Storage_Info{
-        {type=editor.Api,info=type_info_of(editor.Api),place=.Editor},
-        {type=phys.Collision_Settings,info=type_info_of(phys.Collision_Settings),offset=offset_of(Collision_Test_World,settings)},
-    }
-    info:=core.World_Info{entities=offset_of(Collision_Test_World,entities),tables=tables[:],storages=storages[:],settle=collision_test_settle,names=names[:],named_types=named_types[:]}
+    info.names,info.named_types=names[:],named_types[:]
+    core.test_info_index(&info)
     entity,held:=core.create(&world.entities),core.create(&world.entities)
+    alone:=core.create(&world.entities)
     collider:=phys.COLLIDER_DEFAULT;collider.group=held;collider.friction=.8
     config:=Collision_Test_Filter{filter=phys.QUERY_FILTER_DEFAULT,unchanged=93};config.filter.debris=true
-    core.add(&world.ids,entity,{value=7});core.add(&world.ids,held,{value=9});core.add(&world.colliders,entity,collider)
+    core.add(&world.ids,entity,{value=7});core.add(&world.ids,held,{value=9});core.add(&world.ids,alone,{value=11});core.add(&world.colliders,entity,collider);core.add(&world.colliders,alone,phys.COLLIDER_DEFAULT)
     core.add(&world.filters,entity,config);core.add(&world.nested,entity,{region=config});core.add(&world.wrong,entity,{1,2})
-    collision_test_settle(&world,nil,nil)
-    selection:editor.Selection;defer delete(selection.entities)
-    viewport:editor.Viewport;gui:editor.Editor_Ui;edits:editor.Edits;defer editor.edits_free(&edits)
-    api_storage:editor.Api
-    session:=editor.Session{info=&info,edit_world=&world,editor_world=&api_storage,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits}
-    editor.edits_reset(&edits,editor.edited_world(&session))
+    core.settle(&info,&world,nil)
+    selection:history.Selection;defer delete(selection.entities)
+    viewport:editor.Viewport;gui:editor.Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
+    tools:Collision_Test_Editor
+    session:=editor.Session{info=&info,edit_world=&world,editor_world=&tools,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits}
+    history.edits_reset(&edits,editor.edited_world(&session))
     if !testing.expect_value(t,editor.api_open(&session,0,true),editor.Api_Open_Error.None) {return};defer editor.api_close(&session)
     state:=editor.api_state(&session);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"physics.collision.get")==nil {api_collision_register(&session)}
@@ -86,73 +73,86 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     testing.expectf(t,strings.contains(text,`{"name":"trigger","sensor":true,"belongs":["default"],"collides":["*"]}`),"%s",text)
     testing.expect(t,!strings.contains(text,`"custom"`))
     testing.expectf(t,strings.contains(text,`"undeclared":[{"field":"presets","index":4,"value":9}]`),"%s",text)
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collider"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collider"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out))
     testing.expectf(t,strings.contains(text,`"preset":"default","sensor":false,"belongs":["default"],"collides":["*"],"pushes":{},"group":"0x0000000000000009"`),"%s",text)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","belongs":["player"],"collides":["world","camera"]}`)
+    // Without component: the only one of the entity, or an error that lists them.
+    error=execute(state,&out,"physics.collision.get",`{"entity":"000000000000000b"}`)
+    testing.expect_value(t,error.code,0)
+    text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"component":"Collider"`),"%s",text)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007"}`)
+    testing.expect_value(t,error.code,api.INVALID_PARAMS)
+    testing.expectf(t,strings.contains(error.message,"Collider, Collision_Test_Filter"),"%s",error.message)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000009"}`)
+    testing.expect_value(t,error.code,api.INVALID_PARAMS)
+    testing.expectf(t,strings.contains(error.message,"no collision component"),"%s",error.message)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","belongs":["player"],"collides":["world","camera"]}`)
     if !testing.expect_value(t,error.code,0) {return}
     value,_:=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.preset==phys.PRESET_CUSTOM && value.belongs==0b10 && value.collides==0b1100 && !value.sensor)
     testing.expect(t,value.group==held && value.friction==collider.friction)
     testing.expect_value(t,edits.cursor,1)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","sensor":true}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","sensor":true}`)
     testing.expect_value(t,error.code,0)
     value,_=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.sensor && value.belongs==0b10 && value.collides==0b1100)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","preset":"trigger"}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","preset":"trigger"}`)
     testing.expect_value(t,error.code,0)
     value,_=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.preset==phys.PRESET_TRIGGER && value.group==held)
     // Custom chosen as a preset keeps what the preset gave as its own.
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","preset":"custom"}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","preset":"custom"}`)
     testing.expect_value(t,error.code,0)
     value,_=core.get(core.read(&world.colliders),entity)
     testing.expect(t,value.preset==phys.PRESET_CUSTOM && value.sensor && value.belongs==1 && value.collides==phys.COLLISION_LAYERS_ALL)
     // The steps are of the API: it undoes them, as history.undo does.
-    edits.author=editor.EDIT_AUTHOR_API
-    for _ in 0..<4 {testing.expect(t,editor.undo(&edits,editor.edited_world(&session),&selection))}
+    edits.author=history.EDIT_AUTHOR_API
+    for _ in 0..<4 {testing.expect(t,history.undo(&edits,editor.edited_world(&session),&selection))}
     value,_=core.get(core.read(&world.colliders),entity);testing.expect_value(t,value,collider)
-    testing.expect(t,editor.redo(&edits,editor.edited_world(&session),&selection))
-    edits.author=editor.EDIT_AUTHOR_USER
-    before:=editor.edits_scene_state(&edits);cursor:=edits.cursor
+    testing.expect(t,history.redo(&edits,editor.edited_world(&session),&selection))
+    edits.author=history.EDIT_AUTHOR_USER
+    before:=history.edits_scene_state(&edits);cursor:=edits.cursor
     for params in ([]string{
-        `{"id":"7","component":"Collider","preset":"Trigger"}`,
-        `{"id":"7","component":"Collider","belongs":["missing"]}`,
-        `{"id":"7","component":"Collider","collides":["world","missing"]}`,
-        `{"id":"7","component":"Collider","sensor":"yes"}`,
-        `{"id":"7","component":"Collider","preset":"trigger","belongs":["world"]}`,
-        `{"id":"7","component":"Collider","hits":["camera"]}`,
-        `{"id":"7","component":"Collider"}`,
-        `{"id":"7","component":"Collision_Test_Wrong","preset":"trigger"}`,
-        `{"id":"7","component":"Collision_Test_Filter","hits":["missing"]}`,
-        `{"id":"7","component":"Collision_Test_Filter","preset":"trigger"}`,
+        `{"entity":"0000000000000007","component":"Collider","preset":"Trigger"}`,
+        `{"entity":"0000000000000007","component":"Collider","belongs":["missing"]}`,
+        `{"entity":"0000000000000007","component":"Collider","collides":["world","missing"]}`,
+        `{"entity":"0000000000000007","component":"Collider","sensor":"yes"}`,
+        `{"entity":"0000000000000007","component":"Collider","preset":"trigger","belongs":["world"]}`,
+        `{"entity":"0000000000000007","component":"Collider","hits":["camera"]}`,
+        `{"entity":"0000000000000007","component":"Collider"}`,
+        `{"entity":"0000000000000007","component":"Collision_Test_Wrong","preset":"trigger"}`,
+        `{"entity":"0000000000000007","component":"Collision_Test_Filter","hits":["missing"]}`,
+        `{"entity":"0000000000000007","component":"Collision_Test_Filter","preset":"trigger"}`,
     }) {
         error=execute(state,&out,"physics.collision.set",params)
         testing.expect_value(t,error.code,api.INVALID_PARAMS)
-        testing.expect_value(t,editor.edits_scene_state(&edits),before);testing.expect_value(t,edits.cursor,cursor)
+        testing.expect_value(t,history.edits_scene_state(&edits),before);testing.expect_value(t,edits.cursor,cursor)
     }
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collision_Test_Filter","hits":["player","world"]}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collision_Test_Filter","hits":["player","world"]}`)
     testing.expect_value(t,error.code,0)
     filtered,_:=core.get(core.read(&world.filters),entity)
     testing.expect(t,filtered.filter.filter.block==6 && filtered.filter.filter.layers==phys.COLLISION_LAYERS_ALL && filtered.filter.objects==0)
     testing.expect(t,filtered.filter.debris && filtered.unchanged==93)
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collision_Test_Filter"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collision_Test_Filter"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"prefix":"filter","hits":["player","world"],"sensors":false`),"%s",text)
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collision_Test_Nested","prefix":"region.filter","hits":["camera"],"sensors":true}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collision_Test_Nested","prefix":"region.filter","hits":["camera"],"sensors":true}`)
     testing.expect_value(t,error.code,0)
     nested,_:=core.get(core.read(&world.nested),entity)
     testing.expect(t,nested.region.filter.filter.block==8 && nested.region.filter.overlaps && nested.region.filter.objects==0)
     testing.expect(t,nested.region.filter.debris && nested.region.unchanged==93)
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collision_Test_Nested","prefix":"region.filter"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collision_Test_Nested","prefix":"region.filter"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"hits":["camera"],"sensors":true`),"%s",text)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"000000000000000b","sensor":true}`)
+    testing.expect_value(t,error.code,0)
+    testing.expect(t,core.get(&world.colliders,alone).sensor)
     session.mode=.Play;session.runs[0]={world=&world}
-    error=execute(state,&out,"physics.collision.get",`{"id":"7","component":"Collider"}`)
+    error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collider"}`)
     testing.expect_value(t,error.code,0)
     text=string(serial.writer_bytes(&out));testing.expect(t,strings.contains(text,`"playing":true`))
     world.settings.presets[3]={preset=phys.PRESET_CUSTOM,belongs=1}
-    error=execute(state,&out,"physics.collision.set",`{"id":"7","component":"Collider","preset":"trigger"}`)
+    error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","preset":"trigger"}`)
     testing.expect_value(t,error.code,api.SERVER_ERROR)
 }

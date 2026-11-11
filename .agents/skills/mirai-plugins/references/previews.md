@@ -1,12 +1,12 @@
 # Animation and sound documents
 
 `plugins/previews/editor` opens animations (`.anim`), sounds (`.sound`) and sound sets
-(`.sound_set`) as
-[asset documents](../../mirai-editor/references/panels.md#asset-documents): it declares them
-with `Previews_Documents` (an `editor.Asset_Document_Provider`) and draws them from
-`previews_document`, a `ui` step that looks at the front document. The material has its document
-in the editor, and the particle effect, in the [vfx](vfx-editor.md#particle-document) plugin. It
-also provides the animation thumbnails ([thumbnails](#animation-thumbnails)).
+(`.sound_set`) as [asset documents](../../mirai-editor/references/panels.md#asset-documents): it
+declares them with `Previews_Documents` (an `editor.Asset_Document_Provider`) and draws them from
+`previews_document`, a `ui` step that looks at the front document. The material has its document in
+the editor, and the particle effect, in the
+[vfx](../../mirai-world/references/vfx-editor.md#particle-document) plugin. It also provides the
+animation thumbnails ([thumbnails](#animation-thumbnails)).
 
 ## Animation document
 
@@ -120,7 +120,7 @@ browser; a set picks one of its sounds each time. The state is `Previews.sound`.
 ## Verification
 
 - Thumbnails (`plugins/previews/editor`, CPU): `thumbnails_show_the_model_an_animation_moves`;
-  its image, `editor.capture` with the UI and the content browser filtered by Animation.
+  its image, `capture` with the UI and the content browser filtered by Animation.
 - `preview_samples_compact_bones_and_frames_the_clip_without_changing_authored_poses`
   (`plugins/previews/editor`): bones, mesh index order, inverse bind, framing, rest,
   `Pose_Source` and authored poses intact.
@@ -129,13 +129,13 @@ browser; a set picks one of its sounds each time. The state is `Previews.sound`.
   influences, normals, buffer reuse and isolation of scene and history.
   Per backend: [rendering verification][render-verif].
 - With the gallery assets generated:
-  `preview_loads_and_samples_the_imported_manny_assets -define:PREVIEW_MANNY=true` loads from the
-  registry, shares the skeleton cache and advances the `walk` clip, without modifying files or
-  scenes.
+  `preview_loads_and_samples_the_imported_mirai_avatar_assets -define:PREVIEW_MIRAI_AVATAR=true`
+  loads from the registry, shares the skeleton cache and advances the `walk` clip, without
+  modifying files or scenes.
 - The rows over a panel's values:
   `curves_show_as_keys_and_held_values_take_what_a_popup_chose` (`editor`).
 - The documents in an open editor: `editor.document` with `Open` and the asset path, and
-  `editor.capture` with the UI next to the prototype. The sound ones have no prototype:
+  `capture` with the UI next to the prototype. The sound ones have no prototype:
   `audio.play` and `sound_set.inspect` check what they do.
 
 [render-verif]: ../../mirai-rendering/references/verification.md#gpu-environment

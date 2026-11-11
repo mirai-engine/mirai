@@ -13,10 +13,11 @@ GALLERY_START :: mm.Vec3{0,.05,8} // where Mirai starts, and comes back to when 
 // What the player of the gallery can do where it stands, at the bottom of the screen.
 @(step="ui")
 gallery_hud :: proc(g:^gui.Gui,players:core.Read(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),drivables:core.Read(inp.Drivable)) {
-    if core.count(players)==0 {return}
+    seat,found:=core.first(players)
+    if !found {return}
     ctx:=gui.gui_context(g);if ctx==nil {return}
     player:=core.at(players,0)
-    body:=inp.body_of(drivables,core.entity_at(players,0))
+    body:=inp.body_of(drivables,seat)
     title,detail,hint:="Animation gallery","Walk up to a station to see what it shows","WASD: move    Space: jump    Mouse: camera    Esc: cursor"
     text:[96]u8
     if body==player.spider && body!=core.NONE {

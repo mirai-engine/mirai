@@ -54,7 +54,7 @@ scale), through its local Y axis.
 and motion vectors follow the shape.
 
 - `deform_render` creates per entity a deformable copy of its mesh (`deformable_create`), hands it
-  over as a visual replacement (`host.app_instance_add` with `replace_source`) and, while the
+  over as a visual replacement (`host.extras_instance_add` with `replace_source`) and, while the
   shape changes, requests a `Geometry` pass where the stage of its shape writes the vertices from
   the rest ones, as `render.Gpu_Posed_Vertex` in the words of the vertex pool that
   `pass_deformable` gives. With `speed` 0 the shape stays fixed and is only written when its
@@ -275,7 +275,8 @@ marks:
   of its froxels (from the sun, and the ambient one along the path upward) and the surfaces it has
   inside, which `fog_apply` darkens before adding the fog to them.
 
-It is used by [water](water.md): the medium under a surface and its dry boxes.
+It is used by [water](../../mirai-world/references/water.md): the medium under a surface and its dry
+boxes.
 
 **Render** (`fog_render`, `render`, after `render_sync`; `Lit` stage of each view):
 
@@ -294,9 +295,9 @@ It is used by [water](water.md): the medium under a surface and its dry boxes.
   that point receives for each meter of what it scatters (except a hidden cell out of its turn,
   which copies its reprojected light and leaves the medium empty, or with `Never` is marked as not
   lit; one without history is lit at once). The light is weighted with the mean medium of each
-  volume, not that of this frame: it does not depend on where the wisps are. Where there is a
-  medium that scatters, it lights it with the light of the engine's media
-  (`shaders/include/media.slang`, the same as the volumes of [`vfx`](vfx.md#volumes)):
+  volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
+  that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
+  the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):
   - the sun, `sun_light` of the place, at four places of the cell, each by the
     [maps of the sun](../../mirai-rendering/references/lights.md#direct-light-of-a-view) of the
     view where one holds it (the glass on the way still colors it) and with a shadow ray
@@ -389,7 +390,7 @@ view, the plugin requests no passes.
   where the view is, a [volume](../../mirai-gameplay/references/libraries.md#volume) value that
   blends numbers by their weight and takes the switches past the half. `lens_render` resolves it
   for the frame's view and for each local view (`camera.Local_Views`); each pass takes that of its
-  `Camera.slot`. A texture view (a monitor, `editor.capture` without UI) takes that of the frame's
+  `Camera.slot`. A texture view (a monitor, `capture` without UI) takes that of the frame's
   view.
 - **Consistent with exposure.** The aperture (f-number) and the shutter time are those of the
   `Exposure` that exposes the view: that of the camera, or that of the `View_Volume` where it is
@@ -436,7 +437,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
   the editor without a window with validation (`--headless --validation --api-port`): zero
   validation errors in all of them.
 - The cards: `scene.add` (`preset` `decal`, `screen`, `portal` or `mirror`), `scene.set` to give
-  the slot and `editor.capture` with the entity selected.
+  the slot and `capture` with the entity selected.
 - What to look at per scene:
   - `decals/decals.scene`: decals on floor, wall, steps and a sphere; order between two
     overlapping ones; the one that emits; edges up close.
@@ -461,7 +462,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
   blend and the circle of confusion) and, in `lights/night.scene` with a `Lens_Volume`, a capture
   per effect against the same view without it (`--reference`) and `--repeat` (the image does not
   change between frames). Motion blur is captured by flying with `editor.input` (right button and
-  a key held) and `editor.capture` with UI before releasing them.
+  a key held) and `capture` with UI before releasing them.
 - Walking, turning fast while looking at a door and looking at a monitor are tested by the user.
 
 [ext]: ../../mirai-rendering/references/views.md#views-cameras-and-extensions

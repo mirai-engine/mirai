@@ -12,7 +12,6 @@ import "mirai:std/base"
 // sound loads, or a little ahead of what plays when it has the Stream flag.
 
 SOUND_VERSION :: 2
-SOUND_OLDEST :: SOUND_VERSION
 SOUND_BULK_ALIGNMENT :: 16
 SOUND_MAX_SAMPLE_RATE :: 384000
 
@@ -83,7 +82,7 @@ sound_save :: proc(path:string,types:^Types,desc:Sound_Desc,allocator:=context.a
 }
 
 sound_view :: proc(a:^Asset,types:^Types) -> (view:Sound_View,error:Error) {
-    kind_check(a,KIND_SOUND,SOUND_OLDEST,SOUND_VERSION) or_return
+    kind_check(a,KIND_SOUND,SOUND_VERSION) or_return
     view.info=asset_row(a,types,"sound",Sound_Info) or_return
     view.lossless=table_rows(a,types,"lossless",u8) or_return
     view.file=table_rows(a,types,"file",u8) or_return

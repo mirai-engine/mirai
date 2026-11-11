@@ -51,11 +51,6 @@ Keyframe :: struct {
 }
 @(private)
 Anim_Track :: struct {property:Anim_Property,first,count:u32}
-Anim_Kind :: enum u8 {
-    Clip,     // tracks that play together
-    Sequence, // animations one after another
-    Parallel, // animations together
-}
 Anim_Loop :: enum u8 {Once,Loop,Ping_Pong}
 @(private)
 Anim_Node :: struct {kind:Anim_Kind,loop:Anim_Loop,first,count:u32,duration:f32}
@@ -330,6 +325,7 @@ Scope :: struct {
     value:Anim_Value,
     m:Affine,       // layout units to layout units
     tint:[4]f32,
+    still:bool,     // the pointer finds it where the layout put it: what a style moves
 }
 
 @(private)
@@ -349,13 +345,14 @@ affine_inverse :: proc "contextless" (m:Affine) -> Affine {
 }
 
 // What is built until animated_end is drawn moved, scaled, rotated and tinted
-// by value around the center of the element id. The pointer follows.
-animated_begin :: proc(ctx:^Context,id:Id,value:Anim_Value) -> bool {
+// by value around the center of the element id. The pointer follows, unless
+// still: what lifts a button under the pointer does not leave it.
+animated_begin :: proc(ctx:^Context,id:Id,value:Anim_Value,still:=false) -> bool {
     if ctx.scope_count>=len(ctx.scopes) {ctx.stats.dropped_scopes+=1;return false}
     // The pivot is looked up after the layout.
     widget_add(ctx,id,{.Passive})
     index:=u16(ctx.scope_count)
-    ctx.scopes[index]={id=id,parent=ctx.scope,surface=ctx.surface,value=value,m=AFFINE_IDENTITY,tint={1,1,1,1}}
+    ctx.scopes[index]={id=id,parent=ctx.scope,surface=ctx.surface,value=value,m=AFFINE_IDENTITY,tint={1,1,1,1},still=still}
     ctx.scope_count+=1
     ctx.scope=index
     return true
@@ -389,7 +386,7 @@ scopes_resolve :: proc(ctx:^Context) {
         local:=Affine{a,b,pivot.x+v.offset.x-(a*pivot.x+b*pivot.y), c,d,pivot.y+v.offset.y-(c*pivot.x+d*pivot.y)}
         s.m=affine_mul(parent.m,local)
         s.tint=parent.tint*v.color*[4]f32{1,1,1,v.opacity}
-        ctx.previous_scopes[i]=affine_inverse(s.m)
+        ctx.previous_scopes[i]=ctx.previous_scopes[s.parent] if s.still else affine_inverse(s.m)
     }
     ctx.previous_scope_count=ctx.scope_count
 }

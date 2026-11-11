@@ -2,9 +2,12 @@ package editor
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:editor/api"
 import "mirai:std/base"
@@ -12,10 +15,7 @@ import "mirai:std/serial"
 
 @(private="file")
 write_fixture_init :: proc(t:^testing.T,f:^Prefab_Fixture,state:^Api_State,name:string) -> bool {
-    if !testing.expect(t,prefab_fixture_init(f,name)) {return false}
-    for &storage in f.storages {
-        if storage.info==nil {storage.info=type_info_of(storage.type)}
-    }
+    if !prefab_fixture_init(t,f,name) {return false}
     f.api.state=state
     api_schema_build(&f.s,state)
     return true
@@ -31,21 +31,43 @@ write_entity :: proc(f:^Prefab_Fixture,name:string,parent:=core.NONE) -> core.En
 
 @(private="file")
 write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,failure:string,ok:bool) {
-    method:=api.Method{result_id=Api_Write_Result}
-    call:=api.Call{method=&method,result=&result,raw=raw,allocator=context.temp_allocator}
+    result,_,failure,ok=write_scene_made(f,raw)
+    return
+}
+
+// A write with what its result names as made: "name id" of each, in order.
+@(private="file")
+write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,created:[]string,failure:string,ok:bool) {
+    method:=api.Method{result_id=Api_Write_Result,writes_result=true}
+    out:serial.Writer
+    serial.writer_init(&out,0,context.temp_allocator)
+    call:=api.Call{method=&method,raw=raw,out=&out,allocator=context.temp_allocator}
     api_scene_write(&f.s,&call)
-    prefabs_follow(&f.s,&f.prefabs)
-    return result,call.error.message,!call.failed
+    if call.failed {return {},nil,call.error.message,false}
+    text:=string(serial.writer_bytes(&out))
+    if shape:=api.result_mismatch(Api_Write_Result,text);shape!="" {return {},nil,shape,false}
+    value,error:=json.parse_string(text,parse_integers=true,allocator=context.temp_allocator)
+    if error!=nil {return {},nil,text,false}
+    answer:=value.(json.Object)
+    id,_:=strconv.parse_u64_maybe_prefixed(answer["id"].(json.String))
+    result={id=base.Entity_Id(id),made=int(answer["made"].(json.Integer)),removed=int(answer["removed"].(json.Integer)),disabled=int(answer["disabled"].(json.Integer))}
+    names:=make([dynamic]string,context.temp_allocator)
+    for made in answer["created"].(json.Array) {
+        entry:=made.(json.Object)
+        append(&names,fmt.tprintf("%s %s",entry["name"].(json.String),entry["id"].(json.String)))
+    }
+    return result,names[:],"",true
 }
 
 // The document scene.inspect gives of root, and the entities in it as text.
 @(private="file")
 write_tree :: proc(t:^testing.T,f:^Prefab_Fixture,root:base.Entity_Id,components:=true) -> (tree:json.Object,entities:string) {
-    params:=Api_Inspect_Params{root=root,components=components,limit=API_INSPECT_DEFAULT}
+    params:=Api_Inspect_Params{limit=API_INSPECT_DEFAULT}
+    copy(params.root[:],fmt.tprintf("0x%016x",u64(root)))
     method:=api.Method{params_id=Api_Inspect_Params}
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
-    call:=api.Call{method=&method,params=&params,out=&out,allocator=context.temp_allocator}
+    call:=api.Call{method=&method,raw=components?"{}":`{"components":[]}`,params=&params,out=&out,allocator=context.temp_allocator}
     api_scene_inspect(&f.s,&call)
     if !testing.expect(t,!call.failed,call.error.message) {return}
     text:=string(serial.writer_bytes(&out))
@@ -90,7 +112,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     core.add(&f.world.lamps,a,Prefab_Test_Lamp{intensity=2,range=3,uses=7})
     core.add(&f.world.lamps,c,Prefab_Test_Lamp{intensity=1})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     ids:=[4]base.Entity_Id{api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)}
     d_id:=api_entity_id(w,d)
     steps:=len(f.edits.steps)
@@ -126,7 +148,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     testing.expect_value(t,len(f.edits.steps),steps+1)
 
     // One step: undone, the subtree is what it was.
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     core.world_settle(w)
     testing.expect_value(t,write_child_names(f,root),"A,B,C,D")
     testing.expect(t,core.has(core.read(&f.world.lamps),api_entity(w,ids[3])))
@@ -154,12 +176,10 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     b:=write_entity(f,"B",root)
     c:=write_entity(f,"C",a)
     core.world_settle(w)
-    edits_reset(&f.edits,w)
-    prefabs_follow(s,&f.prefabs)
+    history.edits_reset(&f.edits,w)
     root_id,a_id,b_id,c_id:=api_entity_id(w,root),api_entity_id(w,a),api_entity_id(w,b),api_entity_id(w,c)
     _,created:=prefab_create(s,root,"members")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
-    prefabs_follow(s,&f.prefabs)
     steps:=len(f.edits.steps)
 
     _,failure,ok:=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,u64(root_id),u64(a_id),u64(c_id),u64(b_id)))
@@ -176,7 +196,8 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     }
     testing.expect(t,entity_parent(w,api_entity(w,c_id))==api_entity(w,a_id))
     added,child:=0,0
-    for override in f.document.previous.overrides {
+    marked,_:=prefab_overrides_of(s,prefab_instance_for(w,api_entity(w,a_id)))
+    for override in marked {
         if override.kind==.Added {added+=1} else if override.kind==.Child {child+=1}
     }
     testing.expect(t,added==2 && child==1,"The members are off, and what the write made under A is the instance's own")
@@ -188,6 +209,111 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     testing.expect(t,written,write_failure)
     testing.expect_value(t,result,Api_Write_Result{id=root_id})
     testing.expect_value(t,len(f.edits.steps),steps+1)
+}
+
+// A new entity with prefab is the instance prefab.instantiate places, in the
+// step of the write, and what the document says of its members is its own.
+@(test)
+a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    state:Api_State
+    if !write_fixture_init(t,f,&state,"write-places") {return}
+    defer prefab_fixture_destroy(f)
+    defer api_schema_free(&state)
+    s:=&f.s
+    w:=edited_world(s)
+    // A prefab Crate with a Lid that holds a Lamp, and a Level to place it under.
+    crate:=write_entity(f,"Crate")
+    lid:=write_entity(f,"Lid",crate)
+    core.add(&f.world.lamps,write_entity(f,"Lamp",lid),Prefab_Test_Lamp{intensity=2,range=3})
+    level:=write_entity(f,"Level")
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    level_id:=api_entity_id(w,level)
+    id,created:=prefab_create(s,crate,"crate")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    steps,alive:=len(f.edits.steps),core.world_entities(w).alive
+    // The lamp of the instance under the first child of Level.
+    placed_lamp :: proc(f:^Prefab_Fixture,level:base.Entity_Id) -> (north,lamp:core.Entity) {
+        w:=edited_world(&f.s)
+        under:=entity_children(w,api_entity(w,level))
+        if len(under)==0 {return}
+        north=under[0]
+        for part in entity_children(w,north) {
+            for inner in entity_children(w,part) {lamp=inner}
+        }
+        return
+    }
+
+    document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.prefab","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
+    result,named,failure,ok:=write_scene_made(f,document)
+    if !testing.expect(t,ok,failure) {return}
+    testing.expect_value(t,result,Api_Write_Result{id=level_id,made=3})
+    testing.expect_value(t,len(f.edits.steps),steps+1)
+    testing.expect_value(t,core.world_entities(w).alive,alive+3)
+    north,lamp:=placed_lamp(f,level_id)
+    north_id,lamp_id:=api_entity_id(w,north),api_entity_id(w,lamp)
+    testing.expect(t,len(named)==1 && named[0]==fmt.tprintf("North 0x%016x",u64(north_id)),"The result names the instance it placed, by its root")
+    link,linked:=prefab_link_of(w,north)
+    testing.expect(t,linked && link.root && link.asset==id && entity_name(w,north)=="North")
+    testing.expect_value(t,entity_local(w,north).position,[3]f32{4,0,0})
+    member,is_member:=prefab_link_of(w,lamp)
+    value,_:=core.get(core.read(&f.world.lamps),lamp)
+    testing.expect(t,is_member && !member.root && member.instance==link.instance && value.intensity==9,"What the document says of a member, by its name, the member holds")
+    testing.expect(t,prefab_test_has(f,north,lamp,"Prefab_Test_Lamp",.Field,"intensity"),"and the instance holds it on its own")
+    held,_:=prefab_overrides_of(s,north)
+    for override in held {testing.expect(t,override.kind!=.Child,"Nothing was made beside the members")}
+
+    // The document that placed it, and the one inspect gives of it, written again change nothing.
+    result,failure,ok=write_scene(f,document)
+    testing.expect(t,ok && result==Api_Write_Result{id=level_id} && len(f.edits.steps)==steps+1,failure)
+    tree,entities:=write_tree(t,f,level_id)
+    placed:=tree["children"].(json.Array)[0].(json.Object)["prefab"].(json.Object)
+    testing.expect(t,placed["root"].(json.Boolean) && len(placed["asset"].(json.String))>0)
+    result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(level_id),entities))
+    testing.expect(t,ok && result==Api_Write_Result{id=level_id} && len(f.edits.steps)==steps+1,failure)
+
+    // One step: undone, the instance is gone with its link; done again, it is linked as before.
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
+    testing.expect_value(t,core.world_entities(w).alive,alive)
+    testing.expect_value(t,core.count(&f.world.instances),1)
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
+    north,lamp=placed_lamp(f,level_id)
+    link,linked=prefab_link_of(w,north)
+    testing.expect(t,linked && link.root && api_entity_id(w,north)==north_id && core.count(&f.world.instances)==2)
+
+    // Revert gives the member back what the prefab has.
+    reverted,revert_error:=prefab_revert(s,north,nil,true)
+    _,lamp=placed_lamp(f,level_id)
+    value,_=core.get(core.read(&f.world.lamps),lamp)
+    testing.expect(t,revert_error==.None && reverted>0 && value.intensity==2 && value.range==3,fmt.tprintf("%v %d %v",revert_error,reverted,value))
+
+    // Without root the instance is the new root, with what the document says of it.
+    result,failure,ok=write_scene(f,`{"entities":[{"name":"Alone","prefab":"crate.prefab","enabled":false}]}`)
+    alone,placed_alone:=prefab_link_of(w,api_entity(w,result.id))
+    testing.expect(t,ok && result.made==3 && placed_alone && alone.root && entity_has(w,api_entity(w,result.id),core.Disabled),fmt.tprintf("%s %v %v %v",failure,result,placed_alone,alone))
+
+    // What a write refuses after placing an instance takes the instance back; and a prefab is not placed in a file it holds.
+    yard,nested:=prefab_create(s,api_entity(w,level_id),"yard")
+    if !testing.expect_value(t,nested,Prefab_Error.None) {return}
+    testing.expect(t,prefab_contains(s,yard,id) && !prefab_contains(s,id,yard))
+    steps,alive=len(f.edits.steps),core.world_entities(w).alive
+    instances,members:=core.count(&f.world.instances),core.count(&f.world.members)
+    open_id:=f.document.id
+    cases:=[?]struct{document,says:string,inside:bool}{
+        {`{"entities":[{"name":"Top","children":[{"name":"South","prefab":"crate.prefab"},{"name":"Bad","components":{"Light":{}}}]}]}`,"entities[0].children[1].components.Light",false},
+        {`{"entities":[{"name":"In","prefab":"crate.prefab"}]}`,"holds the file it would be placed in",true},
+        {`{"entities":[{"name":"In","prefab":"yard.prefab"}]}`,"holds the file it would be placed in",true},
+    }
+    for c in cases {
+        if c.inside {f.document.id=id}
+        _,refused,accepted:=write_scene(f,c.document)
+        f.document.id=open_id
+        testing.expectf(t,!accepted && strings.contains(refused,c.says),"%s: %s",c.says,refused)
+        testing.expect_value(t,core.world_entities(w).alive,alive)
+        testing.expect_value(t,len(f.edits.steps),steps)
+        testing.expect(t,core.count(&f.world.instances)==instances && core.count(&f.world.members)==members,"The instances are those from before")
+    }
 }
 
 @(test)
@@ -205,19 +331,24 @@ a_write_that_fails_says_where_in_the_document_and_changes_nothing :: proc(t:^tes
     other:=write_entity(f,"Other")
     core.add(&f.world.lamps,a,Prefab_Test_Lamp{intensity=2})
     core.world_settle(w)
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     root_id,other_id:=api_entity_id(w,root),api_entity_id(w,other)
     alive,steps:=core.world_entities(w).alive,len(f.edits.steps)
     at:=fmt.tprintf(`"root":"0x%016x"`,u64(root_id))
     cases:=[?]struct{document,says:string}{
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),"entities[0].children[2].components.Light: Light is not a registered component"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{}},{{"components":{{"Light":{{}}}}}}]}}]}}`,at),`entities[0].children[2].components.Light: "Light" is not a component of the world`},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made"}},{{"components":{{"Prefab_Test_Lamp":{{"intensty":1}}}}}}]}}]}}`,at),"entities[0].children[1].components.Prefab_Test_Lamp"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"components":{{"Prefab_Test_Lamp":null}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Test_Lamp: the document declares the components"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","off":["Prefab_Test_Lamp"]}}]}}]}}`,at),"entities[0].children[0].off: Prefab_Test_Lamp is not among the components it declares"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"x","colour":1}}]}}]}}`,at),"entities[0].children[0] has no 'colour'"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"position":[1,2]}}]}}]}}`,at),"entities[0].children[0]: position must be an array of 3 numbers"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}}]}}]}}`,at,u64(other_id)),"entities[0].children[0].id: 0x"},
-        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"0"}}}}]}}]}}`,at),"entities[0].children[0].prefab: scene.write places no prefab"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"nobody.prefab"}}]}}]}}`,at),`entities[0].children[0].prefab: "nobody.prefab" is no .prefab asset`},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":"level.scene"}}]}}]}}`,at),`entities[0].children[0].prefab: "level.scene" is no .prefab asset`},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":{{"asset":"nobody.prefab","size":2}}}}]}}]}}`,at),"entities[0].children[0].prefab has no 'size'"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"made","prefab":7}}]}}]}}`,at),"entities[0].children[0].prefab must be the path or the id of a prefab"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","prefab":{{"root":true}}}}]}}]}}`,at),"entities[0].children[0].prefab: it is not what links the entity to a prefab"},
+        {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"name":"A","components":{{"Prefab_Instance":{{}}}}}}]}}]}}`,at),"entities[0].children[0].components.Prefab_Instance: Prefab_Instance is what links an entity to its prefab"},
         {fmt.tprintf(`{{%s,"entities":[{{"children":[{{"id":"0x%016x"}},{{"id":"0x%016x"}}]}}]}}`,at,u64(root_id)+1,u64(root_id)+1),"entities[0].children[1].id: 0x"},
         {fmt.tprintf(`{{%s,"entities":[{{"name":"Root"}},{{"name":"Two"}}]}}`,at),"entities declares one entity"},
     }
@@ -241,7 +372,7 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
     defer api_schema_free(&state)
     w:=edited_world(&f.s)
     root:=write_entity(f,"Root")
-    edits_reset(&f.edits,w)
+    history.edits_reset(&f.edits,w)
     root_id:=api_entity_id(w,root)
     light :: proc(f:^Prefab_Fixture,root:core.Entity,name:string) -> (value:erender.Point_Light,e:core.Entity) {
         w:=edited_world(&f.s)
@@ -279,6 +410,6 @@ a_preset_gives_an_entity_of_a_write_the_components_and_place_it_leaves_out :: pr
     testing.expect(t,ok && plain==erender.POINT_LIGHT_DEFAULT,failure)
 
     _,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"children":[{{"name":"X","preset":"nope"}}]}}]}}`,u64(root_id)))
-    testing.expect(t,!ok && strings.has_prefix(failure,"entities[0].children[0].preset: unknown preset"),failure)
+    testing.expect(t,!ok && strings.has_prefix(failure,"entities[0].children[0].preset: "),failure)
     testing.expect_value(t,core.world_entities(w).alive,4)
 }

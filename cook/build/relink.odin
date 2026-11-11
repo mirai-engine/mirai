@@ -6,7 +6,6 @@ import "core:strconv"
 import "core:strings"
 import si "core:sys/info"
 import "core:time"
-import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
 
@@ -238,7 +237,7 @@ link_record_write :: proc(file:string,record:Link_Record) {
         _=os.remove(file)
         return
     }
-    if had && !path_equal(previous.folder,record.folder) {remove_later({previous.folder})}
+    if had && !project.path_same(previous.folder,record.folder) {remove_later({previous.folder})}
 }
 
 // Removes the record and the objects it names: what a compile that failed,
@@ -286,7 +285,7 @@ objects_sweep :: proc(root:string,records:[]string) {
             continue
         }
         // <target>-<hex>-<pid>...: a compile of a job that still runs stays.
-        if dash:=strings.index_byte(entry.name,'-');dash>0 && workspace.process_alive(job_file_pid(entry.name[dash+1:])) {continue}
+        if dash:=strings.index_byte(entry.name,'-');dash>0 && subprocess.process_alive(job_file_pid(entry.name[dash+1:])) {continue}
         append(&removed,entry.fullpath)
     }
     remove_later(removed[:])

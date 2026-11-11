@@ -28,6 +28,9 @@ Table_Info :: struct {
     fields:[]Field_Description, // of the fields of its struct that have a comment on their line
     single:bool, // @(component,single): the world uses one at a time; its table keeps one row on
     far:bool,    // @(component,far): its entity draws a far form of its own, which stays when its section unloads
+    base:bool,   // a component of core, the base of every entity: on while its entity is disabled
+    locks:[]Lock, // @(component,locks="..."): the rows of other tables of its struct a row on of this one owns
+    flat:bool,   // world_info_index found that a value holds nothing behind a pointer: a copy of its bytes is a copy
 }
 
 // Which ends of a network session receive the values of a component of the
@@ -91,6 +94,19 @@ Storage_Info :: struct {
     keep:bool,    // @(storage,keep): the state of the run, which clearing the World leaves
     plugin:string, // the plugin whose package declares it; empty for the engine and the project
     game:bool,     // the game of the project declares it, not the engine or a plugin
+    local:bool,    // @(storage,copy=false): no copy, swap or clear of the World touches it
+    procs:Storage_Procs,
+    flat:bool,     // as that of Table_Info
+}
+
+// The procedures the attributes of a storage name, in place of what core
+// does with its value by reflection; nil without one.
+Storage_Procs :: struct {
+    copy:proc(dst,src:rawptr) -> bool,      // copy="f"
+    copy_kept:proc(dst,src:rawptr) -> bool, // copy_kept="f": into the copy a history keeps
+    swap:proc(a,b:rawptr),                  // swap="f"
+    free:proc(value:rawptr),                // free="f"
+    reset:proc(value:rawptr),               // reset="f": what clearing the World does to it
 }
 
 Step_Info :: struct {
@@ -99,23 +115,18 @@ Step_Info :: struct {
     phases:Phases,
     loops:Loops,
     call:Step_Proc, // the function as its loops call it: its binding, its settle and its time
-    main:bool,      // runs on the thread that runs its loop: it receives the application (^host.App, Records) or a storage of it or of the editor
 }
 
+// A phase of a loop: its functions, one after another in their order.
 Loop_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
-// worker: the one of the job system of the application that runs it; 0 on the thread of the loop.
-Step_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr,worker:int)
-
-// then waits for first: positions in the order of a loop and phase. Two steps
-// without a path of edges between them touch nothing in common that either
-// writes, and give the same World in any order or at once.
-Step_Edge :: struct {first,then:i32}
+Step_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
 
 // What the generator knows of the project, for code that works on any world.
 World_Info :: struct {
     sizes:[Place]int,
     aligns:[Place]int,
     entities:uintptr, // offset of the Entities in World
+    revisions:uintptr, // offset in World of a u64 for each storage, as storages lists them: it grows when a function receives the storage to write, when code outside the loop asks for it (world_storage) and when the World is copied over, swapped or cleared. 0: a World made by hand, which has none and whose storages a copy always takes
     tables:[]Table_Info,
     storages:[]Storage_Info,
     messages:[]Message_Info,
@@ -125,19 +136,9 @@ World_Info :: struct {
     actions:[]Actions_Info,     // the enums @(actions), in the order of their values
     records:[]Record_Info,      // the types @(record)
     steps:[]Step_Info,
-    init:[Place]proc(data:rawptr,allocator:runtime.Allocator) -> bool,
-    destroy:[Place]proc(data:rawptr),
-    copy:proc(dst,src:rawptr) -> bool, // failure leaves a destructible, partial destination
-    copy_changed:proc(dst,src:rawptr,marks:[]Copy_Mark) -> bool, // copy that copies again only the tables that changed (table_copy_changed), for a dst a history keeps as a copy of src, with a mark per table, by its index in tables, that it updates; dst is only copied back with copy, as the storages that say copy_kept hold only what that needs
-    swap:proc(a,b:rawptr), // publishes a prepared World without allocating; local storages stay
-    settle:proc(world,shared,editor:rawptr), // applies what the functions and the editor added and removed
-    clear:proc(world:rawptr),   // every entity and row of a World, and the storages derived from them back to their start; settings and those that say keep stay
-    attach:proc(world,shared:rawptr,allocator:runtime.Allocator) -> bool, // the values of the by_world storages of a World with its id; false without memory
-    detach:proc(world,shared:rawptr), // frees them, after the release phase of the World
+    settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
-    edges:[Loop][Phase][]Step_Edge, // what waits for what in that order, without the edges other edges imply
-    parallel:bool, // edges hold every wait between steps: the host may run those without a path between them at once; otherwise they run in order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
     schema:^World_Schema, // world_info_index
 }
@@ -153,6 +154,65 @@ copy_marks_follow :: proc(w:World_Ref,restored,marks:[]Copy_Mark) {
         t:=world_table_at(w,&info)
         marks[i]={t.version,t.layout,true}
     }
+    first:=len(w.info.tables)
+    for revision,i in world_revisions(w) {
+        at:=first+i
+        if at>=len(marks) || at>=len(restored) || !restored[at].valid || marks[at]!=restored[at] {continue}
+        marks[at]={revision,0,true}
+    }
+}
+
+// The marks a copy of what changed takes: one per table, then one per storage.
+copy_marks_count :: proc "contextless" (info:^World_Info) -> int {return len(info.tables)+len(info.storages)}
+
+// The revisions of the storages of a World, as its World_Info lists them;
+// none in a World made by hand.
+world_revisions :: proc "contextless" (w:World_Ref) -> []u64 {
+    if w.data==nil || w.info.revisions==0 || w.place!=.World {return nil}
+    return ([^]u64)(uintptr(w.data)+w.info.revisions)[:len(w.info.storages)]
+}
+
+// Whether a storage has to be copied again into the copy a mark is of: its
+// revision is not the one the copy was made at.
+storage_changed :: #force_inline proc "contextless" (mark:^Copy_Mark,revision:u64) -> bool {
+    if mark.valid && mark.version==revision {return false}
+    mark.valid=false
+    return true
+}
+
+// A storage was copied over: the one written is another, and the mark says
+// what the source was.
+storage_copied :: #force_inline proc "contextless" (mark:^Copy_Mark,dst:^u64,revision:u64) {
+    dst^=max(dst^,revision)+1
+    mark^={revision,0,true}
+}
+
+// Every storage of dst was copied from src: none of dst is what it was, nor
+// what a mark of another copy says.
+revisions_copied :: proc "contextless" (dst,src:[]u64) {
+    for &revision,i in dst {revision=max(revision,src[i])+1}
+}
+
+revisions_swapped :: proc "contextless" (a,b:[]u64) {
+    for &revision,i in a {
+        revision=max(revision,b[i])+1
+        b[i]=revision
+    }
+}
+
+// Every storage was written, as when the World is cleared.
+revisions_moved :: proc "contextless" (revisions:[]u64) {
+    for &revision in revisions {revision+=1}
+}
+
+// With -define:MIRAI_CHECK_WRITES=true, a storage a copy of what changed
+// left alone is compared with its copy: one written through a core.Ref, or
+// through a pointer kept from an earlier function, differs without its
+// revision having moved, and a rollback would bring back the older value.
+storage_check :: proc(dst,src:rawptr,info:^runtime.Type_Info,name:string) {
+    if !value_equal(dst,src,info) {
+        fail("the storage %s changed without a function receiving it to write (^%s) or code outside the loop asking for it (core.world_storage): a copy of what changed left it as it was",name,name)
+    }
 }
 
 // Runs, outside the loops, the functions of a phase of a loop that the given
@@ -161,10 +221,9 @@ copy_marks_follow :: proc(w:World_Ref,restored,marks:[]Copy_Mark) {
 // preview or the animation of a copy. While they run it stands for the host:
 // the Time of the World is time, and its Frame_Time a frame of time.dt in
 // that phase, as the editor loop runs it; both are given back after. They
-// run one after another on the calling thread, worker of the job system of
-// the application (0: the thread of the loop). False for a World_Ref that is
+// run one after another on the calling thread. False for a World_Ref that is
 // not of a World or without app.
-world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,libraries:[]string,time:Time,worker:=0) -> bool {
+world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,libraries:[]string,time:Time) -> bool {
     if w.data==nil || w.info==nil || w.place!=.World || app==nil {return false}
     clock,frame:=world_storage_of(w,Time),world_storage_of(w,Frame_Time)
     kept_clock:Time
@@ -177,12 +236,12 @@ world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,lib
         kept_frame=frame^
         frame^={accumulator=kept_frame.accumulator,dt=time.dt,alpha=1,phase=phase}
     }
-    w.info.settle(w.data,shared,editor)
+    settle(w.info,w.data,editor)
     for index in w.info.order[loop][phase] {
         s:=&w.info.steps[index]
         for library in libraries {
             if s.library==library {
-                s.call(w.data,shared,editor,app,worker)
+                s.call(w.data,shared,editor,app)
                 break
             }
         }
@@ -217,20 +276,28 @@ by_world_get :: #force_inline proc "contextless" (b:^By_World($T),id:World_Id) -
 // Gives a World its value, starting at value. False without memory.
 by_world_attach :: proc(b:^By_World($T),id:World_Id,value:T,allocator:runtime.Allocator) -> bool {
     if id.generation==0 {return true}
+    room:=cast(^T)by_world_room(cast(^By_World(u8))b,id,size_of(T),align_of(T),allocator)
+    if room==nil {return false}
+    room^=value
+    return true
+}
+
+// The room of the value of a World in a By_World of values of a size, made
+// when it has none; nil without memory.
+by_world_room :: proc(b:^By_World(u8),id:World_Id,size,align:int,allocator:runtime.Allocator) -> rawptr {
     if b.allocator.procedure==nil {b.allocator=allocator}
     if int(id.index)>=len(b.entries) {
         b.entries.allocator=b.allocator
-        if resize(&b.entries,int(id.index)+1)!=nil {return false}
+        if resize(&b.entries,int(id.index)+1)!=nil {return nil}
     }
     entry:=&b.entries[id.index]
     if entry.value==nil {
-        made,error:=new(T,b.allocator)
-        if error!=nil {return false}
-        entry.value=made
+        made,error:=mem.alloc(max(size,1),align,b.allocator)
+        if error!=nil || made==nil {return nil}
+        entry.value=cast(^u8)made
     }
-    entry.value^=value
     entry.world=id
-    return true
+    return entry.value
 }
 
 // Takes the value of a World out: the caller frees what it holds, then
@@ -292,16 +359,25 @@ world_table_at :: proc "contextless" (w:World_Ref,t:^Table_Info) -> ^Raw_Table {
     return cast(^Raw_Table)(uintptr(w.data)+t.offset)
 }
 
+// A storage of a World, to read or to write: its revision moves, so the next
+// copy of what changed takes it again.
 world_storage :: proc(w:World_Ref,type:typeid) -> rawptr {
     if w.info.storages_by_type!=nil {
         at,found:=w.info.storages_by_type[type]
         if !found || w.info.storages[at].place!=w.place {return nil}
-        return rawptr(uintptr(w.data)+w.info.storages[at].offset)
+        return world_storage_at(w,at)
     }
-    for s in w.info.storages {
-        if s.type==type && s.place==w.place && !s.by_world {return rawptr(uintptr(w.data)+s.offset)}
+    for s,at in w.info.storages {
+        if s.type==type && s.place==w.place && !s.by_world {return world_storage_at(w,at)}
     }
     return nil
+}
+
+// The storage at an index of info.storages, of the place of w, as
+// world_storage gives it.
+world_storage_at :: proc "contextless" (w:World_Ref,index:int) -> rawptr {
+    if w.info.revisions!=0 && w.place==.World {([^]u64)(uintptr(w.data)+w.info.revisions)[index]+=1}
+    return rawptr(uintptr(w.data)+w.info.storages[index].offset)
 }
 
 world_storage_of :: proc(w:World_Ref,$T:typeid) -> ^T {return cast(^T)world_storage(w,T)}
@@ -313,7 +389,7 @@ world_table_of :: proc(w:World_Ref,$T:typeid) -> ^Table(T) {
 
 // For code outside the loop: the World of a reference.
 world_settle :: proc(w:World_Ref) {
-    if w.place==.World {w.info.settle(w.data,nil,nil)}
+    if w.place==.World {settle(w.info,w.data,nil)}
 }
 
 // The components an entity has, by table.
@@ -336,9 +412,9 @@ world_destroy_tree :: proc(w:World_Ref,e:Entity) {
 // it replaces (a scene loaded in a job). An Entity they hold named an entity
 // of src, and names none in dst. False without memory.
 world_run_copy :: proc(dst,src:World_Ref) -> bool {
-    for &storage in dst.info.storages {
+    for &storage,index in dst.info.storages {
         if storage.place!=.World || !storage.keep && storage.setting==.None {continue}
-        to,from:=rawptr(uintptr(dst.data)+storage.offset),rawptr(uintptr(src.data)+storage.offset)
+        to,from:=world_storage_at(dst,index),rawptr(uintptr(src.data)+storage.offset)
         value_free(to,storage.info)
         if !value_copy(to,from,storage.info) {return false}
         value_entities_clear(to,storage.info)
@@ -414,20 +490,7 @@ value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
             if !value_copy(rawptr(uintptr(dst)+offset),rawptr(uintptr(src)+offset),v.elem) {return false}
         }
     case runtime.Type_Info_Dynamic_Array:
-        d:=cast(^runtime.Raw_Dynamic_Array)dst
-        s:=cast(^runtime.Raw_Dynamic_Array)src
-        if d.allocator.procedure==nil {d.allocator=context.allocator}
-        context.allocator=d.allocator
-        if s.len>0 && v.elem_size>0 && s.len>max(int)/v.elem_size {return false}
-        if d.cap<s.len && !runtime.__dynamic_array_reserve(d,v.elem_size,v.elem.align,s.len) {return false}
-        for i in s.len..<d.len {value_free(rawptr(uintptr(d.data)+uintptr(i*v.elem_size)),v.elem)}
-        if s.len>d.len {mem.zero(rawptr(uintptr(d.data)+uintptr(d.len*v.elem_size)),(s.len-d.len)*v.elem_size)}
-        d.len=s.len
-        if value_flat(v.elem) {mem.copy(d.data,s.data,s.len*v.elem_size);return true}
-        for i in 0..<s.len {
-            offset:=uintptr(i*v.elem_size)
-            if !value_copy(rawptr(uintptr(d.data)+offset),rawptr(uintptr(s.data)+offset),v.elem) {return false}
-        }
+        return array_copy(cast(^runtime.Raw_Dynamic_Array)dst,cast(^runtime.Raw_Dynamic_Array)src,v.elem)
     case runtime.Type_Info_Slice:
         d:=cast(^runtime.Raw_Slice)dst
         s:=cast(^runtime.Raw_Slice)src
@@ -453,6 +516,40 @@ value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
     case:
         mem.copy(dst,src,info.size)
     }
+    return true
+}
+
+// Copies a dynamic array of values of a type, as value_copy copies each.
+array_copy :: proc(d,s:^runtime.Raw_Dynamic_Array,elem:^runtime.Type_Info) -> bool {
+    if d==s {return true}
+    if value_flat(elem) {return array_copy_flat(d,s,elem.size,elem.align)}
+    size:=elem.size
+    if d.allocator.procedure==nil {d.allocator=context.allocator}
+    context.allocator=d.allocator
+    if s.len>0 && size>0 && s.len>max(int)/size {return false}
+    if d.cap<s.len && !runtime.__dynamic_array_reserve(d,size,elem.align,s.len) {return false}
+    for i in s.len..<d.len {value_free(rawptr(uintptr(d.data)+uintptr(i*size)),elem)}
+    if s.len>d.len {mem.zero(rawptr(uintptr(d.data)+uintptr(d.len*size)),(s.len-d.len)*size)}
+    d.len=s.len
+    for i in 0..<s.len {
+        offset:=uintptr(i*size)
+        if !value_copy(rawptr(uintptr(d.data)+offset),rawptr(uintptr(s.data)+offset),elem) {return false}
+    }
+    return true
+}
+
+// Copies a dynamic array of values of size bytes that hold nothing behind a
+// pointer.
+array_copy_flat :: proc(d,s:^runtime.Raw_Dynamic_Array,size,align:int) -> bool {
+    if d==s {return true}
+    if d.allocator.procedure==nil {d.allocator=context.allocator}
+    if s.len>0 && size>0 && s.len>max(int)/size {return false}
+    if d.cap<s.len {
+        context.allocator=d.allocator
+        if !runtime.__dynamic_array_reserve(d,size,align,s.len) {return false}
+    }
+    d.len=s.len
+    if size>0 && s.len>0 {mem.copy(d.data,s.data,s.len*size)}
     return true
 }
 

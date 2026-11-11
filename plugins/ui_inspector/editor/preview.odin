@@ -7,13 +7,13 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:engine/gui"
 import inp "mirai:engine/input"
 import "mirai:project"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -63,7 +63,6 @@ Preview :: struct {
     tree:ui.Widget_Tree,
     instance:ui.Tree_Instance,
     change:u64,      // of the records it was made from; 0: none
-    scope:Scope,
     assets:u64,      // revision of the assets its images and programs were resolved at
     info:^core.World_Info, // of the game its samples were made from
     valid:bool,      // the records load
@@ -135,18 +134,6 @@ stage_navigate :: proc(ctx:^ui.Context,u:^Ui_Inspector,room:ui.Rect) {
     if .Home in ctx.input.keys_pressed && ctx.edit.id==0 {st.zoom,st.pan=1,{}}
 }
 
-// The nodes a node of the tree counts as when its components are expanded.
-@(private)
-preview_count :: proc(data:ui.Tree_Data,node:ui.Tree_Node,depth:int) -> int {
-    if node.kind!=.Component {return 1}
-    if node.component==0 || int(node.component)>len(data.components) || depth>ui.TREE_DEPTH {return 0}
-    c:=data.components[node.component-1]
-    if u64(c.first)+u64(c.count)>u64(len(data.component_nodes)) {return 0}
-    total:=0
-    for n in data.component_nodes[c.first:][:c.count] {total+=preview_count(data,n,depth+1)}
-    return total
-}
-
 // A node as the preview builds it. With samples its paths stay; without,
 // they go: bound texts show their field, templates their text, and a bound
 // list three elements. Its text goes to shown, from the texts of the records.
@@ -204,7 +191,7 @@ preview_textures :: proc(images:[]ui.Tree_Image,a:^host.Assets) -> []u32 {
     for image,i in images {
         if image.texture=={} {continue}
         if texture:=host.assets_texture_image(a,image.texture);texture!=nil {
-            textures[i]=gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT
+            textures[i]=gui.image_quad(a.renderer,texture.handle).data
         }
     }
     return textures
@@ -216,7 +203,7 @@ preview_textures :: proc(images:[]ui.Tree_Image,a:^host.Assets) -> []u32 {
 // name, a value of its type filled with samples. The values are read once,
 // when the tree is made: what Try writes in them (a Checkbox) stays.
 Preview_Samples :: struct {
-    types:Bind_Types,
+    types:author.Bind_Types,
     host:ui.Bind_Host,
     inner:ui.Bind_Host,    // what finds the types of the sources
     info:^core.World_Info,
@@ -232,7 +219,7 @@ SAMPLE_ASSET :: base.Asset_Id{1,1}
 SAMPLE_ENTITY :: base.Entity(1)
 
 preview_samples_free :: proc(s:^Preview_Samples) {
-    bind_types_free(&s.types)
+    author.bind_types_free(&s.types)
     for block in s.blocks {delete(block,s.allocator)}
     delete(s.blocks);delete(s.sources)
     s^={}
@@ -243,7 +230,7 @@ preview_samples_host :: proc(s:^Preview_Samples,info:^core.World_Info,allocator:
     s.allocator,s.info=allocator,info
     s.sources=make([dynamic]Sample_Source,allocator)
     s.blocks=make([dynamic][]u8,allocator)
-    s.inner=bind_types_host(&s.types,info,allocator)
+    s.inner=author.bind_types_host(&s.types,info,allocator)
     s.host={user=s,schema=s.inner.schema,
         source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
             s:=(^Preview_Samples)(user)
@@ -379,25 +366,20 @@ samples_shown :: proc(p:^Preview) {
 
 // ---------------------------------------------------------------- the tree
 
-// Makes the tree again when the records, the scope, the assets or the game changed.
+// Makes the tree again when the records, the assets or the game changed.
 @(private)
 preview_update :: proc(u:^Ui_Inspector,app:^host.App,allocator:runtime.Allocator) {
     a:=app.assets
     p:=&u.preview
-    if p.change==u.change && p.scope==u.scope && p.assets==a.revision && p.info==app.info {return}
+    if p.change==u.change && p.assets==a.revision && p.info==app.info {return}
     // An edit does not play again what the nodes animate when they appear.
     states:[]ui.Anim_State
     if p.valid {states=make([]ui.Anim_State,len(p.instance.states),context.temp_allocator);copy(states,p.instance.states)}
     center,drawn,scale,game:=p.center,p.drawn,p.scale,p.game
     preview_free(p)
-    p.change,p.scope,p.assets,p.info=u.change,u.scope,a.revision,app.info
+    p.change,p.assets,p.info=u.change,a.revision,app.info
     p.center,p.drawn,p.scale,p.game=center,drawn,scale,game
-    data:=records_data(&u.records)
-    if u.scope>=0 {
-        list:=records_list(&u.records,u.scope)
-        if list==nil {return}
-        data.nodes,data.overrides=list[:],nil
-    }
+    data:=author.records_data(&u.records)
     imports,imported:=imports_cached(&u.imports,a,data,u.allocator)
     if !imported {return}
     preview_load(p,app,data,imports,allocator)
@@ -413,7 +395,7 @@ preview_load :: proc(p:^Preview,app:^host.App,data:ui.Tree_Data,imports:[]ui.Tre
     if !linked_ok {return false}
     p.origins=make([dynamic]int,allocator)
     for n,row in linked.nodes {
-        for _ in 0..<preview_count(linked,n,0) {append(&p.origins,row)}
+        for _ in 0..<author.tree_node_count(linked,n,0) {append(&p.origins,row)}
     }
     if app.info!=nil && preview_build(p,app,linked,true,allocator) {
         p.sampled=true
@@ -527,7 +509,7 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
                     // As the game shows it: the image of the settings, or else that of the pack.
                     if at:=gui.prompt_image_find(g.settings,prompt.family,prompt.input,prompt.text);at>=0 && a.renderer!=nil {
                         if texture:=host.assets_texture_image(a,g.settings.prompt_images[at].texture);texture!=nil && texture.height>0 {
-                            prompt.quad=ui.quad_whole(.Image,gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT)
+                            prompt.quad=gui.image_quad(a.renderer,texture.handle)
                             prompt.aspect=f32(texture.width)/f32(texture.height)
                             continue
                         }
@@ -543,7 +525,7 @@ preview_game :: proc(u:^Ui_Inspector,app:^host.App,settings:^gui.UI_Settings,sta
             a:=(cast(^Preview_Game)user).app.assets
             texture:=host.assets_texture_image(a,id)
             if texture==nil || a.renderer==nil {return {}}
-            return ui.quad_whole(.Image,gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT)
+            return gui.image_quad(a.renderer,texture.handle)
         },
     }
 }
@@ -675,7 +657,7 @@ stage_background :: proc(u:^Ui_Inspector,a:^host.Assets) -> (out:Stage_Fill) {
     case .Texture:
         out.fill={255,255,255,255}
         if texture:=host.assets_texture_image(a,u.stage.texture);texture!=nil && a.renderer!=nil {
-            out.image=ui.quad_whole(.Image,gpu.ui_image(a.renderer,texture.handle)&~gpu.UI_MATERIAL_IMAGE_BIT)
+            out.image=gui.image_quad(a.renderer,texture.handle)
         } else {out.fill={18,20,26,255}}
     }
     return
@@ -1004,7 +986,7 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
     if ui.button(ctx,ui.id(ctx,"play"),{icon=.Play,icon_size=13,icon_color=th.text_muted,tip="Play",style=.Ghost,width=th.control,height=th.control,disabled=preview_node_of(&u.preview,u.selected)<0}).clicked {preview_play(u)}
     backgrounds:=BACKGROUND_NAMES
     background:=int(u.stage.background)
-    if ui.dropdown(ctx,ui.id(ctx,"background"),backgrounds[:],&background,{width=84}) {u.stage.background=Background(background)}
+    if ui.dropdown(ctx,ui.id(ctx,"background"),{list=backgrounds[:]},&background,{width=84}) {u.stage.background=Background(background)}
     if u.stage.background==.Color {
         rgb:=[3]f32{f32(u.stage.color.r)/255,f32(u.stage.color.g)/255,f32(u.stage.color.b)/255}
         if ui.box(ctx,{width=ui.fixed(210),height=ui.fixed(th.row),align_y=.Center}) {
@@ -1019,13 +1001,13 @@ stage_toolbar :: proc(s:^editor.Session,u:^Ui_Inspector) {
     append(&devices,fmt.tprintf("Auto: %s",families[u.stage.family]))
     for name in families {append(&devices,name)}
     device:=int(u.stage.family)+1 if u.stage.fixed else 0
-    if ui.dropdown(ctx,ui.id(ctx,"device"),devices[:],&device,{width=124}) {
+    if ui.dropdown(ctx,ui.id(ctx,"device"),{list=devices[:]},&device,{width=124}) {
         u.stage.fixed=device>0
         if device>0 {u.stage.family=ui.Prompt_Family(device-1)}
     }
     stage_language(ctx,u,cast(^gui.UI_Settings)editor.setting_value(s,gui.UI_Settings))
     references:=REFERENCE_NAMES
-    if ui.dropdown(ctx,ui.id(ctx,"reference"),references[:],&u.stage.reference,{width=104}) {
+    if ui.dropdown(ctx,ui.id(ctx,"reference"),{list=references[:]},&u.stage.reference,{width=104}) {
         if u.stage.reference<len(REFERENCES) {u.stage.custom=stage_reference(&u.stage)}
     }
     if u.stage.reference>=len(REFERENCES) {
@@ -1059,7 +1041,7 @@ stage_language :: proc(ctx:^ui.Context,u:^Ui_Inspector,settings:^gui.UI_Settings
         append(&values,language)
     }
     ui.label(ctx,"Language",ctx.theme.font_small,ctx.theme.text_muted)
-    if ui.dropdown(ctx,ui.id(ctx,"language"),names[:],&chosen,{width=110}) {u.stage.language,u.stage.chosen=values[chosen],true}
+    if ui.dropdown(ctx,ui.id(ctx,"language"),{list=names[:]},&chosen,{width=110}) {u.stage.language,u.stage.chosen=values[chosen],true}
 }
 
 @(private) STAGE_TEXTURE_KEY :: u64(0x75697374616765)

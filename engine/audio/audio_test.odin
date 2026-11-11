@@ -2,7 +2,6 @@ package audio
 
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
 import mixer "mirai:audio"
@@ -22,17 +21,14 @@ import mm "mirai:std/math"
 // application loads them from.
 @(private="file")
 Fixture :: struct {
-    root:string,
     assets:host.Assets,
     app:host.App,
 }
 
 @(private="file")
-fixture_init :: proc(t:^testing.T,f:^Fixture,name:string,set:asset.Sound_Set_Info=asset.SOUND_SET_DEFAULTS) -> bool {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    f.root=fmt.tprintf("%s/mirai-engine-audio-%d-%s",directory,os.get_pid(),name)
-    os.remove_all(f.root)
-    os.make_directory_all(f.root)
+fixture_init :: proc(t:^testing.T,f:^Fixture,set:asset.Sound_Set_Info=asset.SOUND_SET_DEFAULTS) -> bool {
+    root:=base.test_folder(t,"engine-audio")
+    if root=="" {return false}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     samples:=make([]i16,4800,context.temp_allocator)
     for &sample in samples {sample=8000}
@@ -40,12 +36,12 @@ fixture_init :: proc(t:^testing.T,f:^Fixture,name:string,set:asset.Sound_Set_Inf
     if !testing.expect_value(t,coded,mixer.Error.None) {return false}
     for sound in ([3]struct{id:base.Asset_Id,name:string}{{HUM,"hum"},{STEP_A,"step_a"},{STEP_B,"step_b"}}) {
         desc:=asset.Sound_Desc{id=sound.id,channels=1,sample_rate=48000,frames=len(samples),lossless=lossless}
-        if !testing.expect_value(t,asset.sound_save(fmt.tprintf("%s/%s.sound",f.root,sound.name),&types,desc),asset.Error.None) {return false}
+        if !testing.expect_value(t,asset.sound_save(fmt.tprintf("%s/%s.sound",root,sound.name),&types,desc),asset.Error.None) {return false}
     }
     info:=set
     info.sounds[0],info.sounds[1]={sound=STEP_A},{sound=STEP_B}
-    if !testing.expect_value(t,asset.sound_set_save(fmt.tprintf("%s/steps.sound_set",f.root),&types,{id=STEPS,info=info}),asset.Error.None) {return false}
-    if !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=8})) {return false}
+    if !testing.expect_value(t,asset.sound_set_save(fmt.tprintf("%s/steps.sound_set",root),&types,{id=STEPS,info=info}),asset.Error.None) {return false}
+    if !testing.expect(t,host.assets_init(&f.assets,{root=root,capacity=8})) {return false}
     m,error:=mixer.mixer_create({})
     if !testing.expect_value(t,error,mixer.Error.None) {
         host.assets_destroy(&f.assets)
@@ -60,57 +56,52 @@ fixture_destroy :: proc(f:^Fixture) {
     mixer.mixer_destroy(f.app.mixer)
     host.app_content_destroy(&f.app)
     host.assets_destroy(&f.assets)
-    os.remove_all(f.root)
 }
 
 @(private="file")
 Audio_World :: struct {
-    es:core.Entities,
+    using world:core.Test_World,
     sources:core.Table(Audio_Source),
     states:core.Table(Audio_Source_State),
     worlds:core.Table(core.World_Transform),
     listeners:core.Table(Audio_Listener),
     occlusions:core.Table(Audio_Occlusion),
-    voices:Voices,
+    reverbs:core.Table(Audio_Reverb),
+    volumes:core.Table(volume.Volume),
     view:core.View,
+}
+
+// A world with what the application holds for it and the query its sources look through.
+@(private="file")
+Heard_World :: struct {
+    using data:Audio_World,
+    voices:Voices,
     query:core.World_Query,
 }
 
 @(private="file")
-world_init :: proc(w:^Audio_World,source:Audio_Source,position:[3]f32={}) -> core.Entity {
-    core.entities_init(&w.es)
-    core.table_init(&w.sources,"Audio_Source");core.table_init(&w.states,"Audio_Source_State")
-    core.table_init(&w.worlds,"World_Transform");core.table_init(&w.listeners,"Audio_Listener")
-    core.table_init(&w.occlusions,"Audio_Occlusion")
-    e:=core.create(&w.es)
+world_init :: proc(t:^testing.T,w:^Heard_World,source:Audio_Source,position:[3]f32={}) -> (e:core.Entity,ok:bool) {
+    core.test_world_init(t,&w.data,test_types) or_return
+    e=core.create(&w.entities)
     core.add(&w.sources,e,source)
     placed:=mm.TRANSFORM_IDENTITY
     placed.position=position
     core.add(&w.worlds,e,core.World_Transform{placed,placed})
-    world_settle(w)
-    return e
+    core.test_world_settle(&w.data)
+    return e,true
 }
 
 @(private="file")
-world_destroy :: proc(w:^Audio_World) {
-    core.table_destroy(&w.sources);core.table_destroy(&w.states);core.table_destroy(&w.worlds);core.table_destroy(&w.listeners)
-    core.table_destroy(&w.occlusions)
+world_destroy :: proc(w:^Heard_World) {
     core.value_free(&w.voices,type_info_of(Voices))
-    core.entities_destroy(&w.es)
+    core.test_world_destroy(&w.data)
 }
 
 @(private="file")
-world_settle :: proc(w:^Audio_World) {
-    core.table_settle(&w.sources,&w.es);core.table_settle(&w.states,&w.es);core.table_settle(&w.worlds,&w.es);core.table_settle(&w.listeners,&w.es)
-    core.table_settle(&w.occlusions,&w.es)
-    core.entities_settle(&w.es)
-}
-
-@(private="file")
-world_run :: proc(w:^Audio_World,listener:^Mixer_Listener,app:^host.App,dt:f32=1.0/60) {
+world_run :: proc(w:^Heard_World,listener:^Mixer_Listener,app:^host.App,dt:f32=1.0/60) {
     hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.listeners),core.ref(&w.view),w.query}
     sources_update(core.read(&w.sources),&w.states,hearing,dt,&w.voices,listener,app,nil)
-    world_settle(w)
+    core.test_world_settle(&w.data)
 }
 
 // A Play beside the world it was copied from, or the run of an agent stepped
@@ -119,14 +110,15 @@ world_run :: proc(w:^Audio_World,listener:^Mixer_Listener,app:^host.App,dt:f32=1
 @(test)
 each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"worlds") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     m:=f.app.mixer
     listener:Mixer_Listener
     source:=AUDIO_SOURCE_DEFAULT;source.sound,source.loop=HUM,true
-    shown,played:Audio_World
-    e:=world_init(&shown,source);defer world_destroy(&shown)
-    world_init(&played,source);defer world_destroy(&played)
+    shown,played:Heard_World
+    e,shown_made:=world_init(t,&shown,source);defer world_destroy(&shown)
+    _,played_made:=world_init(t,&played,source);defer world_destroy(&played)
+    if !shown_made || !played_made {return}
 
     world_run(&shown,&listener,&f.app)
     world_run(&played,&listener,&f.app)
@@ -140,7 +132,7 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
     testing.expect(t,core.entity_map_get(&shown.voices.entries,e).voice==voice && mixer.voice_valid(m,voice))
     testing.expect(t,shown.voices.stats.started==1 && played.voices.stats.started==1)
 
-    audio_release(&played.voices,&f.app)
+    audio_release(&played.voices,f.app.mixer)
     world_run(&shown,&listener,&f.app)
     testing.expect(t,len(played.voices.entries.values)==0)
     testing.expect(t,core.entity_map_get(&shown.voices.entries,e).voice==voice && mixer.voice_valid(m,voice))
@@ -153,7 +145,7 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
 
     // A source that goes takes its voice with it.
     core.remove(&shown.sources,e)
-    world_settle(&shown)
+    core.test_world_settle(&shown.data)
     world_run(&shown,&listener,&f.app)
     testing.expect_value(t,len(shown.voices.entries.values),0)
 }
@@ -161,7 +153,7 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
 @(test)
 a_tick_that_runs_again_does_not_play_its_sounds_again :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"resimulating") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     tick:=core.Time{dt=1.0/60,playing=true}
     replay:=tick
@@ -169,8 +161,8 @@ a_tick_that_runs_again_does_not_play_its_sounds_again :: proc(t:^testing.T) {
     testing.expect_value(t,play_asset(&f.app,replay,HUM),Voice{})
     testing.expect_value(t,play_asset_at(&f.app,replay,HUM,{1,0,0}),Voice{})
     voice:=play_asset(&f.app,tick,STEPS)
-    testing.expect(t,voice!={} && playing(&f.app,voice))
-    testing.expect(t,stop(&f.app,voice))
+    testing.expect(t,voice!={} && playing(f.app.mixer,voice))
+    testing.expect(t,stop(f.app.mixer,voice))
     testing.expect_value(t,play_asset(&f.app,tick,HUM,bus=Audio_Bus(AUDIO_BUS_CAPACITY)),Voice{})
 }
 
@@ -179,7 +171,7 @@ a_sound_set_plays_its_sounds_by_weight_in_its_ranges_and_not_the_same_twice :: p
     set:=asset.SOUND_SET_DEFAULTS
     set.volume_min,set.volume_max,set.pitch_min,set.pitch_max=0.5,0.75,0.9,1.2
     f:Fixture
-    if !fixture_init(t,&f,"set",set) {return}
+    if !fixture_init(t,&f,set) {return}
     defer fixture_destroy(&f)
     a,b:=host.content_sound(&f.app,STEP_A),host.content_sound(&f.app,STEP_B)
     last:mixer.Sound
@@ -198,15 +190,15 @@ a_sound_set_plays_its_sounds_by_weight_in_its_ranges_and_not_the_same_twice :: p
 @(test)
 buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"buses") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     m:=f.app.mixer
     settings:Audio_Settings
     hall:=Reverb{room_size=0.9,damping=0.3,wet=0.8,width=1}
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC,gain=-6,lowpass=2000,duck_by=BUS_VOICE,duck_amount=0.5,duck_threshold=0.1,duck_attack=0.05,duck_release=0.3,reverb=hall}))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,gain=AUDIO_SILENCE_DB}))
-    volumes:Audio_Volumes
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},&f.app)
+    volumes:=AUDIO_VOLUMES_DEFAULT
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer)
     testing.expect(t,mixer.bus_count(m)>int(BUS_VOICE))
     testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.5012)<0.001 && mixer.bus_lowpass(m,mixer.Bus(BUS_MUSIC))==2000)
     testing.expect(t,mixer.bus_duck(m,mixer.Bus(BUS_MUSIC)).source==mixer.Bus(BUS_VOICE) && mixer.bus_duck(m,mixer.Bus(BUS_MUSIC)).amount==0.5)
@@ -214,30 +206,38 @@ buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T)
     testing.expect(t,mixer.bus_reverb(m,mixer.Bus(BUS_MUSIC))==hall,"a song in the music bus sounds in its hall")
 
     // The volume the player chose goes over the gain of the game.
-    testing.expect(t,audio_volume_set(&volumes,BUS_MUSIC,-6))
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},&f.app)
-    testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.2512)<0.001)
-    testing.expect(t,audio_volume_set(&volumes,BUS_MUSIC,0) && volumes==Audio_Volumes{},"a volume back to 0 leaves no choice")
+    volumes.music=0.5
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer)
+    testing.expect(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-0.2506)<0.001)
+    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(0.5))
+    volumes.more[0]=0.25
+    testing.expect_value(t,audio_volume(&volumes,Audio_Bus(5)),f32(0.25))
+    volumes.music=max(f32)
+    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(1))
+    volumes.music=math.nan_f32()
+    testing.expect_value(t,audio_volume(&volumes,BUS_MUSIC),f32(0))
+    volumes=AUDIO_VOLUMES_DEFAULT
 
     // A bus whose entry goes back to playing as it comes loses its entry, and the mixer follows.
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC}))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER}))
     testing.expect(t,settings==Audio_Settings{},"settings that say nothing are zeros")
-    audio_buses(core.ref(&settings),core.ref(&volumes),{},&f.app)
+    audio_buses(core.ref(&settings),core.ref(&volumes),{},f.app.mixer)
     testing.expect(t,mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))==1 && mixer.bus_lowpass(m,mixer.Bus(BUS_MUSIC))==0 && mixer.bus_duck(m,mixer.Bus(BUS_MUSIC))=={} && mixer.bus_reverb(m,mixer.Bus(BUS_MUSIC))=={})
     testing.expect_value(t,mixer.bus_volume(m,mixer.BUS_MASTER),f32(1))
-    testing.expect(t,abs(db_volume(volume_db(0.25))-0.25)<1e-5 && db_volume(volume_db(0))==0)
+    testing.expect(t,db_volume(AUDIO_SILENCE_DB)==0 && abs(db_volume(-6)-0.5012)<0.001)
 }
 
 @(test)
 without_a_listener_the_view_hears_and_moving_gives_it_a_velocity :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"listener") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     listener:Mixer_Listener
     source:=AUDIO_SOURCE_DEFAULT;source.sound,source.loop,source.spatial,source.doppler=HUM,true,true,1
-    w:Audio_World
-    e:=world_init(&w,source,{0,0,-10});defer world_destroy(&w)
+    w:Heard_World
+    e,made:=world_init(t,&w,source,{0,0,-10});defer world_destroy(&w)
+    if !made {return}
     w.view.position,w.view.rotation={5,0,0},1
     world_run(&w,&listener,&f.app,0.5)
     testing.expect(t,listener.set && listener.position==[3]f32{5,0,0} && listener.velocity==[3]f32{})
@@ -258,12 +258,12 @@ without_a_listener_the_view_hears_and_moving_gives_it_a_velocity :: proc(t:^test
     testing.expect(t,!core.entity_map_get(&w.voices.entries,e).moving)
 
     // An entity that listens comes before the view.
-    hearer:=core.create(&w.es)
+    hearer:=core.create(&w.entities)
     core.add(&w.listeners,hearer,Audio_Listener{})
     placed:=mm.TRANSFORM_IDENTITY
     placed.position={0,2,0}
     core.add(&w.worlds,hearer,core.World_Transform{placed,placed})
-    world_settle(&w)
+    core.test_world_settle(&w.data)
     world_run(&w,&listener,&f.app,0.5)
     testing.expect(t,listener.position==[3]f32{0,2,0})
     testing.expect(t,!math.is_nan(listener.velocity.x))
@@ -278,17 +278,18 @@ wall_probe :: proc(user:rawptr,origin,direction:[3]f32,length,radius:f32,ignore:
 @(test)
 a_source_behind_a_wall_goes_down_and_duller_and_comes_back_over_its_fade :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"occlusion") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     listener:Mixer_Listener
     source:=AUDIO_SOURCE_DEFAULT;source.sound,source.loop,source.spatial=HUM,true,true
-    w:Audio_World
-    e:=world_init(&w,source,{0,0,-10});defer world_destroy(&w)
-    w.view.rotation=1
+    w:Heard_World
+    e,made:=world_init(t,&w,source,{0,0,-10});defer world_destroy(&w)
+    if !made {return}
+    w.view.position,w.view.rotation={},1
     wall:=true
     w.query={user=&wall,probe=wall_probe}
     core.add(&w.occlusions,e,Audio_Occlusion{volume=0.25,lowpass=500,fade=0.5})
-    world_settle(&w)
+    core.test_world_settle(&w.data)
     world_run(&w,&listener,&f.app,0.1)
     entry:=core.entity_map_get(&w.voices.entries,e)
     testing.expect(t,entry!=nil && core.get(&w.states,e).occlusion==1,"a voice that starts hidden is hidden at once")
@@ -317,51 +318,47 @@ a_source_behind_a_wall_goes_down_and_duller_and_comes_back_over_its_fade :: proc
 @(test)
 the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"reverb") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
-    es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
-    reverbs:core.Table(Audio_Reverb);core.table_init(&reverbs,"Audio_Reverb");defer core.table_destroy(&reverbs)
-    volumes:core.Table(volume.Volume);core.table_init(&volumes,"Volume");defer core.table_destroy(&volumes)
-    worlds:core.Table(core.World_Transform);core.table_init(&worlds,"World_Transform");defer core.table_destroy(&worlds)
-    listeners:core.Table(Audio_Listener);core.table_init(&listeners,"Audio_Listener");defer core.table_destroy(&listeners)
-    Place :: struct {es:^core.Entities,reverbs:^core.Table(Audio_Reverb),volumes:^core.Table(volume.Volume),worlds:^core.Table(core.World_Transform)}
-    place :: proc(p:Place,reverb:Audio_Reverb,v:Maybe(volume.Volume),position,scale:[3]f32) {
-        e:=core.create(p.es)
-        core.add(p.reverbs,e,reverb)
-        if v,ok:=v.?;ok {core.add(p.volumes,e,v)}
+    w:Audio_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    place :: proc(p:^Audio_World,reverb:Audio_Reverb,v:Maybe(volume.Volume),position,scale:[3]f32) {
+        e:=core.create(&p.entities)
+        core.add(&p.reverbs,e,reverb)
+        if v,ok:=v.?;ok {core.add(&p.volumes,e,v)}
         placed:=mm.TRANSFORM_IDENTITY
         placed.position,placed.scale=position,scale
-        core.add(p.worlds,e,core.World_Transform{placed,placed})
+        core.add(&p.worlds,e,core.World_Transform{placed,placed})
     }
-    p:=Place{&es,&reverbs,&volumes,&worlds}
     level,hall,cave,closet:=Audio_Reverb{room_size=0.5,wet=0.25},AUDIO_REVERB_DEFAULT,AUDIO_REVERB_DEFAULT,AUDIO_REVERB_DEFAULT
     hall.room_size,cave.room_size,closet.room_size=0.9,0.3,0.1
-    place(p,level,nil,{},{1,1,1})
-    place(p,hall,volume.Volume{shape=.Box,extents={20,10,20}},{},{1,1,1})
-    place(p,cave,volume.Volume{shape=.Box,extents={2,2,2}},{10,0,0},{2,1,1}) // 4 m along x once scaled
-    place(p,closet,volume.Volume{shape=.Box,extents={1,1,1},priority=-1},{13,0,0},{1,1,1})
-    core.table_settle(&reverbs,&es);core.table_settle(&volumes,&es);core.table_settle(&worlds,&es);core.entities_settle(&es)
-    at :: proc(p:Place,point:[3]f32) -> f32 {
-        return volume.at(core.read(p.volumes),core.read(p.worlds),core.read(p.reverbs),point,Audio_Reverb{},reverb_mix).room_size
+    place(&w,level,nil,{},{1,1,1})
+    place(&w,hall,volume.Volume{shape=.Box,extents={20,10,20}},{},{1,1,1})
+    place(&w,cave,volume.Volume{shape=.Box,extents={2,2,2}},{10,0,0},{2,1,1}) // 4 m along x once scaled
+    place(&w,closet,volume.Volume{shape=.Box,extents={1,1,1},priority=-1},{13,0,0},{1,1,1})
+    core.test_world_settle(&w)
+    at :: proc(p:^Audio_World,point:[3]f32) -> f32 {
+        return volume.at(core.read(&p.volumes),core.read(&p.worlds),core.read(&p.reverbs),point,Audio_Reverb{},reverb_mix).room_size
     }
-    testing.expect_value(t,at(p,{0,0,0}),f32(0.9))
-    testing.expect_value(t,at(p,{13.5,0,0}),f32(0.3))
-    testing.expect_value(t,at(p,{0,15,0}),f32(0.5))
+    testing.expect_value(t,at(&w,{0,0,0}),f32(0.9))
+    testing.expect_value(t,at(&w,{13.5,0,0}),f32(0.3))
+    testing.expect_value(t,at(&w,{0,15,0}),f32(0.5))
 
     settings:Audio_Settings
-    view:=core.View{position={0,15,0},rotation=1}
+    w.view=core.View{position={0,15,0},rotation=1}
     mixer_reverb:Mixer_Reverb
-    run :: proc(p:Place,listeners:^core.Table(Audio_Listener),view:^core.View,settings:^Audio_Settings,dt:f32,r:^Mixer_Reverb,app:^host.App) {
-        audio_reverb(core.read(p.reverbs),core.read(p.volumes),core.read(p.worlds),core.read(listeners),core.ref(view),core.ref(settings),{},{dt=dt},r,app)
+    run :: proc(p:^Audio_World,settings:^Audio_Settings,dt:f32,r:^Mixer_Reverb,app:^host.App) {
+        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
     }
-    run(p,&listeners,&view,&settings,0.1,&mixer_reverb,&f.app)
+    run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_:=mixer.reverb_get(f.app.mixer)
     testing.expect(t,got==transmute(Reverb)level,"outside of every box, the level; the first one at once")
-    view.position={0,0,0}
-    run(p,&listeners,&view,&settings,0.1,&mixer_reverb,&f.app)
+    w.view.position={0,0,0}
+    run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_=mixer.reverb_get(f.app.mixer)
     testing.expect(t,got.room_size>0.5 && got.room_size<0.9,"it goes toward the hall")
-    for _ in 0..<40 {run(p,&listeners,&view,&settings,0.1,&mixer_reverb,&f.app)}
+    for _ in 0..<40 {run(&w,&settings,0.1,&mixer_reverb,&f.app)}
     got,_=mixer.reverb_get(f.app.mixer)
     testing.expect(t,got==transmute(Reverb)hall,"and gets there")
 }
@@ -372,56 +369,54 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
 @(test)
 the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"medium") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     m:=f.app.mixer
     settings:Audio_Settings
-    volumes:Audio_Volumes
+    volumes:=AUDIO_VOLUMES_DEFAULT
     water:=Audio_Medium{lowpass=700,reverb={room_size=0.3,damping=0.9,wet=0.6,width=0.5},weight=1}
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),&f.app)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(700))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,lowpass=500}))
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),&f.app)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(500))
     testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MASTER,lowpass=4000}))
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),&f.app)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&water),f.app.mixer)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(700))
     air:Audio_Medium
-    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&air),&f.app)
+    audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&air),f.app.mixer)
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(4000))
 
-    es:core.Entities;core.entities_init(&es);defer core.entities_destroy(&es)
-    reverbs:core.Table(Audio_Reverb);core.table_init(&reverbs,"Audio_Reverb");defer core.table_destroy(&reverbs)
-    regions:core.Table(volume.Volume);core.table_init(&regions,"Volume");defer core.table_destroy(&regions)
-    worlds:core.Table(core.World_Transform);core.table_init(&worlds,"World_Transform");defer core.table_destroy(&worlds)
-    listeners:core.Table(Audio_Listener);core.table_init(&listeners,"Audio_Listener");defer core.table_destroy(&listeners)
+    room:Audio_World
+    if !core.test_world_init(t,&room,test_types) {return}
+    defer core.test_world_destroy(&room)
     level:=Audio_Reverb{room_size=0.5,damping=0.1,wet=0.2,width=1}
-    e:=core.create(&es)
-    core.add(&reverbs,e,level)
-    core.add(&worlds,e,core.World_Transform{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY})
-    core.table_settle(&reverbs,&es);core.table_settle(&worlds,&es);core.entities_settle(&es)
-    view:=core.View{position={0,-2,0},rotation=1}
+    e:=core.create(&room.entities)
+    core.add(&room.reverbs,e,level)
+    core.add(&room.worlds,e,core.World_Transform{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY})
+    core.test_world_settle(&room)
+    room.view=core.View{position={0,-2,0},rotation=1}
     mixed:Mixer_Reverb
     hear :: proc(r:core.Read(Audio_Reverb),v:core.Read(volume.Volume),w:core.Read(core.World_Transform),l:core.Read(Audio_Listener),view:^core.View,settings:^Audio_Settings,medium:^Audio_Medium,mixed:^Mixer_Reverb,app:^host.App) -> Reverb {
-        for _ in 0..<60 {audio_reverb(r,v,w,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app)}
+        for _ in 0..<60 {audio_reverb(r,v,w,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
         got,_:=mixer.reverb_get(app.mixer)
         return got
     }
     near :: proc(a,b:Reverb) -> bool {return abs(a.room_size-b.room_size)<1e-3 && abs(a.damping-b.damping)<1e-3 && abs(a.wet-b.wet)<1e-3 && abs(a.width-b.width)<1e-3}
-    r,v,w,l:=core.read(&reverbs),core.read(&regions),core.read(&worlds),core.read(&listeners)
-    testing.expect(t,near(hear(r,v,w,l,&view,&settings,&water,&mixed,&f.app),water.reverb),"under the water, the reverb of the water")
+    r,v,w,l:=core.read(&room.reverbs),core.read(&room.volumes),core.read(&room.worlds),core.read(&room.listeners)
+    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&water,&mixed,&f.app),water.reverb),"under the water, the reverb of the water")
     water.weight=0.5
     half:=Reverb{0.4,0.5,0.4,0.75}
-    testing.expect(t,near(hear(r,v,w,l,&view,&settings,&water,&mixed,&f.app),half),"half of each")
-    testing.expect(t,near(hear(r,v,w,l,&view,&settings,&air,&mixed,&f.app),transmute(Reverb)level),"in the air, the room")
-    position,found:=listener_position(w,l,core.ref(&view))
-    testing.expect(t,found && position==view.position,"without an Audio_Listener the View hears")
+    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&water,&mixed,&f.app),half),"half of each")
+    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&air,&mixed,&f.app),transmute(Reverb)level),"in the air, the room")
+    position,found:=listener_position(w,l,core.ref(&room.view))
+    testing.expect(t,found && position==room.view.position,"without an Audio_Listener the View hears")
 }
 
 @(test)
 a_source_heard_alone_plays_as_it_is_set_and_follows_its_changes :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"heard") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     m:=f.app.mixer
     source:=AUDIO_SOURCE_DEFAULT
@@ -437,17 +432,17 @@ a_source_heard_alone_plays_as_it_is_set_and_follows_its_changes :: proc(t:^testi
         }
     }
     render(m)
-    testing.expect(t,playing(&f.app,voice),"a loop goes on")
+    testing.expect(t,playing(f.app.mixer,voice),"a loop goes on")
     source.loop=false
-    source_tune(&f.app,voice,source)
+    source_tune(f.app.mixer,voice,source)
     render(m)
-    testing.expect(t,!playing(&f.app,voice),"once it does not loop, it ends")
+    testing.expect(t,!playing(f.app.mixer,voice),"once it does not loop, it ends")
 }
 
 @(test)
 a_source_heard_at_a_place_falls_by_its_curve_and_follows_where_it_is_moved :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,"placed") {return}
+    if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     m:=f.app.mixer
     mixer.listener_set(m,{0,0,0},1)
@@ -467,9 +462,9 @@ a_source_heard_at_a_place_falls_by_its_curve_and_follows_where_it_is_moved :: pr
     voice:=play_source_at(&f.app,{},source,{0,0,-30})
     if !testing.expect(t,voice!={},"it plays") {return}
     testing.expect(t,peak(m)<1e-4,"beyond its max_distance its linear curve leaves it silent")
-    source_place(&f.app,voice,{0,0,-1})
+    source_place(f.app.mixer,voice,{0,0,-1})
     testing.expect(t,peak(m)>0.05,"moved within its min_distance it is heard whole")
-    testing.expect(t,playing(&f.app,voice),"a loop goes on")
+    testing.expect(t,playing(f.app.mixer,voice),"a loop goes on")
 }
 
 @(test)
@@ -512,12 +507,13 @@ a_voice_is_given_its_source_by_what_its_set_drew :: proc(t:^testing.T) {
     set:=asset.SOUND_SET_DEFAULTS
     set.volume_min,set.volume_max,set.pitch_min,set.pitch_max=0.5,0.75,0.9,1.2
     f:Fixture
-    if !fixture_init(t,&f,"given",set) {return}
+    if !fixture_init(t,&f,set) {return}
     defer fixture_destroy(&f)
     listener:Mixer_Listener
     source:=AUDIO_SOURCE_DEFAULT;source.sound,source.loop,source.volume,source.pitch=STEPS,true,0.8,2
-    w:Audio_World
-    e:=world_init(&w,source);defer world_destroy(&w)
+    w:Heard_World
+    e,made:=world_init(t,&w,source);defer world_destroy(&w)
+    if !made {return}
     world_run(&w,&listener,&f.app)
     entry:=core.entity_map_get(&w.voices.entries,e)
     if !testing.expect(t,entry!=nil) {return}

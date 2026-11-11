@@ -6,12 +6,13 @@ import "mirai:asset"
 import "mirai:std/jobs"
 import "mirai:std/compressor"
 import "mirai:std/compressor/lz"
+import lz_optimal "mirai:cook/compressor/lz"
 
 // The code the executables embed: that of the stages of the engine and then of
 // its program stages, in the order of the Odin table of render, as one LZ
 // stream per backend that render decodes once when it starts. A generation
 // packs it as an edit; one asked to ship (Options.ship, the release builds of
-// the engine) packs it as asset.Pack.Ship, which takes far longer and leaves a
+// the engine) packs it as lz_optimal.SHIP, which takes far longer and leaves a
 // smaller executable. Each stream stays in the shared cache under the hashes
 // of the code it holds, and a generation takes the shipped one whenever the
 // cache has it.
@@ -49,10 +50,10 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
     digest:=sha_hex(&hash,context.temp_allocator)
     folder:=path_join(g.shared,CACHE_EMBEDDED,allocator=context.temp_allocator)
     names:=EMBEDDED_NAMES
-    // <digest>.ship.spv.lz, <digest>.edit.spv.lz
-    entries:[asset.Pack]string
-    for &entry,pack in entries {
-        level:="ship" if pack==.Ship else "edit"
+    // <digest>.edit.spv.lz, <digest>.ship.spv.lz
+    entries:[2]string
+    for &entry,shipped in entries {
+        level:="ship" if shipped==1 else "edit"
         entry=path_join(folder,strings.concatenate({digest,".",level,strings.trim_prefix(names[backend],"shaders")},context.temp_allocator),allocator=context.temp_allocator)
     }
     decoder:compressor.Decoder
@@ -61,20 +62,20 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
     check:=make([]u8,len(raw))
     defer delete(check)
     // An entry is taken only when it decodes to this code.
-    for pack in ([2]asset.Pack{.Ship,.Edit}) {
-        if pack==.Edit && ship {break}
-        stored,err:=os.read_entire_file(entries[pack],allocator)
+    for shipped in ([2]int{1,0}) {
+        if shipped==0 && ship {break}
+        stored,err:=os.read_entire_file(entries[shipped],allocator)
         if err!=nil {continue}
         if asset.unpack(&decoder,stored,check)==.None && string(check)==string(raw[:]) {
-            cache_touch(entries[pack])
-            return stored,sizes,pack==.Ship,""
+            cache_touch(entries[shipped])
+            return stored,sizes,shipped==1,""
         }
         delete(stored,allocator)
     }
     encoder:lz.Encoder
     lz.encoder_init(&encoder)
     defer lz.encoder_destroy(&encoder)
-    pack:=asset.Pack.Ship if ship else asset.Pack.Edit
+    pack:=lz_optimal.SHIP if ship else asset.PACK_EDIT
     packed=make([]u8,asset.pack_bound(len(raw)),allocator)
     // Its pieces compress at once on a job system of its own.
     js:jobs.Job_System
@@ -88,6 +89,6 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
     }
     packed=packed[:written]
     // A failure to store only costs packing it again.
-    write_file_atomic(entries[pack],packed)
+    write_file_atomic(entries[int(ship)],packed)
     return packed,sizes,ship,""
 }

@@ -2,7 +2,6 @@ package anim
 
 import "base:runtime"
 import "core:fmt"
-import "core:os"
 import "core:testing"
 import "core:math/linalg"
 import "mirai:asset"
@@ -147,48 +146,55 @@ multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t
     }
 }
 
+@(private="file")
+Rigs_World :: struct {
+    using world:core.Test_World,
+    configs:core.Table(Pose_Modifiers),
+    animations:core.Table(Animation),
+    attachments:core.Table(Bone_Attachment),
+    playback:Playback,
+    modifiers:Modifier_Runtime,
+    requests:Modifier_Requests,
+}
+
 @(test)
 profile_reload_allocation_failure_preserves_spring_state_controls_and_recovers_after_retry :: proc(t:^testing.T) {
-    directory:=fmt.tprintf(".mirai/test-rigs-oom-%d",os.get_pid());os.make_directory_all(directory);defer os.remove(directory)
-    path:=fmt.tprintf("%s/rig.pose",directory);defer os.remove(path)
+    directory:=base.test_folder(t,"rigs-oom")
+    path:=fmt.tprintf("%s/rig.pose",directory)
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=bone_ref("joint1"),bone_ref("joint3")
     id:=base.Asset_Id{91,92}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     if !testing.expect_value(t,pose_profile_save(path,&types,id,{springs={spring}}),asset.Error.None) {return}
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    entity:=core.create(&entities)
-    configs:core.Table(Pose_Modifiers);defer core.table_destroy(&configs)
-    animations:core.Table(Animation);defer core.table_destroy(&animations)
-    attachments:core.Table(Bone_Attachment);defer core.table_destroy(&attachments)
-    core.add(&configs,entity,Pose_Modifiers{profile=id,weight=1,enabled=true});core.table_settle(&configs,&entities)
-    playback:Playback;defer playback_free(&playback)
-    append(&playback.states,rig_test_state(entity,3,1))
+    w:Rigs_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    entity:=core.create(&w.entities)
+    core.add(&w.configs,entity,Pose_Modifiers{profile=id,weight=1,enabled=true});core.test_world_settle(&w)
+    append(&w.playback.states,rig_test_state(entity,3,1))
     profiles:Pose_Assets;defer pose_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
-    modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)) {return}
-    if !testing.expect(t,rigs_apply(&playback.states[0],&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
-    requests:Modifier_Requests;defer delete(requests.controls.items);defer delete(requests.queue.items)
-    testing.expect(t,modifier_control(&requests,{rig=entity,kind=.Spring,weight=.4,enabled=true,fade=0}))
-    modifier_take(&modifiers,&requests,core.read(&configs),nil,.1)
-    geometry,inputs:=modifiers.geometry,modifiers.inputs
-    control,joint:=modifiers.controls[0],modifiers.spring_states[0].springs[2]
-    buffer:=raw_data(modifiers.spring_states)
+    if !testing.expect(t,modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)) {return}
+    if !testing.expect(t,rigs_apply(&w.playback.states[0],&w.modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
+    modifier_control(&w.requests,{rig=entity,kind=.Spring,weight=.4,enabled=true,fade=0})
+    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),nil,.1)
+    geometry,inputs:=w.modifiers.geometry,w.modifiers.inputs
+    control,joint:=w.modifiers.controls[0],w.modifiers.spring_states[0].springs[2]
+    buffer:=raw_data(w.modifiers.spring_states)
     assets.revision+=1
     record,found:=asset.registry_find(&assets.registry,id);if !testing.expect(t,found) {return};record.time+=1
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=runtime.nil_allocator()
-    prepared:=modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)
+    prepared:=modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;profiles.allocator=saved.allocator
     testing.expect(t,!prepared)
-    testing.expect(t,modifiers.geometry==geometry && modifiers.inputs==inputs && len(modifiers.springs.values)==1 && len(modifiers.controls)==1 && len(modifiers.spring_states)==1)
-    if len(modifiers.controls)>0 {testing.expect_value(t,modifiers.controls[0],control)}
-    if len(modifiers.spring_states)>0 {testing.expect(t,raw_data(modifiers.spring_states)==buffer);testing.expect_value(t,modifiers.spring_states[0].springs[2],joint)}
-    if !testing.expect(t,modifier_prepare(&modifiers,core.read(&configs),core.read(&animations),core.read(&attachments),&profiles,&skeletons,&playback,&app,nil)) {return}
-    testing.expect_value(t,modifiers.controls[0],control)
-    testing.expect_value(t,modifiers.springs.values[0].weight,f32(.4))
-    testing.expect(t,rigs_apply(&playback.states[0],&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,w.modifiers.geometry==geometry && w.modifiers.inputs==inputs && len(w.modifiers.springs.values)==1 && len(w.modifiers.controls)==1 && len(w.modifiers.spring_states)==1)
+    if len(w.modifiers.controls)>0 {testing.expect_value(t,w.modifiers.controls[0],control)}
+    if len(w.modifiers.spring_states)>0 {testing.expect(t,raw_data(w.modifiers.spring_states)==buffer);testing.expect_value(t,w.modifiers.spring_states[0].springs[2],joint)}
+    if !testing.expect(t,modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)) {return}
+    testing.expect_value(t,w.modifiers.controls[0],control)
+    testing.expect_value(t,w.modifiers.springs.values[0].weight,f32(.4))
+    testing.expect(t,rigs_apply(&w.playback.states[0],&w.modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
 }
 
 @(private)
@@ -218,8 +224,7 @@ rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities :: proc(t:
     testing.expect(t,pose_profile_check(profile))
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Document;testing.expect_value(t,pose_profile_document(&doc,&types,{42,43},profile),asset.Error.None);defer asset.document_destroy(&doc)
-    directory:=fmt.tprintf(".mirai/test-rigs-%d",os.get_pid());os.make_directory_all(directory);defer os.remove(directory)
-    path:=fmt.tprintf("%s/rig.pose",directory);defer os.remove(path)
+    path:=fmt.tprintf("%s/rig.pose",base.test_folder(t,"rigs"))
     testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
     file:asset.Asset;testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None);defer asset.asset_close(&file)
     view,error:=pose_profile_view(&file,&types);testing.expect_value(t,error,asset.Error.None)
@@ -242,17 +247,19 @@ named_modifier_controls_preserve_full_bone_paths_and_reject_ambiguous_references
     testing.expect(t,modifier_append(&modifiers.look,rig,right) && modifier_append(&modifiers.look,rig,left))
     ground:=FOOT_GROUNDING_DEFAULT;ground.rig=rig;testing.expect(t,modifier_append(&modifiers.grounding,rig,ground))
     requests:Modifier_Requests;defer delete(requests.controls.items)
-    testing.expect(t,modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.5,enabled=true},modifier_operation_name(&left)))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.5,enabled=true},modifier_operation_name(&left))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     slot,ok:=modifier_named_slot(&modifiers,rig,.Look,modifier_operation_name(&left))
     ground_slot,ground_ok:=modifier_named_slot(&modifiers,rig,.Grounding,"grounding")
-    queued:=modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.8,enabled=true},modifier_operation_name(&right))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.8,enabled=true},modifier_operation_name(&right))
+    queued:=len(requests.controls.items)==2
     context=saved
     testing.expect(t,ok && slot==1 && ground_ok && ground_slot==0 && queued)
     testing.expect(t,len(requests.controls.items)==2 && requests.controls.items[0].slot==1 && requests.controls.items[1].slot==0)
     testing.expect(t,modifier_append(&modifiers.look,rig,left))
-    testing.expect(t,!modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=1,enabled=true},modifier_operation_name(&left)))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=1,enabled=true},modifier_operation_name(&left))
     testing.expect_value(t,len(requests.controls.items),2)
+    testing.expect_value(t,requests.controls.refused,1)
 }
 
 @(test)
@@ -274,7 +281,7 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm"))
+    modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm")
     modifier_controls_take(&modifiers,&requests,&problems,0)
     testing.expect_value(t,modifiers.chain_ik.values[0].weight,f32(.2))
     core.at(&modifiers.chain_ik,0).enabled=false
@@ -323,33 +330,32 @@ semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations
 @(test)
 rig_goal_persistence_keeps_independent_effectors_and_accepts_retarget_without_pose_modifiers :: proc(t:^testing.T) {
     problems:core.Problems
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    body,transfer:=core.create(&entities),core.create(&entities)
-    configs:core.Table(Pose_Modifiers);defer core.table_destroy(&configs)
-    core.add(&configs,body,{weight=.5,enabled=true});core.table_settle(&configs,&entities)
-    modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
+    w:Rigs_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    body,transfer:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.configs,body,{weight=.5,enabled=true});core.test_world_settle(&w)
     multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig=body;multi.effector_count=2
     multi.effectors[0],multi.effectors[1]=MULTI_IK_EFFECTOR_DEFAULT,MULTI_IK_EFFECTOR_DEFAULT
-    testing.expect(t,modifier_append(&modifiers.multi_ik,body,multi))
+    testing.expect(t,modifier_append(&w.modifiers.multi_ik,body,multi))
     chain:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;chain.rig=transfer
-    testing.expect(t,modifier_append(&modifiers.retarget_chains,transfer,chain))
-    empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
-    requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({1,2,3}),weight=1,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=1,target=spatial_point({4,5,6}),weight=1,enabled=true}))
-    testing.expect(t,modifier_goal(&requests,{rig=transfer,kind=.Chain_Retarget,weight=.4,enabled=true}))
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems)
-    testing.expect_value(t,len(modifiers.goals),3)
-    testing.expect_value(t,modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{1,2,3})
-    testing.expect_value(t,modifiers.multi_ik.values[0].effectors[1].target.position,mm.Vec3{4,5,6})
-    testing.expect_value(t,modifiers.multi_ik.values[0].weight,f32(.5))
-    testing.expect_value(t,modifiers.retarget_chains.values[0].weight,f32(.4))
+    testing.expect(t,modifier_append(&w.modifiers.retarget_chains,transfer,chain))
+    empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&w.modifiers,&empty))
+    modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({1,2,3}),weight=1,enabled=true})
+    modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=1,target=spatial_point({4,5,6}),weight=1,enabled=true})
+    modifier_goal(&w.requests,{rig=transfer,kind=.Chain_Retarget,weight=.4,enabled=true})
+    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+    testing.expect_value(t,len(w.modifiers.goals),3)
+    testing.expect_value(t,w.modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{1,2,3})
+    testing.expect_value(t,w.modifiers.multi_ik.values[0].effectors[1].target.position,mm.Vec3{4,5,6})
+    testing.expect_value(t,w.modifiers.multi_ik.values[0].weight,f32(.5))
+    testing.expect_value(t,w.modifiers.retarget_chains.values[0].weight,f32(.4))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<64 {
-        stable &&=modifier_goal(&requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({7,8,9}),weight=1,enabled=true})
-        modifier_take(&modifiers,&requests,core.read(&configs),&problems)
-        stable &&=len(modifiers.goals)==3 && modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{4,5,6} && modifiers.retarget_chains.values[0].enabled
+        modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({7,8,9}),weight=1,enabled=true})
+        modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+        stable &&=len(w.modifiers.goals)==3 && w.modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{4,5,6} && w.modifiers.retarget_chains.values[0].enabled
     }
     context=saved;testing.expect(t,stable && problems.count==0)
 }
@@ -366,7 +372,7 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Multi_IK,0);testing.expect(t,found && diagnostic.valid && diagnostic.reached)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    testing.expect(t,modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true},"body"))
+    modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true},"body")
     for goal in core.take(&requests.queue) {modifier_apply_goal(&modifiers,goal,nil)}
     testing.expect_value(t,modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{.5,1.8,0})
     copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))

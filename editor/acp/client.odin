@@ -11,7 +11,7 @@ import "mirai:std/serial"
 
 Error :: enum u8 {None,Out_Of_Memory,Invalid_State,Capacity,Invalid_Message,Unsupported,Start_Failed}
 Phase :: enum u8 {Stopped,Initializing,Initialized,Authenticating,Opening,Configuring,Ready,Prompting,Stopping,Failed}
-Event_Kind :: enum u8 {Initialized,Authenticated,Session_Ready,Config_Options,Update,Permission,Notice,Prompt_Done,Error,Stderr,Exited}
+Event_Kind :: enum u8 {Initialized,Authenticated,Session_Ready,Config_Options,Update,Permission,Notice,Prompt_Done,Steer_Done,Error,Stderr,Exited}
 Event :: struct {
     kind:Event_Kind,
     value:json.Value, // borrowed until the callback returns
@@ -19,6 +19,7 @@ Event :: struct {
     request_id:string, // JSON representation, including quotes for string IDs
     code:int,
     replay:bool,
+    steer_id:int, // Steer_Done: the Client.steer_id of the steer it answers
 }
 Event_Proc :: #type proc(user:rawptr,event:Event)
 Session_Desc :: struct {
@@ -36,6 +37,8 @@ Content :: struct {
     data,mime_type,uri,name:string,
 }
 
+STEER_CAPACITY :: 16
+
 @(private)
 Request :: enum u8 {None,Initialize,Authenticate,Close,New,Load,Resume,Model,Effort,Config,Rename,Prompt}
 
@@ -51,6 +54,10 @@ Client :: struct {
     deadline:f64,
     load_session,resume_session,close_session,http_mcp,image,embedded_context:bool,
     session_titles,session_rename:bool,
+    steering,compact_command:bool,
+    steer_id:int, // the latest steer accepted; grows with each one
+    steers:[STEER_CAPACITY]int, // steers waiting for their answer, oldest first
+    steer_count:int,
     session:[256]u8,
     wanted_session:[256]u8,
     cwd:[1024]u8,
@@ -90,7 +97,8 @@ start :: proc(c:^Client,p:^platform.Platform,desc:platform.Process_Desc,session_
     c.process=handle;c.received,c.queued,c.sent=0,0,0
     c.session,c.wanted_session={},{};c.last_error={}
     c.load_session,c.resume_session,c.close_session,c.http_mcp,c.image,c.embedded_context=false,false,false,false,false,false
-    c.session_rename=false
+    c.session_rename,c.steering,c.compact_command=false,false,false
+    c.steer_count=0
     return initialize_request(c,session_titles)
 }
 
@@ -153,7 +161,7 @@ open_requested_session :: proc(c:^Client) -> Error {
     }
     if meta:=base.text_get(c.meta[:]);meta!="" {member_raw(&params,"_meta",meta)}
     result:=request(c,method,object_end(&params),kind)
-    if result==.None {c.phase=.Opening}
+    if result==.None {c.phase=.Opening;c.compact_command=false}
     return result
 }
 
@@ -166,16 +174,49 @@ set_config_option :: proc(c:^Client,config_id,value:string) -> Error {
 
 prompt :: proc(c:^Client,content:[]Content) -> Error {
     if c.phase!=.Ready || len(content)==0 {return .Invalid_State}
+    if error:=content_check(c,content);error!=.None {return error}
+    w:=prompt_begin(c,"session/prompt",content)
+    id:=c.next_id
+    serial.text_write_raw(&w,"}")
+    if error:=message_end(c,&w);error!=.None {return error}
+    c.next_id+=1;c.pending_id=id;c.pending=.Prompt;c.deadline=0
+    c.phase=.Prompting
+    return .None
+}
+
+// Adds input to the turn in flight. Its answer arrives as Steer_Done, matched by Client.steer_id.
+steer :: proc(c:^Client,blocks:[]Content) -> Error {
+    if !c.steering {return .Unsupported}
+    if c.phase!=.Prompting || len(blocks)==0 {return .Invalid_State}
+    if c.steer_count==len(c.steers) {return .Capacity}
+    if error:=content_check(c,blocks);error!=.None {return error}
+    w:=prompt_begin(c,"_session/steering",blocks)
+    id:=c.next_id
+    member_raw(&w,"_meta",`{"steering":{"idleBehavior":"promptRequired"}}`)
+    serial.text_write_raw(&w,"}")
+    if error:=message_end(c,&w);error!=.None {return error}
+    c.next_id+=1;c.steer_id=id
+    c.steers[c.steer_count]=id;c.steer_count+=1
+    return .None
+}
+
+@(private)
+content_check :: proc(c:^Client,content:[]Content) -> Error {
     for part in content {
         if part.kind==.Image && !c.image || part.kind==.Resource && !c.embedded_context {return .Unsupported}
         if part.kind==.Image && (part.data=="" || part.mime_type=="") {return .Invalid_Message}
         if (part.kind==.Resource || part.kind==.Resource_Link) && part.uri=="" {return .Invalid_Message}
     }
-    // Written in place: the content can be as large as the queue.
-    w:=message_begin(c)
-    id:=c.next_id
-    member(&w,"id");serial.text_write_int(&w,i64(id))
-    member_string(&w,"method","session/prompt")
+    return .None
+}
+
+// A request with the id c.next_id whose params are left open after the prompt blocks. Written in
+// place: the content can be as large as the queue.
+@(private)
+prompt_begin :: proc(c:^Client,method:string,content:[]Content) -> (w:serial.Writer) {
+    w=message_begin(c)
+    member(&w,"id");serial.text_write_int(&w,i64(c.next_id))
+    member_string(&w,"method",method)
     member(&w,"params");serial.text_write_raw(&w,"{")
     member_string(&w,"sessionId",session_id(c))
     member(&w,"prompt");serial.text_write_raw(&w,"[")
@@ -201,11 +242,8 @@ prompt :: proc(c:^Client,content:[]Content) -> Error {
         }
         serial.text_write_raw(&w,"}")
     }
-    serial.text_write_raw(&w,"]}")
-    if error:=message_end(c,&w);error!=.None {return error}
-    c.next_id+=1;c.pending_id=id;c.pending=.Prompt;c.deadline=0
-    c.phase=.Prompting
-    return .None
+    serial.text_write_raw(&w,"]")
+    return
 }
 
 cancel :: proc(c:^Client) -> Error {
@@ -263,6 +301,7 @@ poll :: proc(c:^Client,p:^platform.Platform,emit:Event_Proc,user:rawptr) {
         was_stopping:=c.phase==.Stopping
         platform.process_release(p,c.process);c.process=0;c.pending=.None
         c.phase=.Stopped if was_stopping else .Failed
+        steers_fail(c,emit,user)
         if !was_stopping {fail(c,emit,user,"The AI agent process exited",code)}
         event(emit,user,{kind=.Exited,code=code})
     } else if c.deadline>0 && c.phase!=.Stopping && c.pending!=.None && platform.clock_seconds()>=c.deadline {
@@ -300,8 +339,8 @@ request :: proc(c:^Client,method,params:string,kind:Request) -> Error {
 
 @(private)
 initialize_request :: proc(c:^Client,session_titles:bool) -> Error {
-    basic :: `{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"mirai","title":"Mirai","version":"1"}}`
-    titles :: `{"protocolVersion":1,"clientCapabilities":{"_meta":{"jetbrains":{"air":{"version":1,"capabilities":["sessionIndex"]}}}},"clientInfo":{"name":"mirai","title":"Mirai","version":"1"}}`
+    basic :: `{"protocolVersion":1,"clientCapabilities":{"session":{"compaction":{}}},"clientInfo":{"name":"mirai","title":"Mirai","version":"1"}}`
+    titles :: `{"protocolVersion":1,"clientCapabilities":{"session":{"compaction":{}},"_meta":{"jetbrains":{"air":{"version":1,"capabilities":["sessionIndex"]}}}},"clientInfo":{"name":"mirai","title":"Mirai","version":"1"}}`
     error:=request(c,"initialize",titles if session_titles else basic,.Initialize)
     if error==.None {c.session_titles=session_titles;c.phase=.Initializing}
     return error
@@ -365,6 +404,9 @@ receive :: proc(c:^Client,line:string,emit:Event_Proc,user:rawptr) {
                 if message_end(c,&w)!=.None {fail(c,emit,user,"The ACP response queue is full",0)}
             }
         } else if method=="session/update" {
+            if update:=at(params,"update");text(at(update,"sessionUpdate"))=="available_commands_update" {
+                c.compact_command=command_exists(at(update,"availableCommands"),"compact")
+            }
             event(emit,user,{kind=.Update,value=params,replay=c.pending==.Load})
         } else {
             event(emit,user,{kind=.Notice,value=params,text=method})
@@ -372,7 +414,8 @@ receive :: proc(c:^Client,line:string,emit:Event_Proc,user:rawptr) {
         return
     }
     id,id_ok:=object["id"].(json.Integer)
-    if !id_ok || int(id)!=c.pending_id || c.pending==.None {return}
+    if !id_ok || steer_answer(c,int(id),object,emit,user) {return}
+    if int(id)!=c.pending_id || c.pending==.None {return}
     pending:=c.pending;c.pending=.None;c.deadline=0
     if rpc_error,error_ok:=object["error"].(json.Object);error_ok {
         c.phase=.Initialized if session_id(c)=="" else .Ready
@@ -402,6 +445,7 @@ receive :: proc(c:^Client,line:string,emit:Event_Proc,user:rawptr) {
         c.image=boolean(at(result,"agentCapabilities","promptCapabilities","image"))
         c.embedded_context=boolean(at(result,"agentCapabilities","promptCapabilities","embeddedContext"))
         c.session_rename=c.session_titles && air_capability(result,"sessionRename")
+        c.steering=boolean(at(result,"_meta","steering","supported"))
         c.phase=.Initialized
         event(emit,user,{kind=.Initialized,value=result})
     case .Authenticate:
@@ -436,6 +480,42 @@ receive :: proc(c:^Client,line:string,emit:Event_Proc,user:rawptr) {
         event(emit,user,{kind=.Prompt_Done,value=result,text=text(at(result,"stopReason"))})
     case .None:
     }
+}
+
+// Whether the answer was of a steer in flight. It never touches the phase or the pending request.
+@(private)
+steer_answer :: proc(c:^Client,id:int,object:json.Object,emit:Event_Proc,user:rawptr) -> bool {
+    slot:=-1
+    for steer_id,i in c.steers[:c.steer_count] {if steer_id==id {slot=i;break}}
+    if slot<0 {return false}
+    copy(c.steers[slot:],c.steers[slot+1:c.steer_count]);c.steer_count-=1
+    if rpc_error,failed:=object["error"].(json.Object);failed {
+        code,_:=rpc_error["code"].(json.Integer)
+        event(emit,user,{kind=.Steer_Done,value=object["error"],text="failed",code=int(code),steer_id=id})
+        return true
+    }
+    result:=object["result"]
+    outcome:=text(at(result,"outcome"))
+    switch outcome {
+    case "injected","startedNewTurn","promptRequired":
+    case:outcome="failed"
+    }
+    event(emit,user,{kind=.Steer_Done,value=result,text=outcome,steer_id=id})
+    return true
+}
+
+// A steer whose agent is gone will never be answered.
+@(private)
+steers_fail :: proc(c:^Client,emit:Event_Proc,user:rawptr) {
+    for id in c.steers[:c.steer_count] {event(emit,user,{kind=.Steer_Done,text="failed",steer_id=id})}
+    c.steer_count=0
+}
+
+@(private)
+command_exists :: proc(commands:json.Value,wanted:string) -> bool {
+    list,_:=commands.(json.Array)
+    for command in list {if text(at(command,"name"))==wanted {return true}}
+    return false
 }
 
 @(private)

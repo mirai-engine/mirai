@@ -20,7 +20,7 @@ import "mirai:std/serial"
 // agent needs to decide, not with the events themselves. Every time is in ms.
 
 PROFILE_TREE_ZONES :: 256 // zones of one frame in profile.frames
-PROFILE_WAIT :: 20        // seconds profile.capture waits by default for a compilation or another measurement: within the 30 a client waits by default
+PROFILE_WAIT :: 900       // seconds profile.capture queues by default for a compilation or another measurement: the maximum of its wait
 PROFILE_NAME_BYTES :: 128 // of a zone or a GPU pass in an answer
 PROFILE_NOTE_BYTES :: 256
 PROFILE_LOAD_TOP :: 8     // slowest assets and loop functions of each load in profile.load
@@ -30,19 +30,19 @@ Api_Profile_Capture_Params :: struct {
     advance:bool `mirai:"optional,label=Run the frames inside the call and answer with the summary; first it runs frames until they stop getting faster, unless those that ran just before already did, since a GPU that idled starts at a lower clock. false records the frames the loop runs next (of a window or engine.step or editor.input or play.step) and answers at once: profile.summary answers once they ran"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Of each frame a manual editor runs"`,
     label:[32]u8 `mirai:"optional,text,label=Name to tell the capture by"`,
-    top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes in the summary"`,
-    wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to wait for a compilation or another measurement that runs; past it the call fails. A longer wait needs a client that waits longer (mirai rpc --timeout)"`,
+    top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes in the summary"`,
+    wait:int `mirai:"optional,min=0,max=900,unit=s,label=With advance: how long to queue for a compilation or another measurement that runs; past it the call fails"`,
     allow_limited:bool `mirai:"optional,label=Measure with VSync or a frame limit or graphics validation on; the call refuses otherwise and says how to turn them off. The summary says comparable:false"`,
 }
 Api_Profile_Id_Params :: struct {
     id:int `mirai:"optional,min=0,label=Capture; 0 is the last one"`,
-    top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes in the summary"`,
+    top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes in the summary"`,
 }
 Api_Profile_Frames_Params :: struct {
     id:int `mirai:"optional,min=0,label=Capture; 0 is the last one"`,
-    worst:int `mirai:"optional,min=1,max=16,label=The slowest frames when first is not given"`,
+    worst:int `mirai:"optional,min=1,max=16,clamp,label=The slowest frames when first is not given"`,
     first:int `mirai:"optional,min=-1,max=3599,label=First frame of a range by index in the capture; -1 takes the worst"`,
-    count:int `mirai:"optional,min=1,max=16,label=Frames of the range"`,
+    count:int `mirai:"optional,min=1,max=16,clamp,label=Frames of the range"`,
     depth:int `mirai:"optional,min=1,max=16,label=Deepest zone: 1 the parts of the frame; 2 the functions of the loops; 3 what runs inside them"`,
     min_ms:f32 `mirai:"optional,min=0,max=1000,label=Zones shorter than this are left out"`,
 }
@@ -54,7 +54,7 @@ Api_Profile_Zone_Params :: struct {
 Api_Profile_Compare_Params :: struct {
     base:int `mirai:"optional,min=0,label=Capture to compare against; 0 is the one before id"`,
     id:int `mirai:"optional,min=0,label=Capture compared; 0 is the last one"`,
-    top:int `mirai:"optional,min=1,max=64,label=Zones and GPU passes that changed the most"`,
+    top:int `mirai:"optional,min=1,max=64,clamp,label=Zones and GPU passes that changed the most"`,
 }
 Api_Profile_Export_Params :: struct {
     id:int `mirai:"optional,min=0,label=Capture; 0 is the last one"`,
@@ -207,7 +207,8 @@ Api_Profile_Conditions :: struct {
     window:[2]int `mirai:"label=Pixels of the drawable"`,
     render:[2]int `mirai:"label=Pixels the scene is rendered at"`,
     preset:[16]u8 `mirai:"text,label=Low Medium High Ultra or Custom when the settings match none; empty without graphics settings"`,
-    render_megapixels:f32,
+    render_scale:f32,
+    preset_height:u32,
     vsync:bool,
     frame_limit:u32 `mirai:"label=Frames per second; 0 is unlimited"`,
     refresh_hz:f32 `mirai:"label=Of the display the window is on; 0 when unknown"`,
@@ -443,16 +444,17 @@ api_profile_capture :: proc(s:^Session,call:^api.Call) {
         }
         if refusal:=profile_refusal(profile_limits(conditions));refusal!="" {api.call_fail(call,api.SERVER_ERROR,refusal);return}
     }
-    // Frames that run here run alone among the checkouts, or not at all.
+    // Frames that run here run alone among the checkouts, or not at all: in
+    // the turn this takes, or in that of the measurement the caller is part of.
     measure:workspace.Lock
     defer workspace.lock_release(&measure)
     if p.advance && s.engine_root!="" {
         ok,compiling:bool
         holder:string
-        measure,ok,holder,compiling=workspace.measure_try(s.engine_root,fmt.tprintf("pid %d, profile.capture in %s",os.get_pid(),s.project_root),time.Duration(p.wait)*time.Second)
+        measure,ok,holder,compiling=workspace.measure_try(s.engine_root,workspace.measure_holder(fmt.tprintf("profile.capture in %s",s.project_root)),time.Duration(p.wait)*time.Second,call.measure)
         if holder=="" {holder="another process"}
         what:=compiling?"A compilation":"Another measurement"
-        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s): pass a longer wait, up to 900, with a client that waits longer (mirai rpc --timeout)",what,holder,p.wait);return}
+        if !ok {api.call_failf(call,api.SERVER_ERROR,"%s runs (%s) and did not end within wait (%d s); mirai locks says who holds its turn, and the call can be made again when it ends",what,holder,p.wait);return}
     }
     // While another capture records, profile_begin refuses: no frames run into it.
     profile_collect(s)
@@ -658,13 +660,9 @@ profile_limits :: proc(k:Profile_Conditions) -> (limits:Profile_Limits) {
 // Why profile.capture does not measure with limits, and how to lift each; "" without them.
 profile_refusal :: proc(limits:Profile_Limits) -> string {
     if limits=={} {return ""}
-    choices,off:=GRAPHICS_FRAME_LIMITS,0
-    for limit,i in choices {
-        if limit==0 {off=i}
-    }
     lifts:=make([dynamic]string,context.temp_allocator)
-    if .Vsync in limits {append(&lifts,`VSync is on: graphics.set {"option":"VSync","choice":0} turns it off`)}
-    if .Frame_Limit in limits {append(&lifts,fmt.tprintf(`frames are limited: graphics.set {{"option":"Frame limit","choice":%d}} lifts the limit`,off))}
+    if .Vsync in limits {append(&lifts,`VSync is on: settings.set {"settings":{"Graphics_Settings":{"vsync":false}}} turns it off`)}
+    if .Frame_Limit in limits {append(&lifts,`frames are limited: settings.set {"settings":{"Graphics_Settings":{"frame_limit":0}}} lifts the limit`)}
     if .Validation in limits {append(&lifts,"graphics API validation is on: open the editor without --validation")}
     return fmt.tprintf("The frame time would not be the cost of the frame: %s. A headless editor (mirai session start) paces nothing; allow_limited:true measures anyway, with comparable:false",strings.join(lifts[:],"; ",context.temp_allocator))
 }
@@ -689,10 +687,10 @@ profile_notes :: proc(c:^Profile_Capture,out:Profile_Summary_Out) -> []string {
         append(&notes,fmt.tprintf("%d frames ran before recording, until they stopped getting faster: a GPU that idled starts at a lower clock",c.warmup))
     }
     if f64(out.frame.bound.paced)>=n/2 {
-        append(&notes,fmt.tprintf("%d of %d frames wait for pacing (frame_limit %d, vsync %v): the frame time is the limit, not the cost; read cpu_ms, or lift the limit with graphics.set",out.frame.bound.paced,out.frame.count,k.frame_limit,k.vsync))
+        append(&notes,fmt.tprintf("%d of %d frames wait for pacing (frame_limit %d, vsync %v): the frame time is the limit, not the cost; read cpu_ms, or lift the limit with settings.set",out.frame.bound.paced,out.frame.count,k.frame_limit,k.vsync))
     } else if f64(out.frame.bound.gpu)>=n/2 {
         append(&notes,fmt.tprintf("%d of %d frames wait for the GPU (wait_ms): CPU savings will not shorten them; the gpu passes say where the GPU goes",out.frame.bound.gpu,out.frame.count))
-        if k.vsync {append(&notes,"vsync is on: the wait for a frame slot includes the display; with VSync off (graphics.set) it is only the GPU")}
+        if k.vsync {append(&notes,"vsync is on: the wait for a frame slot includes the display; with VSync off (settings.set) it is only the GPU")}
     }
     if len(c.pass_names)==1 && c.pass_names[0]=="frame" {append(&notes,"The GPU of this backend is measured per frame, not per pass: gpu has the whole frame only")}
     if out.frame.spikes>0 {append(&notes,fmt.tprintf("%d frames took more than twice the median: profile.frames shows the worst with their zones",out.frame.spikes))}
@@ -946,7 +944,8 @@ profile_differences :: proc(a,b:Profile_Conditions) -> []Profile_Difference_Out 
     difference_check(&list,"window",a.window,b.window,true)
     difference_check(&list,"render",a.render,b.render,true)
     difference_check(&list,"preset",a.preset,b.preset,true)
-    difference_check(&list,"render_megapixels",a.render_megapixels,b.render_megapixels,true)
+    difference_check(&list,"render_scale",a.render_scale,b.render_scale,true)
+    difference_check(&list,"preset_height",a.preset_height,b.preset_height,true)
     difference_check(&list,"vsync",a.vsync,b.vsync,true)
     difference_check(&list,"frame_limit",a.frame_limit,b.frame_limit,true)
     difference_check(&list,"document",a.document,b.document,true)
@@ -974,7 +973,7 @@ api_profile_export :: proc(s:^Session,call:^api.Call) {
     if os.write_entire_file(path,transmute([]u8)text)!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written",path);return}
     r:=api.call_result(call,Api_Profile_Export)
     r.id,r.events,r.bytes=c.id,events,len(text)
-    api_text_put(r.path[:],path)
+    base.text_set(r.path[:],path)
 }
 
 // The capture in the Trace Event Format: a complete event per zone, a thread

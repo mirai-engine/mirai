@@ -6,6 +6,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import img "mirai:cook/image"
+import "mirai:std/base"
 
 @(private="file")
 measured :: proc(view:string,frame_ms,stability,luma:f64,luma_target:=0.0) -> Render_Measure {
@@ -146,9 +147,8 @@ render_free_region_leaves_out_the_bar_and_the_panels :: proc(t:^testing.T) {
 @(test)
 render_plan_load_refuses_a_camera_without_a_target :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-render-plan-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"render-plan-camera")
+    if folder=="" {return}
     write :: proc(t:^testing.T,folder,text:string) {testing.expect(t,os.write_entire_file(join(folder,RENDER_PLAN_FILE),text)==nil)}
     write(t,folder,`{"sizes":[[1440,900]],"warmup":10,"frames":10,"interval":5,"captures":2,"views":[{"name":"a","scene":"scenes/a.scene","position":[0,1,2]}]}`)
     _,ok:=render_plan_load(folder,"","")
@@ -273,8 +273,9 @@ render_judge_repeats_a_cost_past_the_limit_and_judges_the_repeat :: proc(t:^test
     testing.expect_value(t,report.regressions,3) // the stability of boils, twice, and other, not comparable
 }
 
-// A view the base has no scene for, or did not measure, is not compared: it
-// is no regression. The base does not stop the art direction of head.
+// A view the base has no scene for, or does not list, is not compared: it is
+// no regression. One the base failed to measure fails the check. The base
+// does not stop the art direction of head.
 @(test)
 render_judge_does_not_compare_a_view_the_base_did_not_measure :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -283,8 +284,10 @@ render_judge_does_not_compare_a_view_the_base_did_not_measure :: proc(t:^testing
     base:=Render_Run{name="base"}
     new_scene:=measured("new",0,0,0)
     new_scene.failure,new_scene.scene_missing="this build has no scene scenes/new.scene",true
-    append(&base.measures,new_scene)
-    append(&head.measures,measured("new",9,0.9,0.5,0.1),measured("unlisted",9,0.9,0.1))
+    broken:=measured("broken",0,0,0)
+    broken.failure="scene.open failed"
+    append(&base.measures,new_scene,broken)
+    append(&head.measures,measured("new",9,0.9,0.5,0.1),measured("unlisted",9,0.9,0.1),measured("broken",9,0.9,0.1))
     append(&report.runs,head,base)
     render_judge(&report)
     verdict,found:=judged(report,"new","base")
@@ -296,7 +299,7 @@ render_judge_does_not_compare_a_view_the_base_did_not_measure :: proc(t:^testing
     verdict,found=judged(report,"new","art")
     testing.expect(t,found && verdict.failed)
     testing.expect_value(t,report.regressions,1)
-    testing.expect_value(t,report.failed_views,0)
+    testing.expect_value(t,report.failed_views,1)
 }
 
 // Without the cost (--quality) the check judges all but the cost, also
@@ -327,7 +330,7 @@ render_flagged_lists_what_a_report_marked :: proc(t:^testing.T) {
     report:Render_Report
     head:=Render_Run{name="head"}
     broken:=measured("broken",0,0,0)
-    broken.size,broken.failure={3072,1728},"editor.capture failed"
+    broken.size,broken.failure={3072,1728},"capture failed"
     append(&head.measures,measured("fine",2,0.04,0.1),measured("slower",2.5,0.04,0.1),broken)
     append(&report.runs,head)
     append(&report.verdicts,Render_Verdict{view="slower",size={1440,900},metric="cost",failed=true},Render_Verdict{view="fine",size={1440,900},metric="cost"},Render_Verdict{view="slower",size={1440,900},metric="stability",failed=true})
@@ -413,9 +416,8 @@ render_judge_finds_a_push_that_leaves_more_behind :: proc(t:^testing.T) {
 @(test)
 render_plan_load_refuses_a_push_it_cannot_make :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,error:=os.make_directory_temp("","mirai-render-plan-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"render-plan-push")
+    if folder=="" {return}
     write :: proc(t:^testing.T,folder,push:string) {
         testing.expect(t,os.write_entire_file(join(folder,RENDER_PLAN_FILE),strings.concatenate({`{"sizes":[[1440,900]],"warmup":10,"frames":10,"interval":5,"captures":2,"views":[{"name":"a","scene":"scenes/a.scene","position":[0,1,2],"target":[0,0,0],"push":`,push,`}]}`}))==nil)
     }
@@ -435,9 +437,8 @@ render_plan_load_refuses_a_push_it_cannot_make :: proc(t:^testing.T) {
 @(test)
 render_base_prepare_refuses_a_folder_that_is_not_a_worktree :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    root,error:=os.make_directory_temp("","mirai-render-base-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"render-base")
+    if root=="" {return}
     commit :: proc(t:^testing.T,root,text:string) {
         testing.expect(t,os.write_entire_file(join(root,"file.txt"),text)==nil)
         _,added:=render_git(root,"add","file.txt")

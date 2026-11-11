@@ -67,7 +67,7 @@ Intent_Gesture :: struct {
 }
 REQUEST_ROWS :: 64
 Request_Params :: struct {
-    id:base.Entity_Id,
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     stop:bool `mirai:"optional,label=Stops playback where it is"`,
     seek:f32 `mirai:"optional,min=0,unit=s,label=Plays from this time on the next evaluation"`,
     parameters:[anim.GRAPH_PARAMETERS]Preview_Parameter `mirai:"optional"`,
@@ -118,7 +118,7 @@ request_runtime_field :: proc(call:^api.Call) -> string {
         if authoring_field_present(call,field) {return field}
     }
     if authoring_field_present(call,"sequence") {
-        value,_:=authoring_json_field(call.raw,"sequence",call.allocator)
+        value:=api.json_member(call.raw,"sequence")
         if strings.contains(value,"Restart") || strings.contains(value,"Seek") {return "sequence"}
     }
     return ""
@@ -129,11 +129,11 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Request_Params)
     if s.mode==.Edit {
         if field:=request_runtime_field(call);field!="" {
-            authoring_failure(call,field,"Runtime_Required","Play or Simulation","Edit",fmt.tprintf("%s changes only a running world",field),api.SERVER_ERROR,fix="Start Play or Simulation, or try it on a copy with animation.preview and the same fields")
+            authoring_failure(call,field,"Runtime_Required","Play or Simulation","Edit",fmt.tprintf("%s changes only a running world",field),fix="Start Play or Simulation, or try it on a copy with animation.preview and the same fields")
             return
         }
     }
-    w,e,ok:=subject(s,call,p.id);if !ok {return}
+    w,e,ok:=subject(s,call,p.entity[:]);if !ok {return}
     e=pose_owner(s,w,e)
     applied:=make([dynamic]Request_Applied,call.allocator)
     if !edit_begin(s,call,"Animation request") {return}
@@ -144,7 +144,7 @@ request :: proc(s:^editor.Session,call:^api.Call) {
     }
     if s.mode==.Edit && !edit_end(s,call,w,true) {return}
     out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,p.id)
+    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))
     if value,has:=editor.entity_get(w,e,anim.Animation);has {api.write_bool(out,"playing",value.playing)}
     if time,_,_,has:=anim.animation_progress(core.world_storage_of(w,anim.Playback),e);has {api.write_key(out,"time");api.write_number(out,time)}
     api.write_key(out,"applied");serial.text_write_raw(out,"[")
@@ -177,7 +177,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     reaches,_:=api.params_array_count(call,"reach")
     animation,present:=editor.entity_get(world,entity,anim.Animation)
     needs:=count>0 || plays>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"distance") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
-    if needs && !present {authoring_failure(call,"id","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
+    if needs && !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
     changed:=false
     when intrinsics.type_has_field(T,"stop") {
         if authoring_field_present(call,"stop") && p.stop {animation.playing=false;changed=true;request_note(applied,"Stop","")}
@@ -191,7 +191,10 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     if changed {core.add(core.world_table_of(world,anim.Animation),entity,animation);core.world_settle(world)}
     when intrinsics.type_has_field(T,"seek") {
         if authoring_field_present(call,"seek") {
-            if !anim.animation_seek(core.world_storage_of(world,anim.Animation_Requests),entity,p.seek) {authoring_failure(call,"seek","Request_Failed","a finite nonnegative time and available seek queue",fmt.tprintf("%v",p.seek),"The seek could not be queued",api.SERVER_ERROR);return false}
+            requested:=core.world_storage_of(world,anim.Animation_Requests)
+            waiting:=len(requested.seeks.items)
+            anim.animation_seek(requested,entity,p.seek)
+            if len(requested.seeks.items)==waiting {authoring_failure(call,"seek","Request_Failed","a finite nonnegative time and available seek queue",fmt.tprintf("%v",p.seek),"The seek could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Seek","",p.seek)
         }
     }
@@ -217,7 +220,10 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             if index<0 {authoring_failure(call,"gesture.clip","Missing_Reference","a gesture of the action profile",name,"The character has no such gesture",fix=request_action_names(profile.actions));return false}
             kind:=anim.Action_Request_Kind.Cancel if p.gesture.stop else .Fire
             if kind==.Fire && !action_control_policy(call,profile.actions[index],animation,"gesture.clip") {return false}
-            if !anim.action_request(core.world_storage_of(world,anim.Action_Requests),entity,kind,name,"") {authoring_failure(call,"gesture","Capacity","space in the action queue","full or unavailable","The gesture could not be queued",api.SERVER_ERROR);return false}
+            requested:=core.world_storage_of(world,anim.Action_Requests)
+            waiting:=len(requested.queue.items)
+            anim.action_request(requested,entity,kind,name,"")
+            if len(requested.queue.items)==waiting {authoring_failure(call,"gesture","Capacity","space in the action queue","full or unavailable","The gesture could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Gesture",name)
         }
     }
@@ -228,26 +234,30 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
         slot,valid:=program_modifier_slot(call,profile,control.kind,control.name[:]);if !valid {return false}
         if !finite(control.weight) || control.weight<0 || control.weight>1 {authoring_failure(call,fmt.tprintf("controls[%d].weight",i),"Range","a finite number in [0,1]",fmt.tprintf("%g",control.weight),"The control weight is invalid");return false}
         if !finite(control.fade) || control.fade<0 {authoring_failure(call,fmt.tprintf("controls[%d].fade",i),"Range","finite nonnegative seconds",fmt.tprintf("%g",control.fade),"The control fade is invalid");return false}
-        if !anim.modifier_control(modifiers,{rig=entity,kind=control.kind,slot=slot,name=control.name,weight=control.weight,enabled=control.enabled,fade=control.fade}) {authoring_failure(call,"controls","Capacity","space in Modifier_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
+        waiting:=len(modifiers.controls.items)
+        anim.modifier_control(modifiers,{rig=entity,kind=control.kind,slot=slot,name=control.name,weight=control.weight,enabled=control.enabled,fade=control.fade})
+        if len(modifiers.controls.items)==waiting {authoring_failure(call,"controls","Capacity","space in Modifier_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
         request_note(applied,"Control",base.text_get(control.name[:]),control.weight)
     }
     if goals>0 {
-        text,_:=authoring_json_field(call.raw,"goals",call.allocator)
+        text:=api.json_member(call.raw,"goals")
         for &goal,i in p.goals[:goals] {
             file:Authoring_File;defer asset.asset_close(&file.file)
             profile,ok:=program_modifier_profile(s,call,world,entity,program_modifier_goal_kind(goal.kind),&file);if !ok {return false}
             raw,_:=authoring_json_element(text,i,call.allocator)
             value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,fmt.tprintf("goals[%d]",i));if !valid {return false}
-            if !anim.modifier_goal(modifiers,value) {authoring_failure(call,"goals","Capacity","space in Modifier_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+            waiting:=len(modifiers.queue.items)
+            anim.modifier_goal(modifiers,value)
+            if len(modifiers.queue.items)==waiting {authoring_failure(call,"goals","Capacity","space in Modifier_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Goal",base.text_get(goal.name[:]))
         }
     }
     if authoring_field_present(call,"look") {
-        raw,_:=authoring_json_field(call.raw,"look",call.allocator)
+        raw:=api.json_member(call.raw,"look")
         if !request_aim(s,call,world,entity,.Look,.Head,p.look.target,p.look.weight,p.look.fade,p.look.off,raw,"look",applied) {return false}
     }
     if reaches>0 {
-        text,_:=authoring_json_field(call.raw,"reach",call.allocator)
+        text:=api.json_member(call.raw,"reach")
         for &reach,i in p.reach[:min(reaches,len(p.reach))] {
             raw,_:=authoring_json_element(text,i,call.allocator)
             hand:=lib.Body_Part.Hand_L if reach.hand==.Left else .Hand_R
@@ -265,12 +275,16 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 declared:=false;for &window in profile.windows {if window.name==motion.name {declared=true;break}}
                 if !declared {authoring_failure(call,fmt.tprintf("motion[%d].name",i),"Missing_Target","a target name declared by a warp window",base.text_get(motion.name[:]),"The warp target is undeclared");return false}
                 target,valid:=spatial_target_value(call,world,motion.target,fmt.tprintf("motion[%d].target",i));if !valid {return false}
-                if !anim.motion_target(requests,entity,base.text_get(motion.name[:]),target,motion.enabled) {authoring_failure(call,fmt.tprintf("motion[%d]",i),"Capacity","space in Motion_Requests.targets","full or unavailable","The warp target could not be queued",api.SERVER_ERROR);return false}
+                waiting:=len(requests.targets.items)
+                anim.motion_target(requests,entity,base.text_get(motion.name[:]),target,motion.enabled)
+                if len(requests.targets.items)==waiting {authoring_failure(call,fmt.tprintf("motion[%d]",i),"Capacity","space in Motion_Requests.targets","full or unavailable","The warp target could not be queued",api.SERVER_ERROR);return false}
                 request_note(applied,"Motion",base.text_get(motion.name[:]))
             }
             if authoring_field_present(call,"locomotion") {
                 value:=p.locomotion
-                if !anim.motion_locomotion(requests,{rig=entity,velocity=value.velocity,source_velocity=value.source_velocity,weight=value.weight,enabled=value.enabled}) {authoring_failure(call,"locomotion","Rejected_Request","finite velocities, weight in [0,1] and queue capacity","invalid data or capacity","The locomotion input was rejected");return false}
+                waiting:=len(requests.locomotion.items)
+                anim.motion_locomotion(requests,{rig=entity,velocity=value.velocity,source_velocity=value.source_velocity,weight=value.weight,enabled=value.enabled})
+                if len(requests.locomotion.items)==waiting {authoring_failure(call,"locomotion","Rejected_Request","finite velocities, weight in [0,1] and queue capacity","invalid data or capacity","The locomotion input was rejected");return false}
                 request_note(applied,"Locomotion","",linalg.length(value.velocity))
             }
             if authoring_field_present(call,"distance") {
@@ -284,7 +298,10 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                     query:=anim.Animation_Distance_Request{entity=entity,clip=base.name_hash(base.text_get(clip[:])),time=time,seek=p.distance.seek,animation=anim.motion_distance_source(profile,name)}
                     if error:=anim.distance_request_check(state,content,query,core.world_storage_of(world,anim.Action_Runtime));error!=.None {authoring_failure(call,"distance",fmt.tprintf("%v",error),"the active source clip and a forward interval; seek allows a discontinuity",base.text_get(clip[:]),"The active animation clock cannot accept this distance",fix="Pass seek true to jump, or a distance ahead of the clock");return false}
                 }
-                if !anim.motion_play_distance(core.world_storage_of(world,anim.Animation_Requests),entity,profile,name,p.distance.distance,p.distance.seek) {authoring_failure(call,"distance","Invalid_Distance","a distance track of the motion profile and a finite distance",name,"The distance playback could not be queued",fix="List the tracks with animation.asset.inspect section motion");return false}
+                requested:=core.world_storage_of(world,anim.Animation_Requests)
+                waiting:=len(requested.distances.items)
+                anim.motion_play_distance(requested,entity,profile,name,p.distance.distance,p.distance.seek)
+                if len(requested.distances.items)==waiting {authoring_failure(call,"distance","Invalid_Distance","a distance track of the motion profile and a finite distance",name,"The distance playback could not be queued",fix="List the tracks with animation.asset.inspect section motion");return false}
                 request_note(applied,"Distance",name,p.distance.distance)
             }
             if authoring_field_present(call,"locomote") {
@@ -295,13 +312,16 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 if !finite(speed) {authoring_failure(call,"locomote.speed","Invalid_Value","finite m/s",fmt.tprintf("%v",speed),"The speed is invalid");return false}
                 direction:=linalg.normalize0(toward)
                 // The clip travels the way the body faces; the warp turns it toward the target.
-                _,forward:=request_body(s,world,entity,.Pelvis)
-                facing:=mm.quat_rotate(placed.rotation,forward);facing.y=0
-                if !anim.motion_locomotion(requests,{rig=entity,velocity=direction*speed,source_velocity=linalg.normalize0(facing)*speed,weight=1,enabled=true}) {authoring_failure(call,"locomote","Rejected_Request","a finite target and queue capacity","rejected","The locomotion input was rejected",api.SERVER_ERROR);return false}
+                facing:=mm.quat_rotate(placed.rotation,mm.FORWARD);facing.y=0
+                waiting:=len(requests.locomotion.items)
+                anim.motion_locomotion(requests,{rig=entity,velocity=direction*speed,source_velocity=linalg.normalize0(facing)*speed,weight=1,enabled=true})
+                if len(requests.locomotion.items)==waiting {authoring_failure(call,"locomote","Rejected_Request","a finite target and queue capacity","rejected","The locomotion input was rejected",api.SERVER_ERROR);return false}
                 request_note(applied,"Locomotion","",speed)
                 for &window in profile.windows {
                     if base.text_get(window.name[:])!="locomote" {continue}
-                    if !anim.motion_target(requests,entity,"locomote",anim.spatial_point(position)) {authoring_failure(call,"locomote","Rejected_Request","queue capacity","full","The locomotion target was rejected",api.SERVER_ERROR);return false}
+                    waiting:=len(requests.targets.items)
+                    anim.motion_target(requests,entity,"locomote",anim.spatial_point(position))
+                    if len(requests.targets.items)==waiting {authoring_failure(call,"locomote","Rejected_Request","queue capacity","full","The locomotion target was rejected",api.SERVER_ERROR);return false}
                     request_note(applied,"Motion","locomote")
                     break
                 }
@@ -320,7 +340,12 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 case .Speed: value.speed=p.sequence.value
                 }
                 core.add(core.world_table_of(world,anim.Keyframe_Path),entity,value)
-            } else if !anim.keyframe_path_request(core.world_storage_of(world,anim.Keyframe_Path_Requests),entity,p.sequence.action,p.sequence.value) {authoring_failure(call,"sequence","Capacity","an available sequence queue","full or unavailable queue","The sequence request could not be queued",api.SERVER_ERROR);return false}
+            } else {
+                requested:=core.world_storage_of(world,anim.Keyframe_Path_Requests)
+                waiting:=len(requested.queue.items)
+                anim.keyframe_path_request(requested,entity,p.sequence.action,p.sequence.value)
+                if len(requested.queue.items)==waiting {authoring_failure(call,"sequence","Capacity","an available sequence queue","full or unavailable queue","The sequence request could not be queued",api.SERVER_ERROR);return false}
+            }
             request_note(applied,"Sequence",fmt.tprintf("%v",p.sequence.action),p.sequence.value)
         }
     }
@@ -372,13 +397,19 @@ request_tick :: proc(call:^api.Call,world:core.World_Ref,entity:core.Entity,p:^$
         mode,known:=locomotion_mode_value(locomotion_modes(world.info),base.text_get(play.mode[:]))
         if !known {if value,matching:=anim.animation_match(core.world_storage_of(world,anim.Playback),entity);matching {mode=value.mode}}
         options:=anim.Match_Play_Options{fade=play.fade,entry=play.entry,phase=play.phase,marker=base.text_get(play.marker[:]),priority=play.priority,wait=play.wait}
-        if !anim.match_play(core.world_storage_of(world,anim.Animation_Requests),entity,base.text_get(play.clip[:]),mode,options) {authoring_failure(call,"plays","Capacity","an available play queue","full or unavailable queue","The play could not be queued",api.SERVER_ERROR);return false}
+        requested:=core.world_storage_of(world,anim.Animation_Requests)
+        waiting:=len(requested.match_plays.items)
+        anim.match_play(requested,entity,base.text_get(play.clip[:]),mode,options)
+        if len(requested.match_plays.items)==waiting {authoring_failure(call,"plays","Capacity","an available play queue","full or unavailable queue","The play could not be queued",api.SERVER_ERROR);return false}
         request_note(applied,"Play",base.text_get(play.clip[:]),play.fade)
     }
     actions,_:=api.params_array_count(call,"actions")
     for &action in p.actions[:actions] {
         if action.tick!=tick {continue}
-        if !anim.action_request(core.world_storage_of(world,anim.Action_Requests),entity,action.kind,base.text_get(action.name[:]),base.text_get(action.section[:])) {authoring_failure(call,"actions","Capacity","space in the action queue","full or unavailable","The action could not be queued",api.SERVER_ERROR);return false}
+        requested:=core.world_storage_of(world,anim.Action_Requests)
+        waiting:=len(requested.queue.items)
+        anim.action_request(requested,entity,action.kind,base.text_get(action.name[:]),base.text_get(action.section[:]))
+        if len(requested.queue.items)==waiting {authoring_failure(call,"actions","Capacity","space in the action queue","full or unavailable","The action could not be queued",api.SERVER_ERROR);return false}
         request_note(applied,fmt.tprintf("%v",action.kind),base.text_get(action.name[:]))
     }
     return true
@@ -390,8 +421,9 @@ request_target_position :: proc(call:^api.Call,world:core.World_Ref,target:Spati
     #partial switch target.kind {
     case .World: return target.position,true
     case .Entity:
-        e:=find_entity(world,target.entity)
-        if e==core.NONE {authoring_failure(call,fmt.tprintf("%s.entity",path),"Missing_Reference","an entity of the world",fmt.tprintf("%x",target.entity),"The target entity does not exist");return {},false}
+        target:=target
+        e,problem:=editor.api_entity_select(world,base.text_get(target.entity[:]),"entity",false,call.allocator)
+        if problem!="" {authoring_failure(call,fmt.tprintf("%s.entity",path),"Missing_Reference","an entity of the world",base.text_get(target.entity[:]),"The target entity does not exist",fix=problem);return {},false}
         return mm.transform_point(editor.entity_world(world,e),target.position),true
     }
     authoring_failure(call,fmt.tprintf("%s.kind",path),"Unsupported_Target","World or Entity",fmt.tprintf("%v",target.kind),"Walking needs a point or an entity",fix="Pass target {\"kind\":\"World\",\"position\":[x,y,z]} or {\"kind\":\"Entity\",\"entity\":\"<id>\"}")
@@ -417,9 +449,13 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
         value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);if !valid {return false}
         // Asking for it turns on an operation the profile keeps off until asked.
         value.enabled=true
-        if !anim.modifier_goal(requests,value) {authoring_failure(call,path,"Capacity","space in Modifier_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+        waiting:=len(requests.queue.items)
+        anim.modifier_goal(requests,value)
+        if len(requests.queue.items)==waiting {authoring_failure(call,path,"Capacity","space in Modifier_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
     }
-    if !anim.modifier_control(requests,{rig=entity,kind=kind,slot=slot,name=definition.name,weight=0 if off else weight,enabled=!off,fade=fade}) {authoring_failure(call,path,"Capacity","space in Modifier_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
+    waiting:=len(requests.controls.items)
+    anim.modifier_control(requests,{rig=entity,kind=kind,slot=slot,name=definition.name,weight=0 if off else weight,enabled=!off,fade=fade})
+    if len(requests.controls.items)==waiting {authoring_failure(call,path,"Capacity","space in Modifier_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
     request_note(applied,"Look" if kind==.Look else "Reach",base.text_get(definition.name[:]),0 if off else weight)
     return true
 }
@@ -446,16 +482,7 @@ request_operation :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Ent
 
 // The bone path of a body part of the skeleton the rig shows, or "".
 @(private)
-request_body_bone :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,part:lib.Body_Part) -> string {
-    bone,_:=request_body(s,world,entity,part)
-    return bone
-}
-
-// The path of a body part of the skeleton the rig shows ("" without it) and
-// the way the body faces in the space of the rig.
-@(private)
-request_body :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,part:lib.Body_Part) -> (bone:string,forward:mm.Vec3) {
-    forward={0,0,1}
+request_body_bone :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,part:lib.Body_Part) -> (bone:string) {
     id:=rig_skeleton(s,world,entity)
     if id=={} || s.app==nil || s.app.assets==nil {return}
     file:asset.Asset
@@ -464,7 +491,6 @@ request_body :: proc(s:^editor.Session,world:core.World_Ref,entity:core.Entity,p
     view,error:=asset.skeleton_view(&file,&s.app.assets.types)
     if error!=.None {return}
     map_:=asset.skeleton_body_map(view.bones,view.body,view.body_parts)
-    forward=map_.forward
     if index:=map_.bones[part];index>=0 {bone=strings.clone(base.text_get(view.bones[index].path[:]),context.temp_allocator)}
     return
 }
@@ -490,16 +516,17 @@ request_source_check :: proc(s:^editor.Session,call:^api.Call,world:core.World_R
 // fields of animation.preview): from time, ticks of dt, calling each with the
 // copy after the first pose (tick 0) and after every tick. The entity is the
 // rig. False, with the call failed, when the copy cannot run or each says so.
-preview_run :: proc(s:^editor.Session,call:^api.Call,id:base.Entity_Id,p:^$T,time:f32,ticks:u32,dt:f32,each:proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,tick:u32,data:rawptr) -> bool,data:rawptr) -> bool {
-    source,e,ok:=subject(s,call,id);if !ok {return false}
+preview_run :: proc(s:^editor.Session,call:^api.Call,named:[]u8,p:^$T,time:f32,ticks:u32,dt:f32,each:proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,tick:u32,data:rawptr) -> bool,data:rawptr) -> bool {
+    source,e,ok:=subject(s,call,named);if !ok {return false}
     e=pose_owner(s,source,e)
-    if !editor.entity_has(source,e,anim.Animation) && rig_skeleton(s,source,e)=={} {authoring_failure(call,"id","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no Animation and shows no mesh with a skeleton");return false}
+    if !editor.entity_has(source,e,anim.Animation) && rig_skeleton(s,source,e)=={} {authoring_failure(call,"entity","Missing_Component","Animation or a mesh with a skeleton","missing both","The entity has no Animation and shows no mesh with a skeleton");return false}
     clone:=preview_world_clone(s,call,source);if clone==nil {return false}
     defer host.app_world_free(s.app,clone)
     world:=core.world_ref(clone,s.info)
     if !request_source_check(s,call,world,e) || !request_apply(s,call,world,e,p,ticks,nil) {return false}
     requests:=core.world_storage_of(world,anim.Animation_Requests)
-    if requests==nil || !anim.animation_seek(requests,e,time) || !anim.animation_evaluate(world,s.app,0) {authoring_failure(call,"preview","Evaluation_Failed","an evaluable copy of the world","initial evaluation failed","The copy could not be evaluated",api.SERVER_ERROR);return false}
+    if requests!=nil {anim.animation_seek(requests,e,time)}
+    if requests==nil || !anim.animation_evaluate(world,s.app,0) {authoring_failure(call,"preview","Evaluation_Failed","an evaluable copy of the world","initial evaluation failed","The copy could not be evaluated",api.SERVER_ERROR);return false}
     if !each(s,call,world,e,0,data) {return false}
     for tick in 1..=ticks {
         if !request_tick(call,world,e,p,tick) {return false}

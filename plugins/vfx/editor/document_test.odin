@@ -5,6 +5,7 @@ import "core:mem"
 import "core:testing"
 import "mirai:editor"
 import "mirai:host"
+import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:ui"
@@ -122,7 +123,7 @@ particle_document_builds_the_rows_of_every_field_and_its_eyes_hide_them :: proc(
     p.open={.Spawn=true,.Shape=true,.Motion=true,.Look=true,.Collision=true,.Program=true}
     frame :: proc(t:^testing.T,ctx:^ui.Context,s:^editor.Session,p:^Effect_Document,app:^host.App,input:ui.Input) {
         ui.frame_begin(ctx,input)
-        if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column,gap=3}) {effect_rows(s,p,app)}
+        if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column,gap=3}) {effect_rows(s,p,app.assets)}
         output:=ui.frame_end(ctx)
         testing.expect(t,!output.overflow)
         testing.expect_value(t,ctx.stats.layout_errors,u32(0))
@@ -185,4 +186,12 @@ the_preview_of_a_document_shows_what_its_rows_hold_and_frames_where_its_particle
     low,high:=effect_reach(nil,&info)
     testing.expect(t,high.y>0.3 && low.y<-6,"it goes up and falls")
     testing.expect(t,low.x<0 && high.x>0 && low.z<0 && high.z>0)
+}
+
+// What git and the tools know of the kinds of the plugin without loading it.
+@(test)
+the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
+    m,error:=project.plugin_read(#directory+"../plugin.mirai")
+    testing.expect_value(t,error.code,project.Error_Code.None)
+    testing.expect_value(t,editor.asset_kinds_differ(VFX_KINDS_DEFAULT.provider,&m),"")
 }

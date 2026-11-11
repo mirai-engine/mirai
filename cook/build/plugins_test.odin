@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/subprocess"
 
 // The demo's engine plugins build one library per part: the runtime parts in
@@ -52,13 +53,11 @@ plugin_libraries_follow_the_parts_and_their_dependencies :: proc(t:^testing.T) {
 a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     root:=slashes(project.path_absolute(#directory+"../.."),context.temp_allocator)
-    stamp:=project.path(root,".mirai","engine","none",ENGINE_STAMP)
+    engine:=Engine_Paths{stamp=project.path(root,".mirai","engine","none",ENGINE_STAMP)}
     hashes:[2]u64
     for &hash in hashes {
-        directory,error:=os.make_directory_temp("","mirai-plugin-project-*",context.temp_allocator)
-        if !testing.expect(t,error==nil) {return}
-        folder:=project.path_absolute(directory)
-        defer os.remove_all(folder)
+        folder:=base.test_folder(t,"plugin-project")
+        if folder=="" {return}
         testing.expect(t,os.write_entire_file(project.path(folder,project.PROJECT_FILE),`{"name": "Shared", "plugins": ["ragdoll"]}`)==nil)
         p,open_error:=project.open(folder,root)
         if !testing.expectf(t,open_error.code==.None,"the project opens: %v",open_error) {return}
@@ -72,7 +71,7 @@ a_plugin_library_is_the_same_in_every_project :: proc(t:^testing.T) {
             testing.expect(t,os.make_directory_all(decl)==nil)
             testing.expect(t,os.write_entire_file(project.path(decl,"declared.odin"),need)==nil)
         }
-        hash=plugin_library_hash(&p,found,"odin",plugin_flags(&p,true),stamp)
+        hash=plugin_library_hash(&p,found,"odin",plugin_flags(&p,true),engine)
     }
     testing.expect_value(t,hashes[1],hashes[0])
 }
@@ -92,13 +91,11 @@ a_plugin_library_under_a_folder_with_spaces_links_with_its_definition :: proc(t:
         root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
         compiler,found:=compiler_find(root,context.temp_allocator)
         if !testing.expect(t,found,"no Odin compiler") {return}
-        directory,directory_error:=os.make_directory_temp("","mirai-plugin-spaces-*",context.temp_allocator)
-        if !testing.expect(t,directory_error==nil) {return}
-        folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-        defer os.remove_all(folder)
+        folder:=base.test_folder(t,"plugin-spaces")
+        if folder=="" {return}
         lib:=spaced_library(folder)
         testing.expect(t,os.make_directory_all(lib.stage)==nil)
-        entry_write(lib.stage,PLUGIN_ENTRY,{},"plugins")
+        entry_write(lib.stage,PLUGIN_ENTRY,{})
         testing.expect(t,os.write_entire_file(project.path(lib.stage,PLUGIN_ENTRY,"answer.odin"),"package __plugin\n\n@(export)\nanswer :: proc \"c\" () -> i32 {return 42}\n")==nil)
         testing.expect(t,plugin_definition_write(&lib))
         staged:=project.path(folder,"a folder","staged.dll")
@@ -163,10 +160,8 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-split-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-split")
+    if folder=="" {return}
     engine,game:=split_plugin_write(t,folder)
     p,error:=project.open(game,engine)
     if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
@@ -199,7 +194,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     program:=project.path(folder,"program")
     testing.expect(t,os.make_directory_all(program)==nil)
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),"package main\n\nimport \"core:os\"\nimport thing \"plugins:thing/runtime\"\nimport \"plugins:thing/runtime/sim\"\n\nmain :: proc() {os.exit(int(thing.doubled(2))-int(sim.answer())+21)}\n")==nil)
-    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"split",EXECUTABLE_EXTENSION}))
+    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"split",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
     append(&command,compiler,"build",program,fmt.tprintf("-collection:plugins=%s",plugins_decl(p.root,"minimal")),fmt.tprintf("-collection:mirai=%s",engine_paths(engine,.Dev).decl),fmt.tprintf("-out:%s",executable),"-o:minimal",fmt.tprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES))
     when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN")}
@@ -228,10 +223,8 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
 @(test)
 the_shared_cache_keeps_the_entries_used_last :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    directory,error:=os.make_directory_temp("","mirai-plugin-cache-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-cache")
+    if folder=="" {return}
     entries:=[3]string{project.path(folder,"a"),project.path(folder,"b"),project.path(folder,"c")}
     for entry,i in entries {
         staging,fresh:=cache_entry_begin(entry)
@@ -256,10 +249,8 @@ the_shared_cache_keeps_the_entries_used_last :: proc(t:^testing.T) {
 @(test)
 a_plugin_that_imports_a_plugin_it_does_not_depend_on_is_an_error :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-imports-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-imports")
+    if folder=="" {return}
     write :: proc(t:^testing.T,folder:string,files:[][2]string) {
         for file in files {
             path:=project.path(folder,file[0],allocator=context.temp_allocator)
@@ -305,10 +296,8 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-params-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-params")
+    if folder=="" {return}
     files:=[][2]string{
         {"engine/core/data.odin","package core\n\nTable :: struct($T:typeid) {values:[2]T}\nRead :: struct($T:typeid) {table:^Table(T)}\n\n@(component)\nProbe :: struct {value:i32}\n\n@(storage,queue)\nAsks :: struct {count:i32}\n\n@(params)\nProber :: struct {probes:^Table(Probe),asks:^Asks}\n"},
         {"engine/plugins/thing/plugin.mirai",`{"name": "thing", "version": "1.0.0", "parts": ["Runtime"]}`},
@@ -347,7 +336,7 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     program:=project.path(folder,"program")
     testing.expect(t,os.make_directory_all(program)==nil)
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),"package main\n\nimport \"core:os\"\nimport \"mirai:core\"\nimport thing \"plugins:thing/runtime\"\n\nmain :: proc() {\n    probes:core.Table(core.Probe)\n    asks:core.Asks\n    thing.thing_probe(core.Prober{probes=&probes,asks=&asks})\n    os.exit(int(probes.values[1].value)+int(asks.count))\n}\n")==nil)
-    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"params",EXECUTABLE_EXTENSION}))
+    executable:=project.path(plugins_libraries_folder(p.root),strings.concatenate({"params",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
     append(&command,compiler,"build",program,fmt.tprintf("-collection:plugins=%s",plugins_decl(p.root,"minimal")),fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-out:%s",executable),"-o:minimal",fmt.tprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES))
     when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN")}
@@ -371,10 +360,8 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-declare-any-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"declare-any")
+    if folder=="" {return}
     files:=[][2]string{
         {"engine/thing/say.odin","package thing\n\nimport \"core:fmt\"\n\nsay :: proc(buffer:[]u8,format:string,args:..any) -> string {return fmt.bprintf(buffer,format,..args)}\n\ncount :: proc(n:int) -> int {return n+1}\n"},
         // Passes its arguments on, as core.report does to base.text_format.
@@ -393,7 +380,7 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     if !testing.expectf(t,len(errors)==0,"%v",errors) {return}
     declared_say,_:=os.read_entire_file(project.path(decl,"thing","say.odin"),context.temp_allocator)
     testing.expectf(t,strings.contains(string(declared_say),"fmt.bprintf") && strings.contains(string(declared_say),"link_name=\"mirai.thing.count\""),"say is compiled where it is called and count through the library:\n%s",string(declared_say))
-    entry_write(stage,"__engine",{"thing"})
+    entry_write(stage,"__engine",{"mirai:thing"})
     testing.expect(t,os.make_directory_all(out)==nil || os.is_dir(out))
     memory,_:=compiler_memory()
     environment:=child_environment(repository,context.temp_allocator)
@@ -404,7 +391,7 @@ an_any_of_a_type_of_what_links_against_a_library_formats_where_it_is_called :: p
     testing.expect(t,os.make_directory_all(program)==nil)
     main_text:="package main\n\nimport \"core:os\"\nimport \"mirai:thing\"\n\nKind :: enum u8 {Fire,Cancel,Section}\nRequest :: struct {kind:Kind,at:i32}\n\nmain :: proc() {\n    buffer:[128]u8\n    text:=thing.report(buffer[:],\"a %v of %v, %d\",Kind.Cancel,Request{.Section,7},thing.count(41))\n    os.write(os.stdout,transmute([]u8)text)\n}\n"
     testing.expect(t,os.write_entire_file(project.path(program,"main.odin"),main_text)==nil)
-    executable:=project.path(out,strings.concatenate({"program",EXECUTABLE_EXTENSION}))
+    executable:=project.path(out,strings.concatenate({"program",project.EXECUTABLE_SUFFIX}))
     command:=make([dynamic]string)
     append(&command,compiler,"build",program,fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-out:%s",executable),"-o:minimal")
     when ODIN_OS==.Linux {linker_flags_append(&command,"-Wl,-rpath,$ORIGIN")}
@@ -425,10 +412,8 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
     repository:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
     compiler,found:=compiler_find(repository,context.temp_allocator)
     if !testing.expect(t,found,"no Odin compiler") {return}
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-order-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"plugin-order")
+    if folder=="" {return}
     files:=[][2]string{
         {"engine/core/data.odin","package core\n"},
         {"engine/plugins/base_thing/plugin.mirai",`{"name": "base_thing", "version": "1.0.0", "parts": ["Runtime"]}`},
@@ -481,41 +466,84 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
     for published in job.plugin_published {testing.expect(t,published)}
 }
 
-// A runtime part of a plugin compiles against the declarations of the
-// engine's runtime alone: a change of the declarations of the editor builds
-// every editor part again and no runtime part; one of the runtime, both.
+// A plugin library follows the declarations of the packages of the engine it
+// reaches and no other: those its sources import, those they import in turn,
+// and those the declarations of the parts it compiles against import. A body
+// only the library of the engine carries declares the same and builds none.
 @(test)
-a_declaration_of_the_editor_alone_builds_no_runtime_part_again :: proc(t:^testing.T) {
+a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    directory,directory_error:=os.make_directory_temp("","mirai-plugin-decl-*",context.temp_allocator)
-    if !testing.expect(t,directory_error==nil) {return}
-    folder:=slashes(project.path_absolute(directory,context.temp_allocator),context.temp_allocator)
-    defer os.remove_all(folder)
-    decl:=project.path(folder,"engine","decl")
-    write :: proc(t:^testing.T,decl,package_path,text:string) {
-        path:=project.path(decl,package_path)
-        testing.expect(t,os.make_directory_all(path)==nil || os.is_dir(path))
-        testing.expect(t,os.write_entire_file(project.path(path,"declared.odin"),text)==nil)
+    folder:=base.test_folder(t,"plugin-decl")
+    if folder=="" {return}
+    write :: proc(t:^testing.T,root,file,text:string) {
+        path:=project.path(root,file)
+        parent:=path[:strings.last_index_byte(path,'/')]
+        testing.expect(t,os.make_directory_all(parent)==nil || os.is_dir(parent))
+        testing.expect(t,os.write_entire_file(path,text)==nil,path)
     }
-    write(t,decl,"core","package core\n\nvalue :: proc() -> i32\n")
-    write(t,decl,"editor","package editor\n\nopen :: proc() -> bool\n")
-    runtime_packages,editor_packages:=[]string{"core"},[]string{"editor"}
     p:project.Project
     p.engine_root=project.path(folder,"engine")
-    runtime_lib:=Plugin_Library{part=.Runtime,stage=project.path(folder,"plugins","stage-thing-runtime")}
-    editor_lib:=Plugin_Library{part=.Editor,stage=project.path(folder,"plugins","stage-thing-editor")}
-    stamp_file:=project.path(folder,"engine.stamp")
-    hashes :: proc(t:^testing.T,p:^project.Project,runtime_lib,editor_lib:^Plugin_Library,stamp_file,decl:string,runtime_packages,editor_packages:[]string) -> (runtime,editor:u64) {
-        stamp:=Engine_Stamp{decl_runtime=decl_hash(decl,runtime_packages,""),decl_editor=decl_hash(decl,editor_packages,""),declares=DECLARE_VERSION}
-        testing.expect(t,engine_stamp_write(stamp_file,stamp)==nil)
-        return plugin_library_hash(p,runtime_lib,"",nil,stamp_file),plugin_library_hash(p,editor_lib,"",nil,stamp_file)
+    write(t,p.engine_root,"core/core.odin","package core\n\nvalue :: proc() -> i32 {return 1}\n\nhalf :: #force_inline proc(v:i32) -> i32 {return v/2}\n")
+    write(t,p.engine_root,"render/render.odin","package render\n\nimport \"mirai:core\"\n\nFRAMES :: 4\n\nframes :: proc() -> i32 {return core.value()}\n")
+    write(t,p.engine_root,"engine/render/view.odin","package engine_render\n\nimport \"mirai:render\"\n\nView :: struct {frames:[render.FRAMES]i32}\n")
+    write(t,p.engine_root,"ui/ui.odin","package ui\n\nimport \"mirai:core\"\n\nBox :: struct {width:i32}\n")
+    write(t,p.engine_root,"editor/editor.odin","package editor\n\nimport \"mirai:ui\"\n\nPanel :: struct {box:ui.Box}\n")
+    write(t,p.engine_root,"plugins/plain/runtime/plain.odin","package plain\n\nimport \"mirai:core\"\n\nvalue :: proc() -> i32 {return core.half(core.value())}\n")
+    write(t,p.engine_root,"plugins/drawn/runtime/drawn.odin","package drawn\n\nimport draw \"mirai:engine/render\"\n\nView :: struct {view:draw.View}\n")
+    write(t,p.engine_root,"plugins/over/runtime/over.odin","package over\n\nimport drawn \"plugins:drawn/runtime\"\n\nOver :: struct {view:drawn.View}\n")
+    write(t,p.engine_root,"plugins/tool/editor/tool.odin","package tool\n\nimport \"mirai:editor\"\n\nTool :: struct {panel:editor.Panel}\n")
+    plugins:=project.path(folder,"plugins")
+    // The declarations of drawn, which over compiles against, as its build writes them.
+    write(t,plugins,"decl/drawn/runtime/drawn.odin","package drawn\n\nimport draw \"mirai:engine/render\"\n\nView :: struct {view:draw.View}\n")
+    Part :: enum {Plain,Drawn,Over,Tool}
+    libraries:=[Part]Plugin_Library{
+        .Plain={part=.Runtime,packages={"plain/runtime"},stage=project.path(plugins,"stage-plain-runtime")},
+        .Drawn={part=.Runtime,packages={"drawn/runtime"},stage=project.path(plugins,"stage-drawn-runtime")},
+        .Over={part=.Runtime,packages={"over/runtime"},needs={"drawn/runtime"},stage=project.path(plugins,"stage-over-runtime")},
+        .Tool={part=.Editor,packages={"tool/editor"},stage=project.path(plugins,"stage-tool-editor")},
     }
-    runtime,editor:=hashes(t,&p,&runtime_lib,&editor_lib,stamp_file,decl,runtime_packages,editor_packages)
-    write(t,decl,"editor","package editor\n\nopen :: proc(path:string) -> bool\n")
-    runtime_after,editor_after:=hashes(t,&p,&runtime_lib,&editor_lib,stamp_file,decl,runtime_packages,editor_packages)
-    testing.expect_value(t,runtime_after,runtime)
-    testing.expect(t,editor_after!=editor,"an editor part compiles against the declarations of the editor")
-    write(t,decl,"core","package core\n\nvalue :: proc() -> i64\n")
-    runtime_last,editor_last:=hashes(t,&p,&runtime_lib,&editor_lib,stamp_file,decl,runtime_packages,editor_packages)
-    testing.expect(t,runtime_last!=runtime_after && editor_last!=editor_after,"both compile against the declarations of the runtime")
+    built:=project.path(folder,"built")
+    engine:=Engine_Paths{decl=project.path(built,"decl"),stamp=project.path(built,ENGINE_STAMP)}
+    keys :: proc(p:^project.Project,libraries:^[Part]Plugin_Library,engine:Engine_Paths) -> (keys:[Part]u64) {
+        for &lib,part in libraries {keys[part]=plugin_library_hash(p,&lib,"",nil,engine)}
+        return
+    }
+    // The engine declares its sources and stamps their hashes, as its build does.
+    declare_engine :: proc(t:^testing.T,root,built:string,engine:Engine_Paths) {
+        errors,_:=declare({root=root,packages={"core","render","engine/render","ui","editor"},binary="mirai",library=project.path(built,"mirai-engine.lib"),stage=project.path(built,"stage"),decl=engine.decl})
+        testing.expectf(t,len(errors)==0,"the engine declares: %v",errors)
+        testing.expect(t,engine_stamp_write(engine.stamp,{declared=decl_hashes(engine.decl),declares=DECLARE_VERSION})==nil)
+    }
+    declare_engine(t,p.engine_root,built,engine)
+    before:=keys(&p,&libraries,engine)
+    cases:=[]struct{what,file,text:string,built_again:bit_set[Part]}{
+        {"a body the library of the engine carries","core/core.odin","package core\n\nvalue :: proc() -> i32 {return 2}\n\nhalf :: #force_inline proc(v:i32) -> i32 {return v/2}\n",{}},
+        {"a constant of a package reached through another","render/render.odin","package render\n\nimport \"mirai:core\"\n\nFRAMES :: 8\n\nframes :: proc() -> i32 {return core.value()}\n",{.Drawn,.Over}},
+        {"a declaration of a package imported under another name","engine/render/view.odin","package engine_render\n\nimport \"mirai:render\"\n\nView :: struct {frames:[render.FRAMES]i32,layer:i32}\n",{.Drawn,.Over}},
+        {"a field of a package the editor imports","ui/ui.odin","package ui\n\nimport \"mirai:core\"\n\nBox :: struct {width,height:i32}\n",{.Tool}},
+        {"a declaration of the editor","editor/editor.odin","package editor\n\nimport \"mirai:ui\"\n\nPanel :: struct {box:ui.Box,open:bool}\n",{.Tool}},
+        {"the body of an inline procedure of a package all reach","core/core.odin","package core\n\nvalue :: proc() -> i32 {return 2}\n\nhalf :: #force_inline proc(v:i32) -> i32 {return v>>1}\n",{.Plain,.Drawn,.Over,.Tool}},
+    }
+    for c in cases {
+        write(t,p.engine_root,c.file,c.text)
+        declare_engine(t,p.engine_root,built,engine)
+        after:=keys(&p,&libraries,engine)
+        for part in Part {
+            testing.expectf(t,(after[part]!=before[part])==(part in c.built_again),"%s: %v built again %v",c.what,part,after[part]!=before[part])
+        }
+        before=after
+    }
+    // Without the hash of a package it reaches, a library follows every build of the engine.
+    stamp,_:=engine_stamp_read(engine.stamp)
+    editor,_:=engine_package_index("editor")
+    stamp.declared[editor]=0
+    for build in ([2]u64{1,2}) {
+        stamp.libraries[.Base].sources=build
+        testing.expect(t,engine_stamp_write(engine.stamp,stamp)==nil)
+        after:=keys(&p,&libraries,engine)
+        for part in Part {
+            testing.expectf(t,(after[part]!=before[part])==(part==.Tool),"without the hash of editor: %v built again %v",part,after[part]!=before[part])
+        }
+        before=after
+    }
 }

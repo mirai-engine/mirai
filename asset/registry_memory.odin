@@ -29,8 +29,7 @@ registry_memory_set :: proc(r:^Registry,path:string,data:[]u8) -> Error {
     held:=registry_memory_take(r,path) or_return
     registry_memory_free_data(r,held)
     held.data,held.removed=copied,false
-    registry_memory_changed(r,held)
-    return .None
+    return registry_memory_changed(r,held)
 }
 
 // path is not there in memory: no file answers for it until it is written or
@@ -39,32 +38,31 @@ registry_memory_remove :: proc(r:^Registry,path:string) -> Error {
     held:=registry_memory_take(r,path) or_return
     registry_memory_free_data(r,held)
     held.data,held.removed=nil,true
-    registry_memory_changed(r,held)
-    return .None
+    return registry_memory_changed(r,held)
 }
 
 // Forgets what memory holds for path: the file on disk answers again, or no
-// file when there is none. False when memory held nothing for it.
-registry_memory_drop :: proc(r:^Registry,path:string) -> bool {
-    if !registry_memory_forget(r,path) {return false}
+// file when there is none. Not dropped when memory held nothing for it;
+// Out_Of_Memory when it is dropped and the records had none to follow.
+registry_memory_drop :: proc(r:^Registry,path:string) -> (dropped:bool,error:Error) {
+    if !registry_memory_forget(r,path) {return false,.None}
     if registry_outside(path) {
         r.revision+=1
-        return true
+        return true,.None
     }
     previous:=registry_path_id(r,path)
     registry_file_remove(r,path)
     full:=registry_file_path(r,path,context.temp_allocator)
-    if info,error:=os.stat(full,context.temp_allocator);error==nil && info.type==.Regular {
+    if info,stat_error:=os.stat(full,context.temp_allocator);stat_error==nil && info.type==.Regular {
         file:=Registry_File{size=info.size,time=time.time_to_unix_nano(info.modification_time),first_dependency=u32(len(r.dependencies))}
-        registry_probe(r,full,&file,&r.dependencies)
-        file.path=strings.clone(path,r.allocator)
-        append(&r.files,file)
+        error=registry_probe(r,full,&file,&r.dependencies)
+        if added:=registry_file_add(r,file,path);added!=.None {error=added}
     }
     r.revision+=1
-    registry_index(r)
+    if indexed:=registry_index(r);indexed!=.None {error=indexed}
     if r.resolve_duplicates {registry_duplicates_resolve(r)}
     registry_note_removed(r,previous)
-    return true
+    return true,error
 }
 
 // Forgets what memory holds for path and nothing else: the caller brings the
@@ -122,8 +120,8 @@ registry_memory_write :: proc(r:^Registry,path:string) -> Error {
         if folder:=filepath.dir(full);!os.is_dir(folder) && os.make_directory_all(folder)!=nil {return .IO}
         if serial.file_write_atomic(full,held.data)!=.None {return .IO}
     }
-    registry_memory_drop(r,path)
-    return .None
+    _,error:=registry_memory_drop(r,path)
+    return error
 }
 
 // What a file of the registry holds now: its content in memory, or the file
@@ -143,14 +141,14 @@ registry_read :: proc(r:^Registry,path:string,allocator:=context.allocator,limit
 // The record of a file in memory: what its content says, in place of what
 // the disk has; none for a removed one.
 @(private)
-registry_memory_record :: proc(r:^Registry,held:^Registry_Memory) {
+registry_memory_record :: proc(r:^Registry,held:^Registry_Memory) -> (error:Error) {
     if registry_outside(held.path) {return}
     registry_file_remove(r,held.path)
     if held.removed {return}
     file:=Registry_File{size=i64(len(held.data)),time=r.memory_time,first_dependency=u32(len(r.dependencies))}
-    registry_probe(r,"",&file,&r.dependencies,held.data)
-    file.path=strings.clone(held.path,r.allocator)
-    append(&r.files,file)
+    error=registry_probe(r,"",&file,&r.dependencies,held.data)
+    if added:=registry_file_add(r,file,held.path);added!=.None {error=added}
+    return
 }
 
 @(private)
@@ -170,7 +168,9 @@ registry_memory_free_data :: proc(r:^Registry,held:^Registry_Memory) {
 @(private="file")
 registry_memory_take :: proc(r:^Registry,path:string) -> (held:^Registry_Memory,error:Error) {
     if found,known:=registry_memory_find(r,path);known {return found,.None}
-    entry:=Registry_Memory{path=strings.clone(path,r.allocator)}
+    entry:Registry_Memory
+    no_path:mem.Allocator_Error
+    if entry.path,no_path=strings.clone(path,r.allocator);no_path!=nil {return nil,.Out_Of_Memory}
     if _,appended:=append(&r.memory,entry);appended!=nil {
         delete(entry.path,r.allocator)
         return nil,.Out_Of_Memory
@@ -181,13 +181,14 @@ registry_memory_take :: proc(r:^Registry,path:string) -> (held:^Registry_Memory,
 // The record of a file in memory follows its new content, with a time that
 // no earlier change of it had.
 @(private="file")
-registry_memory_changed :: proc(r:^Registry,held:^Registry_Memory) {
+registry_memory_changed :: proc(r:^Registry,held:^Registry_Memory) -> Error {
     r.memory_time=max(time.time_to_unix_nano(time.now()),r.memory_time+1)
     previous:=registry_path_id(r,held.path)
-    registry_memory_record(r,held)
+    recorded:=registry_memory_record(r,held)
     r.revision+=1
-    registry_index(r)
+    indexed:=registry_index(r)
     registry_note_removed(r,previous)
+    return recorded if recorded!=.None else indexed
 }
 
 // The asset a path of the registry is now; zero for none.

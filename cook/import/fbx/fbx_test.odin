@@ -9,6 +9,7 @@ import "core:testing"
 import "mirai:asset"
 import anim "mirai:std/anim"
 import importer "mirai:cook/import"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 FIXTURES :: #directory+"/../../../assets/fixtures/"
@@ -81,14 +82,14 @@ an_fbx_of_z_up_in_centimeters_is_imported_in_meters_and_y_up :: proc(t:^testing.
     parent,quad:=find_node(&model,"Parent"),find_node(&model,"Quad")
     if !testing.expect(t,parent>=0 && quad>=0,"the nodes are imported") {return}
     testing.expect(t,model.nodes[parent].parent==-1 && model.nodes[quad].parent==parent,"the hierarchy is the one of the file")
-    testing.expectf(t,close_to(model.nodes[parent].transform.position,{1,0,0}),"100 cm along X are a meter along X: %v",model.nodes[parent].transform.position)
+    testing.expectf(t,close_to(model.nodes[parent].transform.position,{-1,0,0}),"100 cm along X are a meter along -X: %v",model.nodes[parent].transform.position)
     // 90 degrees about Z, which is up, are 90 degrees about the engine's Y.
     turned:=mm.quat_rotate(model.nodes[parent].transform.rotation,[3]f32{1,0,0})
     testing.expectf(t,close_to(turned,{0,0,-1}),"the parent turns about up: X goes to %v",turned)
     testing.expectf(t,close_to(model.nodes[quad].transform.position,{0,0.5,0}),"50 cm up are half a meter along Y: %v",model.nodes[quad].transform.position)
     mesh:=&model.meshes[model.nodes[quad].mesh]
     testing.expectf(t,len(mesh.indices)==9,"a quad and a triangle are three triangles: %d",len(mesh.indices)/3)
-    testing.expect(t,has_vertex(mesh,{0.1,0,0}) && has_vertex(mesh,{0,0,-0.1}) && has_vertex(mesh,{0.2,0,0}),"X stays and Y, the back, is the engine's -Z")
+    testing.expect(t,has_vertex(mesh,{-0.1,0,0}) && has_vertex(mesh,{0,0,0.1}) && has_vertex(mesh,{-0.2,0,0}),"X turns and Y, the back, is the engine's +Z")
     for vertex in mesh.vertices {
         if !testing.expectf(t,close_to(mm.normal_unpack(vertex.normal),{0,1,0},1e-3),"the normal along Z points up: %v",mm.normal_unpack(vertex.normal)) {break}
     }
@@ -136,7 +137,7 @@ a_geometry_transform_moves_the_mesh_of_its_node_alone :: proc(t:^testing.T) {
     testing.expect(t,model.nodes[offset].transform==mm.TRANSFORM_IDENTITY,"the node keeps its own transform")
     testing.expect(t,model.nodes[quad].mesh!=model.nodes[offset].mesh,"the geometry moved by a geometry transform is a mesh of its own")
     mesh:=&model.meshes[model.nodes[offset].mesh]
-    testing.expect(t,has_vertex(mesh,{0,0.1,0}) && has_vertex(mesh,{0.1,0.1,0}),"10 cm up move the vertices a tenth of a meter along Y")
+    testing.expect(t,has_vertex(mesh,{0,0.1,0}) && has_vertex(mesh,{-0.1,0.1,0}),"10 cm up move the vertices a tenth of a meter along Y")
 }
 
 @(private="file")
@@ -180,14 +181,14 @@ a_skinned_fbx_imports_its_skeleton_skin_blend_shape_and_stack :: proc(t:^testing
     if testing.expect(t,turns && len(rotation)>=2,"Tip turns") {
         last:=rotation[len(rotation)-1]
         half:=f32(math.SQRT_TWO/2)
-        testing.expectf(t,abs(last.time-1)<1e-4 && linalg.length(last.value-[4]f32{0,0,half,half})<1e-4,"90 degrees about Z at a second: %v at %v",last.value,last.time)
+        testing.expectf(t,abs(last.time-1)<1e-4 && linalg.length(last.value-[4]f32{0,0,-half,half})<1e-4,"90 degrees about Z at a second: %v at %v",last.value,last.time)
     }
     position,moves:=find_track(clip,"Armature/Root/Tip",.Position)
     if testing.expect(t,moves,"Tip moves") {
         stepped:=false
         for key,i in position {
             if abs(key.time-0.5)<1e-4 && key.interpolation==.Step {
-                stepped=abs(key.value.x-0.25)<1e-5 && i>0 && abs(position[i-1].value.x)<1e-5
+                stepped=abs(key.value.x+0.25)<1e-5 && i>0 && abs(position[i-1].value.x)<1e-5
             }
         }
         testing.expectf(t,stepped,"the constant key steps to 0.25 at half a second: %v",position)
@@ -242,7 +243,7 @@ a_node_that_does_not_inherit_a_squashed_parent_scale_keeps_its_own_pose :: proc(
             worlds:=pose_at(&model,clip,time)
             expect_pose :: proc(t:^testing.T,name,node:string,world:mm.Transform,position,scale:[3]f32,time:f32) {
                 turned:=mm.quat_rotate(world.rotation,[3]f32{1,0,0})
-                testing.expectf(t,close_to(world.position,position,1e-4) && close_to(world.scale,scale,1e-4) && close_to(turned,{0,1,0},1e-4),"%s: %s at %v is at %v scaled %v, not at %v scaled %v",name,node,time,world.position,world.scale,position,scale)
+                testing.expectf(t,close_to(world.position,{-position.x,position.y,-position.z},1e-4) && close_to(world.scale,scale,1e-4) && close_to(turned,{0,-1,0},1e-4),"%s: %s at %v is at %v scaled %v, not at %v scaled %v",name,node,time,world.position,world.scale,position,scale)
             }
             expect_pose(t,name,"Segment",worlds[segment],{0.5,0,0},{1,1+time,1},time)
             expect_pose(t,name,"Leaf",worlds[leaf],{0.5-(1+time),0,0},{1,1+time,1},time)
@@ -257,9 +258,9 @@ a_node_that_does_not_inherit_a_squashed_parent_scale_keeps_its_own_pose :: proc(
 
 @(test)
 an_fbx_6_is_refused_saying_why :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    path:=fmt.tprintf("%s/mirai-fbx-%d-old.fbx",directory,os.get_pid())
-    defer os.remove(path)
+    folder:=base.test_folder(t,"fbx")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/old.fbx",folder)
     text:="; FBX 6.1.0 project file\nFBXHeaderExtension:  {\n\tFBXHeaderVersion: 1003\n\tFBXVersion: 6100\n}\nObjects:  {\n}\n"
     _=os.write_entire_file(path,text)
     model,error:=importer.import_model(path,FORMATS[:])

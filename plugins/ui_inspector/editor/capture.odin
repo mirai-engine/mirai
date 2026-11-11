@@ -1,12 +1,13 @@
 package ui_inspector_editor
 
 import "core:fmt"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:engine/gui"
 import "mirai:host"
-import gpu "mirai:render"
+import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -20,7 +21,7 @@ import "mirai:ui"
 Ui_Capture_Background :: enum u8 {Scene,Checker,Color}
 Ui_Capture_Params :: struct {
     asset:base.Asset_Id,
-    path:[editor.API_PATH_BYTES]u8 `mirai:"text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made"`,
+    path:[editor.API_PATH_BYTES]u8 `mirai:"text,optional,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made. Omitted: .mirai/captures/ui.png of the project"`,
     size:[2]f32 `mirai:"optional,min=0,max=8192,label=Layout units the game lays it out in; zeros: the reference of Project Settings > UI, or 1920 by 1080 without one. The image has that many pixels times the density of the editor"`,
     background:Ui_Capture_Background `mirai:"optional,label=Scene: what the camera of the viewport sees, as the game shows it over its world; Checker; or Color"`,
     color:ui.Color `mirai:"optional,label=Of background Color, in display values"`,
@@ -39,7 +40,7 @@ UI_CAPTURE_SIZE :: [2]f32{1920,1080} // without a reference of the project
 @(private)
 capture_api_register :: proc(s:^editor.Session) {
     defaults:=Ui_Capture_Params{seconds=1}
-    editor.api_method_register(s,{name="ui.capture",summary="Draws a .ui alone at the size the game lays it out at, with samples of the data of the game, over the scene the viewport sees or a background, and writes it as a PNG, which MCP also returns as an image. Requires GPU.",params=Ui_Capture_Params,params_info=type_info_of(Ui_Capture_Params),result=editor.Api_Capture_Result,result_info=type_info_of(editor.Api_Capture_Result),defaults=&defaults,flags={.Read_Only},run=api_ui_capture})
+    editor.api_method_register(s,{name="ui.capture",summary="Draws a .ui alone at the size the game lays it out at, with samples of the data of the game, over the scene the viewport sees or a background, and writes it as a PNG, which MCP also returns as an image. Requires GPU.",params=Ui_Capture_Params,params_info=type_info_of(Ui_Capture_Params),result=editor.Api_Capture_Result,result_info=type_info_of(editor.Api_Capture_Result),writes_result=true,defaults=&defaults,flags={.Read_Only},run=api_ui_capture})
 }
 
 @(private)
@@ -56,18 +57,18 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
         for language in gui.Language {if fmt.tprintf("%v",language)==name {stage.language,stage.chosen=language,true}}
         if !stage.chosen {api.call_failf(call,api.INVALID_PARAMS,"language '%s' is none of the gui.Language names (English, Spanish, ...)",name);return}
     }
-    file,writable:=editor.api_output_file(s,call,serial.text_field(p.path[:]),app.allocator)
+    file,writable:=editor.api_capture_file(s,call,serial.text_field(p.path[:]),"ui.png",app.allocator)
     if !writable {return}
     defer delete(file,app.allocator)
     api_flush(s)
-    records:Records
-    if !records_read(a,p.asset,&records,context.temp_allocator) {api.call_failf(call,api.INVALID_PARAMS,"asset %s is not a .ui that loads; pass the id of a .ui of the project (asset.list kind ui)",fmt.tprintf("%016x%016x",p.asset[0],p.asset[1]));return}
-    data:=records_data(&records)
+    records:author.Records
+    if !author.records_read(author.assets_of(a),p.asset,&records,context.temp_allocator) {api.call_failf(call,api.INVALID_PARAMS,"asset %s is not a .ui that loads; pass the id of a .ui of the project (asset.list kind ui)",fmt.tprintf("%016x%016x",p.asset[0],p.asset[1]));return}
+    data:=author.records_data(&records)
     imports,imported:=host.ui_tree_imports(a,data)
-    if !imported {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",WIDGET_MISSING);return}
+    if !imported {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",author.widget_why(author.assets_of(a),data));return}
     preview:Preview
     defer preview_free(&preview)
-    if !preview_load(&preview,app,data,imports,app.allocator) {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",load_why(a,data,imports));return}
+    if !preview_load(&preview,app,data,imports,app.allocator) {api.call_failf(call,api.INVALID_PARAMS,"the interface does not load: %s",author.load_why(author.assets_of(a),data,imports));return}
     shown:i32
     if name:=serial.text_field(p.node[:]);name!="" {
         for &n,row in records.nodes {
@@ -85,8 +86,8 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
     r:=app.renderer
     fill:=ui.Color{}
     image:ui.Quad
-    scene_texture:gpu.Texture_Handle
-    defer if scene_texture!=0 {gpu.texture_remove(r,scene_texture)}
+    scene_texture:erender.Texture_Handle
+    defer if scene_texture!=0 {erender.texture_remove(r,scene_texture)}
     switch p.background {
     case .Checker: fill=UI_CAPTURE_CHECKER[1]
     case .Color:   fill=p.color
@@ -95,10 +96,10 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
         scene,width,height,drawn:=host.app_capture_world(app,editor.shown_world(s).data,editor.API_CAPTURE_SETTLE,pixels,s.editor_world,app.allocator)
         if !drawn {api.call_failf(call,api.SERVER_ERROR,"the scene could not be drawn: %s",r.error);return}
         added:bool
-        scene_texture,added=gpu.texture_add(r,{pixels=scene,width=width,height=height,srgb=true,name="ui capture scene"})
+        scene_texture,added=erender.texture_add(r,{pixels=scene,width=width,height=height,srgb=true,name="ui capture scene"})
         delete(scene,app.allocator)
         if !added {api.call_failf(call,api.SERVER_ERROR,"the scene could not be shown under the interface: %s",r.error);return}
-        image=ui.quad_whole(.Image,gpu.ui_image(r,scene_texture)&~gpu.UI_MATERIAL_IMAGE_BIT)
+        image=gui.image_quad(r,scene_texture)
     }
     variant:=ui.style_variant(serial.text_field(p.variant[:]))
     // The first frame asks the font for its glyphs; the last one draws them.
@@ -121,11 +122,11 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
         frame=ui.frame_end(ctx)
         host.app_ui_font_sync(app,ctx)
     }
-    draws:=make([]gpu.Ui_Draw,host.UI_COMMAND_CAPACITY,context.temp_allocator)
+    draws:=make([]erender.Ui_Draw,host.UI_COMMAND_CAPACITY,context.temp_allocator)
     layer,_,_,_:=host.ui_frame_convert(frame,draws,nil)
-    texture,made:=gpu.ui_texture_add(r,u32(pixels.x),u32(pixels.y),"ui capture")
+    texture,made:=erender.ui_texture_add(r,u32(pixels.x),u32(pixels.y),"ui capture")
     if !made {api.call_failf(call,api.SERVER_ERROR,"the renderer took no texture of %dx%d: %s",pixels.x,pixels.y,r.error);return}
-    defer gpu.ui_texture_remove(r,texture)
+    defer erender.ui_texture_remove(r,texture)
     captured,width,height,drawn:=host.app_ui_texture_capture(app,{texture=texture,layer=layer,size=size,clear={0,0,0,1}},app.allocator)
     if !drawn {api.call_failf(call,api.SERVER_ERROR,"the interface could not be drawn: %s",r.error);return}
     editor.api_capture_answer(s,call,file,captured,width,height)

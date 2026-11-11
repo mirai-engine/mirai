@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:reflect"
+import "core:slice"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
@@ -178,13 +179,13 @@ INPUT_TIMING :: "Timing"
 @(private)
 input_cards :: proc(s:^Session,needle:string) -> []Input_Card {
     cards:=make([dynamic]Input_Card,context.temp_allocator)
-    every:=needle=="" || contains_fold("Input",needle)
+    every:=needle=="" || base.contains_fold("Input",needle)
     for entry in core.names_of(s.info,input.Action) {
         if entry.value<0 || entry.value>=input.ACTION_CAPACITY {continue}
         title:=readable(entry.name)
-        if every || contains_fold(title,needle) {append(&cards,Input_Card{title,entry.value})}
+        if every || base.contains_fold(title,needle) {append(&cards,Input_Card{title,entry.value})}
     }
-    if every || contains_fold(INPUT_TIMING,needle) || contains_fold("Tap ticks",needle) || contains_fold("Hold ticks",needle) {append(&cards,Input_Card{INPUT_TIMING,-1})}
+    if every || base.contains_fold(INPUT_TIMING,needle) || base.contains_fold("Tap ticks",needle) || base.contains_fold("Hold ticks",needle) {append(&cards,Input_Card{INPUT_TIMING,-1})}
     return cards[:]
 }
 
@@ -234,7 +235,7 @@ input_action_rows :: proc(s:^Session,action:input.Action) {
     row_begin(ctx,"Kind")
     kind:=int(m.kinds[action])
     kinds:=INPUT_KINDS
-    if ui.dropdown(ctx,ui.id(ctx,"kind"),kinds[:],&kind,{width=-1,height=th.row}) && input.Action_Kind(kind)!=m.kinds[action] {
+    if ui.dropdown(ctx,ui.id(ctx,"kind"),{list=kinds[:]},&kind,{width=-1,height=th.row}) && input.Action_Kind(kind)!=m.kinds[action] {
         st.listen={}
         input.input_map_action(m,action,input.Action_Kind(kind))
         input_settings_commit(s)
@@ -357,7 +358,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,nth,index:int) -> (chan
         row_begin(ctx,"Gamepad")
         pads:=INPUT_GAMEPADS
         chosen:=b.gamepad==input.GAMEPAD_ANY?0:int(b.gamepad)+1
-        if ui.dropdown(ctx,ui.id(ctx,"gamepad"),pads[:],&chosen,{width=-1,height=th.row}) {
+        if ui.dropdown(ctx,ui.id(ctx,"gamepad"),{list=pads[:]},&chosen,{width=-1,height=th.row}) {
             b.gamepad=chosen==0?input.GAMEPAD_ANY:u8(chosen-1)
             input_settings_commit(s)
         }
@@ -403,7 +404,7 @@ input_code_prompt :: proc(s:^Session,code:input.Input_Code) -> (prompt:ui.Prompt
     prompt={family=keyboard?.Keyboard:.Xbox,input=input_kind}
     if input_kind==.Key {prompt.text=name}
     if settings:=cast(^gui.UI_Settings)setting_value(s,gui.UI_Settings);settings!=nil && s.app!=nil {
-        prompt=gui.prompt_shown(s.app,settings,host.content_prompts(s.app,settings.prompts),prompt)
+        prompt=gui.prompt_shown(s.app.assets,s.app.renderer,settings,host.content_prompts(s.app,settings.prompts),prompt)
     }
     return
 }
@@ -743,6 +744,10 @@ input_timing_rows :: proc(s:^Session) {
 
 // ---------------------------------------------------------------- API
 
+Api_Input_Get_Params :: struct {
+    actions:[API_SECTIONS][64]u8 `mirai:"text,optional,label=Only these actions by their names; none: every action"`,
+}
+
 Api_Input :: struct {
     tap_ticks:u32 `mirai:"label=Ticks a press may be held and still be a tap"`,
     hold_ticks:u32 `mirai:"label=Ticks a press is held before it is a hold"`,
@@ -769,18 +774,28 @@ API_INPUT_SET_SCHEMA :: `{"type":"object","properties":{` +
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the ticks of a tap and of a hold.",result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
-    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the ticks of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it.",result=Api_Input,writes_result=true,run=api_input_set})
+    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: the kind, the bindings in effect and whether they come from the code or from input.mirai of the project, and the ticks of a tap and of a hold.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
+    api_register(s,st,{name="input.set",params_schema=API_INPUT_SET_SCHEMA,summary="Replaces the kind and the bindings of an input action, puts it back to the default of the code, or changes the ticks of a tap and of a hold; input.mirai of the project keeps what differs from the code, and a Play that starts or runs takes it. It answers with the action it changed.",result=Api_Input,writes_result=true,run=api_input_set})
 }
 
 @(private)
 api_input_get :: proc(s:^Session,call:^api.Call) {
     input_settings_load(s)
-    input_api_write(s,call.out)
+    only:=make([dynamic]string,context.temp_allocator)
+    for &name in api.call_params(call,Api_Input_Get_Params).actions {
+        wanted:=base.text_get(name[:])
+        if wanted=="" {continue}
+        if _,declared:=core.name_value(s.info,input.Action,wanted);!declared {
+            api.call_failf(call,api.INVALID_PARAMS,"%q is not an input action: the code declares %s",wanted,input_action_names(s))
+            return
+        }
+        append(&only,wanted)
+    }
+    input_api_write(s,call.out,len(only)>0,only[:])
 }
 
 @(private)
-input_api_write :: proc(s:^Session,out:^serial.Writer) {
+input_api_write :: proc(s:^Session,out:^serial.Writer,filtered:=false,only:[]string={}) {
     st:=&s.settings_dialog.input
     m:=&st.current
     serial.write_u8(out,'{')
@@ -792,6 +807,7 @@ input_api_write :: proc(s:^Session,out:^serial.Writer) {
     first:=true
     for entry in core.names_of(s.info,input.Action) {
         if entry.value<0 || entry.value>=input.ACTION_CAPACITY {continue}
+        if filtered && !slice.contains(only,entry.name) {continue}
         action:=input.Action(entry.value)
         if !first {serial.write_u8(out,',')}
         first=false
@@ -836,7 +852,11 @@ api_input_set :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    input_api_write(s,call.out)
+    values:[1]string
+    api.object_values(call.allocator,call.raw,{"action"},values[:])
+    action:=strings.trim(values[0],`"`)
+    only:=[1]string{action}
+    input_api_write(s,call.out,true,action!=""?only[:]:nil)
 }
 
 // Reads the params of input.set into a map over the code of the session;
@@ -846,12 +866,6 @@ input_set_apply :: proc(s:^Session,m:^input.Input_Map,raw:string) -> string {
     value,parse_error:=json.parse_string(raw,json.DEFAULT_SPECIFICATION,true,context.temp_allocator)
     root,is_object:=value.(json.Object)
     if parse_error!=.None || !is_object {return USAGE}
-    for key in root {
-        switch key {
-        case "action","kind","bindings","reset","tap_ticks","hold_ticks":
-        case: return fmt.tprintf("%q is not a param: %s",key,USAGE)
-        }
-    }
     ticks:=[2]struct{name:string,value:^u32,default:u32}{{"tap_ticks",&m.tap_ticks,input.TAP_TICKS},{"hold_ticks",&m.hold_ticks,input.HOLD_TICKS}}
     for t in ticks {
         if t.name not_in root {continue}
@@ -892,6 +906,7 @@ input_set_apply :: proc(s:^Session,m:^input.Input_Map,raw:string) -> string {
     for item,i in list {
         o,is_binding:=item.(json.Object)
         if !is_binding {return fmt.tprintf(`bindings[%d] is not an object: {"key": "Space"}`,i)}
+        input_binding_names_fit(o)
         binding,error,field:=input.input_binding_parse(o)
         if error!=.None {return input_binding_problem(i,o,error,field)}
         if !input.binding_suits(kind,binding) {
@@ -919,10 +934,31 @@ input_kind_takes :: proc(kind:input.Action_Kind) -> string {
     return ""
 }
 
-// What is wrong with one binding of the params, with the names it takes.
+// Writes the names of a binding an agent gave as their enums have them, as
+// base.name_find takes them.
+@(private)
+input_binding_names_fit :: proc(o:json.Object) {
+    fit :: proc(value:^json.Value,names:[]string) {
+        if name,is_text:=value.(json.String);is_text {
+            if index,_:=base.name_find(name,names);index>=0 {value^=json.String(names[index])}
+        }
+    }
+    each :: proc(o:json.Object,field:string,names:[]string) {
+        if value,has:=&o[field];has {fit(value,names)}
+    }
+    each(o,"key",reflect.enum_field_names(core.Key))
+    if keys,has:=o["keys"].(json.Array);has {
+        for &key in keys {fit(&key,reflect.enum_field_names(core.Key))}
+    }
+    each(o,"mouse_button",reflect.enum_field_names(core.Mouse_Button))
+    each(o,"gamepad_button",reflect.enum_field_names(core.Gamepad_Button))
+    each(o,"gamepad_axis",reflect.enum_field_names(core.Gamepad_Axis))
+    each(o,"gamepad_stick",reflect.enum_field_names(input.Gamepad_Stick))
+}
+
+// What is wrong with one binding of the params, with the nearest names it takes.
 @(private)
 input_binding_problem :: proc(index:int,o:json.Object,error:input.Input_Map_Error,field:string) -> string {
-    names :: proc($E:typeid) -> string {return strings.join(reflect.enum_field_names(E),", ",context.temp_allocator)}
     switch {
     case field=="":
         return fmt.tprintf("bindings[%d] names no input: give it one of key, keys, mouse_button, mouse, gamepad_button, gamepad_axis or gamepad_stick",index)
@@ -940,15 +976,15 @@ input_binding_problem :: proc(index:int,o:json.Object,error:input.Input_Map_Erro
             if _,known:=reflect.enum_from_name(core.Key,name);!known {wrong=string(name);break}
         }
     }
-    valid:string
+    valid:[]string
     switch field {
-    case "key","keys":     valid=names(core.Key)
-    case "mouse_button":   valid=names(core.Mouse_Button)
-    case "mouse":          valid=fmt.tprintf("%s, Delta, Wheel",names(input.Mouse_Axis))
-    case "gamepad_button": valid=names(core.Gamepad_Button)
-    case "gamepad_axis":   valid=names(core.Gamepad_Axis)
-    case "gamepad_stick":  valid=names(input.Gamepad_Stick)
+    case "key","keys":     valid=reflect.enum_field_names(core.Key)
+    case "mouse_button":   valid=reflect.enum_field_names(core.Mouse_Button)
+    case "mouse":          valid=slice.concatenate([][]string{reflect.enum_field_names(input.Mouse_Axis),{"Delta","Wheel"}},context.temp_allocator)
+    case "gamepad_button": valid=reflect.enum_field_names(core.Gamepad_Button)
+    case "gamepad_axis":   valid=reflect.enum_field_names(core.Gamepad_Axis)
+    case "gamepad_stick":  valid=reflect.enum_field_names(input.Gamepad_Stick)
     }
     what,_:=strings.replace_all(field=="keys"?"key":field,"_"," ",context.temp_allocator)
-    return fmt.tprintf("bindings[%d].%s: %q is not a %s; the names are %s",index,field,wrong,what,valid)
+    return fmt.tprintf("bindings[%d].%s: %s",index,field,base.name_problem(wrong,fmt.tprintf("a %s",what),valid))
 }

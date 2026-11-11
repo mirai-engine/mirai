@@ -102,7 +102,8 @@ the bones of its face) is a rig of its own that follows it: `Rig.leader`.
   Its morphs read the follower's curves (`source_kind` `Own`).
 - In `animation_finish` a follower goes after its leader, which may follow another, in one pass:
   `rigs_update` orders the followers by how many leaders are above them when the rigs change
-  (`Playback.follow_order`), and a loop goes last and is the problem `animation.follow_rig`. Skeletons without a common name are `animation.follow_bones`.
+  (`Playback.follow_order`), and a loop goes last and is the problem `animation.follow_rig`.
+  Skeletons without a common name are `animation.follow_bones`.
   The finished pose of a leader in the world is made once per tick for all of its followers
   (`Playing.world_final`).
 - Its own profile applies after the follow: [curve poses](animation-rigs.md#curve-poses-and-drives)
@@ -146,19 +147,20 @@ locomotion blend space.
 Per tick:
 
 - `match_goal` says the mode, the velocity of the body, the desired one with its acceleration and
-  braking, where it turns, the wall it leans on and when it lands ([landing](#landing)). With physics, the automatic plugin
+  braking, where it turns, the wall it leans on and when it lands ([landing](#landing)). With
+  physics, the automatic plugin
   `animation_physics` says it for each `Character` with `Animation` (the `Character` is the only
   writer of the mode, and its `Character_State` of the wall; animation keeps no copy) and asks for
   the warping of `Animation.motion` while it walks: the game writes no locomotion code. The model
-  on the `Character`'s entity faces its +Z, as the body does
+  on the `Character`'s entity faces its -Z, as the body does
   ([facing](../../mirai-physics/SKILL.md#library-invariants)): it is not turned by hand. Without
   physics, the game calls `match_goal` with what moves its rig.
 - While a `Character` mantles, `animation_physics` gives the window `mantle` of `Animation.motion`
   the target `mantle_to` and drives the climb with the root motion of the tick: a climb clip with a
   root and that window climbs as the clip does and lands on the ledge.
 - With `lag` (for a body that stops or starts harder than its clips; off by default and in
-  `animation.character.setup`), the root of the pose follows the body by a critically damped spring of
-  `lag_half_life`: a change of velocity the body makes at once the root takes in over the
+  `animation.character.setup`), the root of the pose follows the body by a critically damped spring
+  of `lag_half_life`: a change of velocity the body makes at once the root takes in over the
   half-life, never farther than `lag` from the body nor into the wall of the goal. It returns onto
   the body only while the pose walks, at most `MATCH_LAG_CLOSE` of the speed of its clip, so a pose
   that stands holds its offset instead of sliding its feet. The bones right under the rig move by
@@ -319,7 +321,8 @@ owner and keeps no clip choice in game code.
 - **Whole-body moments.** An attack, a death, a rise from the ground or an entry through a window
   is `match_play` with its exit at the end or at a marker and a priority: the death above the
   attack, the attack above nothing. An entry aligned to a place (a window, a board) is
-  `match_play` with [root motion directed at a target](../../mirai-std/references/anim-motion.md#root-motion-directed-at-a-target).
+  `match_play` with [root motion directed at a
+  target](../../mirai-std/references/anim-motion.md#root-motion-directed-at-a-target).
   The game reacts to `Animation_Events` (Finished, Exited and the markers of the clip, such as
   the hit of an attack or a footstep), not to which clip it asked for.
 - **Upper-body moments.** A reload, a swing while walking or a hit reaction over the legs is an
@@ -341,8 +344,8 @@ owner and keeps no clip choice in game code.
   and curves), also over programs. `over` limits a branch and `sync` follows the phase of the base.
   An Additive layer adds what its clip changes from the pose at `reference` seconds of
   `reference_clip` (another clip of the asset; none: its own clip), as an emote over a stand:
-  pose += weight * (emote - stand at 0). A target the reference clip does not move is measured from the
-  layer's own clip; a reference clip the asset lacks is the problem `animation.layer_reference`.
+  pose += weight * (emote - stand at 0). A target the reference clip does not move is measured from
+  the layer's own clip; a reference clip the asset lacks is the problem `animation.layer_reference`.
   With `mesh_space`, an Override layer blends the rotations of its branch in the space of the rig:
   the branch keeps the turn its clip gives it whatever the base turns above it (a torso emote over
   a walk whose pelvis turns).
@@ -370,6 +373,10 @@ its definition or `library`.
 - `Playback` (world storage): clocks, fades, program and dense pose buffers; curves and root delta
   per player. It is derived: clearing the world (loading a scene or a save) starts it over, like the
   other animation storages.
+- A state knows which of its bindings each track of its content moves (`Track_Map`), paired when
+  its bindings are built and shared by the states bound alike to that content: clips and layers
+  blend by bone ([by bone](../../mirai-std/references/anim.md#blending-poseodin)), never by the
+  name of a target, for rigs and for the entities an `Animation` moves by name alike.
 - `Animation_Progress` is written only by `animation_sample` while the game runs: a stored save
   keeps the time of the clip and, when loaded, an entity without state in `Playback` asks for
   `animation_seek` there.
@@ -382,7 +389,9 @@ its definition or `library`.
 Order in `fixed`:
 
 - `animation_sample` (`apply`): prepares profiles and requests, samples programs, clips, actions,
-  layers and overrides, and extracts and adapts root motion, before physics (`simulate`).
+  layers and overrides, and extracts and adapts root motion, before physics (`simulate`). It
+  advances the clocks of every entity in order, then blends their poses
+  ([in jobs](animation-budget.md#parallel-execution)), then takes what follows each pose in order.
 - Between the two, `animation_physics` turns root motion into layered moves of the `Character`: the
   root delta of a climb and the body motion of the actions with
   [`body_move`](animation-actions.md#root-and-movement); another controller reads
@@ -427,8 +436,10 @@ World poses:
   (translating parent and child with the same weight keeps their distance). Zero weight ignores the
   request and the last request of each bone wins. An expired handle or a bone that the rig does not
   have are the problems `animation.final_pose_binding` and `animation.final_pose_bone`.
-- `animation_requests_reserve` reserves the queues at load.
-  [Ragdoll](../../mirai-plugins/references/ragdoll.md) uses it.
+- Request procs return nothing: `animation_requests_serve` keeps the room of `Animation_Settings`
+  and reports what was dropped or refused. `animation_requests_reserve` keeps more final poses
+  than that for a library that sends one per bone, as
+  [Ragdoll](../../mirai-plugins/references/ragdoll.md) does.
 
 Editor and skinning:
 
@@ -442,13 +453,15 @@ Editor and skinning:
   if pose, mesh and parent did not change; it creates, updates and releases the meshes deformed by
   `engine/render`. A mesh not drawn in the last frame (new, or shown again after `Hidden`) shows
   the pose and weights of the tick until the next one, not an interpolation from a tick it was not
-  drawn in: a weapon shown the tick its action starts is not drawn in its rest pose. With `Skin_Part`, the deformed copy is created with the part and each palette
+  drawn in: a weapon shown the tick its action starts is not drawn in its rest pose. With
+  `Skin_Part`, the deformed copy is created with the part and each palette
   collapses its joints onto the bone: changing the bone creates the copy again, changing its layers
   does not.
 - A rig whose palette leaves each vertex at its bind (`palette_at_bind`) is drawn with the world's
   shared mesh: a still character or one without animation copies no geometry or BLAS. The copy is
   created the first time the palette leaves the bind and stays until the rig goes away; with morphs
-  or [curve materials](animation-rigs.md#curve-poses-and-drives), from the start. A copy larger than what one frame uploads goes
+  or [curve materials](animation-rigs.md#curve-poses-and-drives), from the start. A copy larger than
+  what one frame uploads goes
   [over several frames](../../mirai-rendering/references/scene.md#geometry-over-several-frames): the
   entity is not drawn (no shadow, rays or outline) until it went up whole and appears already posed,
   without `Hidden` or anything the game does.
@@ -507,8 +520,7 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
 - A rig that cannot follow its leader (`follow_rig`, `follow_bones`, `follow_pose`), curve poses
   of bones its skeleton lacks or with curves that are not finite (`curve_pose_bone`,
   `curve_pose_value`) and curve materials past the capacity of the override (`curve_material`).
-- Lost markers or events (`markers_lost`, `play_events`, `action_events`), values that do not fit in
-  the pose (`animation.pose_full`, with what `std/anim` counted in `Pose.failed`) and lack of memory
+- Lost markers or events (`markers_lost`, `play_events`, `action_events`) and lack of memory
   (`animation.memory`: the entity keeps its last pose and retries).
 - `Playback.stats.skipped` counts writes skipped because another component owns the transform: it is
   a statistic, not a failure.
@@ -532,9 +544,6 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
   `an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems` and
   `a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready`.
 - By name:
-  - `transition_entries_restart_continue_and_match_phase_with_expected_pose_and_root_motion`
-  - `graph_branch_layers_keep_their_masks_through_repeated_state_transitions_without_allocations`
-  - `graph_phase_end_and_marker_exits_follow_the_incoming_state_clock_during_fades_and_world_copies`
   - `direct_clip_weights_preserve_zero_full_and_partial_trs_without_allocations`
     (`runtime_test.odin`)
 - Body parts and regions (`skeleton_test.odin`):
@@ -548,9 +557,9 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
   - `retarget_constraints_read_frozen_source_pose_and_preserve_target_lengths`
   - `live_retarget_profile_changes_compare_full_asset_ids_and_preserve_source_identity`
   - `retarget_paths_*`
-- `a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without_stable_allocations`
-  (`follow_test.odin`): shared bones over the body's wherever both entities sit, own bones, leader
-  curves, drives and poses, loops, missing names and values that are not finite;
+- `follow_test.odin`: a head of its own skeleton follows the body and its curves pose its face
+  without stable allocations; shared bones over the body's wherever both entities sit, own bones,
+  leader curves, drives and poses, loops, missing names and values that are not finite;
   `followers_finish_after_their_leaders_in_the_order_found_once`: chains and loops of followers.
 - Rigs, actions, motion, budget, grounding, authoring and storage: their references.
 - `rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it` (`skin_bind_test.odin`, GPU): rigs

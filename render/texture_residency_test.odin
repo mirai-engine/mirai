@@ -8,6 +8,7 @@ import "mirai:rhi"
 @(private = "file")
 square_stream :: proc(side: u32, top: u8, lod: f32, shown := true) -> (stream: Texture_Stream) {
 	stream.size, stream.format, stream.top, stream.target = {side, side}, .RGBA8_Unorm, top, top
+	stream.span = math.log2(f32(side))
 	for s := side; ; s /= 2 {
 		stream.levels += 1
 		if s <= 1 {break}
@@ -144,6 +145,18 @@ the_uv_density_of_a_mesh_is_by_entry_of_its_materials :: proc(t: ^testing.T) {
 	testing.expect_value(t, density[0][1], density[0][0]) // without a set of its own, uv1 is uv
 }
 
+@(test)
+an_image_sky_is_read_from_the_entry_of_its_texture :: proc(t: ^testing.T) {
+	r := new(Renderer)
+	defer free(r)
+	textures_init(r)
+	defer textures_destroy(r)
+	append(&r.textures.textures, rhi.Texture(1))
+	append(&r.textures.sizes, [2]int{1024, 512})
+	r.textures.count = 1
+	testing.expect_value(t, sky_map(r, 1, false), Vec4{f32(texture_entry(0)), 0, 10, 1})
+}
+
 // The textures that need more levels go first, the farthest from their target
 // first, unless the pool is past its room; those being read are left out.
 @(test)
@@ -204,4 +217,132 @@ the_detail_camera_sees_the_textures_of_the_views_of_the_window :: proc(t: ^testi
 		testing.expectf(t, seen[0].position == (game.position if on else editor.position), "the window sees from the game camera: %v", on)
 		testing.expect(t, seen[1].position == editor.position, "a view into a texture sees from its own")
 	}
+	// An offscreen frame leaves what the window sees unless it asks for its textures to stream.
+	textures_views_record(r, {camera = editor, views = views[:1]})
+	textures_views_record(r, {camera = game, offscreen = true, views = {{camera = game, rect = {0, 0, 64, 64}, texture = 1}}})
+	testing.expect(t, r.textures.residency.views[0].position == editor.position, "a preview does not move what textures are seen from")
+	textures_views_record(r, {camera = game, offscreen = true, streamed = true, views = {{camera = game, rect = {0, 0, 64, 64}, texture = 1}}})
+	testing.expect(t, r.textures.residency.view_count == 1 && r.textures.residency.views[0].position == game.position, "a capture that waits for its textures is seen from its camera")
+}
+
+// An instance that moves asks its textures again alone, without the scene
+// being estimated again: nearer, they take the finer level at once; farther,
+// the estimate is marked only when a texture was at the level that instance
+// asked and it went TEXTURE_FAR_STEP past it, or shows it no more. A level is
+// never coarser than the estimate of the scene would give.
+@(test)
+a_touched_instance_asks_its_textures_again_without_estimating_the_scene :: proc(t: ^testing.T) {
+	r := new(Renderer)
+	defer free(r)
+	r.allocator = context.allocator
+	// No row has a program: the catalog is not read.
+	r.programs.loaded = true
+	scene_init(r)
+	defer scene_destroy(r)
+	textures_init(r)
+	defer textures_destroy(r)
+	vertices, indices := edit_grid(1, 2)
+	defer {delete(vertices);delete(indices)}
+	mesh, _ := edit_add(r, vertices[:], indices[:], {0, 0})
+	materials_set(r, {DEFAULT_MATERIAL, DEFAULT_MATERIAL})
+	s := &r.scene
+	s.meshes[mesh].uv_density = {}
+	for row in 1 ..= 2 {
+		s.materials[row].textures[.Base_Color] = texture_entry(row - 1)
+		s.materials[row].map_transforms[.Base_Color].linear = {1, 0, 0, 1}
+	}
+	at :: proc(x: f32) -> Mat4 {m := Mat4(1);m[0, 3] = x;return m}
+	descs := [3]Instance_Desc{
+		{object_id = 1, mesh = mesh, material = 1, transform = at(10), tint = {1, 1, 1}},
+		{object_id = 2, mesh = mesh, material = 1, transform = at(20), tint = {1, 1, 1}},
+		{object_id = 3, mesh = mesh, material = 2, transform = at(40), tint = {1, 1, 1}},
+	}
+	testing.expect(t, scene_set(r, descs[:], nil, {}, {}))
+	state := &r.textures.residency
+	resize(&state.streams, 2)
+	r.textures.count = 2
+	for &stream in state.streams {stream = square_stream(1024, 0, 0)}
+	state.seen_views[0], state.seen_count = {position = {0, 0, 0}, scale = math.log2(f32(1000))}, 1
+	// The level a texture of 1024 is asked from `distance` metres to the box, two across.
+	lod :: proc(distance: f32) -> f32 {return math.log2(distance / 1000) + 10}
+	estimate :: proc(r: ^Renderer) {
+		state := &r.textures.residency
+		resize(&state.seen_near, len(r.scene.instances))
+		textures_estimate(state.streams[:], &r.scene, nil, state.seen_views[:state.seen_count], state.seen_near[:])
+		// As after the frame that sent the scene.
+		state.stale, state.retarget, r.scene.instances_dirty, r.scene.materials_dirty = false, false, false, false
+	}
+	// What the frame does with the touched instances: it looks at their textures, sends them and settles them.
+	frame :: proc(r: ^Renderer) {
+		textures_touched(r)
+		touched_settle(&r.scene)
+		touched_settle(&r.scene)
+	}
+	// The estimate of the scene as it is, which the levels are never coarser than.
+	never_coarser :: proc(t: ^testing.T, r: ^Renderer, loc := #caller_location) {
+		state := &r.textures.residency
+		whole: [2]Texture_Stream
+		copy(whole[:], state.streams[:])
+		textures_estimate(whole[:], &r.scene, nil, state.seen_views[:state.seen_count])
+		for stream, i in state.streams {
+			testing.expectf(t, stream.shown == whole[i].shown && stream.lod <= whole[i].lod && stream.lod >= whole[i].lod - TEXTURE_FAR_STEP, "texture %d: lod %v, the scene asks %v", i, stream.lod, whole[i].lod, loc = loc)
+		}
+	}
+	estimate(r)
+	streams := state.streams[:]
+	testing.expectf(t, abs(streams[0].lod - lod(9)) < 1e-3 && abs(streams[1].lod - lod(39)) < 1e-3, "%v %v", streams[0].lod, streams[1].lod)
+
+	// One that is not the nearest to show its texture comes nearer, and farther: nothing to do.
+	testing.expect(t, scene_move(r, {1}, {at(15)}))
+	frame(r)
+	testing.expect(t, !state.stale && !state.retarget && abs(streams[0].lod - lod(9)) < 1e-3)
+	testing.expect(t, scene_move(r, {1}, {at(30)}))
+	frame(r)
+	testing.expect(t, !state.stale && !state.retarget, "what another shows nearer keeps its level")
+	never_coarser(t, r)
+	// It comes the nearest: its texture takes the finer level at once.
+	testing.expect(t, scene_move(r, {1}, {at(5)}))
+	frame(r)
+	testing.expect(t, !state.stale && state.retarget, "a finer level is asked without an estimate")
+	testing.expectf(t, abs(streams[0].lod - lod(4)) < 1e-3, "%v", streams[0].lod)
+	never_coarser(t, r)
+	state.retarget = false
+	// A tint, and a step away shorter than TEXTURE_FAR_STEP, ask for nothing.
+	testing.expect(t, scene_tint(r, {0, 1}, {{1, 0, 0}, {0, 1, 0}}, {{}, {}}))
+	testing.expect(t, scene_move(r, {1}, {at(5.5)}))
+	frame(r)
+	testing.expect(t, !state.stale && !state.retarget)
+	never_coarser(t, r)
+	// The one that gave the level goes past the step: the scene is estimated again.
+	testing.expect(t, scene_move(r, {1}, {at(8)}))
+	frame(r)
+	testing.expect(t, state.stale, "the nearest to show a texture went away")
+	estimate(r)
+	testing.expectf(t, abs(streams[0].lod - lod(7)) < 1e-3, "%v", streams[0].lod)
+
+	// The only one to show a texture is hidden: its texture is shown no more.
+	hidden := descs[2]
+	hidden.hidden = true
+	testing.expect(t, scene_update(r, 2, {hidden}))
+	frame(r)
+	testing.expect(t, state.stale, "what showed a texture alone shows it no more")
+	estimate(r)
+	testing.expect(t, !streams[1].shown)
+	// Shown again, it gives its texture its level alone.
+	testing.expect(t, scene_update(r, 2, {descs[2]}))
+	frame(r)
+	testing.expect(t, !state.stale && state.retarget && streams[1].shown)
+	never_coarser(t, r)
+	state.retarget = false
+	// One that shows other materials shows other textures.
+	other := descs[0]
+	other.material = 2
+	testing.expect(t, scene_update(r, 0, {other}))
+	frame(r)
+	testing.expect(t, state.stale, "another material")
+	estimate(r)
+	// The whole table, as a set gives it, is estimated.
+	testing.expect(t, scene_set(r, descs[:], nil, {}, {}))
+	frame(r)
+	testing.expect(t, state.stale)
 }

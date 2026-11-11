@@ -13,7 +13,6 @@ import "mirai:std/serial"
 // this package does not import (host/content.odin checks that they match).
 
 PROMPTS_VERSION :: 1
-PROMPTS_OLDEST :: PROMPTS_VERSION
 PROMPT_FAMILIES :: 4 // len(ui.Prompt_Family)
 PROMPT_INPUTS :: 26  // len(ui.Prompt_Input)
 PROMPT_INPUT_KEY :: 0 // ui.Prompt_Input.Key: the input that names a key
@@ -65,7 +64,7 @@ prompts_save :: proc(path:string,types:^Types,desc:Prompts_Desc,allocator:=conte
 }
 
 prompts_view :: proc(a:^Asset,types:^Types) -> (view:Prompts_View,error:Error) {
-    kind_check(a,KIND_PROMPTS,PROMPTS_OLDEST,PROMPTS_VERSION) or_return
+    kind_check(a,KIND_PROMPTS,PROMPTS_VERSION) or_return
     view.images=table_rows(a,types,"prompts",Prompt_Image) or_return
     view.source=import_info(a,types) or_return
     if !prompts_check(view) {return {},.Corrupt}

@@ -104,12 +104,18 @@ ai_connections_back :: proc(s:^Session,label:string="Back") -> bool {
     return ui.button(ctx,ui.id(ctx,"back"),{label=label,style=.Field,width=84,height=32,center=true}).clicked
 }
 
+// The mark of an agent without its color.
+@(private)
+ai_connection_mark :: proc(agent:Ai_Agent) -> ui.Icon {
+    icons:=[Ai_Agent]ui.Icon{.Codex=ui.icon_user(u8(User_Icon.Component)),.Claude=.Sparkle,.Command=ui.icon_user(u8(User_Icon.Connection))}
+    return icons[agent]
+}
+
 @(private)
 ai_connections_logo :: proc(ctx:^ui.Context,agent:Ai_Agent,size:f32) {
     colors:=[Ai_Agent]ui.Color{.Codex={230,232,237,255},.Claude={211,159,123,255},.Command={150,158,171,255}}
-    icons:=[Ai_Agent]ui.Icon{.Codex=ui.icon_user(u8(User_Icon.Component)),.Claude=.Sparkle,.Command=ui.icon_user(u8(User_Icon.Connection))}
     if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(size),align_x=.Center,align_y=.Center,fill=colors[agent],radius=size*.25}) {
-        ui.icon(ctx,icons[agent],{31,26,28,255},size*.56)
+        ui.icon(ctx,ai_connection_mark(agent),{31,26,28,255},size*.56)
     }
 }
 
@@ -213,7 +219,7 @@ ai_connections_overview :: proc(s:^Session) {
         labels:=AI_CONNECTION_RUNTIME_LABELS
         runtimes:=[5]string{labels[.Automatic],labels[.Bun],labels[.Node],labels[.Pnpm],labels[.Bundled]}
         selected:=int(m.default_runtime)
-        if ui.dropdown(ctx,ui.id(ctx,"runtime"),runtimes[:],&selected,{width=186,height=30,disabled=state.busy}) {
+        if ui.dropdown(ctx,ui.id(ctx,"runtime"),{list=runtimes[:]},&selected,{width=186,height=30,disabled=state.busy}) {
             previous:=m.default_runtime;m.default_runtime=Ai_Runtime(selected);state.runtime=m.default_runtime
             if !ai_settings_save(s) {m.default_runtime=previous;ai_connections_error(s,"The connection settings could not be saved")}
         }

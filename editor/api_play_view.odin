@@ -22,9 +22,7 @@ import "mirai:std/serial"
 API_VIEW_POINTS :: 8
 
 Api_Play_View_Point :: struct {
-    entity:[16]u8 `mirai:"optional,text,label=An entity by its handle"`,
-    id:base.Entity_Id `mirai:"optional,label=An entity by its id in the scene"`,
-    name:[128]u8 `mirai:"optional,text,label=The first entity with this name in the order of play.inspect"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=An entity by its name or a path Parent/Child or its id or its handle"`,
     point:[3]f32 `mirai:"optional,label=A world point in place of an entity"`,
 }
 
@@ -37,7 +35,7 @@ Api_Play_View :: struct {
     tick:u64,
     seconds:f64 `mirai:"label=The time of the game"`,
     game_camera:bool `mirai:"label=The view is of a camera of the game; false: of the editor or the default one"`,
-    camera:[16]u8 `mirai:"text,label=The handle of the camera it is drawn from; empty without one"`,
+    camera:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the camera it is drawn from; empty without one"`,
     name:[64]u8 `mirai:"text,label=Of the camera"`,
     position:[3]f32 `mirai:"label=Of the eye in the world"`,
     rotation_deg:[3]f32 `mirai:"label=In the world in degrees"`,
@@ -58,13 +56,15 @@ Api_Play_View_Blend :: struct {
     seconds:f32 `mirai:"label=How long the blend takes; 0 when it does not blend"`,
 }
 Api_Play_View_Follow :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of what its Camera_Follow follows; empty when it follows nothing"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of what its Camera_Follow follows; empty when it follows nothing"`,
     name:[64]u8 `mirai:"text"`,
     distance:f32 `mirai:"label=Meters from the eye to the origin of that entity"`,
     pivot_distance:f32 `mirai:"label=Meters from the eye to the pivot the camera follows with and turns around"`,
+    yaw_deg:f32 `mirai:"label=The yaw it looks with now; 0 until it starts: for an Orbit where it stands around its pivot"`,
+    pitch_deg:f32 `mirai:"label=The pitch it looks with now; 0 until it starts: for an Orbit positive above the pivot looking down and for Eyes positive up"`,
 }
 Api_Play_View_Shown :: struct {
-    entity:[16]u8 `mirai:"text,label=The handle of the entity; empty for a world point"`,
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity; empty for a world point"`,
     name:[64]u8 `mirai:"text"`,
     alive:bool `mirai:"label=A world point or an entity that is there; one that is gone is not on the screen"`,
     world:[3]f32 `mirai:"label=The point it projects: of an entity its middle (the center of mass of a body or the middle of what hangs from it)"`,
@@ -88,7 +88,7 @@ Play_View :: struct {
     size:[2]f32,
     mode,preset:string,
     blend:struct {active:bool,progress,weight,seconds:f32},
-    follow:struct {entity,name:string,distance,pivot_distance:f32},
+    follow:struct {entity,name:string,distance,pivot_distance,yaw_deg,pitch_deg:f32},
     points:[]Play_View_Shown,
 }
 @(private)
@@ -117,7 +117,7 @@ play_view_api_register :: proc(s:^Session,st:^Api_State) {
 
 @(private)
 handle_text :: proc(e:core.Entity,allocator:=context.temp_allocator) -> string {
-    return e==core.NONE?"":fmt.aprintf("%016x",u64(e),allocator=allocator)
+    return e==core.NONE?"":api_handle_text(e,allocator)
 }
 
 // The view of w with where targets show, as JSON; problem when the game has no view.
@@ -154,7 +154,10 @@ play_view_json :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=co
                 v.follow.entity,v.follow.name=handle_text(target,allocator),entity_name(w,target)
                 v.follow.distance=linalg.length(entity_world(w,target).position-seen.position)
             }
-            if follow.state.ready {v.follow.pivot_distance=linalg.length(follow.state.pivot.position-seen.position)}
+            if follow.state.ready {
+                v.follow.pivot_distance=linalg.length(follow.state.pivot.position-seen.position)
+                v.follow.yaw_deg,v.follow.pitch_deg=follow.looking.x*mm.DEG_PER_RAD,follow.looking.y*mm.DEG_PER_RAD
+            }
         }
     }
     if views:=core.world_storage_of(w,ecamera.Camera_Views);views!=nil {
@@ -198,25 +201,17 @@ api_view_targets :: proc(w:core.World_Ref,points:[]Api_Play_View_Point,raw:strin
         p:=&points[i]
         values:[1]string
         api.object_values(allocator,items[i],{"point"},values[:])
-        handle,name:=base.text_get(p.entity[:]),base.text_get(p.name[:])
-        named:=int(handle!="")+int(p.id!=0)+int(name!="")
+        entity:=base.text_get(p.entity[:])
         switch {
-        case named+int(values[0]!="")!=1:
-            return nil,fmt.tprintf("points[%d]: name one entity (by entity, id or name) or give a world point",i)
+        case int(entity!="")+int(values[0]!="")!=1:
+            return nil,fmt.tprintf("points[%d]: give entity or a world point",i)
         case values[0]!="":
             if !rpc_finite(p.point.x) || !rpc_finite(p.point.y) || !rpc_finite(p.point.z) {return nil,fmt.tprintf("points[%d].point takes three finite numbers",i)}
             target.point=p.point
-        case name!="":
-            target.named=true
-            for e in api_entities_ordered(w,allocator) {
-                if entity_name(w,e)==name {target.entity=e;break}
-            }
-            if target.entity==core.NONE {return nil,fmt.tprintf("points[%d]: %q names no entity of the game; play.inspect lists them",i,name)}
         case:
             target.named=true
-            e,wrong:=api_play_entity(w,handle,p.id)
-            if wrong!="" {return nil,fmt.tprintf("points[%d]: %s",i,wrong)}
-            target.entity=e
+            wrong:string
+            if target.entity,wrong=api_entity_select(w,entity,fmt.tprintf("points[%d]",i),true,allocator);wrong!="" {return nil,wrong}
         }
     }
     return targets,""
@@ -226,7 +221,7 @@ api_view_targets :: proc(w:core.World_Ref,points:[]Api_Play_View_Point,raw:strin
 api_play_view :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_View_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     w:=run_ref(s,r)
     values:[1]string
     api.object_values(call.allocator,call.raw,{"points"},values[:])

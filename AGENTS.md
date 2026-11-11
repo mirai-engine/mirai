@@ -73,7 +73,8 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
   says. The final message lists what was left unverified or approximate.
 - **If what is missing is structural** (another technique, a new system), stop and ask.
 - **No new pending items.** What was requested is finished in the task; what could not be finished
-  or a defect elsewhere is stated in the final report, not written to a pending file.
+  or a defect elsewhere is stated in the final report, not written to a pending file. A `PLAN_*.md`
+  of work in progress is not a file of pending items.
 
 ## Less code, simpler and faster
 
@@ -84,7 +85,8 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **Performance.** If the task seeks performance or adds measurable work per frame or tick, measure
   once, when it is finished, with `mirai bench compare --base main`
   ([profiling](.agents/skills/mirai-agent-api/references/methods.md#profiling)): it alternates
-  `--release` pairs, without validation, VSync or frame limit, and writes the table. Never after
+  pairs of both builds, built alike at `--dev`, without validation, VSync or frame limit, and
+  writes the table. Never after
   each step nor with homemade pair scripts. A change that does not move the cost (UI, tools) needs
   no base: `profile.capture` in the open session is enough. If other tasks are compiling or
   testing, CPU time per phase counts; wall clock and frame time are measured in the unloaded window
@@ -112,23 +114,24 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **No decision records.** Docs do not record rejected alternatives, past measurements or what was
   tried: skills and code say how things work. A rule the user decided is one line in the
   invariants of the owning skill.
+- `docs/game` is the documentation for writing games, owned by the engine and served by `mirai docs`
+  and the MCP tool `docs`, so projects keep no copy; `mirai-*` skills may link to it, it never links
+  out.
 - `docs/`: [architecture](docs/ARCHITECTURE.md),
-  [dependency workarounds and defects](docs/ODIN_WORKAROUNDS.md) and the `PLAN_*.md` of work in
-  progress. Third-party code and assets that ship with the engine are listed in
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+  [dependency workarounds and defects](docs/ODIN_WORKAROUNDS.md), `game/` (above) and the
+  `PLAN_*.md` of work in progress. Third-party code and assets that ship with the engine are listed
+  in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - Contracts are checked against the code: `engine.describe` reports the methods and schemas of an
   open build and `mirai asset` inspects binary assets.
 
 ## Common commands
 
-Commands are written in bash (Git Bash on Windows); from the `mirai` root it is `./mirai`, and in
-PowerShell `mirai.cmd` hands it to Git Bash. The compiler, Slang and the tools come from `.deps`.
-The command table, the flow of a session and how to hand a command to the user:
+The shell, the command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
 - An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
-  is `--dev` by itself. **`--release` only when the task cannot do without it or the user asks for
-  it**: figures of the CPU (`mirai bench compare`, a benchmark test) or a budget in absolute numbers.
+  and `bench compare` are `--dev` by themselves: two builds of the same mode compare. **`--release`
+  only when the task cannot do without it or the user asks for it**: a budget in absolute numbers.
   If the user's editor holds the `--dev` build of the checkout, work in a worktree.
 - Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
   `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the
@@ -148,7 +151,7 @@ Verify in steps and stop at the first one that is enough for what changed:
    real call per touched method or flow, in a session.
 4. If the change is visible: a capture without validation errors compared with its reference. For
    rendering or importing, `mirai capture` from the reference camera with `--reference` and an SSIM
-   threshold; for editor UI, `editor.capture` with the UI. At most two capture iterations of your
+   threshold; for editor UI, `capture` with `ui`. At most two capture iterations of your
    own before showing the user the image and the doubt; in a visual review with the user, each
    round is shown to them. Crops, zoom and pixels with `mirai image`, not with scripts. Looking at
    how something looks does not require removing the frame limit or VSync.
@@ -162,22 +165,8 @@ Verify in steps and stop at the first one that is enough for what changed:
 | `render`, `shaders` or `rhi` | 1 to 4, with the GPU tests with validation; the render check, below |
 | A merge without code conflicts | `mirai check` of the packages it brings; no captures unless it touches `render/`, `shaders/` or assets |
 
-**Render check.** A global change of the image or its cost (GI, light, shadows, TAA, exposure,
-tonemap, demo materials, a pass that runs in every scene) is accepted only with
-`mirai render check demo`, once at the end, with no regressions against `main`
-([render check](.agents/skills/mirai-rendering/references/verification.md#render-check)).
-Which one depends on what the GPU receives and does:
-
-- **Nothing the GPU receives changes**: how assets are stored, compressed or loaded when they
-  decode to the same data, tools, editor UI. No render check; the captures of step 4 if the image
-  could differ.
-- **Only the image changes**: a constant, a value of a scene, an asset of the same size and
-  format, an encoding setting such as the RDO lambda. `--quality`, which measures no cost.
-- **The work can change**: a pass, a resource, a shader that does more or less work, a texture
-  format or resolution. The full one, which measures cost: only on a machine with no other load.
-  With a game or another GPU job running its times are not valid, so it waits for the machine.
-
-While working, `--views` and `--quality`.
+**Render check.** When a change needs it and which one, once at the end:
+[render check](.agents/skills/mirai-rendering/references/verification.md#render-check).
 
 The table is a guide: the agent decides how far to go according to the size of the change, and its
 report says what ran and what it left for integration. Full suites, reference captures of all
@@ -189,15 +178,16 @@ load.
 - **Only the tests of what was touched.** Each run resolves a new doubt or verifies a change. While
   iterating, `mirai test <package> <test...>` of what changed, or `--failed`; the whole touched
   package, once at the end. No suites of other areas nor GPU tests if `render`, `shaders`, `rhi` or
-  the GPU part of the area was not touched. A run that passed is not repeated without a code change
-  in between. What fails in another area is not investigated in the task: it is reported.
+  the GPU part of the area was not touched (`mirai test <package> --no-gpu`). A run that passed is
+  not repeated without a code change in between. What fails in another area is not investigated in
+  the task: it is reported.
 - **Iterate on what is visible in seconds.** Before touching a shader or a material, confirm in the
   scene what draws what is seen (`scene.inspect` of the entity, its material and its program).
   While iterating, a single `--dev` session open on that scene: a material program is changed with
   `material.program.edit`, another shader of the project or of a plugin with
   `mirai shaders --project P`, which asks the open editor for it; both publish first what the
   viewport draws. An engine shader (`shaders/`) needs `mirai build editor` and restarting the
-  session. Then `editor.capture` or `mirai capture` and `mirai image`. No `render check` or
+  session. Then `capture` or `mirai capture` and `mirai image`. No `render check` or
   `--release` builds per round: the check runs once at the end and only if the change is global; a
   quality one does not measure cost.
 - **New tests.** Before adding one, look for the one that already covers that behavior and extend

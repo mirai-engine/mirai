@@ -36,10 +36,6 @@ RAY_CUT_STEP :: f32(1)
 // starts to serve is not built and let go over and over.
 RAY_CUT_KEEP :: u64(600)
 
-// The offset of the origin of a ray from a surface the eye sees at distance
-// (view_bias of lighting.slang).
-ray_view_bias :: proc "contextless" (distance: f32) -> f32 {return 0.01 + 0.0015 * distance}
-
 // The spacing of the cascade of probes that holds a point at distance from
 // the eye: each holds probe_grid / 2 of its spacings around the eye, and the
 // next doubles it.
@@ -107,7 +103,7 @@ ray_cuts_update :: proc(r: ^Renderer, eye: Vec3) {
 		if cut == inst.meta.x >> INSTANCE_RAY_SHIFT {continue}
 		inst.meta.x = mesh | cut << INSTANCE_RAY_SHIFT
 		if abs(m.rays[cut].error - m.rays[was].error) * scale > probe_spacing_at(r.settings, distance) * 0.5 {scene_changed_box(s, low, high)}
-		if len(s.touched) < cap(s.touched) {append(&s.touched, u32(index))} else {s.instances_dirty = true}
+		instance_touch(s, u32(index))
 		s.tlas_dirty = true
 	}
 	if !r.hardware_rt {return}

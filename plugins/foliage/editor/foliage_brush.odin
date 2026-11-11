@@ -73,7 +73,7 @@ instances_near :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,types:[]u3
     for z in low.y..=high.y {for x in low.x..=high.x {
         cell:=foliage.source_cell(s,{x,z})
         if cell==nil {continue}
-        foliage.cell_build(s,cell,ground_of(ground,cell.coord),work)
+        if !foliage.cell_build(s,cell,ground_of(ground,cell.coord),work) {continue}
         for p in work.placed {if slice.contains(types,p.type) && in_brush(p.position,center,radius) {append(out,Near{p.type,p.position})}}
     }}
 }
@@ -114,23 +114,9 @@ disc_point :: proc "contextless" (center,normal:[3]f32,radius:f32,random:^mm.Rng
 }
 
 
-// The cells whose square meets the disc of a brush, in x and z.
-cells_under :: proc(center:[3]f32,radius:f32,out:^[dynamic][2]i32) {
-    low,high:=cells_around(center,radius)
-    for z in low.y..=high.y {for x in low.x..=high.x {
-        corner:=foliage.cell_corner({x,z})
-        nearest:=[2]f32{clamp(center.x,corner.x,corner.x+foliage.CELL_SIZE),clamp(center.z,corner.z,corner.z+foliage.CELL_SIZE)}
-        d:=nearest-center.xz
-        if d.x*d.x+d.y*d.y<=radius*radius {append(out,[2]i32{x,z})}
-    }}
-}
-
 // Turns the generator on or off in the cells under a brush. True when one changed.
 generate_touch :: proc(s:^foliage.Source,center:[3]f32,radius:f32,on:bool) -> (changed:bool) {
-    cells:=make([dynamic][2]i32,context.temp_allocator)
-    cells_under(center,radius,&cells)
-    for coord in cells {changed|=foliage.source_cell_generate(s,coord,on)}
-    return
+    return foliage.source_generate_area(s,center,radius,on)
 }
 
 // An instance a selection names: its cell and its id (foliage.Placed.id).
@@ -145,8 +131,7 @@ Instance_Ref :: struct {
 instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[2]i32,type:u32,k:int,work:^foliage.Build_Work,role:=foliage.ROLE_MESH,owner:=mm.Quat(1)) -> (ref:Instance_Ref,placed:foliage.Placed,found:bool) {
     cell:=foliage.source_cell(s,coord)
     if cell==nil {return}
-    foliage.cell_build(s,cell,ground_of(ground,coord),work)
-    foliage.placed_group(s,work)
+    if !foliage.cell_build(s,cell,ground_of(ground,coord),work) || !foliage.placed_group(s,work) {return}
     t,index:=foliage.source_type(s,type)
     if index<0 {return}
     order:=work.order[work.firsts[index]:work.firsts[index+1]]
@@ -161,7 +146,7 @@ instance_of_batch :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,coord:[
 instance_placed :: proc(s:^foliage.Source,ground:^foliage.Ground_Owner,ref:Instance_Ref,work:^foliage.Build_Work) -> (placed:foliage.Placed,found:bool) {
     cell:=foliage.source_cell(s,ref.coord)
     if cell==nil {return}
-    foliage.cell_build(s,cell,ground_of(ground,ref.coord),work)
+    if !foliage.cell_build(s,cell,ground_of(ground,ref.coord),work) {return}
     for p in work.placed {if p.id==ref.id {return p,true}}
     return
 }

@@ -5,65 +5,54 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private="file") Panel_Test_Exposure :: struct {compensation:f32 `mirai:"unit=EV"`,auto:bool}
 @(private="file") Panel_Test_Look :: struct {sky:[3]f32 `mirai:"color"`,tint:[3]f32 `mirai:"color"`,group:i32,exposure:Panel_Test_Exposure,secret:f32 `mirai:"hidden"`}
-@(private="file") Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
-@(private="file") Panel_Test_World :: struct {entities:core.Entities,ids:core.Table(core.Id),looks:core.Table(Panel_Test_Look),quality:Panel_Test_Quality}
+@(private="file") @(storage,setting) Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
+@(private="file") Panel_Test_World :: struct {
+    using world:core.Test_World,
+    ids:core.Table(core.Id),
+    looks:core.Table(Panel_Test_Look) `mirai:"name=Look"`,
+    quality:Panel_Test_Quality `mirai:"name=Quality"`,
+}
 @(private="file") Panel_Test_Fixture :: struct {
     world:Panel_Test_World,
-    tables:[2]core.Table_Info,
-    storages:[1]core.Storage_Info,
-    info:core.World_Info,
-    edits:Edits,
-    selection:Selection,
+    edits:history.Edits,
+    selection:history.Selection,
     session:Session,
     panels:Project_Panels,
     entities:[3]core.Entity, // ids 0x10, 0x20 and 0x30, of groups 1, 2 and 1
 }
 
 @(private="file")
-panel_test_settle :: proc(data,shared,editor:rawptr) {
-    w:=(^Panel_Test_World)(data)
-    core.table_settle(&w.ids,&w.entities)
-    core.table_settle(&w.looks,&w.entities)
-    core.entities_settle(&w.entities)
+panel_test_types :: proc(types:^[dynamic]core.Test_Type) {
+    append(types,core.test_type(Panel_Test_Quality,default=proc(dst:^Panel_Test_Quality) {dst^={level=1}}))
 }
 
 @(private="file")
-panel_test_init :: proc(f:^Panel_Test_Fixture) {
-    core.entities_init(&f.world.entities)
-    core.table_init(&f.world.ids,"Id")
-    core.table_init(&f.world.looks,"Look")
-    f.tables={
-        {name="Id",type=core.Id,info=type_info_of(core.Id),offset=offset_of(Panel_Test_World,ids)},
-        {name="Look",type=Panel_Test_Look,info=type_info_of(Panel_Test_Look),offset=offset_of(Panel_Test_World,looks)},
-    }
-    f.storages={
-        {name="Quality",type=Panel_Test_Quality,info=type_info_of(Panel_Test_Quality),offset=offset_of(Panel_Test_World,quality),setting=.Project,default=proc(dst:rawptr) {(^Panel_Test_Quality)(dst)^={level=1}}},
-    }
-    f.info={entities=offset_of(Panel_Test_World,entities),tables=f.tables[:],storages=f.storages[:],settle=panel_test_settle}
+panel_test_init :: proc(t:^testing.T,f:^Panel_Test_Fixture) -> bool {
+    if !core.test_world_init(t,&f.world,panel_test_types) {return false}
     for &e,i in f.entities {
         e=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(0x10*(i+1))})
         core.add(&f.world.looks,e,{sky={1,1,1},group=i==1?2:1})
     }
-    f.world.quality={level=1}
-    panel_test_settle(&f.world,nil,nil)
-    f.session=Session{info=&f.info,edit_world=&f.world,edits=&f.edits,selection=&f.selection,panels=&f.panels}
-    edits_reset(&f.edits,edited_world(&f.session))
+    core.test_world_settle(&f.world)
+    f.session=Session{info=core.test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,panels=&f.panels}
+    history.edits_reset(&f.edits,edited_world(&f.session))
+    return true
 }
 
 @(private="file")
 panel_test_free :: proc(f:^Panel_Test_Fixture) {
-    edits_free(&f.edits)
+    history.edits_free(&f.edits)
     panels_free(&f.panels)
     delete(f.selection.entities)
-    core.table_destroy(&f.world.ids);core.table_destroy(&f.world.looks)
-    core.entities_destroy(&f.world.entities)
+    core.test_world_destroy(&f.world)
 }
 
 @(private="file")
@@ -158,7 +147,8 @@ panels_answer_with_the_shape_they_declare :: proc(t:^testing.T) {
 @(test)
 panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
     f:Panel_Test_Fixture
-    panel_test_init(&f);defer panel_test_free(&f)
+    if !panel_test_init(t,&f) {return}
+    defer panel_test_free(&f)
     s:=&f.session
     w:=edited_world(s)
     rows:=[?]struct{row,says:string}{
@@ -205,37 +195,37 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
     changed,problem:=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,3)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     testing.expect_value(t,tint(&f,f.entities[0]),[3]f32{1,0,0})
     testing.expect_value(t,tint(&f,f.entities[1]),[3]f32{0,0,0})
     testing.expect_value(t,tint(&f,f.entities[2]),[3]f32{1,0,0})
     testing.expect_value(t,f.world.quality.level,i32(3))
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,tint(&f,f.entities[0]),[3]f32{0,0,0})
     testing.expect_value(t,tint(&f,f.entities[2]),[3]f32{0,0,0})
-    testing.expect(t,!undo(&f.edits,w,&f.selection),"a press is one step")
+    testing.expect(t,!history.undo(&f.edits,w,&f.selection),"a press is one step")
 
     changed,problem=panel_press(s,p,1)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,4)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
     testing.expect_value(t,core.get(&f.world.looks,f.entities[0]).exposure.compensation,f32(0))
     for e in f.entities {testing.expect_value(t,core.get(&f.world.looks,e).sky,[3]f32{0.5,0.25,0.1})}
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(0))
-    testing.expect(t,redo(&f.edits,w,&f.selection))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
 
     // A where finds the entities when the button is pressed.
     late:=core.create(&f.world.entities)
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{group=1})
-    panel_test_settle(&f.world,nil,nil)
-    edits_flush(&f.edits,w,&f.selection)
+    core.test_world_settle(&f.world)
+    history.edits_flush(&f.edits,w,&f.selection)
     _,problem=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     testing.expect_value(t,tint(&f,late),[3]f32{1,0,0})
 
     // A where no entity matches changes nothing; a value that fails leaves
@@ -256,9 +246,10 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
 @(test)
 panels_are_kept_in_the_project_and_deleted_with_their_file :: proc(t:^testing.T) {
     f:Panel_Test_Fixture
-    panel_test_init(&f);defer panel_test_free(&f)
-    folder,_:=os.make_directory_temp("","mirai-editor-panels",context.temp_allocator)
-    defer os.remove_all(folder)
+    if !panel_test_init(t,&f) {return}
+    defer panel_test_free(&f)
+    folder:=base.test_folder(t,"editor-panels")
+    if folder=="" {return}
     s:=&f.session
     s.project_root=project.path(folder,"game",allocator=context.temp_allocator)
     panels:Project_Panels;defer panels_free(&panels)
@@ -292,23 +283,24 @@ panels_are_kept_in_the_project_and_deleted_with_their_file :: proc(t:^testing.T)
 @(test)
 panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     f:Panel_Test_Fixture
-    panel_test_init(&f);defer panel_test_free(&f)
+    if !panel_test_init(t,&f) {return}
+    defer panel_test_free(&f)
     s:=&f.session
     w:=edited_world(s)
     p,_:=panel_test_parse(t,PANEL_TEST_TEXT)
     base.text_set(p.id[:],"lab")
     _,problem:=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     late:=core.create(&f.world.entities)
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{tint={0,1,0},group=1})
-    panel_test_settle(&f.world,nil,nil)
-    edits_flush(&f.edits,w,&f.selection)
+    core.test_world_settle(&f.world)
+    history.edits_flush(&f.edits,w,&f.selection)
     for button in 0..<2 {
         _,problem=panel_press(s,p,button)
         testing.expect_value(t,problem,"")
-        edits_flush(&f.edits,w,&f.selection)
+        history.edits_flush(&f.edits,w,&f.selection)
     }
     testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
     testing.expect(t,panel_kept_count(&f.panels,p)>0)
@@ -316,7 +308,7 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     restored,message:=panel_restore(s,p)
     testing.expect_value(t,message,"")
     testing.expect_value(t,restored,panel_test_kept)
-    edits_flush(&f.edits,w,&f.selection)
+    history.edits_flush(&f.edits,w,&f.selection)
     for e in f.entities {
         look:=core.get(&f.world.looks,e)^
         testing.expect_value(t,look.tint,[3]f32{0,0,0})
@@ -326,7 +318,7 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{0,1,0})
     testing.expect_value(t,f.world.quality.level,i32(1))
     testing.expect_value(t,panel_kept_count(&f.panels,p),0)
-    testing.expect(t,undo(&f.edits,w,&f.selection))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
     testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
     testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
 }

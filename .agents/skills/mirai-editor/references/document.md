@@ -1,20 +1,20 @@
 # Document, edits and selection
 
 Code: `document.odin`, `documents.odin`, `documents_restore.odin`, `asset_documents.odin`,
-`edits.odin`, `edits_transaction.odin`, `edits_selection.odin`, `journal.odin`, `edits_files.odin`,
-`selection.odin` and `world.odin`.
+`edits.odin`, `edits_files.odin`, `history.odin`, `selection.odin` and `world.odin`; the journal,
+the steps and the selection are the package `editor/history`, which knows nothing of the session.
 
 ## Document and scenes
 
 `Document` is the open scene: `path`, relative to `assets/` if inside it, and `file`, absolute (one
 never saved has an empty `path` and is "Untitled"). `previous`, the `asset.Scene` it was read with,
-keeps what the `World` does not store: order of the roots, library tables the project does not
-have and prefab records.
+keeps what the `World` does not store: order of the roots and library tables the project does not
+have.
 
 - `path`: relative to `assets/` if inside it; `file`: absolute. A scene never saved has an empty
   `path` and is called "Untitled".
 - `previous`: the `asset.Scene` it was read with; it keeps what the `World` does not store (order
-  of the roots, library tables the project does not have, prefab records).
+  of the roots, library tables the project does not have).
 - The asset id and the history state it was saved at.
 
 Procedures:
@@ -49,8 +49,8 @@ Procedures:
 ### Tabs
 
 - Tabs share the window and the UI context. Each `Document_Tab` keeps world, document, history,
-  selection, camera, inspector, hierarchy, prefab state and the AI chat draft and context
-  ([chats](ai-tasks.md)).
+  selection, camera, inspector, hierarchy and prefab state. The AI chat is one per project, not
+  per tab ([chats](ai-tasks.md)).
 - The generated storages contain only those of the active document; the swap happens between
   frames. Changing document stops the Play.
 - Save and undo act on the front tab: each scene or prefab has its `Edits`, with its selection
@@ -221,28 +221,33 @@ Recovery copy (`recovery_update`), the periodic autosave:
 - It does not touch the original file, the selection, the history or the saved state. The
   `editor_recovery` table keeps the original path; the copy keeps the authoring, not the Play or
   Simulate state, the history or external files.
-- Unsaved assets are copied to `.mirai/recovery-assets/` shortly after changing
-  (`assets_unsaved_store`, with a manifest), never to the project folders; the copy is deleted when
-  none remain and on a normal close.
+- Unsaved assets are copied to `.mirai/recovery-assets-<n>/` shortly after changing
+  (`assets_unsaved_store`, with a manifest), never to the project folders, under a number of the
+  editor after every one it found; the copy is deleted when none remain and on a normal close.
 - A tab that goes to the back (`recovery_park`) leaves its steps in the log and on disk and, if its
   log does not follow a base that a startup finds, a copy; in the background it writes nothing as
   long as it does not change. It returns to the front with the same chain.
 
-On opening the project with a pending copy the editor offers **Recover** and **Discard**
-(`editor.recover` by API):
+On opening the project with a pending copy the editor offers **Recover**, **Later** and **Discard**
+(`editor.recover` by API). What is offered stays aside, in its own slots and asset folders, until
+the user decides: this editor loads, edits, saves and plays under other numbers and writes none of
+it, and without an answer the next startup offers it again:
 
 - Recover returns the unsaved assets to memory and, for each chain it found, loads the copy (or,
   without a copy, the saved file that the log follows) with its original path, marked as modified
   (without a path, Untitled), and replays the steps of the log on top the way those of another
   editor are applied: the journal takes them without an undo step (`recovery_log_replay`). The
   scene goes to the scene's tab; a prefab, or another scene, to a new tab. Save uses the original
-  destination. There can be only assets. The load prepares a temporary world and replaces the open
-  one only if the scene can be instantiated; a chain that does not open stays for the next
-  startup. What was recovered stays in the same chain until a new copy has it.
+  destination. A tab with changes made meanwhile stays and the document opens beside it; an asset
+  this editor also has unsaved makes Recover fail with its name until it is saved or discarded.
+  There can be only assets. The load prepares a temporary world and replaces the open one only if
+  the scene can be instantiated; a chain that does not open stays offered, with the reason. What
+  was recovered stays in the same chain until a new copy has it.
 - An editor that ended because of its GPU left all its tabs (`recovery-tabs/`, with
   `documents_save_restart`): Recover opens them like a restart, with their unsaved assets.
-- Discard deletes copies, logs, tabs and saved assets; closing without resolving the notice keeps
-  them. A session's chains are deleted by its normal close and, that of each document, by saving it
+- Discard deletes what is offered and leaves the chains of this editor; closing without resolving
+  the notice keeps it. A session's chains are deleted by its normal close and, that of each
+  document, by saving it
   or undoing until it is clean. The internal restart uses its own snapshot and shows no notice.
 
 Native failures:
@@ -259,8 +264,8 @@ Native failures:
 
 ## Edits and undo
 
-`Edits` is the edited world's journal (`journal.odin`) and keeps rows, not operations with an
-inverse:
+`Edits` is the edited world's journal (`history/journal.odin`) and keeps rows, not operations
+with an inverse:
 
 - **Image.** What the world had the last time the journal took it: the rows of each table the
   scene stores (`type_saved`: some non-`transient` field, or none, like a tag), per entity and
@@ -282,13 +287,13 @@ inverse:
   its `transient` fields.
 - **Readers**, each with its cursor: undo and redo (`cursor` in `steps`), the
   [review of an AI turn](ai-review.md), the [observation of prefabs](prefabs.md) (`Edits.turns`,
-  `Edit_Step.turned`), [collaboration](collaboration.md#what-travels) (its place in `changes`) and
-  Watch (a `core.Seen` per table of the Play's world).
+  `Edit_Step.turned`) and [collaboration](collaboration.md#what-travels) (its place in `changes`,
+  which keep what each row held before the image took it while it reads).
 
 Procedures:
 
 - A gesture goes from `edits_begin(edits, selection, label)` to `edits_end`, and `edits_flush` (in
-  `editor_end`) records it at the end of the frame; `edits_once` is a step of its own.
+  `editor_end`) records it at the end of the frame.
   `edits_begin` returns `false` if it could not reserve the selection; opening another with one open
   keeps the first.
 - `edits_commit` records immediately, in two phases: `edits_prepare` computes the delta and makes
@@ -306,14 +311,14 @@ Procedures:
 - `edits_reset` forgets the history after replacing the world. `edits_sync_initial` makes the image
   take the initial values resolved from assets and rejects any existing history. `edits_state` is
   the stamp that the saved document compares; a step that left the in-order redo does not count.
-- `edit_open(s, label) -> (opened, ready)` and `edit_close(s, opened)` are the pattern of an edit
-  procedure: it opens a gesture only if there is none, prepares its cancellation and closes it only
-  if it opened it; whoever writes checks `ready`. With the Play in view, edits go to that world
-  without history.
+- `edit_open(s, label) -> (opened, ready)` and `edit_close(s, opened)` (`edits.odin`) are the
+  pattern of an edit procedure: it opens a gesture only if there is none, prepares its
+  cancellation and closes it only if it opened it; whoever writes checks `ready`. With the Play
+  in view, edits go to that world without history.
 
-**Project files** (`edits_files.odin`). A file that an edit writes or deletes (a `.mat`, the
-`.slang` source of a program, a `.particle`, an animation asset) is part of the step of its
-gesture, with the same mechanism for all:
+**Project files** (`edits_files.odin`; what a step keeps of a file, `history/files.odin`). A
+file that an edit writes or deletes (a `.mat`, the `.slang` source of a program, a `.particle`,
+an animation asset) is part of the step of its gesture, with the same mechanism for all:
 
 - `file_write(s, path, bytes, label, remove=false)` changes (or deletes) the file as an edit:
   inside the open gesture or in a step of its own. With an asset document in front and without an
@@ -370,7 +375,7 @@ Rules:
 - With a Play running, `edits_commit` does not record the edits of the Play's world.
 - The [cancelable previews](extensions.md#cancelable-previews) use `Edits.preview`:
   finishing a field or saving does not close the gesture; confirming leaves a step and cancelling
-  also restores the selection and the pending prefab records.
+  also restores the selection.
 
 ### Undo by author
 
@@ -379,7 +384,7 @@ edited afterwards, without overwriting what another wrote later.
 
 - **Author** (`Edit_Step.author`). `Edits.author` is that of what changes now: `EDIT_AUTHOR_USER`
   (0) in the editor; while an API method runs, the task id of its AI turn (`X-Mirai-Ai-Task`) or
-  `EDIT_AUTHOR_API`, and afterwards it returns to the user. `editor.input`, `editor.capture` and
+  `EDIT_AUTHOR_API`, and afterwards it returns to the user. `editor.input`, `capture` and
   `engine.*` run frames and editor input as the user and do not change it. It stays with the front
   document on changing tabs. A gesture belongs to whoever opened it (`Edits.opener`). What arrives
   from a collaborator is not a step of whoever receives it.
@@ -404,18 +409,19 @@ edited afterwards, without overwriting what another wrote later.
 - **New steps.** A new edit by an author discards what that author could redo. What others undid in
   order stays before the new step, reverted and with the sides swapped (`swapped`), and its redo
   continues by ids. An undo or redo by ids does not discard anyone's redo.
-- A step that changed linked prefab records (`Prefab_Version`) or components that are not plain
-  data goes only in order: by ids it fails and says what to do instead.
+- A step that wrote a prefab file, which the instances of the scene follow, or that changed
+  components that are not plain data goes only in order: by ids it fails and says what to do
+  instead.
 - The labels and state of Undo and Redo, `status`, `editor.inspect` and the counters of `history.*`
   are the author's.
 - Before an API method that can edit (all but the read-only ones, `engine.*`, `editor.input`,
-  `editor.capture`, `editor.select`, `camera.set` and `finish`), the user's pending gesture is
+  `capture`, `editor.select`, `camera.set` and `finish`), the user's pending gesture is
   recorded as a step of theirs, with its tools cancelled (a gizmo drag goes back); a gesture the
   method ended is recorded on return.
 
 ### Selection in undo
 
-`edits_selection.odin`.
+`history/edits_selection.odin`.
 
 - `Edits.selected` is the selection as the history knows it. A step (`edits_publish_prepared`),
   undo, redo and cancel leave it there; `edits_select` makes a step of its author (`Selection_Step`)

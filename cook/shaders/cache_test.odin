@@ -7,20 +7,11 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
+import "mirai:std/base"
+import "mirai:project"
 
 @(private)
 ENGINE_ROOT :: #directory+"/../.."
-
-// A folder of its own for a test, removed with fixture_remove.
-@(private)
-fixture_make :: proc(t:^testing.T) -> string {
-    folder,err:=os.make_directory_temp("","mirai-shader-tests-*",context.temp_allocator)
-    testing.expect(t,err==nil,"a temporary folder can be made")
-    return path_clean(folder,context.temp_allocator)
-}
-
-@(private)
-fixture_remove :: proc(root:string) {os.remove_all(root)}
 
 @(private)
 fixture_write :: proc(t:^testing.T,root,relative,text:string) {
@@ -32,7 +23,8 @@ fixture_write :: proc(t:^testing.T,root,relative,text:string) {
 // a.comp includes include/shared.slang, which includes include/nested.slang; b.comp includes nothing.
 @(private="file")
 sources_make :: proc(t:^testing.T) -> string {
-    root:=fixture_make(t)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return ""}
     fixture_write(t,root,"a.comp.slang","#include \"shared.slang\"\nvoid main() {}\n")
     fixture_write(t,root,"b.comp.slang","void main() {}\n")
     fixture_write(t,root,"include/shared.slang","#include \"nested.slang\"\n")
@@ -49,7 +41,7 @@ fingerprint_of :: proc(root,name:string) -> string {
 @(test)
 change_invalidates_only_the_stages_that_depend_on_it :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     a,b:=fingerprint_of(root,"a.comp.slang"),fingerprint_of(root,"b.comp.slang")
     testing.expect(t,len(a)==64 && a!=b)
     fixture_write(t,root,"include/nested.slang","float value = 2;\n")
@@ -63,7 +55,7 @@ change_invalidates_only_the_stages_that_depend_on_it :: proc(t:^testing.T) {
 @(test)
 parameter_metadata_changes_authoring_identity_without_invalidating_compilation :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     original:="//! mirai surface Fixture\n//! parameter amount {\"default\":1,\"min\":0,\"max\":2}\n//! variant hw MIRAI_HW_RT=1\nfloat value=__LINE__;\n"
     fixture_write(t,root,"include/nested.slang",original)
     before:=fingerprint_of(root,"a.comp.slang")
@@ -103,7 +95,7 @@ metadata_hash_preserves_strings_comments_continuations_and_binary_modules :: pro
 @(test)
 configuration_is_part_of_a_fingerprint :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     source:=path_join(root,"a.comp.slang",allocator=context.temp_allocator)
     includes:=[]string{path_join(root,"include",allocator=context.temp_allocator)}
     one,two:="compiler 1","compiler 2"
@@ -115,7 +107,7 @@ configuration_is_part_of_a_fingerprint :: proc(t:^testing.T) {
 @(test)
 shadowing_an_include_invalidates_and_identity_does_not_depend_on_the_checkout :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     first:=fingerprint_of(root,"a.comp.slang")
     // The folder of the including file is searched before the include folders.
     fixture_write(t,root,"shared.slang","float value = 4;\n")
@@ -135,7 +127,7 @@ shadowing_an_include_invalidates_and_identity_does_not_depend_on_the_checkout ::
 @(test)
 textual_inc_and_header_dependencies_are_transitive :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     fixture_write(t,root,"a.comp.slang","#include \"helper.inc\"\nvoid main() {}\n")
     fixture_write(t,root,"include/helper.inc","  #  include <parameters.h>\n")
     fixture_write(t,root,"include/parameters.h","#include \"nested.slang\"\n")
@@ -147,7 +139,7 @@ textual_inc_and_header_dependencies_are_transitive :: proc(t:^testing.T) {
 @(test)
 imported_modules_are_dependencies :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     fixture_write(t,root,"a.comp.slang","import lighting.brdf;\nexport import shared;\nimport missing_builtin;\nvoid main() {}\n")
     fixture_write(t,root,"include/lighting/brdf.slang","float lobe = 1;\n")
     found:=dependencies(path_join(root,"a.comp.slang",allocator=context.temp_allocator),{path_join(root,"include",allocator=context.temp_allocator)},context.temp_allocator)
@@ -164,7 +156,7 @@ imported_modules_are_dependencies :: proc(t:^testing.T) {
 @(test)
 include_named_by_a_macro_depends_on_every_file_of_the_search_folders :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     fixture_write(t,root,"a.comp.slang","#include SELECTED_HEADER\nvoid main() {}\n")
     fixture_write(t,root,"include/data.bin","\xff\xfe\x00binary")
     before:=fingerprint_of(root,"a.comp.slang")
@@ -178,7 +170,7 @@ include_named_by_a_macro_depends_on_every_file_of_the_search_folders :: proc(t:^
 @(test)
 missing_optional_include_is_not_a_dependency_until_it_exists :: proc(t:^testing.T) {
     root:=sources_make(t)
-    defer fixture_remove(root)
+    if root=="" {return}
     fixture_write(t,root,"b.comp.slang","#if OPTIONAL\n#include \"optional.slang\"\n#endif\nvoid main() {}\n")
     before:=fingerprint_of(root,"b.comp.slang")
     fixture_write(t,root,"include/optional.slang","float extra = 1;\n")
@@ -195,8 +187,8 @@ source_outside_every_base_is_named_by_its_path :: proc(t:^testing.T) {
 
 @(test)
 engine_identity_tracks_nested_headers_and_ignores_the_project_generation :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     engine:=path_join(root,"engine-root",allocator=context.temp_allocator)
     project:=path_join(root,"project",allocator=context.temp_allocator)
     generated:=path_join(engine,"shaders/.temporary-generation/include",allocator=context.temp_allocator)
@@ -235,8 +227,8 @@ stored_entry :: proc() -> (entry:Shader,files:[Backend][]u8) {
 
 @(test)
 shared_cache_gives_a_stage_by_its_digest_and_rejects_corrupt_files :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     shared:=path_join(root,"shared",allocator=context.temp_allocator)
     entry,files:=stored_entry()
     both:=Backends{.Vulkan,.Metal}
@@ -267,8 +259,8 @@ shared_cache_gives_a_stage_by_its_digest_and_rejects_corrupt_files :: proc(t:^te
 
 @(test)
 shared_cache_keeps_an_entry_per_digest_and_completes_one_with_another_backend :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     shared:=path_join(root,"shared",allocator=context.temp_allocator)
     entry,files:=stored_entry()
     both:=Backends{.Vulkan,.Metal}
@@ -294,8 +286,8 @@ shared_cache_keeps_an_entry_per_digest_and_completes_one_with_another_backend ::
 
 @(test)
 previous_output_cannot_name_a_file_outside_its_folder :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     source:=path_join(root,"source",allocator=context.temp_allocator)
     entry,files:=stored_entry()
     fixture_write(t,source,"a.comp.spv",string(files[.Vulkan]))
@@ -314,8 +306,8 @@ previous_output_cannot_name_a_file_outside_its_folder :: proc(t:^testing.T) {
 // reader finds one of the versions or none, never a mix.
 @(test)
 writers_of_one_file_never_show_half_of_it :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     Writer :: struct {path,text:string,done:bool}
     write :: proc(w:^Writer) {
         for _ in 0..<200 {_=write_file_atomic(w.path,transmute([]u8)w.text)}
@@ -342,8 +334,8 @@ writers_of_one_file_never_show_half_of_it :: proc(t:^testing.T) {
 
 @(test)
 shared_cache_prunes_entries_unused_for_a_month_at_most_once_a_day :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     shared:=path_join(root,"shared",allocator=context.temp_allocator)
     entry,files:=stored_entry()
     both:=Backends{.Vulkan,.Metal}
@@ -384,9 +376,9 @@ shared_cache_prunes_entries_unused_for_a_month_at_most_once_a_day :: proc(t:^tes
 
 @(test)
 tool_of_the_checkout_is_found_before_path :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
-    executable:=strings.concatenate({"spirv-val",EXECUTABLE_SUFFIX},context.temp_allocator)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
+    executable:=strings.concatenate({"spirv-val",project.EXECUTABLE_SUFFIX},context.temp_allocator)
     fixture_write(t,root,strings.concatenate({".deps/sdk-b/deep/bin/",executable},context.temp_allocator),"tool")
     found,ok:=tool_find(root,.Spirv_Val,context.temp_allocator)
     testing.expect(t,ok)
@@ -397,15 +389,15 @@ tool_of_the_checkout_is_found_before_path :: proc(t:^testing.T) {
     found,ok=tool_find(root,.Spirv_Val,context.temp_allocator)
     testing.expect_value(t,found,path_join(root,".deps/sdk-a/Bin",executable,allocator=context.temp_allocator))
     // The compiler is only the one installed in .deps/slang.
-    fixture_write(t,root,strings.concatenate({".deps/sdk-a/Bin/slangc",EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
+    fixture_write(t,root,strings.concatenate({".deps/sdk-a/Bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
     compiler,compiler_found:=tool_find(root,.Slangc,context.temp_allocator)
     testing.expect(t,!compiler_found || !path_inside(compiler,root),"a slangc of an SDK is not the pinned one")
-    fixture_write(t,root,strings.concatenate({".deps/slang/bin/slangc",EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
+    fixture_write(t,root,strings.concatenate({".deps/slang/bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),"tool")
     compiler,compiler_found=tool_find(root,.Slangc,context.temp_allocator)
     if _,configured:=os.lookup_env("MIRAI_SLANGC",context.temp_allocator);configured {log.info("MIRAI_SLANGC is set: the pinned compiler is not looked up");return}
     if _,configured:=os.lookup_env("MIRAI_SLANG",context.temp_allocator);configured {log.info("MIRAI_SLANG is set: the pinned compiler is not looked up");return}
     testing.expect(t,compiler_found)
-    testing.expect_value(t,compiler,path_join(root,".deps/slang/bin",strings.concatenate({"slangc",EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator))
+    testing.expect_value(t,compiler,path_join(root,".deps/slang/bin",strings.concatenate({"slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),allocator=context.temp_allocator))
 }
 
 @(test)
@@ -460,8 +452,8 @@ cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
 
 @(test)
 a_folder_only_the_overlay_has_lists_the_sources_it_adds :: proc(t:^testing.T) {
-    root:=fixture_make(t)
-    defer fixture_remove(root)
+    root:=base.test_folder(t,"shaders")
+    if root=="" {return}
     missing:=path_join(root,"shaders",allocator=context.temp_allocator)
     path:=path_join(missing,"glow.slang",allocator=context.temp_allocator)
     overlay:=make(map[string]Overlay,context.temp_allocator)

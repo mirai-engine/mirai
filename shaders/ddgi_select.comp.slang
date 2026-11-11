@@ -22,10 +22,9 @@
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 
-// Must match render.PROBE_BUCKETS. A probe a change keeps awake falls in one
-// of PROBE_NEAR_LEVELS levels of how near it is to the change (ddgi_touch.comp),
-// two buckets each, and the waiting ones come after them.
-#define PROBE_BUCKETS 22u
+// The priority of a probe is one of PROBE_BUCKETS buckets. A probe a change
+// keeps awake falls in one of PROBE_NEAR_LEVELS levels of how near it is to the
+// change (ddgi_touch.comp), two buckets each, and the waiting ones come after them.
 #define PROBE_NEAR_LEVELS 4u
 #define PROBE_WAITING_FIRST (2u + 2u * PROBE_NEAR_LEVELS)
 #define NO_BUCKET 0xFFFFFFFFu

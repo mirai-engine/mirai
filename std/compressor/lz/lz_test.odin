@@ -3,6 +3,7 @@ package lz
 import "core:mem"
 import "core:testing"
 import "mirai:std/compressor"
+import "mirai:std/compressor/lz/entropy"
 
 @(private="file")
 inputs :: proc() -> [][]u8 {
@@ -37,12 +38,12 @@ every_level_repeats_itself_within_the_bound_and_decodes_to_its_input :: proc(
     testing.expect_value(t,compressor.decoder_init(&d),compressor.Error.None)
     defer compressor.decoder_destroy(&d)
     for src in inputs() {
-        for level in Level.SuperFast..=Level.Optimal5 {
+        for level in Level {
             bound:=compress_bound(len(src))
             a:=make([]u8,bound,context.temp_allocator)
             b:=make([]u8,bound,context.temp_allocator)
-            na,ea:=compress(&e,level,src,a)
-            nb,eb:=compress(&e,level,src,b)
+            na,ea:=compress(&e,mode(level),src,a)
+            nb,eb:=compress(&e,mode(level),src,b)
             testing.expect_value(t,ea,Error.None)
             testing.expect_value(t,eb,Error.None)
             testing.expect(t,na>0 && na<=bound)
@@ -62,23 +63,35 @@ hostile_arguments_return_errors :: proc(t:^testing.T) {
     defer encoder_destroy(&e)
     src:=make([]u8,70000,context.temp_allocator)
     for i in 0..<len(src) {src[i]=u8(i*7>>3)}
-    n,err:=compress(&e,.Normal,nil,nil)
+    n,err:=compress(&e,mode(.Normal),nil,nil)
     testing.expect(t,n==0 && err==.None)
-    n,err=compress(nil,.Normal,src,nil)
+    n,err=compress(nil,mode(.Normal),src,nil)
     testing.expect_value(t,err,Error.Invalid)
-    n,err=compress(&e,Level(0),src,nil)
-    testing.expect_value(t,err,Error.Invalid)
-    n,err=compress(&e,Level(12),src,nil)
-    testing.expect_value(t,err,Error.Invalid)
+    // No level, a level that does not exist and a level above Normal without its parser.
+    for level in ([]i32{0,12,-1,compressor.LEVEL_OPTIMAL1,compressor.LEVEL_OPTIMAL5}) {
+        n,err=compress(&e,Mode{level=level},src,make([]u8,compress_bound(len(src)),context.temp_allocator))
+        testing.expect(t,n==0 && err==.Invalid)
+    }
+    // The blocks of a framing that has no input or output, outside them, or that was not set up.
+    f:Framing
+    testing.expect_value(t,compress_sub(nil,0,100,0),-1)
+    testing.expect_value(t,compress_sub(&f,0,100,0),-1)
+    arena:=entropy.arena_make(context.temp_allocator)
+    f.arena=&arena
+    f.parser.raw=src
+    f.output=make([]u8,compress_bound(1000),context.temp_allocator)
+    for c in ([][3]int{{0,0,0},{-1,10,0},{len(src)-10,11,0},{0,1001,0},{0,1000,1},{0,10,-1},{0,1000,0}}) {
+        testing.expect_value(t,compress_sub(&f,c[0],c[1],c[2]),-1)
+    }
     // Noise, which no level packs into the smallest of these.
     noise:=make([]u8,70000,context.temp_allocator)
     state:=u32(0x2545f491)
     for &b in noise {state=state*1664525+1013904223;b=u8(state>>24)}
     for size in ([]int{0,1,10,150}) {
         dst:=make([]u8,size,context.temp_allocator)
-        n,err=compress(&e,.Fast,noise,dst)
+        n,err=compress(&e,mode(.Fast),noise,dst)
         testing.expect_value(t,err,Error.Output_Too_Small)
-        n,err=compress(&e,.SuperFast,src[:200],dst)
+        n,err=compress(&e,mode(.SuperFast),src[:200],dst)
         testing.expect_value(t,err,Error.Output_Too_Small)
     }
 }
@@ -90,12 +103,12 @@ running_out_of_memory_returns_an_error :: proc(t:^testing.T) {
     dst:=make([]u8,compress_bound(len(src)),context.temp_allocator)
     for size in ([]int{1000,400000,1200000,3000000}) {
         backing:=make([]u8,size,context.temp_allocator)
-        for level in ([]Level{.SuperFast,.Normal,.Optimal2,.Optimal4}) {
+        for level in ([]Level{.SuperFast,.Normal}) {
             a:mem.Arena
             mem.arena_init(&a,backing)
             e:Encoder
             encoder_init(&e,mem.arena_allocator(&a))
-            _,err:=compress(&e,level,src,dst)
+            _,err:=compress(&e,mode(level),src,dst)
             testing.expect(t,err==.None || err==.Out_Of_Memory)
         }
     }
@@ -118,7 +131,7 @@ pieces_decode_on_their_own :: proc(t:^testing.T) {
         for &b,i in src {state=state*1664525+1013904223;b=(i/3000)%2==0 ? u8(state>>29) : u8(i>>6)}
         for level in ([]Level{.SuperFast,.Normal}) {
             dst:=make([]u8,compress_bound(len(src)),context.temp_allocator)
-            n,err:=compress(&e,level,src,dst,PIECE)
+            n,err:=compress(&e,mode(level),src,dst,PIECE)
             testing.expect_value(t,err,Error.None)
             found:[4]compressor.Piece
             count,scan:=compressor.pieces(dst[:n],len(src),found[:])
@@ -136,11 +149,11 @@ pieces_decode_on_their_own :: proc(t:^testing.T) {
             // A piece_len past the input is the stream without pieces.
             one:=make([]u8,len(dst),context.temp_allocator)
             plain:=make([]u8,len(dst),context.temp_allocator)
-            a,_:=compress(&e,level,src,one,4*PIECE)
-            b,_:=compress(&e,level,src,plain)
+            a,_:=compress(&e,mode(level),src,one,4*PIECE)
+            b,_:=compress(&e,mode(level),src,plain)
             testing.expect(t,a>0 && string(one[:a])==string(plain[:b]))
         }
     }
-    n,err:=compress(&e,.Normal,make([]u8,1000,context.temp_allocator),make([]u8,2000,context.temp_allocator),100)
+    n,err:=compress(&e,mode(.Normal),make([]u8,1000,context.temp_allocator),make([]u8,2000,context.temp_allocator),100)
     testing.expect(t,n==0 && err==.Invalid)
 }

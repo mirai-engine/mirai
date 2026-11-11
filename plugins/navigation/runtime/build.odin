@@ -79,10 +79,13 @@ poses_stamps :: proc "contextless" (rows:core.Read($T),transforms:core.Read(core
 }
 
 @(private)
-seen_reset :: proc(b:^Navigation_Builds,count:int) -> []bool {
-    resize(&b.seen,count)
+seen_reset :: proc(b:^Navigation_Builds,count:int,problems:^core.Problems) -> (seen:[]bool,enough:bool) {
+    if resize(&b.seen,count)!=nil {
+        core.report(problems,core.NONE,"navigation.memory","No memory to look at %d areas, obstacles or links of the navigation: they are looked at again in the next tick; free memory",count)
+        return nil,false
+    }
     for &s in b.seen {s=false}
-    return b.seen[:]
+    return b.seen[:],true
 }
 
 // Where tiles and zones are made: the bounds of the surface, those of the air,
@@ -209,9 +212,10 @@ filters_same :: proc "contextless" (n:^Navigation,collision:^phys.Collision_Sett
 // (nil: the defaults). False without memory.
 @(private)
 navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^phys.Collision_Settings,problems:^core.Problems) -> bool {
-    uid:=n.uid
+    // The revision goes on from where it was: with the uid it says whose meshes a copy holds (navigation_copy_kept).
+    uid,revision:=n.uid,n.revision
     navigation_free(n)
-    n.uid=uid
+    n.uid,n.revision=uid,revision
     n.settings=settings^
     tiles:=int(settings.max_tiles) if settings.max_tiles>0 else 1024
     links:=int(settings.max_links) if settings.max_links>=0 else 0
@@ -232,7 +236,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
             c.volume_config=volume_config(class)
             if !ai.nav_volume_init(&c.volume,{voxel=c.volume_config.voxel,layers=c.volume_config.layers,max_zones=min(tiles,ai.NAV_VOLUME_SLOT_MAX)}) || !base.hash_map_init(&c.marks,tiles) {
                 navigation_free(n)
-                n.uid=uid
+                n.uid,n.revision=uid,revision+1
                 return false
             }
             n.count+=1
@@ -248,7 +252,7 @@ navigation_reset :: proc(n:^Navigation,settings:^Navigation_Settings,collision:^
         width:=f32(c.config.tile_size)*c.config.cell_size
         if !ai.nav_mesh_init(&c.mesh,{tile_width=width,climb=class.climb,max_tiles=tiles,max_links=links}) || !base.hash_map_init(&c.marks,tiles) {
             navigation_free(n)
-            n.uid=uid
+            n.uid,n.revision=uid,revision+1
             return false
         }
         n.count+=1
@@ -390,13 +394,13 @@ navigation_build :: proc(
     }
     bakes_update(n,b,bakes,app,problems,fresh && !reset)
     next,count,overflow:=phys.static_changes(physics,b.cursor,b.boxes[:])
-    limits:=bounds_update(n,b,bounds,transforms,parents,physics,gone,fresh,count>0 || overflow)
+    limits:=bounds_update(n,b,bounds,transforms,parents,physics,gone,fresh,count>0 || overflow,problems)
     if fresh {
         for limit in limits.surface {mark_box(n,limit,limits)}
         for limit in limits.air {mark_box(n,limit,limits)}
     }
-    areas_update(n,b,areas,transforms,parents,limits,fresh)
-    obstacles_update(n,b,obstacles,transforms,parents,limits,time,fresh)
+    areas_update(n,b,areas,transforms,parents,limits,fresh,problems)
+    obstacles_update(n,b,obstacles,transforms,parents,limits,time,fresh,problems)
     for asked in core.take(&requests.queue) {
         if asked.box=={} {
             for limit in limits.surface {mark_box(n,limit,limits,true)}
@@ -423,7 +427,7 @@ navigation_build :: proc(
     paging_update(n,b,unloaded.ptr,time.playing,fresh,reset,app,problems)
     published,spent:=builds_publish(n,b,problems)
     host.load_phase_add(app,.Nav_Tiles,spent,published)
-    builds_start(n,b,physics,limits,gone,time.playing,app,problems)
+    builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
     // Tiles building keep a load from being resident.
     building:=false
     for build in b.builds {building||=build.busy}
@@ -440,7 +444,7 @@ navigation_build :: proc(
 // surface, with its dry boxes. Tiles and zones that leave them are removed;
 // those that enter are marked.
 @(private)
-bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bounds),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool) -> Limits {
+bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bounds),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
     // The water and the box of the collision change with the collision, through its change log.
     poses:=poses_stamps(bounds,transforms,parents)
     stamps:=[7]u64{poses[0],poses[1],poses[2],poses[3],poses[4],poses[5],unloaded.revision}
@@ -497,13 +501,16 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
     copy(previous_water,b.water[:])
     previous_dry:=make([]mm.Aabb,len(b.dry),context.temp_allocator)
     copy(previous_dry,b.dry[:])
-    resize(&b.bounds,count)
+    // Room for the four first: without it the bounds stay as they were, and are looked at again.
+    if reserve(&b.bounds,count)!=nil || reserve(&b.air,count_air)!=nil || reserve(&b.water,count_water)!=nil || reserve(&b.dry,count_dry)!=nil ||
+       resize(&b.bounds,count)!=nil || resize(&b.air,count_air)!=nil || resize(&b.water,count_water)!=nil || resize(&b.dry,count_dry)!=nil {
+        b.bounds_stamps={}
+        core.report(problems,core.NONE,"navigation.memory","No memory for the bounds of the navigation: it keeps those it had; free memory")
+        return {b.bounds[:],b.air[:],b.water[:],b.dry[:]}
+    }
     copy(b.bounds[:],surface[:count])
-    resize(&b.air,count_air)
     copy(b.air[:],air[:count_air])
-    resize(&b.water,count_water)
     copy(b.water[:],water[:count_water])
-    resize(&b.dry,count_dry)
     copy(b.dry[:],dry[:count_dry])
     limits:=Limits{b.bounds[:],b.air[:],b.water[:],b.dry[:]}
     if fresh {return limits}
@@ -550,11 +557,12 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:core.Read(Nav_Bo
 
 // Marks where a Nav_Area was and is, when it moved, changed or went.
 @(private)
-areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,fresh:bool) {
+areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,fresh:bool,problems:^core.Problems) {
     stamps:=poses_stamps(areas,transforms,parents)
     if !fresh && stamps==b.areas_stamps {return}
+    seen,enough:=seen_reset(b,len(b.areas.values),problems)
+    if !enough {return}
     b.areas_stamps=stamps
-    seen:=seen_reset(b,len(b.areas.values))
     for i in 0..<core.count(areas) {
         e:=core.entity_at(areas,i)
         pose,ok:=core.world_of(transforms,parents,e)
@@ -584,7 +592,7 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area
 
 // Gathers, hashes and starts the builds of marked tiles, up to the free jobs.
 @(private)
-builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,app:^host.App,problems:^core.Problems) {
+builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,job_system:^jobs.Job_System,problems:^core.Problems) {
     want:=int(n.settings.builds) if n.settings.builds>0 else 4
     for len(b.builds)<want {
         build,error:=new(Build)
@@ -636,7 +644,14 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                     mark.hash=0
                     continue
                 }
-                if !gather_zone(free,c,b,physics,zone) {
+                complete,enough:=gather_zone(free,c,b,physics,zone)
+                if !enough {
+                    next.dirty=true
+                    mark_set(c,mark,next)
+                    core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a zone of class %q: it is built in a later tick; free memory",base.text_get(c.class.name[:]))
+                    return
+                }
+                if !complete {
                     n.stats.overflowed+=1
                     core.report(problems,core.NONE,"navigation.zone_input","A zone of class %q at %v has more than %d triangles of static collision: it is built from part of them",base.text_get(c.class.name[:]),zone,NAV_TRIANGLES_MAX)
                 }
@@ -645,7 +660,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 free.volume_config=c.volume_config
                 next.building=true
                 mark_set(c,mark,next)
-                build_launch(free,app)
+                build_launch(free,job_system)
                 continue
             }
             coord:=coord_of_key(key)
@@ -654,7 +669,14 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 mark.hash=0
                 continue
             }
-            if !gather(free,n,c,b,physics,coord,problems) {
+            complete,enough:=gather(free,n,c,b,physics,coord,problems)
+            if !enough {
+                next.dirty=true
+                mark_set(c,mark,next)
+                core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a tile of class %q: it is built in a later tick; free memory, or lower tile_cells in Navigation_Settings",base.text_get(c.class.name[:]))
+                return
+            }
+            if !complete {
                 n.stats.overflowed+=1
                 core.report(problems,core.NONE,"navigation.tile_input","A tile of class %q at %v has more than %d triangles of static collision: it is built from part of them; lower tile_cells in Navigation_Settings",base.text_get(n.classes[i].class.name[:]),coord,NAV_TRIANGLES_MAX)
             }
@@ -670,7 +692,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             free.config=c.config
             next.building=true
             mark_set(c,mark,next)
-            build_launch(free,app)
+            build_launch(free,job_system)
         }
     }
     b.unloaded_seen=revision
@@ -690,29 +712,31 @@ mark_box_of :: proc "contextless" (c:^Class_Mesh,key:u64,air:bool) -> mm.Aabb {
 }
 
 @(private)
-build_launch :: proc(build:^Build,app:^host.App) {
-    if jobs.worker_count(&app.jobs)==0 {
+build_launch :: proc(build:^Build,job_system:^jobs.Job_System) {
+    if jobs.worker_count(job_system)==0 {
         build_job(build,0)
         return
     }
-    jobs.run(&app.jobs,jobs.OWNER,build_job,build,&build.counter)
-    if jobs.worker_count(&app.jobs)==1 {jobs.wait(&app.jobs,jobs.OWNER,&build.counter)}
+    jobs.run(job_system,jobs.OWNER,build_job,build,&build.counter)
+    if jobs.worker_count(job_system)==1 {jobs.wait(job_system,jobs.OWNER,&build.counter)}
 }
 
 // The triangles of the static collision in a box that block filter (the
 // agents of a class) into a build, up to NAV_TRIANGLES_MAX. False when not
 // all of them fit.
 @(private)
-gather_triangles :: proc(build:^Build,physics:core.Ref(phys.Physics_State),box:mm.Aabb,filter:phys.Query_Filter) -> bool {
+gather_triangles :: proc(build:^Build,physics:core.Ref(phys.Physics_State),box:mm.Aabb,filter:phys.Query_Filter) -> (complete,enough:bool) {
     size:=4096
     for {
-        resize(&build.vertices,size)
-        resize(&build.indices,size*2)
+        if resize(&build.vertices,size)!=nil || resize(&build.indices,size*2)!=nil {
+            clear(&build.vertices);clear(&build.indices)
+            return false,false
+        }
         vertex_count,index_count,fit:=phys.static_triangles(physics,box,transmute([][3]f32)build.vertices[:],build.indices[:],filter)
         if fit || size>=NAV_TRIANGLES_MAX {
-            resize(&build.vertices,vertex_count)
-            resize(&build.indices,index_count)
-            return fit
+            base.truncate(&build.vertices,vertex_count)
+            base.truncate(&build.indices,index_count)
+            return fit,true
         }
         size*=4
     }
@@ -723,10 +747,11 @@ gather_triangles :: proc(build:^Build,physics:core.Ref(phys.Physics_State),box:m
 // water that hold it and the dry boxes in that water. False when not all of
 // it fit.
 @(private)
-gather_zone :: proc(build:^Build,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),zone:[3]i32) -> bool {
+gather_zone :: proc(build:^Build,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),zone:[3]i32) -> (complete,enough:bool) {
     box:=ai.nav_volume_zone_box(&c.volume,zone)
     margin:=c.volume_config.half+c.volume_config.voxel
-    complete:=gather_triangles(build,physics,{box.min-margin,box.max+margin},c.filter)
+    complete,enough=gather_triangles(build,physics,{box.min-margin,box.max+margin},c.filter)
+    if !enough {return}
     clear(&build.spaces)
     clear(&build.holes)
     water:=c.class.space==.Water
@@ -739,12 +764,12 @@ gather_zone :: proc(build:^Build,c:^Class_Mesh,b:^Navigation_Builds,physics:core
     h=base.hash64(mem.slice_to_bytes(build.spaces[:]),h)
     h=base.hash64(mem.slice_to_bytes(build.holes[:]),h)
     build.hash=h|1
-    return complete
+    return
 }
 
 // The input of a tile into a build, and its hash. False when not all of it fit.
 @(private)
-gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),coord:[2]i32,problems:^core.Problems) -> bool {
+gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),coord:[2]i32,problems:^core.Problems) -> (complete,enough:bool) {
     rect:=ai.nav_tile_rect(c.config,coord)
     margin:=ai.nav_build_margin(c.config)
     box:=mm.Aabb{{rect.min.x-margin,-1e9,rect.min.z-margin},{rect.max.x+margin,1e9,rect.max.z+margin}}
@@ -752,7 +777,8 @@ gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,phy
         box.min.y=min(box.min.y if box.min.y>-1e9 else limit.min.y,limit.min.y)
         box.max.y=max(box.max.y if box.max.y<1e9 else limit.max.y,limit.max.y)
     }
-    complete:=gather_triangles(build,physics,box,c.filter)
+    complete,enough=gather_triangles(build,physics,box,c.filter)
+    if !enough {return}
     clear(&build.volumes)
     // The deep ground under the water first: an area of a Nav_Area or an obstacle there wins.
     for water in b.water {
@@ -779,7 +805,7 @@ gather :: proc(build:^Build,n:^Navigation,c:^Class_Mesh,b:^Navigation_Builds,phy
     h=base.hash_combine(h,triangles_hash(transmute([][3]f32)build.vertices[:],build.indices[:]))
     h=base.hash64(mem.slice_to_bytes(build.volumes[:]),h)
     build.hash=h|1
-    return complete
+    return
 }
 
 // The hash of a set of triangles, whatever their order: a query of the static
@@ -892,13 +918,14 @@ zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Pro
 // Obstacles block the surface under them once they have been still long
 // enough, and stop when they move; outside a run (the editor) they are still.
 @(private)
-obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(Nav_Obstacle),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,time:core.Time,fresh:bool) {
+obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:core.Read(Nav_Obstacle),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
     stamps:=poses_stamps(obstacles,transforms,parents)
     moved:=fresh || stamps!=b.obstacles_stamps
     // Unmoved, only those that settle need the tick.
     if !moved && b.settling==0 {return}
+    seen,enough:=seen_reset(b,len(b.obstacles.values) if moved else 0,problems)
+    if !enough {return}
     b.obstacles_stamps=stamps
-    seen:=seen_reset(b,len(b.obstacles.values) if moved else 0)
     running:=time.playing && time.dt>0
     b.settling=0
     for i in 0..<core.count(obstacles) {

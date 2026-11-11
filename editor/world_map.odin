@@ -8,6 +8,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import scene "mirai:engine/scene"
+import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
 import "mirai:std/base"
@@ -437,11 +438,11 @@ map_item_draw :: proc(ctx:^ui.Context,m:^World_Map,rect:ui.Rect,item:^Map_Item,h
 // ---------------------------------------------------------------- the API
 
 Api_Section_Id_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of a Scene_Reference, as editor.sections lists them"`,
+    entity:Api_Entity_Text `mirai:"text,entity,label=The entity of a Scene_Reference, as editor.sections lists them"`,
 }
 
 Api_Section_View_Params :: struct {
-    id:base.Entity_Id `mirai:"label=The entity of a Scene_Reference, as editor.sections lists them"`,
+    entity:Api_Entity_Text `mirai:"text,entity,label=The entity of a Scene_Reference, as editor.sections lists them"`,
     state:[16]u8 `mirai:"text,label=Active (loaded and on), Loaded (loaded and off), Unloaded, or Auto (what its reference asks)"`,
 }
 
@@ -457,7 +458,7 @@ api_section_write :: proc(s:^Session,out:^serial.Writer,w:core.World_Ref,e:core.
     rules,states,shown_names:=SECTION_RULE_NAMES,SECTION_STATE_NAMES,SECTION_SHOWN_NAMES
     serial.write_u8(out,'{')
     api.write_key(out,"id",true)
-    api_write_id(out,api_entity_id(w,e))
+    api.write_id(out,api_entity_id(w,e))
     api.write_text(out,"name",entity_label(w,e))
     scene_path:=""
     if s.app.assets!=nil {
@@ -524,7 +525,7 @@ api_sections :: proc(s:^Session,call:^api.Call) {
 api_section_view :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Section_View_Params)
     w:=edited_world(s)
-    e,ok:=api_section_reference(call,w,params.id)
+    e,ok:=api_section_reference(call,w,params.entity[:])
     if !ok {return}
     given:=base.text_get(params.state[:])
     state:scene.Section_State
@@ -543,18 +544,40 @@ api_section_view :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,why)
         return
     }
-    api_section_write(s,call.out,w,e,false)
+    api_sections_settle(s)
+    api_section_write(s,call.out,edited_world(s),e,false)
 }
 
 api_section_travel :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Section_Id_Params)
     w:=edited_world(s)
-    e,ok:=api_section_reference(call,w,params.id)
+    e,ok:=api_section_reference(call,w,params.entity[:])
     if !ok {return}
     if why:=section_travel(s,w,e);why!="" {
         api.call_fail(call,api.INVALID_PARAMS,why)
         return
     }
-    if m:=world_map_of(s);m!=nil {m.chosen=params.id}
-    api_section_write(s,call.out,w,e,false)
+    if m:=world_map_of(s);m!=nil {m.chosen=api_entity_id(w,e)}
+    api_sections_settle(s)
+    api_section_write(s,call.out,edited_world(s),e,false)
+}
+
+// What a section asked for is there when the call answers: its load, over
+// the frames it takes, also in a manual editor.
+@(private)
+api_sections_settle :: proc(s:^Session) {
+    Settle :: struct {frames:int}
+    settle:Settle
+    loading :: proc(s:^Session,user:rawptr) -> bool {
+        settle:=(^Settle)(user)
+        settle.frames+=1
+        // The frame after the request begins the loads it needs.
+        if settle.frames<=2 {return true}
+        sections:=host.app_world_storage(s.app,edited_world(s).data,scene.Section_Loads)
+        if sections==nil {return false}
+        for item in sections.items {if item.job!=nil {return true}}
+        for item in sections.far {if item.job!=nil {return true}}
+        return false
+    }
+    api_settle(s,&settle,loading)
 }

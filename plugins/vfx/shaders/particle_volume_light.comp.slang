@@ -47,7 +47,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             if (any(ahead < lo) || any(ahead > hi)) break;
             optical += max(particle_grid_sample_row(g, copy, ahead, 0u).x, 0.0) * v.density * g.cell_size;
         }
-        sun = luminance(trace_transmission(position, frame.sun_direction.xyz, scene_reach(position, frame.sun_direction.xyz))) * exp(-optical);
+        sun = luminance(trace_transmission(position, frame.sun_direction.xyz, sun_reach(position, frame.sun_direction.xyz))) * exp(-optical);
     }
     float pick = float(hash_u32(at * 9781u + frame.frame_index * 26699u) >> 8) / 16777216.0;
     float3 up = float3(0.0, 1.0, 0.0);

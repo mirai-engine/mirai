@@ -22,7 +22,7 @@ import terrain "plugins:terrain/runtime"
 // (terrain.Replay_Result). terrain does not know the network: in a session
 // this library routes every tick (terrain.Terrain_Replays.routed), so
 // terrain_replay applies what it orders and then the requests of
-// request_edit and request_layer, and says how each went.
+// dig and request_layer, and says how each went.
 //
 // A client follows the stream of each source in its order, the edits and the
 // parts the server sends it, where Terrain_Net_World (part of the World)
@@ -339,10 +339,15 @@ net_world :: proc(n:^Terrain_Net,root:core.Ref(scene.Scene_Root)) {
 }
 
 @(private)
+memory_problem :: proc(problems:^core.Problems) {
+    core.report(problems,core.NONE,"terrain.net_memory","out of memory for what the server sends of a terrain; an edit or a part was left out, and the terrain may differ from the server's until its parts are sent again: free memory")
+}
+
+@(private)
 net_source :: proc(n:^Terrain_Net,id:base.Asset_Id,create:bool) -> ^Net_Source {
     for &src in n.sources {if src.id==id {return &src}}
     if !create {return nil}
-    append(&n.sources,Net_Source{id=id,first_page=1})
+    if _,error:=append(&n.sources,Net_Source{id=id,first_page=1});error!=nil {return nil}
     return &n.sources[len(n.sources)-1]
 }
 
@@ -414,7 +419,7 @@ region_differs :: proc(src:^Net_Source,low,high:[3]i32) {
 @(step="input",stage="begin",after="net_begin",before="net_rewind")
 terrain_net_receive :: proc(
     events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Terrain_Net,state:core.Ref(Terrain_Net_World),session:core.Ref(multiplayer.Net_Session),
-    time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),settings:Terrain_Net_Settings,
+    time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),settings:Terrain_Net_Settings,problems:^core.Problems,
 ) {
     if n==nil {return}
     net_world(n,root)
@@ -425,7 +430,10 @@ terrain_net_receive :: proc(
         if edit,ok:=multiplayer.event_read(item,Net_Terrain_Edit);ok {
             if server || edit.sequence==0 {continue}
             src:=net_source(n,edit.source,true)
-            if !log_put(src,edit) {continue}
+            put,enough:=false,false
+            if src!=nil {put,enough=log_put(src,edit)}
+            if !enough {memory_problem(problems)}
+            if !put {continue}
             n.stats.received+=1
             if edit.asker!=own && i32(edit.tick-u32(time.tick))<0 && state.ptr!=nil {
                 for p in state.predictions[:state.prediction_count] {
@@ -433,7 +441,7 @@ terrain_net_receive :: proc(
                 }
             }
         } else if page,page_ok:=multiplayer.event_read(item,Net_Terrain_Page);page_ok {
-            if !server {page_chunk(n,page)}
+            if !server {page_chunk(n,page,problems)}
         } else if refused,refused_ok:=multiplayer.event_read(item,Net_Terrain_Refused);refused_ok {
             if !server {append(&n.refused,Net_Refused{refused=refused});n.stats.refused+=1}
         } else if ask,ask_ok:=multiplayer.event_read(item,Net_Terrain_Ask);ask_ok {
@@ -445,28 +453,30 @@ terrain_net_receive :: proc(
 }
 
 @(private)
-log_put :: proc(src:^Net_Source,edit:Net_Terrain_Edit) -> bool {
+log_put :: proc(src:^Net_Source,edit:Net_Terrain_Edit) -> (put,enough:bool) {
+    enough=true
     if len(src.log)==0 && src.first<=src.floor {src.first=edit.sequence}
     // One that arrives before an edit it came after goes in front, unless what was there was let go.
     if edit.sequence<src.first {
-        if edit.sequence<=src.floor || len(src.log)+int(src.first-edit.sequence)>NET_LOG_MAX {return false}
-        inject_at(&src.log,0,..make([]Net_Logged,int(src.first-edit.sequence),context.temp_allocator))
+        if edit.sequence<=src.floor || len(src.log)+int(src.first-edit.sequence)>NET_LOG_MAX {return}
+        if _,error:=inject_at(&src.log,0,..make([]Net_Logged,int(src.first-edit.sequence),context.temp_allocator));error!=nil {return false,false}
         src.first=edit.sequence
     }
-    if int(edit.sequence-src.first)>=NET_LOG_MAX {return false}
+    if int(edit.sequence-src.first)>=NET_LOG_MAX {return}
     at:=int(edit.sequence-src.first)
-    if at>=len(src.log) {resize(&src.log,at+1)}
-    if src.log[at].edit.sequence==edit.sequence {return false}
+    if at>=len(src.log) && resize(&src.log,at+1)!=nil {return false,false}
+    if src.log[at].edit.sequence==edit.sequence {return}
     src.log[at]=Net_Logged{edit=edit}
     src.newest=max(src.newest,edit.sequence)
-    return true
+    return true,true
 }
 
 // A piece of a part. The first starts it in the order of the stream, which
 // waits for it until the rest is here.
 @(private)
-page_chunk :: proc(n:^Terrain_Net,chunk:Net_Terrain_Page) {
+page_chunk :: proc(n:^Terrain_Net,chunk:Net_Terrain_Page,problems:^core.Problems) {
     src:=net_source(n,chunk.source,true)
+    if src==nil {memory_problem(problems);return}
     if chunk.offset==0 {
         raw_max:=terrain.PAGE_BYTES_MAX
         switch chunk.part {
@@ -482,7 +492,11 @@ page_chunk :: proc(n:^Terrain_Net,chunk:Net_Terrain_Page) {
             error:mem.Allocator_Error
             if state.bytes,error=make([]u8,int(chunk.total));error!=nil {state.complete,state.broken=true,true}
         }
-        append(&src.pages,state)
+        if _,err:=append(&src.pages,state);err!=nil {
+            delete(state.bytes)
+            memory_problem(problems)
+            return
+        }
     }
     if len(src.pages)==0 {return}
     a:=&src.pages[len(src.pages)-1]
@@ -508,7 +522,8 @@ page_chunk :: proc(n:^Terrain_Net,chunk:Net_Terrain_Page) {
     a.bytes=values
 }
 
-// Server: what an ask can be told at once: its rate and its tick.
+// Server: what an ask can be told at once: its rate and its tick. Without
+// memory to count the asks of a connection it is refused as Rate.
 @(private)
 ask_admit :: proc(n:^Terrain_Net,connection:multiplayer.Connection,ask:Net_Terrain_Ask,time:core.Time,settings:Terrain_Net_Settings) -> Terrain_Refusal {
     if i32(ask.tick-u32(time.tick))>NET_AHEAD_TICKS {return .Tick}
@@ -516,7 +531,7 @@ ask_admit :: proc(n:^Terrain_Net,connection:multiplayer.Connection,ask:Net_Terra
     rate:^Net_Rate
     for &r in n.rates {if r.connection==connection {rate=&r;break}}
     if rate==nil {
-        append(&n.rates,Net_Rate{connection=connection,tokens=settings.rate,tick=time.tick})
+        if _,err:=append(&n.rates,Net_Rate{connection=connection,tokens=settings.rate,tick=time.tick});err!=nil {return .Rate}
         rate=&n.rates[len(n.rates)-1]
     }
     rate.tokens=min(rate.tokens+f32(time.tick-rate.tick)*time.dt*settings.rate,max(settings.rate,1))
@@ -572,7 +587,7 @@ terrain_net_follow :: proc(
     authority:core.Ref(core.Network),n:^Terrain_Net,state:^Terrain_Net_World,time:core.Time,replays:^terrain.Terrain_Replays,outbox:^multiplayer.Net_Outbox,
     session:core.Ref(multiplayer.Net_Session),data:core.Ref(terrain.Terrain_Data),terrains:core.Read(terrain.Terrain),
     seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),worlds:core.Read(core.World_Transform),
-    settings:Terrain_Net_Settings,root:core.Ref(scene.Scene_Root),app:^host.App,problems:^core.Problems,
+    settings:Terrain_Net_Settings,root:core.Ref(scene.Scene_Root),assets:^host.Assets,problems:^core.Problems,
 ) {
     if n==nil {return}
     net_world(n,root)
@@ -612,7 +627,9 @@ terrain_net_follow :: proc(
     // Every source a terrain shows here, or cannot read, follows its stream.
     if terrains.table!=nil {
         for marker in terrains.table.values[:core.count(terrains)] {
-            if marker.source!={} && (terrain.terrain_source(data,marker.source)!=nil || terrain.terrain_unread(data,app.assets,marker.source)) {net_source(n,marker.source,true)}
+            if marker.source!={} && (terrain.terrain_source(data,marker.source)!=nil || terrain.terrain_unread(data,assets,marker.source)) {
+                if net_source(n,marker.source,true)==nil {memory_problem(problems)}
+            }
         }
     }
     for &src in n.sources {
@@ -624,7 +641,7 @@ terrain_net_follow :: proc(
         if terrain.terrain_source(data,src.id)==nil {
             src.loaded,src.based=false,false
             // One it cannot read waits for the head of a whole base, which makes it.
-            unread:=terrain.terrain_unread(data,app.assets,src.id)
+            unread:=terrain.terrain_unread(data,assets,src.id)
             if !unread || !stream_skip_to_head(&src,cursor,time) {
                 stream_skip(&src,cursor,time)
                 if unread && !src.missing {src.missing=true;base_ask(&src,data,true)}
@@ -783,8 +800,7 @@ refusals_take :: proc(n:^Terrain_Net,state:^Terrain_Net_World,time:core.Time,ter
         refused:=r.refused
         at:=prediction_find(state,refused.source,refused.tick,refused.index)
         if at>=0 {
-            src:=net_source(n,refused.source,true)
-            region_differs(src,state.predictions[at].low,state.predictions[at].high)
+            if src:=net_source(n,refused.source,true);src!=nil {region_differs(src,state.predictions[at].low,state.predictions[at].high)}
             prediction_remove(state,at)
         }
         if r.tick!=0 {continue}
@@ -973,6 +989,7 @@ edits_send :: proc(n:^Terrain_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,
             continue
         }
         src:=net_source(n,r.source,true)
+        if src==nil {continue}
         src.sequence+=1
         edit.sequence=src.sequence
         if multiplayer.send(outbox,time,edit) {n.stats.sent+=1}
@@ -1076,9 +1093,9 @@ serve_packed :: proc(n:^Terrain_Net,sv:^Net_Serve,chunk:Net_Terrain_Page) -> boo
     total:=0
     if raw>0 {
         error:asset.Error
-        if total,error=asset.pack(&n.encoder,.Edit,n.raw[:raw],sv.packed[:]);error!=.None {return false}
+        if total,error=asset.pack(&n.encoder,asset.PACK_EDIT,n.raw[:raw],sv.packed[:]);error!=.None {return false}
     }
-    resize(&sv.packed,total)
+    base.truncate(&sv.packed,total)
     sv.chunk.total,sv.chunk.offset=u32(total),0
     sv.sending=true
     return true
@@ -1094,7 +1111,9 @@ serves_run :: proc(n:^Terrain_Net,data:core.Ref(terrain.Terrain_Data),time:core.
         entered:=false
         for c in n.entered {if c==sv.connection {entered=true;break}}
         if !entered || terrain.terrain_source(data,sv.source)==nil {i+=1;continue}
-        if !sv.sending && !serve_pack(n,sv,net_source(n,sv.source,true),data) {
+        src:=net_source(n,sv.source,true)
+        if src==nil {i+=1;continue}
+        if !sv.sending && !serve_pack(n,sv,src,data) {
             name:[base.ASSET_ID_TEXT]u8
             how:=""
             if sv.base {how=sv.whole?fmt.tprintf(" as a base of every part: its origin there %016x, here %016x",sv.origin,sv.served_origin):" as a base of what was written since its origin"}

@@ -4,7 +4,6 @@ import "core:math/linalg"
 import "core:math"
 import "core:testing"
 import "mirai:rhi"
-import "mirai:rhi/shared_device"
 
 // Every mode of inspection draws a frame without errors of the device, says
 // what it cannot show and why, changing it keeps the targets of the view,
@@ -12,16 +11,12 @@ import "mirai:rhi/shared_device"
 // box, more lights where more of them reach.
 @(test)
 debug_views_show_their_buffers_and_say_what_they_cannot_show :: proc(t: ^testing.T) {
-	device, _ := shared_device.take(t)
-	if device == nil {
-		if !rhi.gpu_skip_allowed() {testing.expect(t, false, "no GPU device (set MIRAI_ALLOW_GPU_SKIP=1 to skip)")}
-		return
-	}
 	settings := DEFAULT_SETTINGS
 	settings.taa = false
-	r:=new(Renderer);defer free(r)
-	if !testing.expect(t, renderer_init(r, {device = device, width = 96, height = 96, settings = settings}), r.error) {return}
-	defer renderer_destroy(r)
+	f: Fixture
+	if !fixture_init(t, &f, 96, 96, settings) {return}
+	defer fixture_destroy(&f)
+	r, device := f.renderer, f.device
 	vertices: [24]Mesh_Vertex
 	indices: [36]u32
 	normals := [6]Vec3{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}

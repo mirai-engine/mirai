@@ -2,7 +2,6 @@ package project
 
 import "core:os"
 import "core:path/filepath"
-import "core:strings"
 import "mirai:std/serial"
 
 // An engine is a checkout of its repository, which builds its binaries from
@@ -55,12 +54,12 @@ engine_root_find :: proc(given:string,allocator:=context.allocator) -> string {
             folder=parent
         }
     }
-    return strings.clone("",allocator)
+    return ""
 }
 
 // The mirai tool of an engine: what the editor runs for its agents and installers.
 tool_file :: proc(engine_root:string,allocator:=context.allocator) -> string {
-    return path(engine_root,"bin",strings.concatenate({"mirai",".exe" when ODIN_OS==.Windows else ""},context.temp_allocator),allocator=allocator)
+    return path(engine_root,"bin","mirai"+EXECUTABLE_SUFFIX,allocator=allocator)
 }
 
 engine_manifest_parse :: proc(text:string) -> (m:Engine_Manifest,error:Error) {

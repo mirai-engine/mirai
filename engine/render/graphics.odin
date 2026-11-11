@@ -1,5 +1,6 @@
 package render
 
+import "mirai:core"
 import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
@@ -27,13 +28,15 @@ Reflections :: enum u8 {
     Detailed, // and sharp ones show the glass and the gloss of what they reflect
 }
 
-@(storage,setting="machine")
+@(storage,shared,setting="machine")
 Graphics_Settings :: struct {
-    render_megapixels:f32 `mirai:"min=0,max=100,section=Resolution"`, // the most pixels of the 3D image, in millions, below one per point of the window; 0: one per point
+    render_scale:f32 `mirai:"min=0,max=2,section=Resolution"`, // the 3D image per point of the window along each axis, 0.25 to 2; 0 follows the target of the preset (preset_height), and above 0 it is used as it is and the target counts for nothing
+    preset_height:u32 `mirai:"min=0,max=16384,advanced"`,  // the lines the last preset aims for in the views of the window, never above one pixel per point (only graphics_preset_apply writes it); 0: one per point
     antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
     indirect_light:Indirect_Light `mirai:"section=Lighting"`,
     light_probes:Light_Probes,
     reflections:Reflections,
+    sun_shadows:bool,                          // the sun casts shadows; off, it lights everything it faces
     light_samples:u32 `mirai:"min=1,max=31"`,   // samples of the direct light of a pixel, spread over its lights by what each gives it (GRAPHICS_LIGHT_SAMPLES_MAX)
     light_half_resolution:bool,               // the samples of the direct light are taken at one pixel of each 2x2, and the others take theirs by their surfaces
     glass_shadows:bool,                        // blended surfaces color the light that crosses them
@@ -50,19 +53,21 @@ Graphics_Settings :: struct {
 
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
-    render_megapixels=2.0736,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
-    light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
+    preset_height=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
+    sun_shadows=true,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
-Graphics_Preset :: enum u8 {Low,Medium,High,Ultra}
+// The presets, in their order, and Custom: none. No setting stores one: a
+// preset is the values graphics_preset_apply writes, and the one the fields
+// are at is graphics_quality_of.
+Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom}
 // Of each preset only the fields of the quality count: graphics_preset_apply.
-// The resolution and the technique of antialiasing are not of them: a preset
-// leaves them as they are.
-GRAPHICS_PRESETS :: [Graphics_Preset]Graphics_Settings{
-    .Low   ={indirect_light=.Probes,light_probes=.Low,reflections=.Off,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
-    .Medium={indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+// The technique of antialiasing is not one of them: it is the same in all.
+GRAPHICS_PRESETS :: #partial [Graphics_Quality]Graphics_Settings{
+    .Low   ={preset_height=720,sun_shadows=true,indirect_light=.Probes,light_probes=.Low,reflections=.Off,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
+    .Medium={preset_height=900,sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
+    .High  ={preset_height=1080,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={preset_height=1440,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's
@@ -81,10 +86,15 @@ graphics_generates :: proc(graphics:Graphics_Settings,app:^host.App) -> bool {
     return shown==0 || shown>=2*FRAME_GENERATION_BASE_MIN-0.5
 }
 
-// Gives the fields of the quality the values of the preset; the others stay.
-graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Preset) {
+// What names a preset (a control, a layer of the settings, the code of a
+// game): gives the fields of the quality its values, with a scale that
+// follows its target; the others stay. Custom is none and changes nothing.
+graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Quality) {
+    if preset==.Custom {return}
     presets:=GRAPHICS_PRESETS
     p:=presets[preset]
+    g.render_scale,g.preset_height=0,p.preset_height
+    g.sun_shadows=p.sun_shadows
     g.indirect_light,g.light_probes,g.reflections=p.indirect_light,p.light_probes,p.reflections
     g.light_samples,g.glass_shadows,g.glass_layers=p.light_samples,p.glass_shadows,p.glass_layers
     g.light_half_resolution=p.light_half_resolution
@@ -92,17 +102,22 @@ graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Preset) {
     g.frame_generation=p.frame_generation
 }
 
-// The resolution of the default of a small device: the pixels of a 16:9 image 900 tall.
-GRAPHICS_SMALL_DEVICE_MEGAPIXELS :: f32(1.44)
+// The preset the fields of g are at, or Custom: what a control shows, computed
+// when it is read.
+graphics_quality_of :: proc(g:Graphics_Settings) -> Graphics_Quality {
+    for preset in Graphics_Quality {
+        at:=g
+        graphics_preset_apply(&at,preset)
+        if preset!=.Custom && at==g {return preset}
+    }
+    return .Custom
+}
 
-// The default on a device: Medium at GRAPHICS_SMALL_DEVICE_MEGAPIXELS on a GPU
-// without hardware ray tracing or an integrated one, High on the others.
+// The default on a device: Medium on a GPU without hardware ray tracing or an
+// integrated one, High on the others.
 graphics_settings_for_device :: proc(device:rhi.Device_Info) -> Graphics_Settings {
     g:=GRAPHICS_SETTINGS_DEFAULT
-    if !device.features.ray_query || device.type==.Integrated {
-        graphics_preset_apply(&g,.Medium)
-        g.render_megapixels=GRAPHICS_SMALL_DEVICE_MEGAPIXELS
-    }
+    if !device.features.ray_query || device.type==.Integrated {graphics_preset_apply(&g,.Medium)}
     return g
 }
 
@@ -120,7 +135,8 @@ GRAPHICS_TEXTURE_POOL_MIN :: u32(256)
 graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings,device:rhi.Device_Info) -> gpu.Settings {
     s:=settings
     probes,sizes,pixels:=GRAPHICS_PROBES,GRAPHICS_TEXTURE_SIZES,GRAPHICS_DETAIL_PIXELS
-    s.render_scale,s.render_megapixels=1,max(quality.render_megapixels,0)
+    s.render_scale,s.render_height=1,quality.preset_height
+    if quality.render_scale>0 {s.render_scale,s.render_height=clamp(quality.render_scale,0.25,2),0}
     // A plugin that resolves the technique replaces the Resolve stage, where the TAA runs, in its pipeline.
     technique:=quality.antialiasing
     s.taa=base.text_get(technique[:])!=gpu.ANTIALIASING_OFF
@@ -130,6 +146,7 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     if quality.light_probes==.High {s.probe_grid=32}
     s.reflections=quality.reflections!=.Off
     s.reflection_detail_roughness=quality.reflections==.Detailed?gpu.REFLECTION_SHARED_ROUGHNESS:0
+    s.sun_shadows=quality.sun_shadows
     s.direct_samples=clamp(quality.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX)
     s.direct_half_resolution=quality.light_half_resolution
     s.shadow_maps=true
@@ -149,7 +166,8 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
 
 // Brings the renderer and the pacing to the graphics settings of the world when they change.
 @(step="render",loops="game editor",before="render_sync")
-graphics_apply :: proc(graphics:Graphics_Settings,sync:^Render_Sync,app:^host.App) {
+graphics_apply :: proc(settings:core.Ref(Graphics_Settings),sync:^Render_Sync,app:^host.App) {
+    graphics:=settings.ptr^
     if sync.graphics_applied && sync.graphics==graphics {return}
     r:=app.renderer
     if r!=nil && rhi.device_info(r.device).type!=.CPU {
@@ -163,5 +181,6 @@ graphics_apply :: proc(graphics:Graphics_Settings,sync:^Render_Sync,app:^host.Ap
         if app.device!=nil && pacing.vsync!=platform.pacing(app.platform).vsync {rhi.swapchain_set_vsync(app.device,pacing.vsync)}
         platform.set_pacing(app.platform,pacing)
     }
-    sync.graphics,sync.graphics_applied=graphics,true
+    sync.graphics=graphics
+    sync.graphics_applied=true
 }

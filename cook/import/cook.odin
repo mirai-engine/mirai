@@ -27,7 +27,7 @@ MESH_CACHE_BUDGET :: 4<<30 // bytes of the folder
 // when the writer, the format of .mesh or the key of its settings change.
 MESH_CACHE_VERSION :: u64(MESH_SETTINGS_KEY)<<32|u64(IMPORTER_VERSION)<<16|u64(asset.MESH_VERSION)
 @(private="file")
-MESH_SETTINGS_KEY :: 1 // raise it when mesh_settings_hash hashes otherwise
+MESH_SETTINGS_KEY :: 2 // raise it when mesh_settings_hash hashes otherwise
 
 Cook_Failure :: enum u8 {
     None,

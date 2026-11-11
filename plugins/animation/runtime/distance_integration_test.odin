@@ -41,24 +41,24 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     }
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     state:=&playback.states[0]
-    testing.expect(t,animation_distance(&requests,actor,base.name_hash("walk"),.8))
+    animation_distance(&requests,actor,base.name_hash("walk"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     testing.expect(t,abs(state.time-.8)<1e-5 && abs(state.motion.translation.x-.7)<1e-5 && len(events.items)==1)
     animation_play(core.at(&animations,0),"run",fade=1,loop=false)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
-    testing.expect(t,animation_distance(&requests,actor,base.name_hash("run"),.8))
+    animation_distance(&requests,actor,base.name_hash("run"),.8)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     content.animations[0].roots[2]={}
     clock:=animation_motion_clock(state,&content.animations[0],nil,.1,.7)
     testing.expect(t,abs(state.fader.current.time-.8)<1e-5 && abs(state.fader.outgoing[0].player.time-1)<1e-5 && abs(state.fader.elapsed-.2)<1e-5)
     testing.expect(t,clock.player.clip==1 && abs(clock.from-.9)<1e-5 && abs(clock.to-1)<1e-5 && abs(clock.weight-.8)<1e-5 && clock.root.translation)
     value:=core.at(&animations,0);value.motion={1,2};value.fade=0
-    testing.expect(t,animation_distance(&requests,actor,base.name_hash("run"),0,true))
+    animation_distance(&requests,actor,base.name_hash("run"),0,true)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     testing.expect(t,state.motion==ROOT_DELTA_DEFAULT && len(events.items)==0)
     state.fader.outgoing_count=0;state.fader.duration=0
-    target:=mm.TRANSFORM_IDENTITY;target.position.x=7;testing.expect(t,motion_target(&motion_requests,actor,"ledge",spatial_world(target)))
-    testing.expect(t,animation_distance(&requests,actor,base.name_hash("run"),1))
+    target:=mm.TRANSFORM_IDENTITY;target.position.x=7;motion_target(&motion_requests,actor,"ledge",spatial_world(target))
+    animation_distance(&requests,actor,base.name_hash("run"),1)
     step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
     testing.expect(t,abs(state.motion.translation.x-7)<1e-5 && motion.instances[0].error==.None && problems.count==0,fmt.tprint(core.problems_list(&problems)))
 }
@@ -67,11 +67,11 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
 distance_program_advances_only_its_selected_clock_and_keeps_independent_sources_at_physical_dt :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=program_test_content(t,&content);defer {program_test_content_free(&content);playing_free(&state)}
     playback:Playback;events:Animation_Events;defer {playback_free(&playback);delete(events.items)}
-    testing.expect(t,lib.pose_init(&playback.pose,64))
+    testing.expect(t,tracks_bind(&playback,&state,&content))
     nodes:=program_test_graph();nodes[3].weight=.25
     output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
-    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil))
+    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{}))
     testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.1,-1,nil))
     testing.expect(t,program_pose(&playback,&state,&content,animation,output,{}))
     request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("walk"),time=.8}
@@ -86,7 +86,7 @@ distance_program_advances_only_its_selected_clock_and_keeps_independent_sources_
     testing.expect(t,ok && abs(walk-.8)<1e-5 && abs(run-.2)<1e-5 && abs(state.motion.translation.x-.625)<1e-5)
     testing.expect(t,clock.active && clock.player.clip==1 && abs(clock.from-.1)<1e-5 && abs(clock.to-.8)<1e-5 && abs(clock.weight-.75)<1e-5)
     nodes[3].right,nodes[3].weight=2,.9
-    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil) && program_players(&state,output,&content,animation,&events,&playback,0,-1,nil))
+    testing.expect(t,program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{}) && program_players(&state,output,&content,animation,&events,&playback,0,-1,nil))
     clock=animation_motion_clock(&state,&content,output,0,0)
     testing.expect(t,clock.active && clock.player.clip==1 && abs(clock.weight-.1)<1e-5)
 }

@@ -3,13 +3,12 @@ package host
 import "core:fmt"
 import "core:os"
 import "core:testing"
+import "mirai:std/base"
 
 @(test)
 loading_a_library_keeps_the_copies_of_processes_that_still_run :: proc(t:^testing.T) {
-    directory,_:=os.temp_directory(context.temp_allocator)
-    root:=fmt.tprintf("%s/mirai-host-library-%d",directory,os.get_pid())
-    testing.expect_value(t,os.make_directory_all(root),nil)
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"host-library")
+    if root=="" {return}
     path:=fmt.tprintf("%s/libgame.dylib",root)
     running:=fmt.tprintf("%s/libgame-live-%d-0.dylib",root,os.get_ppid())
     ended:=fmt.tprintf("%s/libgame-live-%d-0.dylib",root,2147483646)

@@ -87,9 +87,10 @@ float direct_spin(int2 p) {
 }
 float direct_pick(uint place, uint m, uint k) { return frac(0.5 + float(place * m + k) * 0.6180339887); }
 
-// The weight of the sun at a point: the luminance of its light on the surface.
+// The weight of the sun at a point: the luminance of its light on the surface;
+// none while it casts no shadows, when the pixels take all of it.
 float direct_sun_weight(float3 position, float3 normal) {
-    if (frame.sun_direction.w < 0.5) return 0.0;
+    if (frame.sun_direction.w < 0.5 || frame.sun_direction.w >= SUN_UNSHADOWED) return 0.0;
     return luminance(sun_light(position)) * saturate(dot(normal, frame.sun_direction.xyz));
 }
 

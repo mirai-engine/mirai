@@ -3,6 +3,7 @@ package behavior
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:std/ai"
+import "mirai:std/base"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
 import phys "plugins:physics/runtime"
@@ -55,7 +56,7 @@ Place_Test :: struct {
 
 Place_Query :: struct {
     querier:core.Entity,
-    request:u32,          // given back in the result
+    request:u32,          // place_query writes it: given back in the result
     center:Place_Context, // around whom: the querier, the target or the point
     target:core.Entity,
     point:[3]f32,
@@ -75,10 +76,18 @@ Place_Query :: struct {
 @(storage,queue)
 Place_Requests :: struct {
     using queue:core.Queue(Place_Query),
+    last:u32, // of the requests asked for so far: never 0
 }
 
-// Asks for places for the querier; its Place_Result answers with `request`.
-place_query :: proc(r:^Place_Requests,query:Place_Query) {core.push(&r.queue,query)}
+// Asks for places for the querier: the number its Place_Result answers with.
+place_query :: proc(r:^Place_Requests,query:Place_Query) -> u32 {
+    r.last+=1
+    if r.last==0 {r.last=1}
+    query:=query
+    query.request=r.last
+    core.push(&r.queue,query)
+    return r.last
+}
 
 Place_Status :: enum u8 {None,Waiting,Found,Empty}
 
@@ -140,7 +149,9 @@ places_run :: proc(
         result:Place_Result
         filter:=place_filter(navigation,query.querier,paths,agents,walks,swims,physics)
         smart:=Smart_View{objects=objects,states=states,worlds=worlds,claims=claims,time=time.seconds,tick=time.tick}
-        place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,&smart,agents,influence.ptr)
+        if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,&smart,agents,influence.ptr) {
+            core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
+        }
         if row!=nil {row^=result}
     }
     if places.head==len(places.waiting) {
@@ -148,7 +159,7 @@ places_run :: proc(
         places.head=0
     } else if places.head>=64 && places.head*2>=len(places.waiting) {
         copy(places.waiting[:],places.waiting[places.head:])
-        resize(&places.waiting,len(places.waiting)-places.head)
+        base.truncate(&places.waiting,len(places.waiting)-places.head)
         places.head=0
     }
 }
@@ -165,8 +176,9 @@ place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,pat
 }
 
 // Runs one query into a result.
-place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:^Smart_View,agents:core.Read(nav.Nav_Agent),influence:^Influence) {
+place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:^Smart_View,agents:core.Read(nav.Nav_Agent),influence:^Influence) -> (memory:bool) {
     query:=query
+    memory=true
     result^={request=query.request,status=.Empty,offers=-1}
     at_context :: proc(worlds:core.Read(core.World_Transform),querier:core.Entity,from:Place_Context,target:core.Entity,point:[3]f32) -> (pose:mm.Transform,ok:bool) {
         switch from {
@@ -270,7 +282,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:c
     for test,k in tests {
         from,_:=at_context(worlds,query.querier,test.from,test.target,test.point)
         if test.measure==.Path {
-            place_paths(places,from.position,candidates[:count],refs[:count],mesh,volume,filter,inputs[k:],stride)
+            if !place_paths(places,from.position,candidates[:count],refs[:count],mesh,volume,filter,inputs[k:],stride) {memory=false}
             continue
         }
         for i in 0..<count {inputs[i*stride+k]=place_measure(test,from,candidates[i],query.querier,perceivers,physics,influence)}
@@ -286,6 +298,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:c
     }
     result.count=u8(kept)
     result.status=.Found if kept>0 else .Empty
+    return
 }
 
 @(private)
@@ -295,7 +308,7 @@ place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querie
     case .Distance:
         return linalg.length(candidate-from.position)
     case .Facing:
-        forward:=mm.quat_rotate(from.rotation,mm.Vec3{0,0,1})
+        forward:=mm.quat_forward(from.rotation)
         to:=candidate-from.position
         to.y,forward.y=0,0
         if linalg.length(to)<1e-4 || linalg.length(forward)<1e-4 {return 1}
@@ -323,27 +336,28 @@ place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querie
 // on a mesh, one search from where the origin stands to all of them; through
 // a volume, a search for each.
 @(private)
-place_paths :: proc(places:^Places,origin:mm.Vec3,candidates:[]mm.Vec3,refs:[]ai.Nav_Ref,mesh:^ai.Nav_Mesh,volume:^ai.Nav_Volume,filter:^ai.Nav_Filter,out:[]f32,stride:int) {
+place_paths :: proc(places:^Places,origin:mm.Vec3,candidates:[]mm.Vec3,refs:[]ai.Nav_Ref,mesh:^ai.Nav_Mesh,volume:^ai.Nav_Volume,filter:^ai.Nav_Filter,out:[]f32,stride:int) -> (memory:bool) {
     for i in 0..<len(candidates) {out[i*stride]=PLACE_NO_PATH}
     if volume!=nil {
         from_ref,start,ok:=ai.nav_volume_find_nearest(volume,origin,{0.5,1,0.5})
-        if !ok {return}
-        if len(places.volume_query.points)==0 && !ai.nav_volume_query_init(&places.volume_query,4096) {return}
-        if len(places.refs)==0 {resize(&places.refs,1024)}
+        if !ok {return true}
+        if len(places.volume_query.points)==0 && !ai.nav_volume_query_init(&places.volume_query,4096) {return false}
+        if len(places.refs)==0 && resize(&places.refs,1024)!=nil {return false}
         for candidate,i in candidates {
             to_ref,end,found:=ai.nav_volume_find_nearest(volume,candidate,{0.5,1,0.5})
             if !found {continue}
             _,status,partial:=ai.nav_volume_find_path(&places.volume_query,volume,from_ref,to_ref,start,end,places.refs[:])
             if status==.Found && !partial {out[i*stride]=ai.search_cost(&places.volume_query.search)}
         }
-        return
+        return true
     }
-    if mesh==nil {return}
+    if mesh==nil {return true}
     from_ref,start,ok:=ai.nav_find_nearest_any(mesh,origin,{0.5,2,0.5})
-    if !ok {return}
-    if len(places.query.points)==0 && !ai.nav_query_init(&places.query,4096) {return}
-    if !ai.nav_costs(&places.query,mesh,from_ref,start,filter,refs) {return}
+    if !ok {return true}
+    if len(places.query.points)==0 && !ai.nav_query_init(&places.query,4096) {return false}
+    if !ai.nav_costs(&places.query,mesh,from_ref,start,filter,refs) {return true}
     for candidate,i in candidates {
         if cost,found:=ai.nav_cost_to(&places.query,mesh,refs[i],candidate);found {out[i*stride]=cost}
     }
+    return true
 }

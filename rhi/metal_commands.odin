@@ -540,15 +540,6 @@ cmd_draw :: proc(c: ^Command_List, vertex_count: u32, instance_count: u32 = 1, f
 	MTL.RenderCommandEncoder_drawPrimitives(c.render, mtl_primitive(c), NS.UInteger(first_vertex), NS.UInteger(vertex_count), NS.UInteger(instance_count), NS.UInteger(first_instance))
 }
 
-cmd_draw_indexed :: proc(c: ^Command_List, index_count: u32, instance_count: u32 = 1, first_index: u32 = 0, vertex_offset: i32 = 0, first_instance: u32 = 0) {
-	assert(c.in_render_pass)
-	if index_count == 0 || instance_count == 0 {return}
-	index_buffer := mtl_index_buffer(c)
-	if index_buffer == nil || !mtl_flush_bindings(c, false) {return}
-	offset := NS.UInteger(c.index_offset + u64(first_index) * size_of(u32))
-	MTL.RenderCommandEncoder_drawIndexedPrimitives(c.render, mtl_primitive(c), NS.UInteger(index_count), .UInt32, index_buffer, offset, NS.UInteger(instance_count), NS.Integer(vertex_offset), NS.UInteger(first_instance))
-}
-
 // Metal has no multi-draw indirect without indirect command buffers; each
 // Draw_Indexed_Indirect record (MTLDrawIndexedPrimitivesIndirectArguments
 // layout) is issued as its own indirect draw.
@@ -656,6 +647,33 @@ cmd_copy_texture_to_buffer :: proc(c: ^Command_List, src: Texture, dst: Buffer, 
 		encoder, t.handle, 0, 0, MTL.Origin{0, 0, 0}, MTL.Size{NS.UInteger(t.desc.width), NS.UInteger(t.desc.height), NS.UInteger(max(t.desc.depth, 1))},
 		b.handle, NS.UInteger(dst_offset), row, row * NS.UInteger(t.desc.height),
 	)
+}
+
+// Copies mip 0 of a texture into mip 0 of another, every layer, with its
+// bytes as they are: nothing converts between the sRGB encodings of the two.
+// What it copies between: texture_copy_problem; neither is the image of the
+// swapchain.
+cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture) {
+	assert(!c.in_render_pass)
+	d := c.device
+	s := pool_get(&d.textures, base.Handle(src))
+	t := pool_get(&d.textures, base.Handle(dst))
+	if s == nil || t == nil || s.handle == nil || t.handle == nil {return}
+	if src == dst || s.swapchain || t.swapchain {set_error(d, "cmd_copy_texture: it copies between two textures of the device, not the image of the swapchain"); return}
+	if problem := texture_copy_problem(s.desc, t.desc); problem != "" {set_error(d, "cmd_copy_texture: %s", problem); return}
+	source := s.handle
+	if s.format != t.format {
+		// A blit takes two textures of one pixel format. A view that changes
+		// the sRGB encoding alone asks for no usage of the texture.
+		if s.encoded == nil {s.encoded = MTL.Texture_newTextureViewWithPixelFormat(s.handle, t.format)}
+		if s.encoded == nil {set_error(d, "cmd_copy_texture: newTextureViewWithPixelFormat failed"); return}
+		source = s.encoded
+	}
+	encoder := mtl_blit_encoder(c)
+	size := MTL.Size{NS.UInteger(s.desc.width), NS.UInteger(s.desc.height), 1}
+	for slice in 0 ..< NS.UInteger(max(s.desc.layers, 1)) {
+		MTL.BlitCommandEncoder_copyFromTexture(encoder, source, slice, 0, MTL.Origin{0, 0, 0}, size, t.handle, slice, 0, MTL.Origin{0, 0, 0})
+	}
 }
 
 // ---------------------------------------------------------------- debugging and timing

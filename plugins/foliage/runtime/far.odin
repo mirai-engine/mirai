@@ -2,6 +2,7 @@ package foliage
 
 import "base:runtime"
 import "core:math/linalg"
+import "mirai:core"
 import render "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -64,22 +65,26 @@ kind_find :: proc(resident:^Foliage_Resident,id:base.Asset_Id) -> ^Resident_Kind
 // fills out the frames, builds their levels and the crown in a job, given to
 // the renderer in a later frame. KINDS_A_FRAME of those steps a frame; -1
 // while it waits for one, or for its job.
-kind_ensure :: proc(resident:^Foliage_Resident,app:^host.App,id:base.Asset_Id,parts:[]Part_Draw) -> int {
+kind_ensure :: proc(resident:^Foliage_Resident,assets:^host.Assets,renderer:^render.Renderer,job_system:^jobs.Job_System,allocator:runtime.Allocator,id:base.Asset_Id,parts:[]Part_Draw,problems:^core.Problems,e:core.Entity) -> int {
     for &kind,i in resident.kinds {
         if kind.id!=id {continue}
         if kind.bake==nil {return i}
         if jobs.pending(&kind.bake.counter) || resident.kinds_left<=0 {return -1}
         resident.kinds_left-=1
-        kind_finish(app,&kind)
+        if !kind_finish(assets,renderer,allocator,&kind) {memory_problem(problems,e,"the crown of the far form of a type: its cells cast no shadow from afar")}
         return i
     }
     if resident.kinds_left<=0 {return -1}
     // Drawing its frames is the work of a frame: no cell is built with it.
     resident.kinds_left-=1
     resident.cells_left=0
-    append(&resident.kinds,Resident_Kind{id=id})
+    if _,error:=append(&resident.kinds,Resident_Kind{id=id});error!=nil {memory_problem(problems,e,"the far form of a type");return -1}
     kind:=&resident.kinds[len(resident.kinds)-1]
-    kind_make(kind,app,parts)
+    if !kind_make(kind,assets,renderer,job_system,parts) {
+        pop(&resident.kinds)
+        memory_problem(problems,e,"the far form of a type")
+        return -1
+    }
     return kind.bake==nil?len(resident.kinds)-1:-1
 }
 
@@ -117,32 +122,33 @@ Kind_Bake :: struct {
 }
 
 @(private)
-kind_make :: proc(kind:^Resident_Kind,app:^host.App,parts:[]Part_Draw) {
+kind_make :: proc(kind:^Resident_Kind,assets:^host.Assets,renderer:^render.Renderer,job_system:^jobs.Job_System,parts:[]Part_Draw) -> (enough:bool) {
     kind.made=true
-    if len(parts)==0 {return}
+    if len(parts)==0 {return true}
     pieces:=make([dynamic]render.Impostor_Part,0,len(parts),context.temp_allocator)
     low,high:=[3]f32{max(f32),max(f32),max(f32)},[3]f32{min(f32),min(f32),min(f32)}
     for part in parts {
-        a,b,known:=render.mesh_bounds(app,part.desc.mesh)
-        if !known {return}
+        a,b,known:=render.mesh_bounds(renderer,part.desc.mesh)
+        if !known {return true}
         a,b=box_placed(part.placement,a,b)
         low,high=linalg.min(low,a),linalg.max(high,b)
         append(&pieces,render.Impostor_Part{mesh=part.desc.mesh,placement=part.placement,material=part.desc.material,slot_materials=part.desc.slot_materials})
     }
     kind.low,kind.high=low,high
     heap:=runtime.heap_allocator()
-    bake:=new(Kind_Bake,heap)
+    bake,error:=new(Kind_Bake,heap)
+    if error!=nil {return false}
     bake.positions=make([dynamic][3]f32,heap)
     bake.indices=make([dynamic]u32,heap)
     geom.mesh_buffer_init(&bake.crown,heap)
     host.assets_render_geometry_init(&bake.made,heap)
-    if app.assets!=nil {bake.limits=host.assets_limits(app.assets)}
-    bake.images,bake.captured=render.impostor_capture(app,pieces[:],IMPOSTOR_GRID,IMPOSTOR_FRAME,heap)
+    if assets!=nil {bake.limits=host.assets_limits(assets)}
+    bake.images,bake.captured=render.impostor_capture(renderer,pieces[:],IMPOSTOR_GRID,IMPOSTOR_FRAME,heap)
     if bake.captured {kind.sphere={bake.images.center.x,bake.images.center.y,bake.images.center.z,bake.images.radius}}
-    bake.max_size=render.texture_max_size(app)
+    bake.max_size=render.texture_max_size(renderer)
     for part in parts {
         first:=len(bake.positions)
-        if !render.mesh_triangles(app,part.desc.mesh,&bake.positions,&bake.indices) {
+        if !render.mesh_triangles(renderer,part.desc.mesh,&bake.positions,&bake.indices) {
             clear(&bake.positions);clear(&bake.indices)
             break
         }
@@ -150,7 +156,8 @@ kind_make :: proc(kind:^Resident_Kind,app:^host.App,parts:[]Part_Draw) {
         for &p in bake.positions[first:] {p=(part.placement*[4]f32{p.x,p.y,p.z,1}).xyz}
     }
     kind.bake=bake
-    if jobs.worker_count(&app.jobs)>1 {jobs.run(&app.jobs,jobs.OWNER,kind_bake,bake,&bake.counter)} else {kind_bake(bake,jobs.OWNER)}
+    if jobs.worker_count(job_system)>1 {jobs.run(job_system,jobs.OWNER,kind_bake,bake,&bake.counter)} else {kind_bake(bake,jobs.OWNER)}
+    return true
 }
 
 // A job: the frames of a kind filled out and built into levels, and its crown.
@@ -170,26 +177,34 @@ kind_bake :: proc(bake:^Kind_Bake,worker:int) {
 
 // Gives the renderer what the job of a kind made.
 @(private)
-kind_finish :: proc(app:^host.App,kind:^Resident_Kind) {
+kind_finish :: proc(assets:^host.Assets,renderer:^render.Renderer,allocator:runtime.Allocator,kind:^Resident_Kind) -> (enough:bool) {
+    enough=true
     bake:=kind.bake
     if bake.built {
-        kind.color,_=render.texture_add_built(app,bake.color,"foliage impostor color")
-        kind.normal,_=render.texture_add_built(app,bake.normal,"foliage impostor normal")
+        kind.color,_=render.texture_add_built(renderer,bake.color,"foliage impostor color")
+        kind.normal,_=render.texture_add_built(renderer,bake.normal,"foliage impostor normal")
         if kind.color==0 || kind.normal==0 {
-            if kind.color!=0 {render.texture_remove(app,kind.color)}
-            if kind.normal!=0 {render.texture_remove(app,kind.normal)}
+            if kind.color!=0 {render.texture_remove(renderer,kind.color)}
+            if kind.normal!=0 {render.texture_remove(renderer,kind.normal)}
             kind.color,kind.normal=0,0
         }
     }
-    if bake.meshed && app.assets!=nil {
+    if bake.meshed && assets!=nil {
         shape:=&bake.crown
-        kind.crown,_=host.assets_mesh_publish(app.assets,&bake.made)
-        kind.crown_positions=make([][3]f32,len(shape.positions),app.allocator)
-        kind.crown_indices=make([]u32,len(shape.indices),app.allocator)
-        for p,i in shape.positions {kind.crown_positions[i]=p}
-        copy(kind.crown_indices,shape.indices[:])
+        kind.crown,_=host.assets_mesh_publish(assets,&bake.made)
+        positions,positions_error:=make([][3]f32,len(shape.positions),allocator)
+        indices,indices_error:=make([]u32,len(shape.indices),allocator)
+        if positions_error!=nil || indices_error!=nil {
+            delete(positions,allocator);delete(indices,allocator)
+            enough=false
+        } else {
+            for p,i in shape.positions {positions[i]=p}
+            copy(indices,shape.indices[:])
+            kind.crown_positions,kind.crown_indices=positions,indices
+        }
     }
     kind_bake_free(kind)
+    return
 }
 
 @(private)
@@ -213,8 +228,8 @@ kind_free :: proc(app:^host.App,kind:^Resident_Kind) {
         kind_bake_free(kind)
     }
     if app!=nil {
-        if kind.color!=0 {render.texture_remove(app,kind.color)}
-        if kind.normal!=0 {render.texture_remove(app,kind.normal)}
+        if kind.color!=0 {render.texture_remove(app.renderer,kind.color)}
+        if kind.normal!=0 {render.texture_remove(app.renderer,kind.normal)}
         if kind.crown!={} && app.assets!=nil {host.assets_mesh_release(app.assets,kind.crown)}
     }
     if app!=nil {delete(kind.crown_positions,app.allocator);delete(kind.crown_indices,app.allocator)}

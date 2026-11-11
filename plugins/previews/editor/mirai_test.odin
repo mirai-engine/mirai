@@ -16,11 +16,23 @@ import eanim "plugins:animation/runtime"
 
 PREVIEW_MIRAI_AVATAR :: #config(PREVIEW_MIRAI_AVATAR,false)
 
+@(private="file")
+Avatar_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    skins:core.Table(eanim.Pose_Source),
+    meshes:core.Table(erender.Mesh_Renderer),
+}
+
+@(private="file")
+Avatar_Shared :: struct {skeletons:eanim.Skeleton_Assets}
+
 @(test)
 preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T) {
     when !PREVIEW_MIRAI_AVATAR {return} else {
-        device,message:=shared_device.take(t, hardware_rt = false)
-        if device==nil {testing.expect(t,false,message);return}
+        device:=shared_device.take_or_skip(t,hardware_rt=false)
+        if device==nil {return}
         renderer:gpu.Renderer
         settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
         if !testing.expect(t,gpu.renderer_init(&renderer,{device=device,width=64,height=64,settings=settings}),renderer.error) {return}
@@ -28,24 +40,23 @@ preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T)
         assets:host.Assets
         if !testing.expect(t,host.assets_init(&assets,{root="demo/assets",renderer=&renderer})) {return}
         defer host.assets_destroy(&assets)
-        cache:eanim.Skeleton_Assets;defer eanim.skeleton_assets_free(&cache)
-        app:=host.App{assets=&assets,renderer=&renderer,allocator=context.allocator,shared=&cache}
-        entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-        storages:=[1]core.Storage_Info{{type=eanim.Skeleton_Assets,info=type_info_of(eanim.Skeleton_Assets),place=.Shared}}
-        info:=core.World_Info{storages=storages[:]}
-        world:=core.world_ref(&entities,&info)
-        scene:=Scene{}
-        transforms:core.Table(core.Transform);defer core.table_destroy(&transforms);scene.transforms=&transforms
-        parents:core.Table(core.Parent);defer core.table_destroy(&parents);scene.parents=&parents
-        skins:core.Table(eanim.Pose_Source);defer core.table_destroy(&skins);scene.skins=&skins
-        meshes:core.Table(erender.Mesh_Renderer);defer core.table_destroy(&meshes);scene.meshes=&meshes
-        rig:=core.create(&entities)
+        info,described:=core.test_info(t,Avatar_World,Avatar_Shared,core.Test_None,eanim.test_types)
+        if !described {return}
+        defer core.test_info_destroy(&info)
+        shared:Avatar_Shared;defer core.world_destroy(&info,.Shared,&shared)
+        app:=host.App{assets=&assets,renderer=&renderer,allocator=context.allocator,shared=&shared}
+        w:Avatar_World
+        if !testing.expect(t,core.world_init(&info,.World,&w,context.allocator)) {return}
+        defer core.world_destroy(&info,.World,&w)
+        world:=core.world_ref(&w,&info)
+        scene:=Scene{transforms=&w.transforms,parents=&w.parents,skins=&w.skins,meshes=&w.meshes}
+        rig:=core.create(&w.entities)
         mesh,found:=asset.registry_find_path(&assets.registry,"characters/mirai/output_unwrapped.mesh")
         skeleton,found_skeleton:=asset.registry_find_path(&assets.registry,"characters/mirai/Armature.skeleton")
         animation,found_animation:=asset.registry_find_path(&assets.registry,"characters/mirai/mirai_locomotion.anim")
         if !testing.expect(t,found && found_skeleton && found_animation,"generate the Mirai gallery assets before this integration test") {return}
-        core.add(&transforms,rig,core.TRANSFORM_IDENTITY);core.add(&meshes,rig,{mesh=mesh.id})
-        core.table_settle(&transforms,&entities);core.table_settle(&meshes,&entities)
+        core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.add(&w.meshes,rig,{mesh=mesh.id})
+        core.settle(&info,&w,nil)
         p:=Animation{chosen=animation.id};defer animation_destroy(&p,context.allocator)
         start:=time.tick_now()
         animation_load(&assets,context.allocator,&p)
@@ -73,8 +84,8 @@ preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T)
         changed:=false
         for vertex,i in sub.posed {if linalg.length(vertex.position-initial[i])>0.001 {changed=true;break}}
         testing.expect(t,changed)
-        testing.expect_value(t,transforms.values[0],core.TRANSFORM_IDENTITY)
-        testing.expect_value(t,entities.alive,1)
+        testing.expect_value(t,w.transforms.values[0],core.TRANSFORM_IDENTITY)
+        testing.expect_value(t,w.entities.alive,1)
         testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
         fmt.printfln("Mirai preview: %d bones, %d vertices, %d triangles; gather %.2f ms; fit17 %.2f ms; sample+readback %.2f ms",len(sub.skins[0].rest),len(sub.skins[0].geometry.posed),len(sub.locals)/3,gathered_ms,fit_ms,sample_ms)
     }

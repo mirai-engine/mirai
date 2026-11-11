@@ -1,7 +1,9 @@
 package host
 
+import "base:runtime"
 import "core:c"
 import "core:log"
+import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:time"
@@ -40,7 +42,9 @@ CAMERA_DEFAULT :: render.Camera{position={0,2,6},forward={0,-1,-6},up={0,1,0},fo
 
 ALL_PHASES :: core.Phases{.Input,.Fixed,.Frame,.Late,.Ui,.Render}
 
-@(private)
+// What libraries add to a frame of the application, which draws it and
+// starts the next one without it. A function that adds to the frame
+// receives it by itself.
 Frame_Extras :: struct {
     layers:[FRAME_LAYER_CAPACITY]render.Ui_Layer,
     layer_count:int,
@@ -57,6 +61,11 @@ Frame_Extras :: struct {
     probe_count:int,
     slot_textures:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Texture,
     slot_texture_count:int,
+    slots_shown:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Shown, // of the last frame: render_sync writes them
+    slots_shown_count:int,
+    texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
+    texture_view_count:int,
+    dropped:u64, // what did not fit in its frame and was not drawn, since the application started
 }
 
 // A texture a slot of the mesh of an entity shows this frame over its
@@ -125,7 +134,12 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     if allocation_error!=nil {return .Out_Of_Memory}
     app.renderer=renderer
     generation:render.Shader_Assets
-    shaders:=app_shaders_open(app,desc,&generation)
+    shaders,opened:=app_shaders_open(app,desc,&generation)
+    if !opened {
+        app.renderer=nil
+        free(renderer,app.allocator)
+        return .Out_Of_Memory
+    }
     if !render.renderer_init(renderer,{
         device=device,width=u32(app.drawable.x),height=u32(app.drawable.y),
         settings=desc.render_settings,allocator=app.allocator,shaders=shaders,
@@ -164,12 +178,24 @@ app_exit :: proc(app:^App,code:int) {
     app.quit,app.exit_code=true,code
 }
 
+// What a script of the player adds to the input of the UI of a frame, once the
+// frame has built it from the devices.
+Frame_Script :: struct {
+    input:core.Input,
+    pointer:[2]f32,
+    points:bool, // pointer is a place of the script
+}
+
 // The player's frame, with the phases of the game loop it runs. False once
 // the application was asked to end.
-app_frame :: proc(app:^App,phases:=ALL_PHASES) -> bool {
+app_frame :: proc(app:^App,phases:=ALL_PHASES,script:^Frame_Script=nil) -> bool {
     if !app_frame_begin(app) {
         profile_frame_close(app)
         return false
+    }
+    if script!=nil {
+        player_script_ui(&app.ui_input,script.input,script.pointer,script.points)
+        if script.points {ui_input_camera(&app.ui_input,app.camera,app_scene_points(app))}
     }
     if app.world!=nil {app_game_frame(app,app.world,phases)}
     app_frame_end(app)
@@ -371,7 +397,7 @@ run_editor_only :: proc(app:^App,phase:core.Phase,world,editor:rawptr) {
         if index<0 || int(index)>=len(info.steps) {continue}
         step:=info.steps[index]
         if .Game in step.loops || step.call==nil {continue}
-        step.call(world,app.shared,editor,app,0)
+        step.call(world,app.shared,editor,app)
     }
 }
 
@@ -382,7 +408,7 @@ run_phase :: proc(app:^App,loop:core.Loop,phase:core.Phase,phases:core.Phases,wo
     ref:=app_world_ref(app,world)
     if f:=core.world_storage_of(ref,core.Frame_Time);f!=nil {f.phase=phase}
     if phase==.Render {frame_view(app,ref)}
-    if !steps_run(app,loop,phase,world,editor) {run(world,app.shared,editor,app)}
+    run(world,app.shared,editor,app)
 }
 
 // The camera and the time the frame is drawn with: those of the View, the
@@ -429,7 +455,7 @@ app_frame_end :: proc(app:^App) {
     app.camera_carried={}
     app.inspection={}
     app.view_count=0
-    app.texture_view_count=0
+    app.extras.texture_view_count=0
     app.stats.frames+=1
     images:=u32(2) if drawn && app.renderer!=nil && render.renderer_stats(app.renderer).generated else 1
     app.stats.fps_frames+=int(images)
@@ -501,14 +527,13 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
     if app.view_count==0 && app.scene.z>0 && app.scene.w>0 {
         app.views[0]={camera=app.camera,camera_cut=app.camera_cut,carried=app.camera_carried,inspection=app.inspection,rect=app.scene}
         app.views[0].camera.shift+=app.scene_shift
-        app.views[0].view_width=app.scene_view_width
         app.view_count=1
     }
     started:=time.tick_now()
     // The views of the window and, after them, those drawn into a texture.
     views:[render.VIEW_CAPACITY+TEXTURE_VIEW_CAPACITY]render.Frame_View
     count:=copy(views[:],app.views[:app.view_count])
-    count+=copy(views[count:],app.texture_views[:app.texture_view_count])
+    count+=copy(views[count:],extras.texture_views[:extras.texture_view_count])
     drawn:=render.renderer_frame(r,{
         camera=app.camera,detail=app.detail,ui=extras.layers[:extras.layer_count],camera_cut=app.camera_cut,carried=app.camera_carried,inspection=app.inspection,time=app.time,
         views=views[:count],
@@ -527,10 +552,9 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
 }
 
 // A screen layer for this frame, drawn over the layers added before it.
-app_ui_layer_add :: proc(app:^App,layer:render.Ui_Layer) -> bool {
-    extras:=&app.extras
+extras_ui_layer_add :: proc(extras:^Frame_Extras,layer:render.Ui_Layer) -> bool {
     if extras.layer_count>=len(extras.layers) {
-        app.stats.extras_dropped+=1
+        extras.dropped+=1
         return false
     }
     extras.layers[extras.layer_count]=layer
@@ -538,10 +562,9 @@ app_ui_layer_add :: proc(app:^App,layer:render.Ui_Layer) -> bool {
     return true
 }
 
-app_world_panel_add :: proc(app:^App,panel:render.World_Panel) -> bool {
-    extras:=&app.extras
+extras_world_panel_add :: proc(extras:^Frame_Extras,panel:render.World_Panel) -> bool {
     if extras.panel_count>=len(extras.panels) {
-        app.stats.extras_dropped+=1
+        extras.dropped+=1
         return false
     }
     extras.panels[extras.panel_count]=panel
@@ -550,9 +573,8 @@ app_world_panel_add :: proc(app:^App,panel:render.World_Panel) -> bool {
 }
 
 // A world panel drawn into a texture of render.ui_texture_add in this frame.
-app_ui_texture_draw :: proc(app:^App,draw:render.Ui_Texture_Draw) -> bool {
-    extras:=&app.extras
-    if extras.ui_texture_count>=len(extras.ui_textures) {app.stats.extras_dropped+=1;return false}
+extras_ui_texture_draw :: proc(extras:^Frame_Extras,draw:render.Ui_Texture_Draw) -> bool {
+    if extras.ui_texture_count>=len(extras.ui_textures) {extras.dropped+=1;return false}
     extras.ui_textures[extras.ui_texture_count]=draw
     extras.ui_texture_count+=1
     return true
@@ -571,27 +593,24 @@ app_ui_texture_capture :: proc(app:^App,draw:render.Ui_Texture_Draw,allocator:=c
 
 // What extensions draw at the Effect stage into a texture of
 // render.ui_texture_add, in this frame.
-app_effect_view_add :: proc(app:^App,view:render.Effect_View) -> bool {
-    extras:=&app.extras
-    if extras.effect_view_count>=len(extras.effect_views) {app.stats.extras_dropped+=1;return false}
+extras_effect_view_add :: proc(extras:^Frame_Extras,view:render.Effect_View) -> bool {
+    if extras.effect_view_count>=len(extras.effect_views) {extras.dropped+=1;return false}
     extras.effect_views[extras.effect_view_count]=view
     extras.effect_view_count+=1
     return true
 }
 
 // A pixel whose depth this frame reads back (render.renderer_depth_probes).
-app_depth_probe_add :: proc(app:^App,probe:render.Depth_Probe) -> bool {
-    extras:=&app.extras
-    if extras.probe_count>=len(extras.probes) {app.stats.extras_dropped+=1;return false}
+extras_depth_probe_add :: proc(extras:^Frame_Extras,probe:render.Depth_Probe) -> bool {
+    if extras.probe_count>=len(extras.probes) {extras.dropped+=1;return false}
     extras.probes[extras.probe_count]=probe
     extras.probe_count+=1
     return true
 }
 
-app_debug_lines_add :: proc(app:^App,lines:render.Debug_Lines) -> bool {
-    extras:=&app.extras
+extras_debug_lines_add :: proc(extras:^Frame_Extras,lines:render.Debug_Lines) -> bool {
     if extras.debug_count>=len(extras.debug) {
-        app.stats.extras_dropped+=1
+        extras.dropped+=1
         return false
     }
     extras.debug[extras.debug_count]=lines
@@ -600,36 +619,33 @@ app_debug_lines_add :: proc(app:^App,lines:render.Debug_Lines) -> bool {
 }
 
 // Visual instances for this frame, without entities in a world.
-app_instance_add :: proc(app:^App,instance:render.Instance_Desc) -> bool {
-    extras:=&app.extras
-    if extras.instances.allocator.procedure==nil && app.allocator.procedure!=nil {extras.instances.allocator=app.allocator}
-    if _,error:=append(&extras.instances,instance);error!=nil {app.stats.extras_dropped+=1;return false}
+extras_instance_add :: proc(extras:^Frame_Extras,instance:render.Instance_Desc) -> bool {
+    if _,error:=append(&extras.instances,instance);error!=nil {extras.dropped+=1;return false}
     return true
 }
 
-app_instances :: proc(app:^App) -> []render.Instance_Desc {return app.extras.instances[:]}
+extras_instances :: proc(extras:^Frame_Extras) -> []render.Instance_Desc {return extras.instances[:]}
 
 // Frees what the extras of the frames hold; app_destroy does it.
-app_extras_free :: proc(app:^App) {
-    delete(app.extras.instances)
-    app.extras.instances=nil
+extras_free :: proc(extras:^Frame_Extras) {
+    delete(extras.instances)
+    extras.instances=nil
 }
 
 // A texture a slot of the mesh of an entity shows this frame (Slot_Texture).
 // False without room for another one.
-app_slot_texture_add :: proc(app:^App,texture:Slot_Texture) -> bool {
-    extras:=&app.extras
-    if extras.slot_texture_count>=len(extras.slot_textures) {app.stats.extras_dropped+=1;return false}
+extras_slot_texture_add :: proc(extras:^Frame_Extras,texture:Slot_Texture) -> bool {
+    if extras.slot_texture_count>=len(extras.slot_textures) {extras.dropped+=1;return false}
     extras.slot_textures[extras.slot_texture_count]=texture
     extras.slot_texture_count+=1
     return true
 }
 
-app_slot_textures :: proc(app:^App) -> []Slot_Texture {return app.extras.slot_textures[:app.extras.slot_texture_count]}
+extras_slot_textures :: proc(extras:^Frame_Extras) -> []Slot_Texture {return extras.slot_textures[:extras.slot_texture_count]}
 
 // What drew the mesh of the Slot_Texture of object in the last frame.
-app_slot_shown :: proc(app:^App,object:u64) -> (Slot_Shown,bool) {
-    for shown in app.slots_shown[:app.slots_shown_count] {if shown.object==object {return shown,true}}
+extras_slot_shown :: proc(extras:^Frame_Extras,object:u64) -> (Slot_Shown,bool) {
+    for shown in extras.slots_shown[:extras.slots_shown_count] {if shown.object==object {return shown,true}}
     return {},false
 }
 
@@ -644,10 +660,10 @@ app_camera_set :: proc(app:^App,camera:render.Camera,cut:=false,carried:=render.
 
 // A view this frame draws into a texture of render.view_texture_add, before
 // the views of the window. False without room for another one.
-app_texture_view_add :: proc(app:^App,view:render.Frame_View) -> bool {
-    if app.texture_view_count>=len(app.texture_views) || view.texture==0 {app.stats.extras_dropped+=1;return false}
-    app.texture_views[app.texture_view_count]=view
-    app.texture_view_count+=1
+extras_texture_view_add :: proc(extras:^Frame_Extras,view:render.Frame_View) -> bool {
+    if extras.texture_view_count>=len(extras.texture_views) || view.texture==0 {extras.dropped+=1;return false}
+    extras.texture_views[extras.texture_view_count]=view
+    extras.texture_view_count+=1
     return true
 }
 
@@ -762,8 +778,10 @@ app_capture :: proc(app:^App,path:string) -> bool {
 // into an image of that size, with the inspection its render phase asks for:
 // no screen UI, world panels, debug lines or outlines. editor is the World of
 // the editor when its loop is the one that draws world, as the window does.
-// Between frames.
-app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator) -> (pixels:[]u8,width,height:int,ok:bool) {
+// wait above 0: its frames stream the textures of what it sees and it goes on
+// past frames, up to that long, while one is pending, then frames more for
+// them to settle. False: app_draw_problem says why. Between frames.
+app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
     r:=app.renderer
     if r==nil || world==nil || app.drawable.x<=0 || app.drawable.y<=0 || size.x<0 || size.y<0 {return}
     ui_only:=app.ui_only
@@ -782,7 +800,13 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
     extras:=&app.extras
     drawn:=false
     count:=max(frames,1)
+    started:=time.tick_now()
     for frame:=0;frame<count;frame+=1 {
+        if wait>0 {
+            // Its frames are frames of the budget the loads share.
+            app.stats.frames+=1
+            app_textures_stream(app)
+        }
         if !alone {run_phase(app,loop,.Ui,{.Ui},world,editor)}
         offscreen_origin(app,ref)
         run_phase(app,loop,.Render,{.Render},world,editor)
@@ -790,7 +814,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
             camera=app.camera,ui=extras.layers[:extras.layer_count],camera_cut=frame==0,inspection=app.inspection,time=app.time,
             views=app.views[:app.view_count],panels=extras.panels[:extras.panel_count],debug=extras.debug[:extras.debug_count],
             ui_textures=extras.ui_textures[:extras.ui_texture_count],effect_views=extras.effect_views[:extras.effect_view_count],
-            offscreen=true,detail=app.detail,
+            offscreen=true,streamed=wait>0,detail=app.detail,
         }
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=frame==0,rect={0,0,size.x,size.y},texture=texture,inspection=app.inspection}}
         if alone {desc.ui,desc.views,desc.panels,desc.debug=nil,seen[:],nil,nil}
@@ -802,6 +826,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         app.inspection={}
         app.view_count=0
         if !drawn {break}
+        if wait>0 {count=capture_frames_streaming(count,frame,max(frames,1),render.textures_update(r),time.tick_since(started),wait)}
         // The last frame drew a program as its rows while its pipelines were made: one more with them.
         if frame==count-1 && render.renderer_pipelines_pending(r) {
             render.renderer_pipelines_wait(r)
@@ -812,6 +837,26 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
     if !drawn {return}
     if alone {return render.view_texture_capture(r,texture,allocator)}
     return render.renderer_capture(r,allocator)
+}
+
+// The frames a capture draws in all after frame: settle more after the last
+// that still found textures pending, while its wait lasts.
+@(private)
+capture_frames_streaming :: proc "contextless" (count,frame,settle,pending:int,waited,wait:time.Duration) -> int {
+    if pending==0 || waited>=wait {return count}
+    return max(count,frame+1+settle)
+}
+
+// Why the renderer drew nothing or an image could not be read, for whoever
+// just saw it fail.
+app_draw_problem :: proc(app:^App) -> string {
+    if app.renderer==nil {return "the application has no renderer"}
+    if _,text:=app_gpu_failure(app);text!="" {return text}
+    if window:=platform.input_frame(app.platform).window;window.minimized || window.pixel_size.x<=0 || window.pixel_size.y<=0 || app.drawable.x<=0 || app.drawable.y<=0 {
+        return "the window is minimized or has no size, so nothing is drawn"
+    }
+    if app.renderer.error!="" {return app.renderer.error}
+    return "the renderer skipped the frame without saying why"
 }
 
 // Draws a world the window does not show into a texture of
@@ -833,7 +878,7 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
     defer {
         app.camera=camera
         app.camera_cut,app.camera_carried,app.inspection,app.time,app.ui_only=camera_cut,carried,inspection,shown,ui_only
-        app.view_count,app.texture_view_count=0,0
+        app.view_count,app.extras.texture_view_count=0,0
     }
     app.ui_only=false
     extras:=&app.extras
@@ -857,47 +902,76 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
 // that a frame would wait for it. The pixels belong to the write until it is
 // collected.
 Png_Write :: struct {
-    path:cstring,
+    path:string,
     pixels:[]u8, // RGBA8, of the allocator of the application
     width,height:int,
     quality:int, // above 0: a JPEG of that quality, from 1 to 100, without its alpha
-    written:bool,
+    error:os.Error, // why the file is not there; none once it is
     busy:bool,
     counter:jobs.Counter,
 }
 
 // Starts writing pixels, allocated with the allocator of the application, as
-// the PNG at path, or the JPEG of quality; the write takes them.
+// the PNG at path, or the JPEG of quality; the write takes them. Without
+// memory for the path nothing is written and the write ends with that error.
 app_png_write_start :: proc(app:^App,w:^Png_Write,path:string,pixels:[]u8,width,height:int,quality:=0) {
-    w^={path=strings.clone_to_cstring(path,app.allocator),pixels=pixels,width=width,height=height,quality=quality,busy=true}
+    kept,no_path:=strings.clone(path,app.allocator)
+    w^={path=kept,pixels=pixels,width=width,height=height,quality=quality,busy=true}
+    if no_path!=nil {
+        w.error=no_path
+        return
+    }
     jobs.run(&app.jobs,jobs.OWNER,png_write,w,&w.counter)
+}
+
+@(private="file")
+Png_File :: struct {
+    file:^os.File,
+    error:os.Error,
+}
+
+@(private="file")
+png_file_write :: proc "c" (out,data:rawptr,size:c.int) {
+    context=runtime.default_context()
+    file:=(^Png_File)(out)
+    if file.error==nil {_,file.error=os.write(file.file,([^]u8)(data)[:size])}
 }
 
 @(private)
 png_write :: proc(w:^Png_Write,worker:int) {
+    file,opened:=os.open(w.path,{.Write,.Create,.Trunc})
+    if opened!=nil {w.error=opened;return}
+    out:=Png_File{file=file}
+    encoded:c.int
     if w.quality>0 {
-        w.written=stbi.write_jpg(w.path,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(clamp(w.quality,1,100)))!=0
-        return
+        encoded=stbi.write_jpg_to_func(png_file_write,&out,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(clamp(w.quality,1,100)))
+    } else {
+        encoded=stbi.write_png_to_func(png_file_write,&out,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(w.width*4))
     }
-    w.written=stbi.write_png(w.path,c.int(w.width),c.int(w.height),4,raw_data(w.pixels),c.int(w.width*4))!=0
+    if closed:=os.close(file);out.error==nil {out.error=closed}
+    // stb fails only without memory for the image it compresses.
+    if encoded==0 && out.error==nil {out.error=runtime.Allocator_Error.Out_Of_Memory}
+    w.error=out.error
+    if w.error!=nil {os.remove(w.path)}
 }
 
 // Whether the write ended; then it is collected: its pixels are freed and
-// written says whether the file is there. Without worker threads the job runs here.
-app_png_write_poll :: proc(app:^App,w:^Png_Write) -> (finished,written:bool) {
-    if !w.busy {return true,w.written}
+// error says why the file is not there, none when it is. Without worker
+// threads the job runs here.
+app_png_write_poll :: proc(app:^App,w:^Png_Write) -> (finished:bool,error:os.Error) {
+    if !w.busy {return true,w.error}
     if jobs.worker_count(&app.jobs)==1 {jobs.wait(&app.jobs,jobs.OWNER,&w.counter)}
-    if jobs.pending(&w.counter) {return false,false}
+    if jobs.pending(&w.counter) {return false,nil}
     delete(w.pixels,app.allocator);delete(w.path,app.allocator)
-    w.pixels,w.path,w.busy=nil,nil,false
-    return true,w.written
+    w.pixels,w.path,w.busy=nil,"",false
+    return true,w.error
 }
 
-// Waits for the write to end and collects it.
-app_png_write_wait :: proc(app:^App,w:^Png_Write) -> bool {
+// Waits for the write to end and collects it: why the file is not there, or none.
+app_png_write_wait :: proc(app:^App,w:^Png_Write) -> os.Error {
     if w.busy {jobs.wait(&app.jobs,jobs.OWNER,&w.counter)}
-    _,written:=app_png_write_poll(app,w)
-    return written
+    _,error:=app_png_write_poll(app,w)
+    return error
 }
 
 // The pixels of the last frame drawn; the caller frees them with the allocator.
@@ -912,7 +986,8 @@ app_capture_pixels :: proc(app:^App,allocator:=context.allocator,generated:=fals
 // other context has, so one atlas serves all of them.
 // panels: the world panels it builds in a frame; 0: those of ui.
 app_ui_context_create :: proc(app:^App,panels:=0) -> ^ui.Context {
-    ctx:=new(ui.Context,app.allocator)
+    ctx,error:=new(ui.Context,app.allocator)
+    if error!=nil {return nil}
     desc:=app_ui_context_desc(app)
     desc.max_panels=panels
     if !ui.context_init(ctx,desc) {

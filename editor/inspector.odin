@@ -9,7 +9,9 @@ import "core:strconv"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
+import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
 import evolume "mirai:engine/volume"
 import erender "mirai:engine/render"
@@ -266,7 +268,7 @@ fields_match :: proc(info:^runtime.Type_Info,needle:string) -> bool {
         }
         label:=readable(v.names[i])
         if custom,found:=core.field_option(tag,"label");found && custom!="" {label=custom}
-        if contains_fold(label,needle) {return true}
+        if base.contains_fold(label,needle) {return true}
     }
     return false
 }
@@ -360,7 +362,7 @@ gesture_end :: proc(s:^Session,key:u64) {
 }
 @(private)
 gesture_history_end :: proc(s:^Session) {
-    if h:=asset_history_front(s);h!=nil {asset_history_end(h)} else {edits_end(s.edits)}
+    if h:=asset_history_front(s);h!=nil {asset_history_end(h)} else {history.edits_end(s.edits)}
 }
 gesture_follow :: proc(s:^Session,key:u64,r:ui.Number_Result,label:string) {
     if r.began {gesture_begin(s,key,label)}
@@ -380,7 +382,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
         git_review_build(s,w,width,max_height)
         return
     }
-    active:=selection_active(s.selection)
+    active:=history.selection_active(s.selection)
     if !entity_alive(w,active) {
         if task,id,shown:=ai_review_shown(s);shown {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding=ui.padding_all(PANEL_PADDING)}) {ai_review_deleted_details(s,w,task,id,width-2*PANEL_PADDING,max_height-2*PANEL_PADDING)}
@@ -410,6 +412,11 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
             ui.label(ctx,fmt.tprintf("Variant of %s",variant),th.font_small,PREFAB_TEXT,0)
         }
     }
+    origin:=f32(0)
+    if single && s.mode==.Edit {
+        id_text:[16]u8
+        if id:=api_entity_id(w,active);id!=0 {origin=ai_provenance_row(s,.Entity,base.entity_id_format(id,id_text[:]))}
+    }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(SEARCH_BAR),padding={8,0,8,6},align_y=.Center}) {
         if search_field(s,ui.id(ctx,"inspector_search"),ins.search[:],&ins.search_length,"Search details") {ins.scroll=0}
         scroll_shadow(s,ins.scroll.y>0)
@@ -418,11 +425,11 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     sectioned:=!preview && section_locked(s,w,active)
     if sectioned {ui.disabled_begin(ctx)}
     defer if sectioned {ui.disabled_end(ctx)}
-    if ui.scroll_area(ctx,ui.id(ctx,"inspector_scroll"),&ins.scroll,{height=ui.FIT,max_height=max(max_height-strip-INSPECTOR_HEAD-(variant!=""?INSPECTOR_VARIANT:0)-SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
+    if ui.scroll_area(ctx,ui.id(ctx,"inspector_scroll"),&ins.scroll,{height=ui.FIT,max_height=max(max_height-strip-INSPECTOR_HEAD-(variant!=""?INSPECTOR_VARIANT:0)-origin-SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
         needle:=inspector_needle(ins)
         if single && review==nil {ai_review_entity_bar(s,w,active,width-16)}
         inner:=width-16
-        if needle=="" || contains_fold("Transform Position Rotation Scale",needle) {
+        if needle=="" || base.contains_fold("Transform Position Rotation Scale",needle) {
             card(s)
             _,transform:=core.world_table(w,core.Transform)
             description:=transform.description if transform!=nil else ""
@@ -432,7 +439,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
             }
             if menu {value_menu_open(s,{kind=.Transform},"Transform")}
         }
-        if single && (needle=="" || contains_fold("Hierarchy Parent Children",needle)) {hierarchy_section(s,w,active,inner)}
+        if single && (needle=="" || base.contains_fold("Hierarchy Parent Children",needle)) {hierarchy_section(s,w,active,inner)}
         for pass in 0..<2 {
             for &t,index in w.info.tables {
                 if t.place!=.World || !inspector_visible(s,&t) || inspector_primary(&t)!=(pass==0) {continue}
@@ -449,7 +456,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
                 append(&entities,active)
                 c:=Inspect{s=s,w=w,t=&t,index=index,table=table,entities=entities[:],name=t.name,type=t.type,value=cast([^]u8)core.raw_find(table,t.info,active),size=t.info.size}
                 // A card whose title the search finds shows whole; another, the fields it finds.
-                if needle!="" && !contains_fold(readable(t.name),needle) {
+                if needle!="" && !base.contains_fold(readable(t.name),needle) {
                     if !fields_match(t.info,needle) {continue}
                     c.needle=needle
                 }
@@ -486,17 +493,7 @@ inspector_popups :: proc(s:^Session,w:core.World_Ref) {
 // The components that are sections: what a scene saves, besides the identity
 // and the place of an entity, and what the section of another shows.
 inspector_listed :: proc(s:^Session,t:^core.Table_Info) -> bool {
-    switch t.type {
-    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Override: return false
-    }
-    if inspector_within(s,t) {return false}
-    fields,structured:=runtime.type_info_base(t.info).variant.(runtime.Type_Info_Struct)
-    if structured && fields.field_count>0 {
-        visible:=false
-        for tag in fields.tags[:fields.field_count] {if _,hidden:=core.field_option(reflect.Struct_Tag(tag),"hidden");!hidden {visible=true;break}}
-        if !visible {return false}
-    }
-    return type_saved(t.info)
+    return !inspector_within(s,t) && author.component_listed(t)
 }
 
 @(private)
@@ -518,22 +515,21 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
     ins:=s.inspector
     ctx:=s.gui.ctx
     th:=&ctx.theme
-    link,linked:=prefab_link_of(s,api_entity_id(w,e))
+    link,linked:=prefab_link_of(w,e)
     {
         enabled:=!entity_has(w,e,core.Disabled)
         if ui.checkbox(ctx,ui.id(ctx,"enabled"),&enabled) {entity_enabled_set(s,e,enabled)}
         ui.spacer(ctx,4,1)
         {
             // The icon of the entity in the color of what holds it: a prefab instance, a section.
-            links:=prefab_links(s)
             icon,color:=entity_icon(s,w,e)
-            holder:=container_kind(links,w,e)
-            if holder==.None {holder=container_kind(links,w,container_of(links,w,e))}
+            holder:=container_kind(w,e)
+            if holder==.None {holder=container_kind(w,container_of(w,e))}
             if holder!=.None {color,_=container_color(s,holder)}
             // Inside a prefab instance or a section, it selects the root of what holds it;
             // on the root of an instance, a double click opens its prefab.
-            if up:=container_of(links,w,e);up!=core.NONE {
-                if ui.button(ctx,ui.id(ctx,"holder_root"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).clicked {selection_set(s.selection,{up})}
+            if up:=container_of(w,e);up!=core.NONE {
+                if ui.button(ctx,ui.id(ctx,"holder_root"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).clicked {history.selection_set(s.selection,{up})}
             } else if linked && link.root && s.mode==.Edit {
                 if ui.button(ctx,ui.id(ctx,"prefab_open"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).double {
                     if _,path,found:=prefab_file(s,link.asset);found {
@@ -566,7 +562,7 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
                     variant_prompt_open(s,variant,link.asset,e)
                 }
                 changed|=action_button(s,.Prefab_Apply,{icon=.Save_Prefab,tip="Apply changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
-                if prefab_placed_base(s,link.asset)!={} {changed|=action_button(s,.Prefab_Apply_Base,{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)}
+                if prefab_variant_of(s,w,link)!={} {changed|=action_button(s,.Prefab_Apply_Base,{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)}
                 changed|=action_button(s,.Prefab_Unlink,{icon=ui.icon_user(u8(User_Icon.Unlink)),tip="Unlink",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
                 changed|=action_button(s,.Prefab_Revert,{icon=.Revert,tip="Revert all",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
             } else {
@@ -583,21 +579,12 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
 // The name of the base when the entity is the root of a variant; "" otherwise.
 @(private)
 inspector_variant_name :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> string {
-    id:=api_entity_id(w,e)
-    link,linked:=prefab_link_of(s,id)
+    link,linked:=prefab_link_of(w,e)
     if !linked {return ""}
-    variant_base:=prefab_variant_of(s,link,id)
+    variant_base:=prefab_variant_of(s,w,link)
     if variant_base=={} {return ""}
     file,_,found:=prefab_file(s,variant_base)
     return found?asset_name(file.path):"a missing prefab"
-}
-
-@(private)
-inspector_prefab_root :: proc(s:^Session,w:core.World_Ref,link:Prefab_Link) -> core.Entity {
-    previous:=s.document.previous
-    at:=asset.scene_instance_find(previous,link.instance)
-    if at<0 {return core.NONE}
-    return core.entity_of(core.world_entities(w),previous.instances[at].root)
 }
 
 @(private)
@@ -629,7 +616,6 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     card(s)
-    links:=prefab_links(s)
     ins:=s.inspector
     buttons:=[1]Section_Button{{icon=ui.icon_user(u8(User_Icon.List)),on=ins.hierarchy_tree}}
     pressed:int
@@ -641,10 +627,10 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     if !open {return}
     card_body(s)
     if ins.hierarchy_tree {
-        hierarchy_tree(s,w,e,links)
+        hierarchy_tree(s,w,e)
         return
     }
-    editable:=!prefab_member_locked_in(s,links,w,e)
+    editable:=!prefab_member_locked(s,w,e)
     plus:=ui.Button{icon=.Plus,icon_size=12,icon_color=th.text_label,style=.Well,width=HIERARCHY_TILE,height=HIERARCHY_TILE,disabled=!editable}
     row:=ui.Box{width=ui.GROW,height=ui.fixed(HIERARCHY_TILE),gap=5,align_y=.Center}
     selected,release:=core.NONE,core.NONE
@@ -675,7 +661,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
                     continue
                 }
                 child:=children[cell]
-                clicked,unlink:=hierarchy_square(s,w,child,cell+1,!prefab_member_locked_in(s,links,w,child))
+                clicked,unlink:=hierarchy_square(s,w,child,cell+1,!prefab_member_locked(s,w,child))
                 if clicked {selected=child}
                 if unlink {release=child}
             }
@@ -684,7 +670,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     if len(children)>count {ui.label(ctx,fmt.tprintf("and %d more",len(children)-count),th.font_label,th.text_faint)}
     if release!=core.NONE {
         if !entity_reparent(s,release,core.NONE) {notify(s,"The entity could not leave its parent")}
-    } else if selected!=core.NONE {selection_set(s.selection,{selected})}
+    } else if selected!=core.NONE {history.selection_set(s.selection,{selected})}
 }
 
 HIERARCHY_TREE_HEIGHT :: f32(132)
@@ -692,7 +678,7 @@ HIERARCHY_TREE_HEIGHT :: f32(132)
 // The line of e: its parents from the farthest, e, and what hangs from it,
 // with scroll: its rows select. What is not its parent or under it is not there.
 @(private)
-hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity,links:map[base.Entity_Id]Prefab_Link) {
+hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     ins:=s.inspector
@@ -711,13 +697,13 @@ hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity,links:map[base.
     if ui.scroll_area(ctx,ui.id(ctx,"hierarchy_tree"),&ins.hierarchy_scroll,{height=ui.FIT,max_height=HIERARCHY_TREE_HEIGHT}) {
         for row,i in rows {
             icon,color:=entity_icon(s,w,row.entity)
-            kind:=container_kind(links,w,row.entity)
+            kind:=container_kind(w,row.entity)
             text:ui.Color
             if kind!=.None {color,text=container_color(s,kind)}
             if ui.row(ctx,ui.id(ctx,"hierarchy_tree_row",i+1),{label=entity_label(w,row.entity),icon=icon,icon_color=color,icon_size=13,text_color=text,font=kind!=.None?ui.FONT_SEMIBOLD:0,selected=row.entity==e,height=22,depth=row.depth}).clicked {picked=row.entity}
         }
     }
-    if picked!=core.NONE {selection_set(s.selection,{picked})}
+    if picked!=core.NONE {history.selection_set(s.selection,{picked})}
 }
 
 @(private)
@@ -738,7 +724,7 @@ Transform_Field :: enum u8 {Position,Rotation,Scale}
 transform_rows :: proc(s:^Session,w:core.World_Ref) {
     ins:=s.inspector
     ctx:=s.gui.ctx
-    active:=selection_active(s.selection)
+    active:=history.selection_active(s.selection)
     local:=entity_local(w,active)
     // The angles shown follow those typed or shown before for the same rotation.
     angles:=mm.quat_to_euler(local.rotation)
@@ -938,8 +924,8 @@ geometry_field :: proc(s:^Session,id:ui.Id,mesh:^erender.Mesh_Renderer,mixed:=fa
     appearance:=ui.Node_Style{radius=th.radius_control,text={size=th.font_small,color=th.text}}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_ROW),gap=0,fill=th.well,stroke=open?th.accent:(hot?th.well_stroke_hover:th.well_stroke),radius=th.radius_control}) {
         // The thumbnail beside it shows the geometry (geometry_row).
-        clicked:=ui.button(ctx,id,{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,use_appearance=true,appearance=appearance}).clicked
-        clicked|=ui.button(ctx,arrow,{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,use_appearance=true,appearance=appearance}).clicked
+        clicked:=ui.button(ctx,id,{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,look=&appearance}).clicked
+        clicked|=ui.button(ctx,arrow,{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,look=&appearance}).clicked
         if clicked && !open {
             anchor,_:=ui.widget_rect(ctx,id)
             anchor.w+=18
@@ -996,7 +982,7 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
             if v.names[i]=="rotation" {label="Rot"}
         }
         if prefix!="" {label=fmt.tprintf("%s %s",prefix,strings.to_lower(label,context.temp_allocator))}
-        if depth==0 && c.needle!="" && !contains_fold(label,c.needle) {continue}
+        if depth==0 && c.needle!="" && !base.contains_fold(label,c.needle) {continue}
         if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 && !c.sections {
             if banded {fold_band_end(c.s);banded=false}
             folded=false
@@ -1267,7 +1253,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
                     }
                 }
             }
-        } else if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),v.names,&selected,{width=-1,height=th.row,searchable=true}) {
+        } else if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),{list=v.names},&selected,{width=-1,height=th.row,searchable=true}) {
             buffer:[8]u8
             number_write(raw_data(buffer[:]),v.base,f64(v.values[selected]))
             inspect_write(c,int(offset),buffer[:info.size])
@@ -1416,7 +1402,7 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
         if r.committed || r.cancelled || (!r.editing && !r.began && ctx.edit.id!=field) {ins.naming=0}
     } else {
         created:string
-        if ui.dropdown(ctx,ui.id(ctx,"named",int(offset)+1),options,&selected,{width=-1,height=th.row,searchable=true,empty=fmt.tprintf("%d",current)},&created) {
+        if ui.dropdown(ctx,ui.id(ctx,"named",int(offset)+1),{list=options},&selected,{width=-1,height=th.row,searchable=true,empty=fmt.tprintf("%d",current)},&created) {
             write(c,info,offset,names[selected].value)
         }
         if created!="" {
@@ -1900,7 +1886,7 @@ data_row :: proc(c:^Inspect,label:string,offset:uintptr,count:int) {
         append(&names,fmt.tprintf("%s (missing)",current))
     }
     row_begin(ctx,label)
-    if ui.dropdown(ctx,ui.id(ctx,"data",int(offset)+1),names[:],&selected,{width=-1,height=ctx.theme.row,searchable=true}) && !(missing && selected==len(names)-1) {
+    if ui.dropdown(ctx,ui.id(ctx,"data",int(offset)+1),{list=names[:]},&selected,{width=-1,height=ctx.theme.row,searchable=true}) && !(missing && selected==len(names)-1) {
         buffer:=make([]u8,count,context.temp_allocator)
         if selected>0 {copy(buffer[:max(count-1,0)],names[selected])}
         inspect_write(c,int(offset),buffer)
@@ -2083,7 +2069,7 @@ entity_row :: proc(c:^Inspect,label:string,offset:int,key:u64) {
         if ui.button(ctx,ui.id(ctx,"entity_clear",offset+1),{icon=.Cross,style=.Ghost,width=th.row,height=th.row}).clicked || it.right {
             inspect_entity_set(c,offset,core.NONE)
         } else if it.clicked {
-            selection_set(s.selection,{referred})
+            history.selection_set(s.selection,{referred})
             outliner_reveal(s.outliner,w,referred)
         }
     } else {
@@ -2442,12 +2428,12 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
     icons:=SHAPE_ICONS
     filter,_:=ui.popup_search(ctx,popup)
     if l.key==ADD_COMPONENT_KEY {
-        active:=selection_active(s.selection)
+        active:=history.selection_active(s.selection)
         for &t,index in w.info.tables {
             if t.place!=.World || !inspector_visible(s,&t) {continue}
             if core.raw_find(core.world_table_at(w,&t),t.info,active)!=nil {continue}
             label:=readable(t.name)
-            if !contains_fold(label,filter) {continue}
+            if !base.contains_fold(label,filter) {continue}
             append(&choices,label)
             append(&tables,index)
         }
@@ -2456,7 +2442,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             for shape in erender.Shape {
                 if shape==.None {continue}
                 label:=fmt.tprint(shape)
-                if !contains_fold(label,filter) {continue}
+                if !base.contains_fold(label,filter) {continue}
                 append(&choices,label);append(&ids,base.Asset_Id{});append(&shapes,shape)
             }
         } else {
@@ -2468,7 +2454,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             // The parts of imports, which the browser hides, after the rest.
             parts:=make([dynamic]^asset.Registry_File,context.temp_allocator)
             for &file in a.registry.files {
-                if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !contains_fold(file.path,filter) {continue}
+                if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
                 if l.path>0 && (len(file.path)>=l.path || !asset_under_root(&a.registry,file.path)) {continue}
                 if l.with && !slice.contains(ins.list_with[:],file.id) {continue}
                 if content_part(&a.registry,&file) {
@@ -2550,7 +2536,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
 // The details of the selection as the panel on the right shows them, inside
 // the panel of a plugin tool that takes its place.
 details_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
-    read_only:=watching(s) || selection_held(s)
+    read_only:=watching(s)
     if read_only {ui.disabled_begin(s.gui.ctx)}
     inspector_build(s,w,width,max_height)
     if read_only {ui.disabled_end(s.gui.ctx)}

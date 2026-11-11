@@ -35,14 +35,14 @@ self_refresh :: proc(root:string) -> (code:int,refreshed:bool) {
     sources:=build_sources_file(root,"mirai")
     newer,known:=build.sources_newer(sources,exe,root)
     if !known || !newer {return}
-    final:=join(root,"bin",fmt.aprintf("mirai%s",EXE))
+    final:=join(root,"bin",fmt.aprintf("mirai%s",project.EXECUTABLE_SUFFIX))
     {
         lock,_:=workspace.lock_acquire(join(root,"bin",".refresh.lock"),fmt.tprintf("pid %d",os.get_pid()))
         defer workspace.lock_release(&lock)
         // Another invocation may have built it while this one waited.
         if newer,known=build.sources_newer(sources,final,root);known && newer {
             fmt.eprintln("mirai: its sources changed; building it again")
-            staging:=join(root,"bin",fmt.aprintf(".mirai-build-%d%s",os.get_pid(),EXE))
+            staging:=join(root,"bin",fmt.aprintf(".mirai-build-%d%s",os.get_pid(),project.EXECUTABLE_SUFFIX))
             staged_sources:=fmt.aprintf("%s.sources.json",staging)
             command:=tool_command(root,"tools/mirai","-o:minimal",staging,staged_sources)
             log:=strings.builder_make(context.temp_allocator)

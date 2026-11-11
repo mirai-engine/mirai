@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 @(private="file")
 contracts_project :: proc(t:^testing.T,folder,core_source,game_source:string) -> (p:project.Project,ok:bool) {
@@ -19,13 +20,14 @@ contracts_project :: proc(t:^testing.T,folder,core_source,game_source:string) ->
 
 // A storage is the state of one library: another pushes to it when it is a
 // queue, or writes it in the order of the loop when it says it is shared.
-// core.Commands makes entities with rows of any component and settles every
-// table after the function; core.Ref(core.Entities) reads which are alive.
+// core.Commands makes entities with rows of any component, and after the
+// function core.settle comes to the tables that wait, which say so where the
+// World was made; core.Ref(core.Entities) reads which are alive and asks for
+// no settle of the World.
 @(test)
 storages_have_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 @(storage) State :: struct {value:i32}
 @(storage,queue) Requests :: struct {count:i32}
@@ -34,6 +36,7 @@ storages_have_one_writing_library_and_commands_make_entities :: proc(t:^testing.
 @(component) Thing :: struct {value:f32}
 @(step="fixed") state_step :: proc(state:^State,requests:^Requests,board:^Board,reports:^Reports) {}
 @(step="fixed") things_make :: proc(commands:Commands,entities:Ref(Entities),things:Read(Thing)) {}
+@(step="fixed") things_count :: proc(entities:Ref(Entities),things:^Table(Thing)) {}
 `
     game_source:=`package game
 import "mirai:core"
@@ -46,7 +49,13 @@ import "mirai:core"
     for text in ([]string{output.game_world,output.editor_world}) {
         testing.expect(t,strings.contains(text,"p_core.things_make(p_core.commands(w,app.info),p_core.ref(&w.entities),p_core.read(&w.thing))"),text)
         at:=strings.index(text,"p_core.things_make(")
-        testing.expect(t,at>=0 && strings.contains(text[at:][:400],"settle(w,s,e)"))
+        testing.expect(t,at>=0 && strings.contains(text[at:][:400],"p_core.settle(app.info,w,e)"))
+        // The settle is one loop of core over the tables of the World: none is written for it.
+        testing.expect(t,!strings.contains(text,"settle :: proc") && !strings.contains(text,"info.settle"),text)
+        count:=strings.index(text,"p_core.things_count(")
+        _,_,after:=strings.partition(text[max(count,0):],"}\n\n")
+        call:=text[max(count,0):][:len(text[max(count,0):])-len(after)]
+        testing.expect(t,count>=0 && strings.contains(call,"p_core.table_settle(&w.thing,&w.entities)") && !strings.contains(call,"p_core.settle("),call)
     }
     // The state of a library written by another one is an error that says what to do.
     wrong:=`package game
@@ -78,17 +87,19 @@ import "mirai:core"
 
 // Clearing a World resets the storages derived from its entities: with the
 // reset of their package, or freed and back to their default. Settings, what
-// is not copied and what says keep or persist stay.
+// is not copied and what says keep or persist stay. The World_Info says of
+// each storage which it is, for core.world_clear.
 @(test)
 clearing_a_world_resets_its_derived_storages :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 @(storage) Cache :: struct {values:[dynamic]i32}
 @(storage,free="tally_free") Tally :: struct {count:i32}
 tally_free :: proc(t:^Tally) {}
 TALLY_DEFAULT :: Tally{count=1}
+@(component) Paced :: struct {speed:f32}
+PACED_DEFAULT :: Paced{speed=3}
 @(storage,reset="simulation_reset") Simulation :: struct {epoch:u32}
 simulation_reset :: proc(s:^Simulation) {}
 @(storage,queue) Requests :: struct {count:i32}
@@ -102,16 +113,22 @@ simulation_reset :: proc(s:^Simulation) {}
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     text:=output.game_world
-    at:=strings.index(text,"clear_world :: proc")
-    if !testing.expect(t,at>=0) {return}
-    clear:=text[at:]
-    clear=clear[:strings.index(clear,"\n}\n")]
-    testing.expect(t,strings.contains(clear,"p_core.value_free(&w.cache,type_info_of(p_core.Cache))\n    w.cache={}"),clear)
-    testing.expect(t,strings.contains(clear,"p_core.tally_free(&w.tally)\n    w.tally=p_core.TALLY_DEFAULT"),clear)
-    testing.expect(t,strings.contains(clear,"p_core.simulation_reset(&w.simulation)"),clear)
-    testing.expect(t,strings.contains(clear,"w.requests={}"),clear)
-    testing.expect(t,strings.contains(text,"type_info_of(p_core.Progress),offset_of(World,progress),.World,.None,nil,false,nil,true,true,\"\",false}"),text)
-    for kept in ([]string{"w.clock","w.progress","w.settings","w.world_id"}) {testing.expectf(t,!strings.contains(clear,kept),"%s in %s",kept,clear)}
+    testing.expect(t,!strings.contains(text,"clear_world"),"clearing a World is a loop of core")
+    line :: proc(text,field:string) -> string {
+        _,_,rest:=strings.partition(text,strings.concatenate({"offset_of(World,",field,"),"},context.temp_allocator))
+        found,_,_:=strings.partition(rest,"\n")
+        return found
+    }
+    testing.expect_value(t,line(text,"cache"),`.World,.None,nil,false,nil,false,false,"",false,false,{},false}`)
+    testing.expect(t,strings.contains(text,"free_tally :: proc(value:rawptr) {p_core.tally_free(cast(^p_core.Tally)value)}"),text)
+    testing.expect_value(t,line(text,"tally"),`.World,.None,default_tally,false,nil,false,false,"",false,false,{free=free_tally},false}`)
+    testing.expect(t,strings.contains(text,"default_paced :: proc") && strings.contains(text,",default_paced,"),"a table starts its rows at the default of its component")
+    testing.expect(t,strings.contains(text,"reset_simulation :: proc(value:rawptr) {p_core.simulation_reset(cast(^p_core.Simulation)value)}"),text)
+    testing.expect_value(t,line(text,"simulation"),`.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_simulation},false}`)
+    testing.expect_value(t,line(text,"clock"),`.World,.None,nil,false,nil,false,true,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"progress"),`.World,.None,nil,false,nil,true,true,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"settings"),`.World,.Project,nil,false,nil,false,false,"",false,false,{},false}`)
+    testing.expect_value(t,line(text,"world_id"),`.World,.None,nil,false,nil,false,false,"",false,true,{},false}`)
     // keep and reset are of storages of the World that do not survive already.
     wrong:=`package core
 @(storage,host,keep) Shared_State :: struct {}
@@ -137,9 +154,8 @@ r :: proc(b:^Both) {}
 // what to hold instead.
 @(test)
 the_progress_of_the_player_holds_plain_data :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 import "mirai:std/base"
 Entity :: base.Entity
@@ -171,9 +187,8 @@ Slot :: struct {at:core.Entity}
 // with a default is an error: the generator binds every parameter.
 @(test)
 functions_are_called_from_the_loops_and_from_their_order :: proc(t:^testing.T) {
-    folder,error:=os.make_directory_temp("","mirai-contracts-*",context.temp_allocator)
-    if !testing.expect(t,error==nil) {return}
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"contracts")
+    if folder=="" {return}
     core_source:=`package core
 @(storage) Clock :: struct {tick:u64}
 @(component) Thing :: struct {value:f32}
@@ -185,12 +200,12 @@ functions_are_called_from_the_loops_and_from_their_order :: proc(t:^testing.T) {
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     for text in ([]string{output.game_world,output.editor_world}) {
-        testing.expect_value(t,strings.count(text,"call_things_move :: proc(world,shared,editor:rawptr,app_data:rawptr,worker:int) {"),1)
+        testing.expect_value(t,strings.count(text,"call_things_move :: proc(world,shared,editor:rawptr,app_data:rawptr) {"),1)
         testing.expect_value(t,strings.count(text,"p_core.things_move(&w.thing,w.clock)"),2) // with and without CHECK_WRITES
-        testing.expect(t,strings.contains(text,"game_fixed :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_clock_read(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n    call_things_move(world,shared,editor,app_data,p_host.PROFILE_MAIN)\n}"),text)
+        testing.expect(t,strings.contains(text,"game_fixed :: proc(world,shared,editor:rawptr,app_data:rawptr) {\n    call_clock_read(world,shared,editor,app_data)\n    call_things_move(world,shared,editor,app_data)\n}"),text)
         testing.expect(t,strings.contains(text,"@(rodata) order_game_fixed:=[2]i32{1,0}"),text)
         testing.expect(t,strings.contains(text,"info.loops[.Game][.Late],info.order[.Game][.Late]=game_late,order_game_late[:]"),text)
-        testing.expect(t,strings.contains(text,"steps[0]={\"things_move\",\"core\",{.Fixed,.Late,},{.Game,.Editor,},call_things_move,false}"),text)
+        testing.expect(t,strings.contains(text,"steps[0]={\"things_move\",\"core\",{.Fixed,.Late,},{.Game,.Editor,},call_things_move}"),text)
     }
     defaulted:=`package core
 @(storage) Clock :: struct {tick:u64}

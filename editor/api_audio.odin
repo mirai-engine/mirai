@@ -17,7 +17,7 @@ import "mirai:std/serial"
 
 // Whether the editor plays this asset to be heard now.
 sound_heard :: proc(s:^Session,id:base.Asset_Id) -> bool {
-    return s.heard_sound.sound==id && eaudio.playing(s.app,s.heard)
+    return s.heard_sound.sound==id && eaudio.playing(s.app.mixer,s.heard)
 }
 
 // Plays an asset to be heard, at its own volume and pitch on the master bus,
@@ -31,7 +31,7 @@ sound_hear :: proc(s:^Session,id:base.Asset_Id,volume:f32=1,pitch:f32=1) -> bool
 sound_hear_source :: proc(s:^Session,source:eaudio.Audio_Source) -> bool {
     sound_hear_stop(s)
     content_used(s,source.sound)
-    eaudio.buses_apply(s.app,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
+    eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
     s.heard=eaudio.play_source(s.app,{},source)
     if s.heard=={} {return false}
     s.heard_sound=source
@@ -45,12 +45,12 @@ sound_hear_tune :: proc(s:^Session,source:eaudio.Audio_Source) {
         sound_hear_source(s,source)
         return
     }
-    eaudio.source_tune(s.app,s.heard,source)
+    eaudio.source_tune(s.app.mixer,s.heard,source)
     s.heard_sound=source
 }
 
 sound_hear_stop :: proc(s:^Session) {
-    if s.heard!={} {eaudio.stop(s.app,s.heard)}
+    if s.heard!={} {eaudio.stop(s.app.mixer,s.heard)}
     s.heard,s.heard_sound={},{}
 }
 
@@ -94,7 +94,7 @@ Api_Audio_Stop_Result :: struct {
 }
 
 @(private)
-SOUND_SET_PARAMS_SCHEMA :: `{"type":"object","properties":{"sound_set":{"type":"string","description":"A sound set: its path under the assets folder, or its id"},"path":{"type":"string","description":"sound_set.set: in place of sound_set, a new sound set at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the sound set to change, as sound_set.inspect shows them; sounds holds .sound ids, as asset.list gives them"}},"additionalProperties":false}`
+SOUND_SET_PARAMS_SCHEMA :: `{"type":"object","properties":{"sound_set":{"type":"string","description":"A sound set: its path under the assets folder, or its id"},"path":{"type":"string","description":"sound_set.set: in place of sound_set, a new sound set at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the sound set to change, as sound_set.inspect shows them; sounds holds .sound paths or ids, as asset.list gives them"}},"additionalProperties":false}`
 
 @(private)
 Api_Sound_Set_Result :: struct {
@@ -125,7 +125,7 @@ api_audio_status :: proc(s:^Session,call:^api.Call) {
     r.voices_played,r.voices_stolen,r.voices_rejected=stats.voices_played,stats.voices_stolen,stats.voices_rejected
     r.commands_dropped,r.underruns,r.streams_busy,r.feeds_busy=stats.commands_dropped,stats.underruns,stats.streams_busy,stats.feeds_busy
     name :: proc(s:^Session,bus:mixer.Bus,out:[]u8) {
-        if named,found:=core.name_of(s.info,eaudio.Audio_Bus,i64(bus));found {api_text_put(out,named)} else {api_text_put(out,fmt.tprintf("%d",int(bus)))}
+        if named,found:=core.name_of(s.info,eaudio.Audio_Bus,i64(bus));found {base.text_set(out,named)} else {base.text_set(out,fmt.tprintf("%d",int(bus)))}
     }
     for index in 0..<min(mixer.bus_count(m),len(r.buses)) {
         bus:=mixer.Bus(index)
@@ -138,7 +138,7 @@ api_audio_status :: proc(s:^Session,call:^api.Call) {
             entry.duck_amount=duck.amount
         }
     }
-    if sound_heard(s,s.heard_sound.sound) {api_text_put(r.heard[:],asset_path(s,s.heard_sound.sound))}
+    if sound_heard(s,s.heard_sound.sound) {base.text_set(r.heard[:],asset_path(s,s.heard_sound.sound))}
 }
 
 // A .sound or a .sound_set the params name: its path under the assets
@@ -176,7 +176,7 @@ api_audio_play :: proc(s:^Session,call:^api.Call) {
         return
     }
     r:=api.call_result(call,Api_Audio_Play_Result)
-    api_text_put(r.sound[:],asset_path(s,id))
+    base.text_set(r.sound[:],asset_path(s,id))
     r.seconds=sound_seconds_of(s,id)
 }
 
@@ -259,7 +259,7 @@ sound_set_write :: proc(s:^Session,id:base.Asset_Id,info:asset.Sound_Set_Info) -
 api_sound_set_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
     info,read:=sound_set_file(s,id)
     if !read {
-        api.call_fail(call,api.SERVER_ERROR,"The sound set could not be read")
+        api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"sound set"))
         return
     }
     out:=call.out
@@ -297,7 +297,7 @@ api_sound_set_set :: proc(s:^Session,call:^api.Call) {
     if !t.created {
         loaded:bool
         if info,loaded=sound_set_file(s,t.id);!loaded {
-            api.call_fail(call,api.SERVER_ERROR,"The sound set could not be read")
+            api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,t.id,"sound set"))
             return
         }
     }

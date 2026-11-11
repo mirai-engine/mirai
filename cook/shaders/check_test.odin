@@ -5,6 +5,7 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:std/base"
 
 @(private="file")
 OCEAN_LIKE :: `//! mirai surface Waves
@@ -112,7 +113,8 @@ Check_Fixture :: struct {project,root:string}
 check_fixture :: proc(t:^testing.T,f:^Check_Fixture) -> bool {
     f.root=path_clean(ENGINE_ROOT,context.temp_allocator)
     if _,found:=tool_find(f.root,.Slangc,context.temp_allocator);!found {log.warn("slangc is not installed: run `mirai setup slang`");return false}
-    f.project=fixture_make(t)
+    f.project=base.test_folder(t,"shaders")
+    if f.project=="" {return false}
     os.make_directory_all(path_join(f.project,"shaders",allocator=context.temp_allocator))
     return true
 }
@@ -173,7 +175,6 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 the_check_names_the_mistakes_of_a_program_with_their_fix :: proc(t:^testing.T) {
     f:Check_Fixture
     if !check_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     result:=check_text(t,&f,"rules",RULES)
     expect_rule(t,result,"mirai.parameter_duplicate",3,.Error)
     expect_rule(t,result,"mirai.parameter_orphan",4,.Error)
@@ -196,7 +197,6 @@ the_check_names_the_mistakes_of_a_program_with_their_fix :: proc(t:^testing.T) {
 the_check_names_foreign_functions_texture_objects_packing_and_declarations :: proc(t:^testing.T) {
     f:Check_Fixture
     if !check_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     languages:=check_text(t,&f,"rules",`//! mirai surface Rules
 //! parameter a {"default":0.5,"min":0,"max":1}
 namespace Rules {
@@ -243,7 +243,6 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {Mirai_Surface s
 the_check_compiles_a_program_in_raster_and_ray_stages_without_publishing :: proc(t:^testing.T) {
     f:Check_Fixture
     if !check_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     clean:=check_text(t,&f,"pulse",`//! mirai surface Pulse
 //! parameter color {"default":[0.9,0.35,0.1],"min":0,"max":1,"color":true}
 //! parameter glow {"default":2,"min":0,"max":50}
@@ -298,7 +297,6 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 the_template_of_each_domain_compiles_in_the_stages_that_run_it :: proc(t:^testing.T) {
     f:Check_Fixture
     if !check_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     // Vfx programs run in the stages of the vfx plugin.
     plugins:=[]Source{{"vfx",path_join(f.root,"plugins/vfx/shaders",allocator=context.temp_allocator)}}
     for domain in Program_Domain {
@@ -314,7 +312,6 @@ the_template_of_each_domain_compiles_in_the_stages_that_run_it :: proc(t:^testin
 the_check_reads_programs_of_other_domains_by_their_contract :: proc(t:^testing.T) {
     f:Check_Fixture
     if !check_fixture(t,&f) {return}
-    defer fixture_remove(f.project)
     // A PostProcess program runs in a fragment stage: derivatives are its own.
     post:=check_text(t,&f,"rules",`//! mirai postprocess Rules
 //! parameter strength {"default":1,"min":0,"max":1}

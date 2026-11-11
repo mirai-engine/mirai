@@ -12,9 +12,10 @@ import mm "mirai:std/math"
 
 @(test)
 gpu_skin_preview_reuses_compute_and_buffers_without_mutating_the_scene :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r);device:=skin_test_renderer(t,r,false)
-    if device==nil {return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !skin_fixture(t,&f,false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     vertices,indices,given:=skin_test_geometry()
     given[0]={joints={0,0,0,0,0,0,0,1},weights={0,0,0,0,0,0,0,255}}
     g,origins,slot_words,built:=test_geometry(vertices[:],indices[:])
@@ -69,9 +70,7 @@ gpu_skin_preview_reuses_compute_and_buffers_without_mutating_the_scene :: proc(t
 }
 
 @(private)
-skin_test_renderer :: proc(t:^testing.T,r:^Renderer,hardware:bool,allocator:=context.allocator)->^rhi.Device {
-    device,message:=shared_device.take(t)
-    if device==nil {if !rhi.gpu_skip_allowed() {testing.expect(t,false,message)};return nil}
+skin_fixture :: proc(t:^testing.T,f:^Fixture,hardware:bool,allocator:=context.allocator,loc:=#caller_location)->bool {
     settings:=DEFAULT_SETTINGS
     settings.gi_enabled,settings.reflections,settings.taa=false,false,false
     // Images are compared pixel by pixel: every pixel traces its own rays,
@@ -79,8 +78,7 @@ skin_test_renderer :: proc(t:^testing.T,r:^Renderer,hardware:bool,allocator:=con
     settings.reference_lights=true
     settings.sun_radius=0
     settings.trace_mode=.Hardware if hardware else .Software
-    if !renderer_init(r,{device=device,width=160,height=120,settings=settings,allocator=allocator}) {testing.expect(t,false,r.error);return nil}
-    return device
+    return fixture_init(t,f,160,120,settings,desc={allocator=allocator},loc=loc)
 }
 
 @(private)
@@ -103,9 +101,10 @@ skin_test_grid :: proc(cells:int)->(vertices:[]Mesh_Vertex,indices:[]u32,influen
 
 @(test)
 gpu_skin_refits_inner_nodes_after_a_large_deformation :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r);device:=skin_test_renderer(t,r,false)
-    if device==nil {return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !skin_fixture(t,&f,false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     // Trees of different depths share the passes of the frame.
     cells:=[2]int{32,5}
     skins:[2]Mesh_Handle
@@ -215,9 +214,10 @@ skin_test_sample :: proc(v:Mesh_Vertex,influence:Skin_Influence,palette:[]Mat4)-
 
 @(test)
 gpu_skin_gets_its_software_tree_when_rays_go_back_to_software :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r);device:=skin_test_renderer(t,r,true)
-    if device==nil {return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !skin_fixture(t,&f,true) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     if !r.hardware_rt {fmt.println("skin native RT skipped: device has no ray queries");return}
     vertices,indices,given:=skin_test_geometry()
     source,origins,added:=test_mesh_add(r,vertices[:],indices[:])
@@ -256,10 +256,10 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
         tracker:mem.Tracking_Allocator
         mem.tracking_allocator_init(&tracker,context.allocator)
         defer mem.tracking_allocator_destroy(&tracker)
-        r:=new(Renderer);defer free(r)
-        device:=skin_test_renderer(t,r,hardware,mem.tracking_allocator(&tracker))
-        if device==nil {return}
-        defer renderer_destroy(r)
+        f:Fixture
+        if !skin_fixture(t,&f,hardware,mem.tracking_allocator(&tracker)) {return}
+        defer fixture_destroy(&f)
+        r,device:=f.renderer,f.device
         if hardware && !r.hardware_rt {fmt.println("skin native RT skipped: device has no ray queries");continue}
         vertices,indices,given:=skin_test_geometry()
         source,origins,added:=test_mesh_add(r,vertices[:],indices[:])
@@ -389,10 +389,10 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
 // of that body; every other view draws it whole, from the same skinning.
 @(test)
 a_view_that_leaves_out_the_layers_of_a_skinned_part_draws_it_collapsed :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r)
-    device:=skin_test_renderer(t,r,false)
-    if device==nil {return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !skin_fixture(t,&f,false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     red:=DEFAULT_MATERIAL
     red.base_color={1,0,0}
     materials_set(r,{red})
@@ -466,10 +466,10 @@ test_centroid :: proc(rest:[]Mesh_Vertex,origins:[]u32,influences:[]Skin_Influen
 // again; its box grows by the reach of the program.
 @(test)
 gpu_a_program_moves_a_skin_after_its_skin_now_and_before :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r)
-    device:=skin_test_renderer(t,r,false)
-    if device==nil {return}
-    defer renderer_destroy(r)
+    f:Fixture
+    if !skin_fixture(t,&f,false) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
     pieces:=program_find(r,"Pieces",.Surface)
     if !testing.expect(t,pieces!=nil,"the engine has the Pieces program") {return}
     moving:=DEFAULT_MATERIAL

@@ -27,6 +27,7 @@ package geom
 import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
+import "mirai:std/base"
 
 // The tangents of the corners of an indexed triangle mesh, as MikkTSpace
 // gives them: xyz the unit tangent along u, w the sign of the bitangent,
@@ -165,7 +166,7 @@ corner_tangents :: proc(positions,normals:[]Vec3,uvs:[]Vec2,indices:[]u32,out:[]
                 a,b:=tris[ti].weld[k],tris[ti].weld[(k+1)%3]
                 if a>b {a,b=b,a}
                 key:=u64(a)<<32|u64(b)
-                slot:=int(tangent_mix(key))&edge_mask
+                slot:=int(base.hash_u64(key))&edge_mask
                 for {
                     corner:=edge_slots[slot]
                     if corner==NONE {
@@ -196,14 +197,15 @@ corner_tangents :: proc(positions,normals:[]Vec3,uvs:[]Vec2,indices:[]u32,out:[]
         for c in 0..<3 {
             if tris[ti].group[c]!=-1 {continue}
             gi:=len(groups)
-            append(&groups,Tangent_Group{rep=tris[ti].weld[c],orient=tris[ti].orient,first=len(group_tris)})
+            _,no_group:=append(&groups,Tangent_Group{rep=tris[ti].weld[c],orient=tris[ti].orient,first=len(group_tris)})
+            _,no_tri:=append(&group_tris,u32(ti))
+            if no_group!=nil || no_tri!=nil {return false}
             tris[ti].group[c]=i32(gi)
-            append(&group_tris,u32(ti))
             groups[gi].count+=1
             incident:=[2]int{c,(c+2)%3}
             for e in incident {
                 nb:=tris[ti].adj[e]
-                if nb>=0 {tangent_assign_group(tris,&group_tris,groups[:],gi,int(nb))}
+                if nb>=0 {tangent_assign_group(tris,&group_tris,groups[:],gi,int(nb)) or_return}
             }
         }
     }
@@ -267,9 +269,10 @@ corner_tangents :: proc(positions,normals:[]Vec3,uvs:[]Vec2,indices:[]u32,out:[]
             }
             if found<0 {
                 first:=len(sub_tris)
-                append(&sub_tris,..kept)
-                append(&subs,Tangent_Subgroup{first=first,count=held})
-                append(&sub_spaces,tangent_eval(tris,group,kept,projected[:],n,g.rep,g.orient))
+                _,no_tris:=append(&sub_tris,..kept)
+                _,no_sub:=append(&subs,Tangent_Subgroup{first=first,count=held})
+                _,no_space:=append(&sub_spaces,tangent_eval(tris,group,kept,projected[:],n,g.rep,g.orient))
+                if no_tris!=nil || no_sub!=nil || no_space!=nil {return false}
                 found=len(subs)-1
             }
             space:=sub_spaces[found]
@@ -387,19 +390,10 @@ tangent_bits :: #force_inline proc "contextless" (x:f32) -> u32 {
 // A 64-bit hash of a weld key.
 @(private="file")
 tangent_key_hash :: #force_inline proc "contextless" (key:Tangent_Key) -> u64 {
-    hash:=tangent_mix(u64(key[0])|u64(key[1])<<32)
-    hash=tangent_mix(hash~(u64(key[2])|u64(key[3])<<32))
-    hash=tangent_mix(hash~(u64(key[4])|u64(key[5])<<32))
-    return tangent_mix(hash~(u64(key[6])|u64(key[7])<<32))
-}
-
-// The splitmix64 finalizer.
-@(private="file")
-tangent_mix :: #force_inline proc "contextless" (x:u64) -> u64 {
-    x:=x
-    x=(x~(x>>30))*0xbf58476d1ce4e5b9
-    x=(x~(x>>27))*0x94d049bb133111eb
-    return x~(x>>31)
+    hash:=base.hash_u64(u64(key[0])|u64(key[1])<<32)
+    hash=base.hash_u64(hash~(u64(key[2])|u64(key[3])<<32))
+    hash=base.hash_u64(hash~(u64(key[4])|u64(key[5])<<32))
+    return base.hash_u64(hash~(u64(key[6])|u64(key[7])<<32))
 }
 @(private="file")
 tangent_key :: proc "contextless" (p,n:Vec3,uv:Vec2) -> Tangent_Key {
@@ -449,25 +443,26 @@ tangent_members_equal :: proc "contextless" (a,b:[]u32) -> bool #no_bounds_check
 }
 
 @(private="file")
-tangent_assign_group :: proc(tris:[]Tangent_Tri,group_tris:^[dynamic]u32,groups:[]Tangent_Group,gi,ti:int) #no_bounds_check {
+tangent_assign_group :: proc(tris:[]Tangent_Tri,group_tris:^[dynamic]u32,groups:[]Tangent_Group,gi,ti:int) -> bool #no_bounds_check {
     g:=&groups[gi]
     c:=tangent_corner(tris[ti],g.rep)
-    if c<0 {return}
-    if tris[ti].group[c]==i32(gi) {return}
-    if tris[ti].group[c]!=-1 {return}
+    if c<0 {return true}
+    if tris[ti].group[c]==i32(gi) {return true}
+    if tris[ti].group[c]!=-1 {return true}
     if !tris[ti].any {
-        if tris[ti].orient!=g.orient {return}
+        if tris[ti].orient!=g.orient {return true}
     } else if tris[ti].group[0]==-1 && tris[ti].group[1]==-1 && tris[ti].group[2]==-1 {
         tris[ti].orient=g.orient
     }
+    if _,err:=append(group_tris,u32(ti));err!=nil {return false}
     tris[ti].group[c]=i32(gi)
-    append(group_tris,u32(ti))
     g.count+=1
     incident:=[2]int{c,(c+2)%3}
     for e in incident {
         nb:=tris[ti].adj[e]
-        if nb>=0 {tangent_assign_group(tris,group_tris,groups,gi,int(nb))}
+        if nb>=0 {tangent_assign_group(tris,group_tris,groups,gi,int(nb)) or_return}
     }
+    return true
 }
 
 // The tangent of a subgroup: the projected tangents of its members, weighted
@@ -513,29 +508,38 @@ triangle_in_all :: proc "contextless" (indices:[]u32,n:int) -> bool {
 // memory or for a mesh that is not valid.
 mesh_tangents :: proc(mesh:Mesh,out:^Mesh_Buffer,tangents:^[dynamic]Vec4,scratch:=context.temp_allocator) -> bool {
     if !mesh_is_valid(mesh) {return false}
-    corners:=make([]Vec4,len(mesh.indices),scratch)
-    if corners==nil && len(mesh.indices)>0 {return false}
+    corners,no_corners:=make([]Vec4,len(mesh.indices),scratch)
+    if no_corners!=nil {return false}
     defer delete(corners,scratch)
     if !corner_tangents(mesh.positions,mesh.normals,mesh.uvs,mesh.indices,corners) {return false}
     Key :: struct {vertex:u32,tangent:Vec4}
-    known:=make(map[Key]u32,len(mesh.positions),scratch)
+    known,no_known:=make(map[Key]u32,len(mesh.positions),scratch)
     defer delete(known)
     mesh_buffer_clear(out)
     clear(tangents)
+    if no_known!=nil || reserve(&out.indices,len(mesh.indices))!=nil || reserve(&out.materials,len(mesh.materials))!=nil {return false}
+    whole:=true
     for index,at in mesh.indices {
         key:=Key{index,corners[at]}
         vertex,seen:=known[key]
         if !seen {
+            // A vertex the map has no memory for is written again: no index is left without one.
             vertex=u32(len(out.positions))
             known[key]=vertex
-            append(&out.positions,mesh.positions[index])
-            if len(mesh.normals)>0 {append(&out.normals,mesh.normals[index])}
-            if len(mesh.uvs)>0 {append(&out.uvs,mesh.uvs[index])}
-            if len(mesh.colors)>0 {append(&out.colors,mesh.colors[index])}
-            append(tangents,corners[at])
+            _,no_position:=append(&out.positions,mesh.positions[index])
+            whole&&=no_position==nil
+            if len(mesh.normals)>0 {_,e:=append(&out.normals,mesh.normals[index]);whole&&=e==nil}
+            if len(mesh.uvs)>0 {_,e:=append(&out.uvs,mesh.uvs[index]);whole&&=e==nil}
+            if len(mesh.colors)>0 {_,e:=append(&out.colors,mesh.colors[index]);whole&&=e==nil}
+            _,no_tangent:=append(tangents,corners[at])
+            whole&&=no_tangent==nil
         }
         append(&out.indices,vertex)
     }
     append(&out.materials,..mesh.materials)
-    return len(out.positions)==len(tangents^)
+    if !whole {
+        mesh_buffer_clear(out)
+        clear(tangents)
+    }
+    return whole
 }

@@ -1,5 +1,7 @@
 package host
 
+import "base:runtime"
+import "core:fmt"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:ui"
@@ -11,6 +13,7 @@ import "mirai:ui"
 // would refuse: what is written always loads. imports: the records of the
 // widgets its components name, as ui.tree_link takes them.
 ui_tree_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,data:ui.Tree_Data,imports:[]ui.Tree_Data={},allocator:=context.allocator) -> asset.Error {
+    for component in data.components {if component.widget=={} {return .Invalid}}
     linked,linked_ok:=ui.tree_link(data,imports)
     if !linked_ok {return .Invalid}
     textures:=make([]u32,len(linked.images),context.temp_allocator)
@@ -31,7 +34,6 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_STYLES,data.styles) or_return
     asset.document_put(doc,types,asset.UI_TABLE_VARIANTS,data.variants) or_return
     asset.document_put(doc,types,asset.UI_TABLE_COMPONENTS,data.components) or_return
-    asset.document_put(doc,types,asset.UI_TABLE_COMPONENT_NODES,data.component_nodes,{},.LZ) or_return
     asset.document_put(doc,types,asset.UI_TABLE_OVERRIDES,data.overrides) or_return
     asset.document_put(doc,types,asset.UI_TABLE_IMAGES,data.images) or_return
     asset.document_put(doc,types,asset.UI_TABLE_ANIMS,data.anims) or_return
@@ -43,6 +45,9 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_STYLE_INFOS,data.style_infos) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TRANSLATIONS,data.translations,{},.LZ) or_return
     asset.document_put(doc,types,asset.UI_TABLE_GRID_TRACKS,data.grid_tracks) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_TOKENS,data.tokens) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_TOKEN_USES,data.token_uses) or_return
+    asset.document_put(doc,types,asset.UI_TABLE_PARAMS,data.params) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TEXT,data.text,{.Bulk},.LZ) or_return
     return .None
 }
@@ -66,7 +71,7 @@ ui_tree_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,data:ui.Tre
 // lays them out, copies the asset owns otherwise. A table the file lacks is
 // empty. Nothing in them is checked: ui.tree_load does it.
 ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,error:asset.Error) {
-    asset.kind_check(a,asset.KIND_UI,asset.UI_OLDEST,asset.UI_VERSION) or_return
+    asset.kind_check(a,asset.KIND_UI,asset.UI_VERSION) or_return
     rows :: proc(a:^asset.Asset,types:^asset.Types,name:string,$T:typeid) -> ([]T,asset.Error) {
         if _,found:=asset.asset_table(a,name);!found {return nil,.None}
         return asset.asset_rows(a,types,name,"",T)
@@ -75,7 +80,6 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.styles=rows(a,types,asset.UI_TABLE_STYLES,ui.Node_Style) or_return
     data.variants=rows(a,types,asset.UI_TABLE_VARIANTS,ui.Tree_Style_Variant) or_return
     data.components=rows(a,types,asset.UI_TABLE_COMPONENTS,ui.Tree_Component) or_return
-    data.component_nodes=rows(a,types,asset.UI_TABLE_COMPONENT_NODES,ui.Tree_Node) or_return
     data.overrides=rows(a,types,asset.UI_TABLE_OVERRIDES,ui.Tree_Override) or_return
     data.images=rows(a,types,asset.UI_TABLE_IMAGES,ui.Tree_Image) or_return
     data.anims=rows(a,types,asset.UI_TABLE_ANIMS,ui.Tree_Anim) or_return
@@ -87,6 +91,9 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.style_infos=rows(a,types,asset.UI_TABLE_STYLE_INFOS,ui.Tree_Style_Info) or_return
     data.translations=rows(a,types,asset.UI_TABLE_TRANSLATIONS,ui.Tree_Translation) or_return
     data.grid_tracks=rows(a,types,asset.UI_TABLE_GRID_TRACKS,ui.Grid_Tracks) or_return
+    data.tokens=rows(a,types,asset.UI_TABLE_TOKENS,ui.Tree_Token) or_return
+    data.token_uses=rows(a,types,asset.UI_TABLE_TOKEN_USES,ui.Tree_Token_Use) or_return
+    data.params=rows(a,types,asset.UI_TABLE_PARAMS,ui.Tree_Param) or_return
     data.text=rows(a,types,asset.UI_TABLE_TEXT,u8) or_return
     return data,.None
 }
@@ -98,32 +105,45 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
 // transaction: false when a widget is missing, is not a .ui, does not read,
 // or names through others a file that names it.
 ui_tree_imports :: proc(a:^Assets,data:ui.Tree_Data,files:^[dynamic]Content_Stamp=nil,allocator:=context.temp_allocator) -> (imports:[]ui.Tree_Data,ok:bool) {
+    return ui_tree_imports_in(&a.registry,&a.types,data,files,allocator)
+}
+
+// ui_tree_imports for whoever has the registry of a project and the types of
+// its assets without the assets of an application.
+ui_tree_imports_in :: proc(registry:^asset.Registry,types:^asset.Types,data:ui.Tree_Data,files:^[dynamic]Content_Stamp=nil,allocator:=context.temp_allocator) -> (imports:[]ui.Tree_Data,ok:bool) {
     stack:[ui.TREE_DEPTH]base.Asset_Id
-    return ui_tree_imports_of(a,data,files,&stack,0,allocator)
+    return ui_tree_imports_of(registry,types,data,files,&stack,0,allocator)
 }
 
 @(private="file")
-ui_tree_imports_of :: proc(a:^Assets,data:ui.Tree_Data,files:^[dynamic]Content_Stamp,stack:^[ui.TREE_DEPTH]base.Asset_Id,depth:int,allocator:=context.temp_allocator) -> (imports:[]ui.Tree_Data,ok:bool) {
+ui_tree_imports_of :: proc(registry:^asset.Registry,types:^asset.Types,data:ui.Tree_Data,files:^[dynamic]Content_Stamp,stack:^[ui.TREE_DEPTH]base.Asset_Id,depth:int,allocator:=context.temp_allocator) -> (imports:[]ui.Tree_Data,ok:bool) {
     widgets:=false
     for component in data.components {widgets|=component.widget!={}}
     if !widgets {return nil,true}
     if depth>=ui.TREE_DEPTH {return nil,false}
-    imports=make([]ui.Tree_Data,len(data.components),allocator)
+    allocation:runtime.Allocator_Error
+    if imports,allocation=make([]ui.Tree_Data,len(data.components),allocator);allocation!=nil {return nil,false}
     for component,row in data.components {
         id:=component.widget
         if id=={} {continue}
+        // Several components of a file read it once.
+        seen:=false
+        for earlier,i in data.components[:row] {
+            if earlier.widget==id {imports[row]=imports[i];seen=true;break}
+        }
+        if seen {continue}
         for open in stack[:depth] {if open==id {return nil,false}}
-        record,found:=asset.registry_find(&a.registry,id)
+        record,found:=asset.registry_find(registry,id)
         if !found || record.kind!=asset.KIND_UI {return nil,false}
-        bytes,read:=asset.registry_read(&a.registry,record.path,allocator)
+        bytes,read:=asset.registry_read(registry,record.path,allocator)
         if read!=.None {return nil,false}
         file:asset.Asset
         if asset.asset_take(&file,bytes,allocator)!=.None || file.blob.header.id!=id {return nil,false}
-        widget,error:=ui_tree_view(&file,&a.types)
+        widget,error:=ui_tree_view(&file,types)
         if error!=.None {return nil,false}
         if files!=nil {append(files,Content_Stamp{id=id,size=record.size,time=record.time})}
         stack[depth]=id
-        nested:=ui_tree_imports_of(a,widget,files,stack,depth+1,allocator) or_return
+        nested:=ui_tree_imports_of(registry,types,widget,files,stack,depth+1,allocator) or_return
         imports[row]=ui.tree_link(widget,nested,allocator) or_return
     }
     return imports,true

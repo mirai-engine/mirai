@@ -45,13 +45,6 @@ test_project :: proc(t:^testing.T,root:string) {
 }
 
 @(private="file")
-test_folder :: proc(t:^testing.T) -> string {
-    folder,error:=os.make_directory_temp("","mirai-install-*",context.temp_allocator)
-    testing.expect(t,error==nil)
-    return project.path_absolute(folder,context.temp_allocator)
-}
-
-@(private="file")
 manifest_get :: proc(t:^testing.T,root:string) -> project.Manifest {
     m,error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
     testing.expect_value(t,error.code,project.Error_Code.None)
@@ -61,8 +54,7 @@ manifest_get :: proc(t:^testing.T,root:string) -> project.Manifest {
 @(test)
 a_plugin_from_git_is_added_updated_synced_and_removed :: proc(t:^testing.T) {
     if _,failure:=git("","--version");failure!="" {return} // no git on this machine
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"install")
     repository:=project.path(folder,"hello",allocator=context.temp_allocator)
     url:=test_repository(t,repository,"hello")
     first,_:=git(repository,"rev-parse","HEAD")
@@ -118,8 +110,7 @@ a_plugin_from_git_is_added_updated_synced_and_removed :: proc(t:^testing.T) {
 @(test)
 what_is_not_a_plugin_is_not_added :: proc(t:^testing.T) {
     if _,failure:=git("","--version");failure!="" {return}
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"install")
     root:=project.path(folder,"game",allocator=context.temp_allocator)
     test_project(t,root)
     // A part declared and not there.
@@ -142,8 +133,7 @@ what_is_not_a_plugin_is_not_added :: proc(t:^testing.T) {
 @(test)
 a_plugin_of_the_catalog_updates_only_to_what_the_catalog_lists :: proc(t:^testing.T) {
     if _,failure:=git("","--version");failure!="" {return}
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"install")
     repository:=project.path(folder,"hello",allocator=context.temp_allocator)
     url:=test_repository(t,repository,"hello")
     first,_:=git(repository,"rev-parse","HEAD")
@@ -197,8 +187,7 @@ a_plugin_of_the_catalog_updates_only_to_what_the_catalog_lists :: proc(t:^testin
 @(test)
 a_plugin_from_git_brings_its_companions_and_takes_them_away :: proc(t:^testing.T) {
     if _,failure:=git("","--version");failure!="" {return}
-    folder:=test_folder(t)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"install")
     root:=project.path(folder,"game",allocator=context.temp_allocator)
     test_project(t,root)
     repository:=project.path(folder,"hello",allocator=context.temp_allocator)

@@ -6,6 +6,8 @@ import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import "mirai:editor/ai_store"
+import "mirai:editor/history"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -13,7 +15,6 @@ import "mirai:ui"
 // the agent as text, with the entities it names as pills; the calls of each
 // turn folded under "N steps"; and the line of what the agent does now.
 
-AI_LAST_BYTES :: 160
 AI_ENTITY_MARK :: "](entity:" // the agent names an entity as [Name](entity:ID)
 AI_ASSET_MARK :: "](asset:"   // and an asset as [Name](asset:path under the assets folder)
 AI_ASSET_PATH_BYTES :: 256
@@ -132,7 +133,7 @@ ai_call_target :: proc(s:^Session,raw:string,buffer:[]u8) -> string {
         id,ok:=ai_entity_id_parse(text)
         if !ok {return ""}
         w:=edited_world(s)
-        e:=change_entity(w,id)
+        e:=history.change_entity(w,id)
         return entity_name(w,e) if e!=core.NONE else ""
     }
     for key in ([]string{"name","path","asset","material","file","preset"}) {
@@ -199,10 +200,10 @@ ai_markdown_resolve :: proc(data:rawptr,target,text:string,buffer:[]u8) -> ui.Ma
         id,ok:=ai_entity_id_parse(target[len("entity:"):])
         if !ok || s.edit_world==nil {return {pill=true,color=s.gui.ctx.theme.text_faint}}
         w:=shown_world(s)
-        e:=change_entity(w,id)
+        e:=history.change_entity(w,id)
         if e==core.NONE {return {pill=true,color=s.gui.ctx.theme.text_faint}}
         name:=string(buffer[:copy(buffer,entity_name(w,e))])
-        return {label=name,pill=true,live=true,selected=s.selection!=nil && selection_has(s.selection,e),color=AI_ENTITY_TEXT}
+        return {label=name,pill=true,live=true,selected=s.selection!=nil && history.selection_has(s.selection,e),color=AI_ENTITY_TEXT}
     case strings.has_prefix(target,"asset:"):
         if a:=s.app!=nil?s.app.assets:nil;a!=nil {
             if _,found:=asset.registry_find_path(&a.registry,target[len("asset:"):]);found {return {pill=true,live=true,color=AI_ENTITY_TEXT}}
@@ -254,7 +255,7 @@ ai_markdown_follow :: proc(s:^Session,target:string) {
     case strings.has_prefix(target,"entity:"):
         id,ok:=ai_entity_id_parse(target[len("entity:"):])
         if !ok || s.edit_world==nil {return}
-        if e:=change_entity(shown_world(s),id);e!=core.NONE {selection_set(s.selection,{e})}
+        if e:=history.change_entity(shown_world(s),id);e!=core.NONE {history.selection_set(s.selection,{e})}
     case strings.has_prefix(target,"asset:"):
         a:=s.app!=nil?s.app.assets:nil
         if a==nil {return}
@@ -289,7 +290,7 @@ ai_transcript_shown :: proc(task:^Ai_Task,shown:[]bool,steps:[]int=nil) -> (doin
         for index in start..<end {
             text,kind:=ai_transcript_line(t,index)
             hidden:=ai_transcript_hidden(text,kind)
-            shown[index]=kind==.Prompt || kind==.Note && !hidden
+            shown[index]=kind==.Prompt || kind==.Report || kind==.Divider || kind==.Note && !hidden
             if hidden && !ai_call_finish(text) {
                 calls+=1
                 if first_call<0 {first_call=index}
@@ -321,7 +322,7 @@ ai_transcript_shown :: proc(task:^Ai_Task,shown:[]bool,steps:[]int=nil) -> (doin
 
 // The API calls of a turn, saved as notes: they fold under its steps.
 @(private)
-ai_transcript_hidden :: proc(text:string,kind:Ai_Line_Kind) -> bool {
+ai_transcript_hidden :: proc(text:string,kind:ai_store.Line_Kind) -> bool {
     return kind==.Note && (strings.has_prefix(text,"Tool: ") || strings.has_prefix(text,"Tool failed: "))
 }
 
@@ -341,8 +342,8 @@ ai_message_gap :: proc(t:^Ai_Transcript,index:int,step:bool) -> f32 {
 // A line that goes on the message of the shown line before it: the lines of
 // one answer, or of one message of the user, are drawn as one by the first.
 @(private)
-ai_line_continues :: proc(t:^Ai_Transcript,index:int,shown:[]bool) -> bool {
-    if index==0 || !shown[index] || !shown[index-1] {return false}
+ai_line_continues :: proc(t:^Ai_Transcript,index:int,shown:[]bool,held_first:int=-1) -> bool {
+    if index==0 || index==held_first || !shown[index] || !shown[index-1] {return false}
     kind:=t.lines[index].kind
     return kind==t.lines[index-1].kind && (kind==.Output || kind==.Prompt)
 }
@@ -351,9 +352,9 @@ ai_line_continues :: proc(t:^Ai_Transcript,index:int,shown:[]bool) -> bool {
 // their breaks, in the temporary allocator. A line cut at AI_LINE_BYTES goes
 // on without one.
 @(private)
-ai_message_text :: proc(t:^Ai_Transcript,index:int,shown:[]bool) -> string {
+ai_message_text :: proc(t:^Ai_Transcript,index:int,shown:[]bool,held_first:int=-1) -> string {
     end:=index+1
-    for end<t.count && ai_line_continues(t,end,shown) {end+=1}
+    for end<t.count && ai_line_continues(t,end,shown,held_first) {end+=1}
     if end==index+1 {text,_:=ai_transcript_line(t,index);return text}
     b:=strings.builder_make(context.temp_allocator)
     for line in index..<end {
@@ -376,7 +377,7 @@ ai_bubble_room :: proc(ctx:^ui.Context,text:string,width,size:f32) -> (room,bubb
 ai_note_size :: proc(th:^ui.Theme,size:f32) -> f32 {return size<=th.font_small?th.font_caption:th.font_small}
 
 @(private)
-ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width,size:f32,shown:[]bool) -> f32 {
+ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width,size:f32,shown:[]bool,held_first:int,live:bool) -> f32 {
     ctx:=s.gui.ctx
     t:=&task.transcript
     th:=&ctx.theme
@@ -385,11 +386,15 @@ ai_line_measure :: proc(s:^Session,task:^Ai_Task,index,steps:int,open:bool,width
     if steps>0 {return gap+AI_STEP_HEAD+(f32(steps)*AI_STEP_ROW if open else 0)}
     switch kind {
     case .Prompt:
-        message:=ai_message_text(t,index,shown)
+        message:=ai_message_text(t,index,shown,held_first)
         room,_:=ai_bubble_room(ctx,message,width,size)
         return gap+ui.paragraph_height(ctx,ai_chat_paragraph_text(ctx,message,room,size),room,size)+10
     case .Output:
         return gap+ui.markdown_height(ctx,ai_message_text(t,index,shown),width,ai_markdown_style(s,size))
+    case .Report:
+        return gap+(live?ai_report_height(s,text,width,size):AI_STEP_ROW)
+    case .Divider:
+        return gap+AI_DIVIDER_HEIGHT
     case .Note:
         if strings.has_prefix(text,AI_REVIEWED_NOTE) {return gap+AI_STEP_ROW}
         note:=ai_note_size(th,size)
@@ -475,21 +480,34 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     size:=size>0?size:th.font_small
     t:=&task.transcript
     area:=ui.id(ctx,"transcript",task.id)
-    if t.heights_width!=width || t.heights_size!=size {
-        t.heights_width,t.heights_size=width,size
+    held_first:=ai_held_first(task)
+    if t.heights_width!=width || t.heights_size!=size || t.heights_held!=held_first {
+        t.heights_width,t.heights_size,t.heights_held=width,size,held_first
         for &h in t.heights[:t.count] {h=0}
     }
     shown:[AI_TRANSCRIPT_LINES]bool
     steps:[AI_TRANSCRIPT_LINES]int
+    live:[AI_TRANSCRIPT_LINES]bool
     doing:=ai_transcript_shown(task,shown[:t.count],steps[:t.count])
+    ai_reports_live(t,live[:t.count])
     declined:=task.declined?ai_transcript_declined(t):-1
     // A line that goes on a message is drawn by its first line: it takes no row.
+    // A report follows the review of its agent: it is measured every frame.
     for index in 0..<t.count {
-        if !shown[index] || ai_line_continues(t,index,shown[:t.count]) {t.heights[index]=0;continue}
-        if t.heights[index]>0 {continue}
+        if !shown[index] || ai_line_continues(t,index,shown[:t.count],held_first) {t.heights[index]=0;continue}
+        if t.heights[index]>0 && t.lines[index].kind!=.Report {continue}
         open:=m.steps_task==task.id && m.steps_line==t.dropped+index
-        t.heights[index]=ai_line_measure(s,task,index,steps[index],open,width,size,shown[:t.count])
+        t.heights[index]=ai_line_measure(s,task,index,steps[index],open,width,size,shown[:t.count],held_first,live[index])
         if index==declined {t.heights[index]+=AI_DECLINED_HEIGHT}
+    }
+    if m.scroll_to>0 {
+        line:=m.scroll_to-1-t.dropped
+        m.scroll_to=0
+        if line>=0 && line<t.count {
+            m.scroll=0
+            for h in t.heights[:line] {m.scroll+=h}
+            m.stick=false
+        }
     }
     if ctx.wheel_target==area && ctx.input.wheel.y>0 {m.stick=false}
     if m.stick {m.scroll=max(f32)}
@@ -507,7 +525,7 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
     copy(rows,t.heights[:t.count])
     copy(rows[t.count:],extra_heights[:extra_count])
     note:=ai_note_size(th,size)
-    first,last:=ui.rows_begin(ctx,area,&m.scroll,rows,ui.fixed(width),height)
+    first,last:=ui.rows_begin(ctx,area,&m.scroll,rows,ui.fixed(width+AI_THREAD_MARGIN),height,bar_room=AI_THREAD_MARGIN)
     for index in first..<last {
         if index>=t.count {
             switch extras[index-t.count] {
@@ -544,16 +562,34 @@ ai_transcript_draw :: proc(s:^Session,m:^Ai,task:^Ai_Task,height,width:f32,size:
             ai_steps_build(s,m,task,index,steps[index],width,note)
         case kind==.Prompt:
             // What the user asked, in a box on the right.
-            message:=ai_message_text(t,index,shown[:t.count])
+            message:=ai_message_text(t,index,shown[:t.count],held_first)
             room,bubble:=ai_bubble_room(ctx,message,width,size)
+            held:=held_first>=0 && index>=held_first
             if ui.box(ctx,{width=ui.GROW,height=ui.GROW}) {
                 ui.spacer(ctx)
-                if ui.box(ctx,{width=ui.fixed(bubble),height=ui.GROW,direction=.Column,padding={10,5,10,5},fill=th.field,radius=th.radius_popup}) {
-                    ui.paragraph(ctx,ai_chat_paragraph_text(ctx,message,room,size),size,th.text)
+                if ui.box(ctx,{width=ui.fixed(bubble),height=ui.GROW,direction=.Column,padding={10,5,10,5},fill=held?{}:th.field,radius=th.radius_popup}) {
+                    ui.paragraph(ctx,ai_chat_paragraph_text(ctx,message,room,size),size,held?th.text_body:th.text)
+                    if held {
+                        if ui.box(ctx,{width=ui.fixed(bubble),height=ui.fixed(rows[index]-gap),float={to=.Parent}}) {
+                            ui.canvas(ctx,ui.id(ctx,"held",index),ui.GROW,ui.GROW,u32(User_Icon.Dashed_Box),u64(transmute(u32)th.well_stroke_hover),{.Passive})
+                        }
+                    }
                 }
             }
         case kind==.Output:
             if target:=ui.markdown(ctx,ui.id(ctx,"answer",t.dropped+index),ai_message_text(t,index,shown[:t.count]),width,ai_markdown_style(s,size));target!="" {ai_markdown_follow(s,target)}
+        case kind==.Report && live[index]:
+            ai_report_build(s,text,width,size)
+        case kind==.Report:
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_STEP_ROW),align_y=.Center}) {
+                ui.label(ctx,ai_chat_menu_label(ctx,ai_report_label(m,text),width,note),note,th.text_faint,0)
+            }
+        case kind==.Divider:
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_DIVIDER_HEIGHT),gap=8,align_y=.Center}) {
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
+                ui.label(ctx,text,th.font_caption,th.text_muted)
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
+            }
         case strings.has_prefix(text,AI_REVIEWED_NOTE):
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_STEP_ROW),gap=6,align_y=.Center}) {
                 ui.icon(ctx,.Check,th.success,11)

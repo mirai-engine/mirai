@@ -1,5 +1,7 @@
 package terrain
 
+import "mirai:std/base"
+
 // The quadtree of a source whose chunks lie on one layer (Heightfield and
 // Mesh): its leaves are the chunks, in the order of chunk_index, and above
 // them the nodes of each depth, in rows, up to the root, which covers every
@@ -176,9 +178,9 @@ piece_border_destroy :: proc(border:^Piece_Border) {
 // The border of the chunks low to before high, written to border when it is
 // given; returns a hash of it.
 piece_border :: proc(b:^Border_Levels,low,high:[2]int,border:^Piece_Border=nil) -> (hash:u64) {
-    hash=0xcbf29ce484222325
+    hash=base.HASH_SEED
     put :: #force_inline proc(hash:^u64,list:^[dynamic]u8,value:u8) {
-        hash^=(hash^~u64(value))*0x100000001b3
+        hash^=base.hash_mix(hash^,u64(value))
         if list!=nil {append(list,value)}
     }
     if border!=nil {for i in 0..<4 {clear(&border.sides[i]);clear(&border.corners[i])}}

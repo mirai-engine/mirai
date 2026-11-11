@@ -8,6 +8,7 @@ import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -23,23 +24,15 @@ import "mirai:std/serial"
 // saved or discarded. A duplicate is a new asset with ids of its own, and no
 // output of an import.
 
-Api_Asset_Rename_Params :: struct {
-    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset or folder to rename: its path under the asset folder or the id of an asset"`,
-    name:[ASSET_CREATE_NAME]u8 `mirai:"text,label=Its new name; an asset keeps its extension"`,
-}
-
 Api_Asset_Move_Params :: struct {
-    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset or folder to move: its path under the asset folder or the id of an asset"`,
-    folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in; none: the root"`,
-    name:[ASSET_CREATE_NAME]u8 `mirai:"text,optional,label=Its new name; none: the one it has"`,
-}
-
-Api_Asset_Duplicate_Params :: struct {
-    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset or folder to copy beside itself: its path under the asset folder or the id of an asset"`,
+    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset or folder: its path under the asset folder or the id of an asset"`,
+    folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in; / is the root; none: the one it is in"`,
+    name:[ASSET_CREATE_NAME]u8 `mirai:"text,optional,label=Its new name, an asset keeping its extension; none: the one it has, or a free one for a copy"`,
+    copy:bool `mirai:"optional,label=Copy it with new ids instead of moving it; the copies name each other and are no output of an import"`,
 }
 
 Api_Asset_Moved_Result :: struct {
-    id:[base.ASSET_ID_TEXT]u8 `mirai:"text,label=The id of the asset: the same after a rename or a move and a new one for a duplicate; empty for a folder"`,
+    id:[base.ASSET_ID_TEXT]u8 `mirai:"text,label=The id of the asset: the same after a move and a new one for a copy; empty for a folder"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Where it is now under the asset folder"`,
 }
 
@@ -190,17 +183,33 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     return
 }
 
-// Copies the asset id beside itself with a free name, with copies of the
-// parts it owns beside theirs. Every copy has a new id, and what the copies
-// name of each other they name of the copies. What memory holds unsaved of
-// them is what is copied. Returns the copy, or what failed.
-asset_duplicate :: proc(s:^Session,id:base.Asset_Id) -> (copy:base.Asset_Id,path,message:string) {
+// Copies the asset id, with copies of the parts it owns, beside itself with a
+// free name, or into folder (of the registry) under name without its
+// extension ("": a free one); the parts keep where they are beside it. Every
+// copy has a new id, and what the copies name of each other they name of the
+// copies. What memory holds unsaved of them is what is copied. Returns the
+// copy, or what failed.
+asset_duplicate :: proc(s:^Session,id:base.Asset_Id,folder:Maybe(string)=nil,name:="") -> (copy:base.Asset_Id,path,message:string) {
     if refusal:=asset_create_refusal(s);refusal!="" {return {},"",refusal}
     r:=files_registry(s)
     file,found:=asset.registry_find(r,id)
     if !found {return {},"","The asset is not in the registry: asset.list lists them"}
     if refusal:=asset_owned_refusal(r,file);refusal!="" {return {},"",refusal}
     files:=asset_delete_files(r,id)
+    owner:=strings.clone(content_folder_of(file.path),context.temp_allocator)
+    into:=owner
+    if place,placed:=folder.?;placed {
+        refused:string
+        if into,refused=asset_folder_clean(r,place);refused!="" {return {},"",fmt.tprintf("folder: %s",refused)}
+        into=strings.clone(into,context.temp_allocator)
+    }
+    extension:=asset_path_extension(file.path)
+    named:=strings.trim_space(name)
+    if extension!="" && strings.has_suffix(named,extension) {named=named[:len(named)-len(extension)]}
+    if named!="" {
+        if refusal:=asset_name_refusal(named);refusal!="" {return {},"",fmt.tprintf("name: %s",refusal)}
+        if taken:=asset_create_join(into,named,extension);asset_path_taken(r,taken) {return {},"",fmt.tprintf("%s already exists: give another name or folder",taken)}
+    }
     ids:=make(map[base.Asset_Id]base.Asset_Id,context.temp_allocator)
     sources:=make([]string,len(files),context.temp_allocator)
     for at,i in files {
@@ -209,7 +218,10 @@ asset_duplicate :: proc(s:^Session,id:base.Asset_Id) -> (copy:base.Asset_Id,path
     }
     written:=make([dynamic]string,context.temp_allocator)
     for source,i in sources {
-        target:=asset_create_path(r,content_folder_of(source),asset_name(source),asset_path_extension(source))
+        place:=content_folder_of(source)
+        if into!=owner {place=content_folder_of(asset_create_join(into,source[len(owner)+1:] if owner!="" && asset_path_inside(source,owner) else asset_path_base(source),""))}
+        target:=asset_create_path(r,place,asset_name(source),asset_path_extension(source))
+        if i==0 && named!="" {target=asset_create_join(into,named,extension)}
         if problem:=asset_copy(r,source,target,ids);problem!="" {
             for done in written {_=os.remove(done)}
             return {},"",problem
@@ -226,13 +238,26 @@ asset_duplicate :: proc(s:^Session,id:base.Asset_Id) -> (copy:base.Asset_Id,path
     return
 }
 
-// Copies the folder from beside itself with a free name, with all it holds:
-// its assets as asset_duplicate copies them, among each other; a part whose
-// owner is outside is of its own. Returns where the copy is, or what failed.
-asset_folder_duplicate :: proc(s:^Session,from:string) -> (path,message:string) {
+// Copies the folder from, with all it holds, beside itself with a free name
+// or into folder under name ("": a free one): its assets as asset_duplicate
+// copies them, among each other; a part whose owner is outside is of its own.
+// Returns where the copy is, or what failed.
+asset_folder_duplicate :: proc(s:^Session,from:string,folder:Maybe(string)=nil,name:="") -> (path,message:string) {
     r,source,refusal:=asset_folder_subject(s,from)
     if refusal!="" {return "",refusal}
-    path=asset_create_path(r,content_folder_of(source),asset_path_base(source),"")
+    into:=content_folder_of(source)
+    if place,placed:=folder.?;placed {
+        refused:string
+        if into,refused=asset_folder_clean(r,place);refused!="" {return "",fmt.tprintf("folder: %s",refused)}
+        into=strings.clone(into,context.temp_allocator)
+    }
+    if asset_path_inside(into,source) || into==source {return "",fmt.tprintf("%s cannot be copied inside itself: give a folder outside it",source)}
+    named:=strings.trim_space(name)
+    if named=="" {path=asset_create_path(r,into,asset_path_base(source),"")} else {
+        if refusal=asset_name_refusal(named);refusal!="" {return "",fmt.tprintf("name: %s",refusal)}
+        path=asset_create_join(into,named,"")
+        if asset_path_taken(r,path) {return "",fmt.tprintf("%s already exists: give another name or folder",path)}
+    }
     ids:=make(map[base.Asset_Id]base.Asset_Id,context.temp_allocator)
     files:=make([dynamic]string,context.temp_allocator)
     for &file in r.files {
@@ -330,7 +355,7 @@ asset_document_remap :: proc(doc:^asset.Document,ids:map[base.Asset_Id]base.Asse
 // moved with them.
 @(private)
 asset_history_moved :: proc(s:^Session,from,to:string,folder:bool) {
-    rename :: proc(files:[]Edit_File,from,to:string,folder:bool) {
+    rename :: proc(files:[]history.Edit_File,from,to:string,folder:bool) {
         for &file in files {
             if file.path!=from && !(folder && asset_path_inside(file.path,from)) {continue}
             moved:=strings.concatenate({to,file.path[len(from):]})
@@ -362,7 +387,7 @@ asset_start_scene_moved :: proc(s:^Session,from,to:string,folder:bool) {
     }
 }
 
-// ---------------------------------------------------------------- asset.rename, asset.move, asset.duplicate
+// ---------------------------------------------------------------- asset.move
 
 // What a call names: an asset by its id or path, or a folder of the assets.
 @(private)
@@ -400,56 +425,40 @@ api_asset_registry :: proc(s:^Session,call:^api.Call) -> ^asset.Registry {
 }
 
 @(private)
-api_asset_rename :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Asset_Rename_Params)
-    r:=api_asset_registry(s,call)
-    if r==nil {return}
-    id,folder,ok:=api_asset_subject(call,r,base.text_get(p.asset[:]))
-    if !ok {return}
-    name:=strings.trim_space(base.text_get(p.name[:]))
-    if refusal:=asset_name_refusal(name);refusal!="" {
-        api.call_failf(call,api.INVALID_PARAMS,"name: %s",refusal)
-        return
-    }
-    if id=={} {
-        path,message:=asset_folder_move(s,folder,content_folder_of(folder),name)
-        api_asset_moved(call,{},path,message)
-        return
-    }
-    file,_:=asset.registry_find(r,id)
-    path,message:=asset_move(s,id,content_folder_of(file.path),name)
-    api_asset_moved(call,id,path,message)
-}
-
-@(private)
 api_asset_move :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Asset_Move_Params)
     r:=api_asset_registry(s,call)
     if r==nil {return}
     id,folder,ok:=api_asset_subject(call,r,base.text_get(p.asset[:]))
     if !ok {return}
-    into,name:=base.text_get(p.folder[:]),base.text_get(p.name[:])
+    place,name:=base.text_get(p.folder[:]),base.text_get(p.name[:])
+    if place=="" && name=="" && !p.copy {
+        api.call_fail(call,api.INVALID_PARAMS,"give a folder, a name or copy true: asset.move changes nothing without them")
+        return
+    }
+    if place=="" {
+        current:=folder
+        if id!={} {
+            file,_:=asset.registry_find(r,id)
+            current=file.path
+        }
+        place=strings.clone(content_folder_of(current),context.temp_allocator)
+    }
+    if p.copy {
+        if id=={} {
+            path,message:=asset_folder_duplicate(s,folder,place,name)
+            api_asset_moved(call,{},path,message)
+            return
+        }
+        made,path,message:=asset_duplicate(s,id,place,name)
+        api_asset_moved(call,made,path,message)
+        return
+    }
     if id=={} {
-        path,message:=asset_folder_move(s,folder,into,name)
+        path,message:=asset_folder_move(s,folder,place,name)
         api_asset_moved(call,{},path,message)
         return
     }
-    path,message:=asset_move(s,id,into,name)
+    path,message:=asset_move(s,id,place,name)
     api_asset_moved(call,id,path,message)
-}
-
-@(private)
-api_asset_duplicate :: proc(s:^Session,call:^api.Call) {
-    p:=api.call_params(call,Api_Asset_Duplicate_Params)
-    r:=api_asset_registry(s,call)
-    if r==nil {return}
-    id,folder,ok:=api_asset_subject(call,r,base.text_get(p.asset[:]))
-    if !ok {return}
-    if id=={} {
-        path,message:=asset_folder_duplicate(s,folder)
-        api_asset_moved(call,{},path,message)
-        return
-    }
-    copy,path,message:=asset_duplicate(s,id)
-    api_asset_moved(call,copy,path,message)
 }

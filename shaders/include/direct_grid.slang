@@ -60,7 +60,7 @@ uint direct_table_draw(uint4 row, float u, out float chance) {
 void direct_ray(uint light, float3 position, float3 origin, float point, float spin, float sun_radius, out float3 direction, out float reach) {
     if (light == INVALID) {
         direction = sun_ray(point, spin, sun_radius);
-        reach = scene_reach(origin, direction);
+        reach = sun_reach(origin, direction);
         return;
     }
     float3 toward = light_point(lights[light], position, point, spin);

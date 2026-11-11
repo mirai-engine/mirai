@@ -1,9 +1,10 @@
 package terrain
 
+import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:testing"
 import "mirai:asset"
+import "mirai:std/base"
 
 @(private="file")
 dominant :: proc(w:[4]f32) -> int {
@@ -57,7 +58,7 @@ the_interior_of_a_volume_shows_where_it_is_dug_and_what_fills_keeps_its_layer ::
     // The interior travels in the file, and a layer that goes takes its strata.
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     loaded:Source;defer source_destroy(&loaded)
-    path:=source_test_path("interior.terrain");defer os.remove(path)
+    path:=fmt.tprintf("%s/interior.terrain",base.test_folder(t,"terrain"))
     testing.expect_value(t,source_save(&s,path,{91,92},&types),asset.Error.None)
     _,ok:=source_load(&loaded,path,&types)
     testing.expect(t,ok && loaded.interior==s.interior && grid_equal(&loaded.weights,&s.weights))

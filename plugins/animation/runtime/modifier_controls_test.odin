@@ -5,13 +5,20 @@ import "core:testing"
 import "mirai:core"
 import mm "mirai:std/math"
 
+@(private="file")
+Modifier_Controls_World :: struct {
+    using world:core.Test_World,
+    configs:core.Table(Pose_Modifiers),
+}
+
 @(test)
 modifier_controls_preserve_targets_contacts_and_fade_independently_through_world_copies :: proc(t:^testing.T) {
     problems:core.Problems
-    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    rig:=core.create(&entities)
-    configs:core.Table(Pose_Modifiers);defer core.table_destroy(&configs)
-    core.add(&configs,rig,POSE_MODIFIERS_DEFAULT);core.table_settle(&configs,&entities)
+    w:Modifier_Controls_World
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    rig:=core.create(&w.entities)
+    core.add(&w.configs,rig,POSE_MODIFIERS_DEFAULT);core.test_world_settle(&w)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     for _ in 0..<2 {value:=IK_CONSTRAINT_DEFAULT;value.rig,value.pole=rig,{4,5,6};value.target=spatial_point({1,2,3});testing.expect(t,modifier_append(&modifiers.ik,rig,value))}
     look:=LOOK_CONSTRAINT_DEFAULT;look.rig=rig;look.target=spatial_point({3,2,1});testing.expect(t,modifier_append(&modifiers.look,rig,look))
@@ -21,14 +28,14 @@ modifier_controls_preserve_targets_contacts_and_fade_independently_through_world
     empty:Modifier_Runtime
     testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
     requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems)
-    testing.expect(t,modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=.8,enabled=true}))
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.Look,weight=.5,enabled=true,fade=1}))
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=1}))
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.Contact,weight=.3,enabled=true}))
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.Grounding,weight=.4,enabled=true}))
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.Limit,weight=.2,enabled=true}))
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems,.5)
+    modifier_take(&modifiers,&requests,core.read(&w.configs),&problems)
+    modifier_goal(&requests,{rig=rig,kind=.Look,target=spatial_point({}),weight=.8,enabled=true})
+    modifier_control(&requests,{rig=rig,kind=.Look,weight=.5,enabled=true,fade=1})
+    modifier_control(&requests,{rig=rig,kind=.IK,slot=1,weight=1,enabled=false,fade=1})
+    modifier_control(&requests,{rig=rig,kind=.Contact,weight=.3,enabled=true})
+    modifier_control(&requests,{rig=rig,kind=.Grounding,weight=.4,enabled=true})
+    modifier_control(&requests,{rig=rig,kind=.Limit,weight=.2,enabled=true})
+    modifier_take(&modifiers,&requests,core.read(&w.configs),&problems,.5)
     testing.expect_value(t,modifiers.look.values[0].weight,f32(.6))
     testing.expect_value(t,modifiers.look.values[0].target.position,mm.Vec3{})
     testing.expect_value(t,modifiers.ik.values[0].weight,f32(1))
@@ -45,10 +52,10 @@ modifier_controls_preserve_targets_contacts_and_fade_independently_through_world
     copy_requests:Modifier_Requests;core.value_copy(&copy_requests,&requests,type_info_of(Modifier_Requests));defer delete(copy_requests.queue.items);defer delete(copy_requests.controls.items)
     testing.expect(t,raw_data(modifiers.controls)!=raw_data(copied.controls))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,modifier_control(&requests,{rig=rig,kind=.Look,weight=.5,enabled=true,fade=1}))
-    modifier_take(&modifiers,&requests,core.read(&configs),&problems,.5)
-    modifier_take(&copied,&copy_requests,core.read(&configs),&problems,.5)
-    for _ in 0..<120 {modifier_take(&modifiers,&requests,core.read(&configs),&problems,1.0/60);modifier_take(&copied,&copy_requests,core.read(&configs),&problems,1.0/60)}
+    modifier_control(&requests,{rig=rig,kind=.Look,weight=.5,enabled=true,fade=1})
+    modifier_take(&modifiers,&requests,core.read(&w.configs),&problems,.5)
+    modifier_take(&copied,&copy_requests,core.read(&w.configs),&problems,.5)
+    for _ in 0..<120 {modifier_take(&modifiers,&requests,core.read(&w.configs),&problems,1.0/60);modifier_take(&copied,&copy_requests,core.read(&w.configs),&problems,1.0/60)}
     context=saved
     testing.expect_value(t,modifiers.look.values[0].weight,f32(.4))
     testing.expect_value(t,modifiers.ik.values[1].weight,f32(0))
@@ -72,8 +79,8 @@ modifier_fades_track_only_active_rows_cancel_restart_and_survive_reordered_profi
     requests:Modifier_Requests;defer delete(requests.controls.items)
     modifier_controls_take(&modifiers,&requests,&problems,0)
     testing.expect(t,modifier_control_state(&modifiers,core.entity_make(3,1),.IK,0)==nil && modifier_control_state(&modifiers,second,.IK,2)==nil)
-    testing.expect(t,modifier_control(&requests,{rig=first,kind=.IK,slot=1,weight=0,fade=1}))
-    testing.expect(t,modifier_control(&requests,{rig=second,kind=.IK,weight=.5,enabled=true,fade=2}))
+    modifier_control(&requests,{rig=first,kind=.IK,slot=1,weight=0,fade=1})
+    modifier_control(&requests,{rig=second,kind=.IK,weight=.5,enabled=true,fade=2})
     modifier_controls_take(&modifiers,&requests,&problems,.25)
     testing.expect_value(t,len(modifiers.fades),2)
     reordered:Modifier_Runtime;defer modifier_runtime_free(&reordered)
@@ -83,10 +90,10 @@ modifier_fades_track_only_active_rows_cancel_restart_and_survive_reordered_profi
     copied:Modifier_Runtime;core.value_copy(&copied,&reordered,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     testing.expect(t,raw_data(copied.fades)!=raw_data(reordered.fades))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    testing.expect(t,modifier_control(&requests,{rig=second,kind=.IK,weight=.8,enabled=true}))
+    modifier_control(&requests,{rig=second,kind=.IK,weight=.8,enabled=true})
     modifier_controls_take(&reordered,&requests,&problems,0)
     testing.expect_value(t,len(reordered.fades),1)
-    testing.expect(t,modifier_control(&requests,{rig=second,kind=.IK,weight=.2,enabled=true,fade=.5}))
+    modifier_control(&requests,{rig=second,kind=.IK,weight=.2,enabled=true,fade=.5})
     modifier_controls_take(&reordered,&requests,&problems,.5)
     modifier_controls_take(&copied,&requests,&problems,2)
     modifier_controls_take(&reordered,&requests,&problems,1)
@@ -102,18 +109,20 @@ modifier_fades_track_only_active_rows_cancel_restart_and_survive_reordered_profi
 @(test)
 modifier_control_requests_reject_invalid_slots_values_and_exhausted_capacity :: proc(t:^testing.T) {
     requests:Modifier_Requests;defer delete(requests.controls.items)
+    reserve(&requests.controls.items,4)
     control:=Modifier_Control{rig=core.Entity(1),kind=.IK,weight=1,enabled=true}
-    testing.expect(t,!modifier_control(nil,control))
-    bad:=control;bad.rig=core.NONE;testing.expect(t,!modifier_control(&requests,bad))
-    bad=control;bad.slot=POSE_CONSTRAINTS;testing.expect(t,!modifier_control(&requests,bad))
-    bad=control;bad.kind=.Grounding;bad.slot=1;testing.expect(t,!modifier_control(&requests,bad))
-    bad=control;bad.fade=-1;testing.expect(t,!modifier_control(&requests,bad))
-    bad=control;bad.weight=2;testing.expect(t,!modifier_control(&requests,bad))
+    modifier_control(nil,control)
+    bad:=control;bad.rig=core.NONE;modifier_control(&requests,bad)
+    bad=control;bad.slot=POSE_CONSTRAINTS;modifier_control(&requests,bad)
+    bad=control;bad.kind=.Grounding;bad.slot=1;modifier_control(&requests,bad)
+    bad=control;bad.fade=-1;modifier_control(&requests,bad)
+    bad=control;bad.weight=2;modifier_control(&requests,bad)
     for invalid in ([?]f32{transmute(f32)u32(0x7fc00000),transmute(f32)u32(0x7f800000)}) {
-        bad=control;bad.weight=invalid;testing.expect(t,!modifier_control(&requests,bad))
-        bad=control;bad.fade=invalid;testing.expect(t,!modifier_control(&requests,bad))
+        bad=control;bad.weight=invalid;modifier_control(&requests,bad)
+        bad=control;bad.fade=invalid;modifier_control(&requests,bad)
     }
-    for _ in 0..<REQUEST_CAPACITY {testing.expect(t,modifier_control(&requests,control))}
-    testing.expect(t,!modifier_control(&requests,control))
-    testing.expect_value(t,len(requests.controls.items),REQUEST_CAPACITY)
+    testing.expect_value(t,requests.controls.refused,9)
+    for _ in 0..=cap(requests.controls.items) {modifier_control(&requests,control)}
+    testing.expect_value(t,requests.controls.dropped,1)
+    testing.expect_value(t,len(requests.controls.items),cap(requests.controls.items))
 }

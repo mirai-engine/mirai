@@ -2,12 +2,13 @@ package ui_inspector_editor
 
 import "core:strings"
 import "core:testing"
+import "mirai:cook/author"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
 @(private="file")
-records_sample :: proc(t:^testing.T,r:^Records) -> bool {
+records_sample :: proc(t:^testing.T,r:^author.Records) -> bool {
     texts:=make([dynamic]u8,context.temp_allocator)
     nodes:=[]ui.Tree_Node{
         ui.tree_node_record(&texts,-1,{kind=.Box,name="hud",float={to=.Safe,anchor=.Top_Left,pivot=.Top_Left}}),
@@ -17,13 +18,12 @@ records_sample :: proc(t:^testing.T,r:^Records) -> bool {
         ui.tree_node_record(&texts,-1,{kind=.Button,name="menu",text="Menu"}),
     }
     styles:=[]ui.Node_Style{{}}
-    return testing.expect(t,records_load(r,{text=texts[:],nodes=nodes,styles=styles},context.allocator))
+    return testing.expect(t,author.records_load(r,{text=texts[:],nodes=nodes,styles=styles},context.allocator))
 }
 
-@(private)
-records_load_as_tree :: proc(r:^Records) -> bool {
+records_load_as_tree :: proc(r:^author.Records) -> bool {
     tree:ui.Widget_Tree
-    data:=records_data(r)
+    data:=author.records_data(r)
     textures:=make([]u32,len(data.images),context.temp_allocator)
     fonts:=make([]u8,len(data.fonts),context.temp_allocator)
     if !ui.tree_load(&tree,data,{textures=textures,fonts=fonts}) {return false}
@@ -36,132 +36,6 @@ names_of :: proc(nodes:[]ui.Tree_Node) -> [dynamic]string {
     names:=make([dynamic]string,context.temp_allocator)
     for &n in nodes {append(&names,serial.text_field(n.name[:]))}
     return names
-}
-
-@(test)
-inserted_and_deleted_nodes_keep_the_records_in_pre_order :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    testing.expect_value(t,records_subtree(r.nodes[:],0),3)
-    testing.expect_value(t,records_subtree(r.nodes[:],2),1)
-    testing.expect_value(t,records_depth(r.nodes[:],3),2)
-
-    // Inside a box: after what it already holds, before the next root.
-    row:=records_insert(&r,-1,0,.Text)
-    testing.expect_value(t,row,4)
-    testing.expect_value(t,r.nodes[row].parent,i32(0))
-    testing.expect_value(t,serial.text_field(r.nodes[row].name[:]),"text1")
-    testing.expect_value(t,r.nodes[5].parent,i32(-1))
-    testing.expect(t,records_load_as_tree(&r))
-    testing.expect_value(t,records_insert(&r,-1,1,.Text),-1) // a Text holds nothing
-
-    root:=records_insert(&r,-1,-1,.Box)
-    testing.expect_value(t,root,len(r.nodes)-1)
-    testing.expect_value(t,r.nodes[root].float.to,ui.Float_To.Safe)
-    testing.expect(t,records_load_as_tree(&r))
-
-    // The bar and its progress go; the rows after them point at their boxes again.
-    records_delete(&r,-1,2)
-    testing.expect_value(t,len(r.nodes),5)
-    testing.expect_value(t,serial.text_field(r.nodes[2].name[:]),"text1")
-    testing.expect_value(t,r.nodes[2].parent,i32(0))
-    testing.expect_value(t,serial.text_field(r.nodes[3].name[:]),"menu")
-    testing.expect(t,records_load_as_tree(&r))
-}
-
-// What Create makes of a .ui: a root Box that grows to the surface, with style 0.
-@(test)
-an_empty_interface_is_a_root_box_that_grows_to_the_surface :: proc(t:^testing.T) {
-    r:Records
-    if !testing.expect(t,records_load(&r,ui_empty_data(),context.allocator)) {return}
-    defer records_destroy(&r)
-    testing.expect(t,len(r.nodes)==1 && r.nodes[0].kind==.Box && r.nodes[0].parent==-1 && len(r.styles)==1)
-    testing.expect(t,r.nodes[0].layout.width.kind==.Grow && r.nodes[0].layout.height.kind==.Grow && r.nodes[0].float.to==.Surface)
-    testing.expect(t,records_load_as_tree(&r))
-}
-
-@(test)
-a_duplicate_has_its_own_names_image_animations_and_the_overrides_of_its_instances :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    records_image(&r,&r.nodes[3])
-    records_anim_set(&r,&r.nodes[3])
-    card:=records_widget(&r,-1,2,base.Asset_Id{7,7},"card")
-    testing.expect_value(t,card,4)
-    append(&r.overrides,ui.Tree_Override{instance=u32(card)})
-    copy:=records_duplicate(&r,-1,2)
-    testing.expect_value(t,copy,5)
-    names:=names_of(r.nodes[:])
-    testing.expect(t,names[5]=="bar1" && names[6]=="fuel1" && names[7]=="card1")
-    testing.expect_value(t,r.nodes[6].parent,i32(5))
-    testing.expect(t,r.nodes[6].image!=r.nodes[3].image && r.nodes[6].anims!=r.nodes[3].anims,"The copy edits an image and animations of its own")
-    testing.expect_value(t,len(r.overrides),2)
-    testing.expect_value(t,r.overrides[1].instance,u32(7))
-    // A row two nodes share is copied for the one that changes it.
-    r.nodes[1].image=r.nodes[3].image
-    testing.expect(t,records_image(&r,&r.nodes[1])!=int(r.nodes[3].image)-1)
-}
-
-@(test)
-overrides_follow_the_rows_of_their_instances :: proc(t:^testing.T) {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    nodes:=[]ui.Tree_Node{
-        ui.tree_node_record(&texts,-1,{kind=.Box,name="first"}),
-        ui.tree_node_record(&texts,-1,{kind=.Box,name="second"}),
-    }
-    r:Records
-    if !testing.expect(t,records_load(&r,{text=texts[:],nodes=nodes,styles={{}},overrides={{instance=0},{instance=1}}},context.allocator)) {return}
-    defer records_destroy(&r)
-    testing.expect_value(t,records_insert(&r,-1,0,.Spacer),1)
-    testing.expect_value(t,r.overrides[0].instance,u32(0))
-    testing.expect_value(t,r.overrides[1].instance,u32(2))
-    records_delete(&r,-1,0)
-    testing.expect_value(t,len(r.overrides),1)
-    testing.expect_value(t,r.overrides[0].instance,u32(0))
-}
-
-@(test)
-a_widget_of_another_file_makes_its_component_once :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    a:=records_widget(&r,-1,0,base.Asset_Id{7,7},"button")
-    b:=records_widget(&r,-1,0,base.Asset_Id{7,7},"button")
-    testing.expect(t,a>=0 && b>=0)
-    testing.expect_value(t,len(r.templates),1)
-    testing.expect_value(t,r.templates[0].component.widget,base.Asset_Id{7,7})
-    testing.expect(t,serial.text_field(r.nodes[a].name[:])!=serial.text_field(r.nodes[b].name[:]))
-    data:=records_data(&r)
-    testing.expect_value(t,data.components[0].count,u32(0))
-}
-
-@(test)
-tracks_and_keys_keep_their_ranges_and_their_order_in_time :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    first:=records_clip(&r,"fade",.Opacity,{0,0,0,0},{1,0,0,0},0.2)
-    second:=records_clip(&r,"grow",.Scale,{0.5,0.5,0,0},{1,1,0,0},0.2)
-    testing.expect(t,records_track_add(&r,first,.Offset))
-    testing.expect_value(t,r.anims[second].first,u32(2))
-    testing.expect_value(t,r.tracks[r.anims[second].first].property,ui.Anim_Property.Scale)
-    records_key_add(&r,int(r.anims[first].first))
-    testing.expect_value(t,r.tracks[0].key_count,u32(3))
-    testing.expect_value(t,r.keys[r.tracks[0].first_key+2].time,f32(1.2))
-    records_track_remove(&r,first,0)
-    testing.expect_value(t,r.anims[first].count,u32(1))
-    testing.expect_value(t,r.tracks[r.anims[second].first].property,ui.Anim_Property.Scale)
-    testing.expect(t,records_load_as_tree(&r))
-    // A time edited past the next key goes after it when the records are written.
-    track:=r.tracks[r.anims[second].first]
-    r.keys[track.first_key].time=0.5
-    if !testing.expect(t,!records_load_as_tree(&r),"The tree takes keys in order") {return}
-    records_tidy(&r)
-    testing.expect_value(t,r.keys[track.first_key].time,f32(0.2))
-    testing.expect_value(t,r.keys[track.first_key+1].time,f32(0.5))
-    testing.expect(t,records_load_as_tree(&r))
 }
 
 @(test)
@@ -184,17 +58,17 @@ the_preview_shows_bound_names_and_floats_inside_the_stage :: proc(t:^testing.T) 
     template:=[]ui.Tree_Node{ui.tree_node_record(&texts,-1,{kind=.Box,name="card"}),ui.tree_node_record(&texts,0,{kind=.Text,name="title"})}
     components:=[]ui.Tree_Component{ui.tree_component_record("card",0,2)}
     data:=ui.Tree_Data{text=texts[:],nodes=nodes,component_nodes=template,components=components}
-    testing.expect_value(t,preview_count(data,nodes[1],0),2)
+    testing.expect_value(t,author.tree_node_count(data,nodes[1],0),2)
 }
 
 @(test)
 a_dragged_node_goes_inside_before_or_after_another_with_what_it_holds :: proc(t:^testing.T) {
-    r:Records
+    r:author.Records
     if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
+    defer author.records_destroy(&r)
     node_text_set(&r,&r.nodes[3],3,.Spanish,.English,"Combustible")
     // The bar and its fuel into the menu's place at the root, before it.
-    at:=records_place(&r,2,-1,4)
+    at:=author.records_place(&r,2,-1,4)
     testing.expect_value(t,at,2)
     names:=names_of(r.nodes[:])
     testing.expect(t,names[0]=="hud" && names[1]=="title" && names[2]=="bar" && names[3]=="fuel" && names[4]=="menu")
@@ -203,65 +77,44 @@ a_dragged_node_goes_inside_before_or_after_another_with_what_it_holds :: proc(t:
     testing.expect_value(t,node_text_in(&r,&r.nodes[3],.Spanish,.English),"Combustible")
     testing.expect(t,records_load_as_tree(&r))
     // The menu inside the bar, last.
-    at=records_place(&r,4,2,-1)
+    at=author.records_place(&r,4,2,-1)
     testing.expect_value(t,at,4)
     testing.expect_value(t,r.nodes[4].parent,i32(2))
     // Not into itself, nor into what holds nothing.
-    testing.expect_value(t,records_place(&r,2,3,-1),-1)
-    testing.expect_value(t,records_place(&r,2,1,-1),-1)
-    testing.expect(t,records_load_as_tree(&r))
-}
-
-@(test)
-a_copied_node_is_pasted_inside_a_container_or_after_another :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    clip:Clip_Nodes
-    defer clip_destroy(&clip)
-    records_copy(&r,2,&clip)
-    testing.expect_value(t,len(clip.records.nodes),2)
-    // Into the hud, last, with names of its own.
-    at:=records_paste(&r,0,&clip)
-    testing.expect_value(t,at,4)
-    testing.expect_value(t,r.nodes[4].parent,i32(0))
-    testing.expect(t,serial.text_field(r.nodes[4].name[:])!="bar")
-    // After a text, beside it.
-    at=records_paste(&r,1,&clip)
-    testing.expect_value(t,r.nodes[at].parent,i32(0))
-    testing.expect_value(t,len(r.styles),1)
+    testing.expect_value(t,author.records_place(&r,2,3,-1),-1)
+    testing.expect_value(t,author.records_place(&r,2,1,-1),-1)
     testing.expect(t,records_load_as_tree(&r))
 }
 
 @(test)
 a_node_pasted_into_another_interface_takes_the_rows_it_uses :: proc(t:^testing.T) {
-    src,dst:Records
+    src,dst:author.Records
     if !records_sample(t,&src) {return}
     // In the source the bar has a named style, and the fuel a look of its own
     // with a font of the file, an image, a fade and a translation.
-    panel:=records_style_add(&src,{radius={4,4,4,4}},nil,{family=.Box})
+    panel:=author.records_style_add(&src,{radius={4,4,4,4}},nil,{family=.Box})
     ui.tree_text_set(src.style_infos[panel].name[:],"Panel")
     append(&src.fonts,ui.Tree_Font{font={9,9}})
-    own:=records_style_add(&src,{text={font=ui.FONT_TREE}},nil,{})
+    own:=author.records_style_add(&src,{text={font=ui.FONT_TREE}},nil,{})
     src.nodes[2].style,src.nodes[3].style=u16(panel),u16(own)
-    image:=records_image(&src,&src.nodes[3])
+    image:=author.records_image(&src,&src.nodes[3])
     src.images[image].texture={5,5}
-    fade:=records_clip(&src,"fade",.Opacity,{0,0,0,0},{1,0,0,0},0.2)
-    set:=records_anim_set(&src,&src.nodes[3])
+    fade:=author.records_clip(&src,"fade",.Opacity,{0,0,0,0},{1,0,0,0},0.2)
+    set:=author.records_anim_set(&src,&src.nodes[3])
     src.anim_sets[set].shown=ui.Anim(fade+1)
     node_text_set(&src,&src.nodes[3],3,.Spanish,.English,"Combustible")
     source_id:=src.nodes[3].text_id
-    clip:Clip_Nodes
-    defer clip_destroy(&clip)
-    records_copy(&src,2,&clip)
-    records_destroy(&src)
+    clip:author.Clip_Nodes
+    defer author.clip_destroy(&clip)
+    author.records_copy(&src,2,&clip)
+    author.records_destroy(&src)
     // The other has a style of that name and family, and an animation of that name.
     if !records_sample(t,&dst) {return}
-    defer records_destroy(&dst)
-    other:=records_style_add(&dst,{radius={9,9,9,9}},nil,{family=.Box})
+    defer author.records_destroy(&dst)
+    other:=author.records_style_add(&dst,{radius={9,9,9,9}},nil,{family=.Box})
     ui.tree_text_set(dst.style_infos[other].name[:],"Panel")
-    records_clip(&dst,"fade",.Scale,{},{1,1,0,0},0.5)
-    at:=records_paste(&dst,0,&clip)
+    author.records_clip(&dst,"fade",.Scale,{},{1,1,0,0},0.5)
+    at:=author.records_paste(&dst,0,&clip)
     if !testing.expect(t,at>=0) {return}
     bar,fuel:=&dst.nodes[at],&dst.nodes[at+1]
     testing.expect_value(t,int(bar.style),other)
@@ -277,257 +130,42 @@ a_node_pasted_into_another_interface_takes_the_rows_it_uses :: proc(t:^testing.T
 
 @(test)
 a_box_becomes_a_widget_with_only_the_rows_it_uses :: proc(t:^testing.T) {
-    r:Records
+    r:author.Records
     if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    unused:=records_style_add(&r,{radius={2,2,2,2}},nil,{family=.Box})
+    defer author.records_destroy(&r)
+    unused:=author.records_style_add(&r,{radius={2,2,2,2}},nil,{family=.Box})
     ui.tree_text_set(r.style_infos[unused].name[:],"Unused")
-    own:=records_style_add(&r,{radius={6,6,6,6}},nil,{})
+    own:=author.records_style_add(&r,{radius={6,6,6,6}},nil,{})
     r.nodes[3].style=u16(own)
     node_text_set(&r,&r.nodes[3],3,.Spanish,.English,"Combustible")
-    widget:Records
-    if !testing.expect(t,records_widget_data(&r,2,&widget,context.allocator)) {return}
-    defer records_destroy(&widget)
+    widget:author.Records
+    if !testing.expect(t,author.records_widget_data(&r,2,&widget,context.allocator)) {return}
+    defer author.records_destroy(&widget)
     testing.expect(t,len(widget.nodes)==2 && widget.nodes[0].parent==-1 && widget.nodes[0].float.to==.None)
     testing.expect_value(t,len(widget.styles),2)
     testing.expect_value(t,widget.styles[widget.nodes[1].style].radius[0],f32(6))
     testing.expect(t,widget.nodes[1].text_id!=r.nodes[3].text_id && len(widget.translations)==1,"Its texts have ids of their own")
     testing.expect(t,records_load_as_tree(&widget))
-    other:Records
-    testing.expect(t,!records_widget_data(&r,1,&other,context.allocator),"only a Box")
-}
-
-@(test)
-an_override_saves_into_its_style_and_goes :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    // A named style the title and the fuel share, with a variant.
-    shared:=records_style_add(&r,{radius=4},{ui.tree_variant_record(0,"",{.Hovered},{})},{})
-    ui.tree_text_set(r.style_infos[shared].name[:],"Label")
-    r.nodes[1].style,r.nodes[3].style=u16(shared),u16(shared)
-    testing.expect_value(t,records_style_users(&r,shared),2)
-    testing.expect_value(t,records_style_name(&r,shared),"Label")
-    // The title overrides it, with its variant.
-    changed:=r.styles[shared]
-    changed.radius=9
-    override:=records_style_add(&r,changed,records_style_variants(&r,shared),{base=u16(shared+1)})
-    r.nodes[1].style=u16(override)
-    testing.expect_value(t,records_style_base(&r,override),shared)
-    testing.expect_value(t,len(records_style_variants(&r,override)),1)
-    if !testing.expect(t,records_load_as_tree(&r)) {return}
-    // Saving writes it into the shared style, which both use again.
-    saved:=records_style_save(&r,override)
-    testing.expect_value(t,saved,shared)
-    testing.expect_value(t,len(r.styles),2)
-    testing.expect_value(t,len(r.style_infos),2)
-    testing.expect_value(t,r.styles[shared].radius,9)
-    testing.expect_value(t,records_style_users(&r,shared),2)
-    testing.expect_value(t,len(records_style_variants(&r,shared)),1)
-    testing.expect_value(t,len(r.variants),1)
-    testing.expect(t,records_load_as_tree(&r))
-    // A style still in use stays.
-    testing.expect_value(t,records_style_remove(&r,shared,0),0)
-    testing.expect_value(t,len(r.styles),2)
-    testing.expect(t,!records_style_delete(&r,shared),"A named style a node uses stays")
-}
-
-@(test)
-rows_nothing_uses_go_when_the_records_are_written :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    lost:=records_style_add(&r,{radius={1,1,1,1}},{ui.tree_variant_record(0,"big",{},{})},{})
-    named:=records_style_add(&r,{radius={2,2,2,2}},nil,{family=.Box})
-    ui.tree_text_set(r.style_infos[named].name[:],"Kept")
-    used:=records_style_add(&r,{radius={3,3,3,3}},{ui.tree_variant_record(0,"big",{},{})},{})
-    r.nodes[2].style=u16(used)
-    records_image(&r,&r.nodes[0]) // "No image" leaves it behind
-    r.nodes[0].image=0
-    records_image(&r,&r.nodes[3])
-    r.images[r.nodes[3].image-1].texture={3,3}
-    records_widget(&r,-1,0,base.Asset_Id{7,7},"card")
-    records_delete(&r,-1,4)
-    records_tidy(&r)
-    testing.expect_value(t,len(r.styles),3)
-    testing.expect(t,int(r.nodes[2].style)!=lost && r.styles[r.nodes[2].style].radius[0]==3,"The rows after the ones that went follow")
-    testing.expect_value(t,len(r.variants),1)
-    testing.expect_value(t,int(r.variants[0].style),int(r.nodes[2].style))
-    testing.expect_value(t,records_style_name(&r,1),"Kept")
-    testing.expect_value(t,len(r.images),1)
-    testing.expect_value(t,r.images[r.nodes[3].image-1].texture,base.Asset_Id{3,3})
-    testing.expect_value(t,len(r.templates),0)
-    testing.expect(t,records_load_as_tree(&r))
-    // A named style no node uses goes when asked.
-    testing.expect(t,records_style_delete(&r,1))
-    testing.expect_value(t,len(r.styles),2)
-    testing.expect_value(t,r.styles[r.nodes[2].style].radius[0],f32(3))
-}
-
-@(test)
-an_undo_chooses_the_node_it_changed :: proc(t:^testing.T) {
-    before,after:Records
-    if !records_sample(t,&before) {return}
-    defer records_destroy(&before)
-    if !testing.expect(t,records_load(&after,records_data(&before),context.allocator)) {return}
-    defer records_destroy(&after)
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),-1)
-    ui.tree_text_set(after.nodes[3].name[:],"tank")
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),3)
-    after.nodes[3]=before.nodes[3]
-    // A style that changed chooses the node chosen when it takes it, the first that does otherwise.
-    append(&before.styles,ui.Node_Style{})
-    append(&after.styles,ui.Node_Style{radius=4})
-    before.nodes[2].style,before.nodes[4].style=1,1
-    after.nodes[2].style,after.nodes[4].style=1,1
-    testing.expect_value(t,records_changed_row(&before,&after,-1,4),4)
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),2)
-    // A node taken away chooses the row it left.
-    records_delete(&after,-1,4)
-    testing.expect_value(t,records_changed_row(&before,&after,-1,0),3)
+    other:author.Records
+    testing.expect(t,!author.records_widget_data(&r,1,&other,context.allocator),"only a Box")
 }
 
 @(test)
 a_copy_of_a_localized_node_is_another_text_and_a_deleted_one_takes_its_translations :: proc(t:^testing.T) {
-    r:Records
+    r:author.Records
     if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
+    defer author.records_destroy(&r)
     menu:=&r.nodes[4]
     node_text_set(&r,menu,4,.Spanish,.English,"Menú")
     testing.expect(t,.Localized in menu.flags && menu.text_id!=0,"A translation makes the node localized, with an id")
-    copy:=records_duplicate(&r,-1,4)
+    copy:=author.records_duplicate(&r,4)
     testing.expect_value(t,copy,5)
     testing.expect(t,r.nodes[5].text_id!=0 && r.nodes[5].text_id!=r.nodes[4].text_id,"The copy has an id of its own")
     testing.expect_value(t,node_text_in(&r,&r.nodes[5],.Spanish,.English),"Menú")
     node_text_set(&r,&r.nodes[5],5,.Spanish,.English,"Opciones")
     testing.expect_value(t,node_text_in(&r,&r.nodes[4],.Spanish,.English),"Menú")
     testing.expect(t,records_load_as_tree(&r))
-    records_delete(&r,-1,5)
+    author.records_delete(&r,5)
     testing.expect_value(t,len(r.translations),1)
 }
 
-@(test)
-a_renamed_node_keeps_a_name_of_its_own_and_what_named_it_follows :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    ui.tree_text_set(r.nodes[4].nav[0][:],"title")
-    ui.tree_text_set(r.nodes[0].ghost[:],"title")
-    ui.tree_text_set(r.nodes[1].name[:],"menu")
-    testing.expect_value(t,records_rename(&r,-1,1,"title"),"menu1")
-    testing.expect_value(t,serial.text_field(r.nodes[4].nav[0][:]),"menu1")
-    testing.expect_value(t,serial.text_field(r.nodes[0].ghost[:]),"menu1")
-    ui.tree_text_set(r.nodes[1].name[:],"heading")
-    testing.expect_value(t,records_rename(&r,-1,1,"menu1"),"heading")
-    // What named a node that went names nothing.
-    records_delete(&r,-1,1)
-    testing.expect_value(t,serial.text_field(r.nodes[3].nav[0][:]),"")
-    testing.expect_value(t,serial.text_field(r.nodes[0].ghost[:]),"")
-    field:[ui.TREE_NAME_CAPACITY]u8
-    ui.tree_text_set(field[:],"slot/icon")
-    testing.expect(t,path_part_rename(field[:],0,"slot","box") && serial.text_field(field[:])=="box/icon")
-    testing.expect(t,path_part_rename(field[:],4,"icon","mark") && serial.text_field(field[:])=="box/mark")
-    testing.expect(t,!path_part_rename(field[:],0,"bo","x"),"A part is a whole name")
-}
-
-@(test)
-a_variant_renamed_changes_only_the_nodes_of_its_style :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    a:=records_style_add(&r,{},{ui.tree_variant_record(0,"big",{},{})},{})
-    b:=records_style_add(&r,{},{ui.tree_variant_record(0,"big",{},{})},{})
-    r.nodes[1].style,r.nodes[3].style=u16(a),u16(b)
-    ui.tree_text_set(r.nodes[1].variant[:],"big")
-    ui.tree_text_set(r.nodes[3].variant[:],"big")
-    records_variant_rename(&r,a,serial.text_field(r.nodes[1].variant[:]),"large")
-    testing.expect_value(t,serial.text_field(r.nodes[1].variant[:]),"large")
-    testing.expect_value(t,serial.text_field(r.nodes[3].variant[:]),"big")
-    testing.expect_value(t,serial.text_field(records_style_variants(&r,a)[0].variant[:]),"large")
-    testing.expect_value(t,serial.text_field(records_style_variants(&r,b)[0].variant[:]),"big")
-}
-
-@(test)
-a_field_an_override_turns_on_takes_what_the_node_of_the_widget_has :: proc(t:^testing.T) {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    nodes:=[]ui.Tree_Node{
-        ui.tree_node_record(&texts,-1,{kind=.Box,name="card"}),
-        ui.tree_node_record(&texts,0,{kind=.Text,name="label",text="Hi",style=1,selected=true}),
-    }
-    styles:=[]ui.Node_Style{{},{radius={5,5,5,5}}}
-    infos:=[]ui.Tree_Style_Info{{},{family=.Text}}
-    ui.tree_text_set(infos[1].name[:],"Big")
-    widget:Records
-    if !testing.expect(t,records_load(&widget,{text=texts[:],nodes=nodes,styles=styles,style_infos=infos},context.allocator)) {return}
-    defer records_destroy(&widget)
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    instance:=records_widget(&r,-1,0,base.Asset_Id{7,7},"card")
-    o:=records_override(&r,instance,"label",{})
-    records_override_field(&r,o,.Style,true,&widget,widget.nodes[1])
-    records_override_field(&r,o,.Text,true,&widget,widget.nodes[1])
-    records_override_field(&r,o,.Visibility,true,&widget,widget.nodes[1])
-    v:=&r.overrides[o].values
-    testing.expect_value(t,records_style_name(&r,int(v.style)),"Big")
-    testing.expect_value(t,r.styles[v.style].radius[0],f32(5))
-    testing.expect_value(t,records_text(&r,v.text),"Hi")
-    testing.expect(t,v.selected,"Selected comes from the widget")
-    records_override_field(&r,o,.Text,false,&widget,widget.nodes[1])
-    testing.expect(t,r.overrides[o].fields=={.Style,.Visibility})
-}
-
-@(test)
-unbinding_the_visibility_shows_the_node :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    n:=&r.nodes[1]
-    ui.tree_text_set(n.bind_visible[:],"alive")
-    n.flags+={.Invisible}
-    node_unbind(n,n.bind_visible[:])
-    testing.expect(t,n.bind_visible[0]==0 && .Invisible not_in n.flags && .Collapsed not_in n.flags)
-}
-
-@(test)
-a_check_reports_each_path_the_game_lacks_and_why_records_do_not_load :: proc(t:^testing.T) {
-    r:Records
-    if !records_sample(t,&r) {return}
-    defer records_destroy(&r)
-    types:Bind_Types
-    defer bind_types_free(&types)
-    found:[BIND_PROBLEMS]Bind_Problem
-    count:=bind_check(&types,context.allocator,nil,nil,records_data(&r),nil,true,found[:])
-    if !testing.expect_value(t,count,2) {return}
-    testing.expect(t,found[0].row==1 && found[0].fault==.Path && serial.text_field(found[0].path[:])=="trips")
-    testing.expect(t,found[1].row==3 && found[1].binding==.Value && serial.text_field(found[1].path[:])=="fuel")
-    // An override of a node its template does not have.
-    texts:=make([dynamic]u8,context.temp_allocator)
-    nodes:=[]ui.Tree_Node{ui.tree_node_record(&texts,-1,{kind=.Box,name="root"}),ui.tree_node_record(&texts,0,{kind=.Component,name="slot",component=1})}
-    template:=[]ui.Tree_Node{ui.tree_node_record(&texts,-1,{kind=.Box,name="card"}),ui.tree_node_record(&texts,0,{kind=.Text,name="label"})}
-    overrides:=[]ui.Tree_Override{ui.tree_override_record(&texts,1,"icon",{.Clip},{})}
-    data:=ui.Tree_Data{text=texts[:],nodes=nodes,styles={{}},component_nodes=template,components={ui.tree_component_record("card",0,2)},overrides=overrides}
-    count=bind_check(&types,context.allocator,nil,nil,data,nil,true,found[:])
-    testing.expect(t,count==1 && found[0].fault==.Load)
-    testing.expect(t,strings.contains(serial.text_field(found[0].path[:]),"'icon'"),serial.text_field(found[0].path[:]))
-    overrides[0]=ui.tree_override_record(&texts,1,"label",{.Clip},{})
-    testing.expect_value(t,bind_check(&types,context.allocator,nil,nil,data,nil,true,found[:]),0)
-}
-
-@(test)
-each_interface_keeps_where_it_was_left :: proc(t:^testing.T) {
-    u:=new(Ui_Inspector,context.temp_allocator)
-    u.id,u.selected,u.nodes_scroll=base.Asset_Id{1,1},3,{0,40}
-    u.stage.zoom=2
-    view_keep(u)
-    u.id=base.Asset_Id{2,2}
-    view_take(u)
-    testing.expect(t,u.selected==-1 && u.nodes_scroll.y==0 && u.stage.zoom==0)
-    u.selected=1
-    view_keep(u)
-    u.id=base.Asset_Id{1,1}
-    view_take(u)
-    testing.expect(t,u.selected==3 && u.nodes_scroll.y==40 && u.stage.zoom==2)
-    testing.expect_value(t,widget_file_name("My Card!"),"My_Card")
-    testing.expect_value(t,widget_file_name("../"),"widget")
-}

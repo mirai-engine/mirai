@@ -138,7 +138,10 @@ reflected_immediate_removal_moves_the_last_row_releases_locks_and_never_allocate
     locks:=[1]Lock{{offset=lock_offset(&names,&owner),id=1,target="Transform",names={"","Test owner"}}}
     names.locks=locks[:]
     add(&names,a,name_make("a"));add(&names,b,name_make("b"));add(&names,c,name_make("c"))
+    unowned:=owner.version
     table_settle(&names,&es)
+    testing.expect(t,owner.version>unowned,"who owns its rows is part of what a table holds: a copy of what changed takes it")
+    owned:=owner.version
     prior_version,prior_layout,last_stamp:=names.version,names.layout,names.stamps[2]
     tracker:mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracker,context.allocator);defer mem.tracking_allocator_destroy(&tracker)
@@ -153,6 +156,7 @@ reflected_immediate_removal_moves_the_last_row_releases_locks_and_never_allocate
     testing.expect(t,names.version>prior_version && names.layout>prior_layout)
     testing.expect_value(t,owners[entity_index(b)],Row_Owner{})
     testing.expect_value(t,owners[entity_index(c)].id,u16(1))
+    testing.expect(t,owner.version>owned)
     testing.expect(t,!raw_drop(raw(&names),type_info_of(Name),b))
     testing.expect(t,!raw_drop(nil,type_info_of(Name),a) && !raw_drop(raw(&names),nil,a) && !raw_drop(raw(&names),type_info_of(Name),NONE))
     remove(&names,a)
@@ -236,7 +240,7 @@ a_single_table_keeps_on_the_row_turned_on_last :: proc(t:^testing.T) {
     enable(&table,b)
     table_settle(&table,&es)
     testing.expect_value(t,on(&table),b)
-    testing.expect_value(t,table.values[table.rows[entity_index(a)]-1],1)
+    testing.expect_value(t,table.values[rows_at(raw(&table),entity_index(a))-1],1)
     disable(&table,b)
     table_settle(&table,&es)
     testing.expect(t,on(&table)==a,"turning off the one on turns on the one before")
@@ -292,4 +296,130 @@ a_settle_without_changes_leaves_a_single_table_as_it_was :: proc(t:^testing.T) {
     enable(&skies,a)
     table_settle(&skies,&es)
     testing.expect(t,skies.layout==shape && entity_at(read(&skies),0)==a)
+}
+
+// What a function asked waits for the settle: staged_has answers as has will after it.
+@(test)
+staged_has_says_what_has_will_say_when_the_function_ends :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    marks:Table(Name)
+    table_init(&marks,"Name")
+    defer table_destroy(&marks)
+    kept,gone,turned,fresh:=create(&es),create(&es),create(&es),create(&es)
+    add(&marks,kept,{});add(&marks,gone,{});add(&marks,turned,{})
+    table_settle(&marks,&es)
+
+    remove(&marks,gone)
+    set_on(&marks,turned,false)
+    add(&marks,fresh,{})
+    testing.expect(t,staged_has(&marks,kept) && !staged_has(&marks,gone) && !staged_has(&marks,turned) && staged_has(&marks,fresh))
+    testing.expect(t,has(&marks,gone) && has(&marks,turned) && !has(&marks,fresh),"has keeps the rows of before the settle")
+    table_settle(&marks,&es)
+    testing.expect(t,has(&marks,kept) && !has(&marks,gone) && !has(&marks,turned) && has(&marks,fresh))
+
+    set_on(&marks,turned,true)
+    testing.expect(t,staged_has(&marks,turned) && !has(&marks,turned))
+    set_on(&marks,turned,false)
+    testing.expect(t,!staged_has(&marks,turned),"the last turn counts")
+}
+
+@(test)
+first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    names:Table(Name)
+    table_init(&names,"Name")
+    defer table_destroy(&names)
+    _,any:=first(&names)
+    _,one:=sole(read(&names))
+    testing.expect(t,!any && !one && entity_named(read(&names),"lift")==NONE)
+
+    a,b:=create(&es),create(&es)
+    add(&names,a,name_make("lift"))
+    table_settle(&names,&es)
+    e,found:=sole(&names)
+    testing.expect(t,found && e==a)
+
+    add(&names,b,name_make("door"))
+    table_settle(&names,&es)
+    e,found=first(read(&names))
+    testing.expect(t,found && e==a)
+    _,found=sole(&names)
+    testing.expect(t,!found,"sole is the only one")
+    testing.expect_value(t,entity_named(read(&names),"door"),b)
+}
+
+@(test)
+a_component_added_without_a_value_is_zeroed_whatever_its_size :: proc(t:^testing.T) {
+    Empty :: struct {}
+    Small :: struct {value:u64}
+    Large :: struct {bytes:[8192]u8,tail:u64}
+    check :: proc(t:^testing.T,$T:typeid,name:string) {
+        es:Entities
+        entities_init(&es)
+        defer entities_destroy(&es)
+        table:Table(T)
+        table_init(&table,name)
+        defer table_destroy(&table)
+        info:=type_info_of(T)
+        // The memory the adds wait in holds what the last ones left.
+        filled:T
+        mem.set(&filled,0xff,size_of(T))
+        first,second:=create(&es),create(&es)
+        raw_add(raw(&table),info,first,&filled)
+        testing.expect(t,table_settle(&table,&es))
+        raw_add(raw(&table),info,second,nil)
+        testing.expectf(t,table_settle(&table,&es) && has(&table,second),"%s: added",name)
+        if size_of(T)==0 {return}
+        zero:T
+        testing.expectf(t,mem.compare_ptrs(raw_get(raw(&table),info,second),&zero,size_of(T))==0,"%s: zeroed",name)
+        testing.expectf(t,mem.compare_ptrs(raw_get(raw(&table),info,first),&filled,size_of(T))==0,"%s: the value given stays",name)
+    }
+    check(t,Empty,"Empty")
+    check(t,Small,"Small")
+    check(t,Large,"Large")
+}
+
+// The rows by entity of a table come in pages made for the entities it has
+// rows of: an entity far from the others costs a page, not room for every
+// entity before it. A copy brings every row and forgets those it had, and
+// the room of the entities gone is made when the first one goes.
+@(test)
+a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es);defer entities_destroy(&es)
+    names,copied:Table(i32)
+    table_init(&names,"Name");defer table_destroy(&names)
+    table_init(&copied,"Name");defer table_destroy(&copied)
+    near:=create(&es)
+    far:Entity
+    for _ in 0..<5*ROWS_PAGE {far=create(&es)}
+    add(&names,near,1);add(&names,far,2)
+    table_settle(&names,&es)
+    pages:=0
+    for page in names.rows {if len(page)>0 {pages+=1}}
+    testing.expect_value(t,pages,2)
+    testing.expect(t,cap(names.gone)==0,"no entity went: there is no room for them yet")
+    value,found:=get(read(&names),far)
+    testing.expect(t,found && value==2 && !has(&names,entity_make(2*ROWS_PAGE,1)))
+    testing.expect(t,table_copy(&copied,&names))
+    value,found=get(read(&copied),far)
+    testing.expect(t,found && value==2 && has(&copied,near))
+    // A table a storage holds is copied and freed as any value is.
+    held:Table(i32)
+    testing.expect(t,value_copy(&held,&names,type_info_of(Table(i32))))
+    value,found=get(read(&held),far)
+    testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]))
+    value_free(&held,type_info_of(Table(i32)))
+    seen:Seen
+    _=changes(&names,&seen)
+    remove(&names,far)
+    table_settle(&names,&es)
+    c:=changes(&names,&seen)
+    testing.expect(t,!has(&names,far) && has(&names,near) && !c.all && len(c.gone)==1 && c.gone[0]==far)
+    testing.expect(t,table_copy(&copied,&names))
+    testing.expect(t,!has(&copied,far) && has(&copied,near) && raw_row(raw(&copied),far)<0)
 }

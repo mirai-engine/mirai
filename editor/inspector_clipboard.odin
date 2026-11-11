@@ -6,6 +6,7 @@ import "core:mem"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -107,7 +108,7 @@ value_copy :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
     menu:=menu
     ctx:=s.gui.ctx
     if ctx.clipboard_set==nil {return "The clipboard is not available"}
-    active:=selection_active(s.selection)
+    active:=history.selection_active(s.selection)
     if !entity_alive(w,active) {return ""}
     out:serial.Writer
     serial.writer_init(&out,1024,context.temp_allocator)
@@ -184,7 +185,7 @@ value_paste :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
     serial.text_reader_init(&r,text,context.temp_allocator)
     schema:serial.Schema
     serial.schema_init(&schema,context.temp_allocator)
-    active:=selection_active(s.selection)
+    active:=history.selection_active(s.selection)
     if !entity_alive(w,active) {return ""}
     switch menu.kind {
     case .None: return ""
@@ -216,7 +217,7 @@ value_paste :: proc(s:^Session,w:core.World_Ref,menu:Value_Menu) -> string {
         }
         for value in values {if !finite3(value) {return fmt.tprintf("%s: the clipboard holds a number that is not finite",label)}}
         opened,edit_ready:=edit_open(s,fmt.tprintf("Paste %s",label))
-        if !edit_ready {return edits_error_text(s.edits.error)}
+        if !edit_ready {return history.edits_error_text(s.edits.error)}
         defer edit_close(s,opened)
         ins:=s.inspector
         for e in s.selection.entities {
@@ -314,5 +315,5 @@ value_pending_apply :: proc(s:^Session,pending:[]Value_Pending,label:string) {
     if !edit_ready {return}
     defer edit_close(s,opened)
     for p in pending {component_add(s,p.e,p.t,raw_data(p.bytes))}
-    core.world_settle(shown_world(s))
+    core.world_settle(editing_world(s))
 }

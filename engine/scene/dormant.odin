@@ -113,35 +113,45 @@ records_drop :: proc(r:^Section_Records,e:core.Entity) {
 }
 
 // A record of the section of e, which its scene brought locals to, for the
-// next look; the one it had goes.
+// next look; the one it had goes. Not ok, with no record, without memory for it.
 @(private)
-records_add :: proc(w:core.World_Ref,e:core.Entity,locals:[]base.Entity_Id) -> ^Section_Record {
+records_add :: proc(w:core.World_Ref,e:core.Entity,locals:[]base.Entity_Id) -> (record:^Section_Record,ok:bool) {
     r:=core.world_storage_of(w,Section_Records)
-    if r==nil || e==core.NONE {return nil}
+    if r==nil || e==core.NONE {return nil,true}
     records_drop(r,e)
     // Those of sections that went go now: a section dropped takes its own.
     es:=core.world_entities(w)
     for i:=len(r.items)-1;i>=0;i-=1 {
         if !core.alive(es,r.items[i].reference) {records_drop(r,r.items[i].reference)}
     }
-    sorted:=slice.clone(locals)
+    sorted,no_sorted:=slice.clone(locals)
+    if no_sorted!=nil {return nil,false}
     slice.sort(sorted)
-    append(&r.items,Section_Record{reference=e,locals=sorted,look=true})
+    if _,no_room:=append(&r.items,Section_Record{reference=e,locals=sorted,look=true});no_room!=nil {
+        delete(sorted)
+        return nil,false
+    }
     r.looks+=1
-    return &r.items[len(r.items)-1]
+    return &r.items[len(r.items)-1],true
 }
 
 // Every record waiting for a look sees each table as it is, past the rows the
 // next settle stamps for it (fresh): what is written after is a change. One
-// that has no shapes yet takes those of its entities now.
-records_look :: proc(w:core.World_Ref) {
+// that has no shapes yet takes those of its entities now. Out_Of_Memory when
+// a record had no memory to look: it waits for the next call.
+records_look :: proc(w:core.World_Ref) -> Error {
     r:=core.world_storage_of(w,Section_Records)
-    if r==nil || r.looks==0 {return}
+    if r==nil || r.looks==0 {return .None}
+    waiting:=0
     for &record in r.items {
         if !record.look {continue}
         if len(record.seen)!=len(w.info.tables) {
             delete(record.seen)
-            record.seen=make([]u64,len(w.info.tables))
+            no_seen:mem.Allocator_Error
+            if record.seen,no_seen=make([]u64,len(w.info.tables));no_seen!=nil {
+                waiting+=1
+                continue
+            }
         }
         for &info,at in w.info.tables {
             if info.place!=w.place {continue}
@@ -156,7 +166,8 @@ records_look :: proc(w:core.World_Ref) {
             record.shaped=true
         }
     }
-    r.looks=0
+    r.looks=waiting
+    return .Out_Of_Memory if waiting>0 else .None
 }
 
 // The tables whose rows say nothing of whether an entity of a section changed:
@@ -171,13 +182,13 @@ fold_skips :: proc(info:^core.Table_Info,value_type:^core.Value_Schema) -> bool 
 // and where it hangs is told by the stamps of Parent.
 @(private)
 shape_of :: proc(w:core.World_Ref,types:^core.World_Schema,held:^core.Table(Section_Held),e:core.Entity) -> u64 {
-    shape:=u64(0xcbf29ce484222325)
+    shape:=base.HASH_SEED
     for &info,at in w.info.tables {
         if info.place!=w.place || info.type==core.Parent || fold_skips(&info,&types.tables[at]) {continue}
         t:=core.world_table_at(w,&info)
         row:=core.raw_row(t,e)
         if row<0 || info.type==core.Disabled && row_has(held,e) {continue}
-        shape=(shape~(u64(at)<<1|u64(t.off[row])))*0x100000001b3
+        shape=base.hash_mix(shape,u64(at)<<1|u64(t.off[row]))
     }
     return shape
 }

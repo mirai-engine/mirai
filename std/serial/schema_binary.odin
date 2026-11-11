@@ -158,7 +158,9 @@ schema_read_tables :: proc(r:^Reader,s:^Schema) -> Schema_Error {
 @(private="file")
 schema_string :: proc(s:^Schema,text:string) -> string {
     if text=="" {return ""}
-    return strings.clone(text,s.allocator)
+    copied,error:=strings.clone(text,s.allocator)
+    if error!=nil {return ""}
+    return copied
 }
 
 // Checks what schema_read promises. Also true of every schema built by schema_add.
@@ -303,17 +305,29 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
             if added.type==TYPE_NONE {return TYPE_NONE}
             append(&fields,added)
         }
+        if reserve(&dst.fields,len(dst.fields)+len(fields))!=nil {return TYPE_NONE}
+        whole:=true
         for &field in fields {
-            field.name=schema_string(dst,field.name)
-            field.label,field.unit=schema_string(dst,field.label),schema_string(dst,field.unit)
-            field.description=schema_string(dst,field.description)
+            from:=field
+            field.name=schema_string(dst,from.name)
+            field.label,field.unit=schema_string(dst,from.label),schema_string(dst,from.unit)
+            field.description=schema_string(dst,from.description)
+            field.asset_kinds=schema_string(dst,from.asset_kinds)
+            whole&&=len(field.name)==len(from.name) && len(field.label)==len(from.label) && len(field.unit)==len(from.unit) && len(field.description)==len(from.description) && len(field.asset_kinds)==len(from.asset_kinds)
+        }
+        if !whole {
+            for field in fields {schema_field_free(dst,field)}
+            return TYPE_NONE
         }
         copied.first=u32(len(dst.fields))
         append(&dst.fields,..fields[:])
     case .Enum,.Bit_Set,.Int,.Uint:
         copied.first=u32(len(dst.choices))
         for choice in src.choices[source.first:][:source.count] {
-            append(&dst.choices,Choice{schema_string(dst,choice.name),choice.value})
+            if schema_choice_add(dst,choice.name,choice.value) {continue}
+            copied.name=""
+            schema_type_drop(dst,copied)
+            return TYPE_NONE
         }
     case .Array:
         copied.elem=schema_import(link,source.elem)
@@ -321,6 +335,10 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
     }
     copied.name=schema_string(dst,source.name)
     index:=Type_Index(len(dst.types))
+    if len(copied.name)!=len(source.name) || reserve(&dst.types,len(dst.types)+1)!=nil {
+        schema_type_drop(dst,copied)
+        return TYPE_NONE
+    }
     append(&dst.types,copied)
     if !schema_hashes_update(dst,link.dst_hashes) {return TYPE_NONE}
     link.remap[type]=index
@@ -328,20 +346,37 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
 }
 
 // An exact copy: the same types, fields and choices at the same indices.
-schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) {
+// Without memory dst is left with nothing.
+schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) -> Schema_Error {
     schema_init(dst,allocator)
-    reserve(&dst.types,len(src.types));reserve(&dst.fields,len(src.fields));reserve(&dst.choices,len(src.choices))
+    if reserve(&dst.types,len(src.types))!=nil || reserve(&dst.fields,len(src.fields))!=nil || reserve(&dst.choices,len(src.choices))!=nil {
+        schema_destroy(dst)
+        return .Out_Of_Memory
+    }
+    whole:=true
     for type in src.types {
         copied:=type
         copied.name=schema_string(dst,type.name)
         append(&dst.types,copied)
+        whole&&=len(copied.name)==len(type.name)
     }
     for field in src.fields {
         copied:=field
         copied.name=schema_string(dst,field.name)
         copied.label,copied.unit=schema_string(dst,field.label),schema_string(dst,field.unit)
         copied.description=schema_string(dst,field.description)
+        copied.asset_kinds=schema_string(dst,field.asset_kinds)
         append(&dst.fields,copied)
+        whole&&=len(copied.name)==len(field.name) && len(copied.label)==len(field.label) && len(copied.unit)==len(field.unit) && len(copied.description)==len(field.description) && len(copied.asset_kinds)==len(field.asset_kinds)
     }
-    for choice in src.choices {append(&dst.choices,Choice{schema_string(dst,choice.name),choice.value})}
+    for choice in src.choices {
+        name:=schema_string(dst,choice.name)
+        append(&dst.choices,Choice{name,choice.value})
+        whole&&=len(name)==len(choice.name)
+    }
+    if !whole {
+        schema_destroy(dst)
+        return .Out_Of_Memory
+    }
+    return .None
 }

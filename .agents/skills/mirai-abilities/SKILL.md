@@ -1,11 +1,11 @@
 ---
 name: mirai-abilities
 description: Mirai gameplay abilities - the `abilities` plugin (`plugins/abilities/runtime` and
-  `editor`) with `Ability` and `Ability_Kit` rows of game data, `Ability_User`, statuses, tags,
-  attributes, effects, hitboxes, cancel windows, input buffer, cooldowns, charges and durability,
-  and the `abilities.*` methods. Use when building attacks, combos, dashes, blocks, skills, spells,
-  hit reactions, weapons or a gameplay ability system (GAS, Mantis, fighting-game moves), when
-  touching that plugin, or when diagnosing why an ability does not start.
+  `plugins/abilities/editor`) with `Ability` and `Ability_Kit` rows of game data, `Ability_User`,
+  statuses, tags, attributes, effects, hitboxes, cancel windows, input buffer, cooldowns, charges
+  and durability, and the `abilities.*` methods. Use when building attacks, combos, dashes, blocks,
+  skills, spells, hit reactions, weapons or a gameplay ability system (GAS, Mantis, fighting-game
+  moves), when touching that plugin, or when diagnosing why an ability does not start.
 ---
 
 # Mirai abilities
@@ -87,7 +87,8 @@ and the tick it started, and derives everything else from the tick against the s
 - Types: `mirai check plugins/abilities/runtime` and `plugins/abilities/editor` (with
   `-collection:plugins=plugins`).
 - Tests: `mirai test plugins/abilities/runtime` (`abilities_test.odin`: the blade kit combo,
-  the input delay and the wait for the branch, a window on the own clock, the charged dash with charges, a copy halfway that runs the same future, a cancel that leaves
+  the input delay and the wait for the branch, a window on the own clock, the charged dash with
+  charges, a copy halfway that runs the same future, a cancel that leaves
   nothing, replicas, lasting effects with stacks, cleanse and immunity, invalid sheets and
   requests, and a stable tick without allocations).
 - Methods: `mirai generate demo`, `mirai build editor demo --dev` and, in a session on a copy,

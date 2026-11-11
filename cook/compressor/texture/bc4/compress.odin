@@ -539,18 +539,6 @@ compress_block :: proc "contextless" (values:^Source_Data,level:common.Level,
     return encode(&b),err
 }
 
-// The block of endpoints ep0 and ep1 with the indices that fit values best,
-// and its internal squared error.
-find_indices_and_encode :: proc "contextless" (values:^Source_Data,ep0,ep1:u8) -> (bits:u64,
-    err:u32) {
-    b:=Block{e0=int(ep0),e1=int(ep1)}
-    switch values.type {
-    case .UNorm: err,b.inds=find_indices(values,b.e0,b.e1,.UNorm)
-    case .Alpha: err,b.inds=find_indices(values,b.e0,b.e1,.Alpha)
-    }
-    return encode(&b),err
-}
-
 @(private)
 decode_palette :: #force_inline proc "contextless" (bits:u64,$scale:int) -> (p:[8]int) {
     e0:=int(bits&255)

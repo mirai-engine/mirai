@@ -1,7 +1,9 @@
 package rhi_tests
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:fmt"
+import "core:strings"
 import "core:math"
 import "core:sync"
 import "core:testing"
@@ -12,14 +14,7 @@ import "mirai:rhi/shared_device"
 
 @(private = "file")
 test_device :: proc(t: ^testing.T) -> ^rhi.Device {
-	shared_device.hold(t)
-	d, err := rhi.device_create({on_message = rhi.message_print, app_name = "mirai rhi tests", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = 1 << 20})
-	if d == nil {
-		if rhi.gpu_skip_allowed() {fmt.eprintln("rhi tests skipped:", err); return nil}
-		testing.expectf(t, false, "no GPU device: %s (set MIRAI_ALLOW_GPU_SKIP=1 to skip)", err)
-		return nil
-	}
-	return d
+	return shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai rhi tests", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = 1 << 20})
 }
 
 @(private = "file")
@@ -498,6 +493,47 @@ rhi_texture_upload_writes_a_region_alone :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// A texture takes on the GPU the bytes of another as they are, into its own
+// sRGB encoding too, each time it is copied; one of another size is refused
+// and keeps what it had.
+@(test)
+rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	SIZE :: 8
+	source := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "copy source"})
+	encoded := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .RGBA8_Srgb, usage = {.Sampled}, name = "copy into sRGB"})
+	same := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy into its format"})
+	small := rhi.texture_create(d, {width = SIZE / 2, height = SIZE / 2, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy into a smaller one"})
+	testing.expect(t, source != 0 && encoded != 0 && same != 0 && small != 0, rhi.device_error(d))
+	gray: [SIZE * SIZE * 4]u8
+	for &b in gray {b = 40}
+	for texture in ([]rhi.Texture{encoded, same}) {testing.expect(t, rhi.texture_upload(d, texture, gray[:], SIZE * 4), rhi.device_error(d))}
+	testing.expect(t, rhi.texture_upload(d, small, gray[:SIZE * SIZE], SIZE * 2), rhi.device_error(d))
+	texels, seen: [SIZE * SIZE * 4]u8
+	// Twice: the second copy finds on Metal the view the first one made.
+	for round in 0 ..< 2 {
+		for &b, i in texels {b = u8(i * 7 + round * 31)}
+		testing.expect(t, rhi.texture_upload(d, source, texels[:], SIZE * 4), rhi.device_error(d))
+		cmd := rhi.immediate_begin(d)
+		rhi.cmd_copy_texture(cmd, source, encoded)
+		rhi.cmd_copy_texture(cmd, source, same)
+		rhi.cmd_copy_texture(cmd, source, small)
+		rhi.cmd_copy_texture(cmd, source, source)
+		for texture in ([]rhi.Texture{source, encoded, same}) {rhi.cmd_barrier_texture(cmd, texture, .Shader_Read)}
+		testing.expect(t, rhi.immediate_end(d, cmd), rhi.device_error(d))
+		for texture in ([]rhi.Texture{encoded, same, source}) {
+			testing.expect(t, rhi.texture_read(d, texture, seen[:]), rhi.device_error(d))
+			testing.expectf(t, seen == texels, "round %d: a texture holds the bytes of the source", round)
+		}
+	}
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	for b in seen[:SIZE * SIZE] {if b != 40 {testing.expect(t, false, "a texture of another size keeps what it had"); break}}
+	for texture in ([]rhi.Texture{source, encoded, same, small}) {rhi.texture_destroy(d, texture)}
+	expect_clean(t, d)
+}
+
 // A cube and an array take every layer of each level in one upload, as
 // HDR or 16-bit texels and as BC6H where the device samples blocks; the
 // table of 2D textures refuses them, and a cube needs square faces.
@@ -593,4 +629,66 @@ rhi_timestamps_report_ordered_nanoseconds :: proc(t: ^testing.T) {
 	}
 	rhi.timestamps_want(d, false)
 	expect_clean(t, d)
+}
+
+// An allocator that serves `remaining` requests of its owner and refuses the rest.
+@(private="file")
+Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
+
+@(private="file")
+memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
+    limit:=(^Memory_Limit)(data)
+    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
+        if limit.remaining<=0 {return nil,.Out_Of_Memory}
+        limit.remaining-=1
+    }
+    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+}
+
+// What a device asks its allocator for, to be created and to grow its texture
+// table, with the memory ending at each request in turn: the call is refused
+// with a message that says so and leaves a device that works, and with memory
+// enough it goes through.
+@(test)
+rhi_device_without_memory_is_refused_and_keeps_its_texture_table :: proc(t:^testing.T) {
+    shared_device.hold(t)
+    limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
+    limited:=runtime.Allocator{memory_limit_proc,&limit}
+    desc:=rhi.Device_Desc{app_name="mirai rhi memory tests",validation=true,upload_bytes_per_frame=1<<20,capacities={buffers=16,textures=16,samplers=4,pipelines=4,accels=4,deletions=16},allocator=limited}
+    d:^rhi.Device
+    defer if d!=nil {rhi.device_destroy(d)}
+    texture:rhi.Texture
+    Step :: enum {Create,Table}
+    for step in Step {
+        done,refused:=false,false
+        for served in 0..<96 {
+            message:string
+            limit.remaining=served
+            switch step {
+            case .Create:
+                d,message=rhi.device_create(desc)
+                done=d!=nil
+            case .Table:
+                done=rhi.texture_table_set(d,rhi.TEXTURE_TABLE_FIRST,texture)
+                message=rhi.device_error(d)
+            }
+            limit.remaining=max(int)
+            if done {break}
+            if !strings.contains(message,"out of memory") {
+                // Another refusal than the one of the allocator: there is no device to test with.
+                if step==.Create && rhi.gpu_skip_allowed() {fmt.eprintln("rhi tests skipped:",message)} else {testing.expectf(t,false,"%v with %d requests served: %s",step,served,message)}
+                return
+            }
+            refused=true
+            if step==.Table {testing.expectf(t,rhi.texture_table_set(d,0,texture),"the table of before takes an entry with %d requests served: %s",served,rhi.device_error(d))}
+        }
+        if !testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",step) {return}
+        if step==.Create {
+            texture=rhi.texture_create(d,{width=1,height=1,format=.RGBA8_Unorm,usage={.Sampled},name="entry"})
+            white:=[4]u8{255,255,255,255}
+            if !testing.expect(t,texture!=0 && rhi.texture_upload(d,texture,white[:],4),rhi.device_error(d)) {return}
+            if !testing.expect(t,rhi.texture_table_limit(d)>rhi.TEXTURE_TABLE_FIRST,"the device holds a table that grows") {return}
+        }
+    }
+    testing.expect_value(t,rhi.device_validation_errors(d),0)
 }

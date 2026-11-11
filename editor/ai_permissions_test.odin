@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:editor/acp"
 import "mirai:project"
+import "mirai:std/base"
 
 @(test)
 deleting_files_is_asked_of_the_user_and_moving_them_is_not :: proc(t:^testing.T) {
@@ -47,9 +48,7 @@ codex_trusts_the_project_to_read_its_rules_and_claude_gets_them_as_settings :: p
     testing.expect_value(t,meta_error,json.Error.None)
     ask,_:=acp.at(meta,"claudeCode","options","settings","permissions","ask").(json.Array)
     testing.expect(t,len(ask)>0 && acp.text(ask[0])=="Bash(rm:*)")
-    temporary,_:=os.temp_directory(context.temp_allocator)
-    folder:=project.path(temporary,"mirai-codex-rules-test",allocator=context.temp_allocator)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"codex-rules");if folder=="" {return}
     testing.expect(t,ai_codex_rules_write(folder))
     data,read_error:=os.read_entire_file(project.path(folder,AI_CODEX_RULES_PATH,allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,read_error==nil && string(data)==AI_CODEX_RULES)

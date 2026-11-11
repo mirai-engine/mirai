@@ -1,9 +1,11 @@
+//! mirai constant PARTICLE_CURVE_KEYS uint ../runtime/effect/effect.odin
 // Particles: the pool, the emitters and what the passes share. Layouts are
 // those of gpu.odin of the vfx plugin (sizes asserted there).
 #ifndef MIRAI_PARTICLES_SLANG
 #define MIRAI_PARTICLES_SLANG
 #include "scene.slang"
 #include "volume.slang"
+#include <constants/plugins/vfx.slang>
 
 struct Particle {
     float3 position; float age;     // in the world relative to the origin of the frame, or local to the emitter
@@ -16,7 +18,6 @@ struct Particle {
 };
 
 #define PARTICLE_SPAWNS 8u
-#define PARTICLE_CURVE_KEYS 8u
 
 struct Particle_Emitter {
     float4 world[3];
@@ -143,7 +144,6 @@ struct Particle_Event {
 #define PARTICLE_STAGE_CELLS 2u
 #define PARTICLE_BIRTH_BYTES 80u
 #define PARTICLE_SORT_MAX 2048u
-#define PROGRAM_PARAMETER_BYTES 256u
 
 // render.Glass_Side: the side of glass a Blend pass draws (Stage_Pass.glass).
 #define PARTICLE_PASS_BEHIND_GLASS 1u

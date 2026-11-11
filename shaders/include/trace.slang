@@ -220,10 +220,7 @@ struct Hit {
 
 // The classes of instances a ray can meet. Those whose every material is
 // blended are a class apart, so a ray that goes through glass never visits
-// them (render.RAY_SOLID and RAY_GLASS, the mask of an instance).
-#define RAY_SOLID 1u
-#define RAY_GLASS 2u
-#define RAY_SMALL 4u
+// them (RAY_SOLID, RAY_GLASS and RAY_SMALL, the mask of an instance).
 // The solid instances a ray meets: every one, or, in the passes of the probe
 // volume (MIRAI_TRACE_NO_SMALL), all but the small ones.
 #ifdef MIRAI_TRACE_NO_SMALL
@@ -232,9 +229,8 @@ struct Hit {
 #define RAY_OPAQUE (RAY_SOLID | RAY_SMALL)
 #endif
 // The instances of a batch that casts shadows and that no other ray sees,
-// and those of one rays see and that casts none (render.Batch_Flags).
-#define RAY_SHADOW_ONLY 8u
-#define RAY_UNSHADOWED 16u
+// and those of one rays see and that casts none (render.Batch_Flags):
+// RAY_SHADOW_ONLY and RAY_UNSHADOWED.
 // What the shadow rays of lights meet, and what the rays that see surfaces meet.
 #define RAY_SHADOWS (RAY_OPAQUE | RAY_SHADOW_ONLY)
 #define RAY_SEEN (RAY_OPAQUE | RAY_UNSHADOWED)
@@ -286,7 +282,6 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
 // An instance index; TLAS_REF_GLASS marks the RAY_GLASS class, so a ray that
 // goes through glass leaves the instance without reading it.
 [[vk::binding(SLOT_TLAS_REFS, 0)]] StructuredBuffer<uint> tlas_refs : register(MIRAI_REGISTER(t, SLOT_TLAS_REFS), space0);
-#define TLAS_REF_GLASS 0x80000000u
 
 // Slab test returning the entry distance, or FLT_MAX on a miss.
 float ray_box(float3 origin, float3 inv_dir, float3 bmin, float3 bmax, float t_min, float t_max) {

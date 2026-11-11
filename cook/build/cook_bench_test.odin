@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:testing"
 import "mirai:project"
+import "mirai:std/base"
 
 // The cook of a project as the job Game does it: filling an empty texture
 // cache and from it. Run with --release -define:COOK_BENCH=true;
@@ -18,10 +19,8 @@ bench_cook_of_a_project_filling_its_texture_cache_and_from_it :: proc(t:^testing
     root:=COOK_BENCH_PROJECT if COOK_BENCH_PROJECT!="" else project.path(engine,"demo",allocator=context.temp_allocator)
     p,error:=project.open(root,engine,context.temp_allocator)
     if !testing.expect_value(t,error.code,project.Error_Code.None) {return}
-    directory,_:=os.temp_directory(context.temp_allocator)
-    folder:=fmt.tprintf("%s/mirai-cook-bench-%d",directory,os.get_pid())
-    os.remove_all(folder)
-    defer os.remove_all(folder)
+    folder:=base.test_folder(t,"cook-bench")
+    if folder=="" {return}
     desc:=Cook_Desc{
         assets=project.folder_path(p.root,.Assets,context.temp_allocator),
         output=fmt.tprintf("%s/out",folder),

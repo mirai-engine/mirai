@@ -22,7 +22,7 @@ blends a local copy of its description.
   policy of its channel.
 - A combo whose parts chain pose to pose is one clip cut in sections: the game jumps to the next
   part with Section when the current one reaches its end section, so nothing crossfades.
-- `animation.action.set` (with `path` or `asset`) resolves names and derives quantities. The `next`
+- `animation.action.set` resolves names and derives quantities. The `next`
   of a section links another of the same clip, regardless of row order, and empty completes the
   action. Without sections the whole clip is played; with them it starts at the first of the action
   or at the one Fire asks for. The ranges, in seconds, are positive and fall inside the clip. Files
@@ -36,8 +36,8 @@ asks for Play/Simulation.
 - The layer of an action is reserved by leaving `Animation.layers[layer-1].clip=0`: Fire rejects a
   layer that the component occupies (`ReservedLayer`). A pose of `animation_play` faded to
   `animation_weight(…, 0)` keeps its clip to come back to, so it still occupies the layer;
-  `animation_stop(animation, layer, fade)` fades it out and frees the layer in the same tick, and the
-  action cross-fades from what is fading.
+  `animation_stop(animation, layer, fade)` fades it out and frees the layer in the same tick, and
+  the action cross-fades from what is fading.
 - Fire replaces the action of the layer if its priority reaches the active one and the active one
   allows it: Allow cancels immediately, Finish_Section defers the cancellation until the section
   ends and Deny rejects.
@@ -106,13 +106,9 @@ Discovery and memory:
 `plugins/animation/runtime`:
 
 - `actions_test.odin`: roundtrip, invalid references and policies, windows and sections,
-  cancellation, copies, queues, weighted extraction, clocks and distance.
-- `actions_retry_a_first_fire_when_profile_preparation_has_no_memory`.
-- `action_playing_answers_while_an_action_plays_and_animation_stop_frees_a_layer_that_weight_zero_keeps`:
-  the query through Fire, Section and Cancel, and a layer that weight 0 keeps and `animation_stop`
-  frees.
-- `actions_discover_changed_components_retry_requests_and_compact_generational_rows_through_world_copies`:
-  discovery by stamp, lack of memory and generational recycling.
+  cancellation, copies, queues, weighted extraction, clocks and distance; the query through Fire,
+  Section and Cancel, and a layer that weight 0 keeps and `animation_stop` frees; discovery by
+  stamp, lack of memory and generational recycling.
 - `discovery_bench_test.odin` (with `MIRAI_BENCH`): optional preparation without stable allocations.
 - `an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta`: Fire, the share without the
   base and an action without `body_move`.

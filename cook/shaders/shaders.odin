@@ -144,7 +144,7 @@ cancel :: proc(progress:^Progress) {
 // What the code of a stage is for: SPIR-V for Vulkan, Metal source for Metal.
 Backend :: enum u8 {Vulkan,Metal}
 Backends :: bit_set[Backend;u8]
-HOST_BACKEND :: Backend.Metal when ODIN_OS==.Darwin else Backend.Vulkan
+HOST_BACKEND :: Backend.Metal when rhi.SHADER_FORMAT==.Msl else Backend.Vulkan
 
 Result :: struct {
     shaders,tests,programs:int,
@@ -636,6 +636,7 @@ engine_fingerprint :: proc(root,version:string,include_dirs:[]string,allocator:=
     sha_text(&hash,GENERATOR_CONTRACT)
     sha_text(&hash,abi_text())
     sha_text(&hash,material_schema())
+    sha_text(&hash,shared_constants())
     sha_text(&hash,strings.join(SLANG_FLAGS," ",context.temp_allocator))
     sha_text(&hash,strings.join(SLANG_OPTIMIZATION," ",context.temp_allocator))
     sha_text(&hash,strings.join(SPIRV_FLAGS," ",context.temp_allocator))
@@ -1112,9 +1113,6 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     cleanup:=true
     defer if cleanup {os.remove_all(staging)}
 
-    // Programs and the frame constants of extensions see the schema too.
-    os.make_directory_all(path_join(staging,"include",allocator=scratch))
-    if !write_file(path_join(staging,"include",SCHEMA_INCLUDE,allocator=scratch),transmute([]u8)material_schema(scratch)) {fail(&result,allocator,"could not write %s",SCHEMA_INCLUDE);return}
     copies:=make([dynamic]Base,scratch)
     programs_folder:=path_join(staging,"include/programs",allocator=scratch)
     append(&copies,Base{path_join(g.root,"shaders/materials",allocator=scratch),path_join(programs_folder,"builtin",allocator=scratch)})
@@ -1161,7 +1159,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     {
         hash:Sha256
         sha_begin(&hash)
-        for text in ([]string{GENERATOR_CONTRACT,g.version,g.metal_tools,abi_text(),material_schema()}) {sha_text(&hash,text);sha_text(&hash,"\n")}
+        for text in ([]string{GENERATOR_CONTRACT,g.version,g.metal_tools,abi_text(),material_schema(),shared_constants()}) {sha_text(&hash,text);sha_text(&hash,"\n")}
         for flags in ([][]string{SLANG_FLAGS,SLANG_OPTIMIZATION,SPIRV_FLAGS,VALIDATE_FLAGS,OPTIMIZE_FLAGS,METAL_FLAGS}) {sha_text(&hash,strings.join(flags," ",context.temp_allocator));sha_text(&hash,"\n")}
         g.configuration=transmute([]u8)sha_hex(&hash,scratch)
     }
@@ -1320,7 +1318,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     result.shaders,result.tests,result.programs=shader_count+program_count+extension_count,test_count,len(catalog.programs)
     result.engine=strings.clone(identity,allocator)
     append(&outputs,manifest_path,path_join(g.output,"catalog.json",allocator=scratch))
-    for name in ([]string{SURFACE_INCLUDE,SURFACE_COVERAGE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
+    for name in ([]string{SURFACE_INCLUDE,SURFACE_COVERAGE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE,CONSTANTS_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
     for job,at in g.jobs {
         folder:=tests_out if at>=test_first && at<test_first+test_count else g.output
         for name in ([]string{job.result.spv,job.result.msl}) {
@@ -1394,7 +1392,7 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
     }
     strings.write_string(&b,"Shader_Id :: enum u8 {\n")
     for job in jobs {fmt.sbprintf(&b,"\t%s,\n",job.result.id)}
-    strings.write_string(&b,"}\n\nwhen ODIN_OS == .Darwin {\n")
+    fmt.sbprintf(&b,"}}\n\nwhen %sSHADER_FORMAT == .Msl {{\n",prefix)
     names:=EMBEDDED_NAMES
     for metal in ([]bool{true,false}) {
         if !metal {strings.write_string(&b,"} else {\n")}

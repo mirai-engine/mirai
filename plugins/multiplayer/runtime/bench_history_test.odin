@@ -1,6 +1,5 @@
 package multiplayer
 
-import "base:runtime"
 import "core:fmt"
 import "core:testing"
 import "core:time"
@@ -8,7 +7,6 @@ import "mirai:core"
 import phys "plugins:physics/runtime"
 import "mirai:engine/render"
 import "mirai:host"
-import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 
 // What the history of a client costs on a world the size of the demo: 117
@@ -26,85 +24,94 @@ import "mirai:std/base"
 History_Bench_Row :: struct {a,b,c:[3]f32,d:u64,e:[2]f32}
 
 @(private)
+History_Bench_Table :: core.Table(History_Bench_Row)
+
+// HISTORY_BENCH_EXTRA tables of one row: a world holds each table as a field with its own name.
+@(private)
+History_Bench_Extra :: struct {
+    r00:History_Bench_Table `mirai:"name=History_Bench_Row_00"`,r01:History_Bench_Table `mirai:"name=History_Bench_Row_01"`,
+    r02:History_Bench_Table `mirai:"name=History_Bench_Row_02"`,r03:History_Bench_Table `mirai:"name=History_Bench_Row_03"`,
+    r04:History_Bench_Table `mirai:"name=History_Bench_Row_04"`,r05:History_Bench_Table `mirai:"name=History_Bench_Row_05"`,
+    r06:History_Bench_Table `mirai:"name=History_Bench_Row_06"`,r07:History_Bench_Table `mirai:"name=History_Bench_Row_07"`,
+    r08:History_Bench_Table `mirai:"name=History_Bench_Row_08"`,r09:History_Bench_Table `mirai:"name=History_Bench_Row_09"`,
+    r10:History_Bench_Table `mirai:"name=History_Bench_Row_10"`,r11:History_Bench_Table `mirai:"name=History_Bench_Row_11"`,
+    r12:History_Bench_Table `mirai:"name=History_Bench_Row_12"`,r13:History_Bench_Table `mirai:"name=History_Bench_Row_13"`,
+    r14:History_Bench_Table `mirai:"name=History_Bench_Row_14"`,r15:History_Bench_Table `mirai:"name=History_Bench_Row_15"`,
+    r16:History_Bench_Table `mirai:"name=History_Bench_Row_16"`,r17:History_Bench_Table `mirai:"name=History_Bench_Row_17"`,
+    r18:History_Bench_Table `mirai:"name=History_Bench_Row_18"`,r19:History_Bench_Table `mirai:"name=History_Bench_Row_19"`,
+    r20:History_Bench_Table `mirai:"name=History_Bench_Row_20"`,r21:History_Bench_Table `mirai:"name=History_Bench_Row_21"`,
+    r22:History_Bench_Table `mirai:"name=History_Bench_Row_22"`,r23:History_Bench_Table `mirai:"name=History_Bench_Row_23"`,
+    r24:History_Bench_Table `mirai:"name=History_Bench_Row_24"`,r25:History_Bench_Table `mirai:"name=History_Bench_Row_25"`,
+    r26:History_Bench_Table `mirai:"name=History_Bench_Row_26"`,r27:History_Bench_Table `mirai:"name=History_Bench_Row_27"`,
+    r28:History_Bench_Table `mirai:"name=History_Bench_Row_28"`,r29:History_Bench_Table `mirai:"name=History_Bench_Row_29"`,
+    r30:History_Bench_Table `mirai:"name=History_Bench_Row_30"`,r31:History_Bench_Table `mirai:"name=History_Bench_Row_31"`,
+    r32:History_Bench_Table `mirai:"name=History_Bench_Row_32"`,r33:History_Bench_Table `mirai:"name=History_Bench_Row_33"`,
+    r34:History_Bench_Table `mirai:"name=History_Bench_Row_34"`,r35:History_Bench_Table `mirai:"name=History_Bench_Row_35"`,
+    r36:History_Bench_Table `mirai:"name=History_Bench_Row_36"`,r37:History_Bench_Table `mirai:"name=History_Bench_Row_37"`,
+    r38:History_Bench_Table `mirai:"name=History_Bench_Row_38"`,r39:History_Bench_Table `mirai:"name=History_Bench_Row_39"`,
+    r40:History_Bench_Table `mirai:"name=History_Bench_Row_40"`,r41:History_Bench_Table `mirai:"name=History_Bench_Row_41"`,
+    r42:History_Bench_Table `mirai:"name=History_Bench_Row_42"`,r43:History_Bench_Table `mirai:"name=History_Bench_Row_43"`,
+    r44:History_Bench_Table `mirai:"name=History_Bench_Row_44"`,r45:History_Bench_Table `mirai:"name=History_Bench_Row_45"`,
+    r46:History_Bench_Table `mirai:"name=History_Bench_Row_46"`,r47:History_Bench_Table `mirai:"name=History_Bench_Row_47"`,
+    r48:History_Bench_Table `mirai:"name=History_Bench_Row_48"`,r49:History_Bench_Table `mirai:"name=History_Bench_Row_49"`,
+    r50:History_Bench_Table `mirai:"name=History_Bench_Row_50"`,r51:History_Bench_Table `mirai:"name=History_Bench_Row_51"`,
+    r52:History_Bench_Table `mirai:"name=History_Bench_Row_52"`,r53:History_Bench_Table `mirai:"name=History_Bench_Row_53"`,
+    r54:History_Bench_Table `mirai:"name=History_Bench_Row_54"`,r55:History_Bench_Table `mirai:"name=History_Bench_Row_55"`,
+    r56:History_Bench_Table `mirai:"name=History_Bench_Row_56"`,r57:History_Bench_Table `mirai:"name=History_Bench_Row_57"`,
+    r58:History_Bench_Table `mirai:"name=History_Bench_Row_58"`,r59:History_Bench_Table `mirai:"name=History_Bench_Row_59"`,
+    r60:History_Bench_Table `mirai:"name=History_Bench_Row_60"`,r61:History_Bench_Table `mirai:"name=History_Bench_Row_61"`,
+    r62:History_Bench_Table `mirai:"name=History_Bench_Row_62"`,r63:History_Bench_Table `mirai:"name=History_Bench_Row_63"`,
+    r64:History_Bench_Table `mirai:"name=History_Bench_Row_64"`,r65:History_Bench_Table `mirai:"name=History_Bench_Row_65"`,
+    r66:History_Bench_Table `mirai:"name=History_Bench_Row_66"`,r67:History_Bench_Table `mirai:"name=History_Bench_Row_67"`,
+    r68:History_Bench_Table `mirai:"name=History_Bench_Row_68"`,r69:History_Bench_Table `mirai:"name=History_Bench_Row_69"`,
+    r70:History_Bench_Table `mirai:"name=History_Bench_Row_70"`,r71:History_Bench_Table `mirai:"name=History_Bench_Row_71"`,
+    r72:History_Bench_Table `mirai:"name=History_Bench_Row_72"`,r73:History_Bench_Table `mirai:"name=History_Bench_Row_73"`,
+    r74:History_Bench_Table `mirai:"name=History_Bench_Row_74"`,r75:History_Bench_Table `mirai:"name=History_Bench_Row_75"`,
+    r76:History_Bench_Table `mirai:"name=History_Bench_Row_76"`,r77:History_Bench_Table `mirai:"name=History_Bench_Row_77"`,
+    r78:History_Bench_Table `mirai:"name=History_Bench_Row_78"`,r79:History_Bench_Table `mirai:"name=History_Bench_Row_79"`,
+    r80:History_Bench_Table `mirai:"name=History_Bench_Row_80"`,r81:History_Bench_Table `mirai:"name=History_Bench_Row_81"`,
+    r82:History_Bench_Table `mirai:"name=History_Bench_Row_82"`,r83:History_Bench_Table `mirai:"name=History_Bench_Row_83"`,
+    r84:History_Bench_Table `mirai:"name=History_Bench_Row_84"`,r85:History_Bench_Table `mirai:"name=History_Bench_Row_85"`,
+    r86:History_Bench_Table `mirai:"name=History_Bench_Row_86"`,r87:History_Bench_Table `mirai:"name=History_Bench_Row_87"`,
+    r88:History_Bench_Table `mirai:"name=History_Bench_Row_88"`,r89:History_Bench_Table `mirai:"name=History_Bench_Row_89"`,
+    r90:History_Bench_Table `mirai:"name=History_Bench_Row_90"`,r91:History_Bench_Table `mirai:"name=History_Bench_Row_91"`,
+    r92:History_Bench_Table `mirai:"name=History_Bench_Row_92"`,r93:History_Bench_Table `mirai:"name=History_Bench_Row_93"`,
+    r94:History_Bench_Table `mirai:"name=History_Bench_Row_94"`,r95:History_Bench_Table `mirai:"name=History_Bench_Row_95"`,
+    r96:History_Bench_Table `mirai:"name=History_Bench_Row_96"`,r97:History_Bench_Table `mirai:"name=History_Bench_Row_97"`,
+}
+
+#assert(size_of(History_Bench_Extra)==HISTORY_BENCH_EXTRA*size_of(History_Bench_Table))
+
+// Storages of plain data.
+@(private)
+History_Bench_Flat :: struct {words:[60][32]u64}
+
+@(private)
 History_Bench_World :: struct {
-    using net:Net_Test_World,
-    extra:[HISTORY_BENCH_EXTRA]core.Table(History_Bench_Row),
-    flat:[60][32]u64, // storages of plain data
+    using world:core.Test_World,
+    using net:Net_Test_Tables,
+    using extra:History_Bench_Extra,
+    flat:History_Bench_Flat,
 }
 
 @(private)
-history_bench_init :: proc(data:rawptr,allocator:runtime.Allocator) -> bool {
-    w:=cast(^History_Bench_World)data
-    if !net_test_init(&w.net,allocator) {return false}
+history_bench_init :: proc(w:^History_Bench_World,info:^core.World_Info) -> bool {
+    if !net_test_init(w,info) {return false}
     w.settings={bodies=512,shapes=512,contacts=4096,joints=8,characters=4,hulls=64,meshes=4,heightfields=1}
     return true
 }
 
+// One of the extra tables, the last ones of the World.
 @(private)
-history_bench_destroy :: proc(data:rawptr) {
-    w:=cast(^History_Bench_World)data
-    for &t in w.extra {core.table_destroy(&t)}
-    net_test_destroy(&w.net)
-}
-
-@(private)
-history_bench_copy :: proc(dst,src:rawptr) -> bool {
-    d,s:=cast(^History_Bench_World)dst,cast(^History_Bench_World)src
-    if !net_test_copy(&d.net,&s.net) {return false}
-    if d.es.generation.allocator.procedure!=nil {context.allocator=d.es.generation.allocator}
-    for &t,i in d.extra {if !core.table_copy(&t,&s.extra[i]) {return false}}
-    d.flat=s.flat
-    return true
-}
-
-@(private)
-history_bench_copy_changed :: proc(dst,src:rawptr,marks:[]core.Copy_Mark) -> bool {
-    d,s:=cast(^History_Bench_World)dst,cast(^History_Bench_World)src
-    if !net_test_copy_changed(&d.net,&s.net,marks) {return false}
-    if d.es.generation.allocator.procedure!=nil {context.allocator=d.es.generation.allocator}
-    for &t,i in d.extra {if !core.table_copy_changed(&t,&s.extra[i],&marks[HISTORY_BENCH_BASE+i]) {return false}}
-    d.flat=s.flat
-    return true
-}
-
-@(private) HISTORY_BENCH_BASE :: NET_TEST_TABLES
-
-@(private)
-history_bench_swap :: proc(a,b:rawptr) {
-    x,y:=cast(^History_Bench_World)a,cast(^History_Bench_World)b
-    net_test_swap(&x.net,&y.net)
-    for &t,i in x.extra {core.table_swap(&t,&y.extra[i])}
-    x.flat,y.flat=y.flat,x.flat
-}
-
-@(private)
-history_bench_settle :: proc(world,shared,editor:rawptr) {
-    w:=cast(^History_Bench_World)world
-    for &t in w.extra {core.table_settle(&t,&w.es)}
-    net_test_settle(&w.net,shared,editor)
-}
-
-@(private)
-history_bench_info :: proc() -> core.World_Info {
-    info:=net_test_info()
-    tables:=make([]core.Table_Info,len(info.tables)+HISTORY_BENCH_EXTRA)
-    copy(tables,info.tables)
-    for k in 0..<HISTORY_BENCH_EXTRA {
-        tables[len(info.tables)+k]={name="History_Bench_Row",type=History_Bench_Row,info=type_info_of(History_Bench_Row),offset=offset_of(History_Bench_World,extra)+uintptr(k*size_of(core.Table(History_Bench_Row)))}
-    }
-    delete(info.tables)
-    info.tables=tables
-    info.sizes[.World],info.aligns[.World]=size_of(History_Bench_World),align_of(History_Bench_World)
-    info.init[.World],info.destroy[.World]=history_bench_init,history_bench_destroy
-    info.copy,info.copy_changed,info.swap,info.settle=history_bench_copy,history_bench_copy_changed,history_bench_swap,history_bench_settle
-    return info
+history_bench_extra :: proc(w:^History_Bench_World,info:^core.World_Info,k:int) -> ^History_Bench_Table {
+    return cast(^History_Bench_Table)core.world_table_at(core.world_ref(w,info),&info.tables[len(info.tables)-HISTORY_BENCH_EXTRA+k])
 }
 
 @(private)
 history_bench_world :: proc(w:^History_Bench_World,shared:^Net_Test_Shared,app:^host.App) {
-    history_bench_init(w,context.allocator)
+    history_bench_init(w,shared.info)
     for i in 0..<HISTORY_BENCH_ENTITIES {
-        e:=core.create(&w.es)
+        e:=core.create(&w.entities)
         position:=[3]f32{f32(i%50)*2,0,f32(i/50)*2}
         core.add(&w.identities,e,core.Id{base.Entity_Id(i+1)})
         if i<300 {
@@ -120,35 +127,48 @@ history_bench_world :: proc(w:^History_Bench_World,shared:^Net_Test_Shared,app:^
             core.add(&w.transforms,e,core.Transform{position=position,rotation=1,scale={1,1,1}})
         }
         core.add(&w.worlds,e,core.World_Transform{})
-        if i%4!=0 {core.add(&w.meshes,e,render.Mesh_Renderer{shape=.Cube})}
+        if i%4!=0 {core.add(&w.statics,e,render.Mesh_Renderer{shape=.Cube})}
         for k in 0..<HISTORY_BENCH_EXTRA {
-            if (i+k)%10==0 {core.add(&w.extra[k],e,History_Bench_Row{d=u64(i)})}
+            if (i+k)%10==0 {core.add(history_bench_extra(w,shared.info,k),e,History_Bench_Row{d=u64(i)})}
         }
     }
-    history_bench_settle(w,nil,nil)
-    net_test_physics(&w.net,shared,app)
-    world:=&w.physics.world
-    vertices:=make([][3]f32,101*101)
-    defer delete(vertices)
-    indices:=make([]u32,100*100*6)
-    defer delete(indices)
-    for z in 0..<101 {for x in 0..<101 {vertices[z*101+x]={f32(x)-50,-1+f32((x*7+z*13)%5)*0.01,f32(z)-50}}}
-    for z in 0..<100 {
-        for x in 0..<100 {
-            at:=(z*100+x)*6
-            a:=u32(z*101+x)
-            indices[at+0],indices[at+1],indices[at+2]=a,a+101,a+1
-            indices[at+3],indices[at+4],indices[at+5]=a+1,a+101,a+102
+    core.settle(shared.info,w,nil)
+    // The level and the hulls are colliders of meshes the application generates.
+    if app.assets!=nil {
+        vertices:=make([][3]f32,101*101)
+        defer delete(vertices)
+        indices:=make([]u32,100*100*6)
+        defer delete(indices)
+        for z in 0..<101 {for x in 0..<101 {vertices[z*101+x]={f32(x)-50,-1+f32((x*7+z*13)%5)*0.01,f32(z)-50}}}
+        for z in 0..<100 {
+            for x in 0..<100 {
+                at:=(z*100+x)*6
+                a:=u32(z*101+x)
+                indices[at+0],indices[at+1],indices[at+2]=a,a+101,a+1
+                indices[at+3],indices[at+4],indices[at+5]=a+1,a+101,a+102
+            }
+        }
+        if level,made:=host.assets_mesh_generate(app.assets,{positions=vertices,indices=indices},options={no_lods=true,collision=true});made {
+            e:=core.create(&w.entities)
+            core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
+            core.add(&w.statics,e,render.Mesh_Renderer{mesh=level})
+            core.add(&w.colliders,e,phys.collider_mesh())
+        }
+        corners:=[4][3]f32{{0,0,0},{1,0,0},{0,1,0},{0,0,1}}
+        faces:=[12]u32{0,2,1,0,1,3,0,3,2,1,2,3}
+        for k in 0..<32 {
+            tetra:=corners
+            for &v in tetra {v*=1+f32(k)*0.01}
+            hull,made:=host.assets_mesh_generate(app.assets,{positions=tetra[:],indices=faces[:]},options={no_lods=true,collision=true})
+            if !made {continue}
+            e:=core.create(&w.entities)
+            core.add(&w.transforms,e,core.Transform{position={-60-2*f32(k),0,0},rotation=1,scale={1,1,1}})
+            core.add(&w.statics,e,render.Mesh_Renderer{mesh=hull})
+            core.add(&w.colliders,e,phys.collider_hull())
         }
     }
-    sim.mesh_create(world,{vertices=vertices,indices=indices})
-    corners:=[4][3]f32{{0,0,0},{1,0,0},{0,1,0},{0,0,1}}
-    counts:=[4]u8{3,3,3,3};faces:=[12]u8{0,2,1,0,1,3,0,3,2,1,2,3}
-    for k in 0..<32 {
-        tetra:=corners
-        for &v in tetra {v*=1+f32(k)*0.01}
-        sim.hull_create(world,{tetra[:],counts[:],faces[:]})
-    }
+    core.settle(shared.info,w,nil)
+    net_test_physics(w,shared,app)
 }
 
 @(private)
@@ -167,17 +187,20 @@ history_bench_micro :: proc(cost:History_Bench_Cost) -> f64 {return cost.copies>
 @(test)
 cost_of_the_history_of_a_client :: proc(t:^testing.T) {
     when !NET_HISTORY_BENCH {return}
-    info:=history_bench_info()
-    defer delete(info.tables)
-    defer delete(info.storages)
+    info,described:=core.test_info(t,History_Bench_World,net_test_types)
+    if !described {return}
+    defer core.test_info_destroy(&info)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
-    app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=base.test_folder(t,"history"),capacity=64})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared,assets=&assets}
     defer {host.app_world_scratch_free(&app);delete(app.worlds)}
     world:=new(History_Bench_World)
     defer free(world)
     history_bench_world(world,&shared,&app)
-    defer history_bench_destroy(world)
+    defer core.world_destroy(&info,.World,world)
     whole:=make([]History_Bench_World,HISTORY_BENCH_SLOTS)
     defer delete(whole)
     changed:=make([]History_Bench_World,HISTORY_BENCH_SLOTS)
@@ -187,21 +210,21 @@ cost_of_the_history_of_a_client :: proc(t:^testing.T) {
     physics:=make([]phys.Physics_State,HISTORY_BENCH_SLOTS)
     defer delete(physics)
     for i in 0..<HISTORY_BENCH_SLOTS {
-        history_bench_init(&whole[i],context.allocator)
-        history_bench_init(&changed[i],context.allocator)
-        marks[i]=make([]core.Copy_Mark,len(info.tables))
+        history_bench_init(&whole[i],&info)
+        history_bench_init(&changed[i],&info)
+        marks[i]=make([]core.Copy_Mark,core.copy_marks_count(&info))
     }
-    defer for i in 0..<HISTORY_BENCH_SLOTS {history_bench_destroy(&whole[i]);history_bench_destroy(&changed[i]);delete(marks[i])}
+    defer for i in 0..<HISTORY_BENCH_SLOTS {core.world_destroy(&info,.World,&whole[i]);core.world_destroy(&info,.World,&changed[i]);delete(marks[i])}
     defer for &state in physics {phys.state_destroy(&state)}
     // Each tick copies its world whole to one ring and what changed to another, in turns.
     copies :: proc(t:^testing.T,info:^core.World_Info,world:^History_Bench_World,whole,changed:^History_Bench_World,marks:[]core.Copy_Mark,tick:int,measured:bool,full,part:^History_Bench_Cost) {
         for turn in 0..<2 {
             started:=time.tick_now()
             if (turn+tick)%2==0 {
-                testing.expect(t,info.copy(whole,world))
+                testing.expect(t,core.world_copy(info,whole,world))
                 if measured {history_bench_add(full,started)}
             } else {
-                testing.expect(t,info.copy_changed(changed,world,marks))
+                testing.expect(t,core.world_copy_changed(info,changed,world,marks))
                 if measured {history_bench_add(part,started)}
             }
         }
@@ -219,17 +242,17 @@ cost_of_the_history_of_a_client :: proc(t:^testing.T) {
                 world.time.tick=u64(again)
                 slot:=again%HISTORY_BENCH_SLOTS
                 copies(t,&info,world,&whole[slot],&changed[slot],marks[slot],again,again>=2*HISTORY_BENCH_SLOTS,&replay_whole,&replay_changed)
-                net_test_physics(&world.net,&shared,&app)
+                net_test_physics(world,&shared,&app)
             }
         }
         world.time.tick=u64(tick)
         slot:=tick%HISTORY_BENCH_SLOTS
         copies(t,&info,world,&whole[slot],&changed[slot],marks[slot],tick,tick>=2*HISTORY_BENCH_SLOTS,&steady_whole,&steady_changed)
         started:=time.tick_now()
-        testing.expect(t,phys.state_copy(&physics[slot],&world.physics))
+        testing.expect(t,phys.state_copy(&physics[slot],&world.state))
         if tick>=2*HISTORY_BENCH_SLOTS {history_bench_add(&physics_cost,started)}
-        net_test_physics(&world.net,&shared,&app)
-        bodies=int(world.physics.world.state.body_high)
+        net_test_physics(world,&shared,&app)
+        bodies=int(world.state.world.state.body_high)
     }
     rows:=0
     for &table in info.tables {rows+=int((cast(^core.Raw_Table)(uintptr(world)+table.offset)).values.len)}

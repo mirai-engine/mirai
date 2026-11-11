@@ -19,6 +19,7 @@ import "mirai:rhi"
 // plugin owns nothing of the GPU. It lets go of the buffers of a world when
 // the world goes (buffer_release).
 
+Renderer :: gpu.Renderer // what a step or a function that reaches the renderer receives: nil without a GPU
 Stage :: gpu.Frame_Stage
 Stage_Proc :: gpu.Stage_Proc
 Pass :: gpu.Stage_Pass
@@ -75,23 +76,23 @@ Format :: rhi.Format
 // the renderer and passes of the plugin's own, in order. The renderer compiles
 // it the first time it is asked for and keeps it while some frame asks for it:
 // ask in each frame that uses it. 0 and the reason when it is wrong.
-pipeline :: proc(app:^host.App,desc:Render_Pipeline_Desc) -> (Render_Pipeline,string) {
-    if app.renderer==nil {return 0,"render pipeline: there is no renderer"}
-    return gpu.renderer_pipeline(app.renderer,desc)
+pipeline :: proc(renderer:^Renderer,desc:Render_Pipeline_Desc) -> (Render_Pipeline,string) {
+    if renderer==nil {return 0,"render pipeline: there is no renderer"}
+    return gpu.renderer_pipeline(renderer,desc)
 }
 
 // The passes of a standard pipeline, to build one of a plugin's own from.
 standard_pipeline_passes :: gpu.standard_pipeline_passes
 
 // One of the pipelines the renderer always has.
-pipeline_standard :: proc(app:^host.App,kind:Standard_Pipeline) -> Render_Pipeline {
-    return app.renderer!=nil?gpu.renderer_standard_pipeline(app.renderer,kind):0
+pipeline_standard :: proc(renderer:^Renderer,kind:Standard_Pipeline) -> Render_Pipeline {
+    return renderer!=nil?gpu.renderer_standard_pipeline(renderer,kind):0
 }
 
 // The pipeline of the views of the window in the next frame. False for a
 // pipeline the renderer does not have.
-pipeline_main :: proc(app:^host.App,pipeline:Render_Pipeline) -> bool {
-    return app.renderer!=nil && gpu.renderer_main_pipeline(app.renderer,pipeline)
+pipeline_main :: proc(renderer:^Renderer,pipeline:Render_Pipeline) -> bool {
+    return renderer!=nil && gpu.renderer_main_pipeline(renderer,pipeline)
 }
 
 // Places of the world for the GPU of a pass, relative to its origin
@@ -139,27 +140,27 @@ ANTIALIASING_TAA :: gpu.ANTIALIASING_TAA
 // resolve it, and draws the views of the window with a pipeline whose pass
 // stands in place of the Resolve stage while the setting names it. False
 // without room, or for a name the renderer has or another plugin offered.
-antialiasing_offer :: proc(app:^host.App,name,label:string) -> bool {
-    return app.renderer!=nil && gpu.antialiasing_offer(app.renderer,name,label)
+antialiasing_offer :: proc(renderer:^Renderer,name,label:string) -> bool {
+    return renderer!=nil && gpu.antialiasing_offer(renderer,name,label)
 }
 
 // The techniques plugins offered for the last frame, besides Off and TAA.
-antialiasing_offered :: proc(app:^host.App) -> []Antialiasing_Desc {
-    return app.renderer!=nil?gpu.renderer_antialiasing(app.renderer):nil
+antialiasing_offered :: proc(renderer:^Renderer) -> []Antialiasing_Desc {
+    return renderer!=nil?gpu.renderer_antialiasing(renderer):nil
 }
 
 // Asks the next frame to call `record` at a stage: every view for Mask,
 // Surface and Lit, once for Geometry. False without room for another pass, and for
 // Inspect: the pass of a mode of inspection goes in the view that shows it,
 // which the editor names (editor.view_mode_declare).
-frame_pass :: proc(app:^host.App,stage:Stage,record:Stage_Proc,user:rawptr=nil) -> bool {
-    return app.renderer!=nil && gpu.frame_pass(app.renderer,stage,record,user)
+frame_pass :: proc(renderer:^Renderer,stage:Stage,record:Stage_Proc,user:rawptr=nil) -> bool {
+    return renderer!=nil && gpu.frame_pass(renderer,stage,record,user)
 }
 
 // The pipeline of a stage, from the shaders in use; the renderer keeps it. 0
 // while those shaders do not have its stages: ask again in each frame.
-stage_pipeline :: proc(app:^host.App,desc:Stage_Pipeline_Desc) -> Pipeline {
-    return app.renderer!=nil?gpu.stage_pipeline(app.renderer,desc):0
+stage_pipeline :: proc(renderer:^Renderer,desc:Stage_Pipeline_Desc) -> Pipeline {
+    return renderer!=nil?gpu.stage_pipeline(renderer,desc):0
 }
 
 pass_extension_data :: gpu.pass_extension_data
@@ -204,14 +205,14 @@ pass_readback :: gpu.pass_readback
 pass_gbuffer_begin :: gpu.pass_gbuffer_begin
 // The next frame draws a mesh with a material (0: those of the mesh) in its
 // Gbuffer stage: each view keeps what they reflect and their layers.
-frame_gbuffer_mesh :: proc(app:^host.App,mesh:Mesh_Handle,material:Material_Handle) {
-    if app.renderer!=nil {gpu.frame_gbuffer_mesh(app.renderer,mesh,material)}
+frame_gbuffer_mesh :: proc(renderer:^Renderer,mesh:Mesh_Handle,material:Material_Handle) {
+    if renderer!=nil {gpu.frame_gbuffer_mesh(renderer,mesh,material)}
 }
 // Tells the frame that the plugin draws every cluster of level 0 of a mesh
 // (the meshes of particles): a mesh that streams loads its pages and keeps
 // them. Ask in each frame that draws it.
-frame_mesh_whole :: proc(app:^host.App,mesh:Mesh_Handle) {
-    if app.renderer!=nil {gpu.frame_mesh_whole(app.renderer,mesh)}
+frame_mesh_whole :: proc(renderer:^Renderer,mesh:Mesh_Handle) {
+    if renderer!=nil {gpu.frame_mesh_whole(renderer,mesh)}
 }
 pass_gbuffer_pipeline :: gpu.pass_gbuffer_pipeline
 pass_material_program :: gpu.pass_material_program
@@ -221,41 +222,41 @@ pass_blend_begin :: gpu.pass_blend_begin
 
 // Lets go of a buffer of the plugin in a world (pass_buffer): the world goes,
 // or will not be drawn again. False when the renderer had none of that name.
-buffer_release :: proc(app:^host.App,world:core.World_Id,name:string) -> bool {
-    return app.renderer!=nil && gpu.buffer_release(app.renderer,world_key(world),name)
+buffer_release :: proc(renderer:^Renderer,world:core.World_Id,name:string) -> bool {
+    return renderer!=nil && gpu.buffer_release(renderer,world_key(world),name)
 }
 
 // A texture of the table of the plugin in a world (world_key) that its passes
 // write (pass_table_texture) and materials read by index; made the first
 // time and with another size, a load transaction between frames.
-table_texture :: proc(app:^host.App,world:u64,desc:Table_Texture_Desc) -> (index:u32,made,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.table_texture(app.renderer,world,desc)
+table_texture :: proc(renderer:^Renderer,world:u64,desc:Table_Texture_Desc) -> (index:u32,made,ok:bool) {
+    if renderer==nil {return}
+    return gpu.table_texture(renderer,world,desc)
 }
 
 // Releases the table texture of the plugin in a world (pass_table_texture),
 // in the release of the world or when it is no longer drawn.
-table_texture_release :: proc(app:^host.App,world:core.World_Id,name:string) -> bool {
-    return app.renderer!=nil && gpu.table_texture_release(app.renderer,world_key(world),name)
+table_texture_release :: proc(renderer:^Renderer,world:core.World_Id,name:string) -> bool {
+    return renderer!=nil && gpu.table_texture_release(renderer,world_key(world),name)
 }
 
 // What a readback of the plugin in a world (pass_readback) brought back
 // last, and the frame it is of; none until a frame that copied it is done.
 // Valid until the next frame.
-readback :: proc(app:^host.App,world:core.World_Id,name:string) -> (data:[]u8,frame:u64,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.readback(app.renderer,world_key(world),name)
+readback :: proc(renderer:^Renderer,world:core.World_Id,name:string) -> (data:[]u8,frame:u64,ok:bool) {
+    if renderer==nil {return}
+    return gpu.readback(renderer,world_key(world),name)
 }
 
-readback_release :: proc(app:^host.App,world:core.World_Id,name:string) -> bool {
-    return app.renderer!=nil && gpu.readback_release(app.renderer,world_key(world),name)
+readback_release :: proc(renderer:^Renderer,world:core.World_Id,name:string) -> bool {
+    return renderer!=nil && gpu.readback_release(renderer,world_key(world),name)
 }
 
 // The counters a pass bound under a name (pass_counters), as the frame two
 // frames ago left them. False while no pass bound them.
-counters :: proc(app:^host.App,name:string) -> (values:[4]u32,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.renderer_counters(app.renderer,name)
+counters :: proc(renderer:^Renderer,name:string) -> (values:[4]u32,ok:bool) {
+    if renderer==nil {return}
+    return gpu.renderer_counters(renderer,name)
 }
 
 // Bytes a buffer of a pass may span at most on this device.
@@ -264,9 +265,9 @@ max_storage_range :: proc(app:^host.App) -> u64 {return app.device!=nil?rhi.devi
 // How many vertices a draw (pass_draw_indirect) gives the clusters of level 0
 // of a mesh: CLUSTER_DRAW_VERTICES a cluster, which a vertex shader reads
 // with geometry.slang. False for a mesh the renderer does not have.
-mesh_draw_range :: proc(app:^host.App,mesh:Mesh_Handle) -> (vertex_count:u32,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.mesh_draw_range(app.renderer,mesh)
+mesh_draw_range :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> (vertex_count:u32,ok:bool) {
+    if renderer==nil {return}
+    return gpu.mesh_draw_range(renderer,mesh)
 }
 
 // A program of a domain in the shaders in use, by name; nil without it.
@@ -346,60 +347,67 @@ nested_faces_nearest :: proc(pass:^Pass,items:[]$T,face:proc(item:^T,origin:[3]f
 }
 
 // The angular radius of the sun, radians, which gives its shadows their penumbra.
-sun_radius :: proc(app:^host.App) -> f32 {
-    if app.renderer==nil {return 0}
-    return app.renderer.settings.sun_radius
+sun_radius :: proc(renderer:^Renderer) -> f32 {
+    if renderer==nil {return 0}
+    return renderer.settings.sun_radius
 }
 
-// Four numbers of an instance of sync.instances, by its index there, that
+// The mesh an instance of the renderer shows and where it draws it, a
+// transform into the world, by its index (instance_object). False for an
+// index the renderer does not have.
+instance_placed :: proc(renderer:^Renderer,index:int) -> (mesh:Mesh_Handle,transform:matrix[4,4]f32,ok:bool) {
+    if renderer==nil || index<0 {return}
+    return gpu.scene_instance_placed(renderer,u32(index))
+}
+// Four numbers of an instance of the renderer, by its index (instance_object), that
 // the shaders of the plugin read with instance_values (scene.slang): they
 // stay while the instance keeps its identity and change neither its light
 // nor its rays. False for an index the renderer does not have or a value that
 // is not finite.
-instance_values_set :: proc(app:^host.App,index:int,values:[4]f32) -> bool {
-    return app.renderer!=nil && index>=0 && gpu.scene_set_instance_values(app.renderer,u32(index),values)
+instance_values_set :: proc(renderer:^Renderer,index:int,values:[4]f32) -> bool {
+    return renderer!=nil && index>=0 && gpu.scene_set_instance_values(renderer,u32(index),values)
 }
-// How wet an instance of sync.instances is, by its index there: 0 dry to 1
+// How wet an instance of the renderer is, by its index (instance_object): 0 dry to 1
 // soaked. Every material darkens and smooths by it what is not metal, glass
 // or unlit, and a program reads it in Mirai_Surface_Context.wet. It stays
 // while the instance keeps its identity and changes neither its light nor
 // its rays; one plugin gives it (water). False for an index the renderer does
 // not have or a value that is not finite.
-instance_wet_set :: proc(app:^host.App,index:int,wet:f32) -> bool {
-    return app.renderer!=nil && index>=0 && gpu.scene_set_instance_wet(app.renderer,u32(index),wet)
+instance_wet_set :: proc(renderer:^Renderer,index:int,wet:f32) -> bool {
+    return renderer!=nil && index>=0 && gpu.scene_set_instance_wet(renderer,u32(index),wet)
 }
 // A visual instance for this frame, without an entity of its own in the renderer.
-instance_add :: proc(app:^host.App,instance:Instance_Desc) -> bool {return host.app_instance_add(app,instance)}
+instance_add :: proc(extras:^host.Frame_Extras,instance:Instance_Desc) -> bool {return host.extras_instance_add(extras,instance)}
 
 // The box of a mesh, in its own space.
-mesh_bounds :: proc(app:^host.App,mesh:Mesh_Handle) -> (bounds_min,bounds_max:[3]f32,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.mesh_bounds(app.renderer,mesh)
+mesh_bounds :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> (bounds_min,bounds_max:[3]f32,ok:bool) {
+    if renderer==nil {return}
+    return gpu.mesh_bounds(renderer,mesh)
 }
 
-mesh_remove :: proc(app:^host.App,mesh:Mesh_Handle) -> bool {
-    return app.renderer!=nil && gpu.mesh_remove(app.renderer,mesh)
+mesh_remove :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> bool {
+    return renderer!=nil && gpu.mesh_remove(renderer,mesh)
 }
 
 // Whether a mesh is not drawn yet because its geometry still goes to the GPU
 // over frames: a large pose of skin_create, or a mesh a load took.
-mesh_uploading :: proc(app:^host.App,mesh:Mesh_Handle) -> bool {
-    return app.renderer!=nil && gpu.mesh_uploading(app.renderer,mesh)
+mesh_uploading :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> bool {
+    return renderer!=nil && gpu.mesh_uploading(renderer,mesh)
 }
 
 // A copy of a mesh whose vertices the plugin writes in its Geometry stage, in
 // each frame it asked deformable_update for. levels: it keeps the levels of
 // detail of the mesh, whose vertices the plugin writes too (pass_deformable
 // counts them); rays meet the first. A load transaction.
-deformable_create :: proc(app:^host.App,source:Mesh_Handle,levels:=false) -> (Mesh_Handle,bool) {
-    if app.renderer==nil {return 0,false}
-    return gpu.deformable_create(app.renderer,source,levels)
+deformable_create :: proc(renderer:^Renderer,source:Mesh_Handle,levels:=false) -> (Mesh_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.deformable_create(renderer,source,levels)
 }
 
 // Says that the next frame writes the vertices of a deformable, and the box
 // they stay in, in the space of the mesh.
-deformable_update :: proc(app:^host.App,mesh:Mesh_Handle,bounds_min,bounds_max:[3]f32) -> bool {
-    return app.renderer!=nil && gpu.deformable_update(app.renderer,mesh,bounds_min,bounds_max)
+deformable_update :: proc(renderer:^Renderer,mesh:Mesh_Handle,bounds_min,bounds_max:[3]f32) -> bool {
+    return renderer!=nil && gpu.deformable_update(renderer,mesh,bounds_min,bounds_max)
 }
 
 Skin_Influence :: gpu.Skin_Influence
@@ -418,9 +426,9 @@ Skin_Part_Pose :: gpu.Skin_Part_Pose
 // what a frame uploads goes over frames: an instance of it, and the mesh it
 // replaces (Instance_Desc.replace_source), are drawn once all of it went
 // (mesh_uploading).
-skin_create :: proc(app:^host.App,source:Mesh_Handle,influences:[]Skin_Influence,joint_count:u32,morph:Morph_Data={},part:=false) -> (Mesh_Handle,bool) {
-    if app.renderer==nil {return 0,false}
-    return gpu.skin_create(app.renderer,source,influences,joint_count,morph,part)
+skin_create :: proc(renderer:^Renderer,source:Mesh_Handle,influences:[]Skin_Influence,joint_count:u32,morph:Morph_Data={},part:=false) -> (Mesh_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.skin_create(renderer,source,influences,joint_count,morph,part)
 }
 
 // The palette the next frame deforms a skin with: by joint, from the bind
@@ -428,16 +436,16 @@ skin_create :: proc(app:^host.App,source:Mesh_Handle,influences:[]Skin_Influence
 // those it had). reset_motion: no motion since the frame before is drawn, as
 // after a cut. part: the palette that collapses its part and its layers.
 // Unchanged ones cost nothing.
-skin_update :: proc(app:^host.App,mesh:Mesh_Handle,palette:[]matrix[4,4]f32,reset_motion:=false,morph_weights:[]f32=nil,part:Skin_Part_Pose={}) -> bool {
-    return app.renderer!=nil && gpu.skin_update(app.renderer,mesh,palette,reset_motion,morph_weights,part)
+skin_update :: proc(renderer:^Renderer,mesh:Mesh_Handle,palette:[]matrix[4,4]f32,reset_motion:=false,morph_weights:[]f32=nil,part:Skin_Part_Pose={}) -> bool {
+    return renderer!=nil && gpu.skin_update(renderer,mesh,palette,reset_motion,morph_weights,part)
 }
 
 // The palette of a skin for the next frame and the one of the frame before,
 // as rows of 3x4 matrices by joint, into current and previous as many as fit;
 // count: its joints. False for a mesh without a skin of joints.
-skin_palette :: proc(app:^host.App,mesh:Mesh_Handle,current,previous:[][3][4]f32) -> (count:int,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.skin_palette(app.renderer,mesh,current,previous)
+skin_palette :: proc(renderer:^Renderer,mesh:Mesh_Handle,current,previous:[][3][4]f32) -> (count:int,ok:bool) {
+    if renderer==nil {return}
+    return gpu.skin_palette(renderer,mesh,current,previous)
 }
 
 Batch_Handle :: gpu.Batch_Handle
@@ -459,19 +467,19 @@ world_key :: proc "contextless" (id:core.World_Id) -> u64 {return u64(id.generat
 // error says what is wrong and how to fix it, and changes nothing. A batch
 // stays until batch_remove, or until the renderer forgets every batch
 // (batches_epoch).
-batch_set :: proc(app:^host.App,world:core.World_Id,handle:Batch_Handle,desc:Batch_Desc,instances:[]Batch_Instance) -> (Batch_Handle,string) {
-    if app.renderer==nil {return handle,"batch_set: there is no renderer"}
-    return gpu.batch_set(app.renderer,handle,world_key(world),desc,instances)
+batch_set :: proc(renderer:^Renderer,world:core.World_Id,handle:Batch_Handle,desc:Batch_Desc,instances:[]Batch_Instance) -> (Batch_Handle,string) {
+    if renderer==nil {return handle,"batch_set: there is no renderer"}
+    return gpu.batch_set(renderer,handle,world_key(world),desc,instances)
 }
 
 // False for a handle that names no batch.
-batch_remove :: proc(app:^host.App,handle:Batch_Handle) -> bool {
-    return app.renderer!=nil && gpu.batch_remove(app.renderer,handle)
+batch_remove :: proc(renderer:^Renderer,handle:Batch_Handle) -> bool {
+    return renderer!=nil && gpu.batch_remove(renderer,handle)
 }
 
 // Changes when the renderer forgets every batch, along with every mesh (a
 // scene loaded again): those who keep batches set them again.
-batches_epoch :: proc(app:^host.App) -> u64 {return app.renderer!=nil?gpu.batches_epoch(app.renderer):0}
+batches_epoch :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.batches_epoch(renderer):0}
 
 Batch_Info :: gpu.Batch_Info
 Batch_Hit :: gpu.Batch_Hit
@@ -479,16 +487,16 @@ Batch_Hit :: gpu.Batch_Hit
 // Changes when a batch comes, goes or is set again: what an extension that
 // gives batches values (batch_values_set) compares to know when to go
 // through them again.
-batches_revision :: proc(app:^host.App) -> u64 {return app.renderer!=nil?gpu.batches_revision(app.renderer):0}
+batches_revision :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.batches_revision(renderer):0}
 
 // The records of the batches, to go through them with batch_info.
-batch_records :: proc(app:^host.App) -> int {return app.renderer!=nil?gpu.batch_records(app.renderer):0}
+batch_records :: proc(renderer:^Renderer) -> int {return renderer!=nil?gpu.batch_records(renderer):0}
 
 // The batch of a record: its handle, world, object id, values and
 // instances. False for a record that holds none.
-batch_info :: proc(app:^host.App,index:int) -> (info:Batch_Info,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.batch_info(app.renderer,index)
+batch_info :: proc(renderer:^Renderer,index:int) -> (info:Batch_Info,ok:bool) {
+    if renderer==nil {return}
+    return gpu.batch_info(renderer,index)
 }
 
 // Four numbers of a batch that the shaders of a plugin read with
@@ -496,15 +504,15 @@ batch_info :: proc(app:^host.App,index:int) -> (info:Batch_Info,ok:bool) {
 // extension that does not own the batch: they stay until its owner sets it
 // again, and change neither its light nor its rays. False for a handle
 // that names no batch or a value that is not finite.
-batch_values_set :: proc(app:^host.App,handle:Batch_Handle,values:[4]f32) -> bool {
-    return app.renderer!=nil && gpu.batch_values_set(app.renderer,handle,values)
+batch_values_set :: proc(renderer:^Renderer,handle:Batch_Handle,values:[4]f32) -> bool {
+    return renderer!=nil && gpu.batch_values_set(renderer,handle,values)
 }
 
 // The instance of a batch of a world a ray of the world meets first within
 // max_distance, on the triangles of its mesh at rest.
-batch_ray :: proc(app:^host.App,world:core.World_Id,origin,direction:[3]f32,max_distance:f32) -> (hit:Batch_Hit,found:bool) {
-    if app.renderer==nil {return}
-    return gpu.batch_ray(app.renderer,world_key(world),origin,direction,max_distance)
+batch_ray :: proc(renderer:^Renderer,world:core.World_Id,origin,direction:[3]f32,max_distance:f32) -> (hit:Batch_Hit,found:bool) {
+    if renderer==nil {return}
+    return gpu.batch_ray(renderer,world_key(world),origin,direction,max_distance)
 }
 
 // The mesh and materials of a batch from what a Mesh_Renderer shows, as an
@@ -528,16 +536,16 @@ impostor_dilate :: gpu.impostor_dilate
 // The frames of an octahedral impostor of some meshes (gpu.impostor_capture),
 // read back: a blocking transaction between frames. impostor_dilate fills
 // what they do not cover, anywhere, as a job does.
-impostor_capture :: proc(app:^host.App,parts:[]Impostor_Part,grid,frame:u32,allocator:=context.allocator) -> (images:Impostor_Images,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.impostor_capture(app.renderer,parts,grid,frame,allocator)
+impostor_capture :: proc(renderer:^Renderer,parts:[]Impostor_Part,grid,frame:u32,allocator:=context.allocator) -> (images:Impostor_Images,ok:bool) {
+    if renderer==nil {return}
+    return gpu.impostor_capture(renderer,parts,grid,frame,allocator)
 }
 
 // The triangles of the first level of a mesh, in its space, appended:
 // positions, and three indices into them a triangle. False for a mesh the
 // renderer does not have.
-mesh_triangles :: proc(app:^host.App,mesh:Mesh_Handle,positions:^[dynamic][3]f32,indices:^[dynamic]u32) -> bool {
-    return app.renderer!=nil && gpu.mesh_triangles(app.renderer,mesh,positions,indices)
+mesh_triangles :: proc(renderer:^Renderer,mesh:Mesh_Handle,positions:^[dynamic][3]f32,indices:^[dynamic]u32) -> bool {
+    return renderer!=nil && gpu.mesh_triangles(renderer,mesh,positions,indices)
 }
 
 Texture_Desc :: gpu.Texture_Desc
@@ -549,24 +557,24 @@ texture_data_destroy :: gpu.texture_data_destroy
 texture_build :: gpu.texture_build
 
 // The side of the first level of the textures the renderer takes now.
-texture_max_size :: proc(app:^host.App) -> int {return app.renderer!=nil?gpu.texture_limits(app.renderer).max_size:0}
+texture_max_size :: proc(renderer:^Renderer) -> int {return renderer!=nil?gpu.texture_limits(renderer).max_size:0}
 
 // Gives the renderer the levels texture_build built: the second half of
 // texture_add. A load transaction; texture_remove frees it.
-texture_add_built :: proc(app:^host.App,data:Texture_Data,name:string) -> (Texture_Handle,bool) {
-    if app.renderer==nil {return 0,false}
-    return gpu.texture_add_data(app.renderer,data,name)
+texture_add_built :: proc(renderer:^Renderer,data:Texture_Data,name:string) -> (Texture_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.texture_add_data(renderer,data,name)
 }
 
 // An image of the texture table from RGBA8 pixels, with its levels: what
 // shaders read at texture_index. A load transaction; texture_remove frees it.
-texture_add :: proc(app:^host.App,desc:Texture_Desc) -> (Texture_Handle,bool) {
-    if app.renderer==nil {return 0,false}
-    return gpu.texture_add(app.renderer,desc)
+texture_add :: proc(renderer:^Renderer,desc:Texture_Desc) -> (Texture_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.texture_add(renderer,desc)
 }
 
-texture_remove :: proc(app:^host.App,texture:Texture_Handle) -> bool {
-    return app.renderer!=nil && gpu.texture_remove(app.renderer,texture)
+texture_remove :: proc(renderer:^Renderer,texture:Texture_Handle) -> bool {
+    return renderer!=nil && gpu.texture_remove(renderer,texture)
 }
 
 // Where shaders read a texture of the table (material_textures of scene.slang).
@@ -574,76 +582,76 @@ texture_index :: proc "contextless" (texture:Texture_Handle) -> u32 {return u32(
 
 // How many times the vertices of the scene were made again: what was written
 // in a deformable before is gone, and it is to be written again.
-vertices_made :: proc(app:^host.App) -> u64 {return app.renderer!=nil?gpu.vertices_made(app.renderer):0}
+vertices_made :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.vertices_made(renderer):0}
 
 // Room for lights that a pass writes in the Simulate stage (pass_lights),
 // which light the scene as its lights do: count that cast shadows within
 // its budgets, and shadowless that light whatever stands in their way and
 // trace no rays. From the next frame, up to LIGHTS_ASKED_MAX of each. Ask in
 // each frame that uses it.
-lights_ask :: proc(app:^host.App,count,shadowless:u32) {if app.renderer!=nil {gpu.lights_ask(app.renderer,count,shadowless)}}
+lights_ask :: proc(renderer:^Renderer,count,shadowless:u32) {if renderer!=nil {gpu.lights_ask(renderer,count,shadowless)}}
 
 // An entry of the texture table for what a camera sees, which a material
 // shows as any other color texture. Black until view_texture_draw draws it.
 // A load transaction between frames.
-view_texture_add :: proc(app:^host.App,width,height:u32,name:string) -> (Texture_Handle,bool) {
-    if app.renderer==nil {return 0,false}
-    return gpu.view_texture_add(app.renderer,width,height,name)
+view_texture_add :: proc(renderer:^Renderer,width,height:u32,name:string) -> (Texture_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.view_texture_add(renderer,width,height,name)
 }
 
-view_texture_remove :: proc(app:^host.App,texture:Texture_Handle) -> bool {
-    return app.renderer!=nil && gpu.view_texture_remove(app.renderer,texture)
+view_texture_remove :: proc(renderer:^Renderer,texture:Texture_Handle) -> bool {
+    return renderer!=nil && gpu.view_texture_remove(renderer,texture)
 }
 
 // An entry of the texture table that frames draw UI into
-// (host.app_ui_texture_draw), or with effects what extensions draw at the
-// Effect stage (host.app_effect_view_add); a material or the UI shows it as
+// (host.extras_ui_texture_draw), or with effects what extensions draw at the
+// Effect stage (host.extras_effect_view_add); a material or the UI shows it as
 // any color texture. A load transaction between frames.
-ui_texture_add :: proc(app:^host.App,width,height:u32,name:string,effects:=false) -> (Texture_Handle,bool) {
-    if app.renderer==nil {return 0,false}
-    return gpu.ui_texture_add(app.renderer,width,height,name,effects)
+ui_texture_add :: proc(renderer:^Renderer,width,height:u32,name:string,effects:=false) -> (Texture_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.ui_texture_add(renderer,width,height,name,effects)
 }
 
-ui_texture_remove :: proc(app:^host.App,texture:Texture_Handle) -> bool {
-    return app.renderer!=nil && gpu.ui_texture_remove(app.renderer,texture)
+ui_texture_remove :: proc(renderer:^Renderer,texture:Texture_Handle) -> bool {
+    return renderer!=nil && gpu.ui_texture_remove(renderer,texture)
 }
 
 // Where a ray meets a mesh placed by transform, and its first texture
 // coordinates there (gpu.mesh_ray). ok false for a miss or without a renderer.
-mesh_ray :: proc(app:^host.App,mesh:Mesh_Handle,transform:matrix[4,4]f32,origin,direction:[3]f32,limit:=max(f32)) -> (distance:f32,uv:[2]f32,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.mesh_ray(app.renderer,mesh,transform,origin,direction,limit)
+mesh_ray :: proc(renderer:^Renderer,mesh:Mesh_Handle,transform:matrix[4,4]f32,origin,direction:[3]f32,limit:=max(f32)) -> (distance:f32,uv:[2]f32,ok:bool) {
+    if renderer==nil {return}
+    return gpu.mesh_ray(renderer,mesh,transform,origin,direction,limit)
 }
 
 // Makes what mesh_ray meets a mesh with when the renderer keeps no software
 // tree of it, for a mesh a ray meets in many frames (gpu.mesh_ray_prepare).
-mesh_ray_prepare :: proc(app:^host.App,mesh:Mesh_Handle) -> bool {
-    return app.renderer!=nil && gpu.mesh_ray_prepare(app.renderer,mesh)
+mesh_ray_prepare :: proc(renderer:^Renderer,mesh:Mesh_Handle) -> bool {
+    return renderer!=nil && gpu.mesh_ray_prepare(renderer,mesh)
 }
 
-mesh_ray_release :: proc(app:^host.App,mesh:Mesh_Handle) {
-    if app.renderer!=nil {gpu.mesh_ray_release(app.renderer,mesh)}
+mesh_ray_release :: proc(renderer:^Renderer,mesh:Mesh_Handle) {
+    if renderer!=nil {gpu.mesh_ray_release(renderer,mesh)}
 }
 
-// What the depth probes of the last frame the GPU finished read (host.app_depth_probe_add).
-depth_probes :: proc(app:^host.App) -> []gpu.Depth_Probe_Result {
-    return app.renderer!=nil?gpu.renderer_depth_probes(app.renderer):nil
+// What the depth probes of the last frame the GPU finished read (host.extras_depth_probe_add).
+depth_probes :: proc(renderer:^Renderer) -> []gpu.Depth_Probe_Result {
+    return renderer!=nil?gpu.renderer_depth_probes(renderer):nil
 }
 
 // Reads back the image a frame last drew into a texture of view_texture_add
 // (RGBA8, its size; the caller frees it). Blocks until the GPU is idle;
 // between frames. False while no frame has drawn it.
-view_texture_capture :: proc(app:^host.App,texture:Texture_Handle,allocator:=context.allocator) -> (pixels:[]u8,width,height:int,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.view_texture_capture(app.renderer,texture,allocator)
+view_texture_capture :: proc(renderer:^Renderer,texture:Texture_Handle,allocator:=context.allocator) -> (pixels:[]u8,width,height:int,ok:bool) {
+    if renderer==nil {return}
+    return gpu.view_texture_capture(renderer,texture,allocator)
 }
 
 // Draws a view into a texture of view_texture_add in this frame, before the
 // views of the window, with a pipeline (0: Full). cut: what it kept from its
 // last image does not belong to this one. readback: the image comes back to
 // the CPU (view_texture_pixels). False without room for another view.
-view_texture_draw :: proc(app:^host.App,texture:Texture_Handle,view:core.View,width,height:u32,cut:=false,pipeline:=Render_Pipeline(0),readback:=false) -> bool {
-    return host.app_texture_view_add(app,{
+view_texture_draw :: proc(extras:^host.Frame_Extras,texture:Texture_Handle,view:core.View,width,height:u32,cut:=false,pipeline:=Render_Pipeline(0),readback:=false) -> bool {
+    return host.extras_texture_view_add(extras,{
         camera=host.camera_from_view(view),camera_cut=cut,rect={0,0,i32(width),i32(height)},texture=texture,pipeline=pipeline,readback=readback,
     })
 }
@@ -652,15 +660,15 @@ view_texture_draw :: proc(app:^host.App,texture:Texture_Handle,view:core.View,wi
 // and readback (RGBA8, the size of the texture), and that frame + 1 of the
 // renderer; none until such a frame is done, which takes a few frames. It
 // does not wait for the GPU. Valid until the next frame.
-view_texture_pixels :: proc(app:^host.App,texture:Texture_Handle) -> (pixels:[]u8,frame:u64,ok:bool) {
-    if app.renderer==nil {return}
-    return gpu.view_texture_pixels(app.renderer,texture)
+view_texture_pixels :: proc(renderer:^Renderer,texture:Texture_Handle) -> (pixels:[]u8,frame:u64,ok:bool) {
+    if renderer==nil {return}
+    return gpu.view_texture_pixels(renderer,texture)
 }
 
 // The GPU time of the last frame the GPU finished, on the clock of
 // time.tick_now: one interval per pass while host.profile_request (or a
 // recording) asks for them, else one "frame" interval. Valid until the next frame.
-gpu_timings :: proc(app:^host.App) -> []Gpu_Timing {return app.renderer!=nil?gpu.renderer_stats(app.renderer).timings:nil}
+gpu_timings :: proc(renderer:^Renderer) -> []Gpu_Timing {return renderer!=nil?gpu.renderer_stats(renderer).timings:nil}
 
 gpu_backend :: proc(app:^host.App) -> (backend:Gpu_Backend,ok:bool) {
     if app.device==nil {return}

@@ -140,8 +140,7 @@ per bone.
   ([model](../../mirai-rendering/references/materials.md#layers-openpbr)).
 - An empty `program` is the standard model; `parameters` keeps its values and, with nonzero
   `overlay`, those of a layer of `overlays`. `hidden` are the names the editor does not show.
-- `material_view` reads absent fields from `MATERIAL_DEFAULTS` and validates ranges, also those of
-  `imported` and `imported_parameters`.
+- `material_view` validates ranges, also those of `imported` and `imported_parameters`.
 
 ### What was imported and what was changed
 
@@ -226,16 +225,18 @@ table per record (`UI_TABLE_*`); contracts and precedence, in the
   text. Images and fonts go by their asset's id, so they are dependencies.
 - A component with `widget` takes its template from another `.ui`, which is also a dependency:
   `host.ui_tree_imports` reads those files (and theirs, without cycles) and `ui.tree_link` joins
-  them to the records before loading.
+  them to the records before loading. A row of `style_infos` with `from` takes the style of that
+  name from the file of that component, at the same moment.
 - `asset/ui.odin` declares the fourcc, the version, the tables and their structural check, because
-  `asset` does not import `ui`. Whoever links the two packages writes and reads it:
+  `asset` does not import `ui`; the node kinds, the override fields and the limits both judge the
+  structure by are declared once, in `std/ui_format`, and `ui` gives them its own names. Whoever
+  links the two packages writes and reads it:
   `host.ui_tree_document`, `ui_tree_save` and `ui_tree_view`; `ui_tree_document` returns `.Invalid`
   for records that `ui.tree_load` would reject.
 - `asset.ui_check`, what `mirai asset verify` uses, accepts and rejects the same as `ui.tree_load`
   by structure (references, ranges, overrides, component cycles);
   `host.ui_check_refuses_what_tree_load_refuses_case_by_case` compares the two paths field by
-  field. The values are covered by the check against the schema. `UI_TREE_DEPTH` and
-  `UI_CLIP_TRACKS` repeat `ui.TREE_DEPTH` and `ui.TREE_CLIP_TRACKS`.
+  field. The values are covered by the check against the schema.
 - Changing a value: `mirai asset set hud.ui 'nodes[6].layout.gap=8'`; adding or removing nodes or
   changing texts is `unpack`, edit and `pack`, or the editor's `ui.*` API.
 

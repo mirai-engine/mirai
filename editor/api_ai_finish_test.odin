@@ -1,15 +1,14 @@
 package editor
 
 import "core:encoding/json"
-import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:editor/acp"
+import "mirai:editor/ai_store"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
-import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
@@ -37,7 +36,7 @@ finish_typed_results_work_through_rpc_and_mcp_dispatch :: proc(t:^testing.T) {
     testing.expect(t,api.process(&state.server,request,.Rpc,"7-0"))
     rpc:struct {result:Api_Ai_Finish_Result}
     testing.expect(t,json.unmarshal(serial.writer_bytes(&state.server.out),&rpc,allocator=temporary)==nil)
-    testing.expect_value(t,rpc.result,Api_Ai_Finish_Result{id=7,accepted=true})
+    testing.expect_value(t,rpc.result,Api_Ai_Finish_Result{accepted=true})
     testing.expect(t,task.finish_called && task.state==.Running && finish_answer(task)=="","normal RPC dispatch handles a typed result without a free-form writer")
     task.finish_called=false
     state.server.out.count=0
@@ -47,7 +46,7 @@ finish_typed_results_work_through_rpc_and_mcp_dispatch :: proc(t:^testing.T) {
     if !testing.expect(t,json.unmarshal(serial.writer_bytes(&state.server.out),&mcp,allocator=temporary)==nil && !mcp.result.isError && len(mcp.result.content)==1) {return}
     result:Api_Ai_Finish_Result
     testing.expect(t,json.unmarshal(transmute([]u8)mcp.result.content[0].text,&result,allocator=temporary)==nil)
-    testing.expect_value(t,result,Api_Ai_Finish_Result{id=7,accepted=true})
+    testing.expect_value(t,result,Api_Ai_Finish_Result{accepted=true})
     testing.expect(t,task.finish_called && task.state==.Running)
     testing.expect_value(t,finish_answer(task),"The cube is blue.")
 }
@@ -64,13 +63,11 @@ finish_answer :: proc(task:^Ai_Task) -> string {
 
 @(test)
 finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^testing.T) {
-    root:=project.path_absolute(fmt.tprintf(".mirai/test-ai-finish-%d",os.get_pid()),context.temp_allocator)
-    if !testing.expect(t,!os.exists(root)) {return}
-    defer os.remove_all(root)
+    root:=base.test_folder(t,"ai-finish");if root=="" {return}
     m:=new(Ai);defer free(m)
-    testing.expect_value(t,ai_store_open(&m.store,root),"");defer ai_store_close(&m.store)
+    testing.expect_value(t,ai_store.open(&m.store,root),"");defer ai_store.close(&m.store)
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=root}
     task:=&m.tasks[0]
     m.task_count,m.workers[0].task,m.selected=2,1,1;m.chat_open=true
@@ -92,7 +89,7 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
     call.client_tag="1-0"
     call.failed=false;call.error={}
     api_ai_finish(&s,&call)
-    testing.expect(t,!call.failed && result==Api_Ai_Finish_Result{id=1,accepted=true} && call.out==nil,"a typed result succeeds without a free-form writer")
+    testing.expect(t,!call.failed && result==Api_Ai_Finish_Result{accepted=true} && call.out==nil,"a typed result succeeds without a free-form writer")
     testing.expect(t,task.finish_called && task.state==.Running && m.workers[0].task==1,"finish requests completion but does not mark the task done")
     testing.expect_value(t,task.transcript.count,1)
     ai_acp_event(&callback,acp.Event{kind=.Update,value=chatter})
@@ -112,8 +109,8 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
     testing.expect(t,text=="The player's health is 100." && kind==.Output)
     ai_acp_event(&callback,acp.Event{kind=.Update,value=chatter})
     testing.expect_value(t,task.transcript.count,2)
-    saved:[8]Ai_Stored_Line
-    count,message:=ai_store_page(&m.store,1,-1,saved[:])
+    saved:[8]ai_store.Stored_Line
+    count,message:=ai_store.page(&m.store,1,-1,saved[:])
     testing.expect(t,message=="" && count==2 && saved[1].role=="assistant" && saved[1].text==text,"the finish answer is saved as assistant content")
     ai_acp_event(&callback,acp.Event{kind=.Prompt_Done})
     testing.expect(t,task.state==.Done && m.workers[0].task==0)
@@ -132,7 +129,7 @@ finish_writes_only_the_final_answer_and_waits_for_acp_completion :: proc(t:^test
 finish_ends_the_turn_its_tag_names_and_no_other :: proc(t:^testing.T) {
     m:=new(Ai);defer free(m)
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits}
     m.task_count=2
     for &task,index in m.tasks[:m.task_count] {
@@ -165,7 +162,7 @@ finish_ends_the_turn_its_tag_names_and_no_other :: proc(t:^testing.T) {
 finish_is_required_and_acp_errors_and_cancellation_remain_visible :: proc(t:^testing.T) {
     m:=new(Ai);defer free(m)
     app:host.App
-    edits:Edits
+    edits:history.Edits
     s:=Session{ai=m,app=&app,edits=&edits,project_root=".mirai/missing-ai-finish-project"}
     m.task_count,m.selected=1,1;m.chat_open=true
     task:=&m.tasks[0];task.id=1;task.conversation.id=1
@@ -258,7 +255,7 @@ a_turn_cannot_throw_away_what_the_user_has_not_saved :: proc(t:^testing.T) {
     shutdown:=Api_Shutdown_Params{discard=true}
     load:=Api_Path_Params{}
     recover:=Api_Recovery_Params{discard=true}
-    calls:=[3]struct{run:Api_Handler,params:rawptr,type:typeid}{{api_shutdown,&shutdown,Api_Shutdown_Params},{api_scene_load,&load,Api_Path_Params},{api_recover,&recover,Api_Recovery_Params}}
+    calls:=[3]struct{run:Api_Handler,params:rawptr,type:typeid}{{api_shutdown,&shutdown,Api_Shutdown_Params},{api_scene_open,&load,Api_Path_Params},{api_recover,&recover,Api_Recovery_Params}}
     for c in calls {
         method:=api.Method{params_id=c.type}
         call:=api.Call{method=&method,params=c.params,out=&out,allocator=context.temp_allocator,client_tag="4-0"}

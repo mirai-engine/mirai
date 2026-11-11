@@ -91,6 +91,7 @@ Asset :: struct {
     view:Scene_View,      // of a scene or prefab, read once with view_types
     view_types:^Types,
     decoder:^Decoder,     // lent by whoever reads, else made by asset_decoder and owned
+    lacking:[2]string,    // the table and the field of a row a whole read refused: the file does not store that field
     decoder_owned:bool,
 }
 
@@ -381,8 +382,10 @@ asset_column_matches :: proc(a:^Asset,table:^Asset_Table,column:int,layout_hash:
 }
 
 // Reads the rows of a column into dst as values of a type of another schema:
-// one copy with the same layout, a migration by field names otherwise.
-asset_column_read :: proc(a:^Asset,table:^Asset_Table,column:int,schema:^serial.Schema,type:serial.Type_Index,dst:[]u8,default:[]u8=nil) -> Error {
+// one copy with the same layout, a migration by field names otherwise. whole
+// refuses, with Version, a column that does not store a field of the type: the
+// rows of a kind of asset, which hold every field of its version.
+asset_column_read :: proc(a:^Asset,table:^Asset_Table,column:int,schema:^serial.Schema,type:serial.Type_Index,dst:[]u8,default:[]u8=nil,whole:=false) -> Error {
     size:=int(schema.types[type].size)
     if len(dst)!=table.rows*size {return .Invalid}
     data:=asset_column_data(a,table,column) or_return
@@ -390,13 +393,17 @@ asset_column_read :: proc(a:^Asset,table:^Asset_Table,column:int,schema:^serial.
     migration_error:=serial.migration_init(&migration,&a.schema,table.columns[column].type,schema,type,a.allocator)
     defer serial.migration_destroy(&migration)
     if migration_error!=.None {return migration_error==.Out_Of_Memory?.Out_Of_Memory:.Invalid}
+    if whole && migration.added>0 {
+        a.lacking={table.name,migration.lacking}
+        return .Version
+    }
     serial.migration_apply(&migration,dst,data,table.rows,default)
     return .None
 }
 
 // The rows of a column as values of T: the file itself when T has the layout
 // the file stores, a migrated copy the asset owns otherwise.
-asset_rows :: proc(a:^Asset,types:^Types,table_name,column_name:string,$T:typeid,default:^T=nil) -> (rows:[]T,error:Error) {
+asset_rows :: proc(a:^Asset,types:^Types,table_name,column_name:string,$T:typeid,default:^T=nil,whole:=false) -> (rows:[]T,error:Error) {
     table,found:=asset_table(a,table_name)
     if !found {return nil,.Not_Found}
     column,column_found:=table_column(table,column_name)
@@ -409,13 +416,13 @@ asset_rows :: proc(a:^Asset,types:^Types,table_name,column_name:string,$T:typeid
         if uintptr(raw_data(data))&uintptr(align_of(T)-1)==0 {return mem.slice_data_cast([]T,data),.None}
     }
     block:=asset_alloc(a,table.rows*size_of(T),align_of(T)) or_return
-    asset_column_read(a,table,column,&types.schema,index,block,default==nil?nil:mem.ptr_to_bytes(default)) or_return
+    asset_column_read(a,table,column,&types.schema,index,block,default==nil?nil:mem.ptr_to_bytes(default),whole) or_return
     return mem.slice_data_cast([]T,block),.None
 }
 
 // The row of a table of one row.
-asset_row :: proc(a:^Asset,types:^Types,table_name:string,$T:typeid,default:^T=nil) -> (row:^T,error:Error) {
-    rows:=asset_rows(a,types,table_name,"",T,default) or_return
+asset_row :: proc(a:^Asset,types:^Types,table_name:string,$T:typeid,default:^T=nil,whole:=false) -> (row:^T,error:Error) {
+    rows:=asset_rows(a,types,table_name,"",T,default,whole) or_return
     if len(rows)!=1 {return nil,.Corrupt}
     return &rows[0],.None
 }

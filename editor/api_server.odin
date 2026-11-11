@@ -11,7 +11,9 @@ import "core:time"
 import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import escene "mirai:engine/scene"
+import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
@@ -20,17 +22,20 @@ import "mirai:std/serial"
 // The agent API of the editor: the server of editor/api (JSON-RPC and MCP on
 // 127.0.0.1) with the methods of the editor registered on it. The server is
 // polled once per frame between frames, so every handler runs on the main
-// thread and may advance frames itself (engine.step, editor.capture). A
+// thread and may advance frames itself (engine.step, capture). A
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "8"
-API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with method, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. scene.inspect gives the ids of the entities."
+API_VERSION :: "14"
+API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with methods, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. Every method takes _select, the fields of its result to keep (a.b,c[0].d), and a read-only one _wait_until, a condition (phase=Built) it is called again until; a method that changes things is called once, and the wait goes on its status method. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
 API_STORAGE_BYTES :: 256*1024 // the largest storage the API reads and writes
 API_IDLE_WAIT :: 10*time.Millisecond // a manual editor without calls: how often it looks at builds, imports and collaboration
 API_ACTIVE :: 2*time.Second // after a call, how long the editor keeps the rate of a window with focus
+API_SETTLE_FRAMES :: 600 // the most frames a handler runs to finish what it asked of the next ones
+API_BUILD_SECONDS :: 600 // how long a call waits for a build it needs
+API_SHADERS_SECONDS :: 600 // how long a call that draws waits for shaders that changed on disk
 
 Api_Handler :: #type proc(s:^Session,call:^api.Call)
 
@@ -60,12 +65,14 @@ Api_State :: struct {
     in_call:int,
     last_call:time.Tick, // when a call arrived last: an agent that drives the editor keeps it at its rate
     stepping:bool,
+    waiting:int,    // handlers inside api_wait: what runs meanwhile holds no world of theirs
+    restart:bool,   // a Build asked to start the editor again while a call waits for it
     step_frames:u64, // app.stats.frames when the times of the functions were last read
-    manual:bool,       // frames advance only when asked to: engine.step, editor.capture, editor.input
+    manual:bool,       // frames advance only when asked to: engine.step, capture, editor.input
     port:int,
     library_generation:int,
     plugin:string, // of the provider whose methods are being registered; empty for the editor
-    scripts:[EDITOR_RUNS]Run_Script, // the input play.input scheduled for each place of Session.runs
+    step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
 }
 
 @(storage)
@@ -73,12 +80,28 @@ Api :: struct {
     state:^Api_State,
     // The parts of the last frame of the editor loop, in ms.
     begin_ms,tools_ms,panels_ms,end_ms:f32,
+    unedited:[256]u8, // why an edit of the call that runs did not happen (edit_refusal)
+    unedited_length:int,
 }
 
 @(private)
 api_of :: proc(s:^Session) -> ^Api {
     if s.info==nil || s.editor_world==nil {return nil}
     return core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Api)
+}
+
+// The call of the API whose edit was refused fails with the reason, also
+// when the method failed by itself because its edit did not happen.
+@(private)
+api_refusal_begin :: proc(s:^Session) {
+    if a:=api_of(s);a!=nil {a.unedited_length=0}
+}
+
+@(private)
+api_refusal_end :: proc(s:^Session,call:^api.Call) {
+    a:=api_of(s)
+    if a==nil || a.unedited_length==0 {return}
+    api.call_fail(call,api.INVALID_PARAMS,string(a.unedited[:a.unedited_length]))
 }
 
 api_state :: proc(s:^Session) -> ^Api_State {
@@ -102,10 +125,11 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
     st:=new(Api_State)
     st.allocator=context.allocator
     st.manual=manual
-    if error:=api.server_init(&st.server,{port=port,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
+    if error:=api.server_init(&st.server,{port=port,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
         return .Server
     }
+    st.server.assets={s,asset_text_resolve}
     api_schema_build(s,st)
     st.port=api.server_port(&st.server)
     a.state=st
@@ -120,6 +144,8 @@ api_open :: proc(s:^Session,port:int,manual:bool) -> Api_Open_Error {
         return .Methods
     }
     st.library_generation=s.library_generation
+    st.server.pause,st.server.user=api_server_pause,s
+    api_disk_baseline(s)
     api_port_file_write(s,st.port)
     return .None
 }
@@ -230,6 +256,7 @@ api_poll :: proc(s:^Session) {
         if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload, the first: %s",st.refused,st.refusal)}
         st.library_generation=s.library_generation
     }
+    st.server.instance={os.get_pid(),project.ENGINE_VERSION,project_name(s),s.project_root}
     api.server_poll(&st.server)
 }
 
@@ -246,6 +273,14 @@ api_idle :: proc(s:^Session) -> bool {
         restart(s,{"--built"})
         return true
     }
+    api_jobs(s)
+    api.server_wait(&st.server,API_IDLE_WAIT)
+    return true
+}
+
+// What runs beside the frames of a manual editor, between frames.
+@(private)
+api_jobs :: proc(s:^Session) {
     import_poll(s)
     git_poll(s)
     projects_poll(s)
@@ -254,8 +289,110 @@ api_idle :: proc(s:^Session) -> bool {
     runs_pump(s)
     collab_update(s)
     recovery_update(s)
-    api.server_wait(&st.server,API_IDLE_WAIT)
+}
+
+// Keeps the editor going from inside a handler until pending says false:
+// frames with a window, so the user and other work go on, and only the jobs
+// in a manual editor, whose frames advance when asked. The library a build
+// left loads meanwhile: the handler holds nothing of the worlds, and no text
+// of the temporary allocator, across this. False when the time ran out or the
+// editor is ending.
+api_wait :: proc(s:^Session,seconds:f64,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool,what:="working") -> bool {
+    st:=api_state(s)
+    if st==nil {return !pending(s,user)}
+    started:=time.tick_now()
+    st.waiting+=1
+    defer {
+        st.waiting-=1
+        if st.waiting==0 && st.restart {
+            st.restart=false
+            s.requests+={.Restart}
+        }
+    }
+    for pending(s,user) {
+        if s.quit || time.duration_seconds(time.tick_since(started))>seconds || api.server_cancelled(&st.server) {return false}
+        if api.server_progress_due(&st.server) {api.server_progress(&st.server,fmt.tprintf("%s: %.0f s",what,time.duration_seconds(time.tick_since(started))))}
+        if st.manual {
+            temp:=runtime.default_temp_allocator_temp_begin()
+            build_poll(s)
+            api_jobs(s)
+            runtime.default_temp_allocator_temp_end(temp)
+            time.sleep(API_IDLE_WAIT)
+        } else if api_frames(s,1,0)==0 {
+            return false
+        }
+    }
     return true
+}
+
+// Whether the client cancelled the call that runs: the loops of a handler that
+// goes on for long end at their next safe point.
+api_stop_asked :: proc(s:^Session) -> bool {
+    st:=api_state(s)
+    return st!=nil && api.server_cancelled(&st.server)
+}
+
+// Advances whole frames from inside a handler until pending says false or
+// frames ran out: what the handler asked of the next frames is done when it
+// answers, also in a manual editor. False when they ran out or the editor is
+// ending.
+api_settle :: proc(s:^Session,user:rawptr,pending:proc(s:^Session,user:rawptr)->bool,frames:=API_SETTLE_FRAMES) -> bool {
+    if api_state(s)==nil {return !pending(s,user)}
+    for _ in 0..<frames {
+        if !pending(s,user) {return true}
+        if api_frames(s,1,0)==0 || s.quit {return false}
+    }
+    return !pending(s,user)
+}
+
+// Between two calls of _wait_until the editor goes on as a handler that waits does.
+@(private)
+api_server_pause :: proc(server:^api.Server,seconds:f64) -> bool {
+    s:=(^Session)(server.user)
+    st:=api_state(s)
+    context.temp_allocator=st.poll_temp
+    st.in_call+=1
+    defer st.in_call-=1
+    going_on :: proc(s:^Session,user:rawptr) -> bool {return !s.quit}
+    api_wait(s,seconds,nil,going_on)
+    return !s.quit
+}
+
+// What is on disk when the editor opens, against which api_disk_sync looks.
+@(private)
+api_disk_baseline :: proc(s:^Session) {
+    if s.app!=nil {host.app_assets_watch_now(s.app)}
+    if s.build!=nil && s.has_project {s.build.shader_sources=shaders_fingerprint(s.project_root)}
+}
+
+// What changed on disk since the last call is there for this one, whoever
+// changed it: assets are read again where they are loaded, with unsaved ones
+// kept, and shaders are published; a call that draws waits for them. False,
+// with the call failed, when they could not be published.
+@(private)
+api_disk_sync :: proc(s:^Session,call:^api.Call) -> bool {
+    if s.app==nil {return true}
+    host.app_assets_watch_now(s.app)
+    if s.build==nil || !s.has_project {return true}
+    sources:=shaders_fingerprint(s.project_root)
+    if sources==s.build.shader_sources {return true}
+    s.build.shader_sources=sources
+    programs_publish_request(s)
+    if !api_call_draws(call) {return true}
+    if ok,message:=programs_wait(s,API_SHADERS_SECONDS,true);!ok {
+        api.call_fail(call,api.SERVER_ERROR,message)
+        return false
+    }
+    return true
+}
+
+// Whether a method draws the scene or starts what draws it.
+@(private)
+api_call_draws :: proc(call:^api.Call) -> bool {
+    switch call.method.name {
+    case "capture","play.start","play.record","view.viewport","material.preview.capture","animation.capture","ui.capture": return true
+    }
+    return false
 }
 
 // Whether an agent drives the editor: a call runs, or one arrived within API_ACTIVE.
@@ -297,9 +434,9 @@ api_trampoline :: proc(call:^api.Call) {
     edits:=entry.session.edits
     if edits!=nil && api_call_edits(call) {
         if turn!=nil || edits.open || edits.commit || edits.preview {tools_release(entry.session)}
-        edits_commit(edits,edited_world(entry.session),entry.session.selection)
+        history.edits_commit(edits,edited_world(entry.session),entry.session.selection)
     }
-    if edits!=nil {edits_select(edits,edited_world(entry.session),document_selection(entry.session))}
+    if edits!=nil {history.edits_select(edits,edited_world(entry.session),document_selection(entry.session))}
     task_id,external_id:=task!=nil?task.id:0,external!=nil?external.id:0
     // What the call works on is named before it runs: a deletion takes its name with it.
     target_buffer:[96]u8
@@ -308,27 +445,27 @@ api_trampoline :: proc(call:^api.Call) {
     refs:=ai_call_refs(call.raw,refs_buffer[:]) if turn!=nil else ""
     serial_before:=edits!=nil?edits.serial:0
     started:=time.tick_now()
-    if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?Edit_Author(turn.id):EDIT_AUTHOR_API}
-    collab_held_begin(entry.session)
+    if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?history.Edit_Author(turn.id):history.EDIT_AUTHOR_API}
+    api_refusal_begin(entry.session)
     event(entry.session,"api",call.method.name)
-    entry.run(entry.session,call)
-    collab_held_end(entry.session,call)
+    if st.in_call>1 || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
+    api_refusal_end(entry.session,call)
     if edits!=nil {
         // A gesture the call opened and ended is its step, without waiting for the frame.
         if edits.commit && edits.opener==edits.author {
             sections_sync(entry.session)
-            edits_flush(edits,edited_world(entry.session),entry.session.selection)
+            history.edits_flush(edits,edited_world(entry.session),document_selection(entry.session))
         }
         // What the call selected is a step of its author.
-        edits_select(edits,edited_world(entry.session),document_selection(entry.session))
-        edits.author=EDIT_AUTHOR_USER
+        history.edits_select(edits,edited_world(entry.session),document_selection(entry.session))
+        edits.author=history.EDIT_AUTHOR_USER
     }
     files_settle(entry.session)
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}
     if task!=nil {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
-    if task!=nil && !call.failed && .Read_Only not_in call.method.flags && !strings.has_prefix(call.method.name,"engine.") && call.method.name!="editor.capture" && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
+    if task!=nil && !call.failed && .Read_Only not_in call.method.flags && !strings.has_prefix(call.method.name,"engine.") && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
         ai_review_record(entry.session,task,serial_before)
         ai_task_dirty(task)
         ai_task_persist(entry.session,task)
@@ -351,7 +488,7 @@ api_call_edits :: proc(call:^api.Call) -> bool {
 @(private)
 api_call_as_user :: proc(call:^api.Call) -> bool {
     name:=call.method.name
-    return name=="editor.input" || name=="editor.capture" || strings.has_prefix(name,"engine.")
+    return name=="editor.input" || name=="capture" || strings.has_prefix(name,"engine.")
 }
 
 Api_Method :: struct {
@@ -362,7 +499,6 @@ Api_Method :: struct {
     run:Api_Handler,
     flags:api.Method_Flags,
     params_schema,result_schema:string,
-    mcp_content:bool,
     writes_result:bool, // the handler writes the result into call.out; result only gives its schema
 }
 
@@ -415,7 +551,7 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
         params_info=m.params_info,result_info=m.result_info,
-        params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,mcp_content=m.mcp_content,writes_result=m.writes_result,
+        params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {
         return refuse(st,"%s could not be registered: %v %s",m.name,result,st.server.schema.error)
@@ -430,43 +566,27 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
 // ends before the edit. The scene of the document can be edited while a game
 // runs: the game keeps its own copy and the user sees the changes when the
 // run stops.
-@(private)
 api_guard :: proc(s:^Session,call:^api.Call) -> bool {
-    if s.recovery.pending {
-        api.call_fail(call,api.SERVER_ERROR,"Resolve the pending recovery with editor.recover before editing")
-        return false
-    }
     tools_release(s)
-    edits_cancel(s.edits,edited_world(s))
+    history.edits_cancel(s.edits,edited_world(s))
     if s.edits.open || s.edits.commit || s.edits.preview {
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(s.edits.error))
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
         return false
     }
     return true
 }
 
-// The checks of api_guard for what has to wait for Edit: saving, prefabs,
-// which work on the selection in sight and write assets a running game may
-// load, and a tool of a plugin that confirms through its own preview.
-api_guard_edit :: proc(s:^Session,call:^api.Call) -> bool {
-    if playing(s) {
-        api.call_fail(call,api.SERVER_ERROR,"A game is playing; this is done from Edit")
-        return false
-    }
-    return api_guard(s,call)
-}
-
 // Opens the transaction of an edit. False, with the call failed, when the scene cannot be edited now.
 api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
     api_guard(s,call) or_return
-    if !edits_begin(s.edits,document_selection(s),label) {
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(s.edits.error))
+    if !history.edits_begin(s.edits,document_selection(s),label) {
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
         return false
     }
-    if error:=edits_cancel_prepare(s.edits,edited_world(s));error!=.None {
+    if error:=history.edits_cancel_prepare(s.edits,edited_world(s));error!=.None {
         s.edits.open,s.edits.commit=false,false
         s.edits.error=error
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(error))
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(error))
         return false
     }
     return true
@@ -477,21 +597,21 @@ api_edit_end :: proc(s:^Session,call:^api.Call,applied:bool) -> bool {
     w:=edited_world(s)
     selection:=document_selection(s)
     if !applied || call.failed {
-        edits_cancel(s.edits,w)
-        selection_restore(selection,w,s.edits.selection[:])
+        history.edits_cancel(s.edits,w)
+        history.selection_restore(selection,w,s.edits.selection[:])
         if !call.failed {api.call_fail(call,api.SERVER_ERROR,"The edit could not be applied")}
         return false
     }
     sections_sync(s)
-    edits_end(s.edits)
-    if !edits_commit(s.edits,w,selection) && s.edits.error!=.No_Change {
+    history.edits_end(s.edits)
+    if !history.edits_commit(s.edits,w,selection) && s.edits.error!=.No_Change {
         error:=s.edits.error
-        edits_cancel(s.edits,w)
-        selection_restore(selection,w,s.edits.selection[:])
-        api.call_fail(call,api.SERVER_ERROR,edits_error_text(error))
+        history.edits_cancel(s.edits,w)
+        history.selection_restore(selection,w,s.edits.selection[:])
+        api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(error))
         return false
     }
-    selection_prune(selection,w)
+    history.selection_prune(selection,w)
     return true
 }
 
@@ -511,7 +631,7 @@ Rpc_Object :: struct {started:bool}
 
 rpc_init :: proc(a:^Rpc_Args,call:^api.Call,text:string) {
     a^={call=call,text=text}
-    serial.text_reader_init(&a.r,text,call.allocator)
+    api.call_reader_init(call,&a.r,text)
 }
 
 rpc_fail :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
@@ -522,9 +642,32 @@ rpc_fail :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
     return false
 }
 
+// A failure of the shape or the type of params read by hand: its data says
+// what the method takes.
+rpc_fail_type :: proc(a:^Rpc_Args,format:string,args:..any) -> bool {
+    if !a.failed {
+        a.failed=true
+        usage:=a.call.server!=nil && a.call.method!=nil?api.params_usage(a.call.server,a.call.method):""
+        api.call_fail(a.call,api.INVALID_PARAMS,fmt.aprintf(format,..args,allocator=a.call.allocator),usage)
+    }
+    return false
+}
+
+// A key the object does not take: which ones it does, the nearest first when
+// the key looks like it.
+rpc_fail_unknown :: proc(a:^Rpc_Args,key:string,valid:..string) -> bool {
+    nearest:=""
+    closest:=max(len(key)/2,2)+1
+    for name in valid {
+        if distance:=strings.levenshtein_distance(key,name,context.temp_allocator);distance<closest {nearest,closest=name,distance}
+    }
+    if nearest!="" {return rpc_fail_type(a,"unknown field %q; did you mean %s? It takes %s",key,nearest,strings.join(valid,", ",context.temp_allocator))}
+    return rpc_fail_type(a,"unknown field %q; it takes %s",key,strings.join(valid,", ",context.temp_allocator))
+}
+
 rpc_object_begin :: proc(a:^Rpc_Args,what:string) -> bool {
     if a.failed {return false}
-    if !serial.text_accept(&a.r,'{') {return rpc_fail(a,"%s must be an object",what)}
+    if !serial.text_accept(&a.r,'{') {return rpc_fail_type(a,"%s must be an object",what)}
     return true
 }
 
@@ -538,7 +681,7 @@ rpc_next :: proc(a:^Rpc_Args,o:^Rpc_Object) -> (key:string,more:bool) {
     name,read:=serial.text_string(r)
     if !separated || !read || !serial.text_accept(r,':') {
         line,column:=serial.text_position(a.text,r.offset)
-        rpc_fail(a,"malformed JSON at line %d column %d",line,column)
+        rpc_fail_type(a,"malformed JSON at line %d column %d",line,column)
         return
     }
     count:=copy(a.key[:],name)
@@ -546,26 +689,31 @@ rpc_next :: proc(a:^Rpc_Args,o:^Rpc_Object) -> (key:string,more:bool) {
 }
 
 @(private)
-rpc_finite :: proc "contextless" (v:f32) -> bool {return v-v==0}
+rpc_finite :: proc "contextless" (values:..f32) -> bool {
+    for v in values {
+        if v-v!=0 {return false}
+    }
+    return true
+}
 
 @(private)
 rpc_number :: proc(a:^Rpc_Args,what:string) -> (value:f32,ok:bool) {
     if a.failed {return}
     bits,read:=serial.text_read_float(&a.r,4)
     value=transmute(f32)u32(bits)
-    if !read || !rpc_finite(value) {return 0,rpc_fail(a,"%s must be a finite number",what)}
+    if !read || !rpc_finite(value) {return 0,rpc_fail_type(a,"%s must be a finite number",what)}
     return value,true
 }
 
 @(private)
 rpc_vector :: proc(a:^Rpc_Args,what:string,out:[]f32) -> bool {
     if a.failed {return false}
-    if !serial.text_accept(&a.r,'[') {return rpc_fail(a,"%s must be an array of %d numbers",what,len(out))}
+    if !serial.text_accept(&a.r,'[') {return rpc_fail_type(a,"%s must be an array of %d numbers",what,len(out))}
     for &value,i in out {
-        if i>0 && !serial.text_accept(&a.r,',') {return rpc_fail(a,"%s must be an array of %d numbers",what,len(out))}
+        if i>0 && !serial.text_accept(&a.r,',') {return rpc_fail_type(a,"%s must be an array of %d numbers",what,len(out))}
         value=rpc_number(a,what) or_return
     }
-    if !serial.text_accept(&a.r,']') {return rpc_fail(a,"%s must be an array of %d numbers",what,len(out))}
+    if !serial.text_accept(&a.r,']') {return rpc_fail_type(a,"%s must be an array of %d numbers",what,len(out))}
     return true
 }
 
@@ -573,35 +721,32 @@ rpc_bool :: proc(a:^Rpc_Args,what:string) -> (value,ok:bool) {
     if a.failed {return}
     if serial.text_keyword(&a.r,"true") {return true,true}
     if serial.text_keyword(&a.r,"false") {return false,true}
-    return false,rpc_fail(a,"%s must be true or false",what)
+    return false,rpc_fail_type(a,"%s must be true or false",what)
 }
 
 rpc_unsigned :: proc(a:^Rpc_Args,what:string) -> (value:u64,ok:bool) {
     if a.failed {return}
     negative,magnitude,read:=serial.text_integer(&a.r)
-    if !read || negative {return 0,rpc_fail(a,"%s must be a non negative integer",what)}
+    if !read || negative {return 0,rpc_fail_type(a,"%s must be a non negative integer",what)}
     return magnitude,true
 }
 
-// An id as a hexadecimal string or a number; null is none.
+// The id a document read by hand holds; null is none.
 rpc_id :: proc(a:^Rpc_Args,what:string) -> (id:base.Entity_Id,ok:bool) {
     if a.failed {return}
     if serial.text_keyword(&a.r,"null") {return 0,true}
-    if serial.text_peek(&a.r)=='"' {
-        text,read:=serial.text_string(&a.r)
-        value,parsed:=serial.text_parse_hex(text)
-        if !read || !parsed {return 0,rpc_fail(a,"%s must be an entity id",what)}
-        return base.Entity_Id(value),true
-    }
-    value:=rpc_unsigned(a,what) or_return
+    text,read:=serial.text_string(&a.r)
+    if !read {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
+    value,parsed:=serial.text_parse_hex(text)
+    if !parsed {return 0,rpc_fail_type(a,"%s must be an entity id",what)}
     return base.Entity_Id(value),true
 }
 
 rpc_text :: proc(a:^Rpc_Args,what:string,out:[]u8) -> (text:string,ok:bool) {
     if a.failed {return}
     value,read:=serial.text_string(&a.r)
-    if !read {return "",rpc_fail(a,"%s must be a string",what)}
-    if len(value)>len(out) {return "",rpc_fail(a,"%s is longer than %d bytes",what,len(out))}
+    if !read {return "",rpc_fail_type(a,"%s must be a string",what)}
+    if len(value)>len(out) {return "",rpc_fail_type(a,"%s is longer than %d bytes",what,len(out))}
     return string(out[:copy(out,value)]),true
 }
 
@@ -612,26 +757,25 @@ rpc_raw :: proc(a:^Rpc_Args) -> (text:string,ok:bool) {
     start:=a.r.offset
     if !serial.text_skip(&a.r) {
         line,column:=serial.text_position(a.text,a.r.error.offset)
-        return "",rpc_fail(a,"malformed JSON at line %d column %d",line,column)
+        return "",rpc_fail_type(a,"malformed JSON at line %d column %d",line,column)
     }
     return a.text[start:a.r.offset],true
 }
 
 // ---------------------------------------------------------------- small helpers
 
-@(private)
-api_text_put :: proc "contextless" (buffer:[]u8,text:string) {
-    if len(buffer)==0 {return}
-    count:=copy(buffer[:len(buffer)-1],text)
-    buffer[count]=0
-}
+// A text that holds a handle as the answers write it: 0x, its 16 digits and the NUL.
+API_HANDLE_TEXT :: 19
+
+// A handle as every answer writes it, the form of a core.Entity in the schema.
+api_handle_text :: proc(e:core.Entity,allocator:=context.temp_allocator) -> string {return fmt.aprintf("0x%016x",u64(e),allocator=allocator)}
+
+api_handle_put :: proc(buffer:[]u8,e:core.Entity) {base.text_set(buffer,api_handle_text(e))}
 
 // The id of an entity of a world, 0 without one.
 api_entity_id :: proc(w:core.World_Ref,e:core.Entity) -> base.Entity_Id {
     return core.id_of(core.read(core.world_table_of(w,core.Id)),e)
 }
-
-api_write_id :: proc(w:^serial.Writer,id:base.Entity_Id) {api.write_id(w,id)}
 
 // The live entity of a world with an Id, as of its last settle; NONE for 0
 // or an Id no entity has.

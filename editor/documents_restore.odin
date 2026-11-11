@@ -8,6 +8,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:host"
 import "mirai:project"
+import "mirai:std/serial"
 
 RESTART_ASSETS :: "restart-assets"
 
@@ -41,30 +42,36 @@ documents_save_restart :: proc(s:^Session,folder:string) -> (file:string,ok:bool
     data,error:=json.marshal(saved,{},context.temp_allocator)
     if error!=nil {return "",false}
     file=project.path(folder,"restart-documents.json",allocator=context.temp_allocator)
-    return file,os.write_entire_file(file,data)==nil
+    return file,serial.file_write_atomic(file,data)==.None
 }
 
-documents_restore :: proc(s:^Session,file:string) -> bool {
+// The tabs a file keeps, the first in the tab in front or, with beside,
+// after the tabs there are. "" or why not all of them came back.
+documents_restore :: proc(s:^Session,file:string,beside:=false) -> string {
     data,error:=os.read_entire_file(file,context.temp_allocator)
-    if error!=nil {return false}
+    if error!=nil {return fmt.tprintf("%s could not be read: %s",file,os.error_string(error))}
     saved:Documents_Restore
-    if json.unmarshal(data,&saved,allocator=context.temp_allocator)!=nil || len(saved.tabs)==0 {return false}
+    if json.unmarshal(data,&saved,allocator=context.temp_allocator)!=nil || len(saved.tabs)==0 {return fmt.tprintf("%s lists no tabs",file)}
     folder:=filepath.dir(project.path_absolute(file,context.temp_allocator))
     for tab,index in saved.tabs {
         expected:=project.path(folder,fmt.tprintf("restart-%d.scene",index),allocator=context.temp_allocator)
-        if tab.file!=expected {return false}
+        if tab.file!=expected {return fmt.tprintf("%s names %s where %s should be",file,tab.file,expected)}
     }
     // The scenes find the assets as they were.
     if assets:=project.path(folder,RESTART_ASSETS,allocator=context.temp_allocator);assets_unsaved_kept(assets) {
-        if _,restored:=assets_unsaved_restore(s,assets);!restored {return false}
+        if _,restored:=assets_unsaved_restore(s,assets);!restored {return fmt.tprintf("the unsaved assets in %s could not be read",assets)}
     }
+    documents_ensure(s)
+    first,after:=s.active_document,len(s.documents)
+    if beside {first=after}
     for tab,index in saved.tabs {
-        if index>0 && !document_tab_new(s) {return false}
-        if document_restore(s,tab.file,tab.path,tab.dirty)!=.None {return false}
+        if (index>0 || beside) && !document_tab_new(s) {return fmt.tprintf("%s could not be opened in a new tab",tab.path)}
+        if failure:=document_restore(s,tab.file,tab.path,tab.dirty);failure!=.None {return fmt.tprintf("%s: %s",tab.path,document_error_text(failure))}
         s.viewport.orbit,s.viewport.preview_sun=tab.orbit,tab.preview_sun
         select_ids(s,tab.selection)
     }
-    document_activate(s,clamp(saved.active,0,len(s.documents)-1))
+    active:=clamp(saved.active,0,len(saved.tabs)-1)
+    document_activate(s,active==0?first:(beside?first:after-1)+active)
     // The asset documents open again; one whose asset is gone does not.
     for path,index in saved.assets {
         opened:=false
@@ -79,5 +86,5 @@ documents_restore :: proc(s:^Session,file:string) -> bool {
     if saved.asset>=0 {asset_document_activate(s,saved.asset)}
     for tab in saved.tabs {_=os.remove(tab.file)}
     _=os.remove(file)
-    return true
+    return ""
 }

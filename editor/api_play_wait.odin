@@ -9,23 +9,22 @@ import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// Conditions on the game that plays: a value of a component of an entity or
-// of a storage compared with a number or a text, or whether an entity or a
-// component is there. play.check reads them now; play.step with until runs
-// ticks until they hold. Values are read as play.inspect writes them.
+// Conditions on the game that plays: a value of an entity or of a storage
+// compared with a number or a text, or whether an entity or a component is
+// there. play.check reads them now; play.step with until runs ticks until they
+// hold. Values are read as play.inspect writes them, and there is one syntax to
+// name one, read by api_entity_value: Component.field.0.field, where a[0].b is
+// a.0.b, or a key of the document of the entity (world_position.2).
 
 API_PLAY_CONDITIONS :: 16
 
 Api_Compare :: enum u8 {Exists,Gone,Equal,Not_Equal,Below,At_Most,Above,At_Least}
 
 Api_Play_Condition :: struct {
-    entity:[16]u8 `mirai:"optional,text,label=The entity by its handle as play.inspect gives it"`,
-    id:base.Entity_Id `mirai:"optional,label=The entity by its id in the scene"`,
-    name:[64]u8 `mirai:"optional,text,label=The entity by its name: the first with it in the order of play.inspect"`,
-    component:[64]u8 `mirai:"optional,text,label=A component of the entity; empty: the entity itself or its world_position"`,
+    entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=The entity by its name or a path Parent/Child or its id or its handle"`,
     storage:[64]u8 `mirai:"optional,text,label=A storage of the world in place of an entity"`,
     view:bool `mirai:"optional,label=What the player sees as play.view writes it in place of a storage or an entity: the entity named is its point (points.0)"`,
-    field:[128]u8 `mirai:"optional,text,label=The value inside by names of fields and indices of elements joined by dots (velocity.1 or points.0.normalized.0); empty: all of it"`,
+    field:[128]u8 `mirai:"optional,text,label=The value: Component.field.0.field of an entity or world_position.2 or the names of fields and indices joined by dots inside a storage or the view (points.0.normalized.0); empty: the entity itself or all of it"`,
     compare:Api_Compare `mirai:"optional,label=Exists (the default) and Gone say whether the entity or the component or the field is there; the others compare the value"`,
     number:f64 `mirai:"optional,label=What a number is compared with; a bool is 1 or 0"`,
     text:[128]u8 `mirai:"optional,text,label=What a text or the name of a value of an enum is compared with (Equal and Not_Equal) in place of number"`,
@@ -46,9 +45,22 @@ Api_Play_Check_Entry :: struct {
     value:u8 `mirai:"any,label=What it read as play.inspect writes it; null when the entity or the component or the storage is not there"`,
 }
 
+Api_Play_Get_Params :: struct {
+    entity:[API_ENTITY_TEXT]u8 `mirai:"text,entity,label=The entity by its name or a path Parent/Child or its id or its handle"`,
+    field:[128]u8 `mirai:"text,label=The value: Component.field.0.field (Motion.linear.1) or a key of the document of the entity as play.inspect writes it (world_position)"`,
+    player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
+}
+
+Api_Play_Get_Result :: struct {
+    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity"`,
+    tick:u64 `mirai:"label=The tick of the game it was read at"`,
+    value:u8 `mirai:"any,label=The value as play.inspect writes it"`,
+}
+
 @(private)
 api_play_wait_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=Api_Play_Check_Params,result=Api_Play_Check_Result,writes_result=true,flags={.Read_Only},run=api_play_check})
+    api_register(s,st,{name="play.get",summary="One value of one entity of the game of the caller now, without its whole document: a field of a component or a place of the world.",params=Api_Play_Get_Params,result=Api_Play_Get_Result,writes_result=true,flags={.Read_Only},run=api_play_get})
+    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=Api_Play_Check_Params,result=Api_Play_Check_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_check})
 }
 
 // What a condition read of a world: whether it holds, and the value as JSON.
@@ -64,17 +76,17 @@ Api_Condition_Read :: struct {
 @(private)
 api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,allocator:=context.temp_allocator) -> (read:Api_Condition_Read,problem:string) {
     st:=api_state(s)
-    handle,name,component,storage:=base.text_get(c.entity[:]),base.text_get(c.name[:]),base.text_get(c.component[:]),base.text_get(c.storage[:])
+    entity,storage:=base.text_get(c.entity[:]),base.text_get(c.storage[:])
     field,text:=base.text_get(c.field[:]),base.text_get(c.text[:])
-    named:=int(handle!="")+int(c.id!=0)+int(name!="")
-    if c.view && (storage!="" || component!="") {return {},"view reads what the player sees: leave storage and component out; an entity named is its point"}
-    if !c.view && (named>0) == (storage!="") {return {},"name what it reads: an entity (by entity, id or name), a storage or the view"}
-    if named>1 {return {},"name the entity once: by entity, by id or by name"}
-    if storage!="" && component!="" {return {},"a storage has no components: leave component out, or name an entity"}
+    named:=int(entity!="")
+    if c.view && storage!="" {return {},"view reads what the player sees: leave storage out; an entity named is its point"}
+    if !c.view && (named>0) == (storage!="") {return {},"name what it reads: an entity, a storage or the view"}
     if text!="" && c.compare!=.Equal && c.compare!=.Not_Equal && c.compare!=.Exists && c.compare!=.Gone {return {},"a text is compared with Equal or Not_Equal; give number for the others"}
     out:serial.Writer
     serial.writer_init(&out,0,allocator)
     found:=false
+    leaf:json.Value
+    selected:=false // leaf is the value already
     switch {
     case storage!="":
         at:=-1
@@ -87,16 +99,10 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
         found=true
     case:
         e:=core.NONE
-        switch {
-        case handle!="":
-            value,parsed:=serial.text_parse_hex(handle)
-            if !parsed {return {},fmt.tprintf("entity %q is not a handle: give the 16 hexadecimal digits play.inspect writes as entity",handle)}
-            if core.alive(core.world_entities(w),core.Entity(value)) {e=core.Entity(value)}
-        case c.id!=0: e=api_entity(w,c.id)
-        case name!="":
-            for candidate in api_entities_ordered(w,allocator) {
-                if entity_name(w,candidate)==name {e=candidate;break}
-            }
+        if entity!="" {
+            several:string
+            e,several=api_entity_find(w,entity,allocator)
+            if several!="" {return {},several}
         }
         if c.view {
             // An entity that is not there is a reading of null, as without view.
@@ -106,29 +112,21 @@ api_condition_read :: proc(s:^Session,w:core.World_Ref,c:^Api_Play_Condition,all
             if problem!="" {return {},problem}
             serial.text_write_raw(&out,text)
             found=true
-        } else if component!="" {
-            t:=component_table(s,component)
-            if t==nil || t.place!=.World || st.types[api_table_index(s,t)]==serial.TYPE_NONE {return {},fmt.tprintf("component %q is not a component of the game; component.list lists them",component)}
-            value:=e!=core.NONE?core.raw_find(core.world_table_at(w,t),t.info,e):nil
-            if value!=nil {
-                scratch:=make([]u8,max(t.info.size,1),allocator)
-                api_value_out(w,t.info,value,scratch,handles=true)
-                serial.text_write(&out,&st.schema,st.types[api_table_index(s,t)],scratch[:t.info.size],.Line)
-                found=true
-            }
         } else if e!=core.NONE {
-            position:=entity_world(w,e).position
-            serial.text_write_raw(&out,`{"entity":"`);serial.text_write_hex(&out,u64(e))
-            serial.text_write_raw(&out,`","world_position":`);api.write_list(&out,position[:])
-            serial.write_u8(&out,'}')
-            found=true
+            wrong:string
+            leaf,found,wrong=api_entity_value(s,w,e,field,true,allocator)
+            if wrong!="" {return {},fmt.tprintf("field %q: %s",field,wrong)}
+            selected=true
         }
     }
     if !found {return {passed=c.compare==.Gone,value="null"},""}
-    whole,parse_error:=json.parse(serial.writer_bytes(&out),allocator=allocator)
-    if parse_error!=nil {return {},"the value could not be read back as JSON"}
-    leaf,missing:=api_json_select(whole,field,allocator)
-    if missing!="" {return {},fmt.tprintf("field %q: %s",field,missing)}
+    if !selected {
+        whole,parse_error:=json.parse(serial.writer_bytes(&out),allocator=allocator)
+        if parse_error!=nil {return {},"the value could not be read back as JSON"}
+        missing:string
+        leaf,missing=api_json_select(whole,field,allocator)
+        if missing!="" {return {},fmt.tprintf("field %q: %s",field,missing)}
+    }
     read.value=api_json_text(leaf,allocator)
     switch c.compare {
     case .Exists: read.passed=true
@@ -179,10 +177,10 @@ api_conditions_read :: proc(s:^Session,w:core.World_Ref,conditions:[]Api_Play_Co
 api_play_check :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Check_Params)
     r,_:=api_play_run(s,call,params.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
     values:[1]string
     api.object_values(call.allocator,call.raw,{"conditions"},values[:])
-    count:=api_list_count(values[0])
+    count:=api.json_count(values[0])
     if count==0 {api.call_fail(call,api.INVALID_PARAMS,"conditions is empty: give what must hold");return}
     w:=run_ref(s,r)
     reads:=make([]Api_Condition_Read,count,context.temp_allocator)
@@ -201,6 +199,89 @@ api_play_check :: proc(s:^Session,call:^api.Call) {
         serial.write_u8(out,'}')
     }
     serial.text_write_raw(out,"]}")
+}
+
+// A value of a live entity at a path of the one syntax of Play: a component and
+// the path inside it, Component.field.0.field, or a key of the document of the
+// entity as play.inspect writes it; empty, the entity and where it is. there is
+// false when the entity lacks the component the path names, which is a reading
+// and not a problem. runtime reads hidden and transient fields too; scratch
+// keeps a call that reads many from asking memory each time.
+api_entity_value :: proc(s:^Session,w:core.World_Ref,e:core.Entity,path:string,runtime:bool,allocator:=context.temp_allocator,scratch:[]u8=nil) -> (leaf:json.Value,there:bool,problem:string) {
+    st:=api_state(s)
+    head,rest:=path,""
+    if end:=strings.index_any(path,".[");end>=0 {head,rest=path[:end],strings.trim_prefix(path[end:],".")}
+    if head=="components" {return nil,false,fmt.tprintf("a component is named by itself: %s",strings.trim_prefix(strings.trim_prefix(path,"components"),"."))}
+    readable :: proc(s:^Session,t:^core.Table_Info) -> bool {return t!=nil && t.place==.World && api_state(s).types[api_table_index(s,t)]!=serial.TYPE_NONE}
+    omitted:=runtime?serial.Field_Flags{}:serial.Field_Flags{.Transient,.Hidden}
+    component :: proc(s:^Session,w:core.World_Ref,e:core.Entity,t:^core.Table_Info,rest:string,omitted:serial.Field_Flags,scratch:[]u8,allocator:=context.temp_allocator) -> (leaf:json.Value,there:bool,problem:string) {
+        st:=api_state(s)
+        value:=core.raw_find(core.world_table_at(w,t),t.info,e)
+        if value==nil {return nil,false,""}
+        scratch:=scratch
+        if len(scratch)<t.info.size {scratch=make([]u8,max(t.info.size,1),allocator)}
+        api_value_out(w,t.info,value,scratch,handles=true)
+        out:serial.Writer
+        serial.writer_init(&out,0,allocator)
+        serial.text_write(&out,&st.schema,st.types[api_table_index(s,t)],scratch[:t.info.size],.Line,omit_fields=omitted)
+        whole,parse_error:=json.parse(serial.writer_bytes(&out),allocator=allocator)
+        if parse_error!=nil {return nil,false,"the value could not be read back as JSON"}
+        missing:string
+        leaf,missing=api_json_select(whole,rest,allocator)
+        return leaf,missing=="",missing
+    }
+    if t:=component_table(s,head);t!=nil && t.name==head && readable(s,t) {return component(s,w,e,t,rest,omitted,scratch,allocator)}
+    out:serial.Writer
+    serial.writer_init(&out,0,allocator)
+    small:=path=="" || head=="entity" || head=="world_position"
+    if small {
+        position:=entity_world(w,e).position
+        serial.text_write_raw(&out,`{"entity":"`);serial.text_write_hex(&out,u64(e))
+        serial.text_write_raw(&out,`","world_position":`);api.write_list(&out,position[:])
+        serial.write_u8(&out,'}')
+    } else {
+        scratch:=scratch
+        if scratch==nil {scratch=make([]u8,max(st.largest,1),allocator)}
+        api_entity_write(s,w,&out,e,true,scratch,true,runtime)
+    }
+    whole,parse_error:=json.parse(serial.writer_bytes(&out),allocator=allocator)
+    if parse_error!=nil {return nil,false,"the value could not be read back as JSON"}
+    if doc,is_object:=whole.(json.Object);is_object && (small || head in doc) {
+        missing:string
+        leaf,missing=api_json_select(whole,path,allocator)
+        return leaf,missing=="",missing
+    }
+    named,wrong:=api_component_named(w,head)
+    if !readable(s,named) {return nil,false,fmt.tprintf("%s, or a key of the entity as world_position",wrong!=""?wrong:head)}
+    return component(s,w,e,named,rest,omitted,scratch,allocator)
+}
+
+// A value of a live entity as JSON text; problem says what is wrong with the path.
+api_entity_field :: proc(s:^Session,w:core.World_Ref,e:core.Entity,field:string,allocator:=context.temp_allocator) -> (value,problem:string) {
+    leaf,there,wrong:=api_entity_value(s,w,e,field,true,allocator)
+    if wrong!="" {return "",fmt.tprintf("field %q: %s",field,wrong)}
+    if !there {return "",fmt.tprintf("the entity has no %s: play.inspect lists its components",strings.split_n(field,".",2,context.temp_allocator)[0])}
+    return api_json_text(leaf,allocator),""
+}
+
+@(private)
+api_play_get :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Play_Get_Params)
+    r,_:=api_play_run(s,call,p.player)
+    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    w:=run_ref(s,r)
+    e,known:=api_call_entity(call,w,p.entity[:],game=true)
+    if !known {return}
+    value,wrong:=api_entity_field(s,w,e,base.text_get(p.field[:]),call.allocator)
+    if wrong!="" {api.call_fail(call,api.INVALID_PARAMS,wrong);return}
+    out:=call.out
+    serial.text_write_raw(out,`{"entity":`);serial.text_write_string(out,api_handle_text(e))
+    api.write_key(out,"tick")
+    tick:u64
+    if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
+    serial.text_write_uint(out,tick)
+    api.write_key(out,"value");serial.text_write_raw(out,value)
+    serial.write_u8(out,'}')
 }
 
 // The value at a path inside a JSON value: names of fields joined by dots and
