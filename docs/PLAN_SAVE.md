@@ -11,7 +11,8 @@ shows the changed entities of a scene. Four stacked branches (each from the one 
    an API call, when no gesture is open (scene edits, every asset history) and no game plays, the
    asset files a step changed are written, then the document if its history state is not the one
    its file holds. Atomic per file; a step of several files is not atomic across them. A write
-   that fails is told once and tried again.
+   that fails is told once and tried again. At the end of a frame the document waits 100 ms
+   after it last changed, as a file does: steps that follow one another are one write.
 2. **Inside an open gesture an asset file lives in the registry** (`asset.registry_memory_*`,
    which `cook/author` also uses): a foliage brush writes its asset every frame, paint every
    80 ms, the navmesh at every revision, and what draws them reads through the registry. It is a
