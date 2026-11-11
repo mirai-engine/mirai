@@ -65,7 +65,7 @@ thumbnail_provider :: proc(s:^Session,kind:asset.Fourcc) -> (provider:Thumbnail_
 }
 
 // The kinds of asset of the plugins that the browser lists: those a plugin
-// opens as documents or declares (Asset_Kind_Provider).
+// opens as documents or declares in its plugin.mirai.
 @(private)
 content_plugin_kinds :: proc(s:^Session,allocator:=context.temp_allocator) -> []asset.Fourcc {
     kinds:=make([dynamic]asset.Fourcc,allocator)

@@ -146,7 +146,7 @@ piece_make :: proc(s:^editor.Session,w:core.World_Ref,info:^core.Table_Info,piec
         if !shape_write(s,w,info,copies[0],&piece.shape) {return core.NONE}
         return copies[0]
     }
-    e:=editor.entity_create(s,{preset=.Empty,name="Shape",transform=core.from_math(piece.world)})
+    e:=editor.entity_create(s,{name="Shape",transform=core.from_math(piece.world)})
     if e==core.NONE {return core.NONE}
     editor.component_add(s,e,info,&piece.shape)
     return e

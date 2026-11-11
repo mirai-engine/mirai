@@ -196,3 +196,45 @@ a_kept_copy_takes_what_the_simulation_uses_and_copies_back_to_the_same_steps :: 
     sim.world_step(&kept.world,1.0/60)
     testing.expect_value(t,sim.world_hash(&kept.world),before)
 }
+
+// As the physics gallery of the demo: a floor, posts, resting boxes, colliders another library makes the bodies
+// of, and a character. A history copy of a tick where nothing moved writes nothing, and the tick walks nothing
+// held; copied back after bodies came and went, the links are those it kept.
+@(test)
+a_history_copy_takes_only_the_links_written_since :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.settings={}
+    f.gravity={0,-9.81,0}
+    for _ in 0..<20 {core.create(&f.entities)}
+    physics_test_box(&f,{0,-0.5,0},{60,0.5,60})
+    for i in 0..<34 {physics_test_box(&f,{f32(i%6)*8-24,1,f32(i/6)*8-21},{0.5,1,0.5})}
+    for i in 0..<30 {physics_test_box(&f,{f32(i%6)*3-8,0.5,f32(i/6)*3-30},{0.4,0.4,0.4},Rigid_Body{type=.Dynamic,mass=2,gravity_scale=1,bullet=true})}
+    for i in 0..<14 {
+        e:=core.create(&f.entities)
+        core.add(&f.transforms,e,core.Transform{{f32(i)*2,1,40},1,{1,1,1}})
+        external:=COLLIDER_DEFAULT;external.kind=.External
+        core.add(&f.colliders,e,external)
+    }
+    walker:=core.create(&f.entities)
+    core.add(&f.transforms,walker,core.Transform{{0,0.1,20},1,{1,1,1}})
+    core.add(&f.colliders,walker,collider_character())
+    core.add(&f.characters,walker,character_default())
+    for _ in 0..<600 {physics_test_step(&f)}
+    kept:Physics_State
+    defer state_destroy(&kept)
+    first,copied:=state_copy_as(&kept,&f.state,true)
+    if !testing.expect(t,copied) {return}
+    physics_test_step(&f)
+    idle,_:=state_copy_as(&kept,&f.state,true)
+    testing.expectf(t,idle==0 && len(f.state.held)==0,"an idle tick walks %d held and its copy writes %d bytes",len(f.state.held),idle)
+    links:=make([]Link,len(kept.links.values));defer delete(links)
+    copy(links,kept.links.values[:])
+    core.remove(&f.characters,walker);core.remove(&f.colliders,walker)
+    for i in 0..<3 {physics_test_box(&f,{f32(i)*3,3,0},{0.4,0.4,0.4},RIGID_BODY_DYNAMIC)}
+    physics_test_step(&f)
+    testing.expect(t,len(f.state.links.values)==len(links)+2)
+    if !testing.expect(t,state_copy(&f.state,&kept)) {return}
+    testing.expect(t,len(f.state.links.values)==len(links) && mem.compare(mem.slice_to_bytes(f.state.links.values[:]),mem.slice_to_bytes(links))==0)
+}

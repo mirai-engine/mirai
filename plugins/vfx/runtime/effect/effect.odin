@@ -26,8 +26,6 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
-KIND :: asset.Fourcc(u32('P')|u32('A')<<8|u32('R')<<16|u32('T')<<24)
-EXTENSION :: ".particle"
 VERSION :: 3
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
@@ -192,7 +190,7 @@ Particle_View :: struct {
 particle_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc,allocator:=context.allocator) -> asset.Error {
     info:=desc.info
     if !particle_check({info=&info,parameters=desc.parameters,hidden=desc.hidden,resources=desc.resources}) {return .Invalid}
-    asset.document_init(doc,KIND,desc.id,allocator)
+    asset.document_init(doc,PARTICLE_KIND,desc.id,allocator)
     doc.kind_version=VERSION
     error:=particle_tables(doc,types,&info,desc)
     if error!=.None {asset.document_destroy(doc)}
@@ -225,7 +223,7 @@ particle_bytes :: proc(types:^asset.Types,desc:Particle_Desc,allocator:=context.
 }
 
 particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Particle_View,error:asset.Error) {
-    asset.kind_check(a,KIND,VERSION) or_return
+    asset.kind_check(a,PARTICLE_KIND,VERSION) or_return
     view.info=asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return
     view.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
     view.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
