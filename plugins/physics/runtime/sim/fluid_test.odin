@@ -9,9 +9,25 @@ ocean :: proc(w:^World,height:f32=0,density:f32=1000,current:=Vec3{}) -> Fluid_H
     return fluid_create(w,{shape=.Plane,position={0,height,0},density=density,current=current})
 }
 
+// The loop of a box of half sizes half around center, turned by yaw about +Y.
+box_loop :: proc(center,half:Vec3,yaw:f32=0) -> (loop:[4]Path_Point) {
+    s,c:=cmath.sincos(yaw)
+    for corner,i in ([4][2]f32{{-1,-1},{1,-1},{1,1},{-1,1}}) {
+        x,z:=corner.x*half.x,corner.y*half.z
+        loop[i].position=center+{c*x+s*z,0,c*z-s*x}
+    }
+    return
+}
+
+// A prism that is a box of half sizes half around center, turned by yaw about +Y.
+box_prism :: proc(w:^World,center,half:Vec3,density:f32=1000,yaw:f32=0,priority:i32=0) -> Fluid_Handle {
+    loop:=box_loop(center,half,yaw)
+    return fluid_create(w,{shape=.Prism,position=center+{0,half.y,0},depth=2*half.y,density=density,priority=priority},loop[:])
+}
+
 @(private="file")
 dry_box :: proc(w:^World,center,half:Vec3,yaw:f32=0) -> Fluid_Handle {
-    return fluid_create(w,{shape=.Box,position=center,half_extents=half,yaw=yaw,priority=1})
+    return box_prism(w,center,half,0,yaw,1)
 }
 
 @(private="file")
@@ -51,9 +67,9 @@ the_fluid_at_a_point_gives_the_surface_over_or_under_it_through_the_dry_boxes ::
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
-    sea:=fluid_create(&w,{shape=.Plane,density=1025,current={0,0,-1},yaw=0.5*PI})
+    sea:=fluid_create(&w,{shape=.Plane,density=1025,current={-1,0,0}})
     dry_box(&w,{0,-5,0},{2,1,2})
-    pool:=fluid_create(&w,{shape=.Box,position={20,5,0},half_extents={2,1,2},density=1000})
+    pool:=box_prism(&w,{20,5,0},{2,1,2})
     testing.expect(t,sea!={} && pool!={})
     expect :: proc(t:^testing.T,w:^World,p:Vec3,height,density:f32,loc:=#caller_location) {
         sample,ok:=fluid_sample(w,p)
@@ -69,12 +85,14 @@ the_fluid_at_a_point_gives_the_surface_over_or_under_it_through_the_dry_boxes ::
     expect(t,&w,{20,2,0},0,0)      // between the two, the sea is the nearest under
     expect(t,&w,{20,9,0},6,0)
     sample,_:=fluid_sample(&w,{0,-1,0})
-    expect_near3(t,sample.current,{-1,0,0},1e-5) // the current turns with the yaw of the sea
+    expect_near3(t,sample.current,{-1,0,0},1e-5)
     expect_near3(t,sample.normal,UP)
     _,found:=fluid_sample(&w,{50,0,50})
     testing.expect(t,found,"the sea reaches everywhere")
     testing.expect_value(t,fluid_create(&w,{shape=.Plane,density=0}),Fluid_Handle{})
-    testing.expect_value(t,fluid_create(&w,{shape=.Box,half_extents={1,0,1},density=1000}),Fluid_Handle{})
+    flat:=box_loop({},{1,0,1})
+    testing.expect_value(t,fluid_create(&w,{shape=.Prism,density=1000},flat[:]),Fluid_Handle{})
+    testing.expect_value(t,fluid_create(&w,{shape=.Prism,depth=1,density=1000},flat[:2]),Fluid_Handle{})
     found_handles:[4]Fluid_Handle
     testing.expect_value(t,fluids_overlap(&w,{{18,-1,-1},{22,5,1}},found_handles[:]),2) // the pool and the sea under it
     fluid_destroy(&w,pool)
@@ -190,9 +208,9 @@ a_body_floats_in_the_water_it_is_in_and_in_both_across_a_border :: proc(t:^testi
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
     river:=fluid_create(&w,{shape=.Path,density=1000},{{{-20,0,0},4,1,1},{{-20,0,-40},4,1,1},{{20,0,-40},4,1,1},{{20,0,0},4,1,1}})
-    lake:=fluid_create(&w,{shape=.Box,position={0,-1,-20},half_extents={8,1,8},density=1000})
-    left:=fluid_create(&w,{shape=.Box,position={-2,-1,40},half_extents={2,1,2},density=1000})
-    right:=fluid_create(&w,{shape=.Box,position={2,-1,40},half_extents={2,1,2},density=1000})
+    lake:=box_prism(&w,{0,-1,-20},{8,1,8})
+    left:=box_prism(&w,{-2,-1,40},{2,1,2})
+    right:=box_prism(&w,{2,-1,40},{2,1,2})
     testing.expect(t,river!={} && lake!={} && left!={} && right!={})
     raft:=solid(&w,Box{{0.4,0.4,0.4}},{0,0.2,-20},500)
     plank:=solid(&w,Box{{1.5,0.1,0.5}},{0,0.1,40},500)
@@ -388,6 +406,30 @@ a_dry_box_takes_the_buoyancy_out_and_a_body_halfway_keeps_the_wet_part :: proc(t
     expect_near3(t,body_center(&w,wet),{0,0,6},1e-4)
 }
 
+// An L of water 2 m deep whose notch, the square from 4 to 8 on x and z, is under a hill: its loop, not its
+// box, decides what is in it, and of the two walls where the loop turns in only the nearer clips.
+@(test)
+a_lake_is_the_loop_of_its_points_and_a_body_in_its_notch_takes_no_water :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    l:=[6]Path_Point{{position={0,0,0}},{position={8,0,0}},{position={8,0,4}},{position={4,0,4}},{position={4,0,8}},{position={0,0,8}}}
+    testing.expect(t,fluid_create(&w,{shape=.Prism,depth=2,density=1000},l[:])!={})
+    notch:=solid(&w,Box{{0.5,0.5,0.5}},{6,-1,6},1000)
+    inside:=solid(&w,Box{{0.5,0.5,0.5}},{2,-1,2},1000)
+    wall:=solid(&w,Box{{0.5,0.5,0.5}},{8,-1,2},1000)
+    corner:=solid(&w,Box{{0.25,0.25,0.25}},{4.2,-1,3.7},1000)
+    Case :: struct {body:Body_Handle,volume:f32}
+    for c in ([?]Case{{notch,0},{inside,1},{wall,0.5},{corner,0.125}}) {
+        load,_:=submerged(&w,c.body)
+        expect_near(t,load.volume,c.volume,1e-5)
+    }
+    test_steps(&w,18)
+    // In the notch a body falls as in air; one as dense as water stays where it is in the L.
+    expect_near(t,body_linear_velocity(&w,notch).y,-9.81*0.3,0.01)
+    expect_near3(t,body_center(&w,inside),{2,-1,2},1e-4)
+}
+
 @(test)
 a_character_floats_with_its_head_out_and_knows_how_deep_its_head_is :: proc(t:^testing.T) {
     w:World
@@ -479,9 +521,10 @@ fluids_repeat_bit_for_bit_from_a_snapshot_and_when_resimulated :: proc(t:^testin
             if step==40 {
                 // The room floods: its air rises off the floor.
                 desc,_:=fluid_desc(w,room)
-                desc.position.y+=1
-                desc.half_extents.y-=1
-                fluid_set(w,room,desc)
+                desc.depth-=2
+                loop:[FLUID_PATH_POINTS]Path_Point
+                fluid_set(w,room,desc,loop[:fluid_path(w,room,&loop)])
+
             }
             world_step(w,1.0/60)
         }
@@ -540,7 +583,8 @@ a_fluid_made_or_changed_is_a_change_of_the_static_world :: proc(t:^testing.T) {
     expect_near3(t,boxes[0].min,{2,0,-2})
     desc,_:=fluid_desc(&w,room)
     desc.position.y+=1
-    fluid_set(&w,room,desc)
+    loop:[FLUID_PATH_POINTS]Path_Point
+    fluid_set(&w,room,desc,loop[:fluid_path(&w,room,&loop)])
     _,count,_=static_changes(&w,next,boxes[:])
     testing.expect_value(t,count,2) // where it was and where it is
 }

@@ -22,6 +22,7 @@ Fixture :: struct {
     levels:core.Table(Level),
     parents:core.Table(core.Parent),
     sections:core.Table(scene.Scene_Reference),
+    splines:core.Table(Spline),
 }
 
 @(private="file")
@@ -35,7 +36,7 @@ place :: proc(f:^Fixture,level:f32,v:Maybe(Volume),position:[3]f32={},scale:f32=
 }
 
 @(private="file")
-where_of :: proc(f:^Fixture) -> Where {return {core.read(&f.volumes),core.read(&f.worlds),core.read(&f.parents),core.read(&f.sections)}}
+where_of :: proc(f:^Fixture) -> Where {return {core.read(&f.volumes),core.read(&f.worlds),core.read(&f.parents),core.read(&f.sections),core.read(&f.splines)}}
 
 @(private="file")
 level_at :: proc(f:^Fixture,point:[3]f32) -> f32 {
@@ -67,12 +68,22 @@ the_shapes_are_as_their_constructors_say_and_a_world_volume_with_extents_is_repo
     check:Volume_Check
     problems:core.Problems
     place(&f,1,box({1,1,1}))
-    volumes_check(core.read(&f.volumes),&check,&problems)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
     testing.expect_value(t,problems.count,0)
     e:=place(&f,2,Volume{extents={4,4,4}})
-    volumes_check(core.read(&f.volumes),&check,&problems)
-    volumes_check(core.read(&f.volumes),&check,&problems)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,e,"volume.unbounded_extents")!=nil && problems.entries[0].count==1)
+    // An outline holds nothing until its entity has a loop of points.
+    testing.expect_value(t,outline(4),Volume{shape=.Outline,extents={0,2,0}})
+    lake:=place(&f,3,outline(4))
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
+    testing.expect(t,core.problem_find(&problems,lake,"volume.outline")!=nil,"an outline without a Spline is reported")
+    core.problems_clear(&problems)
+    core.add(&f.splines,lake,Spline{count=3,points={0={position={0,0,0}},1={position={1,0,0}},2={position={0,0,1}}}})
+    test_world_settle(&f)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
+    testing.expect(t,core.problem_find(&problems,lake,"volume.outline")==nil,"an outline with a loop of points is not reported")
 }
 
 @(test)
@@ -228,18 +239,26 @@ each_shape_holds_the_points_inside_it_and_meets_the_boxes_that_touch_it :: proc(
         // Its up is -X: under it is +X of x=1.
         {"a turned plane",plane(),{position={1,0,0},rotation=quarter,scale=1},{3,50,0},2,1,{0,0,0},{{0,0,0},{1.5,1,1}},{{-1,0,0},{0.5,1,1}},0},
     }
-    for c in cases {
-        testing.expectf(t,abs(depth(c.v,c.pose,c.inside)-c.depth)<1e-4,"%s: %v is %v deep, not %v",c.name,c.inside,depth(c.v,c.pose,c.inside),c.depth)
-        testing.expectf(t,abs(weight(c.v,c.pose,c.inside,c.blend)-c.weight)<1e-4,"%s: %v weighs %v, not %v",c.name,c.inside,weight(c.v,c.pose,c.inside,c.blend),c.weight)
-        testing.expectf(t,holds(c.v,c.pose,c.inside) && !holds(c.v,c.pose,c.outside) && weight(c.v,c.pose,c.outside)==0,"%s: holds %v and not %v",c.name,c.inside,c.outside)
-        testing.expectf(t,overlaps(c.v,c.pose,c.meets) && !overlaps(c.v,c.pose,c.misses),"%s: meets %v and not %v",c.name,c.meets,c.misses)
-        testing.expectf(t,valid(c.v,c.pose),"%s is valid",c.name)
+    check :: proc(t:^testing.T,c:Case,outline:[]mm.Path_Point=nil) {
+        testing.expectf(t,abs(depth(c.v,c.pose,c.inside,outline)-c.depth)<1e-4,"%s: %v is %v deep, not %v",c.name,c.inside,depth(c.v,c.pose,c.inside,outline),c.depth)
+        testing.expectf(t,abs(weight(c.v,c.pose,c.inside,c.blend,outline)-c.weight)<1e-4,"%s: %v weighs %v, not %v",c.name,c.inside,weight(c.v,c.pose,c.inside,c.blend,outline),c.weight)
+        testing.expectf(t,holds(c.v,c.pose,c.inside,outline) && !holds(c.v,c.pose,c.outside,outline) && weight(c.v,c.pose,c.outside,0,outline)==0,"%s: holds %v and not %v",c.name,c.inside,c.outside)
+        testing.expectf(t,overlaps(c.v,c.pose,c.meets,outline) && !overlaps(c.v,c.pose,c.misses,outline),"%s: meets %v and not %v",c.name,c.meets,c.misses)
+        testing.expectf(t,valid(c.v,c.pose,outline),"%s is valid",c.name)
         // What it holds and what it meets are in its bounds.
-        b:=bounds(c.v,c.pose)
+        b:=bounds(c.v,c.pose,outline)
         testing.expectf(t,mm.aabb_overlaps(b,{c.inside,c.inside}) && mm.aabb_overlaps(b,c.meets),"%s: its bounds %v leave out what it holds",c.name,b)
         // The shader weighs it as the processor does.
+        if outline!=nil {return}
         testing.expectf(t,abs(gpu_weight(gpu_volume(c.v,c.pose,{blend=c.blend}),c.inside)-c.weight)<1e-4 && gpu_weight(gpu_volume(c.v,c.pose,{blend=c.blend}),c.outside)==0,"%s: the shader weighs %v at %v",c.name,gpu_weight(gpu_volume(c.v,c.pose,{blend=c.blend}),c.inside),c.inside)
     }
+    for c in cases {check(t,c)}
+    // An L whose notch is the square from 2 to 4 on x and z: the notch and a box in it are inside its
+    // bounds and not in it; its height is 2.
+    l:=[6]mm.Path_Point{{position={0,0,0}},{position={4,0,0}},{position={4,0,2}},{position={2,0,2}},{position={2,0,4}},{position={0,0,4}}}
+    check(t,{"an outline",outline(2),{position={10,0,0},rotation=1,scale=1},{11,0,1},1,1,{13,0,3},{{13.5,-0.5,0.5},{15,0.5,1}},{{12.5,-0.5,2.5},{13.5,0.5,3.5}},1},l[:])
+    check(t,{"a turned scaled outline",outline(2),{position={},rotation=mm.quat_axis_angle({0,1,0},mm.PI/2),scale={2,1,2}},{2,0,-2},1,0.5,{6,0,-6},{{7.5,-0.5,-1},{9,0.5,0}},{{5,-0.5,-7},{7,0.5,-5}},2},l[:])
+    testing.expect(t,!valid(outline(2),mm.TRANSFORM_IDENTITY,l[:2]) && !valid(outline(0),mm.TRANSFORM_IDENTITY,l[:]) && !holds(outline(2),mm.TRANSFORM_IDENTITY,{1,0,1}),"an outline of two points, of no height or without its points holds nothing")
     all:=spatial.Aabb{{-5,-5,-5},{5,5,5}}
     testing.expect(t,holds(world(),mm.TRANSFORM_IDENTITY,{1e30,-1e30,0}) && overlaps(world(),mm.TRANSFORM_IDENTITY,all) && valid(world(),mm.TRANSFORM_IDENTITY))
     testing.expect_value(t,weight(world(),mm.TRANSFORM_IDENTITY,{1,2,3}),f32(1))
