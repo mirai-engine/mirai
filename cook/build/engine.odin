@@ -2,6 +2,7 @@ package build
 
 import "core:fmt"
 import "core:os"
+import "mirai:std/subprocess"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -743,7 +744,7 @@ engine_tasks_run :: proc(root:string,paths:Engine_Paths,libraries:[]Engine_Libra
         waited:=false
         for &task in tasks {
             if task.state!=.Running {continue}
-            state,error:=os.process_wait(task.compile.process,0 if waited else (os.TIMEOUT_INFINITE if running==1 else WAIT_STEP))
+            state,error:=subprocess.wait(&task.compile.process,0 if waited else (os.TIMEOUT_INFINITE if running==1 else WAIT_STEP))
             waited=true
             if !state.exited {
                 if general,is_general:=error.(os.General_Error);is_general && general==.Timeout {continue}

@@ -53,7 +53,7 @@ test_queued :: proc(t:^testing.T,c:^Client) -> json.Value {
 @(test)
 acp_fragments_negotiate_capabilities_and_preserve_utf8_updates :: proc(t:^testing.T) {
     c:=test_client(t)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.pending=.Initialize;c.pending_id=1;c.phase=.Initializing
     first:=`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}},"promptCapabilities":{"image":true,"embeddedContext":true},"mcpCapabilities":{"http":true}},"authMethods":[{"id":"chat-gpt"}]}}`+"\r\n"
@@ -75,7 +75,7 @@ acp_fragments_negotiate_capabilities_and_preserve_utf8_updates :: proc(t:^testin
 @(test)
 acp_session_configures_exact_model_effort_and_resumes_without_replay :: proc(t:^testing.T) {
     c:=test_client(t)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.phase=.Initialized;c.next_id=2;c.load_session=true;c.resume_session=true;c.close_session=true;c.http_mcp=true
     desc:=Session_Desc{cwd=TEST_CWD,model="gpt-6-luna",effort="low",mcp_servers_json=`[{"type":"http","name":"mirai","url":"http://127.0.0.1:7940/mcp","headers":[{"name":"X-Mirai-Task","value":"8-0"}]}]`,meta=`{"claudeCode":{"options":{}}}`}
@@ -134,7 +134,7 @@ acp_session_configures_exact_model_effort_and_resumes_without_replay :: proc(t:^
 @(test)
 acp_ready_session_closure_preserves_the_target_and_aborts_on_error :: proc(t:^testing.T) {
     c:=test_client(t)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.phase=.Ready;c.close_session=true;c.load_session=true
     text_set(c.session[:],"previous-thread")
@@ -174,7 +174,7 @@ acp_ready_session_closure_preserves_the_target_and_aborts_on_error :: proc(t:^te
 @(test)
 acp_session_titles_negotiate_only_the_index_and_rename_before_prompt :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     testing.expect_value(t,initialize_request(&c,true),Error.None)
     request:=test_queued(t,&c)
@@ -225,7 +225,7 @@ acp_session_titles_negotiate_only_the_index_and_rename_before_prompt :: proc(t:^
 @(test)
 acp_session_title_negotiation_is_optional_and_required_when_a_title_is_requested :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     testing.expect_value(t,initialize_request(&c,false),Error.None)
     request:=test_queued(t,&c)
@@ -262,7 +262,7 @@ acp_session_title_negotiation_is_optional_and_required_when_a_title_is_requested
 @(test)
 acp_session_title_errors_do_not_launch_a_prompt_or_leave_a_pending_request :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.phase=.Initialized;c.session_rename=true
     testing.expect_value(t,open_session(&c,{cwd=TEST_CWD,title="Visual task"}),Error.None)
@@ -283,7 +283,7 @@ acp_session_title_errors_do_not_launch_a_prompt_or_leave_a_pending_request :: pr
 @(test)
 acp_prompt_escapes_content_and_permissions_require_an_explicit_response :: proc(t:^testing.T) {
     c:=test_client(t)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.phase=.Ready;c.image=true;c.embedded_context=true
     text_set(c.session[:],"session-1")
@@ -335,7 +335,7 @@ test_event_text :: proc(events:^Test_Events) -> string {
 acp_initialize_announces_compaction_and_reads_steering :: proc(t:^testing.T) {
     for session_titles in ([]bool{false,true}) {
         c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-        defer destroy(&c,nil)
+        defer destroy(&c)
         events:Test_Events
         testing.expect_value(t,initialize_request(&c,session_titles),Error.None)
         request:=test_queued(t,&c)
@@ -349,7 +349,7 @@ acp_initialize_announces_compaction_and_reads_steering :: proc(t:^testing.T) {
 @(test)
 acp_steer_joins_the_running_turn_and_is_answered_by_id :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     blocks:=[]Content{{kind=.Text,text="Also the door"}}
     c.phase=.Ready;c.steering=true
@@ -390,7 +390,7 @@ acp_steer_joins_the_running_turn_and_is_answered_by_id :: proc(t:^testing.T) {
 @(test)
 acp_steer_failures_do_not_end_the_turn :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     blocks:=[]Content{{kind=.Text,text="Also the door"}}
     test_turn(t,&c)
@@ -427,7 +427,7 @@ acp_steer_failures_do_not_end_the_turn :: proc(t:^testing.T) {
 @(test)
 acp_steer_requires_the_announcement :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.pending=.Initialize;c.pending_id=1;c.phase=.Initializing
     receive(&c,`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"_meta":{"steering":{"supported":false}}}}`,collect,&events)
@@ -441,7 +441,7 @@ acp_steer_requires_the_announcement :: proc(t:^testing.T) {
 @(test)
 acp_session_commands_track_compact_until_a_session_opens :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=4096,send_bytes=8192)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.phase=.Initialized
     with:=`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"review"},{"name":"compact"}]}}}`
@@ -461,7 +461,7 @@ acp_session_commands_track_compact_until_a_session_opens :: proc(t:^testing.T) {
 @(test)
 acp_capacity_and_configuration_errors_do_not_substitute_models :: proc(t:^testing.T) {
     c:=test_client(t,receive_bytes=256,send_bytes=512)
-    defer destroy(&c,nil)
+    defer destroy(&c)
     events:Test_Events
     c.phase=.Ready
     text_set(c.session[:],"s")
@@ -504,25 +504,21 @@ acp_idle_poll_does_not_allocate_and_native_transport_exits_after_eof :: proc(t:^
     c:Client
     error:=create(&c,mem.tracking_allocator(&tracking))
     testing.expect_value(t,error,Error.None)
-    p,platform_error:=platform.create({headless=true,process_capacity=2})
-    testing.expect_value(t,platform_error,platform.Error.None)
-    if p==nil {destroy(&c,nil);return}
-    defer platform.destroy(p)
-    defer destroy(&c,p)
+    defer destroy(&c)
     before:=tracking.total_allocation_count
     {
         context.allocator=mem.tracking_allocator(&tracking)
         context.temp_allocator=context.allocator
-        for _ in 0..<1000 {poll(&c,p,nil,nil)}
+        for _ in 0..<1000 {poll(&c,nil,nil)}
     }
     testing.expect_value(t,tracking.total_allocation_count,before)
     when ODIN_OS!=.Windows {
         script:=`read line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}'; cat >/dev/null`
-        testing.expect_value(t,start(&c,p,{command={"sh","-c",script}}),Error.None)
+        testing.expect_value(t,start(&c,{command={"sh","-c",script}}),Error.None)
         events:Test_Events
         deadline:=platform.clock_seconds()+5
         for c.phase!=.Initialized && platform.clock_seconds()<deadline {
-            poll(&c,p,collect,&events)
+            poll(&c,collect,&events)
             platform.sleep_coarse(1_000_000)
         }
         testing.expect_value(t,c.phase,Phase.Initialized)
@@ -530,15 +526,15 @@ acp_idle_poll_does_not_allocate_and_native_transport_exits_after_eof :: proc(t:^
         {
             context.allocator=mem.tracking_allocator(&tracking)
             context.temp_allocator=context.allocator
-            for _ in 0..<1000 {poll(&c,p,collect,&events)}
+            for _ in 0..<1000 {poll(&c,collect,&events)}
         }
         testing.expect_value(t,tracking.total_allocation_count,before)
-        stop(&c,p)
-        for c.process!=0 && platform.clock_seconds()<deadline {
-            poll(&c,p,collect,&events)
+        stop(&c)
+        for c.process.pid!=0 && platform.clock_seconds()<deadline {
+            poll(&c,collect,&events)
             platform.sleep_coarse(1_000_000)
         }
-        testing.expect_value(t,c.process,platform.Process(0))
+        testing.expect_value(t,c.process.pid,0)
         testing.expect_value(t,c.phase,Phase.Stopped)
         testing.expect_value(t,events.counts[.Exited],1)
         testing.expect_value(t,events.counts[.Error],0)

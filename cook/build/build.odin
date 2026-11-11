@@ -391,7 +391,7 @@ job_plugins_start :: proc(job:^Job) {
     for i:=0;i<len(job.plugin_queue); {
         index:=job.plugin_queue[i]
         compiling,linking:=0,0
-        for compile in job.compiles {
+        for &compile in job.compiles {
             if compile.relink {linking+=1} else {compiling+=1}
         }
         room:=linking<job.link_limit if job.plugin_relink[index] else compiling<job.plugin_limit
@@ -708,7 +708,7 @@ job_advance :: proc(job:^Job,wait:bool) -> bool {
             i+=1
             continue
         }
-        state,error:=os.process_wait(job.compiles[i].process,timeout)
+        state,error:=subprocess.wait(&job.compiles[i].process,timeout)
         timeout=0
         if !state.exited {
             if general,is_general:=error.(os.General_Error);is_general && general==.Timeout {
@@ -867,9 +867,8 @@ job_done :: proc(job:^Job) -> ^Job {
 @(private)
 job_fail :: proc(job:^Job,failure:Failure) -> ^Job {
     job.result.status,job.result.failure=.Failed,failure
-    for compile in job.compiles {
-        _=os.process_kill(compile.process)
-        _,_=os.process_wait(compile.process)
+    for &compile in job.compiles {
+        subprocess.release(&compile.process)
     }
     clear(&job.compiles)
     test_build_cancel(&job.test_build)

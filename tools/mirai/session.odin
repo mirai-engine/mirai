@@ -109,6 +109,14 @@ session_log_path :: proc(folder:string) -> string {
     return project.path(folder,".mirai","session.log",allocator=context.temp_allocator)
 }
 
+// Starts an editor that outlives this process, writing stdout and stderr to
+// log, which it truncates.
+detached_logged :: proc(command:[]string,log,working_dir:string) -> (process:subprocess.Process,error:os.Error) {
+    file:=os.open(log,{.Write,.Create,.Trunc}) or_return
+    defer os.close(file)
+    return subprocess.detached({command=command,working_dir=working_dir,stdout=file,stderr=file})
+}
+
 // The port file of the editor of the project at folder, when its process is alive.
 session_find :: proc(folder:string) -> (file:api.Port_File,alive:bool) {
     path:=project.path(folder,".mirai",api.PORT_FILE,allocator=context.temp_allocator)
@@ -269,13 +277,13 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     command:=make([dynamic]string)
     append(&command,build.engine_paths(root,engine).editor_program,"--project",folder,"--headless")
     append(&command,..editor_args)
-    process,error:=subprocess.detached(command[:],log,root)
+    process,error:=detached_logged(command[:],log,root)
     if error!=nil {fmt.eprintfln("mirai session: could not open %s: %v",command[0],error);return {},1}
     session_record_write(folder,{process.pid,editor_args})
     deadline:=time.tick_now()
     for time.duration_seconds(time.tick_since(deadline))<f64(timeout) {
         if found,alive:=session_find(folder);alive && session_answers(found.port) {return found,0}
-        if state,_:=os.process_wait(process,0);state.exited {
+        if state,_:=subprocess.wait(&process,0);state.exited {
             fmt.eprintfln("mirai session: the editor exited before opening the API (exit code %d); its log:",state.exit_code)
             session_log_tail(log)
             return {},1
