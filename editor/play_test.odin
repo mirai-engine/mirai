@@ -58,7 +58,6 @@ play_test_open :: proc(t:^testing.T,f:^Play_Test) -> bool {
     test_session_open(&f.edited,core.world_ref(f.data,&f.info))
     f.s.app=&f.app
     if !test_commands_open(t,&f.s,&f.commands) {return false}
-    f.document.saved=history.edits_state(&f.edits)
     return true
 }
 

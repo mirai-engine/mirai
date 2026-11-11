@@ -49,15 +49,11 @@ Net_Play_Party :: struct {
     ping:int,   // milliseconds of round trip the online players simulate
 }
 
-// What waits for the question about unsaved assets.
-Net_Play_Pending :: enum u8 {None,Serve,Join}
-
 @(storage)
 Net_Play :: struct {
     party:Net_Play_Party,
     phase:Net_Play_Phase,
     role:Net_Play_Role,
-    pending:Net_Play_Pending,
     serial:u32,     // of the game: the offer of the host says which one it serves
     port:int,       // of the server
     invite:u64,     // the token of the invitation of the server
@@ -72,7 +68,7 @@ Multiplayer_Play :: struct {provider:editor.Play_Provider}
 
 multiplayer_play_default :: proc() -> Multiplayer_Play {
     return {provider={
-        start=net_play_start,confirmed=net_play_confirmed,verb=net_play_verb,
+        start=net_play_start,
         menu=net_play_menu,active=net_play_active,stop=net_play_stop,label=net_play_label,poll=net_play_poll,
         play_begin=net_play_begin,play_end=net_play_served_end,pump=net_play_pump,turn=net_play_turn,
         offer=net_play_offer,game=net_play_game,host_menu=net_play_host_menu,joined=net_play_joined,scene_arrived=net_play_scene_arrived,
@@ -117,44 +113,15 @@ net_play_serving :: proc(n:^Net_Play) -> bool {return n!=nil && n.phase!=.Idle &
 local_players :: proc(s:^editor.Session) -> int {return s.play_players!=nil?s.play_players.players:editor.PLAY_PLAYERS_DEFAULT.players}
 
 // Play serves the game when it has online players or guests in the session
-// it shares. From the bar (online -1) unsaved assets are asked about; from
-// the API they are refused, unless saved_only.
+// it shares.
 @(private)
-net_play_start :: proc(s:^editor.Session,online,ping:int,saved_only:bool) -> (taken:bool,error:string) {
+net_play_start :: proc(s:^editor.Session,online,ping:int) -> (taken:bool,error:string) {
     n:=net_play_of(s)
     if n==nil {return}
     if online>=0 {n.party.online=online}
     if ping>=0 {n.party.ping=ping}
     if n.party.online<=0 && !editor.collab_hosting(s) {return}
-    if !saved_only {
-        if unsaved:=editor.assets_unsaved_paths(s);len(unsaved)>0 {
-            if online>=0 {return true,editor.play_unsaved(s)}
-            n.pending=.Serve
-            editor.confirm_open(s,.Play_Plugin,unsaved)
-            return true,""
-        }
-    }
     return true,serve(s,n)
-}
-
-@(private)
-net_play_confirmed :: proc(s:^editor.Session) {
-    n:=net_play_of(s)
-    if n==nil {return}
-    pending:=n.pending
-    n.pending=.None
-    error:=""
-    #partial switch pending {
-    case .Serve: error=serve(s,n)
-    case .Join:  error=join(s,n)
-    }
-    if error!="" {editor.notify(s,error)}
-}
-
-@(private)
-net_play_verb :: proc(s:^editor.Session) -> string {
-    n:=net_play_of(s)
-    return n!=nil && n.pending==.Join?"Join":"Play"
 }
 
 // Starts Play serving the game on the network, with its online players. Returns why it could not.
@@ -168,6 +135,8 @@ serve :: proc(s:^editor.Session,n:^Net_Play) -> string {
     }
     editor.tools_release(s)
     history.edits_commit(s.edits,editor.edited_world(s),s.selection)
+    // Its players read the files.
+    editor.files_flush(s,true)
     if error:=editor.document_write(s,editor.play_copy_file(s,editor.PLAY_SCENE),false);error!=.None {
         return fmt.tprintf("The scene could not be copied: %s",editor.document_error_text(error))
     }
@@ -388,7 +357,7 @@ net_play_end :: proc(s:^editor.Session,n:^Net_Play,reason:string) {
     editor.player_processes_close(s)
     if n.mapping_on {wire.mapping_close(&n.mapping)}
     n.mapping_on=false
-    n.phase,n.scene_ready,n.serial,n.port,n.invite,n.pending=.Idle,false,0,0,0,.None
+    n.phase,n.scene_ready,n.serial,n.port,n.invite=.Idle,false,0,0,0
     base.text_set(n.reason[:],reason)
     if reason!="" {
         log.warn(reason)
@@ -457,11 +426,7 @@ net_play_host_menu :: proc(s:^editor.Session,offered:bool) {
     if n.phase!=.Idle && n.role==.Client {
         if ui.menu_item(ctx,ui.id(ctx,"leave"),"Leave game",{icon=.Stop}) {net_play_stop(s)}
     } else if ui.menu_item(ctx,ui.id(ctx,"join"),"Join game",{icon=ui.icon_user(u8(editor.User_Icon.Connection)),disabled=!offered || n.phase!=.Idle}) {
-        // Its player reads the saved files.
-        if unsaved:=editor.assets_unsaved_paths(s);len(unsaved)>0 {
-            n.pending=.Join
-            editor.confirm_open(s,.Play_Plugin,unsaved)
-        } else if error:=join(s,n);error!="" {editor.notify(s,error)}
+        if error:=join(s,n);error!="" {editor.notify(s,error)}
     }
 }
 

@@ -27,7 +27,7 @@ Api_Asset_Users_Params :: struct {
 }
 
 Api_Asset_Users_Result :: struct {
-    used_by:[]string `mirai:"label=The files that reference the asset or a part it owns, by id, and the open documents whose unsaved changes do (Untitled for one never saved): moving it keeps them working and deleting it breaks them"`,
+    used_by:[]string `mirai:"label=The files that reference the asset or a part it owns, by id: moving it keeps them working and deleting it breaks them"`,
 }
 
 ASSET_DELETE_USERS :: 4 // rows of the files that use it; the rest is a count
@@ -62,28 +62,13 @@ asset_delete_all :: proc(s:^Session,r:^asset.Registry,id:base.Asset_Id) -> (file
 }
 
 // What uses what deleting moves and is not moved with it, by path: the files
-// that reference it, and the open documents whose unsaved changes do
-// ("Untitled" for one never saved).
+// that reference it.
 @(private)
 asset_delete_users :: proc(s:^Session,r:^asset.Registry,files:[]u32) -> []string {
     users:=make([dynamic]string,context.temp_allocator)
     for at in files {
         for user in asset.registry_dependents(r,r.files[at].id) {
             if !slice.contains(files,user) && !slice.contains(users[:],r.files[user].path) {append(&users,r.files[user].path)}
-        }
-    }
-    ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    for i in -1..<len(s.documents) {
-        world:=s.edit_world if i<0 else s.documents[i].world
-        if i==s.active_document || world==nil || !(document_dirty(s) if i<0 else document_tab_dirty(s,i)) {continue}
-        clear(&ids)
-        host.world_asset_ids(core.world_ref(world,s.info),&ids)
-        for at in files {
-            if !slice.contains(ids[:],r.files[at].id) {continue}
-            path:=document_path(s.document if i<0 else &s.documents[i].document)
-            if path=="" {path="Untitled"}
-            if !slice.contains(users[:],path) {append(&users,path)}
-            break
         }
     }
     return users[:]
@@ -124,8 +109,8 @@ asset_delete :: proc(s:^Session,id:base.Asset_Id) -> (moved:[]string,message:str
     files,sidecar:=asset_delete_all(s,r,id)
     paths:=make([]string,len(files),context.temp_allocator)
     for at,i in files {paths[i]=strings.clone(r.files[at].path,context.temp_allocator)}
-    // What memory holds of them goes first, or the registry would keep answering for them.
-    assets_discard(s,paths)
+    // What the registry holds of them goes first, or it would keep answering for them.
+    for path in paths {_,_=asset.registry_memory_drop(r,path)}
     done:=make([dynamic]string,context.temp_allocator)
     for path in paths {
         if !platform.trash(asset.registry_file_path(r,path,context.temp_allocator)) {

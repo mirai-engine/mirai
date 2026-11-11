@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/build"
@@ -12,27 +13,35 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// Git from the editor: the project in a repository, its changes, commit, push
-// and pull. The commands run in editor/git; here is what they need of the
-// session (unsaved work, the files of the project, the assets read again) and
-// what starts them. A pull that leaves files in conflict puts the editor in
+// Git from the editor: the project in a repository, its changes, what is kept
+// of them (the index), commit, push and pull. The commands run in editor/git; here is what they need of the
+// session (the files of the project, the assets read again) and what starts
+// them. A pull that leaves files in conflict puts the editor in
 // merge mode: the conflicts are resolved in git_merge.odin. The editor writes
 // the lines of .gitattributes of the kinds of asset on Initialize.
 
 GIT_FETCH_SECONDS :: 120 // how often an editor with a window brings what the remote has
+GIT_STATUS_SECONDS :: 1  // how often the changes are read again while the Git tab is hidden
+
+// Why the pending changes are listed: the editor found them when it opened, or it ends.
+Git_Notice :: enum u8 {None,Open,Quit}
 
 @(storage)
 Git :: struct {
     using repo:git.Repository,
     init_later:bool,            // Initialize runs once the check says git is there and the project is no repository
+    notice:Git_Notice,          // what Modal.Pending asks about
+    told:bool,                  // the pending changes the editor found when it opened were told
+    quits:bool,                 // the editor ends once the changes are kept or discarded
+    warned:bool,                // a headless editor said its project is no repository
     history_scroll:[2]f32,
     history_drag:[2]f32,        // the height of the history and the pointer when its edge was pressed
-    discard_trashed:[dynamic]string, // what Discard sends to the trash once git is done
     scroll:[2]f32,         // of the list of changes
     merge:Git_Merge,
+    entities:Git_Entities,
     refreshed:f64,         // platform clock of the last refresh
     fetched:f64,           // platform clock of the last fetch; 0: none yet
-    stale:bool,            // something the tab shows may have changed: it is read again when shown
+    stale:bool,            // something it shows may have changed: it is read again
     seen:[2]u64,           // the revisions of the registry and of the reviews of agents the last read saw
     panel_frame:u64,       // the frame the tab was last built in
     panel_shown:bool,
@@ -71,7 +80,8 @@ git_schedule :: proc(s:^Session) {
         git.start(g,git_roots(s),.Fetch)
         return
     }
-    if g.stale && shown {
+    // The tabs show what is pending too: read again with the tab hidden, less often.
+    if g.stale && g.repository && (shown || now-g.refreshed>=GIT_STATUS_SECONDS) {
         g.stale=false
         git.start(g,git_roots(s),.Refresh)
     }
@@ -113,19 +123,14 @@ git_init :: proc(s:^Session) -> string {
     return ""
 }
 
-// Commits the changes not left out with the message typed, and pushes them
-// after when push is set.
+// Commits what is kept with the message typed, or every change when nothing
+// is kept, and pushes after when push is set.
 git_commit :: proc(s:^Session,push:bool) -> string {
     g:=s.git
     if git.working(g) {return "Wait for git to finish"}
     if g.merging {return "Resolve the conflicts of the merge first"}
     if strings.trim_space(string(g.message[:g.message_length]))=="" {return "Write a message for the commit"}
-    included,left_out:=0,0
-    for change in g.changes {
-        if change.left_out {left_out+=1} else {included+=1}
-    }
-    if left_out>0 && included==0 {return "Every change is left out"}
-    if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save first: a commit takes the files as they are saved"}
+    files_flush(s,true)
     git.start(g,git_roots(s),push?.Commit_Push:.Commit)
     return ""
 }
@@ -138,63 +143,84 @@ git_pull :: proc(s:^Session) -> string {
     if git.working(g) {return "Wait for git to finish"}
     if g.merging {return "Resolve the conflicts of the merge first"}
     if base.text_get(g.remote[:])=="" {return "The repository has no remote to pull from"}
-    if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save first"}
     if len(g.changes)>0 {return "Commit your changes before pulling"}
     git.start(g,git_roots(s),.Pull)
     return ""
 }
 
-// Puts the changes of some files back as the last commit has them, or all
-// of them with paths empty; a file git does not track goes to the trash.
-// With unsaved work it does not: what memory holds would be written again.
-git_discard :: proc(s:^Session,paths:[]string) -> string {
+// The path of a file of the project from the root of the repository, as
+// git.Change names it; "" for one outside it.
+git_path :: proc(s:^Session,file:string) -> string {
+    root:=base.text_get(s.git.root[:])
+    if root=="" || len(file)<=len(root)+1 || file[len(root)]!='/' || !project.path_same(file[:len(root)],root) {return ""}
+    return file[len(root)+1:]
+}
+
+// Whether a file of the project has what the index does not, as git last said.
+git_pending :: proc(s:^Session,file:string) -> bool {
+    g:=s.git
+    if g==nil || file=="" {return false}
+    path:=git_path(s,file)
+    for &change in g.changes {
+        if change.pending && project.path_same(base.text_get(change.path[:]),path) {return true}
+    }
+    return false
+}
+
+// How many files of the project are pending, as git last said.
+git_pending_count :: proc(s:^Session) -> (count:int) {
+    if s.git==nil {return}
+    for change in s.git.changes {count+=int(change.pending && change.status!='U')}
+    return
+}
+
+// Keeps (adds to the index), takes out of what is kept, or discards (puts
+// back from the index; a file git does not track goes to the trash) the
+// changes of some files, by their paths from the root of the repository, or
+// all of them with none.
+git_changes_run :: proc(s:^Session,operation:git.Operation,paths:[]string) -> string {
     g:=s.git
     if git.working(g) {return "Wait for git to finish"}
+    if !g.repository {return "The project is not in a repository"}
     if g.merging {return "Resolve the conflicts of the merge first"}
-    if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save or discard the unsaved changes first"}
-    for list in ([3]^[dynamic]string{&g.discard_paths,&g.discard_staged,&g.discard_trashed}) {
-        for path in list {delete(path)}
-        clear(list)
-    }
-    for &change in g.changes {
-        path:=base.text_get(change.path[:])
-        if change.status=='U' {continue}
-        if len(paths)>0 {
-            wanted:=false
-            for p in paths {if p==path {wanted=true;break}}
-            if !wanted {continue}
-        }
-        switch {
-        case change.tracked: append(&g.discard_paths,strings.clone(path))
-        case change.staged:  append(&g.discard_staged,strings.clone(path));append(&g.discard_trashed,strings.clone(path))
-        case:                append(&g.discard_trashed,strings.clone(path))
-        }
-    }
-    if len(g.discard_paths)+len(g.discard_trashed)==0 {return "Nothing to discard"}
-    git.start(g,git_roots(s),.Discard)
+    files_flush(s,true)
+    git.start_paths(g,git_roots(s),operation,paths)
     return ""
 }
 
-// After git put the files back: those it does not track go to the trash,
-// the assets are read again, and the scene open in a tab reads its file again.
+// Keeps the document in front and the files its steps wrote.
+git_keep_front :: proc(s:^Session) -> string {
+    files:=make([dynamic]string,context.temp_allocator)
+    add :: proc(s:^Session,files:^[dynamic]string,file:string) {
+        if path:=git_path(s,file);path!="" && !slice.contains(files[:],path) {append(files,path)}
+    }
+    if d:=asset_document_active(s);d!=nil {
+        path:=asset_document_path(s,d)
+        if r:=files_registry(s);r!=nil && path!="" && !asset.registry_outside(path) {path=asset.registry_file_path(r,path,context.temp_allocator)}
+        add(s,&files,path)
+        for &step in d.history.steps {for &file in step.files {add(s,&files,file.path)}}
+    } else {
+        add(s,&files,document_file(s.document))
+        for &step in s.edits.steps {for &file in step.files {add(s,&files,file.path)}}
+    }
+    if len(files)==0 {return "The document in front has no file of the repository"}
+    return git_changes_run(s,.Keep,files[:])
+}
+
+// After git put the files back: those it does not track go to the trash and
+// the assets are read again; the documents follow their files with the next
+// flush, and the one in front whose file is gone closes.
 @(private)
 git_discarded :: proc(s:^Session,ok:bool) {
     g:=s.git
     root:=base.text_get(g.root[:])
-    if ok {
-        for path in g.discard_trashed {
-            if !platform.trash(project.path(root,path,allocator=context.temp_allocator)) {notify(s,fmt.tprintf("%s could not be moved to the trash",path))}
-        }
-    }
-    open:=document_file(s.document)
-    reopen:=false
     files:=make([dynamic]string,context.temp_allocator)
-    for list in ([2]^[dynamic]string{&g.discard_paths,&g.discard_trashed}) {
-        for path in list {
-            absolute:=project.path(root,path,allocator=context.temp_allocator)
-            if project.path_same(absolute,open) {reopen=true}
-            append(&files,absolute)
-        }
+    for &change in g.changes {
+        if !git.takes(g,&change) {continue}
+        path:=base.text_get(change.path[:])
+        absolute:=project.path(root,path,allocator=context.temp_allocator)
+        if ok && !change.tracked && !platform.trash(absolute) {notify(s,fmt.tprintf("%s could not be moved to the trash",path))}
+        append(&files,absolute)
     }
     if s.app!=nil && s.app.assets!=nil {
         assets_wrote(s,..files[:])
@@ -202,7 +228,54 @@ git_discarded :: proc(s:^Session,ok:bool) {
             if relative,inside:=asset.registry_relative(&s.app.assets.registry,file);inside {host.app_asset_changed(s.app,relative)}
         }
     }
-    if reopen && os.exists(open) {scene_open(s,open)}
+    if open:=document_file(s.document);open!="" && !os.exists(open) {
+        for file in files {
+            if project.path_same(file,open) {document_close_active(s);break}
+        }
+    }
+}
+
+// Why the editor edits nothing in its project: git is not there, or the
+// project is in no repository. "" when it can, and before git answered.
+git_missing :: proc(s:^Session) -> string {
+    g:=s.git
+    if g==nil || !s.has_project || !g.checked || g.init_later || g.operation==.Init {return ""}
+    if !g.available {return "Git was not found: the editor keeps the changes of a project with it. Install git and open the project again"}
+    if !g.repository {return "The project is not in a git repository: git.init makes it one, or `git init` in its folder"}
+    return ""
+}
+
+// The state of the repository was read: what the editor says once of it, and
+// the dialog that stands while the project is in no repository.
+@(private)
+git_read :: proc(s:^Session) {
+    g:=s.git
+    windowed:=s.gui!=nil && !s.headless && !(s.projects!=nil && s.projects.launcher)
+    if missing:=git_missing(s);missing!="" {
+        if windowed && s.gui.modal==.None {s.gui.modal=.No_Repository}
+        if !windowed && !g.warned {
+            g.warned=true
+            fmt.eprintfln("mirai: %s: %s",s.project_root,missing)
+        }
+        return
+    }
+    if s.gui!=nil && s.gui.modal==.No_Repository {s.gui.modal=.None}
+    if g.told || !g.repository {return}
+    g.told=true
+    if windowed && s.gui.modal==.None && git_pending_count(s)>0 {
+        g.notice=.Open
+        s.gui.modal=.Pending
+    }
+}
+
+// The editor is asked to end with pending changes: it lists them first.
+// False when there is nothing to ask.
+git_quit_ask :: proc(s:^Session) -> bool {
+    g:=s.git
+    if g==nil || s.gui==nil || s.headless || !g.repository || g.merging || git_pending_count(s)==0 {return false}
+    g.notice=.Quit
+    s.gui.modal=.Pending
+    return true
 }
 
 // Follows the command that runs, between frames, and starts what git does on its own.
@@ -233,6 +306,7 @@ git_ended :: proc(s:^Session) {
     case .Refresh,.Check:
         if g.merging && !g.merge.loaded {git_merge_load_start(s)}
         else if !g.merging && g.merge.loaded {git_merge_clear(g)}
+        git_read(s)
         if g.init_later {
             g.init_later=false
             if g.available && !g.repository {
@@ -242,9 +316,14 @@ git_ended :: proc(s:^Session) {
     case .Finish:
         if !failed {git_merge_finished(s)}
         git.start(g,git_roots(s),.Refresh)
-    case .Discard:
-        git_discarded(s,!failed)
+    case .Base:
+        git_entities_read(s)
+    case .Keep,.Discard:
+        if finished==.Discard {git_discarded(s,!failed)}
+        quits:=g.quits && !failed
+        g.quits=false
         git.start(g,git_roots(s),.Refresh)
+        if quits {documents_quit(s,true,true)}
     case:
         git.start(g,git_roots(s),.Refresh)
     }

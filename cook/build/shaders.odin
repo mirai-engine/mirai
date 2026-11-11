@@ -86,9 +86,8 @@ shader_sources :: proc(p:^project.Project,allocator:=context.allocator) -> (sour
 // in the manifest); once they are, shaders_first names a generation that
 // loads alone with them. idle: stages compiled after the others; once every
 // other one is, shaders_active names a generation that loads alone with
-// them. overlay: sources read from memory instead of their files (what an
-// editor holds unsaved), copied here.
-shaders_start :: proc(p:^project.Project,first:[]string={},overlay:[]shaders.Overlay={},idle:[]string={},allocator:=context.allocator) -> ^Shaders_Job {
+// them.
+shaders_start :: proc(p:^project.Project,first:[]string={},idle:[]string={},allocator:=context.allocator) -> ^Shaders_Job {
     job:=new(Shaders_Job,allocator)
     job.allocator=allocator
     _=virtual.arena_init_growing(&job.arena)
@@ -103,9 +102,6 @@ shaders_start :: proc(p:^project.Project,first:[]string={},overlay:[]shaders.Ove
         return job
     }
     sources,own:=shader_sources(p,a)
-    // A program the editor made and did not save yet is of the project too.
-    folder:=strings.concatenate({project.folder_path(p.root,.Shaders,context.temp_allocator),"/"},context.temp_allocator)
-    for entry in overlay {own||=!entry.removed && strings.has_suffix(entry.path,".slang") && strings.has_prefix(entry.path,folder)}
     if !own && len(sources)==0 {
         if os.is_file(project.path(job.result.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             if base.remove_all(job.result.output)!=nil {return finish(job,.Failed,"the generation of an earlier build could not be removed")}
@@ -115,9 +111,8 @@ shaders_start :: proc(p:^project.Project,first:[]string={},overlay:[]shaders.Ove
     if p.engine_root=="" {return finish(job,.Failed,"the root of the engine is not known")}
     job.options={
         root=strings.clone(p.engine_root,a),project=strings.clone(p.root,a),sources=sources,output=job.result.output,
-        progress=&job.progress,overlay=make([]shaders.Overlay,len(overlay),a),
+        progress=&job.progress,
     }
-    for entry,i in overlay {job.options.overlay[i]={strings.clone(entry.path,a),slice.clone(entry.data,a),entry.removed}}
     if len(first)>0 {
         folder,error:=os.make_directory_temp("","mirai-shaders-first-*",a)
         if error!=nil {return finish(job,.Failed,"the folder of the first stages could not be made")}

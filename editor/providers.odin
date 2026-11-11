@@ -38,10 +38,8 @@ Simulation_Provider :: struct {
 Play_Provider :: struct {
     // Play was asked from Edit: taken when the plugin starts its game instead,
     // with why it could not. online and ping come from play.start: -1, what
-    // its menu says. saved_only plays with the saved files without asking.
-    start:proc(s:^Session,online,ping:int,saved_only:bool) -> (taken:bool,error:string),
-    confirmed:proc(s:^Session), // the question about unsaved assets its start asked was answered: it goes on
-    verb:proc(s:^Session) -> string, // what that question goes on to do: "Play", "Join"
+    // its menu says.
+    start:proc(s:^Session,online,ping:int) -> (taken:bool,error:string),
     menu:proc(s:^Session),      // its rows in the menu of the Play button
     active:proc(s:^Session) -> bool, // its game runs: Play and Simulate wait, and Stop ends it
     stop:proc(s:^Session),
@@ -385,10 +383,10 @@ play_plugin_poll :: proc(s:^Session) {
 
 // Play from Edit: the game of the plugin when it takes it. taken is false for a Play alone.
 @(private)
-play_plugin_start :: proc(s:^Session,online,ping:int,saved_only:bool) -> (taken:bool,error:string) {
+play_plugin_start :: proc(s:^Session,online,ping:int) -> (taken:bool,error:string) {
     p:=providers(s)
     if !p.plays || p.play.start==nil {return}
-    taken,error=p.play.start(s,online,ping,saved_only)
+    taken,error=p.play.start(s,online,ping)
     // A new Play of the user, on the network: the last one kept goes.
     if taken {replay_free(s)}
     return

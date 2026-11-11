@@ -26,7 +26,7 @@ Stroke_Params :: struct {
 
 Stroke_Result :: struct {
     id:base.Entity_Id,
-    colors:base.Asset_Id `mirai:"label=The .paint the entity shows now over its mesh; unsaved until saved"`,
+    colors:base.Asset_Id `mirai:"label=The .paint the entity shows now over its mesh"`,
     path:[128]u8 `mirai:"text,label=Of the .paint under the asset root"`,
     vertices:u32 `mirai:"label=Of the mesh"`,
     changed:u32 `mirai:"label=Vertices whose color the stroke changed"`,
@@ -42,7 +42,7 @@ Clear_Result :: struct {cleared:u32}
 api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,"paint","Paint",.Edit,{key=.B,set=true})
     defaults:=Stroke_Params{radius=RADIUS_DEFAULT,strength=STRENGTH_DEFAULT,color=COLOR_DEFAULT}
-    editor.api_method_register(s,{params=type_info_of(Stroke_Params),result=type_info_of(Stroke_Result),name="paint.stroke",summary="Paints the vertex colors of an entity over the mesh it shows with the brush of the Paint tool along world points, at every level of detail; other entities of the mesh keep theirs. One step of undo; the colors are a .paint that stays unsaved until saved.",defaults=&defaults,run=api_stroke})
+    editor.api_method_register(s,{params=type_info_of(Stroke_Params),result=type_info_of(Stroke_Result),name="paint.stroke",summary="Paints the vertex colors of an entity over the mesh it shows with the brush of the Paint tool along world points, at every level of detail; other entities of the mesh keep theirs. One step of undo; the colors are a .paint of the entity.",defaults=&defaults,run=api_stroke})
     editor.api_method_register(s,{params=type_info_of(Clear_Params),result=type_info_of(Clear_Result),name="paint.clear",summary="Gives painted entities back the vertex colors of their mesh. One step of undo.",run=api_clear})
 }
 

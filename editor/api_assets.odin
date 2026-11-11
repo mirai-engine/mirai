@@ -79,13 +79,12 @@ Api_Detach_Result :: struct {
     asset:base.Asset_Id `mirai:"label=The part"`,
     path:string `mirai:"label=Its path under the asset folder"`,
     owner:base.Asset_Id `mirai:"label=The asset it was a part of"`,
-    unsaved:bool `mirai:"label=Always true: the change waits for asset.save"`,
 }
 
 // What api_asset_delete (asset_delete.odin) writes.
 Api_Asset_Delete_Result :: struct {
     moved:[]string `mirai:"label=The paths moved to the trash: the asset and its parts"`,
-    used_by:[]string `mirai:"label=The files and the open documents with unsaved changes that use what moved; they keep the reference"`,
+    used_by:[]string `mirai:"label=The files that use what moved; they keep the reference"`,
     error:string `mirai:"optional,label=Why the rest could not be moved after some were"`,
 }
 
@@ -98,7 +97,7 @@ api_assets_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=type_info_of(Api_Asset_Create_Params),result=type_info_of(Api_Asset_Create_Result),run=api_asset_create})
     api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=type_info_of(Api_Asset_Users_Params),result=type_info_of(Api_Asset_Users_Result),flags={.Read_Only},run=api_asset_users})
     api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=type_info_of(Api_Asset_Delete_Params),result=type_info_of(Api_Asset_Delete_Result),flags={.Destructive},run=api_asset_delete})
-    api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, unsaved changes, a folder into itself and outside Edit.",params=type_info_of(Api_Asset_Move_Params),result=type_info_of(Api_Asset_Moved_Result),run=api_asset_move})
+    api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, files being edited, a folder into itself and outside Edit.",params=type_info_of(Api_Asset_Move_Params),result=type_info_of(Api_Asset_Moved_Result),run=api_asset_move})
 }
 
 // ---------------------------------------------------------------- component.list

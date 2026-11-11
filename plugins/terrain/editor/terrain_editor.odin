@@ -144,8 +144,8 @@ stroke_baseline :: proc(t:^Terrain_Tool) -> bool {
     entry.held,entry.revision,entry.stamp=true,stroke.revision,stroke.stamp
     return true
 }
-// Puts a source in the file of its terrain, in the memory of the registry,
-// unsaved, outside the history of the editor (terrain_history.odin).
+// Puts a source in the file of its terrain, outside the history of the
+// editor (terrain_history.odin).
 @(private)
 terrain_write :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,source:^terrain.Source,keep:=false) -> bool {
     path,found:=terrain.terrain_file(a,id)

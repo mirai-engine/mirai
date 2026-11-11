@@ -65,7 +65,7 @@ texts_text :: proc(t:^Texts,key,code:string) -> string {
     return ""
 }
 
-// The texts of the assets, unsaved changes included. source: the code of the
+// The texts of the assets as the registry holds them. source: the code of the
 // language they are written in.
 texts_read :: proc(a:Assets,source:string) -> (t:Texts) {
     context.allocator=context.temp_allocator

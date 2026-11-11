@@ -34,11 +34,10 @@ libraries.
   call (`character.setup` writes assets and components in a single one): `history.undo/redo` apply
   it only if the file is still as the step left it, and the review of an AI turn lists it in
   `changed_files` and reverts it.
-- Publishing leaves the asset in the registry unsaved: `asset.save` writes it, `asset.discard`
-  returns to what was saved and a created asset (also by `character.setup`, `request`, a clip verb
-  or a bake) exists only in the registry until saved. Runtime, preview, Play and inspectors read it
-  from there. Editing a shared asset affects its consumers when they reload; what is requested in
-  Play/Simulation is not saved.
+- Publishing writes the asset when the step ends, and a created one (also by `character.setup`,
+  `request`, a clip verb or a bake) is a file from then on. Runtime, preview, Play and inspectors
+  read it through the registry. Editing a shared asset affects its consumers when they reload;
+  what is requested in Play/Simulation is not written.
 - A validation fails with `data.path/code/expected/actual/fix`, and `fix` says how to correct it
   (which method creates what is missing, which values the field admits). The parser rejects unknown
   fields, arrays out of capacity and non-finite values before the handler; an unknown enum or bit
@@ -76,9 +75,10 @@ libraries.
 
 ## Character
 
-`animation.character.setup` builds a character from the saved body of the skeleton of its rig (or a
-detected unsaved one) and a clip library (by default, the one it plays). With `skeleton` instead of
-`entity` it needs `library`, only writes the assets and returns them, and changes no entity.
+`animation.character.setup` builds a character from the body stored in the skeleton of its rig (or a
+detected one that is not stored) and a clip library (by default, the one it plays). With `skeleton`
+instead of `entity` it needs `library`, only writes the assets and returns them, and changes no
+entity.
 
 - It classifies the clips by the words of their name: idle, stand, walk, jog, run and sprint serve
   the walking mode (with start, stop, turn or pivot they do not loop); fall, air or a looping jump,
@@ -121,10 +121,10 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
   side; `animation.clip.edit` with `Face_Rest` turns it back to the rest facing of the body, which
   the `Character` then turns. The body faces where the joint that carries the pelvis does, so a
   turn split between it and the joints above (a stop that turns toward a camera) goes whole.
-- With the body saved in the `.skeleton`, the assets name
-  [parts and regions](animation.md#components-and-shared-data) (`@head`, `@upper_body`) and
-  serve another skeleton with a body; with a detected unsaved one they name bones. Legs, pelvis and
-  the warped spine are never named: they are read from the body.
+- With the body stored in the `.skeleton`, the assets name [parts and
+  regions](animation.md#components-and-shared-data) (`@head`, `@upper_body`) and serve another
+  skeleton with a body; with a detected one that is not stored they name bones. Legs, pelvis and the
+  warped spine are never named: they are read from the body.
 - It returns the state of each capability (`Ready`, `Partial`, `Missing`) with its `fix` and the
   chosen clips with their velocities.
 
@@ -166,7 +166,7 @@ an actor), whose marks a drag moves and the right button deletes.
 
 - It keeps only its view (head, zoom, range, the track and key chosen, the `.anim` it reads): every
   edit is a call of `animation.key.set`, `animation.track.set`, `animation.marker.set` or
-  `animation.key.capture` through `editor.command_call`, one step of undo, in memory until Save.
+  `animation.key.capture` through `editor.command_call`, one step of undo.
 - The scene shows the clip at the head because the tool seeks it there, as the preview of an
   `Animation`; turning it off takes the clip back to its start. A new key at the head takes the
   value the track has there.

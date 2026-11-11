@@ -25,9 +25,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [commands and shortcuts](references/editor.md#commands-and-shortcuts) (what a menu entry, a
   shortcut and a button run, and how a plugin adds its own); the past of a Play, going back to a
   tick and recording it at fixed fps: [history and recording](references/editor.md#play).
-- **Documents, tabs, recovery, undo, edit procedures, selection**:
+- **Documents, tabs, the file as the state, undo, edit procedures, selection**:
   [documents](references/document.md#document-and-scenes),
-  [recovery](references/document.md#recovery-and-failures),
+  [the file is the state](references/document.md#the-file-is-the-editors-state),
   [edits and undo](references/document.md#edits-and-undo),
   [edit procedures](references/document.md#world-edit-procedures) and
   [selection](references/document.md#selection); the selection as an undo step:
@@ -83,10 +83,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [pins](references/ai-tasks.md#pins-annotations-and-provenance); how the panel shows all of it
   (status line, report cards, subagent view, expanded chat, popups, marks):
   [AI panel](references/panels.md#ai-panel).
-- **Attribution, Finish, Revert, Restore, Retry, persistence of the review**:
+- **Attribution, Finish, Revert, Restore, Retry, the record of the review**:
   [change sets](references/ai-review.md#change-sets),
   [finish, revert and retry](references/ai-review.md#finish-revert-and-retry) and
-  [persistence](references/ai-review.md#persistence-and-capacity).
+  [the record](references/ai-review.md#the-record-and-its-capacity).
 - **Git** (Git tab, init, commit, push, pull, merge mode, `git.*` methods):
   [operations](references/git.md#operations) and [merge mode](references/git.md#merge-mode).
 - **Tools, panels, cards, inspection modes, API methods, inspector, asset types and thumbnails of
@@ -138,13 +138,13 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 4. A created or copied entity has `core.Id` (`core.id_new` with `Session.id_state`), `core.Name`
    (`name_free`) and `core.Transform`; its other components appear when the loop function
    finishes.
-5. A project file that an edit writes (materials, programs, particles, animation assets) enters
-   its step with `file_write` and its bytes; an asset or the source of a program stays in memory,
-   unsaved, until Save ([files](references/document.md#edits-and-undo),
-   [programs](references/document.md#unsaved-programs)). The world of a Play, components declared
-   `derived` and derived rows without `Id` do not enter the undo; any other component does, by
-   its presence when no field of it is saved. Painting
-   and terrain leave in the undo the reference to a revision of the asset, not the file.
+5. A project file that an edit writes (materials, programs, particles, animation assets) enters its
+   step with `file_write` and its bytes; the flush at the end of the step writes it
+   ([files](references/document.md#edits-and-undo), [the file is the
+   state](references/document.md#the-file-is-the-editors-state)). The world of a Play, components
+   declared `derived` and derived rows without `Id` do not enter the undo; any other component does,
+   by its presence when no field of it is saved. Painting and terrain leave in the undo the
+   reference to a revision of the asset, not the file.
 6. Apply the [tables](../mirai-core/references/core.md#tables) contract from editor tools too.
 7. A change to an API method, a field tag or the scene format updates `editor/api`, plugins, the
    demo and this skill in the same task.
@@ -169,7 +169,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   fields of `Ai`: they go through `editor/ai_outside.odin` and the procedures of the tasks.
 - `edited_world` is the document (undo, scenes, Build); `shown_world` is that of the Play while it
   runs or what is watched in `Watch`. UI edits during a Play go to the Play's world and are not
-  saved; the edit API always writes to the document.
+  written; the edit API always writes to the document.
 - What is watched is not edited
   ([watching another run](references/editor.md#watching-another-run)).
 - The editor has no network logic: networked play is provided by `multiplayer` through its
@@ -230,8 +230,8 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   a session, and the ACP adapter is the one the user installed (Download fetches it into the
   user's folder if there is none).
 - A section is edited in its world: inside the world that contains it, in the same document, with
-  everything else dimmed and read-only; Save also writes the section's scene and undo is one for
-  both ([sections](references/document.md#sections)).
+  everything else dimmed and read-only; the flush also writes the section's scene and undo is one
+  for both ([sections](references/document.md#sections)).
 - A guest's Play is either solo or in the host's game: in a collaboration session each editor plays
   their own copy, which does not travel, affects nobody and is shown to nobody else, or a guest
   joins as a network client of the game the host serves (Join game, `play.join`) with their seat
@@ -277,23 +277,23 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `editor/assets`); in `editor/acp`, the optional smoke test `editor/acp/smoke_test.odin` (real
   account, `-define:ACP_SMOKE=true` and `MIRAI_ACP_SMOKE_ADAPTER`, `_BUN`, `_CWD`, `_CODEX`).
 - Sections: `editor/sections_test.odin` (the view without edits and its returned rule, the lock by
-  each path and by `scene.write`, traveling, saving what changed and staying unsaved if one is not
-  written, the reference a step makes and what hangs from one that left, the map and its API); its
-  panel, `capture` with the UI in the World tab.
+  each path and by `scene.write`, traveling, the flush that writes what changed and tries again if
+  one is not written, the reference a step makes and what hangs from one that left, the map and its
+  API); its panel, `capture` with the UI in the World tab.
 - Picking: `editor/pick_test.odin`; a click builds only what its ray reaches and the cache stays
   while other meshes change.
-- Thumbnails: `editor/thumbnails_test.odin` (key, read, write and invalidation when saving the
-  asset or a dependency; a provider's image between frames) and
+- Thumbnails: `editor/thumbnails_test.odin` (key, read, write and invalidation when the asset or a
+  dependency changes; a provider's image between frames) and
   `editor/thumbnail_subjects_test.odin` (the stored view of a scene at each size); those of a
   plugin, in its skill ([previews](../mirai-plugins/references/previews.md#verification)); their
   image, `capture` with the UI and the content browser filtered by Animation, Prefab and Scene.
 - The first undo of a stroke is tested from `plugins/terrain/editor/terrain_history_test.odin`; a
-  material imported unsaved on reimport and its per-field reversion: `editor/materials_test.odin`.
-- Recovery: `editor/recovery_test.odin` (the copy written by a job) and
-  `editor/recovery_log_test.odin` (the chain over the saved file, a truncated log, the replay by
-  `Id`, the copy that deletes the previous one, one chain per tab and all of them at startup, what
-  is offered staying aside while the document is edited and saved); recovery after killing the
-  process, by API in an open editor.
+  material imported over a change not yet written and its per-field reversion:
+  `editor/materials_test.odin`.
+- The file as the state: `editor/documents_test.odin` (the steps of a document reach its file once
+  it has one, a file changed outside is read again) and `editor/edits_files_test.odin` (asset files
+  reach the disk when their step is flushed, program sources at once); the flush against a guest,
+  a Play and an open gesture, and a restart, by API in an open editor.
 - Journal, undo and transactions: `editor/history/journal_test.odin` (each reader's cursors,
   steps that grow with what changed, cancellation and undo without allocating) and
   `editor/history/edits_memory_test.odin`; through the API and the inspector,
@@ -305,13 +305,13 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `editor/collab_edit_test.odin` (what another editor selected, a file too large to travel, the
   scene a guest receives when the host fails halfway).
 - Prefabs: `editor/prefabs_test.odin` (an operation as one step of the rows of an instance,
-  overrides derived, reverted and applied with the file unsaved, added entities and turned-off
-  members, unlink and variants, a document opened after its prefab changed, an instance without
-  its base, instances in collaboration); the document written onto a world:
+  overrides derived, reverted and applied while the file waits for its flush, added entities and
+  turned-off members, unlink and variants, a document opened after its prefab changed, an instance
+  without its base, instances in collaboration); the document written onto a world:
   `engine/scene/update_test.odin`; the overrides and the node the prefab leaves:
-  `asset/prefab_overrides_test.odin` and `asset/scene_test.odin`. The time of a Save and of placing
-  one instance in a scene of many: `prefab_save_and_placing_in_a_scene_of_many_instances` in
-  `editor/prefabs_bench_test.odin` with `-define:EDITOR_PREFAB_BENCH=true`.
+  `asset/prefab_overrides_test.odin` and `asset/scene_test.odin`. The time of writing a prefab and
+  of placing one instance in a scene of many: `editor/prefabs_bench_test.odin` with
+  `-define:EDITOR_PREFAB_BENCH=true`.
 - Content browser: `editor/content_test.odin`, and its image with `capture` with the UI and
   `editor.input` in a session. Create and `asset.create`: `editor/asset_create_test.odin`; rename,
   move and duplicate: `editor/asset_move_test.odin`; the empty `.ui`:
@@ -321,7 +321,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   (the program a material document reads, its picks for the next message, the values of a
   variant); their view in an open editor, `editor.document` (`Open` with the asset's path) and
   `capture` with the UI.
-- Build and reload, recovery, networked Play (`templates/game`) and collaboration
+- Build and reload, networked Play (`templates/game`) and collaboration
   (`--share`/`--join`) are checked by API in an open editor. Images:
   [rendering](../mirai-rendering/SKILL.md#verification); protocol:
   [API](../mirai-agent-api/SKILL.md#verification); extensions:

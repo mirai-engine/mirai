@@ -37,6 +37,7 @@ Paint_Test :: struct {
     edits:history.Edits,
     viewport:editor.Viewport,
     gui:editor.Editor_Ui,
+    document:editor.Document,
     session:editor.Session,
 }
 
@@ -56,7 +57,7 @@ paint_test_open :: proc(t:^testing.T,f:^Paint_Test,name:string) -> bool {
     core.world_settle(f.ref)
     f.app={allocator=context.allocator,assets=&f.assets}
     history.edits_reset(&f.edits,f.ref)
-    f.session={app=&f.app,info=test_world_info(w),edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui}
+    f.session={app=&f.app,info=test_world_info(w),edit_world=&f.world,assets_root=f.root,headless=true,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=&f.document}
     return true
 }
 
@@ -84,7 +85,7 @@ paint_test_stroke :: proc(t:^testing.T,tool:^Paint_Tool,app:^host.App,e:core.Ent
 }
 
 @(test)
-painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:^testing.T) {
+painted_colors_reach_the_disk_at_the_flush_and_go_with_undo_and_cancel :: proc(t:^testing.T) {
     f:Paint_Test
     if !paint_test_open(t,&f,"paint") {return}
     defer paint_test_close(&f)
@@ -105,9 +106,8 @@ painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     testing.expect_value(t,core.at(&world.meshes,core.row_of(&world.meshes,e)),cube)
     testing.expect_value(t,core.at(&world.painted,core.row_of(&world.painted,e)).colors,first)
     testing.expect(t,editor.file_exists(s,first_path) && !os.exists(first_path))
-    testing.expect(t,editor.asset_unsaved(s,first))
 
-    // The next stroke reads the unsaved colors.
+    // The next stroke reads the colors the registry holds.
     if !paint_test_stroke(t,&tool,app,e,first,root,0x52) {return}
     testing.expect_value(t,tool.stroke.before[0],u32(0xff0000ff))
     second_path:=fmt.tprintf("%s/%s/%016x%s",root,FOLDER,u64(0x52),paint.PAINT_EXTENSION)
@@ -124,14 +124,12 @@ painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     testing.expect_value(t,core.at(&world.meshes,core.row_of(&world.meshes,e)),cube)
     testing.expect(t,!core.has(&world.painted,e))
     testing.expect(t,!editor.file_exists(s,first_path))
-    testing.expect_value(t,len(editor.assets_unsaved(s)),0)
+    testing.expect(t,editor.files_flush(s,true) && !os.exists(first_path))
     testing.expect(t,history.redo(edits,ref,selection))
     editor.files_settle(s)
     testing.expect_value(t,core.at(&world.painted,core.row_of(&world.painted,e)).colors,first)
     testing.expect(t,editor.file_exists(s,first_path))
-    saved,written:=editor.assets_save_all(s)
-    testing.expect(t,written && saved==1 && os.exists(first_path))
-    testing.expect_value(t,len(editor.assets_unsaved(s)),0)
+    testing.expect(t,editor.files_flush(s,true) && os.exists(first_path))
 }
 
 @(test)
@@ -157,7 +155,6 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     testing.expect_value(t,core.at(&f.world.painted,core.row_of(&f.world.painted,e)),paint.Painted{colors=result.colors})
     path:=fmt.tprintf("%s/%s",f.root,base.text_get(result.path[:]))
     testing.expect(t,editor.file_exists(s,path) && !os.exists(path))
-    testing.expect(t,editor.asset_unsaved(s,result.colors))
 
     // Away from the mesh nothing is painted and no step is made.
     params.points[0]={10,10,10}
@@ -188,6 +185,7 @@ paint_api_strokes_along_points_and_clears_as_steps_of_undo :: proc(t:^testing.T)
     editor.files_settle(s)
     testing.expect_value(t,core.at(&f.world.meshes,core.row_of(&f.world.meshes,e)),erender.Mesh_Renderer{shape=.Cube})
     testing.expect(t,!editor.file_exists(s,path))
+    testing.expect(t,editor.files_flush(s,true) && !os.exists(path))
 }
 
 // A stroke over one of two entities of a mesh of levels paints the vertices
@@ -263,7 +261,7 @@ paint_grid_save :: proc(path:string,types:^asset.Types,id:base.Asset_Id,backward
 }
 
 // A painted mesh imported again with its vertices in another order keeps its
-// colors on the same places: the editor fits the .paint to it, unsaved.
+// colors on the same places: the editor fits the .paint to it and writes it.
 @(test)
 paint_follows_its_mesh_imported_again_with_its_vertices_in_another_order :: proc(t:^testing.T) {
     f:Paint_Test
@@ -298,7 +296,6 @@ paint_follows_its_mesh_imported_again_with_its_vertices_in_another_order :: proc
     after,error:=paint.paint_view(&file,&a.types)
     if !testing.expect_value(t,error,asset.Error.None) || !testing.expect_value(t,len(after.colors),len(before.colors)) {return}
     testing.expect_value(t,after.mesh,record.content_hash)
-    testing.expect(t,editor.asset_unsaved(&f.session,result.colors))
     moved,painted:=0,0
     for p,at in after.positions {
         if p!=before.positions[at] {moved+=1}
@@ -310,4 +307,10 @@ paint_follows_its_mesh_imported_again_with_its_vertices_in_another_order :: proc
         }
     }
     testing.expectf(t,moved>0 && painted>0 && painted<len(after.colors),"%d vertices moved and %d of %d are painted",moved,painted,len(after.colors))
+    testing.expect(t,editor.files_flush(&f.session,true))
+    written:asset.Asset
+    if !testing.expect_value(t,host.assets_file(a,result.colors,paint.PAINT_KIND,&written),asset.Error.None) {return}
+    defer asset.asset_close(&written)
+    fitted,_:=paint.paint_view(&written,&a.types)
+    testing.expect_value(t,fitted.mesh,record.content_hash)
 }

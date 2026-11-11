@@ -78,14 +78,12 @@ Edits :: struct {
     image:[dynamic]Journal_Table, // by table of the world info
     image_entities:Journal_Entities,
     ranges:[dynamic]Edit_Transient_Ranges, // by table a scene saves
-    changes:[dynamic]Journal_Change,       // what the image took since collaboration or the recovery log read, while they read
+    changes:[dynamic]Journal_Change,       // what the image took since collaboration read, while it reads
     changes_first:u64,            // how many changes went before changes[0]
     change_values:[dynamic]u8,    // what the rows of the changes held before, one after another (Journal_Change.value)
     change_values_first:u64,      // how many bytes went before change_values[0]
     reading:bool,                 // collaboration reads the changes
     read_done:u64,                // up to where it read them
-    logging:bool,                 // the recovery log of the editor reads the changes
-    logged:u64,                   // up to where it wrote them
     steps:[dynamic]Edit_Step,
     cursor:int,               // the steps done are steps[:cursor]; steps[cursor:] were undone in order
     author:Edit_Author,       // of what changes now: a method of the API sets its own while it runs

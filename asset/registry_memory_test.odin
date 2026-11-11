@@ -63,11 +63,13 @@ registry_answers_with_files_held_in_memory_until_they_are_written_or_dropped :: 
     held,found=registry_find(&r,stone)
     testing.expect(t,found && held.size==i64(len(on_disk)) && len(registry_dependencies(&r,held))==0,"dropped, the disk answers again")
 
+    held,_=registry_find(&r,brick)
+    recorded:=[2]i64{held.size,held.time}
     testing.expect_value(t,registry_memory_write(&r,r.memory[0].path),Error.None)
     stored,_=os.read_entire_file(fmt.tprintf("%s/materials/brick.mat",root),context.temp_allocator)
     testing.expect(t,string(stored)==string(created) && len(r.memory)==0,"written, the file holds it and memory forgets it")
-    _,found=registry_find(&r,brick)
-    testing.expect(t,found)
+    held,found=registry_find(&r,brick)
+    testing.expect(t,found && recorded==[2]i64{held.size,held.time},"its record is the one it had in memory: who read it reads nothing again")
 }
 
 @(test)
@@ -83,11 +85,11 @@ registry_holds_a_file_outside_its_folders_by_its_absolute_path :: proc(t:^testin
     testing.expect_value(t,registry_scan(&r),Error.None)
     testing.expect(t,registry_outside(source) && !registry_outside("materials/stone.mat"))
 
-    testing.expect_value(t,registry_memory_set(&r,source,transmute([]u8)string("unsaved")),Error.None)
+    testing.expect_value(t,registry_memory_set(&r,source,transmute([]u8)string("held")),Error.None)
     _,listed:=registry_find_path(&r,source)
     testing.expect(t,!listed && len(r.files)==0,"it is no file of the registry")
     read,error:=registry_read(&r,source,context.temp_allocator)
-    testing.expect(t,error==.None && string(read)=="unsaved")
+    testing.expect(t,error==.None && string(read)=="held")
     testing.expect_value(t,registry_scan(&r),Error.None)
     _,kept:=registry_memory_find(&r,source)
     testing.expect(t,kept && len(r.files)==0,"a scan keeps it in memory and out of the files")

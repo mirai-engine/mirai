@@ -81,7 +81,7 @@ Api_Status :: struct {
     mode:Mode,
     entities:int,
     selected:int,
-    dirty,headless,manual,gpu_enabled,has_project:bool,
+    headless,manual,gpu_enabled,has_project:bool,
     document:[API_PATH_BYTES]u8 `mirai:"text"`,
     fps,gpu_ms:f32,
     ev100:f32 `mirai:"label=The exposure of the viewport before its compensation: what the meter took or the manual value"`,
@@ -156,9 +156,6 @@ Api_Step_Params :: struct {
 }
 Api_Step_Result :: struct {frame:u64,dt:f32}
 
-Api_Shutdown_Params :: struct {
-    discard:bool `mirai:"optional,label=Quit with unsaved changes"`,
-}
 Api_Shutdown_Result :: struct {quitting:bool}
 
 Api_Gpu_Lose_Result :: struct {
@@ -206,9 +203,8 @@ Api_Play_Result :: struct {
 
 Api_Play_Start_Params :: struct {
     players:int `mirai:"optional,min=0,max=4,label=Local players sharing the screen; 0: the last chosen (a turn: the scene)"`,
-    online:int `mirai:"optional,min=-1,max=3,label=Players on the network besides them; the run serves the game. A turn gets a run per online player (player 1 and on) that is a client of its run. -1 outside a turn: those the Play menu of the editor has, asking the person at the editor first about unsaved assets the players would not have"`,
+    online:int `mirai:"optional,min=-1,max=3,label=Players on the network besides them; the run serves the game. A turn gets a run per online player (player 1 and on) that is a client of its run. -1 outside a turn: those the Play menu of the editor has"`,
     ping_ms:int `mirai:"optional,min=-1,max=1000,label=Round trip the online players simulate; -1: that of the Play menu"`,
-    saved_only:bool `mirai:"optional,label=Outside a turn a game on the network plays with what the files hold although assets have unsaved changes"`,
     simulate:bool `mirai:"optional,label=Simulate the scene instead: the editor camera and no player input; outside a turn and without players or online"`,
     from:Api_Play_From `mirai:"optional,label=Where player 1 gets its first body outside a turn: Scene (the default) at a Spawn_Point or without one at the editor camera; Camera and Point there before any Spawn_Point, standing on what is under it"`,
     point:[3]f32 `mirai:"optional,label=With from Point: where in the world, as scene.raycast gives it"`,
@@ -290,7 +286,6 @@ Api_Editor_Inspect :: struct {
 }
 Api_Editor_Document :: struct {
     path:string,
-    dirty:bool,
     entities:int,
     undo,redo:int,
 }
@@ -303,8 +298,7 @@ Api_Editor_Camera :: struct {
 }
 Api_Editor_Interactions :: struct {
     captured_by:string `mirai:"label=What holds the pointer in the viewport: look pan select or gizmo; empty when nothing does"`,
-    modal:string `mirai:"label=The dialog that blocks the editor: confirm save_changes recovery shortcuts settings delete_asset or git_discard; empty when none does"`,
-    recovery_offered:bool `mirai:"label=Whether changes an editor left when it ended wait for editor.recover: they stay set aside until then"`,
+    modal:string `mirai:"label=The dialog that blocks the editor: confirm shortcuts settings delete_asset or git_discard; empty when none does"`,
     popups:int `mirai:"label=Popups open"`,
     editing_text:bool `mirai:"label=Whether a text field takes the keys"`,
     dialog_pending:bool `mirai:"label=Whether a file dialog of the system waits for an answer"`,
@@ -394,11 +388,10 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     pause_default:=Api_Pause_Params{paused=true}
     api_register(s,st,{name="engine.status",summary="The state of the editor and of its renderer, and what the last frame cost by part of the main thread and by pass of the GPU.",result=type_info_of(Api_Status),flags={.Read_Only,.As_User},run=api_status})
     api_register(s,st,{name="engine.step",summary="Advances whole frames of editor, game and render with a fixed dt. Manual execution only (headless).",params=type_info_of(Api_Step_Params),result=type_info_of(Api_Step_Result),defaults=&step_default,flags={.As_User},run=api_step})
-    api_register(s,st,{name="engine.shutdown",summary="Stops Play and quits the editor after answering. Fails with unsaved changes of scenes or assets unless discard.",params=type_info_of(Api_Shutdown_Params),result=type_info_of(Api_Shutdown_Result),flags={.Destructive,.As_User},run=api_shutdown})
+    api_register(s,st,{name="engine.shutdown",summary="Stops Play and quits the editor after answering.",result=type_info_of(Api_Shutdown_Result),flags={.Destructive,.As_User},run=api_shutdown})
     api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=type_info_of(Api_Gpu_Lose_Result),flags={.Destructive,.As_User},run=api_gpu_lose})
     api_register(s,st,{name="editor.inspect",summary="What the editor shows and the entries of its menus, shortcuts and buttons: the method each one calls, with what params, and whether it is off or checked for the person now.",result=type_info_of(Api_Editor_Inspect),flags={.Read_Only},run=api_editor_inspect})
-    api_register(s,st,{name="editor.recover",summary="Recovers what an editor that ended left unsaved, or discards it; until then it stays set aside, whatever is edited or saved meanwhile, and a tab with changes stays as it is. With nothing offered it answers resolved false.",params=type_info_of(Api_Recovery_Params),result=type_info_of(Api_Recovery_Result),flags={.Idempotent},run=api_recover})
-    api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=type_info_of(Api_Section_Edit_Params),result=type_info_of(Api_Section_Edit_Result),run=api_section_edit})
+    api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, its scene is written too, and everything else reads only. id 0 stops. Returns the reference edited.",params=type_info_of(Api_Section_Edit_Params),result=type_info_of(Api_Section_Edit_Result),run=api_section_edit})
     api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=type_info_of(Api_Section_Preview_Params),result=type_info_of(Api_Section_Preview_Result),run=api_section_preview})
     api_register(s,st,{name="editor.sections",summary="The sections of the scene as the World panel maps them: each Scene_Reference with its rule, the state it asks, what the view of the editor asks of it (view; Auto for nothing) and what it shows, its box, and what it costs (entities, meshes and textures of its scene, GPU bytes they hold now and bytes of their files); with the sources the sections stream around and the camera of the editor.",flags={.Read_Only},result=type_info_of(Api_Sections_Result),run=api_sections})
     api_register(s,st,{name="editor.section_view",summary="Turns a section on (Active), loaded and off (Loaded) or off (Unloaded) in the view of the editor alone, or gives it back to what its reference asks (Auto): not an edit, not in the undo and not saved; Play starts with what the references ask. It loads over the next frames: shown in editor.sections says when it is there. Returns the section.",params=type_info_of(Api_Section_View_Params),flags={.Idempotent,.View},result=type_info_of(Api_Section),run=api_section_view})
@@ -426,7 +419,6 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_names_register(s,st)
     api_simulation_register(s,st)
     api_assets_register(s,st)
-    unsaved_api_register(s,st)
     prefab_api_register(s,st)
     documents_api_register(s,st)
     collab_api_register(s,st)
@@ -514,7 +506,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
     status_value:=status(s)
     r.frame,r.mode=s.frame,s.mode
     r.entities,r.selected=status_value.entities,status_value.selected
-    r.dirty,r.headless,r.manual,r.gpu_enabled,r.has_project=status_value.dirty,s.headless,st.manual,app.renderer!=nil,s.has_project
+    r.headless,r.manual,r.gpu_enabled,r.has_project=s.headless,st.manual,app.renderer!=nil,s.has_project
     base.text_set(r.document[:],status_value.document)
     r.fps=s.app.stats.fps
     r.undo,r.redo=status_value.undo,status_value.redo
@@ -588,18 +580,6 @@ api_step :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_shutdown :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"quit the editor") {return}
-    params:=api.call_params(call,Api_Shutdown_Params)
-    if documents_dirty(s) && !params.discard {
-        api.call_fail(call,api.SERVER_ERROR,"The scene has unsaved changes; save it first or pass discard")
-        return
-    }
-    if unsaved:=assets_unsaved(s);len(unsaved)>0 && !params.discard {
-        names:=make([dynamic]string,context.temp_allocator)
-        for held in unsaved[:min(len(unsaved),API_UNSAVED_NAMED)] {append(&names,unsaved_name(s,held.path))}
-        more:=len(unsaved)>API_UNSAVED_NAMED?fmt.tprintf(" and %d more",len(unsaved)-API_UNSAVED_NAMED):""
-        api.call_failf(call,api.SERVER_ERROR,"Unsaved changes in %s%s; asset.save writes them, or pass discard",strings.join(names[:],", ",context.temp_allocator),more)
-        return
-    }
     if platform.dialog_pending(s.app.platform) {
         api.call_fail(call,api.SERVER_ERROR,"A file dialog is open; answer it first")
         return
@@ -720,11 +700,11 @@ api_editor_inspect_value :: proc(s:^Session,allocator:=context.temp_allocator) -
     r.snap,r.indicators=snapping(v,.Move),v.show_indicators
     mode,_:=reflect.enum_name_from_value(s.mode)
     r.mode=api_lower(mode)
-    r.document={document_path(s.document),document_dirty(s),core.world_entities(world).alive,history.edits_undo_count(s.edits),history.edits_redo_count(s.edits)}
+    r.document={document_path(s.document),core.world_entities(world).alive,history.edits_undo_count(s.edits),history.edits_redo_count(s.edits)}
     r.camera={orbit_position(v.orbit),v.orbit.target,v.orbit.yaw,v.orbit.pitch,v.orbit.distance,v.orbit.fov}
     capture,_:=reflect.enum_name_from_value(v.capture)
     modal,_:=reflect.enum_name_from_value(g.modal)
-    r.interactions={"" if v.capture==.None else api_lower(capture),"" if g.modal==.None else api_lower(modal),s.recovery.pending,g.ctx.popup.count,g.ctx.edit.id!=0,platform.dialog_pending(s.app.platform),v.hovered}
+    r.interactions={"" if v.capture==.None else api_lower(capture),"" if g.modal==.None else api_lower(modal),g.ctx.popup.count,g.ctx.edit.id!=0,platform.dialog_pending(s.app.platform),v.hovered}
     window:=platform.input_frame(s.app.platform).window
     r.window={!s.headless,{f32(window.size.x),f32(window.size.y)},window.minimized,window.maximized,window.fullscreen}
     rect :: proc(rect:ui.Rect) -> [4]f32 {return {rect.x,rect.y,rect.w,rect.h}}
@@ -1152,11 +1132,11 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"online and ping_ms -1 are the Play menu of the person at the editor: a turn gives its own")
         return
     }
-    if play_build_first(s,{owner=owner,players=params.players,online=online,ping_ms=ping,saved_only=params.saved_only}) {
+    if play_build_first(s,{owner=owner,players=params.players,online=online,ping_ms=ping}) {
         api_play_after_build(s,call,owner)
         return
     }
-    if error:=play_begin(s,owner,params.players,online,ping,params.saved_only);error!="" {
+    if error:=play_begin(s,owner,params.players,online,ping);error!="" {
         s.play_asked={}
         api.call_fail(call,api.SERVER_ERROR,error)
         return
@@ -1223,14 +1203,14 @@ api_build_first_error :: proc(s:^Session) -> string {
 
 // Starts the run of an owner with its local and online players: "" or what
 // kept it from starting.
-play_begin :: proc(s:^Session,owner,players,online,ping_ms:int,saved_only:bool) -> string {
+play_begin :: proc(s:^Session,owner,players,online,ping_ms:int) -> string {
     plugin:=providers(s)
     if online>0 && (!plugin.plays || plugin.play.start==nil || plugin.play.turn==nil) {
         return "Online players need a plugin that plays games on the network: add multiplayer to the plugins of project.mirai"
     }
     if owner==0 {
         if players>0 && s.play_players!=nil {s.play_players.players=players}
-        taken,error:=play_plugin_start(s,online,ping_ms,saved_only)
+        taken,error:=play_plugin_start(s,online,ping_ms)
         if error!="" {return error}
         if taken {return ""}
     }
@@ -1533,8 +1513,7 @@ built_loading :: proc(s:^Session,user:rawptr) -> bool {
 @(private)
 api_build_status :: proc(s:^Session,call:^api.Call) {api_build_result(s,call)}
 
-// build.start with target shaders: published again from their files and what
-// the editor holds unsaved, answering once the viewport has them.
+// build.start with target shaders: published again from their files, answering once the viewport has them.
 @(private)
 api_build_shaders :: proc(s:^Session,call:^api.Call,seconds:int) {
     started:=time.tick_now()

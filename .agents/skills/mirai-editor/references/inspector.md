@@ -195,15 +195,15 @@ Transform row (Rotation in degrees), `{"Spot_Light":{...}}` for a component and 
   program textures and overlays. The inspector never writes the material; Apply to material and the
   [material document](panels.md#material-document) change it for everyone.
 - Apply to material (`material_apply`, `material.instance.apply`) writes into the material what the
-  entity changes of that slot and removes it from the entity, in one undo step and in memory like
-  every edit: Save writes the file. The other entities that show it take it, except in what they
+  entity changes of that slot and removes it from the entity, in one undo step, and the flush writes
+  the file. The other entities that show it take it, except in what they
   change. Revert material changes removes from the entity what it changes of that slot
   (`material_revert`); the overlays belong to the first one. Reverting a shader parameter keeps the
   other overrides.
 - Material and effect references have an arrow; a texture's returns to the prefab's or, without
   it, to the material's.
 - What the source gave is read from the material's file when the registry has other content for it
-  (`material_base`). Reimporting a model with a material changed and unsaved rebases it in memory
+  (`material_base`). Reimporting a model with a material changed rebases it
   (`material_rebase`): it follows the source like the file and keeps what was changed.
 - **Overlays** goes below Material, outside its box. Its layers (`Overlay`) are the material's
   until the entity changes one: from then on the entity has its own list, which replaces the

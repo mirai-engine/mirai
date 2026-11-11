@@ -49,7 +49,7 @@ Api_Scene_Write_Params :: struct {
     select:bool `mirai:"optional,label=true: the entities it made are what the editor has selected after it"`,
     root:string `mirai:"entity,optional,label=by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it: entities holds that one entity. Left out: entities are those at the top of the scene"`,
     replace:bool `mirai:"optional,label=true: the document declares all there is under root, or in the scene without root, and what it leaves out goes: entities, components and fields. Left out: what it leaves out stays as it is, and it names only what it changes or adds"`,
-    kind:Document_Kind `mirai:"optional,label=what the document is from now on, which Save writes: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
+    kind:Document_Kind `mirai:"optional,label=what the document is from now on, which its file keeps: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
     entities:[]Api_Scene_Write_Entity `mirai:"label=the entities, nesting what hangs from each by children; matched by id, else by name among siblings, else (with replace) by place, and the others are made"`,
 }
 Api_Scene_Write_Entity :: struct {
@@ -417,7 +417,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
             core.world_settle(a.w)
             return before-core.world_entities(a.w).alive,""
         },
-        // The kind of the document, which Save writes.
+        // The kind of the document, which its file keeps.
         kind=proc(user:rawptr,prefab:bool) -> (bool,string) {
             a:=(^Api_Write)(user)
             d:=a.s.document
@@ -427,7 +427,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
                 for e in core.world_table_of(a.w,core.Id).entities {roots+=int(entity_parent(a.w,e)==core.NONE)}
                 if roots!=1 {return false,fmt.tprintf("a prefab has exactly one root, and this scene has %d: put its entities under one (group), then make it a prefab",roots)}
             }
-            d.prefab,d.unsaved=prefab,true
+            d.prefab,d.stale=prefab,true
             a.s.view_cut=true
             return true,""
         },
@@ -464,6 +464,6 @@ api_inspect_tree :: proc(a:^Api_Write,params:^Api_Inspect_Params) {
     serial.write_u8(&tree,']')
     r:=api.call_result(call,Api_Inspect_Result)
     base.text_set(r.path[:],document_path(s.document))
-    r.dirty,r.playing,r.total=document_dirty(s),s.mode!=.Edit,core.world_entities(w).alive
+    r.playing,r.total=s.mode!=.Edit,core.world_entities(w).alive
     r.shown,r.matched,r.tree=len(part),len(part),serial.Json(string(serial.writer_bytes(&tree)))
 }

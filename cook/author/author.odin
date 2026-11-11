@@ -15,7 +15,7 @@ import "mirai:ui"
 // so does the program of mirai ui and mirai scene (command.odin).
 
 // The files of a project a document names and reads: the registry that finds
-// them, unsaved ones included, and the types of their tables. Zero: none.
+// them, those it holds in memory included, and the types of their tables. Zero: none.
 Assets :: struct {
     registry:^asset.Registry,
     types:^asset.Types,

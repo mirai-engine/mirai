@@ -7,7 +7,7 @@ changes `shell.ui` with `ui.write` (or the visual editor edits it) and the game 
 ## Restyle
 
 Read the look with `mirai rpc --project . ui.inspect asset=menu/theme.ui --select document`, change
-what you want and write it back with `ui.write` and `save=true`: tokens first (the colors and
+what you want and write it back with `ui.write`: tokens first (the colors and
 sizes), then the `button`, `control` and `panel` styles the widgets take; `button.ui`, `panel.ui`,
 `select_row.ui` and `check_row.ui` are the widgets the screens use ([styles.md](styles.md#widgets)).
 `shell.ui` only names them; keep its node names, since `shell_events` matches them.
@@ -25,9 +25,9 @@ sizes), then the `button`, `control` and `panel` styles the widgets take; `butto
 {"name": "menu_controls", "kind": "Button", "style": "button", "text": "Controls"}
 ```
 
-Write the page by writing its parent: `ui.write asset=menu/shell.ui node=pages document=@pages.json
-save=true`, whose `nodes` is that Switcher with its children, and only that node changes. The
-same for the menu that holds the new button.
+Write the page by writing its parent: `ui.write asset=menu/shell.ui node=pages
+document=@pages.json`, whose `nodes` is that Switcher with its children, and only that node changes.
+The same for the menu that holds the new button.
 
 3. A line in `shell_events` that sets `shell.page`, and one in the `gui.menu_pressed` switch of
    `shell_frame` if the page should go back.

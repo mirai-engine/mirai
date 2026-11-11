@@ -23,9 +23,8 @@ import "mirai:ui"
 // stays as it is for every other entity. A stroke writes the colors of the
 // entity as a .paint of its own and names it in its Painted, so undoing the
 // stroke puts back the colors it showed and takes the file away. The file is
-// of the step of the stroke (editor.file_write): it stays in the memory of
-// the registry, unsaved, until it is saved. While the stroke lasts it is
-// written again as the brush moves.
+// of the step of the stroke (editor.file_write). While the stroke lasts it is
+// written again as the brush moves, and reaches the disk when it ends.
 
 PANEL_SCOPE :: ui.Id(0x7061696e)
 FOLDER :: "painted" // of the asset root: where the colors of strokes go
@@ -243,7 +242,7 @@ stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,asset
 
 // The paint of an entity whose mesh changed since it was painted (imported
 // again) follows it: its colors go to the nearest vertices of the mesh as it
-// is now, in memory, and are saved with the next Save.
+// is now, and its file is written again.
 @(storage,free="paint_fit_free")
 Paint_Fit :: struct {
     seen:u64,                  // the revision of the assets last looked at

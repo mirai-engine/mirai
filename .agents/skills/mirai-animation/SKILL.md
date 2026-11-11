@@ -219,11 +219,11 @@ Adapt the source's data to these features instead of rebuilding its runtime:
 - The Tracks tool is the one editor of the keys of every clip and keeps only its view; each of its
   gestures is a call of an `animation.*` method.
 - Asset edits go through the editor's file history: one step per call, attributed to the AI turn,
-  which `history.undo` and `history.redo` undo and redo. They stay in memory unsaved like the other
-  assets: the disk does not change until saved and a created asset exists only in the registry.
+  which `history.undo` and `history.redo` undo and redo. Like the other assets, the files are
+  written when the step ends.
 - Runtime, editor and previews read the assets through the registry (`host.assets_file` by id,
   `asset.registry_read` by path), never the file by its path on disk, and notice a change by the
-  registry revision; this way the preview and Play see what is unsaved.
+  registry revision; this way the preview and Play see what a step has not flushed yet.
 - The project's `.anim` keeps exact keys, which the editor edits; the editor and the game play
   them compressed into a stream per clip, and a shipped game carries only those streams
   ([storage](../mirai-std/references/anim-storage.md)). A compression is kept in the project

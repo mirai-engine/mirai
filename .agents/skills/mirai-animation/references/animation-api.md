@@ -20,7 +20,7 @@ catalog](../../mirai-agent-api/references/methods.md); flows and contracts:
 - Asking for parameters, targets, actions or intents in Edit: they require Play/Simulate, and
   the `fix` proposes `animation.preview` with the same fields
   ([control](animation-authoring.md#per-instance-control-and-preview)).
-- Expecting the change on disk: what is published stays in the registry unsaved until `asset.save`
+- Expecting the change on disk at once: the file is written when the step ends
   ([files](animation-authoring.md#files-and-history)).
 - Sending indices, slots or quantities: the API names parameters, operations, effectors, clips,
   modes, gestures and body parts, and derives the quantities from the lists.

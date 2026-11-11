@@ -71,13 +71,14 @@ A game is a struct in memory and a list of functions that transform it
    or dynamic ownership in components. `description="..."` gives an optional description of the
    component in its metadata, without per-entity data.
 2. The options of each field go in the `mirai:"..."` tag, which `std/serial` alone reads
-   ([tags](../mirai-assets/references/serial.md)): `transient`, `local`, `readonly`,
-   `hidden`, `text`, `hex` (an exact `u64` in the inspector, without going through float), `color`,
-   `angle`, `unit=`, `min=`, `max=`, `precision=`, `bits=`, `section=` (inspector subtitle,
+   ([tags](../mirai-assets/references/serial.md)): `transient`, `local`, `readonly`, `hidden`,
+   `text`, `hex` (an exact `u64` in the inspector, without going through float), `color`, `angle`,
+   `unit=`, `min=`, `max=`, `precision=`, `bits=`, `section=` (inspector subtitle,
    [inspector](../mirai-editor/references/inspector.md)), `owned` (an `Asset_Id` that the scene
-   generates and [saves with it](../mirai-editor/references/document.md#tabs)), `advanced` (a
-   field of a setting that sizes a pool or a per-tick budget, or tunes an internal algorithm: the
-   settings dialog shows it under an Advanced fold,
+   generates and [writes with
+   it](../mirai-editor/references/document.md#the-file-is-the-editors-state)), `advanced` (a field
+   of a setting that sizes a pool or a per-tick budget, or tunes an internal algorithm: the settings
+   dialog shows it under an Advanced fold,
    [settings](../mirai-editor/references/panels.md#project-settings)).
 3. A nonzero initial value is declared with `NAME_DEFAULT` or `name_default()` in the same package
    (`SPIN_DEFAULT :: Spin{...}`); a literal of the type that leaves out a field it sets is a

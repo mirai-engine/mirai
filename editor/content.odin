@@ -1916,8 +1916,8 @@ content_review_badge :: proc(ctx:^ui.Context,agent:^Ai_Task,float:ui.Float) {
     if ui.box(ctx,{width=ui.fixed(CONTENT_REVIEW_BADGE),height=ui.fixed(CONTENT_REVIEW_BADGE),fill=ai_agent_color(agent),stroke=CONTENT_FRAME,stroke_width=1,radius=CONTENT_REVIEW_BADGE*0.5,float=float}) {}
 }
 
-// A cell of the grid or a row of the list, with its star, the arrow of a
-// library and the mark of unsaved changes.
+// A cell of the grid or a row of the list, with its star and the arrow of a
+// library.
 @(private)
 // whole: its line is all in sight; the buttons that float over a cell stay out
 // of one the edge of the list cuts, as floats are not clipped. first: the first
@@ -1934,16 +1934,12 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
     star:=ui.id(ctx,"content_star",int(key))
     favorite:=card.clip==0 && content_favorite(&c.marks,file.id)
     starred:=card.clip==0 && (favorite || it.hot || ctx.hot==star)
-    unsaved:=card.clip==0 && asset_unsaved(s,file.id)
     reviewed:=ai_asset_mark(s,file.path) if card.clip==0 else nil
     shown:=content_shows_names(c.view)
     if c.view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,selected,it.hot,content_keyboard(ctx,it))) {
             asset_thumbnail(s,file,20,clip=content_clip_index(c,card))
             ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if selected else 0)
-            if unsaved {
-                if ui.box(ctx,{width=ui.fixed(5),height=ui.fixed(5),fill=UNSAVED_COLOR,radius=2.5}) {}
-            }
             if reviewed!=nil {content_review_badge(ctx,reviewed,{})}
             if card.holds {content_expander(s,card,key,{})}
             if starred {content_star(s,star,file.id,favorite)} else {ui.spacer(ctx,18,18)}
@@ -1957,9 +1953,6 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
         inset:=f32(3)
         if starred && whole {content_star(s,star,file.id,favorite,{to=.Parent,anchor=.Top_Left,pivot=.Top_Left,offset={inset,inset}},small=!shown)}
         if card.holds && whole && (shown || it.hot || card.open) {content_expander(s,card,key,{to=.Parent,anchor=.Top_Right,pivot=.Center_Right,offset={-2,cell*0.5}})}
-        if unsaved && whole {
-            if ui.box(ctx,{width=ui.fixed(5),height=ui.fixed(5),fill=UNSAVED_COLOR,radius=2.5,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-inset-2,inset+2}}}) {}
-        }
         if reviewed!=nil && whole {content_review_badge(ctx,reviewed,{to=.Parent,anchor=.Top_Left,pivot=.Bottom_Left,offset={inset,cell-inset-CONTENT_BAR}})}
     }
     if it.hot && (shown || reviewed!=nil) {

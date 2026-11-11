@@ -203,7 +203,7 @@ a_prefab_spawned_again_is_placed_as_read_anew_from_the_form_its_world_keeps :: p
     _,inner_placed:=prefab_instance(host.app_world_ref(&p.app,p.kept),lit.target)
     testing.expect(t,!inner_placed)
 
-    // The bulb changes in memory, as an editor holds it unsaved: the lamp is read again, once.
+    // The bulb changes in memory, as an editor holds it until its step ends: the lamp is read again, once.
     spawn_test_bulb(&bulb,&p.types,5)
     data,encoded:=asset.scene_bytes(&bulb)
     testing.expect_value(t,encoded,asset.Error.None)

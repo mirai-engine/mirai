@@ -108,7 +108,7 @@ edits_prepare :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection,externa
             prepared.step.bytes+=len(prepared.step.entities.indices)*(size_of(u32)*3+2)
         }
     }
-    if (edits.reading || edits.logging) && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return edits_prepare_failed(&prepared,.Memory)}
+    if edits.reading && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return edits_prepare_failed(&prepared,.Memory)}
     prepared.changed=len(prepared.step.tables)>0 || len(prepared.step.entities.indices)>0 || external_change || len(edits.files)>0
     if prepared.changed {
         prepared.step.label=edits.label
@@ -271,7 +271,7 @@ edits_step_prepare :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step,selecti
         notes+=rows
         if rows>0 && !journal_room(&edits.image[index],len(edits.image[index].entities)+adds,table.info.size,edits.cancel_limit) {return .Memory}
     }
-    if (edits.reading || edits.logging) && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return .Memory}
+    if edits.reading && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return .Memory}
     for rows in step.tables {
         table:=&w.info.tables[rows.table]
         current:=core.world_table_at(w,table)

@@ -181,7 +181,8 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     history.edits_reset(&edits,ref)
     viewport:editor.Viewport
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=331}
+    document:editor.Document
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=331,document=&document}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     testing.expect_value(t,tool.create_kind,terrain.Source_Kind.Heightfield)
     tool.samples,tool.depth,tool.chunk_cells=5,5,4
@@ -218,6 +219,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     testing.expect_value(t,len(world.terrains.values),1)
     testing.expect_value(t,history.selection_active(&selection),owner)
     testing.expect(t,editor.file_exists(&s,path) && !os.exists(path))
+    testing.expect(t,editor.files_flush(&s,true) && os.exists(path))
 }
 
 // A Volume made on a Heightfield joins it and its field is the ground,

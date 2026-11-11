@@ -352,7 +352,7 @@ git_file_absolute :: proc(g:^Git,file:^Git_Merge_File) -> string {
 }
 
 // Replaces the edited World with a scene in memory, keeping the file of the
-// document, which is unsaved after; the item shown stays selected.
+// document, which finishing the merge writes; the item shown stays selected.
 @(private)
 git_scene_show :: proc(s:^Session,data:[]u8) {
     a:=s.app.assets
@@ -372,8 +372,8 @@ git_scene_show :: proc(s:^Session,data:[]u8) {
     document_previous_free(s.document)
     s.document.previous=loaded
     history.edits_reset(s.edits,w)
-    s.document.saved=history.edits_scene_state(s.edits)
-    s.document.unsaved=true
+    s.document.written=history.edits_scene_state(s.edits)
+    s.document.stale=false
     s.view_cut=true
     g:=s.git
     if g.merge.current>=0 && g.merge.current<len(g.merge.items) {git_select(s,g.merge.items[g.merge.current].key)}

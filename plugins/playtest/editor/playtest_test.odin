@@ -149,7 +149,6 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.tools,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
     history.edits_reset(&f.edits,editor.edited_world(&f.s))
-    f.document.saved=history.edits_state(&f.edits)
     api_opened,api_problem:=editor.api_open(&f.s,0,true)
     if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     editor.api_state(&f.s).poll_temp=context.temp_allocator
@@ -202,12 +201,9 @@ probe_drive :: proc(f:^Probe) {
         core.settle(&f.info,world,nil)
     }
     history.edits_reset(&f.edits,editor.edited_world(&f.s))
-    f.document.saved=history.edits_state(&f.edits)
     editor.api_state(&f.s).step_frame=probe_frame
 }
 
-// Where a repro goes: the project is set only while it is written, as a
-// fixture without a project starts its games without a recovery copy.
 @(private="file")
 probe_json :: proc(t:^testing.T,text:string) -> json.Object {
     value,error:=json.parse_string(text,allocator=context.temp_allocator)

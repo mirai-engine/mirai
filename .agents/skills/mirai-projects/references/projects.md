@@ -544,7 +544,9 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   empty, and over it `templates/common`, what every template shares, which has no `project.mirai`
   and so is no template; `--list` gives the first line of the `README.md` of each template. It
   writes the project's `.gitattributes`, which no template carries
-  ([git and assets](../../mirai-assets/references/cli.md#git)).
+  ([git and assets](../../mirai-assets/references/cli.md#git)), and makes the project a git
+  repository when it is in none: the editor keeps its changes with
+  [git](../../mirai-editor/references/git.md#pending-and-kept).
 - `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and

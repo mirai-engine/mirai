@@ -15,8 +15,8 @@ import "mirai:ui"
 // the scenes (editor.asset_workspace). The animation document plays a clip of
 // the .anim on a subject, a skinned mesh or the subtree of an entity of the
 // scene; the renderer draws its image inside the frame into an image of its
-// texture table. What a document changes goes to the file of its asset in
-// memory, unsaved, as steps of the history of the document. The thumbnails of
+// texture table. What a document changes goes to the file of its asset as
+// steps of the history of the document. The thumbnails of
 // animations and skeletons are drawn by the content browser with what
 // thumbnails.odin gives.
 

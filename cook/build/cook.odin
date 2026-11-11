@@ -193,7 +193,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     // Which of two files with one id is the asset depends on the machine: the cook takes neither.
     if len(registry.duplicates)>0 {
         twins:=registry.duplicates[0]
-        cook_fail(&report,.Duplicate_Id,fmt.tprintf("%s and %s have one id; open the copy in the editor and save it, which gives it an id of its own",files[twins.first].path,files[twins.second].path),allocator)
+        cook_fail(&report,.Duplicate_Id,fmt.tprintf("%s and %s have one id; open the project in the editor, which gives the copy an id of its own",files[twins.first].path,files[twins.second].path),allocator)
         return
     }
     reached:=make([]bool,len(files),temp)
@@ -723,7 +723,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
     if report.textures_compressed>0 {fmt.sbprintf(&b,", %d textures compressed",report.textures_compressed)}
     if report.animations_compressed>0 {fmt.sbprintf(&b,", %d animations sampled",report.animations_compressed)}
     if report.scenes_resolved>0 {fmt.sbprintf(&b,", %d scenes and prefabs with their prefab instances brought up to date",report.scenes_resolved)}
-    if report.reparented>0 {fmt.sbprintf(&b,", %d entities they added under members their prefabs removed under the nearest member left (open and save them in the editor to keep that)",report.reparented)}
+    if report.reparented>0 {fmt.sbprintf(&b,", %d entities they added under members their prefabs removed under the nearest member left (an edit of them in the editor writes that)",report.reparented)}
     if report.removed>0 {fmt.sbprintf(&b,", %d files of an earlier cook removed",report.removed)}
     if report.reused>0 {fmt.sbprintf(&b,", %d files kept from an earlier cook: what they are made of did not change",report.reused)}
     strings.write_byte(&b,'\n')

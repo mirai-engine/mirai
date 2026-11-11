@@ -49,8 +49,8 @@ Code: `editor/api/` (package `api`: server, JSON-RPC, MCP, schemas, client),
   until ACP completes the turn and a write fails. `finish` finishes the turn of its header and
   `agent.spawn` starts a subagent from it; both are listed only to a request that has one
   (`Method_Flag.Turn`), and `agent.spawn` fails unless the turn is the main chat's.
-- A turn does not discard the user's unsaved work: `engine.shutdown`, `scene.open`,
-  `editor.recover` with `discard` and closing a document with changes fail, asking it to ask.
+- A turn does not replace the user's work: `engine.shutdown`, `scene.open` and `scene.new` fail,
+  asking it to ask.
 - A tagged write closes the user's previous gesture and, if it succeeds, attributes to the turn
   only the new transactions of that request
   ([change review](../../mirai-editor/references/ai-review.md)); without the header, to no agent.
@@ -78,7 +78,7 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   binaries or a library older than the latest, they warn and continue with what it loaded until
   `restart`. An editor of the project with a window is not reused, trampled or closed (`start`,
   `restart` and `stop` fail with its pid); a headless one that does not respond is not trampled
-  either: `stop --discard` closes it.
+  either: `stop --force` closes it.
 - **Build with an open session.** Windows does not replace loaded binaries, but it moves them: the
   build moves the ones a program runs to `.mirai/engine/<mode>/retired/` and writes in their place
   (`build.engine_unlock`), and a later build deletes them once nothing runs them. `mirai build
@@ -93,9 +93,10 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   is, and the session record follows it to a restarted process, so the next call reaches it
   through the port file and `mirai session` still knows it as the project's. `mirai build engine`
   does not hand builds to sessions: it names them.
-- `stop` never saves: unsaved changes (from `editor.documents` and `asset.unsaved`) are discarded
-  automatically if all are copies under `.mirai/tmp/`; otherwise it fails listing them and
-  `--discard` discards them.
+- `stop` asks the editor to quit and leaves its files as they are: every edit was written when its
+  step ended. `--force` ends an editor that does not answer. Of a copy, it deletes the copy. Every
+  edit is written to its file, so what is only to be tried or verified is done on a copy
+  (`start --copy`; [AGENTS.md](../../../../AGENTS.md#verification)).
 - **Orphans**: editors that run from the checkout's `.mirai/engine/` and that the `api.json` of
   their project does not name. `status` (0 if the session responds) lists them and
   `stop --orphans [project]` closes the headless ones, never one with a window.
@@ -115,7 +116,7 @@ console, `stats` and, with `--reference`, `diff`
 ([`mirai image`](image.md)). It exits with 1 if there are validation errors or if the SSIM against
 `--reference` is below `--threshold`. Each capture starts the window clock at zero (`seconds` of
 `capture`): a scene loaded again and captured again draws the same frames. `--repeat` loads
-the scene again (that of `--scene` or the document's file, if it has no unsaved changes), returns
+the scene again (that of `--scene` or the document's file), returns
 to the same camera, captures and gives its SSIM; what remains is what two renderers do not share
 and, below `REPEAT_SSIM`, it warns that a higher threshold compares noise. `--view` shows a mode of
 `editor.view_mode.list` and when done restores the one the session had; `collision` is not visible
@@ -162,7 +163,7 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
   beside the assets.
 - **One writer of scenes.** `scene write` runs `scene_apply` (`cook/author/scene_document.odin`),
   which `scene.write` of the editor runs too, on the file as its `Scene_Target`
-  (`cook/author/scene_file.odin`), and then writes the file as a save of the editor does: its
+  (`cook/author/scene_file.odin`), and then writes the file as the editor does: its
   entities loaded into a world of the game and captured (`engine/scene.capture`), so the same
   document gives the same bytes with and without an editor. The entities a document makes take
   their ids from the sequence of whoever makes them.
@@ -431,8 +432,8 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   the API outside a turn or the user) and `history.*` moves the caller's
   ([undo per author](../../mirai-editor/references/document.md#undo-by-author); `ai.revert`,
   `ai.review.accept` and `ai.retry`: [contract](../../mirai-editor/references/ai-review.md)).
-- During Play or Simulate, scene edits, history, saving, prefabs and asset authoring **work on the
-  document and the assets**: the game runs on its copy and sees an asset that changes when it is
-  read again, as with any write on disk. What opens a view over the viewport (a section, a material
+- During Play or Simulate, scene edits, history, prefabs and asset authoring **work on the document
+  and the assets**: the game runs on its copy and sees an asset that changes when it is read again;
+  nothing is written until it stops. What opens a view over the viewport (a section, a material
   document) or simulates on the document (`physics.settle`) waits for Edit; `simulation.apply`
   commits transforms into the document with one undo ([methods](methods.md#simulation)).

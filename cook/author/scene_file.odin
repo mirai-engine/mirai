@@ -422,7 +422,7 @@ scene_file_apply :: proc(f:^Scene_File,text:string) -> (applied:Scene_Applied,pr
     return
 }
 
-// The bytes of a scene as a save of the editor writes it: its entities in a
+// The bytes of a scene as the editor writes it: its entities in a
 // world of the game info describes, captured, so the same scene is the same
 // bytes whoever wrote it, every component in the layout the game declares.
 // scratch: that world, made the first time; in the temp allocator.

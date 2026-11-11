@@ -43,7 +43,7 @@ services_open :: proc(s:^Session,options:Options) -> (api_ok:bool) {
             log.errorf("the scene could not be shared: %s",collab_error_text(error))
         }
     } else if options.join!="" {
-        if error:=collab_join(s,options.join,options.name,true);error!=.None {
+        if error:=collab_join(s,options.join,options.name);error!=.None {
             log.errorf("the session could not be entered: %s",collab_error_text(error))
         }
     }

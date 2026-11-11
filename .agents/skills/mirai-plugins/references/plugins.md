@@ -249,11 +249,11 @@ demo enables. How an `editor/` adds steps, panels and tools:
 Vertex color brush (shortcut **B**, code in `paint_editor.odin` and `canvas.odin`).
 
 - A stroke paints every vertex of every level of the mesh and writes the colors of the entity as
-  a `.paint`, a file of the stroke step (`editor.file_write`) that `Painted` names: it stays in
-  memory until Save, undo and cancel remove it, and the next stroke reads it through
+  a `.paint`, a file of the stroke step (`editor.file_write`) that `Painted` names: the flush
+  writes it when the step ends, undo and cancel remove it, and the next stroke reads it through
   `host.assets_file`. Another entity of the same mesh keeps its own colors.
 - A `.paint` whose mesh file changed (imported again) follows it: `paint_fit` gives each vertex
-  the color of the nearest painted position and writes it in memory, saved with the next Save.
+  the color of the nearest painted position and writes it, as a step.
 - A stroke stamps the brush by distance in the world onto the vertices, with a soft falloff up to
   the radius, and each vertex keeps the maximum of its stamps: passing twice in one stroke paints
   once.
@@ -268,10 +268,10 @@ Vertex color brush (shortcut **B**, code in `paint_editor.odin` and `canvas.odin
   generated resources. The component stores the identity and revision of its source.
 - Derived fields carry `transient`; those that must not travel over the network, `local`.
 - Test with `generate` of the demo, `check` of each part and a run with the editor or the game.
-- `paint/editor`: unsaved colors that go with undo and cancel, every level painted, and stroke
-  and clear by API (`painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel`,
+- `paint/editor`: colors written at the flush that go with undo and cancel, every level painted, and
+  stroke and clear by API (`painted_colors_reach_the_disk_at_the_flush_and_go_with_undo_and_cancel`,
   `a_stroke_paints_every_level_of_a_mesh_two_entities_share`,
   `paint_api_strokes_along_points_and_clears_as_steps_of_undo`,
-  `paint_follows_its_mesh_imported_again_with_its_vertices_in_another_order`); drawn at every
-  level, per instance: `gpu_instances_of_one_mesh_draw_their_own_colors_at_every_level`
-  (`render`). The stroke with the pointer is verified by the user.
+  `paint_follows_its_mesh_imported_again_with_its_vertices_in_another_order`); drawn at every level,
+  per instance: `gpu_instances_of_one_mesh_draw_their_own_colors_at_every_level` (`render`). The
+  stroke with the pointer is verified by the user.

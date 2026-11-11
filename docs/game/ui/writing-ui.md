@@ -8,11 +8,11 @@ for this (a new game has it).
 
 ## A working document
 
-Save this as `screen.json` and write it (`save=true` writes the file: a path that does not exist
+Save this as `screen.json` and write it (a path that does not exist
 yet makes the `.ui`):
 
 ```
-mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=true
+mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json
 ```
 
 ```json
@@ -53,7 +53,7 @@ mirai rpc --project . ui.write asset=ui/screen.ui document=@screen.json save=tru
 ```
 
 ```
-mirai rpc --project . ui.write asset=hud/stat.ui document=@stat.json save=true
+mirai rpc --project . ui.write asset=hud/stat.ui document=@stat.json
 ```
 
 A document only sees its own `styles` and those of what it lists in `use`.
@@ -116,5 +116,3 @@ A node with `key` shows that key of the texts of the game in the language of the
 - A `.ui` that does not load shows nothing: `engine.diagnostics` has `gui.asset`.
 - Controls need distinct `name`s: events carry only its hash. A name the screen's `.ui` lacks is
   a problem `gui.names` the first frame a step asks for it.
-- `ui.write` without `save=true` waits for Save (the changes are one step of history); agents pass
-  `save=true`.

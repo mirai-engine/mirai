@@ -322,7 +322,8 @@ api_jobs :: proc(s:^Session) {
     play_plugin_poll(s)
     runs_pump(s)
     collab_update(s)
-    recovery_update(s)
+    events_steps(s)
+    files_flush(s)
 }
 
 // Keeps the editor going from inside a handler until pending says false:
@@ -405,8 +406,8 @@ api_disk_baseline :: proc(s:^Session) {
 }
 
 // What changed on disk since the last call is there for this one, whoever
-// changed it: assets are read again where they are loaded, with unsaved ones
-// kept, and shaders are published; a call that draws waits for them. False,
+// changed it: assets are read again where they are loaded, with those the
+// registry holds kept, and shaders are published; a call that draws waits for them. False,
 // with the call failed, when they could not be published.
 @(private)
 api_disk_sync :: proc(s:^Session,call:^api.Call) -> bool {
@@ -484,7 +485,11 @@ api_trampoline :: proc(call:^api.Call) {
     if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?history.Edit_Author(turn.id):history.EDIT_AUTHOR_API}
     api_refusal_begin(entry.session)
     event(entry.session,st.person?"command":"api",call.method.name)
-    if st.in_call>1 || st.person || api_disk_sync(entry.session,call) {entry.run(entry.session,call)}
+    if missing:=git_missing(entry.session);missing!="" && api_call_edits(call) && !strings.has_prefix(call.method.name,"git.") {
+        api.call_fail(call,api.SERVER_ERROR,missing)
+    } else if st.in_call>1 || st.person || api_disk_sync(entry.session,call) {
+        entry.run(entry.session,call)
+    }
     api_refusal_end(entry.session,call)
     if edits!=nil {
         // A gesture the call opened and ended is its step, without waiting for the frame.
@@ -497,6 +502,8 @@ api_trampoline :: proc(call:^api.Call) {
         edits.author=st.person || st.in_call>1?author_before:history.EDIT_AUTHOR_USER
     }
     files_settle(entry.session)
+    // The files of the steps of the call are written before it answers.
+    if st.in_call==1 && !st.transaction && api_call_edits(call) {files_flush(entry.session,true)}
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}

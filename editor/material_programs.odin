@@ -13,15 +13,13 @@ import gpu "mirai:render"
 // The material programs of the project are published again when a source of
 // theirs changes through the editor (an API edit, an undo, a discard): the
 // shaders of the project are generated on a job, without stopping the editor,
-// with the sources the editor holds unsaved read from its memory
-// (programs_overlay). The stages the previews draw with go first: once they
+// from the files of their sources. The stages the previews draw with go first: once they
 // compile, the renderer takes them with the new catalog and the other stages
 // as they were, and a preview shows the program. The stages the frames run
 // go next: once they compile, the renderer takes them with the idle ones as
 // they were (gpu.renderer_shaders_idle), and the viewport shows it. The whole
 // generation replaces them when it is done. A change while a job runs cancels
-// it and starts another. Saving a source needs no publication: its file then
-// holds what was published.
+// it and starts another.
 
 Programs_Publication :: struct {
     job:^build.Shaders_Job,
@@ -100,17 +98,7 @@ programs_start :: proc(s:^Session) {
         unused:=gpu.renderer_shaders_idle(s.app.renderer)
         for id in gpu.Shader_Id {if unused[id] {append(&idle,gpu.SHADERS[id].name)}}
     }
-    p.job=build.shaders_start(p.project,first[:],programs_overlay(s),idle[:])
-}
-
-// The sources of programs the editor holds unsaved, as a generation reads
-// them in place of their files; they point into the registry.
-programs_overlay :: proc(s:^Session) -> []shaders.Overlay {
-    overlay:=make([dynamic]shaders.Overlay,context.temp_allocator)
-    for held in assets_unsaved(s) {
-        if asset.registry_outside(held.path) {append(&overlay,shaders.Overlay{held.path,held.data,held.removed})}
-    }
-    return overlay[:]
+    p.job=build.shaders_start(p.project,first[:],idle[:])
 }
 
 @(private)

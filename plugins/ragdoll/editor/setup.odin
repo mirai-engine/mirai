@@ -177,7 +177,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         if !body.present {continue}
         e:=editor.entity_create(s,{name=fmt.tprintf("%s %s",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),transform=core.from_math(body.pose)})
         if e==core.NONE {
-            failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The bodies could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
+            failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The bodies could not be made in the edited scene","Edit the section the rig is in, or reopen the scene"})
             editor.api_edit_end(s,call,false)
             return
         }
@@ -189,7 +189,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         if part==.Pelvis {continue}
         joined:=editor.entity_create(s,{name=fmt.tprintf("%s %s joint",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),parent=e,transform=core.from_math(body.joint_at)})
         if joined==core.NONE {
-            failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The joints could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
+            failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The joints could not be made in the edited scene","Edit the section the rig is in, or reopen the scene"})
             editor.api_edit_end(s,call,false)
             return
         }

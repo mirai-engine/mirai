@@ -13,16 +13,16 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 @(private)
-unsaved_test_held :: proc(a:^host.Assets,relative:string) -> bool {_,found:=asset.registry_memory_find(&a.registry,relative);return found}
+undo_test_held :: proc(a:^host.Assets,relative:string) -> bool {_,found:=asset.registry_memory_find(&a.registry,relative);return found}
 
 // One stroke of the tool on owner, confirmed as a step.
 @(private)
-unsaved_test_sculpt :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,height:f32) {
-    unsaved_test_stroke(t,s,tool,ref,world,owner,{kind=.Raise,center={0,0,0},radius=1,amount=height})
+undo_test_sculpt :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,height:f32) {
+    undo_test_stroke(t,s,tool,ref,world,owner,{kind=.Raise,center={0,0,0},radius=1,amount=height})
 }
 
 @(private)
-unsaved_test_stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,brush:terrain.Brush) {
+undo_test_stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,brush:terrain.Brush) {
     terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
     if !testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner})) {return}
     if !testing.expect(t,stroke_baseline(tool)) {return}
@@ -35,7 +35,7 @@ unsaved_test_stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,re
 }
 
 @(test)
-terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
+terrain_history_writes_its_file_at_the_flush_and_follows_a_change_outside_it :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/ground.terrain",root)
     relative:="ground.terrain"
@@ -61,37 +61,42 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     edits:history.Edits;defer history.edits_free(&edits)
     history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    document:editor.Document
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
     test_world_settle(&world)
-    unsaved:=unsaved_test_held
-    sculpt:=unsaved_test_sculpt
+    held:=undo_test_held
+    sculpt:=undo_test_sculpt
     middle:=[3]int{2,0,2}
 
-    // A stroke stays in memory; Save writes it and the history keeps it.
+    // The registry answers for a stroke at once; the flush of its step writes it.
     sculpt(t,&s,&tool,ref,&world,owner,2)
-    testing.expect(t,unsaved(&assets,relative))
+    testing.expect(t,held(&assets,relative))
     on_disk,_:=serial.file_read(path);testing.expect(t,string(on_disk)==string(disk));delete(on_disk)
     stroked:=test_held(t,&assets,relative);defer delete(stroked)
-    saved,written:=editor.assets_save(&s,{relative})
-    testing.expect(t,written && saved==1 && !unsaved(&assets,relative))
+    testing.expect(t,string(stroked)!=string(disk))
+    testing.expect(t,editor.files_flush(&s,true))
+    testing.expect(t,!held(&assets,relative))
     on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
+    // Undo and redo write back the side of their step.
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     testing.expect(t,history.undo(&edits,ref,&selection))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    testing.expect(t,unsaved(&assets,relative))
-    undone:=test_held(t,&assets,relative);testing.expect(t,string(undone)==string(disk));delete(undone)
+    testing.expect(t,editor.files_flush(&s,true))
+    on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(disk));delete(on_disk)
     testing.expect(t,history.redo(&edits,ref,&selection))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    testing.expect(t,!unsaved(&assets,relative))
+    testing.expect(t,editor.files_flush(&s,true))
+    on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
 
-    // Discard takes back the disk: the revision the owners are at holds it,
-    // and redo does not bring the discarded stroke back.
+    // A file that changes outside the tool is what the revision the owners
+    // are at holds, and redo does not bring the stroke it replaced back.
     sculpt(t,&s,&tool,ref,&world,owner,5)
     testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(3))
-    testing.expect(t,unsaved(&assets,relative))
-    testing.expect_value(t,editor.assets_discard(&s,{relative}),1)
+    testing.expect(t,editor.files_flush(&s,true))
+    testing.expect_value(t,serial.file_write_atomic(path,stroked),serial.File_Error.None)
+    testing.expect(t,host.assets_refresh(&assets,{relative}))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
     head:=editor.revision_head(&tool.history,id,3)
     if !testing.expect(t,head!=nil) {return}
@@ -100,10 +105,9 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     testing.expect_value(t,terrain.source_value(&tool.stroke.source,middle),f32(2))
     testing.expect(t,history.undo(&edits,ref,&selection))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    testing.expect(t,!unsaved(&assets,relative))
     testing.expect(t,history.redo(&edits,ref,&selection))
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    testing.expect(t,!unsaved(&assets,relative))
+    testing.expect(t,editor.files_flush(&s,true))
     on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
 }
 
@@ -127,7 +131,8 @@ undoing_a_new_terrain_takes_its_file_away_after_its_strokes :: proc(t:^testing.T
     edits:history.Edits;defer history.edits_free(&edits)
     history.edits_reset(&edits,ref)
     viewport:editor.Viewport
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=517}
+    document:editor.Document
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,id_state=517,document=&document}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.chunk_cells=5,4
     terrain_create(&s,&tool,ref,app.assets,app.allocator)
@@ -137,19 +142,20 @@ undoing_a_new_terrain_takes_its_file_away_after_its_strokes :: proc(t:^testing.T
     created:=test_held(t,&assets,relative);defer delete(created)
     core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
     test_world_settle(&world)
-    unsaved_test_sculpt(t,&s,&tool,ref,&world,owner,2)
-    unsaved_test_sculpt(t,&s,&tool,ref,&world,owner,3)
+    undo_test_sculpt(t,&s,&tool,ref,&world,owner,2)
+    undo_test_sculpt(t,&s,&tool,ref,&world,owner,3)
     stroked:=test_held(t,&assets,relative);defer delete(stroked)
     testing.expect_value(t,edits.cursor,3)
     for _ in 0..<3 {testing.expect(t,history.undo(&edits,ref,&selection))}
     testing.expect_value(t,len(world.terrains.values),0)
-    testing.expect(t,!editor.file_exists(&s,path) && !unsaved_test_held(&assets,relative))
+    testing.expect(t,!editor.file_exists(&s,path) && !undo_test_held(&assets,relative))
+    testing.expect(t,editor.files_flush(&s,true) && !os.exists(path))
     testing.expect(t,history.redo(&edits,ref,&selection))
     held:=test_held(t,&assets,relative);testing.expect(t,string(held)==string(created));delete(held)
     for _ in 0..<2 {testing.expect(t,history.redo(&edits,ref,&selection))}
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    held=test_held(t,&assets,relative);testing.expect(t,string(held)==string(stroked));delete(held)
-    testing.expect(t,!os.exists(path))
+    testing.expect(t,editor.files_flush(&s,true))
+    on_disk,_:=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
 }
 
 // The strokes of a Volume are steps of undo; the snapshots of its history
@@ -183,9 +189,9 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     created:=test_held(t,&assets,relative);defer delete(created)
     cave:=[3]f32{-8.5,-24.5,-8.5}
     deep:=[3]int{40,24,40}
-    unsaved_test_stroke(t,&s,&tool,ref,&world,owner,{kind=.Carve,center=cave,radius=20,amount=1})
+    undo_test_stroke(t,&s,&tool,ref,&world,owner,{kind=.Carve,center=cave,radius=20,amount=1})
     carved:=test_held(t,&assets,relative);defer delete(carved)
-    unsaved_test_stroke(t,&s,&tool,ref,&world,owner,{kind=.Add,center=cave,radius=6,amount=1})
+    undo_test_stroke(t,&s,&tool,ref,&world,owner,{kind=.Add,center=cave,radius=6,amount=1})
     filled:=test_held(t,&assets,relative);defer delete(filled)
     testing.expect_value(t,edits.cursor,3)
     // The head holds values only for the blocks the surface crosses, and each

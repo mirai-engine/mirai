@@ -27,7 +27,7 @@ asset_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Assets,
     case .Out_Of_Memory:
         core.report(problems,e,code,"%s names %s, which did not fit in memory; it is read again when the assets change: free memory",field,path)
     case .Truncated,.Not_An_Asset,.Corrupt,.Hash,.Too_Large,.Schema,.IO:
-        core.report(problems,e,code,"%s names %s, which cannot be read (%v); import it again or save it again from the editor",field,path,error)
+        core.report(problems,e,code,"%s names %s, which cannot be read (%v); import it again or write it again from the editor",field,path,error)
     }
 }
 

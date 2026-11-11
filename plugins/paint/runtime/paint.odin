@@ -101,7 +101,7 @@ paint_render :: proc(state:^Paint_Render,painted:^core.Table(Painted,.Read),sync
     for shown in state.shown[:state.count] {
         index:=render.instance_of(sync,shown.entity)
         if index>=0 && !render.instance_colors_set(renderer,index,shown.handle) {
-            core.report(problems,shown.entity,"paint.mismatch","its .paint was painted on another version of its mesh, with another number of vertices, and is not shown; open the scene in the editor, which fits the paint to the mesh, and save it")
+            core.report(problems,shown.entity,"paint.mismatch","its .paint was painted on another version of its mesh, with another number of vertices, and is not shown; open the scene in the editor, which fits the paint to the mesh and writes it")
         }
     }
 }

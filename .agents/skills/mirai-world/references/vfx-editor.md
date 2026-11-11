@@ -32,7 +32,7 @@ Content browser gestures:
 An effect's file is one shape in the editor, `Particle_File` (`effect_file.odin`): its tables in
 room of its own, copied, compared and merged as a value by the document, the section and the API,
 and sliced into the `effect.Particle_Desc` that the file is read as and written from. It is written
-with `particle_write`: with `editor.file_write`, in memory and unsaved, as a history step where it
+with `particle_write`: with `editor.file_write`, as a history step where it
 is written ([files in the history](../../mirai-editor/references/document.md#edits-and-undo)).
 
 ## Particle_Emitter section

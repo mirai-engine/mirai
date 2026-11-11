@@ -247,7 +247,7 @@ ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_a
     testing.expect_value(t,len(setup_test_bodies(f,f.plain)),16)
     testing.expect(t,core.has(&f.world.configs,f.plain))
     testing.expect_value(t,f.edits.cursor,1)
-    testing.expect_value(t,len(host.assets_unsaved(&f.assets)),0)
+    testing.expect_value(t,len(f.assets.registry.memory),0)
     core.remove(&f.world.animations,f.figure);test_world_settle(&f.world)
     result,_=setup_test_call(f,`{"entity":"0000000000000011"}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`))

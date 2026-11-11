@@ -16,8 +16,8 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 
 // The methods of the terrain for agents and scripts: what the panel does, by
-// what it does, in the edited world, each a step of undo kept unsaved as a
-// stroke of the tool is. A stroke goes from at to to, touching every quarter
+// what it does, in the edited world, each a step of undo as a stroke of the
+// tool is. A stroke goes from at to to, touching every quarter
 // of the radius, with what one pass of the tool does at each point. While a
 // game of the caller plays, terrain.edit and terrain.layer are requests of
 // that game instead (dig, request_layer), which it applies in its
@@ -171,7 +171,7 @@ terrain_api_register :: proc(s:^editor.Session) {
     interior_defaults:=Interior_Params{wave_scale=16}
     for &stratum in interior_defaults.strata {stratum.depth=1}
     for &vein in interior_defaults.veins {vein.scale,vein.amount,vein.depth=4,0.3,{0,terrain.HEIGHT_LIMIT}}
-    editor.api_method_register(s,{name="terrain.create",summary="Makes a terrain in the edited scene: a Heightfield (heights over x and z, for open ground) or a Volume (solid and air, for caves, overhangs and digging), flat or from a heightmap. Its .terrain stays in memory until it is saved; one step of undo takes it away.",params=type_info_of(Create_Params),defaults=&create_defaults,result=type_info_of(Id_Result),run=api_create})
+    editor.api_method_register(s,{name="terrain.create",summary="Makes a terrain in the edited scene: a Heightfield (heights over x and z, for open ground) or a Volume (solid and air, for caves, overhangs and digging), flat or from a heightmap. One step of undo takes it and its .terrain away.",params=type_info_of(Create_Params),defaults=&create_defaults,result=type_info_of(Id_Result),run=api_create})
     editor.api_method_register(s,{name="terrain.edit",summary="One stroke of a brush of the terrain tool on a terrain, from at to to (or at alone), as one step of undo: sculpting (raise, lower, smooth, flatten, set_height, terrace, noise, erode, a ramp between at and to), painting a layer (paint, erase), holes (hole, fill) or a shape it joins or takes out (add, carve: a sphere at at, a capsule to to, or a box), on a Heightfield or a Volume alike. The error says what failed and what to use.",params=type_info_of(Edit_Params),defaults=&edit_defaults,result=type_info_of(Terrain_Edit_Result),run=api_edit})
     editor.api_method_register(s,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to four.",params=type_info_of(Layer_Params),defaults=&layer_defaults,result=type_info_of(Terrain_Layer_Result),run=api_layer})
     editor.api_method_register(s,{name="terrain.interior",summary="Sets what a Volume holds under its surface, as its layers, and writes it into every sample as one step of undo: strata down from the top of each column (grass, dirt, rock) and pockets or veins of noise over them (ore). The walls and floor of what is dug show it, and what a game digs reports it by layer (terrain.Terrain_Digs). What it is not given stays as it is.",params=type_info_of(Interior_Params),defaults=&interior_defaults,result=type_info_of(Terrain_Interior_Result),run=api_interior})

@@ -10,7 +10,7 @@ AI_TRANSCRIPT_BYTES :: 48*1024
 AI_TRANSCRIPT_LINES :: 512
 AI_LINE_BYTES :: 1024
 AI_DECLINED_NOTE :: "Rejected changes"
-AI_UNSAVED_NOTE :: "Changes not in the saved scene"
+AI_UNDONE_NOTE :: "Changes undone"
 AI_RESTORED_NOTE :: "Changes taken back for review"
 
 Ai_Line :: struct {
@@ -94,7 +94,7 @@ ai_transcript_touch :: proc(t:^Ai_Transcript,index:int) {
 ai_transcript_declined :: proc(t:^Ai_Transcript) -> int {
     for index:=t.count-1;index>=0;index-=1 {
         text,kind:=ai_transcript_line(t,index)
-        if kind==.Note && (text==AI_DECLINED_NOTE || text==AI_UNSAVED_NOTE) {return index}
+        if kind==.Note && (text==AI_DECLINED_NOTE || text==AI_UNDONE_NOTE) {return index}
     }
     return -1
 }

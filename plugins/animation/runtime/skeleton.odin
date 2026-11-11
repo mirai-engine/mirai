@@ -124,7 +124,7 @@ skeleton_assets_free :: proc(cache:^Skeleton_Assets) {
 }
 
 // Advances when what the plugin reads of the assets may have changed: a file
-// of the registry, on disk or unsaved in its memory, or what the host gave out
+// of the registry, on disk or in its memory, or what the host gave out
 // of one. A content looks at its record again only then. Never 0.
 @(private)
 assets_stamp :: proc "contextless" (assets:^host.Assets) -> u64 {return assets.revision+assets.registry.revision+1}
