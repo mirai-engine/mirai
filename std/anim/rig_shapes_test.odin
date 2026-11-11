@@ -16,6 +16,35 @@ aim_up_keeps_secondary_axis_and_applies_influence_once :: proc(t:^testing.T) {
     _,ok=aim_at(1,{0,0,-1},{1,0,0},{0,0,1},{0,1,0},math.PI);testing.expect(t,!ok)
 }
 
+// The ray from the offset (the eyes of a head, the muzzle of a gun) passes through the target.
+@(test)
+look_and_aim_pass_the_ray_from_their_offset_through_the_target :: proc(t:^testing.T) {
+    Case :: struct {name:string,rotation:math.Quat,forward,offset,target:math.Vec3,up:bool}
+    tilted:=math.quat_axis_angle(linalg.normalize(math.Vec3{1,2,-1}),.7)
+    cases:=[]Case{
+        {name="eyes",rotation=1,forward={0,0,-1},offset={0,.1,-.08},target={.3,.15,-.4}},
+        {name="eyes with up",rotation=1,forward={0,0,-1},offset={0,.1,-.08},target={.3,.15,-.4},up=true},
+        {name="muzzle",rotation=tilted,forward={1,0,0},offset={.3,.05,0},target={0,.1,-.5}},
+        {name="muzzle with up",rotation=tilted,forward={1,0,0},offset={.3,.05,0},target={0,.1,-.5},up=true},
+        {name="no offset",rotation=tilted,forward={1,0,0},target={0,.1,-.5},up=true},
+    }
+    for c in cases {
+        solved,ok:=look_at(c.rotation,c.forward,c.target,math.PI,1,c.offset)
+        if c.up {solved,ok=aim_at(c.rotation,c.forward,c.target,{0,1,0},{0,1,0},math.PI,1,c.offset)}
+        origin:=math.quat_rotate(solved,c.offset)
+        ray:=math.quat_rotate(solved,linalg.normalize(c.forward))
+        sight:=c.target-origin
+        miss:=linalg.length(sight-ray*linalg.dot(sight,ray))
+        testing.expectf(t,ok && linalg.dot(sight,ray)>0 && miss<1e-4,"%s: the ray passes %.5f m from the target",c.name,miss)
+    }
+    nan:=f32(0h7fc00000)
+    _,ok:=look_at(1,{0,0,-1},{0,0,-.2},math.PI,1,{0,.3,0});testing.expect(t,!ok,"a target nearer than the ray passes")
+    _,ok=aim_at(1,{0,0,-1},{0,0,-.2},{0,1,0},{0,1,0},math.PI,1,{0,.3,0});testing.expect(t,!ok,"a target nearer than the ray passes, aiming")
+    _,ok=look_at(1,{0,0,-1},{0,0,-1},math.PI,1,{nan,0,0});testing.expect(t,!ok,"a NaN offset")
+    _,ok=look_at(1,{0,0,-1},{nan,0,-1},math.PI,1,{0,.1,0});testing.expect(t,!ok,"a NaN target")
+    _,ok=look_at(1,{0,0,-1},{},math.PI,1,{0,.1,0});testing.expect(t,!ok,"a target at the bone")
+}
+
 @(test)
 soft_reach_and_stretch_keep_a_bounded_continuous_reach :: proc(t:^testing.T) {
     at,scale,ok:=chain_reach({},{0,3,0},2,{max_stretch=.25})

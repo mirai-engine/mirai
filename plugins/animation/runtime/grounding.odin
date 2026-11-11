@@ -15,6 +15,7 @@ Grounded_Leg :: struct {
     pole_offset,foot_up:mm.Vec3,
     sole_height,contact_offset,contact_height,plant_speed,max_tilt:f32,
     phase,step_distance,step_height,step_duration,max_distance,contact:f32,
+    reach:lib.Chain_Reach, // a softened approach to full extension and how far the leg may stretch past it
 }
 GROUNDED_LEG_DEFAULT :: Grounded_Leg{
     foot_up={0,1,0},sole_height=0.05,contact_height=0.08,plant_speed=0.6,max_tilt=mm.PI*.5,
@@ -177,7 +178,7 @@ grounding_config_valid :: proc(config:Foot_Grounding) -> bool {
     if config.trace_above+config.trace_below<=0 || !finite(config.trace_above+config.trace_below) || config.minimum_ground_dot>1 || config.global_contact>1 || config.weight>1 || config.replant_distance>config.release_distance || config.cycle_duration<=0 || config.swing_fraction<=0 || config.swing_fraction>1 || config.max_swinging<=0 {return false}
     for i in 0..<int(config.count) {
         leg:=config.legs[i]
-        values:=[?]f32{leg.sole_height,leg.contact_offset,leg.contact_height,leg.plant_speed,leg.max_tilt,leg.phase,leg.step_distance,leg.step_height,leg.step_duration,leg.max_distance,leg.contact}
+        values:=[?]f32{leg.sole_height,leg.contact_offset,leg.contact_height,leg.plant_speed,leg.max_tilt,leg.phase,leg.step_distance,leg.step_height,leg.step_duration,leg.max_distance,leg.contact,leg.reach.soft_distance,leg.reach.max_stretch}
         for value in values {if !finite(value) || value<0 {return false}}
         if leg.phase>=1 || leg.step_duration<=0 || leg.max_distance<leg.step_distance || leg.contact>1 || linalg.length(leg.foot_up)<1e-6 {return false}
         for value in leg.foot_up {if !finite(value) {return false}}
@@ -543,12 +544,12 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             if !valid {return grounding_unsolved(problems,state.entity,"the pole of the knee",i)}
             poles[i]=pole+mm.quat_rotate(root.rotation,leg.pole_offset)
         }
-        original,ok:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,poles[i],target.weight)
+        original,ok:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,poles[i],target.weight,leg.reach)
         if !ok {return grounding_unsolved(problems,state.entity,"the IK",i)}
         if config.mode==.Procedural {
             replacement:lib.Surface_Contact
             if !original.reached && target.weight==1 && !record.legs[i].swinging && record.legs[i].anchor.active && contacts[i].valid {
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],contacts[i].position,poles[i],target.weight)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],contacts[i].position,poles[i],target.weight,leg.reach)
                 if valid && solved.reached {
                     _,blocked:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !blocked {replacement=contacts[i];original=solved}
@@ -559,7 +560,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
                         hit,found:=ground.probe(ground.user,probe+up*config.trace_above,-up,config.trace_above+config.trace_below,0,ignore,mask)
                         if found && linalg.dot(hit.normal,up)>=config.minimum_ground_dot {
                             position:=hit.point+hit.normal*leg.sole_height
-                            candidate,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight)
+                            candidate,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight,leg.reach)
                             if valid && candidate.reached {
                                 _,blocked:=grounding_limb_hit(ground,candidate.root.position,candidate.joint.position,candidate.end.position,ignore,mask)
                                 if !blocked {
@@ -576,7 +577,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             if blocked && linalg.dot(hit.normal,up)<config.minimum_ground_dot {
                 length:=linalg.length(state.world[knee].position-state.world[hip].position)+linalg.length(state.world[foot].position-state.world[knee].position)
                 pole:=state.world[hip].position+hit.normal*length
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,pole,target.weight)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,pole,target.weight,leg.reach)
                 if valid && solved.reached {
                     _,intersects:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !intersects {poles[i]=pole;original=solved;blocked=false}
@@ -584,7 +585,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             }
             if blocked && linalg.dot(hit.normal,up)>=config.minimum_ground_dot {
                 position:=hit.point+hit.normal*leg.sole_height
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight,leg.reach)
                 if valid && solved.reached {
                     _,intersects:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !intersects {
@@ -625,7 +626,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
                 pole,pole_valid:=lib.two_bone_pole_from_pose(state.world[hip],state.world[knee],state.world[foot],goal)
                 if !pole_valid {return grounding_unsolved(problems,state.entity,"the pole of the knee",i)}
                 pole+=mm.quat_rotate(root.rotation,leg.pole_offset)
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],goal,pole)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],goal,pole,1,leg.reach)
                 if !valid {return grounding_unsolved(problems,state.entity,"the IK",i)}
                 if !solved.reached {break}
                 if !lib.pose_ik_apply(hierarchy,state.local[:],state.world[:],hip,knee,foot,solved,basis) {return grounding_unsolved(problems,state.entity,"the IK",i)}
