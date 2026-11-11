@@ -37,7 +37,7 @@ plugin_icon_draw :: proc(s:^Session,icon:^Plugin_Icon,file:string,side:=PLUGIN_I
         if ui.box(ctx,{width=ui.fixed(side),height=ui.fixed(side),image=quad,layer={enabled=true,opacity=1,radius=side*0.2}}) {}
         return
     }
-    ui.icon(ctx,ui.icon_user(u8(User_Icon.Plugin)),color if color!={} else ctx.theme.text_muted,side)
+    ui.icon(ctx,ui.icon_user(u8(User_Icon.Plugin)),color if color!={} else ui.tone(ctx,"text_muted"),side)
 }
 
 @(private)

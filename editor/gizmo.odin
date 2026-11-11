@@ -6,6 +6,7 @@ import "mirai:core"
 import "mirai:editor/history"
 import "mirai:platform"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The gizmo of the selection, of a constant size on the screen.
@@ -512,9 +513,8 @@ gizmo_paint :: proc(s:^Session,g:Gizmo,tool:Tool,hot:Handle) {
     if !g.visible {return}
     v:=s.viewport
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     axis_handles:=[3]Handle{.X,.Y,.Z}
-    names:=ui.AXIS_NAMES
+    names:=kit.AXIS_NAMES
     dark:=ui.Color{0,0,0,120}
     switch tool {
     case .Move:
@@ -523,7 +523,7 @@ gizmo_paint :: proc(s:^Session,g:Gizmo,tool:Tool,hot:Handle) {
             quad,ok:=gizmo_plane(g,k,v)
             if !ok {continue}
             is_hot:=hot==plane_handles[k]
-            color:=handle_color(th.axis[k],is_hot)
+            color:=handle_color(ui.tone(ctx,kit.AXIS_TOKENS[k]),is_hot)
             fill:=ui.color_alpha(color,is_hot?150:70)
             ui.draw_quad_colors(ctx,quad,{fill,fill,fill,fill})
             ui.draw_polyline(ctx,quad[:],1.5,ui.color_alpha(color,230),true)
@@ -531,22 +531,22 @@ gizmo_paint :: proc(s:^Session,g:Gizmo,tool:Tool,hot:Handle) {
         for i in 0..<3 {
             if !g.usable[i] {continue}
             is_hot:=hot==axis_handles[i]
-            color:=handle_color(th.axis[i],is_hot)
+            color:=handle_color(ui.tone(ctx,kit.AXIS_TOKENS[i]),is_hot)
             direction:=linalg.normalize0(g.ends[i]-g.screen)
             side:=[2]f32{-direction.y,direction.x}
             head,half:=f32(15),f32(6)
             ui.draw_line(ctx,g.screen+direction*7,g.ends[i]-direction*(head-2),is_hot?3.5:2.5,color)
             ui.draw_triangle(ctx,g.ends[i],g.ends[i]-direction*head+side*half,g.ends[i]-direction*head-side*half,color)
-            ui.draw_text(ctx,names[i],g.ends[i].x+direction.x*10-4,g.ends[i].y+direction.y*10-7,th.font_label,color)
+            ui.draw_text(ctx,names[i],g.ends[i].x+direction.x*10-4,g.ends[i].y+direction.y*10-7,ui.metric(ctx,"font_label"),color)
         }
-        ui.draw_rect(ctx,{g.screen.x-5,g.screen.y-5,10,10},ui.color_alpha(th.text,hot==.Center?255:200))
+        ui.draw_rect(ctx,{g.screen.x-5,g.screen.y-5,10,10},ui.color_alpha(ui.tone(ctx,"text"),hot==.Center?255:200))
         ui.draw_rect_lines(ctx,{g.screen.x-6,g.screen.y-6,12,12},1,dark)
     case .Rotate:
         for k in 0..<3 {
             points,world,ok:=gizmo_ring(g,k,v)
             if !ok {continue}
             is_hot:=hot==axis_handles[k]
-            color:=handle_color(th.axis[k],is_hot)
+            color:=handle_color(ui.tone(ctx,kit.AXIS_TOKENS[k]),is_hot)
             for i in 0..<RING_SEGMENTS {
                 // The half of the ring behind the pivot is dimmed.
                 middle:=(world[i]+world[i+1])*0.5
@@ -554,18 +554,18 @@ gizmo_paint :: proc(s:^Session,g:Gizmo,tool:Tool,hot:Handle) {
                 ui.draw_line(ctx,points[i],points[i+1],is_hot?3.5:2.5,ui.color_alpha(color,behind && !is_hot?110:255))
             }
         }
-        ui.draw_circle(ctx,g.screen,3,ui.color_alpha(th.text,220))
+        ui.draw_circle(ctx,g.screen,3,ui.color_alpha(ui.tone(ctx,"text"),220))
     case .Scale:
         for i in 0..<3 {
             if !g.usable[i] {continue}
             is_hot:=hot==axis_handles[i]
-            color:=handle_color(th.axis[i],is_hot)
+            color:=handle_color(ui.tone(ctx,kit.AXIS_TOKENS[i]),is_hot)
             direction:=linalg.normalize0(g.ends[i]-g.screen)
             ui.draw_line(ctx,g.screen+direction*7,g.ends[i],is_hot?3.5:2.5,color)
             ui.draw_rect(ctx,{g.ends[i].x-5,g.ends[i].y-5,10,10},color)
-            ui.draw_text(ctx,names[i],g.ends[i].x+direction.x*12-4,g.ends[i].y+direction.y*12-7,th.font_label,color)
+            ui.draw_text(ctx,names[i],g.ends[i].x+direction.x*12-4,g.ends[i].y+direction.y*12-7,ui.metric(ctx,"font_label"),color)
         }
-        ui.draw_rect(ctx,{g.screen.x-6,g.screen.y-6,12,12},ui.color_alpha(th.text,hot==.Center?255:200))
+        ui.draw_rect(ctx,{g.screen.x-6,g.screen.y-6,12,12},ui.color_alpha(ui.tone(ctx,"text"),hot==.Center?255:200))
         ui.draw_rect_lines(ctx,{g.screen.x-7,g.screen.y-7,14,14},1,dark)
     }
 }

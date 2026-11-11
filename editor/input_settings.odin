@@ -14,6 +14,7 @@ import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
+import "mirai:editor/kit"
 
 // The input actions in Project Settings and in input.get: the actions the
 // code declares, with the kind and the bindings that Input_Settings of the
@@ -188,7 +189,6 @@ INPUT_GAMEPADS :: [?]string{"Any","1","2","3","4"}
 @(private)
 input_action_rows :: proc(s:^Session,action:input.Action) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     st:=&s.settings_dialog.input
     driven:=input_driven(s,action)
     ui.id_push(ctx,ui.id(ctx,"action",int(action)+1))
@@ -196,7 +196,7 @@ input_action_rows :: proc(s:^Session,action:input.Action) {
     row_begin(ctx,"Kind")
     kind:=int(driven.kind)
     kinds:=INPUT_KINDS
-    if ui.dropdown(ctx,ui.id(ctx,"kind"),{list=kinds[:]},&kind,{width=-1,height=th.row}) && input.Action_Kind(kind)!=driven.kind {
+    if ui.dropdown(ctx,ui.id(ctx,"kind"),{list=kinds[:]},&kind,{width=-1,height=ui.metric(ctx,"row")}) && input.Action_Kind(kind)!=driven.kind {
         st.listen={}
         driven.kind,driven.bindings=input.Action_Kind(kind),{}
         input_drive(s,action,driven)
@@ -204,7 +204,7 @@ input_action_rows :: proc(s:^Session,action:input.Action) {
     }
     if input_same(driven,st.code.actions[action]) {
         ui.spacer(ctx,REVERT_SIDE,1)
-    } else if ui.button(ctx,ui.id(ctx,"restore"),{icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
+    } else if ui.button(ctx,ui.id(ctx,"restore"),{icon=.Revert,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
         st.listen={}
         input_drive(s,action,st.code.actions[action])
         input_settings_commit(s)
@@ -222,7 +222,7 @@ input_action_rows :: proc(s:^Session,action:input.Action) {
     } else {
         add,menu:=ui.id(ctx,"add"),ui.id(ctx,"add_menu")
         open:=ui.popup_is_open(ctx,menu)
-        if ui.button(ctx,add,{label="Add binding",icon=.Plus,icon_size=11,icon_color=th.text_muted,style=.Ghost,height=th.row,size=th.font_small,active=open}).clicked && !open {
+        if ui.button(ctx,add,{label="Add binding",icon=.Plus,icon_size=11,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),active=open}).clicked && !open {
             anchor,_:=ui.widget_rect(ctx,add)
             ui.popup_open(ctx,menu,anchor)
         }
@@ -233,7 +233,7 @@ input_action_rows :: proc(s:^Session,action:input.Action) {
 
 @(private)
 input_row_rule :: proc(ctx:^ui.Context) {
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.row_rule}) {}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
 }
 
 // A binding: its device in the column of labels, which folds its options
@@ -243,7 +243,6 @@ input_row_rule :: proc(ctx:^ui.Context) {
 @(private)
 input_binding_row :: proc(s:^Session,action:input.Action,driven:^input.Action_Bindings,nth:int) -> (changed:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     st:=&s.settings_dialog.input
     l:=&st.listen
     binding:=driven.bindings[nth]
@@ -254,7 +253,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,driven:^input.Action_Bi
     key:=base.hash_combine(u64(action)<<16|u64(nth),0x696e707574)
     menu:=ui.id(ctx,"menu")
     open:=false
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
         menus:=INPUT_MENUS
         device:=menus[input_code_menu(binding.inputs[0])]
         if scaled || zoned || padded {
@@ -264,7 +263,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,driven:^input.Action_Bi
                 open=!open
             }
         } else {
-            ui.column_label(ctx,device)
+            kit.column_label(ctx,device)
         }
         listening:=l.active && l.action==action && l.binding==nth
         if listening && l.whole {
@@ -286,7 +285,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,driven:^input.Action_Bi
         }
         input_choices_menu(s,menu,action,nth)
         ui.spacer(ctx)
-        if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,icon_size=10,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
+        if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,icon_size=10,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
             st.listen={}
             input_binding_remove(driven,nth)
             input_drive(s,action,driven^)
@@ -318,7 +317,7 @@ input_binding_row :: proc(s:^Session,action:input.Action,driven:^input.Action_Bi
         row_begin(ctx,"Gamepad")
         pads:=INPUT_GAMEPADS
         chosen:=int(b.gamepad)
-        if ui.dropdown(ctx,ui.id(ctx,"gamepad"),{list=pads[:]},&chosen,{width=-1,height=th.row}) {
+        if ui.dropdown(ctx,ui.id(ctx,"gamepad"),{list=pads[:]},&chosen,{width=-1,height=ui.metric(ctx,"row")}) {
             b.gamepad=u8(chosen)
             input_drive(s,action,driven^)
             input_settings_commit(s)
@@ -371,11 +370,10 @@ input_code_prompt :: proc(s:^Session,code:input.Input_Code) -> (prompt:ui.Prompt
 @(private)
 input_code_chip :: proc(s:^Session,id:ui.Id,code:input.Input_Code) -> ui.Interaction {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
-    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(th.row),padding={3,0,3,0},gap=4,align_y=.Center,fill=it.hot?th.field_hover:th.well,stroke=th.well_stroke,radius=th.radius_control}) {
+    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(ui.metric(ctx,"row")),padding={3,0,3,0},gap=4,align_y=.Center,fill=it.hot?ui.tone(ctx,"field_hover"):ui.tone(ctx,"well"),stroke=ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control")}) {
         prompt,name,shown:=input_code_prompt(s,code)
-        if shown {ui.prompt_glyph(ctx,prompt,th.row-6)} else {ui.label(ctx,name,th.font_small,th.text,0)}
+        if shown {ui.prompt_glyph(ctx,prompt,ui.metric(ctx,"row")-6)} else {ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)}
     }
     return it
 }
@@ -502,11 +500,10 @@ input_choices_menu :: proc(s:^Session,menu:ui.Id,action:input.Action,nth:int) {
 @(private)
 input_choice_row :: proc(s:^Session,id:ui.Id,choice:Input_Choice) -> bool {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    height:=th.row-6
+    height:=ui.metric(ctx,"row")-6
     prompts:[4]ui.Prompt
     count:=0
-    width:=ui.text_width(&ctx.font,choice.name,th.font)+12
+    width:=ui.text_width(&ctx.font,choice.name,ui.metric(ctx,"font"))+12
     for group in input_binding_groups(choice.binding) {
         prompt,_,shown:=input_code_prompt(s,choice.binding.inputs[group.slot])
         if !shown {continue}
@@ -515,9 +512,9 @@ input_choice_row :: proc(s:^Session,id:ui.Id,choice:Input_Choice) -> bool {
         width+=(prompt.quad.kind!=.Solid && prompt.aspect>0?height*prompt.aspect:ui.prompt_width(ctx,prompt,height))+7
     }
     it:=ui.popup_row(ctx,id)
-    if ui.box(ctx,{id=id,width=ui.grow(width),height=ui.fixed(th.control),padding={6,0,6,0},gap=7,align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
+    if ui.box(ctx,{id=id,width=ui.grow(width),height=ui.fixed(ui.metric(ctx,"control")),padding={6,0,6,0},gap=7,align_y=.Center,fill=it.hot?ui.color_hover(ctx):{},radius=ui.metric(ctx,"radius_control")}) {
         for prompt in prompts[:count] {ui.prompt_glyph(ctx,prompt,height)}
-        ui.label(ctx,choice.name,th.font,th.text,0)
+        ui.label(ctx,choice.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
     }
     if it.clicked {ui.popup_close(ctx)}
     return it.clicked
@@ -550,12 +547,11 @@ input_binding_keep :: proc(binding,old:input.Input_Binding) -> input.Input_Bindi
 input_listen_chip :: proc(s:^Session,id:ui.Id,gathered:input.Input_Binding,slot:int) {
     gathered:=gathered
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(th.row),padding={6,0,6,0},gap=4,align_y=.Center,fill=th.accent_soft,stroke=th.accent,radius=th.radius_control}) {
+    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(ui.metric(ctx,"row")),padding={6,0,6,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"accent_soft"),stroke=ui.tone(ctx,"accent"),radius=ui.metric(ctx,"radius_control")}) {
         for code in gathered.inputs[:min(slot,4)] {
-            if prompt,name,shown:=input_code_prompt(s,code);shown {ui.prompt_glyph(ctx,prompt,th.row-6)} else {ui.label(ctx,name,th.font_small,th.text,0)}
+            if prompt,name,shown:=input_code_prompt(s,code);shown {ui.prompt_glyph(ctx,prompt,ui.metric(ctx,"row")-6)} else {ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)}
         }
-        ui.label(ctx,"Press an input",th.font_small,th.text_muted,0)
+        ui.label(ctx,"Press an input",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
     }
 }
 
@@ -674,7 +670,6 @@ input_binding_put :: proc(s:^Session,action:input.Action,nth:int,binding:input.I
 @(private)
 input_timing_rows :: proc(s:^Session) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     st:=&s.settings_dialog.input
     settings:=input_settings_of(s)
     if settings==nil {return}
@@ -691,7 +686,7 @@ input_timing_rows :: proc(s:^Session) {
         if st.unsaved && !r.scrubbing && !r.editing {input_settings_commit(s)}
         if row.value^==0 {
             ui.spacer(ctx,REVERT_SIDE,1)
-        } else if ui.button(ctx,ui.id(ctx,"ticks_restore",i+1),{icon=.Revert,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
+        } else if ui.button(ctx,ui.id(ctx,"ticks_restore",i+1),{icon=.Revert,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
             row.value^=0
             input_settings_written(s)
             input_settings_commit(s)

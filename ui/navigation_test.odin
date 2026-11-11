@@ -39,10 +39,8 @@ test_navigation_build :: proc(ctx:^Context,user:rawptr) {
 test_navigation_init :: proc(t:^testing.T,ctx:^Context,s:^Test_Navigation,input:^Input) {
     desc:=TEST_SMALL
     desc.navigation=true
-    theme:=THEME_EDITOR
-    theme.focus={255,255,255,255}
-    desc.theme=&theme
-    testing.expect(t,context_init(ctx,desc))
+    testing.expect(t,test_context_init(ctx,desc))
+    test_tone_set(ctx,"focus",{255,255,255,255})
     input^=test_input()
     input.pointer_absent=true
     test_frame(ctx,input,test_navigation_build,s)
@@ -141,7 +139,7 @@ enter_and_the_gamepad_activate_the_focused_widget :: proc(t:^testing.T) {
     ring:=false
     if quad_kind(last.quad)==.Shape {
         shape:=frame.shapes[quad_data(last.quad)]
-        focus:=ctx.theme.focus
+        focus:=tone(&ctx,"focus")
         ring=test_rect_near(Rect{shape.bounds[0],shape.bounds[1],shape.bounds[2],shape.bounds[3]},{check.x-2,check.y-2,check.w+4,check.h+4}) && shape.stroke==[4]f32{f32(focus[0]),f32(focus[1]),f32(focus[2]),f32(focus[3])}/255 && shape.fill[3]==0
     }
     testing.expect(t,ring,"The last shape of the frame outlines the focused widget")
@@ -198,7 +196,7 @@ navigation_stays_inside_an_open_dialog :: proc(t:^testing.T) {
 @(test)
 a_press_that_no_focusable_widget_takes_takes_the_focus_away :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Navigation
     input:=test_input()
@@ -232,7 +230,7 @@ a_press_that_no_focusable_widget_takes_takes_the_focus_away :: proc(t:^testing.T
 @(test)
 the_editor_does_not_navigate_with_the_keyboard :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Navigation
     input:=test_input()

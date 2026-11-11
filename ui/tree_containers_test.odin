@@ -90,7 +90,7 @@ a_list_that_clips_builds_only_what_is_in_sight_and_navigation_moves_it :: proc(t
     ctx:Context
     desc:=TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
@@ -140,7 +140,7 @@ a_node_inside_an_element_out_of_sight_the_code_gives_the_focus_to_comes_into_sig
     ctx:Context
     desc:=TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
@@ -166,7 +166,7 @@ a_node_inside_an_element_out_of_sight_the_code_gives_the_focus_to_comes_into_sig
 @(test)
 a_list_that_names_a_component_shows_the_rows_of_its_table :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
@@ -200,7 +200,7 @@ a_list_that_names_a_component_shows_the_rows_of_its_table :: proc(t:^testing.T) 
 @(test)
 an_array_whose_source_did_not_change_is_not_copied_and_only_changed_texts_are_made_again :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
@@ -238,9 +238,9 @@ a_tabs_shows_the_page_of_the_tab_chosen :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Containers
     test_containers_init(t,&s)
     defer test_containers_destroy(&s)
@@ -280,9 +280,9 @@ a_tabs_shows_the_page_of_the_tab_chosen :: proc(t:^testing.T) {
 @(test)
 a_popup_opens_from_its_parent_and_closes_outside_or_with_escape :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Containers
     test_containers_init(t,&s)
     defer test_containers_destroy(&s)
@@ -318,7 +318,7 @@ a_popup_opens_from_its_parent_and_closes_outside_or_with_escape :: proc(t:^testi
 @(test)
 a_bound_popup_opens_with_its_value_and_stays_shut_once_the_player_closed_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
@@ -351,7 +351,7 @@ a_modal_blocks_what_is_under_it_and_escape_says_closed :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
@@ -385,9 +385,9 @@ a_modal_blocks_what_is_under_it_and_escape_says_closed :: proc(t:^testing.T) {
 @(test)
 a_context_menu_opens_at_the_pointer_and_a_button_chosen_closes_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Containers
     test_containers_init(t,&s)
     defer test_containers_destroy(&s)
@@ -416,9 +416,9 @@ a_radial_focuses_the_child_in_the_direction_of_the_stick :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Containers
     test_containers_init(t,&s)
     defer test_containers_destroy(&s)
@@ -448,7 +448,7 @@ a_radial_focuses_the_child_in_the_direction_of_the_stick :: proc(t:^testing.T) {
 @(test)
 a_tooltip_waits_its_delay_and_stays_inside_the_surface :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
@@ -480,7 +480,7 @@ a_tooltip_waits_its_delay_and_stays_inside_the_surface :: proc(t:^testing.T) {
 @(test)
 a_tree_gives_its_grids_the_tracks_it_holds :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Containers
     test_containers_init(t,&s)
