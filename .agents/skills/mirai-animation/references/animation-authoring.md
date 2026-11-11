@@ -155,7 +155,9 @@ detected unsaved one) and a clip library (by default, the one it plays). With `s
 ### Tracks tool
 
 The one editor of the keys of any clip (a door, a light, a camera move, a cinematic), in
-`plugins/animation/editor/tracks.odin`: Tools > Tracks, or `animation.tracks.show`, on the clip of
+`plugins/animation/editor/tracks.odin`: Tools > Tracks (`editor.tool` with `tracks`; in Edit
+`animation.request` with `seek` moves its
+head on the clip of an entity), on the clip of
 the `Animation` of the selection or of the entity whose clip moves it. Its panel lists the tracks by
 target and field, the key chosen (interpolation, ease) and what adds a track for a value of the
 selected entity; the strip at the bottom has a lane of keys per track in view and, after them, a

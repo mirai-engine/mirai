@@ -69,16 +69,19 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - `camera` is `{position,target,yaw,pitch,distance,fov}` (`fov` in vertical degrees).
   - `snap` is that of Move; Rotate and Scale have their own state and increments
     ([gizmo](../../mirai-editor/references/panels.md#viewport)).
-- What a menu does, an agent does by calling the method of its entry with values of its own in
-  place of what the entry takes from the person (`$roots`, `$toggle`, `$ask`): there is no method
-  that runs entries by name.
-  - `editor.tool` sets the mode of the gizmo or turns the tool of a plugin on and off;
-    `editor.view` shows a dialog, a popup, a tab of the left panel, the name field or the studio
-    light; the panels and the options of the viewport the editor remembers are `preferences.set`
-    (`Layout`, `Viewport_Preferences`).
-  - `scene.new`, `scene.group`, `scene.thumbnail`, `editor.copy`, `editor.save_all`, `play.release`
-    and `camera.preview` are what the File menu, Ctrl+G, View, Ctrl+C, Save all, F1 and the camera
-    preview do.
+- What a menu does to the scene or the project, an agent does by calling the method of its entry
+  with values of its own in place of what the entry takes from the person (`$roots`, `$shown`):
+  there is no method that runs entries by name. An entry with no method only changes what the
+  person sees (a dialog, a popup, a tab, the selection, the viewport camera, who has the keys)
+  or asks them first: an agent that tests that interface drives it with `editor.input` and
+  captures with `ui`.
+  - `editor.tool` sets the mode of the gizmo or turns the tool of a plugin on and off; the panels,
+    their tabs and the options of the viewport the editor remembers are `preferences.set`
+    (`Layout`, `Viewport_Preferences`). What Settings and Projects show is `settings.get`/`set`
+    and `project.get`/`set`.
+  - A method that cannot be called as the editor is fails with `-32001` and says why;
+    `engine.describe` gives the same text as `unavailable`.
+  - A method that went answers what does what it did (`API_MOVED` in `editor/api_server.odin`).
   - The prefab actions use the scope of the UI; `prefab.apply` and `prefab.revert`, that of their
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
 - `editor.section_edit`: `entity` with `Scene_Reference`: its section is edited in the
@@ -227,8 +230,9 @@ The `cinematics.*` methods of the `cinematics` plugin read and play timelines; `
 one (`preset` `cinematic`, with its clip as `Animation.asset`) and its actors (an `Animation_Target`
 that names it). The keys and markers of a timeline (its shots and actions are markers on its
 cameras and actors) are those of its clip, which the `animation.*` methods write. In Edit,
-`cinematics.control` moves the head of the Tracks tool on the timeline (`animation.tracks.show` for
-any clip): the document does not change and the image shows in the next frame (`capture`); in Play
+`cinematics.control` moves the head of the Tracks tool on the timeline (`editor.tool` with `tracks`
+and `animation.request` with `seek` for any clip): the document does not change and the image shows
+in the next frame (`capture`); in Play
 it queues the command in the running world. Contract:
 [cinematics](../../mirai-gameplay/references/cinematics.md#editor-and-api).
 
@@ -692,7 +696,6 @@ Runs the whole scene with the editor's camera and controls, without player input
   need a `Collider`. Dropping a pile is `scene.write` of the objects
   above where they fall, then `physics.settle` of them; the poses are one undo step. An entity that
   cannot fall is `-32602` naming its index; `rested` false and `reason` say what the tick limit cut.
-  `physics.drop` only ends the Drop gesture a person holds open (`Confirm` or `Cancel`).
 
 During Simulate, `editor.select`, `editor.inspect`, `editor.input`, `camera.set` and the viewport
 actions act on the copy; `editor.input` still requires a manual editor and `capture` with `ui`

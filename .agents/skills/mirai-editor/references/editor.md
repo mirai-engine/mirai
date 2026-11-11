@@ -447,33 +447,39 @@ causes the failure to test it.
 ## Commands and shortcuts
 
 The methods of the API are the only catalog of commands (`editor/commands.odin`). A menu entry, a
-shortcut and a button of the bar are an entry (`Binding`): the name of a method, its params as
-JSON, a label, an icon, a shortcut and a menu. `command_run` runs an entry and `command_call` a
-method with params the interface worked out (Play from here); both queue the call, which runs
-between frames through the handler every call of an agent goes through, so the undo step, the
-errors and what is refused are those of the method. What fails is said in a notice. A method the
-person runs while a gesture of theirs is open records into that gesture's step
-(`command_join`, `api_edit_begin`): one undo takes back both.
+shortcut and a button of the bar are an entry (`Binding`, given with `command_bind`): the name of
+a method and its params as JSON, a label, an icon, a shortcut and a menu. `command_run` runs an
+entry and `command_call` a method with params the interface worked out (Play from here); both
+queue the call, which runs between frames through the handler every call of an agent goes
+through, so the undo step, the errors and what is refused are those of the method. What fails is
+said in a notice. A method the person runs while a gesture of theirs is open records into that
+gesture's step (`command_join`, `api_edit_begin`): one undo takes back both, and a step an entry
+makes is named as the entry.
 
-- **What is a command.** Whatever has a menu entry, a shortcut or a button. What a person does
-  inside a panel with the pointer or the keyboard focus (a scroll, a hover, a fold, a splitter, a
-  field being typed, the keys a focused card of the browser or an asset document takes) is the view
-  of that panel and has no method. What the editor remembers of its view is a preference, and its
-  entry calls `preferences.set`; what it does not (a dialog, a popup, a tab, the studio light) goes
-  through `editor.view`.
-- **The context stays out of the method.** The params of an entry name what the person has in front
-  in place of values: `$roots`, `$selection`, `$active`, `$copied` and `$all` stand for entities
-  (`api_context_entities`), `$toggle` for the opposite of what the entry shows checked, and `$ask`
-  for a file the person picks in a dialog. They mean that only in a gesture: an agent names its
-  entities and its paths.
-- **A person and an agent.** `api_person` says the call that runs is a gesture. The method is the
-  same; where it lacks a decision a person is asked (unsaved changes, the file of Open) and an agent
-  is told what to pass, and a person does not wait for what goes on (a build, an import) while an
-  agent gets the answer at its end.
-- **What an entry shows** (`Binding.state`: off, checked, another label) is for the person at the
-  editor now, and `editor.inspect` reports it with the method and the params of each entry. The
-  methods of the scene write the document: with a game shown their entries are off, and Delete
-  calls `play.destroy`.
+- **A method takes only the params it is given.** It never knows who calls. What the person has
+  in front is put into the params by the entry, before the call (`binding_params`): its params
+  name it (`$selection`, `$roots`, `$copied`, `$active`, `$shown`, `$document`, `$card`), and an
+  entity list gives the element that names it once for each entity. What a gesture needs that an
+  agent would not is a param anyone may give (`scene.write` `select`, `prefab.apply` `whole`).
+- **What only changes what the person sees is no method.** A dialog, a popup, a tab of the left
+  panel, the selection, the camera of the viewport, the field a name is typed in, who has the
+  keys, and what asks the person first (New, Open, Save, Import, Quit) are a procedure of the
+  interface on the entry (`Binding.view`). An agent works through the API, shows a panel with
+  `preferences.set` of `Layout` and a tool with `editor.tool`, and looks at the interface with
+  `editor.input` and `capture` with `ui`.
+- **One place says whether an entry is on and checked** (`binding_state`): what it acts on is in
+  front (`scene`, `document`, `card`), the editor is in one of its `modes`, its context is there,
+  and its method can be called: `Api_Method.can` says why not as the editor is, whatever the
+  params, which also fails the call of an agent (`-32001`) and is what `engine.describe` gives as
+  `unavailable`. An entry that flips something names it (`tool`, or `preference` with the fields
+  it has `on` and `off`): that gives its params and its check. `Binding.state` is left for what
+  no method says: the labels of Undo, Redo and Build, Play against Stop, what applies to the
+  selected member of a prefab, and the procedures of the interface. `editor.inspect` reports
+  every entry with its method, its params and what it shows.
+- **What a document or a card has chosen.** The entries of an asset document are bindings its
+  plugin gives with `document` (the nodes of a `.ui`), and those of the asset of the card of the
+  browser that has the keyboard have `card`: they share the keys of those of the scene, which
+  are off while a document covers it, and a card takes its keys before the selected entities.
 - **Keys.** With `Ctrl` as `Cmd` on macOS; View > Keyboard shortcuts lists them, those of the
   plugins too. Two entries may share a key when they are never on together (Play and Stop on F5,
   Pause and Resume on F6). They do not run while a text field is editing, a popup or dialog is
@@ -482,5 +488,6 @@ person runs while a gesture of theirs is open records into that gesture's step
   in a frame.
 - Copy keeps the ids of the selected roots in `Session.copied`, not their data; Paste duplicates
   them like Duplicate, in one undo step, and selects the copies. What was copied and is no longer
-  in the scene is not pasted. In Play and while watching, Copy and Paste are off.
+  in the scene is not pasted. With a game shown, Delete, Duplicate and Paste write that game
+  (`"world":"$shown"`); while watching they are off.
 - The Stats popup summarizes what `engine.status` gives in more detail.

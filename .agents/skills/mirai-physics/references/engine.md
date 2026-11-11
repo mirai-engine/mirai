@@ -740,8 +740,8 @@ them while no plugin draws them. Without the plugin none of that appears.
 - The **Drop** tool (shortcut **P**): the left button held on the scene drops the chosen mesh, at
   its height and scale, under the pointer and keeps dropping at its speed; what fell is seen
   falling in the document until **Confirm** (one undo step with the meshes and their poses),
-  **Cancel**, Escape or another tool, which leave the document as it was (`physics.drop` ends it
-  by API). Each dropped mesh gets a `Collider` of kind `Hull`, which stays: in the game it is a
+  **Cancel**, Escape or another tool, which leave the document as it was. Each dropped mesh gets a
+  `Collider` of kind `Hull`, which stays: in the game it is a
   static prop that collides.
 - In a settle, the moving entities are dynamic bodies (their `Rigid_Body` when dynamic) and every
   other body is static and every character the still capsule of its collider; joints act. Only

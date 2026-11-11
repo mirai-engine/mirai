@@ -251,7 +251,7 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     scene_keys_write(keys,types,said[:])
     testing.expect(t,strings.contains(on(&p,.Scene,"check").out,"arena/main.scene: kept"),"a scene whose key did not move is not checked again")
     more:=project.path(root,"more.json",allocator=context.temp_allocator)
-    testing.expect(t,os.write_entire_file(more,`{"merge":true,"entities":[{"name":"Probe"}]}`)==nil)
+    testing.expect(t,os.write_entire_file(more,`{"replace":false,"entities":[{"name":"Probe"}]}`)==nil)
     testing.expect_value(t,on(&p,.Scene,"write","arena/main.scene",more).code,0)
     testing.expect(t,!strings.contains(on(&p,.Scene,"check").out,"kept"),"a scene that changed is checked again")
 }

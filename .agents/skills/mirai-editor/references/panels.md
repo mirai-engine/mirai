@@ -320,7 +320,7 @@ not change the world or the history and Play does not see it. On turning it off,
 recovers its sun and sky from `Render_Sync`. It is per tab, starts off and is not saved. The
 scene's local lights remain and the exposure is the one chosen below.
 
-- API: `editor.view` with `Studio_Light` turns it on and off; `editor.inspect` gives its `checked`.
+- It is what a person sees and no method: View > Studio light; `editor.inspect` gives its `checked`.
 
 ### Viewport exposure
 
