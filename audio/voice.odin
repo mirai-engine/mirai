@@ -119,7 +119,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     frames:=slot.frames
     offset:=frames>0?u32(min(max(f64(desc.offset),0)*rate,f64(frames-1))):0
     start.offset=offset
-    if feed>=0 {feed_prepare(m,&m.feeds[feed],slot.source,sound_index,int(offset-min(offset,1)),int(slot.loop_start),desc.loop)}
+    if feed>=0 {feed_prepare(m,&m.feeds[feed],slot.source,sound_index,int(offset),int(slot.loop_start),desc.loop)}
     if !command_push(m,{kind=.Voice_Play,index=index,start=start}) {
         if !stolen {m.free_voices[m.free_count]=index;m.free_count+=1}
         return 0

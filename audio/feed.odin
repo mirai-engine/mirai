@@ -30,7 +30,7 @@ Feed_Phase :: enum u32 {Free,Starting,Running,Done}
 Feed :: struct {
     // Written by the game thread while the feed is Free; then the decoder's.
     decoder:Decoder,
-    offset:int,   // the frame the play begins at
+    offset:int,   // the frame the play begins at; its ring begins a frame before, which interpolates it
     loop_start:int, // the frame a loop goes back to
     sound:u32,    // slot of the sound it decodes
     owner:Voice,  // the voice it was handed to last; game thread
@@ -128,7 +128,7 @@ feed_pump :: proc(m:^Mixer,f:^Feed) -> (busy:bool) {
     switch feed_phase(f) {
     case .Free,.Done:return false
     case .Starting:
-        decoder_seek(&f.decoder,f.offset)
+        decoder_seek(&f.decoder,f.offset-min(f.offset,1))
         feed_phase_set(f,.Running)
     case .Running:
     }
