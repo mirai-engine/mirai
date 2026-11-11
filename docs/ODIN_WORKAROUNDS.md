@@ -38,7 +38,7 @@ Defects of the tools that translate the shaders (`cook/shaders`).
 | Marker in code | Upstream | Remove when |
 | --- | --- | --- |
 | `SURFACE_COVERAGE_INCLUDE` (`cook/shaders/programs.odin`): the stages that trace include the alpha of the programs with coverage, and their fingerprint follows it | shader-slang/slang#14212, #6607 | `slangc -incomplete-library -target spirv` compiles a stage that calls an `extern` function in a loop and a module that only exports functions links; a ray stage with the `extern` alpha plus the alpha of each program linked with `spirv-link` then costs the same |
-| `shader_reduced` (`cook/shaders/shaders.odin`): compiles `fsr3_prepare_reactivity` and `fsr3_shading_change` with `-O1` | KhronosGroup/SPIRV-Tools#7005 | the `spirv-opt -O` of `.deps` and of the Vulkan SDK optimizes both stages |
+| `shader_reduced` (`cook/shaders/shaders.odin`): compiles `fsr3_prepare_reactivity`, `fsr3_shading_change` and `direct_spread` with `-O1` | KhronosGroup/SPIRV-Tools#7005 | the `spirv-opt -O` of `.deps` and of the Vulkan SDK, which the Metal build runs, optimizes the three stages |
 | `metal_table_buffer` (`cook/shaders/shaders.odin`): moves the argument buffer of the texture table to `TEXTURE_TABLE_METAL_BUFFER` (`rhi/rhi.odin`) | none | the SPIRV-Cross of `.deps` and of the SDK has `--msl-resource-binding`; use it to place the table |
 
 ## Drivers
