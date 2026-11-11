@@ -449,12 +449,33 @@ event_users :: proc "contextless" (w:^World,shape_a,shape_b:i32) -> (users,swapp
     return users,{users.body_b,users.body_a,users.shape_b,users.shape_a}
 }
 
+// Whether two bodies overlap by another pair of shapes of the same users as those of contact: the pieces of
+// one sensor (an outline, a hull of several pieces) are one overlap, which begins with the first pair and
+// ends with the last. Of pairs that begin, or end, in the same step, the first in the contacts speaks.
+@(private)
+overlap_shared :: proc "contextless" (w:^World,contact:^Contact,ending:bool) -> bool #no_bounds_check {
+    users:=[2]u64{w.shapes[contact.shape_a].user_data,w.shapes[contact.shape_b].user_data}
+    self:=(uintptr(contact)-uintptr(&w.contacts[0]))/size_of(Contact)
+    for key:=w.bodies[contact.body_a].contact_list;key>=0; {
+        other:=&w.contacts[key>>1]
+        earlier:=uintptr(key>>1)<self
+        key=other.edges[key&1].next
+        if other==contact || .Overlap not_in other.flags {continue}
+        pair:=[2]u64{w.shapes[other.shape_a].user_data,w.shapes[other.shape_b].user_data}
+        if pair!=users && pair!=users.yx {continue}
+        if .Touching in other.flags && (ending || .Started not_in other.flags || earlier) {return true}
+        if ending && .Stopped in other.flags && earlier {return true}
+    }
+    return false
+}
+
 @(private)
 contact_end_events :: proc(w:^World,contact:^Contact) {
     if .Debris in (w.bodies[contact.body_a].flags+w.bodies[contact.body_b].flags) {return}
     shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
     users,swapped:=event_users(w,contact.shape_a,contact.shape_b)
     if .Overlap in contact.flags {
+        if overlap_shared(w,contact,true) {return}
         event_push(w,w.events.overlap_end,3,Overlap_Event{shape_a,shape_b,body_a,body_b,false,users})
         event_push(w,w.events.overlap_end,3,Overlap_Event{shape_b,shape_a,body_b,body_a,false,swapped})
     } else {
@@ -503,7 +524,7 @@ contacts_update :: proc(w:^World) #no_bounds_check {
         kept+=1
         if .Touching not_in contact.flags {continue}
         if .Overlap in contact.flags {
-            if .Started in contact.flags {
+            if .Started in contact.flags && !overlap_shared(w,contact,false) {
                 shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
                 users,swapped:=event_users(w,contact.shape_a,contact.shape_b)
                 event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_a,shape_b,body_a,body_b,false,users})

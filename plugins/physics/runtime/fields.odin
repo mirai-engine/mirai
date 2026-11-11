@@ -30,10 +30,10 @@ force_fields_step :: proc(fields:^core.Table(Force_Field,.Read),volumes:^core.Ta
         field:=core.at(fields,row)
         if field.force==0 {continue}
         e:=core.entity_at(fields,row)
-        area,pose,rules:=volume.placed({volumes,worlds,parents,sections},e)
+        area,pose,_,rules:=volume.placed({volumes,worlds,parents,sections,nil},e)
         if !rules {continue}
         along:=linalg.normalize0(field.along)
         if world,placed:=core.get(worlds,e);placed {along=mm.quat_rotate(world.rotation,along)}
-        apply_area(bodies,area,pose,field.force,along,blend=field.blend,falloff=field.falloff,filter=field.filter,range=field.falloff_range,noise=field.noise)
+        apply_area(bodies,area,pose,field.force,along,blend=field.blend,falloff=field.falloff,filter=field.filter,range=field.falloff_range,noise=field.noise,outline_of=e)
     }
 }

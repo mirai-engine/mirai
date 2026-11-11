@@ -175,7 +175,9 @@ float4 particle_frame_row(uint at) { return asfloat(particle_frame.Load4(at)); }
 // gravity where no Gravity rules, then every Gravity and every Wind in the order they apply.
 #define PARTICLE_GRAVITY_VOLUMES 8u // vfx.GRAVITY_VOLUMES
 #define PARTICLE_FIELDS_GRAVITY 16u
-#define PARTICLE_FIELDS_WIND (PARTICLE_FIELDS_GRAVITY + 16u + PARTICLE_GRAVITY_VOLUMES * 112u)
+// volume.Gpu_Outlines: its count and its rows.
+#define PARTICLE_OUTLINES_BYTES (16u + VOLUME_OUTLINE_POINTS * 8u)
+#define PARTICLE_FIELDS_WIND (PARTICLE_FIELDS_GRAVITY + 16u + PARTICLE_GRAVITY_VOLUMES * 112u + PARTICLE_OUTLINES_BYTES)
 
 Gpu_Volume particle_frame_volume(uint at) {
     Gpu_Volume v;
@@ -186,6 +188,12 @@ Gpu_Volume particle_frame_volume(uint at) {
     v.kind = particle_frame.Load4(at + 64u);
     return v;
 }
+
+// The points of a Gpu_Outlines at bytes at of particle_frame.
+struct Particle_Outlines : IVolume_Outlines {
+    uint at;
+    float2 outline_point(uint i) { float4 r = particle_frame_row(at + 16u + (i >> 1) * 16u); return (i & 1u) != 0u ? r.zw : r.xy; }
+};
 
 // What a Gravity pulls with at p, as volume gravity_of: along xyz of pull, or toward
 // it as a center with the acceleration y and the surface z of center.
@@ -207,16 +215,18 @@ float3 particle_fields(uint slot, uint at, float3 p) {
     float4 gravity = float4(particle_frame_row(at).xyz, 0.0);
     uint g = at + PARTICLE_FIELDS_GRAVITY;
     uint pulls = g + 16u + PARTICLE_GRAVITY_VOLUMES * 80u;
+    Particle_Outlines pulled = {g + 16u + PARTICLE_GRAVITY_VOLUMES * 112u};
     for (uint i = 0u; i < min(particle_frame.Load(g), PARTICLE_GRAVITY_VOLUMES); i++) {
         Gpu_Volume v = particle_frame_volume(g + 16u + i * 80u);
-        float w = volume_weight(v, p);
+        float w = volume_weight(v, p, pulled);
         if (w > 0.0) gravity = volume_mix(gravity, float4(particle_gravity_of(particle_frame_row(pulls + i * 16u), particle_frame_row(pulls + PARTICLE_GRAVITY_VOLUMES * 16u + i * 16u), p), 0.0), w, v);
     }
     float4 wind = float4(0.0);
     uint winds = at + PARTICLE_FIELDS_WIND;
+    Particle_Outlines blown = {winds + 16u + WIND_VOLUMES * 96u};
     for (uint i = 0u; i < min(particle_frame.Load(winds), WIND_VOLUMES); i++) {
         Gpu_Volume v = particle_frame_volume(winds + 16u + i * 80u);
-        float w = volume_weight(v, p);
+        float w = volume_weight(v, p, blown);
         if (w > 0.0) wind = volume_mix(wind, particle_frame_row(winds + 16u + WIND_VOLUMES * 80u + i * 16u), w, v);
     }
     return gravity.xyz * particle_emitters[slot].noise.w + wind.xyz * particle_emitters[slot].acceleration.w;

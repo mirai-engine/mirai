@@ -93,11 +93,15 @@ Nav_Build_Config :: struct {
     detail_max_error:f32,     // m the detail mesh may stray from the samples
 }
 
-// A volume that marks the area of the surface inside it: a convex polygon on
-// XZ (counter-clockwise, up to 8 points) between two heights. Later volumes
-// win where they overlap; NAV_AREA_BLOCKED removes the surface.
+NAV_AREA_POINTS :: 64
+
+// A volume that marks the area of the surface inside it: a polygon on XZ (up
+// to NAV_AREA_POINTS points, either way round, convex or not) between two
+// heights. Later volumes win where they overlap; NAV_AREA_BLOCKED removes the
+// surface.
 Nav_Area_Volume :: struct {
-    points:[8][2]f32,
+    points:[NAV_AREA_POINTS][2]f32,
+
     count:u8,
     area:u8,
     min_y,max_y:f32,
