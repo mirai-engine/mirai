@@ -105,8 +105,9 @@ counterclockwise seen from above, and the queries do not depend on the winding.
 
 ### Corridor (`nav_corridor.odin`)
 
-- `Nav_Corridor` is the path an agent follows, flat and of fixed capacity: what exceeds it is cut
-  and the target stays on the last polygon, to plan again near it.
+- `Nav_Corridor` is the path an agent follows, flat and of fixed capacity: what exceeds it, at
+  `nav_corridor_set` or when `nav_corridor_move` adds to its front, is cut (`cut`) and the
+  target stays on the last polygon, to plan again before it.
 - `nav_corridor_set` takes a planned path and straightens it once (`nav_path_straighten`); the
   corridor is not straightened again while it is followed.
 - Each tick: `nav_corridor_move` takes the start to where the agent is (what it walked off the path

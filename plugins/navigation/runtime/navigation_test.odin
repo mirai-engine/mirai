@@ -1762,6 +1762,42 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     testing.expect_value(t,f.problems.count,0)
 }
 
+// A way of more polygons than its corridor holds: the agent plans the rest
+// before the end of the part it holds, and arrives once, at its goal.
+@(test)
+an_agent_arrives_once_at_the_end_of_a_way_longer_than_its_corridor :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{42,0.5,3})
+    // Pillars on either side in turn cut the floor into many polygons.
+    for i in 0..<32 {nav_test_box(&f,{-39+f32(i)*2.5,1,1.5 if i%2==0 else -1.5},{0.3,1,0.3})}
+    f.nav_settings.tile_cells=16
+    nav_test_settled(t,&f)
+    from,to:=mm.Vec3{-41,0,0},mm.Vec3{41,0,0}
+    mesh:=&f.nav.classes[0].mesh
+    filter:=filter_make(&f.nav_settings,{},ai.NAV_CAN_ALL)
+    a,start,_:=ai.nav_find_nearest(mesh,from,{1,2,1},&filter)
+    b,end,_:=ai.nav_find_nearest(mesh,to,{1,2,1},&filter)
+    q:ai.Nav_Query
+    ai.nav_query_init(&q,4096)
+    defer ai.nav_query_destroy(&q)
+    refs:[1024]ai.Nav_Ref
+    count,_,_:=ai.nav_find_path(&q,mesh,a,b,start,end,&filter,refs[:])
+    testing.expectf(t,count>ai.NAV_CORRIDOR_CAPACITY,"the way has only %d polygons",count)
+    e:=agents_test_walker(&f,from)
+    nav_move_to(&f.nav_requests,e,to)
+    arrivals:=0
+    for _ in 0..<60*25 {
+        agents_test_step(&f)
+        for event in f.nav_events.queue.items {if event.entity==e && event.kind==.Arrived {arrivals+=1}}
+    }
+    pose,_:=core.get(&f.worlds,e)
+    p,_:=core.get(&f.paths,e)
+    testing.expectf(t,arrivals==1 && p.state==.Arrived && !p.partial && linalg.distance(pose.position.xz,to.xz)<0.5,"it arrived %d times, is %v at %v",arrivals,p.state,pose.position)
+    testing.expect_value(t,f.problems.count,0)
+}
+
 // A path that says it crosses a link is driven only while navigation counts
 // one crossing: with none, the crossing of links looks at no path.
 @(test)

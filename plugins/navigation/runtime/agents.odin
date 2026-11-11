@@ -46,7 +46,7 @@ NAV_REPLAN_FOLLOW :: f32(0.5)  // s between plans while following a target that 
 NAV_FOLLOW_TREES :: 4          // targets whose followers share a search at once
 NAV_FOLLOW_IDLE :: f32(2)      // s without a follower asking before the search toward a target is let go
 NAV_OFF_LEVEL :: f32(0.5)      // m beyond its climb that an agent may be above or below its corridor
-NAV_CORRIDOR_AHEAD :: 8        // steps of its corridor that must stay valid as an agent walks it
+NAV_CORRIDOR_AHEAD :: 8        // steps of its corridor that must stay valid, and before the end of a cut one, that an agent plans again
 NAV_CROSS_SLACK :: f32(1.0)    // s a crossing may outlast its arc before it counts as failed
 NAV_FLY_AHEAD :: 6             // portals of its corridor a flying agent looks for ahead
 NAV_SHORE_MARGIN :: f32(16)    // m around its way where an agent that swims looks for shores
@@ -496,8 +496,8 @@ agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pos
         agent_replan(p)
         return
     }
-    // A step ahead changed (a tile built again).
-    if !ai.nav_corridor_valid(&p.corridor,mesh,filter,NAV_CORRIDOR_AHEAD) {agent_replan(p)}
+    // A step ahead changed (a tile built again), or the end of a cut corridor is near.
+    if !ai.nav_corridor_valid(&p.corridor,mesh,filter,NAV_CORRIDOR_AHEAD) || p.corridor.cut && p.corridor.count<NAV_CORRIDOR_AHEAD {agent_replan(p)}
     corners:[4]ai.Nav_Corner
     count:=ai.nav_corridor_corners(&p.corridor,mesh,corners[:],0.05)
     if count==0 {agent_replan(p);return}
@@ -540,7 +540,10 @@ agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,vol
     to:=next-position
     distance:=linalg.length(to)
     reach:=agent_reach(agent,p)
-    if end && distance<=reach {
+    // The end of a cut corridor is not where it goes: it plans on from there without braking.
+    if end && p.corridor.cut {
+        if distance<=reach {agent_replan(p)}
+    } else if end && distance<=reach {
         p.velocity={}
         // At the portal into a section away: it goes far from here (agents_far).
         if p.through {return}
@@ -551,7 +554,7 @@ agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,vol
     }
     top:=speed if speed>0 else 3
     // Toward the end, no faster than it can brake: in the air nothing else stops it.
-    if end && acceleration>0 {top=min(top,max(math.sqrt(2*acceleration*0.5*distance),0.2))}
+    if end && !p.corridor.cut && acceleration>0 {top=min(top,max(math.sqrt(2*acceleration*0.5*distance),0.2))}
     p.velocity=to/max(distance,1e-4)*top
 }
 
@@ -986,7 +989,7 @@ agent_medium_path :: proc(n:^Navigation,a:^Navigation_Agents,p:^Nav_Path,e:core.
     if !set {agent_fail(p,e,events);return}
     p.medium=crosses
     if crosses {p.from,p.to,p.kind=from,to,Nav_Link_Kind(kind)}
-    p.partial=!crosses && (partial || final!=.Found || part<count)
+    p.partial=!crosses && (partial || final!=.Found)
     p.state=.Moving
     p.time=0
 }
