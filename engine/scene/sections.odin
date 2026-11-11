@@ -165,7 +165,11 @@ scene_sections :: proc(
                 continue
             }
             scene:=job.root
-            if _,error:=section_load_end(job,world,e);error!=.None {section_failed(world,app.assets,references,e,scene,error,problems)}
+            report,error:=section_load_end(job,world,e)
+            if error!=.None {section_failed(world,app.assets,references,e,scene,error,problems)}
+            else if report.missing>0 {
+                core.report(problems,e,"scene.section","%d scenes this section loads with are not there, and stay empty; put their files back, or take out the references that name them",report.missing)
+            }
         }
         for &l in loads.far {
             if l.job==nil || !load_step(l.job) {continue}

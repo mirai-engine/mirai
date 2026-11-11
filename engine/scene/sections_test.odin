@@ -2,6 +2,7 @@ package scene
 
 import "base:runtime"
 import "core:fmt"
+import os "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -457,6 +458,59 @@ the_section_a_player_stands_in_loads_first_and_holds_it_until_it_joins :: proc(t
         testing.expect_value(t,r.loaded,CELL)
     }
     testing.expect_value(t,len(f.loads.cancelled),0)
+}
+
+// A section whose file goes while it loads does not load, is not tried
+// again, and holds no player standing in it; one that loads with it whose
+// file goes stays empty. Either says so.
+@(test)
+a_section_whose_file_goes_while_it_loads_fails_and_lets_its_player_go :: proc(t:^testing.T) {
+    for gone in ([]string{"outer.scene","inner.scene"}) {
+        f:Section_Fixture
+        if !section_fixture_open(t,&f,fmt.tprintf("gone-%s",gone[:5])) {return}
+        defer section_fixture_close(&f)
+        OUTER :: base.Asset_Id{0x6d,1}
+        INNER :: base.Asset_Id{0x6d,2}
+        outer:asset.Scene;asset.scene_init(&outer,&f.types,OUTER)
+        asset.scene_entity_add(&outer,1,0,"Inner")
+        asset.scene_set(&outer,1,"Scene_Reference",&Scene_Reference{scene=INNER})
+        section_save(t,&f,&outer,"outer.scene")
+        inner:asset.Scene;asset.scene_init(&inner,&f.types,INNER)
+        asset.scene_entity_add(&inner,1,0,"Lamp")
+        asset.scene_set(&inner,1,"Section_Test_Lamp",&Section_Test_Lamp{1})
+        section_save(t,&f,&inner,"inner.scene")
+        host.assets_scan(&f.assets)
+        w:=f.world
+        e,body,seat:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+        core.add(&w.ids,e,core.Id{1})
+        core.add(&w.references,e,Scene_Reference{scene=OUTER,extents={5,5,5},rule=.Manual})
+        core.add(&w.worlds,e,core.World_Transform{transform={rotation=1,scale=1}})
+        core.add(&w.worlds,body,core.World_Transform{transform={rotation=1,scale=1}})
+        core.add(&w.seats,seat,input.Seat{body=body})
+        core.world_settle(section_ref(&f))
+        frame :: proc(f:^Section_Fixture) {
+            section_frame(f)
+            w:=f.world
+            scene_holds(core.read(&w.references),core.read(&w.worlds),core.read(&w.seats),core.read(&w.remotes),&w.disabled,&w.held,{},&w.holds,f.problems)
+            core.world_settle(section_ref(f))
+        }
+        testing.expect_value(t,os.remove(fmt.tprintf("%s/%s",f.folder,gone)),nil)
+        for _ in 0..<3 {frame(&f)}
+        reference,_:=core.get(&w.references,e)
+        if gone=="inner.scene" {
+            testing.expect_value(t,reference.loaded,OUTER)
+            inner,_:=core.get(&w.references,core.entity_at(&w.references,1))
+            testing.expect(t,inner.loaded==INNER && inner.failed=={},"what loads with it stays empty")
+        } else {
+            testing.expect_value(t,reference.failed,OUTER)
+            testing.expect_value(t,reference.loaded,base.Asset_Id{})
+        }
+        testing.expect_value(t,core.raw_count(core.raw(&w.lamps)),0)
+        testing.expect(t,f.problems.count>0,"it says the section did not load")
+        testing.expect(t,!core.entity_off(&w.entities,body),"the player goes on")
+        testing.expect(t,ready_at(core.read(&w.references),core.read(&w.worlds),{0,0,0}),"nothing there is to load")
+        for l in f.loads.items {testing.expect(t,l.job==nil,"it is not tried again")}
+    }
 }
 
 @(private="file") SECTION_A :: base.Asset_Id{0x6b,1}
