@@ -843,11 +843,13 @@ a zone value combines is its `Zone`, a `Fluid` has its priority, a `Force_Field`
   `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
   [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Every reader takes
   any shape; only a real limit refuses one, with a problem: a fluid is not a sphere, a strain
-  region travels as a box or a sphere and an area request carries no outline, a navmesh and a fog
-  need a shape with an end, and a shader takes no outline.
-- **Something went in.** With physics, a box or sphere `Volume` on an entity without a `Collider`,
-  `Rigid_Body` or `Character` is a sensor of the solver: `Physics_Events.overlap_begin` and
-  `overlap_end` name it as `collider` when a body goes in and out
+  region travels as a box or a sphere, a navmesh and a fog need a shape with an end. An area
+  request names the entity whose `Spline` its outline is (`apply_area` `outline_of`); a shader
+  reads the points of the outlines of its block of volumes from one `Gpu_Outlines` that
+  `gpu_volume` fills, and `volume_weight` rejects by the box of an outline before its loop.
+- **Something went in.** With physics, a box, sphere or outline `Volume` on an entity without a
+  `Collider`, `Rigid_Body` or `Character` is a sensor of the solver:
+  `Physics_Events.overlap_begin` and `overlap_end` name it as `collider` when a body goes in and out
   ([physics](../../mirai-physics/references/engine.md#events-physics_events)). A reaction to
   entering (a sky, a heal) is game code on that event; no component reacts to a zone by itself.
 - **`Spline`** (`spline.odin`) is the one path, as `Volume` is the one region: points in the frame
@@ -880,8 +882,7 @@ the `fog` plugin):
 - The value and its `Volume` are replicated.
 - **On the GPU** (`shaders/include/volume.slang`): `ordered` gives the rows in the order in which
   they are applied, which does not depend on the point, and `gpu_volume` their shape;
-  `volume_weight` and `volume_mix` are the same weight and the same mix. An outline weighs 0
-  there.
+  `volume_weight` and `volume_mix` are the same weight and the same mix.
 
 - **`Wind`** (`wind.odin`): `speed` toward the front (-Z) of its entity and `gusts` (cycles per
   second). Without any, the air is still. `gpu_wind` gives it to foliage, which mixes it at each

@@ -80,8 +80,6 @@ $P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,
   area holds nothing (`volume.outline`). Two fluids that meet at the same `priority`:
   `physics.fluid_overlap`.
 - `Fluid_Waves` on a river makes no waves: the problem `physics.fluid_waves`.
-- A fog, a wind on particles and grass, a gravity on particles: the shaders take no `Outline`
-  (a fog in one is `fog.volume`); give them a `Box`, a `Sphere` or a `Plane`.
 
 - A river whose points have no width or no height, or sit at the same place seen from above, or
   whose `Fluid` has a `current` along it (`z`), is not made (`physics.fluid_path`).

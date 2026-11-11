@@ -219,7 +219,7 @@ volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Trans
         params={fog.variable?1/max(fog.wisp_size,0.1):0,clamp(fog.anisotropy,-0.95,0.95),max(fog.falloff,0),at.position.y},
     }
     // The base is the lowest point of a box, a sphere or an outline.
-    if place.shape!=.Plane {entry.params.w=volume.bounds(place,at,outline).min.y}
+    if place.shape==.Box || place.shape==.Sphere || place.shape==.Outline {entry.params.w=volume.bounds(place,at,outline).min.y}
     state.volumes[state.count]=entry
     state.drift[state.count]=fog.drift
     state.count+=1

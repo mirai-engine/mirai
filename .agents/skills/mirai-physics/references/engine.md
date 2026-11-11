@@ -562,9 +562,11 @@ read in a function of the `react` stage ([order](../../mirai-core/references/gen
 `a`, `b`, `entity` and `other` are the entities of the bodies; `collider_*`, those of the colliders
 that touched, which distinguish head, foot or weapon of the same body. `NONE` is a body without an
 entity; the detached ones of a destructible name their group entity, and the root group, the owner.
-A box or sphere [`Volume`](../../mirai-gameplay/references/libraries.md#volume) on an entity
-without a `Collider`, `Rigid_Body` or `Character` is a static sensor of preset `Trigger`, made by
-the sync from the volume (`zone_collider`): its overlaps are those of any sensor, with the volume's
+A box, sphere or outline [`Volume`](../../mirai-gameplay/references/libraries.md#volume) on an
+entity without a `Collider`, `Rigid_Body` or `Character` is a static sensor of preset `Trigger`,
+made by the sync from the volume (`zone_collider`; an outline, as the hulls of its convex pieces,
+`zone_pieces`, which the solver reports as one overlap per pair of shape users,
+`overlap_shared`): its overlaps are those of any sensor, with the volume's
 entity as `entity` and `collider`. A plane or an unbounded volume makes none: the solver holds no
 shape without an end. This is the one way a zone says what went in; there is no second test of
 "inside".

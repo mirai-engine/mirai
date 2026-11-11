@@ -31,20 +31,19 @@ $P scene.write '{"merge":true,"entities":[
 ## What can happen in it
 
 - `Gravity`, `Wind`, `Audio_Reverb`, `View_Volume`, `Fog_Volume`, `Lens_Volume`: the value rules
-  there, in any shape; on the GPU (a fog, the wind of grass and particles, the gravity of
-  particles) not in an `Outline`, and a fog needs an end. Its `zone` says how it meets the others:
+  there, in any shape but a fog, which needs an end. Its `zone` says how it meets the others:
   `blend`, metres inside the border over which its weight rises from 0 to 1; `priority`, the
   higher goes on top and among equals the smaller volume wins; `mode`, `Replace` what is below or
   `Add` to it. Without a `Volume` it rules the whole world.
 - `phys.Fluid`: water, where bodies float and characters swim ([water](water-fog.md)); density 0
   is a dry box, and its `priority` decides where fluids meet. A `Plane`, a `Box` or an `Outline`;
   without one, the problem `physics.fluid`.
-- `phys.Force_Field`: pushes the bodies there each tick, rising over its `blend`, in any shape but
-  an `Outline`. Without a `Volume` it pushes everywhere.
+- `phys.Force_Field`: pushes the bodies there each tick, rising over its `blend`, in any shape.
+  Without a `Volume` it pushes everywhere.
 - `destruct.Strain_Field`: strains the destructibles there each tick. A `Box` or a `Sphere`;
   without one, the problem `destruct.strain_field`.
 - `nav.Nav_Bounds`, `nav.Nav_Area`, `nav.Nav_Obstacle`: where navmeshes are made, an area with a
-  cost, a blocker ([ai](../ai.md)). A `Box` or a `Sphere`; without one, the problem
+  cost, a blocker ([ai](../ai.md)). A `Box`, a `Sphere` or an `Outline`; without one, the problem
   `navigation.volume`.
 - `foliage.Foliage_Bender`: leans the grass around a body, as far as its volume reaches.
 
