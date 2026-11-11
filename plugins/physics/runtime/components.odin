@@ -42,7 +42,7 @@ Collider_Kind :: enum u8 {
     Hull, // the convex hull of what the Mesh_Renderer of the entity shows
     Mesh, // the triangles of what the Mesh_Renderer shows; no mass, intended for static geometry
     Heightfield, // the compact height grid of a generated Mesh_Renderer; no mass
-    External, // another plugin makes its shapes from this surface and collision (destruct, for a Destructible): physics makes none
+    External, // another plugin makes its shapes from this surface and collision (shapes, for a brush): physics makes none
 }
 
 COLLIDER_HULL_VERTICES :: 32

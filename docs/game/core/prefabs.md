@@ -56,8 +56,36 @@ game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
 - Create without a prefab: `core.commands_create(commands)`, then `commands_add` (or
   `commands_add_default`, the row of the component at its default) for
   `core.Transform`, `core.Parent{entity=parent}` and the rest.
-- Players' bodies are not spawned by code: `Spawn_Settings.prefab` names them, and they appear at
-  the `Spawn_Point`s ([character](../character.md)).
+
+## At spawn points
+
+A `spawn.Spawn_Point` (plugin `spawn`) is a place of the scene where its `prefab` appears. With
+`players` on it is one of the players': a player's body appears at the point asked for, or else at
+the next one of the players' in turn, of the prefab asked for, or else the point's, or else
+`Spawn_Settings.prefab`. While such a prefab is named, each seat gets its body there with no code
+([character](../character.md)). With `players` off only the game spawns there, so the point of an
+enemy never gives a player its body:
+
+```odin
+import spawn "plugins:spawn/runtime"
+
+// An enemy every 10 s, at most 3 alive: Enemy is a component its prefab carries.
+@(storage)
+Enemy_Clock :: struct {next:u64}
+
+@(step="fixed",server)
+enemies_appear :: proc(enemies:core.Read(Enemy),requests:^spawn.Spawn_Requests,
+    clock:^Enemy_Clock,time:core.Time) {
+    if core.count(enemies)>=3 || !core.due(time,clock.next) {return}
+    spawn.spawn(requests,core.NONE) // at the next point without players, of its prefab
+    clock.next=core.deadline(time,10)
+}
+```
+
+- `spawn.spawn(requests,core.NONE,path,point)` names a prefab or a point; without them the points
+  without players are taken in turn. The copy has its own `core.Id`, so the API names it.
+- A client cannot spawn: the server does, and the copy reaches the clients when its prefab
+  carries `multiplayer.Replicate`.
 
 ## Hierarchy
 

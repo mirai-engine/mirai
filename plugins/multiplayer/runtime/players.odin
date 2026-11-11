@@ -68,7 +68,9 @@ net_seats :: proc(
     waits:=absent_ticks(settings,time)
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
-        value:=core.staged(seats,seat)
+        // Read without writing: only the seats of connections are written.
+        value:=seats.values[row]
+        if added:=core.table_added(seats,seat);added!=nil {value=added^}
         if value.peer==0 {
             // The seat of a player of a saved game waits for that player.
             if serving && value.player!=0 {absent(absents,disabled,seat,0)}
@@ -79,12 +81,12 @@ net_seats :: proc(
         connection:=Connection(value.peer)
         if serving && connected(connections,connection) {
             sent,_:=remote_input(connections,connection)
-            input.seat_receive(value,bindings.ptr,sent,time.dt)
+            input.seat_receive(core.staged(seats,seat),bindings.ptr,sent,time.dt)
             continue
         }
         // A connection that left: its seat waits for its player, or goes.
         if serving && value.player!=0 && waits>=0 {
-            value.peer=0
+            core.staged(seats,seat).peer=0
             absent(absents,disabled,seat,time.tick+u64(max(waits,1)))
             continue
         }

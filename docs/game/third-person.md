@@ -15,8 +15,9 @@ pause, settings and HUD. Follow these steps; then [rules-test.md](third-person/r
 `project.mirai`: add `"terrain","foliage","water","fog"` to the `plugins` the game already has.
 Remove a plugin only after its imports are gone from `game/` and `tools/`. `settings.mirai` stays:
 `Spawn_Settings.prefab` names the player prefab, of which each player gets a body at the
-`Spawn_Point`, with no spawn or camera code. A sunny scene needs no exposure setting and no fog:
-`render.SKY_DEFAULT` and a 100000 lux sun are a clear day, auto exposure meters it.
+`Spawn_Point` (its `players` on), with no spawn or camera code. A sunny scene needs no exposure
+setting and no fog: `render.SKY_DEFAULT` and a 100000 lux sun are a clear day, auto exposure
+meters it.
 
 ## 2. The player
 

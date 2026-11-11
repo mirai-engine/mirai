@@ -171,8 +171,8 @@ editor.
   Zombies wander, chase the runner they see (`nav_follow`) jumping from roof to roof and falling to
   the street through the generated links, and bite it three at a time (attack tokens); the rest
   surround it until a spot is freed. A cart (`Arena_Cart`, kinematic with `Nav_Obstacle`) parks on a
-  street: the tiles under it are redone. With `Horde_Waves` more arrive through the edge streets,
-  in [waves](#game-data).
+  street: the tiles under it are redone. With `Horde_Waves` more arrive in [waves](#game-data) at
+  the `Spawn_Point`s of an edge street, which have `players` off.
 - `Firefight` (`agents` per squad): two squads of tactical bots in a walled yard. Each soldier
   shoots with one of two tokens per enemy, takes cover on the side of a wall chosen by a place
   query over the cover offers (that its enemy does not see, close and with little enemy
@@ -215,9 +215,10 @@ inventories, dialogues or waves, and these are demo code that can be copied and 
   order, so in the grid they are added without touching the line. `Interface_Demo.talk` is the line
   it starts with.
 - **Waves** (`ai_arena.odin`): `Horde_Waves` in the `Horde` arena sends zombies after those the
-  arena builds. Each `Horde_Wave` says when, how many, how often and with what weight each
-  `Zombie_Kind` (speed, sight, color) comes out, and names the next wave; one that names an earlier
-  one repeats it. The component's seed fixes which kind comes out at each place.
+  arena builds. Each `Horde_Wave` says when, how many and how often, and names the next wave; one
+  that names an earlier one repeats it. Each zombie appears at the next spawn point without
+  players (`spawn.spawn` with no seat), and the prefab of that point (`ai/Walker zombie.scene`,
+  `Runner zombie`, `Brute zombie`) is its kind.
 - What is shown of a row (names, texts) is redone only when `records_generation` of its table or
   the language changes, so editing a row during Play is seen in the next tick at no cost to the
   others.

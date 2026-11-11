@@ -67,9 +67,9 @@ A seat is a player of this machine (`slot`) or of a connection (`peer`); it exis
   `^inp.Seat_Requests`; they apply at the start of the tick. Any entity can be driven: entering a
   car is driving it, leaving it is driving the person again. The body a seat lets go of stops.
 - `inp.body_of(seats,seat)` and `inp.seat_of(seats,body)` read `core.Read(inp.Seat)`.
-- Bodies appear at spawn points: with a player prefab (`Spawn_Settings.prefab`, or one on the
-  point) each seat gets one, or ask with `spawn.spawn(requests,seat,PLAYER_PREFAB)` and
-  `spawn.respawn(requests,body,point)` in `^spawn.Spawn_Requests` (a client cannot: the server
+- Bodies appear at spawn points with `players` on: with a player prefab (`Spawn_Settings.prefab`,
+  or one on such a point) each seat gets one, or ask with `spawn.spawn(requests,seat,PLAYER_PREFAB)`
+  and `spawn.respawn(requests,body,point)` in `^spawn.Spawn_Requests` (a client cannot: the server
   decides).
 - How many players share the screen is of the run: `--players`, or the Play selector of the editor.
 - A body no seat drives is moved by writing its `inp.Move_Input`: `move` (in the world, up to

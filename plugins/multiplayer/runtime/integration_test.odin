@@ -54,7 +54,8 @@ Net_Test_Tables :: struct {
     input:core.Input,
     bindings:inp.Input_Map,
     remote:Remote_Inputs,
-    received:Net_Events,
+    messages:core.Net_Messages,
+    made:Net_Spawns,
     outbox:Net_Outbox,
     request:Session_Request,
     network:core.Network,
@@ -81,7 +82,8 @@ Net_Test_Shared :: struct {
     session:^Net_Session,
     info:^core.World_Info,
     colliders:phys.Collider_Meshes,
-    spawn_at:u64, // the tick in which the game makes an entity on both ends (predict_spawn); 0: none
+    spawn_at:u64, // the tick in which the game makes entities on both ends (predict_spawn); 0: none
+    spawns:int,   // how many it makes then; 0: one
     sent:int,     // the messages it sent with them
 }
 
@@ -196,20 +198,20 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
     }
     net_test_feed(w)
     if sh.spawn_at!=0 && w.time.tick==sh.spawn_at {
-        e:=core.create(&w.entities)
-        core.add(&w.transforms,e,core.Transform{position={0,5,0},rotation=1,scale={1,1,1}})
-        core.add(&w.values,e,Net_Test_Value{})
-        predict_spawn(core.ref(sh.session),&w.identities,&w.spawns,e,0,w.time)
+        for k in 0..<max(sh.spawns,1) {
+            e:=core.create(&w.entities)
+            core.add(&w.transforms,e,core.Transform{position={f32(k),5,0},rotation=1,scale={1,1,1}})
+            core.add(&w.values,e,Net_Test_Value{})
+            predict_spawn(&w.made,e,{})
+        }
         sh.sent+=int(send(&w.outbox,u32(1)))
         core.settle(sh.info,w,nil)
     }
     net_test_physics(w,sh,app)
     if sh.session!=nil {
         outbox:Net_Outbox
-        adoptions:Net_Adoptions
-        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
-        core.value_free(&adoptions,type_info_of(Net_Adoptions))
     }
 }
 
@@ -593,11 +595,9 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         for time.duration_seconds(time.tick_since(start))<2 {
             now:=wire.host_time(&sessions[0].host)
             for &session in sessions {wire.host_update(&session.host,now)}
-            server_events,client_events:Net_Events
             server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
             client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
             for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
-            core.value_free(&server_events,type_info_of(Net_Events));core.value_free(&client_events,type_info_of(Net_Events))
             if connected!=0 && sessions[1].status==.Connected {break}
             time.sleep(time.Millisecond)
         }
@@ -611,7 +611,6 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         now:=time_base+f64(tick)/60
         if !udp {wire.sim_network_advance(&network,now)}
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_events,client_events:Net_Events
         server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
         for event in net_test_arrived(&sessions[0]) {
             if event.kind==.Connected {
@@ -621,8 +620,6 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
         }
         client_commands(&sessions[1],core.world_ref(&worlds[1],&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
-        core.value_free(&server_events,type_info_of(Net_Events))
-        core.value_free(&client_events,type_info_of(Net_Events))
         if tick==60 {core.enable(&worlds[0].joints,entities[0][0])}
         if tick==90 {core.edit(&worlds[0].values,entities[0][0]).force=400}
         if tick==140 {

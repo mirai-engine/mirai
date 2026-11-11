@@ -138,8 +138,9 @@ the same attributes and no private paths. Declaration and parameter binding:
   AI or the game writes it for the bodies no seat drives. The mover turns the body toward its look
   at its own rate (locomotion: `Character.turn_speed`); nobody else turns it. An own mode
   (swimming, climbing) is requested with `locomotion.set_mode`. Player bodies appear at the
-  `Spawn_Point`s of the `spawn` plugin when a player prefab is named, not through game code; the
-  number of local players is of the run ([control](references/control.md)).
+  `Spawn_Point`s with `players` on of the `spawn` plugin when a player prefab is named, not through
+  game code; a point with `players` off serves what the game spawns (enemies) and never gives a
+  seat its body. The number of local players is of the run ([control](references/control.md)).
 - **Volumes: one algorithm and an unbounded base value.** Gravity, wind, reverb, view and fog
   change per zone with a single algorithm: each volume has a priority and says whether it adds to
   or replaces what is below, and the base value is a volume without bounds. An unbounded volume of

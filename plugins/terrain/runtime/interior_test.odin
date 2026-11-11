@@ -87,10 +87,10 @@ lowering_a_heightfield_counts_the_height_it_takes_by_layer :: proc(t:^testing.T)
     middle:=source_origin(&s)+{8,0,8}
     testing.expect(t,source_edit(&s,{kind=.Paint,center=middle+{6,0,0},radius=6,amount=1,layer=1,falloff=.Constant}).changed)
     before:=f32(0)
-    for z in 0..<17 {for x in 0..<17 {before+=grid_get(&s.heights,x,z)}}
+    for z in 0..<17 {for x in 0..<17 {before+=grid_get(&s.field,x,z)}}
     testing.expect(t,source_edit(&s,{kind=.Lower,center=middle,radius=4,amount=1}).changed)
     after:=f32(0)
-    for z in 0..<17 {for x in 0..<17 {after+=grid_get(&s.heights,x,z)}}
+    for z in 0..<17 {for x in 0..<17 {after+=grid_get(&s.field,x,z)}}
     testing.expect(t,abs(s.dug.volume-(before-after))<1e-3)
     testing.expect(t,s.dug.layers[0]>0 && s.dug.layers[1]>0 && s.dug.sum.y<0)
     testing.expect(t,source_edit(&s,{kind=.Raise,center=middle,radius=4,amount=1}).changed && s.dug.volume==0)
