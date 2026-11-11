@@ -115,8 +115,8 @@ difference with the catalog, it rules.
    and initial values), `asset.list`; a single field with `--select` (`_select` in a call of MCP),
    and a state that takes time (`play.network.status`) with `--wait-until` (`_wait_until`).
 3. Edit the entities with `scene.write`, its `entities` the `tree` `scene.inspect` with `root`
-   gives: with `merge` it names only what it adds or changes; without it, it declares all there
-   is under `root`. Calls of several methods that succeed or fail together go in `batch` with
+   gives: it names only what it adds or changes; with `replace` it declares all there is under
+   `root`, and what it leaves out goes. Calls of several methods that succeed or fail together go in `batch` with
    `transaction`.
 4. Verify with `scene.inspect` or `capture`; undo with `history.undo`. A method that fails
    changes nothing.

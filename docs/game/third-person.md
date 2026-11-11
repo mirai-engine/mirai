@@ -27,7 +27,7 @@ it through the API or the editor, and nothing writes over it. With the session o
 ```sh
 P="mirai rpc --project ."
 $P scene.open '{"path":"player/Player.scene"}'
-$P scene.write '{"root":"Player","merge":true,"entities":[{
+$P scene.write '{"root":"Player","entities":[{
   "components":{
     "Character":{"turn_speed":12},
     "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
@@ -42,7 +42,7 @@ $P scene.write '{"root":"Player","merge":true,"entities":[{
 $P scene.save '{}'
 ```
 
-One `scene.write` with `merge` changes the fields it names of `Player` and of the child named
+One `scene.write` changes the fields it names of `Player` and of the child named
 `Player view`, makes `Body`, which no child is named yet, and leaves the rest of the prefab as it
 is.
 
@@ -61,7 +61,7 @@ height ([water-fog.md](world/water-fog.md)):
 
 ```sh
 $P scene.open '{"path":"arena/main.scene"}'
-$P scene.write '{"merge":true,"entities":[{"name":"Sea","position":[0,-1,0],"components":{
+$P scene.write '{"entities":[{"name":"Sea","position":[0,-1,0],"components":{
   "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}}]}'
 $P scene.save '{}'
 ```

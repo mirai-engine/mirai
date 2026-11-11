@@ -36,12 +36,12 @@ Api_Write_Made :: struct {
 // cook/author reads from the text.
 Api_Scene_Write_Params :: struct {
     root:string `mirai:"entity,optional,label=by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it: entities holds that one entity. Left out: entities are those at the top of the scene"`,
-    merge:bool `mirai:"optional,label=true: what the document leaves out stays as it is (entities, components, fields, places): it names only what it changes or adds. Left out: the document declares all there is under root, or in the scene without root, and what it leaves out goes"`,
+    replace:bool `mirai:"optional,label=true: the document declares all there is under root, or in the scene without root, and what it leaves out goes: entities, components and fields. Left out: what it leaves out stays as it is, and it names only what it changes or adds"`,
     kind:Document_Kind `mirai:"optional,label=what the document is from now on, which Save writes: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
-    entities:[]Api_Scene_Write_Entity `mirai:"label=the entities, nesting what hangs from each by children; matched by id, else by name among siblings, else (not in a merge) by place, and the others are made"`,
+    entities:[]Api_Scene_Write_Entity `mirai:"label=the entities, nesting what hangs from each by children; matched by id, else by name among siblings, else (with replace) by place, and the others are made"`,
 }
 Api_Scene_Write_Entity :: struct {
-    id:string `mirai:"optional,label=matches the entity with this id, which goes under the entity the document nests it in; in a merge, one at the top of the document stays under the parent it has"`,
+    id:string `mirai:"optional,label=matches the entity with this id, which goes under the entity the document nests it in; one at the top of the document stays under the parent it has, unless replace"`,
     name:string `mirai:"optional,label=without id, matches the entity of this name among those of its parent; none: it is made"`,
     preset:string `mirai:"optional,label=a preset or the card of a plugin (cube, sphere, plane, point_light, sun, camera, spawn...): it gives a new entity its components, whose fields components changes, and the rotation and scale it has when those are left out"`,
     prefab:serial.Json `mirai:"optional,label=on a new entity, the path or the id of a prefab: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"`,
@@ -52,8 +52,8 @@ Api_Scene_Write_Entity :: struct {
     scale:[3]f32 `mirai:"optional,label=[1,1,1] or that of its preset when left out"`,
     visible:bool `mirai:"optional,label=true when left out"`,
     enabled:bool `mirai:"optional,label=true when left out; false turns the entity and everything under it off: their components keep their values and no system sees them"`,
-    components:serial.Json `mirai:"optional,label=by name the components it has besides those of its preset, each with the fields that differ from the value it starts with; those it leaves out go. In a merge: the fields to change of each, and null takes a component away"`,
-    off:[]string `mirai:"optional,label=the components it declares that are turned off by themselves, keeping their values; those it declares and does not list are on. In a merge without off nothing turns"`,
+    components:serial.Json `mirai:"optional,label=by name the fields to change of each component, which it gets when it has none; null takes a component away. With replace: the components it has besides those of its preset, each with the fields that differ from the value it starts with, and those it leaves out go"`,
+    off:[]string `mirai:"optional,label=the components it declares that are turned off by themselves, keeping their values; those it declares and does not list are on. Left out, nothing turns, unless replace"`,
     children:[]serial.Json `mirai:"optional,label=the entities that hang from it, in order, each with these keys"`,
 }
 
@@ -68,7 +68,7 @@ Api_Write :: struct {
 
 @(private)
 api_scene_write_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params=type_info_of(Api_Scene_Write_Params),summary="The one way to change the entities of the scene: makes it say what a document of nested entities declares, as scene.inspect with root gives it. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity). What the document leaves out goes, or with merge stays: then it names only what changes, and delete takes an entity away. One step of undo; the result names what it made.",result=type_info_of(Api_Write_Result),run=api_scene_write})
+    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params=type_info_of(Api_Scene_Write_Params),summary="The one way to change the entities of the scene: a document of nested entities, as scene.inspect with root gives it, that names what changes. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity), and delete takes one away; what the document leaves out stays, or with replace goes. One step of undo; the result names what it made.",result=type_info_of(Api_Write_Result),run=api_scene_write})
 }
 
 // The entities of the part of the scene a document declares: root and what
@@ -131,7 +131,7 @@ api_write_refused :: proc(a:^Api_Write,parent:author.Node) -> string {
 }
 
 // A component of the entity takes the value of the document over the one it
-// starts with (from: what its card gives), or with merge over the one it has.
+// starts with (from: what its card gives), or with merge the one it has.
 @(private="file")
 api_write_component :: proc(a:^Api_Write,reading:^author.Reading,e:core.Entity,t:^core.Table_Info,text,path:string,from:[]u8,merge:bool) -> (changed,ok:bool) {
     s,w:=a.s,a.w

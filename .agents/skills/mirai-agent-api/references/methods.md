@@ -399,21 +399,22 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
   ([`mirai scene`](api.md#mirai-ui-and-mirai-scene)); the editor gives it the rows of the world
   (`editor/api_scene_write.odin`).
   - Without `root`, `entities` are those at the top of the scene; with it, the one entity is
-    `root`. It matches by `id`, else by `name` among those of its parent, else by place among
-    those left; it makes the others, and what the document does not declare goes with what
-    hangs from it.
-  - What an entity does not give is that of a new one: identity place, visible, enabled and
+    `root`. What the document leaves out stays, so it names only what it adds or changes: an
+    entity is matched by `id` or by `name` among those of its parent and never by place, and
+    the others are made; one at the top named by `id` stays under the parent it has, a component
+    takes the fields given over the value it has, `null` removes it, `off` turns components the
+    entity has off (and with `off` given, on those it declares and does not list), siblings keep
+    their order, and `"delete":true` takes an entity away.
+    `{"root":"Lamp","entities":[{"position":[0,2,0]}]}` moves one entity; a member of an
+    instance that says `delete` is turned off.
+  - `replace:true` declares all there is under `root`, or in the scene: entities left unmatched
+    are also matched by place, and what the document does not declare goes with what hangs from
+    it. What an entity does not give is that of a new one: identity place, visible, enabled and
     without components. A component is its starting value with the fields it gives (keeping the
     hidden, `transient` and `read_only` ones); those it does not name are removed, also the one
     the editor adds beside another (the `Collider` of a `Character`). Siblings end up in the
-    order of the document.
-  - `merge:true` keeps what the document leaves out, so it names only what it adds or changes:
-    an entity is matched by `id` or `name` and never by place, one at the top named by `id`
-    stays under the parent it has, a component takes the fields given over the value it has,
-    `null` removes it, `off` turns components the entity has off (and with `off` given, on those
-    it declares and does not list), siblings keep their order, and `"delete":true` takes an
-    entity away. `{"root":"Lamp","merge":true,"entities":[{"position":[0,2,0]}]}` moves one
-    entity; a member of an instance that says `delete` is turned off.
+    order of the document. `mirai scene write` writes a file whole: it replaces unless the
+    document says `"replace":false`.
   - `preset` names a [recipe](../../mirai-editor/references/document.md#recipes) of the engine or
     of an active plugin by the name of its file, case-insensitive; it stands for the components
     of its entity, whose values are the starting ones of the fields `components` does not name;

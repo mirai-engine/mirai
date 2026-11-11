@@ -1195,7 +1195,7 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
     testing.expect(t,run_find(&f.s,0).world==world,"a game already playing is not started again")
     testing.expect(t,play_start(&f.s,false,7))
     other:=run_find(&f.s,7).world
-    error,_=probe_call(f,"scene.write",`{"root":"Hero","merge":true,"entities":[{"name":"Renamed"}]}`)
+    error,_=probe_call(f,"scene.write",`{"root":"Hero","entities":[{"name":"Renamed"}]}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,run_find(&f.s,0).world==world,"an edit alone does not touch the run")
     f.document.saved=history.edits_state(&f.edits)
@@ -1241,7 +1241,7 @@ the_api_edits_the_document_while_a_game_plays :: proc(t:^testing.T) {
     defer probe_close(f)
     running:=run_ref(&f.s,run_find(&f.s,0))
     document:=edited_world(&f.s)
-    error,_:=probe_call(f,"scene.write",`{"root":"Hero","merge":true,"entities":[{"name":"Renamed","position":[9,0,0]}]}`)
+    error,_:=probe_call(f,"scene.write",`{"root":"Hero","entities":[{"name":"Renamed","position":[9,0,0]}]}`)
     testing.expect_value(t,error.code,0)
     hero:=api_entity(document,1)
     testing.expect_value(t,entity_name(document,hero),"Renamed")

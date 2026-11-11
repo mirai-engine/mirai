@@ -9,7 +9,7 @@ and is invisible.
 
 ```sh
 P="mirai rpc --project ."
-$P scene.write '{"merge":true,"entities":[
+$P scene.write '{"entities":[
   {"name":"Sea","position":[0,2,0],"components":{
     "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}},
   {"name":"Breeze","components":{"Wind":{"speed":6,"gusts":0.5}}},
@@ -53,7 +53,7 @@ for a hazier day). A `Fog_Volume` without a `Volume`, or with one of shape `Unbo
 nothing (`fog.volume`).
 
 ```sh
-$P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,0],"components":{
+$P scene.write '{"entities":[{"name":"Valley mist","position":[0,0,0],"components":{
   "Volume":{"shape":"Box","extents":[100,8,100]},"Fog_Volume":{"density":0.03,"falloff":0.2,
   "variable":true,"wisp_size":20,"drift":[0.5,0,0.2]}}}]}'
 ```

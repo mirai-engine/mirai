@@ -383,8 +383,8 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="save",method="scene.save",label="Save",icon=user(.Save),shortcut=key(.S,{.Primary}),menu=.File,group=1,state=state_save},
         {name="save_all",method="editor.save_all",label="Save all",icon=user(.Save),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,state=state_editing},
         {name="save_as",method="scene.save",params=`{"path":"$ask"}`,label="Save as...",icon=user(.Save),shortcut=key(.S,{.Primary,.Alt}),menu=.File,group=1,state=state_editing,scene=true},
-        {name="make_prefab",method="scene.write",params=`{"merge":true,"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,state=state_kind,scene=true},
-        {name="make_scene",method="scene.write",params=`{"merge":true,"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,state=state_kind,scene=true},
+        {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,state=state_kind,scene=true},
+        {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,state=state_kind,scene=true},
         {name="import",method="asset.import",params=`{"path":"$ask"}`,label="Import...",icon=.Import,menu=.File,group=2,state=state_import},
         {name="build",method="build.start",label="Build",icon=user(.Hammer),shortcut=key(.B,{.Primary}),menu=.File,group=3,state=state_build},
         {name="settings",method="editor.view",params=`{"part":"Settings"}`,label="Project settings",icon=user(.Gear),menu=.File,group=3,state=state_settings},
@@ -393,9 +393,9 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="undo",method="history.undo",label="Undo",icon=user(.Undo),shortcut=key(.Z,{.Primary}),state=state_undo},
         {name="redo",method="history.redo",label="Redo",icon=user(.Redo),shortcut=key(.Y,{.Primary}),alternate=key(.Z,{.Primary,.Shift}),state=state_redo},
         {name="copy",method="editor.copy",params=`{"entities":["$roots"]}`,label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),state=state_copy,scene=true},
-        {name="paste",method="scene.write",params=`{"merge":true,"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),state=state_paste,scene=true},
-        {name="duplicate",method="scene.write",params=`{"merge":true,"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),state=state_scene_edit,scene=true},
-        {name="delete",method="scene.write",params=`{"root":"$roots","merge":true,"entities":[{"delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_scene_edit,scene=true},
+        {name="paste",method="scene.write",params=`{"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),state=state_paste,scene=true},
+        {name="duplicate",method="scene.write",params=`{"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),state=state_scene_edit,scene=true},
+        {name="delete",method="scene.write",params=`{"root":"$roots","entities":[{"delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_scene_edit,scene=true},
         // Of a game the editor shows: its entities are not those of the document.
         {name="delete_in_game",method="play.destroy",params=`{"entity":"$roots"}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_game_edit,scene=true},
         {name="rename",method="editor.view",params=`{"part":"Rename"}`,label="Rename",icon=.Edit,shortcut=key(.F2),state=state_rename,scene=true},
@@ -837,7 +837,7 @@ api_editor_view :: proc(s:^Session,call:^api.Call) {
     case .Rename:
         if !params.on {refuse(call,params.part);return}
         if len(s.selection.entities)!=1 || watching(s) {
-            api.call_fail(call,api.SERVER_ERROR,"Rename is of one selected entity: editor.select it; scene.write with root, merge and name renames without the field")
+            api.call_fail(call,api.SERVER_ERROR,"Rename is of one selected entity: editor.select it; scene.write with root and name renames without the field")
             return
         }
         g.layout.right_open=true

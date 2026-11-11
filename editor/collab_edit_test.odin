@@ -167,7 +167,7 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
         case .Write:
             method:=api.Method{result_id=Api_Write_Result}
             result:Api_Write_Result
-            call:=api.Call{method=&method,result=&result,raw=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
+            call:=api.Call{method=&method,result=&result,raw=fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
             api_scene_write(s,&call)
             done=!call.failed
             testing.expect(t,done,call.error.message)

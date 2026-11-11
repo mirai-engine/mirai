@@ -17,7 +17,7 @@ import "mirai:std/serial"
 // editor applies it to the world it edits, and mirai scene write to a file,
 // through what each gives as a Scene_Target.
 //
-//   {"root": "Yard/Lamp", "merge": true, "kind": "Prefab", "entities": [...]}
+//   {"root": "Yard/Lamp", "replace": true, "kind": "Prefab", "entities": [...]}
 //
 // Entities nest by children and give what differs from a new entity: their
 // transform local to the parent, being hidden or off, and by name the
@@ -27,19 +27,22 @@ import "mirai:std/serial"
 // of that prefab, and one with copy a copy of another entity.
 //
 // Without root the entities are those at the top of the scene; with it, the
-// one entity is root. Entities are matched by id, else by name among their
-// siblings, else by place; the others are made. What the document leaves out
-// goes, and a member of an instance of a prefab, which keeps the place its
-// prefab gives it, is turned off.
+// one entity is root. What the document leaves out stays: entities,
+// components, fields and places. An entity is matched by id or by name among
+// its siblings, and the others are made; one at the top named by id stays
+// under the parent it has, a component takes the fields given over the value
+// it has, null takes it away, and delete true takes the entity away.
 //
-// With merge what the document leaves out stays: entities, components, fields
-// and places. An entity is matched by id or by name and never by place, one at
-// the top named by id stays under the parent it has, a component takes the
-// fields given over the value it has, null takes it away, and delete true
-// takes the entity away. kind makes the scene a Scene or a Prefab, which has
-// exactly one root; left out, it stays what it is. An entity placed or matched by the path or the id of
-// its prefab alone, and what a copy holds, keep what the document leaves out
-// the same way in any write.
+// With replace the document declares all there is under root, or in the
+// scene: entities are also matched by place, and what it leaves out goes; a
+// member of an instance of a prefab, which keeps the place its prefab gives
+// it, is turned off. A file is written whole: mirai scene write replaces
+// unless the document says replace false.
+//
+// kind makes the scene a Scene or a Prefab, which has exactly one root; left
+// out, it stays what it is. An entity placed or matched by the path or the id
+// of its prefab alone, and what a copy holds, keep what the document leaves
+// out the same way in any write.
 
 // ---------------------------------------------------------------- components
 
@@ -228,7 +231,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
                 word,is_text:=doc_string(reading,value)
                 if !is_text {reading_failf(reading,"%s must be a string",what);return false}
                 d.name=strings.trim_space(word)
-                if d.name=="" {reading_failf(reading,"%s: name is empty; leave it out to match by place",d.path);return false}
+                if d.name=="" {reading_failf(reading,"%s: name is empty; leave it out",d.path);return false}
                 if len(d.name)>=asset.ENTITY_NAME_BYTES {reading_failf(reading,"%s must be shorter than %d bytes",what,asset.ENTITY_NAME_BYTES);return false}
             case "preset","copy":
                 word,is_text:=doc_string(reading,value)
@@ -283,7 +286,7 @@ Scene_Apply :: struct {
     using target:^Scene_Target,
     using applied:Scene_Applied,
     reading:^Reading,
-    merge:bool,
+    replace:bool, // what the document leaves out goes
     decls:[]Scene_Entity,
     taken:map[Node]bool,  // the entities a document entity is
     placed:map[Node]bool, // the instances, by their roots, the document names by their prefab alone: what it leaves out of them stays
@@ -291,11 +294,12 @@ Scene_Apply :: struct {
     presets:map[string]Scene_Preset,
 }
 
-// Makes a scene say what a document declares. False after failing the
-// reading: whoever owns the target undoes what was applied until then.
-scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string) -> (applied:Scene_Applied,ok:bool) {
+// Makes a scene say what a document declares. replace: what a document that
+// does not say it does. False after failing the reading: whoever owns the
+// target undoes what was applied until then.
+scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string,replace:=false) -> (applied:Scene_Applied,ok:bool) {
     keys,values:=tree_object(reading,text,"document") or_return
-    a:=Scene_Apply{target=target,reading=reading}
+    a:=Scene_Apply{target=target,reading=reading,replace=replace}
     root,entities,kind:="","",""
     for key,i in keys {
         switch key {
@@ -306,12 +310,12 @@ scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string) -> (appli
             if strings.trim_space(values[i])=="null" {break}
             is_text:bool
             if root,is_text=doc_string(reading,values[i]);!is_text || root=="" {reading_fail(reading,"root must be an entity: its name, a path Parent/Child or its id");return}
-        case "merge":
+        case "replace":
             known:bool
-            if a.merge,known=doc_bool(values[i]);!known {reading_fail(reading,"merge must be true or false");return}
+            if a.replace,known=doc_bool(values[i]);!known {reading_fail(reading,"replace must be true or false");return}
         case "entities": entities=values[i]
         case:
-            reading_failf(reading,"document has no '%s'; it has root, merge, kind and entities: the entities at the top of the scene, or root alone, nesting what hangs from them by children",key)
+            reading_failf(reading,"document has no '%s'; it has root, replace, kind and entities: the entities at the top of the scene, or root alone, nesting what hangs from them by children. What it leaves out stays, unless replace is true",key)
             return
         }
     }
@@ -369,7 +373,7 @@ scene_refused :: proc(a:^Scene_Apply,path,problem:string) -> bool {
 scene_match :: proc(a:^Scene_Apply,parent:Node,from,to:int,ids:=false) {
     children:=a.children(a.user,parent,a.reading.allocator)
     for by_name in ([]bool{true,false}) {
-        if !by_name && a.merge {break}
+        if !by_name && !a.replace {break}
         for c:=from;c<to;c=a.decls[c].end {
             d:=&a.decls[c]
             if d.node!=0 || d.copy!="" || d.id!=0 && !ids || (d.name!="")!=by_name {continue}
@@ -451,7 +455,7 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
         if d.prefab!="" {scene_prefab_linked(a,&d) or_return}
         info:=a.entity(a.user,d.node)
         parent:=decls[d.parent].node if d.parent>=0 else 0
-        if scene_member(info,d.node) && info.parent!=parent && !(d.parent<0 && (root!=0 || a.merge)) {
+        if scene_member(info,d.node) && info.parent!=parent && !(d.parent<0 && (root!=0 || !a.replace)) {
             reading_failf(reading,"%s: %s is a member of an instance of a prefab and keeps the place its prefab gives it; declare it under its parent, or leave it out to turn it off",d.path,info.name)
             return false
         }
@@ -473,8 +477,8 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
         }
         switch {
         case d.node!=0:
-            // The root stays where it is, and so does what a merge names at its top.
-            if d.parent<0 && (root!=0 || a.merge) || a.entity(a.user,d.node).parent==parent {continue}
+            // The root stays where it is, and so does what a document that keeps the rest names at its top.
+            if d.parent<0 && (root!=0 || !a.replace) || a.entity(a.user,d.node).parent==parent {continue}
             if scene_refused(a,d.path,a.reparent(a.user,d.node,parent)) {return false}
             scene_changed(a,d.path,"its parent")
         case d.copy!="":
@@ -531,7 +535,7 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
             last=at
         }
     }
-    if !a.merge {
+    if a.replace {
         if root==0 {order(a,0,len(decls))}
         for &p,i in decls {order(a,i+1,p.end)}
     }
@@ -567,7 +571,7 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
         }
         return true
     }
-    if !a.merge {left(a,&gone,root,true,false) or_return}
+    if a.replace {left(a,&gone,root,true,false) or_return}
     if len(gone)>0 {
         removed,problem:=a.remove(a.user,gone[:])
         if scene_refused(a,"what the document takes away",problem) {return false}
@@ -603,7 +607,7 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
         if scene_refused(a,fmt.tprintf("%s.name",d.path),a.rename(a.user,node,d.name)) {return false}
         scene_changed(a,d.path,"name")
     }
-    keeps:=!d.made && (a.merge || d.keeps || a.placed[info.instance])
+    keeps:=!d.made && (!a.replace || d.keeps || a.placed[info.instance])
     local:=info.local
     rotation:=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG) if d.has_rotation else d.recipe.local.rotation
     target:=local
@@ -645,7 +649,7 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
             t:=scene_table(a,name,path)
             if t==nil {return false}
             if strings.trim_space(values[i])=="null" {
-                if !keeps {reading_failf(reading,"%s: the document declares the components the entity has; leave %s out to take it away",path,name);return false}
+                if !keeps {reading_failf(reading,"%s: a document that replaces declares the components the entity has; leave %s out to take it away",path,name);return false}
                 if has,_:=a.has(a.user,node,t);has {
                     a.drop(a.user,node,t)
                     scene_changed(a,d.path,name)

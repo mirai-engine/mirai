@@ -205,7 +205,7 @@ an_entity_of_a_section_reads_only_on_every_path_with_an_error_that_names_the_sec
     s.api=&surface
     api_schema_build(s,&state)
     defer {api_schema_free(&state);s.api=nil}
-    for document in ([]string{`{{"root":"0x%016x","merge":true,"entities":[{{"position":[1,2,3]}}]}}`,`{{"merge":true,"entities":[{{"id":"0x%016x","delete":true}}]}}`}) {
+    for document in ([]string{`{{"root":"0x%016x","entities":[{{"position":[1,2,3]}}]}}`,`{{"entities":[{{"id":"0x%016x","delete":true}}]}}`}) {
         method:=api.Method{result_id=Api_Write_Result}
         result:Api_Write_Result
         call:=api.Call{method=&method,result=&result,raw=fmt.tprintf(document,u64(SECTIONS_TEST_LOCAL)),allocator=context.temp_allocator}

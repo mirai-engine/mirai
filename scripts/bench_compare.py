@@ -337,7 +337,7 @@ def measure_view(b: Bench, prefix: str, metrics: dict, passes: dict, parts: dict
 
 def merge(*entities: dict) -> dict:
     """The params of a scene.write that adds or changes these entities and leaves the rest."""
-    return {"merge": True, "entities": list(entities)}
+    return {"entities": list(entities)}
 
 
 def move_params(entity, position, offset: float) -> dict:
@@ -562,7 +562,7 @@ def grid_cubes(b: Bench, first: int) -> list[dict]:
 
 
 def delete_roots(b: Bench):
-    rpc(b, "scene.write", {"entities": []})
+    rpc(b, "scene.write", {"replace": True, "entities": []})
 
 
 def grid_new(b: Bench, path: Path):

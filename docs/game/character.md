@@ -33,7 +33,7 @@ through the API. Its camera is the `Camera` under the body; a body and a camera 
 the eyes child needs no turn. For a first-person view:
 
 ```json
-{"method":"scene.write","params":{"root":"Player","merge":true,"entities":[{
+{"method":"scene.write","params":{"root":"Player","entities":[{
  "children":[{"name":"Player view",
    "components":{"Camera_Follow":{"mode":"Eyes","offset":[0,1.6,0]}}}]}]}}
 ```

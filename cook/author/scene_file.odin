@@ -410,7 +410,7 @@ scene_file_apply :: proc(f:^Scene_File,text:string) -> (applied:Scene_Applied,pr
     reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&f.p.registry)}
     target:=scene_target(f)
     ok:bool
-    if applied,ok=scene_apply(&target,&reading,text);!ok {problem=reading.problem}
+    if applied,ok=scene_apply(&target,&reading,text,true);!ok {problem=reading.problem}
     return
 }
 
