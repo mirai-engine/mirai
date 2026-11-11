@@ -389,7 +389,7 @@ import "core:os"
 import "mirai:cook/import/sources"
 import "mirai:editor"
 
-main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.plugin_import_formats))}
+main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))}
 `,paths.import_program},
         {"author program","author",`package main
 

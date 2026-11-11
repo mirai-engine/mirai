@@ -30,6 +30,22 @@ animation_motor_preserves_world_root_direction_facing_and_physical_speed_limits_
     testing.expect(t,abs(linalg.length(clamped.move)-1)<1e-5)
 }
 
+// The body of Mirai: the first mesh of the import of characters/mirai/mirai.glb, by the id its
+// sidecar keeps. The sync of a build writes it to the imported folder.
+@(private)
+MIRAI_BODY :: "f0c947702bb8141dc1d27444a341d52c"
+
+// The asset of a character and that of the body of Mirai, which a test of the demo plays it on.
+@(private)
+mirai_assets :: proc(t:^testing.T,assets:^host.Assets,character:string,loc:=#caller_location) -> (ids:[2]base.Asset_Id,ok:bool) {
+    record,present:=asset.registry_find_path(&assets.registry,character)
+    if !testing.expectf(t,present,"the demo has %s",character,loc=loc) {return}
+    body,_:=base.asset_id_parse(MIRAI_BODY)
+    _,built:=asset.registry_find(&assets.registry,body)
+    if !testing.expectf(t,built,"the demo has the body of Mirai %s: mirai build editor demo imports it",MIRAI_BODY,loc=loc) {return}
+    return {record.id,body},true
+}
+
 @(private)
 Animation_Input_Fixture :: struct {
     entities:core.Entities,
