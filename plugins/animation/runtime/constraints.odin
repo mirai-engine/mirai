@@ -36,6 +36,8 @@ Look_Constraint :: struct {
     max_angle:f32 `mirai:"angle,min=0"`,
     weight:f32 `mirai:"min=0,max=1"`,
     enabled:bool,
+    from:Spatial_Target `mirai:"transient"`, // the target it turns away from, by the share turning
+    turning:f32 `mirai:"transient"`,
 }
 LOOK_CONSTRAINT_DEFAULT :: Look_Constraint{target=SPATIAL_TARGET_DEFAULT,forward=mm.FORWARD,up={0,1,0},world_up={0,1,0},max_angle=1.5,weight=1,enabled=true}
 
@@ -270,6 +272,10 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         if bone<0 {constraint_problem(problems,state.entity,.Look,at,.Bind,config.bone);continue}
         target,ok:=spatial_target_sample(config.target,&rig.targets[1][at],playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds)
         if !ok {constraint_problem(problems,state.entity,.Look,at,.Target);if rig_runtime!=nil {modifier_request_rejected(rig_runtime,state.entity,.Missing_Target)};continue}
+        if config.turning>0 {
+            binding:Spatial_Target_Binding
+            if from,found:=spatial_target_sample(config.from,&binding,playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds);found {target.position=mm.lerp(target.position,from.position,config.turning)}
+        }
         direction:=target.position-state.world[bone].position
         rotation:mm.Quat;valid:bool
         if config.use_up {rotation,valid=lib.aim_at(state.world[bone].rotation,config.forward,direction,config.up,config.world_up,config.max_angle,config.weight)} else {rotation,valid=lib.look_at(state.world[bone].rotation,config.forward,direction,config.max_angle,config.weight)}

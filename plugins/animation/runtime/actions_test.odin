@@ -625,8 +625,8 @@ Played_World :: struct {
 }
 
 // A body that stands in its idle leans by an action and turns by its look: each fades in and out
-// over its own time, the pose turns no faster than twice what the action alone turns it, and once
-// both let go the body is back at rest.
+// over its own time, the look turns to a new target over its fade too, the pose turns no faster
+// than twice what the action alone turns it, and once both let go the body is back at rest.
 @(test)
 an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testing.T) {
     directory:=base.test_folder(t,"played_fades")
@@ -676,12 +676,13 @@ an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testi
     alone:f32
     for _ in 0..<60 {alone=max(alone,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))}
     rested,_:=core.get(core.read(&w.transforms),body)
-    // With a look, which lets go after the action ends.
+    // With a look, which turns to another target while it plays and lets go after the action ends.
     look(&w.requests,rig,spatial_point({.6,-.2,-1}))
     play(&w.requests,rig,"Lean")
     both:f32
-    for i in 0..<90 {
-        if i==50 {look(&w.requests,rig,spatial_point({}),0)}
+    for i in 0..<110 {
+        if i==20 {look(&w.requests,rig,spatial_point({-.6,-.2,-1}))}
+        if i==70 {look(&w.requests,rig,spatial_point({}),0)}
         both=max(both,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))
     }
     last,_:=core.get(core.read(&w.transforms),body)

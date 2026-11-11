@@ -21,6 +21,7 @@ Modifier_Control_State :: struct {
     fade_row:u32,
     base_weight,weight,start,target,elapsed,duration:f32,
     base_enabled,enabled:bool,
+    turning:bool, // a Look turns from its former target over the fade
 }
 
 modifier_control :: proc(requests:^Animation_Requests,control:Modifier_Control) {
@@ -95,7 +96,11 @@ modifier_control_apply :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control
     }
     switch state.kind {
     case .IK: apply(&runtime.ik,state.row,weight,enabled)
-    case .Look: apply(&runtime.look,state.row,weight,enabled)
+    case .Look:
+        apply(&runtime.look,state.row,weight,enabled)
+        turning:=f32(0)
+        if state.turning && state.elapsed<state.duration {alpha:=state.elapsed/state.duration;turning=1-alpha*alpha*(3-2*alpha)}
+        if state.row>=0 && state.row<len(runtime.look.values) && runtime.look.values[state.row].turning!=turning {core.edit_at(&runtime.look,state.row).turning=turning}
     case .Grounding: apply(&runtime.grounding,state.row,weight,enabled)
     case .Limit: apply(&runtime.limits,state.row,weight,enabled)
     case .Chain_IK: apply(&runtime.chain_ik,state.row,weight,enabled)
@@ -119,16 +124,18 @@ modifier_fade_remove :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_S
     state.fade_row=0
 }
 
-// Moves the weight of a control from the one it has to target over fade seconds.
+// Moves the weight of a control from the one it has to target over fade seconds; turning, a Look
+// turns from its former target over them too.
 @(private)
-modifier_fade_to :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_State,target:f32,enabled:bool,fade:f32) -> bool {
-    if fade>0 && state.weight!=target && state.fade_row==0 {
+modifier_fade_to :: proc(runtime:^Modifier_Runtime,state:^Modifier_Control_State,target:f32,enabled:bool,fade:f32,turning:=false) -> bool {
+    state.turning=turning && fade>0
+    if fade>0 && (state.weight!=target || state.turning) && state.fade_row==0 {
         row:=int((uintptr(state)-uintptr(raw_data(runtime.controls)))/size_of(Modifier_Control_State))
         if append(&runtime.fades,u32(row))!=1 {return false}
         state.fade_row=u32(len(runtime.fades))
     }
     state.start,state.target,state.enabled,state.duration,state.elapsed=state.weight,target,enabled,fade,0
-    if fade==0 || state.start==target {state.weight=target;state.elapsed=state.duration;modifier_fade_remove(runtime,state)}
+    if fade==0 || state.start==target && !state.turning {state.weight=target;state.elapsed=state.duration;modifier_fade_remove(runtime,state)}
     return true
 }
 

@@ -253,6 +253,8 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:core.Read(Animatio
     runtime.request_error,runtime.request_error_rig=request_error,request_error_rig
     #reverse for goal,i in runtime.goals {
         if modifier_control_state(runtime,goal.rig,goal.kind,goal.slot)==nil {unordered_remove(&runtime.goals,i);continue}
+        // Laid out again, a look aims where it aimed: it does not turn there from the row's target.
+        if goal.kind==.Look {if row:=rig_slot_row(&runtime.look,goal.rig,goal.slot);row>=0 {runtime.look.values[row].target=goal.target}}
         modifier_apply_goal(runtime,goal,problems)
     }
     for &control in runtime.controls {modifier_control_apply(runtime,&control)}
@@ -270,7 +272,10 @@ modifier_apply_goal :: proc(runtime:^Modifier_Runtime,goal:Modifier_Goal,problem
         // The weight that applies now fades to the one asked: the goal hands it to its control.
         now:=control.base_weight*control.weight if control.base_enabled && (control.enabled || control.weight>0) else 0
         control.base_weight,control.base_enabled,control.weight=1,true,now
-        if !modifier_fade_to(runtime,control,goal.weight if goal.enabled else 0,goal.enabled,goal.fade) {memory_problem(problems,goal.rig,"the fade of a goal of its .character")}
+        // A look that applies and is given another target turns to it over the same fade.
+        turn:=false
+        if goal.kind==.Look && goal.enabled && now>0 {if row:=rig_slot_row(&runtime.look,goal.rig,goal.slot);row>=0 && runtime.look.values[row].target!=goal.target {turn=true;core.edit_at(&runtime.look,row).from=runtime.look.values[row].target}}
+        if !modifier_fade_to(runtime,control,goal.weight if goal.enabled else 0,goal.enabled,goal.fade,turn) {memory_problem(problems,goal.rig,"the fade of a goal of its .character")}
         scaled,active=control.weight,control.enabled || control.weight>0
     } else if control!=nil {
         control.base_enabled=active
