@@ -81,6 +81,7 @@ Binding :: struct {
 @(private)
 Command_Asked :: struct {
     method:string,
+    label:string, // of the entry that asked: what its step of undo is called
     params:[COMMAND_PARAMS]u8,
     length:int,
 }
@@ -211,13 +212,14 @@ command_run :: proc(s:^Session,name:string) -> bool {
     }
     params:=strings.builder_make(context.temp_allocator)
     binding_params(&params,b.params,state.checked)
-    return command_call(s,b.method,strings.to_string(params))
+    return command_call(s,b.method,strings.to_string(params),b.label)
 }
 
 // Runs a method as the person at the editor, with params the interface
-// worked out (a point of the scene, a path): between frames. False when the
-// gestures of the frame do not fit.
-command_call :: proc(s:^Session,method,params:string) -> bool {
+// worked out (a point of the scene, a path): between frames. label names the
+// step of undo of what it edits, in place of the one its method gives. False
+// when the gestures of the frame do not fit.
+command_call :: proc(s:^Session,method,params:string,label:="") -> bool {
     st:=api_state(s)
     if st==nil {return false}
     c:=&st.commands
@@ -226,7 +228,7 @@ command_call :: proc(s:^Session,method,params:string) -> bool {
         return false
     }
     asked:=&c.asked[c.asked_count]
-    asked.method=method
+    asked.method,asked.label=method,label
     asked.length=copy(asked.params[:],params)
     c.asked_count+=1
     return true
@@ -277,7 +279,7 @@ commands_run :: proc(s:^Session) {
     defer c.running=false
     for at:=0;at<c.asked_count;at+=1 {
         asked:=c.asked[at]
-        command_execute(s,st,asked.method,string(asked.params[:asked.length]))
+        command_execute(s,st,asked.method,string(asked.params[:asked.length]),asked.label)
     }
     c.asked_count=0
 }
@@ -285,7 +287,7 @@ commands_run :: proc(s:^Session) {
 // One call of the person: the handler of the method, through what every
 // call goes through. What it refuses is said in a notice.
 @(private)
-command_execute :: proc(s:^Session,st:^Api_State,name,params:string) {
+command_execute :: proc(s:^Session,st:^Api_State,name,params:string,label:="") {
     method:=api.method_find(&st.server,name)
     if method==nil {
         notify(s,fmt.tprintf("No method is named %s",name))
@@ -304,11 +306,11 @@ command_execute :: proc(s:^Session,st:^Api_State,name,params:string) {
     serial.writer_init_fixed(&out,answer[:])
     // Inside a call of an agent the server holds whose it is: this one is of nobody's turn.
     server:=&st.server
-    was,tag,client:=st.person,server.client_tag,server.client_name
-    st.person,st.left_going=true,false
+    was,gesture,tag,client:=st.person,st.gesture,server.client_tag,server.client_name
+    st.person,st.gesture,st.left_going=true,label,false
     server.client_tag,server.client_name="",""
     error,ok:=api.method_execute(server,method,params,&out)
-    st.person,server.client_tag,server.client_name=was,tag,client
+    st.person,st.gesture,server.client_tag,server.client_name=was,gesture,tag,client
     if !ok && !st.left_going && error.message!="" {notify(s,error.message)}
 }
 

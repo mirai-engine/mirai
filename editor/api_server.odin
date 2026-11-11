@@ -75,6 +75,7 @@ Api_State :: struct {
     step_frame:Api_Step_Frame,      // a frame of a step in place of one of the editor; for tests without a window
     commands:Commands, // the entries of menus, shortcuts and buttons that call the methods (commands.odin)
     person:bool,       // the call that runs is a gesture of the person at the editor (api_person)
+    gesture:string,    // the label of the entry that gesture ran: the name of the step of what it edits
     transaction:bool,  // a batch holds one edit open, which the edits of its calls record into
     joined:bool,       // its edit records into the gesture that is open: of the person, or of a batch (api_edit_begin)
     left_going:bool,   // that call left what it started going, which a call of an agent waits for
@@ -633,6 +634,9 @@ api_edit_begin :: proc(s:^Session,call:^api.Call,label:string) -> bool {
         return true
     }
     api_guard(s,call) or_return
+    // A gesture of an entry names its step as the entry.
+    label:=label
+    if st:=api_state(s);st!=nil && st.gesture!="" {label=st.gesture}
     if !history.edits_begin(s.edits,document_selection(s),label) {
         api.call_fail(call,api.SERVER_ERROR,history.edits_error_text(s.edits.error))
         return false
