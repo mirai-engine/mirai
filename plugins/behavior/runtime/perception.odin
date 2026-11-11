@@ -11,8 +11,8 @@ import phys "plugins:physics/runtime"
 
 // What agents perceive. A Perceiver sees the Perceivables of the teams it
 // notices that are in its cone, or within `aware` of its eyes, and that a ray
-// of the physics reaches, and hears the noises the game makes of those teams
-// within its hearing, or meant for it alone; it remembers each in
+// of the physics reaches, and hears the noises the game makes of those teams,
+// or of none, within its hearing, or meant for it alone; it remembers each in
 // its Perception, surer the more recently it perceived it, and forgets it
 // `forget` seconds after it last did, or at once when it is destroyed. Each
 // looks only at those around it, found in a grid over the ground made every
@@ -34,7 +34,7 @@ TEAM_NEUTRAL :: Team(0)
 @(name_bits="Team")
 Teams :: distinct u32
 
-@(component,description="Sees, hears and remembers: the Perceivables of the teams it notices in its cone of sight, or close around it, that nothing hides, and the noises of those teams within its hearing.")
+@(component,description="Sees, hears and remembers: the Perceivables of the teams it notices in its cone of sight, or close around it, that nothing hides, and the noises of those teams, or of none, within its hearing.")
 Perceiver :: struct {
     sight:f32 `mirai:"min=0,unit=m"`,          // how far it sees
     angle:f32 `mirai:"angle,min=0"`,           // half of the cone it sees, from where its body faces
@@ -79,14 +79,15 @@ BEHAVIOR_SETTINGS_DEFAULT :: Behavior_Settings{
     influence_cell=2,influence_size=128,influence_cells=8192,influence_rays=90,influence_falloff=0.15,influence_blend=0.6,
 }
 
-// A noise the game makes: whoever notices `team` and hears it within loudness
-// times its hearing, or only `listener` wherever it is (a hit, a touch),
-// perceives its maker there as of `age` ticks ago.
+// A noise the game makes: whoever hears it within loudness times its hearing,
+// or only `listener` wherever it is (a hit, a touch), and notices its team,
+// perceives its maker there as of `age` ticks ago. Its team is that of its
+// maker's Perceivable; a noise of no team is heard by all.
 Noise :: struct {
     position:[3]f32,
     loudness:f32,         // m it carries for a hearing of 1; unused with a listener
     maker:core.Entity,    // whom it reveals; none: only the place
-    team:Team,            // of the maker
+    team:Maybe(Team),     // when its maker is not a Perceivable; none: of no team
     listener:core.Entity, // the only perceiver it reaches; none: those that hear it
     age:u32,              // ticks since the maker was there
 }
@@ -158,6 +159,9 @@ perception_update :: proc(
     if !time.playing || time.dt<=0 {return}
     // With nobody to look at or to hear, and nothing remembered, nobody perceives or forgets.
     if len(perceivers.entities)==0 || len(perceivables.entities)==0 && len(heard)==0 && turns.remembering==0 {return}
+    for &n in heard {
+        if maker,ok:=core.get(perceivables,n.maker);ok {n.team=maker.team}
+    }
     count:=core.count(perceivers)
     rays:=int(settings.rays) if settings.ptr!=nil else 256
     far:=nav.nav_far_decide(time) && fars!=nil && len(perceivers.entities)>count
@@ -326,7 +330,7 @@ hear :: proc(memory:^ai.Perception_Memory,e:core.Entity,p:Perceiver,position:mm.
         if n.listener!=core.NONE {
             if n.listener!=e {continue}
         } else if !(n.loudness>0) || linalg.length(mm.Vec3(n.position)-position)>n.loudness*p.hearing {continue}
-        if !noticed(p,n.team) {continue}
+        if team,sided:=n.team.?;sided && !noticed(p,team) {continue}
         if ai.memory_perceive(memory,u64(n.maker),n.position,.Hearing,0.75,time.tick-min(u64(n.age),time.tick))==.New {
             core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=n.maker,sense=.Hearing,position=n.position})
         }

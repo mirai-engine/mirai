@@ -387,12 +387,13 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     testing.expect(t,mine!=nil && mine.memory.count==1 && ai.memory_find(&mine.memory,u64(ahead))!=nil)
     testing.expect(t,len(f.events.queue.items)==1 && f.events.queue.items[0].kind==.Noticed && f.events.queue.items[0].subject==ahead)
     // A noise behind it is heard; out of hearing, not.
-    noise(&f.noises,{position={0,0,4},loudness=10,maker=behind,team=1})
-    noise(&f.noises,{position={0,0,40},loudness=10,maker=friend,team=1})
+    noise(&f.noises,{position={0,0,4},loudness=10,maker=behind})
+    distant:=core.create(&f.entities)
+    noise(&f.noises,{position={0,0,40},loudness=10,maker=distant})
     sight_tick(&f,0.2)
     mine=core.edit(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
-    testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(friend))==nil)
+    testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(distant))==nil)
     // What it saw stays in sight a little past its range; what it did not is not noticed there.
     core.edit(&f.worlds,ahead).position={0,0,-21}
     beyond:=placed(&f,{1.5,0,-21})
@@ -432,33 +433,60 @@ a_perceiver_sees_all_around_within_aware :: proc(t:^testing.T) {
     }
 }
 
-// A noise reaches the perceivers that notice the team of its maker: by ear
+// A noise reaches the perceivers that notice its team, that of its maker's
+// Perceivable or else the one given, and with no team all of them: by ear
 // within their hearing, or only its listener wherever it is (a hit), without
 // a ray; one of long ago is remembered as of then.
 @(test)
 a_noise_reaches_those_that_notice_its_team_or_only_its_listener :: proc(t:^testing.T) {
+    Maker :: enum {None,Mate,Enemy,Bell}
+    cases:=[?]struct{maker:Maker,team:Maybe(Team),heard:bool,what:string}{
+        {.Enemy,nil,true,"the team of its maker, noticed"},
+        {.Mate,nil,false,"the team of its maker, not noticed"},
+        {.Mate,Team(1),false,"the team of its maker over the one given"},
+        {.None,nil,true,"no maker and no team: all hear it"},
+        {.Bell,nil,true,"a maker of no team and no team: all hear it"},
+        {.None,Team(2),false,"the team given, not noticed"},
+        {.Bell,Team(1),true,"the team given, noticed"},
+    }
+    watch:=PERCEIVER_DEFAULT
+    watch.notices=Teams(1<<1)
+    for c in cases {
+        f:Sight_World
+        if !test_world_init(t,&f.behavior) {return}
+        defer sight_world_destroy(&f)
+        f.settings.rays=0
+        guard:=placed(&f,{})
+        core.add(&f.perceivers,guard,watch)
+        makers:[Maker]core.Entity
+        for &m,kind in makers {if kind!=.None {m=core.create(&f.entities)}}
+        core.add(&f.perceivables,makers[.Mate],Perceivable{team=2})
+        core.add(&f.perceivables,makers[.Enemy],Perceivable{team=1})
+        sight_tick(&f,0)
+        noise(&f.noises,{position={0,0,4},loudness=10,maker=makers[c.maker],team=c.team})
+        sight_tick(&f,1)
+        mine:=core.edit(&f.perceptions,guard)
+        testing.expectf(t,(ai.memory_find(&mine.memory,u64(makers[c.maker]))!=nil)==c.heard,"%s",c.what)
+    }
+
     f:Sight_World
     if !test_world_init(t,&f.behavior) {return}
     defer sight_world_destroy(&f)
     f.settings.rays=0
-    watch:=PERCEIVER_DEFAULT
-    watch.notices=Teams(1<<1)
     guard,near:=placed(&f,{}),placed(&f,{0,0,40})
     core.add(&f.perceivers,guard,watch)
     core.add(&f.perceivers,near,watch)
-    mate,enemy,hitter:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
+    mate,hitter:=core.create(&f.entities),core.create(&f.entities)
+    core.add(&f.perceivables,mate,Perceivable{team=2})
     sight_tick(&f,0)
-    noise(&f.noises,{position={0,0,4},loudness=10,maker=mate,team=2})
-    noise(&f.noises,{position={0,0,-4},loudness=10,maker=enemy,team=1})
-    noise(&f.noises,{position={0,0,39},maker=hitter,team=1,listener=guard,age=30})
-    noise(&f.noises,{position={0,0,39},maker=mate,team=2,listener=guard})
+    noise(&f.noises,{position={0,0,39},maker=hitter,listener=guard,age=30})
+    noise(&f.noises,{position={0,0,39},maker=mate,listener=guard})
     sight_tick(&f,1)
     mine,other:=core.edit(&f.perceptions,guard),core.edit(&f.perceptions,near)
-    testing.expect(t,ai.memory_find(&mine.memory,u64(mate))==nil,"a noise of a team it does not notice is not heard")
-    testing.expect(t,ai.memory_find(&mine.memory,u64(enemy))!=nil)
     hit:=ai.memory_find(&mine.memory,u64(hitter))
     testing.expect(t,hit!=nil && hit.first==30 && hit.position=={0,0,39},"its listener perceives it, as long ago as its age")
     testing.expect(t,ai.memory_find(&other.memory,u64(hitter))==nil,"another perceiver beside it does not")
+    testing.expect(t,ai.memory_find(&mine.memory,u64(mate))==nil,"its listener does not notice its team")
 }
 
 // A subject remembered and then destroyed is forgotten at once, with its

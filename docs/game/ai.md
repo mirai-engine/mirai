@@ -52,9 +52,9 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - **Cooldowns:** in `think`, `ai.mind_ready(t.mind, .Slam, t.tick, t.dt, 5)`.
 - **Hordes:** the attack takes `ai.token_take(a, u64(target), N)` and `think` proposes it only if
   `ai.reserve_free(t, target, N)`; the rest circle. Tokens release on `Exit`.
-- **Hearing:** `behavior.noise(noises, {position, loudness, maker, team})` reaches each
-  `Perceiver` noticing `team` within `loudness` times its `hearing` m, walls included; with
-  `listener`, only it, anywhere (a hit). `age` (ticks) dates a report: never over a fresher one.
+- **Hearing:** `noise(noises, {position, loudness, maker})` reaches a `Perceiver` within `loudness`
+  times its `hearing` m that notices the maker's team (else `team`; none: all). `listener`: only
+  it, anywhere (a hit). `age` (ticks) dates a report: never over a fresher one.
 - **Use the world:** a smart object offers a use; `think` proposes going if one is open and
   the action does the trip ([smart-objects.md](ai/smart-objects.md)). A need the agent
   satisfies with an object (ammo, health) is this.

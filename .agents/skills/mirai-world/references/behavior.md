@@ -127,9 +127,10 @@ what it perceives; `think` only reads and proposes, and the actions write.
   goes first in the next tick, on from where it stopped: every subject in sight is looked at again
   within as many ticks as there are candidates per ray. What it saw last stays in sight up to
   `SIGHT_KEEP` times its range and angle, so that at the edge it is not noticed and forgotten in
-  turn. Hearing takes the noises of `Noises` (`noise`) of a team it notices, within its range by
-  volume, or the ones whose `listener` it is wherever they are; a noise with an `age` is
-  remembered as of that many ticks ago.
+  turn. Hearing takes the noises of `Noises` (`noise`) within its range by volume, or the ones
+  whose `listener` it is wherever they are, if it notices their team: that of the maker's
+  `Perceivable`, else the noise's own; a noise of no team reaches everyone. A noise with an `age`
+  is remembered as of that many ticks ago.
   Memory lowers confidence until forgetting, only on the perceiver's turn: what it could not look
   at it does not forget before looking at it again. A destroyed subject is forgotten at once.
 - Each perceiver looks only at the `Perceivable`s around it: those of the tick are put in a
