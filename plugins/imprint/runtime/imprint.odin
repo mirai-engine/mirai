@@ -111,7 +111,7 @@ stride_print :: proc "contextless" (stride:^Stride,stamp:Imprint_Stamp,at,forwar
 // swept from where it was the tick before or, with a stride, a print each
 // stride it goes.
 @(step="fixed",loops="game editor",stage="end")
-imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),births:^core.Births,time:core.Time,frame:core.Frame_Time) {
+imprint_stamps :: proc(steps:^Imprint_Steps,stamps:^core.Table(Imprint_Stamp,.Read),worlds:^core.Table(core.World_Transform,.Read),physics:core.Ref(phys.Physics_State),births:^core.Births,time:core.Time,frame:core.Frame_Time) {
     dt:=time.dt if time.playing else frame.dt
     steps.tick+=1
     if !(dt>0) || core.count(stamps)==0 {return}
@@ -209,9 +209,9 @@ Imprint_Gpu :: struct {
 // field may have changed written in the Geometry stage.
 @(step="render",loops="game editor",before="render_sync")
 imprint_render :: proc(
-    state:^Imprint_Gpu,grounds:core.Read(Imprint_Ground),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),hidden:core.Read(erender.Hidden),offsets:core.Read(erender.Draw_Offset),
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),
+    state:^Imprint_Gpu,grounds:^core.Table(Imprint_Ground,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),hidden:^core.Table(erender.Hidden,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(erender.Camera,.Read),
     steps:core.Ref(Imprint_Steps),sync:core.Ref(vfx.Particle_Sync),app:^host.App,frame:core.Frame_Time,id:core.World_Id,poses:^erender.Posed_Meshes,
 ) {
     if state==nil || app.renderer==nil || app.assets==nil {return}
@@ -265,9 +265,9 @@ imprint_render :: proc(
 // field may have changed.
 @(private)
 displace :: proc(
-    state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),hidden:core.Read(erender.Hidden),offsets:core.Read(erender.Draw_Offset),
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,frame:core.Frame_Time,
+    state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),hidden:^core.Table(erender.Hidden,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(erender.Camera,.Read),assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,frame:core.Frame_Time,
     place:vfx.World_Texture_Place,start:[2]i32,low,high:[2]f64,made:u64,
 ) {
     static,has_mesh:=core.get(meshes,e)

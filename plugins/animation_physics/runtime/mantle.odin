@@ -16,7 +16,7 @@ MANTLE_WINDOW :: "mantle"
 MANTLE_ROOT_MOVE :: u32(0x4d4e544c) // the id of its layered moves
 
 @(step="fixed",stage="apply")
-animation_mantle :: proc(states:core.Read(locomotion.Locomotion_State),worlds:core.Read(core.World_Transform),paces:core.Read(core.Own_Pace),playback:core.Ref(anim.Playback),moves:^locomotion.Locomotion_Requests,time:core.Time,clock:core.Clock) {
+animation_mantle :: proc(states:^core.Table(locomotion.Locomotion_State,.Read),worlds:^core.Table(core.World_Transform,.Read),paces:^core.Table(core.Own_Pace,.Read),playback:core.Ref(anim.Playback),moves:^locomotion.Locomotion_Requests,time:core.Time,clock:core.Clock) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(states) {
         if core.at(states,row).mode!=locomotion.MODE_MANTLING {continue}

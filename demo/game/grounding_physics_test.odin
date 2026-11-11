@@ -291,7 +291,7 @@ grounding_replants_all_four_blocked_spider_shins_on_the_real_step_without_stretc
     obstacle:=grounding_spider_step_fixture(&f,t)
     before:[26]mm.Transform;copy(before[:],f.state.world[:])
     source:[26]mm.Transform;copy(source[:],f.state.local[:])
-    testing.expect(t,anim.grounding_prepare(&f.cache,core.read(&f.configs),nil))
+    testing.expect(t,anim.grounding_prepare(&f.cache,&f.configs,nil))
     saved:=f.cache.records[0]
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(&f),.1))
     record:=&f.cache.records[0]
@@ -424,7 +424,7 @@ grounding_procedural_turn_release_keeps_final_segments_above_the_floor :: proc(t
     for variant in 0..<2 {
         f:Grounding_Fixture;grounding_fixture_init(&f,t,0);defer grounding_fixture_free(&f)
         _=grounding_spider_step_fixture(&f,t)
-        testing.expect(t,anim.grounding_prepare(&f.cache,core.read(&f.configs),nil))
+        testing.expect(t,anim.grounding_prepare(&f.cache,&f.configs,nil))
         for frame in 0..<(len(startup) if variant==0 else 80) {
             copy(f.state.local[:],f.state.rest[:])
             turn:=min(max(frame-30,0),20)
@@ -1043,14 +1043,14 @@ grounding_prepared_hierarchies_rebind_atomically_repack_rigs_and_replay_copied_w
     for value,i in expected_world {testing.expect_value(t,other.world[i],value)}
     testing.expect_value(t,saved.records[1],f.cache.records[1])
     core.remove(&f.configs,f.rig);core.table_settle(&f.configs,&f.entities)
-    testing.expect(t,anim.grounding_prepare(&f.cache,core.read(&f.configs),nil))
+    testing.expect(t,anim.grounding_prepare(&f.cache,&f.configs,nil))
     testing.expect(t,len(f.cache.records)==1 && f.cache.records[0].rig==other.entity && len(f.cache.links)==8 && f.cache.hierarchies[0].first==0)
     previous=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     reused:=anim.grounding_apply(&other,&f.cache,grounding_fixture_inputs(&f),.1)
     context=previous
     testing.expect(t,reused)
     core.remove(&f.configs,other.entity);core.table_settle(&f.configs,&f.entities)
-    testing.expect(t,anim.grounding_prepare(&f.cache,core.read(&f.configs),nil))
+    testing.expect(t,anim.grounding_prepare(&f.cache,&f.configs,nil))
     testing.expect(t,len(f.cache.records)==0 && len(f.cache.rows)==0 && len(f.cache.hierarchies)==0 && len(f.cache.links)==0)
 }
 
@@ -1060,13 +1060,13 @@ grounding_configuration_retires_removed_rigs_and_retries_out_of_memory :: proc(t
     f:=&fixture
     previous_context:=context
     context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    failed:=!anim.grounding_prepare(&f.cache,core.read(&f.configs),&f.problems)
+    failed:=!anim.grounding_prepare(&f.cache,&f.configs,&f.problems)
     context=previous_context
     testing.expect(t,failed && len(f.cache.records)==0 && core.problem_find(&f.problems,core.NONE,"animation.memory")!=nil)
-    testing.expect(t,anim.grounding_prepare(&f.cache,core.read(&f.configs),nil))
+    testing.expect(t,anim.grounding_prepare(&f.cache,&f.configs,nil))
     testing.expect_value(t,len(f.cache.records),1)
     core.remove(&f.configs,f.rig);core.table_settle(&f.configs,&f.entities)
-    testing.expect(t,anim.grounding_prepare(&f.cache,core.read(&f.configs),nil))
+    testing.expect(t,anim.grounding_prepare(&f.cache,&f.configs,nil))
     testing.expect(t,len(f.cache.records)==0 && len(f.cache.rows)==0)
     testing.expect(t,anim.grounding_apply(&f.state,&f.cache,grounding_fixture_inputs(f),0))
     config:=anim.FOOT_GROUNDING_DEFAULT;config.count=1;config.legs[0]=anim.GROUNDED_LEG_DEFAULT

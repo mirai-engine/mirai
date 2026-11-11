@@ -102,7 +102,7 @@ reflection :: proc "contextless" (plane:[4]f32) -> (m:mm.Mat4) {
 // The portal that leads somewhere the way from a to b goes into first, where
 // it is, what it carries by and after which share of the way. Mirrors carry
 // nothing.
-portal_way :: proc(portals:core.Read(Portal),worlds:core.Read(core.World_Transform),a,b:[3]f32) -> (portal:core.Entity,entrance,through:mm.Transform,share:f32,found:bool) {
+portal_way :: proc(portals:^core.Table(Portal,$A),worlds:^core.Table(core.World_Transform,$B),a,b:[3]f32) -> (portal:core.Entity,entrance,through:mm.Transform,share:f32,found:bool) {
     share=2
     openings:=core.join(portals,worlds)
     for e,config,placed in core.each_joined(&openings) {
@@ -125,9 +125,9 @@ portal_way :: proc(portals:core.Read(Portal),worlds:core.Read(core.World_Transfo
 // of a floor.
 @(step="fixed",loops="game",stage="input",before="camera_drive")
 portals_travel :: proc(
-    portals:core.Read(Portal),travelers:core.Read(Traveler),worlds:core.Read(core.World_Transform),
-    motions:core.Read(core.Motion),characters:core.Read(phys.Character_State),
-    colliders:core.Read(phys.Collider),moves:^core.Table(inp.Move_Input),remotes:core.Read(core.Remote),
+    portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    motions:^core.Table(core.Motion,.Read),characters:^core.Table(phys.Character_State,.Read),
+    colliders:^core.Table(phys.Collider,.Read),moves:^core.Table(inp.Move_Input),remotes:^core.Table(core.Remote,.Read),
     placer:core.Placer,requests:^phys.Body_Requests,crossings:^Portal_Crossings,
 ) {
     if core.count(portals)==0 {return}
@@ -221,7 +221,7 @@ way_distance2 :: proc "contextless" (p,a,b:[3]f32) -> f32 {
 // itself from there in RIGHTING_TIME.
 @(step="late",loops="game",stage="end",after="camera_view")
 portals_view :: proc(
-    portals:core.Read(Portal),travelers:core.Read(Traveler),worlds:core.Read(core.World_Transform),
+    portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
     crossings:core.Ref(Portal_Crossings),last:^Portal_View,view:^core.View,time:core.Time,frame:core.Frame_Time,
 ) {
     view.carried={}

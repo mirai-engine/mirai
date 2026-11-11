@@ -70,7 +70,7 @@ bench_hierarchy :: proc(t:^testing.T) {
     }
     settle :: proc(locals:^Table(Transform),parents:^Table(Parent),worlds:^Table(World_Transform),h:^Hierarchy,es:^Entities) {
         table_settle(parents,es)
-        hierarchy_settle(h,read(parents),es)
+        hierarchy_settle(h,parents,es)
         table_settle(locals,es)
         table_settle(worlds,es)
         entities_settle(es)
@@ -106,7 +106,7 @@ bench_hierarchy :: proc(t:^testing.T) {
     // The settle of a function that did not touch Parent.
     b={}
     for bench_round(&b) {
-        for _ in 0..<PASSES*16 {hierarchy_settle(&h,read(&parents),&es)}
+        for _ in 0..<PASSES*16 {hierarchy_settle(&h,&parents,&es)}
     }
     bench_report("hierarchy_settle, nothing changed",b,PASSES*16)
 

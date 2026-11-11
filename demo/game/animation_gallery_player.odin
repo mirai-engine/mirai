@@ -36,8 +36,8 @@ gallery_move :: proc(input:^inp.Move_Input,wish:mm.Vec3) {
 
 // A body of the gallery player that fell goes back to where the gallery starts.
 @(step="fixed")
-gallery_player_fall :: proc(players:core.Read(Gallery_Player),worlds:core.Read(core.World_Transform),placer:core.Placer) {
-    for player in players.table.values[:core.count(players)] {
+gallery_player_fall :: proc(players:^core.Table(Gallery_Player,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer) {
+    for player in players.values[:core.count(players)] {
         if placed,exists:=core.get(worlds,player.mirai);exists && placed.position.y< -3 {core.place(placer,player.mirai,GALLERY_START,at_rest=true)}
     }
 }
@@ -45,7 +45,7 @@ gallery_player_fall :: proc(players:core.Read(Gallery_Player),worlds:core.Read(c
 // E at a station: frame its panel, or drive the spider; E again, or at the spider, gives the
 // walk back to Mirai.
 @(step="fixed")
-gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),worlds:core.Read(core.World_Transform),seats:core.Read(inp.Seat),actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
+gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel,.Read),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read),actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
     for row in 0..<core.count(players) {
         player:=core.at(players,row)
         seat:=core.entity_at(players,row)
@@ -90,7 +90,7 @@ GALLERY_PLAQUE_DISTANCE :: 10 // m from the body of the player within which the 
 // The plaques show near the body of the player and a panel only while its player adjusts it: a
 // widget without size is not drawn.
 @(step="fixed")
-gallery_widgets :: proc(players:core.Read(Gallery_Player),labels:core.Read(Gallery_Label),panels:core.Read(Gallery_Panel),widgets:^core.Table(gui.World_Widget),worlds:core.Read(core.World_Transform),seats:core.Read(inp.Seat)) {
+gallery_widgets :: proc(players:^core.Table(Gallery_Player,.Read),labels:^core.Table(Gallery_Label,.Read),panels:^core.Table(Gallery_Panel,.Read),widgets:^core.Table(gui.World_Widget),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read)) {
     player,found:=core.first(players)
     if !found {return}
     focus:=core.at(players,0).focus
