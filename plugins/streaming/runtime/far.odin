@@ -137,7 +137,7 @@ streaming_far :: proc(
         above,_:=core.get(parents,r)
         below,_:=core.get(parents,e)
         if !found || renderer.mesh!=mesh && (mesh!={} || !host.assets_loaded(a,renderer.mesh)) || above.entity!=below.entity || r in far.shown || !far_shows(views.ptr,r,reference) {
-            core.world_destroy_tree(world,e)
+            core.destroy(core.world_entities(world),e)
             continue
         }
         far.shown[r]=e

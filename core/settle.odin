@@ -41,7 +41,8 @@ settles :: #force_inline proc "contextless" (info:^World_Info) -> Settle_Info {
 }
 
 // Applies what the functions and the editor added, removed, turned and
-// destroyed in a World: Disabled and Parent first, then the Hierarchy and
+// destroyed in a World: Parent first, with what hangs from the entities
+// destroyed, which goes with them, and Disabled, then the Hierarchy and
 // what is off, which follow them, then the other tables, which move the rows
 // of the entities turned, and last the indices of the entities destroyed are
 // free again. It comes only to the tables that say they have changes pending
@@ -54,10 +55,16 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
     marks:=es.pending[:]
     // Checking writes, every table settles: a row written late shows at the next settle of the World.
     linked:=!CHECK_WRITES && len(marks)>0 && len(marks)>=len(info.tables)
+    if s.parent>=0 && (!linked || marks[s.parent] || len(es.doomed)>0) {
+        settle_table(info,world,s.parent,es,marks)
+        settled+=1
+        if s.hierarchy>=0 && hierarchy_doom(cast(^Hierarchy)(uintptr(world)+info.storages[s.hierarchy].offset),cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset),es) {
+            settle_table(info,world,s.parent,es,marks)
+        }
+    }
     if linked {settle_mark(info,world,marks,es.doomed[:],false)}
-    for at in ([2]int{s.disabled,s.parent}) {
-        if at<0 || linked && !marks[at] {continue}
-        settle_table(info,world,at,es,marks)
+    if s.disabled>=0 && (!linked || marks[s.disabled]) {
+        settle_table(info,world,s.disabled,es,marks)
         settled+=1
     }
     if s.disabled>=0 && s.parent>=0 && s.hierarchy>=0 {

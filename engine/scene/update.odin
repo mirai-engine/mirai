@@ -67,10 +67,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
                 if at in going {return {},.Invalid}
             }
         }
-        hierarchy:=core.world_storage_of(w,core.Hierarchy)
-        for e in going {
-            if hierarchy!=nil {core.destroy_tree(es,core.ref(hierarchy),e)} else {core.destroy(es,e)}
-        }
+        for e in going {core.destroy(es,e)}
     }
 
     for id,row in view.ids {

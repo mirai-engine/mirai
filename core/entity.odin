@@ -19,7 +19,7 @@ Entities :: struct {
     doomed:[dynamic]Entity,  // destroyed; world_settle removes their rows and frees their index
     off:[dynamic]bool,       // by index: it or something above it has Disabled
     turned:[dynamic]Entity,  // their off changed in this settle: the tables move their rows
-    walk:[dynamic]bool,      // by index, while entities_activity runs: under a Disabled
+    walk:[dynamic]bool,      // by index, scratch of the settle: destroyed (hierarchy_doom), then under a Disabled (entities_activity)
     activity:Seen,           // the Disabled that off follows
     activity_tree:u64,       // and the version of the Hierarchy
     alive:int,

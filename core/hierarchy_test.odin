@@ -56,17 +56,17 @@ children_follow_their_parent_rows_in_order :: proc(t:^testing.T) {
     tree_settle(t,&w)
     testing.expect(t,same(children(h,root),{a}) && same(children(h,a),{c}) && parent_of(h,b)==NONE)
 
-    // A destroyed parent leaves its children as roots, and the entity that reuses its index has none.
+    // A destroyed parent takes its children, and the entity that reuses its index has none.
     destroy(&w.entities,a)
     tree_settle(t,&w)
-    testing.expect(t,parent_of(h,c)==NONE && len(children(h,root))==0)
-    reused:=create(&w.entities)
-    testing.expect_value(t,entity_index(reused),entity_index(a))
+    testing.expect(t,!alive(&w.entities,c) && len(children(h,root))==0)
+    reused,again:=create(&w.entities),create(&w.entities)
+    testing.expect(t,entity_index(reused)==entity_index(c) && entity_index(again)==entity_index(a))
     tree_settle(t,&w)
-    testing.expect(t,first_child(h,reused)==NONE)
+    testing.expect(t,first_child(h,again)==NONE)
 
     // A table copied over is read whole, to the same tree.
-    add(&w.parents,b,Parent{root,5});add(&w.parents,c,Parent{root,4})
+    add(&w.parents,b,Parent{root,5});add(&w.parents,reused,Parent{root,4})
     tree_settle(t,&w)
     copied:Table(Parent)
     table_init(&copied,"Parent")
@@ -76,7 +76,27 @@ children_follow_their_parent_rows_in_order :: proc(t:^testing.T) {
     defer value_free(&other,type_info_of(Hierarchy))
     testing.expect(t,value_copy(&other,&w.hierarchy,type_info_of(Hierarchy)))
     testing.expect(t,hierarchy_settle(&other,&copied,&w.entities))
-    testing.expect(t,same(children(ref(&other),root),{c,b}))
+    testing.expect(t,same(children(ref(&other),root),{reused,b}))
+}
+
+// What hangs from an entity destroyed goes at the settle, also what a Parent
+// of the same function hangs from it and from those; one taken out first stays.
+@(test)
+what_hangs_from_a_destroyed_entity_goes_with_it :: proc(t:^testing.T) {
+    w:Tree_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    root,kept,old,outside:=create(&w.entities),create(&w.entities),create(&w.entities),create(&w.entities)
+    add(&w.parents,kept,Parent{root,0});add(&w.parents,old,Parent{root,1})
+    tree_settle(t,&w)
+    born,deeper:=create(&w.entities),create(&w.entities)
+    add(&w.parents,deeper,Parent{born,0});add(&w.parents,born,Parent{root,2})
+    remove(&w.parents,kept)
+    destroy(&w.entities,root)
+    tree_settle(t,&w)
+    testing.expect(t,!alive(&w.entities,old) && !alive(&w.entities,born) && !alive(&w.entities,deeper))
+    testing.expect(t,alive(&w.entities,kept) && alive(&w.entities,outside))
+    testing.expect_value(t,count(&w.parents),0)
 }
 
 @(test)
@@ -127,10 +147,10 @@ a_subtree_is_walked_parents_first_and_destroyed_whole :: proc(t:^testing.T) {
     for at:=a;at!=NONE;at=subtree_next(h,a,at) {append(&walk,at)}
     testing.expect(t,same(walk[:],{a,a1,a2}))
 
-    destroy_tree(&w.entities,h,a)
+    destroy(&w.entities,a)
+    tree_settle(t,&w)
     testing.expect(t,!alive(&w.entities,a) && !alive(&w.entities,a1) && !alive(&w.entities,a2))
     testing.expect(t,alive(&w.entities,root) && alive(&w.entities,b) && alive(&w.entities,b1) && alive(&w.entities,outside))
-    tree_settle(t,&w)
     testing.expect(t,same(children(h,root),{b}))
 }
 

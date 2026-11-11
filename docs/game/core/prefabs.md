@@ -110,8 +110,8 @@ for c:=core.first_child(hierarchy,e);c!=core.NONE;c=core.next_sibling(hierarchy,
 
 - Whole subtree, parents before children:
   `for at:=root;at!=core.NONE;at=core.subtree_next(hierarchy,root,at) {...}`.
-- Destroy an entity and what hangs from it: `core.destroy_tree(commands.entities,hierarchy,e)`
-  with `commands:core.Commands`.
+- `core.destroy(commands,e)` destroys what hangs from e with it at the settle; take a child out
+  first (`core.remove(parents,child)`) to keep it.
 - Upward: `core.ancestor_with(parents,table,e)` and `core.is_under(parents,e,ancestor)`, with
   `parents:^core.Table(core.Parent,.Read)`.
 

@@ -11,7 +11,8 @@ import mm "mirai:std/math"
 // hierarchy, and go up it through Parent. A Parent that would put its entity
 // under itself is left out of the tree, and its entity is a root of it until
 // that Parent or the links above change; one that names an entity not alive
-// leaves it a root.
+// leaves it a root. What hangs from an entity destroyed goes with it at the
+// settle (hierarchy_doom): a child to keep is taken out first.
 @(storage,reset="hierarchy_clear")
 Hierarchy :: struct {
     parent:[dynamic]Entity,
@@ -34,6 +35,42 @@ hierarchy_clear :: proc(h:^Hierarchy) {
     h.seen={}
     h.version+=1
     log_reset(&h.moved)
+}
+
+// Destroys, with each entity destroyed since the last settle, what hangs from
+// it: its children in the tree whose Parent still names it, those a Parent
+// written since the tree last looked puts under it, and so on down. The
+// settle of a World calls it after settling Parent and before the other
+// tables. True when it destroyed any.
+hierarchy_doom :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities) -> bool {
+    if len(es.doomed)==0 || resize(&es.walk,len(es.generation))!=nil {return false}
+    for e in es.doomed {es.walk[entity_index(e)]=true}
+    first,k:=len(es.doomed),0
+    for more:=true;more; {
+        for ;k<len(es.doomed);k+=1 {
+            gone:=es.doomed[k]
+            if entity_index(gone)>=len(h.first_child) {continue}
+            for child:=h.first_child[entity_index(gone)];child!=NONE;child=h.next_sibling[entity_index(child)] {
+                if value,ok:=get(parents,child);ok && value.entity==gone {doom(es,child)}
+            }
+        }
+        more=false
+        seen:=h.seen
+        c:=changes(parents,&seen)
+        for row in each_changed(parents,&c) {
+            p:=at(parents,row).entity
+            if p!=NONE && !alive(es,p) && entity_index(p)<len(es.walk) && es.walk[entity_index(p)] {more=doom(es,entity_at(parents,row)) || more}
+        }
+    }
+    for e in es.doomed {es.walk[entity_index(e)]=false}
+    return len(es.doomed)>first
+}
+
+@(private="file")
+doom :: proc(es:^Entities,e:Entity) -> bool {
+    if !entity_destroy(es,e) {return false}
+    es.walk[entity_index(e)]=true
+    return true
 }
 
 // Makes the tree follow what Parent settled since it last looked: the
@@ -147,7 +184,7 @@ hierarchy_unlink :: proc(h:^Hierarchy,e:Entity) -> bool {
     return true
 }
 
-// The children of an entity destroyed become roots: their Parent names one not alive.
+// The children an entity destroyed still has in the tree (hierarchy_doom had no memory) become roots.
 @(private)
 hierarchy_orphan :: proc(h:^Hierarchy,e:Entity) -> bool {
     i:=entity_index(e)
@@ -214,12 +251,6 @@ subtree_next :: proc "contextless" (h:Ref(Hierarchy),root,at:Entity,descend:=tru
         if next:=next_sibling(h,e);next!=NONE {return next}
     }
     return NONE
-}
-
-// Destroys an entity and everything under it.
-destroy_tree :: proc(es:^Entities,h:Ref(Hierarchy),e:Entity) {
-    if !alive(es,e) {return}
-    for at:=e;at!=NONE;at=subtree_next(h,e,at) {destroy(es,at)}
 }
 
 // e, or the nearest entity above it, with the component on; NONE without one.

@@ -440,14 +440,14 @@ replica_place :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
                 loaded=reference.loaded!={}
             }
             if loaded {
-                core.world_destroy_tree(w,r.entity)
+                core.destroy(core.world_entities(w),r.entity)
                 s.stats.despawned+=1
             } else {
                 replica_unlink(w,r.entity)
             }
         } else {
             if near && (!home || replica_adoptable(s,w,r)==core.NONE) {return false}
-            core.world_destroy_tree(w,r.entity)
+            core.destroy(core.world_entities(w),r.entity)
             s.stats.despawned+=1
         }
     }
@@ -805,7 +805,7 @@ replica_destroy :: proc(s:^Net_Session,w:core.World_Ref,object:Object,end:End) {
     es:=core.world_entities(w)
     if (end==.End || end==.Leave && !r.adopted) && core.alive(es,r.entity) {
         // The parts the prefab of the replica brought go with it.
-        core.world_destroy_tree(w,r.entity)
+        core.destroy(es,r.entity)
         s.stats.despawned+=1
     } else if core.alive(es,r.entity) {
         replica_unlink(w,r.entity)
@@ -1659,7 +1659,7 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
     for &r in s.client.replicas[:s.client.replica_high] {
         if r.object==0 || r.waits || r.pose.id!=id {continue}
         if r.entity==e {return &r}
-        if core.alive(es,r.entity) {core.world_destroy_tree(w,r.entity)}
+        if core.alive(es,r.entity) {core.destroy(es,r.entity)}
         r.entity,r.adopted=e,true
         replicate:=REPLICATE_DEFAULT
         replicate.simulation=r.simulation
@@ -1728,7 +1728,7 @@ spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
             spawn_taken(w,r,e,spawn)
             replica_classify(s,w,r)
         } else if !time.resimulating && time.tick>spawn.tick+u64(s.client.history) {
-            if spawn.kept {core.remove(spawns,e)} else {core.world_destroy_tree(w,e)}
+            if spawn.kept {core.remove(spawns,e)} else {core.destroy(core.world_entities(w),e)}
         }
     }
 }

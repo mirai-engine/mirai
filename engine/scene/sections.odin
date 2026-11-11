@@ -376,7 +376,7 @@ section_failed :: proc(w:core.World_Ref,assets:^host.Assets,references:^core.Tab
 section_drop :: proc(w:core.World_Ref,documents:Documents,e:core.Entity) {
     if ok,_:=section_unload(w,documents,e);ok {return}
     if hierarchy:=core.world_storage_of(w,core.Hierarchy);hierarchy!=nil {
-        for child:=core.first_child(core.ref(hierarchy),e);child!=core.NONE;child=core.next_sibling(core.ref(hierarchy),child) {core.world_destroy_tree(w,child)}
+        for child:=core.first_child(core.ref(hierarchy),e);child!=core.NONE;child=core.next_sibling(core.ref(hierarchy),child) {core.destroy(core.world_entities(w),child)}
     }
     if references:=core.world_table_of(w,Scene_Reference);references!=nil {
         if reference:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),e));reference!=nil {reference.loaded,reference.held,reference.far={},false,{}}

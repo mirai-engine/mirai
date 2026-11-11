@@ -628,7 +628,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
                     apart_ids:=core.world_table_of(apart,core.Id)
                     for child in children {
                         if there:=core.entity_of(core.world_entities(w),core.id_of(apart_ids,child));core.alive(core.world_entities(w),there) {
-                            core.world_destroy_tree(apart,child)
+                            core.destroy(apart_es,child)
                             continue
                         }
                         parent:=(^core.Parent)(core.raw_find(t,type_info_of(core.Parent),child))
@@ -642,7 +642,7 @@ sleepers_apply :: proc(w,apart:core.World_Ref,e:core.Entity) -> (s:Sleepers) {
             continue
         }
         if tomb,buried:=row_of(tombstones,x);buried {
-            if gone:=core.entity_of(apart_es,tomb.id);core.alive(apart_es,gone) {core.world_destroy_tree(apart,gone)}
+            if gone:=core.entity_of(apart_es,tomb.id);core.alive(apart_es,gone) {core.destroy(apart_es,gone)}
             append(&s.buried,x)
             continue
         }
@@ -885,7 +885,7 @@ far_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> bool {
     if reference==nil || reference.loaded!={} || reference.far!=job.root {return false}
     h:=core.ref(hierarchy)
     for child:=core.first_child(h,e);child!=core.NONE;child=core.next_sibling(h,child) {
-        if row_has(kept,child) {core.world_destroy_tree(w,child)}
+        if row_has(kept,child) {core.destroy(core.world_entities(w),child)}
     }
     return core.world_union(w,host.app_world_ref(job.app,job.world),e)
 }

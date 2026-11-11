@@ -420,11 +420,6 @@ entity_tables :: proc(w:World_Ref,e:Entity,allocator:=context.temp_allocator) ->
     return found[:]
 }
 
-// Destroys an entity and everything under it, from code outside the loop.
-world_destroy_tree :: proc(w:World_Ref,e:Entity) {
-    destroy_tree(world_entities(w),ref(world_storage_of(w,Hierarchy)),e)
-}
-
 // Gives dst what src holds of the run, not of its entities: the storages
 // that say keep and the settings. What a World made apart takes from the one
 // it replaces (a scene loaded in a job). An Entity they hold named an entity
