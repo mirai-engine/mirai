@@ -1,5 +1,6 @@
 package mirai_math
 
+import "core:math"
 import "core:math/linalg"
 
 // Parametric curves over floats or vectors, with t from 0 to 1 along one segment.
@@ -43,6 +44,43 @@ b_spline :: proc "contextless" (p0,p1,p2,p3:$T,t:f32) -> T {
     u:=1-t
     return (p0*(u*u*u)+p1*(3*t3-6*t2+4)+p2*(-3*t3+3*t2+3*t+1)+p3*t3)*(1.0/6)
 }
+
+// A point of a path, with the width and the height of what lies along it there.
+Path_Point :: struct {
+    position:Vec3,
+    width,height:f32,
+}
+
+// A path through its points sampled by length: the points and, between two,
+// more on the Catmull-Rom curve through them about piece apart, or farther
+// when out cannot hold that many, with width and height in proportion. The
+// ends go on straight. Returns how many it wrote: zero for fewer than two
+// points, a piece that is not above zero, or an out with no room for one more
+// sample than the points.
+path_sample :: proc "contextless" (points:[]Path_Point,piece:f32,out:[]Path_Point) -> int {
+    n:=len(points)
+    room:=len(out)-n
+    if n<2 || room<1 || !(piece>0) {return 0}
+    whole:f32
+    for i in 1..<n {whole+=linalg.length(points[i].position-points[i-1].position)}
+    // Each span takes at most one piece more than its share, so the pieces fit.
+    piece:=max(piece,whole/f32(room))
+    count:=0
+    for i in 0..<n-1 {
+        a,b:=points[i],points[i+1]
+        before:=i>0?points[i-1].position:2*a.position-b.position
+        after:=i+2<n?points[i+2].position:2*b.position-a.position
+        steps:=clamp(int(min(math.ceil(linalg.length(b.position-a.position)/piece),1<<30)),1,len(out)-1-count-(n-2-i))
+        for k in 0..<steps {
+            t:=f32(k)/f32(steps)
+            out[count]={catmull_rom(before,a.position,b.position,after,t),a.width+(b.width-a.width)*t,a.height+(b.height-a.height)*t}
+            count+=1
+        }
+    }
+    out[count]=points[n-1]
+    return count+1
+}
+
 
 // Arc length table: lengths[i] is the length of the curve from its start to
 // sample i, for points sampled at even steps of the parameter. Both slices

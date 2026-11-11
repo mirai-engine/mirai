@@ -1,0 +1,9 @@
+{
+  "version": 3,
+  "settings": {
+    "image": "Color"
+  },
+  "outputs": [
+    {"kind": "TEX", "name": "marble_color", "index": 0, "id": "f3ace87b27d210d20ba711efdf73ad3a"}
+  ]
+}

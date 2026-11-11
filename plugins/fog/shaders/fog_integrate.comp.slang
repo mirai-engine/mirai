@@ -80,8 +80,7 @@ void main(uint3 id : SV_DispatchThreadID) {
                 int2 at = int2(id.xy) + int2(x, y);
                 if (any(at < 0) || any(at >= int2(fog.grid.xy))) continue;
                 float w = float((2 - abs(x)) * (2 - abs(y)));
-                // A cell never lit (a below 0) is behind all that is seen.
-                light += max(light_now.Load(int4(at, z, 0)), float4(0.0)) * w;
+                light += light_now.Load(int4(at, z, 0)) * w;
             }
         }
         float4 medium = medium_now.Load(int4(id.xy, z, 0));

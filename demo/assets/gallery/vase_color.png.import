@@ -1,0 +1,9 @@
+{
+  "version": 3,
+  "settings": {
+    "image": "Color"
+  },
+  "outputs": [
+    {"kind": "TEX", "name": "vase_color", "index": 0, "id": "c94299d672a2e4371f7a5374961b418c"}
+  ]
+}

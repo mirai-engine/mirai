@@ -14,9 +14,9 @@ import phys "plugins:physics/runtime"
 // WET_SECONDS (water_wet_render). Presentation alone: nothing of it enters
 // the simulation, a snapshot or a rollback.
 
-CHANNEL_SPLASHES :: core.Birth_Channel(3)
-CHANNEL_BUBBLES :: core.Birth_Channel(4)
-CHANNEL_MOTES :: core.Birth_Channel(5)
+CHANNEL_SPLASHES :: "splashes"
+CHANNEL_BUBBLES :: "bubbles"
+CHANNEL_MOTES :: "motes"
 SPLASH_SPEED :: f32(1.5)   // m/s down through the surface below which a body makes no splash
 SPLASH_ENTERED :: f32(0.05) // share of a body under the surface past which it is in
 SPLASH_PAUSE :: 30          // ticks a body makes no other splash after one
@@ -61,7 +61,7 @@ splash_of :: proc "contextless" (body:phys.Fluid_Body,before:f32) -> (birth:core
     if before>SPLASH_ENTERED || share<=SPLASH_ENTERED || down<SPLASH_SPEED {return}
     drops:=f32(SPLASH_DROPS)*math.cbrt(body.whole)*(down/SPLASH_SPEED)
     birth={
-        channel=CHANNEL_SPLASHES,
+        channel=core.birth_channel(CHANNEL_SPLASHES),
         position={body.center.x,body.surface,body.center.z},
         velocity={0.3*body.velocity.x,0.35*down,0.3*body.velocity.z},
         size=clamp(math.cbrt(body.whole),0.5,3),
@@ -80,7 +80,7 @@ bubbles_of :: proc "contextless" (body:phys.Fluid_Body) -> (birth:core.Birth,ok:
     behind:=body.center-body.velocity*(0.5*body.reach/speed)
     behind.y=min(behind.y,body.surface-BUBBLE_DEPTH)
     birth={
-        channel=CHANNEL_BUBBLES,
+        channel=core.birth_channel(CHANNEL_BUBBLES),
         position=behind,
         velocity=0.25*body.velocity,
         size=clamp(size,0.5,1.5),
@@ -107,7 +107,7 @@ water_bodies :: proc(wet:^Water_Wet,physics:core.Ref(phys.Physics_State),births:
     } else if wet.motes>0 {
         wet.motes-=1
     } else {
-        core.push(&births.queue,core.Birth{channel=CHANNEL_MOTES,position=view.position,count=MOTE_COUNT})
+        core.push(&births.queue,core.Birth{channel=core.birth_channel(CHANNEL_MOTES),position=view.position,count=MOTE_COUNT})
         wet.motes=MOTE_PAUSE
     }
 }

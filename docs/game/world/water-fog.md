@@ -14,16 +14,26 @@ $P scene.write '{"merge":true,"entities":[
     "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}},
   {"name":"Breeze","components":{"Wind":{"speed":6,"gusts":0.5}}},
   {"name":"Pond","position":[30,0,10],"components":{
-    "Volume":{"shape":"Box","extents":[6,1.5,4]},"Fluid":{"density":1000},"Water":{}}}]}'
+    "Volume":{"shape":"Box","extents":[6,1.5,4]},"Fluid":{"density":1000},"Water":{}}},
+  {"name":"Creek","position":[30,0,-10],"components":{
+    "Fluid":{"density":1000,"current":[0,0,-1.5]},"Water":{},
+    "Spline":{"count":3,"points":[{"position":[0,0,0],"width":3,"height":1},
+      {"position":[6,0,-10],"width":3,"height":1},{"position":[0,0,-20],"width":4,"height":1.2}]}}}]}'
 ```
 
-- A `Plane` volume is every point below the height of its entity: put the entity at the water
-  level, and sculpt the terrain under that height to make a sea, a lake or a shore. A `Box` volume
-  (`extents` is half its size, times the scale of the entity) is a pool whose top face is the
-  surface; it has no waves. A fluid stays level: only the yaw of the entity turns it.
+- A `Plane` volume is every point below the height of its entity, to the horizon: a sea. A `Box`
+  volume (`extents` is half its size, times the scale of the entity) is water that ends at its
+  walls, with its top face as the surface: a lake whose box fills its basin up to the water level,
+  or a pool. Only its surface is drawn: the ground or a basin around it are its walls.
+- A river is a `Fluid` on a `Spline` ([splines](splines.md)) instead of a `Volume`:
+  the spline lies on the ground, and its water is the `height` of each point deep over it and as
+  wide as the point, level across. The `current` of the `Fluid` is in the frame of the path: `-z`
+  flows toward its last point, and what floats drifts with it. It ends at its first and last point.
+  Where it runs into a lake or the sea, the one the physics takes there by `priority` is drawn (a
+  `Volume` on the river gives only its priority).
 - Density 1000 is fresh water, 1025 the sea; 0 is a dry box, the air of a room under the sea: give
   its `Volume` a higher `priority` than that of the water it cuts.
-- `Fluid_Waves` on a plane makes waves, from the `Wind` of the world (a `Wind` entity with no
+- `Fluid_Waves` makes waves on a sea, from the `Wind` of the world (a `Wind` with no
   `Volume` blows everywhere) and its own trains; bodies float on them and swimmers ride them.
 - `Water` changes the look: its `material` (a `.mat`), how it absorbs and scatters light, shafts
   and caustics. Through the API, `{}` adds it at its starting value, `water.WATER_DEFAULT`.
@@ -33,11 +43,11 @@ $P scene.write '{"merge":true,"entities":[
 ## Fog and haze
 
 `Fog_Volume` (plugin `fog`) is a medium that dims what is behind it and shows the shafts of the
-sun and lights through it. With a `Volume` on its entity (box or sphere, `blend`, `priority`) it
-stays in that place. **With no `Volume` it fills the world and the sky too**: the sky is infinitely
-far, so even a small density replaces it with the color of the fog, a milky gray over a clear day.
-For a clear day leave fog out; for haze near the ground give it a `Volume` with `falloff`, as
-below.
+sun and lights through it, in the `Volume` of its entity: a box, a sphere or everything under a
+plane (`blend`, `priority`). Particles and smoke behind it are fogged as the scene is. The haze
+over the whole world, out to the sky, is not a fog: it is the air of the `Sky` (raise its `mie`
+for a hazier day). A `Fog_Volume` without a `Volume`, or with one of shape `Unbounded`, fills
+nothing (`fog.volume`).
 
 ```sh
 $P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,0],"components":{
@@ -52,9 +62,12 @@ $P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,
 
 ## Pitfalls that fail silently
 
-- A `Plane` with the entity at the wrong height: everything below it is water, even a cellar.
+- A `Plane` with the entity at the wrong height: everything below it is water, even a cellar. A
+  lake in the mountains is a `Box`, not a `Plane`.
 - A `Fluid` without a `Volume`, in a sphere or the whole world, or with density 0 in a `Plane`, is
   not made (`physics.fluid`). Two fluids that meet at the same `priority`: `physics.fluid_overlap`.
-- `Fluid_Waves` on a `Box` makes no waves: the problem `physics.fluid_waves`.
+- `Fluid_Waves` on a `Box` or a river makes no waves: the problem `physics.fluid_waves`.
+- A river whose points have no width or no height, or sit at the same place seen from above, is
+  not made (`physics.fluid_path`).
 - A fog that hides the whole view is a `density` too high: lower it before touching exposure
   ([exposure.md](exposure.md)).

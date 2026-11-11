@@ -41,7 +41,7 @@ What each importer reads and rejects is in the
 - [`khronos-simple-skin/`](khronos-simple-skin/README.md): external SimpleSkin by
   Marco Hutter/Khronos, CC0; external buffers and interleaved accessors. Its clip
   is not imported.
-- The [original demo robot](../../demo/source/models/skeletal-character/README.md)
+- The [original demo robot](../../demo/assets/characters/robot/README.md)
   has 13 joints and blended weights.
 - [`mesh2motion-human/`](mesh2motion-human/README.md): a CC0 character with the Mesh2Motion human
   skeleton placed by hand and two clips of that skeleton compressed with meshopt; they test the
