@@ -105,10 +105,15 @@ Method_Desc :: struct {
     params,result:^runtime.Type_Info, // structs, from the library that declares them; nil: no params, a null result
     defaults:rawptr,      // a params value; absent optional fields take its values
     handler:Handler,
+    can:Method_Can,       // nil: it can always be called
     user:rawptr,
     flags:Method_Flags,
     writes_result:bool,   // the handler writes the result as JSON into call.out; result only gives its schema
 }
+
+// Why a method cannot be called as things are now, whatever its params; "" when it can. The server
+// asks before it runs the handler, and engine.describe tells it.
+Method_Can :: #type proc(user:rawptr) -> string
 
 Method :: struct {
     name,summary:string,
@@ -118,6 +123,7 @@ Method :: struct {
     params_id,result_id:typeid,
     defaults:[]u8,
     handler:Handler,
+    can:Method_Can,
     user:rawptr,
     flags:Method_Flags,
     writes_result:bool,

@@ -24,7 +24,8 @@ import "mirai:std/serial"
 // components they have with the fields that differ from the value a
 // component starts with. A preset names a recipe and stands for the
 // components it gives; a new entity with prefab is a linked instance
-// of that prefab, and one with copy a copy of another entity.
+// of that prefab, one with copy a copy of another entity, and one with group
+// takes the entities it names under it, at their center.
 //
 // Without root the entities are those at the top of the scene; with it, the
 // one entity is root. What the document leaves out stays: entities,
@@ -158,6 +159,7 @@ Scene_Target :: struct {
     create:   proc(user:rawptr,parent:Node,name:string,preset:Scene_Preset,id:base.Entity_Id) -> (node:Node,problem:string),
     place:    proc(user:rawptr,prefab:^asset.Scene,id:base.Asset_Id,parent:Node) -> (root:Node,made:int,problem:string),
     copy:     proc(user:rawptr,sources:[]Node,allocator:runtime.Allocator) -> (copies:[]Node,made:int,problem:string), // one of each, beside its source: what a copy names of another source is its copy
+    group:    proc(user:rawptr,members:[]Node) -> (node:Node,problem:string), // a new entity at their center, where they hang from when they share a parent, with them under it where they are
     reparent: proc(user:rawptr,node,parent:Node) -> string,
     rename:   proc(user:rawptr,node:Node,name:string) -> string,
     move:     proc(user:rawptr,node:Node,local:core.Transform) -> string,
@@ -186,7 +188,7 @@ Scene_Entity :: struct {
     hidden,disabled:bool,
     has_visible,has_enabled:bool,
     delete:bool,
-    preset,components,off,prefab,copy:string, // as given; "": left out
+    preset,components,off,prefab,copy,group:string, // as given; "": left out
     given:Scene_Prefab, // what prefab says
     recipe:Scene_Preset,
     node:Node,         // the entity it is matched to or made as
@@ -194,7 +196,7 @@ Scene_Entity :: struct {
     keeps:bool,        // what it leaves out stays
 }
 
-@(private="file") SCENE_ENTITY_KEYS :: "id, name, preset, prefab, copy, delete, position, rotation_deg, scale, visible, enabled, components, off and children"
+@(private="file") SCENE_ENTITY_KEYS :: "id, name, preset, prefab, copy, group, delete, position, rotation_deg, scale, visible, enabled, components, off and children"
 
 @(private="file")
 scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,out:^[dynamic]Scene_Entity) -> bool {
@@ -254,6 +256,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
             case "components": d.components=value
             case "off":        d.off=value
             case "prefab":     d.prefab=value
+            case "group":      d.group=value
             case "children":
                 scene_entities_read(reading,value,index,fmt.tprintf("%s.children",d.path),out) or_return
             case:
@@ -264,6 +267,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
         d:=&out[index]
         if d.delete && said>0 {reading_failf(reading,"%s: an entity that goes declares nothing else; leave its id or its name beside delete",d.path);return false}
         if d.copy!="" && (d.id!=0 || d.preset!="" || d.prefab!="") {reading_failf(reading,"%s.copy: a copy is a new entity made from another; leave id, preset and prefab out",d.path);return false}
+        if d.group!="" && (d.id!=0 || d.copy!="" || d.prefab!="" || parent>=0 || len(out)>index+1) {reading_failf(reading,"%s.group: a group is a new entity at the top of the document, made where the entities it names hang from, with them as its children; leave id, copy, prefab and children out",d.path);return false}
         d.end=len(out)
     }
     return true
@@ -375,7 +379,7 @@ scene_match :: proc(a:^Scene_Apply,parent:Node,from,to:int,ids:=false) {
         if !by_name && !a.replace {break}
         for c:=from;c<to;c=a.decls[c].end {
             d:=&a.decls[c]
-            if d.node!=0 || d.copy!="" || d.id!=0 && !ids || (d.name!="")!=by_name {continue}
+            if d.node!=0 || d.copy!="" || d.group!="" || d.id!=0 && !ids || (d.name!="")!=by_name {continue}
             for x in children {
                 if a.taken[x] || by_name && a.entity(a.user,x).name!=d.name {continue}
                 d.node=x
@@ -503,6 +507,22 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
             if d.parent<0 && (root!=0 || !a.replace) || a.entity(a.user,d.node).parent==parent {continue}
             if scene_refused(a,d.path,a.reparent(a.user,d.node,parent)) {return false}
             scene_changed(a,d.path,"its parent")
+        case d.group!="":
+            place:=fmt.tprintf("%s.group",d.path)
+            items:=doc_items(reading,d.group,place,"entities") or_return
+            members:=make([]Node,len(items),reading.allocator)
+            for item,at in items {
+                name,_:=doc_string(reading,item)
+                unknown:string
+                if members[at],unknown=a.named(a.user,name,fmt.tprintf("%s[%d]",place,at),reading.allocator);unknown!="" {reading_fail(reading,unknown);return false}
+            }
+            node,problem:=a.group(a.user,members)
+            if scene_refused(a,place,problem) {return false}
+            // What it leaves out stays as the group was made: its place is their center.
+            d.node,d.keeps=node,true
+            a.made+=1
+            append(&a.created,node)
+            a.taken[node]=true
         case d.prefab!="":
             prefab:asset.Scene
             scene_prefab_open(reading,a.assets,d.given,d.path,a.into,&prefab) or_return

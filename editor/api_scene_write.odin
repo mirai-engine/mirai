@@ -8,6 +8,7 @@ import "mirai:asset"
 import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -45,6 +46,7 @@ Api_Write_Made :: struct {
 Api_Scene_Write_Params :: struct {
     world:Api_World `mirai:"optional,label=Game: the game of the caller that plays (that of its turn, or the Play of the user outside a turn) in place of the document, as the game changes itself between two ticks: no step of undo, a position is a teleport, a prefab is spawned, Entity fields hold handles and an id may be a handle. A game takes no replace and no kind"`,
     player:int `mirai:"optional,min=0,max=3,label=world Game: the run of that player of a game a turn plays on the network"`,
+    select:bool `mirai:"optional,label=true: the entities it made are what the editor has selected after it"`,
     root:string `mirai:"entity,optional,label=by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it: entities holds that one entity. Left out: entities are those at the top of the scene"`,
     replace:bool `mirai:"optional,label=true: the document declares all there is under root, or in the scene without root, and what it leaves out goes: entities, components and fields. Left out: what it leaves out stays as it is, and it names only what it changes or adds"`,
     kind:Document_Kind `mirai:"optional,label=what the document is from now on, which Save writes: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
@@ -55,6 +57,7 @@ Api_Scene_Write_Entity :: struct {
     name:string `mirai:"optional,label=without id, matches the entity of this name among those of its parent; none: it is made"`,
     preset:string `mirai:"optional,label=a preset or the card of a plugin (cube, sphere, plane, point_light, sun, camera, spawn...): it gives a new entity its components, whose fields components changes, and the rotation and scale it has when those are left out"`,
     prefab:serial.Json `mirai:"optional,label=on a new entity, the path or the id of a prefab: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"`,
+    group:[]string `mirai:"optional,label=on a new entity at the top of the document, the entities it takes under it, by name, path or id: it is made at their center, where they hang from when they share a parent, and they stay where they are in the world"`,
     copy:string `mirai:"optional,label=on a new entity, the entity it is a copy of, by its name, a path Parent/Child or its id: copied with what hangs from it and new ids, beside that entity unless the document nests it under another; what the entity and those under it say changes the copy"`,
     delete:bool `mirai:"optional,label=true takes the entity away with what hangs from it; it declares nothing else. A member of an instance of a prefab is turned off instead"`,
     position:[3]f32 `mirai:"optional,label=local to the parent; [0,0,0] when left out"`,
@@ -136,11 +139,14 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
     reading:=author.Reading{allocator=call.allocator,raw=call.raw,assets={s,asset_text_resolve}}
     applied:author.Scene_Applied
     if ready {
-        if applied,ready=author.scene_apply(&target,&reading,call.raw,also={"world","player"});!ready && !call.failed {
+        if applied,ready=author.scene_apply(&target,&reading,call.raw,also={"world","player","select"});!ready && !call.failed {
             api.call_fail(call,api.SERVER_ERROR if reading.internal else api.INVALID_PARAMS,reading.problem)
         }
     }
     core.world_settle(a.w)
+    if ready && p.select && len(applied.created)>0 && (a.run==nil || a.w.data==shown_world(s).data) {
+        history.selection_set(document_selection(s) if a.run==nil else s.selection,transmute([]core.Entity)applied.created[:])
+    }
     if a.run!=nil {
         if !ready {core.world_swap(s.info,a.run.world,kept);return}
         run_tell_call(s,a.run,"scene.write",call.raw)
@@ -310,6 +316,17 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
             core.world_settle(a.w)
             return transmute([]author.Node)copies,core.world_entities(a.w).alive-before,"nothing was copied" if len(copies)!=len(sources) else ""
         },
+        group=proc(user:rawptr,members:[]author.Node) -> (author.Node,string) {
+            a:=(^Api_Write)(user)
+            entities:=transmute([]core.Entity)members
+            if a.run!=nil || len(entities)==0 {return 0,"name the entities of the scene the group holds: a game that plays groups nothing"}
+            for e in entities {
+                if prefab_member_locked(a.s,a.w,e) {return 0,"a member of an instance of a prefab keeps the place its prefab gives it; group the instance, or unlink it"}
+            }
+            made:=entities_group(a.s,a.w,entities)
+            core.world_settle(a.w)
+            return author.Node(made),"the group could not be made" if made==core.NONE else ""
+        },
         reparent=proc(user:rawptr,node,parent:author.Node) -> string {
             a:=(^Api_Write)(user)
             e,under:=core.Entity(node),core.Entity(parent)
@@ -400,7 +417,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
             if prefab {
                 roots:=0
                 for e in core.world_table_of(a.w,core.Id).entities {roots+=int(entity_parent(a.w,e)==core.NONE)}
-                if roots!=1 {return false,fmt.tprintf("a prefab has exactly one root, and this scene has %d: put its entities under one, then make it a prefab",roots)}
+                if roots!=1 {return false,fmt.tprintf("a prefab has exactly one root, and this scene has %d: put its entities under one (group), then make it a prefab",roots)}
             }
             d.prefab,d.unsaved=prefab,true
             a.s.view_cut=true

@@ -426,17 +426,6 @@ api_document_fail :: proc(call:^api.Call,error:Document_Error,path:string) {
 @(private)
 api_scene_save :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Path_Params)
-    // A person saves what is in front, picks the file of Save as, and is asked
-    // about the unsaved assets the scene uses.
-    if api_person(s) {
-        switch {
-        case api_asks(s,base.text_get(params.path[:])): dialog_save(s)
-        case asset_document_active(s)!=nil:             asset_document_save(s)
-        case:                                           save_request(s)
-        }
-        api_file_result(s,call)
-        return
-    }
     if !api_guard(s,call) {return}
     if !collab_can_save(s) {
         api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")

@@ -196,20 +196,15 @@ Api_Simulation_Apply_Params :: struct {
 @(private)
 api_simulation_register :: proc(s:^Session,st:^Api_State) {
     move:=Api_Simulation_Move_Params{rotation={0,0,0,1}}
-    api_register(s,st,{name="simulation.move",summary="Drives a body toward a world pose on physics ticks: a dynamic body is pulled by a spring of bounded force and keeps colliding, a static or kinematic one moves there as kinematic. release lets go: a pulled body at once, keeping its velocity, another once it reaches the target.",params=type_info_of(Api_Simulation_Move_Params),defaults=&move,result=type_info_of(Api_Play_Result),run=api_simulation_move})
-    api_register(s,st,{name="simulation.apply",summary="Stops and keeps only the transforms of the given scene entities as one undo step.",params=type_info_of(Api_Simulation_Apply_Params),result=type_info_of(Api_History_Result),run=api_simulation_apply})
+    api_register(s,st,{name="simulation.move",summary="Drives a body toward a world pose on physics ticks: a dynamic body is pulled by a spring of bounded force and keeps colliding, a static or kinematic one moves there as kinematic. release lets go: a pulled body at once, keeping its velocity, another once it reaches the target.",params=type_info_of(Api_Simulation_Move_Params),defaults=&move,result=type_info_of(Api_Play_Result),can=simulation_can,run=api_simulation_move})
+    api_register(s,st,{name="simulation.apply",summary="Stops and keeps only the transforms of the given scene entities as one undo step.",params=type_info_of(Api_Simulation_Apply_Params),result=type_info_of(Api_History_Result),can=simulation_can,run=api_simulation_apply})
 }
 
 @(private)
-api_simulation_guard :: proc(s:^Session,call:^api.Call) -> bool {
-    if simulating(s) {return true}
-    api.call_not_now(call,"No scene is simulating; play.start with simulate first","play.start")
-    return false
-}
+simulation_can :: proc(s:^Session) -> string {return "" if simulating(s) else "No scene is simulating; play.start with simulate first"}
 
 @(private)
 api_simulation_apply :: proc(s:^Session,call:^api.Call) {
-    if !api_simulation_guard(s,call) {return}
     if _,own:=api_play_run(s,call);!own {api_play_refused(call);return}
     params:=api.call_params(call,Api_Simulation_Apply_Params)
     ids:[len(params.entities)]base.Entity_Id

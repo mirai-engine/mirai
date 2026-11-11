@@ -317,6 +317,9 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
         copy=proc(user:rawptr,sources:[]Node,allocator:runtime.Allocator) -> ([]Node,int,string) {
             return nil,0,"scene.write of the editor makes a copy; in a file, declare the entity in full"
         },
+        group=proc(user:rawptr,members:[]Node) -> (Node,string) {
+            return 0,"scene.write of the editor groups entities; in a file, declare the entity with them as its children"
+        },
         reparent=proc(user:rawptr,node,parent:Node) -> string {
             f:=(^Scene_File)(user)
             order:=asset.scene_orders(&f.scene)[f.scene.index[base.Entity_Id(node)]]

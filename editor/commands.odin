@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
@@ -13,32 +14,48 @@ import "mirai:ui"
 // and a button of the bar are an entry (Binding): the name of a method, its
 // params, and how the entry looks. What a command does lives in its method,
 // which a person and an agent run alike: its undo, its errors and what it
-// refuses are the same for both. A plugin gives its methods entries the same
-// way (Api_Method.entry, command_bind, tool_entry).
+// refuses are the same for both, and it takes only the params it is given. A
+// plugin gives its methods entries the same way (command_bind, tool_entry).
+//
+// What the person has in front is put into the params by the entry, before
+// the call (binding_params): its params name it in place of values.
+//   "$selection" "$roots" "$copied"   entities; the element of a list that names them, the
+//                                      name or the object that holds it, is given once for each
+//   "$active"                          the active entity
+//   "$shown"                           Scene, or Game while the editor shows a game
+//   "$document"                        the asset document in front; "" for the scene
+//   "$card"                            the asset of the card of the browser with the keyboard
+// An entry that flips something names it (tool, preference), which gives its
+// params and says whether it shows checked.
+//
+// Whether an entry is on is said in one place (binding_state): by what it
+// acts on being in front, by the modes it is for, by its context being
+// there, and by its method, whose Api_Method.can also fails the call of an
+// agent and is told by engine.describe.
 //
 // An entry that only changes what the person sees (a dialog, a popup, a tab,
-// the field a name is typed in, who has the keys) runs a procedure of the
-// interface (Binding.view) and is no method: an agent works through the API,
-// and looks at the interface with editor.input and capture.
+// the field a name is typed in, who has the keys), or that asks the person
+// before anything happens (a file to open, what to do with unsaved changes),
+// runs a procedure of the interface (Binding.view) and is no method: an agent
+// works through the API, and looks at the interface with editor.input and
+// capture.
 //
 // What a person does inside a panel with the pointer or the keyboard focus (a
-// scroll, a hover, a fold, a splitter, a field being typed, the keys a focused
-// card or an asset document takes) is the view of that panel and has no entry.
-//
-// The params of an entry name what the person has in front in place of
-// values, which the editor puts there when the gesture runs:
-//   "$roots", "$selection", "$active", "$copied", "$all"   entities (api_entity_select.odin)
-//   "$toggle"       true when the entry is not checked, false when it is
-//   "$toggle:A:B"   "A" when the entry is not checked, "B" when it is
-//   "$ask"          the method asks the person, with a dialog of the system
-// The gestures of a frame run between frames, where the calls of agents run.
+// scroll, a hover, a fold, a splitter, a field being typed) is the view of
+// that panel and has no entry. The gestures of a frame run between frames,
+// where the calls of agents run.
 
-COMMAND_ASK :: "$ask"
-COMMAND_TOGGLE :: `"$toggle`
+CONTEXT_SELECTION :: "$selection" // the selected entities
+CONTEXT_ROOTS     :: "$roots"     // those of them no other selected one holds
+CONTEXT_ACTIVE    :: "$active"    // the active one
+CONTEXT_COPIED    :: "$copied"    // the roots Copy kept that the world shown has
+CONTEXT_SHOWN     :: "$shown"     // the world the editor shows: Scene or Game
+CONTEXT_DOCUMENT  :: "$document"  // the asset document in front, by its path
+CONTEXT_CARD      :: "$card"      // the asset of the card of the browser that has the keyboard, by its id
+
 BINDING_CAPACITY :: 160
 COMMAND_QUEUE :: 16
-COMMAND_PARAMS :: 512 // bytes of the params of a gesture
-COMMAND_TEXT :: 8192  // bytes of the params the entries are given that are not constants
+COMMAND_PARAMS :: 512 // bytes of the params of a gesture the interface worked out (command_call)
 
 Shortcut :: struct {key:core.Key,modifiers:ui.Modifiers,set:bool}
 
@@ -63,25 +80,37 @@ Menu :: enum u8 {
 MENU_GROUPS :: 8
 MENU_GROUP_PLUGINS :: 3
 
+Modes :: bit_set[Mode;u8]
+
 Binding :: struct {
     name:string,   // what command_run, the buttons and editor.inspect name it by; the name of its method when empty
-    method:string,
-    params:string, // JSON; "": none
-    view:proc(s:^Session), // in place of a method: what only changes what the person sees
     label:string,
     icon:ui.Icon,
     shortcut,alternate:Shortcut,
     menu:Menu,
     group:u8,      // of its menu, under MENU_GROUPS
-    state:Command_State_Proc, // nil: always on, never checked
+    // What it runs: a method, or a procedure of the interface.
+    method:string,
+    params:string, // JSON; "": none. Of an entry with view: the context it needs
+    view:proc(s:^Session), // in place of a method: what only changes what the person sees, or asks them first
+    // What it flips: its method and its params come from it, and whether it shows checked.
+    tool:string,              // editor.tool: a mode of the gizmo, or the tool of a plugin
+    preference,on,off:string, // preferences.set: the area, and its fields as JSON when the entry is on and when it is off
+    // When it is on.
+    modes:Modes,   // of the editor; {}: all
     scene:bool,    // it works on the scene: off while an asset document covers it
+    document:asset.Fourcc, // it works on the asset document of this kind: off unless one is in front
+    card:bool,     // it works on the asset of the card of the browser that has the keyboard: off without one
     in_game:bool,  // its shortcut runs while a game has the keys
+    state:Command_State_Proc, // of a procedure of the interface: off and checked; of a method: what no method says, its label or whose game plays
+    can:Api_Can,   // of its method, taken when it is bound
 }
 
 @(private)
 Command_Asked :: struct {
+    binding:^Binding, // the entry that asked: its params are worked out when it runs; nil: those below
     method:string,
-    label:string, // of the entry that asked: what its step of undo is called
+    label:string,     // what the step of undo of what it edits is called; "": as its method calls it
     params:[COMMAND_PARAMS]u8,
     length:int,
 }
@@ -92,30 +121,28 @@ Commands :: struct {
     asked:[COMMAND_QUEUE]Command_Asked, // the gestures of the frame, until commands_run
     asked_count:int,
     running:bool,
-    text:[COMMAND_TEXT]u8, // the params of the entries that are worked out when they are given
-    text_used:int,
 }
 
-// A text of an entry that is not a constant, kept while the entries are.
-@(private)
-command_text :: proc(st:^Api_State,format:string,args:..any) -> string {
-    c:=&st.commands
-    // Without room for the longest params it gives none: the entry it was for is refused.
-    if len(c.text)-c.text_used<COMMAND_PARAMS {return ""}
-    text:=fmt.bprintf(c.text[c.text_used:],format,..args)
-    c.text_used+=len(text)
-    return text
-}
-
-// Gives a method an entry. The texts stay where they are: constants of the
-// editor or of a library, which stays loaded. False when it does not fit or
-// its name is taken.
+// Gives a method, or a procedure of the interface, an entry. The texts stay
+// where they are: constants of the editor or of a library, which stays
+// loaded. False when it does not fit, its name is taken or its method is not
+// registered yet.
 command_bind :: proc(s:^Session,b:Binding) -> bool {
     st:=api_state(s)
-    if st==nil || (b.method=="")==(b.view==nil) {return false}
+    if st==nil {return false}
     c:=&st.commands
     entry:=b
+    switch {
+    case entry.tool!="":       entry.method="editor.tool"
+    case entry.preference!="": entry.method="preferences.set"
+    }
+    if (entry.method=="")==(entry.view==nil) {return false}
     if entry.name=="" {entry.name=entry.method}
+    if entry.method!="" {
+        method:=api.method_find(&st.server,entry.method)
+        if method==nil || method.user==nil {return false}
+        entry.can=(^Api_Entry)(method.user).can
+    }
     if c.count>=len(c.bindings) || binding_find(c,entry.name)!=nil {return false}
     c.bindings[c.count]=entry
     c.count+=1
@@ -125,19 +152,25 @@ command_bind :: proc(s:^Session,b:Binding) -> bool {
 // The entry of a tool of a plugin in the Tools menu, by the name it turns on
 // with (tool_set): editor.tool turns it on and off, for a person and an agent.
 tool_entry :: proc(s:^Session,name,label:string,icon:ui.Icon,shortcut:=Shortcut{}) -> bool {
-    st:=api_state(s)
-    if st==nil {return false}
-    params:=command_text(st,`{{"tool":%q,"on":"$toggle"}}`,name)
-    if params=="" {return false}
-    return command_bind(s,{
-        name=name,method="editor.tool",params=params,
-        label=label,icon=icon,shortcut=shortcut,menu=.Tools,state=tool_entry_state,scene=true,
-    })
+    return command_bind(s,{name=name,tool=name,label=label,icon=icon,shortcut=shortcut,menu=.Tools,modes={.Edit},scene=true})
 }
 
+// The mode of the gizmo a tool is named by; false for the tool of a plugin.
 @(private)
-tool_entry_state :: proc(s:^Session,b:^Binding) -> Command_State {
-    return {checked=tool_on(s,b.name),disabled=playing(s)}
+gizmo_tool :: proc(name:string) -> (tool:Tool,ok:bool) {
+    switch name {
+    case "move":   return .Move,true
+    case "rotate": return .Rotate,true
+    case "scale":  return .Scale,true
+    }
+    return
+}
+
+// Whether a tool is the one on. While a plugin tool that lends the scene to the gizmo holds it, no mode is.
+@(private)
+tool_checked :: proc(s:^Session,name:string) -> bool {
+    if tool,gizmo:=gizmo_tool(name);gizmo {return s.viewport.tool==tool && !lender_holding(s.viewport)}
+    return tool_on(s,name)
 }
 
 @(private)
@@ -167,13 +200,19 @@ command_state :: proc(s:^Session,name:string) -> Command_State {
     return binding_state(s,b)
 }
 
+// What an entry shows now: the one place that says whether it is on and whether it is checked.
 binding_state :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     if st:=api_state(s);st.library_generation!=s.library_generation {return {disabled=true}}
     if s.gui!=nil && s.gui.modal==.Recovery && b.name!="quit" {return {disabled=true}}
-    // An asset document in front: what acts on the scene waits for it, but
-    // what its plugin takes in its place.
-    if d:=asset_document_active(s);d!=nil && b.scene {return {disabled=!asset_document_takes(s,d.kind,b.name)}}
+    // What it acts on is in front: the scene, an asset document of its kind, a card with the keyboard.
+    d:=asset_document_active(s)
+    if b.scene && d!=nil || b.document!=0 && (d==nil || d.kind!=b.document) || b.card && card_focused(s)=={} {return {disabled=true}}
     if b.state!=nil {state=b.state(s,b)}
+    switch {
+    case b.tool!="":       state.checked=tool_checked(s,b.tool)
+    case b.preference!="": state.checked=preference_holds(s,b.preference,b.on)
+    }
+    state.disabled||=b.modes!={} && s.mode not_in b.modes || context_missing(s,b.params) || b.can!=nil && b.can(s)!=""
     return
 }
 
@@ -196,23 +235,9 @@ command_shortcut_text :: proc(s:^Session,name:string,allocator:=context.temp_all
 // call of an agent. False when it is off or names nothing.
 command_run :: proc(s:^Session,name:string) -> bool {
     b:=command_binding(s,name)
-    if b==nil {return false}
-    state:=binding_state(s,b)
-    if state.disabled {return false}
+    if b==nil || binding_state(s,b).disabled {return false}
     event(s,"command",b.name)
-    // The plugin of the document in front runs what its documents take.
-    if d:=asset_document_active(s);d!=nil && b.scene {
-        d.request=b.name
-        d.request_serial+=1
-        return true
-    }
-    if b.view!=nil {
-        b.view(s)
-        return true
-    }
-    params:=strings.builder_make(context.temp_allocator)
-    binding_params(&params,b.params,state.checked)
-    return command_call(s,b.method,strings.to_string(params),b.label)
+    return command_ask(s,{binding=b})
 }
 
 // Runs a method as the person at the editor, with params the interface
@@ -220,16 +245,25 @@ command_run :: proc(s:^Session,name:string) -> bool {
 // step of undo of what it edits, in place of the one its method gives. False
 // when the gestures of the frame do not fit.
 command_call :: proc(s:^Session,method,params:string,label:="") -> bool {
+    if len(params)>COMMAND_PARAMS {
+        notify(s,"The params of that gesture are too long")
+        return false
+    }
+    asked:=Command_Asked{method=method,label=label}
+    asked.length=copy(asked.params[:],params)
+    return command_ask(s,asked)
+}
+
+@(private)
+command_ask :: proc(s:^Session,asked:Command_Asked) -> bool {
     st:=api_state(s)
     if st==nil {return false}
     c:=&st.commands
-    if c.asked_count>=len(c.asked) || len(params)>COMMAND_PARAMS {
-        notify(s,len(params)>COMMAND_PARAMS?"The params of that gesture are too long":"Too much was asked of the editor in one frame")
+    if c.asked_count>=len(c.asked) {
+        notify(s,"Too much was asked of the editor in one frame")
         return false
     }
-    asked:=&c.asked[c.asked_count]
-    asked.method,asked.label=method,label
-    asked.length=copy(asked.params[:],params)
+    c.asked[c.asked_count]=asked
     c.asked_count+=1
     return true
 }
@@ -244,29 +278,126 @@ command_join :: proc(s:^Session,method,params:string) -> bool {
     return true
 }
 
-// The params of an entry with what it shows now in place of "$toggle".
+// ---------------------------------------------------------------- what the person has in front
+
+// Whether something the params of an entry name of what the person has in front is not there.
 @(private)
-binding_params :: proc(b:^strings.Builder,params:string,checked:bool) {
+context_missing :: proc(s:^Session,params:string) -> bool {
     rest:=params
     for {
-        at:=strings.index(rest,COMMAND_TOGGLE)
-        if at<0 {break}
-        strings.write_string(b,rest[:at])
-        rest=rest[at+len(COMMAND_TOGGLE):]
-        close:=strings.index_byte(rest,'"')
-        if close<0 {break}
-        choices:=rest[:close]
-        rest=rest[close+1:]
-        if choices=="" {
-            strings.write_string(b,checked?"false":"true")
-            continue
+        at:=strings.index_byte(rest,'$')
+        if at<0 {return false}
+        rest=rest[at:]
+        missing:bool
+        switch {
+        case strings.has_prefix(rest,CONTEXT_SELECTION),strings.has_prefix(rest,CONTEXT_ROOTS): missing=len(s.selection.entities)==0
+        case strings.has_prefix(rest,CONTEXT_ACTIVE): missing=history.selection_active(s.selection)==core.NONE
+        case strings.has_prefix(rest,CONTEXT_COPIED): missing=len(s.copied)==0
+        case strings.has_prefix(rest,CONTEXT_SHOWN):  missing=watching(s)
         }
-        // ":A:B"
-        first,_,second:=strings.partition(strings.trim_prefix(choices,":"),":")
-        fmt.sbprintf(b,"%q",checked?second:first)
+        if missing {return true}
+        rest=rest[1:]
     }
-    strings.write_string(b,rest)
-    if strings.builder_len(b^)==0 {strings.write_string(b,"{}")}
+}
+
+// An entity as the params of a method name it: by its id, or one of a game without one by its handle.
+@(private="file")
+context_entity :: proc(out:^strings.Builder,w:core.World_Ref,e:core.Entity) {
+    id:=u64(api_entity_id(w,e))
+    fmt.sbprintf(out,`"0x%016x"`,id if id!=0 else u64(e))
+}
+
+// Writes params with what the person has in front in place of the context
+// names. Of entities, the element of the list that names them is given once
+// for each: the name itself, or the object that holds it. False when
+// something they name is not there.
+@(private)
+context_write :: proc(s:^Session,out:^strings.Builder,text:string) -> bool {
+    at:=strings.index(text,`"$`)
+    close:=at<0?-1:strings.index_byte(text[at+1:],'"')
+    if close<0 {
+        strings.write_string(out,text)
+        return true
+    }
+    end:=at+close+2
+    w:=shown_world(s)
+    entities:[]core.Entity
+    listed:=true
+    strings.write_string(out,text[:at])
+    switch text[at+1:end-1] {
+    case CONTEXT_SELECTION: entities=s.selection.entities[:]
+    case CONTEXT_ROOTS:     entities=history.selection_roots(s.selection,w,context.temp_allocator)
+    case CONTEXT_COPIED:    entities=copied_entities(s,w)
+    case CONTEXT_ACTIVE:
+        active:=history.selection_active(s.selection)
+        if active==core.NONE {return false}
+        context_entity(out,w,active)
+        listed=false
+    case CONTEXT_SHOWN:
+        if watching(s) {return false}
+        strings.write_string(out,`"Game"` if playing(s) else `"Scene"`)
+        listed=false
+    case CONTEXT_DOCUMENT:
+        d:=asset_document_active(s)
+        fmt.sbprintf(out,"%q",asset_document_path(s,d) if d!=nil else "")
+        listed=false
+    case CONTEXT_CARD:
+        buffer:[base.ASSET_ID_TEXT]u8
+        fmt.sbprintf(out,"%q",base.asset_id_format(card_focused(s),buffer[:]))
+        listed=false
+    case:
+        strings.write_string(out,text[at:end])
+        listed=false
+    }
+    if !listed {return context_write(s,out,text[end:])}
+    // What a document names by its id is of the scene; a game names any of its entities.
+    named:=make([dynamic]core.Entity,0,len(entities),context.temp_allocator)
+    for e in entities {
+        if playing(s) || api_entity_id(w,e)!=0 {append(&named,e)}
+    }
+    if len(named)==0 {return false}
+    // The element: from the name back to what opens it, an object or the list itself.
+    from,to,depth:=at,end,0
+    #reverse for c,i in transmute([]u8)text[:at] {
+        if c=='}' || c==']' {depth+=1}
+        if c!='{' && c!='[' {continue}
+        if depth>0 {depth-=1;continue}
+        if c=='{' {
+            from,depth=i,0
+            for inner,j in transmute([]u8)text[i:] {
+                if inner=='{' {depth+=1}
+                if inner=='}' {depth-=1}
+                if depth==0 {to=i+j+1;break}
+            }
+        }
+        break
+    }
+    resize(&out.buf,len(out.buf)-(at-from))
+    for e,i in named {
+        if i>0 {strings.write_byte(out,',')}
+        element:=strings.builder_make(context.temp_allocator)
+        strings.write_string(&element,text[from:at])
+        context_entity(&element,w,e)
+        strings.write_string(&element,text[end:to])
+        context_write(s,out,strings.to_string(element)) or_return
+    }
+    return context_write(s,out,text[to:])
+}
+
+// The params an entry calls its method with now. False when there is nothing to call with.
+@(private)
+binding_params :: proc(s:^Session,b:^Binding,out:^strings.Builder) -> bool {
+    switch {
+    case b.tool!="":
+        // The gizmo always has a mode; the tool of a plugin is turned on and off.
+        _,gizmo:=gizmo_tool(b.tool)
+        fmt.sbprintf(out,`{{"tool":%q,"on":%v}}`,b.tool,gizmo || !tool_checked(s,b.tool))
+    case b.preference!="":
+        fmt.sbprintf(out,`{{"preferences":{{%q:{{%s}}}}}}`,b.preference,b.off if preference_holds(s,b.preference,b.on) else b.on)
+    case:
+        return context_write(s,out,b.params if b.params!="" else "{}")
+    }
+    return true
 }
 
 // Between frames: what the gestures of the frame asked for, in their order.
@@ -279,7 +410,14 @@ commands_run :: proc(s:^Session) {
     defer c.running=false
     for at:=0;at<c.asked_count;at+=1 {
         asked:=c.asked[at]
-        command_execute(s,st,asked.method,string(asked.params[:asked.length]),asked.label)
+        b:=asked.binding
+        switch {
+        case b==nil:     command_execute(s,st,asked.method,string(asked.params[:asked.length]),asked.label)
+        case b.view!=nil: b.view(s)
+        case:
+            params:=strings.builder_make(context.temp_allocator)
+            if binding_params(s,b,&params) {command_execute(s,st,b.method,strings.to_string(params),b.label)}
+        }
     }
     c.asked_count=0
 }
@@ -334,31 +472,26 @@ shortcuts_run :: proc(s:^Session,keys:core.Keys,modifiers:ui.Modifiers) {
         play_strip_toggle(s,r)
         keys-={.Space}
     }
-    // The keys of Delete, Rename and Duplicate on a card of the browser act on
-    // its asset, not on the selected entities.
-    if s.gui!=nil && s.gui.ctx!=nil {
-        if id:=content_focused(s.content,s.gui.ctx);id!={} {
-            for name in ([3]string{"delete","rename","duplicate"}) {
-                b:=command_binding(s,name)
-                if b==nil || !shortcut_pressed(keys,modifiers,b.shortcut) && !shortcut_pressed(keys,modifiers,b.alternate) {continue}
-                if s.mode!=.Edit || watching(s) {return}
-                switch name {
-                case "delete":    asset_delete_ask(s,id)
-                case "rename":    content_rename_begin(s,id)
-                case "duplicate": content_duplicate(s,id)
-                }
-                return
-            }
-        }
+    // The keys of the entries of a card of the browser that has the keyboard are of its asset, not
+    // of the selected entities.
+    card:core.Keys
+    for &b in command_bindings(s) {
+        if b.card && card_focused(s)!={} {card+={b.shortcut.key,b.alternate.key}}
     }
     game:=s.mode==.Play || player_processes_captured(s)
     for &b in command_bindings(s) {
         if !shortcut_pressed(keys,modifiers,b.shortcut) && !shortcut_pressed(keys,modifiers,b.alternate) {continue}
         // While a game runs the keys are its own, but those of Play.
-        if game && !b.in_game {continue}
+        if game && !b.in_game || !b.card && keys&card!={} {continue}
         if play_shown(s) && b.name=="library_panel" {continue}
         command_run(s,b.name)
     }
+}
+
+// The asset of the card of the browser that has the keyboard; zero without one.
+@(private)
+card_focused :: proc(s:^Session) -> base.Asset_Id {
+    return content_focused(s.content,s.gui.ctx) if s.gui!=nil && s.gui.ctx!=nil else {}
 }
 
 // The text of a shortcut: "Ctrl+Shift+S".
@@ -382,91 +515,97 @@ commands_register :: proc(s:^Session,st:^Api_State) {
     commands_methods_register(s,st)
     user :: proc(icon:User_Icon) -> ui.Icon {return ui.icon_user(u8(icon))}
     key :: proc(k:core.Key,modifiers:ui.Modifiers={}) -> Shortcut {return {k,modifiers,true}}
-    preference :: proc(st:^Api_State,area,fields:string) -> string {
-        return command_text(st,`{{"preferences":{{%q:{{%s}}}}}}`,area,fields)
-    }
-    reset:=ORBIT_DEFAULT
+    VIEWPORT :: "Viewport_Preferences"
+    LAYOUT :: "Layout"
+    edit:=Modes{.Edit}
     entries:=[?]Binding{
-        {name="new",method="scene.new",label="New scene",icon=user(.Scene),shortcut=key(.N,{.Primary}),menu=.File,group=0,state=state_editing},
-        {name="new_prefab",method="scene.new",params=`{"kind":"Prefab"}`,label="New prefab",icon=.Prefab,menu=.File,group=0,state=state_editing},
-        {name="open",method="editor.document",params=`{"action":"Open","path":"$ask"}`,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,state=state_editing},
-        {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,state=state_projects},
-        {name="save",method="scene.save",label="Save",icon=user(.Save),shortcut=key(.S,{.Primary}),menu=.File,group=1,state=state_save},
-        {name="save_all",method="editor.save_all",label="Save all",icon=user(.Save),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,state=state_editing},
-        {name="save_as",method="scene.save",params=`{"path":"$ask"}`,label="Save as...",icon=user(.Save),shortcut=key(.S,{.Primary,.Alt}),menu=.File,group=1,state=state_editing,scene=true},
-        {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,state=state_kind,scene=true},
-        {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,state=state_kind,scene=true},
-        {name="import",method="asset.import",params=`{"path":"$ask"}`,label="Import...",icon=.Import,menu=.File,group=2,state=state_import},
+        {name="new",view=proc(s:^Session) {file_new(s)},label="New scene",icon=user(.Scene),shortcut=key(.N,{.Primary}),menu=.File,group=0,modes=edit},
+        {name="new_prefab",view=proc(s:^Session) {file_new(s,true)},label="New prefab",icon=.Prefab,menu=.File,group=0,modes=edit},
+        {name="open",view=file_open,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,modes=edit},
+        {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,modes=edit,state=state_projects},
+        {name="save",view=save_front,label="Save",icon=user(.Save),shortcut=key(.S,{.Primary}),menu=.File,group=1,state=state_save},
+        {name="save_all",method="editor.save_all",label="Save all",icon=user(.Save),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,modes=edit},
+        {name="save_as",view=dialog_save,label="Save as...",icon=user(.Save),shortcut=key(.S,{.Primary,.Alt}),menu=.File,group=1,modes=edit,scene=true},
+        {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,modes=edit,state=state_kind,scene=true},
+        {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,state=state_kind,scene=true},
+        {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},
         {name="build",method="build.start",label="Build",icon=user(.Hammer),shortcut=key(.B,{.Primary}),menu=.File,group=3,state=state_build},
-        {name="settings",view=settings_toggle,label="Project settings",icon=user(.Gear),menu=.File,group=3,state=state_settings},
-        {name="quit",method="engine.shutdown",label="Quit",icon=.Cross,shortcut=key(.Q,{.Primary}),menu=.File,group=4},
+        {name="settings",view=settings_toggle,label="Project settings",icon=user(.Gear),menu=.File,group=3,modes=edit,state=state_settings},
+        {name="quit",view=quit_request,label="Quit",icon=.Cross,shortcut=key(.Q,{.Primary}),menu=.File,group=4},
 
-        {name="undo",method="history.undo",label="Undo",icon=user(.Undo),shortcut=key(.Z,{.Primary}),state=state_undo},
-        {name="redo",method="history.redo",label="Redo",icon=user(.Redo),shortcut=key(.Y,{.Primary}),alternate=key(.Z,{.Primary,.Shift}),state=state_redo},
-        {name="copy",view=copy_roots,label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),state=state_copy,scene=true},
-        {name="paste",method="scene.write",params=`{"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),state=state_paste,scene=true},
-        {name="duplicate",method="scene.write",params=`{"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),state=state_scene_edit,scene=true},
-        {name="delete",method="scene.write",params=`{"root":"$roots","entities":[{"delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_scene_edit,scene=true},
+        {name="undo",method="history.undo",params=`{"asset":"$document"}`,label="Undo",icon=user(.Undo),shortcut=key(.Z,{.Primary}),state=state_undo},
+        {name="redo",method="history.redo",params=`{"asset":"$document"}`,label="Redo",icon=user(.Redo),shortcut=key(.Y,{.Primary}),alternate=key(.Z,{.Primary,.Shift}),state=state_redo},
+        {name="copy",view=copy_roots,params=CONTEXT_ROOTS,label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),modes=edit,scene=true},
+        {name="paste",method="scene.write",params=`{"world":"$shown","select":true,"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),scene=true},
+        {name="duplicate",method="scene.write",params=`{"world":"$shown","select":true,"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),scene=true},
+        {name="delete",method="scene.write",params=`{"world":"$shown","entities":[{"id":"$roots","delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),scene=true},
         {name="rename",view=rename_focus,label="Rename",icon=.Edit,shortcut=key(.F2),state=state_rename,scene=true},
-        {name="select_all",method="editor.select",params=`{"entities":["$all"]}`,label="Select all",shortcut=key(.A,{.Primary}),state=state_select_all,scene=true},
-        {name="deselect",method="editor.select",label="Deselect",shortcut=key(.Escape),state=state_selected,scene=true},
-        {name="group",method="scene.group",params=`{"entities":["$roots"]}`,label="Group selection",icon=.Group,shortcut=key(.G,{.Primary}),state=state_scene_edit,scene=true},
+        {name="select_all",view=select_all,label="Select all",shortcut=key(.A,{.Primary}),scene=true},
+        {name="deselect",view=proc(s:^Session) {history.selection_clear(s.selection)},params=CONTEXT_SELECTION,label="Deselect",shortcut=key(.Escape),scene=true},
+        {name="group",method="scene.write",params=`{"select":true,"entities":[{"group":["$roots"]}]}`,label="Group selection",icon=.Group,shortcut=key(.G,{.Primary}),modes=edit,scene=true},
 
-        {name="tool_move",method="editor.tool",params=`{"tool":"move"}`,label="Move",icon=.Move,shortcut=key(.W),state=state_gizmo,scene=true},
-        {name="tool_rotate",method="editor.tool",params=`{"tool":"rotate"}`,label="Rotate",icon=.Rotate,shortcut=key(.E),state=state_gizmo,scene=true},
-        {name="tool_scale",method="editor.tool",params=`{"tool":"scale"}`,label="Scale",icon=.Scale,shortcut=key(.R),state=state_gizmo,scene=true},
-        {name="space",method="preferences.set",params=preference(st,"Viewport_Preferences",`"space":"$toggle:Local:World"`),label="Local axes",icon=.Relative,state=state_space,scene=true},
-        {name="snap",method="preferences.set",params=preference(st,"Viewport_Preferences",`"snap":"$toggle","snap_off":false`),label="Snap to grid",icon=.Grid,state=state_snap,scene=true},
+        {name="tool_move",tool="move",label="Move",icon=.Move,shortcut=key(.W),scene=true},
+        {name="tool_rotate",tool="rotate",label="Rotate",icon=.Rotate,shortcut=key(.E),scene=true},
+        {name="tool_scale",tool="scale",label="Scale",icon=.Scale,shortcut=key(.R),scene=true},
+        {name="space",preference=VIEWPORT,on=`"space":"Local"`,off=`"space":"World"`,label="Local axes",icon=.Relative,scene=true},
+        {name="snap",preference=VIEWPORT,on=`"snap":true,"snap_off":false`,off=`"snap":false`,label="Snap to grid",icon=.Grid,scene=true},
 
-        {name="focus",method="camera.set",params=`{"frame":["$selection"]}`,label="Focus selection",icon=.Focus,shortcut=key(.F),menu=.View,group=0,state=state_selected,scene=true},
-        {name="reset_camera",method="camera.set",params=command_text(st,`{{"target":[%v,%v,%v],"yaw":%v,"pitch":%v,"distance":%v,"fov":%v}}`,reset.target.x,reset.target.y,reset.target.z,reset.yaw,reset.pitch,reset.distance,reset.fov),label="Reset camera",icon=user(.Camera),menu=.View,group=0,scene=true},
-        {name="scene_thumbnail",method="scene.thumbnail",label="Update scene thumbnail",icon=user(.Camera),menu=.View,group=0,state=state_scene_thumbnail,scene=true},
-        {name="grid",method="preferences.set",params=preference(st,"Viewport_Preferences",`"show_grid":"$toggle"`),label="Grid",icon=.Grid,menu=.View,group=1,state=state_grid,scene=true},
-        {name="indicators",method="preferences.set",params=preference(st,"Viewport_Preferences",`"show_indicators":"$toggle"`),label="Indicators",icon=.Eye,menu=.View,group=1,state=state_indicators,scene=true},
-        {name="output_frame",method="preferences.set",params=preference(st,"Viewport_Preferences",`"show_output_frame":"$toggle"`),label="Output frame",icon=user(.Camera),menu=.View,group=1,state=state_output_frame,scene=true},
-        {name="game_detail",method="preferences.set",params=preference(st,"Viewport_Preferences",`"game_detail":"$toggle"`),label="Detail of the game camera",menu=.View,group=1,state=state_game_detail,scene=true},
-        {name="studio_light",view=studio_light_toggle,label="Studio light",icon=.Sun,menu=.View,group=1,state=state_studio_light,scene=true},
+        {name="focus",view=focus_selection,params=CONTEXT_SELECTION,label="Focus selection",icon=.Focus,shortcut=key(.F),menu=.View,group=0,scene=true},
+        {name="reset_camera",view=proc(s:^Session) {s.viewport.orbit,s.view_cut=ORBIT_DEFAULT,true;viewport_camera(s.viewport)},label="Reset camera",icon=user(.Camera),menu=.View,group=0,scene=true},
+        {name="scene_thumbnail",method="scene.thumbnail",label="Update scene thumbnail",icon=user(.Camera),menu=.View,group=0,scene=true},
+        {name="grid",preference=VIEWPORT,on=`"show_grid":true`,off=`"show_grid":false`,label="Grid",icon=.Grid,menu=.View,group=1,scene=true},
+        {name="indicators",preference=VIEWPORT,on=`"show_indicators":true`,off=`"show_indicators":false`,label="Indicators",icon=.Eye,menu=.View,group=1,scene=true},
+        {name="output_frame",preference=VIEWPORT,on=`"show_output_frame":true`,off=`"show_output_frame":false`,label="Output frame",icon=user(.Camera),menu=.View,group=1,scene=true},
+        {name="game_detail",preference=VIEWPORT,on=`"game_detail":true`,off=`"game_detail":false`,label="Detail of the game camera",menu=.View,group=1,scene=true},
+        {name="studio_light",view=proc(s:^Session) {s.viewport.studio_light=!s.viewport.studio_light},label="Studio light",icon=.Sun,menu=.View,group=1,modes=edit,state=state_studio_light,scene=true},
         {name="graphics",view=graphics_toggle,label="Graphics",icon=user(.Graphics),menu=.View,group=1,state=state_graphics},
-        {name="inspector_panel",method="preferences.set",params=preference(st,"Layout",`"right_open":"$toggle"`),label="Details",icon=user(.Graphics),menu=.View,group=2,state=state_inspector_panel},
-        {name="console_panel",method="preferences.set",params=preference(st,"Layout",`"bottom_open":"$toggle","bottom_tab":"Console"`),label="Console",icon=user(.Terminal),shortcut=key(.Grave,{.Primary}),menu=.View,group=2,state=state_console_panel},
-        {name="build_panel",method="preferences.set",params=preference(st,"Layout",`"bottom_open":"$toggle","bottom_tab":"Build"`),label="Build output",icon=user(.Hammer),menu=.View,group=2,state=state_build_panel},
-        {name="library_panel",method="preferences.set",params=preference(st,"Layout",`"left_open":"$toggle"`),label="Content Browser",icon=.Layers,shortcut=key(.Tab),state=state_library_panel},
-        {name="hierarchy_panel",view=hierarchy_toggle,label="Hierarchy",icon=user(.List),state=state_hierarchy_panel},
-        {name="source_control",view=git_toggle,label="Source control",icon=user(.Branch),state=state_source_control},
+        {name="inspector_panel",preference=LAYOUT,on=`"right_open":true`,off=`"right_open":false`,label="Details",icon=user(.Graphics),menu=.View,group=2},
+        {name="console_panel",preference=LAYOUT,on=`"bottom_open":true,"bottom_tab":"Console"`,off=`"bottom_open":false`,label="Console",icon=user(.Terminal),shortcut=key(.Grave,{.Primary}),menu=.View,group=2},
+        {name="build_panel",preference=LAYOUT,on=`"bottom_open":true,"bottom_tab":"Build"`,off=`"bottom_open":false`,label="Build output",icon=user(.Hammer),menu=.View,group=2},
+        {name="library_panel",preference=LAYOUT,on=`"left_open":true`,off=`"left_open":false`,label="Content Browser",icon=.Layers,shortcut=key(.Tab)},
+        {name="hierarchy_panel",view=proc(s:^Session) {library_select(s,.Editor if state_hierarchy_panel(s,nil).checked else .Hierarchy)},label="Hierarchy",icon=user(.List),state=state_hierarchy_panel},
+        {name="source_control",view=proc(s:^Session) {library_select(s,.Content if state_source_control(s,nil).checked else .Git)},label="Source control",icon=user(.Branch),state=state_source_control},
         {name="ai_chat",view=chat_toggle,label="AI tasks",icon=.Sparkle,state=state_ai_chat},
         {name="shortcuts",view=shortcuts_show,label="Keyboard shortcuts",icon=user(.Command),menu=.View,group=MENU_GROUP_PLUGINS+1},
         {name="find",view=finder_open,label="Find object",icon=user(.Search),shortcut=key(.Space),scene=true},
 
-        // The key of Play stops what plays, and that of Pause resumes it.
-        {name="play",method="play.start",label="Play",icon=.Play,shortcut=key(.F5),state=state_play,scene=true},
-        {name="play_from_camera",method="play.start",params=`{"from":"Camera"}`,label="Play from camera",icon=user(.Camera),state=state_play,scene=true},
+        // The key of Play stops what plays, and that of Pause resumes it. A person plays with the
+        // players the Play menu has.
+        {name="play",method="play.start",params=`{"online":-1,"ping_ms":-1}`,label="Play",icon=.Play,shortcut=key(.F5),state=state_play,scene=true},
+        {name="play_from_camera",method="play.start",params=`{"from":"Camera","online":-1,"ping_ms":-1}`,label="Play from camera",icon=user(.Camera),state=state_play,scene=true},
         {name="simulate",method="play.start",params=`{"simulate":true}`,label="Simulate",icon=user(.Simulate),state=state_play,scene=true},
-        {name="apply_simulation",method="simulation.apply",params=`{"entities":["$selection"]}`,label="Apply transforms",state=state_apply_simulation,scene=true},
-        {name="pause",method="play.pause",params=`{"paused":true}`,label="Pause",icon=user(.Pause),shortcut=key(.F6),state=state_pause,scene=true,in_game=true},
-        {name="resume",method="play.pause",params=`{"paused":false}`,label="Resume",icon=.Play,shortcut=key(.F6),state=state_resume,scene=true,in_game=true},
+        {name="apply_simulation",method="simulation.apply",params=`{"entities":["$selection"]}`,label="Apply transforms",scene=true},
+        {name="pause",method="play.pause",params=`{"paused":true}`,label="Pause",icon=user(.Pause),shortcut=key(.F6),modes={.Play,.Simulate},scene=true,in_game=true},
+        {name="resume",method="play.pause",params=`{"paused":false}`,label="Resume",icon=.Play,shortcut=key(.F6),modes={.Paused,.Simulation_Paused},scene=true,in_game=true},
         {name="stop",method="play.stop",label="Stop",icon=.Stop,shortcut=key(.F5,{.Shift}),alternate=key(.F5),state=state_stop,in_game=true},
-        {name="release_input",view=input_release,label="Release input",shortcut=key(.F1),state=state_release_input,scene=true,in_game=true},
-        {name="camera_preview",view=camera_preview_selected,label="Preview camera",state=state_camera_preview,scene=true},
+        {name="release_input",view=proc(s:^Session) {if player_processes_captured(s) {player_processes_release(s)} else {play_release_input(s)}},label="Release input",shortcut=key(.F1),state=state_release_input,scene=true,in_game=true},
+        {name="camera_preview",view=camera_preview_selected,label="Preview camera",modes=edit,state=state_camera_preview,scene=true},
         {name="camera_keep",view=proc(s:^Session) {camera_preview_end(s,true)},label="Keep cameras",state=state_camera_previewing},
         {name="camera_discard",view=proc(s:^Session) {camera_preview_end(s,false)},label="Discard cameras",state=state_camera_previewing},
 
-        {name="prefab_create",method="prefab.create",params=`{"entity":"$selection"}`,label="Create prefab",icon=.Save_Prefab,state=state_prefab,scene=true},
-        {name="prefab_apply",method="prefab.apply",params=`{"entity":"$active"}`,label="Apply to prefab",icon=.Prefab,state=state_prefab,scene=true},
-        {name="prefab_apply_base",method="prefab.apply",params=`{"entity":"$active","target":"Base"}`,label="Apply to base",icon=user(.Up),state=state_prefab,scene=true},
-        {name="prefab_revert",method="prefab.revert",params=`{"entity":"$active"}`,label="Revert to prefab",icon=.Revert,state=state_prefab,scene=true},
+        {name="prefab_create",method="prefab.create",params=`{"entities":["$roots"]}`,label="Create prefab",icon=.Save_Prefab,state=state_prefab,scene=true},
+        {name="prefab_apply",method="prefab.apply",params=`{"entity":"$active","whole":true}`,label="Apply to prefab",icon=.Prefab,state=state_prefab,scene=true},
+        {name="prefab_apply_base",method="prefab.apply",params=`{"entity":"$active","whole":true,"target":"Base"}`,label="Apply to base",icon=user(.Up),state=state_prefab,scene=true},
+        {name="prefab_revert",method="prefab.revert",params=`{"entity":"$active","whole":true}`,label="Revert to prefab",icon=.Revert,state=state_prefab,scene=true},
         {name="prefab_unlink",method="prefab.unlink",params=`{"entity":"$active"}`,label="Unlink prefab",icon=user(.Unlink),state=state_prefab,scene=true},
+
+        // Of the asset of the card of the browser that has the keyboard, with the keys of the scene.
+        {name="asset_delete",view=proc(s:^Session) {asset_delete_ask(s,card_focused(s))},label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),modes=edit,card=true},
+        {name="asset_rename",view=proc(s:^Session) {content_rename_begin(s,card_focused(s))},label="Rename",icon=.Edit,shortcut=key(.F2),modes=edit,card=true},
+        {name="asset_duplicate",method="asset.move",params=`{"asset":"$card","copy":true}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),modes=edit,card=true},
     }
     for entry in entries {
-        if !command_bind(s,entry) {api_refuse(st,fmt.tprintf("the entry %s did not fit: raise BINDING_CAPACITY in editor/commands.odin",entry.name))}
+        if !command_bind(s,entry) {api_refuse(st,fmt.tprintf("the entry %s did not fit, or its method is not registered before it: raise BINDING_CAPACITY in editor/commands.odin",entry.name))}
     }
     if s.has_project {tool_entry(s,AI_ANNOTATE_TOOL,"Annotate",ai_annotate_icon())}
 }
 
-// ---------------------------------------------------------------- what the entries show
+// ---------------------------------------------------------------- what the entries show that no method says
 
-@(private="file") state_editing :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit}}
-@(private="file") state_kind :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || document_is_prefab(s)==(b.name=="make_prefab")}}
-@(private="file") state_selected :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=len(s.selection.entities)==0}}
+@(private="file") state_kind :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=document_is_prefab(s)==(b.name=="make_prefab")}}
+// A key is of Play or of Stop: an agent plays again a game that plays, a person stops it.
+@(private="file") state_play :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || play_plugin_active(s)}}
+@(private="file") state_stop :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Edit && !play_plugin_active(s)}}
 
 @(private="file")
 state_save :: proc(s:^Session,b:^Binding) -> Command_State {
@@ -516,53 +655,20 @@ state_redo :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     return
 }
 
-@(private="file") state_copy :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=len(s.selection.entities)==0 || s.mode!=.Edit}}
-@(private="file") state_paste :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || len(s.copied)==0}}
-// The methods of the scene write the document: a game the editor shows has its own.
-@(private="file") state_scene_edit :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=len(s.selection.entities)==0 || playing(s)}}
-@(private="file") state_game_edit :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=len(s.selection.entities)==0 || !playing(s) || watching(s)}}
+// What applies to the selected entity of a prefab: its overrides, its link, the base of its variant.
+@(private="file") state_prefab :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=prefab_entry_disabled(s,b.name)}}
+
+// Of the procedures of the interface: they have no method to say it.
 @(private="file") state_rename :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=len(s.selection.entities)!=1 || watching(s)}}
-@(private="file") state_select_all :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=core.world_entities(shown_world(s)).alive==0}}
-
-// While a plugin tool that lends the scene to them holds it, none is on.
-@(private="file")
-state_gizmo :: proc(s:^Session,b:^Binding) -> Command_State {
-    v:=s.viewport
-    tool:=Tool.Move
-    switch b.name {
-    case "tool_rotate": tool=.Rotate
-    case "tool_scale":  tool=.Scale
-    }
-    return {checked=v.tool==tool && !lender_holding(v)}
-}
-
-@(private="file") state_space :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.viewport.space==.Local}}
-@(private="file") state_snap :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=snapping(s.viewport,.Move)}}
-@(private="file") state_grid :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.viewport.show_grid}}
-@(private="file") state_indicators :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.viewport.show_indicators}}
-@(private="file") state_output_frame :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.viewport.show_output_frame}}
-@(private="file") state_game_detail :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.viewport.game_detail}}
-@(private="file") state_studio_light :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=document_is_prefab(s) || playing(s),checked=s.viewport.studio_light}}
-@(private="file") state_scene_thumbnail :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || !scene_thumbnail_takes(s)}}
+@(private="file") state_studio_light :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=document_is_prefab(s),checked=s.viewport.studio_light}}
 @(private="file") state_hierarchy_panel :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.gui.layout.left_open && s.gui.layout.library_tab==.Hierarchy}}
-@(private="file") state_library_panel :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.gui.layout.left_open}}
-@(private="file") state_inspector_panel :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.gui.layout.right_open}}
-@(private="file") state_console_panel :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.gui.layout.bottom_open && s.gui.layout.bottom_tab==.Console}}
-@(private="file") state_build_panel :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.gui.layout.bottom_open && s.gui.layout.bottom_tab==.Build}}
-@(private="file") state_play :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || play_plugin_active(s)}}
-@(private="file") state_apply_simulation :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!simulating(s) || len(s.selection.entities)==0}}
-@(private="file") state_pause :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Play && s.mode!=.Simulate}}
-@(private="file") state_resume :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!play_paused(s)}}
-@(private="file") state_stop :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Edit && !play_plugin_active(s)}}
 @(private="file") state_release_input :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!player_processes_captured(s) && (s.mode!=.Play || s.play_input_released)}}
-@(private="file") state_import :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || s.app.assets==nil}}
 @(private="file") state_ai_chat :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Play,checked=ai_chat_open(s.ai) && (s.gui.layout.left_open || play_shown(s))}}
 @(private="file") state_source_control :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.layout.left_open && s.gui.layout.library_tab==.Git}}
-@(private="file") state_projects :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || s.engine_root=="" || s.projects==nil}}
-@(private="file") state_settings :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project || s.mode!=.Edit,checked=s.gui.modal==.Settings}}
-@(private="file") state_camera_preview :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || camera_preview_target(s,shown_world(s))==core.NONE}}
+@(private="file") state_projects :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.engine_root=="" || s.projects==nil}}
+@(private="file") state_settings :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.modal==.Settings}}
+@(private="file") state_camera_preview :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=camera_preview_target(s,shown_world(s))==core.NONE}}
 @(private="file") state_camera_previewing :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!camera_previewing(s)}}
-@(private="file") state_prefab :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=prefab_entry_disabled(s,b.name)}}
 
 @(private="file")
 state_graphics :: proc(s:^Session,b:^Binding) -> Command_State {
@@ -570,15 +676,85 @@ state_graphics :: proc(s:^Session,b:^Binding) -> Command_State {
     return {checked=ui.popup_is_open(s.gui.ctx,graphics_popup(s.gui))}
 }
 
+// ---------------------------------------------------------------- what only changes what the person sees, or asks them first
+
+@(private="file") settings_toggle :: proc(s:^Session) {if s.gui.modal==.Settings {modal_close(s.gui)} else {settings_show(s)}}
+@(private="file") rename_focus :: proc(s:^Session) {s.gui.layout.right_open,s.inspector.rename=true,true}
+
+// Saves what is in front: the asset of the document, or the scene, asking first about the unsaved assets it uses.
+@(private="file")
+save_front :: proc(s:^Session) {
+    if asset_document_active(s)!=nil {asset_document_save(s)} else {save_request(s)}
+}
+
+@(private="file")
+shortcuts_show :: proc(s:^Session) {
+    ui.popup_close(s.gui.ctx)
+    s.gui.modal,s.gui.modal_scroll=.Shortcuts,0
+}
+
+@(private="file")
+graphics_toggle :: proc(s:^Session) {
+    g:=s.gui
+    if ui.popup_is_open(g.ctx,graphics_popup(g)) {ui.popup_close(g.ctx);return}
+    anchor,_:=ui.widget_rect(g.ctx,shell_id(g,"graphics"))
+    ui.popup_open(g.ctx,graphics_popup(g),anchor)
+}
+
+// A chat folded with its panel comes back with it instead of closing.
+@(private="file")
+chat_toggle :: proc(s:^Session) {
+    switch {
+    case play_shown(s):                                 play_chat_set(s,!s.play_chat_open)
+    case ai_chat_open(s.ai) && !s.gui.layout.left_open: s.gui.layout.left_open=true
+    case:                                               ai_chat_toggle(s.ai)
+    }
+}
+
+// Every entity a person selects in the scene.
+@(private="file")
+select_all :: proc(s:^Session) {
+    w:=shown_world(s)
+    all:=make([dynamic]core.Entity,context.temp_allocator)
+    items:=scene_items(s,w)
+    for item in scene_item_next(&items) {if entity_author(w,item.entity)==item.entity {append(&all,item.entity)}}
+    history.selection_set(s.selection,all[:])
+}
+
+// Frames the selection in the viewport, looking the way it looks now: the image keeps its history.
+@(private="file")
+focus_selection :: proc(s:^Session) {
+    v:=s.viewport
+    box:=api_entities_box(s,shown_world(s),s.selection.entities[:])
+    free:=free_region(s.gui,v.window)
+    free.x-=v.origin.x
+    free.y-=v.origin.y
+    orbit_frame(&v.orbit,box.min,box.max,v.size,free)
+    orbit_sanitize(&v.orbit)
+    viewport_camera(v)
+}
+
+// Keeps the selected roots for Paste, by their ids: not their data.
+@(private="file")
+copy_roots :: proc(s:^Session) {
+    w:=shown_world(s)
+    clear(&s.copied)
+    for e in history.selection_roots(s.selection,w,context.temp_allocator) {
+        if id:=api_entity_id(w,e);id!=0 {append(&s.copied,id)}
+    }
+}
+
+// The scene plays as a simulation seen through the selected camera, with the blend of its activation.
+@(private="file")
+camera_preview_selected :: proc(s:^Session) {
+    if !camera_preview_start(s,camera_preview_target(s,shown_world(s))) {notify(s,"The camera could not be previewed: the simulation did not start")}
+}
+
 // ---------------------------------------------------------------- the methods the entries of the editor needed
 
 Api_Scene_New_Params :: struct {
     discard:bool `mirai:"optional,label=Drops the unsaved changes of the scene it takes the place of; without it they make it fail"`,
     kind:Document_Kind `mirai:"optional,label=Scene: with a sky and a sun, shown in its own light; Prefab: one root, shown in the studio light and placed as instances"`,
-}
-
-Api_Group_Params :: struct {
-    entities:[64]Api_Entity_Text `mirai:"text,entity,label=The entities the group holds by name or path or id; it is made where they hang from when they share a parent and at the root otherwise"`,
 }
 
 Api_Tool_Params :: struct {
@@ -602,8 +778,7 @@ Api_Thumbnail_Result :: struct {
 commands_methods_register :: proc(s:^Session,st:^Api_State) {
     tool_on_default:=Api_Tool_Params{on=true}
     api_register(s,st,{name="scene.new",summary="An empty scene or prefab in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
-    api_register(s,st,{name="scene.group",summary="Puts entities under a new empty entity at their center, as one undo step. Returns the group.",params=type_info_of(Api_Group_Params),result=type_info_of(Api_Edit_Result),run=api_scene_group})
-    api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=type_info_of(Api_Thumbnail_Result),run=api_scene_thumbnail})
+    api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=type_info_of(Api_Thumbnail_Result),can=scene_thumbnail_can,run=api_scene_thumbnail})
     api_register(s,st,{name="editor.tool",summary="Chooses what the pointer does in the viewport: the mode of the gizmo, or the tool of a plugin, whose panel takes the place of Details while it is on.",params=type_info_of(Api_Tool_Params),result=type_info_of(Api_Tool_Result),defaults=&tool_on_default,flags={.Idempotent},run=api_editor_tool})
     api_register(s,st,{name="editor.save_all",summary="Writes every unsaved asset and every document with changes that has a file.",result=type_info_of(Api_Save_All_Result),run=api_save_all})
 }
@@ -611,12 +786,7 @@ commands_methods_register :: proc(s:^Session,st:^Api_State) {
 @(private)
 api_scene_new :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"replace the document and its history") {return}
-    // A person is asked about what the scene would lose.
     params:=api.call_params(call,Api_Scene_New_Params)
-    if api_person(s) {
-        file_new(s,params.kind==.Prefab)
-        return
-    }
     if !collab_can_open(s) {
         api.call_fail(call,api.SERVER_ERROR,"Leave the session before replacing the scene (collab.leave)")
         return
@@ -632,55 +802,14 @@ api_scene_new :: proc(s:^Session,call:^api.Call) {
     api_file_result(s,call)
 }
 
-// Puts entities under a new group at their center. NONE when it could not.
-entities_group :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> core.Entity {
-    if len(entities)==0 {return core.NONE}
-    center:[3]f32
-    for e in entities {center+=entity_world(w,e).position}
-    center/=f32(len(entities))
-    opened,edit_ready:=edit_open(s,"Group")
-    if !edit_ready {return core.NONE}
-    defer edit_close(s,opened)
-    parent:=entity_parent(w,entities[0])
-    for e in entities[1:] {
-        if entity_parent(w,e)!=parent {parent=core.NONE;break}
-    }
-    group:=entity_create(s,{name="Group",parent=parent,transform={position=center,rotation=1,scale={1,1,1}}})
-    if group==core.NONE {return core.NONE}
-    // The group exists once settled: its children are placed relative to where it will be.
-    core.world_settle(w)
-    for e in entities {entity_reparent(s,e,group)}
-    return group
-}
-
 @(private)
-api_scene_group :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Group_Params)
-    if !api_edit_begin(s,call,"Group") {return}
-    w:=edited_world(s)
-    entities,known:=api_call_entities(call,w,params.entities[:],"entities",call.allocator)
-    group:=core.NONE
-    if known && len(entities)==0 {api.call_fail(call,api.INVALID_PARAMS,"entities: name the entities the group holds")}
-    if known && len(entities)>0 {
-        for e in entities {
-            if text:=section_lock_text(s,w,e,true);text!="" {api.call_failf(call,api.SERVER_ERROR,"scene.group: %s",text);break}
-            if prefab_member_locked(s,w,e) {api.call_fail(call,api.SERVER_ERROR,"scene.group: a member of an instance of a prefab keeps the place its prefab gives it; group the instance, or unlink it");break}
-        }
-        if !call.failed {group=entities_group(s,w,entities)}
-        if group!=core.NONE {core.world_settle(w)}
-    }
-    id:=api_entity_id(w,group)
-    // A person goes on with the group: it is what the step leaves selected.
-    if group!=core.NONE && api_person(s) {history.selection_set(document_selection(s),{group})}
-    if api_edit_end(s,call,group!=core.NONE) {api.call_result(call,Api_Edit_Result).id=id}
+scene_thumbnail_can :: proc(s:^Session) -> string {
+    if s.mode==.Edit && scene_thumbnail_takes(s) {return ""}
+    return "The thumbnail is that of a scene of the assets in front, out of Play, in an editor that draws and a project with a thumbs folder"
 }
 
 @(private)
 api_scene_thumbnail :: proc(s:^Session,call:^api.Call) {
-    if s.mode!=.Edit || !scene_thumbnail_takes(s) {
-        api.call_fail(call,api.SERVER_ERROR,"The thumbnail is that of a scene of the assets in front, out of Play, in an editor that draws and a project with a thumbs folder")
-        return
-    }
     thumbnail_scene_take(s,s.document.id,0,true)
     api.call_result(call,Api_Thumbnail_Result).asked=true
 }
@@ -691,14 +820,7 @@ api_editor_tool :: proc(s:^Session,call:^api.Call) {
     name:=base.text_get(params.tool[:])
     v:=s.viewport
     if s.edits.preview {tools_release(s)}
-    tool,gizmo:=Tool.Move,true
-    switch name {
-    case "move":
-    case "rotate": tool=.Rotate
-    case "scale":  tool=.Scale
-    case:          gizmo=false
-    }
-    if gizmo {
+    if tool,gizmo:=gizmo_tool(name);gizmo {
         if !params.on {
             api.call_fail(call,api.INVALID_PARAMS,"The gizmo always has a mode: name the one to change to")
             return
@@ -709,9 +831,9 @@ api_editor_tool :: proc(s:^Session,call:^api.Call) {
         known:=false
         names:=make([dynamic]string,context.temp_allocator)
         for &b in command_bindings(s) {
-            if b.method!="editor.tool" || b.menu!=.Tools {continue}
-            append(&names,b.name)
-            known||=b.name==name
+            if b.tool=="" || b.menu!=.Tools {continue}
+            append(&names,b.tool)
+            known||=b.tool==name
         }
         if !known {
             api.call_failf(call,api.INVALID_PARAMS,"tool: %s",base.name_problem(name,"a tool",names[:]))
@@ -732,55 +854,6 @@ api_editor_tool :: proc(s:^Session,call:^api.Call) {
     if v.plugin_tool!=0 {base.text_set(result.plugin_tool[:],base.text_get(v.plugin_tool_name[:]))}
 }
 
-// ---------------------------------------------------------------- what only changes what the person sees
-
-@(private="file") settings_toggle :: proc(s:^Session) {if s.gui.modal==.Settings {modal_close(s.gui)} else {settings_show(s)}}
-@(private="file") rename_focus :: proc(s:^Session) {s.gui.layout.right_open,s.inspector.rename=true,true}
-@(private="file") studio_light_toggle :: proc(s:^Session) {s.viewport.studio_light=!s.viewport.studio_light}
-@(private="file") hierarchy_toggle :: proc(s:^Session) {library_select(s,.Editor if state_hierarchy_panel(s,nil).checked else .Hierarchy)}
-@(private="file") git_toggle :: proc(s:^Session) {library_select(s,.Content if state_source_control(s,nil).checked else .Git)}
-@(private="file") input_release :: proc(s:^Session) {if player_processes_captured(s) {player_processes_release(s)} else {play_release_input(s)}}
-
-@(private="file")
-shortcuts_show :: proc(s:^Session) {
-    ui.popup_close(s.gui.ctx)
-    s.gui.modal,s.gui.modal_scroll=.Shortcuts,0
-}
-
-@(private="file")
-graphics_toggle :: proc(s:^Session) {
-    g:=s.gui
-    if ui.popup_is_open(g.ctx,graphics_popup(g)) {ui.popup_close(g.ctx);return}
-    anchor,_:=ui.widget_rect(g.ctx,shell_id(g,"graphics"))
-    ui.popup_open(g.ctx,graphics_popup(g),anchor)
-}
-
-// A chat folded with its panel comes back with it instead of closing.
-@(private="file")
-chat_toggle :: proc(s:^Session) {
-    switch {
-    case play_shown(s):                                  play_chat_set(s,!s.play_chat_open)
-    case ai_chat_open(s.ai) && !s.gui.layout.left_open:  s.gui.layout.left_open=true
-    case:                                                ai_chat_toggle(s.ai)
-    }
-}
-
-// Keeps the selected roots for Paste, by their ids: not their data.
-@(private="file")
-copy_roots :: proc(s:^Session) {
-    w:=shown_world(s)
-    clear(&s.copied)
-    for e in history.selection_roots(s.selection,w,context.temp_allocator) {
-        if id:=api_entity_id(w,e);id!=0 {append(&s.copied,id)}
-    }
-}
-
-// The scene plays as a simulation seen through the selected camera, with the blend of its activation.
-@(private="file")
-camera_preview_selected :: proc(s:^Session) {
-    if !camera_preview_start(s,camera_preview_target(s,shown_world(s))) {notify(s,"The camera could not be previewed: the simulation did not start")}
-}
-
 // Opens Project Settings on the layer of the project.
 @(private)
 settings_show :: proc(s:^Session) {
@@ -797,13 +870,11 @@ settings_show :: proc(s:^Session) {
 
 @(private)
 api_save_all :: proc(s:^Session,call:^api.Call) {
-    if !api_person(s) {
-        if api_turn_refused(s,call,"save what others changed: asset.save writes the assets of its turn and scene.save the document") {return}
-        if !api_guard(s,call) {return}
-        if !collab_can_save(s) {
-            api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")
-            return
-        }
+    if api_turn_refused(s,call,"save what others changed: asset.save writes the assets of its turn and scene.save the document") {return}
+    if !api_guard(s,call) {return}
+    if !collab_can_save(s) {
+        api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")
+        return
     }
     save_all(s)
     api.call_result(call,Api_Save_All_Result).dirty=documents_dirty(s)
@@ -818,6 +889,8 @@ api_commands :: proc(s:^Session,allocator:=context.temp_allocator) -> []Api_Edit
     for &b,i in bindings {
         state:=binding_state(s,&b)
         commands[i]={name=b.name,method=b.method,params=b.params,label=binding_label(&b,state),disabled=state.disabled,checked=state.checked}
+        // What it flips gives its params: those it would call with now.
+        if params:=strings.builder_make(allocator);(b.tool!="" || b.preference!="") && binding_params(s,&b,&params) {commands[i].params=strings.to_string(params)}
         if b.shortcut.set {commands[i].shortcut=shortcut_text(b.shortcut)}
     }
     return commands

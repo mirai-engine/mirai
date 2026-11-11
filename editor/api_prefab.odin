@@ -23,18 +23,20 @@ Api_Prefab_Inspect_Params :: struct {
 }
 
 Api_Prefab_Create_Params :: struct {
-    entity:Api_Entity_Text `mirai:"text,entity,label=The root of the subtree that becomes the prefab"`,
+    entities:[]string `mirai:"entity,label=The root of the subtree that becomes the prefab; several become one prefab under a new root"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=A new file inside the assets folder; omitted: beside the open scene with the name of the entity"`,
 }
 
 Api_Prefab_Entity_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity"`,
     paths:[512]u8 `mirai:"text,optional,label=Names separated by commas (name; Component; Component.field or child); none: every override of the entity"`,
+    whole:bool `mirai:"optional,label=Of the root of an instance: the overrides of every member of it, not only its own"`,
 }
 
 Api_Prefab_Apply_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity"`,
     paths:[512]u8 `mirai:"text,optional,label=Names separated by commas (name; Component; Component.field or child); none: every override of the entity"`,
+    whole:bool `mirai:"optional,label=Of the root of an instance: the overrides of every member of it, not only its own"`,
     target:Prefab_Apply_Target `mirai:"optional,label=Prefab: the prefab of the instance. Base: through that prefab, a variant, into its base"`,
 }
 
@@ -215,21 +217,20 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
     if len(r.chain)>0 {r.base=r.chain[0]}
 }
 
-// The entry of a menu on the root of an instance takes the overrides of every
-// member of it; a call names the entity whose overrides it takes.
+// Whether a call takes the overrides of every member of the instance e is the root of.
 @(private)
-api_prefab_whole :: proc(s:^Session,e:core.Entity) -> bool {
+api_prefab_whole :: proc(s:^Session,e:core.Entity,whole:bool) -> bool {
     link,linked:=prefab_link_of(edited_world(s),e)
-    return api_person(s) && linked && link.root
+    return whole && linked && link.root
 }
 
 @(private)
 api_prefab_create :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Create_Params)
     if !api_guard(s,call) {return}
-    // Several selected entities become one prefab.
-    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
+    targets,found:=api_call_named(call,edited_world(s),params.entities,"entities",call.allocator)
     if !found {return}
+    if len(targets)==0 {api.call_fail(call,api.INVALID_PARAMS,"entities: name the root of the subtree that becomes the prefab");return}
     e:=targets[0]
     path:=base.text_get(params.path[:])
     if path=="" {path=prefab_name_free(s,prefab_folder(s),entity_name(edited_world(s),e))}
@@ -238,7 +239,7 @@ api_prefab_create :: proc(s:^Session,call:^api.Call) {
         api_prefab_fail(call,error)
         return
     }
-    if api_person(s) {notify(s,fmt.tprintf("Prefab %s created",path))}
+    notify(s,fmt.tprintf("Prefab %s created",path))
     result:=api.call_result(call,Api_Prefab_Created_Result)
     result.id,result.asset=api_entity_id(edited_world(s),e),id
     if file,_,ok:=prefab_file(s,id);ok {base.text_set(result.path[:],file.path)}
@@ -259,15 +260,14 @@ api_paths_split :: proc(text:string,allocator:=context.temp_allocator) -> []stri
 api_prefab_apply :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Apply_Params)
     if !api_guard(s,call) {return}
-    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
+    e,found:=api_call_entity(call,edited_world(s),params.entity[:])
     if !found {return}
-    e:=targets[0]
-    count,error:=prefab_apply(s,e,api_paths_split(base.text_get(params.paths[:])),api_prefab_whole(s,e),params.target)
+    count,error:=prefab_apply(s,e,api_paths_split(base.text_get(params.paths[:])),api_prefab_whole(s,e,params.whole),params.target)
     if error!=.None {
         api_prefab_fail(call,error)
         return
     }
-    if api_person(s) {notify(s,fmt.tprintf(params.target==.Base?"%d overrides applied to the base":"%d overrides applied",count))}
+    notify(s,fmt.tprintf(params.target==.Base?"%d overrides applied to the base":"%d overrides applied",count))
     api.call_result(call,Api_Prefab_Count_Result)^={api_entity_id(edited_world(s),e),count}
 }
 
@@ -296,15 +296,14 @@ api_prefab_variant_create :: proc(s:^Session,call:^api.Call) {
 api_prefab_revert :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Entity_Params)
     if !api_guard(s,call) {return}
-    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
+    e,found:=api_call_entity(call,edited_world(s),params.entity[:])
     if !found {return}
-    e:=targets[0]
-    count,error:=prefab_revert(s,e,api_paths_split(base.text_get(params.paths[:])),api_prefab_whole(s,e))
+    count,error:=prefab_revert(s,e,api_paths_split(base.text_get(params.paths[:])),api_prefab_whole(s,e,params.whole))
     if error!=.None {
         api_prefab_fail(call,error)
         return
     }
-    if api_person(s) {notify(s,fmt.tprintf("%d overrides reverted",count))}
+    notify(s,fmt.tprintf("%d overrides reverted",count))
     api.call_result(call,Api_Prefab_Count_Result)^={api_entity_id(edited_world(s),e),count}
 }
 
@@ -330,13 +329,12 @@ api_prefab_refresh :: proc(s:^Session,call:^api.Call) {
 api_prefab_unlink :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Unlink_Params)
     if !api_guard(s,call) {return}
-    targets,found:=api_call_targets(call,edited_world(s),params.entity[:])
+    e,found:=api_call_entity(call,edited_world(s),params.entity[:])
     if !found {return}
-    e:=targets[0]
     if error:=prefab_unlink(s,e,params.recursive);error!=.None {
         api_prefab_fail(call,error)
         return
     }
-    if api_person(s) {notify(s,"Prefab unlinked")}
+    notify(s,"Prefab unlinked")
     api.call_result(call,Api_Edit_Result).id=api_entity_id(edited_world(s),e)
 }

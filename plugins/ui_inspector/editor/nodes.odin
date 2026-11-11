@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"
+import "mirai:core"
 import "mirai:editor"
 import "mirai:host"
 import "mirai:std/base"
@@ -651,73 +652,103 @@ node_drop :: proc(list:[]ui.Tree_Node,i:int,rect:ui.Rect,y:f32) -> Node_Drop {
     return {parent=int(list[i].parent),before=before,inside=-1,line=rect.y+rect.h,ok=true}
 }
 
-// The menu of a node of the hierarchy, and the entries of the editor the
-// document takes in place of the scene (Copy, Paste, Duplicate, Rename,
-// Delete), by their names: on every node chosen.
+// The menu of a node of the hierarchy: the entries of the document, which
+// have the keys of those of the scene while a .ui is in front.
 @(private)
 nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor.Asset_Document) {
     ctx:=s.gui.ctx
     r:=&u.records
     ux_sync(u)
-    popup:=ui.id_derive(ctx,SCOPE,"node_menu")
-    request:=""
-    if d.request_serial!=u.request_seen {
-        u.request_seen=d.request_serial
-        request=d.request
-    }
-    if ui.popup(ctx,popup,{min_width=180}) {
-        none:=u.selected<0 || u.selected>=len(r.nodes)
-        entries:=[5]string{"copy","paste","duplicate","rename","delete"}
-        labels:=[5]string{"Copy","Paste","Duplicate","Rename","Delete"}
-        for entry,i in entries {
-            off:=none if entry!="paste" else len(u.clip.records.nodes)==0
-            if ui.menu_item(ctx,ui.id(ctx,"menu_entry",i+1),labels[i],{shortcut=editor.command_shortcut_text(s,entry),disabled=off}) {request=entry}
-        }
+    if ui.popup(ctx,ui.id_derive(ctx,SCOPE,"node_menu"),{min_width=180}) {
+        for entry,i in NODE_ENTRIES {editor.command_menu_item(s,ui.id(ctx,"menu_entry",i+1),entry)}
         ui.menu_separator(ctx)
-        box:=!none && r.nodes[u.selected].kind==.Box && len(chosen_rows(u))==1
+        box:=u.selected>=0 && u.selected<len(r.nodes) && r.nodes[u.selected].kind==.Box && len(chosen_rows(u))==1
         if ui.menu_item(ctx,ui.id(ctx,"menu_widget"),"Make widget",{disabled=!box}) {make_widget(s,u,a,d)}
     }
-    if request=="" {return}
-    row:=u.selected if u.selected>=0 && u.selected<len(r.nodes) else -1
-    rows:=chosen_rows(u)
-    switch request {
-    case "copy":
-        if row>=0 {
-            author.records_copy_rows(r,rows,&u.clip,u.allocator)
-            u.clip.source=u.id
-        }
-    case "paste":
-        clip:=&u.clip.records
-        for &template in clip.components {
-            if template.widget==u.id {
-                editor.notify(s,"An interface does not hold an instance of itself")
-                return
-            }
-        }
-        if pasted:=author.records_paste_rows(r,row,&u.clip);len(pasted)>0 {
-            choose_rows(u,pasted)
-            changed(u,"Paste node" if len(pasted)==1 else "Paste nodes")
-        } else if len(clip.nodes)>0 {editor.notify(s,"That node holds no other node: choose a container")}
-    case "duplicate":
-        if row>=0 {
-            if copies:=author.records_duplicate_rows(r,rows);len(copies)>0 {
-                choose_rows(u,copies)
-                changed(u,"Duplicate node" if len(copies)==1 else "Duplicate nodes")
-            }
-        }
-    case "rename":
-        if row>=0 {
-            rename_begin(u,row)
-            if !(s.gui.layout.left_open && s.gui.layout.library_tab==.Hierarchy) {editor.notify(s,"Hierarchy shows the name to type: open it in the left panel")}
-        }
-    case "delete":
-        if row>=0 {
-            first:=author.selection_roots(r.nodes[:],rows)[0]
-            author.records_delete_rows(r,rows)
-            choose_rows(u,{min(first,len(r.nodes)-1)} if len(r.nodes)>0 else {})
-            changed(u,"Delete node" if len(rows)==1 else "Delete nodes")
+}
+
+NODE_ENTRIES :: [5]string{"ui_copy","ui_paste","ui_duplicate","ui_rename","ui_delete"}
+
+// The entries of the nodes of a .ui: what the document has chosen, in the
+// records it edits; Copy and Rename only change what the person sees.
+nodes_bind :: proc(s:^editor.Session) {
+    key :: proc(k:core.Key,modifiers:ui.Modifiers={}) -> editor.Shortcut {return {k,modifiers,true}}
+    entries:=[?]editor.Binding{
+        {name="ui_copy",view=node_copy,label="Copy",shortcut=key(.C,{.Primary}),state=node_state},
+        {name="ui_paste",view=node_paste,label="Paste",shortcut=key(.V,{.Primary}),state=node_state},
+        {name="ui_duplicate",view=node_duplicate,label="Duplicate",shortcut=key(.D,{.Primary}),state=node_state},
+        {name="ui_rename",view=node_rename,label="Rename",shortcut=key(.F2),state=node_state},
+        {name="ui_delete",view=node_delete,label="Delete",shortcut=key(.Delete),alternate=key(.Backspace),state=node_state},
+    }
+    for entry in entries {
+        entry:=entry
+        entry.document=asset.KIND_UI
+        editor.command_bind(s,entry)
+    }
+}
+
+// The document in front, the node it has chosen (-1: none) and the rows chosen.
+@(private="file")
+node_front :: proc(s:^editor.Session) -> (u:^Ui_Inspector,row:int,rows:[]int) {
+    u=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Ui_Inspector)
+    ux_sync(u)
+    row=u.selected if u.selected>=0 && u.selected<len(u.records.nodes) else -1
+    return u,row,chosen_rows(u)
+}
+
+@(private="file")
+node_state :: proc(s:^editor.Session,b:^editor.Binding) -> editor.Command_State {
+    u,row,_:=node_front(s)
+    return {disabled=len(u.clip.records.nodes)==0 if b.name=="ui_paste" else row<0}
+}
+
+@(private="file")
+node_copy :: proc(s:^editor.Session) {
+    u,_,rows:=node_front(s)
+    author.records_copy_rows(&u.records,rows,&u.clip,u.allocator)
+    u.clip.source=u.id
+}
+
+@(private="file")
+node_paste :: proc(s:^editor.Session) {
+    u,row,_:=node_front(s)
+    clip:=&u.clip.records
+    for &template in clip.components {
+        if template.widget==u.id {
+            editor.notify(s,"An interface does not hold an instance of itself")
+            return
         }
     }
+    if pasted:=author.records_paste_rows(&u.records,row,&u.clip);len(pasted)>0 {
+        choose_rows(u,pasted)
+        changed(u,"Paste node" if len(pasted)==1 else "Paste nodes")
+    } else if len(clip.nodes)>0 {editor.notify(s,"That node holds no other node: choose a container")}
+}
+
+@(private="file")
+node_duplicate :: proc(s:^editor.Session) {
+    u,_,rows:=node_front(s)
+    if copies:=author.records_duplicate_rows(&u.records,rows);len(copies)>0 {
+        choose_rows(u,copies)
+        changed(u,"Duplicate node" if len(copies)==1 else "Duplicate nodes")
+    }
+}
+
+@(private="file")
+node_rename :: proc(s:^editor.Session) {
+    u,row,_:=node_front(s)
+    rename_begin(u,row)
+    if !(s.gui.layout.left_open && s.gui.layout.library_tab==.Hierarchy) {editor.notify(s,"Hierarchy shows the name to type: open it in the left panel")}
+}
+
+@(private="file")
+node_delete :: proc(s:^editor.Session) {
+    u,_,rows:=node_front(s)
+    r:=&u.records
+    first:=author.selection_roots(r.nodes[:],rows)[0]
+    author.records_delete_rows(r,rows)
+    choose_rows(u,{min(first,len(r.nodes)-1)} if len(r.nodes)>0 else {})
+    changed(u,"Delete node" if len(rows)==1 else "Delete nodes")
 }
 
 // A node renamed in Properties keeps a name no other node has,

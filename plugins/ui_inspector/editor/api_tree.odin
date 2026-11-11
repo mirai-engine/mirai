@@ -49,6 +49,7 @@ tree_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="ui.inspect",summary="A .ui, or one of its nodes, as the document ui.write takes back: its nodes nested, each with what differs from a new node of its kind, and the styles and animations they take.",params=type_info_of(Ui_Inspect_Params),result=type_info_of(Tree_Inspect),flags={.Read_Only},run=api_tree_inspect})
     editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; a widget is a .ui of its own and another uses it by name through use. Nodes are matched by name, the others are made and those it does not declare go; a node with key shows that key of the .strings of the project, and its text is what the key says in the language texts are written in. A path its nodes bind that the game of this build lacks fails with what the game has there, and changes nothing. One step of history; the file waits for Save, or for save:true. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params=type_info_of(Ui_Write_Params),result=type_info_of(Tree_Write_Answer),run=api_tree_write})
     capture_api_register(s)
+    nodes_bind(s)
 }
 
 // ---------------------------------------------------------------- reading params

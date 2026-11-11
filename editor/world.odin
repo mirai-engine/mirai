@@ -270,6 +270,28 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
     selection.serial+=1
 }
 
+// Puts entities under a new group at their center, where they hang from when they share a parent
+// and at the top otherwise. NONE when it could not.
+entities_group :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> core.Entity {
+    if len(entities)==0 {return core.NONE}
+    center:[3]f32
+    for e in entities {center+=entity_world(w,e).position}
+    center/=f32(len(entities))
+    opened,edit_ready:=edit_open(s,"Group")
+    if !edit_ready {return core.NONE}
+    defer edit_close(s,opened)
+    parent:=entity_parent(w,entities[0])
+    for e in entities[1:] {
+        if entity_parent(w,e)!=parent {parent=core.NONE;break}
+    }
+    group:=entity_create(s,{name="Group",parent=parent,transform={position=center,rotation=1,scale={1,1,1}}})
+    if group==core.NONE {return core.NONE}
+    // The group exists once settled: its children are placed relative to where it will be.
+    core.world_settle(w)
+    for e in entities {entity_reparent(s,e,group)}
+    return group
+}
+
 // Copies entities with everything under them, next to their originals:
 // what a scene saves of each, with references inside a copy pointing to the
 // copy. Returns the copies of the entities given, in their order.
