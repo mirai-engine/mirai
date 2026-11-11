@@ -1,8 +1,7 @@
 package history
 
 import "base:runtime"
-import "core:reflect"
-import "mirai:core"
+import "mirai:std/serial"
 
 // Byte ranges of the transient fields of a type: what a copy leaves zero.
 transient_ranges :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator,error:^runtime.Allocator_Error=nil) -> [][2]int {
@@ -28,7 +27,7 @@ field_ranges :: proc(type:^runtime.Type_Info,saved:bool,allocator:runtime.Alloca
         }
         for field in 0..<int(value.field_count) {
             offset:=at+value.offsets[field]
-            if _,transient:=core.field_option(reflect.Struct_Tag(value.tags[field]),"transient");transient {
+            if tagged,_:=serial.field_tag(value.tags[field]);.Transient in tagged.flags {
                 if !saved {
                     if out!=nil {out[index^]={int(offset),value.types[field].size}}
                     index^+=1

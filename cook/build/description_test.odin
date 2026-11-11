@@ -46,6 +46,34 @@ Commented :: struct {
     }
 }
 
+// A tag std/serial does not read is an error of the build that names the
+// field and the tags there are, in any struct of a package the world reads.
+@(test)
+a_tag_that_is_not_one_is_an_error_of_the_build :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"tags")
+    if folder=="" {return}
+    engine:=project.path(folder,"engine",allocator=context.temp_allocator)
+    game:=project.path(folder,"project",allocator=context.temp_allocator)
+    for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
+        if !testing.expect(t,os.make_directory_all(path)==nil) {return}
+    }
+    source:="package core\n@(component)\nTagged :: struct {\n    reach:f32 `mirai:\"min=0,unit=m,label=How far, in a line\"`,\n    speed:f32 `mirai:\"min=0,unti=m/s\"`,\n}\nPlain :: struct {inner:struct {limit:f32 `mirai:\"max=high\"`}}\n"
+    testing.expect(t,os.write_entire_file(project.path(engine,"core","data.odin",allocator=context.temp_allocator),source)==nil)
+    p:=project.Project{root=game,engine_root=engine}
+    output:=world_generate(&p,context.temp_allocator)
+    wanted:=[][]string{{"data.odin(5:","Tagged.speed",`"unti" is not a tag of a field`,"unit="},{"data.odin(7:","Plain.limit","max="}}
+    for want in wanted {
+        found:=false
+        for message in output.errors {
+            whole:=true
+            for part in want {whole&&=strings.contains(message,part)}
+            found||=whole
+        }
+        testing.expectf(t,found,"no error says %v: %v",want,output.errors)
+    }
+    testing.expect_value(t,len(output.errors),len(wanted))
+}
+
 // @(storage,setting) is a setting of the project and setting="machine" one of
 // the machine; any other kind is an error that says what to write.
 // @(storage,scene) is no more: the message says to make it a component.

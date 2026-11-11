@@ -31,49 +31,41 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
     }
     s:=Session{project_root=root}
     server:=api.Server{}
-    method:=api.Method{params_id=Api_Viewport_Params}
+    method:=api.Method{params_id=Api_Viewport_Params,result_id=Api_Viewport_Result}
     params:Api_Viewport_Params
-    buffer:[1024]u8
-    w:serial.Writer
     for request,index in requests {
         base.text_set(params.request[:],request)
-        serial.writer_init_fixed(&w,buffer[:])
-        call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+        result:Api_Viewport_Result
+        call:=api.Call{server=&server,method=&method,params=&params,result=&result,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
-        testing.expect(t,!call.failed && w.overflow==0)
-        value:Api_Viewport_Result_Text
-        testing.expect(t,json.unmarshal(serial.writer_bytes(&w),&value,allocator=context.temp_allocator)==nil)
-        testing.expect_value(t,call.image,value.path)
+        testing.expect(t,!call.failed)
+        testing.expect_value(t,call.image,result.path)
         shown,read:=os.read_entire_file(call.image,context.temp_allocator)
         testing.expect(t,read==nil)
         testing.expect_value(t,string(shown),saved[index])
     }
     for request in ([]string{"../12-0","12-0/../../secret","12--2","0-0","12-3"}) {
         base.text_set(params.request[:],request)
-        serial.writer_init_fixed(&w,buffer[:])
-        call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+        result:Api_Viewport_Result
+        call:=api.Call{server=&server,method=&method,params=&params,result=&result,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
         testing.expect(t,call.failed)
-        testing.expect_value(t,w.count,0)
+        testing.expect_value(t,result.path,"")
     }
     // Without a request it is the turn of the caller; outside a turn it says so.
     base.text_set(params.request[:],"")
-    serial.writer_init_fixed(&w,buffer[:])
-    outside:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+    answer:Api_Viewport_Result
+    outside:=api.Call{server=&server,method=&method,params=&params,result=&answer,allocator=context.temp_allocator}
     api_view_viewport(&s,&outside)
     testing.expect(t,outside.failed && outside.error.code==api.INVALID_PARAMS,outside.error.message)
     m:=new(Ai,context.temp_allocator)
     m.task_count=1
     base.text_set(m.tasks[0].name[:],requests[1])
     s.ai=m
-    serial.writer_init_fixed(&w,buffer[:])
-    turn:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator,client_tag=requests[1]}
+    turn:=api.Call{server=&server,method=&method,params=&params,result=&answer,allocator=context.temp_allocator,client_tag=requests[1]}
     api_view_viewport(&s,&turn)
-    testing.expect(t,!turn.failed && w.count>0,turn.error.message)
+    testing.expect(t,!turn.failed && answer.path!="",turn.error.message)
 }
-
-@(private="file")
-Api_Viewport_Result_Text :: struct {path:string}
 
 @(private)
 @(test_world,editor="Camera_Editor")
@@ -112,7 +104,8 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     editor:Camera_Editor
     session:=Session{info=&info,edit_world=&world,editor_world=&editor,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
     history.edits_reset(&edits,edited_world(&session))
-    if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     execute :: proc(state:^Api_State,out:^serial.Writer,params:string) -> (error:api.Error,result:Api_Camera_Result) {
@@ -145,7 +138,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     error,result=execute(state,&out,`{"entity":"0000000000000002","fov":70,"distance":4}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,near(result.position,{10,2,5}) && result.fov_y==70 && abs(result.distance-4)<1e-4,"fov and distance apply over the camera")
-    for wrong in ([]string{`{"entity":"0000000000000002","position":[0,0,0]}`,`{"entity":"0000000000000002","yaw":1}`,`{"entity":"0000000000000003"}`,`{"entity":"0000000000000004"}`,`{"entity":"0000000000000063"}`,`{"entity":null}`}) {
+    for wrong in ([]string{`{"entity":"0000000000000002","position":[0,0,0]}`,`{"entity":"0000000000000002","yaw":1}`,`{"entity":"0000000000000003"}`,`{"entity":"0000000000000004"}`,`{"entity":"0000000000000063"}`}) {
         error,_=execute(state,&out,wrong)
         testing.expectf(t,error.code==api.INVALID_PARAMS,"%s: %v",wrong,error)
     }

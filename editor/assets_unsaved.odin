@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -222,8 +221,8 @@ assets_unsaved_store :: proc(s:^Session,folder:string) -> bool {
         if serial.file_write_atomic(file,held.data)!=.None {return false}
         append(&manifest.assets,held.path)
     }
-    data,error:=json.marshal(manifest,{},context.temp_allocator)
-    return error==nil && serial.file_write_atomic(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator),data)==.None
+    data,encoded:=serial.text_encode(manifest,.Line,context.temp_allocator)
+    return encoded && serial.file_write_atomic(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator),data)==.None
 }
 
 // Whether folder keeps unsaved assets (assets_unsaved_store).
@@ -237,7 +236,7 @@ assets_unsaved_conflict :: proc(s:^Session,folder:string) -> string {
     data,read:=os.read_entire_file(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator),context.temp_allocator)
     if read!=nil {return ""}
     manifest:Unsaved_Manifest
-    if json.unmarshal(data,&manifest,allocator=context.temp_allocator)!=nil {return ""}
+    if serial.text_decode(string(data),&manifest,context.temp_allocator)!="" {return ""}
     r:=&s.app.assets.registry
     for path in manifest.assets {
         if _,held:=asset.registry_memory_find(r,path);held {return path}
@@ -255,7 +254,7 @@ assets_unsaved_restore :: proc(s:^Session,folder:string) -> (restored:int,ok:boo
     data,read:=os.read_entire_file(project.path(folder,UNSAVED_MANIFEST,allocator=context.temp_allocator),context.temp_allocator)
     if read!=nil {return}
     manifest:Unsaved_Manifest
-    if json.unmarshal(data,&manifest,allocator=context.temp_allocator)!=nil {return}
+    if serial.text_decode(string(data),&manifest,context.temp_allocator)!="" {return}
     r:=&s.app.assets.registry
     for path in manifest.assets {
         bytes,error:=os.read_entire_file(unsaved_copy(s,folder,path),context.temp_allocator)

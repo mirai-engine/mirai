@@ -8,7 +8,6 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
-import "mirai:std/serial"
 import "mirai:host"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -329,7 +328,7 @@ api_section_preview :: proc(s:^Session,call:^api.Call) {
     w:=edited_world(s)
     p:=core.world_storage_of(w,erender.Environment_Preview)
     if s.mode!=.Edit || p==nil {
-        api.call_fail(call,api.INVALID_PARAMS,"The preview of a section is of Edit: stop Play or Simulate first")
+        api_playing(call,"the preview of a section is of Edit")
         return
     }
     if params.entity[0]==0 {
@@ -339,12 +338,7 @@ api_section_preview :: proc(s:^Session,call:^api.Call) {
         if !ok {return}
         if !section_previewed(w,e) {section_preview_toggle(s,w,e)}
     }
-    w_out:=call.out
-    serial.text_write_raw(w_out,`{"sky":`)
-    serial.text_write_string(w_out,fmt.tprintf("0x%016x",u64(api_entity_id(w,p.sky))))
-    serial.text_write_raw(w_out,`,"sun":`)
-    serial.text_write_string(w_out,fmt.tprintf("0x%016x",u64(api_entity_id(w,p.sun))))
-    serial.write_u8(w_out,'}')
+    api.call_result(call,Api_Section_Preview_Result)^={api_entity_id(w,p.sky),api_entity_id(w,p.sun)}
 }
 
 // The entity of the Scene_Reference id names; none, with the call failed, for another.
@@ -630,6 +624,15 @@ Api_Section_Edit_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity,optional,label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; omitted stops"`,
 }
 
+Api_Section_Edit_Result :: struct {
+    editing:base.Entity_Id `mirai:"label=The section edited in its world now; 0 for none"`,
+    unsaved:base.Entity_Id `mirai:"label=The section it left with unsaved changes, which stays loaded; 0 for none"`,
+}
+Api_Section_Preview_Result :: struct {
+    sky:base.Entity_Id `mirai:"label=The Sky the viewport previews; 0 for that of the document"`,
+    sun:base.Entity_Id `mirai:"label=The sun the viewport previews; 0 for that of the document"`,
+}
+
 api_section_edit :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Section_Edit_Params)
     w:=edited_world(s)
@@ -649,12 +652,7 @@ api_section_edit :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.save, then scene.open it again to edit another",SECTIONS_EDITED)
         return
     }
-    out:=call.out
-    serial.text_write_raw(out,`{"editing":`)
-    api.write_id(out,api_entity_id(w,e))
-    serial.text_write_raw(out,`,"unsaved":`)
-    api.write_id(out,kept?api_entity_id(w,left):0)
-    serial.write_u8(out,'}')
+    api.call_result(call,Api_Section_Edit_Result)^={api_entity_id(w,e),kept?api_entity_id(w,left):0}
 }
 
 // ---------------------------------------------------------------- the view

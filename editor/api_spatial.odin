@@ -62,9 +62,9 @@ Api_Ground_Result :: struct {
 @(private)
 spatial_api_register :: proc(s:^Session,st:^Api_State) {
     raycast:=Api_Raycast_Params{reach=PICK_REACH}
-    api_register(s,st,{name="scene.raycast",summary="The first mesh of the document a ray meets: the one picking in the viewport would select.",params=Api_Raycast_Params,result=Api_Raycast_Result,defaults=&raycast,flags={.Read_Only},run=api_scene_raycast})
-    api_register(s,st,{name="scene.bounds",summary="The boxes in the world of entities of the document with what hangs from them and the box around them all.",params=Api_Spatial_Entities_Params,result=Api_Bounds_Result,flags={.Read_Only},run=api_scene_bounds})
-    api_register(s,st,{name="scene.ground",summary="Moves entities of the document up or down until the bottom of their box rests on the first surface under them as one step of undo.",params=Api_Ground_Params,result=Api_Ground_Result,run=api_scene_ground})
+    api_register(s,st,{name="scene.raycast",summary="The first mesh of the document a ray meets: the one picking in the viewport would select.",params=type_info_of(Api_Raycast_Params),result=type_info_of(Api_Raycast_Result),defaults=&raycast,flags={.Read_Only},run=api_scene_raycast})
+    api_register(s,st,{name="scene.bounds",summary="The boxes in the world of entities of the document with what hangs from them and the box around them all.",params=type_info_of(Api_Spatial_Entities_Params),result=type_info_of(Api_Bounds_Result),flags={.Read_Only},run=api_scene_bounds})
+    api_register(s,st,{name="scene.ground",summary="Moves entities of the document up or down until the bottom of their box rests on the first surface under them as one step of undo.",params=type_info_of(Api_Ground_Params),result=type_info_of(Api_Ground_Result),run=api_scene_ground})
 }
 
 // The bodies of the scene with their places from the locals; with ghosts,

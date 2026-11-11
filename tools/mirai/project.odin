@@ -10,6 +10,7 @@ import "mirai:cook/install"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 
 NEW_USAGE :: "new <folder> [--name N] [--template T] | new --list"
 BUILD_USAGE :: "build tools [--debug]"
@@ -294,6 +295,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         }
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
+    rebuilt:bool
     {
         job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode})
         defer build.job_destroy(job)
@@ -336,8 +338,26 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         }
         if target==.Game && !shipped_report(job) {return 1,"",shaders_failed}
         output=strings.clone(result.output)
+        rebuilt=result.status==.Built
     }
+    if target==.Editor && rebuilt && !editor_methods_register(root,p.root,engine) {return 1,"",shaders_failed}
     return 0,output,shaders_failed
+}
+
+// Whether an editor of the build registers every method of the project and
+// its plugins: each library has its own types, which only a run of the
+// libraries together shows. It prints the methods that did not register.
+@(private="file")
+editor_methods_register :: proc(root,folder:string,engine:build.Engine_Paths) -> bool {
+    command:=[]string{engine.editor_program,"--project",folder,"--headless","--no-gpu","--frames","1","--no-api"}
+    state,_,stderr,error:=subprocess.exec({command=command,working_dir=root},context.temp_allocator)
+    if error!=nil {
+        fmt.eprintfln("mirai build: could not run %s to check its API: %v",command[0],error)
+        return false
+    }
+    if state.exit_code==0 {return true}
+    fmt.eprintfln("mirai build: the built editor does not open the API of %s (exit code %d):\n%s",folder,state.exit_code,string(stderr))
+    return false
 }
 
 // Why the compiler stopped at the memory it may use, and how to go on.

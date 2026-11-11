@@ -23,43 +23,31 @@ import "mirai:ui"
 Ui_Tree_Api :: struct {provider:editor.Api_Provider}
 ui_tree_api_default :: proc() -> Ui_Tree_Api {return {provider={register=tree_api_register}}}
 
-@(private) TREE_ASSET_SCHEMA :: `"asset":{"type":"string","description":"the path of a .ui of the project (hud/hud.ui), or its id"}`
-@(private) TREE_INSPECT_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string","description":"name or #row: that node and what it holds, with the styles and animations they take; absent: the whole file"}}}`
-@(private) TREE_WRITE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["asset","document"],"properties":{` + TREE_ASSET_SCHEMA + `,"node":{"type":"string","description":"name or #row: the document declares that node and what it holds, and nothing else of the file changes; absent: the whole file"},"document":{"type":"object","description":"as ui.inspect gives it: use (paths of the .ui it takes styles and tokens from, and widgets), params of the widget this file is (name to node.field, node.parameter of a use, or field of its root), tokens, styles and animations by name, and nodes nested, each {name, kind (a Node_Kind, or the name of the file of a widget it uses), text (in the language texts are written in), key (the key of the .strings it shows, which then says that text; \"\" makes one from the text; absent: the same text in every language), style, look (its own style instead), image, the keys of its layout (width, height, gap...), events, slot, children}; a use also the parameters of its widget. tokens, styles and animations it names become what it says, null takes one away, the others stay; the nodes of the file, or of node, become these, matched by name and kind. Without nodes, no node changes"},"save":{"type":"boolean","description":"writes the file now, as asset.save does, instead of leaving it for Save; a path that does not exist yet makes the .ui"}}}`
-
 // Bytes of a text of a result that no capacity of its own bounds.
 @(private) RESULT_TEXT_BYTES :: 256*1024
 
 Ui_Ok :: struct {ok:bool}
 
 Tree_Inspect :: struct {
-    document:Tree_Document `mirai:"label=What ui.write takes back"`,
+    document:serial.Json `mirai:"label=What ui.write takes back, in the grammar of the .ui as text: use (the paths of the .ui it takes styles, tokens and widgets from), params of the widget of this file, tokens, styles and animations by name, and nodes: the roots in order, each with name, kind (a ui.Node_Kind or the file of a widget it uses), text, key (the key of the .strings it shows), style or look, image, events, slot and children, and the keys of ui.Tree_Node and of its layout that differ from a new node of its kind"`,
 }
-Tree_Document :: struct {
-    use:u8 `mirai:"any,optional,label=The paths of the .ui it takes styles and tokens from and whose widgets its nodes name by the name of their file"`,
-    params:u8 `mirai:"any,optional,label=What the widget of this file takes, by name: node.field, node.parameter of a use it holds, or the field of its root"`,
-    tokens:u8 `mirai:"any,optional,label=By name: a color or a number that styles name"`,
-    styles:u8 `mirai:"any,label=The named styles, or those its nodes take, by name: extends, family, defaults (the kinds whose new nodes take it), its keys (fill, size, width, shadow...), the states hover, focus, pressed, disabled, selected and over, variants by name, and rules {variant, states, tokens and the keys of a state}"`,
-    animations:u8 `mirai:"any,label=By name: kind, loop, and from-to properties with seconds and ease (of std/math), tracks of a Clip with the keys of std/anim, or parts of a Sequence or a Parallel"`,
-    nodes:[1]Tree_Document_Node `mirai:"list,label=The roots in order, each also with the keys of ui.Tree_Node and of its layout that differ from a new node of its kind, and a use with the parameters of its widget; with node, that node alone"`,
+
+Ui_Inspect_Params :: struct {
+    asset:string `mirai:"label=the path of a .ui of the project (hud/hud.ui), or its id"`,
+    node:string `mirai:"optional,label=name or #row: that node and what it holds, with the styles and animations they take; absent: the whole file"`,
 }
-Tree_Document_Node :: struct {
-    name:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,label=What ui.write matches it by"`,
-    kind:u8 `mirai:"any,optional,label=A ui.Node_Kind, or the name of the file of a widget it uses"`,
-    text:[RESULT_TEXT_BYTES]u8 `mirai:"text,optional,label=In the language texts are written in"`,
-    key:type_of(asset.String_Key{}.name) `mirai:"text,optional,label=The key of the .strings it shows, which says text; absent: text in every language"`,
-    style:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,optional,label=The named style it takes; empty: none, where its kind would take one; absent: the one its kind takes"`,
-    look:u8 `mirai:"any,optional,label=Its own look, instead of style: a style without family; with extends it says what it changes of that style, which it follows otherwise"`,
-    image:ui.Tree_Image `mirai:"optional"`,
-    events:u8 `mirai:"any,optional,label=By trigger (shown or hidden or clicked): the animation it plays"`,
-    slot:bool `mirai:"optional,label=Whether it takes what a use of this widget holds"`,
-    children:u8 `mirai:"any,optional,label=The nodes it holds, in order, as this one"`,
+
+Ui_Write_Params :: struct {
+    asset:string `mirai:"label=the path of a .ui of the project (hud/hud.ui), or its id"`,
+    node:string `mirai:"optional,label=name or #row: the document declares that node and what it holds, and nothing else of the file changes; absent: the whole file"`,
+    document:serial.Json `mirai:"label=as ui.inspect gives it: use (paths of the .ui it takes styles and tokens from, and widgets), params of the widget this file is (name to node.field, node.parameter of a use, or field of its root), tokens, styles and animations by name, and nodes nested, each {name, kind (a Node_Kind, or the name of the file of a widget it uses), text (in the language texts are written in), key (the key of the .strings it shows, which then says that text; '' makes one from the text; absent: the same text in every language), style, look (its own style instead), image, the keys of its layout (width, height, gap...), events, slot, children}; a use also the parameters of its widget. tokens, styles and animations it names become what it says, null takes one away, the others stay; the nodes of the file, or of node, become these, matched by name and kind. Without nodes, no node changes"`,
+    save:bool `mirai:"optional,label=writes the file now, as asset.save does, instead of leaving it for Save; a path that does not exist yet makes the .ui"`,
 }
 
 @(private)
 tree_api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="ui.inspect",summary="A .ui, or one of its nodes, as the document ui.write takes back: its nodes nested, each with what differs from a new node of its kind, and the styles and animations they take.",params_schema=TREE_INSPECT_SCHEMA,result=Tree_Inspect,result_info=type_info_of(Tree_Inspect),writes_result=true,flags={.Read_Only},run=api_tree_inspect})
-    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; a widget is a .ui of its own and another uses it by name through use. Nodes are matched by name, the others are made and those it does not declare go; A node with key shows that key of the .strings of the project, and its text is what the key says in the language texts are written in. A path its nodes bind that the game of this build lacks fails with what the game has there, and changes nothing. One step of history; the file waits for Save, or for save:true. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params_schema=TREE_WRITE_SCHEMA,result=Tree_Write_Answer,result_info=type_info_of(Tree_Write_Answer),run=api_tree_write})
+    editor.api_method_register(s,{name="ui.inspect",summary="A .ui, or one of its nodes, as the document ui.write takes back: its nodes nested, each with what differs from a new node of its kind, and the styles and animations they take.",params=type_info_of(Ui_Inspect_Params),result=type_info_of(Tree_Inspect),flags={.Read_Only},run=api_tree_inspect})
+    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; a widget is a .ui of its own and another uses it by name through use. Nodes are matched by name, the others are made and those it does not declare go; a node with key shows that key of the .strings of the project, and its text is what the key says in the language texts are written in. A path its nodes bind that the game of this build lacks fails with what the game has there, and changes nothing. One step of history; the file waits for Save, or for save:true. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params=type_info_of(Ui_Write_Params),result=type_info_of(Tree_Write_Answer),run=api_tree_write})
     capture_api_register(s)
 }
 
@@ -120,12 +108,11 @@ api_tree_inspect :: proc(s:^editor.Session,call:^api.Call) {
     root,root_ok:=author.tree_arg_row(&args,&r,"node")
     if !root_ok {return}
     a:=author.assets_of(s.app.assets)
-    out:=call.out
     libs:=author.doc_libs(&args,&r)
-    serial.write_u8(out,'{')
-    api.write_key(out,"document",true)
-    author.document_write(out,a.types,&r,root,libs[:],a,&texts)
-    serial.write_u8(out,'}')
+    document:serial.Writer
+    serial.writer_init(&document,0,call.allocator)
+    author.document_write(&document,a.types,&r,root,libs[:],a,&texts)
+    api.call_result(call,Tree_Inspect).document=serial.Json(string(serial.writer_bytes(&document)))
 }
 
 Tree_Write_Answer :: struct {

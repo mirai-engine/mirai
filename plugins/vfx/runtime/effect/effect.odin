@@ -357,7 +357,7 @@ particle_values_visit :: proc(visit:Particle_Value_Visitor,user:rawptr) -> bool 
         #partial switch v in runtime.type_info_base(info).variant {
         case runtime.Type_Info_Struct:
             for i in 0..<int(v.field_count) {
-                if reflect.struct_tag_get(reflect.Struct_Tag(v.tags[i]),"mirai")=="text" {continue}
+                if tagged,_:=serial.field_tag(v.tags[i]);.Text in tagged.flags {continue}
                 at:=used
                 if at>0 {path[at]='.';at+=1}
                 if at+len(v.names[i])>len(path) {return false}

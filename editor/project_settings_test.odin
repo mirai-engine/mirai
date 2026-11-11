@@ -65,7 +65,8 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     processes:Player_Processes
     session:=Session{info=&info,edit_world=&world,editor_world=&editor,app=&app,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,inspector=&inspector,build=&building,processes=&processes,project_root=root,assets_root=project.path(root,"assets",allocator=context.temp_allocator),has_project=true}
     history.edits_reset(&edits,edited_world(&session))
-    if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"project.get")==nil {project_api_register(&session,state)}
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -99,7 +100,7 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
         {`{"identifier":"com studio"}`,"com.studio.game"},
         {`{"icon":"missing.png"}`,"does not exist in the project"},
         {`{"start_scene":"scenes/none.scene"}`,"does not exist"},
-        {`{"window":{"width":0}}`,"go from 1 to"},
+        {`{"window":{"width":0}}`,"window.width must be at least 1"},
         {`{"title":"Game"}`,"title"},
         {`{"name":""}`,"name is missing"},
     }

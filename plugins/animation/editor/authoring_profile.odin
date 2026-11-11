@@ -5,7 +5,6 @@ import "mirai:asset"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 // The tables of the modifiers of a .character.
@@ -42,34 +41,35 @@ authoring_profile_register :: proc(s:^editor.Session) {
     set.curve_pose,set.curve_drive,set.curve_material=anim.CURVE_POSE_DEFAULT,anim.CURVE_DRIVE_DEFAULT,anim.CURVE_MATERIAL_DEFAULT
     poses:=new(Profile_Poses_Params,context.temp_allocator);if poses==nil {return}
     poses.tolerance=PROFILE_POSES_TOLERANCE
-    editor.api_method_register(s,Profile_Set_Params,Authoring_Write_Result,{name="animation.modifier.set",summary="Replaces or appends the row of a table of the modifiers of a .character (IK, look, limits, grounding, rigs, curve poses) that has the key of the value, or removes it; a new .character at path is made of animation.",defaults=set,run=authoring_profile_set,writes_result=true})
-    editor.api_method_register(s,Profile_Poses_Params,Profile_Poses_Result,{name="animation.modifier.poses",summary="Makes the curve poses of a .character from the frames of a clip, each a pose that a Float curve of its name brings, measured from the pose at base: the poses of a face from an animation of them. One step of undo.",defaults=poses,run=authoring_profile_poses,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Profile_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.modifier.set",summary="Replaces or appends the row of a table of the modifiers of a .character (IK, look, limits, grounding, rigs, curve poses) that has the key of the value, or removes it; a new .character at path is made of animation.",defaults=set,run=authoring_profile_set})
+    editor.api_method_register(s,{params=type_info_of(Profile_Poses_Params),result=type_info_of(Profile_Poses_Result),name="animation.modifier.poses",summary="Makes the curve poses of a .character from the frames of a clip, each a pose that a Float curve of its name brings, measured from the pose at base: the poses of a face from an animation of them. One step of undo.",defaults=poses,run=authoring_profile_poses})
 }
 
 // The counts of the tables of the modifiers of a set, and a page of the rows of table.
 @(private)
-character_modifiers_write :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profile_Table,offset,limit:u32) {
-    out:=call.out
-    api.write_key(out,"counts");serial.text_write_raw(out,"{")
-    api.write_uint(out,"IK",u64(len(profile.ik)),true);api.write_uint(out,"Look",u64(len(profile.look)));api.write_uint(out,"Limit",u64(len(profile.limits)));api.write_uint(out,"Grounding",u64(1 if profile.grounding.count>0 else 0));api.write_uint(out,"Chain_IK",u64(len(profile.chain_ik)));api.write_uint(out,"Twist",u64(len(profile.twist)));api.write_uint(out,"Spring",u64(len(profile.springs)));api.write_uint(out,"Multi_IK",u64(len(profile.multi_ik)));api.write_uint(out,"Chain_Retarget",u64(len(profile.retarget_chains)));api.write_uint(out,"Spline_IK",u64(len(profile.spline_ik)));api.write_uint(out,"Corrective",u64(len(profile.correctives)));api.write_uint(out,"Follow",u64(len(profile.follow)));api.write_uint(out,"Curve_Pose",u64(len(profile.curve_poses)));api.write_uint(out,"Curve_Drive",u64(len(profile.curve_drives)));api.write_uint(out,"Curve_Material",u64(len(profile.curve_materials)));serial.text_write_raw(out,"}")
-    table:=table
-    api.write_key(out,"table");authoring_write_value(call,&table,type_info_of(Profile_Table))
-    program_rows(call,"ik",profile.ik if table==.IK else nil,offset,limit)
-    program_rows(call,"look",profile.look if table==.Look else nil,offset,limit)
-    program_rows(call,"limits",profile.limits if table==.Limit else nil,offset,limit)
+// The modifiers of a .character: the rows of each table and a page of the rows of one.
+character_modifiers :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profile_Table,offset,limit:u32,r:^Asset_Inspect_Result) {
+    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(1 if profile.grounding.count>0 else 0),u32(len(profile.chain_ik)),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.retarget_chains)),u32(len(profile.spline_ik)),u32(len(profile.correctives)),u32(len(profile.follow)),u32(len(profile.curve_poses)),u32(len(profile.curve_drives)),u32(len(profile.curve_materials))}
+    r.table=table
+    o,l:=offset,limit
     grounding:=[1]anim.Foot_Grounding{profile.grounding}
-    profile_constraint_rows(call,"grounding",grounding[:1 if profile.grounding.count>0 && table==.Grounding else 0],offset,limit)
-    profile_constraint_rows(call,"chain_ik",profile.chain_ik if table==.Chain_IK else nil,offset,limit)
-    profile_constraint_rows(call,"twist",profile.twist if table==.Twist else nil,offset,limit)
-    profile_constraint_rows(call,"springs",profile.springs if table==.Spring else nil,offset,limit)
-    profile_constraint_rows(call,"multi_ik",profile.multi_ik if table==.Multi_IK else nil,offset,limit)
-    program_rows(call,"retarget_chains",profile.retarget_chains if table==.Chain_Retarget else nil,offset,limit)
-    profile_constraint_rows(call,"spline_ik",profile.spline_ik if table==.Spline_IK else nil,offset,limit)
-    profile_constraint_rows(call,"correctives",profile.correctives if table==.Corrective else nil,offset,limit)
-    profile_constraint_rows(call,"follow",profile.follow if table==.Follow else nil,offset,limit)
-    program_rows(call,"curve_poses",profile.curve_poses if table==.Curve_Pose else nil,offset,limit)
-    program_rows(call,"curve_drives",profile.curve_drives if table==.Curve_Drive else nil,offset,limit)
-    program_rows(call,"curve_materials",profile.curve_materials if table==.Curve_Material else nil,offset,limit)
+    switch table {
+    case .IK: r.ik=authoring_pages(call,profile.ik,o,l,anim.IK_Constraint)
+    case .Look: r.look=authoring_pages(call,profile.look,o,l,anim.Look_Constraint)
+    case .Limit: r.limits=authoring_pages(call,profile.limits,o,l,anim.Rotation_Constraint)
+    case .Grounding: r.grounding=authoring_pages(call,grounding[:1 if profile.grounding.count>0 else 0],o,l,Profile_Grounding_Params)
+    case .Chain_IK: r.chain_ik=authoring_pages(call,profile.chain_ik,o,l,Profile_Chain_Params)
+    case .Twist: r.twist=authoring_pages(call,profile.twist,o,l,Profile_Twist_Params)
+    case .Spring: r.springs=authoring_pages(call,profile.springs,o,l,Profile_Spring_Params)
+    case .Multi_IK: r.multi_ik=authoring_pages(call,profile.multi_ik,o,l,Profile_Multi_Params)
+    case .Chain_Retarget: r.retarget_chains=authoring_pages(call,profile.retarget_chains,o,l,anim.Chain_Retarget_Constraint)
+    case .Spline_IK: r.spline_ik=authoring_pages(call,profile.spline_ik,o,l,Profile_Spline_Params)
+    case .Corrective: r.correctives=authoring_pages(call,profile.correctives,o,l,Profile_Corrective_Params)
+    case .Follow: r.follow=authoring_pages(call,profile.follow,o,l,Profile_Follow_Params)
+    case .Curve_Pose: r.curve_poses=authoring_pages(call,profile.curve_poses,o,l,anim.Curve_Pose)
+    case .Curve_Drive: r.curve_drives=authoring_pages(call,profile.curve_drives,o,l,anim.Curve_Drive)
+    case .Curve_Material: r.curve_materials=authoring_pages(call,profile.curve_materials,o,l,anim.Curve_Material)
+    }
 }
 
 // rows with value in the place of the row with its key, or after them; with

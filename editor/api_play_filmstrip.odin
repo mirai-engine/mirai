@@ -8,9 +8,7 @@ import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
-import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 // A filmstrip of capture: the game stepped as play.step steps it and
 // drawn before the first tick and every some ticks, a cell of each drawing
@@ -46,17 +44,17 @@ Api_Filmstrip :: struct {
 // Writes to path a filmstrip of the ticks a run keeps around one, played again
 // on the World of the run, which is put back after; what it answers as JSON,
 // or "" after failing the call.
-api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:string) -> string {
-    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"A filmstrip needs a GPU");return ""}
-    if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return ""}
+api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:string) -> Api_Capture_Result {
+    if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"A filmstrip needs a GPU");return {}}
+    if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return {}}
     h:=r.history
     oldest,newest,_,_,_:=history_span(h)
     from:=tick>oldest+FILMSTRIP_PAST_AROUND?tick-FILMSTRIP_PAST_AROUND:oldest
     to:=min(tick+FILMSTRIP_PAST_AROUND,newest)
     first:=history_frame_for(h,from)
-    if first==0 {api_history_older(call,h,from);return ""}
+    if first==0 {api_history_older(call,h,from);return {}}
     file,writable:=api_output_file(s,call,path,call.allocator)
-    if !writable {return ""}
+    if !writable {return {}}
     span:=to>from?to-from:0
     every:=max(span/(FILMSTRIP_PAST_CELLS-1),1)
     strip:=new(Api_Filmstrip,call.allocator)
@@ -65,7 +63,7 @@ api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:stri
     strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
     defer img.sheet_destroy(&strip.sheet)
     saved,copied:=history_save(s,r)
-    if !copied {api.call_fail(call,api.SERVER_ERROR,"No memory for a copy of the World to play its past on; the game stays as it is");return ""}
+    if !copied {api.call_fail(call,api.SERVER_ERROR,"No memory for a copy of the World to play its past on; the game stays as it is");return {}}
     problem:string
     {
         kept:=extras_mark(s.app)
@@ -73,10 +71,10 @@ api_filmstrip_around :: proc(s:^Session,call:^api.Call,r:^Run,tick:u64,path:stri
         problem=api_filmstrip_past_cells(s,r,strip,first,to,every)
     }
     history_restore(s,r,&saved)
-    if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
+    if problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return {}}
     sheet:=strip.sheet
     strip.sheet={}
-    if problem:=api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return ""}
+    if problem:=api_png_write(s,file,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return {}}
     return api_filmstrip_result(file,sheet,strip.cells[:strip.taken],false,call.allocator,strip.counted)
 }
 
@@ -195,7 +193,7 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
 api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:string,shown:bool) {
     defer img.sheet_destroy(&strip.sheet)
     r:=run_player(s,strip.run.owner,strip.run.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api_no_game(call);return}
     if strip.run.owner==0 && !play_paused(s) {play_pause(s,true,stepped=true)}
     if problem:=api_filmstrip_take(s,strip,0);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     ran,_,problem:=api_step_run(s,&strip.run,api_step_frame)
@@ -207,36 +205,20 @@ api_filmstrip_run :: proc(s:^Session,call:^api.Call,strip:^Api_Filmstrip,path:st
     // The write takes the pixels.
     strip.sheet={}
     if problem:=api_png_write(s,path,sheet.image.pixels,sheet.image.width,sheet.image.height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
-    serial.text_write_raw(call.out,api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator,strip.counted,ran))
+    api.call_result(call,Api_Capture_Result)^=api_filmstrip_result(path,sheet,strip.cells[:strip.taken],strip.follow!=core.NONE,call.allocator,strip.counted,ran)
     if shown {api.call_image(call,path)}
 }
 
 // What a filmstrip answers besides its image: where it is, its grid and the tick of each cell.
 @(private)
-api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_Cell,followed:bool,allocator:mem.Allocator,counted:=Api_Capture_Seen{},ticks:=-1) -> string {
-    out:serial.Writer
-    serial.writer_init(&out,1024,allocator)
-    serial.text_write_raw(&out,`{"path":`);serial.text_write_string(&out,path)
-    api.write_int(&out,"width",i64(sheet.image.width));api.write_int(&out,"height",i64(sheet.image.height))
-    api.write_int(&out,"columns",i64(sheet.columns));api.write_int(&out,"rows",i64(sheet.rows))
-    if ticks>=0 {api.write_int(&out,"ticks",i64(ticks))}
-    api.write_key(&out,"cell");serial.write_u8(&out,'[')
-    serial.text_write_int(&out,i64(sheet.tile.x));serial.write_u8(&out,',');serial.text_write_int(&out,i64(sheet.tile.y))
-    serial.write_u8(&out,']')
-    api.write_key(&out,"cells");serial.write_u8(&out,'[')
-    for &cell,i in cells {
-        if i>0 {serial.write_u8(&out,',')}
-        serial.text_write_raw(&out,`{"tick":`);serial.text_write_uint(&out,cell.tick)
-        if followed {
-            api.write_key(&out,"at")
-            if cell.seen {api.write_list(&out,cell.at[:])} else {serial.text_write_raw(&out,"null")}
-        }
-        serial.write_u8(&out,'}')
+api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_Cell,followed:bool,allocator:mem.Allocator,counted:=Api_Capture_Seen{},ticks:=0) -> (r:Api_Capture_Result) {
+    r={path=api.clone_text(allocator,path),width=sheet.image.width,height=sheet.image.height,columns=sheet.columns,rows=sheet.rows,ticks=ticks,cell={int(sheet.tile.x),int(sheet.tile.y)},seen=counted}
+    r.cells=make([]Api_Capture_Cell,len(cells),allocator)
+    for &cell,i in r.cells {
+        cell.tick=cells[i].tick
+        if followed && cells[i].seen {cell.at=make([]f32,2,allocator);copy(cell.at,cells[i].at[:])}
     }
-    serial.write_u8(&out,']')
-    api_capture_seen_write(&out,counted)
-    serial.write_u8(&out,'}')
-    return string(serial.writer_bytes(&out))
+    return
 }
 
 // A cell of the filmstrip: the game drawn now, the part of it it shows put

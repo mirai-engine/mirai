@@ -42,107 +42,59 @@ Api_Play_Scenario_Result :: struct {
     passed:bool `mirai:"label=Every scenario passed"`,
     total:int `mirai:"label=Scenarios it ran"`,
     failed:int `mirai:"label=Scenarios that failed"`,
-    scenarios:[1]Api_Scenario_Report `mirai:"list,label=One per file in the order of their names"`,
+    scenarios:[]Api_Scenario_Report `mirai:"label=One per file in the order of their names"`,
 }
 Api_Scenario_Report :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The file: relative to the project when it is inside"`,
-    scene:[API_PATH_BYTES]u8 `mirai:"text,label=The scene it played as the file names it; empty: the one open"`,
+    path:string `mirai:"label=The file: relative to the project when it is inside"`,
+    scene:string `mirai:"label=The scene it played as the file names it; empty: the one open"`,
     steps:int `mirai:"label=Steps of the file"`,
-    ran:[1]Api_Scenario_Step `mirai:"list,label=The steps it ran in order up to the first that failed"`,
+    ran:[]Api_Scenario_Step `mirai:"label=The steps it ran in order up to the first that failed"`,
     passed:bool,
-    failure:[API_SCENARIO_TEXT]u8 `mirai:"text,label=What failed first and why; empty when it passed"`,
+    failure:string `mirai:"label=What failed first and why; empty when it passed"`,
     tick:u64 `mirai:"label=The tick of the game when it stopped"`,
 }
 Api_Scenario_Step :: struct {
-    name:[128]u8 `mirai:"optional,text,label=The name the file gives it"`,
-    method:[64]u8 `mirai:"text"`,
-    result:u8 `mirai:"any,label=What the method answered as it answers a call; null when the call failed"`,
+    name:string `mirai:"optional,label=The name the file gives it"`,
+    method:string,
+    result:serial.Json `mirai:"label=What the method answered as it answers a call; null when the call failed"`,
     passed:bool,
     tick:u64 `mirai:"label=The tick of the game after it"`,
-    error:[API_SCENARIO_TEXT]u8 `mirai:"text,label=Why the call failed; empty when it answered"`,
+    error:string `mirai:"label=Why the call failed; empty when it answered"`,
 }
 
-// A scenario as its file gives it: texts of the file, params as JSON.
+// A scenario file; the params of a step are those of its method.
 @(private)
 Scenario :: struct {
-    scene:string,
-    start:string,
+    scene:string `mirai:"optional"`,
+    start:serial.Json `mirai:"optional"`,
     steps:[]Scenario_Step,
 }
 @(private)
 Scenario_Step :: struct {
-    name,method,params:string,
+    name:string `mirai:"optional"`,
+    method:string,
+    params:serial.Json `mirai:"optional"`,
 }
 
 @(private)
 api_play_scenario_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=Api_Play_Scenario_Params,result=Api_Play_Scenario_Result,writes_result=true,run=api_play_scenario_run})
+    api_register(s,st,{name="play.scenario.run",summary="Plays the scenarios of the project, gameplay tests written as files: each plays its scene from the first tick, runs its steps (calls of play.input, play.step, play.check, play.spawn, capture and the other play methods) and stops; says per step whether it passed, at which tick and what its method answered.",params=type_info_of(Api_Play_Scenario_Params),result=type_info_of(Api_Play_Scenario_Result),run=api_play_scenario_run})
 }
 
-// The keys of a JSON object in values, in the order of keys; problem names a
-// key it does not take, or says it is not an object. at prefixes problems.
-@(private)
-scenario_object :: proc(text,at:string,keys:[]string,values:[]string,allocator:=context.allocator) -> (problem:string) {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,text,allocator)
-    if !serial.text_accept(&r,'{') {return fmt.aprintf("%sgive an object {...}",at,allocator=allocator)}
-    if serial.text_accept(&r,'}') {return ""}
-    for {
-        key,ok:=serial.text_string(&r)
-        if !ok || !serial.text_expect(&r,':') {return fmt.aprintf("%sis not valid JSON",at,allocator=allocator)}
-        slot:=-1
-        for name,i in keys {if name==key {slot=i;break}}
-        if slot<0 {return fmt.aprintf("%s%q is not a key of it; it takes %s",at,key,strings.join(keys,", ",allocator),allocator=allocator)}
-        serial.text_peek(&r)
-        start:=r.offset
-        if !serial.text_skip(&r) {return fmt.aprintf("%s%s: the value is not valid JSON",at,key,allocator=allocator)}
-        values[slot]=r.text[start:r.offset]
-        if serial.text_accept(&r,'}') {break}
-        if !serial.text_expect(&r,',') {return fmt.aprintf("%sis not valid JSON after %s",at,key,allocator=allocator)}
-    }
-    if !serial.text_end(&r) {return fmt.aprintf("%shas text after the object",at,allocator=allocator)}
-    return ""
-}
 
 // Reads the text of a scenario file; problem says what is wrong and where.
 // The methods of its steps are checked by api_scenario_check.
 @(private)
 scenario_parse :: proc(text:string,allocator:=context.allocator) -> (sc:Scenario,problem:string) {
-    keys:=[?]string{"scene","start","steps"}
-    values:[len(keys)]string
-    if problem=scenario_object(text,"the file: ",keys[:],values[:],allocator);problem!="" {return}
-    if values[0]!="" {
-        ok:bool
-        if sc.scene,ok=api.string_value(allocator,values[0]);!ok || sc.scene=="" {return {},"scene: give the scene it plays as a path, as \"scenes/main.scene\""}
-    }
-    sc.start="{}"
-    if values[1]!="" {
-        if !strings.has_prefix(values[1],"{") {return {},"start: give the params of play.start as an object, as {\"players\": 1}"}
-        sc.start=values[1]
-    }
-    count:=api.json_count(values[2])
-    if count==0 {return {},`steps: give the steps in order, as [{"method": "play.step", "params": {"for": 60}}, {"method": "play.check", "params": {"conditions": [...]}}]`}
-    if count>API_SCENARIO_STEPS {return {},fmt.aprintf("steps: %d steps, and a scenario takes %d at most: split it into several files",count,API_SCENARIO_STEPS,allocator=allocator)}
-    items:=make([]string,count,allocator)
-    api_list_items(values[2],items)
-    sc.steps=make([]Scenario_Step,count,allocator)
-    step_keys:=[?]string{"name","method","params"}
+    if problem=serial.text_decode(text,&sc,allocator);problem!="" {return {},fmt.aprintf("the file: %s",problem,allocator=allocator)}
+    if len(sc.steps)==0 {return {},`steps: give the steps in order, as [{"method": "play.step", "params": {"for": 60}}, {"method": "play.check", "params": {"conditions": [...]}}]`}
+    if len(sc.steps)>API_SCENARIO_STEPS {return {},fmt.aprintf("steps: %d steps, and a scenario takes %d at most: split it into several files",len(sc.steps),API_SCENARIO_STEPS,allocator=allocator)}
+    if sc.start=="" {sc.start="{}"}
+    if !strings.has_prefix(string(sc.start),"{") {return {},"start: give the params of play.start as an object, as {\"players\": 1}"}
     for &step,i in sc.steps {
-        at:=fmt.aprintf("steps[%d]: ",i,allocator=allocator)
-        fields:[len(step_keys)]string
-        if problem=scenario_object(items[i],at,step_keys[:],fields[:],allocator);problem!="" {return {},problem}
-        ok:bool
-        if fields[0]!="" {
-            if step.name,ok=api.string_value(allocator,fields[0]);!ok {return {},fmt.aprintf("%sname is a text",at,allocator=allocator)}
-        }
-        if step.method,ok=api.string_value(allocator,fields[1]);!ok || step.method=="" {
-            return {},fmt.aprintf("%sgive its method, as \"method\": \"play.step\"",at,allocator=allocator)
-        }
-        step.params="{}"
-        if fields[2]!="" {
-            if !strings.has_prefix(fields[2],"{") {return {},fmt.aprintf("%sparams: give the params of %s as an object",at,step.method,allocator=allocator)}
-            step.params=fields[2]
-        }
+        if step.method=="" {return {},fmt.aprintf("steps[%d]: give its method, as \"method\": \"play.step\"",i,allocator=allocator)}
+        if step.params=="" {step.params="{}"}
+        if !strings.has_prefix(string(step.params),"{") {return {},fmt.aprintf("steps[%d]: params: give the params of %s as an object",i,step.method,allocator=allocator)}
     }
     return
 }
@@ -167,14 +119,14 @@ api_scenario_check :: proc(server:^api.Server,sc:^Scenario,allocator:=context.al
         if method==nil {return fmt.aprintf("steps[%d].method: %q is not a method of this editor; engine.describe lists them",i,step.method,allocator=allocator)}
         if refusal:=scenario_method_refusal(step.method);refusal!="" {return fmt.aprintf("steps[%d].method: %s: %s",i,step.method,refusal,allocator=allocator)}
         mark:=base.arena_mark(&server.scratch)
-        _,_,error,read:=api.params_read(server,method,step.params)
+        _,_,error,read:=api.params_read(server,method,string(step.params))
         base.arena_rewind(&server.scratch,mark)
         if !read {return fmt.aprintf("steps[%d].params: %s",i,error.message,allocator=allocator)}
-        if method.params==serial.TYPE_NONE && !api.json_valid(allocator,step.params) {return fmt.aprintf("steps[%d].params: not valid JSON",i,allocator=allocator)}
+        if method.params==serial.TYPE_NONE && !api.json_valid(allocator,string(step.params)) {return fmt.aprintf("steps[%d].params: not valid JSON",i,allocator=allocator)}
     }
     if start:=api.method_find(server,"play.start");start!=nil {
         mark:=base.arena_mark(&server.scratch)
-        _,_,error,read:=api.params_read(server,start,sc.start)
+        _,_,error,read:=api.params_read(server,start,string(sc.start))
         base.arena_rewind(&server.scratch,mark)
         if !read {return fmt.aprintf("start: %s",error.message,allocator=allocator)}
     }
@@ -215,54 +167,35 @@ api_play_scenario_run :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Scenario_Params)
     files,problem:=scenario_files(s.project_root,base.text_get(params.path[:]),call.allocator)
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    out:=call.out
-    failed:=0
-    serial.text_write_raw(out,`{"scenarios":[`)
+    result:=api.call_result(call,Api_Play_Scenario_Result)
+    result.scenarios=make([]Api_Scenario_Report,len(files),call.allocator)
     for file,i in files {
-        if i>0 {serial.write_u8(out,',')}
-        if !api_scenario_play(s,call,file,out) {failed+=1}
-        if out.overflow>0 {break}
+        result.scenarios[i]=api_scenario_play(s,call,file)
+        if !result.scenarios[i].passed {result.failed+=1}
     }
-    serial.write_u8(out,']')
-    api.write_bool(out,"passed",failed==0)
-    api.write_int(out,"total",i64(len(files)))
-    api.write_int(out,"failed",i64(failed))
-    serial.write_u8(out,'}')
+    result.passed,result.total=result.failed==0,len(files)
 }
 
-// Plays one scenario file and writes its report to out; whether it passed.
+// Plays one scenario file; its report.
 @(private)
-api_scenario_play :: proc(s:^Session,call:^api.Call,file:string,out:^serial.Writer) -> (passed:bool) {
+api_scenario_play :: proc(s:^Session,call:^api.Call,file:string) -> (report:Api_Scenario_Report) {
     server:=call.server
-    failure_buffer:[API_SCENARIO_TEXT]u8
-    failure:string
-    tick:u64
-    shown:=file
-    if root:=s.project_root;root!="" && strings.has_prefix(file,root) && len(file)>len(root) && file[len(root)]=='/' {shown=file[len(root)+1:]}
-    serial.write_u8(out,'{')
-    api.write_text(out,"path",shown,true)
+    report.path=file
+    if root:=s.project_root;root!="" && strings.has_prefix(file,root) && len(file)>len(root) && file[len(root)]=='/' {report.path=file[len(root)+1:]}
     sc:Scenario
     text,read_error:=os.read_entire_file(file,call.allocator)
     switch {
     case read_error!=nil:
-        failure=fmt.bprintf(failure_buffer[:],"the file could not be read: %s",os.error_string(read_error))
+        report.failure=fmt.aprintf("the file could not be read: %s",os.error_string(read_error),allocator=call.allocator)
     case len(text)>API_SCENARIO_FILE_BYTES:
-        failure=fmt.bprintf(failure_buffer[:],"the file has %d bytes and a scenario takes %d at most: split it",len(text),API_SCENARIO_FILE_BYTES)
+        report.failure=fmt.aprintf("the file has %d bytes and a scenario takes %d at most: split it",len(text),API_SCENARIO_FILE_BYTES,allocator=call.allocator)
     case:
-        wrong:string
-        if sc,wrong=scenario_parse(string(text),call.allocator);wrong=="" {wrong=api_scenario_check(server,&sc,call.allocator)}
-        if wrong!="" {failure=fmt.bprintf(failure_buffer[:],"%s",wrong)}
+        if sc,report.failure=scenario_parse(string(text),call.allocator);report.failure=="" {report.failure=api_scenario_check(server,&sc,call.allocator)}
     }
-    api.write_text(out,"scene",sc.scene)
-    api.write_int(out,"steps",i64(len(sc.steps)))
-    api.write_key(out,"ran");serial.write_u8(out,'[')
-    if failure=="" {failure,tick=api_scenario_steps(s,call,&sc,out,failure_buffer[:])}
-    serial.write_u8(out,']')
-    api.write_bool(out,"passed",failure=="")
-    api.write_text(out,"failure",failure)
-    api.write_uint(out,"tick",tick)
-    serial.write_u8(out,'}')
-    return failure==""
+    report.scene,report.steps=sc.scene,len(sc.steps)
+    if report.failure=="" {report.ran,report.failure,report.tick=api_scenario_steps(s,call,&sc)}
+    report.passed=report.failure==""
+    return
 }
 
 // Runs a method of the API inside this call with params as JSON, answering
@@ -301,71 +234,60 @@ scenario_step_held :: proc(params,answer:string) -> (held:bool,why:string) {
 // Plays the scene of a scenario and its steps, writing a report per step to
 // out, and stops the game; the first failure, in buffer, and the last tick.
 @(private)
-api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario,out:^serial.Writer,buffer:[]u8) -> (failure:string,tick:u64) {
+api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario) -> (ran:[]Api_Scenario_Step,failure:string,tick:u64) {
     server:=call.server
     owner:=ai_task_of_call(s,call)
     answer_buffer:[4096]u8
-    if run_find(s,owner)!=nil {
-        return fmt.bprintf(buffer,"a game is already playing: stop it (play.stop) and run the scenario again"),0
-    }
+    fail :: proc(call:^api.Call,format:string,args:..any) -> string {return fmt.aprintf(format,..args,allocator=call.allocator)}
+    if run_find(s,owner)!=nil {return nil,fail(call,"a game is already playing: stop it (play.stop) and run the scenario again"),0}
     if sc.scene!="" {
         target:=scene_file(s,sc.scene)
-        if target=="" {return fmt.bprintf(buffer,"scene: %q is not a path of a file",sc.scene),0}
-        if !os.is_file(target) {return fmt.bprintf(buffer,"scene: %s is not there",target),0}
+        if target=="" {return nil,fail(call,"scene: %q is not a path of a file",sc.scene),0}
+        if !os.is_file(target) {return nil,fail(call,"scene: %s is not there",target),0}
         if !project.path_same(target,document_file(s.document)) {
             switch {
             case owner!=0:
-                return fmt.bprintf(buffer,"scene: the scenario plays %s and the document is %s; a turn does not open another scene: run it with mirai play test, or ask the user to open that scene",sc.scene,document_path(s.document)),0
+                return nil,fail(call,"scene: the scenario plays %s and the document is %s; a turn does not open another scene: run it with mirai play test, or ask the user to open that scene",sc.scene,document_path(s.document)),0
             case document_dirty(s):
-                return fmt.bprintf(buffer,"scene: the scenario plays %s and the document %s has unsaved changes: save them (scene.save) or open %s",sc.scene,document_path(s.document),sc.scene),0
+                return nil,fail(call,"scene: the scenario plays %s and the document %s has unsaved changes: save them (scene.save) or open %s",sc.scene,document_path(s.document),sc.scene),0
             }
-            path:serial.Writer
-            serial.writer_init(&path,0,context.temp_allocator)
-            serial.text_write_raw(&path,`{"path":`);serial.text_write_string(&path,target);serial.write_u8(&path,'}')
-            if _,error,ok:=api_scenario_call(server,"scene.open",string(serial.writer_bytes(&path)),answer_buffer[:]);!ok {
-                return fmt.bprintf(buffer,"scene: %s could not be opened: %s",sc.scene,error.message),0
+            path,_:=serial.text_encode(struct{path:string}{target},.Line,context.temp_allocator)
+            if _,error,ok:=api_scenario_call(server,"scene.open",string(path),answer_buffer[:]);!ok {
+                return nil,fail(call,"scene: %s could not be opened: %s",sc.scene,error.message),0
             }
         }
     }
-    _,error,ok:=api_scenario_call(server,"play.start",sc.start,answer_buffer[:])
-    if !ok {return fmt.bprintf(buffer,"play.start: %s",error.message),0}
+    _,error,ok:=api_scenario_call(server,"play.start",string(sc.start),answer_buffer[:])
+    if !ok {return nil,fail(call,"play.start: %s",error.message),0}
     defer api_scenario_call(server,"play.stop","{}",answer_buffer[:])
+    // Each step rewinds the scratch it used, and the frames it runs free the
+    // temporary memory: what it leaves is kept after the rewind.
+    steps:=make([dynamic]Api_Scenario_Step,call.allocator)
+    answer:serial.Writer
+    serial.writer_init(&answer,0,s.app.allocator)
+    defer serial.writer_destroy(&answer)
     for &step,i in sc.steps {
-        if api_stop_asked(s) {return fmt.bprintf(buffer,"cancelled"),0}
+        if api_stop_asked(s) {return steps[:],"cancelled",tick}
         api.server_progress(server,fmt.tprintf("step %d of %d: %s",i+1,len(sc.steps),step.name!=""?step.name:step.method),i,len(sc.steps))
         method:=api.method_find(server,step.method)
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_text(out,"method",step.method,true)
-        if step.name!="" {api.write_text(out,"name",step.name)}
-        api.write_key(out,"result")
-        start:=out.count
+        serial.writer_reset(&answer)
         mark:=base.arena_mark(&server.scratch)
-        step_error,answered:=api.method_execute(server,method,step.params,out)
+        step_error,answered:=api.method_execute(server,method,string(step.params),&answer)
         server.image=""
+        why:=step_error.message
         held:=answered
-        if answered {
-            why:string
-            if held,why=scenario_step_held(step.params,string(out.data[start:min(out.count,len(out.data))]));!held {
-                failure=fmt.bprintf(buffer,"steps[%d] %s: %s",i,step.method,why)
-            }
-        } else {
-            out.count,out.overflow=start,0
-            serial.text_write_raw(out,"null")
-            failure=fmt.bprintf(buffer,"steps[%d] %s: %s",i,step.method,step_error.message)
-        }
+        if answered {held,why=scenario_step_held(string(step.params),string(serial.writer_bytes(&answer)))}
         if r,_:=api_play_run(s,call);r!=nil {
             if t:=core.world_storage_of(run_ref(s,r),core.Time);t!=nil {tick=t.tick}
         } else if held {
-            failure=fmt.bprintf(buffer,"steps[%d] %s: the game stopped",i,step.method)
-            held=false
+            held,why=false,"the game stopped"
         }
-        api.write_bool(out,"passed",held)
-        api.write_uint(out,"tick",tick)
-        api.write_text(out,"error",answered?"":step_error.message)
-        serial.write_u8(out,'}')
+        why=fmt.tprintf("steps[%d] %s: %s",i,step.method,why)
         base.arena_rewind(&server.scratch,mark)
-        if !held || out.overflow>0 {break}
+        report:=Api_Scenario_Step{name=step.name,method=step.method,result="null",passed=held,tick=tick}
+        if answered {report.result=serial.Json(strings.clone(string(serial.writer_bytes(&answer)),call.allocator))} else {report.error=strings.clone(step_error.message,call.allocator)}
+        append(&steps,report)
+        if !held {failure=strings.clone(why,call.allocator);break}
     }
-    return
+    return steps[:],failure,tick
 }

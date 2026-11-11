@@ -10,11 +10,8 @@ import "mirai:std/serial"
 // singular or the plural of a field, a single value where a list goes, a list
 // of one where a single value goes, a number or a boolean as its text where
 // only a string goes, and an enum name as base.name_find takes it. One rule
-// over the JSON Schema of the params, so a method whose handler reads them by
-// hand gets it too. For such a method it also refuses a key its schema does
-// not name, in the words of the reader of a typed one: an object with
-// properties takes only those unless its additionalProperties is true or the
-// schema of the others.
+// over the JSON Schema of the params, so the text a handler reads of them
+// (Call.raw) says what its params say.
 
 @(private="file")
 SHAPE_DEPTH :: 16
@@ -41,7 +38,7 @@ Shaper :: struct {
     checker:Checker,
     r:serial.Text_Reader,
     edits:[dynamic]Shape_Edit,
-    by_hand:bool, // the handler reads them itself: enum names as an agent writes them, and no key an object does not declare
+    names:bool, // enum names as the schema has them, and no key an object does not declare
 }
 
 @(private="file")
@@ -143,7 +140,7 @@ shape_object :: proc(c:^Shaper,node:^Shape_Node) -> bool {
             field=shape_field_meant(c,node,key,object)
             if field!=nil {append(&c.edits,Shape_Edit{at,end,serial.text_quote(field.name,c.checker.allocator)})}
         }
-        if field==nil && !node.open && c.by_hand {
+        if field==nil && !node.open && c.names {
             fields:=make([]serial.Field,len(node.fields),c.checker.allocator)
             for each,i in node.fields {fields[i].name=each.name}
             serial.text_fail_names(r,.Unknown_Field,at,nil,fields)
@@ -227,7 +224,7 @@ shape_value :: proc(c:^Shaper,node:^Shape_Node) -> bool {
         return shape_list(c,node)
     case kind=='{' && node.object:
         return shape_object(c,node)
-    case kind=='"' && len(node.names)>0 && c.by_hand:
+    case kind=='"' && len(node.names)>0 && c.names:
         return shape_name(c,node)
     case node.text && len(node.names)==0 && (kind=='t' || kind=='f' || kind=='-' || kind>='0' && kind<='9'):
         at:=r.offset
@@ -238,10 +235,8 @@ shape_value :: proc(c:^Shaper,node:^Shape_Node) -> bool {
     return serial.text_skip(r)
 }
 
-// The JSON Schema of the params of a method: the one written by hand, or that
-// of its type, in the scratch of the server.
+// The JSON Schema of the params of a method, in the scratch of the server.
 params_schema_text :: proc(s:^Server,method:^Method) -> string {
-    if method.params==serial.TYPE_NONE {return method.params_schema}
     w:serial.Writer
     serial.writer_init(&w,4096,base.arena_allocator(&s.scratch))
     method_schema_write(&w,s,method,false)
@@ -251,11 +246,14 @@ params_schema_text :: proc(s:^Server,method:^Method) -> string {
 // The params made into what schema declares; the same text when nothing
 // changes or the schema says nothing of them. problem: what they ask that
 // cannot be made valid. Text that is not JSON stays for its reader to report.
-params_shape :: proc(s:^Server,schema,params:string,by_hand:=true) -> (shaped,problem:string) {
+// names: the members of enums are also written as the schema has them, for a
+// handler that reads them from the text, and a key an object does not declare
+// is a problem.
+params_shape :: proc(s:^Server,schema,params:string,names:=false) -> (shaped,problem:string) {
     shaped=params
     if schema=="" || params=="{}" {return}
     allocator:=base.arena_allocator(&s.scratch)
-    c:=Shaper{checker={allocator=allocator},edits=make([dynamic]Shape_Edit,allocator),by_hand=by_hand}
+    c:=Shaper{checker={allocator=allocator},edits=make([dynamic]Shape_Edit,allocator),names=names}
     root:=shape_node(schema,&c,0)
     if root==nil || !root.object {return}
     serial.text_reader_init(&c.r,params,allocator)

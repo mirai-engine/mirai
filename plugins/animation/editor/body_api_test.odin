@@ -1,11 +1,9 @@
 package animation_editor
 
 import "core:fmt"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import aa "mirai:asset"
-import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import lib "mirai:std/anim"
@@ -64,14 +62,14 @@ skeleton_body_detect_saves_the_parts_and_set_corrects_them_by_name :: proc(t:^te
     before:=authoring_test_revision(f,"figure.skeleton")
     result:=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s","dry_run":true}}`,identity))
     if !testing.expect(t,result.code==0,result.message) {return}
-    text:=string(serial.writer_bytes(&f.out))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)))
     testing.expect(t,strings.contains(text,`"part":"Hand_L","bone":"root/pelvis/spine_01/clavicle_l/upperarm_l/lowerarm_l/hand_l"`))
     testing.expect(t,strings.contains(text,`"unassigned_total":1`) && strings.contains(text,`"root/ik_hand_root"`) && strings.contains(text,`"missing":[]`))
     testing.expect_value(t,authoring_test_revision(f,"figure.skeleton"),before)
 
     result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s"}}`,identity))
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect_value(t,result_shape_mismatch(Body_Result,string(serial.writer_bytes(&f.out))),"")
+    testing.expect_value(t,result_shape_mismatch(Body_Result,api.json_compact(string(serial.writer_bytes(&f.out)))),"")
     map_,bones:=body_test_view(f,t)
     if bones==nil {return}
     testing.expect(t,map_.bones[.Pelvis]==1 && map_.bones[.Toe_R]==20 && map_.manual=={})
@@ -81,7 +79,7 @@ skeleton_body_detect_saves_the_parts_and_set_corrects_them_by_name :: proc(t:^te
     if !testing.expect(t,result.code==0,result.message) {return}
     map_,bones=body_test_view(f,t)
     testing.expect(t,map_.bones[.Hand_L]==7 && map_.bones[.Elbow_L]==-1 && map_.bones[.Toe_R]==-1 && map_.manual=={.Hand_L,.Toe_R})
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"missing":["Elbow_L","Toe_R"]`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"missing":["Elbow_L","Toe_R"]`))
 
     // Detecting again keeps what a person set.
     result=authoring_test_execute(f,"detect",fmt.tprintf(`{{"asset":"%s"}}`,identity))

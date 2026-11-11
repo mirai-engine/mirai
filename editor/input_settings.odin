@@ -704,13 +704,13 @@ Api_Input_Get_Params :: struct {
 Api_Input :: struct {
     tap_seconds:f32 `mirai:"unit=s,label=How long a press may be held and still be a tap"`,
     hold_seconds:f32 `mirai:"unit=s,label=How long a press is held before it is a hold"`,
-    actions:[1]input.Action_Setting `mirai:"list,label=The actions the code declares and what drives each, as an entry of Input_Settings writes it"`,
-    changed:[1][input.ACTION_NAME]u8 `mirai:"text,list,label=The actions Input_Settings of the project changes from the defaults of the code"`,
+    actions:[]serial.Json `mirai:"label=The actions the code declares and what drives each, as an entry of Input_Settings writes it"`,
+    changed:[]string `mirai:"label=The actions Input_Settings of the project changes from the defaults of the code"`,
 }
 
 @(private)
 input_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: what drives each, as an entry of Input_Settings writes it, which of them the project changes, and the seconds of a tap and of a hold. settings.set with Input_Settings changes them.",params=Api_Input_Get_Params,result=Api_Input,writes_result=true,flags={.Read_Only},run=api_input_get})
+    api_register(s,st,{name="input.get",summary="The input actions of the game and its plugins: what drives each, as an entry of Input_Settings writes it, which of them the project changes, and the seconds of a tap and of a hold. settings.set with Input_Settings changes them.",params=type_info_of(Api_Input_Get_Params),result=type_info_of(Api_Input),flags={.Read_Only},run=api_input_get})
 }
 
 @(private)
@@ -726,23 +726,19 @@ api_input_get :: proc(s:^Session,call:^api.Call) {
         }
         append(&only,wanted)
     }
-    out:=call.out
+    r:=api.call_result(call,Api_Input)
     settings:=input_settings_of(s)
-    tap,hold:=input.TAP_SECONDS,input.HOLD_SECONDS
-    if settings!=nil && settings.tap_seconds>0 {tap=settings.tap_seconds}
-    if settings!=nil && settings.hold_seconds>0 {hold=settings.hold_seconds}
+    r.tap_seconds,r.hold_seconds=input.TAP_SECONDS,input.HOLD_SECONDS
+    if settings!=nil && settings.tap_seconds>0 {r.tap_seconds=settings.tap_seconds}
+    if settings!=nil && settings.hold_seconds>0 {r.hold_seconds=settings.hold_seconds}
+    // An action is written as Input_Settings has it, with the names of the game.
     schema:serial.Schema
     serial.schema_init(&schema,context.temp_allocator)
     defer serial.schema_destroy(&schema)
     if s.info.schema!=nil {schema.named=s.info.schema.schema.named}
     type,_:=serial.schema_add_type_info(&schema,type_info_of(input.Action_Setting))
-    serial.write_u8(out,'{')
-    api.write_key(out,"tap_seconds",true);api.write_number(out,tap)
-    api.write_key(out,"hold_seconds");api.write_number(out,hold)
-    changed:=make([dynamic]string,context.temp_allocator)
-    api.write_key(out,"actions")
-    serial.write_u8(out,'[')
-    first:=true
+    actions:=make([dynamic]serial.Json,call.allocator)
+    changed:=make([dynamic]string,call.allocator)
     for entry in core.names_of(s.info,input.Action) {
         if entry.value<0 || entry.value>=input.ACTION_CAPACITY {continue}
         if len(only)>0 && !slice.contains(only[:],entry.name) {continue}
@@ -750,16 +746,10 @@ api_input_get :: proc(s:^Session,call:^api.Call) {
         setting:=input.Action_Setting{driven=input_driven(s,action)}
         base.text_set(setting.action[:],entry.name)
         if !input_same(setting.driven,s.settings_dialog.input.code.actions[action]) {append(&changed,entry.name)}
-        if !first {serial.write_u8(out,',')}
-        first=false
-        serial.text_write(out,&schema,type,mem.ptr_to_bytes(&setting),.Line)
+        out:serial.Writer
+        serial.writer_init(&out,0,call.allocator)
+        serial.text_write(&out,&schema,type,mem.ptr_to_bytes(&setting),.Line)
+        append(&actions,serial.Json(string(serial.writer_bytes(&out))))
     }
-    serial.write_u8(out,']')
-    api.write_key(out,"changed")
-    serial.write_u8(out,'[')
-    for name,i in changed {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,name)
-    }
-    serial.text_write_raw(out,"]}")
+    r.actions,r.changed=actions[:],changed[:]
 }

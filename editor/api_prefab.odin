@@ -7,7 +7,6 @@ import "mirai:core"
 import "mirai:editor/api"
 import scene "mirai:engine/scene"
 import "mirai:std/base"
-import mm "mirai:std/math"
 import "mirai:std/serial"
 
 // The prefab.* methods of the API: the linked prefabs of prefabs.odin. Each
@@ -70,16 +69,16 @@ Api_Prefab_Refresh_Result :: struct {
 }
 
 Api_Prefab_List :: struct {
-    prefabs:[1]Api_Prefab_File `mirai:"list,label=The prefab files of the assets"`,
-    instances:[1]Api_Prefab_Instance `mirai:"list,label=The instances of the document whose root exists"`,
+    prefabs:[]Api_Prefab_File `mirai:"label=The prefab files of the assets"`,
+    instances:[]Api_Prefab_Instance `mirai:"label=The instances of the document whose root exists"`,
 }
 Api_Prefab_File :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text"`,
+    path:string,
     asset:base.Asset_Id,
 }
 Api_Prefab_Instance :: struct {
     asset:base.Asset_Id `mirai:"label=The prefab"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The file of the prefab; empty when it is missing"`,
+    path:string `mirai:"label=The file of the prefab; empty when it is missing"`,
     root:base.Entity_Id `mirai:"label=Its root: what names the instance"`,
     members:int,
     missing:bool `mirai:"label=Whether the file of its prefab is missing"`,
@@ -89,46 +88,46 @@ Api_Prefab_Instance :: struct {
 Api_Prefab_Inspect_Result :: struct {
     id:base.Entity_Id `mirai:"optional,label=With entity: the entity"`,
     locked:bool `mirai:"optional,label=With entity: whether it keeps the place its prefab gives it as a member of an instance that is not its root"`,
-    links:[1]Api_Prefab_Link `mirai:"list,optional,label=With entity: the instance that placed it in the document and then each instance the prefab of the one before places that the entity is of; empty for an entity no instance placed"`,
-    overrides:[1]Api_Prefab_Override `mirai:"list,optional,label=With entity: what it holds that its prefab does not; its placement left out"`,
+    links:[]Api_Prefab_Link `mirai:"optional,label=With entity: the instance that placed it in the document and then each instance the prefab of the one before places that the entity is of; empty for an entity no instance placed"`,
+    overrides:[]Api_Prefab_Override `mirai:"optional,label=With entity: what it holds that its prefab does not; its placement left out"`,
     stale:bool `mirai:"optional,label=With entity: whether its instance is not up to date with its prefab as its files give it now; prefab.refresh updates it"`,
     asset:base.Asset_Id `mirai:"optional,label=With asset: the prefab"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=With asset: the file of the prefab"`,
+    path:string `mirai:"optional,label=With asset: the file of the prefab"`,
     root:base.Entity_Id `mirai:"optional,label=With asset: the root of the prefab"`,
-    entities:[1]Api_Prefab_Entity `mirai:"list,optional,label=With asset: every entity of the prefab"`,
+    entities:[]Api_Prefab_Entity `mirai:"optional,label=With asset: every entity of the prefab"`,
     instances:int `mirai:"optional,label=With asset: the instances of other prefabs it places"`,
     base:Api_Asset_Id `mirai:"optional,label=With asset: the prefab its root is an instance of when it is a variant; zero when it is not"`,
-    chain:[1]Api_Asset_Id `mirai:"list,optional,label=With asset: its base, the base of that one and so on"`,
+    chain:[]Api_Asset_Id `mirai:"optional,label=With asset: its base, the base of that one and so on"`,
 }
 // base.Asset_Id where a field is named base.
 Api_Asset_Id :: base.Asset_Id
 
 Api_Prefab_Link :: struct {
     asset:base.Asset_Id `mirai:"label=The prefab"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The file of the prefab; empty when it is missing"`,
+    path:string `mirai:"label=The file of the prefab; empty when it is missing"`,
     root:base.Entity_Id `mirai:"label=The root of the instance: of the document for the first link; of the instance a prefab places for the next ones"`,
     source:base.Entity_Id `mirai:"label=The entity of the prefab the entity stands for"`,
 }
 Api_Prefab_Override :: struct {
-    path:[256]u8 `mirai:"text,label=name; child; a component or Component.field"`,
-    kind:[8]u8 `mirai:"text,label=field; added; removed; turned or child"`,
+    path:string `mirai:"label=name; child; a component or Component.field"`,
+    kind:string `mirai:"label=field; added; removed; turned or child"`,
 }
 Api_Prefab_Entity :: struct {
     id:base.Entity_Id,
-    parent:u8 `mirai:"any,label=The id of its parent; null for the root"`,
-    name:[64]u8 `mirai:"text"`,
+    parent:base.Entity_Id `mirai:"optional,label=The id of its parent; the root has none"`,
+    name:string,
 }
 
 @(private)
 prefab_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="prefab.list",summary="The prefabs of the assets and the instances of the document.",result=Api_Prefab_List,writes_result=true,flags={.Read_Only},run=api_prefab_list})
-    api_register(s,st,{name="prefab.inspect",summary="The prefab links and overrides of an entity, or the entities of a prefab.",params=Api_Prefab_Inspect_Params,result=Api_Prefab_Inspect_Result,writes_result=true,flags={.Read_Only},run=api_prefab_inspect})
-    api_register(s,st,{name="prefab.create",summary="Writes the subtree of an entity as a prefab and links the entity as its first instance.",params=Api_Prefab_Create_Params,result=Api_Prefab_Created_Result,run=api_prefab_create})
-    api_register(s,st,{name="prefab.apply",summary="Writes the overrides of an entity, a member or one an instance added, into the file of its prefab, or through a variant into its base, ends them and brings every instance up to date.",params=Api_Prefab_Apply_Params,result=Api_Prefab_Count_Result,run=api_prefab_apply})
-    api_register(s,st,{name="prefab.revert",summary="Forgets overrides of an entity, a member or one an instance added, and gives back what its prefab has: values, and no entity added by the instance.",params=Api_Prefab_Entity_Params,result=Api_Prefab_Count_Result,run=api_prefab_revert})
-    api_register(s,st,{name="prefab.refresh",summary="Brings the instances of a prefab, or of all, up to date with its file; what an instance holds on its own stays.",params=Api_Prefab_Params,result=Api_Prefab_Refresh_Result,run=api_prefab_refresh})
-    api_register(s,st,{name="prefab.variant.create",summary="Writes a variant of a prefab: a new prefab whose root is an instance of it, which follows its changes and keeps its own as overrides.",params=Api_Prefab_Variant_Params,result=Api_Prefab_Variant_Result,run=api_prefab_variant_create})
-    api_register(s,st,{name="prefab.unlink",summary="Makes the members of an instance ordinary entities.",params=Api_Prefab_Unlink_Params,result=Api_Edit_Result,run=api_prefab_unlink})
+    api_register(s,st,{name="prefab.list",summary="The prefabs of the assets and the instances of the document.",result=type_info_of(Api_Prefab_List),flags={.Read_Only},run=api_prefab_list})
+    api_register(s,st,{name="prefab.inspect",summary="The prefab links and overrides of an entity, or the entities of a prefab.",params=type_info_of(Api_Prefab_Inspect_Params),result=type_info_of(Api_Prefab_Inspect_Result),flags={.Read_Only},run=api_prefab_inspect})
+    api_register(s,st,{name="prefab.create",summary="Writes the subtree of an entity as a prefab and links the entity as its first instance.",params=type_info_of(Api_Prefab_Create_Params),result=type_info_of(Api_Prefab_Created_Result),run=api_prefab_create})
+    api_register(s,st,{name="prefab.apply",summary="Writes the overrides of an entity, a member or one an instance added, into the file of its prefab, or through a variant into its base, ends them and brings every instance up to date.",params=type_info_of(Api_Prefab_Apply_Params),result=type_info_of(Api_Prefab_Count_Result),run=api_prefab_apply})
+    api_register(s,st,{name="prefab.revert",summary="Forgets overrides of an entity, a member or one an instance added, and gives back what its prefab has: values, and no entity added by the instance.",params=type_info_of(Api_Prefab_Entity_Params),result=type_info_of(Api_Prefab_Count_Result),run=api_prefab_revert})
+    api_register(s,st,{name="prefab.refresh",summary="Brings the instances of a prefab, or of all, up to date with its file; what an instance holds on its own stays.",params=type_info_of(Api_Prefab_Params),result=type_info_of(Api_Prefab_Refresh_Result),run=api_prefab_refresh})
+    api_register(s,st,{name="prefab.variant.create",summary="Writes a variant of a prefab: a new prefab whose root is an instance of it, which follows its changes and keeps its own as overrides.",params=type_info_of(Api_Prefab_Variant_Params),result=type_info_of(Api_Prefab_Variant_Result),run=api_prefab_variant_create})
+    api_register(s,st,{name="prefab.unlink",summary="Makes the members of an instance ordinary entities.",params=type_info_of(Api_Prefab_Unlink_Params),result=type_info_of(Api_Edit_Result),run=api_prefab_unlink})
 }
 
 @(private)
@@ -150,79 +149,49 @@ api_asset_write :: proc(w:^serial.Writer,id:base.Asset_Id) {
 
 @(private)
 api_prefab_list :: proc(s:^Session,call:^api.Call) {
-    a:=s.app.assets
-    w:=call.out
-    serial.text_write_raw(w,`{"prefabs":[`)
-    first:=true
-    if a!=nil {
+    r:=api.call_result(call,Api_Prefab_List)
+    prefabs:=make([dynamic]Api_Prefab_File,call.allocator)
+    if a:=s.app.assets;a!=nil {
         assets_rescan(s)
         for &file in a.registry.files {
             if !asset.registry_prefab(&file) || !asset.registry_listed(&file) {continue}
-            if !first {serial.write_u8(w,',')}
-            first=false
-            serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,file.path)
-            api.write_key(w,"asset");api_asset_write(w,file.id)
-            serial.write_u8(w,'}')
+            append(&prefabs,Api_Prefab_File{file.path,file.id})
         }
     }
-    serial.write_u8(w,']')
-    api.write_key(w,"instances");serial.write_u8(w,'[')
-    for state,i in prefab_instances(s) {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"asset":`);api_asset_write(w,state.asset)
-        api.write_key(w,"path");serial.text_write_string(w,state.path)
-        api.write_key(w,"root");api.write_id(w,state.root)
-        api.write_key(w,"members");serial.text_write_int(w,i64(state.members))
-        api.write_key(w,"missing");api.write_flag(w,state.missing)
-        api.write_key(w,"stale");api.write_flag(w,state.stale)
-        serial.write_u8(w,'}')
-    }
-    serial.write_u8(w,']')
-    serial.write_u8(w,'}')
+    r.prefabs=prefabs[:]
+    states:=prefab_instances(s)
+    r.instances=make([]Api_Prefab_Instance,len(states),call.allocator)
+    for state,i in states {r.instances[i]={state.asset,state.path,state.root,state.members,state.missing,state.stale}}
 }
 
 @(private)
 api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Prefab_Inspect_Params)
-    w:=call.out
+    r:=api.call_result(call,Api_Prefab_Inspect_Result)
     world:=edited_world(s)
     if params.entity[0]!=0 {
         e,named:=api_call_entity(call,world,params.entity[:])
         if !named {return}
-        entity_id:=api_entity_id(world,e)
-        serial.text_write_raw(w,`{"id":`);api.write_id(w,entity_id)
-        api.write_key(w,"locked");api.write_flag(w,prefab_member_locked(s,world,e))
+        r.id,r.locked=api_entity_id(world,e),prefab_member_locked(s,world,e)
         assets_rescan(s)
-        api.write_key(w,"links");serial.write_u8(w,'[')
-        for link,at in prefab_chain(s,world,e,call.allocator) {
-            if at>0 {serial.write_u8(w,',')}
+        chain:=prefab_chain(s,world,e,call.allocator)
+        r.links=make([]Api_Prefab_Link,len(chain),call.allocator)
+        for link,at in chain {
             file,_,_:=prefab_file(s,link.asset)
-            serial.text_write_raw(w,`{"asset":`);api_asset_write(w,link.asset)
-            api.write_key(w,"path");serial.text_write_string(w,file!=nil?file.path:"")
-            api.write_key(w,"root");api.write_id(w,api_entity_id(world,link.instance))
-            api.write_key(w,"source");api.write_id(w,link.source)
-            serial.write_u8(w,'}')
+            r.links[at]={link.asset,file!=nil?file.path:"",api_entity_id(world,link.instance),link.source}
         }
-        serial.write_u8(w,']')
-        api.write_key(w,"overrides");serial.write_u8(w,'[')
         root:=prefab_instance_for(world,e)
         overrides:[]asset.Override
         known:=true
         if root!=core.NONE {overrides,known=prefab_overrides_of(s,root)}
         kinds:=[asset.Override_Kind]string{.Field="field",.Added="added",.Removed="removed",.Turned="turned",.Child="child"}
-        first:=true
+        held:=make([dynamic]Api_Prefab_Override,call.allocator)
         for &override in overrides {
-            if override.entity!=entity_id {continue}
-            if !first {serial.write_u8(w,',')}
-            first=false
-            serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,prefab_override_name(s,&override,call.allocator))
-            api.write_key(w,"kind");serial.text_write_string(w,kinds[override.kind])
-            serial.write_u8(w,'}')
+            if override.entity==r.id {append(&held,Api_Prefab_Override{prefab_override_name(s,&override,call.allocator),kinds[override.kind]})}
         }
-        serial.write_u8(w,']')
+        r.overrides=held[:]
         placed,is_instance:=scene.prefab_instance(world,root)
-        api.write_key(w,"stale");api.write_flag(w,is_instance && (!known || prefab_stale(s,placed)))
-        serial.write_u8(w,'}')
+        r.stale=is_instance && (!known || prefab_stale(s,placed))
         return
     }
     id,located:=asset_named(s,call,base.text_get(params.asset[:]),asset.KIND_SCENE,SCENE_EXTENSION,"a prefab")
@@ -234,30 +203,16 @@ api_prefab_inspect :: proc(s:^Session,call:^api.Call) {
     }
     defer prefab_scene_free(loaded)
     file,_,_:=prefab_file(s,id)
-    root,_:=asset.prefab_root(loaded)
-    serial.text_write_raw(w,`{"asset":`);api_asset_write(w,id)
-    api.write_key(w,"path");serial.text_write_string(w,file.path)
-    api.write_key(w,"root");api.write_id(w,root)
-    api.write_key(w,"entities");serial.write_u8(w,'[')
-    for row in 0..<asset.scene_entity_count(loaded) {
+    r.asset,r.path=id,strings.clone(file.path,call.allocator)
+    r.root,_=asset.prefab_root(loaded)
+    r.entities=make([]Api_Prefab_Entity,asset.scene_entity_count(loaded),call.allocator)
+    for row in 0..<len(r.entities) {
         record:=asset.scene_entity(loaded,row)
-        if row>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"id":`);api.write_id(w,record.id)
-        api.write_key(w,"parent")
-        if record.parent!=0 {api.write_id(w,record.parent)} else {serial.text_write_raw(w,"null")}
-        api.write_key(w,"name");serial.text_write_string(w,record.name)
-        serial.write_u8(w,'}')
+        r.entities[row]={record.id,record.parent,strings.clone(record.name,call.allocator)}
     }
-    serial.write_u8(w,']')
-    api.write_key(w,"instances");serial.text_write_int(w,i64(len(asset.scene_instance_roots(loaded))))
-    chain:=prefab_variant_chain(s,id)
-    api.write_key(w,"base");api_asset_write(w,len(chain)>0?chain[0]:{})
-    api.write_key(w,"chain");serial.write_u8(w,'[')
-    for link,at in chain {
-        if at>0 {serial.write_u8(w,',')}
-        api_asset_write(w,link)
-    }
-    serial.text_write_raw(w,"]}")
+    r.instances=len(asset.scene_instance_roots(loaded))
+    r.chain=prefab_variant_chain(s,id)
+    if len(r.chain)>0 {r.base=r.chain[0]}
 }
 
 // The entry of a menu on the root of an instance takes the overrides of every
