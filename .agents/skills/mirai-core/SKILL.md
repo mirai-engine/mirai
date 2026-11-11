@@ -121,6 +121,10 @@ A game is a struct in memory and a list of functions that transform it
   forward and the engine resolves the side it shows; a game never adds a half turn. A portal (a
   mirror too) shows its face toward +Z.
 - The generator does not detect mutable package variables: check for them when reading.
+- **Authored and derived data never share a component.** What a step writes at run time (a pose, a
+  screen, a value a curve moves) lives in a `@(component,derived)` component, which save,
+  Duplicate, undo and documents skip; an authored component holds only what the editor, the API or
+  game code authored.
 - **One table per component, not archetypes.** The world stores a dense table per component, without
   a query engine, and `core.changes` makes each reader process only what changed.
 - **The loop order is named stages, not numbers.** A function says in which part of the tick it runs

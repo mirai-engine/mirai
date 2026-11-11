@@ -128,6 +128,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   ([constants and variants](references/shaders.md#compilation)).
 - The engine has no Surface program: those of the tests are in `render/testdata/`.
 - A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
+- What is decided per instance (its class, the row of its material with its own values) is built
+  on the CPU when the instance is given: no stage builds it again per pixel or per hit.
 - A graphics option keeps a choice, and a preset a step above another, only where the image
   differs to the eye: what costs more and looks the same is not offered.
 - The display transform is a project setting, Neutral by default and ACES 2.0 by choice, baked
