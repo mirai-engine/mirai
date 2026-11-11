@@ -93,3 +93,44 @@ the_view_streams_ahead_of_where_it_moves_unless_it_jumped :: proc(t:^testing.T) 
     run(&sources,view,0.1,&w.seats,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect(t,sources.items[0].ahead==sources.items[0].position,"a jump is not a motion")
 }
+
+// The simulation reads the bodies the seats drive and the marks of the tick,
+// never the view: two views of the same world, at any frame rate, give the
+// same simulation sources, while the residency loads around each view. The
+// distance to them is that past what each keeps around it.
+@(test)
+the_simulation_sources_do_not_depend_on_the_view :: proc(t:^testing.T) {
+    w:Sources_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    problems:=new(core.Problems);defer free(problems)
+    body,mark,seat:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.worlds,body,core.World_Transform{transform={position={10,0,0},rotation=1,scale=1}})
+    core.add(&w.worlds,mark,core.World_Transform{transform={position={0,0,100},rotation=1,scale=1}})
+    core.add(&w.marks,mark,Streaming_Source{distance=20})
+    core.add(&w.seats,seat,input.Seat{body=body})
+    test_world_settle(&w)
+    ticks:[2][3]Simulation_Sources
+    for view_at,i in ([2][3]f32{{0,0,0},{500,0,-300}}) {
+        streaming:Streaming_Sources
+        for &tick,n in ticks[i] {
+            core.edit(&w.worlds,body).position.x=10+f32(n)
+            test_world_settle(&w)
+            scene_sources(&streaming,{position=view_at,size={640,480}},{dt=f32(i+1)/60},core.read(&w.seats),core.read(&w.marks),core.read(&w.worlds),core.read(&w.motions),problems)
+            scene_simulation_sources(&tick,core.read(&w.seats),core.read(&w.marks),core.read(&w.worlds),core.read(&w.motions),problems)
+        }
+        testing.expectf(t,streaming.count==3 && streaming.items[0].position==view_at,"the residency loads around the view: %v",streaming.items[:streaming.count])
+    }
+    testing.expect(t,ticks[0]==ticks[1],"two views decide the same, tick by tick")
+    last:=&ticks[0][2]
+    testing.expect(t,last.count==2 && last.items[0].position=={12,0,0} && last.items[1].distance==20)
+    nan:=f32(0h7FC00000)
+    Distance :: struct {low,high:[3]f32,m:f32}
+    for c in ([]Distance{{{12,0,4},{12,0,4},4},{{0,0,150},{0,0,150},30},{{0,0,110},{0,0,110},0},{{14,0,-3},{20,0,3},2},{{nan,0,0},{nan,0,0},max(f32)}}) {
+        d:=sources_distance(last,c.low,c.high)
+        testing.expectf(t,c.m==max(f32) && d>max(f32) || abs(d-c.m)<1e-4,"%v: %v m",c,d)
+    }
+    empty:Simulation_Sources
+    testing.expect(t,sources_distance(&empty,{1e6,0,0},{1e6,0,0})==0 && sources_distance(nil,{},{})==0,"without sources all is near")
+    testing.expect_value(t,problems.count,0)
+}

@@ -229,6 +229,12 @@ placed, `box_near` says how many reaches away a box is (the source's `distance` 
 library gives), `resident` leaves it resident within one and up to `RESIDENT_KEEP` if it already
 was, and `residents_past` leaves, out of a budget, the closest ones.
 
+The simulation never reads the view: what decides by distance (minds, avoidance, the order of the
+navmesh builds) reads `Simulation_Sources`, which `scene_simulation_sources` (`fixed`) gathers
+from the same bodies and marks with the code the residency shares, so a world decides the same
+headless, in the editor, with the camera anywhere and at any frame rate. `sources_distance` gives
+the metres from a box to the nearest of them, past the `distance` of each.
+
 ## Plugin `streaming`
 
 Loading policy of the `Spatial` sections, optional, with the [residency of the
