@@ -136,11 +136,8 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
     names:=rig.skeleton.names
     half_left:=[4]Keyframe{{time=0,value={.1,-.95,-.1875,0}},{time=.5,value={.1,-.95,.1875,0}},{time=.75,value={.1,-.875,0,0}},{time=1,value={.1,-.95,-.1875,0}}}
     half_right:=[4]Keyframe{{time=0,value={-.1,-.95,.1875,0}},{time=.25,value={-.1,-.875,0,0}},{time=.5,value={-.1,-.95,-.1875,0}},{time=1,value={-.1,-.95,.1875,0}}}
-    still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=.5,value={.1,-.95,0,0}}}
-    other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=.5,value={-.1,-.95,0,0}}}
     halfway,e0:=clip_add(&library,{name=base.name_hash("halfway"),loop=.Loop,tracks={{target=names[2],property=.Position,keys=half_left[:]},{target=names[3],property=.Position,keys=half_right[:]}}})
-    short,e1:=clip_add(&library,{name=base.name_hash("short"),loop=.Loop,tracks={{target=names[2],property=.Position,keys=still[:]},{target=names[3],property=.Position,keys=other[:]}}})
-    if !testing.expect(t,e0==.None && e1==.None) {return}
+    if !testing.expect(t,e0==.None) {return}
     blend:=Match_Clip{clips={0=clips[0].clips[0],1=clips[1].clips[0]},weights={0=.25,1=.25},modes=1<<1}
     measured:=[5]Match_Clip{clips[0],clips[1],clips[2],blend,{clips={0=halfway},modes=1<<1}}
     if testing.expect(t,match_database_build(&db,&library,rig,measured[:],30,weights)==.None) {
@@ -153,13 +150,32 @@ match_database_finds_each_frame_by_its_features_and_the_clip_a_trajectory_asks_f
             testing.expectf(t,largest<1e-3,"row %d of the blend is that of the blended pose, off by %v",k,largest)
         }
     }
-    // A blend whose clips last different times, one that does not loop, or a weight out of 0..1.
-    unequal:=blend;unequal.clips[1]=short
+    // The walk retimed to 1.1 s and to 0.8 s, blended half and half, lasts 0.95 s with its feet in
+    // phase: its rows are those of the walk retimed to 0.95 s.
+    paced:[3]Clip
+    for duration,i in ([3]f32{1.1,.8,.95}) {
+        l:=[4]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5*duration,value={.1,-.95,.375,0}},{time=.75*duration,value={.1,-.8,0,0}},{time=duration,value={.1,-.95,-.375,0}}}
+        r:=[4]Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25*duration,value={-.1,-.8,0,0}},{time=.5*duration,value={-.1,-.95,-.375,0}},{time=duration,value={-.1,-.95,.375,0}}}
+        error:Clip_Error
+        paced[i],error=clip_add(&library,{name=base.name_hash("paced")+u64(i),loop=.Loop,tracks={{target=names[2],property=.Position,keys=l[:]},{target=names[3],property=.Position,keys=r[:]}}})
+        if !testing.expect(t,error==.None) {return}
+    }
+    mixed:=[3]Match_Clip{clips[0],{clips={0=paced[0],1=paced[1]},weights={0=.5,1=.5},modes=1<<1},{clips={0=paced[2]},modes=1<<1}}
+    if testing.expect(t,match_database_build(&db,&library,rig,mixed[:],30,weights)==.None) {
+        a,b:=db.ranges[1],db.ranges[2]
+        largest:f32
+        for k in 0..<int(min(a.count,b.count)) {
+            difference:=match_features(&db,int(a.first)+k)-match_features(&db,int(b.first)+k)
+            for lane in difference {for v in simd.to_array(lane) {largest=max(largest,abs(v))}}
+        }
+        testing.expectf(t,a.count==b.count && largest<1e-3,"a blend of 1.1 s and 0.8 s has the %d rows of 0.95 s, not %d, off by %v",b.count,a.count,largest)
+    }
+    // A blend of a clip that does not loop, or a weight out of 0..1.
     once:=blend;once.clips[1]=clips[1].clips[0];data:=&library.clips[clips[1].clips[0]-1];data.loop=.Once
-    for refused,i in ([3]Match_Clip{unequal,once,{clips=blend.clips,weights={0=1.5,1=.5},modes=1<<1}}) {
+    for refused,i in ([2]Match_Clip{once,{clips=blend.clips,weights={0=1.5,1=.5},modes=1<<1}}) {
         attempt:=[2]Match_Clip{clips[0],refused}
         testing.expectf(t,match_database_build(&db,&library,rig,attempt[:],30,weights)==.Invalid,"blend %d is refused",i)
-        if i==1 {data.loop=.Loop}
+        if i==0 {data.loop=.Loop}
     }
 }
 
@@ -199,6 +215,76 @@ match_search_skips_runs_by_their_bounds_and_enters_a_mode_by_its_entry_clips :: 
     best,_,_=match_search(&db,falling)
     range:=match_range_of(&db,best)
     testing.expect(t,range>=0 && db.ranges[range].entry && f32(best-int(db.ranges[range].first))<=MATCH_ENTRY_SPAN*db.rate+1,"entering a mode searches the starts of its entry clips")
+}
+
+// A set with only a turn to the left, its left foot ahead, mirrored: the reflected rows turn to
+// the right with the right foot ahead, and a body asked to turn right picks them. A rig with no
+// sides to swap refuses a mirrored clip.
+@(test)
+a_mirrored_clip_adds_the_rows_of_its_reflected_pose :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    names:=rig.skeleton.names
+    // The hips go a quarter of a circle of 1.5 m to the left in 1 s, turning with it.
+    RADIUS :: 1.5/(cmath.PI/2)
+    hips,turns:[5]Keyframe
+    for &key,i in hips {
+        angle:=f32(i)/4*cmath.PI/2;turn:=math.quat_axis_angle({0,1,0},angle)
+        key={time=f32(i)/4,value={-RADIUS+RADIUS*cmath.cos(angle),1,-RADIUS*cmath.sin(angle),0}}
+        turns[i]={time=f32(i)/4,value={imag(turn),jmag(turn),kmag(turn),real(turn)}}
+    }
+    ahead:=[2]Keyframe{{time=0,value={.1,-.95,-.3,0}},{time=1,value={.1,-.95,-.3,0}}}
+    behind:=[2]Keyframe{{time=0,value={-.1,-.95,.3,0}},{time=1,value={-.1,-.95,.3,0}}}
+    turn,error:=clip_add(&library,{name=base.name_hash("turn_left"),tracks={{target=names[1],property=.Position,keys=hips[:]},{target=names[1],property=.Rotation,keys=turns[:]},{target=names[2],property=.Position,keys=ahead[:]},{target=names[3],property=.Position,keys=behind[:]}}})
+    if !testing.expect(t,error==.None) {return}
+    pairs:=[5]i32{0,1,3,2,4}
+    corrections:[5]math.Quat;scratch:[5]math.Transform
+    if rig.plane,ok=mirror_prepare(rig.skeleton.parents,pairs[:],rig.skeleton.rest,corrections[:],scratch[:]);!testing.expect(t,ok) {return}
+    rig.pairs,rig.corrections=pairs[:],corrections[:]
+    set:=[4]Match_Clip{clips[0],clips[1],{clips={0=turn},modes=1<<1},{clips={0=turn},modes=1<<1,mirror=true}}
+    db:Match_Database;defer match_database_free(&db)
+    if !testing.expect(t,match_database_build(&db,&library,rig,set[:],30)==.None) {return}
+    left,right:=db.ranges[2],db.ranges[3]
+    testing.expectf(t,right.mirror && !left.mirror && left.travel.x< -.5 && linalg.length(right.travel-{-left.travel.x,left.travel.y,left.travel.z})<1e-3,"the mirrored turn goes %v, the turn %v",right.travel,left.travel)
+    request:=Match_Request{modes=1<<1,min_rate=.5,max_rate=1}
+    request.trajectory=match_trajectory({0,0,-1.5},{1.5,0,0},3,3,{0,0,-1},{1,0,0},cmath.PI/2)
+    best,_,_:=match_search(&db,request)
+    feet:=[2]int{MATCH_FEATURES[.Foot_Position][0]+2,MATCH_FEATURES[.Foot_Position][0]+5}
+    raw:[2]f32
+    for at,k in feet {raw[k]=simd.to_array(db.features[best*MATCH_LANES+at/4])[at%4]*db.scale[at]+db.mean[at]}
+    testing.expectf(t,match_range_of(&db,best)==3 && raw[1]<raw[0]-.5,"a turn to the right plays row %d of range %d with the right foot ahead: %v",best,match_range_of(&db,best),raw)
+    rig.pairs=nil
+    testing.expect_value(t,match_database_build(&db,&library,rig,set[:],30),Match_Build_Error.Invalid)
+}
+
+// The pose a rig has, a frame of the walk and the one before, asks for that row of the walk: the
+// feet where they are and moving as they move with the body. A pose out of shape asks for the mean.
+@(test)
+match_query_pose_asks_for_the_row_of_the_feet_the_rig_has :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    db:Match_Database;defer match_database_free(&db)
+    tracks:[5]Bone_Tracks
+    if !testing.expect(t,match_database_build(&db,&library,rig,clips[:],30)==.None && skeleton_bind(&library,clips[1].clips[0],rig.skeleton,tracks[:])) {return}
+    walk:=db.ranges[1];dt:=1/db.rate
+    parents,rest:=rig.skeleton.parents,rig.skeleton.rest
+    for frame in ([3]int{3,7,22}) {
+        current,previous:[5]math.Transform
+        if !testing.expect(t,skeleton_sample(&library,tracks[:],rest,f32(frame)*dt,current[:]) && skeleton_sample(&library,tracks[:],rest,f32(frame-1)*dt,previous[:])) {return}
+        query,read:=match_query_pose(&db,parents,rig.left_foot,rig.right_foot,rig.hips,current[:],previous[:],dt,walk.travel)
+        best,_,_:=match_search(&db,{query=query,trajectory=match_row_trajectory(&db,int(walk.first)+frame),modes=1<<1})
+        testing.expectf(t,read && abs(best-int(walk.first)-frame)<=1,"the pose of frame %d asks for row %d of the walk",frame,best-int(walk.first))
+        Hostile :: struct {parents:[]i32,current:[]math.Transform,left:i32,dt:f32}
+        late:=[5]i32{-1,0,3,1,1}
+        broken:=current;broken[2].position.x=cmath.nan_f32()
+        for hostile,i in ([?]Hostile{{parents,current[:],rig.left_foot,cmath.nan_f32()},{parents,current[:],rig.left_foot,0},{parents,current[:],9,dt},{parents,current[:4],rig.left_foot,dt},{late[:],current[:],rig.left_foot,dt},{parents,broken[:],rig.left_foot,dt}}) {
+            mean,valid:=match_query_pose(&db,hostile.parents,hostile.left,rig.right_foot,rig.hips,hostile.current,previous[:],hostile.dt,walk.travel)
+            zero:=true;for lane in mean {for v in simd.to_array(lane) {zero&&=v==0}}
+            testing.expectf(t,!valid && zero,"hostile pose %d asks for the mean",i)
+        }
+    }
 }
 
 @(test)

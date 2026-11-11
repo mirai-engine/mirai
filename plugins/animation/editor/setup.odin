@@ -37,9 +37,9 @@ Setup_Blend_Sample :: struct {
     weights:[anim.MATCH_BLEND]f32 `mirai:"min=0,max=1,label=Eight: one per clip of the blend in its order, 0 past its clips; they play as shares of their sum, above 0"`,
     speed:f32 `mirai:"optional,min=0,unit=m/s,label=The speed it travels at; omitted is measured from its blended feet"`,
 }
-// Locomotion clips that loop, last the same and are in phase, searched as one clip per sample.
+// Locomotion clips that loop and are in phase, searched as one clip per sample.
 Setup_Blend :: struct {
-    clips:[anim.MATCH_BLEND][64]u8 `mirai:"text,label=2 to 8 looping locomotion clips of one mode and duration, in phase (the directions of a set); they leave the locomotion as clips of their own"`,
+    clips:[anim.MATCH_BLEND][64]u8 `mirai:"text,label=2 to 8 looping locomotion clips of one mode, in phase (the directions of a set); they leave the locomotion as clips of their own"`,
     samples:[SETUP_BLEND_SAMPLES]Setup_Blend_Sample `mirai:"optional,label=The points of the blend the search can pick, each played as those clips at its weights"`,
     min_rate:f32 `mirai:"optional,min=0,label=The least share of its speed each sample plays at, in place of min_rate of the setup; omitted or 0 keeps that"`,
     max_rate:f32 `mirai:"optional,min=0,label=The most share of its speed each sample plays at, with min_rate"`,
@@ -444,9 +444,6 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
                 if !clip.loop {authoring_failure(call,at,"Not_Loop","a looping clip",name,"The clips of a blend loop in phase",fix="Make it loop with animation.clip.edit Make_Loop, or leave it out of the blend");return}
                 if k==0 {first=clip;continue}
                 if clip.mode!=first.mode {authoring_failure(call,at,"Mixed_Modes",fmt.tprintf("a clip of the mode of %s",first.name),name,"The clips of a blend serve one locomotion mode",fix="Blend clips of one mode: idle, walk, jog and run walk; a fall or air loop falls");return}
-                if frame:=1/anim.MATCH_INFO_DEFAULT.rate;abs(clip.duration-first.duration)>frame {
-                    authoring_failure(call,at,"Unequal_Duration",fmt.tprintf("%.3f s, as %s, within %.3f s",first.duration,first.name,frame),fmt.tprintf("%.3f s",clip.duration),"The clips of a blend last the same and are in phase: the same share of each is the same moment of the step",fix="Blend clips of one duration, or retime one with animation.clip.edit");return
-                }
             }
             if blend_samples[b]==0 {authoring_failure(call,fmt.tprintf("%s.samples",path),"Required","at least one sample","none","A blend plays only at its samples",fix="Pass samples, each with eight weights, one per clip of the blend in its order and 0 past them: [1,0,0,0,0,0,0,0] plays the first alone, [0.5,0.5,0,0,0,0,0,0] half and half");return}
             if blend.min_rate!=0 || blend.max_rate!=0 {

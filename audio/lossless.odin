@@ -97,7 +97,7 @@ lossless_decode :: proc(file:[]u8,allocator:runtime.Allocator) -> (pcm:Pcm,error
         }
         lossless_convert(planes,l.block_frames,l.channels,0,frames,samples[block*l.block_frames*l.channels:])
     }
-    return {samples,l.channels,l.sample_rate},.None
+    return {samples,l.channels,l.sample_rate,0},.None
 }
 
 // Frames [first,first+count) of a decoded block to f32, interleaved.

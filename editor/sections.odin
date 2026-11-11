@@ -62,17 +62,16 @@ section_place :: proc(s:^Session,id:base.Asset_Id,point:[3]f32,name:string) -> c
     e:=entity_create(s,{name=name,transform={position=point,rotation=1,scale={1,1,1}}})
     if e==core.NONE {return core.NONE}
     if t:=core.world_table_of(w,scene.Scene_Reference);t!=nil {core.add(t,e,scene.Scene_Reference{scene=id,loaded=id})}
-    if error:=section_instantiate(s,w,e,file,{});error!=.None {notify(s,fmt.tprintf("The scene could not be placed: %s",scene.error_text(error)))}
+    if error:=section_instantiate(s,w,e,file);error!=.None {notify(s,fmt.tprintf("The scene could not be placed: %s",scene.error_text(error)))}
     return e
 }
 
-// Instantiates file under the reference e: its Ids combined with that of e,
-// its unbounded volumes ruling in the box of e.
+// Instantiates file under the reference e: its Ids combined with that of e.
 @(private)
-section_instantiate :: proc(s:^Session,w:core.World_Ref,e:core.Entity,file:^asset.Asset,extents:[3]f32) -> scene.Error {
+section_instantiate :: proc(s:^Session,w:core.World_Ref,e:core.Entity,file:^asset.Asset) -> scene.Error {
     path:=[1]base.Asset_Id{s.document.id}
     stored:=make([dynamic]scene.Stored,context.temp_allocator)
-    _,error:=scene.instantiate(w,file,&s.app.assets.types,{parent=e,documents=scene.assets_documents(s.app.assets),salt=api_entity_id(w,e),path=path[:],scope=e,scope_extents=extents,stored=&stored})
+    _,error:=scene.instantiate(w,file,&s.app.assets.types,{parent=e,documents=scene.assets_documents(s.app.assets),salt=api_entity_id(w,e),path=path[:],stored=&stored})
     stored_log(s,stored[:])
     return error
 }
@@ -106,7 +105,7 @@ sections_sync :: proc(s:^Session) {
         loaded.loaded,loaded.held=reference.scene,false
         file:=host_scene(s,reference.scene)
         if file==nil || reference.scene==s.document.id {continue}
-        if error:=section_instantiate(s,w,e,file,reference.extents);error!=.None {
+        if error:=section_instantiate(s,w,e,file);error!=.None {
             notify(s,fmt.tprintf("The scene of %s could not be loaded: %s",entity_name(w,e),scene.error_text(error)))
         }
     }
@@ -145,7 +144,7 @@ section_reload :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     }
     core.world_settle(w)
     if file!=nil {
-        if error:=section_instantiate(s,w,e,file,reference.extents);error!=.None {
+        if error:=section_instantiate(s,w,e,file);error!=.None {
             notify(s,fmt.tprintf("The scene of %s could not be loaded again: %s",entity_name(w,e),scene.error_text(error)))
         }
     }

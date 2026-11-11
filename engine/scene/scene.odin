@@ -8,7 +8,6 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
-import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -50,8 +49,6 @@ Instantiate_Desc :: struct {
     documents:Documents,    // the scenes the document references, loaded under their references; none: they stay empty
     salt:base.Entity_Id,    // the Id of the reference the document hangs from: its Ids are combined with it (id_in)
     path:[]base.Asset_Id,   // the scenes that reference this one, outermost first
-    scope:core.Entity,      // the reference of a section: its unbounded volumes rule in its box (volume.Volume.scope)
-    scope_extents:[3]f32,
     saved:bool,             // a saved game: what hangs from its references came with it, loaded as it was
     only:base.Entity_Id,    // when given, only the entity whose Id in the world (id_in with salt) is this and what hangs from it, a root; its references stay unloaded
     root:core.Entity,       // when given, the entity of the first root of the document, which keeps what it has: a spawned copy
@@ -226,7 +223,6 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
     defer host.load_phase_end(app,settling)
     core.world_settle(candidate)
     if error!=.None {return}
-    if !references {scopes_restore(candidate)}
     root_set(candidate,a.blob.header.id)
     references_resolve(candidate)
     propagate(candidate,app)
@@ -449,7 +445,7 @@ sections_load :: proc(w:core.World_Ref,scene:base.Asset_Id,asset_types:^asset.Ty
         resolved:asset.Asset
         defer asset.asset_close(&resolved)
         document:=current(desc.documents,file,&resolved) or_return
-        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,scope=section.entity,scope_extents=section.reference.extents,stored=desc.stored})
+        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,stored=desc.stored})
         report.entities+=inner.entities
         report.components+=inner.components
         report.dangling+=inner.dangling
@@ -716,20 +712,3 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
     return .None
 }
 
-// The unbounded volumes of the sections of a saved game, which does not keep
-// where they rule: each rules again in the box of the section it hangs from.
-@(private)
-scopes_restore :: proc(w:core.World_Ref) {
-    places:=core.world_table_of(w,volume.Volume)
-    references:=core.world_table_of(w,Scene_Reference)
-    parents:=core.world_table_of(w,core.Parent)
-    if places==nil || references==nil || parents==nil {return}
-    for row in 0..<core.count(places) {
-        if core.at(places,row).shape!=.Unbounded {continue}
-        section:=core.ancestor_with(parents,references,core.entity_at(places,row))
-        reference,found:=core.get(references,section)
-        if !found {continue}
-        place:=core.edit_at(places,row)
-        place.scope,place.scope_extents=section,reference.extents
-    }
-}

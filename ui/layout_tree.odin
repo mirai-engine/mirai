@@ -107,7 +107,6 @@ Layout_Text_Desc :: struct {
     size:f32,    // of its style: a line shows while the box of a line of this size fits in the element
     line:f32,    // the box of a line; one that holds a taller piece is as tall as it
     wrap:Text_Wrap,
-    cut:bool,    // a word wider than a line goes on in the next one instead of past its end
     ellipsis:bool,
     hits:bool,   // pieces of it take the pointer: frame_end gives them their rectangles
     align_x,align_y:Align,
@@ -441,10 +440,10 @@ layout_text_ask :: proc "contextless" (t:^Layout_Tree,font:^Font,text:^Layout_Te
         m:=&s.measure
         if s.box || s.pad>0 || s.solid || s.text=="" || !m.breaks {
             line+=s.width+s.gap
-            if s.box {least=max(least,s.width)} else if s.text!="" && !text.cut {least=max(least,s.width if s.pad>0 || s.solid else m.min_width)}
+            if s.box {least=max(least,s.width)} else if s.text!="" {least=max(least,s.width if s.pad>0 || s.solid else m.min_width)}
             continue
         }
-        if !text.cut {least=max(least,m.min_width)}
+        least=max(least,m.min_width)
         if len(spans)==1 {wide=m.width;continue}
         words:=layout_span_walk(t,font,&s)
         for {
@@ -564,8 +563,22 @@ layout_measure_run :: proc(g:^Layout_Measures,font:^Font,text:string,size:f32,fa
     return
 }
 
-// The words of a run, in order, as they are measured: each with the space that
-// ends it, and a line break as a word of no length after the word before it.
+// The bytes of the mark a word may end after that ends text at byte end: a
+// hyphen or a slash (1), a soft hyphen (2: drawn as a hyphen only where a line
+// breaks at it), an en or em dash or a zero width space (3); 0 for none.
+@(private)
+text_mark :: #force_inline proc "contextless" (text:string,end:int) -> int {
+    switch c:=text[end-1];c {
+    case '-','/':return 1
+    case 0xad:if end>=2 && text[end-2]==0xc2 {return 2}
+    case 0x93,0x94,0x8b:if end>=3 && text[end-3]==0xe2 && text[end-2]==0x80 {return 3}
+    }
+    return 0
+}
+
+// The words of a run, in order, as they are measured: each with the space or
+// the mark (text_mark) that ends it, and a line break as a word of no length
+// after the word before it.
 @(private)
 Layout_Walk :: struct {
     font:^Font,text:string,size:f32,face:int,space:f32,
@@ -587,7 +600,16 @@ layout_walk :: proc "contextless" (w:^Layout_Walk) -> (word:Layout_Word,bare:f32
     start:=w.at
     for i in start..<len(w.text) {
         c:=w.text[i]
-        if c!=' ' && c!='\n' {continue}
+        if c!=' ' && c!='\n' {
+            // A word ends after a mark that follows something and that a word
+            // follows, and a hyphen or a slash keeps a number after it (1/2, x-5).
+            n:=text_mark(w.text,i+1)
+            if n==0 || i+1-n<=start || i+1>=len(w.text) {continue}
+            if next:=w.text[i+1];next==' ' || next=='\n' || n==1 && next>='0' && next<='9' {continue}
+            w.at=i+1
+            bare=text_width(w.font,w.text[start:i+1],w.size,w.face)
+            return {i32(start),i32(i+1-start),bare},bare,true
+        }
         w.at=i+1
         if c=='\n' && i==start {return {i32(i+1),0,0},0,true}
         bare=text_width(w.font,w.text[start:i],w.size,w.face)
@@ -684,7 +706,7 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
     spans:=t.spans[text.spans_first:][:text.spans_len]
     y:f32
     defer if keep {text.height=max(y,text.line)}
-    f:=Flow{spans=spans,width=width if text.wrap==.Words else max(f32),cut=text.cut}
+    f:=Flow{spans=spans,width=width if text.wrap==.Words else max(f32)}
     for &s,i in spans {
         p:=Flow_Piece{span=i32(i),text=s.text,width=s.width,gap=s.gap}
         if s.box || s.pad>0 || s.solid {
@@ -726,18 +748,18 @@ Flow_Piece :: struct {
 }
 // A line being filled with the words of spans: how every text breaks. Words
 // come from layout_walk; a word that does not fit starts the next line, a
-// word wider than the line takes one of its own (or goes on in the next with
-// cut), a line gives up the space it breaks at, and pieces that no space
-// parts stay on one line. When flow_put refuses a piece the line is full: its
-// owner keeps what flow_line gives, calls flow_next and puts the piece again.
+// word wider than the line breaks after its last glyph that fits, a line gives
+// up the space it breaks at and draws the hyphen of a soft hyphen it breaks
+// at, and pieces that no space or mark parts stay on one line. When flow_put
+// refuses a piece the line is full: its owner keeps what flow_line gives,
+// calls flow_next and puts the piece again.
 @(private)
 Flow :: struct {
     spans:[]Layout_Span, // what its pieces are of
     pieces:[FLOW_PIECES]Flow_Piece,
     count:int,
     used,width:f32,
-    cut:bool,     // a word wider than the line goes on in the next one instead of past its end
-    glued:bool,   // no space follows the piece put last
+    glued:bool,   // the line may not break after the piece put last
     unit:int,     // where the pieces no space parts start: the piece,
     unit_at:int,  // the byte of its text
     unit_x:f32,   // and the place in the line
@@ -799,20 +821,28 @@ flow_put :: proc "contextless" (f:^Flow,font:^Font,p:^Flow_Piece) -> bool {
         }
         bare:=len(p.text)
         for bare>0 && p.text[bare-1]==' ' {bare-=1}
-        if f.cut && !s.box && bare>0 {
+        if !s.box && bare>0 {
             n,width:=text_prefix(font,p.text,s.size,room-s.pad,int(s.font))
+            // A line holds at least one character.
+            if n==0 && f.count==0 {
+                n=1
+                for n<len(p.text) && p.text[n]&0xc0==0x80 {n+=1}
+                width=text_width(font,p.text[:n],s.size,int(s.font))
+            }
             if n<bare {
-                if n==0 && f.count==0 {
-                    n=1
-                    for n<len(p.text) && p.text[n]&0xc0==0x80 {n+=1}
-                    width=text_width(font,p.text[:n],s.size,int(s.font))
-                }
                 if n>0 {
                     head:=p^
                     head.text,head.width,head.gap=p.text[:n],width+s.pad,0
                     flow_add(f,head)
+                    // The rest is the word less its head and the kerning across the cut,
+                    // so a long word is not measured again at each of its lines.
+                    a,b:=n-1,n+1
+                    for a>0 && p.text[a]&0xc0==0x80 {a-=1}
+                    for b<len(p.text) && p.text[b]&0xc0==0x80 {b+=1}
+                    pair:=text_width(font,p.text[a:b],s.size,int(s.font))
+                    kern:=pair-text_width(font,p.text[a:n],s.size,int(s.font))-text_width(font,p.text[n:b],s.size,int(s.font))
                     p.text=p.text[n:]
-                    p.width=text_width(font,p.text,s.size,int(s.font))+s.pad
+                    p.width-=width+kern
                 }
                 f.ready=f.count
                 return false
@@ -824,7 +854,14 @@ flow_put :: proc "contextless" (f:^Flow,font:^Font,p:^Flow_Piece) -> bool {
     }
     if !joins && f.count==FLOW_PIECES {f.ready=f.count;return false}
     flow_add(f,p^)
-    f.glued=!flow_words(f,p) || p.text=="" || p.text[len(p.text)-1]!=' '
+    f.glued=!flow_words(f,p) || p.text==""
+    if !f.glued {
+        switch text_mark(p.text,len(p.text)) {
+        case 0:f.glued=p.text[len(p.text)-1]!=' '
+        // A soft hyphen breaks only where the hyphen it draws still fits.
+        case 2:f.glued=f.used+text_width(font,"-",s.size,int(s.font))>f.width
+        }
+    }
     return true
 }
 // Room as wide as a space after what the line holds: a word ends there.
@@ -843,11 +880,14 @@ flow_line :: proc "contextless" (f:^Flow,font:^Font) -> []Flow_Piece {
     n:=f.ready
     if n>0 {
         last:=&f.pieces[n-1]
-        if flow_words(f,last) && len(last.text)>0 && last.text[len(last.text)-1]==' ' {
-            s:=&f.spans[last.span]
-            last.text=last.text[:len(last.text)-1]
-            last.width-=text_width(font," ",s.size,int(s.font))
-            if last.text=="" {n-=1}
+        if s:=&f.spans[last.span];flow_words(f,last) && len(last.text)>0 {
+            if last.text[len(last.text)-1]==' ' {
+                last.text=last.text[:len(last.text)-1]
+                last.width-=text_width(font," ",s.size,int(s.font))
+                if last.text=="" {n-=1}
+            } else if text_mark(last.text,len(last.text))==2 {
+                last.width+=text_width(font,"-",s.size,int(s.font))
+            }
         }
     }
     return f.pieces[:n]

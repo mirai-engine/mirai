@@ -119,10 +119,11 @@ breakable_events :: proc(physics:core.Ref(Physics_State)) -> []Break_Event {
 }
 
 // Strains the breakables the filter meets in a volume placed at pose, a box or a sphere, each of their
-// bodies by itself: amount N s on every bond, by the weight of the volume there; with weakening nothing
-// breaks yet. Applied once the step of the tick ran, with its hits: what it did is in breakable_events.
-strain_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,amount:f32,weakening:=false,filter:=QUERY_FILTER_DEFAULT) {
-    core.push(&requests.queue,Body_Request{kind=.Area_Strain,area=area,position=pose.position,rotation=pose.rotation,scale=pose.scale,strength=amount,override=weakening,filter=filter})
+// bodies by itself: amount N s on every bond, by the weight of the volume there, rising over blend metres
+// from its border; with weakening nothing breaks yet. Applied once the step of the tick ran, with its hits:
+// what it did is in breakable_events.
+strain_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,amount:f32,weakening:=false,filter:=QUERY_FILTER_DEFAULT,blend:f32=0) {
+    core.push(&requests.queue,Body_Request{kind=.Area_Strain,area=area,position=pose.position,rotation=pose.rotation,scale=pose.scale,blend=blend,strength=amount,override=weakening,filter=filter})
 }
 
 @(private)
@@ -130,7 +131,7 @@ strains_apply :: proc(w:^sim.World,requests:[]Body_Request) {
     for request in requests {
         if request.kind!=.Area_Strain {continue}
         scale:=request.scale=={}?[3]f32{1,1,1}:linalg.abs(request.scale)
-        region:=Break_Region{point=request.position,rotation=request.rotation,blend=request.area.blend}
+        region:=Break_Region{point=request.position,rotation=request.rotation,blend=request.blend}
         #partial switch request.area.shape {
         case .Sphere: region.radius=request.area.extents.x*max(scale.x,scale.y,scale.z)
         case .Box:    region.half_extents=request.area.extents*scale

@@ -187,7 +187,7 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
     shape.aabb=shape_aabb(w,shape,body_transform_of(body))
     shape.fat=body.type==.Static?shape.aabb:shape_fat(shape.aabb)
     shape.proxy,_=spatial.dynamic_tree_insert(tree,shape.fat,u64(index))
-    if body.type==.Static {static_log_push(w,shape.aabb)}
+    if body.type==.Static && shape.filter.block!=0 {static_log_push(w,shape.aabb)}
     if update_mass {body_update_mass(w,body_index)}
     handle:=shape_handle(w,index)
     if w.twin_count>0 {twin_source_added(w,body_index,index)}
@@ -228,7 +228,7 @@ shape_destroy_index :: proc(w:^World,index:i32,update_mass,static_log:bool) {
     body:=&w.bodies[shape.body]
     stamp(w,shape)
     stamp(w,body)
-    if static_log && body.type==.Static {static_log_push(w,shape.aabb)}
+    if static_log && body.type==.Static && shape.filter.block!=0 {static_log_push(w,shape.aabb)}
     shape_destroy_contacts(w,index)
     spatial.dynamic_tree_remove(&w.trees[body.type==.Static?STATIC_TREE:DYNAMIC_TREE],shape.proxy)
     if shape.prev>=0 {stamp(w,.Shapes,shape.prev);w.shapes[shape.prev].next=shape.next} else {body.shape_list=shape.next}
@@ -462,7 +462,7 @@ shape_set_filter :: proc(w:^World,h:Shape_Handle,filter:Filter) {
     shape,index:=shape_get(w,h)
     if shape==nil {return}
     w.grounds_stale=true
-    if w.bodies[shape.body].type==.Static && shape.filter!=filter {static_log_push(w,shape.aabb)}
+    if w.bodies[shape.body].type==.Static && shape.filter!=filter && (shape.filter.block!=0 || filter.block!=0) {static_log_push(w,shape.aabb)}
     shape.filter=filter
     shape_destroy_contacts(w,index)
     shape_moved(w,index)
