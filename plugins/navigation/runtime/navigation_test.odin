@@ -69,6 +69,7 @@ Nav_Test :: struct {
     builds:Navigation_Builds,
     unloaded:[dynamic]mm.Aabb, // what the ground names unloaded
     ground:core.Ground_Queries,
+    sources:scene.Streaming_Sources, // where the world streams around: tiles near them build first
     run:Navigation_Agents,
     time:core.Time, // of the build
     tick:u64,
@@ -112,7 +113,7 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},{},
         )
         nav_test_settle(f)
-        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),core.ref(&f.sources),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
         clear(&f.ground.unloaded.items)
     }
 }
@@ -273,6 +274,39 @@ a_tile_is_published_a_fixed_number_of_ticks_after_its_build_whatever_the_threads
         threaded:=run(t,c.threads,c.blocked)
         testing.expectf(t,threaded==alone,"%d threads, blocked %v: %v, without threads %v",c.threads,c.blocked,threaded,alone)
     }
+}
+
+// With a streaming source, the marked tiles build nearest it first: with one
+// build a tick, no tile is published farther from it than one published after.
+@(test)
+tiles_build_nearest_the_streaming_sources_first :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{30,0.5,30})
+    f.nav_settings.builds=1
+    source:=mm.Vec3{-26,0,-26}
+    f.sources.items[0]={position=source,ahead=source}
+    f.sources.count=1
+    published:[256][2]i32
+    count:=0
+    farthest:=f32(0)
+    for _ in 0..<400 {
+        nav_test_step(&f)
+        c:=&f.nav.classes[0]
+        for &tile in c.mesh.tiles {
+            if !tile.used || slice.contains(published[:count],tile.data.coord) || count==len(published) {continue}
+            published[count]=tile.data.coord
+            count+=1
+            rect:=ai.nav_tile_rect(c.config,tile.data.coord)
+            away:=linalg.length(mm.Vec2{max(rect.min.x-source.x,0,source.x-rect.max.x),max(rect.min.z-source.z,0,source.z-rect.max.z)})
+            testing.expectf(t,away>=farthest-1e-3,"tile %v, %.1f m from the source, published after one %.1f m from it",tile.data.coord,away,farthest)
+            farthest=max(farthest,away)
+        }
+        if f.nav.count>0 && f.nav.classes[0].pending==0 && count>0 {break}
+    }
+    testing.expect(t,count>16 && farthest>40)
+    testing.expect_value(t,f.problems.count,0)
 }
 
 @(test)
@@ -817,7 +851,7 @@ agents_test_step :: proc(f:^Nav_Test) {
         if w:=core.edit(&f.worlds,e);w!=nil {w.transform=t} else {core.add(&f.worlds,e,core.World_Transform{transform=t})}
     }
     nav_test_settle(f)
-    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),core.ref(&f.sources),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
     navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.seats),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)

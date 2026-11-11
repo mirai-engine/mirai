@@ -40,6 +40,7 @@ NAV_FIELDS :: 64               // tiles whose heightfield is kept to build them 
 // meanwhile, and one not done by then is waited for, so a tile arrives at the same tick whatever
 // the threads do. A dev build of the AI arena takes about 9 ms a tile, under one tick at 60 Hz.
 NAV_BUILD_TICKS :: 4
+NAV_BUILD_REACH :: f32(50)    // m: reach of a streaming source with no distance, for the build order
 
 // What the application keeps to build the meshes of a world: the jobs and
 // what the build tracks of the world. None of it is the state of the world.
@@ -482,7 +483,7 @@ tile_inside :: proc "contextless" (c:^Class_Mesh,coord:[2]i32,limits:[]mm.Aabb) 
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
     bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
-    ground:core.Ref(core.Ground_Queries),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
+    ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Streaming_Sources),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
     if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
@@ -560,7 +561,7 @@ navigation_build :: proc(
     b.ticks+=1
     published,spent:=builds_publish(n,b,problems)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
-    builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
+    builds_start(n,b,physics,limits,gone,time.playing,sources.ptr,&app.jobs,problems)
     // Tiles building keep a load from being resident.
     building:=false
     for build in b.builds {building||=build.busy}
@@ -729,18 +730,23 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
     }
 }
 
-// Gathers, hashes and starts the builds of marked tiles, up to the free jobs.
+// Gathers, hashes and starts the builds of marked tiles, up to the free jobs:
+// with streaming sources, those nearest them first (scene.box_near); without,
+// in the order of the marks.
 @(private)
-builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,job_system:^jobs.Job_System,problems:^core.Problems) {
+builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Streaming_Sources,job_system:^jobs.Job_System,problems:^core.Problems) {
     b.jobs=job_system
     per_tick:=int(n.settings.builds) if n.settings.builds>0 else 4
-    due:=b.ticks+NAV_BUILD_TICKS
     for len(b.builds)<per_tick*NAV_BUILD_TICKS {
         build,error:=new(Build)
         if error!=nil {break}
         append(&b.builds,build)
     }
-    checks:=0
+    start:=Build_Start{n=n,b=b,physics=physics,limits=limits,jobs=job_system,problems=problems,per_tick=per_tick,due=b.ticks+NAV_BUILD_TICKS}
+    near:=scene.sources_near(sources,mm.MAT4_IDENTITY,NAV_BUILD_REACH)
+    // The marks nearest the sources, nearest first: no tick gathers more than NAV_CHECKS_PER_TICK.
+    nearest:[NAV_CHECKS_PER_TICK]Build_Near
+    count:=0
     // The marks that wait for their collision are looked at again when what is not loaded changes.
     revision:=unloaded.revision
     loaded:=revision!=b.unloaded_seen
@@ -748,6 +754,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
     for i in 0..<n.count {
         c:=&n.classes[i]
         if c.ready==0 && (c.loading==0 || !loaded) {continue}
+        volume:=class_in_volume(n,i)
         it:=base.hash_map_iterator(&c.marks)
         for key,mark in base.hash_map_iterate(&it) {
             b.looked+=1
@@ -755,7 +762,6 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             // What it reads is not all loaded: it keeps what it has and waits. With nothing to
             // keep where only away sections are, it waits for nothing: a change there marks it
             // again; nor in a run where only the terrain not loaded is, kept to mark when it loads.
-            volume:=class_in_volume(n,i)
             box:=mark_box_of(c,key,volume)
             if waits:=unloaded_overlaps(unloaded,box,!volume);waits!=mark.unloaded {
                 next:=mark^
@@ -771,78 +777,133 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 }
                 continue
             }
-            if checks>=NAV_CHECKS_PER_TICK {return}
-            free:^Build
-            started:=0
-            for build in b.builds {
-                if !build.busy {free=build} else if build.due==due {started+=1}
-            }
-            if free==nil || started>=per_tick {return}
-            checks+=1
-            next:=mark^
-            collision:=mark.collision
-            next.dirty,next.collision=false,false
-            mark_set(c,mark,next)
-            if class_in_volume(n,i) {
-                zone:=zone_of_key(key)
-                if !zone_inside(c,zone,limits_of(c,limits)) {
-                    if ai.nav_volume_remove_zone(&c.volume,zone) {n.revision+=1}
-                    mark.hash=0
-                    continue
-                }
-                complete,enough:=gather_zone(free,c,b,physics,zone)
-                if !enough {
-                    next.dirty=true
-                    mark_set(c,mark,next)
-                    core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a zone of class %q: it is built in a later tick; free memory",base.text_get(c.class.name[:]))
-                    return
-                }
-                if !complete {
-                    n.stats.overflowed+=1
-                    core.report(problems,core.NONE,"navigation.zone_input","A zone of class %q at %v has more than %d triangles of static collision: it is built from part of them",base.text_get(c.class.name[:]),zone,NAV_TRIANGLES_MAX)
-                }
-                if free.hash==mark.hash {n.stats.unchanged+=1;continue}
-                free.busy,free.class,free.air,free.zone,free.stamp,free.uid=true,i,true,zone,mark.stamp,n.uid
-                free.volume_config=c.volume_config
-                next.building=true
-                mark_set(c,mark,next)
-                build_launch(free,job_system,due)
+            if near.count==0 {
+                if !build_start(&start,i,key,mark) {return}
                 continue
             }
-            coord:=coord_of_key(key)
-            if !tile_inside(c,coord,limits.surface) {
-                if ai.nav_mesh_remove_tile(&c.mesh,coord) {n.revision+=1;links_mark(n,i,coord)}
-                mark.hash=0
-                continue
-            }
-            complete,enough:=gather(free,i,c,b,physics,coord,collision)
-            if !enough {
-                next.dirty,next.collision=true,collision
-                mark_set(c,mark,next)
-                core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a tile of class %q: it is built in a later tick; free memory, or lower tile_cells in Navigation_Settings",base.text_get(c.class.name[:]))
-                return
-            }
-            if !complete {
-                n.stats.overflowed+=1
-                core.report(problems,core.NONE,"navigation.tile_input","A tile of class %q at %v has more than %d triangles of static collision: it is built from part of them; lower tile_cells in Navigation_Settings",base.text_get(n.classes[i].class.name[:]),coord,NAV_TRIANGLES_MAX)
-            }
-            if free.hash==mark.hash {n.stats.unchanged+=1;continue}
-            // No collision here: nothing to build, and a bake keeps no tile of it, so every load asks.
-            if !free.from_field && len(free.indices)==0 && len(free.volumes)==0 {
-                field_drop(b,i,coord)
-                if ai.nav_mesh_remove_tile(&c.mesh,coord) {n.revision+=1;links_mark(n,i,coord)}
-                mark.hash=free.hash
-                n.stats.emptied+=1
-                continue
-            }
-            free.busy,free.class,free.air,free.coord,free.stamp,free.uid=true,i,false,coord,mark.stamp,n.uid
-            free.config=c.config
-            next.building=true
-            mark_set(c,mark,next)
-            build_launch(free,job_system,due)
+            // Kept in order, the farthest of a full list giving its place.
+            at:=box_near_of(c,key,volume,&near)
+            slot:=count
+            for slot>0 && nearest[slot-1].near>at {slot-=1}
+            if slot>=len(nearest) {continue}
+            last:=min(count,len(nearest)-1)
+            copy(nearest[slot+1:last+1],nearest[slot:last])
+            nearest[slot]={at,i,key}
+            count=last+1
         }
     }
+    for entry in nearest[:count] {
+        mark:=base.hash_map_ptr(&n.classes[entry.class].marks,entry.key)
+        if mark!=nil && !build_start(&start,entry.class,entry.key,mark) {return}
+    }
     b.unloaded_seen=revision
+}
+
+@(private)
+Build_Near :: struct {near:f32,class:int,key:u64}
+
+// How near the streaming sources come to a tile, or a zone, in their reaches.
+@(private)
+box_near_of :: proc "contextless" (c:^Class_Mesh,key:u64,volume:bool,near:^scene.Sources_Near) -> f32 {
+    if volume {
+        box:=ai.nav_volume_zone_box(&c.volume,zone_of_key(key))
+        return scene.box_near(near,box.min,box.max)
+    }
+    rect:=ai.nav_tile_rect(c.config,coord_of_key(key))
+    return scene.box_near(near,rect.min,rect.max)
+}
+
+// What the builds a tick starts share.
+@(private)
+Build_Start :: struct {
+    n:^Navigation,
+    b:^Navigation_Builds,
+    physics:core.Ref(phys.Physics_State),
+    limits:Limits,
+    jobs:^jobs.Job_System,
+    problems:^core.Problems,
+    per_tick:int,
+    due:u64,
+    checks:int,
+}
+
+// Gathers and hashes a marked tile or zone that waits for a build, and starts
+// its build when its input changed. False when the tick starts no more: its
+// gathers or its builds are spent, or memory is short.
+@(private)
+build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
+    n,b,limits,problems:=s.n,s.b,s.limits,s.problems
+    c:=&n.classes[i]
+    if s.checks>=NAV_CHECKS_PER_TICK {return false}
+    free:^Build
+    started:=0
+    for build in b.builds {
+        if !build.busy {free=build} else if build.due==s.due {started+=1}
+    }
+    if free==nil || started>=s.per_tick {return false}
+    s.checks+=1
+    next:=mark^
+    collision:=mark.collision
+    next.dirty,next.collision=false,false
+    mark_set(c,mark,next)
+    if class_in_volume(n,i) {
+        zone:=zone_of_key(key)
+        if !zone_inside(c,zone,limits_of(c,limits)) {
+            if ai.nav_volume_remove_zone(&c.volume,zone) {n.revision+=1}
+            mark.hash=0
+            return true
+        }
+        complete,enough:=gather_zone(free,c,b,s.physics,zone)
+        if !enough {
+            next.dirty=true
+            mark_set(c,mark,next)
+            core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a zone of class %q: it is built in a later tick; free memory",base.text_get(c.class.name[:]))
+            return false
+        }
+        if !complete {
+            n.stats.overflowed+=1
+            core.report(problems,core.NONE,"navigation.zone_input","A zone of class %q at %v has more than %d triangles of static collision: it is built from part of them",base.text_get(c.class.name[:]),zone,NAV_TRIANGLES_MAX)
+        }
+        if free.hash==mark.hash {n.stats.unchanged+=1;return true}
+        free.busy,free.class,free.air,free.zone,free.stamp,free.uid=true,i,true,zone,mark.stamp,n.uid
+        free.volume_config=c.volume_config
+        next.building=true
+        mark_set(c,mark,next)
+        build_launch(free,s.jobs,s.due)
+        return true
+    }
+    coord:=coord_of_key(key)
+    if !tile_inside(c,coord,limits.surface) {
+        if ai.nav_mesh_remove_tile(&c.mesh,coord) {n.revision+=1;links_mark(n,i,coord)}
+        mark.hash=0
+        return true
+    }
+    complete,enough:=gather(free,i,c,b,s.physics,coord,collision)
+    if !enough {
+        next.dirty,next.collision=true,collision
+        mark_set(c,mark,next)
+        core.report(problems,core.NONE,"navigation.memory","No memory for the collision under a tile of class %q: it is built in a later tick; free memory, or lower tile_cells in Navigation_Settings",base.text_get(c.class.name[:]))
+        return false
+    }
+    if !complete {
+        n.stats.overflowed+=1
+        core.report(problems,core.NONE,"navigation.tile_input","A tile of class %q at %v has more than %d triangles of static collision: it is built from part of them; lower tile_cells in Navigation_Settings",base.text_get(c.class.name[:]),coord,NAV_TRIANGLES_MAX)
+    }
+    if free.hash==mark.hash {n.stats.unchanged+=1;return true}
+    // No collision here: nothing to build, and a bake keeps no tile of it, so every load asks.
+    if !free.from_field && len(free.indices)==0 && len(free.volumes)==0 {
+        field_drop(b,i,coord)
+        if ai.nav_mesh_remove_tile(&c.mesh,coord) {n.revision+=1;links_mark(n,i,coord)}
+        mark.hash=free.hash
+        n.stats.emptied+=1
+        return true
+    }
+    free.busy,free.class,free.air,free.coord,free.stamp,free.uid=true,i,false,coord,mark.stamp,n.uid
+    free.config=c.config
+    next.building=true
+    mark_set(c,mark,next)
+    build_launch(free,s.jobs,s.due)
+    return true
 }
 
 // The box a tile or a zone reads to build: with the margin of its class, and every height for a tile.
