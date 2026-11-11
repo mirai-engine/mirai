@@ -435,6 +435,10 @@ rhi_texture_table_is_indexed_per_invocation :: proc(t: ^testing.T) {
 	output = run(t, d, pipeline, sampler, queries, results)
 	testing.expectf(t, near(output[0], {1, 1, 1, 1}) && near(output[6], {1, 1, 1, 1}), "entries 3 and far after their texture was destroyed: %v %v", output[0], output[6])
 	testing.expectf(t, near(output[2], {0.2158, 0.2158, 0.2158, 1}), "the other entries stay: %v", output[2])
+	// And a texture in one entry too.
+	rhi.texture_destroy(d, gray)
+	output = run(t, d, pipeline, sampler, queries, results)
+	testing.expectf(t, near(output[2], {1, 1, 1, 1}), "the entry of a texture in one entry after it was destroyed: %v", output[2])
 	expect_clean(t, d)
 }
 

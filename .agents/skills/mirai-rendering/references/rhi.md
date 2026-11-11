@@ -20,7 +20,10 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   type (`rhi/vulkan_memory.odin`), with the range allocator of the acceleration structures
   (`rhi/arena.odin`). Only a resource too large for a block, or one the driver prefers alone,
   takes an allocation of the driver, and their count never passes `maxMemoryAllocationCount`; a
-  refusal says in `device_error` whether the memory or that count ran out.
+  refusal says in `device_error` whether the memory or that count ran out. `GPU` memory is
+  device memory, never the small heap the CPU sees of a discrete GPU (BAR); with device memory
+  full a resource goes to system memory instead of being refused, counted in
+  `device_stats().host_memory` and reported in the renderer's `Stats.problem`.
 - **New contents.** A new buffer reads zero on both backends; the texels of a new texture are
   undefined until something writes them (`Buffer_Desc`, `Texture_Desc`). On Vulkan a range held
   another resource before, so the device zeroes a buffer of `GPU` memory with a fill in the next
@@ -33,7 +36,9 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 
 - **Selection.** Discrete, integrated, virtual GPU and finally CPU. `Device_Desc.preferred_device`
   selects by part of the name; `MIRAI_GPU=<text>` overrides it. Without a GPU, Linux can use
-  lavapipe. The selection does not look at presentation support: the surface is created later.
+  lavapipe. The window comes in `Device_Desc.surface` and is made with the device: on Vulkan
+  its surface exists before the selection, which passes over every device without a
+  graphics+compute queue that presents to it, the preferred one included.
 - **Messages.** The device does not print: errors and validation reach `Device_Desc.on_message`;
   `message_print` writes them to stderr.
 - **Per-device tables.** Vulkan calls through the tables loaded per device (`Device.ivk`,
@@ -91,7 +96,10 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   `frame_begin` waits for the delivery; without VSync, a frame with no free image renders
   offscreen (`swapchain_texture` zero) and keeps its LDR for capture.
 - **Vulkan swapchain.** Without `VK_EXT_swapchain_maintenance1`: the presentation semaphores are
-  recycled after `vkDeviceWaitIdle`.
+  recycled after `vkDeviceWaitIdle`. A surface the platform reports lost (a display change, a
+  driver reset) skips that frame; the next one makes surface and swapchain again from the window
+  through `Surface_Desc.vulkan_create`. After `VK_SURFACE_TRIES` frames that cannot, the window
+  stays without images and `device_error` says so; the device keeps working.
 
 ## Paced presentation
 

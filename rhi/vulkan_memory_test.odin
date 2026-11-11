@@ -3,6 +3,7 @@ package rhi
 
 import "base:runtime"
 import "core:math/rand"
+import "core:slice"
 import "core:testing"
 import vk "vendor:vulkan"
 
@@ -270,6 +271,51 @@ vk_memory_refuses_what_is_no_request_and_falls_back_between_types :: proc(t: ^te
 	vk_memory_trim(&m, source)
 	vk_memory_give(&m, source, next)
 	testing.expect(t, driver.alive == 0 && m.count == 0)
+}
+
+// GPU memory is device memory the CPU does not see first, never the small heap
+// the CPU sees of the device (BAR) while there is such memory, and then system
+// memory: with device memory full a resource lands there instead of being
+// refused. Where all device memory is seen by the CPU (unified, resizable BAR)
+// that is the device memory. The other kinds keep their order.
+@(test)
+vk_memory_for_the_gpu_falls_back_to_system_memory :: proc(t: ^testing.T) {
+	DEVICE :: vk.MemoryPropertyFlags{.DEVICE_LOCAL}
+	SEEN :: vk.MemoryPropertyFlags{.DEVICE_LOCAL, .HOST_VISIBLE, .HOST_COHERENT}
+	HOST :: vk.MemoryPropertyFlags{.HOST_VISIBLE, .HOST_COHERENT}
+	Case :: struct {name: string, types: []vk.MemoryPropertyFlags, bits: u32, kind: Memory, order: []u32}
+	cases := []Case {
+		{"a discrete GPU", {DEVICE, SEEN, HOST}, 0b111, .GPU, {0, 2}},
+		{"a resource that cannot take its device memory", {DEVICE, SEEN, HOST}, 0b110, .GPU, {1, 2}},
+		{"unified memory", {SEEN, HOST}, 0b11, .GPU, {0, 1}},
+		{"no device memory", {HOST}, 0b1, .GPU, {0}},
+		{"uploads", {DEVICE, SEEN, HOST}, 0b111, .Upload, {1, 2}},
+		{"staging", {DEVICE, SEEN, HOST}, 0b111, .Staging, {2, 1}},
+	}
+	for c in cases {
+		properties := vk.PhysicalDeviceMemoryProperties{memoryTypeCount = u32(len(c.types))}
+		for flags, i in c.types {properties.memoryTypes[i].propertyFlags = flags}
+		types, count := vk_memory_candidates(&properties, c.bits, c.kind)
+		testing.expectf(t, slice.equal(types[:count], c.order), "%s: %v, not %v", c.name, types[:count], c.order)
+	}
+
+	// Type 1 of the fake driver is a small heap, as the BAR of a discrete GPU.
+	driver: Fake_Driver
+	defer fake_destroy(&driver)
+	m: Vk_Memory_Pools
+	fake_pools(&m, &driver, 64, 1)
+	source := fake_source(&driver)
+	defer vk_memory_destroy(&m, source, true)
+	properties := vk.PhysicalDeviceMemoryProperties{memoryTypeCount = 3}
+	properties.memoryTypes[0].propertyFlags, properties.memoryTypes[FAKE_SMALL_TYPE].propertyFlags, properties.memoryTypes[2].propertyFlags = DEVICE, SEEN, HOST
+	types, count := vk_memory_candidates(&properties, 0b111, .GPU)
+	driver.room[0] = 0
+	for size in ([]u64{4096, VK_MEMORY_BLOCK_BYTES}) {
+		memory, _, problem, _ := vk_memory_take(&m, source, {size = size, align = 256, types = types[:count]})
+		testing.expectf(t, problem == .None && memory.type == 2 && driver.types[int(memory.handle) - 1] == 2, "%d bytes with device memory full: %v in %v", size, problem, memory)
+		vk_memory_give(&m, source, memory)
+	}
+	testing.expect(t, driver.room[FAKE_SMALL_TYPE] == FAKE_SMALL_HEAP, "the small heap gave nothing")
 }
 
 // With the memory of the tables ending at each request in turn, a resource is

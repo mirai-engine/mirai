@@ -53,19 +53,31 @@ vk_set_name :: proc(d: ^Device, type: vk.ObjectType, handle: u64, name: string) 
 	vk_loader_unlock(d)
 }
 
-// Memory types that satisfy `required`, those with every `preferred` flag
-// and none of `avoided` first, so allocation can fall back when a preferred
-// heap is exhausted (e.g. the 256 MiB device-local host-visible heap without
-// resizable BAR).
+// The memory types of bits that take a resource of a kind, the best first, so
+// allocation falls back when a heap is exhausted: those with every preferred
+// flag and no avoided one, then those with the preferred flags, then the rest
+// with the required ones. GPU memory falls back last to system memory, which
+// the device reads over the bus: a slower frame instead of a refused resource.
+// A device with device memory the CPU does not see keeps GPU resources out of
+// the small heap the CPU sees of it (BAR), which uploads use.
 @(private)
-vk_memory_candidates :: proc(d: ^Device, bits: u32, required, preferred: vk.MemoryPropertyFlags, avoided: vk.MemoryPropertyFlags = {}) -> (types: [32]u32, count: int) {
-	for pass in 0 ..< 2 {
-		for i in 0 ..< d.memory_properties.memoryTypeCount {
+vk_memory_candidates :: proc "contextless" (properties: ^vk.PhysicalDeviceMemoryProperties, bits: u32, kind: Memory) -> (types: [32]u32, count: int) {
+	required, preferred, avoided: vk.MemoryPropertyFlags
+	switch kind {
+	case .GPU:      preferred = {.DEVICE_LOCAL}; avoided = {.HOST_VISIBLE}
+	case .Upload:   required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.DEVICE_LOCAL}
+	case .Readback: required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.HOST_CACHED}
+	case .Staging:  required = {.HOST_VISIBLE, .HOST_COHERENT}; avoided = {.DEVICE_LOCAL}
+	}
+	for pass in 0 ..< 3 {
+		if pass == 1 && kind == .GPU && count > 0 {continue}
+		for i in 0 ..< min(properties.memoryTypeCount, 32) {
 			if bits & (1 << i) == 0 {continue}
-			flags := d.memory_properties.memoryTypes[i].propertyFlags
+			flags := properties.memoryTypes[i].propertyFlags
 			if required & flags != required {continue}
-			has_preferred := preferred & flags == preferred && avoided & flags == {}
-			if (pass == 0) != has_preferred {continue}
+			rank := 2
+			if preferred & flags == preferred {rank = 0 if avoided & flags == {} else 1}
+			if rank != pass {continue}
 			types[count] = i
 			count += 1
 		}
@@ -298,8 +310,10 @@ vk_release_texture :: proc(d: ^Device, t: ^Vk_Texture) {
 }
 
 texture_destroy :: proc(d: ^Device, texture: Texture) {
-	if t := pool_get(&d.textures, base.Handle(texture)); t == nil || t.swapchain {return}
-	for entry, index in d.table_textures {if entry == texture {texture_table_set(d, u32(index), 0)}}
+	kept := pool_get(&d.textures, base.Handle(texture))
+	if kept == nil || kept.swapchain {return}
+	from, to := table_refs_range(d.table_textures[:], texture, kept.table)
+	for index in from ..< to {if d.table_textures[index] == texture {texture_table_set(d, u32(index), 0)}}
 	t, _ := pool_remove(&d.textures, base.Handle(texture))
 	if t.shared != 0 {vk_shared_close(t.shared)}
 	e := Vk_Deferred{image = t.image, memory = t.memory, layer_views = t.layer_views}
@@ -448,6 +462,8 @@ texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 		set_error(d, "texture table entry %d: shaders read the table as 2D textures of one layer", index)
 		return false
 	}
+	before := pool_get(&d.textures, base.Handle(d.table_textures[index]))
+	table_refs_move(&before.table if before != nil else nil, &t.table if texture != 0 else nil, index)
 	d.table_textures[index] = texture
 	table_changed(&d.table_changes, index)
 	return true

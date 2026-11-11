@@ -38,7 +38,6 @@ Probe_World :: struct {
     using scene_tables:Test_Scene,
     health:core.Table(Probe_Health) `mirai:"game"`,
     seats:core.Table(input.Seat),
-    drivables:core.Table(input.Drivable),
     moves:core.Table(input.Move_Input),
     standings:core.Table(Probe_Standing),
     players:input.Seats,
@@ -139,9 +138,11 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     if w.score.points>=10 {w.score.state=.Won}
     // A driven body walks by the move action until a wall at x 6, and the jump
     // action drops it 5 meters.
-    if core.count(&w.drivables)==0 {return}
-    hero:=w.drivables.entities[0]
-    seat:=w.drivables.values[0].seat
+    seat,hero:=core.NONE,core.NONE
+    for value,row in w.seats.values {
+        if value.body!=core.NONE {seat,hero=w.seats.entities[row],value.body}
+    }
+    if hero==core.NONE {return}
     if w.climb.on {
         probe_climb_tick(w,hero,seat)
         return
@@ -1119,7 +1120,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
 probe_drive :: proc(f:^Probe) {
     worlds:=[2]^Probe_World{cast(^Probe_World)f.data,cast(^Probe_World)run_find(&f.s,0).world}
     for world in worlds {
-        core.add(&world.drivables,f.hero,input.Drivable{seat=f.seat})
+        core.edit(&world.seats,f.seat).body=f.hero
         core.add(&world.moves,f.hero,input.Move_Input{})
         world.view=core.View{rotation=1,fov=90*math.RAD_PER_DEG,near=0.1,size={800,600}}
         core.settle(&f.info,world,nil)

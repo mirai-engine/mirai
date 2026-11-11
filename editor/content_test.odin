@@ -493,7 +493,7 @@ content_test_still :: proc(s:^Session,content_view:bool=true) {_=content_test_fr
 @(test)
 content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the_keyboard :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)
@@ -630,7 +630,7 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
 @(test)
 content_navigation_gestures_of_the_browser :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_wall_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)
@@ -741,7 +741,7 @@ the_zoom_of_the_browser_walks_columns_and_names_follow_it :: proc(t:^testing.T) 
 
     // In the browser Ctrl+wheel zooms and the slider walks every step.
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)
@@ -797,7 +797,7 @@ ctrl_and_the_wheel_over_create_resize_its_cards_with_those_of_the_browser :: pro
     testing.expect(t,view.mode==.Grid && content_level(view)==1,"Up from the list Create and the browser are the grid of the most columns")
 
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     app:host.App
     g:=Editor_Ui{ctx=&ctx}
@@ -911,7 +911,7 @@ content_gear_shows_the_parts_and_details_lists_them_after_the_rest :: proc(t:^te
     f:=new(struct{ctx:ui.Context,assets:host.Assets,app:host.App,g:Editor_Ui,ins:Inspector,selection:history.Selection,info:core.World_Info,session:Session})
     defer free(f)
     ctx,assets,g,session:=&f.ctx,&f.assets,&f.g,&f.session
-    testing.expect(t,ui.context_init(ctx,{}))
+    testing.expect(t,test_ui_init(ctx,{}))
     defer ui.context_destroy(ctx)
     assets.registry,assets.indexed=content_test_parts_registry(),true
     defer content_test_registry_free(&assets.registry)
@@ -1021,7 +1021,7 @@ a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) 
     if root=="" {return}
     if !testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil)) {return}
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
@@ -1058,17 +1058,16 @@ a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) 
 @(test)
 a_selection_fills_its_row_or_cell_and_the_keyboard_has_a_ring_of_its_own :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
-    th:=&ctx.theme
     row:=asset_row_box(&ctx,1,4,true,false,false)
-    testing.expect(t,row.fill==th.accent_soft && row.stroke=={},"A selected row fills, as the rows of the outliner")
+    testing.expect(t,row.fill==ui.tone(&ctx,"accent_soft") && row.stroke=={},"A selected row fills, as the rows of the outliner")
     row=asset_row_box(&ctx,1,4,false,false,true)
-    testing.expect(t,row.fill=={} && row.stroke==th.text,"Only the keyboard has the light ring")
+    testing.expect(t,row.fill=={} && row.stroke==ui.tone(&ctx,"text"),"Only the keyboard has the light ring")
     card:=asset_card_box(&ctx,1,CONTENT_VIEW_DEFAULT,60,true,false)
-    testing.expect(t,card.fill==th.accent_soft && card.stroke=={} && card.padding=={},"A cell has no padding")
-    edge,width:=asset_frame_edge(th,false,true)
-    testing.expect(t,edge==th.toggle_on_stroke && width==1,"Its thumbnail has a violet border, no light ring")
+    testing.expect(t,card.fill==ui.tone(&ctx,"accent_soft") && card.stroke=={} && card.padding=={},"A cell has no padding")
+    edge,width:=asset_frame_edge(&ctx,false,true)
+    testing.expect(t,edge==ui.tone(&ctx,"toggle_on_stroke") && width==1,"Its thumbnail has a violet border, no light ring")
     columns,_:=content_cells(CONTENT_VIEW_DEFAULT,CONTENT_TEST_WIDTH)
     testing.expect_value(t,columns,4)
 }
@@ -1078,7 +1077,7 @@ a_selection_fills_its_row_or_cell_and_the_keyboard_has_a_ring_of_its_own :: proc
 @(test)
 a_click_on_the_background_of_the_browser_clears_its_selection :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:=host.Assets{registry=content_test_wall_registry(),indexed=true}
     defer content_test_registry_free(&assets.registry)

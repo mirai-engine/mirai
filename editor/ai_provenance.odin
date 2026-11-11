@@ -87,13 +87,13 @@ ai_provenance_row :: proc(s:^Session,kind:Ai_Provenance_Kind,ref:string) -> f32 
     if m==nil || m.store.db==nil || ref=="" {return 0}
     view:=ai_provenance_view(m,kind,ref)
     if !view.found {return 0}
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     id:=ui.id(ctx,"ai_provenance")
     it:=ui.interact(ctx,id)
-    color:=it.hot?th.text_muted:th.text_faint
+    color:=it.hot?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text_faint")
     if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_PROVENANCE_ROW),padding={11,0,7,0},gap=6,align_y=.Center}) {
-        ui.label(ctx,base.text_get(view.title[:]),th.font_caption,color,0)
-        ui.label(ctx,ai_time_ago(time.to_unix_nanoseconds(time.now())/1_000_000-view.at),th.font_caption,color)
+        ui.label(ctx,base.text_get(view.title[:]),ui.metric(ctx,"font_caption"),color,0)
+        ui.label(ctx,ai_time_ago(time.to_unix_nanoseconds(time.now())/1_000_000-view.at),ui.metric(ctx,"font_caption"),color)
     }
     if it.clicked {ai_provenance_open(s,view.conversation,view.sequence)}
     return AI_PROVENANCE_ROW

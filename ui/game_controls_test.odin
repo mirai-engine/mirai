@@ -36,7 +36,7 @@ TEST_CONTROL_STYLE :: Node_Style{
 @(test)
 game_controls_take_every_color_corner_and_size_from_their_style :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     s:=Test_Controls{style=TEST_CONTROL_STYLE,volume=0.5}
     input:=test_input()
@@ -68,7 +68,7 @@ game_controls_take_every_color_corner_and_size_from_their_style :: proc(t:^testi
     test_frame(&ctx,&input,test_controls_build,&s)
     testing.expect(t,test_paint(&ctx,"***")!=nil)
     for &p in ctx.paints[:ctx.paint_count] {
-        testing.expect(t,p.fill!=ctx.theme.accent && p.fill!=ctx.theme.well,"No control takes a color of the theme")
+        testing.expect(t,p.fill!=tone(&ctx,"accent") && p.fill!=tone(&ctx,"well"),"No control takes a color of the theme")
     }
 }
 
@@ -77,9 +77,9 @@ game_controls_step_type_and_choose_by_pointer_and_keys :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_FONT
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:=Test_Controls{style=TEST_CONTROL_STYLE}
     input:=test_input()
     build:=test_controls_build

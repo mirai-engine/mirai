@@ -48,7 +48,7 @@ game_saves :: proc(actions:inp.Frame_Input_Of(Action),saves:^save.Save_Requests,
 
 A score, an inventory or the lives are components on a `core.Keep` root: it passes to the scene
 that replaces this one with what hangs from it, a save keeps it and it replicates as any entity.
-The seat of a player is one (`inp.seat_of(drivables,body)`); for the run of all, make one once.
+The seat of a player is one (`inp.seat_of(seats,body)`); for the run of all, make one once.
 `@(storage,keep)` is for state only an interface shows, as the page of a menu.
 
 ```odin

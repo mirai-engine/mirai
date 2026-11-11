@@ -2,6 +2,7 @@
 package rhi
 
 import "base:runtime"
+import "core:sync"
 import vk "vendor:vulkan"
 
 // Buffers and textures share blocks of device memory instead of taking a
@@ -32,6 +33,7 @@ Vk_Memory :: struct {
 	size:   u64,
 	block:  u32,
 	pool:   u8, // the pool of the block + 1; 0: an allocation of its own
+	type:   u8, // the memory type
 }
 
 @(private)
@@ -148,7 +150,7 @@ vk_memory_take_alone :: proc(m: ^Vk_Memory_Pools, source: Vk_Memory_Source, requ
 	}
 	m.count += 1
 	m.alone_bytes += request.size
-	return {handle = handle, size = request.size}, mapped, true
+	return {handle = handle, size = request.size, type = u8(type)}, mapped, true
 }
 
 @(private = "file")
@@ -193,7 +195,7 @@ vk_memory_take_range :: proc(m: ^Vk_Memory_Pools, source: Vk_Memory_Source, requ
 		}
 		mapped = rawptr(uintptr(b.mapped) + uintptr(offset))
 	}
-	return {handle = b.handle, offset = offset, size = request.size, block = u32(block), pool = u8(index + 1)}, mapped, true, false
+	return {handle = b.handle, offset = offset, size = request.size, block = u32(block), pool = u8(index + 1), type = u8(type)}, mapped, true, false
 }
 
 // Whether the driver gives one allocation more, for memory made outside the
@@ -330,15 +332,7 @@ vk_memory_bind :: proc(d: ^Device, buffer: vk.Buffer, image: vk.Image, kind: Mem
 		d.dvk.GetBufferMemoryRequirements2(d.handle, &info, &asked)
 	}
 	requirements := asked.memoryRequirements
-	required, preferred: vk.MemoryPropertyFlags
-	switch kind {
-	case .GPU:      required = {.DEVICE_LOCAL}
-	case .Upload:   required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.DEVICE_LOCAL}
-	case .Readback: required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.HOST_CACHED}
-	case .Staging:  required = {.HOST_VISIBLE, .HOST_COHERENT}
-	}
-	types, count := vk_memory_candidates(d, requirements.memoryTypeBits, required, preferred, {.DEVICE_LOCAL} if kind == .Staging else {})
-	if count == 0 && kind == .GPU {types, count = vk_memory_candidates(d, requirements.memoryTypeBits, {}, {})}
+	types, count := vk_memory_candidates(&d.memory_properties, requirements.memoryTypeBits, kind)
 	if count == 0 {set_error(d, "%s: no Vulkan memory type for %v", name, kind); return}
 	ask := Vk_Memory_Ask{d = d, buffer = buffer, image = image, address = address}
 	source := vk_memory_source(&ask)
@@ -376,6 +370,7 @@ vk_memory_bind :: proc(d: ^Device, buffer: vk.Buffer, image: vk.Image, kind: Mem
 		vk_memory_give(&d.memory, source, memory)
 		return {}, nil, false
 	}
+	if kind == .GPU && .DEVICE_LOCAL not_in d.memory_properties.memoryTypes[memory.type].propertyFlags {sync.atomic_add(&d.stats.host_memory, 1)}
 	return memory, mapped, true
 }
 

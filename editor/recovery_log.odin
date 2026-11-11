@@ -277,7 +277,7 @@ recovery_log_update :: proc(s:^Session) {
     if l.sync_due!=0 && platform.clock_ns()>=l.sync_due && !l.sync.busy && l.file!=nil {
         l.sync_due=0
         l.sync={busy=true,file=l.file}
-        jobs.run(&s.app.jobs,jobs.OWNER,recovery_log_sync_run,&l.sync,&l.sync.counter)
+        jobs.run(&s.app.jobs,jobs.OWNER,.Background,recovery_log_sync_run,&l.sync,&l.sync.counter)
         if jobs.worker_count(&s.app.jobs)==1 {recovery_log_sync_collect(s,true)}
     }
 }

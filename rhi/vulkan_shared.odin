@@ -99,8 +99,7 @@ vk_shared_image :: proc(d: ^Device, desc: Texture_Desc) -> (t: Vk_Texture, ok: b
 vk_shared_memory :: proc(d: ^Device, t: ^Vk_Texture, next: rawptr) -> bool {
 	requirements: vk.MemoryRequirements
 	d.dvk.GetImageMemoryRequirements(d.handle, t.image, &requirements)
-	types, count := vk_memory_candidates(d, requirements.memoryTypeBits, {.DEVICE_LOCAL}, {})
-	if count == 0 {types, count = vk_memory_candidates(d, requirements.memoryTypeBits, {}, {})}
+	types, count := vk_memory_candidates(&d.memory_properties, requirements.memoryTypeBits, .GPU)
 	dedicated := vk.MemoryDedicatedAllocateInfo{sType = .MEMORY_DEDICATED_ALLOCATE_INFO, pNext = next, image = t.image}
 	if !vk_memory_room(&d.memory) {
 		set_error(d, "shared texture: the driver gives %d memory allocations at once (maxMemoryAllocationCount) and all are taken", d.memory.limit)

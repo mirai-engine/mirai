@@ -14,6 +14,7 @@ import "mirai:host"
 import "mirai:platform"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 import foliage "plugins:foliage/runtime"
 import "base:runtime"
@@ -297,7 +298,7 @@ foliage_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,
     if !tool.active || s.viewport.pick.active {return}
     id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")
     panel:=editor.tool_panel(g,id)
-    room:=max(ctx.size.y-panel.offset.y-ctx.theme.margin-panel.padding[1]-panel.padding[3],ctx.theme.row)
+    room:=max(ctx.size.y-panel.offset.y-ui.metric(ctx,"margin")-panel.padding[1]-panel.padding[3],ui.metric(ctx,"row"))
     // The panel and its scroll area end with the scope they open, so each keeps a block.
     if ui.panel(ctx,id,panel) {
         ui.id_push(ctx,id);defer ui.id_pop(ctx)
@@ -316,13 +317,13 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
         return
     }
     source:=&tool.edit.source
-    ui.section(ctx,editor.entity_label(world,e),"",80)
+    kit.section(ctx,editor.entity_label(world,e),"",80)
     // The modes in two rows of three, each with its number key.
     for row in 0..<2 {
-        if ui.segments(ctx,ui.GROW,ctx.theme.control) {
+        if kit.segments(ctx,ui.GROW,ui.metric(ctx,"control")) {
             for i in row*3..<row*3+3 {
                 mode:=Foliage_Mode(i)
-                if ui.button(ctx,ui.id(ctx,"mode",i+1),{label=MODE_NAMES[mode],detail=KEY_NAMES[i],style=.Tab,active=tool.mode==mode,width=-1,height=ctx.theme.control-4,size=ctx.theme.font_small}).clicked {mode_set(s,tool,assets,mode)}
+                if ui.button(ctx,ui.id(ctx,"mode",i+1),{label=MODE_NAMES[mode],detail=KEY_NAMES[i],variant="tab",active=tool.mode==mode,width=-1,height=ui.metric(ctx,"control")-4,size=ui.metric(ctx,"font_small")}).clicked {mode_set(s,tool,assets,mode)}
             }
         }
     }
@@ -331,35 +332,35 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
     switch tool.mode {
     case .Paint,.Erase,.Reapply,.Generate:
         radius:=f64(tool.radius)
-        if ui.property(ctx,"Radius") {
+        if kit.property(ctx,"Radius") {
             if ui.number_field(ctx,ui.id(ctx,"radius"),&radius,{width=ui.fixed(FIELD_WIDTH),min=f64(RADIUS_MIN),max=f64(RADIUS_MAX),has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.radius=f32(radius)}
             editor.key_hint(ctx,"F")
         }
         if tool.mode==.Paint || tool.mode==.Erase {
             density:=density_of(tool,tool.mode)
             percent:=f64(density^)*100
-            if ui.property(ctx,tool.mode==.Paint?"Paint density":"Erase density") {
+            if kit.property(ctx,tool.mode==.Paint?"Paint density":"Erase density") {
                 if ui.number_field(ctx,ui.id(ctx,"density"),&percent,{width=ui.fixed(FIELD_WIDTH),min=tool.mode==.Paint?1:0,max=100,has_min=true,has_max=true,speed=0.5,unit="%",integer=true}).changed {density^=f32(percent/100)}
                 editor.key_hint(ctx,"Shift F")
             }
         }
-        if tool.mode==.Paint {if ui.property(ctx,"Ground only") {ui.checkbox(ctx,ui.id(ctx,"ground_only"),&tool.ground_only)}}
+        if tool.mode==.Paint {if kit.property(ctx,"Ground only") {ui.checkbox(ctx,ui.id(ctx,"ground_only"),&tool.ground_only)}}
         if tool.mode==.Reapply {
-            if ui.property(ctx,"Scale") {ui.checkbox(ctx,ui.id(ctx,"reapply_scale"),&tool.reapply_scale)}
-            if ui.property(ctx,"Turn") {ui.checkbox(ctx,ui.id(ctx,"reapply_turn"),&tool.reapply_turn)}
-            if ui.property(ctx,"Offset") {ui.checkbox(ctx,ui.id(ctx,"reapply_offset"),&tool.reapply_offset)}
+            if kit.property(ctx,"Scale") {ui.checkbox(ctx,ui.id(ctx,"reapply_scale"),&tool.reapply_scale)}
+            if kit.property(ctx,"Turn") {ui.checkbox(ctx,ui.id(ctx,"reapply_turn"),&tool.reapply_turn)}
+            if kit.property(ctx,"Offset") {ui.checkbox(ctx,ui.id(ctx,"reapply_offset"),&tool.reapply_offset)}
         }
     case .Place:
-        if ui.property(ctx,"Ground only") {ui.checkbox(ctx,ui.id(ctx,"ground_only"),&tool.ground_only)}
+        if kit.property(ctx,"Ground only") {ui.checkbox(ctx,ui.id(ctx,"ground_only"),&tool.ground_only)}
     case .Select:
         gizmo:=int(s.viewport.tool)
-        if ui.tabs(ctx,ui.id(ctx,"gizmo"),{"Move","Rotate","Scale"},&gizmo) {s.viewport.tool=editor.Tool(gizmo)}
+        if kit.tabs(ctx,ui.id(ctx,"gizmo"),{"Move","Rotate","Scale"},&gizmo) {s.viewport.tool=editor.Tool(gizmo)}
         radius:=f64(tool.radius)
-        if ui.property(ctx,"Radius") {if ui.number_field(ctx,ui.id(ctx,"radius"),&radius,{width=ui.fixed(FIELD_WIDTH),min=f64(RADIUS_MIN),max=f64(RADIUS_MAX),has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.radius=f32(radius)}}
-        if has_place && ui.button(ctx,ui.id(ctx,"select_all"),{label="Select all of the types",style=.Field,width=-1,center=true}).clicked {selected_all(tool,e,ground)}
+        if kit.property(ctx,"Radius") {if ui.number_field(ctx,ui.id(ctx,"radius"),&radius,{width=ui.fixed(FIELD_WIDTH),min=f64(RADIUS_MIN),max=f64(RADIUS_MAX),has_min=true,has_max=true,speed=0.05,unit="m"}).changed {tool.radius=f32(radius)}}
+        if has_place && ui.button(ctx,ui.id(ctx,"select_all"),{label="Select all of the types",variant="field",width=-1,center=true}).clicked {selected_all(tool,e,ground)}
         if tool.selected.active && len(source.types)>0 {
             sel:=&tool.selected
-            ui.section(ctx,"Selected",fmt.tprintf("%s instances",count_text(u32(len(sel.refs)))),140)
+            kit.section(ctx,"Selected",fmt.tprintf("%s instances",count_text(u32(len(sel.refs)))),140)
             chosen:=-1
             names:=make([]string,len(source.types),context.temp_allocator)
             for &t,i in source.types {
@@ -367,12 +368,12 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
                 if len(sel.types)>0 && t.id==sel.types[0] {chosen=i}
             }
             for type in sel.types {if len(sel.types)>0 && type!=sel.types[0] {chosen=-1;break}}
-            if ui.property(ctx,"Type") {
+            if kit.property(ctx,"Type") {
                 if has_place && ui.dropdown(ctx,ui.id(ctx,"instance_type"),{list=names},&chosen,{width=-1}) {selected_retype(s,tool,world,assets,ground,placed.transform,source.types[chosen].id)}
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
-                if ui.button(ctx,ui.id(ctx,"ground"),{label="Stand on ground",detail="End",style=.Field,width=-1,center=true}).clicked && has_place {selected_ground(s,tool,world,assets,ground,placed.transform)}
-                if ui.button(ctx,ui.id(ctx,"delete"),{label="Delete",detail="Del",style=.Field,width=-1,center=true}).clicked {selected_delete(s,tool,world,assets)}
+                if ui.button(ctx,ui.id(ctx,"ground"),{label="Stand on ground",detail="End",variant="field",width=-1,center=true}).clicked && has_place {selected_ground(s,tool,world,assets,ground,placed.transform)}
+                if ui.button(ctx,ui.id(ctx,"delete"),{label="Delete",detail="Del",variant="field",width=-1,center=true}).clicked {selected_delete(s,tool,world,assets)}
             }
         }
     }
@@ -382,7 +383,7 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
             counts_update(&tool.counts,&entry.source,{e,entry.epoch,entry.loads,revision},ground,&tool.work)
         }
     }
-    if ui.collapsible(ctx,ui.id(ctx,"info"),"Live info",&tool.info_open).open {
+    if kit.collapsible(ctx,ui.id(ctx,"info"),"Live info",&tool.info_open).open {
         placed,has_place:=core.get(worlds,e)
         info_rows(s,tool,placed.transform if has_place else mm.Transform{rotation=1,scale={1,1,1}},ground)
     }
@@ -396,7 +397,6 @@ panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,fol
 @(private)
 info_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,owner:mm.Transform,ground:^foliage.Ground_Owner) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     over:=tool.mode!=.Select && tool.over && tool.stroke.over
     position,cell,instances,height,below,slope:="-","-","-","-","-","-"
     if to_local,inverted:=mm.transform_inverse_matrix(owner);over && inverted {
@@ -415,7 +415,7 @@ info_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,owner:mm.Transform,ground
     }
     rows:=[?][2]string{{"Position",position},{"Cell",cell},{"Instances",instances},{"Height",height},{"Ground",below},{"Slope",slope}}
     for row in rows {
-        if ui.property(ctx,row[0]) {ui.label(ctx,row[1],th.font,th.text)}
+        if kit.property(ctx,row[0]) {ui.label(ctx,row[1],ui.metric(ctx,"font"),ui.tone(ctx,"text"))}
     }
 }
 
@@ -432,11 +432,10 @@ type_name :: proc(t:^foliage.Foliage_Type) -> string {
 @(private)
 types_list :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets,input:core.Input) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     source:=&tool.edit.source
     types_keep(tool)
     selected:=len(tool.painted)
-    ui.section(ctx,"Types",fmt.tprintf("%d selected",selected) if selected>1 else "",80)
+    kit.section(ctx,"Types",fmt.tprintf("%d selected",selected) if selected>1 else "",80)
     area:=ui.id(ctx,"types")
     tool.list_hovered=false
     if rect,found:=ui.widget_rect(ctx,area);found {
@@ -483,8 +482,8 @@ types_list :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
                     if count,known:=counts_total(&tool.counts,id);known {
                         float:=editor.asset_card_float(s)
                         if float=={} {ui.spacer(ctx)}
-                        if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={5,1,5,1},fill=th.chip,radius=th.radius_control,float=float}) {
-                            ui.label(ctx,count_text(count),th.font_caption,th.text)
+                        if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={5,1,5,1},fill=ui.tone(ctx,"chip"),radius=ui.metric(ctx,"radius_control"),float=float}) {
+                            ui.label(ctx,count_text(count),ui.metric(ctx,"font_caption"),ui.tone(ctx,"text"))
                         }
                     }
                     editor.asset_card_end(s)
@@ -511,7 +510,7 @@ type_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,ass
     defaults:=foliage.FOLIAGE_TYPE_DEFAULT
     h:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|u64(t.id),info=type_info_of(foliage.Foliage_Type),value=&tool.held,defaults=&defaults}
     fields:=[?]string{"name","mesh","prefab","materials","density","scale","height","yaw","tilt","align","offset","rule","fade_distance","cull_distance","impostor_distance","wind","wind_variants","casts_shadow","ray_visible","collision","size"}
-    ui.section(ctx,type_name(t),"",80)
+    kit.section(ctx,type_name(t),"",80)
     for field in fields {if editor.held_field_row(s,h,field) {tool.held_dirty=true}}
     if tool.held_dirty && !core.mouse_down(input,.Left) && ctx.edit.id==0 {
         tool.held_dirty=false
@@ -599,12 +598,12 @@ types_remove :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,a
 @(private)
 choose_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,foliages:core.Read(foliage.Foliage)) {
     ctx:=s.gui.ctx
-    ui.section(ctx,"Select or create a foliage","",80)
+    kit.section(ctx,"Select or create a foliage","",80)
     for i in 0..<core.count(foliages) {
         e:=core.entity_at(foliages,i)
-        if ui.button(ctx,ui.id(ctx,"foliage",core.entity_index(e)+1),{label=editor.entity_label(world,e),icon=.Edit,style=.Field,width=-1}).clicked {history.selection_set(s.selection,{e})}
+        if ui.button(ctx,ui.id(ctx,"foliage",core.entity_index(e)+1),{label=editor.entity_label(world,e),icon=.Edit,variant="field",width=-1}).clicked {history.selection_set(s.selection,{e})}
     }
-    if ui.button(ctx,ui.id(ctx,"create"),{label="New foliage",style=.Field,width=-1,center=true}).clicked {foliage_create(s,tool,world,assets,allocator)}
+    if ui.button(ctx,ui.id(ctx,"create"),{label="New foliage",variant="field",width=-1,center=true}).clicked {foliage_create(s,tool,world,assets,allocator)}
 }
 
 // A Foliage with a new .foliage of no types, at the target of the view. The

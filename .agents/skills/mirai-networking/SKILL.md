@@ -249,7 +249,8 @@ In `plugins/multiplayer/runtime`:
 
 - `mirai test net [test...]`, `mirai test std/serial` (bitstream) and
   `mirai test plugins/multiplayer/runtime`. Run the `*_test.odin` of the touched area: `address`,
-  `connection`, `secure`, `invite`, `congestion`, `conditioner`, `replication`,
+  `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part),
+  `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
   `replication` (re-typing:
