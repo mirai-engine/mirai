@@ -449,9 +449,9 @@ GOLDEN_BOXES :: []Golden_Box{
     {"nested.grow",{320,332,200,20}},
     {"nested.grow.half",{320,332,100,10}},
     {"nested.fixed",{520,332,100,20}},
-    {"float.wide",{320,352,0,6}},
+    {"float.wide",{320,352,150,6}},
     {"float.fill",{0,476,640,4}},
-    {"float.part",{640,0,0,0}},
+    {"float.part",{480,0,160,48}},
     {"glass",{0,460,60,20}},
     {"glass.in",{5,465,10,10}},
 }

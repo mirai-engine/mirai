@@ -95,7 +95,8 @@ result. It is built every frame and resolved in `frame_end`, one axis at a time:
    it received and the heights rise to the roots. Afterwards the height is distributed like the
    width.
 4. The floating roots are ordered by layer (within a layer, the one declared later stays on top) and
-   placed against what they hang from; a `GROW` float takes the size of that. Afterwards each
+   placed against what they hang from; a `GROW` float takes the size of that and a `percent` one
+   its share of it. Afterwards each
    element is placed and the commands are listed in draw order.
 
 The measure of a span of text is stored by text, size and face in two generations that swap

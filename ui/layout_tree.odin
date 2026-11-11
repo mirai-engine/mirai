@@ -1050,11 +1050,12 @@ layout_fit_grid :: proc(t:^Layout_Tree,n:^Layout_Node,kids:[]i32) {
 layout_size :: proc(t:^Layout_Tree,x:bool) {
     for &root in t.roots[:t.root_count] {
         r:=&t.nodes[root.node]
-        // A growing floating element takes the size of what it hangs from.
+        // A growing floating element takes the size of what it hangs from, a percent its share of it.
         if r.floating {
             p:=[2]f32{root.rect.w,root.rect.h} if root.hung else t.nodes[root.parent].dim
-            if r.layout.width.kind==.Grow {r.dim.x=p.x}
-            if r.layout.height.kind==.Grow {r.dim.y=p.y}
+            w,h:=r.layout.width,r.layout.height
+            if w.kind==.Grow {r.dim.x=p.x} else if w.kind==.Percent {r.dim.x=p.x*w.value}
+            if h.kind==.Grow {r.dim.y=p.y} else if h.kind==.Percent {r.dim.y=p.y*h.value}
         }
         r.dim.x=clamp(r.dim.x,axis_min(r.layout.width),axis_max(r.layout.width))
         r.dim.y=clamp(r.dim.y,axis_min(r.layout.height),axis_max(r.layout.height))
