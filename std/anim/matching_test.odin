@@ -595,3 +595,36 @@ bounded_search_with_spans_finds_the_row_the_whole_scan_finds :: proc(t:^testing.
         testing.expectf(t,best>=0 && cost==least && db.flags[best]=={},"row %d: the bounded search gives %v, the whole scan %v",row,cost,least)
     }
 }
+
+// A clip of 1.01 s at 30 rows a second lays 32 rows over its whole duration: its last row is at
+// its end, inside a span over its tail, at its marker there, and the row of its end time.
+@(test)
+rows_of_a_clip_of_no_whole_number_of_rows_keep_the_spans_and_events_of_their_times :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    left:=[3]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=1.01,value={.1,-.95,-.375,0}}}
+    right:=[3]Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.5,value={-.1,-.95,-.375,0}},{time=1.01,value={-.1,-.95,.375,0}}}
+    marks:=[2]Marker{{time=.95,id=4,duration=.06},{time=1.01,id=5}}
+    step,error:=clip_add(&library,{name=base.name_hash("step"),tracks={{target=rig.skeleton.names[2],property=.Position,keys=left[:]},{target=rig.skeleton.names[3],property=.Position,keys=right[:]}},markers=marks[:]})
+    if !testing.expect(t,error==.None) {return}
+    // The same with the span alone: it has no marker of the event.
+    tail:=marks[:1]
+    stride,stride_error:=clip_add(&library,{name=base.name_hash("stride"),tracks={{target=rig.skeleton.names[2],property=.Position,keys=left[:]},{target=rig.skeleton.names[3],property=.Position,keys=right[:]}},markers=tail})
+    if !testing.expect(t,stride_error==.None) {return}
+    all:=[3]Match_Clip{clips[0],{clips={0=step},modes=1<<1},{clips={0=stride},modes=1<<1}}
+    spans:=[1]Match_Span{{marker=4,kind=.Block}}
+    events:=[1]u32{5}
+    db:Match_Database;defer match_database_free(&db)
+    if !testing.expect(t,match_database_build(&db,&library,rig,all[:],30,event=events[:],spans=spans[:])==.None) {return}
+    r:=db.ranges[1];last:=int(r.first+r.count)-1
+    testing.expectf(t,r.count==32 && abs(f32(r.count-1)/r.rate-1.01)<1e-5,"32 rows over 1.01 s, not %d at %v a second",r.count,r.rate)
+    testing.expectf(t,.Block in db.flags[last] && .Block in db.flags[last-1] && .Block not_in db.flags[last-3],"the span over the tail: %v",db.flags[last-3:last+1])
+    testing.expectf(t,db.events[last]>=0 && db.events[last]<1e-4 && match_row(&db,1,1.01)==last,"the last row is at the marker of the end, %v s from it",db.events[last])
+    // Toward an event no row reaches, the clip without its marker is left out for that, not for its span.
+    noted:Match_Candidates
+    request:=Match_Request{query=match_features(&db,int(r.first)),modes=1<<1,event=10,event_rates={.5,2}}
+    match_search(&db,request,candidates=&noted)
+    reasons:=match_test_reasons(&db,noted)
+    testing.expectf(t,reasons[2]==.Event,"the stride lacks the marker: %v",reasons)
+}

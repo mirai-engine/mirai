@@ -88,12 +88,12 @@ match_source_clips :: proc(source:^Match_Source) -> (names:[MATCH_BLEND]string,c
     return
 }
 
-// Whether spans fit a set: each named, of a kind, and at most one of a kind per name.
+// Whether spans fit a set: each named, of a kind, and one rule per name.
 match_spans_check :: proc(spans:[]Match_Span) -> bool {
     if len(spans)>MATCH_SPANS {return false}
     for &span,i in spans {
         if !blend_text_valid(span.name[:],false) || span.kind>max(lib.Match_Span_Kind) {return false}
-        for &other in spans[:i] {if other.name==span.name && other.kind==span.kind {return false}}
+        for &other in spans[:i] {if other.name==span.name {return false}}
     }
     return true
 }
@@ -445,14 +445,14 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         current:=playing if playing>=0 && (db.ranges[playing].modes&bit!=0 || m.phase==.Landed) else -1
         // A blended sample is at the share of its clips its leaves are at.
         time:=state.time
-        if current>=0 && db.ranges[current].weights!={0=1} && state.duration>0 {time*=f32(db.ranges[current].count-1)/(db.rate*state.duration)}
+        if current>=0 && db.ranges[current].weights!={0=1} && state.duration>0 {time*=f32(db.ranges[current].count-1)/(db.ranges[current].rate*state.duration)}
         row:=lib.match_row(db,current,time) if current>=0 else -1
         // A clip that does not loop is left once it ends or nears its end, before the trajectory runs
         // past it: its own pose would win every search from there, frozen. One toward its landing
         // marker, or on from it, is left when it ends.
         ending:=false
         if current>=0 && !db.ranges[current].loop {
-            r:=db.ranges[current];tail:=int(cmath.ceil(lib.MATCH_HORIZON[lib.MATCH_TRAJECTORY-1]*db.rate))
+            r:=db.ranges[current];tail:=int(cmath.ceil(lib.MATCH_HORIZON[lib.MATCH_TRAJECTORY-1]*r.rate))
             ending=state.ended || m.phase==.Matching && int(r.count)>tail+1 && row>=int(r.first+r.count)-tail
         }
         // With stationary_speed, a body that stands plays the clips that stand and one that moves
@@ -538,7 +538,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 m.speed=db.ranges[range].speed
                 // A clip that stands travels nowhere: what its feet drift is no direction to turn from.
                 m.travel_from,m.travel_to,m.travel_age=m.travel,linalg.normalize0(db.ranges[range].travel) if m.speed>lib.MATCH_STILL else {},0
-                start=f32(best-int(db.ranges[range].first))/db.rate
+                start=f32(best-int(db.ranges[range].first))/db.ranges[range].rate
                 m.jumps+=1;m.since=0
             }
         }
@@ -580,7 +580,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         r:=db.ranges[m.range]
         group.count,group.mode=0,.Weighted
         // Each clip starts at the share of its own duration the row is at.
-        share:=max(start,0)*db.rate/f32(r.count-1)
+        share:=max(start,0)*r.rate/f32(r.count-1)
         for clip,k in r.clips {
             if r.weights[k]<=0 {continue}
             group.leaves[group.count]={clip=lib.clip_data(&library.lib,clip).name,key=u32(k)+1,weight=r.weights[k],speed=m.rate,loop=true,sync=true,start=share*lib.clip_duration(&library.lib,clip)}

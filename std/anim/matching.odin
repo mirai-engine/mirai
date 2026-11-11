@@ -99,8 +99,9 @@ MATCH_BLEND :: 8
 Match_Clip :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,modes:u32,entry,mirror:bool,speed:f32,rates:[2]f32}
 // The rows of a clip or of a blended sample, with its clips and their weights as shares of 1.
 // speed is how fast the body goes over the ground in it, m/s: that of its root, or for a clip in
-// place the one its feet push at. rates and mirror: those of its Match_Clip.
-Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry,mirror:bool,speed:f32,travel:math.Vec3,rates:[2]f32}
+// place the one its feet push at. rates and mirror: those of its Match_Clip. rate: its rows per
+// second of its clip, the one that lays them over its whole duration (row k is at k/rate).
+Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry,mirror:bool,speed:f32,travel:math.Vec3,rates:[2]f32,rate:f32}
 Match_Database :: struct {
     rate:f32,                      // rows per second of each clip
     features:[]simd.f32x4,         // MATCH_LANES per row, normalized
@@ -240,7 +241,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             speed=c.speed
         }
         motion:=Match_Motion{frames=frames,world=world[:count*n],rest=rest_world,root=root,in_place=ground.in_place,travel=travel}
-        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,mirror=c.mirror,speed=speed,travel=travel,rates=c.rates}
+        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,mirror=c.mirror,speed=speed,travel=travel,rates=c.rates,rate=exact}
         for frame in 0..<count {
             values:=&raw[row+frame]
             at:=f32(frame)
@@ -284,11 +285,11 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
         for c,i in clips {
             r:=ranges[i]
             for frame in 0..<int(r.count) {
-                at:=f32(frame)/rate;next:=f32(-1)
+                at:=f32(frame)/r.rate;next:=f32(-1)
                 // A marker within half a row of a frame is at that frame.
                 if r.weights=={0=1} {
                     for marker in clip_markers(lib,c.clips[0]) {
-                        if !slice.contains(event,marker.id) || marker.time<at-.5/rate {continue}
+                        if !slice.contains(event,marker.id) || marker.time<at-.5/r.rate {continue}
                         if ahead:=max(marker.time-at,0);next<0 || ahead<next {next=ahead}
                     }
                 }
@@ -307,7 +308,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             markers:=clip_markers(lib,c.clips[0])
             for frame in 0..<int(r.count) {
                 // Both ends of a span are in it, within what a time of f32 strays.
-                at:=f32(frame)/rate;near:=f32(1e-4)
+                at:=f32(frame)/r.rate;near:=f32(1e-4)
                 for span in spans {
                     for marker in markers {
                         if marker.id==span.marker && marker.duration>0 && at>=marker.time-near && at<=marker.time+marker.duration+near {flags[int(r.first)+frame]+={span.kind}}
@@ -355,7 +356,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
 // The normalized features of the row of a range nearest a time of its clip.
 match_row :: proc "contextless" (db:^Match_Database,range:int,time:f32) -> int {
     r:=db.ranges[range]
-    frame:=int(cmath.round(time*db.rate)) if anim_finite(time) else 0
+    frame:=int(cmath.round(time*r.rate)) if anim_finite(time) else 0
     if r.loop && r.count>1 {frame%=int(r.count-1);if frame<0 {frame+=int(r.count-1)}}
     return int(r.first)+clamp(frame,0,int(r.count-1))
 }
@@ -533,7 +534,7 @@ match_event_ahead :: proc "contextless" (db:^Match_Database,range:int,time:f32) 
     if len(db.events)!=db.rows || range<0 || range>=len(db.ranges) || !anim_finite(time) {return -1}
     row:=match_row(db,range,time)
     if db.events[row]<0 {return -1}
-    return db.events[row]+f32(row-int(db.ranges[range].first))/db.rate-time
+    return db.events[row]+f32(row-int(db.ranges[range].first))/db.ranges[range].rate-time
 }
 
 // Rows at the end of a range that a search leaves out: a clip that does not loop keeps out its
@@ -542,9 +543,9 @@ match_event_ahead :: proc "contextless" (db:^Match_Database,range:int,time:f32) 
 match_tail :: proc "contextless" (db:^Match_Database,range:int) -> int {
     r:=db.ranges[range]
     if r.loop {return 0}
-    tail:=int(cmath.ceil(MATCH_HORIZON[MATCH_TRAJECTORY-1]*db.rate))
+    tail:=int(cmath.ceil(MATCH_HORIZON[MATCH_TRAJECTORY-1]*r.rate))
     if int(r.count)>tail+1 {return tail}
-    return clamp(int(cmath.ceil(MATCH_TAIL_MIN*db.rate)),0,int(r.count)-1)
+    return clamp(int(cmath.ceil(MATCH_TAIL_MIN*r.rate)),0,int(r.count)-1)
 }
 
 // Ages the rows a rig left by dt and forgets those it left span seconds ago or more.
@@ -586,7 +587,6 @@ match_behind :: #force_inline proc "contextless" (r:Match_Range,row,from,reach:i
 match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,current:=-1,whole:=false,span:f32=0,recent:^Match_Recent=nil,candidates:^Match_Candidates=nil) -> (best:int,cost,rate:f32) {
     best,cost,rate=-1,max(f32),1
     if candidates!=nil {candidates^={}}
-    entry_rows:=int(cmath.ceil(MATCH_ENTRY_SPAN*db.rate))+1
     rates:=request.event_rates
     event:=len(db.events)==db.rows && anim_finite(request.event) && request.event>0 && anim_finite(rates[0]) && anim_finite(rates[1]) && rates[0]>0 && rates[0]<=rates[1]
     bounded:=len(db.small)>0
@@ -615,7 +615,7 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
         if reason!=.None && candidates==nil {continue}
         query,weights,scaled:=match_query(db,request,range)
         last:=int(r.count)-match_tail(db,range)
-        if request.entry {last=min(int(r.count),entry_rows)} else if event {last=int(r.count)}
+        if request.entry {last=min(int(r.count),int(cmath.ceil(MATCH_ENTRY_SPAN*r.rate))+1)} else if event {last=int(r.count)}
         if reason!=.None {
             match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,reason)
             continue
@@ -655,12 +655,12 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
             match_candidates_add(candidates,{row=i32(found),cost=least,rate=found_rate,costs=match_cost_split(db,found,query,weights),reason=.Cost})
         } else if skipped>=0 {
             match_candidates_add(candidates,{row=i32(skipped),cost=skipped_cost,rate=found_rate,costs=match_cost_split(db,skipped,query,weights),reason=.Reselect})
-        } else if match_rows_flagged(db,int(r.first),int(r.first)+last,.Exclude) || match_rows_flagged(db,int(r.first),int(r.first)+last,.Block) {
-            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,.Span)
         } else if event {
             reached:=false
             for ahead in db.events[r.first:][:last] {if ahead>=0 {reached=true;break}}
             match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,.Window if reached else .Event)
+        } else if match_rows_flagged(db,int(r.first),int(r.first)+last,.Exclude) || match_rows_flagged(db,int(r.first),int(r.first)+last,.Block) {
+            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,.Span)
         }
     }
     if candidates!=nil {

@@ -534,7 +534,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         set.match.clips,set.match.samples=sources[:],samples[:]
         span_count,_:=api.params_array_count(call,"spans")
         set.match.spans=p.spans[:min(span_count,anim.MATCH_SPANS)]
-        if !anim.match_spans_check(set.match.spans) {authoring_failure(call,"spans","Invalid_Span","spans each named, of a kind, and one of each kind per name","an invalid span","A span rule is invalid",fix="Name each span, give it the kind Exclude or Block, and do not repeat a kind for a name");return}
+        if !anim.match_spans_check(set.match.spans) {authoring_failure(call,"spans","Invalid_Span","spans each named, of a kind, and one rule per name","an invalid span","A span rule is invalid",fix="Name each span, give it the kind Exclude or Block, and give a name one rule");return}
         // The warping turns and stretches the legs of the body toward the velocity of the Character.
         if mapped(body,.Pelvis,.Hip_L,.Knee_L,.Foot_L) || mapped(body,.Pelvis,.Hip_R,.Knee_R,.Foot_R) {
             warp:=&set.motion.warp

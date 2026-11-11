@@ -350,7 +350,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
     r.ranges=make([]Instance_Match_Range,len(db.ranges),call.allocator)
     for &row,i in r.ranges {
         range:=&db.ranges[i]
-        row={clip=anim.source_clip_label(library,range.clips[0]),modes=match_modes(call,modes,range.modes),loop=range.loop,entry=range.entry,speed=range.speed,travel=range.travel,duration=f32(max(range.count-1,0))/db.rate}
+        row={clip=anim.source_clip_label(library,range.clips[0]),modes=match_modes(call,modes,range.modes),loop=range.loop,entry=range.entry,speed=range.speed,travel=range.travel,duration=f32(max(range.count-1,0))/range.rate}
         if range.weights=={0=1} {continue}
         members:=make([dynamic]Instance_Match_Member,call.allocator)
         for clip,k in range.clips {if range.weights[k]>0 {append(&members,Instance_Match_Member{clip=anim.source_clip_label(library,clip),weight=range.weights[k]})}}
@@ -369,7 +369,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
         index:=lib.match_range_of(db,int(candidate.row));if index<0 {continue}
         range:=db.ranges[index];c:=candidate.costs
         append(&candidates,Instance_Match_Candidate{
-            range=u32(index),clip=anim.source_clip_label(library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/db.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
+            range=u32(index),clip=anim.source_clip_label(library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/range.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
             costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction]},
         })
     }

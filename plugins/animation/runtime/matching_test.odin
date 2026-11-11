@@ -1125,10 +1125,11 @@ spans_of_a_set_keep_rows_out_of_the_search_and_leave_or_play_into_them :: proc(t
             }
         }
     }
-    // The table reads back, and a set refuses a span without a name, twice of a kind, or of no kind.
+    // The table reads back, and a set refuses a span without a name, a second rule for a name, or
+    // one of no kind.
     {
         f:Match_Fixture;defer match_fixture_free(&f)
-        spans:=[2]Match_Span{match_test_span("stumble",.Block),match_test_span("stumble",.Exclude)}
+        spans:=[2]Match_Span{match_test_span("stumble",.Block),match_test_span("hold",.Exclude)}
         if !testing.expect(t,match_fixture(t,&f,walk_spans=stumble[:],spans=spans[:])) {return}
         set:=f.graphs.contents[0].set
         types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -1140,7 +1141,7 @@ spans_of_a_set_keep_rows_out_of_the_search_and_leave_or_play_into_them :: proc(t
             view,read:=character_view(&file,&types)
             testing.expect(t,read==.None && len(view.match.spans)==2 && view.match.spans[1]==spans[1],"the spans read back")
         }
-        for wrong in ([3]Match_Span{match_test_span("",.Block),match_test_span("stumble",.Block),match_test_span("hold",lib.Match_Span_Kind(7))}) {
+        for wrong in ([3]Match_Span{match_test_span("",.Block),match_test_span("stumble",.Exclude),match_test_span("swing",lib.Match_Span_Kind(7))}) {
             changed:=set.match;more:=[3]Match_Span{spans[0],spans[1],wrong};changed.spans=more[:]
             testing.expectf(t,!match_check(changed),"%v is refused",wrong)
         }
