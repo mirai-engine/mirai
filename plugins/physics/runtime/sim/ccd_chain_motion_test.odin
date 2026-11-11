@@ -13,7 +13,7 @@ ccd_finds_an_angular_impact_after_starting_inside_the_outer_clearance :: proc(t:
     outer:=time_of_impact(a,b,sa,sb)
     testing.expect_value(t,outer.state,Toi_State.Hit)
     testing.expect_value(t,outer.fraction,f32(0))
-    actual:=continuous_toi(a,b,sa,sb,1)
+    actual:=continuous_toi(a,b,sa,sb,1,0,0)
     testing.expect_value(t,actual.state,Toi_State.Hit)
     testing.expectf(t,actual.fraction>0 && actual.fraction<.05,"angular impact fraction %v",actual.fraction)
 }

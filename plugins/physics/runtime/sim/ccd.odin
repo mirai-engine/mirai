@@ -9,6 +9,8 @@ import math "mirai:std/math"
 @(private) CCD_OVERLAP_CAPACITY :: 4 // shapes that only overlap a bullet it keeps for their events in one step
 @(private) CCD_MAX_IMPACTS :: 4      // of a bullet in one step; after the last one it waits for the next step
 @(private) CCD_MIN_REST :: 1e-4      // fraction of the step below which what is left after an impact is not swept
+@(private) CCD_SAFETY :: 0.5         // of its smallest extent: a dynamic that moves more in a step is swept
+@(private) CCD_CORE :: 0.25          // of its smallest extent: the core swept when the shapes start touching
 
 @(private) CCD_Hit :: struct {fraction:f32,shape_a,shape_b:i32}
 
@@ -76,7 +78,7 @@ continuous_destroy :: proc(c:^Continuous,a:mem.Allocator) {
     c^={}
 }
 
-@(private) Toi_Visit :: struct {proxy:Proxy,sweep,other:Sweep,start:Vec3,best:^f32,keep:f32}
+@(private) Toi_Visit :: struct {proxy:Proxy,sweep,other:Sweep,start:Vec3,best:^f32,keep,core:f32}
 
 @(private)
 toi_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
@@ -84,7 +86,7 @@ toi_triangle :: proc(data:rawptr,a,b,c:Vec3) -> bool {
     // One-sided, as the contacts of meshes: a bullet that starts behind a face goes through it.
     if dot(cross(b-a,c-a),visit.start-a)<0 {return true}
     points:=[3]Vec3{a,b,c}
-    out:=continuous_toi(visit.proxy,{points[:],0,0},visit.sweep,visit.other,visit.best^,visit.keep)
+    out:=continuous_toi(visit.proxy,{points[:],0,0},visit.sweep,visit.other,visit.best^,visit.keep,visit.core)
     if out.state==.Hit && out.fraction<visit.best^ {visit.best^=out.fraction}
     return true
 }
@@ -117,10 +119,16 @@ continuous_bound :: proc "contextless" (w:^World,shape:^Shape,body:^Body,sweep:S
 // The outer TOI clearance is not an impact when the shapes already start inside it: the search goes on with
 // the clearance `keep` of the gap there was at the start. Zero searches the real surfaces and leaves a start
 // in contact to the solver of the step; a bullet that resumes after an impact keeps half the gap, so that no
-// impact of the step leaves it touching what it would then go through unseen.
+// impact of the step leaves it touching what it would then go through unseen. Shapes that start touching sweep
+// a sphere of radius `core` at the center of mass instead, so a body in contact still cannot go through.
 @(private)
-continuous_toi :: proc(a,b:Proxy,sa,sb:Sweep,fraction:f32,keep:f32=0) -> Toi_Output {
+continuous_toi :: proc(a,b:Proxy,sa,sb:Sweep,fraction:f32,keep,core:f32) -> Toi_Output {
     out:=time_of_impact(a,b,sa,sb,fraction)
+    if out.state==.Overlapped {
+        center:=[1]Vec3{sa.local_center}
+        out=time_of_impact({center[:],core,0},b,sa,sb,fraction)
+        return out.state==.Hit && out.fraction>0?out:{.Overlapped,0}
+    }
     if out.state!=.Hit || out.fraction!=0 {return out}
     clearance:f32
     if keep>0 {
@@ -138,8 +146,9 @@ continuous_fraction :: #force_inline proc "contextless" (c:^Continuous,index:i32
     return entry.stamp==c.stamp?entry.fraction:1
 }
 
-// Searches the first impact of each active bullet over what is left of its sweep. Every other body moves on
-// its own sweep while it has not stopped, and stands where it is once it has.
+// Searches the first impact of each active swept body over what is left of its sweep: a bullet against every
+// body, any other against static ones. Every other body moves on its own sweep while it has not stopped, and
+// stands where it is once it has.
 @(private)
 continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
     w:=(^World)(data)
@@ -155,13 +164,15 @@ continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
         b.stationary,b.continues,b.retry,b.dropped=false,false,false,0
         slots:=c.overlaps[int(index)*CCD_OVERLAP_CAPACITY:][:CCD_OVERLAP_CAPACITY]
         kept,found:=int(entry.crossed),0
+        trees:=[3]^spatial.Dynamic_Tree{&w.trees[STATIC_TREE],&w.trees[DYNAMIC_TREE],&c.tree}
+        core:=CCD_CORE*body.min_extent
         for s:=body.shape_list;s>=0;s=w.shapes[s].next {
             shape:=&w.shapes[s]
             if shape.filter.block|shape.filter.overlap==0 || shape.type>=.Mesh {continue}
             storage_a,storage_b:[8]Vec3=---,---
             proxy:=shape_proxy(w,shape,&storage_a)
             box:=c.bounds[s]
-            for tree,which in ([3]^spatial.Dynamic_Tree{&w.trees[STATIC_TREE],&w.trees[DYNAMIC_TREE],&c.tree}) {
+            for tree,which in trees[:.Bullet in body.flags?3:1] {
                 query:=spatial.dynamic_tree_query(tree,box)
                 for _,user in spatial.tree_query_next(&query) {
                     other:=&w.shapes[user]
@@ -211,7 +222,7 @@ continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
                     local:=limit
                     keep:f32=start>0?CCD_RESUME_KEEP:0
                     if other.type<.Mesh {
-                        out:=continuous_toi(proxy,shape_proxy(w,other,&storage_b),sweep,other_sweep,limit,keep)
+                        out:=continuous_toi(proxy,shape_proxy(w,other,&storage_b),sweep,other_sweep,limit,keep,core)
                         if out.state==.Hit && out.fraction<local {local=out.fraction}
                     } else {
                         local_start:=xf_inv_mul(sweep_transform(other_sweep,0),sweep_transform(sweep,0))
@@ -219,7 +230,7 @@ continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
                         radius:=body.max_extent
                         if other_sweep.q1!=other_sweep.q2 {radius+=2*other_body.max_extent}
                         local_box:=math.aabb_expand(math.aabb_merge({local_start.p,local_start.p},{local_end.p,local_end.p}),radius)
-                        visit:=Toi_Visit{proxy,sweep,other_sweep,local_start.p,&local,keep}
+                        visit:=Toi_Visit{proxy,sweep,other_sweep,local_start.p,&local,keep,core}
                         triangles_visit(w,other,local_box,{},&visit,toi_triangle)
                     }
                     if local<limit {
@@ -234,19 +245,28 @@ continuous_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
     }
 }
 
-// Continuous collision of the bullets awake in the step. Each pass searches in parallel the first impact of
-// every active bullet; the impacts are accepted in order of time and slot. In the next pass a bullet stopped
-// by a static body sweeps what is left of the step with its new velocity, and one whose target had stopped
-// before meeting it searches again against where the target stands. Passes and impacts of a bullet stop at
-// CCD_MAX_IMPACTS.
+// Continuous collision of the awake bullets and of the dynamics that moved more than CCD_SAFETY of their smallest
+// extent in the step (Box2D's fast bodies). Each pass searches in parallel the first impact of every active
+// swept body; the impacts are accepted in order of time and slot. In the next pass a bullet stopped by a static
+// body sweeps what is left of the step with its new velocity, and one whose target had stopped before meeting
+// it searches again against where the target stands. Passes and impacts of a bullet stop at CCD_MAX_IMPACTS.
 @(private)
 continuous_update :: proc(w:^World) #no_bounds_check {
     st:=&w.step
     c:=&st.ccd
-    count:=0
+    count,bullets:=0,0
     for index in st.awake[:st.awake_count] {
         body:=&w.bodies[index]
-        if .Bullet not_in body.flags || body.type!=.Dynamic {continue}
+        if body.type!=.Dynamic {continue}
+        if .Bullet in body.flags {
+            bullets+=1
+        } else {
+            // The motion of the farthest point, by the moves of the substeps and by the final velocity.
+            solved:=&st.bodies[body.solver_index]
+            turn:=2*length(Vec3{solved.dq.x,solved.dq.y,solved.dq.z})*body.max_extent
+            motion:=max(length(solved.dp)+turn,(length(solved.v)+length(solved.w)*body.max_extent)*st.dt)
+            if !(motion>CCD_SAFETY*body.min_extent) {continue}
+        }
         c.bullets[count]={index=index}
         c.active[count]=i32(count)
         count+=1
@@ -257,21 +277,16 @@ continuous_update :: proc(w:^World) #no_bounds_check {
         for &entry in c.bodies {entry.stamp=0}
         c.stamp=1
     }
-    // Only what moved in the step is swept; sleeping and static bodies are found in the persistent trees.
+    // Bullets meet every body that moved in the step in tree; sleeping and static bodies are found in the
+    // persistent trees. Without bullets only the swept bodies and the joint neighbours they stop are needed.
     spatial.dynamic_tree_clear(&c.tree)
-    for index in st.awake[:st.awake_count] {
-        body:=&w.bodies[index]
-        i:=body.solver_index
-        sweep:=Sweep{body.local_center,body.center-st.bodies[i].dp,body.center,st.params[i].q0,body.rotation}
-        if sweep.q1.w*sweep.q2.w+sweep.q1.x*sweep.q2.x+sweep.q1.y*sweep.q2.y+sweep.q1.z*sweep.q2.z<0 {sweep.q1=-sweep.q1}
-        c.bodies[index]={sweep=sweep,fraction=1,stamp=c.stamp,bullet=-1,moving=true}
-        for s:=body.shape_list;s>=0;s=w.shapes[s].next {
-            c.bounds[s]=continuous_bound(w,&w.shapes[s],body,sweep)
-            c.proxies[s],_=spatial.dynamic_tree_insert(&c.tree,c.bounds[s],u64(s))
-        }
+    if bullets>0 {
+        for index in st.awake[:st.awake_count] {continuous_enter(w,index,true)}
+    } else {
+        for b in c.bullets[:count] {continuous_enter(w,b.index,false)}
     }
     for b,k in c.bullets[:count] {c.bodies[b.index].bullet=i32(k)}
-    active:=count
+    active,contacts:=count,st.active_count
     for _ in 0..<CCD_MAX_IMPACTS {
         world_parallel(w,active,1,w,continuous_task)
         for a,k in c.active[:active] {
@@ -295,6 +310,9 @@ continuous_update :: proc(w:^World) #no_bounds_check {
             }
             continuous_clip(w,b.index,hit.fraction)
             continuous_clip(w,other,hit.fraction)
+            // As in Box2D, a fast body that is not a bullet only stops at the impact: the contacts of the next
+            // step answer it with every shape that touches, not the one pair the sweep found first.
+            if .Bullet not_in w.bodies[b.index].flags {continue}
             continuous_contact(w,hit.shape_a,hit.shape_b)
             b.impacts+=1
             b.continues=w.bodies[other].type==.Static && !continuous_jointed(w,b.index)
@@ -329,7 +347,8 @@ continuous_update :: proc(w:^World) #no_bounds_check {
         active=next
         if active==0 {break}
     }
-    slice.sort(st.active[:st.active_count])
+    // The contacts that bullets answered were appended.
+    if st.active_count!=contacts {slice.sort(st.active[:st.active_count])}
     continuous_crossings(w,count)
 }
 
@@ -438,12 +457,37 @@ continuous_clip :: proc(w:^World,index:i32,fraction:f32) {
     }
 }
 
-// Records that a body stopped at `fraction`; one the run did not know stands still where it is.
+// The sweep of an awake body over the step, and its box.
+@(private)
+continuous_enter :: proc(w:^World,index:i32,insert:bool) {
+    st:=&w.step
+    c:=&st.ccd
+    body:=&w.bodies[index]
+    i:=body.solver_index
+    sweep:=Sweep{body.local_center,body.center-st.bodies[i].dp,body.center,st.params[i].q0,body.rotation}
+    if sweep.q1.w*sweep.q2.w+sweep.q1.x*sweep.q2.x+sweep.q1.y*sweep.q2.y+sweep.q1.z*sweep.q2.z<0 {sweep.q1=-sweep.q1}
+    c.bodies[index]={sweep=sweep,fraction=1,stamp=c.stamp,bullet=-1,moving=true}
+    for s:=body.shape_list;s>=0;s=w.shapes[s].next {
+        c.bounds[s]=continuous_bound(w,&w.shapes[s],body,sweep)
+        if insert {c.proxies[s],_=spatial.dynamic_tree_insert(&c.tree,c.bounds[s],u64(s))}
+    }
+}
+
+// Records that a body stopped at `fraction`; one the run did not know moves on its sweep if it is awake and
+// stands still where it is otherwise.
 @(private)
 continuous_stop :: proc(w:^World,index:i32,fraction:f32) {
-    c:=&w.step.ccd
+    st:=&w.step
+    c:=&st.ccd
     entry:=&c.bodies[index]
-    if entry.stamp!=c.stamp {entry^={sweep=sweep_still(&w.bodies[index]),stamp=c.stamp,bullet=-1}}
+    if entry.stamp!=c.stamp {
+        i:=w.bodies[index].solver_index
+        if i>=0 && int(i)<st.awake_count && st.awake[i]==index {
+            continuous_enter(w,index,false)
+        } else {
+            entry^={sweep=sweep_still(&w.bodies[index]),stamp=c.stamp,bullet=-1}
+        }
+    }
     entry.fraction=fraction
 }
 

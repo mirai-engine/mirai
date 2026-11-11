@@ -177,6 +177,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
     allocator:=runtime.heap_allocator()
     options:=importer.Import_Options{
         root=strings.clone(root,allocator),
+        world=s.info,
         texture_cache=project.content_cache_path(s.project_root,project.TEXTURE_CACHE,allocator=allocator),
         mesh_cache=project.content_cache_path(s.project_root,project.MESH_CACHE,allocator=allocator),
         fast_textures=true,
@@ -485,7 +486,7 @@ import_working :: proc(s:^Session) -> bool {
 }
 
 // A format of models a plugin adds: its files import as those of the engine,
-// in the editor and in the sync of every build (plugin_import_formats).
+// in the editor and in the sync of every build (import_library).
 Import_Format_Provider :: struct {
     format:importer.Format,
     // Before a model is imported: the options of the format for it
@@ -538,9 +539,9 @@ import_formats_prepare :: proc(s:^Session,job:^Import_Job) {
     job.plugin_formats=slice.clone(plugins,job.allocator)
 }
 
-// What plugin_import_formats holds until its release.
+// What import_library holds until its release.
 @(private="file")
-Plugin_Formats_Held :: struct {
+Import_Library_Held :: struct {
     library:host.Project_Library,
     registry:asset.Registry,
     providers:[]Import_Format_Provider,
@@ -548,17 +549,17 @@ Plugin_Formats_Held :: struct {
     allocator:mem.Allocator,
 }
 
-// The formats of models the plugins of the project at root add, from the
-// library of its editor, prepared for its assets (sources.Plugin_Formats):
-// what the import program of the engine syncs and imports their sources
-// with.
-plugin_import_formats :: proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,release:proc(state:rawptr),state:rawptr,problem:string) {
+// The formats of models the plugins of the project at root add, prepared for
+// its assets, and the types of its game, from the library of its editor
+// (sources.Library): what the import program of the engine syncs and imports
+// its sources with.
+import_library :: proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string) {
     path:=project.project_library(root,"editor",context.temp_allocator)
-    if !os.is_file(path) {return nil,nil,nil,"the project has no built editor library, where the formats of its plugins are: mirai build editor builds it"}
-    held:=new(Plugin_Formats_Held,allocator)
+    if !os.is_file(path) {return nil,nil,nil,nil,"the project has no built editor library, where the formats of its plugins and the types of its game are: mirai build editor builds it"}
+    held:=new(Import_Library_Held,allocator)
     held.allocator=allocator
     error:host.Library_Error
-    if held.library,error=host.project_library_load(path,0);error!=.None {return nil,nil,nil,host.library_error_text(error,path)}
+    if held.library,error=host.project_library_load(path,0);error!=.None {return nil,nil,nil,nil,host.library_error_text(error,path)}
     asset.registry_init(&held.registry,project.folder_path(root,.Assets,context.temp_allocator),"",allocator,project.imported_path(root,context.temp_allocator))
     asset.registry_scan(&held.registry)
     found:[PROVIDER_CAPACITY]Import_Format_Provider
@@ -568,8 +569,8 @@ plugin_import_formats :: proc(root:string,allocator:mem.Allocator) -> (formats:[
         held.formats[i]=provider.format
         if provider.prepare!=nil {held.formats[i].data=provider.prepare(&held.registry,&held.library.info,allocator)}
     }
-    return held.formats,proc(state:rawptr) {
-        held:=(^Plugin_Formats_Held)(state)
+    return held.formats,&held.library.info,proc(state:rawptr) {
+        held:=(^Import_Library_Held)(state)
         for provider,i in held.providers {
             if provider.prepare!=nil && provider.release!=nil {provider.release(held.formats[i].data,held.allocator)}
         }

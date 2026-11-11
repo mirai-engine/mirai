@@ -55,9 +55,11 @@ Mix_Voice :: struct {
     eq:[2][BANDS]Biquad,eq_state:[2][BANDS]Biquad_State,eq_current:u8,
     eq_on:bool,
     direction:[3]f32,
+    blend:f32, // share of its direction, below 1 within its near radius
     binaural_live,binaural_direction_valid:bool,
     binaural_clock:u64, // the chunk its next block continues from
     binaural_direction:[3]f32, // that of its HRTF
+    binaural_blend:f32,        // that of its HRTF
     // A binaural voice that went silent adds one more block, and then ends
     // or, with tail_pause, pauses.
     tail,tail_pause:bool,
@@ -76,6 +78,12 @@ voice_begin :: proc "contextless" (m:^Mixer,v:^Mix_Voice,start:Voice_Start) {
     v.spatial_dirty=true
     v.spatial_pitch=1
     v.reverb_now=start.reverb
+    if start.spatial && start.attenuation.delay {
+        // DirectSimulator::calcDelay, applied once to where the voice starts.
+        _,distance:=listener_direction(m.listener.position,m.listener.rotation,start.position)
+        frames:=min(f64(distance)/f64(m.speed_of_sound)*f64(m.sample_rate)+0.5,f64(max(u32)))
+        v.start_frame=max(v.start_frame,m.clock)+u64(frames)
+    }
 }
 
 // The game thread learns of the end through finished, unless the slot was

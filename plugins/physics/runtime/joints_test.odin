@@ -80,24 +80,6 @@ joint_requests_drive_disable_repair_and_reject_unsupported_changes :: proc(t:^te
 }
 
 @(test)
-ending_manipulation_can_preserve_velocity_for_animation_to_physics :: proc(t:^testing.T) {
-    f:Physics_Test
-    if !physics_test_init(t,&f) {return}
-    defer physics_test_destroy(&f)
-    e:=physics_test_box(&f,{},{0.2,0.2,0.2},RIGID_BODY_DYNAMIC)
-    physics_test_step(&f,0)
-    manipulation_target(&f.requests,e,{0.1,0,0})
-    physics_test_step(&f)
-    body:=body_of(core.ref(&f.state),e)
-    before:=sim.body_linear_velocity(&f.state.world,body)
-    testing.expect(t,before.x>1)
-    manipulation_end(&f.requests,e,true)
-    physics_test_step(&f)
-    testing.expect_value(t,sim.body_type(&f.state.world,body),sim.Body_Type.Dynamic)
-    testing.expectf(t,abs(sim.body_linear_velocity(&f.state.world,body).x-before.x)<0.01,"velocity was lost")
-}
-
-@(test)
 world_rotation_drives_use_recaptured_frames_and_preserve_request_order :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}

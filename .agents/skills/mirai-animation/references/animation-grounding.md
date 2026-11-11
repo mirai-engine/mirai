@@ -1,6 +1,7 @@
 # Supports and procedural locomotion
 
-`Foot_Grounding` is the `grounding` table of the `.character` a rig plays: it
+`Foot_Grounding` is the `grounding` row of the `.character` a rig plays (none while its `count` is
+0): it
 joins the [procedural functions of `std/anim`](../../mirai-std/references/anim.md) with the ground
 of the world, over the dense pose of the rig. `Animated` adapts the pose of clips, blends or
 retarget; `Procedural` walks without `Animation`, clips or per-bone entities.
@@ -19,8 +20,8 @@ the preview.
 - Up to 16 legs; `count` sets how many entries of `legs` are evaluated.
 - The definition is edited in the Grounding table of the set
   ([modifier authoring](animation-authoring.md#skeletons-sockets-and-profiles)).
-- The runtime resolves `rig` to the entity that plays the set. There is one grounding definition
-  per set and an independent state per rig.
+- The rig is the entity that plays the set. There is one grounding definition per set and an
+  independent state per rig.
 - The global contact is modified with `Modifier_Goal{kind=.Grounding}` requests;
   `Modifier_Control{kind=.Grounding}` changes influence or activation with an independent fade,
   without touching that contact.
@@ -185,7 +186,7 @@ Body:
   or the set of configurations prepares again in a transaction; changing weights or strengths reuses
   the memory. Removing a component compacts its links; a lack of memory keeps the previous state.
 - Rig problems: `animation.grounding_config`, `grounding_bones`, `grounding_solve` (with the leg and
-  the step), `grounding_twice` and `animation.memory`.
+  the step) and `animation.memory`.
 
 ## Verification
 

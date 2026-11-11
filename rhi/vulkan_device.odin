@@ -114,6 +114,8 @@ Vk_Frame :: struct {
 	upload_ptr:   [^]u8,
 	upload_size:  u64,
 	upload_used:  u64,
+	oversized:       [MAX_FRAME_OVERSIZED]Buffer, // see frame_alloc
+	oversized_count: int,
 	deletions:    [dynamic]Vk_Deferred, // reserved once; see vk_defer
 	queries:      vk.QueryPool,
 	passes:       bool, // the frame writes the timestamps of cmd_timestamp: timestamps_want was on when it began
@@ -227,7 +229,7 @@ Device :: struct {
 	table_taken:       []u32, // as long as the table: what a copy takes
 	table_limit:       int,   // the most entries the table grows to on this device
 	table_default:     Texture,
-	pipelines_kept:    Pipeline_Store, // with a path, read when created and written when destroyed
+	pipelines_kept:    Pipeline_Store, // with a path, read when created and written as it grows and when destroyed
 	store_path:        [512]u8,
 	store_path_len:    int,
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
@@ -774,7 +776,7 @@ vk_create_frames :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		if !vk_check(d, d.dvk.AllocateCommandBuffers(d.handle, &alloc, &f.cmd), "command buffer") {return false}
 		semaphore_info := vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO}
 		if !vk_check(d, d.dvk.CreateSemaphore(d.handle, &semaphore_info, nil, &f.acquire), "acquire semaphore") {return false}
-		f.upload = vk_create_buffer(d, Buffer_Desc{size = upload_size, usage = {.Uniform, .Storage, .Index, .Indirect, .Transfer_Src, .Transfer_Dst, .Accel_Input}, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
+		f.upload = vk_create_buffer(d, Buffer_Desc{size = upload_size, usage = TRANSIENT_USAGE, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
 		if f.upload == 0 {return false}
 		f.upload_ptr = cast([^]u8)pool_get(&d.buffers, base.Handle(f.upload)).mapped
 		f.upload_size = upload_size
@@ -908,7 +910,7 @@ device_validation_messages :: proc(d: ^Device, out: []string) -> int {
 // What the device made for itself, which device_stats leaves out.
 @(private)
 device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
-	for f in d.frames {if f.upload != 0 {buffers += 1}}
+	for f in d.frames {buffers += int(f.upload != 0) + f.oversized_count}
 	for block in d.accel_blocks {if block != 0 {buffers += 1}}
 	if d.scratch != 0 {buffers += 1}
 	if d.staging != 0 {buffers += 1}
@@ -1098,6 +1100,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	if !d.in_frame || cmd != &d.frames[d.slot].list {set_error(d, "frame_end without the list its frame_begin gave"); return false}
 	f := &d.frames[d.slot]
 	pr := &d.presenter
+	frame_oversized_release(d)
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	if f.acquired {cmd_barrier_texture(cmd, d.swapchain.images[f.image_index], .Present)}
 	if f.paced && pr.pair >= 0 {
@@ -1158,22 +1161,6 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 }
 
 frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
-
-frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
-	// Between frames the slot may still be in flight and frame_begin resets
-	// the ring, so transient memory only exists while a frame is recorded.
-	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
-	f := &d.frames[d.slot]
-	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
-	offset := align_up(f.upload_used, align)
-	if offset + size > f.upload_size {
-		d.stats.exhausted += 1
-		set_error(d, "frame upload ring exhausted (%d of %d bytes)", offset + size, f.upload_size)
-		return {}
-	}
-	f.upload_used = offset + size
-	return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
-}
 
 // ---------------------------------------------------------------- immediate transactions
 

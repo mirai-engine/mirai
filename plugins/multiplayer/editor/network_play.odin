@@ -29,7 +29,7 @@ import multiplayer "plugins:multiplayer/runtime"
 
 NET_PLAY_PORTS :: 16               // tried from the default port of the player
 NET_PLAY_STEPPED_TIMEOUT :: 600.0 // seconds the runs of a turn wait for each other: they advance when the turn asks
-NET_PLAY_OFFER :: 13              // bytes of the offer: port, port on the router, game, invitation, whether the router is still asked
+NET_PLAY_OFFER :: 17              // bytes of the offer: port, port on the router, game, invitation, whether the router is still asked
 
 Net_Play_Phase :: enum u8 {
     Idle,
@@ -60,7 +60,7 @@ Net_Play :: struct {
     pending:Net_Play_Pending,
     serial:u32,     // of the game: the offer of the host says which one it serves
     port:int,       // of the server
-    invite:u32,     // the token of the invitation of the server
+    invite:u64,     // the token of the invitation of the server
     scene_ready:bool,
     mapping:wire.Port_Mapping, // of the port of the server on the router, while the session is shared
     mapping_on:bool,
@@ -228,11 +228,11 @@ host_game :: proc(s:^editor.Session) -> (code:string,game:u32,ok,reachable:bool)
     port,_:=endian.get_u16(offer[0:2],.Little)
     external,_:=endian.get_u16(offer[2:4],.Little)
     game,_=endian.get_u32(offer[4:8],.Little)
-    invitation.token,_=endian.get_u32(offer[8:12],.Little)
+    invitation.token,_=endian.get_u64(offer[8:16],.Little)
     invitation.lan.port,invitation.public.port=port,external
     if external==0 {invitation.public={}}
     code=wire.invite_encode(invitation,context.temp_allocator)
-    return code,game,code!="",offer[12]==0
+    return code,game,code!="",offer[16]==0
 }
 
 // What the session tells its guests of the game this editor serves.
@@ -249,8 +249,8 @@ net_play_offer :: proc(s:^editor.Session,out:[]u8) -> int {
     endian.put_u16(out[0:2],.Little,u16(n.port))
     endian.put_u16(out[2:4],.Little,external)
     endian.put_u32(out[4:8],.Little,n.serial)
-    endian.put_u32(out[8:12],.Little,n.invite)
-    out[12]=u8(mapping)
+    endian.put_u64(out[8:16],.Little,n.invite)
+    out[16]=u8(mapping)
     return NET_PLAY_OFFER
 }
 

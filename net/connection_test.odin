@@ -478,6 +478,110 @@ send_rate_limits_the_bytes_a_connection_puts_on_the_wire :: proc(t:^testing.T) {
     testing.expect(t,after.send_rate>10000 && after.send_rate<24000)
 }
 
+// A transport that keeps the last datagram of a connection its host sent.
+@(private="file")
+Capture :: struct {inner:Transport,last:[PACKET_BYTES]u8,size:int}
+@(private="file")
+capture_transport :: proc(c:^Capture) -> Transport {
+    return {c,proc(data:rawptr,to:Address,bytes:[]u8) -> bool {
+        c:=(^Capture)(data)
+        if test_packet_data(bytes) {c.size=copy(c.last[:],bytes)}
+        return c.inner.send(c.inner.data,to,bytes)
+    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:Address,ok:bool) {
+        c:=(^Capture)(data)
+        return c.inner.receive(c.inner.data,buffer)
+    }}
+}
+// A message each way, stepped until both arrive. False when an end lost the connection or they did not.
+@(private="file")
+both_ways :: proc(server,client:^Host,on_server,on_client:Connection,step:proc(data:rawptr),data:rawptr) -> bool {
+    message_send(server,on_server,0,{1})
+    message_send(client,on_client,0,{2})
+    server_got,client_got:=false,false
+    for _ in 0..<300 {
+        step(data)
+        for command in host_poll(server) {
+            if command.kind==.Disconnected {return false}
+            if command.kind==.Message && command.connection==on_server {server_got=true}
+        }
+        for command in host_poll(client) {
+            if command.kind==.Disconnected {return false}
+            if command.kind==.Message {client_got=true}
+        }
+        if server_got && client_got {return true}
+    }
+    return false
+}
+
+// A router that changes the port of a client mid-session: the connection
+// follows it on its first datagram from there, which opens under its key, and
+// keeps its handle. That datagram, or any other, replayed by someone else from
+// another address moves nothing. Over the in-memory network and real UDP.
+@(test)
+a_connection_follows_its_client_to_a_new_port_and_a_replay_moves_nothing :: proc(t:^testing.T) {
+    {
+        w:Test_World;test_world_init(&w,4,seed=5);defer test_world_destroy(&w)
+        server:=test_host(&w,{mode=.Server,channels=CHANNELS})
+        client:=test_host(&w,{mode=.Client,channels=CHANNELS})
+        capture:=Capture{inner=client.desc.transport}
+        client.desc.transport=capture_transport(&capture)
+        on_server,on_client:=test_connect(&w,server,client)
+        sim_step :: proc(data:rawptr) {test_step((^Test_World)(data))}
+        testing.expect(t,on_server!=0 && both_ways(server,client,on_server,on_client,sim_step,&w))
+        capture.inner=sim_endpoint_transport(&w.sim,2)
+        testing.expect(t,both_ways(server,client,on_server,on_client,sim_step,&w),"the connection goes on from the new port")
+        p:=peer_from(server,on_server)
+        testing.expect(t,p!=nil && p.address==address_memory(2))
+        forger:=sim_endpoint_transport(&w.sim,3)
+        forger.send(forger.data,address_memory(0),capture.last[:capture.size])
+        testing.expect(t,both_ways(server,client,on_server,on_client,sim_step,&w))
+        testing.expect(t,p.address==address_memory(2),"a replay moved the connection")
+        testing.expect_value(t,host_stats(server).connections,1)
+    }
+    Pair :: struct {server,client:^Host}
+    sockets:[4]Udp
+    if !udp_open(&sockets[0],address_loopback(0)) {testing.expect(t,false,"cannot bind a UDP socket on 127.0.0.1");return}
+    for &socket in sockets[1:] {
+        if !udp_open(&socket,address_loopback(0)) {testing.expect(t,false,"cannot bind a UDP socket on 127.0.0.1");return}
+    }
+    defer for &socket in sockets {udp_close(&socket)}
+    pair:Pair={new(Host),new(Host)}
+    defer {free(pair.server);free(pair.client)}
+    capture:=Capture{inner=udp_transport(&sockets[1])}
+    if !testing.expect_value(t,host_init(pair.server,{mode=.Server,transport=udp_transport(&sockets[0]),channels=CHANNELS,protocol_id=93}),Error.None) {return}
+    defer host_destroy(pair.server)
+    if !testing.expect_value(t,host_init(pair.client,{mode=.Client,transport=capture_transport(&capture),channels=CHANNELS,protocol_id=93}),Error.None) {return}
+    defer host_destroy(pair.client)
+    udp_step :: proc(data:rawptr) {
+        pair:=(^Pair)(data)
+        now:=host_time(pair.server)
+        host_update(pair.client,now);host_update(pair.server,now)
+        time.sleep(time.Millisecond)
+    }
+    host_connect(pair.client,address_loopback(int(sockets[0].address.port)))
+    on_server,on_client:Connection
+    for _ in 0..<3000 {
+        udp_step(&pair)
+        for command in host_poll(pair.server) {
+            if command.kind==.Connected {on_server=command.connection}
+        }
+        for command in host_poll(pair.client) {
+            if command.kind==.Connected {on_client=command.connection}
+        }
+        if on_server!=0 && on_client!=0 {break}
+    }
+    testing.expect(t,on_server!=0 && both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair))
+    capture.inner=udp_transport(&sockets[2])
+    testing.expect(t,both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair),"the connection goes on from the new port")
+    moved:=address_loopback(int(sockets[2].address.port))
+    p:=peer_from(pair.server,on_server)
+    testing.expect(t,p!=nil && p.address==moved)
+    forger:=udp_transport(&sockets[3])
+    forger.send(forger.data,address_loopback(int(sockets[0].address.port)),capture.last[:capture.size])
+    testing.expect(t,both_ways(pair.server,pair.client,on_server,on_client,udp_step,&pair))
+    testing.expect(t,p.address==moved,"a replay moved the connection")
+}
+
 @(test)
 hostile_datagrams_never_crash_a_host_nor_reach_the_game_as_data :: proc(t:^testing.T) {
     w:Test_World;test_world_init(&w,3,seed=99);defer test_world_destroy(&w)
@@ -506,7 +610,8 @@ hostile_datagrams_never_crash_a_host_nor_reach_the_game_as_data :: proc(t:^testi
     for size in ([]int{0,1,DATA_HEADER,DATA_HEADER+CHECKSUM_BYTES,DATA_HEADER+TAG_BYTES,HANDSHAKE_BYTES-1,HANDSHAKE_BYTES,PACKET_BYTES,PACKET_BYTES+1,len(big)}) {
         for type in Packet_Type {
             for &b in big[1:] {b=u8(base.splitmix_next(&state))}
-            big[0]=u8(type)
+            // A datagram of a connection names its slot: the live one or a free one, which a stranger cannot move.
+            big[0],big[3],big[4]=u8(type),u8(size&1),0
             if size>=DATA_HEADER+1+CHECKSUM_BYTES && size<=PACKET_BYTES && type!=.Data && type!=.Disconnect {checksum_write(big[:size],server.back.key)}
             for from in ([2]Address{address_memory(2),address_memory(1)}) {
                 buffer:=big
