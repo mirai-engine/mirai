@@ -101,7 +101,7 @@ ai_connection_installing :: proc(m:^Ai,provider:Ai_Provider) -> bool {
 @(private)
 ai_connections_back :: proc(s:^Session,label:string="Back") -> bool {
     ctx:=s.gui.ctx
-    return ui.button(ctx,ui.id(ctx,"back"),{label=label,style=.Field,width=84,height=32,center=true}).clicked
+    return ui.button(ctx,ui.id(ctx,"back"),{label=label,variant="field",width=84,height=32,center=true}).clicked
 }
 
 // The mark of an agent without its color.
@@ -121,10 +121,10 @@ ai_connections_logo :: proc(ctx:^ui.Context,agent:Ai_Agent,size:f32) {
 
 @(private)
 ai_connections_brand :: proc(s:^Session,provider:Ai_Provider) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(48),gap=12,align_y=.Center}) {
         ai_connections_logo(ctx,s.ai.connections[provider].agent,40)
-        ui.label(ctx,ai_connection_name(s.ai,provider),16,th.text,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,ai_connection_name(s.ai,provider),16,ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
     }
 }
 
@@ -139,13 +139,13 @@ ai_connection_command_line :: proc(ctx:^ui.Context,c:^Ai_Connection) -> string {
 
 @(private)
 ai_connections_overview :: proc(s:^Session) {
-    m:=s.ai;state:=&m.connection_ui;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;state:=&m.connection_ui;ctx:=s.gui.ctx
     makers:=AI_AGENT_MAKERS
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(32),align_y=.Center}) {
-        ui.label(ctx,"Agents",th.font_small,th.text_muted)
+        ui.label(ctx,"Agents",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         ui.spacer(ctx)
         waiting:=state.busy && base.text_get(m.install_operation[:])=="check"
-        if ui.button(ctx,ui.id(ctx,"check_updates"),{label="Check for updates",icon=waiting?ui.icon_user(u8(User_Icon.Waiting)):.Refresh,style=.Ghost,height=30,disabled=state.busy}).clicked {
+        if ui.button(ctx,ui.id(ctx,"check_updates"),{label="Check for updates",icon=waiting?ui.icon_user(u8(User_Icon.Waiting)):.Refresh,variant="ghost",height=30,disabled=state.busy}).clicked {
             state.version={}
             ai_connections_transfer(s,"check")
         }
@@ -157,34 +157,34 @@ ai_connections_overview :: proc(s:^Session) {
         version,latest:=base.text_get(connection.version[:]),base.text_get(connection.latest[:])
         update:=connection.installed && latest!="" && latest!=version
         installing:=ai_connection_installing(m,provider)
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding=ui.padding_all(12),fill=th.card,stroke=th.rule,radius=th.radius_panel}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding=ui.padding_all(12),fill=ui.tone(ctx,"card"),stroke=ui.tone(ctx,"rule"),radius=ui.metric(ctx,"radius_panel")}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=12,align_y=.Center}) {
                 ai_connections_logo(ctx,connection.agent,36)
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=4}) {
                     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center}) {
-                        ui.label(ctx,base.text_get(connection.name[:]),th.font,th.text,font=ui.FONT_SEMIBOLD)
-                        ui.label(ctx,command_agent?ai_connection_command_line(ctx,&connection):makers[connection.agent],th.font_small,th.text_muted,0)
+                        ui.label(ctx,base.text_get(connection.name[:]),ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+                        ui.label(ctx,command_agent?ai_connection_command_line(ctx,&connection):makers[connection.agent],ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
                     }
                     // One line of state: connection, the version installed and the one that can replace it.
                     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
                         if installing {
-                            ui.icon(ctx,ui.icon_user(u8(User_Icon.Waiting)),th.accent_hover,12)
-                            ui.label(ctx,base.text_get(state.status[:]),th.font_small,th.accent_hover,0)
+                            ui.icon(ctx,ui.icon_user(u8(User_Icon.Waiting)),ui.tone(ctx,"accent_hover"),12)
+                            ui.label(ctx,base.text_get(state.status[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"accent_hover"),0)
                         } else {
-                            color:=connection.configured?th.success:th.text_muted
+                            color:=connection.configured?ui.tone(ctx,"success"):ui.tone(ctx,"text_muted")
                             if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=color,radius=3}) {}
                             missing:=command_agent?"Command not found":"Not installed"
-                            ui.label(ctx,connection.configured?"Connected":connection.installed?"Not connected":missing,th.font_small,color)
-                            if connection.installed && version!="" {ui.label(ctx,version,th.font_small,th.text_faint)}
-                            if connection.user {ui.label(ctx,"your installation",th.font_small,th.text_faint)}
-                            if update {buffer:[96]u8;ui.label(ctx,fmt.bprintf(buffer[:],"%s available",latest),th.font_small,th.accent_hover)}
+                            ui.label(ctx,connection.configured?"Connected":connection.installed?"Not connected":missing,ui.metric(ctx,"font_small"),color)
+                            if connection.installed && version!="" {ui.label(ctx,version,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))}
+                            if connection.user {ui.label(ctx,"your installation",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))}
+                            if update {buffer:[96]u8;ui.label(ctx,fmt.bprintf(buffer[:],"%s available",latest),ui.metric(ctx,"font_small"),ui.tone(ctx,"accent_hover"))}
                         }
                     }
                 }
                 // Download and Update start at once; while they go the button cancels them.
                 action:="Download" if !connection.installed else ("Update" if update else ("Disconnect" if connection.configured else "Connect"))
                 if installing {action="Cancel"}
-                if ui.button(ctx,ui.id(ctx,"agent_action"),{label=action,style=installing || connection.configured && !update?.Field:.Accent,width=96,height=th.control,center=true,disabled=!installing && (state.busy || command_agent && !connection.installed)}).clicked {
+                if ui.button(ctx,ui.id(ctx,"agent_action"),{label=action,variant=installing || connection.configured && !update?"field":"accent",width=96,height=ui.metric(ctx,"control"),center=true,disabled=!installing && (state.busy || command_agent && !connection.installed)}).clicked {
                     switch {
                     case installing:            ai_install_cancel(s)
                     case !connection.installed: ai_connections_install(s,provider,"download")
@@ -195,7 +195,7 @@ ai_connections_overview :: proc(s:^Session) {
                     }
                 }
                 menu_id:=ui.id(ctx,"options")
-                if ui.button(ctx,ui.id(ctx,"more"),{label="···",style=.Ghost,width=th.control,height=th.control,center=true,disabled=state.busy}).clicked {
+                if ui.button(ctx,ui.id(ctx,"more"),{label="···",variant="ghost",width=ui.metric(ctx,"control"),height=ui.metric(ctx,"control"),center=true,disabled=state.busy}).clicked {
                     anchor,_:=ui.widget_rect(ctx,ui.id(ctx,"more"));ui.popup_open(ctx,menu_id,anchor)
                 }
                 if ui.popup(ctx,menu_id,{align_right=true}) {
@@ -209,12 +209,12 @@ ai_connections_overview :: proc(s:^Session) {
         }
         ui.id_pop(ctx)
     }
-    if ui.button(ctx,ui.id(ctx,"add_agent"),{label="Add agent by command",icon=.Plus,style=.Ghost,width=-1,height=30,disabled=state.busy || m.connection_count>=AI_CONNECTION_CAPACITY}).clicked {ai_connections_page(s,.Add,AI_CODEX)}
+    if ui.button(ctx,ui.id(ctx,"add_agent"),{label="Add agent by command",icon=.Plus,variant="ghost",width=-1,height=30,disabled=state.busy || m.connection_count>=AI_CONNECTION_CAPACITY}).clicked {ai_connections_page(s,.Add,AI_CODEX)}
     ai_connections_missing_runtime(s)
-    if ui.button(ctx,ui.id(ctx,"advanced"),{label="Advanced settings",icon=state.advanced?.Chevron_Down:.Chevron_Right,style=.Ghost,width=-1,height=28}).clicked {state.advanced=!state.advanced}
+    if ui.button(ctx,ui.id(ctx,"advanced"),{label="Advanced settings",icon=state.advanced?.Chevron_Down:.Chevron_Right,variant="ghost",width=-1,height=28}).clicked {state.advanced=!state.advanced}
     if !state.advanced {return}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),gap=12,align_y=.Center}) {
-        ui.label(ctx,"Runtime",th.font_small,th.text_muted)
+        ui.label(ctx,"Runtime",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         ui.spacer(ctx)
         labels:=AI_CONNECTION_RUNTIME_LABELS
         runtimes:=[5]string{labels[.Automatic],labels[.Bun],labels[.Node],labels[.Pnpm],labels[.Bundled]}
@@ -228,12 +228,12 @@ ai_connections_overview :: proc(s:^Session) {
 
 @(private)
 ai_connections_missing_runtime :: proc(s:^Session) {
-    state:=&s.ai.connection_ui;ctx:=s.gui.ctx;th:=&ctx.theme
+    state:=&s.ai.connection_ui;ctx:=s.gui.ctx
     if state.available[.Bun] || state.available[.Node] || state.available[.Pnpm] {return}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(42),gap=12,align_y=.Center}) {
-        ui.label(ctx,"No runtime found",th.font_small,th.text_muted)
+        ui.label(ctx,"No runtime found",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         ui.spacer(ctx)
-        if ui.button(ctx,ui.id(ctx,"download_bun"),{label="Download Bun",icon=state.busy?ui.icon_user(u8(User_Icon.Waiting)):.Import,style=.Field,height=32,disabled=state.busy}).clicked {ai_connections_transfer(s,"runtime")}
+        if ui.button(ctx,ui.id(ctx,"download_bun"),{label="Download Bun",icon=state.busy?ui.icon_user(u8(User_Icon.Waiting)):.Import,variant="field",height=32,disabled=state.busy}).clicked {ai_connections_transfer(s,"runtime")}
     }
 }
 
@@ -243,10 +243,10 @@ ai_connections_missing_runtime :: proc(s:^Session) {
 ai_connections_auth :: proc(s:^Session) {
     state:=&s.ai.connection_ui;ctx:=s.gui.ctx
     ai_connections_brand(s,state.provider)
-    if ui.button(ctx,ui.id(ctx,"existing"),{label="Use existing sign-in",style=.Field,width=-1,height=38,center=true}).clicked {
+    if ui.button(ctx,ui.id(ctx,"existing"),{label="Use existing sign-in",variant="field",width=-1,height=38,center=true}).clicked {
         if !ai_connections_error(s,ai_connection_set(s,state.provider,true)) {ai_connections_page(s,.Overview,state.provider)}
     }
-    if ui.button(ctx,ui.id(ctx,"browser"),{label="Sign in with the agent",style=.Accent,width=-1,height=38,center=true}).clicked {
+    if ui.button(ctx,ui.id(ctx,"browser"),{label="Sign in with the agent",variant="accent",width=-1,height=38,center=true}).clicked {
         if !ai_connections_error(s,ai_connection_set(s,state.provider,false)) {state.screen=.Login;state.busy=true}
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(36),align_x=.End,align_y=.Center}) {
@@ -256,11 +256,11 @@ ai_connections_auth :: proc(s:^Session) {
 
 @(private)
 ai_connections_wait :: proc(s:^Session) {
-    state:=&s.ai.connection_ui;ctx:=s.gui.ctx;th:=&ctx.theme
+    state:=&s.ai.connection_ui;ctx:=s.gui.ctx
     if state.screen==.Login {ai_connections_brand(s,state.provider)}
     status:=base.text_get(state.status[:])
-    ui.label(ctx,status!=""?status:(state.screen==.Login?"Waiting for browser sign-in":"Preparing installation"),th.font_small,th.text)
-    if state.screen==.Login && s.ai.connections[state.provider].agent==.Command && base.text_get(state.log[:])!="" {ui.text(ctx,base.text_get(state.log[:]),ui.prose(ctx,th.font_small,th.text_muted))}
+    ui.label(ctx,status!=""?status:(state.screen==.Login?"Waiting for browser sign-in":"Preparing installation"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
+    if state.screen==.Login && s.ai.connections[state.provider].agent==.Command && base.text_get(state.log[:])!="" {ui.text(ctx,base.text_get(state.log[:]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))}
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(38),align_x=.End,align_y=.Center}) {
         if ai_connections_back(s,state.busy?"Cancel":"Done") {
             if state.busy {ai_install_cancel(s)}
@@ -280,8 +280,7 @@ ai_connections_wait :: proc(s:^Session) {
 ai_connections_add :: proc(s:^Session) {
     state:=&s.ai.connection_ui;ctx:=s.gui.ctx
     field :: proc(ctx:^ui.Context,id:ui.Id,label,placeholder:string,buffer:[]u8,length:^int) {
-        th:=&ctx.theme
-        ui.label(ctx,label,th.font_small,th.text_muted)
+        ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         ui.text_field(ctx,id,buffer,length,{height=32,live=true,placeholder=placeholder})
     }
     field(ctx,ui.id(ctx,"agent_name"),"Name","Gemini",state.name[:len(state.name)-1],&state.name_length)
@@ -289,7 +288,7 @@ ai_connections_add :: proc(s:^Session) {
     field(ctx,ui.id(ctx,"agent_arguments"),"Arguments","--experimental-acp",state.arguments[:len(state.arguments)-1],&state.arguments_length)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),gap=8,align_x=.End,align_y=.Center}) {
         if ai_connections_back(s,"Cancel") {ai_connections_page(s,.Overview,AI_CODEX)}
-        if ui.button(ctx,ui.id(ctx,"confirm_add"),{label="Add",style=.Accent,width=100,height=32,center=true,disabled=state.name_length==0 || state.command_length==0}).clicked {
+        if ui.button(ctx,ui.id(ctx,"confirm_add"),{label="Add",variant="accent",width=100,height=32,center=true,disabled=state.name_length==0 || state.command_length==0}).clicked {
             provider,message:=ai_connection_add(s,string(state.name[:state.name_length]),string(state.command[:state.command_length]),string(state.arguments[:state.arguments_length]))
             if !ai_connections_error(s,message) {ai_connections_page(s,.Auth,provider)}
         }
@@ -298,12 +297,12 @@ ai_connections_add :: proc(s:^Session) {
 
 @(private)
 ai_connections_remove :: proc(s:^Session) {
-    state:=&s.ai.connection_ui;ctx:=s.gui.ctx;th:=&ctx.theme
+    state:=&s.ai.connection_ui;ctx:=s.gui.ctx
     ai_connections_brand(s,state.provider)
-    ui.label(ctx,"Remove the connection; its chats stay in the history",th.font_small,th.text_muted)
+    ui.label(ctx,"Remove the connection; its chats stay in the history",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),gap=8,align_x=.End,align_y=.Center}) {
         if ai_connections_back(s,"Cancel") {ai_connections_page(s,.Overview,AI_CODEX)}
-        if ui.button(ctx,ui.id(ctx,"confirm_remove"),{label="Remove",style=.Field,width=110,height=32,center=true}).clicked {
+        if ui.button(ctx,ui.id(ctx,"confirm_remove"),{label="Remove",variant="field",width=110,height=32,center=true}).clicked {
             if !ai_connections_error(s,ai_connection_remove(s,state.provider)) {ai_connections_page(s,.Overview,AI_CODEX)}
         }
     }
@@ -311,12 +310,12 @@ ai_connections_remove :: proc(s:^Session) {
 
 @(private)
 ai_connections_uninstall :: proc(s:^Session) {
-    state:=&s.ai.connection_ui;ctx:=s.gui.ctx;th:=&ctx.theme
+    state:=&s.ai.connection_ui;ctx:=s.gui.ctx
     ai_connections_brand(s,state.provider)
-    ui.label(ctx,"Remove installation and disconnect",th.font_small,th.text_muted)
+    ui.label(ctx,"Remove installation and disconnect",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(40),gap=8,align_x=.End,align_y=.Center}) {
         if ai_connections_back(s,"Cancel") {ai_connections_page(s,.Overview,state.provider)}
-        if ui.button(ctx,ui.id(ctx,"confirm_uninstall"),{label="Uninstall",style=.Field,width=110,height=32,center=true}).clicked {ai_connections_transfer(s,"uninstall")}
+        if ui.button(ctx,ui.id(ctx,"confirm_uninstall"),{label="Uninstall",variant="field",width=110,height=32,center=true}).clicked {ai_connections_transfer(s,"uninstall")}
     }
 }
 
@@ -336,7 +335,7 @@ ai_connections_build :: proc(s:^Session) {
     if s.ai==nil || s.gui==nil || s.gui.ctx==nil {return}
     state:=&s.ai.connection_ui
     if state.screen==.Closed {return}
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if ui.escape(ctx) {ai_connections_page(s,.Closed,state.provider);return}
     name:=ai_connection_name(s.ai,state.provider)
     title_buffer:[128]u8
@@ -355,7 +354,7 @@ ai_connections_build :: proc(s:^Session) {
     if ui.modal(ctx,shell_id(s.gui,"ai_connections"),{width=AI_CONNECTIONS_WIDTH,padding=20,gap=14,scroll=&state.scroll,close=&closed,own_cross=true}) {
         ui.id_push(ctx,shell_id(s.gui,"ai_connections"))
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(30),align_y=.Center}) {
-            ui.label(ctx,title,th.font_title,th.text,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,title,ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
             if ui.icon_button(ctx,ui.id(ctx,"close"),.Cross,26).clicked {ai_connections_page(s,.Closed,state.provider)}
         }
@@ -368,10 +367,10 @@ ai_connections_build :: proc(s:^Session) {
         case .Remove:ai_connections_remove(s)
         case .Closed:
         }
-        if base.text_get(state.notice[:])!="" {ui.text(ctx,base.text_get(state.notice[:]),ui.prose(ctx,th.font_small,th.text_muted))}
+        if base.text_get(state.notice[:])!="" {ui.text(ctx,base.text_get(state.notice[:]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))}
         if base.text_get(state.error[:])!="" {
-            ui.text(ctx,base.text_get(state.error[:]),ui.prose(ctx,th.font_small,th.danger))
-            if base.text_get(state.log[:])!="" {ui.text(ctx,base.text_get(state.log[:]),ui.prose(ctx,th.font_small,th.text_muted))}
+            ui.text(ctx,base.text_get(state.error[:]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"danger")))
+            if base.text_get(state.log[:])!="" {ui.text(ctx,base.text_get(state.log[:]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))}
         }
         ui.id_pop(ctx)
     }

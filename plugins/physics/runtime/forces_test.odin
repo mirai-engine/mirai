@@ -220,7 +220,7 @@ external_proxies_replace_the_own_body_and_accept_impulses_forces_joints_and_mani
     physics_test_step(&f)
     testing.expect(t,sim.joint_valid(&f.state.world,core.entity_map_get(&f.state.joints,joint).joint))
     core.remove(&f.joints,joint)
-    manipulation_target(&f.requests,e,{3,0,0})
+    manipulation_target(&f.requests,e,{3,0,0},follow=true)
     physics_test_step(&f,0)
     testing.expect_value(t,sim.body_type(&f.state.world,body),sim.Body_Type.Kinematic)
     manipulation_end(&f.requests,e)

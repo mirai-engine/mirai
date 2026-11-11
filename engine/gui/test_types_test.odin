@@ -25,5 +25,5 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
 Seats_Test_World :: struct {
     using world:core.Test_World,
     seats:core.Table(inp.Seat),
-    drivables:core.Table(inp.Drivable),
+    moves:core.Table(inp.Move_Input),
 }

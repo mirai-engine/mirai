@@ -92,18 +92,18 @@ ai_range_rows :: proc(m:^Ai) -> int {return m!=nil && m.range.to>m.range.from?1:
 ai_range_build :: proc(s:^Session,width:f32,rows:int) {
     m:=s.ai
     if rows<=0 || ai_range_rows(m)==0 {return}
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     buffer:[64]u8
     label:=fmt.bprintf(buffer[:],"%s %d to %d",m.range.kind==.Asset?"Frames":"Ticks",m.range.from,m.range.to)
-    size:=min(width,math.ceil(ui.text_width(&ctx.font,label,th.font_small))+AI_CHIP_ROOM)
+    size:=min(width,math.ceil(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small")))+AI_CHIP_ROOM)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center}) {
         chip:=ui.Box{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,
-            align_y=.Center,fill=th.field,radius=th.radius_control}
+            align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}
         if ui.box(ctx,chip) {
-            ui.icon(ctx,timeline_icon(.Range),th.text_muted,12)
-            ui.label(ctx,label,th.font_small,th.text_muted,size-40)
-            remove:=ui.Button{icon=.Cross,icon_color=th.text_muted,icon_size=10,padding=-1,
-                style=.Ghost,width=12,height=12}
+            ui.icon(ctx,timeline_icon(.Range),ui.tone(ctx,"text_muted"),12)
+            ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40)
+            remove:=ui.Button{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,
+                variant="ghost",width=12,height=12}
             if ui.button(ctx,ui.id(ctx,"remove_range"),remove).clicked {m.range={}}
         }
     }

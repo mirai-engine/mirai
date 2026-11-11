@@ -95,7 +95,6 @@ watch_name :: proc(s:^Session) -> string {
 // lights up with its color instead of showing the square of a button.
 @(private)
 presence_glyph :: proc(ctx:^ui.Context,id:ui.Id,color:ui.Color,lit:bool,icon:ui.Icon,initial,tip:string,ring:f32=1.5,working:=false) -> ui.Interaction {
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     if it.hot && tip!="" {ui.tooltip(ctx,tip)}
     alpha:=PRESENCE_GLYPH_FILL
@@ -106,8 +105,8 @@ presence_glyph :: proc(ctx:^ui.Context,id:ui.Id,color:ui.Color,lit:bool,icon:ui.
     if it.hot {for &c,i in stroke[:3] {c=u8(f32(color[i])+(255-f32(color[i]))*0.45)}}
     if ui.box(ctx,{id=id,width=ui.fixed(24),height=ui.fixed(24),align_x=.Center,align_y=.Center,fill=ui.color_alpha(color,alpha),stroke=stroke,stroke_width=ring,radius=12}) {
         switch {
-        case icon!=.None:  ui.icon(ctx,icon,th.text,ring>1.5?13:15)
-        case initial!="":  ui.label(ctx,initial,th.font_small,th.text)
+        case icon!=.None:  ui.icon(ctx,icon,ui.tone(ctx,"text"),ring>1.5?13:15)
+        case initial!="":  ui.label(ctx,initial,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
         case:              pulse_dot(ctx,color,working)
         }
     }
@@ -134,13 +133,11 @@ ai_task_on_bar :: proc(s:^Session,task:^Ai_Task) -> bool {
 watch_bar_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     {
         agent :: proc(s:^Session,g:^Editor_Ui,task:^Ai_Task,main:bool) {
             ctx:=g.ctx
-            th:=&ctx.theme
             subagent:=ai_task_subagent(task)
-            color:=main?th.accent:ai_agent_color(task)
+            color:=main?ui.tone(ctx,"accent"):ai_agent_color(task)
             watched:=s.mode==.Watch && s.watch.task==task.id
             if ui.box(ctx,{width=ui.FIT,height=ui.fixed(26),gap=1,align_y=.Center}) {
                 id:=shell_id(g,"watch_agent",task.id)

@@ -61,7 +61,8 @@ Usually its prefab carries it: everything that appears from that prefab is repli
   - It occupies its place in `max_objects` and `state_words` while it is disabled.
 - A client makes the entity from the prefab of the pose (`scene.spawn`, `transient`), takes it from
   the scene if it has that `Id`, or makes it empty; the one of a section it has not loaded waits
-  for it to load.
+  for it to load. A copy whose prefab this client has not read is filled later
+  (`scene.Prefab_Pending`); what the server sent stays on it.
 - A replicated component that names an entity the other end does not have (it has not arrived yet,
   or it is not replicated) is removed from the replica until it arrives: it would name something
   else. A `Joint` toward something that is not there is not anchored to the world.
@@ -179,8 +180,8 @@ The network and physics share only `core` tables, each with one writer:
 `terrain_multiplayer` terrain edits
 ([terrain](../../mirai-world/references/terrain.md#network)), both as
 [operation journals](#operation-journal). The `behavior` minds decide only on
-the server, and clients see what each agent does in its replicated `Mind_Presentation`, without
-predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
+the server, and clients play what their actions play through the replicated `Animation_Played`,
+without predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
 
 ## Operation journal
 
@@ -205,9 +206,13 @@ it leaves) and applies what the journal hands it; the journal owns the rest:
   the parts of the key over a region, or a base (`journal_resync`, with what the client holds,
   `since`, in the library's terms); a server offers a base itself (`journal_offer`), as to each
   connection that enters its world. The library writes each part (`journal_serves`,
-  `journal_part`); the journal packs it in LZ and sends it within `JOURNAL_BUDGET` bytes a tick, and
-  the client applies it in its place among the operations. A new ask waits for the answer to the
-  last one, or `JOURNAL_ASK_TICKS`.
+  `journal_part`); the journal packs it in LZ, tells it in its place among the operations
+  (`Net_Journal_Part`, numbered) and streams its bytes whole on the session's channel of parts
+  (`JOURNAL_CHANNEL`), handing a connection more while less than `JOURNAL_QUEUE` of it waits, so
+  a part goes as fast as the connection carries. The client applies it in that place once its
+  bytes are here; bytes that come before the part was told wait for it. A new ask waits for the
+  answer to the last one, or `JOURNAL_ASK_TICKS` while no told part is still arriving; a base on
+  its way stands for the operations it covers.
 - A scene that replaces the world forgets the journal (`journal_world`).
 
 A third library declares its operation bytes, applies them and writes its parts: nothing else.
@@ -793,7 +798,7 @@ one set by whoever tests those functions by hand).
   `history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_and_corrections`
   and `a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from` (rewind).
 - Operation journal (`journal_test.odin`):
-  `operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_within_the_budget`
+  `operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_whole`
   (in-memory network with loss, a late joiner and UDP on loopback),
   `a_correction_hands_each_operation_again_at_its_tick_and_never_twice` and
   `what_a_client_receives_without_memory_is_left_out_and_reported`.

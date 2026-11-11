@@ -109,7 +109,7 @@ test_text_init :: proc(t:^testing.T,ctx:^Context,s:^Test_Text,input:^Input) {
     desc.clipboard_user=s
     desc.clipboard_set=proc(user:rawptr,text:string) {s:=cast(^Test_Text)user;s.clipboard_length=copy(s.clipboard[:],text)}
     desc.clipboard_get=proc(user:rawptr,buffer:[]u8) -> int {s:=cast(^Test_Text)user;return copy(buffer,s.clipboard[:s.clipboard_length])}
-    testing.expect(t,context_init(ctx,desc))
+    testing.expect(t,test_context_init(ctx,desc))
     s.name_length=copy(s.name[:],"hello world")
     input^=test_input()
     test_text_frame(ctx,input,s)
@@ -130,7 +130,7 @@ the_first_click_on_a_field_selects_all_and_the_next_places_the_caret :: proc(t:^
     testing.expect(t,lo==0 && hi==11)
     testing.expect_value(t,ctx.focus,id(&ctx,"name"))
     field:=test_paint(&ctx,"hello world")
-    testing.expect(t,field.kind==.Field && field.caret==11 && field.selection==[2]int{0,11} && field.fill==THEME_EDITOR.well && field.stroke==THEME_EDITOR.accent,"The selection shows over the fill of the field")
+    testing.expect(t,field.kind==.Field && field.caret==11 && field.selection==[2]int{0,11} && field.fill==tone(&ctx,"well") && field.stroke==tone(&ctx,"accent"),"The selection shows over the fill of the field")
     test_release(&input)
     test_text_frame(&ctx,&input,&s)
     // A second click places the caret at the nearest boundary.
@@ -468,7 +468,7 @@ a_multiline_field_keeps_its_breaks_wraps_and_moves_by_lines :: proc(t:^testing.T
 @(test)
 a_multiline_edit_holds_a_long_message_and_moves_through_all_its_lines :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     long:[1024]u8
     for i in 0..<len(long) {long[i]='x' if i%2==0 else '\n'}

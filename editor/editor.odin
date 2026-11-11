@@ -104,7 +104,7 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
   --api-port    port of the agent API (JSON-RPC and MCP); 7940 if missing, or a free one when it is taken; 0: a free one, never 7940
   --no-api      without the agent API
   --share       shares the scene with other editors; port 7950 if missing. Prints the invitation code
-  --join        joins the session of another editor with the code of its invitation (R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A)
+  --join        joins the session of another editor with the code of its invitation (R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT)
   --name        name in the shared session
   --project     project folder; the current one if missing
   --scene       scene to open: a file or a path relative to the assets folder
@@ -292,7 +292,7 @@ run_player :: proc "contextless" (s:^Session,owner,player:int) -> ^Run {
 }
 
 // What a new run asks of its world before its first tick: how many players
-// sit at it (0: what the scene says).
+// sit at it.
 run_configure :: proc(s:^Session,r:^Run,players:int) {
     if run:=core.world_storage_of(run_ref(s,r),input.Run_Players);run!=nil {run.count=players}
 }
@@ -837,8 +837,8 @@ play_start :: proc(s:^Session,simulate:=false,owner:int=0) -> bool {
         log.info("Play of an agent")
         return true
     }
-    // The players of Play share the screen , as many as the
-    // selector says, and a plugin readies the world for its game.
+    // The players of Play share the screen, as many as the selector says,
+    // and a plugin readies the world for its game.
     run_configure(s,r,s.play_players!=nil?s.play_players.players:PLAY_PLAYERS_DEFAULT.players)
     // Play starts with the environment that is on, not with the preview of a section.
     if preview:=core.world_storage_of(host.app_world_ref(s.app,r.world),erender.Environment_Preview);preview!=nil {preview^={}}

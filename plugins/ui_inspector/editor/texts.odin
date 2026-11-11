@@ -6,6 +6,7 @@ import "mirai:cook/author"
 import "mirai:editor"
 import "mirai:engine/gui"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The text of a node in the languages of the game. A localized node shows a
@@ -98,10 +99,9 @@ node_localize :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,source
 texts_button :: proc(p:^Pane,n:^ui.Tree_Node,bound:bool) {
     s,u:=p.s,p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     localized:=.Localized in n.flags && !bound
     tip:="Its text in each language of the game" if !bound else "A path of the game gives its text: it shows as the game has it"
-    if ui.button(ctx,ui.id(ctx,"texts_open"),{icon=.Speech if localized else .Speech_Empty,icon_size=14,icon_color=th.accent if localized else th.text_faint,tip=tip,style=.Ghost,width=th.row,height=th.row,disabled=bound,active=u.texts.open}).clicked {
+    if ui.button(ctx,ui.id(ctx,"texts_open"),{icon=.Speech if localized else .Speech_Empty,icon_size=14,icon_color=ui.tone(ctx,"accent") if localized else ui.tone(ctx,"text_faint"),tip=tip,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=bound,active=u.texts.open}).clicked {
         u.texts.open,u.texts.node=true,-1
     }
 }
@@ -110,7 +110,6 @@ texts_button :: proc(p:^Pane,n:^ui.Tree_Node,bound:bool) {
 @(private)
 texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     e:=&u.texts
     if !e.open {return}
     r:=&u.records
@@ -131,25 +130,25 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
     }
     closed:=false
     if ui.modal(ctx,ui.id(ctx,"texts_window"),{width=460,close=&closed}) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=6,align_y=.Center}) {
-            ui.icon(ctx,.Speech,th.text_muted,15)
-            ui.label(ctx,fmt.tprintf("Texts of %s",serial.text_field(n.name[:])),th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
-            if ui.button(ctx,ui.id(ctx,"texts_settings"),{icon=ui.icon_user(u8(editor.User_Icon.Gear)),icon_size=14,icon_color=th.text_muted,tip="The languages of the game, in Project Settings",style=.Ghost,width=th.row,height=th.row}).clicked {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center}) {
+            ui.icon(ctx,.Speech,ui.tone(ctx,"text_muted"),15)
+            ui.label(ctx,fmt.tprintf("Texts of %s",serial.text_field(n.name[:])),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+            if ui.button(ctx,ui.id(ctx,"texts_settings"),{icon=ui.icon_user(u8(editor.User_Icon.Gear)),icon_size=14,icon_color=ui.tone(ctx,"text_muted"),tip="The languages of the game, in Project Settings",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
                 e.open=false
                 editor.settings_open(s,"UI_Settings")
             }
         }
         localized:=.Localized in n.flags
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-            ui.column_label(ctx,"Localized")
-            if ui.toggle_switch(ctx,ui.id(ctx,"texts_localized"),&localized) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+            kit.column_label(ctx,"Localized")
+            if kit.toggle_switch(ctx,ui.id(ctx,"texts_localized"),&localized) {
                 node_localize(s,r,n,source,localized)
                 changed(u,"Localized")
             }
         }
         if localized {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-                ui.column_label(ctx,"Key")
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+                kit.column_label(ctx,"Key")
                 if ui.text_field(ctx,ui.id(ctx,"texts_key"),e.key[:len(e.key)-1],&e.key_length,{width=ui.GROW}).committed && e.key_length>0 {
                     author.records_text_set(r,&n.text,string(e.key[:e.key_length]))
                     changed(u,"Key")
@@ -158,8 +157,8 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
         }
         for language in gui.Language {
             if language not_in languages || !localized && language!=source {continue}
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-                ui.column_label(ctx,language_name(language))
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+                kit.column_label(ctx,language_name(language))
                 buffer:=e.values[language][:]
                 result:=ui.text_field(ctx,ui.id(ctx,"text",int(language)+1),buffer[:len(buffer)-1],&e.lengths[language],{width=ui.GROW,placeholder="" if language==source else string(e.values[source][:e.lengths[source]])})
                 if result.committed && node_text_set(s,r,n,language,string(buffer[:e.lengths[language]])) {changed(u,"Text")}

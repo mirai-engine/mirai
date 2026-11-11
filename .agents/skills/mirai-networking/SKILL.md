@@ -143,6 +143,9 @@ In `plugins/multiplayer/runtime`:
   allocate.
 - **Every connection is sealed, and nothing answers an unproven sender:** before a returned cookie
   only the challenge, and nothing to a proof that does not open. There is no unsealed mode.
+- **A connection changes address only on a datagram that opens under its key** and is newer than
+  any it accepted ([roaming](references/networking.md#connections)). A wrong proof costs its
+  address, never everyone: guessers do not shut out who brings the invitation.
 - **Two ways in, nothing else:** by address (a server without an invitation admits anyone who
   reaches it) and by invitation code (only its holders). The code carries the host's real
   addresses, on its network and on its router; a client asks only those, never guesses others.
@@ -246,7 +249,8 @@ In `plugins/multiplayer/runtime`:
 
 - `mirai test net [test...]`, `mirai test std/serial` (bitstream) and
   `mirai test plugins/multiplayer/runtime`. Run the `*_test.odin` of the touched area: `address`,
-  `connection`, `secure`, `invite`, `congestion`, `conditioner`, `replication`,
+  `connection`, `secure`, `invite`, `congestion`, `flow` (reliable window, a streamed part),
+  `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
   `replication` (re-typing:

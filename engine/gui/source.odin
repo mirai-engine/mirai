@@ -68,7 +68,7 @@ source_bind :: proc(
     seat:=p>0?inp.local_seat(seats,p-1):core.NONE
     settings,preferences:=settings,preferences
     s.source={
-        gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.actions,seat_state=seat_state.ptr,seats=seats,
+        gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.slots[clamp(seat_state.focus,0,inp.LOCAL_CAPACITY-1)],seat_state=seat_state.ptr,seats=seats,
         cameras=cameras,exposures=exposures,view_volumes=view_volumes,zones=zones,pixels=s.key.scale*max(app.density,0.01),
         pack=host.content_prompts(app,settings.prompts),
     }
@@ -222,7 +222,7 @@ prompt_input :: proc "contextless" (code:inp.Input_Code,keyboard:bool) -> (input
     return
 }
 
-// Whether an action is held and was pressed: of the frame for the window, of
+// Whether an action is held and was pressed: of the frame of the focused slot for the window, of
 // the tick of its seat for a local player, past the block of the Modal screen
 // being built: what a Modal takes from the game its own buttons still get.
 @(private)

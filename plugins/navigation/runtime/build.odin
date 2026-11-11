@@ -42,6 +42,7 @@ NAV_FIELDS :: 64               // tiles whose heightfield is kept to build them 
 @(storage,host,by_world,free="builds_free")
 Navigation_Builds :: struct {
     builds:[dynamic]^Build,
+    jobs:^jobs.Job_System, // the one the builds ran on
     uid:u64,          // of the Navigation the builds and the tracking below are for
     next_uid:u64,
     cursor:phys.Static_Cursor,
@@ -221,7 +222,7 @@ Build :: struct {
 builds_free :: proc(b:^Navigation_Builds) {
     for build in b.builds {
         // A job may still write it.
-        for jobs.pending(&build.counter) {}
+        if jobs.pending(&build.counter) {jobs.wait(b.jobs,jobs.OWNER,&build.counter)}
         build_release(build)
         free(build)
     }
@@ -715,6 +716,7 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:core.Read(Nav_Area
 // Gathers, hashes and starts the builds of marked tiles, up to the free jobs.
 @(private)
 builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,job_system:^jobs.Job_System,problems:^core.Problems) {
+    b.jobs=job_system
     want:=int(n.settings.builds) if n.settings.builds>0 else 4
     for len(b.builds)<want {
         build,error:=new(Build)
@@ -842,7 +844,7 @@ build_launch :: proc(build:^Build,job_system:^jobs.Job_System) {
         build_job(build,0)
         return
     }
-    jobs.run(job_system,jobs.OWNER,build_job,build,&build.counter)
+    jobs.run(job_system,jobs.OWNER,.Background,build_job,build,&build.counter)
     if jobs.worker_count(job_system)==1 {jobs.wait(job_system,jobs.OWNER,&build.counter)}
 }
 

@@ -9,9 +9,11 @@ import mm "mirai:std/math"
 
 // The camera each player sees through, and cameras that follow. The camera a
 // seat sees through is its latest override, and otherwise the camera of its
-// body (input.Drivable.camera); the focused local player's is the view of the
-// game (render.View_Camera, view.odin). The lens of an override goes to its
-// camera while it stands.
+// body: the render.Camera on it or under it, first in the walk of its
+// hierarchy; the focused local player's is the view of the game
+// (render.View_Camera, view.odin). The lens of an override goes to its camera
+// while it stands. What the seat asks of its body comes from what it sees
+// (drive.odin).
 //
 // A Camera_Follow on a camera entity moves it with a target. Follow keeps an
 // offset from the target with a smoothed pivot; Orbit turns around the pivot
@@ -34,32 +36,31 @@ Camera_Mode :: enum u8 {Follow,Orbit,Eyes}
 
 @(component,locks="core.Transform")
 Camera_Follow :: struct {
-    target:core.Entity `mirai:"section=Follow"`, // none: the body whose camera it is, or else the one of the focused local player
+    target:core.Entity `mirai:"section=Follow"`, // none: the body it hangs from (follow_target), or else the one of the focused local player
     mode:Camera_Mode,
     offset:[3]f32 `mirai:"unit=m"`, // from the target to the pivot, in the axes of the vertical of the target: world axes without one
-    distance:f32 `mirai:"min=0,unit=m"`, // Orbit: from the pivot to the camera
-    half_life:f32 `mirai:"min=0,unit=s"`, // time the pivot takes to close half of its distance to the target; 0: rigid
-    up_half_life:f32 `mirai:"min=0,unit=s"`, // the same along the up of the target; 0: half_life
-    probe_radius:f32 `mirai:"min=0,unit=m"`, // Orbit: of the sphere kept clear from the pivot to the camera; 0: nothing pulls it in
-    shoulder:[2]f32 `mirai:"unit=m"`, // Orbit: right and up of the camera, from the pivot to where its arm starts
-    look_up_offset:[3]f32 `mirai:"unit=m"`,   // Orbit: right, up and back of the camera added to where its arm starts when it looks straight up, in proportion to the pitch
-    look_down_offset:[3]f32 `mirai:"unit=m"`, // Orbit: the same looking straight down
-    dead_zone:[3]f32 `mirai:"min=0,unit=m,section=Framing"`, // half the box, along the right, up and back of the camera, the target moves in before the pivot follows
-    look_ahead:f32 `mirai:"min=0,unit=s"`, // the pivot leads the target by how far it goes across the ground in this time
-    look_ahead_max:f32 `mirai:"min=0,unit=m"`, // 0: no limit
-    yaw:f32 `mirai:"angle,section=Look"`, // Orbit: where it starts; aiming, what it adds to the look
-    pitch:f32 `mirai:"angle"`, // Orbit: where it starts, positive above the pivot looking down, negative below it looking up; aiming, what it adds to the look. Eyes: where it starts, positive looks up
-    min_pitch,max_pitch:f32 `mirai:"angle"`, // both 0: almost straight up and down
-    turn:bool,                      // Orbit without aim: the look action of the focused local player who drives its target turns it
-    recenter:f32 `mirai:"min=0,unit=s"`, // Orbit without aim: this long after it was last turned, it comes back behind a target that moves; 0: never
-    look_at:bool,                   // Follow: the camera faces the target
-    aim:bool,                       // Orbit: it looks where the Move_Input of the target looks
-    facing:bool,                    // Orbit: the body it follows looks where it looks, as when aiming (move_relative_to View)
-    pull_grace:f32 `mirai:"min=0,unit=s,section=Advanced"`, // Orbit: what only crosses between the pivot and the camera is let be this long before the camera comes in
-    pull_time:f32 `mirai:"min=0,unit=s"`,    // half-life of coming in toward it; 0: at once
-    return_delay:f32 `mirai:"min=0,unit=s"`, // it stays in this long after the way clears
-    return_time:f32 `mirai:"min=0,unit=s"`,  // half-life of going back out; 0: at once
-    arm_margin:f32 `mirai:"min=0,unit=m"`,   // kept between the camera and what it hit
+    distance:f32 `mirai:"min=0,unit=m,mode=Orbit"`, // from the pivot to the camera
+    half_life:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // time the pivot takes to close half of its distance to the target; 0: rigid
+    up_half_life:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // the same along the up of the target; 0: half_life
+    probe_radius:f32 `mirai:"min=0,unit=m,mode=Orbit"`, // of the sphere kept clear from the pivot to the camera; 0: nothing pulls it in
+    shoulder:[2]f32 `mirai:"unit=m,mode=Orbit"`, // right and up of the camera, from the pivot to where its arm starts
+    look_up_offset:[3]f32 `mirai:"unit=m,mode=Orbit"`,   // right, up and back of the camera added to where its arm starts when it looks straight up, in proportion to the pitch
+    look_down_offset:[3]f32 `mirai:"unit=m,mode=Orbit"`, // the same looking straight down
+    dead_zone:[3]f32 `mirai:"min=0,unit=m,section=Framing,mode=Follow|Orbit"`, // half the box, along the right, up and back of the camera, the target moves in before the pivot follows
+    look_ahead:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // the pivot leads the target by how far it goes across the ground in this time
+    look_ahead_max:f32 `mirai:"min=0,unit=m,mode=Follow|Orbit"`, // 0: no limit
+    yaw:f32 `mirai:"angle,section=Look,mode=Orbit"`, // where it starts; aiming, what it adds to the look
+    pitch:f32 `mirai:"angle,mode=Orbit|Eyes"`, // Orbit: where it starts, positive above the pivot looking down, negative below it looking up; aiming, what it adds to the look. Eyes: where it starts, positive looks up
+    min_pitch,max_pitch:f32 `mirai:"angle,mode=Orbit|Eyes"`, // both 0: almost straight up and down
+    turn:bool `mirai:"mode=Orbit"`, // without aim: the look action of the local player who drives its target turns it
+    recenter:f32 `mirai:"min=0,unit=s,mode=Orbit"`, // without aim: this long after it was last turned, it comes back behind a target that moves; 0: never
+    look_at:bool `mirai:"mode=Follow"`, // the camera faces the target
+    aim:bool `mirai:"mode=Orbit"`,  // it looks where the Move_Input of the target looks
+    pull_grace:f32 `mirai:"min=0,unit=s,section=Advanced,mode=Orbit"`, // what only crosses between the pivot and the camera is let be this long before the camera comes in
+    pull_time:f32 `mirai:"min=0,unit=s,mode=Orbit"`,    // half-life of coming in toward it; 0: at once
+    return_delay:f32 `mirai:"min=0,unit=s,mode=Orbit"`, // it stays in this long after the way clears
+    return_time:f32 `mirai:"min=0,unit=s,mode=Orbit"`,  // half-life of going back out; 0: at once
+    arm_margin:f32 `mirai:"min=0,unit=m,mode=Orbit"`,   // kept between the camera and what it hit
     hide_within:f32 `mirai:"min=0,unit=m"`,  // the body it follows is not drawn in its view while the camera is nearer than this to its pivot, and fades out from twice as far; 0: always drawn
     looking:[2]f32 `mirai:"transient,readonly"`, // yaw and pitch it looks with now, radians
     state:Camera_Follow_State `mirai:"transient,hidden"`,
@@ -166,23 +167,40 @@ camera_override_remove :: proc(r:^Camera_Requests,owner:core.Entity) {
     core.push(&r.queue,Camera_Request{override={owner=owner}})
 }
 
-// The camera a seat sees through: its latest override, and otherwise the
-// camera of its body. none without a valid one.
-camera_selected :: proc(cameras_state:^Cameras,drivables:core.Read(input.Drivable),cameras:core.Read(render.Camera),seat:core.Entity) -> core.Entity {
-    camera,_:=seat_camera(cameras_state,drivables,cameras,seat)
-    return camera
+// What the players see through, for a step to receive in one parameter.
+@(params)
+Sight :: struct {
+    shown:core.Ref(Cameras),
+    seats:core.Read(input.Seat),
+    cameras:core.Read(render.Camera),
+    hierarchy:core.Ref(core.Hierarchy),
+    worlds:core.Read(core.World_Transform),
 }
 
-// The camera a seat sees through and, when an override chose it, the blend it asked for.
-@(private)
-seat_camera :: proc(cameras_state:^Cameras,drivables:core.Read(input.Drivable),cameras:core.Read(render.Camera),seat:core.Entity) -> (core.Entity,Camera_Blend) {
+// The ray of the view of the player who drives a body: from the camera it
+// sees through, where it looks, whatever the mode of that camera. False
+// without a camera.
+aim :: proc(sight:Sight,body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
+    camera,_:=camera_selected(sight.shown.ptr,sight.seats,sight.cameras,sight.hierarchy,input.seat_of(sight.seats,body))
+    placed:=core.get(sight.worlds,camera) or_return
+    return placed.position,mm.quat_forward(placed.rotation),true
+}
+
+// The camera a seat sees through: its latest override, and otherwise the
+// camera of its body; none without a valid one. With the blend an override asked for.
+camera_selected :: proc(cameras_state:^Cameras,seats:core.Read(input.Seat),cameras:core.Read(render.Camera),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> (core.Entity,Camera_Blend) {
     if chosen:=override_chosen(cameras_state,cameras,seat);chosen!=nil {return chosen.camera,chosen.blend}
-    if seat==core.NONE {return core.NONE,{}}
-    if body:=input.body_of(drivables,seat);body!=core.NONE {
-        value,_:=core.get(drivables,body)
-        if camera_valid(cameras,value.camera) {return value.camera,{}}
+    return body_camera(hierarchy,cameras,input.body_of(seats,seat)),{}
+}
+
+// The camera of a body: a render.Camera on it or under it, the first in the
+// walk of its hierarchy; none without one.
+body_camera :: proc(hierarchy:core.Ref(core.Hierarchy),cameras:core.Read(render.Camera),body:core.Entity) -> core.Entity {
+    if body==core.NONE {return core.NONE}
+    for at:=body;at!=core.NONE;at=core.subtree_next(hierarchy,body,at) {
+        if camera_valid(cameras,at) {return at}
     }
-    return core.NONE,{}
+    return core.NONE
 }
 
 // Whether an owner asks for a camera now.
@@ -214,7 +232,7 @@ camera_valid :: proc(cameras:core.Read(render.Camera),e:core.Entity) -> bool {
 @(step="fixed",stage="input")
 camera_select :: proc(
     es:core.Ref(core.Entities),cameras:core.Read(render.Camera),cameras_state:^Cameras,requests:^Camera_Requests,
-    activations:core.Read(Camera_Activation),follows:core.Read(Camera_Follow),drivables:core.Read(input.Drivable),
+    activations:core.Read(Camera_Activation),follows:core.Read(Camera_Follow),parents:core.Read(core.Parent),
     seats:core.Read(input.Seat),seat_state:core.Ref(input.Seats),problems:^core.Problems,
 ) {
     for request in core.take(&requests.queue) {
@@ -248,9 +266,8 @@ camera_select :: proc(
             core.report(problems,camera,"camera.activation","the Camera_Activation of entity 0x%016x has no action or a blend below 0 seconds; give it the action that brings this camera, as aim",u64(camera))
             continue
         }
-        target:=input.body_of(drivables,player)
-        if follow,ok:=core.get(follows,camera);ok {target=follow_target(camera,follow.target,drivables,player)}
-        seat:=input.seat_of(drivables,target)
+        follow,_:=core.get(follows,camera)
+        seat:=input.seat_of(seats,follow_target(camera,follow.target,parents,seats,player))
         if seat!=core.NONE && camera_valid(cameras,camera) && input.seat_action(seats,seat,activation.action).down {
             if !override_set(cameras_state,{owner=camera,seat=seat,camera=camera,blend=activation.blend}) {
                 core.report(problems,camera,"camera.overrides_full","the Camera_Activation of entity 0x%016x was not seen: %d camera overrides are active, as many as fit",u64(camera),OVERRIDE_CAPACITY)
@@ -290,10 +307,10 @@ override_set :: proc(cameras_state:^Cameras,r:Camera_Override) -> bool {
 @(step="late")
 camera_follow :: proc(
     world:core.World_Ref,follows:^core.Table(Camera_Follow),cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),
-    worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),drivables:core.Read(input.Drivable),
+    worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
     seats:core.Read(input.Seat),moves:core.Read(input.Move_Input),shown:core.Ref(Cameras),
     seat_state:core.Ref(input.Seats),look_actions:input.Frame_Input_Of(input.Look_Action),queries:core.Ref(core.World_Queries),look_input:^Camera_Input,changes:^Camera_Changes,
-    views:core.Ref(Camera_Views),verticals:core.Read(core.Vertical),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
+    verticals:core.Read(core.Vertical),frame:core.Frame_Time,time:core.Time,problems:^core.Problems,
     shakes:^Camera_Shakes,
 ) {
     // The lens is the one of the mode or the override; the shakes go over it again below.
@@ -317,30 +334,17 @@ camera_follow :: proc(
         follow.state.idle=0
     }
     player:=input.focused(seat_state.ptr,seats)
-    // The cameras that turn with the look of the player of the one seen look
-    // where it looks, so that the view does not turn when it changes to one.
-    for slot in views.slots {
-        seen:=core.edit(follows,slot.camera)
-        if seen==nil || seen.mode!=.Orbit || seen.aim || !seen.turn || !seen.state.ready {continue}
-        target:=follow_target(slot.camera,seen.target,drivables,player)
-        for row in 0..<core.count(follows) {
-            e:=core.entity_at(follows,row)
-            other:=core.edit_at(follows,row)
-            if e==slot.camera || other.mode!=.Orbit || other.aim || !other.turn || !other.state.ready || follow_target(e,other.target,drivables,player)!=target {continue}
-            low,high:=pitch_limits(other^)
-            other.looking={seen.looking.x,clamp(seen.looking.y,low,high)}
-        }
-    }
-    turn:=input.vector(look_actions,.Look)*input.LOOK_SPEED
-    if seat,ok:=core.get(seats,player);!ok || seat.blocked&input.action_bit(input.action_of(look_actions,.Look))!=0 {turn={}}
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)
         follow:=core.edit_at(follows,row)
-        target:=follow_target(e,follow.target,drivables,player)
-        if follow.turn && turn!={} && follow.state.ready && follow.mode==.Orbit && !follow.aim && input.seat_of(drivables,target)==player {
-            low,high:=pitch_limits(follow^)
-            follow.looking={mm.angle_wrap(follow.looking.x-turn.x),clamp(follow.looking.y-turn.y,low,high)}
-            follow.state.idle=0
+        target:=follow_target(e,follow.target,parents,seats,player)
+        // The look of the local seat that drives its target turns it, from the devices of its slot.
+        if seat,local:=core.get(seats,input.seat_of(seats,target));local && input.seat_local(seat) && follow.turn && follow.state.ready && follow.mode==.Orbit && !follow.aim {
+            if turn:=input.slot_frame_state(look_actions,int(seat.slot),.Look).vector*input.LOOK_SPEED;turn!={} {
+                low,high:=pitch_limits(follow^)
+                follow.looking={mm.angle_wrap(follow.looking.x-turn.x),clamp(follow.looking.y-turn.y,low,high)}
+                follow.state.idle=0
+            }
         }
         vertical:=core.vertical_of(verticals,target)
         if placed,ok:=core.get(worlds,target);ok && core.has(verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
@@ -381,11 +385,11 @@ mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.
         want.state.changes=1
         want.state.blend=change.blend
         core.add(follows,change.camera,want)
-        camera_lens_set(camera,change.setup.lens)
+        camera^=lens_on(camera^,change.setup.lens)
         return
     }
     want.target=follow.target
-    if camera_follow_config(follow^)==want && lens_of(camera^)==change.setup.lens {return}
+    if camera_follow_config(follow^)==want && lens_on(camera^,change.setup.lens)==camera^ {return}
     state:=follow.state
     looked:=follow.looking
     if own,ok:=core.get(worlds,change.camera);ok {looked=look_of(own.rotation)}
@@ -399,12 +403,7 @@ mode_take :: proc(follows:^core.Table(Camera_Follow),cameras:^core.Table(render.
         follow.state.handoff=looked
         follow.state.handing=true
     }
-    camera_lens_set(camera,change.setup.lens)
-}
-
-camera_lens_set :: proc "contextless" (camera:^render.Camera,lens:Camera_Lens) {
-    camera.projection,camera.fov,camera.near,camera.height,camera.shift,camera.layers=lens.projection,lens.fov,lens.near,lens.height,lens.shift,lens.layers
-    camera.own_hidden=lens.own_hidden
+    camera^=lens_on(camera^,change.setup.lens)
 }
 
 // The yaw and pitch of an Orbit that looks as rotation does.
@@ -441,14 +440,21 @@ arm_query :: proc(user:rawptr,from,to:mm.Vec3,radius:f32) -> (fraction:f32,hit:b
     return found.distance/length,true
 }
 
-// Its target, or without one the body whose camera it is, or else the one of
-// the focused local player.
-follow_target :: proc(e,target:core.Entity,drivables:core.Read(input.Drivable),player:core.Entity) -> core.Entity {
+// Its target, or without one the body it hangs from: the nearest entity above
+// it that a seat drives, or else the root of its hierarchy. A camera that
+// hangs from nothing follows the body of the focused local player.
+follow_target :: proc(e,target:core.Entity,parents:core.Read(core.Parent),seats:core.Read(input.Seat),player:core.Entity) -> core.Entity {
     if target!=core.NONE {return target}
-    for row in 0..<core.count(drivables) {
-        if core.at(drivables,row).camera==e {return core.entity_at(drivables,row)}
+    root:=core.NONE
+    at:=e
+    for _ in 0..<core.HIERARCHY_DEPTH {
+        parent,ok:=core.get(parents,at)
+        if !ok || parent.entity==core.NONE {break}
+        at=parent.entity
+        if input.seat_of(seats,at)!=core.NONE {return at}
+        root=at
     }
-    return input.body_of(drivables,player)
+    return root!=core.NONE?root:input.body_of(seats,player)
 }
 
 // How far ahead of the target the pivot goes for a velocity across the ground.

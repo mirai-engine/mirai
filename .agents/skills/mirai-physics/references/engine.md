@@ -114,7 +114,12 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   body, with the collider's surface, filter and density; otherwise it is the hull of all the points.
   It fits in the hull budget whole or not at all.
 - `size` is multiplied by the absolute world scale: the sphere takes the largest; capsule and
-  cylinder, the largest of XZ for the radius and Y for the height.
+  cylinder, the largest of XZ for the radius and Y for the height. A negative axis mirrors the
+  collider where it is drawn: its center, and the points of a mesh or hull, whose triangles turn
+  so they keep facing out. A heightfield cannot be mirrored (`physics.collider_mirrored`), and a
+  collider turned under a scale that is not uniform across the turn is sheared, which a shape
+  cannot be (`physics.collider_sheared`).
+- A world Transform that is not finite is `physics.transform`: the body keeps its last pose.
 - `convex_radius` rounds the edges of `Box`, `Cylinder` or `Hull` without changing their size
   ([geometry](physics.md#geometry)) and is scaled by the smallest axis. It must stay below the
   smallest half-axis, the radius and half the height of the cylinder, or the distance from the hull
@@ -193,10 +198,9 @@ Overlaps:
 - They are evaluated when at least one body is awake. A zone that appears over a sleeping dynamic
   body or an idle `Character` may not emit an entry until it wakes. Gameplay keeps its occupants
   if it needs to know who is still inside.
-- A `bullet` that crosses a trigger in one tick emits both events in that tick, with `crossed`:
-  whoever counts occupants processes the `overlap_begin` before the `overlap_end`. A body that is
-  not a bullet and travels in one tick more than the thickness of the trigger and its own can cross
-  it without events.
+- A dynamic body that crosses a static trigger in one tick emits both events in that tick, with
+  `crossed`: whoever counts occupants processes the `overlap_begin` before the `overlap_end`. Only
+  a `bullet` does it also for a trigger on a moving body.
 
 ## Binding and world step
 
@@ -361,14 +365,17 @@ zone; `gravity.odin` applies it to the simulation.
 
 Manipulation:
 
-- `manipulation_target` moves a body temporarily as kinematic without modifying its `Rigid_Body`,
-  also a collider without that component or a proxy. It chases the pose in fixed steps and transmits
-  velocity to contacts: a large jump needs several ticks because of the solver's velocity limits.
-  Afterwards it stays held at the pose reached.
-- `manipulation_end` releases it on reaching the pending destination and restores authoring type
-  and mass (or the previous type of the proxy); it sets the velocity to zero except with
-  `preserve_velocity` (animation-to-simulation transition). With `dt=0`, placing and releasing are
-  immediate and without contacts.
+- `manipulation_target` holds a body toward a world pose without modifying its `Rigid_Body`, also a
+  collider without that component or a proxy. A dynamic body stays dynamic: a joint from the world
+  body drives its six axes toward the pose with a soft spring (Box2D's mouse drag) whose force is
+  bounded by `PULL_WEIGHTS` times its weight, so it collides, stops at walls and pushes no more than
+  that force allows. A static or kinematic body, or any with `follow` (a pose by design: the
+  animated ragdoll), is held as kinematic: it chases the pose in fixed steps, pushes what it touches
+  as infinite mass and needs several ticks for a large jump because of the solver's velocity limits.
+- `manipulation_end` lets a pulled body go at once and a kinematic hold once it reaches the pending
+  pose, restoring the authored type and mass (or the previous type of the proxy). A body dynamic
+  again keeps its velocity (a throw, the ragdoll going limp); any other stops. With `dt=0`, placing
+  and releasing are immediate and without contacts.
 - Requests go to the owner that `manipulation_owner` gives (the ancestor of a compound collider;
   `NONE` for characters) and their poses are in its world frame: they do not move a child shape
   separately. Two proxies of the same body share a hold and the last request wins. The hold is
@@ -391,20 +398,21 @@ entity of the joint:
 
 ## Locomotion
 
-The first-party `locomotion` plugin (`plugins/locomotion/runtime`: `locomotion.odin`, `moves.odin`,
-`seat.odin`; it depends on `physics`, never the other way) walks, jumps, falls, flies and swims the
+The first-party `locomotion` plugin (`plugins/locomotion/runtime`: `locomotion.odin` and
+`moves.odin`; it depends on `physics`, never the other way) walks, jumps, falls, flies and swims the
 `Character` of an entity that has the component of a mode (`Walk`, `Fly`, `Swim`) through its
-`input.Move_Input` ([engine/input](../../mirai-gameplay/references/control.md)), which the seat,
-the game, an AI or the network writes. A walker is `Character` + `Walk`. It drives the character
-only through the facade of physics: it writes `Character_Move`, reads `Character_State`,
-`core.Motion`, `gravity_of_entity` and `look_yaw_of`, and looks for ledges with `character_capsule`
+`input.Move_Input` ([engine/input](../../mirai-gameplay/references/control.md)), which the seat
+(through `engine/camera`), the game, an AI or the network writes. A walker is `Character` +
+`Walk`. It drives the character only through the facade of physics: it writes `Character_Move`,
+reads `Character_State`, `core.Motion`, `gravity_of_entity` and `look_yaw_of`, and looks for ledges
+with `character_capsule`
 and the queries (`sweep`, `raycast`, `overlap_capsule`); like every other plugin it may not import
 the solver. A game with bodies and no walkers leaves the plugin out.
 
-- Authored and run-time state are apart: `Character` (the body, and the `turn_speed` toward where it
-  goes that the seat, navigation and the animation read) and the mode components are written only
-  by an author; how a seat drives it (`move_relative_to`, `pitch_limit`) is in its
-  `input.Drivable`. `Locomotion_State` holds what changes while it plays (the mode it is in, jump,
+- Authored and run-time state are apart: `Character` (the body, and the `turn_speed` at which
+  locomotion turns it toward its look, which the animation reads too) and the mode components are
+  written only by an author. `Locomotion_State` holds what changes while it plays (the mode it is
+  in, the yaw it faces, jump,
   coyote, layered movements, the gravity asked with `set_gravity_scale`), every field `transient`,
   so a scene never holds one and the editor offers none, with `locomotion_step` its only writer.
   The mode components and the state are `replicated`: each end runs the same locomotion from the
@@ -517,38 +525,24 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
 - A layered movement lasts its `ticks` of own time. A game mode writes its `Character_Move` in its
   own time (with `dt * pace_of` and the velocity of `core.Motion` over `Locomotion_State.pace`),
   and `locomotion_step` takes it to the world's.
-- The seat turns toward the movement at `Character.turn_speed` of own time; mouse look does not
-  depend on time.
+- The body turns toward its look at `Character.turn_speed` of own time; mouse look does not depend
+  on time.
 
-### Seat control
+### What drives it
 
-- The seat that drives a `Character` writes its `Move_Input` with `locomotion_seat` (`fixed`,
-  `input`): the `move` and `look` actions (`Axis2`) give the movement and the look, and the buttons
-  are the `Button` actions that the seat has pressed, by id; a button that the game declares
-  (crouch) reaches a mode of its own this way without mapping code. It adds `ground_turn` to it.
-- `move_relative_to` of its `Drivable` says what forward is:
-  - `Look`: where it looks; the look turns `LOOK_SPEED` radians per unit of the action and the pitch
-    stays within the `pitch_limit` of its `Drivable` (first person, camera behind that follows the
-    look).
-  - `Camera`: where the camera of its `Drivable` looks, and the body turns toward the movement at
-    `Character.turn_speed` (orbiting camera).
-  - `World`: the world -Z, turning the same (top-down view).
-  - Both give the heading transverse to the character's up, in the frame of its vertical.
-
-  - `Game`: the game writes the `Move_Input` (click to move, the animation gallery).
-  - `View`: according to the camera through which its seat sees (`camera_selected`; without it, that
-    of its `Drivable`): like `Look` while it looks with the body (`Eyes`, or an `Orbit` with `aim`),
-    like `Camera` but looking where the camera looks if it has `facing` (aiming), and like `Camera`
-    otherwise. For a body whose camera changes mode or that aims with another
-    ([modes](../../mirai-gameplay/references/control.md#modes)).
-- A player's sensitivity is the scale of their `look` bindings. `move`, `jump`, `sprint` and
-  `crouch` belong to `locomotion` (`Walk_Action`) and `look` to `engine/input` (`Look_Action`)
-  ([actions](../../mirai-gameplay/references/control.md#actions)).
-- Without a seat, before `locomotion_step` takes its initial look or where another end decides
-  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `Input_Settings`
-  gives `move` or `look` another type, it is the `locomotion.seat_action` problem.
-- A step that adjusts what it wrote runs with `after="locomotion_seat"`; a portal turns only the
-  look of the traveler that drives its tip.
+- Whoever drives a `Character` writes its `Move_Input`: the seat through `camera_drive` of
+  `engine/camera` ([driving](../../mirai-gameplay/references/control.md#driving)), an AI or the game
+  for one no seat drives, the network for a replica. `move` is in the world; `look_yaw` is where it
+  is asked to face and `look_pitch` where it looks.
+- `locomotion_step` turns the yaw the body faces (`Locomotion_State.yaw`) toward `look_yaw` at
+  `Character.turn_speed` of own time (0: at once), plus the `ground_turn` of what it stands on; the
+  modes read the move in the axes of that yaw (`move_facing`), and its `Character_Move.yaw` is it.
+  No driver turns the body itself.
+- A player's sensitivity is the scale of their `look` bindings. `move` and `look` belong to
+  `engine/input` (`Move_Action`, `Look_Action`) and `jump`, `sprint` and `crouch` to `locomotion`
+  (`Walk_Action`) ([actions](../../mirai-gameplay/references/control.md#actions)). If
+  `Input_Settings` gives `move` or `look` another type, it is the `camera.seat_actions` problem.
+- A portal turns only the look of the traveler that drives its tip, before `camera_drive`.
 
 ## Physics step outside the loop
 
@@ -684,12 +678,12 @@ Physics does not know the network: both share `core` tables.
     touches moves it away from what the other owner shows. It does not push like a kinematic body:
     what it touches moves aside by itself.
   - Following and manipulation are two sources of the same hold (`Physics_State.held`, which lists
-    only what a manipulation or a pose target steers): the first that takes the body makes it
-    kinematic and stores its type, the last that releases it gives it back, and
-    the target's pose goes before that of manipulation. While the target continues,
-    `manipulation_target` stores the destination without moving the body and `manipulation_end`
-    releases the manipulation without changing its type or velocity; when following ends, a
-    manipulation that is still requested holds it.
+    only what a manipulation or a pose target steers): the first that holds the body as kinematic
+    stores its type, the last that releases it gives it back, and the target's pose goes before
+    that of manipulation. While the target continues, `manipulation_target` stores the destination
+    without moving the body (a pull has no spring) and `manipulation_end` releases the manipulation
+    without changing its type or velocity; when following ends, a manipulation that is still
+    requested holds or pulls it.
   - A body that is not yet made receives the pose in its `Transform` and the velocities in
     `core.Motion`, from where it takes them when made. An entity with a parent is left to the
     parent.

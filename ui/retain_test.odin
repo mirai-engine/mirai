@@ -26,7 +26,7 @@ test_retain_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_retained_subtree_is_drawn_again_without_being_built :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     s:=Test_Retain{key=1,floating=true}
     input:=test_input()
@@ -74,7 +74,7 @@ a_retained_subtree_is_drawn_again_without_being_built :: proc(t:^testing.T) {
 @(test)
 what_lays_out_in_the_flow_of_the_surface_is_never_kept :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Retain{key=1}
     input:=test_input()

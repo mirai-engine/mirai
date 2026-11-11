@@ -64,7 +64,7 @@ ai_attachment_rows :: proc(s:^Session,width:f32) -> int {
 @(private)
 ai_attachments_build :: proc(s:^Session,width:f32,rows:int) {
     if rows<=0 {return}
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     remove:=-1
     used:=f32(0);row:=0
     for id,i in m.attachments[:m.attachment_count] {
@@ -75,11 +75,11 @@ ai_attachments_build :: proc(s:^Session,width:f32,rows:int) {
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=th.field,radius=th.radius_control}) {
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
             ui.icon(ctx,icon,color,12)
-            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),th.font_small),th.font_small,th.text_muted,size-40-AI_CHIP_PIN_ROOM)
+            ui.label(ctx,ai_chat_menu_label(ctx,label,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40-AI_CHIP_PIN_ROOM)
             if path,_:=ai_attachment_file(s,id);path!="" {ai_chip_pin(s,ui.id(ctx,"pin_attachment",i+1),AI_PIN_ASSET,path,label)}
-            if ui.button(ctx,ui.id(ctx,"remove_attachment",i+1),{icon=.Cross,icon_color=th.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {remove=i}
+            if ui.button(ctx,ui.id(ctx,"remove_attachment",i+1),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,variant="ghost",width=12,height=12}).clicked {remove=i}
         }
         used+=size+5
     }

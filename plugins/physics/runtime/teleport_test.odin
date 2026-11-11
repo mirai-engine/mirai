@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:std/base"
+import "mirai:std/spatial"
 import mm "mirai:std/math"
 import sim "plugins:physics/runtime/sim"
 
@@ -114,3 +115,26 @@ a_write_that_only_turns_a_character_is_a_problem_that_says_how :: proc(t:^testin
 
 @(private="file")
 quaternion_vector :: proc(q:mm.Quat) -> [4]f32 {return {real(q),imag(q),jmag(q),kmag(q)}}
+
+// A Transform or a request that is not finite is a problem of its entity, and the body stays where it was.
+@(test)
+values_that_are_not_finite_leave_a_body_where_it_was_with_a_problem :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    e:=physics_test_box(&f,{0,2,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
+    physics_test_step(&f)
+    l:=link_find(&f.state,e)
+    if !testing.expect(t,l!=nil && l.kind==.Body) {return}
+    was:=sim.body_position(&f.state.world,l.body)
+    core.edit(&f.transforms,e).position={math.nan_f32(),2,0}
+    physics_test_step(&f)
+    testing.expect(t,core.problem_find(&f.problems,e,"physics.transform")!=nil)
+    testing.expect_value(t,sim.body_position(&f.state.world,l.body),was)
+    teleport(&f.requests,e,{0,math.inf_f32(1),0})
+    apply_impulse(&f.requests,e,{math.nan_f32(),0,0})
+    physics_test_step(&f)
+    testing.expect(t,core.problem_find(&f.problems,e,"physics.request_value")!=nil)
+    testing.expect(t,sim.finite(sim.body_position(&f.state.world,l.body),sim.body_linear_velocity(&f.state.world,l.body)))
+    for &tree in f.state.world.trees {testing.expect(t,spatial.dynamic_tree_validate(&tree))}
+}

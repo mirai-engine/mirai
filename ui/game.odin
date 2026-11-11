@@ -160,14 +160,16 @@ GAME_ARROW :: f32(0.75) // the arrows of a selector, a number and a dropdown, in
 // Without a size, a control is a line of its text tall with GAME_PAD of
 // room above and below; a checkbox and a radio, a line of text square.
 Game_Control :: struct {
-    style:^Node_Style, // resolved for the state of the control; nil: nothing but its text, in the size of the theme
+    style:^Node_Style, // resolved for the state of the control; nil: nothing but its text, CONTROL_EM in size
     width,height:Size,
     disabled:bool,
 }
 
+CONTROL_EM :: f32(13) // the size of the text of a control whose look gives none
+
 @(private)
 control_em :: proc(ctx:^Context,style:^Node_Style) -> f32 {
-    return style.text.size if style.text.size>0 else ctx.theme.font
+    return style.text.size if style.text.size>0 else CONTROL_EM
 }
 // What the layout says, or sizes sizes of its text wide by a line with its room.
 @(private)

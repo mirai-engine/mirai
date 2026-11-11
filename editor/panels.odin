@@ -12,6 +12,7 @@ import "mirai:project"
 import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 import "mirai:editor/api"
 
@@ -1020,41 +1021,40 @@ panels_build :: proc(s:^Session,g:^Editor_Ui,panels:^Project_Panels) {
 panel_build :: proc(s:^Session,p:^Project_Panel) -> (deleted:bool) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     id:=ui.id_derive(ctx,PANELS_SCOPE,base.text_get(p.id[:]))
     float:=tool_panel(g,id)
     width:=float.width.value-float.padding[0]-float.padding[2]
-    height:=ctx.size.y-float.offset.y-th.margin-float.padding[1]-float.padding[3]
+    height:=ctx.size.y-float.offset.y-ui.metric(ctx,"margin")-float.padding[1]-float.padding[3]
     if ui.panel(ctx,id,float) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),align_y=.Center,gap=2}) {
-            ui.label(ctx,base.text_get(p.title[:]),th.font,th.text,width-24,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,base.text_get(p.title[:]),ui.metric(ctx,"font"),ui.tone(ctx,"text"),width-24,font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
-            deleted=ui.button(ctx,ui.id(ctx,"delete"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=th.text_muted,style=.Ghost,width=22,height=22,icon_size=12}).clicked
+            deleted=ui.button(ctx,ui.id(ctx,"delete"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=22,height=22,icon_size=12}).clicked
         }
         for first:=0;first<p.button_count;first+=2 {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
                 for button in first..<min(first+2,p.button_count) {
                     name:=base.text_get(p.buttons[button].name[:])
-                    if ui.button(ctx,ui.id(ctx,"button",button+1),{label=name,style=.Field,width=-1,center=true}).clicked {
+                    if ui.button(ctx,ui.id(ctx,"button",button+1),{label=name,variant="field",width=-1,center=true}).clicked {
                         changed,problem:=panel_press(s,p,button)
                         if problem!="" {notify(s,problem)} else if changed==0 {notify(s,fmt.tprintf("%s: no entity matches",name))}
                     }
                 }
             }
         }
-        if ui.button(ctx,ui.id(ctx,"restore"),{label="Restore",icon=.Revert,style=.Ghost,width=-1,center=true,disabled=panel_kept_count(s.panels,p)==0}).clicked {
+        if ui.button(ctx,ui.id(ctx,"restore"),{label="Restore",icon=.Revert,variant="ghost",width=-1,center=true,disabled=panel_kept_count(s.panels,p)==0}).clicked {
             if _,problem:=panel_restore(s,p);problem!="" {notify(s,problem)}
         }
         w:=edited_world(s)
         if p.row_count>0 || p.button_count>0 {
-            if ui.scroll_area(ctx,ui.id(ctx,"rows"),&p.scroll,{width=ui.GROW,height=ui.FIT,max_height=max(height-24-(th.row+6)*f32((p.button_count+1)/2+1)-12,80),direction=.Column,gap=3}) {
+            if ui.scroll_area(ctx,ui.id(ctx,"rows"),&p.scroll,{width=ui.GROW,height=ui.FIT,max_height=max(height-24-(ui.metric(ctx,"row")+6)*f32((p.button_count+1)/2+1)-12,80),direction=.Column,gap=3}) {
                 for &row,i in p.rows[:p.row_count] {
                     ui.id_push(ctx,ui.id(ctx,"row",i+1))
                     defer ui.id_pop(ctx)
                     if row.kind==.Heading {
-                        ui.section(ctx,base.text_get(row.label[:]))
+                        kit.section(ctx,base.text_get(row.label[:]))
                         continue
                     }
                     panel_target_row(s,w,p,&row.place,base.text_get(row.label[:]),width)
@@ -1096,8 +1096,7 @@ panel_target_row :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,t:^Panel_T
 @(private)
 panel_attributes :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,width:f32) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    if !ui.collapsible(ctx,ui.id(ctx,"attributes"),"Attributes",&p.attributes).open {return}
+    if !kit.collapsible(ctx,ui.id(ctx,"attributes"),"Attributes",&p.attributes).open {return}
     shown:=make([dynamic]^Panel_Target,context.temp_allocator)
     for &b in p.buttons[:p.button_count] {
         next: for &set in b.sets[:b.set_count] {
@@ -1120,7 +1119,7 @@ panel_attributes :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,width:f32)
                 if entities,problem:=panel_entities(s,w,table,t);problem=="" {caption=fmt.tprintf(len(entities)==1?"%s, %d entity":"%s, %d entities",caption,len(entities))}
             }
         }
-        ui.label(ctx,caption,th.font_small,th.text_faint,width)
+        ui.label(ctx,caption,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),width)
         panel_target_row(s,w,p,t,"",width)
     }
 }

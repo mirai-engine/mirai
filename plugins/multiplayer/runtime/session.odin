@@ -95,7 +95,7 @@ Open_Request :: struct {
     server:bool,
     port:int,          // server: 0: Net_Settings.port
     invite:bool,       // server: it lets in only who brings the code of its invitation; without it, anyone who reaches its address
-    invite_token:u32,  // of it; 0: one is made, the port is mapped on the router and the code carries that address too
+    invite_token:u64,  // of it; 0: one is made, the port is mapped on the router and the code carries that address too
     connect:[96]u8 `mirai:"text"`, // client: the code of an invitation, or the address of a server without one
     latency,jitter:f64, // seconds a datagram is delayed each way, and how much that varies
     loss:f32,          // share of the datagrams lost each way
@@ -139,12 +139,16 @@ Net_Session :: struct {
     secret:[2]u64, // client: of the player it presents (Net_Player); kept while the World lives
     arrived:[dynamic]Connection_Event, // since the last tick began: Net_Connections of the next one
     received:[]core.Net_Arrived,       // likewise the messages of the game, by message: core.Net_Messages of the next one
+    parts_next:[dynamic]Journal_Arrived, // client: likewise the parts of the journals: parts of the next one
+    parts:[dynamic]Journal_Arrived,    // client: the parts of the tick, which journal_receive hands to each journal
+    incoming:[dynamic]u8,              // client: the part arriving on the channel of parts, until its last piece
+    incoming_over:bool,                // it is larger than a part can be: dropped when it ends
     scratch:[]u8, // one event or one component
     placed:u32,   // the places it asked of core.Pose_Target: each a new number
     taken:u32,    // client: the last place asked before a tick began, which its simulation took
     address:string,
     port:int,       // server: of the socket
-    invite:u32,     // server: the token a client must bring, 0: anyone joins; client: the one it brings
+    invite:u64,     // server: the token a client must bring, 0: anyone joins; client: the one it brings
     invite_code:string, // server: the code of the invitation, once the router answered
     mapping:wire.Port_Mapping, // server: of the port, when it made its own invitation
     mapping_on:bool,
@@ -245,7 +249,7 @@ session_start :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,settings:^Ne
     case .None:
     case .Transport_Failed:
         if wanted.server {session_fail(s,app.allocator,fmt.tprintf("could not open the UDP port %d: is another server on it?",port))}
-        else {session_fail(s,app.allocator,fmt.tprintf("\"%s\" is neither an invitation nor an address: give the code its host shows, like R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A (copy it again if a character changed), or an address like 1.2.3.4:27500 or [::1]:27500",connect))}
+        else {session_fail(s,app.allocator,fmt.tprintf("\"%s\" is neither an invitation nor an address: give the code its host shows, like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT (copy it again if a character changed), or an address like 1.2.3.4:27500 or [::1]:27500",connect))}
     case .Protocol_Failed:
         if refusal:=base.text_get(s.refusal[:]);refusal!="" {
             session_fail(s,app.allocator,fmt.tprintf("the libraries do not describe a network protocol: %s",refusal))
@@ -341,6 +345,7 @@ session_open :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,port:int) -> 
         mode=s.mode,transport=transport,protocol=&s.protocol,protocol_id=d.protocol_id,version=d.version,
         seed=d.seed,invite=s.invite,max_connections=d.max_clients,tick_rate=int(1/app.tick_dt+0.5),replication=d.replication,allocator=allocator,
         timeout=d.timeout,connect_timeout=d.connect_timeout,hold=s.follows,
+        channels=JOURNAL_CHANNELS,
     }
     host_desc.replication.max_objects=d.max_objects
     host_desc.frame_ops=max(4096,d.max_objects*8)
@@ -531,6 +536,9 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.arrived);s.arrived=nil
     for pending in s.received {delete(pending.blocks)}
     delete(s.received,allocator);s.received=nil
+    parts_clear(&s.parts);parts_clear(&s.parts_next)
+    delete(s.parts);delete(s.parts_next);delete(s.incoming)
+    s.parts,s.parts_next,s.incoming,s.incoming_over=nil,nil,nil,false
     delete(s.scratch,allocator);s.scratch=nil
     delete(s.address,allocator);s.address=""
     delete(s.invite_code,allocator);s.invite_code=""
@@ -791,13 +799,13 @@ launch_read :: proc(s:^Net_Session,app:^host.App) -> bool {
         wanted.invite=true
         if text,given:=host.launch_value(launch,at);given {
             token,parsed:=strconv.parse_u64(text,16)
-            if !parsed || token==0 || token>u64(max(u32)) {return fail("--invite takes a nonzero 32-bit hexadecimal token")}
-            wanted.invite_token=u32(token)
+            if !parsed || token==0 {return fail("--invite takes a nonzero 64-bit hexadecimal token")}
+            wanted.invite_token=token
         }
     }
     if at,on:=host.launch_flag(launch,"--connect");on {
         text,given:=host.launch_value(launch,at)
-        if !given || len(text)>=len(wanted.connect) {return fail("--connect takes the code of an invitation (R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A) or the address of a server without one (1.2.3.4:27500)")}
+        if !given || len(text)>=len(wanted.connect) {return fail("--connect takes the code of an invitation (R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT) or the address of a server without one (1.2.3.4:27500)")}
         base.text_set(wanted.connect[:],text)
     }
     if wanted.server && wanted.connect[0]!=0 {return fail("--server or --dedicated and --connect do not go together: a player serves the game or joins one")}

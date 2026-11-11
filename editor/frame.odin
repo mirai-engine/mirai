@@ -45,7 +45,7 @@ editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Sele
     // above, and between the left panel and a docked Details: what they take
     // is not drawn. The camera keeps the center of the whole view, the part
     // under the left panel too, so folding the panel moves nothing of the image.
-    bars:=ctx.theme.bar_height+toolbar_height(g)
+    bars:=ui.metric(ctx,"bar_height")+toolbar_height(g)
     density:=app.density if app.density>0 else 1
     left,right:=dock_widths(s)
     top:=min(i32(math.round(bars*density)),max(app.drawable.y-1,0))

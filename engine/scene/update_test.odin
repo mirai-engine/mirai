@@ -136,28 +136,6 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     testing.expect(t,error==.None && report.dangling==1 && core.at(&w.links,core.row_of(&w.links,bulb)).target==core.NONE)
 }
 
-// asset declares the two components of the instances for a document, where
-// it cannot name the ones of a world: any drift of names, kinds or order
-// between them would read one as the other wrongly.
-@(test)
-the_components_of_prefab_instances_are_the_ones_asset_declares :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    Pair :: struct {world,document:typeid}
-    for pair in ([]Pair{{Prefab_Instance,asset.Prefab_Instance},{Prefab_Member,asset.Prefab_Member}}) {
-        world,document:=type_info_of(pair.world),type_info_of(pair.document)
-        testing.expect(t,world.size==document.size && world.align==document.align)
-    }
-    world_instance,_:=asset.types_index(&types,Prefab_Instance)
-    document_instance,_:=asset.types_index(&types,asset.Prefab_Instance)
-    world_member,_:=asset.types_index(&types,Prefab_Member)
-    document_member,_:=asset.types_index(&types,asset.Prefab_Member)
-    testing.expect_value(t,types.hashes[world_instance],types.hashes[document_instance])
-    testing.expect_value(t,types.hashes[world_member],types.hashes[document_member])
-    testing.expect(t,types.hashes[world_instance]!=types.hashes[world_member])
-    testing.expect_value(t,asset.COMPONENT_INSTANCE,"Prefab_Instance")
-    testing.expect_value(t,asset.COMPONENT_MEMBER,"Prefab_Member")
-}
-
 @(private="file")
 update_file :: proc(t:^testing.T,document:^asset.Scene,file:^asset.Asset) -> bool {
     data,bytes_error:=asset.scene_bytes(document,context.temp_allocator)

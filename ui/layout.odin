@@ -206,6 +206,6 @@ spacer :: proc(ctx:^Context,width:f32=-1,height:f32=-1) {
 }
 // A one unit line across its parent.
 divider :: proc(ctx:^Context) {
-    paint:=paint_add(ctx,{kind=.Rect,fill=ctx.theme.divider})
+    paint:=paint_add(ctx,{kind=.Rect,fill=tone(ctx,"divider")})
     element_leaf(ctx,{layout={width=GROW,height=fixed(1)},custom=paint})
 }
