@@ -49,7 +49,7 @@ MAX_CONNECTIONS :: 1024
 @(private) CHECKSUM_BYTES :: 4
 @(private) ACCEPT_BYTES :: 18   // server salt, object capacity, ticks of history and the slot of the connection, sealed
 @(private) CANDIDATES :: 2      // addresses a client asks at once: those of an invitation
-@(private) TRANSPORT_VERSION :: 7 // of the layout of the handshake and of the datagrams after it: raised when it changes
+@(private) TRANSPORT_VERSION :: 8 // of the layout of the handshake and of the datagrams after it: raised when it changes
 
 Connection_Stats :: struct {
     rtt,rtt_variance,jitter:f32, // seconds

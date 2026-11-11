@@ -8,9 +8,10 @@ import "mirai:core"
 import "mirai:host"
 
 when #config(MIRAI_BENCH,false) {
-@(private="file")
+@(private)
+@(test_world)
 Discovery_Bench_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     descriptions:core.Table(Animation),
 }
 
@@ -20,14 +21,14 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
     REPEATS :: 500
     for feature_count,case_index in ([4]int{0,16,256,16}) {
         w:Discovery_Bench_World
-        if !core.test_world_init(t,&w,test_types) {return}
-        defer core.test_world_destroy(&w)
+        if !test_world_init(t,&w) {return}
+        defer test_world_destroy(&w)
         for i in 0..<COUNT {
             entity:=core.create(&w.entities);description:=ANIMATION_DEFAULT
             if i<feature_count {description.asset={3,4}}
             core.add(&w.descriptions,entity,description)
         }
-        core.test_world_settle(&w)
+        test_world_settle(&w)
         host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
         characters:=Character_Assets{allocator=context.allocator};defer character_assets_free(&characters)
         test_character_register(&host_assets,{3,4});defer test_registry_free(&host_assets)

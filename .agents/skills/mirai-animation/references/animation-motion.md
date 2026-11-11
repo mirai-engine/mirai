@@ -20,8 +20,9 @@ distance→time curves, without components per window, foot or operation. Math:
   angle of zero leave the pose exact. It is applied before grounding and the constraints, after
   physics publishes the place of the actor. Below `MOTION_WARP_FADE_SPEED` of the body or of its
   clip it fades out with that speed, so a body that slows to a stop keeps the pose of the clip
-  without the stride shrinking to its minimum on the way. The turn follows the angle asked by a
-  spring, so a body that starts or turns at once does not swing the legs round in a tick; a clip
+  without the stride shrinking to its minimum on the way. The turn and the stride follow those
+  asked by a spring, so a body that starts or turns at once does not swing the legs round, nor
+  drop the pelvis that a long stride lowers, in a tick; a clip
   that stands travels nowhere, so a start turns from the walk's own direction, not the idle's.
 - A distance (`Motion_Distance`) is strictly monotonic keys of a clip. `motion_distance_time` gives
   clip and time without advancing the world; `motion_play_distance` and `animation_distance` enqueue

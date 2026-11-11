@@ -3,14 +3,14 @@ package core
 import "core:fmt"
 
 // What the attributes of a @(component) or @(storage) say of its table or
-// storage. The generator reads it from the declarations of a project and a
-// test world from those of the types of its fields, both through
-// declared_read.
+// storage: the generator reads it with declared_read, for the world of a game
+// and for those of its tests.
 Declared :: struct {
     shared,host,by_world:bool,
     single:bool, // a component the world uses one of at a time: its table keeps one row on
     far:bool,    // a component that draws a far form of its own: its entity stays when its section unloads
     derived:bool, // a component only code adds and nobody authors: a save, a copy and the undo leave it out
+    was:string,   // a component: the names it had, separated by spaces; a table of a document under one of them is its table
     replication:Replication,
     queue:bool,        // a storage of requests that many push and one library takes
     keep:bool,         // a storage of the World that survives clearing it: the state of the run, not of its entities
@@ -82,6 +82,7 @@ declared_read :: proc(d:^Declared,options:map[string]string,editor:bool) -> (inv
     _,d.single=options["single"]
     _,d.far=options["far"]
     _,d.derived=options["derived"]
+    d.was=options["was"] or_else ""
     _,d.queue=options["queue"]
     _,d.persist=options["persist"]
     _,d.keep=options["keep"]

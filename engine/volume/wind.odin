@@ -10,9 +10,10 @@ import "mirai:render/abi"
 Wind :: struct {
     speed:f32 `mirai:"min=0,unit=m/s"`,
     gusts:f32 `mirai:"min=0"`, // cycles per second of what sways in it
+    zone:Zone,
 }
 
-WIND_DEFAULT :: Wind{speed=4,gusts=0.6}
+WIND_DEFAULT :: Wind{speed=4,gusts=0.6,zone=ZONE_DEFAULT}
 
 // The wind as numbers that mix: xyz its velocity, m/s; w its gusts.
 wind_value :: proc "contextless" (w:Wind,pose:mm.Transform) -> [4]f32 {
@@ -21,7 +22,7 @@ wind_value :: proc "contextless" (w:Wind,pose:mm.Transform) -> [4]f32 {
 }
 
 // The wind at a point, as wind_value.
-wind_at :: proc(winds:^core.Table(Wind,$A),volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),point:[3]f32) -> [4]f32 {
+wind_at :: proc(winds:^core.Table(Wind,$A),at:Where,point:[3]f32) -> [4]f32 {
     if winds==nil {return {}}
     Winds :: struct {winds:^core.Table(Wind,.Read),worlds:^core.Table(core.World_Transform,.Read)}
     of :: proc(w:Winds,row:i32) -> [4]f32 {
@@ -29,7 +30,7 @@ wind_at :: proc(winds:^core.Table(Wind,$A),volumes:^core.Table(Volume,$B),worlds
         if !placed {pose.transform=mm.TRANSFORM_IDENTITY}
         return wind_value(core.at(w.winds,int(row)),pose.transform)
     }
-    return combine(gather(volumes,worlds,winds,point),[4]f32{},Winds{winds,worlds},of,mix_linear)
+    return combine(gather(at,winds,point),[4]f32{},Winds{winds,at.worlds},of,mix_linear)
 }
 
 WIND_VOLUMES :: abi.WIND_VOLUMES // the most a shader combines; past it the lowest priorities are left out
@@ -41,16 +42,17 @@ Gpu_Wind :: struct {
     values:[WIND_VOLUMES][4]f32, // as wind_value
 }
 
-gpu_wind :: proc(winds:^core.Table(Wind,$A),volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C)) -> (g:Gpu_Wind) {
+gpu_wind :: proc(winds:^core.Table(Wind,$A),at:Where) -> (g:Gpu_Wind) {
     rows:[WIND_VOLUMES]i32
-    n:=ordered(volumes,worlds,winds,rows[:])
+    n:=ordered(at,winds,rows[:])
     for i in 0..<n {
         e:=core.entity_at(winds,int(rows[i]))
-        v,at,_:=placed(volumes,worlds,e)
-        pose,found:=core.get(worlds,e)
+        wind:=core.at(winds,int(rows[i]))
+        v,shape,_:=placed(at,e)
+        pose,found:=core.get(at.worlds,e)
         if !found {pose.transform=mm.TRANSFORM_IDENTITY}
-        g.volumes[i]=gpu_volume(v,at)
-        g.values[i]=wind_value(core.at(winds,int(rows[i])),pose.transform)
+        g.volumes[i]=gpu_volume(v,shape,wind.zone)
+        g.values[i]=wind_value(wind,pose.transform)
     }
     g.count.x=u32(n)
     return

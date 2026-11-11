@@ -18,9 +18,7 @@
 // each emitter binds: in the namespace, name is its index for the functions
 // below. surface: the triangles of a mesh, or of what an entity draws (a skin
 // moves them). channel: the births a game gives the channel of its name in
-// this frame. bones: the bones of a skinned mesh, from the joint of each
-// parent bone to its own, as the skin is posed. grid: a grid of the world of
-// that name (vfx.Particle_Grid), layers of four floats in each cell; one
+// this frame. grid: a grid of the world of that name (vfx.Particle_Grid), layers of four floats in each cell; one
 // declared `//! resource name grid cleared` starts at zero each stage that
 // writes it. emitter: the particles of another emitter, the entity the
 // emitter binds by the name of the resource (vfx.Particle_Bindings). data,

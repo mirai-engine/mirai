@@ -167,9 +167,10 @@ gates_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
 
 // A world of the physics without gravity, where the tests below do what
 // portals_collision and portals_travel do for a traveler every tick.
-@(private="file")
+@(private)
+@(test_world)
 Lab_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     twins:core.Table(phys.Body_Twin),
     cuts:core.Table(phys.Collider_Cuts),
@@ -185,7 +186,7 @@ Lab :: struct {
 
 @(private="file")
 lab_init :: proc(t:^testing.T,lab:^Lab) -> bool {
-    if !core.test_world_init(t,&lab.w,phys.test_types) {return false}
+    if !test_world_init(t,&lab.w) {return false}
     lab.settings={bodies=64,shapes=64,contacts=512,joints=4,characters=4,hulls=4,meshes=4,heightfields=4,fluids=4,events=64}
     lab.whole=true
     return true
@@ -194,7 +195,7 @@ lab_init :: proc(t:^testing.T,lab:^Lab) -> bool {
 @(private="file")
 lab_destroy :: proc(lab:^Lab) {
     phys.test_host_destroy(&lab.host)
-    core.test_world_destroy(&lab.w)
+    test_world_destroy(&lab.w)
 }
 
 @(private="file")
@@ -212,9 +213,9 @@ lab_box :: proc(lab:^Lab,type:phys.Body_Type,position,half:[3]f32,rotation:mm.Qu
 // Makes the bodies of the rows and applies the requests, without a step.
 @(private="file")
 lab_settle :: proc(lab:^Lab) {
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
     phys.test_step(&lab.physics,&lab.host,0)
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
 }
 
 @(private="file")
@@ -249,7 +250,7 @@ lab_tick :: proc(lab:^Lab,traveler:core.Entity,openings:[]Opening) -> bool {
         if core.has(&lab.twins,traveler) {core.remove(&lab.twins,traveler)}
         if core.has(&lab.cuts,traveler) {core.remove(&lab.cuts,traveler)}
     }
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
     phys.physics_twins(&lab.state,core.read(&lab.twins),core.read(&lab.cuts),&lab.problems)
     return near
 }
@@ -257,7 +258,7 @@ lab_tick :: proc(lab:^Lab,traveler:core.Entity,openings:[]Opening) -> bool {
 @(private="file")
 lab_step :: proc(lab:^Lab) {
     phys.test_step(&lab.physics,&lab.host,1.0/60)
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
 }
 
 // A body whose center went into an opening comes out of its exit, with its velocity turned.
@@ -416,12 +417,12 @@ a_body_halfway_through_an_opening_steps_again_the_same_from_a_snapshot :: proc(t
     run(&lab,cube,openings[:],first[:])
     testing.expect(t,core.has(&lab.twins,cube),"the snapshot is taken halfway in")
     snapshot:Lab_World
-    if !core.test_world_init(t,&snapshot,phys.test_types) {return}
-    defer core.test_world_destroy(&snapshot)
-    testing.expect(t,core.test_world_copy(&snapshot,&lab.w))
+    if !test_world_init(t,&snapshot) {return}
+    defer test_world_destroy(&snapshot)
+    testing.expect(t,test_world_copy(&snapshot,&lab.w))
     once,again:[40]u64
     run(&lab,cube,openings[:],once[:])
-    testing.expect(t,core.test_world_copy(&lab.w,&snapshot))
+    testing.expect(t,test_world_copy(&lab.w,&snapshot))
     run(&lab,cube,openings[:],again[:])
     testing.expect(t,once==again)
 }

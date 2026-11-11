@@ -230,6 +230,21 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         return job_fail(job,.Write_Failed)
     }
+    // A check and a build of tests read the code of the project with its tests, and so its test worlds.
+    if desc.action!=.Build {
+        folders:=make([dynamic]string,context.temp_allocator)
+        names:=project.FOLDER_NAMES
+        append(&folders,project.path(p.root,names[.Game],allocator=context.temp_allocator),project.path(p.root,names[.Editor],allocator=context.temp_allocator))
+        for plugin in p.plugins {
+            if plugin.origin==.Engine {continue}
+            for part in project.PART_NAMES {append(&folders,project.path(plugin.folder,part,allocator=context.temp_allocator))}
+        }
+        if desc.test_package!="" {append(&folders,desc.test_package)}
+        if errors:=test_worlds_write(p.engine_root,p.root,folders[:],false,project.path(project_tests_folder(p.root,context.temp_allocator),"worlds.stamp",allocator=context.temp_allocator),context.temp_allocator);len(errors)>0 {
+            job.result.text=strings.join(errors,"\n",a)
+            return job_fail(job,.Generate)
+        }
+    }
     job.published=target_output(p,desc.target,desc.output,a,desc.server)
     if desc.target==.Game && project.path_same(job.published[:strings.last_index_byte(job.published,'/')],p.root) {return job_fail(job,.Output_Invalid)}
     job.staged=project.path(job.work,strings.concatenate({job.prefix,desc.target==.Game?project.EXECUTABLE_SUFFIX:project.LIBRARY_SUFFIX},context.temp_allocator),allocator=a)
@@ -253,7 +268,7 @@ job_start :: proc(desc:Desc) -> ^Job {
             if p.plugins[index].manifest.development {append(&job.development,strings.clone(p.plugins[index].folder,a))}
         }
         if assets:=project.folder_path(p.root,.Assets,a);os.is_dir(assets) {
-            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,allocator=a}
+            job.cook={assets=assets,output=project.folder_path(folder,.Assets,a),manifest=project.path(p.root,COOK_FILE,allocator=a),texture_cache=project.content_cache_path(p.root,project.TEXTURE_CACHE,allocator=a),mesh_cache=project.content_cache_path(p.root,project.MESH_CACHE,allocator=a),root=p.root,server=desc.server,quick=desc.dev,keys=project.path(job.work,fmt.tprintf("%s.cook",name),allocator=a),allocator=a}
             job.plugin_assets=make([dynamic]project.Asset_Folder,a)
             for found in project.asset_folders(p,a) {
                 if found.prefix!="" {append(&job.plugin_assets,found)}

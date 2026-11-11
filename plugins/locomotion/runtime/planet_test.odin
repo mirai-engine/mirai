@@ -157,16 +157,16 @@ a_copied_world_repeats_a_walk_around_a_planet_exactly :: proc(t:^testing.T) {
     testing.expect(t,linalg.length(planet_up(f)-[3]f32{0,1,0})>1e-3)
     buffer:=new(Loco_World)
     defer free(buffer)
-    if !core.test_world_init(t,buffer,test_types) {return}
-    defer core.test_world_destroy(buffer)
-    testing.expect(t,core.test_world_copy(buffer,&f.w))
+    if !test_world_init(t,buffer) {return}
+    defer test_world_destroy(buffer)
+    testing.expect(t,test_world_copy(buffer,&f.w))
     Sample :: struct {feet,up:[3]f32,hash:u64}
     first:[150]Sample
     for &sample,i in first {
         script(f,200+i)
         sample={loco_position(f),planet_up(f),phys.state_hash(core.ref(&f.state))}
     }
-    testing.expect(t,core.test_world_copy(&f.w,buffer))
+    testing.expect(t,test_world_copy(&f.w,buffer))
     for sample,i in first {
         script(f,200+i)
         again:=Sample{loco_position(f),planet_up(f),phys.state_hash(core.ref(&f.state))}

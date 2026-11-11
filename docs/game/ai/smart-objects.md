@@ -22,7 +22,8 @@ to anyone. `Smart_Object` is also a component to add to an entity in a scene.
 ## Going to use it
 
 `think` proposes the trip only if one is open; the action does the whole trip (take the nearest,
-claim it, walk, wait) with `offer_act` and applies the effect:
+claim it, walk, wait) with `offer_act` and applies the effect. It walks after an object that
+moves, and fails if the offer is gone or closed before it is used:
 
 ```odin
 user := behavior.Smart_User{entity=behavior.agent(t), team=TEAM_ENEMY}

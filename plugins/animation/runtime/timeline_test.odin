@@ -7,8 +7,8 @@ import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 
-@(private="file") Timeline_Flag :: enum u8 {Lit,Flickers}
-@(private="file")
+@(private) Timeline_Flag :: enum u8 {Lit,Flickers}
+@(private)
 Timeline_Lamp :: struct {
     color:[4]f32,
     intensity:f64,
@@ -18,9 +18,10 @@ Timeline_Lamp :: struct {
     mode:Timeline_Flag,
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Timeline_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     names:core.Table(core.Name),
@@ -79,9 +80,9 @@ timeline_tick :: proc(w:^Timeline_World,app:^host.App,problems:^core.Problems,dt
     time:=core.Time{dt=dt,playing=true}
     extra:Test_Storages;defer test_storages_free(&extra)
     test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,app,time,{},nil,problems,&extra)
-    animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,{},app,problems)
+    animation_fields(test_world_ref(w),core.ref(&w.playback),&w.fields,{},app,problems)
     animation_finish(&w.playback,{problems=problems},&w.constraints,&w.transforms,&w.parents,dt,nil,{},places=&w.places)
-    core.test_world_settle(w)
+    test_world_settle(w)
 }
 
 @(private="file")
@@ -123,8 +124,8 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
         {"leaf/@field/Timeline_Lamp.intensity",.Float,ramp}, // the leaf has no lamp: nothing to write
     },{{time=.6,name="half"}}) {return}
     w:Timeline_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     door:=timeline_named(&w,"door")
     leaf:=timeline_named(&w,"leaf",door)
     actor:=timeline_named(&w,"somebody")
@@ -135,7 +136,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     animation:=ANIMATION_DEFAULT;animation.asset,animation.loop,animation.fade,animation.playing=id,false,0,false
     core.add(&w.animations,door,animation)
     core.add(&w.progress,door,Animation_Progress{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     at :: proc(w:^Timeline_World,e:core.Entity) -> [3]f32 {value,_:=core.get(&w.transforms,e);return value.position}
 

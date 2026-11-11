@@ -5,9 +5,10 @@ import "mirai:core"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
 
-@(private="file")
+@(private)
+@(test_world)
 Disable_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     points:core.Table(erender.Point_Light),
 }
@@ -17,9 +18,9 @@ Disable_Test_World :: struct {
 @(test)
 turning_off_and_disabling_are_undone_and_keep_the_values :: proc(t:^testing.T) {
     w:Disable_Test_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    ref:=core.test_world_ref(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    ref:=test_world_ref(&w)
     lamp,bulb:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.ids,lamp,core.Id{1});core.add(&w.ids,bulb,core.Id{2})
     core.add(&w.parents,bulb,core.Parent{lamp,0})

@@ -47,9 +47,9 @@ Test_Game :: struct {
 // Makes a key say a text in the language of the tests.
 test_game_text :: proc(s:^Test_Game,key,text:string) {
     hash:=base.name_hash(key)
-    at:=base.text_slot(TEST_LANGUAGE,hash)&u64(len(s.text_slots)-1)
+    at:=base.text_slot(base.name_hash(TEST_LANGUAGE),hash)&u64(len(s.text_slots)-1)
     for s.text_slots[at].key!=0 {at=(at+1)&u64(len(s.text_slots)-1)}
-    s.text_slots[at]={TEST_LANGUAGE,hash,u32(s.text_length),u32(len(text))}
+    s.text_slots[at]={base.name_hash(TEST_LANGUAGE),hash,u32(s.text_length),u32(len(text))}
     s.text_length+=copy(s.text_bytes[s.text_length:],text)
     s.texts={slots=s.text_slots[:],text=s.text_bytes[:]}
 }
@@ -73,7 +73,7 @@ test_game_build :: proc(ctx:^Context,user:rawptr) {
 test_game_instance :: proc(s:^Test_Game) -> bool {
     return tree_instance_init(&s.instance,&s.tree,test_host(&s.host,&s.schema,s.type,&s.values),&s.texts,TEST_LANGUAGE)
 }
-TEST_LANGUAGE :: u64(0x6573) // a language other than the one the texts are written in
+TEST_LANGUAGE :: "xx" // a language other than the one the texts are written in
 // A number a node writes in the copy of its instance.
 test_game_number :: proc(s:^Test_Game,node:int) -> f64 {return bound_number(raw_data(s.instance.values),s.instance.bounds[node].value)}
 test_game_context :: proc(t:^testing.T,ctx:^Context,s:^Test_Game,font:=false) {

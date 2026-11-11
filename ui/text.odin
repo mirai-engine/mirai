@@ -20,7 +20,7 @@ Text_Span :: struct {
     radius:f32,   // of the corners of back
     pad:f32,      // a chip: room beside its text, half on each side, which does not break at spaces
     height:f32,   // of a chip
-    solid:bool,   // its text breaks at no space: in a text that cuts, where each line ends (code)
+    solid:bool,   // its text breaks at no space, only where each line ends (code)
 }
 
 // The text being built between text_begin and text_end.
@@ -31,11 +31,10 @@ Text_Open :: struct {
 }
 
 // Starts a text of a style: the spans put until text_end are what it says.
-// line: the box of its lines when the style does not say it. cut: a word wider
-// than a line goes on in the next one. measure: nothing is built; end it with
-// text_end_height. False when the frame has no room for it, and then the
-// spans and the end do nothing.
-text_begin :: proc(ctx:^Context,style:Text_Style,line:f32=0,cut:=false,measure:=false) -> bool {
+// line: the box of its lines when the style does not say it. measure: nothing
+// is built; end it with text_end_height. False when the frame has no room for
+// it, and then the spans and the end do nothing.
+text_begin :: proc(ctx:^Context,style:Text_Style,line:f32=0,measure:=false) -> bool {
     o:=&ctx.text_open
     if o.open {ctx.stats.layout_errors+=1;return false}
     t:=&ctx.layout
@@ -55,7 +54,7 @@ text_begin :: proc(ctx:^Context,style:Text_Style,line:f32=0,cut:=false,measure:=
         box=style.size*(style.line_height if style.line_height>0 else TEXT_LINE)
         if whole:=math.round(box);abs(box-whole)<1e-3 {box=whole}
     }
-    desc:=Layout_Text_Desc{size=style.size,line=box,wrap=style.wrap,cut=cut,ellipsis=style.ellipsis,align_x=style.align_x,align_y=style.align_y}
+    desc:=Layout_Text_Desc{size=style.size,line=box,wrap=style.wrap,ellipsis=style.ellipsis,align_x=style.align_x,align_y=style.align_y}
     if !layout_text_begin(t,desc) {
         ctx.stats.dropped_elements+=1
         return false
@@ -168,7 +167,7 @@ text_end_height :: proc(ctx:^Context,width:f32) -> f32 {
     _,least:=layout_text_ask(t,&ctx.font,text)
     height:=layout_text_wrap(t,&ctx.font,text,max(width,least),false)
     t.span_count=int(text.spans_first)
-    return height
+    return context_whole(ctx,height)
 }
 
 // Text in a style inside a box of width by height. A FIT width is the width
@@ -319,6 +318,10 @@ text_draw_line :: proc(ctx:^Context,n:^Layout_Node,index:i32) {
         if cut_piece==i {
             if whole {draw_text_decorated(ctx,ELLIPSIS,end,py,style,decoration)}
             return
+        }
+        // A line that breaks at a soft hyphen draws it as a hyphen.
+        if whole && i==len(pieces)-1 && shown!="" && text_mark(shown,len(shown))==2 {
+            draw_text_decorated(ctx,"-",px+text_width(font,shown,style.size,int(style.font)),py,style,decoration)
         }
     }
 }

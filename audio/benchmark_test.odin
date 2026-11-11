@@ -10,7 +10,9 @@ AUDIO_BENCHMARK :: #config(AUDIO_BENCHMARK,false)
 
 @(private="file")
 Scenario :: enum {
-    Mono_Direct,Mono_Resampled,Stereo_Resampled,
+    // Sounds at the rate of the mixer, as every imported one is: at their own pitch they are
+    // copied, at another resampled.
+    Mono_Direct,Mono_Pitched,Stereo_Direct,Stereo_Pitched,
     // Spatial voices that move every 10 ms: within 2.5 m and in sight, 30 to 50 m away, or hidden.
     Speakers_Near,Speakers_Far,Speakers_Occluded,Headphones_Near,Headphones_Far,Headphones_Occluded,
     Mixed_Buses,
@@ -34,8 +36,7 @@ benchmark_mixing_ten_milliseconds :: proc(t:^testing.T) {
             m:=test_mixer(t,{voice_capacity=count,command_capacity=4096,output=.Headphones if headphones else .Speakers})
             defer mixer_destroy(m)
             mono:=test_mono(t,m,RATE,proc(i:int) -> f32 {return 0.01*math.sin_f32(f32(i)*0.05)})
-            mono_44:=test_mono(t,m,44100,proc(i:int) -> f32 {return 0.01*math.sin_f32(f32(i)*0.05)},44100)
-            stereo_44:=test_stereo(t,m,44100,proc(i:int) -> f32 {return 0.01*math.sin_f32(f32(i)*0.05)},44100)
+            stereo:=test_stereo(t,m,RATE,proc(i:int) -> f32 {return 0.01*math.sin_f32(f32(i)*0.05)})
             buses:[3]Bus
             for &bus in buses {bus,_=bus_create(m)}
             if scenario==.Mixed_Buses {
@@ -52,14 +53,15 @@ benchmark_mixing_ten_milliseconds :: proc(t:^testing.T) {
                 sound:=mono
                 switch scenario {
                 case .Mono_Direct:
-                case .Mono_Resampled:sound=mono_44;desc.pitch=0.8+f32(i%8)*0.05
-                case .Stereo_Resampled:sound=stereo_44;desc.pitch=0.8+f32(i%8)*0.05
+                case .Mono_Pitched:desc.pitch=0.8+f32(i%8)*0.05
+                case .Stereo_Direct:sound=stereo
+                case .Stereo_Pitched:sound=stereo;desc.pitch=0.8+f32(i%8)*0.05
                 case .Speakers_Near,.Speakers_Far,.Speakers_Occluded,.Headphones_Near,.Headphones_Far,.Headphones_Occluded:
-                    sound=mono_44;desc.spatial=true;desc.doppler=1
+                    desc.spatial=true;desc.doppler=1
                     desc.position=bench_place(i,0,far)
                     if scenario==.Speakers_Occluded || scenario==.Headphones_Occluded {desc.occlusion=1}
                 case .Mixed_Buses:
-                    sound=mono_44 if i%2==0 else stereo_44 if i%4==1 else mono
+                    sound=stereo if i%4==1 else mono;desc.pitch=0.9 if i%2==0 else 1
                     desc.bus=buses[i%3];desc.spatial=i%4==0;desc.position={f32(i%16)-8,0,-2}
                 }
                 voice=voice_play(m,sound,desc)

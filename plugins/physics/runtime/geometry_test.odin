@@ -587,7 +587,8 @@ cylinder_colliders_and_convex_radii_reach_the_simulation_at_the_scale_of_the_ent
 }
 
 // A mesh mirrored by a negative scale collides where it is drawn, from the side it faces there. A collider
-// turned under a scale that is not uniform across the turn is sheared: a problem of its entity.
+// turned under a scale that is not uniform across the turn is sheared: a problem of its entity; a quarter turn,
+// also with the tilt of a few millionths of a radian a simulated rotation carries, is not.
 @(test)
 a_mirrored_mesh_collides_where_it_is_drawn :: proc(t:^testing.T) {
     g:Geometry_Test
@@ -608,11 +609,11 @@ a_mirrored_mesh_collides_where_it_is_drawn :: proc(t:^testing.T) {
     core.add(&g.rigids,ball,RIGID_BODY_DYNAMIC)
     parent:=core.create(&g.entities)
     core.add(&g.transforms,parent,core.Transform{{0,0,-6},1,{2,1,1}})
-    turns:=[2]f32{0.25*linalg.PI,0.5*linalg.PI}
-    turned:[2]core.Entity
+    turns:=[3]mm.Quat{mm.quat_axis_angle({0,1,0},0.25*linalg.PI),mm.quat_axis_angle({0,1,0},0.5*linalg.PI),mm.quat_axis_angle({0,0,1},1e-5)*mm.quat_axis_angle({0,1,0},0.5*linalg.PI)}
+    turned:[3]core.Entity
     for &e,at in turned {
         e=core.create(&g.entities)
-        core.add(&g.transforms,e,core.Transform{{f32(at)*3,0,0},mm.quat_axis_angle({0,1,0},turns[at]),{1,1,1}})
+        core.add(&g.transforms,e,core.Transform{{f32(at)*3,0,0},turns[at],{1,1,1}})
         core.add(&g.parents,e,core.Parent{entity=parent})
         core.add(&g.colliders,e,collider_box({0.5,0.5,0.5}))
     }
@@ -625,6 +626,7 @@ a_mirrored_mesh_collides_where_it_is_drawn :: proc(t:^testing.T) {
     testing.expect(t,!beside,"nothing is where the ledge would be unmirrored")
     testing.expect(t,core.problem_find(&g.problems,turned[0],"physics.collider_sheared")!=nil,"an eighth turn under a scale of (2,1,1) shears")
     testing.expect(t,core.problem_find(&g.problems,turned[1],"physics.collider_sheared")==nil,"a quarter turn does not")
+    testing.expect(t,core.problem_find(&g.problems,turned[2],"physics.collider_sheared")==nil,"nor a quarter turn tilted by noise")
 }
 
 @(private="file")

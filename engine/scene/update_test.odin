@@ -5,12 +5,13 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:std/base"
 
-@(private="file") Update_Lamp :: struct {range:f32,heat:f32 `mirai:"transient"`}
-@(private="file") Update_Link :: struct {target:core.Entity}
+@(private) Update_Lamp :: struct {range:f32,heat:f32 `mirai:"transient"`}
+@(private) Update_Link :: struct {target:core.Entity}
 
-@(private="file")
+@(private)
+@(test_world)
 Update_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -31,15 +32,15 @@ Update_Fixture :: struct {
 
 @(private="file")
 update_fixture_init :: proc(t:^testing.T,f:^Update_Fixture) -> (ref:core.World_Ref,ok:bool) {
-    core.test_world_init(t,&f.w,test_types) or_return
+    test_world_init(t,&f.w) or_return
     asset.types_init(&f.types)
-    return core.test_world_ref(&f.w),true
+    return test_world_ref(&f.w),true
 }
 
 @(private="file")
 update_fixture_destroy :: proc(f:^Update_Fixture) {
     asset.types_destroy(&f.types)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 @(private="file")
@@ -63,7 +64,7 @@ update_put :: proc(t:^testing.T,f:^Update_Fixture,ref:core.World_Ref,document:^a
     testing.expect_value(t,asset.asset_open(&file,data),asset.Error.None)
     defer asset.asset_close(&file)
     report,error=update(ref,&file,&f.types,{scope=scope})
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     return
 }
 
@@ -82,7 +83,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     core.add(&w.lamps,bulb,Update_Lamp{range=1,heat=7})
     core.add(&w.links,bulb,Update_Link{other})
     core.add(&w.links,lamp,Update_Link{bulb})
-    core.test_world_settle(w)
+    test_world_settle(w)
 
     // A capture written back changes nothing, and what it names outside stays named.
     document:asset.Scene
@@ -167,7 +168,7 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     if !update_file(t,&level,&file) {return}
     defer asset.asset_close(&file)
     _,error:=instantiate(ref,&file,&f.types)
-    core.test_world_settle(w)
+    test_world_settle(w)
     testing.expect_value(t,error,Error.None)
     root,bulb:=core.entity_of(&w.entities,root_id),core.entity_of(&w.entities,bulb_id)
     of_bulb,instance,member:=prefab_instance_of(ref,bulb)
@@ -195,6 +196,6 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     rows:=[2]int{core.count(&w.instances),core.count(&w.members)}
     report:Report
     report,error=instantiate(ref,&copied,&f.types,{fresh=true})
-    core.test_world_settle(w)
+    test_world_settle(w)
     testing.expect(t,error==.None && report.entities==3 && rows==[2]int{core.count(&w.instances),core.count(&w.members)})
 }

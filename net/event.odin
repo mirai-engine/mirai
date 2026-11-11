@@ -20,6 +20,7 @@ event_deliver :: proc(h:^Host,p:^Peer,channel:int,rd:^serial.Bit_Reader) -> Even
     r:=&h.back.repl
     id:=int(serial.bit_read(rd,16))
     object:=serial.bit_read(rd,64)
+    tick:=r.server?r.remote_tick:u32(serial.bit_read(rd,32))
     if rd.error || id>=len(r.protocol.events) {return .Bad}
     type:=&r.protocol.events[id]
     if (r.server && .From_Client not_in type.flags) || (.Reliable in type.flags)!=(channel==CHANNEL_SYSTEM) {return .Bad}
@@ -37,7 +38,7 @@ event_deliver :: proc(h:^Host,p:^Peer,channel:int,rd:^serial.Bit_Reader) -> Even
             if r.live[index]!=1 || u64(object_handle(r,index))!=object {return .Missing}
         }
     }
-    command:=command_push(h,{kind=.Event,event=Event_Id(id),object=Object(object),connection=handle,tick=r.remote_tick},nil,type.desc.words)
+    command:=command_push(h,{kind=.Event,event=Event_Id(id),object=Object(object),connection=handle,tick=tick},nil,type.desc.words)
     if command!=nil {copy(command.words,words)}
     return .Delivered
 }
@@ -133,7 +134,11 @@ event_fanout :: proc(h:^Host,to,object:u64,sent:u8,data:[]u8) {
     if r.server && object!=0 && !about {return}
     for &p in h.back.peers {
         if p.state!=.Connected || (to!=0 && u64(peer_handle(h,&p))!=to) || r.server && p.repl.held && !held {continue}
-        if r.server && about && (p.repl.link[o]==.None || p.repl.link[o]>=.Pending_Destroy) {continue}
+        if r.server && about {
+            if p.repl.link[o]==.None || p.repl.link[o]>=.Pending_Destroy {continue}
+            p.repl.flags[o]|=LINK_TICK
+            if p.repl.link[o]==.Created {bitset_set(p.repl.work,o)}
+        }
         channel_queue(h,&p,reliable?CHANNEL_SYSTEM:CHANNEL_EVENTS,data)
     }
 }

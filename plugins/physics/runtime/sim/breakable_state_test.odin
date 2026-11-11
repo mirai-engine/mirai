@@ -102,7 +102,7 @@ a_written_state_makes_an_intact_destructible_what_the_other_became :: proc(t:^te
     testing.expect(t,breakable_state_apply(&b,walls[1],buffer[:size]))
     testing.expect(t,breakable_revision(&b,walls[1])==0 && breakable_check(&a,walls[0])==breakable_check(&b,walls[1]))
 
-    _,broke:=breakable_damage(&a,walls[0],{0.3,1.5,0.2},1.5,{0,0,-9000})
+    _,broke:=breakable_damage(&a,walls[0],{0.3,1.5,0.2},0.8,{0,0,-200})
     _,cut:=breakable_slice(&a,walls[0],{-0.9,1,0},{1,0.2,0})
     _,strained:=breakable_damage(&a,walls[0],{-1.5,0.4,0.2},0.6,{0,0,-1})
     testing.expect(t,broke,"the first damage breaks")

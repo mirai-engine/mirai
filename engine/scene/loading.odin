@@ -7,7 +7,6 @@ import "core:slice"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
-import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -629,14 +628,6 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
     }
     sleepers_join(w,e,&sleepers,made[:],held)
     if r:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),e));r!=nil {r.loaded,r.held=job.root,held}
-    // Its unbounded volumes rule in its box: they are found where they wait to join.
-    if places,joined_places:=core.world_table_of(apart,volume.Volume),core.world_table_of(w,volume.Volume);places!=nil && joined_places!=nil {
-        for row in 0..<core.raw_count(core.raw(places)) {
-            place:=(^volume.Volume)(core.raw_value(core.raw(places),type_info_of(volume.Volume),row))
-            if place.shape!=.Unbounded {continue}
-            if staged:=core.staged(joined_places,joined(made[:],core.raw(places).entities[row]));staged!=nil {staged.scope,staged.scope_extents=e,reference.extents}
-        }
-    }
     from,to:=core.world_storage_of(apart,Unresolved_References),core.world_storage_of(w,Unresolved_References)
     if from!=nil && to!=nil {
         for item in from.items {

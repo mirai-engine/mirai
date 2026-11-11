@@ -9,7 +9,7 @@ import mm "mirai:std/math"
 
 @(private) Marks_Model :: struct {mesh:base.Asset_Id}
 @(private) Marks_Held :: struct {list:[dynamic]base.Asset_Id}
-@(private) Marks_World :: struct {using world:core.Test_World,models:core.Table(Marks_Model),held:Marks_Held}
+@(test_world) @(private) Marks_World :: struct {using world:Test_World,models:core.Table(Marks_Model),held:Marks_Held}
 
 // What a World names stays loaded and what it stops naming unloads at the
 // next mark: a component, a dynamic array of a storage; once the World goes,
@@ -31,9 +31,9 @@ what_no_world_names_unloads_at_the_next_mark :: proc(t:^testing.T) {
     for id in meshes {_=assets_mesh(&assets,id)}
     for id in meshes {testing.expect(t,assets_loaded(&assets,id))}
 
-    info,described:=core.test_info(t,Marks_World)
+    info,described:=test_info(t,Marks_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     app:=App{info=&info,assets=&assets,allocator=context.allocator}
     app.worlds=make([dynamic]World_Slot)
     defer delete(app.worlds)

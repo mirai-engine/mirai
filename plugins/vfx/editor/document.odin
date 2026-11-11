@@ -38,8 +38,6 @@ Effect_Values :: struct {
     parameters:[effect.PARTICLE_MAX_PARAMETERS]effect.Particle_Parameter,
     parameter_count:int,
     hidden:bit_set[0..<PARTICLE_FIELDS;u64],
-    resources:[vfx.RESOURCES]effect.Particle_Resource, // kept as the file has them
-    resource_count:int,
 }
 
 Particle_Group :: enum u8 {Spawn,Shape,Motion,Look,Collision,Program}
@@ -48,12 +46,12 @@ PARTICLE_GROUP_TITLES :: [Particle_Group]string{.Spawn="SPAWN",.Shape="SHAPE",.M
 // A field of Particle_Info in the group the panel shows it in, in order.
 Particle_Row :: struct {group:Particle_Group,field:string}
 PARTICLE_ROWS :: [?]Particle_Row{
-    {.Spawn,"duration"},{.Spawn,"prewarm"},{.Spawn,"max_particles"},{.Spawn,"rate"},{.Spawn,"rate_over_cycle"},{.Spawn,"rate_over_distance"},{.Spawn,"bursts"},
-    {.Shape,"shape"},{.Shape,"shape_size"},{.Shape,"surface_mesh"},{.Shape,"shape_angle"},{.Shape,"shell"},
+    {.Spawn,"duration"},{.Spawn,"prewarm"},{.Spawn,"max_particles"},{.Spawn,"rate"},{.Spawn,"rate_over_distance"},{.Spawn,"bursts"},
+    {.Shape,"shape"},{.Shape,"shape_size"},{.Shape,"shape_angle"},{.Shape,"shell"},
     {.Motion,"lifetime"},{.Motion,"speed"},{.Motion,"velocity"},{.Motion,"inherit_velocity"},{.Motion,"local_space"},{.Motion,"gravity"},
     {.Motion,"acceleration"},{.Motion,"drag"},{.Motion,"noise"},{.Motion,"noise_frequency"},{.Motion,"noise_speed"},{.Motion,"attractor"},{.Motion,"attractor_strength"},
     {.Look,"size"},{.Look,"rotation"},{.Look,"spin"},{.Look,"colors"},{.Look,"intensity"},{.Look,"emission_mode"},{.Look,"size_over_life"},{.Look,"color_over_life"},
-    {.Look,"render"},{.Look,"blend"},{.Look,"lit"},{.Look,"lights"},{.Look,"light_shadows"},{.Look,"light_intensity"},{.Look,"light_range"},{.Look,"light_radius"},{.Look,"sort"},{.Look,"material"},{.Look,"mesh"},{.Look,"facing"},{.Look,"spin_axis"},{.Look,"mesh_rotation"},{.Look,"mesh_scale"},{.Look,"stretch"},{.Look,"soft"},{.Look,"flipbook"},{.Look,"flipbook_speed"},
+    {.Look,"render"},{.Look,"blend"},{.Look,"lit"},{.Look,"lights"},{.Look,"light_shadows"},{.Look,"light_intensity"},{.Look,"light_range"},{.Look,"light_radius"},{.Look,"sort"},{.Look,"material"},{.Look,"mesh"},{.Look,"stretch"},{.Look,"soft"},{.Look,"flipbook"},{.Look,"flipbook_speed"},
     {.Collision,"collision"},{.Collision,"bounce"},{.Collision,"friction"},{.Collision,"collision_life"},{.Collision,"trigger"},{.Collision,"sub_particle"},{.Collision,"sub_count"},{.Collision,"report"},
     {.Program,"program"},
 }
@@ -106,7 +104,6 @@ effect_values_of :: proc(view:effect.Particle_View) -> (values:Effect_Values) {
     for &field in view.hidden {
         if index:=particle_field_index(base.text_get(field.name[:]));index>=0 {values.hidden+={index}}
     }
-    values.resource_count=copy(values.resources[:],view.resources)
     return
 }
 
@@ -116,8 +113,6 @@ effect_file :: proc(values:^Effect_Values) -> (file:Particle_File) {
     file.parameters=make([dynamic]effect.Particle_Parameter,0,values.parameter_count,context.temp_allocator)
     append(&file.parameters,..values.parameters[:values.parameter_count])
     file.hidden=make([dynamic]effect.Particle_Field,context.temp_allocator)
-    file.resources=make([dynamic]effect.Particle_Resource,0,values.resource_count,context.temp_allocator)
-    append(&file.resources,..values.resources[:values.resource_count])
     fields:=runtime.type_info_base(type_info_of(effect.Particle_Info)).variant.(runtime.Type_Info_Struct)
     for i in 0..<min(int(fields.field_count),PARTICLE_FIELDS) {
         if i not_in values.hidden {continue}
@@ -502,8 +497,8 @@ effect_document_between :: proc(s:^editor.Session,d:^editor.Asset_Document) {
     if p.due==0 || p.due==p.image.signature || p.id!=d.id {return}
     image:=&p.image
     image.signature=p.due
-    override,given:=preview_values(&p.held,&p.file)
-    image.ready=preview_draw(s,&p.preview,p.id,&p.held.info,&override,&given,p.playback.time,PARTICLE_SIDE)
+    override:=preview_values(&p.held,&p.file)
+    image.ready=preview_draw(s,&p.preview,p.id,&p.held.info,&override,p.playback.time,PARTICLE_SIDE)
     image.renderer,image.texture=s.app.renderer,p.preview.texture
     image.side,image.size,image.stretch=0,{},false
 }

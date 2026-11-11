@@ -16,10 +16,10 @@ import "mirai:std/jobs"
 @(private="file")
 quad_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:=core.View{}) {
     if w.settings=={} {w.settings={bodies=256,shapes=256,contacts=64,joints=1,characters=1,hulls=1,meshes=256,heightfields=256}}
-    test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
-    core.test_world_settle(&w.w)
+    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+    test_world_settle(&w.w)
     terrain_test_physics(w,app)
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
 }
 
 @(private="file")
@@ -75,7 +75,7 @@ quad_owner :: proc(w:^Terrain_Test_World,id:base.Asset_Id,position:[3]f32={}) ->
     core.add(&w.transforms,owner,place)
     core.add(&w.worlds,owner,core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     return owner
 }
 

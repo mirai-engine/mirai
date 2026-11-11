@@ -95,15 +95,15 @@ the_menu_action_is_reported_unless_an_interface_used_escape :: proc(t:^testing.T
 @(test)
 the_mouse_is_captured_while_the_seat_with_it_drives_a_body_with_look :: proc(t:^testing.T) {
     w:Seats_Test_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     bindings:inp.Input_Map
     LOOK :: inp.Action(0)
     inp.input_map_action(&bindings,LOOK,.Axis2)
     state:=inp.Seats{local_count=1}
     seat,body:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,seat,inp.Seat{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
 
     wants:=proc(seats:^core.Table(inp.Seat),state:^inp.Seats,bindings:^inp.Input_Map,modal:bool) -> bool {
         return mouse_wanted(core.read(seats),state,bindings,LOOK,modal)

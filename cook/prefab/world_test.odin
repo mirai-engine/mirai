@@ -20,6 +20,7 @@ Game_Animation :: struct {
 Game_Animation_Target :: struct {path:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`,animation:core.Entity}
 Game_Pose_Source :: struct {rig:core.Entity,stage:u8}
 Game_Bone_Attachment :: struct {rig:core.Entity,socket:[64]u8 `mirai:"text"`,offset:mm.Transform,enabled:bool}
+GAME_BONE_ATTACHMENT_DEFAULT :: Game_Bone_Attachment{offset=mm.TRANSFORM_IDENTITY,enabled=true}
 Game_Morph_Weights :: struct {
     source:core.Entity,
     path:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`,
@@ -32,8 +33,9 @@ GAME_ANIMATION_DEFAULT :: Game_Animation{speed=1,weight=1,loop=true,playing=true
 
 // The world of a game with the animation plugin, whose types the prefab of an
 // import is written in.
+@(test_world)
 Import_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     parents:core.Table(core.Parent),
@@ -54,8 +56,9 @@ Import_World :: struct {
 }
 
 // Without the animation plugin: its components are left out of a prefab.
+@(test_world)
 Static_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     parents:core.Table(core.Parent),
@@ -66,20 +69,11 @@ Static_World :: struct {
     hidden:core.Table(render.Hidden),
 }
 
-@(private="file")
-import_types :: proc(types:^[dynamic]core.Test_Type) {
-    render.test_types(types)
-    append(types,
-        core.test_type(Game_Animation,default=proc(dst:^Game_Animation) {dst^=GAME_ANIMATION_DEFAULT}),
-        core.test_type(Game_Bone_Attachment,default=proc(dst:^Game_Bone_Attachment) {dst^={offset=mm.TRANSFORM_IDENTITY,enabled=true}}),
-    )
-}
-
 // The World_Info of the game of a test import, in the temp allocator; nil,
 // with the test failed, when it cannot be made.
 import_world :: proc(t:^testing.T,animated:=true,loc:=#caller_location) -> ^core.World_Info {
     info:=new(core.World_Info,context.temp_allocator)
     ok:bool
-    if animated {info^,ok=core.test_info(t,Import_World,import_types,context.temp_allocator,loc)} else {info^,ok=core.test_info(t,Static_World,render.test_types,context.temp_allocator,loc)}
+    if animated {info^,ok=test_info(t,Import_World,context.temp_allocator,loc)} else {info^,ok=test_info(t,Static_World,context.temp_allocator,loc)}
     return info if ok else nil
 }

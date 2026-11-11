@@ -43,9 +43,10 @@ root_motion_leaves_out_the_transform_the_entity_was_bound_with :: proc(t:^testin
     testing.expectf(t,mm.quat_angle(turned,turn)<1e-5,"its turn is its own: %v",turned)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Root_Metadata_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     names:core.Table(core.Name),
@@ -68,14 +69,14 @@ selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_tab
     source.roots[2].translation,source.roots[2].rotation=false,true
     append(&content.animations,source);content.index[source.id]={kind=.Animation,index=0}
     w:Root_Metadata_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     actor,hip:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,actor,core.TRANSFORM_IDENTITY);core.add(&w.transforms,hip,core.TRANSFORM_IDENTITY);core.add(&w.parents,hip,{entity=actor})
     name:core.Name;base.text_set(name.text[:],"hip");core.add(&w.names,hip,name)
     animation:=ANIMATION_DEFAULT;animation.asset=source.id;animation.loop=false;animation.fade=0;animation.root_motion=.Extract;base.text_set(animation.clip[:],"walk")
     core.add(&w.animations,actor,animation)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     extra:Test_Storages;defer test_storages_free(&extra)

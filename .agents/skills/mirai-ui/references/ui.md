@@ -95,8 +95,15 @@ result. It is built every frame and resolved in `frame_end`, one axis at a time:
    it received and the heights rise to the roots. Afterwards the height is distributed like the
    width.
 4. The floating roots are ordered by layer (within a layer, the one declared later stays on top) and
-   placed against what they hang from; a `GROW` float takes the size of that. Afterwards each
-   element is placed and the commands are listed in draw order.
+   placed against what they hang from; a `GROW` float takes the size of that and a `percent` one
+   its share of it. Afterwards each element is placed and the commands are listed in draw order.
+5. Each box is rounded to the device pixels of the screen: its edges, from where the layout put
+   them, and its size between them, so neighbours share an edge. What transitions is not rounded
+   while it moves, nor what it holds. An edge moves at most half a device pixel, a size at most
+   one; what a text asks for (and a button measured from its text) is rounded up to whole device
+   pixels first, so a box never ends narrower than the text it holds, and `text_height` gives the
+   same. Pointer hits and `widget_rect` see the rounded boxes; a shape's border is whole device
+   pixels wide.
 
 The measure of a span of text is stored by text, size and face in two generations that swap
 between frames: what a frame shows again is taken from the previous one without measuring it,
@@ -214,10 +221,15 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
 - **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
-  with one `Flow`, whatever its spans: a word goes to the next line unless it fits with the space
-  after it, one wider than the line takes a line of its own, a line gives up the space it breaks
-  or ends at, and what no space parts stays on one line. `text_line` is that break for the text a
-  field edits, which keeps the spaces of its last line.
+  with one `Flow`, whatever its spans. A word ends at a space or after a mark (`text_mark`: a
+  hyphen or a slash not followed by a digit, an en or em dash, a zero width space, a soft hyphen).
+  A word goes to the next line unless it fits with the space after it; one wider than the line
+  starts one and breaks after its last glyph that fits; a line gives up the space it breaks or
+  ends at, and a soft hyphen it breaks at is drawn as a hyphen, which must fit; what no space or
+  mark parts stays on one line. `text_line` is that break for the text a field edits, which keeps
+  the spaces of its last line.
+- **A glyph a font lacks** is measured and drawn from `FONT_REGULAR` (Inter in the fonts of the
+  application), at the same size; `?` only when that one lacks it too (`font_glyph`).
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way and `Text_Style.line_height` distributes the excess of each line;
@@ -315,6 +327,10 @@ All take the context, an id and their state by parameter.
 - A game field (`style`) takes everything from the style and its first click places the cursor.
 - There is only one field in edit per context (`ctx.edit`, up to `TEXT_EDIT_CAPACITY` bytes, what
   the AI chat message admits). The cursor blinks with `Input.dt` without allocating.
+- Primary+Z undoes and Primary+Y or Primary+Shift+Z redoes, within the edit in progress: a run of
+  typing, of Backspace or of Delete and a paste over a selection are one step each, and a caret
+  moved ends a run. The steps live in `ctx.edit` (`TEXT_EDIT_STEPS`, `TEXT_EDIT_HISTORY`); the
+  oldest go to make room. Primary with the arrows, Backspace or Delete goes by words.
 
 ### Number fields
 
@@ -360,9 +376,13 @@ All take the context, an id and their state by parameter.
   only the visible rows (equal ones, or of heights that the caller measured once).
   - An area that scrolls horizontally leaves its content as wide as it asks, so a paragraph is not
     split.
-  - The wheel goes to the innermost area under the pointer; the page keys and the right stick, to
-    that one or to the one that has the focus, if it has nothing focusable (otherwise they belong to
-    the navigation). `zoom` takes the wheel with Ctrl (Cmd on macOS) before the area scrolls.
+  - The wheel goes to the innermost area under the pointer that can still move its content that
+    way (by last frame's rectangles of the area and its content), so one that fits or is at its
+    end passes it outward; one whose content fits its height turns it sideways. An area without
+    content of its own (one that pans or zooms) and Ctrl+wheel take it always. The page keys and
+    the right stick go to the innermost area under the pointer or to the one that has the focus,
+    if it has nothing focusable (otherwise they belong to the navigation). `zoom` takes the wheel
+    with Ctrl (Cmd on macOS) before the area scrolls.
   - A content that shrinks leaves in place what was seen: the area stores below the missing place,
     which goes away when scrolling up and never when scrolling down with the wheel. The bar floats
     and takes no layout.
@@ -456,6 +476,14 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
     previous frame built and, while it does not know it, it builds `TREE_LIST_PROBE`. The focus that
     code puts on a node of an element that was not built, outside another inner `List`, scrolls the
     list until it is shown.
+  - **An item is told apart by its key**: `bind_key` names a field of the element (a whole number,
+    an enum, an `Entity` or a text), and an array of entities keys itself; without one, its index.
+    The id of an element comes from the hash of its key, and its slots (states, kept texts,
+    animations) from a table of the list by that hash, where an item keeps its slot while it is in
+    the list: an item that moves keeps its focus, hover and style fade, and its `layout_transition`
+    carries it from its old row. An item that comes in takes a slot no item of the build holds and
+    starts its states afresh; one that moved formats its texts again, because what the copy says
+    changed is by place. Two items with one key are two elements with one id.
   - Each tab of a `Tabs` shows its option, like those of a `Selector` (its text separated by `|` or
     the array it binds), and without it the text of its node, its name or its number.
   - A `Popup` that the player closed stays closed until the game hides it; `Modal` takes all the
@@ -478,9 +506,9 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
     it moves a shown step (its decimals, a second of a clock), and the value of a Progress when its
     fill moves a pixel; below that nothing is copied and no node is built. Games never round.
   - The formats after the colon are in `tree_bind.odin`: numbers with the separators of the
-    language of `Game_Source.language` (`NUMBER_LOCALES`), times, texts by value and CLDR plurals
-    (`{n:one=# coin|other=# coins}`). An enum name or a category that does not exist fails like a
-    path.
+    language of `Game_Source.language` (`NUMBER_LOCALES`, a region writing as its language),
+    times, texts by value and CLDR plurals (`{n:one=# coin|other=# coins}`). An enum name or a
+    category that does not exist fails like a path.
   - A text with braces is a template of names (`{health:0}/{most}`): each name is a field of the
     node with its path, so the text names the same in every language without paths. It is
     interpreted when creating the instance and in the frame only what changed is formatted;
@@ -543,13 +571,14 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
 - `Node_Style.layout_transition` carries the rectangle of the node to a new layout (an item inserted
-  above it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the
-  last rectangle of each element that asks (`layout_transition_ask`, in a table by id of
-  `Context_Desc.max_transitions`), and the node goes from where it was drawn to where the layout
-  puts it with the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a
-  parent that moves or scrolls carries it without starting it; a size on its way is fixed for a
-  second layout, so what surrounds it follows. The first time, after a frame it was not asked for (a
-  node shown again), and on a surface of another size, it is where the layout puts it at once.
+  above it in a `List` with a key, a page that grows, a size that changes), as Clay's transitions
+  do: the layout keeps the last rectangle of each element that asks (`layout_transition_ask`, in a
+  table by id of `Context_Desc.max_transitions`), and the node goes from where it was drawn to
+  where the layout puts it with the `Cubic_Out` ease. Its place is kept from the corner of its
+  parent's content, so a parent that moves or scrolls carries it without starting it; a size on
+  its way is fixed for a second layout, so what surrounds it follows. The first time, after a
+  frame it was not asked for (a node shown again), and on a surface of another size, it is where
+  the layout puts it at once.
   `Frame.transitioning` says the next frame differs, and `engine/gui` keeps no screen of that
   context. Only tree nodes ask: what code builds, as the editor, goes to its new place at once.
 - `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and

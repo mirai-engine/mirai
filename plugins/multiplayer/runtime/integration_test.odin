@@ -72,8 +72,9 @@ Net_Test_Tables :: struct {
 }
 
 @(private)
+@(test_world)
 Net_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using net:Net_Test_Tables,
 }
 
@@ -85,13 +86,9 @@ Net_Test_Shared :: struct {
     colliders:phys.Collider_Meshes,
     spawn_at:u64, // the tick in which the game makes entities on both ends (predict_spawn); 0: none
     spawns:int,   // how many it makes then; 0: one
+    late:bool,    // each second one has Net_Test_Late too: of another kind (a grenade beside a bullet)
     sent:int,     // the messages it sent with them
-}
-
-@(private)
-net_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    test_types(types)
-    phys.test_types(types)
+    outbox:^Net_Outbox, // what the server sends from, when the test sends messages
 }
 
 // The World_Info of Net_Test_World, with the fixed loop of these tests.
@@ -99,7 +96,7 @@ net_test_types :: proc(types:^[dynamic]core.Test_Type) {
 // the generator makes; the test deletes them.
 @(private)
 net_test_info :: proc(t:^testing.T,follows:=false,loc:=#caller_location) -> (info:core.World_Info,ok:bool) {
-    info=core.test_info(t,Net_Test_World,net_test_types,context.allocator,loc) or_return
+    info=test_info(t,Net_Test_World,context.allocator,loc) or_return
     if follows {
         info.messages=slice.clone([]core.Message_Info{
             {name="Net_World",library="multiplayer",type=Net_World,info=type_info_of(Net_World),from=.Server,reliable=true},
@@ -182,7 +179,7 @@ net_test_physics :: proc(w:^$W,shared:^Net_Test_Shared,app:^host.App) {
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
         core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),
         &w.character_states,&w.joint_states,{},nil,{},core.ref(&w.sync_check),&w.simulation_hash,nil,nil,
-        core.read(&w.gravities),core.read(&w.volumes),core.read(&w.worlds),{},{},core.ref(&w.hierarchy),{},{},{})
+        core.read(&w.gravities),core.read(&w.volumes),core.read(&w.worlds),{},{},core.ref(&w.hierarchy),{},{},{},{})
     core.settle(shared.info,w,nil)
 }
 
@@ -197,12 +194,16 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
         net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
     }
+    // The seat of a client acts on its input as late as its input delay, as the loop does around input_seats.
+    if sh.session!=nil {net_input_take(sh.session,&w.seats,w.time)}
     net_test_feed(w)
+    if sh.session!=nil {net_input_delay(sh.session,&w.seats,core.ref(&w.bindings),w.time,sh.session.problems)}
     if sh.spawn_at!=0 && w.time.tick==sh.spawn_at {
         for k in 0..<max(sh.spawns,1) {
             e:=core.create(&w.entities)
             core.add(&w.transforms,e,core.Transform{position={f32(k),5,0},rotation=1,scale={1,1,1}})
             core.add(&w.values,e,Net_Test_Value{})
+            if sh.late && k%2==1 {core.add(&w.lates,e,Net_Test_Late{})}
             predict_spawn(&w.made,e,{})
         }
         sh.sent+=int(send(&w.outbox,u32(1)))
@@ -211,7 +212,7 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
     net_test_physics(w,sh,app)
     if sh.session!=nil {
         outbox:Net_Outbox
-        net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)
+        net_tick_tail(ref,sh.session,sh.outbox!=nil?sh.outbox:&outbox,&w.made,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
     }
 }
@@ -342,7 +343,7 @@ net_test_command :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,fo
 authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -423,7 +424,7 @@ predicted_transforms_compare_rotation_scale_and_quantized_components :: proc(t:^
 component_references_resolve_after_binding_and_clear_after_destruction :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -476,7 +477,7 @@ component_references_resolve_after_binding_and_clear_after_destruction :: proc(t
 server_publishes_only_changed_rows_at_the_objects_frequency :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -544,7 +545,7 @@ net_test_physical_objects :: proc(w:^Net_Test_World,info:^core.World_Info,entiti
 net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -672,7 +673,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     }
     late,has_late:=core.get(&worlds[1].lates,entities[1][1])
     testing.expectf(t,has_late && late.level==9 && !core.has(&worlds[1].lates,entities[1][0]),"the client has the late component of the second body %v at level %d, and that of the first %v",has_late,late.level,core.has(&worlds[1].lates,entities[1][0]))
-    testing.expect_value(t,sessions[0].stats.retyped,u64(3))
+    testing.expect_value(t,sessions[0].stats.retyped,u64(2)) // the gains; the loss goes as absent in the pose
     testing.expect_value(t,sessions[1].stats.spawned,u64(2))
     testing.expect(t,sessions[1].stats.corrected>0)
     testing.expect_value(t,problems[0].count,0)
@@ -693,7 +694,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
 remote_character_intent_is_replayed_from_its_authoritative_tick :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -751,7 +752,7 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     PAIRS :: 24
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -787,7 +788,8 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     c:=&s.client
     ref:=core.world_ref(&world,&info)
     replica :: proc(s:^Net_Session,w:core.World_Ref,index:int,e:core.Entity,role:Role) {
-        s.client.replicas[index]={object=Object(index),entity=e,role=role,type=net_test_type(s,w,e),slot=-1,samples=-1}
+        local,_:=core.get(core.world_table_of(w,core.Transform),e)
+        s.client.replicas[index]={object=Object(index),entity=e,role=role,type=net_test_type(s,w,e),slot=-1,samples=-1,pose={position=local.position,rotation=1,scale={1,1,1}}}
     }
     for k in 0..<PAIRS {
         a,_:=core.get(&world.bodies,driven[k])
@@ -817,7 +819,7 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
 object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     apps:[2]host.App
     sessions:[2]Net_Session
@@ -919,7 +921,7 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
 replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_retarget :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World;net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     source:=net_test_body(&world,&info,1)
     initial:=net_test_body(&world,&info,2,{1,0,0})

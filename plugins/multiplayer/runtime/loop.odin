@@ -82,7 +82,7 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
         for event in session.arrived {core.push(&connections.events,event)}
         clear(&session.arrived)
     }
-    if messages!=nil && !time.resimulating {messages_fill(session,messages)}
+    defer if messages!=nil && !time.resimulating {messages_fill(session,messages)}
     if !session.host_ready {return}
     world_follow(session,world)
     tick:=u32(time.tick)
@@ -90,6 +90,8 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
         server_inputs(session,tick,inputs)
     } else {
         client_head(session,world,app,tick,time.resimulating)
+        // What the tick shows is placed: the messages about it are due.
+        if !time.resimulating {messages_release(session)}
     }
 }
 

@@ -25,11 +25,13 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   them again only when it holds those of another, also after the world went back to a copy, and
   copies the marks of the tiles, the settings and the counts every time.
 - It builds by itself, in `navigation_build` (`fixed`, `react`, game and editor, `server`):
-  - **Where.** Inside the `Nav_Bounds`; with none, in the box of all the static collision
-    (`phys.static_bounds`). The box of a `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle` is the
-    [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity, a `Box` taken
-    upright where the entity is (`box_half`); without one, the `navigation.volume` problem, and
-    the navigation does not see it.
+  - **Where.** Inside the `Nav_Bounds`; with none, in the box of the static collision that blocks,
+    without sensors (`phys.static_bounds`). A `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle`
+    covers the upright prism of the
+    [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
+    (`volume_prism`): a box by its corners turned by the yaw, a sphere by the octagon around it.
+    Without one, or with a plane or an unbounded one, which no navmesh bounds, the
+    `navigation.volume` problem, and the navigation does not see it.
   - **What.** The physics static collision (`phys.static_triangles`) that blocks the agents of the
     class (above), without dynamic or kinematic bodies, characters or sensors; the arcs of the
     generated links are checked against the same collision. Terrain and foliage enter
@@ -150,8 +152,9 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   within `path_iterations` per tick, moves the corridor to where the body is, goes to the next
   corner, steps aside from the others with ORCA (characters that do not navigate and obstacles
   enter as neighbors that do not step aside) and writes the `Move_Input`, unless a seat drives the
-  body: toward its velocity, at the share of the speed of its `Walk`, `Fly` or `Swim` that the
-  velocity asks. It turns at the `turn_speed` of its `Character` and adds the turn of the ground.
+  body: its velocity as a velocity (`Move_Input.velocity`), which the locomotion takes up to the
+  top speed of its mode (crouched, backing off). It turns at the `turn_speed` of its `Character`
+  and adds the turn of the ground.
 - **Neighbors as far as the horizon.** An agent gathers those it may meet within
   `NAV_AGENT_HORIZON` at its speed and theirs, from the cells around its own in blocks that grow
   until they hold that reach, or as many neighbors nearer than the block as ORCA counts.
@@ -167,6 +170,12 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   still far from the level of its corridor (more than its `climb` and half a meter: pushed,
   fallen, placed elsewhere) searches again from where it is, instead of walking against the wall
   toward a corner above.
+- **Planning on the way.** While its path is searched (`Waiting`), one that walks goes on along
+  the corridor it has, from whose first polygon the search starts. It plans again when a step
+  ahead stops being valid or the end of a cut corridor is near: `Arrived` only at the goal.
+- **Blocked.** One that walks in place within its radius (asking for a quarter of its speed or
+  more, so not one that ORCA holds back) plans once more after `NAV_BLOCKED` and fails after
+  twice that, with `navigation.blocked`.
 - **Searching in the air.** A request cuts the crossing in progress and searches in the same tick.
   If the body is not standing on the ground (it falls, or jumps between roofs) and there is no
   navmesh within its reach, the search waits for it to be standing instead of failing with

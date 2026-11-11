@@ -267,9 +267,10 @@ ik_holds_the_rotation_it_is_asked_and_look_keeps_its_up_axis :: proc(t:^testing.
     testing.expect(t,linalg.dot(mm.quat_rotate(state.world[3].rotation,look.forward),aimed)>.9999 && linalg.dot(up,wanted)>.9999,"the bone aims and its up axis turns to world_up around the aim")
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Rig_Shapes_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     animations:core.Table(Animation),
     attachments:core.Table(Bone_Attachment),
     playback:Playback,
@@ -294,10 +295,10 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     w:Rig_Shapes_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     rig:=core.create(&w.entities)
-    player:=ANIMATION_DEFAULT;player.asset=id;core.add(&w.animations,rig,player);core.test_world_settle(&w)
+    player:=ANIMATION_DEFAULT;player.asset=id;core.add(&w.animations,rig,player);test_world_settle(&w)
     profiles:Character_Assets;defer character_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     prepare :: proc(w:^Rig_Shapes_World,profiles:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App) -> bool {

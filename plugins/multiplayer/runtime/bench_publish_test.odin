@@ -15,7 +15,7 @@ bench_publish_run :: proc(t:^testing.T,changed:bool,hz:f32) {
     SAMPLES :: 600
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)

@@ -204,9 +204,10 @@ play_ui_lists_what_the_last_frame_showed_where_it_is_in_the_window :: proc(t:^te
 
 // The voices of a game: what each was given, its bus by name, its place when
 // spatial, the counters of the game and, with a mixer, those of the mixer.
-@(private="file")
+@(private)
+@(test_world)
 Audio_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     sources:core.Table(eaudio.Audio_Source),
     states:core.Table(eaudio.Audio_Source_State),
 }
@@ -214,13 +215,13 @@ Audio_Test_World :: struct {
 @(test)
 play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^testing.T) {
     world:Audio_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     near,far:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.sources,near,eaudio.Audio_Source{sound={1,2},volume=1,pitch=2,pan=-1,bus=eaudio.BUS_MUSIC,loop=true})
     core.add(&world.sources,far,eaudio.Audio_Source{sound={1,3},volume=1,pitch=1,bus=eaudio.Audio_Bus(6),spatial=true})
     core.add(&world.states,far,eaudio.Audio_Source_State{occlusion=0.5})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     voices:eaudio.Voices
     defer core.entity_map_destroy(&voices.entries)
     core.entity_map_put(&voices.entries,near,eaudio.Voice_Entry{kind={sound={1,2},bus=eaudio.BUS_MUSIC},pick={0.5,1.5}})
@@ -231,7 +232,7 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     s:=Session{app=&host.App{},info=&info}
     w:serial.Writer
     serial.writer_init(&w,0,context.temp_allocator)
-    play_audio_write(&s,&w,&voices,core.test_world_ref(&world),nil)
+    play_audio_write(&s,&w,&voices,test_world_ref(&world),nil)
     text:=string(serial.writer_bytes(&w))
     api_result_shape_expect(t,text,Api_Play_Audio)
     result:=observe_json(t,text)

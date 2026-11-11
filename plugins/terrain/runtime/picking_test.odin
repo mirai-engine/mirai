@@ -30,10 +30,10 @@ chunks_without_a_collider_keep_their_triangles_on_the_cpu_only_while_the_world_d
         owner:=core.create(&w.entities)
         core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
         core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         for _ in 0..<3 {
-            test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),&resident,&app,&w.problems,time={playing=playing},view=core.VIEW_DEFAULT)
-            core.test_world_settle(&w.w)
+            test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),&resident,&app,&w.problems,time={playing=playing},view=core.VIEW_DEFAULT)
+            test_world_settle(&w.w)
             if work_busy(&w.data,nil) {work_wait(&w.data,nil)}
         }
         held,bare:=0,0

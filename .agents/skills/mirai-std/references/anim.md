@@ -25,8 +25,10 @@ depends on `core:`, `std/base` and `std/math`.
 - `Keyframe` is the only key of the engine and `track_evaluate` the only reader of a keyed value:
   clips, the cinematics they play and the animations of an interface store and read the same.
 - The interpolation and easing of a `Keyframe` say how the value arrives at it from the previous
-  one; the comment of `Keyframe` defines the tangents of `Cubic` (Hermite). Outside the keys the
-  track holds its value; a NaN time gives the first one.
+  one; the comment of `Keyframe` defines the tangents of `Cubic` (Hermite). Without tangents a
+  `Cubic` segment never passes the value of a key: the slope is flat at the ends, at a peak and
+  beside an equal key (one key type for clips, fields and interfaces, with no overshoot to undo).
+  Outside the keys the track holds its value; a NaN time gives the first one.
 - In `Rotation`, `Cubic` is Shoemake's spherical spline (`squad`): it passes through each key, the
   turning speed does not jump and it does not use the slopes. `Cubic_Spline` is glTF's: it keeps the
   imported tangents per component.
@@ -135,8 +137,12 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
 
 - `two_bone_ik` receives three transforms in the same space, target and pole. It keeps the lengths
   also with intermediate weight, clamps targets out of reach, keeps the rotation of the end and
-  gives `reached` apart from numeric success. `skeleton_ik` applies it to a direct parent-child
-  chain and recomposes the pose.
+  gives `reached` apart from numeric success. With a `Chain_Reach` it softens and stretches as a
+  chain does ([reach](anim-rigs.md#reach-spline-aiming-and-pose-samples-rig_shapesodin)).
+  `skeleton_ik` applies it to a direct parent-child chain and recomposes the pose.
+- `look_at` and `aim_at` aim the ray from an `offset` of the bone (eyes, muzzle) through the
+  target, so the vector to the target is not normalized; a target nearer the bone than that ray
+  passes fails.
 - `two_bone_pole_from_pose` gives a pole that keeps the bend when the target changes: it transports
   the direction of the knee through the minimal rotation of the root→end axis toward root→target and
   leaves it at one chain length, so that raising the target does not invert the knee. An almost

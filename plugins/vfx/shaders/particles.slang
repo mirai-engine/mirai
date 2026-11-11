@@ -39,7 +39,7 @@ struct Particle_Emitter {
     float4 collide;       // bounce, friction, life lost
     float4 look;          // stretch, soft, intensity, flipbook speed
     float4 attractor;
-    uint4 mesh;           // vertex count of a draw of the clusters of level 0 of its mesh (geometry.slang), the mesh, PARTICLE_FACING_*, material row
+    uint4 mesh;           // vertex count of a draw of the clusters of level 0 of its mesh (geometry.slang), the mesh, 0, material row
     uint4 flipbook;
     float4 size_curve[2];
     float4 size_times[2];
@@ -52,9 +52,6 @@ struct Particle_Emitter {
     float4 light;         // intensity (cd), range, radius (0: half the size of the particle)
     uint4 lights;         // its share of the room of the frame: x the first of its lights with shadows, y how many; z, w those without
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
-    float4 mesh_rotation; // of Mesh particles: the quaternion (xyz, w) of length one the mesh takes before the rotation of the particle
-    float4 mesh_axis;     // of Mesh particles: xyz the axis of length one their rotation turns them about in the frame of mesh.z
-    float4 mesh_scale;    // of Mesh particles: xyz of the mesh on each axis, times the size of the particle; w the largest
 };
 
 struct Particle_State {
@@ -101,12 +98,6 @@ struct Particle_Event {
 #define PARTICLE_RENDER_HORIZONTAL 2u
 #define PARTICLE_RENDER_RIBBON 3u
 #define PARTICLE_RENDER_MESH 4u
-
-// effect.Particle_Facing: the frame a Mesh particle turns its mesh in.
-#define PARTICLE_FACING_RANDOM 0u
-#define PARTICLE_FACING_ENTITY 1u
-#define PARTICLE_FACING_CAMERA_POSITION 2u
-#define PARTICLE_FACING_CAMERA_PLANE 3u
 
 #define PARTICLE_COLLISION_WORLD 1u
 #define PARTICLE_EVENT_DEATH 1u
@@ -505,77 +496,15 @@ float particle_puff(float2 tile, float seed) {
     return disc * disc * saturate(0.35 + n * 1.1);
 }
 
-// A turn by angle about an axis of length one.
-float3x3 particle_axis_rotation(float3 axis, float angle) {
+// Rotation of a particle mesh: about an axis of its own.
+float3x3 particle_rotation(uint seed, float angle) {
+    uint s = seed * 31u + 7u;
+    float3 axis = normalize(float3(random01(s), random01(s), random01(s)) * 2.0 - 1.0 + float3(0.0, 1e-3, 0.0));
     float c = cos(angle), si = sin(angle), t = 1.0 - c;
     return float3x3(
         t * axis.x * axis.x + c, t * axis.x * axis.y - si * axis.z, t * axis.x * axis.z + si * axis.y,
         t * axis.x * axis.y + si * axis.z, t * axis.y * axis.y + c, t * axis.y * axis.z - si * axis.x,
         t * axis.x * axis.z - si * axis.y, t * axis.y * axis.z + si * axis.x, t * axis.z * axis.z + c);
-}
-
-// Rotation of a particle mesh: about an axis of its own.
-float3x3 particle_rotation(uint seed, float angle) {
-    uint s = seed * 31u + 7u;
-    float3 axis = normalize(float3(random01(s), random01(s), random01(s)) * 2.0 - 1.0 + float3(0.0, 1e-3, 0.0));
-    return particle_axis_rotation(axis, angle);
-}
-
-// The turn of a quaternion (xyz, w) of length one.
-float3x3 particle_quaternion_rotation(float4 q) {
-    float3 q2 = q.xyz * 2.0;
-    float xx = q.x * q2.x, yy = q.y * q2.y, zz = q.z * q2.z;
-    float xy = q.x * q2.y, xz = q.x * q2.z, yz = q.y * q2.z;
-    float wx = q.w * q2.x, wy = q.w * q2.y, wz = q.w * q2.z;
-    return float3x3(
-        1.0 - (yy + zz), xy - wz, xz + wy,
-        xy + wz, 1.0 - (xx + zz), yz - wx,
-        xz - wy, yz + wx, 1.0 - (xx + yy));
-}
-
-// How a Mesh particle turns its mesh, from the space of the mesh to that of
-// the simulation (particle_world_vector takes it on to the world): the frame
-// of its facing, its rotation (which its spin moves) about the axis of the
-// effect, then the turn of the mesh. A Random facing turns it about an axis
-// of the particle's own instead of a frame and that axis. The frame of the
-// camera: X toward it (Camera_Position) or against its forward (Camera_Plane),
-// Z across X and the up of the world (or of the camera), Y across Z and X.
-float3x3 particle_mesh_turn(uint slot, Particle p) {
-    float3x3 mesh_turn = particle_quaternion_rotation(particle_emitters[slot].mesh_rotation);
-    uint facing = particle_emitters[slot].mesh.z;
-    if (facing == PARTICLE_FACING_RANDOM) return mul(particle_rotation(p.seed, p.rotation), mesh_turn);
-    float3x3 turn = mul(particle_axis_rotation(particle_emitters[slot].mesh_axis.xyz, p.rotation), mesh_turn);
-    if (facing != PARTICLE_FACING_CAMERA_POSITION && facing != PARTICLE_FACING_CAMERA_PLANE) return turn;
-    float3 toward, up;
-    if (facing == PARTICLE_FACING_CAMERA_POSITION) {
-        toward = to_eye(particle_world(slot, p.position));
-        float along = dot(toward, float3(0.0, 1.0, 0.0));
-        up = abs(along) > 0.99 ? float3(along > 0.0 ? -1.0 : 1.0, 0.0, 0.0) : float3(0.0, 1.0, 0.0);
-    } else {
-        toward = -normalize(frame.camera_forward.xyz);
-        up = frame.view[1].xyz;
-    }
-    if ((particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u) {
-        toward = inverse_transform_vector(particle_emitters[slot].world, toward);
-        up = inverse_transform_vector(particle_emitters[slot].world, up);
-    }
-    float3 c0 = normalize(toward);
-    float3 c2 = normalize(cross(c0, up));
-    float3 c1 = cross(c2, c0);
-    float3x3 facing_frame = float3x3(c0.x, c1.x, c2.x, c0.y, c1.y, c2.y, c0.z, c1.z, c2.z);
-    return mul(facing_frame, turn);
-}
-
-// The normal and the tangent of a mesh scaled on each axis: the normal by the
-// inverse of the scale (its cofactors, so a flat axis keeps it), the tangent
-// by the scale; each as it was where the scale leaves nothing of it.
-float3 particle_mesh_normal(float3 n, float3 scale) {
-    float3 scaled = n * float3(scale.y * scale.z, scale.z * scale.x, scale.x * scale.y);
-    return dot(scaled, scaled) > 1e-20 ? scaled : n;
-}
-float3 particle_mesh_tangent(float3 t, float3 scale) {
-    float3 scaled = t * scale;
-    return dot(scaled, scaled) > 1e-20 ? scaled : t;
 }
 
 #endif

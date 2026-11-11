@@ -12,7 +12,7 @@ import "mirai:platform"
 a_paused_client_whose_server_closes_runs_its_ticks_at_the_pace_of_the_frames :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App

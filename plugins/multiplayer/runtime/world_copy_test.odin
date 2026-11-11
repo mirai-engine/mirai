@@ -27,7 +27,7 @@ rollback_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignmen
 rollback_copy_failure_keeps_live_world_and_warm_publication_does_not_allocate :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     entity:=net_test_body(&world,&info,1)
     shared:=Net_Test_Shared{info=&info};defer phys.collider_meshes_destroy(&shared.colliders)
@@ -94,7 +94,7 @@ clock_test_fixed :: proc(world,shared,editor,application:rawptr) {
 a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=clock_test_fixed
     world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     net_test_body(&world,&info,1)
@@ -139,7 +139,7 @@ a_rollback_replays_its_ticks_and_leaves_the_clock_and_the_frame_where_they_were 
 a_tick_a_library_asks_to_go_back_to_runs_again_from_the_copy_it_started_from :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=clock_test_fixed
     world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     net_test_body(&world,&info,1)
@@ -199,7 +199,7 @@ net_test_same :: proc(info:^core.World_Info,a,b:^Net_Test_World) -> bool {
 history_copies_of_what_changed_equal_whole_copies_through_writes_layout_changes_and_corrections :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     first:=net_test_body(&world,&info,1)
     second:=net_test_body(&world,&info,2,{1,0,0})
@@ -270,7 +270,7 @@ net_test_state :: proc(s:^Net_Session,r:^Replica,tick:u32,position:[3]f32) {
 sync_test_run :: proc(t:^testing.T,outside:bool,late:=false) -> (problems:core.Problems,body:core.Entity,moved:bool,skipped:u64) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=sync_test_fixed
     world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     body=net_test_body(&world,&info,1)
@@ -365,7 +365,7 @@ sync_test_after_a_correction_compares_with_what_the_correction_left :: proc(t:^t
 a_rollback_places_interpolated_replicas_as_far_behind_as_each_tick_did :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World;testing.expect(t,net_test_init(&world,&info));defer core.world_destroy(&info,.World,&world)
     net_test_body(&world,&info,1)
     shown:=core.create(&world.entities)

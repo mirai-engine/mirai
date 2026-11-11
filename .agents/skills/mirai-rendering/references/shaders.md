@@ -122,7 +122,7 @@
   [`vfx` plugin](../../mirai-world/references/vfx.md#vfx-programs), and `Orbit`
   (`plugins/vfx/shaders/orbit.slang`) is its own.
 - A Vfx program declares what it reads besides its parameters with `//! resource name surface`,
-  `channel`, `bones`, `grid`, `emitter` or `data words` (up to `PROGRAM_RESOURCES`). The
+  `channel`, `grid`, `emitter` or `data words` (up to `PROGRAM_RESOURCES`). The
   generation gives each one a constant with its index in the program's namespace (`hits` inside
   `Gather`) and the catalog lists them in `resources`. A surface is read with
   `mirai_vfx_surface_sample` (a point per area) and `mirai_vfx_surface_at` (the same triangle and
@@ -134,7 +134,7 @@
   `_store`. `mirai_vfx_trace` gives the first opaque thing a ray finds in the scene (distance,
   normal and whether it started inside a closed mesh) in `initialize`, `update` and the stages,
   which include `trace.slang` and declare the `hw` variant; in `render` it finds nothing. Which
-  mesh, which skin, which channel or which grid each one is is resolved by the
+  mesh, which channel or which grid each one is is resolved by the
   [plugin](../../mirai-world/references/vfx.md#surfaces-bones-and-resources).
 - Its stages (`//! stage name over particles|resource [iterations N]`, up to `MAX_STAGES`) are
   functions of the namespace: over particles with the signature of `update`, over the cells of a

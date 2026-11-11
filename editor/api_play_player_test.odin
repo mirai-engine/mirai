@@ -8,9 +8,10 @@ import input "mirai:engine/input"
 import render "mirai:engine/render"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
+@(test_world)
 Player_Inspect_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     seats:core.Table(input.Seat),
     players:input.Seats,
@@ -20,9 +21,9 @@ Player_Inspect_World :: struct {
 
 @(test)
 play_player_reads_the_live_seat_without_changing_the_document :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Player_Inspect_World,test_types)
+    info,described:=test_info(t,Player_Inspect_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     edited,running:Player_Inspect_World
     if !testing.expect(t,core.world_init(&info,.World,&edited,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
     defer {core.world_destroy(&info,.World,&edited);core.world_destroy(&info,.World,&running)}

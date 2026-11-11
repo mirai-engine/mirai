@@ -2,6 +2,7 @@ package core
 
 import "base:runtime"
 import "core:slice"
+import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -69,17 +70,40 @@ world_schema_make :: proc(info:^World_Info,allocator:=context.allocator) -> ^Wor
     ws.tables,tables_error=make([]Value_Schema,len(info.tables),allocator)
     ws.storages,storages_error=make([]Value_Schema,len(info.storages),allocator)
     ws.records,records_error=make([]Value_Schema,len(info.records),allocator)
-    ws.table_hashes,hashes_error=make([]Table_Hash,len(info.tables),allocator)
+    names:=len(info.tables)
+    for t in info.tables {
+        rest:=t.was
+        for _ in strings.fields_iterator(&rest) {names+=1}
+    }
+    ws.table_hashes,hashes_error=make([]Table_Hash,names,allocator)
     if tables_error!=nil || storages_error!=nil || records_error!=nil || hashes_error!=nil {
         world_schema_destroy(ws)
         return nil
     }
-    for t,i in info.tables {ws.table_hashes[i]={base.name_hash(t.name),i}}
+    // A table is found by its name and by every name it had (@(component,was=)).
+    names=len(info.tables)
+    for t,i in info.tables {
+        ws.table_hashes[i]={base.name_hash(t.name),i}
+        rest:=t.was
+        for name in strings.fields_iterator(&rest) {
+            ws.table_hashes[names]={base.name_hash(name),i}
+            names+=1
+        }
+    }
     slice.sort_by(ws.table_hashes,proc(a,b:Table_Hash) -> bool {return a.hash<b.hash || a.hash==b.hash && a.table<b.table})
     for t,i in info.tables {
         if !value_schema(ws,&ws.tables[i],t.info) {
             world_schema_destroy(ws)
             return nil
+        }
+        // Files written with the type carry the names it had, for a reader without this world.
+        if type:=ws.tables[i].type;t.was!="" && type!=serial.TYPE_NONE {
+            was,no_was:=strings.clone(t.was,ws.schema.allocator)
+            if no_was!=nil {
+                world_schema_destroy(ws)
+                return nil
+            }
+            ws.schema.types[type].was=was
         }
     }
     for s,i in info.storages {
@@ -115,7 +139,12 @@ world_table_index_of_hash :: proc(w:World_Ref,hash:u64) -> (int,bool) {
         return -1,false
     }
     for &t,at in w.info.tables {
-        if t.place==w.place && base.name_hash(t.name)==hash {return at,true}
+        if t.place!=w.place {continue}
+        if base.name_hash(t.name)==hash {return at,true}
+        rest:=t.was
+        for name in strings.fields_iterator(&rest) {
+            if base.name_hash(name)==hash {return at,true}
+        }
     }
     return -1,false
 }
