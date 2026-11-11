@@ -259,11 +259,11 @@ cmd_check :: proc(root:string,args:[]string) -> int {
     return 0 if lints_run(files,alloc_lint_applies(root,folder),solver_lint_applies(root,folder)) else 1
 }
 
-// Writes the World_Info of the test worlds a package of the engine and those it imports declare
-// (build.test_worlds_write), which a check and a build of tests read. False after saying what is wrong
-// in one.
+// Writes the World_Info of the test worlds a package and those it imports declare
+// (build.test_worlds_write), which a check and a build of tests from the sources of the engine
+// read. False after saying what is wrong in one.
 test_worlds :: proc(root,folder:string) -> bool {
-    errors:=build.test_worlds_write(root,"",{folder},context.temp_allocator)
+    errors:=build.test_worlds_write(root,project_of(folder),{folder},true,context.temp_allocator)
     for e in errors {fmt.eprintfln("mirai: %s",e)}
     return len(errors)==0
 }

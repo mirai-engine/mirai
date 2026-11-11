@@ -2484,10 +2484,11 @@ Test_World :: struct {
 // reads with its tests and whose tests declare a @(test_world), when its text
 // changed, and removes one left where none is declared now. starts: the
 // folders the build is given; the packages they import follow, those of the
-// engine and its plugins for a package of the engine (project_root ""),
-// those of the project for one of a project, whose engine libraries bring no
-// test. errors: what no World_Info can be written of, with how to fix it.
-test_worlds_write :: proc(engine_root,project_root:string,starts:[]string,allocator:=context.allocator) -> (errors:[]string) {
+// project (project_root; "" outside one) and, when the build reads the engine
+// from its sources and not from its libraries, which bring no test, those of
+// the engine and its plugins. errors: what no World_Info can be written of,
+// with how to fix it.
+test_worlds_write :: proc(engine_root,project_root:string,starts:[]string,engine_sources:bool,allocator:=context.allocator) -> (errors:[]string) {
     context.allocator=allocator
     g:Generator
     g.by_key=make(map[string]^Type)
@@ -2511,7 +2512,7 @@ test_worlds_write :: proc(engine_root,project_root:string,starts:[]string,alloca
         for file in pkg.files {
             for imp in file.imports {
                 path:=strings.trim(imp.relpath.text,"\"`")
-                if g.root!=""?!strings.has_prefix(path,"project:"):!strings.has_prefix(path,"mirai:") && !strings.has_prefix(path,"plugins:") {continue}
+                if !strings.has_prefix(path,"project:") && !(engine_sources && (strings.has_prefix(path,"mirai:") || strings.has_prefix(path,"plugins:"))) {continue}
                 if next:=test_package(&g,path);next!=nil && !slice.contains(queue[:],next) {append(&queue,next)}
             }
         }

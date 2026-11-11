@@ -34,7 +34,7 @@ api_test_run_v1 :: proc(s:^Session,call:^api.Call) {
 api_test_run_v2 :: proc(s:^Session,call:^api.Call) {api.call_result(call,Api_Test_Result).value=2*api.call_params(call,Api_Test_Params).value}
 
 @(private)
-@(test_world)
+@(test_world,editor="Api_Test_Editor")
 Api_Test_World :: struct {using world:Test_World}
 
 @(test)
