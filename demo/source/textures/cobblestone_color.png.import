@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Color"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "cobblestone_color", "index": 0, "id": "9a69320baec0a94ab9eb8d2010a8a8a4"}
-  ]
-}

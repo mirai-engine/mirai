@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Color"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "bricks_color", "index": 0, "id": "4c24cf1fa5b4eeca8ac84ea3d8813cfc"}
-  ]
-}

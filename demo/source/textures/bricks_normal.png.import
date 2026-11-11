@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Normal"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "bricks_normal", "index": 0, "id": "0873ef8dc2c7deca1ed9eb84f5a8d6b9"}
-  ]
-}

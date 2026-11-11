@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Color"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "neon_emission", "index": 0, "id": "6d9362793631542f0b778005f9fd8dd0"}
-  ]
-}

@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Color"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "sky_sunset", "index": 0, "id": "7b819d061e0487f04a17587b8ff0bce1"}
-  ]
-}

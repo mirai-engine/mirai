@@ -14,8 +14,8 @@ import "mirai:ui"
 // (WOFF) are refused with what to do instead. The font is opened as the
 // interfaces open it, so what is imported loads.
 
-// Imports a font file as <name>.font in folder, the root of its import.
-import_font :: proc(path,folder:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
+// Imports a font file as <name>.font, the root of its import.
+import_font :: proc(path:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
     mem.dynamic_arena_init(&scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
@@ -46,12 +46,9 @@ import_font :: proc(path,folder:string,options:Import_Options={},allocator:=cont
     for available in probe.metrics[0].available {glyphs+=int(available)}
     ui.font_destroy(&probe)
 
-    report.allocator=allocator
-    report.assets.allocator=allocator
-    report.warnings.allocator=allocator
-    report.others.allocator=allocator
+    report_init(&report,allocator)
     w:Writer
-    ok:=writer_init(&w,path,folder,options,&report,allocator)
+    ok:=writer_init(&w,path,"",options,&report,allocator)
     defer asset.types_destroy(&w.types)
     if ok {
         source:=w.source

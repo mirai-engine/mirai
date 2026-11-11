@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Normal"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "brushed_normal", "index": 0, "id": "b9466f1cd86f5f900d74e12980fdc702"}
-  ]
-}

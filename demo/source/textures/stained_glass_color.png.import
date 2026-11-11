@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Color"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "stained_glass_color", "index": 0, "id": "601bad68a6b7e349bc2655ac13c9196f"}
-  ]
-}

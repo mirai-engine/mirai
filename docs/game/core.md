@@ -24,7 +24,7 @@ reads `game/` and the active plugins; `mirai generate` lists its errors.
 project.mirai   manifest: name, start_scene, plugins, window, build
 settings.mirai  project settings and rebinds (Input_Settings), only what differs
 cook.mirai      roots only code names (assets)
-assets/ source/ binary assets; art sources, never shipped    game/  the game package
+assets/         assets and the art sources beside them      game/  the game package
 plugins/<n>/    your plugins (plugins)   tools/content/  writes generated assets (assets)
 tests/scenarios/  mirai play test .           .mirai/  generated, never edited (.mirai/gen)
 ```

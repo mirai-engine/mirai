@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Normal"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "grate_normal", "index": 0, "id": "c9d9c9f0f1dea3ec0ceec0f9671187eb"}
-  ]
-}

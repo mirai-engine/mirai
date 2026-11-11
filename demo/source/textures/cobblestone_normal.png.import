@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Normal"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "cobblestone_normal", "index": 0, "id": "1a08080be2a08b5fe300ec425923c195"}
-  ]
-}

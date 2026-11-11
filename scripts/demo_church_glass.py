@@ -6,7 +6,7 @@
 # required-version = ">=0.13"
 # ///
 """The stained glass of the windows of the demo's church
-(demo/source/textures/church_glass_color.png): a lancet window of jewel
+(demo/assets/church/church_glass_color.png): a lancet window of jewel
 glass, as gothic windows are, in panes large enough that their colors
 survive the average the haze and the bounced light make of them. A border of
 small alternating panes, three medallions down the middle with a figure of
@@ -15,7 +15,7 @@ all held by dark leading. The color of a pane is what the glass lets through:
 saturated and dark, as real pot metal glass. The same seed gives the same
 image.
 
-    uv run scripts/demo_church_glass.py [--out demo/source/textures/church_glass_color.png]
+    uv run scripts/demo_church_glass.py [--out demo/assets/church/church_glass_color.png]
 """
 
 import argparse
@@ -56,7 +56,7 @@ def voronoi_labels(width, height, points):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default="demo/source/textures/church_glass_color.png")
+    parser.add_argument("--out", default="demo/assets/church/church_glass_color.png")
     args = parser.parse_args()
     rng = np.random.default_rng(SEED)
     ys, xs = np.mgrid[0:HEIGHT, 0:WIDTH].astype(np.float64)

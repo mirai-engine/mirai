@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Color"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "planks_color", "index": 0, "id": "79a53ef6d585bc9fd1a912a9e592f913"}
-  ]
-}

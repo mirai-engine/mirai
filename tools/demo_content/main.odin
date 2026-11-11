@@ -10,8 +10,8 @@ import "mirai:std/base"
 // meshes, sources, fractures and terrain its scenes use, with the same bytes
 // on every run. What is authored (scenes, prefabs, interfaces, materials,
 // particles, tables of game data, clips of a few keys) is changed through the
-// API or the editor, and this names what it uses by its id; the sources of
-// demo/source are imported by the build (sources.sync).
+// API or the editor, and this names what it uses by its id; the sources it
+// writes beside their assets are imported by the build (sources.sync).
 //
 //   mirai content demo [-- --physics-only|--features-only|--animation-only|--interface-only|--dig-only]
 
@@ -96,8 +96,7 @@ write_hum :: proc(o:^Out) {
         tremolo:=0.75+0.25*math.sin(2*math.PI*1.5*t)
         le(file,44+frame*2,u32(u16(i16(wave*tremolo*20000))),2)
     }
-    source:=path(o,"source/sounds/hum.wav")
-    os.make_directory_all(path(o,"source/sounds"))
+    source:=path(o,"assets/showcase/hum.wav")
     // Written only when it differs, so that the import of an unchanged source is the same file.
     existing,read_error:=os.read_entire_file(source,context.temp_allocator)
     if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file(source,file)!=nil {
@@ -105,7 +104,7 @@ write_hum :: proc(o:^Out) {
         o.content.failed=true
         return
     }
-    fmt.println("wrote source/sounds/hum.wav")
+    fmt.println("wrote assets/showcase/hum.wav")
 }
 
 // The id of the material <name>.mat of assets/surfaces: the one an import of its source once gave it.

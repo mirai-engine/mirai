@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "settings": {
-    "image": "Color"
-  },
-  "outputs": [
-    {"kind": "TEX", "name": "church_glass_color", "index": 0, "id": "2767edae7841cea315b1e40d922c9950"}
-  ]
-}
