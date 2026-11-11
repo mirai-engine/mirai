@@ -61,7 +61,8 @@ Usually its prefab carries it: everything that appears from that prefab is repli
   - It occupies its place in `max_objects` and `state_words` while it is disabled.
 - A client makes the entity from the prefab of the pose (`scene.spawn`, `transient`), takes it from
   the scene if it has that `Id`, or makes it empty; the one of a section it has not loaded waits
-  for it to load.
+  for it to load. A copy whose prefab this client has not read is filled later
+  (`scene.Prefab_Pending`); what the server sent stays on it.
 - A replicated component that names an entity the other end does not have (it has not arrived yet,
   or it is not replicated) is removed from the replica until it arrives: it would name something
   else. A `Joint` toward something that is not there is not anchored to the world.
@@ -179,8 +180,8 @@ The network and physics share only `core` tables, each with one writer:
 `terrain_multiplayer` terrain edits
 ([terrain](../../mirai-world/references/terrain.md#network)), both as
 [operation journals](#operation-journal). The `behavior` minds decide only on
-the server, and clients see what each agent does in its replicated `Mind_Presentation`, without
-predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
+the server, and clients play what their actions play through the replicated `Animation_Played`,
+without predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
 
 ## Operation journal
 

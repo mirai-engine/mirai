@@ -331,7 +331,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     pose:anim.Pose_Profile
     looks:=make([dynamic]anim.Look_Constraint,call.allocator)
     hands:=make([dynamic]anim.IK_Constraint,call.allocator)
-    grounding:=make([dynamic]anim.Foot_Grounding,call.allocator)
+    grounding:anim.Foot_Grounding
     if .Look in want {
         if mapped(body,.Head) {
             head:=world[body.bones[.Head]]
@@ -384,11 +384,11 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             feet.legs[side]=leg;feet.count+=1
         }
         if feet.count==2 && body.bones[.Pelvis]>=0 {
-            append(&grounding,feet)
+            grounding=feet
             say(&capabilities[.Foot_Ik],.Ready,"the feet stand on the ground under them, with physics colliders","")
         } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or not both legs","Set pelvis, and hip, knee and foot of both legs with skeleton.body.set")}
     }
-    pose.look,pose.ik,pose.grounding=looks[:],hands[:],grounding[:]
+    pose.look,pose.ik,pose.grounding=looks[:],hands[:],grounding
 
     // Locomotion: the clips by mode, which the Character of the body drives; the warping stretches
     // the stride of a walk to the speed of the body.

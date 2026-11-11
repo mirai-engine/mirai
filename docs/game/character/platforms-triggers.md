@@ -77,9 +77,9 @@ returns `(hit,ok)` with `hit.entity`, `hit.point`, `hit.normal`.
 
 ## Pitfalls that fail silently
 
-- A body that crosses a thin trigger within one tick, and is not a `bullet`, gives no event.
-- A `bullet` gives `overlap_begin` and `overlap_end` in the same tick (`crossed`): handle begin
-  before end when counting occupants.
+- A body that crosses a thin trigger within one tick gives `overlap_begin` and `overlap_end` in
+  the same tick (`crossed`): handle begin before end when counting occupants. A trigger on a
+  moving body sees it only if the body is a `bullet`.
 - Two static colliders never report each other; a zone over a sleeping dynamic body reports
   only once it wakes, a `Character` standing still too.
 - A new `Collider` blocks (preset `Default`): a zone must be given the trigger preset.

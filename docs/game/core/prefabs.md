@@ -34,6 +34,12 @@ A spawn that fails (no such scene, or one that is not a prefab) returns `core.NO
 problem `scene.spawn` of the parent or of the world, which says what to change. The root of a copy
 has `scene.Prefab_Instance`, whose `prefab` is the scene it came from.
 
+A spawn never waits for a file. A prefab the scene names in a field (a `Spawn_Point`'s prefab) is
+read with the scene, and its spawn is whole at once. One that is not loaded yet is read in the
+background: the root comes at once with its transform, parent and `scene.Prefab_Pending`, and
+nothing else, and takes the rest of the prefab a few frames later. What the game gives the root
+meanwhile stays, and wins over the prefab's value.
+
 ## Keep the root
 
 `scene.spawn` gives the root, to give the new entity components:
@@ -52,7 +58,8 @@ game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
 
 - The rows appear when the function ends. `core.commands_add` gives only a component the root
   lacks; for one the prefab already has, `core.commands_added(spawner.commands,e,Follow)` returns
-  the row to finish. Put a component in the prefab when it is always there.
+  the row to finish, or nil for a root that waits for its prefab, to which `commands_add` gives
+  it. Put a component in the prefab when it is always there.
 - Create without a prefab: `core.commands_create(commands)`, then `commands_add` (or
   `commands_add_default`, the row of the component at its default) for
   `core.Transform`, `core.Parent{entity=parent}` and the rest.

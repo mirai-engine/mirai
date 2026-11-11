@@ -162,7 +162,7 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
     actions:=core.world_storage_of(world,anim.Action_Runtime)
     for &layer,i in state.layers[:state.stack] {
         asked:=state.asked[i]
-        if asked.injected || layer.weight<=0 {continue}
+        if layer.weight<=0 {continue}
         players:[anim.LAYER_PLAYERS]lib.Player
         for player,k in players[:anim.layer_players(&layer,&players)] {
             total+=1;if written>=PREVIEW_TRACE_ROWS {continue}

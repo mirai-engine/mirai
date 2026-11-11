@@ -18,7 +18,7 @@ import phys "plugins:physics/runtime"
 // speed of the root of its pose. A game writes no code for locomotion; the clips and their modes
 // are in the .character.
 @(step="fixed")
-animation_locomotion :: proc(characters:core.Read(phys.Character),states:core.Read(locomotion.Locomotion_State),found:core.Read(phys.Character_State),animations:core.Read(anim.Animation),motions:core.Read(core.Motion),inputs:core.Read(inp.Move_Input),walk_actions:inp.Input_Of(locomotion.Walk_Action),walks:core.Read(locomotion.Walk),tacticals:core.Read(locomotion.Tactical_Sprint),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,warps:^anim.Motion_Requests,problems:^core.Problems) {
+animation_locomotion :: proc(characters:core.Read(phys.Character),states:core.Read(locomotion.Locomotion_State),found:core.Read(phys.Character_State),animations:core.Read(anim.Animation),motions:core.Read(core.Motion),inputs:core.Read(inp.Move_Input),walk_actions:inp.Input_Of(locomotion.Walk_Action),walks:core.Read(locomotion.Walk),tacticals:core.Read(locomotion.Tactical_Sprint),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),worlds:core.Read(core.World_Transform),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,problems:^core.Problems) {
     for row in 0..<core.count(states) {
         entity:=core.entity_at(states,row)
         animation,animated:=core.get(animations,entity)
@@ -46,7 +46,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),states:core.Re
             // The slide keeps its course and the climb its way: what the body does is what it asks.
             if walk,ok:=core.get(walks,entity);ok {goal.desired,goal.acceleration,goal.braking={going.linear.x,0,going.linear.z},walk.acceleration,walk.braking}
             // The clip of the climb warps onto where it ends (mantle.odin).
-            if character.mode==locomotion.MODE_MANTLING && matching {anim.motion_target(warps,entity,MANTLE_WINDOW,mantle_target(character,placed.rotation))}
+            if character.mode==locomotion.MODE_MANTLING && matching {anim.motion_target(requests,entity,MANTLE_WINDOW,mantle_target(character,placed.rotation))}
         case:
             if walk,ok:=core.get(walks,entity);ok {
                 sprinting:=input.buttons&inp.action_bit(inp.action_of(walk_actions,.Sprint))!=0
@@ -60,7 +60,7 @@ animation_locomotion :: proc(characters:core.Read(phys.Character),states:core.Re
         // The warping corrects what the clip travels, in its own direction, toward the body: a clip
         // that strafes or backs off is not turned as if it went forward.
         along:=playing.travel if playing.travel!={} else mm.FORWARD
-        anim.motion_locomotion(warps,{rig=entity,velocity={playing.velocity.x,0,playing.velocity.z},source_velocity=mm.quat_rotate(placed.rotation,along*playing.speed),weight=1,enabled=(character.mode==locomotion.MODE_WALKING || character.mode==locomotion.MODE_CROUCHING) && !playing.forced && playing.speed>0})
+        anim.motion_locomotion(requests,{rig=entity,velocity={playing.velocity.x,0,playing.velocity.z},source_velocity=mm.quat_rotate(placed.rotation,along*playing.speed),weight=1,enabled=(character.mode==locomotion.MODE_WALKING || character.mode==locomotion.MODE_CROUCHING) && !playing.forced && playing.speed>0})
     }
 }
 

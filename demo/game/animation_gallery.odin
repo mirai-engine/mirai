@@ -171,7 +171,7 @@ gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Ta
     }
 }
 
-gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
+gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),progresses:core.Read(anim.Animation_Progress),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
         entity:=core.entity_at(gallery,row)
@@ -181,19 +181,18 @@ gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^co
         phase:=int(item.age/3)%3
         wanted:="wave" if phase==1 else "walk"
         speed:=f32(-1) if phase==2 else f32(1)
-        if base.text_get(value.clip[:])!=wanted || value.speed!=speed {
-            next:=core.edit(animations,entity)
-            base.text_set(next.clip[:],wanted);next.speed=speed
-            anim.animation_seek(requests,entity,1.5 if phase==2 else 0)
-        }
+        if progress,_:=core.get(progresses,entity);base.text_get(value.clip[:])==wanted && progress.speed==speed {continue}
+        anim.animation_clip(core.edit(animations,entity),wanted)
+        anim.animation_command(requests,entity,.Resume,speed=speed)
+        anim.animation_seek(requests,entity,1.5 if phase==2 else 0)
     }
 }
 
 // The bodies that walk by their physics plant their feet only while they stand on the ground.
 // It reads the gallery as gallery_observe left it in the last tick.
 @(step="fixed",stage="react",before="gallery_observe")
-gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(Gallery_Player),characters:core.Read(phys.Character_State),requests:^anim.Modifier_Requests) {
-    ground :: proc(characters:core.Read(phys.Character_State),requests:^anim.Modifier_Requests,entity:core.Entity) {
+gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(Gallery_Player),characters:core.Read(phys.Character_State),requests:^anim.Animation_Requests) {
+    ground :: proc(characters:core.Read(phys.Character_State),requests:^anim.Animation_Requests,entity:core.Entity) {
         character,exists:=core.get(characters,entity)
         if exists {anim.modifier_goal(requests,{rig=entity,kind=.Grounding,weight=1 if character.standing else 0,enabled=true})}
     }
@@ -205,20 +204,24 @@ gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(G
 }
 
 // The matching station is told the speed it walks at and now and then plays a wave over its whole
-// body, entered and left by inertialization; the additive, greeting and synchronized stations set
+// body, faded in and out over it; the additive, greeting and synchronized stations set
 // their parameter; the actions station greets and steps; the warp station strides to its goal.
 @(step="fixed")
-gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),worlds:core.Read(core.World_Transform),time:core.Time,requests:^anim.Animation_Requests,goals:^anim.Modifier_Requests,motion:^anim.Motion_Requests,playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:core.Read(core.Name),panel:core.Ref(Gallery_UI),morphs:core.Read(Morph_Playground),morph_weights:^core.Table(anim.Morph_Weights)) {
+gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),worlds:core.Read(core.World_Transform),time:core.Time,requests:^anim.Animation_Requests,progresses:core.Read(anim.Animation_Progress),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:core.Read(core.Name),panel:core.Ref(Gallery_UI),morphs:core.Read(Morph_Playground),morph_weights:^core.Table(anim.Morph_Weights)) {
     if morphs.table!=nil && morph_weights!=nil {morph_playground_animate(morphs,requests,morph_weights,time)}
-    for event in ui_events.items {if event.kind==.Clicked && event.name==base.name_hash("toggle") {if value:=core.edit(animations,core.entity_named(names,SHOWCASE_LIFT));value!=nil {value.playing=!value.playing}}}
+    for event in ui_events.items {
+        if event.kind!=.Clicked || event.name!=base.name_hash("toggle") {continue}
+        lift:=core.entity_named(names,SHOWCASE_LIFT)
+        anim.animation_command(requests,lift,.Pause if anim.animation_playing(playback.ptr,lift) else .Resume)
+    }
     commands:=panel.commands[:panel.count]
-    gallery_playback_commands(commands,animations,requests,goals)
-    gallery_direct_clips(gallery,animations,requests,commands)
+    gallery_playback_commands(commands,animations,requests,playback.ptr)
+    gallery_direct_clips(gallery,animations,progresses,requests,commands)
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
         if item.target!=core.NONE {
-            anim.modifier_goal(goals,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true})
+            anim.modifier_goal(requests,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true})
             anim.look(requests,entity,anim.spatial_entity(item.target))
         }
         manual:=gallery_manual(item.manual,entity,commands)
@@ -248,9 +251,9 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
             }
             if warp.start {
                 if motor:=core.edit(motors,entity);motor!=nil {motor.enabled=true}
-                anim.motion_target(motion,entity,GALLERY_REACH,anim.spatial_point(gallery_warp_goal(item,warp)))
-                animation.playing=true
+                anim.motion_target(requests,entity,GALLERY_REACH,anim.spatial_point(gallery_warp_goal(item,warp)))
                 anim.animation_clip(animation,"stride",.2,loop=false)
+                anim.animation_command(requests,entity,.Resume)
             } else if _,_,ended,ok:=anim.animation_progress(playback.ptr,entity);ok && ended && base.text_get(animation.clip[:])=="stride" {
                 anim.animation_clip(animation,"idle",.3,loop=true)
             }

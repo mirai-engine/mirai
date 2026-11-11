@@ -2,6 +2,7 @@ package mirai_physics
 
 import "core:testing"
 import cmath "core:math"
+import math "mirai:std/math"
 
 @(private="file")
 ocean :: proc(w:^World,height:f32=0,density:f32=1000,current:=Vec3{}) -> Fluid_Handle {
@@ -73,6 +74,90 @@ the_fluid_at_a_point_gives_the_surface_over_or_under_it_through_the_dry_boxes ::
     fluid_destroy(&w,pool)
     testing.expect(t,!fluid_valid(&w,pool))
     testing.expect_value(t,world_stats(&w).fluids,2)
+}
+
+// The samples of the curve through points, as the plugin of a path hands them over (math.path_sample).
+@(private="file")
+path_of :: proc(points:[]Path_Point) -> []Path_Point {
+    out:=make([]Path_Point,FLUID_PATH_SAMPLES,context.temp_allocator)
+    return out[:math.path_sample(points,1,out)]
+}
+
+// Water along a path: its surface goes through its samples, it ends at its
+// banks and its ends, and what floats in it drifts with its current.
+@(test)
+water_along_a_path_holds_between_its_banks_and_carries_what_floats :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    // 40 m toward -z falling 2 m, 4 m wide and 2 m deep, at 1 m/s; then 20 m toward -x, level.
+    desc:=Fluid_Desc{shape=.Path,density=1000,current={0,0,-1}}
+    path:=path_of({{{0,2,0},4,2},{{0,0,-40},4,2},{{-20,0,-40},4,2}})
+    river:=fluid_create(&w,desc,path)
+    testing.expect(t,river!={})
+    back,_:=fluid_desc(&w,river)
+    samples:[FLUID_PATH_SAMPLES]Path_Point
+    count:=fluid_path(&w,river,&samples)
+    testing.expect(t,count==len(path) && samples[count-1]==path[count-1] && back==desc,"its samples and description come back as they were given")
+    Case :: struct {p:Vec3,inside:bool,height,density:f32}
+    for c in ([]Case{
+        {{0,1.5,0},true,2,1000},      // at its first point the surface is at that point
+        {{0,0.5,-20},true,1,1000},    // half way down
+        {{1.5,0.5,-20},true,1,1000},  // near a bank
+        {{0,1.5,-20},true,1,0},       // over the surface
+        {{4,0.5,-20},false,0,0},      // past a bank, where the curve bends out before the turn
+        {{0,1,5},false,0,0},          // before its first point
+        {{-25,-0.5,-40},false,0,0},   // past its last point
+        {{-10,-0.5,-42},true,-0.12,1000}, // after the turn, where the curve swings past the points
+    }) {
+        sample,ok:=fluid_sample(&w,c.p)
+        testing.expectf(t,ok==c.inside,"at %v",c.p)
+        if !ok {continue}
+        expect_near(t,sample.height,c.height,0.05)
+        expect_near(t,sample.density,c.density,1e-4)
+    }
+    sample,_:=fluid_sample(&w,{0,0.5,-20})
+    testing.expectf(t,sample.normal.z<0 && sample.normal.y>0.99,"the surface leans down the path: %v",sample.normal)
+    testing.expectf(t,sample.current.z< -0.99 && abs(sample.current.x)<0.1,"it flows down the path: %v",sample.current)
+    bounds:=fluid_bounds(&w,river)
+    testing.expect(t,bounds.max.y>=2 && bounds.min.y<= -2 && bounds.min.x<= -20 && bounds.max.z>=0)
+    box:=solid(&w,Box{{0.4,0.4,0.4}},{0,0.8,-10},500)
+    test_steps(&w,600)
+    at:=body_center(&w,box)
+    drift:=body_linear_velocity(&w,box)
+    testing.expectf(t,at.z< -12 && drift.z< -0.5,"it drifts downstream: at %v at %v m/s",at,drift)
+    height,_,_:=fluid_surface(&w,river,at.x,at.z)
+    testing.expectf(t,abs(at.y-height)<0.4,"and floats on the surface at %v, %v",at,height)
+    many:[FLUID_PATH_SAMPLES+1]Path_Point
+    for &p,i in many {p={{0,0,-f32(i)},1,1}}
+    for refused in ([][]Path_Point{
+        {{{0,0,0},1,1}},
+        {{{0,0,0},1,1},{{0,1,0},1,1}},
+        {{{0,0,0},0,1},{{0,0,4},1,1}},
+        {{{0,0,0},1,0},{{0,0,4},1,1}},
+        {{{cmath.nan_f32(),0,0},1,1},{{0,0,4},1,1}},
+        many[:],
+    }) {testing.expect_value(t,fluid_create(&w,{shape=.Path,density=1000},refused),Fluid_Handle{})}
+    testing.expect_value(t,fluid_create(&w,{shape=.Path},{{{0,0,0},1,1},{{0,0,4},1,1}}),Fluid_Handle{})
+}
+
+// Two paths whose ends meet, the second going on the way the first ends: across
+// the join there is water all along.
+@(test)
+two_paths_whose_ends_meet_hold_water_across_the_join :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    water:=Fluid_Desc{shape=.Path,density=1000}
+    up:=fluid_create(&w,water,path_of({{{0,3,0},4,1},{{10,2,-10},4,1},{{10,1,-30},4,1}}))
+    down:=fluid_create(&w,water,path_of({{{10,1,-30},4,1},{{10,0,-50},4,1}}))
+    testing.expect(t,up!={} && down!={})
+    for x in ([]f32{8.1,9,10,11,11.9}) {
+        for z in ([]f32{-29.9,-30,-30.1}) {
+            sample,ok:=fluid_sample(&w,{x,0.5,z})
+            testing.expectf(t,ok && sample.density==1000 && abs(sample.height-1)<0.01,"at %v, %v: %v",x,z,sample)
+        }
+    }
 }
 
 @(test)

@@ -26,7 +26,7 @@ mirai play <project> --server                           # serves and plays
 mirai play <project> --connect 127.0.0.1 --new-player   # a client; --new-player: own player
 mirai play <project> --connect 127.0.0.1 --latency 60 --loss 2   # --jitter <ms> too
 mirai play <project> --server --invite                  # serves only who brings its code
-mirai play <project> --connect R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A
+mirai play <project> --connect R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT
 mirai build server                                      # dedicated build, run with --dedicated
 ```
 

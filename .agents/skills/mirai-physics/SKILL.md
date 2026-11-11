@@ -167,6 +167,9 @@ tables and is the only package that imports it. The game and the other plugins, 
 - A link holds only the handles of what was made; the sync learns what changed from row stamps and
   calls a setter only where the simulation differs, so taking a restored row again changes nothing.
   Holds live in `Physics_State.held`, which the step walks instead of the links.
+- A manipulation keeps a dynamic body dynamic and pulls it with a spring of bounded force; only a
+  pose by design (a following pose target, `follow` of the animated ragdoll) holds a body as
+  kinematic.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs
   physics uses `step_world`
   ([requests](references/engine.md#requests),
