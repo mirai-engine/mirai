@@ -4,6 +4,7 @@ import "core:reflect"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
@@ -150,17 +151,6 @@ api_fields_write :: proc(w:^serial.Writer,schema:^serial.Schema,type:serial.Type
     }
 }
 
-// Every field of the component is transient: the engine derives it.
-@(private)
-api_schema_derived :: proc(schema:^serial.Schema,type:serial.Type_Index) -> bool {
-    t:=schema.types[type]
-    if t.kind!=.Struct || t.count==0 {return false}
-    for field in schema.fields[t.first:][:t.count] {
-        if .Transient not_in field.flags {return false}
-    }
-    return true
-}
-
 @(private)
 api_component_list :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Component_Params)
@@ -176,7 +166,7 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
             api.call_failf(call,api.INVALID_PARAMS,"%s; component.list without a name lists them",problem)
             return
         }
-        if type:=st.types[api_table_index(s,table)];!params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {
+        if !params.include_runtime && !author.component_saved(table.type) {
             api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, play.inspect reads it; include_runtime=true lists it",table.name)
             return
         }
@@ -189,7 +179,7 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
         if t.place!=.World || count>0 && !slice.contains(named[:count],&t) {continue}
         type:=st.types[i]
         // A derived component is not added nor written: play.inspect reads it.
-        if !params.include_runtime && type!=serial.TYPE_NONE && api_schema_derived(&st.schema,type) {continue}
+        if !params.include_runtime && !author.component_saved(t.type) {continue}
         if !first {serial.write_u8(w,',')}
         first=false
         serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,t.name)

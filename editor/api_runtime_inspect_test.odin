@@ -75,8 +75,8 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     core.add(&world.config,entity,Inspect_Config{speed=2,compiled={8,9},diagnostics=13})
     core.add(&world.state,entity,Inspect_Runtime{ticks=21})
     core.settle(&info,&world,nil)
-    testing.expect(t,!inspector_listed(&session,&tables[3]))
-    testing.expect(t,!api_component_listed(&session,&tables[3]))
+    // A component with no saved field is data by its presence: listed, its values are not.
+    testing.expect(t,inspector_listed(&session,&tables[3]) && api_component_listed(&session,&tables[3]))
     testing.expect(t,api_component_listed(&session,&tables[3],true))
     testing.expect(t,!api_component_listed(&session,&tables[1],true))
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -86,7 +86,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     api_entity_write(&session,w,&out,entity,true,scratch,true)
     text:=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,`"Inspect_Config":{"speed": 2}`))
-    testing.expect(t,!strings.contains(text,"compiled") && !strings.contains(text,"diagnostics") && !strings.contains(text,"Inspect_Runtime"))
+    testing.expect(t,!strings.contains(text,"compiled") && !strings.contains(text,"diagnostics") && strings.contains(text,`"Inspect_Runtime":{}`),text)
     out.count=0
     api_entity_write(&session,w,&out,entity,true,scratch,true,true)
     text=string(serial.writer_bytes(&out))

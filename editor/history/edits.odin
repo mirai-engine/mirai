@@ -357,7 +357,7 @@ edits_image_take :: proc(edits:^Edits,w:core.World_Ref) {
     ids:=core.world_table_of(w,core.Id)
     authors:=History_Authors{current=ids!=nil?core.raw(ids):nil}
     for &t,i in w.info.tables {
-        edits.saved[i]=t.place==.World && author.type_saved(t.info)
+        edits.saved[i]=t.place==.World && author.component_saved(t.type)
         if edits.saved[i] {journal_table_take(&edits.image[i],core.world_table_at(w,&t),t.info.size,authors,ids!=nil && t.type!=core.Id)} else {journal_table_free(&edits.image[i])}
     }
     journal_ranges(edits,w)

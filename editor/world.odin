@@ -307,7 +307,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
         return false
     }
     for &t in w.info.tables {
-        if t.place!=.World || !author.type_saved(t.info) {continue}
+        if t.place!=.World || !author.component_saved(t.type) {continue}
         table:=core.world_table_at(w,&t)
         info:=t.info
         offsets:=entity_offsets(t.info)

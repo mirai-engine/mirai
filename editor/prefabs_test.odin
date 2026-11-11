@@ -24,7 +24,11 @@ Prefab_Test_World :: struct {
     point_lights:core.Table(erender.Point_Light),
     instances:core.Table(scene.Prefab_Instance),
     members:core.Table(scene.Prefab_Member),
+    marks:core.Table(Prefab_Test_Mark),
 }
+
+// A marker: saved, copied and undone by its presence, with no field a scene saves.
+Prefab_Test_Mark :: struct {seen:i32 `mirai:"transient,hidden"`}
 
 // A component a scene saves and the API writes.
 Prefab_Test_Lamp :: struct {intensity,range:f32,target:core.Entity,uses:u32 `mirai:"hidden"`}
@@ -875,9 +879,21 @@ a_copy_of_an_instance_is_another_and_a_member_keeps_its_place :: proc(t:^testing
     id,created:=prefab_create(s,crate,"crate")
     if !testing.expect_value(t,created,Prefab_Error.None) {return}
 
+    core.add(&f.world.marks,crate,{seen=3})
+    core.world_settle(w)
+    history.edits_commit(&f.edits,w,&f.selection)
     whole:=entities_duplicate(s,{crate})
     core.world_settle(w)
     if !testing.expect_value(t,len(whole),1) {return}
+    // A marker is copied, and an undone delete gives it back, by its presence.
+    mark,marked:=core.get(&f.world.marks,whole[0])
+    testing.expect(t,marked && mark.seen==0,"a copy has the marker of what it copies, its transient fields zero")
+    history.edits_commit(&f.edits,w,&f.selection)
+    entities_delete(s,{crate})
+    history.edits_commit(&f.edits,w,&f.selection)
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
+    core.world_settle(w)
+    testing.expect(t,core.has(&f.world.marks,crate),"undoing a delete gives the marker back")
     link,linked:=prefab_link_of(w,whole[0])
     testing.expect(t,linked && link.root && link.asset==id && len(prefab_members(w,whole[0]))==3 && core.count(&f.world.instances)==2)
     testing.expect(t,lamp_of(f,prefab_test_named(f,whole[0],"Lamp")).target==prefab_test_named(f,whole[0],"Lid"))

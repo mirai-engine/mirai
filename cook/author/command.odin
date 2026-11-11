@@ -127,6 +127,7 @@ project_close :: proc(p:^Project) {
     delete(p.name)
     delete(p.assets_root)
     delete(p.languages)
+    delete(p.untyped)
     p^={}
 }
 
@@ -135,7 +136,7 @@ project_close :: proc(p:^Project) {
 project_library_open :: proc(p:^Project) {
     path:=project.project_library(p.root,"editor",context.temp_allocator)
     if !os.is_file(path) {
-        p.untyped="the project has no built library, where the types of its game are: "+BUILD_FIX
+        p.untyped=strings.clone("the project has no built library, where the types of its game are: "+BUILD_FIX)
         return
     }
     library,error:=host.project_library_load(path,0)
