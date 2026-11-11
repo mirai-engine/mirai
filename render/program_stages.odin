@@ -56,7 +56,7 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 			}
 		}
 	} else if entry.pipeline == 0 && entry.code != nil && now {
-		renderer_pipelines_wait(r)
+		renderer_pipelines_wait(r, &entry.pipeline)
 	}
 	return entry.pipeline if entry.pipeline != 0 else target^
 }

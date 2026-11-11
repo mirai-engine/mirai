@@ -262,6 +262,7 @@ Device :: struct {
 	waited_out:        bool, // a wait passed GPU_WAIT_LIMIT_NS: the GPU may still run that work
 	lose_asked:        bool, // device_lose
 	lose_provoked:     bool,
+	refuse:            Pipeline_Refusal,
 	presenter:         Presenter,
 	present:           Vk_Present,
 	queue_lock:        sync.Mutex, // the presenter submits and presents from its thread too

@@ -247,6 +247,7 @@ Device :: struct {
 	failure_buffer: [FAILURE_TEXT_BYTES]u8,
 	lose_asked:     bool, // device_lose
 	lose_provoked:  bool,
+	refuse:         Pipeline_Refusal,
 	presenter:      Presenter,
 	present:        Mtl_Present,
 	pipeline_lock:  sync.Mutex, // pipelines are made on other threads too: guards their pool and that of shaders

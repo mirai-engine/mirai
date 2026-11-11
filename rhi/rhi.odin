@@ -375,8 +375,31 @@ shader_constants_valid :: proc(d: ^Device, pipeline: string, code: ^Shader_Code,
 			return false
 		}
 	}
+	if d.refuse.shader != "" && code.name == d.refuse.shader && constants == d.refuse.constants {
+		sync.atomic_add(&d.refuse.count, 1)
+		return false
+	}
 	return true
 }
+
+// What device_refuse_pipeline refuses.
+@(private)
+Pipeline_Refusal :: struct {
+	shader:    string,
+	constants: Shader_Constants,
+	count:     int, // pipelines refused (atomic)
+}
+
+// Makes the device refuse every pipeline of the shader so named with these
+// constants, as a driver that fails to compile it, without an error of the
+// device, and counts them: what a test of the reaction to a refused pipeline
+// provokes. "" refuses none.
+device_refuse_pipeline :: proc(d: ^Device, shader: string, constants: Shader_Constants) {
+	d.refuse = {shader = shader, constants = constants}
+}
+
+// The pipelines device_refuse_pipeline refused since it was called.
+device_refused_pipelines :: proc(d: ^Device) -> int {return sync.atomic_load(&d.refuse.count)}
 // The code of a shader as bytes, and the entry point its MSL names ("" for SPIR-V).
 shader_code_bytes :: proc "contextless" (code: Shader_Code) -> []u8 {
 	when SHADER_FORMAT == .Msl {return transmute([]u8)code.msl} else {return code.spirv}

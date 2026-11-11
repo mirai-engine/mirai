@@ -301,7 +301,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	constants: rhi.Shader_Constants
 	if shadows_colored(r) {constants += {REFLECT_COMP_COLOR}}
 	if !scene_layered(s) && !(glass && glass_layered(s)) {constants += {REFLECT_COMP_UNLAYERED}}
-	pipeline := pipeline_of(r, .Reflect, constants)^
+	pipeline := pipeline_of(r, .Reflect, constants, {REFLECT_COMP_COLOR, REFLECT_COMP_UNLAYERED})^
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
@@ -326,7 +326,9 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	// The disc keeps its size on screen at any resolution, down to the few
 	// pixels a filter needs to have neighbours at all.
 	resolve := Resolve{history_valid = 1 if history_valid else 0, max_radius = max(7 * f32(t.height) / 900, 3), blend = 0.08, shared_from = split}
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^)
+	resolve_pipeline := pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^
+	if resolve_pipeline == 0 {return}
+	rhi.cmd_bind_pipeline(cmd, resolve_pipeline)
 	set_params(cmd, &resolve)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
@@ -379,6 +381,7 @@ present_blit :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: rhi.Texture, 
 renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     d:=r.device
     r.error=""
+    r.pipeline_waiting=""
     started:=time.tick_now()
     texture_uploads_install(r)
     geometry_uploads_install(r)
@@ -1022,9 +1025,11 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		if !upload_transient(r, cmd, restart[:], s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch))) {return false}
 		params := Cull_Params{phase = 1, occlusion = 1, hiz_levels = t.hiz_levels, glass_groups = glass_groups}
 		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
-		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^)
-		cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
-		rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
+		if candidates := pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^; candidates != 0 {
+			rhi.cmd_bind_pipeline(cmd, candidates)
+			cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
+			rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
+		}
 		cull_programs_bin(p, 1)
 		rhi.cmd_timestamp(cmd, "gbuffer late")
 		draw1 := u64(offset_of(Gpu_Cull_State, draws)) + size_of(Gpu_Draw)
@@ -1226,7 +1231,7 @@ pass_shadow_set :: proc(p: ^Pass, set: ^Shadow_Set) {
 		params := Params{light_budget = settings.light_budget, sun_radius = settings.sun_radius, block = set.block}
 		// The filters of glass with a program wait for it.
 		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := pipeline_of(r, .Shadow_Trace, {SHADOW_TRACE_COMP_COLOR} if shadows_colored(r) else {})^
+		pipeline := pipeline_of(r, .Shadow_Trace, {SHADOW_TRACE_COMP_COLOR} if shadows_colored(r) else {}, {SHADOW_TRACE_COMP_COLOR})^
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1295,7 +1300,7 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 		if !ensure_direct_list(r, t) {return false}
 		rhi.cmd_fill_buffer(cmd, t.direct_traced, 0, 4, 0)
 		rhi.cmd_copy_buffer(cmd, r.dispatch_start, 0, t.direct_dispatch, 0, 16)
-		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Lighting, {} if p.layered else {LIGHTING_COMP_UNLAYERED})^)
+		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Lighting, {} if p.layered else {LIGHTING_COMP_UNLAYERED}, {LIGHTING_COMP_UNLAYERED})^)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
@@ -1314,7 +1319,7 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 		Params :: struct {light_budget, listed, pad0, pad1, resume, pad2, pad3, pad4: u32}
 		params := Params{light_budget = settings.light_budget, listed = u32(blocks)}
 		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := pipeline_of(r, .Lighting_Traced, {LIGHTING_TRACED_COMP_COLOR} if shadows_colored(r) else {})^
+		pipeline := pipeline_of(r, .Lighting_Traced, {LIGHTING_TRACED_COMP_COLOR} if shadows_colored(r) else {}, {LIGHTING_TRACED_COMP_COLOR})^
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1438,7 +1443,7 @@ pass_contact :: proc(p: ^Pass) -> bool {
 pass_composite :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "composite")
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED})^)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED}, {COMPOSITE_COMP_UNLAYERED})^)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.emission)
@@ -1684,7 +1689,8 @@ update_stats :: proc(r: ^Renderer) {
 	if host := rhi.device_stats(r.device).host_memory; host > 0 {
 		memory = fmt.tprintf("%d resources of GPU memory went to system memory because the device memory was full, which slows the frames: a lower resolution or texture quality frees device memory", host)
 	}
-	for other in ([]string{r.tlas_problem, pages_problem(r), memory}) {
+	waiting := fmt.tprintf("the pass of the stage %s is skipped while its pipeline is made", r.pipeline_waiting) if r.pipeline_waiting != "" else ""
+	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, waiting}) {
 		if other == "" {continue}
 		if s.problem == "" {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], other)]); continue}
 		// The problems before are at the start of problem_buffer: this one follows them.

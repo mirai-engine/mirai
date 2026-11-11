@@ -2,6 +2,7 @@ package mirai_render
 
 import "core:math"
 import "core:mem"
+import "core:strings"
 import "core:testing"
 import "mirai:rhi"
 
@@ -195,17 +196,33 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(device), rhi.device_validation_message(device))
 }
 
-// The variants a scene may ask for are made on the pipeline thread from the
-// start, those of colored shadows too: turning them on waits for none.
+// The variants the settings select are made with the renderer, the others on
+// the pipeline thread behind what frames ask for. One the device refuses is
+// asked for once, not at every frame: the frames take the stage without its
+// constant, and Stats.problem says so.
 @(test)
-variants_a_scene_may_ask_for_are_made_off_the_frame :: proc(t: ^testing.T) {
+variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 48, DEFAULT_SETTINGS) {return}
+	settings := DEFAULT_SETTINGS
+	settings.colored_shadows = false
+	if !fixture_init(t, &f, 64, 48, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	renderer_pipelines_wait(r)
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
-	testing.expect(t, pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "without layers")
-	testing.expect(t, pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "with colored shadows, while they are off")
+	unlayered := pipeline_slot(r, .Lighting, .Any, {LIGHTING_COMP_UNLAYERED})
+	testing.expect(t, unlayered^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "the renderer starts with the variants without layers")
+	renderer_pipelines_wait(r)
+	testing.expect(t, pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "and makes those of colored shadows, while they are off, behind the frames")
+
+	// As a change of the shaders that the driver fails to compile.
+	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Lighting_Comp].name, {LIGHTING_COMP_UNLAYERED})
+	defer rhi.device_refuse_pipeline(f.device, "", {})
+	rhi.pipeline_destroy(f.device, unlayered^)
+	unlayered^ = 0
+	pipelines_drop(r)
+	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 100 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	testing.expectf(t, rhi.device_refused_pipelines(f.device) == 1, "the refused variant was asked for %d times in 100 frames", rhi.device_refused_pipelines(f.device))
+	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Lighting"), "the frames say it: %s", renderer_stats(r).problem)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
