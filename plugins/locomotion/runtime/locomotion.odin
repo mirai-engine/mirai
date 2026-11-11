@@ -370,14 +370,23 @@ move_facing :: proc "contextless" (asked:input.Move_Input,yaw:f32,frame:mm.Quat)
     return facing
 }
 
-// Direction of the move of an input in the axes of its yaw (move_facing) in
-// the world, across the up of the frame of the vertical, at most 1 long.
-move_wish :: proc "contextless" (move_input:input.Move_Input,frame:mm.Quat) -> [3]f32 {
+// The move of an input in the axes of its yaw (move_facing) in the world,
+// across the up of the frame of the vertical, as a share of the top speed of
+// a mode, at most 1 long: a velocity input asks for top speed at most.
+move_wish :: proc "contextless" (move_input:input.Move_Input,frame:mm.Quat,top:f32) -> [3]f32 {
     s,c:=cmath.sincos(move_input.look_yaw)
-    m:=move_input.move
+    m:=move_share(move_input,top)
     wish:=[3]f32{c*m.x+s*m.z,0,c*m.z-s*m.x}
     if l:=linalg.length(wish);l>1 {wish/=l}
     return mm.quat_rotate(frame,wish)
+}
+
+// The move of an input as a share of the top speed of a mode, at most 1 long.
+move_share :: proc "contextless" (move_input:input.Move_Input,top:f32) -> [3]f32 {
+    m:=move_input.move
+    if move_input.velocity {m=m/top if top>0 else {}}
+    if l:=linalg.length(m);!(l<=1) {m=m/l if l<=max(f32) else {}}
+    return m
 }
 
 // Within this angle of where it looks a move may sprint: cos 60°.
@@ -432,7 +441,8 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
     released:=!held && loco.jump_held
     loco.jump_held=held
     v:=velocity-additive_delivered(velocity,loco.added,loco.driven)
-    wish:=move_wish(move_input,frame)
+    // Its direction; how far it asks is a share of the top speed of each mode.
+    wish:=move_wish(move_input,frame,walk.max_speed)
     // Into the water and out of it by the depth of the water over the ground, the same both ways; never in
     // the middle of a move that overrides the locomotion, as climbing out.
     if swim,swims:=swim.?;swims && loco.mode!=MODE_FLYING && !overriding(loco) {
@@ -448,9 +458,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         loco.jumped,loco.coyote,loco.crouched,loco.sprint_active,loco.ledge_jumping=false,0,false,false,false
         current:=ground.fluid_velocity
         relative:=v-current
-        aim:=move_input.move
-        if l:=linalg.length(aim);l>1 {aim/=l}
-        aim=mm.quat_rotate(look,aim)
+        aim:=mm.quat_rotate(look,move_share(move_input,swim.speed))
         surfaced:=ground.head_depth<=0 && linalg.dot(aim,up)>=0
         flat:=across(relative,up)
         drift:=across(current,up)
@@ -461,7 +469,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
             // Out onto a ledge or a raft: a climb, for a jump against the drag of the water takes no one out.
             // It takes the feet to the surface at the speed of a jump, which then takes them jump_height over it.
             if speed:=cmath.sqrt(2*linalg.length(gravity)*walk.jump_height);pressed && speed*dt>0 && loco.move_count<LAYERED_MOVE_CAPACITY {
-                loco.moves[loco.move_count]={velocity=up*speed+wish*swim.speed,ticks=max(u32(cmath.ceil(max(ground.depth,0)/(speed*dt))),1),mix=.Override}
+                loco.moves[loco.move_count]={velocity=up*speed+move_wish(move_input,frame,swim.speed)*swim.speed,ticks=max(u32(cmath.ceil(max(ground.depth,0)/(speed*dt))),1),mix=.Override}
                 loco.move_count+=1
                 loco.mode,loco.jumped=MODE_FALLING,true
             }
@@ -475,9 +483,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         }
     } else if loco.mode==MODE_FLYING {
         loco.jumped,loco.coyote,loco.crouched,loco.sprint_active,loco.ledge_jumping=false,0,false,false,false
-        aim:=move_input.move
-        if l:=linalg.length(aim);l>1 {aim/=l}
-        aim=mm.quat_rotate(look,aim)
+        aim:=mm.quat_rotate(look,move_share(move_input,fly.speed))
         move.air={mm.approach_point(v,aim*fly.speed,fly.acceleration*dt),traction}
         move.flags={.Airborne,.Drive_Vertical,.No_Gravity}
     } else {
@@ -569,9 +575,9 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
             if move.ground.force==0 {
                 speed:=walk_speed(walk,move_input,sprint_held,loco.mode==MODE_CROUCHING,boost)
                 desired:[3]f32
-                if wish!={} {
-                    along:=wish-up*(linalg.dot(wish,n)/linalg.dot(n,up))
-                    desired=along*(speed*linalg.length(wish)/linalg.length(along))
+                if share:=move_wish(move_input,frame,speed);share!={} {
+                    along:=share-up*(linalg.dot(share,n)/linalg.dot(n,up))
+                    desired=along*(speed*linalg.length(share)/linalg.length(along))
                 }
                 rate:=desired=={}?walk.braking:walk.acceleration
                 if desired!={} && loco.sprint_active && tactical.acceleration_multiplier>0 {rate*=tactical.acceleration_multiplier}
@@ -583,9 +589,10 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         move.air={velocity=across(v,up)}
         if wish!={} && walk.air_control>0 {
             speed:=walk_speed(walk,move_input,sprint_held,false,boost)
+            share:=move_wish(move_input,frame,speed)
             // A ledge jump is steered, not slowed.
             if loco.ledge_jumping {speed=max(speed,linalg.length(move.air.velocity))}
-            move.air={mm.approach_point(move.air.velocity,wish*speed,walk.air_control*walk.acceleration*dt),walk.air_control*traction}
+            move.air={mm.approach_point(move.air.velocity,share*speed,walk.air_control*walk.acceleration*dt),walk.air_control*traction}
             // Ground too steep to walk is not climbed from the air either.
             if ground.ground_normal!={} && !ground.walkable && ground.ground_distance<=body.step_height {
                 flat:=across(ground.ground_normal,up)

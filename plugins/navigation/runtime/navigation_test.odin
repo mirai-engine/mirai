@@ -1526,6 +1526,28 @@ a_seated_agent_walks_where_it_is_asked_while_its_seat_drives_it :: proc(t:^testi
     testing.expect_value(t,f.problems.count,0)
 }
 
+// Crouched, a walker could go at its crouch_speed (2.5 m/s), and its path goes at 2 (the max_speed of
+// its Walk): it goes at 2, for navigation asks for the velocity it planned, which the locomotion
+// takes up to the top speed it has.
+@(test)
+an_agent_goes_at_the_speed_of_its_path_under_its_top_speed :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    nav_test_settled(t,&f)
+    e:=agents_test_walker(&f,{-6,0,0})
+    nav_test_settle(&f)
+    core.edit(&f.walks,e).max_speed=2
+    core.edit(&f.inputs,e).buttons=input.action_bit(input.Action(locomotion.Walk_Action.Crouch)) // its actions start at 0
+    nav_move_to(&f.nav_requests,e,{6,0,0})
+    for _ in 0..<120 {agents_test_step(&f)}
+    motion,_:=core.get(&f.bodies,e)
+    state,_:=core.get(&f.loco_states,e)
+    testing.expect_value(t,state.mode,locomotion.MODE_CROUCHING)
+    testing.expectf(t,abs(linalg.length(motion.linear.xz)-2)<0.05,"it goes at %v",motion.linear)
+}
+
 // Six walkers patrol the paths of the AI arena of the demo, each from another
 // point: up a ladder onto a platform, off it by a drop, around a blocked area
 // and over a fence by a link the game crosses. Where they crowd at the start

@@ -59,7 +59,7 @@ camera_drive :: proc(
             if move==nil {continue}
         }
         if turned,ok:=core.get(verticals,body);ok {move.look_yaw=mm.angle_wrap(move.look_yaw+turned.turn)}
-        move.buttons=input.seat_buttons(seats,seat,bindings.ptr)
+        move.buttons,move.velocity=input.seat_buttons(seats,seat,bindings.ptr),false
         wish:=input.seat_vector(move_actions,seat,.Move)
         camera,_:=camera_selected(shown.ptr,seats,cameras,hierarchy,seat)
         follow,follows_it:=core.get(follows,camera)

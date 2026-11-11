@@ -533,8 +533,9 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
 
 - Whoever drives a `Character` writes its `Move_Input`: the seat through `camera_drive` of
   `engine/camera` ([driving](../../mirai-gameplay/references/control.md#driving)), an AI or the game
-  for one no seat drives, the network for a replica. `move` is in the world; `look_yaw` is where it
-  is asked to face and `look_pitch` where it looks.
+  for one no seat drives, the network for a replica. `move` is in the world, a share of the top
+  speed of its mode or, with `velocity`, m/s up to it (`move_wish`); `look_yaw` is where it is
+  asked to face and `look_pitch` where it looks.
 - `locomotion_step` turns the yaw the body faces (`Locomotion_State.yaw`) toward `look_yaw` at
   `Character.turn_speed` of own time (0: at once), plus the `ground_turn` of what it stands on; the
   modes read the move in the axes of that yaw (`move_facing`), and its `Character_Move.yaw` is it.

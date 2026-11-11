@@ -17,8 +17,10 @@ are used by every game and the third only by one that makes bodies appear for it
   the network sets on a server, and `player`, the id its client presented). It exists even if it
   drives nothing: between one death and the next, in a menu, spectating.
 - Each seat carries the actions of the tick's `Input_Map`. Actions are all of the player's
-  (shoot, use, menus); `Move_Input` is the body's intent: a move in the world, the look (the yaw
-  to face and the pitch) and the held buttons, as action ids. `camera_drive` passes from the
+  (shoot, use, menus); `Move_Input` is the body's intent: a move in the world (a share of the top
+  speed of the body; with `velocity`, m/s that the mover takes up to its top speed, which a driver
+  that plans its own speed, such as navigation, asks), the look (the yaw to face and the pitch) and
+  the held buttons, as action ids. `camera_drive` passes from the
   former to the latter for every body a seat drives, without game code ([driving](#driving)).
   What does not move the body (shoot, use) the game reads from the seat.
 - `Move_Input` is what is asked of a body in the tick, and it is `shared`: `camera_drive` writes
@@ -96,10 +98,10 @@ inspector use them.
   `inp.Input_Code`, named as the members of the enums of core (`Space`, `South`, `Left_X`, and the
   mouse as `Mouse_Left`, `Mouse_X`, `Wheel_Y`).
 - **Displacement and rate.** The `scale` of a binding is the sensitivity of a player and multiplies
-  the value after the dead zone. A mouse axis gives the movement since the last update; in an action
-  a mouse axis drives (`Look`), the other bindings are rates, their value per second, so a stick held
-  turns as far in a frame or a tick of any length. A seat's look travels and replays as the turn of
-  its tick, like the mouse's.
+  the value after the dead zone. A mouse axis gives the movement since the last update; in an
+  action a mouse axis drives (`Look`), the other bindings are rates, their value per second, so a
+  stick held turns as far in a frame or a tick of any length. A seat's look travels and replays as
+  the turn of its tick, like the mouse's.
 - **What a project or a player changes** is the machine setting `inp.Input_Settings`
   ([settings](../../mirai-projects/references/projects.md#project-settings)), a section of
   `settings.mirai` with one keyed entry per action, by its name: its kind, context and bindings

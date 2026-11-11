@@ -296,7 +296,7 @@ navigation_agents :: proc(
             agent_stop_crossing(p,asked.entity,loco)
             p.state=.Idle
             p.velocity={}
-            if mi:=core.edit(inputs,asked.entity);mi!=nil {mi.move={}}
+            if mi:=core.edit(inputs,asked.entity);mi!=nil {mi.move,mi.velocity={},false}
         case .Look_At:
             p.look,p.looking=asked.point,true
         case .Look_Along:
@@ -458,7 +458,7 @@ navigation_agents :: proc(
     sections:=&builds.ptr.sections if builds.ptr!=nil else nil
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
     agents_avoid(n.ptr,a,paths,time.dt,problems)
-    crossings.count=agents_steer(n.ptr,agents,paths,inputs,seats,grounds,worlds,walks,flights,swims,time.dt)
+    crossings.count=agents_steer(n.ptr,agents,paths,inputs,seats,grounds,worlds)
     agents_far(n,builds,a,agents,paths,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
 }
 
@@ -1073,15 +1073,14 @@ ground_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb
 }
 
 // Writes the Move_Input of every agent no seat drives, and of a seated one
-// while it goes: along its velocity, at the share of the speed of its Walk
-// that its velocity asks (the velocity that steps aside is the one it moves
-// at), looking where it goes or at what it looks at; its body turns there at
-// its own rate. One that flies or swims looks level and climbs or dives, at
-// the share of the speed of its Fly or its Swim. The seat of a seated one
+// while it goes: its velocity, which its mover takes up to its top speed (the
+// velocity that steps aside is the one it moves at), looking where it goes or
+// at what it looks at; its body turns there at its own rate. One that flies or
+// swims looks level and climbs or dives. The seat of a seated one
 // wrote its Move_Input earlier in the tick, with its buttons and the turn of
 // the ground. How many agents cross a link.
 @(private)
-agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),seats:^core.Table(input.Seat,.Read),grounds:^core.Table(phys.Character_State,.Read),worlds:^core.Table(core.World_Transform,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),dt:f32) -> (crossing:u32) {
+agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),inputs:^core.Table(input.Move_Input),seats:^core.Table(input.Seat,.Read),grounds:^core.Table(phys.Character_State,.Read),worlds:^core.Table(core.World_Transform,.Read)) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
         p:=core.edit_at(paths,row)
@@ -1097,7 +1096,7 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^co
         if p.state!=.Moving && p.state!=.Crossing {
             // Once, when it stops: whatever writes it next is not navigation.
             if !p.halted {
-                if !driven {mi.move={}}
+                if !driven {mi.move,mi.velocity={},false}
                 p.halted=true
             }
             continue
@@ -1113,26 +1112,14 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^co
             to.y=0
             if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
         } else if speed>0.05 {mi.look_yaw=mm.yaw_of_direction(flat)}
+        mi.velocity=true
         if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
             mi.look_pitch=0
-            full:=linalg.length(p.velocity)
-            if full<=1e-4 {mi.move={};continue}
-            top:f32
-            if n.classes[p.class].class.space==.Water {
-                swim,_:=core.get(swims,e)
-                top=swim.speed
-            } else {
-                fly,_:=core.get(flights,e)
-                top=fly.speed
-            }
-            share:=min(full/top,1) if top>0 else 1
-            mi.move=p.velocity/full*share
+            mi.move=p.velocity
             continue
         }
-        if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={};continue}
-        walk,_:=core.get(walks,e)
-        top:=max(speed,walk.max_speed if walk.max_speed>0 else 3)
-        mi.move=flat/top
+        mi.move=flat
+        if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={}}
     }
     return
 }

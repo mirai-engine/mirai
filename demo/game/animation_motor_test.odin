@@ -20,14 +20,13 @@ animation_motor_preserves_world_root_direction_facing_and_physical_speed_limits_
     actor:=mm.Transform{rotation=mm.quat_axis_angle({0,1,0},.6),scale={2,1,3}}
     delta:=anim.Root_Delta{translation={.1,.5,.2},rotation=mm.quat_axis_angle({0,1,0},.3)}
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    input:=animation_motor_input(delta,actor,10,.1)
-    world:=input.move*10*.1
+    input:=animation_motor_input(delta,actor,.1)
+    world:=input.move*.1
     requested:=mm.quat_rotate(actor.rotation,delta.translation*actor.scale);requested.y=0
-    stopped:=animation_motor_input(delta,actor,10,0)
-    clamped:=animation_motor_input({translation={100,0,0},rotation=1},actor,10,.1)
+    stopped:=animation_motor_input(delta,actor,0)
     context=saved
-    testing.expect(t,linalg.length(world-requested)<1e-5 && abs(mm.angle_wrap(input.look_yaw-.9))<1e-5 && input.move.y==0 && stopped.move=={})
-    testing.expect(t,abs(linalg.length(clamped.move)-1)<1e-5)
+    // A velocity the locomotion takes up to the top speed of the walk.
+    testing.expect(t,input.velocity && linalg.length(world-requested)<1e-5 && abs(mm.angle_wrap(input.look_yaw-.9))<1e-5 && input.move.y==0 && stopped.move=={})
 }
 
 // The body of Mirai: the first mesh of the import of characters/mirai/mirai.glb, by the id its
@@ -113,10 +112,11 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5 && abs(f.playback.states[0].local[1].position.x-time.dt)<1e-5)
     before_control,_:=core.get(&f.transforms,controlled);before_motor,_:=core.get(&f.transforms,motor)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    animation_motor_drive(core.read(&f.motors),&f.inputs,core.read(&f.walks),core.read(&f.worlds),{&f.playback},time)
+    animation_motor_drive(core.read(&f.motors),&f.inputs,core.read(&f.worlds),{&f.playback},time)
     context=saved
     published_control,_:=core.get(&f.inputs,controlled);published_motor,_:=core.get(&f.inputs,motor)
-    testing.expect(t,published_control.move.x==.2 && abs(published_motor.move.x-.2)<1e-5)
+    // The clip advances 1 m/s: the motor asks for that velocity.
+    testing.expect(t,published_control.move.x==.2 && !published_control.velocity && abs(published_motor.move.x-1)<1e-5 && published_motor.velocity)
     time.tick+=1;animation_input_physics(&f,time)
     after_control,_:=core.get(&f.transforms,controlled);after_motor,_:=core.get(&f.transforms,motor)
     testing.expect(t,after_control.position.x>before_control.position.x && after_motor.position.x>before_motor.position.x)

@@ -150,8 +150,9 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   within `path_iterations` per tick, moves the corridor to where the body is, goes to the next
   corner, steps aside from the others with ORCA (characters that do not navigate and obstacles
   enter as neighbors that do not step aside) and writes the `Move_Input`, unless a seat drives the
-  body: toward its velocity, at the share of the speed of its `Walk`, `Fly` or `Swim` that the
-  velocity asks. It turns at the `turn_speed` of its `Character` and adds the turn of the ground.
+  body: its velocity as a velocity (`Move_Input.velocity`), which the locomotion takes up to the
+  top speed of its mode (crouched, backing off). It turns at the `turn_speed` of its `Character`
+  and adds the turn of the ground.
 - **Neighbors as far as the horizon.** An agent gathers those it may meet within
   `NAV_AGENT_HORIZON` at its speed and theirs, from the cells around its own in blocks that grow
   until they hold that reach, or as many neighbors nearer than the block as ORCA counts.

@@ -84,6 +84,29 @@ walking_sprints_and_slows_backward :: proc(t:^testing.T) {
     testing.expectf(t,near(v.z,-5,0.05),"after letting sprint go %v",v)
 }
 
+// A move asks for a share of the top speed of a mode, up to all of it; a velocity, for that speed up
+// to the top one. What is not a number asks for nothing.
+@(test)
+a_move_asks_a_share_of_the_top_speed_or_a_velocity_up_to_it :: proc(t:^testing.T) {
+    nan,inf:=cmath.nan_f32(),cmath.inf_f32(1)
+    Case :: struct {move:[3]f32,velocity:bool,top:f32,share:[3]f32}
+    cases:=[]Case{
+        {move={0.5,0,0},top=4,share={0.5,0,0}},
+        {move={3,0,4},top=4,share={0.6,0,0.8}},
+        {move={2,0,0},velocity=true,top=4,share={0.5,0,0}},
+        {move={0,0,-8},velocity=true,top=4,share={0,0,-1}},
+        {move={2,0,0},velocity=true,top=0,share={}},
+        {move={2,0,0},velocity=true,top=nan,share={}},
+        {move={2,0,0},velocity=true,top=inf,share={}},
+        {move={nan,0,0},top=4,share={}},
+        {move={inf,0,0},velocity=true,top=4,share={}},
+    }
+    for c in cases {
+        got:=move_share({move=c.move,velocity=c.velocity},c.top)
+        testing.expectf(t,abs(got.x-c.share.x)<1e-5 && abs(got.y-c.share.y)<1e-5 && abs(got.z-c.share.z)<1e-5,"%v gives %v",c,got)
+    }
+}
+
 // The body faces where the look does: -Z.
 @(test)
 walking_toward_plus_x_turns_the_front_of_the_body_to_plus_x_and_keeps_the_look :: proc(t:^testing.T) {
