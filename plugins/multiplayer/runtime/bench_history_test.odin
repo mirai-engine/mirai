@@ -88,8 +88,9 @@ History_Bench_Extra :: struct {
 History_Bench_Flat :: struct {words:[60][32]u64}
 
 @(private)
+@(test_world)
 History_Bench_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using net:Net_Test_Tables,
     using extra:History_Bench_Extra,
     flat:History_Bench_Flat,
@@ -188,9 +189,9 @@ history_bench_micro :: proc(cost:History_Bench_Cost) -> f64 {return cost.copies>
 @(test)
 cost_of_the_history_of_a_client :: proc(t:^testing.T) {
     when !NET_HISTORY_BENCH {return}
-    info,described:=core.test_info(t,History_Bench_World,net_test_types)
+    info,described:=test_info(t,History_Bench_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
     assets:host.Assets
@@ -277,9 +278,9 @@ history_bench_table_bytes :: proc(table:^core.Raw_Table,size:int) -> int {
 @(test)
 rows_and_bytes_of_a_rollback :: proc(t:^testing.T) {
     when !NET_HISTORY_BENCH {return}
-    info,described:=core.test_info(t,History_Bench_World,net_test_types)
+    info,described:=test_info(t,History_Bench_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
     assets:host.Assets

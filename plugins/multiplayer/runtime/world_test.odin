@@ -73,7 +73,7 @@ pair_destroy :: proc(p:^Pair) {
     for &app in p.apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     for &share in p.shares {phys.collider_meshes_destroy(&share.colliders)}
     delete(p.info.messages)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A frame of both ends as the loop runs it: what arrived, the seats of the
@@ -276,7 +276,7 @@ a_client_follows_the_pause_and_the_time_scale_of_its_server :: proc(t:^testing.T
 the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)

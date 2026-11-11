@@ -75,19 +75,20 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
 @(private="file")
 Api_Viewport_Result_Text :: struct {path:string}
 
-@(private="file")
+@(private)
+@(test_world,editor="Camera_Editor")
 Camera_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     cameras:core.Table(erender.Camera),
 }
-@(private="file") Camera_Editor :: struct {api:Api}
+@(private) Camera_Editor :: struct {api:Api}
 
 @(test)
 camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_it :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Camera_World,core.Test_None,Camera_Editor,test_types)
+    info,described:=test_info(t,Camera_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Camera_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
@@ -155,18 +156,19 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     testing.expect_value(t,len(edits.steps),0)
 }
 
+@(private) @(test_world) Shown_World :: struct {using world:Test_World}
+
 @(test)
 capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testing.T) {
-    Shown_World :: struct {using world:core.Test_World}
     shown:Shown_World
-    if !core.test_world_init(t,&shown) {return}
-    defer core.test_world_destroy(&shown)
+    if !test_world_init(t,&shown) {return}
+    defer test_world_destroy(&shown)
     settings:=gpu.DEFAULT_SETTINGS
     settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={128,96}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
-    app.info=core.test_world_info(&shown)
+    app.info=test_world_info(&shown)
     session:=Session{app=app,info=app.info,edit_world=&shown}
     cube,made:=erender.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({position={0,0.5,0},rotation=1,scale={1,1,1}}),{color={0.2,0.9,0.5,1},emission={0.05,0.3,0.15}})
     if !testing.expect(t,made) {return}

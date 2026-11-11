@@ -183,8 +183,8 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     testing.expect_value(t,f.p.marks.written,written)
 }
 
-@(private="file") Preferences_World :: struct {using world:core.Test_World}
-@(private="file") Preferences_Editor :: struct {api:Api}
+@(test_world,editor="Preferences_Editor") @(private) Preferences_World :: struct {using world:Test_World}
+@(private) Preferences_Editor :: struct {api:Api}
 
 // preferences.set changes the areas it names at once and the file keeps what
 // differs from the code; preferences.get says both.
@@ -197,9 +197,9 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     preferences_test_open(f,folder)
     preferences_open(&f.s,{})
     defer delete(f.p.file)
-    info,made:=core.test_info(t,Preferences_World,core.Test_None,Preferences_Editor,test_types)
+    info,made:=test_info(t,Preferences_World)
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Preferences_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)

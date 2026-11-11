@@ -110,7 +110,8 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if p.nothing || p.owner!="" {continue}
         files:=package_parse(p.folder)
         package_flags,ok:=test_flags(root,p.folder,files,release,flags[:])
-        if !ok || !test_imports_check(root,p.folder,files) || !package_test_shaders(root,p.folder) {
+        // What it compiles reads the test worlds of the package and of those it imports.
+        if !ok || !test_imports_check(root,p.folder,files) || !package_test_shaders(root,p.folder) || !test_worlds(root,p.folder) {
             builds[i].failure=.Generate
             continue
         }

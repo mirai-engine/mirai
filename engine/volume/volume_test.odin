@@ -7,15 +7,16 @@ import scene "mirai:engine/scene"
 import mm "mirai:std/math"
 import "mirai:std/spatial"
 
-@(private="file")
+@(private)
 Level :: struct {value:f32,zone:Zone}
 
 @(private="file")
 mix_level :: proc(value:^Level,by:Level,weight:f32,add:bool) {mix_linear(&value.value,by.value,weight,add)}
 
-@(private="file")
+@(private)
+@(test_world)
 Fixture :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     volumes:core.Table(Volume),
     worlds:core.Table(core.World_Transform),
     levels:core.Table(Level),
@@ -29,7 +30,7 @@ place :: proc(f:^Fixture,level:f32,v:Maybe(Volume),position:[3]f32={},scale:f32=
     core.add(&f.levels,e,Level{level,zone})
     if v,ok:=v.?;ok {core.add(&f.volumes,e,v)}
     core.add(&f.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale=scale}})
-    core.test_world_settle(f)
+    test_world_settle(f)
     return e
 }
 
@@ -61,8 +62,8 @@ the_shapes_are_as_their_constructors_say_and_a_world_volume_with_extents_is_repo
     testing.expect_value(t,plane(),Volume{shape=.Plane})
     testing.expect_value(t,world(),Volume{})
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     check:Volume_Check
     problems:core.Problems
     place(&f,1,box({1,1,1}))
@@ -77,8 +78,8 @@ the_shapes_are_as_their_constructors_say_and_a_world_volume_with_extents_is_repo
 @(test)
 a_box_replaces_the_level_inside_and_fades_at_its_border :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     testing.expect_value(t,level_at(&f,{}),1)
     place(&f,2,nil)
     testing.expect_value(t,level_at(&f,{}),2)
@@ -96,8 +97,8 @@ a_box_replaces_the_level_inside_and_fades_at_its_border :: proc(t:^testing.T) {
 @(test)
 priority_orders_bounded_and_unbounded_and_add_sums :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     place(&f,5,Volume{shape=.Sphere,extents={2,0,0}})
     place(&f,3,Volume{shape=.Unbounded},zone={priority=1})
     testing.expect_value(t,level_at(&f,{}),3)
@@ -112,15 +113,15 @@ priority_orders_bounded_and_unbounded_and_add_sums :: proc(t:^testing.T) {
 @(test)
 an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     section:=core.create(&f.entities)
     core.add(&f.worlds,section,core.World_Transform{transform={position={100,0,0},rotation=1,scale=1}})
     core.add(&f.sections,section,scene.Scene_Reference{extents={10,10,10}})
-    core.test_world_settle(&f)
+    test_world_settle(&f)
     e:=place(&f,9,world())
     core.add(&f.parents,e,core.Parent{entity=section})
-    core.test_world_settle(&f)
+    test_world_settle(&f)
     testing.expect_value(t,level_at(&f,{100,0,0}),9)
     testing.expect_value(t,level_at(&f,{0,0,0}),1)
     core.edit(&f.sections,section).extents={}
@@ -133,8 +134,8 @@ an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
 @(test)
 the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     place(&f,2,nil)
     place(&f,3,Volume{shape=.Unbounded},zone={priority=5,mode=.Add})
@@ -167,8 +168,8 @@ the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^t
 @(test)
 the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     update :: proc(f:^Fixture,ix:^Index) -> bool {
         changed,_:=index_update(ix,where_of(f),core.read(&f.levels))
@@ -186,7 +187,7 @@ the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
 
     other:=core.create(&f.entities)
     core.add(&f.worlds,other,core.World_Transform{transform={rotation=1,scale=1}})
-    core.test_world_settle(&f)
+    test_world_settle(&f)
     core.edit(&f.worlds,other).position={3,0,0}
     testing.expect(t,!update(&f,&ix),"what moves is not one of its volumes")
     zone:=place(&f,10,box({1,1,1}),zone={priority=2})
@@ -307,8 +308,8 @@ a_hostile_volume_holds_and_meets_nothing :: proc(t:^testing.T) {
     for blend in ([?]f32{nan,-1}) {testing.expect_value(t,weight(box({1,1,1}),still,{},blend),f32(1))}
     // An index of hostile volumes is made, and its points are not in them.
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     for c in cases {
         e:=place(&f,50,c.v)

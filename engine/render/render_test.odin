@@ -19,8 +19,8 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     sync:Render_Sync;defer sync_free(&sync)
     w.view.position,w.view.rotation,w.view.size={8,8,12},mm.quat_look({-8,-8,-12},{0,1,0}),{160,120}
     w.view.fov=50*mm.RAD_PER_DEG
@@ -64,7 +64,7 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
                 core.add(&w.meshes,e,Mesh_Renderer{mesh=source[i]})
                 core.add(&w.tints,e,Tint{color=owner==0?[4]f32{1,1,1,1}:{0,1,0,1},emission={3,3,3}})
             }
-            core.test_world_settle(&w)
+            test_world_settle(&w)
         } else if pass==2 || pass==4 {
             for e,i in chunks {core.edit(&w.meshes,e).mesh=source[i%4]}
         }
@@ -124,9 +124,9 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
     if app==nil {return}
     defer host.app_destroy(app)
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);core.test_world_settle(&w)}
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);test_world_settle(&w)}
     sync:Render_Sync
     defer {
         sync_free(&sync)
@@ -135,10 +135,10 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
     e:=core.create(&w.entities)
     core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
     core.add(&w.tints,e,Tint{color={1,0,0,1},emission={3,0,0}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     for pass in 0..<5 {
         host.app_frame_begin(app)
-        if pass==1 {core.add(&w.worlds,e,core.World_Transform{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY});core.test_world_settle(&w)}
+        if pass==1 {core.add(&w.worlds,e,core.World_Transform{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY});test_world_settle(&w)}
         if pass==2 || pass==3 {
             transform:=mm.TRANSFORM_IDENTITY
             transform.position.x=pass==2?1.5:-1.5
@@ -284,9 +284,9 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
     if app==nil {return}
     defer host.app_destroy(app)
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);core.test_world_settle(&w)}
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);test_world_settle(&w)}
     sync:Render_Sync;defer sync_free(&sync)
     w.view.position,w.view.rotation,w.view.size={0,0,6},1,{160,120}
     parent,child:=core.create(&w.entities),core.create(&w.entities)
@@ -298,7 +298,7 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
         core.add(&w.tints,e,Tint{color={1,0,0,1},emission={3,0,0}})
     }
     core.add(&w.parents,child,core.Parent{parent,0})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect(t,core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities))
     sets:u64
     for pass in 0..<4 {
@@ -308,7 +308,7 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
         case 2: core.remove(&w.hidden,parent)
         case 3: core.add(&w.hidden,child,Hidden{})
         }
-        core.test_world_settle(&w)
+        test_world_settle(&w)
         host.app_camera_set(app,host.camera_from_view(w.view),w.view.cut,w.view.carried)
         world_sync(&w,&sync,app,hierarchy=core.ref(&w.hierarchy))
         host.app_frame_end(app)
@@ -341,9 +341,9 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
     if app==nil {return}
     defer host.app_destroy(app)
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);core.test_world_settle(&w)}
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);test_world_settle(&w)}
     sync:Render_Sync;defer sync_free(&sync)
     w.view.position,w.view.rotation,w.view.size={0,0,8},1,{160,120}
     cube :: proc(w:^Render_World,x:f32) -> core.Entity {
@@ -357,7 +357,7 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
     }
     a,b:=cube(&w,-2.5),cube(&w,0)
     c:=cube(&w,2.5)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     counts:=[6]int{3,2,3,2,3,2}
     for pass in 0..<6 {
         host.app_frame_begin(app)
@@ -368,7 +368,7 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
         case 4: _=cube(&w,-2.5)
         case 5: core.destroy(&w.entities,c)
         }
-        core.test_world_settle(&w)
+        test_world_settle(&w)
         extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Tint{color={0,1,0,1},emission={0,3,0}})
         testing.expect(t,usable)
         extra.copy_owner,extra.copy_variant=1,1
@@ -401,12 +401,12 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
 @(test)
 the_editor_outlines_an_entity_in_place_of_the_game :: proc(t:^testing.T) {
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     plain,outlined,both:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.outlines,outlined,Outline{style=2});core.add(&w.outlines,both,Outline{style=2})
     core.add(&w.highlights,both,Highlight{level=1})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect_value(t,instance_outline(core.read(&w.highlights),core.read(&w.outlines),plain),u8(0))
     testing.expect_value(t,instance_outline(core.read(&w.highlights),core.read(&w.outlines),outlined),u8(HIGHLIGHT_LEVELS+2))
     testing.expect_value(t,instance_outline(core.read(&w.highlights),core.read(&w.outlines),both),u8(1))
@@ -421,12 +421,12 @@ the_editor_outlines_an_entity_in_place_of_the_game :: proc(t:^testing.T) {
 @(test)
 the_meshes_of_a_body_are_marked_with_the_local_player_whose_view_hides_it :: proc(t:^testing.T) {
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     body,arm,hand,other:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.parents,arm,core.Parent{entity=body})
     core.add(&w.parents,hand,core.Parent{entity=arm})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     tables:Sync_Tables
     tables.parents=core.read(&w.parents)
     testing.expect(t,body_owner(tables,hand)==0,"without bodies, no mesh is marked")
@@ -434,7 +434,7 @@ the_meshes_of_a_body_are_marked_with_the_local_player_whose_view_hides_it :: pro
     testing.expect(t,body_owner(tables,body)==3 && body_owner(tables,hand)==3,"the body and what hangs from it are of slot 2")
     testing.expect(t,body_owner(tables,other)==0)
     core.add(&w.layers,hand,Layers{mask=1<<15})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     tables.layers=core.read(&w.layers)
     extras:=[3]gpu.Instance_Desc{{object_id=u64(hand),replace_source=true},{object_id=u64(hand)},{object_id=u64(hand),replace_source=true,layers=2}}
     extras_inherit(tables,extras[:])
@@ -455,9 +455,9 @@ a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
     if app==nil {return}
     defer host.app_destroy(app)
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
-    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);core.test_world_settle(&w)}
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    {sky_entity:=core.create(&w.entities);core.add(&w.skies,sky_entity,SKY_DEFAULT);test_world_settle(&w)}
     w.view.position,w.view.rotation,w.view.size={0,0,8},1,{160,120}
     cube :: proc(w:^Render_World,x:f32) -> core.Entity {
         e:=core.create(&w.entities)
@@ -470,7 +470,7 @@ a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
     }
     a:=cube(&w,-2.5)
     _=cube(&w,0)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
     limited:=runtime.Allocator{memory_limit_proc,&limit}
     sync:Render_Sync

@@ -8,8 +8,9 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 
-@(private="file")
-Terrain_View_Test_World :: struct {using world:core.Test_World}
+@(private)
+@(test_world)
+Terrain_View_Test_World :: struct {using world:Test_World}
 
 // The modes are declared in every frame and shown by their pass; the pipeline
 // is asked for only while one of the modes of the pass is shown, and without
@@ -18,14 +19,14 @@ Terrain_View_Test_World :: struct {using world:core.Test_World}
 @(test)
 terrain_view_modes_ask_for_their_pipeline_only_while_one_is_shown :: proc(t:^testing.T) {
     world:Terrain_View_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     modes:editor.View_Modes
     defer editor.view_modes_free(&modes)
     viewport:editor.Viewport
     document:editor.Document
     app:host.App
-    s:=editor.Session{info=core.test_world_info(&world),edit_world=&world,app=&app,viewport=&viewport,document=&document,view_modes=&modes}
+    s:=editor.Session{info=test_world_info(&world),edit_world=&world,app=&app,viewport=&viewport,document=&document,view_modes=&modes}
     view:Terrain_View
 
     terrain_view_modes(&s,&view,app.renderer)

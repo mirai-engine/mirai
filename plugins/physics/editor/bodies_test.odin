@@ -5,21 +5,22 @@ import "mirai:core"
 import "mirai:editor"
 import phys "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world,editor="Bodies_Test_Editor")
 Bodies_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     states:core.Table(phys.Character_State),
 }
 
-@(private="file") Bodies_Test_Editor :: struct {bodies:Physics_Bodies}
+@(private) Bodies_Test_Editor :: struct {bodies:Physics_Bodies}
 
 // The editor hears of a character whether it stands, and of a body that is
 // not one, nothing.
 @(test)
 a_character_says_whether_it_stands_and_another_body_says_nothing :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Bodies_Test_World,core.Test_None,Bodies_Test_Editor,test_types)
+    info,described:=test_info(t,Bodies_Test_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Bodies_Test_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
