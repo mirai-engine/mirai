@@ -48,13 +48,13 @@ Api_Particle_Id_Params :: struct {
 }
 
 @(private)
-Particle_Action :: enum u8 {Start,Stop,Restart,Pause,Resume,Authored,Burst}
+Particle_Action :: enum u8 {Start,Stop,Restart,Pause,Resume,Burst}
 
 @(private)
 Api_Particle_Control_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     world:Particle_World `mirai:"optional,label=Edit: the preview of the document; Play: the Play of the caller"`,
-    action:Particle_Action `mirai:"label=Start and Stop emit or not whatever active says; Restart drops its particles and starts its cycle; Authored gives it back to its fields; Burst starts count particles at once"`,
+    action:Particle_Action `mirai:"label=Start and Stop set active, in Play; Restart drops its particles and starts its cycle; Burst starts count particles at once"`,
     count:u32 `mirai:"optional,max=1048576,label=Particles of a Burst"`,
 }
 
@@ -73,11 +73,11 @@ api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
-    editor.api_method_register(s,Api_Particle_Instance_Params,{name="particle.instance.inspect",defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, control, seconds, generation, births).",flags={.Read_Only},run=api_particle_instance_inspect})
+    editor.api_method_register(s,Api_Particle_Instance_Params,{name="particle.instance.inspect",defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, seconds, generation, births).",flags={.Read_Only},run=api_particle_instance_inspect})
     editor.api_method_register(s,{name="particle.instance.set",params_schema=PARTICLE_INSTANCE_SET_SCHEMA,summary="In Edit, one undo step: the values given that differ from the effect become the entity's own (at most 16, not its assets or program), and the parameters given its own (at most 8). The result is as particle.instance.inspect's.",run=api_particle_instance_set})
     editor.api_method_register(s,Api_Particle_Id_Params,{name="particle.instance.revert",summary="In Edit, one undo step: the entity takes back every value and parameter of its effect.",run=api_particle_instance_revert})
     editor.api_method_register(s,Api_Particle_Id_Params,{name="particle.instance.apply",summary="Writes the values and parameters the entity shows into its effect, for every entity that shows it, and reverts the entity, in one undo step.",run=api_particle_instance_apply})
-    editor.api_method_register(s,Api_Particle_Control_Params,Api_Particle_Control_Result,{name="particle.instance.control",defaults=&control,summary="Asks an emitter in the Play of the caller, or in the preview of the document, to start, stop, restart, pause, resume, go back to its fields or burst count particles. It takes it in its next fixed step; its fields do not change.",run=api_particle_instance_control})
+    editor.api_method_register(s,Api_Particle_Control_Params,Api_Particle_Control_Result,{name="particle.instance.control",defaults=&control,summary="Asks an emitter in the Play of the caller to start or stop (its active), restart, pause, resume or burst count particles, or one in the preview of the document all of them but start and stop. It takes it in its next fixed step.",run=api_particle_instance_control})
 }
 
 // The params of an effect: its name, path and values, its parameters (the
@@ -451,7 +451,6 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
             api.write_key(out,"status")
             serial.write_u8(out,'{')
             api.write_text(out,"state",fmt.tprint(status.state),first=true)
-            api.write_text(out,"control",fmt.tprint(status.control))
             api.write_key(out,"seconds");serial.text_write_float(out,transmute(u64)status.time,8)
             api.write_uint(out,"generation",u64(status.generation))
             api.write_uint(out,"births",status.emitted)
@@ -655,6 +654,10 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"Burst takes count: the particles it starts")
         return
     }
+    if p.world==.Edit && (p.action==.Start || p.action==.Stop) {
+        api.call_fail(call,api.INVALID_PARAMS,"Start and Stop set active, which the document's emitter does not emit by: set its preview with scene.write, or start a Play")
+        return
+    }
     w,ok:=particle_world(s,call,p.world)
     if !ok {return}
     if p.world==.Play {
@@ -673,7 +676,6 @@ api_particle_instance_control :: proc(s:^editor.Session,call:^api.Call) {
     case .Restart: vfx.restart(requests,e)
     case .Pause: vfx.pause(requests,e)
     case .Resume: vfx.resume(requests,e)
-    case .Authored: vfx.authored(requests,e)
     case .Burst: vfx.burst(requests,e,p.count)
     }
     api.call_result(call,Api_Particle_Control_Result)^={id=editor.api_entity_id(w,e),queued=true}

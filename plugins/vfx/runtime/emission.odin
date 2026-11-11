@@ -19,13 +19,6 @@ Particle_Birth :: struct {
     spacing:f32,
 }
 
-// How an emitter is told to emit besides its fields.
-Particle_Control :: enum u8 {
-    Authored, // as its fields say: active, or preview while the world does not play
-    Playing,  // started by a request, whatever active says
-    Stopped,  // stopped by a request: its particles finish
-}
-
 // What of its effect the clock of an emitter follows.
 Emission :: struct {
     duration,rate,rate_over_distance:f32,
@@ -39,7 +32,6 @@ Emission :: struct {
 Emitter_Clock :: struct {
     time:f64,             // seconds of this generation; a paused clock stays
     generation:u32,       // a restart starts another: the renderer drops the particles of the one before
-    control:Particle_Control,
     paused:bool,          // nothing moves: neither the clock nor its particles
     done:bool,            // its cycle ended and its last particles died
     placed:bool,
@@ -141,7 +133,7 @@ emission_step :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool,pos
         }
     }
     clock.position=position
-    finished:=!looping && after>=duration || !emitting && clock.control==.Stopped
+    finished:=!looping && after>=duration || !emitting && clock.last>-max(f64)
     clock.done=finished && after-clock.last>=f64(e.tail)
 }
 

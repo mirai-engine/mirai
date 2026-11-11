@@ -10,12 +10,11 @@ import "plugins:vfx/runtime/effect"
 // a Particle_Emitter, or that its emitter cannot take, is a problem of that
 // entity.
 Particle_Command :: enum u8 {
-    Start,            // emits whatever active says, from where its cycle is (from the start once done)
-    Stop,             // emits no more; its particles finish
+    Start,            // sets active, from where its cycle is (from the start once done)
+    Stop,             // clears active: it emits no more and its particles finish
     Restart,          // another generation: its particles go and the cycle starts again
     Pause,            // nothing moves, neither the clock nor its particles
     Resume,
-    Authored,         // back to what its fields say
     Burst,            // count particles now
     Override_Set,     // the value at the path of hash name
     Override_Remove,
@@ -44,7 +43,6 @@ stop :: proc(requests:^Particle_Requests,e:core.Entity) {core.push(&requests.que
 restart :: proc(requests:^Particle_Requests,e:core.Entity) {core.push(&requests.queue,Particle_Request{entity=e,command=.Restart})}
 pause :: proc(requests:^Particle_Requests,e:core.Entity) {core.push(&requests.queue,Particle_Request{entity=e,command=.Pause})}
 resume :: proc(requests:^Particle_Requests,e:core.Entity) {core.push(&requests.queue,Particle_Request{entity=e,command=.Resume})}
-authored :: proc(requests:^Particle_Requests,e:core.Entity) {core.push(&requests.queue,Particle_Request{entity=e,command=.Authored})}
 burst :: proc(requests:^Particle_Requests,e:core.Entity,count:u32) {core.push(&requests.queue,Particle_Request{entity=e,command=.Burst,count=count})}
 
 // Asks for a value of the effect for this entity. A path or value the effect
@@ -87,7 +85,7 @@ request_parameter_clear :: proc(requests:^Particle_Requests,e:core.Entity) {core
 // The requests since the last step, applied in order.
 @(private)
 requests_apply :: proc(
-    requests:^Particle_Requests,emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),
+    requests:^Particle_Requests,emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),
     parameters:^core.Table(Particle_Parameters),clocks:^Particle_Clocks,problems:^core.Problems,
 ) {
     for &request in core.take(&requests.queue) {
@@ -99,18 +97,14 @@ requests_apply :: proc(
         }
         if error==.None {
             switch request.command {
-            case .Start:
+            case .Start,.Stop:
+                emitter:=core.edit(emitters,request.entity)
+                emitter.active=request.command==.Start
                 // A single cycle that ended starts again.
-                emitter,_:=core.get(emitters,request.entity)
-                if clock.done || !emitter.loop && clock.time>=f64(clock.emission.duration) {clock.time,clock.pending,clock.done=0,0,false}
-                clock.control=.Playing
-            case .Stop: clock.control=.Stopped
-            case .Restart:
-                clock_restart(clock)
-                clock.control=.Playing
+                if emitter.active && (clock.done || !emitter.loop && clock.time>=f64(clock.emission.duration)) {clock.time,clock.pending,clock.done=0,0,false}
+            case .Restart: clock_restart(clock)
             case .Pause: clock.paused=true
             case .Resume: clock.paused=false
-            case .Authored: clock.control=.Authored
             case .Burst:
                 if !clock.paused {
                     births_add(clock,clock.time,request.count,request.count,0)

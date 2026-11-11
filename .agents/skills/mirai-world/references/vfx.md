@@ -287,7 +287,7 @@ Clocks (`Particle_Clocks`, of the world):
 
 - One `Emitter_Clock` per emitter, in a `core.Entity_Map`; that of an emitter that left or lost its
   `World_Transform` is released from `core.changes`. It stores seconds of its generation,
-  generation, control, pause and the numbered births it started (`emitted`), in `Particle_Birth`
+  generation, pause and the numbered births it started (`emitted`), in `Particle_Birth`
   groups (first index, count, every how many, time of the first and spacing). It stores the last
   `PARTICLE_BIRTHS`; if they do not fit, it merges the two oldest without losing any.
 - `particles_tick` (`fixed`, both loops, after `transforms_propagate`) takes the requests and
@@ -300,16 +300,17 @@ Clocks (`Particle_Clocks`, of the world):
 
 Requests (`Particle_Requests`, a `core.Queue` of the world; `particles_tick` takes them in order):
 
-- `start`, `stop` (lets it finish), `restart` (another generation: the GPU discards its
-  particles), `pause`, `resume`, `authored` (returns to its fields) and `burst(count)` (at the
-  step's time).
+- `start` and `stop` set and clear `Particle_Emitter.active`, which `particles_tick` alone writes
+  for them (a stopped emitter lets its particles finish); `restart` (another generation: the GPU
+  discards its particles), `pause`, `resume` and `burst(count)` (at the step's time) act on the
+  clock. An emitter is emitting by its fields alone: `active` while playing, `preview` otherwise.
 - `request_override`, `request_override_remove`, `request_override_clear`, `request_parameter` and
   their pairs validate when asked; applied, they write `Particle_Override` and
   `Particle_Parameters`.
 - One for an entity without an emitter, or that the emitter does not take, is the `vfx.request`
   problem of that entity, with the `Error` and its `error_message`.
 - `status(clocks, emitter, e)` gives state (`Idle`, `Playing`, `Paused`, `Finishing`, `Done`),
-  control, seconds, generation and births.
+  seconds, generation and births.
 
 To the GPU:
 

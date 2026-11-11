@@ -31,12 +31,13 @@ saves.
 `vfx.Particle_Requests` is applied in the next fixed step, in order.
 ```odin
 // inside a fixed function, with requests:^vfx.Particle_Requests
-vfx.start(requests, e); vfx.stop(requests, e) // live particles finish
+vfx.start(requests, e); vfx.stop(requests, e) // set or clear active; live particles finish
 vfx.burst(requests, e, 30)
 ```
 
-Also `restart`, `pause`, `resume`, `authored` (back to the asset's fields). `vfx.status(clocks,
-emitter, e)` gives a `Particle_Status` with its `state` (`Playing`, `Done`).
+`start` and `stop` change the emitter's `active`, as writing the field does. Also `restart`,
+`pause` and `resume`. `vfx.status(clocks, emitter, e)` gives a `Particle_Status` with its `state`
+(`Playing`, `Done`).
 
 ## Values of one instance
 

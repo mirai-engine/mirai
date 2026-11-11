@@ -69,7 +69,7 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(&f.emitters,&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
@@ -413,11 +413,11 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
     e:=fixture_emitter(&f,Particle_Emitter{loop=true})
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
-    testing.expect(t,clock!=nil && clock.control==.Authored)
+    testing.expect(t,clock!=nil && clock.emitted==0)
+    // Start and stop set active, the field the emitter emits by.
     start(&f.requests,e)
     fixture_tick(&f,TICK)
-    clock=clock_find(&f.clocks,e)
-    testing.expect_value(t,clock.control,Particle_Control.Playing)
+    testing.expect(t,core.at(&f.emitters,0).active)
     status_now,_:=status(&f.clocks,core.at(&f.emitters,0),e)
     testing.expect_value(t,status_now.state,Particle_State.Playing)
     pause(&f.requests,e)
@@ -442,7 +442,9 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
     testing.expect_value(t,sync_shown(&f.sync,e).generation,generation+1)
     stop(&f.requests,e)
     fixture_tick(&f,TICK)
-    testing.expect_value(t,clock_find(&f.clocks,e).control,Particle_Control.Stopped)
+    testing.expect(t,!core.at(&f.emitters,0).active)
+    status_now,_=status(&f.clocks,core.at(&f.emitters,0),e)
+    testing.expect_value(t,status_now.state,Particle_State.Finishing)
     // An entity without an emitter is refused.
     other:=core.create(&f.entities)
     burst(&f.requests,other,3)

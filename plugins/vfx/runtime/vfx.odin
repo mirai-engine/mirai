@@ -33,7 +33,7 @@ GRAVITY :: [3]f32{0,-9.81,0} // of the particles of an effect view, which are of
 @(component)
 Particle_Emitter :: struct {
     particle:base.Asset_Id, // a .particle; none: effect.PARTICLE_DEFAULTS
-    active:bool,            // it emits from the start; clearing it lets the particles alive finish
+    active:bool,            // it emits while the world plays (start and stop set it); clearing it lets the particles alive finish
     loop:bool,              // the cycle of the effect starts again when it ends
     preview:bool,           // in the editor, while the world does not play, it emits and starts over when it is done
     destroy_when_done:bool, // while playing, the entity and what hangs from it go once every emitter there is done
@@ -132,7 +132,7 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 // what each starts and the entities of the effects that are done.
 @(step="fixed",loops="game editor",stage="end")
 particles_tick :: proc(
-    emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
+    emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
     worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:core.Commands,
     clocks:^Particle_Clocks,requests:^Particle_Requests,births:^core.Births,listeners:core.Read(Particle_Channel),
     time:core.Time,frame:core.Frame_Time,assets:^host.Assets,problems:^core.Problems,
@@ -144,14 +144,15 @@ particles_tick :: proc(
     }
     channels_step(clocks,core.take(&births.queue),listeners,time)
     // The clocks of the emitters that went, or whose entity is no longer placed.
-    core.entity_map_prune(&clocks.clocks,emitters,core.changes(emitters,&clocks.seen_emitters))
+    rows:=core.read(emitters)
+    core.entity_map_prune(&clocks.clocks,rows,core.changes(rows,&clocks.seen_emitters))
     core.entity_map_prune(&clocks.clocks,worlds,core.changes(worlds,&clocks.seen_worlds))
     dt:=time.playing?time.dt:max(frame.dt,0)
     requests_apply(requests,emitters,overrides,parameters,clocks,problems)
     a:=assets
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
-    placed:=core.join(emitters,worlds)
+    placed:=core.join(rows,worlds)
     for e,emitter,world in core.each_joined(&placed) {
         clock:=clock_of(clocks,e)
         if clock==nil {continue}
@@ -161,17 +162,17 @@ particles_tick :: proc(
             clock.emission=emission_of(a,&info)
             clock.resolved=key
         }
-        emitting:=clock.control==.Playing || clock.control==.Authored && (time.playing?emitter.active:emitter.preview)
+        emitting:=time.playing?emitter.active:emitter.preview
         before:=clock.time
         emission_step(clock,&clock.emission,emitting,emitter.loop,world.transform.position,dt)
         if !time.playing && emitting && !clock.paused {
             if listener,listens:=core.get(listeners,e);listens {channel_preview(clocks,listener,world.transform.position,before,clock.time,f64(clock.emission.duration))}
         }
-        if !time.playing && clock.done && emitter.preview && clock.control==.Authored {clock_restart(clock)}
+        if !time.playing && clock.done && emitter.preview {clock_restart(clock)}
         if time.playing && clock.done && emitter.destroy_when_done {append(&done,e)}
     }
     for e in done {
-        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy_tree(entities.entities,hierarchy,e)}
+        if subtree_done(rows,clocks,hierarchy,e) {core.destroy_tree(entities.entities,hierarchy,e)}
     }
 }
 
@@ -447,7 +448,6 @@ Particle_State :: enum u8 {
 // Where an emitter of the world is: what particles_tick says of its clock.
 Particle_Status :: struct {
     state:Particle_State,
-    control:Particle_Control,
     time:f64,       // seconds of its generation
     generation:u32,
     emitted:u64,    // births since it began
@@ -457,9 +457,9 @@ Particle_Status :: struct {
 status :: proc(clocks:^Particle_Clocks,emitter:Particle_Emitter,e:core.Entity) -> (s:Particle_Status,ok:bool) {
     clock:=clock_find(clocks,e)
     if clock==nil {return}
-    s={control=clock.control,time=clock.time,generation=clock.generation,emitted=clock.emitted}
-    emitting:=clock.control==.Playing || clock.control==.Authored && (clocks.playing?emitter.active:emitter.preview)
-    over:=!emitter.loop && clock.time>=f64(clock.emission.duration) || clock.control==.Stopped
+    s={time=clock.time,generation=clock.generation,emitted=clock.emitted}
+    emitting:=clocks.playing?emitter.active:emitter.preview
+    over:=!emitter.loop && clock.time>=f64(clock.emission.duration) || !emitting
     switch {
     case clock.paused: s.state=.Paused
     case clock.done: s.state=.Done
