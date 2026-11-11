@@ -67,7 +67,7 @@ Sync :: struct {
     character_states:^core.Table(Character_State),
     jumps:^core.Jumps, // nil for whoever steps the simulation by hand
     problems:^core.Problems,
-    changes:[4]core.Changes, // of Rigid_Body, Collider, Character and Volume since Physics_State.rows_seen
+    changes:[5]core.Changes, // of Rigid_Body, Collider, Character, Volume and Spline since Physics_State.rows_seen
     written:core.Changes,    // of Transform since the last tick: what another function wrote
     budget:int,   // what the tick may still make or let go
     waiting:bool, // something waits for the next tick
@@ -147,7 +147,7 @@ physics_step :: proc(
         }
     }
     seen,transforms_seen:=state.rows_seen,state.transforms_seen
-    s.changes={core.changes(rigids,&seen[0]),core.changes(colliders,&seen[1]),core.changes(characters,&seen[2]),volumes!=nil?core.changes(volumes,&seen[3]):{}}
+    s.changes={core.changes(rigids,&seen[0]),core.changes(colliders,&seen[1]),core.changes(characters,&seen[2]),volumes!=nil?core.changes(volumes,&seen[3]):{},splines!=nil?core.changes(splines,&seen[4]):{}}
     s.written=core.changes(s.transforms,&transforms_seen)
     // Nothing the bodies are made from was written: they are as they were.
     structure:=sync_structure(&s)
@@ -307,6 +307,7 @@ sync_structure :: proc(s:^Sync) -> u64 {
     seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.version(s.characters)+core.layout(s.characters)
     seen+=core.version(s.statics)+core.layout(s.statics)+core.version(s.parents)+core.layout(s.parents)+core.layout(s.transforms)
     if s.volumes!=nil {seen+=core.version(s.volumes)+core.layout(s.volumes)}
+    if s.splines!=nil {seen+=core.version(s.splines)+core.layout(s.splines)}
     return seen+u64(s.state.epoch)+(s.app.assets!=nil?s.app.assets.structure:0)
 }
 
@@ -378,19 +379,21 @@ sync_order :: proc(s:^Sync,e:core.Entity) -> (order:u64,body:bool) {
     return
 }
 
-// The sensor the Volume of an entity without a Collider, Rigid_Body or Character makes: a box or a sphere
-// that blocks nothing and reports the bodies that go in and out of it (Physics_Events.overlap_begin and
-// overlap_end). External without one: a plane or the whole world has no end the simulation can hold.
+// The sensor the Volume of an entity without a Collider, Rigid_Body or Character makes: a box, a sphere or
+// the convex pieces of an outline (zone_pieces) that block nothing and report the bodies that go in and out
+// of it (Physics_Events.overlap_begin and overlap_end), by the overlaps of the solver as every other shape.
+// External without one: a plane or the whole world has no end the simulation can hold.
 @(private)
 zone_collider :: proc(s:^Sync,e:core.Entity) -> (collider:Collider) {
     collider.kind=.External
     if s.volumes==nil || core.has(s.colliders,e) || core.has(s.rigids,e) || core.has(s.characters,e) {return}
     v,found:=core.get(s.volumes,e)
-    if !found || !volume.valid(v,mm.TRANSFORM_IDENTITY) {return}
+    if !found || !volume.valid(v,mm.TRANSFORM_IDENTITY,volume.spline_outline(s.splines,e)) {return}
     #partial switch v.shape {
-    case .Box:    collider=collider_box(v.extents)
-    case .Sphere: collider=collider_sphere(v.extents.x)
-    case:         return
+    case .Box:     collider=collider_box(v.extents)
+    case .Sphere:  collider=collider_sphere(v.extents.x)
+    case .Outline: collider=collider_box(v.extents);collider.kind=.Hull
+    case:          return
     }
     collider.preset,collider.density=PRESET_TRIGGER,0
     return
@@ -548,7 +551,7 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     collider,has_collider:=core.get(s.colliders,e)
     config,has_character:=core.get(s.characters,e)
     collider_changed:=row_changed(s.colliders,s.changes[1],e)
-    if zone:=zone_collider(s,e);zone.kind!=.External {collider,has_collider,collider_changed=zone,true,row_changed(s.volumes,s.changes[3],e)}
+    if zone:=zone_collider(s,e);zone.kind!=.External {collider,has_collider,collider_changed=zone,true,row_changed(s.volumes,s.changes[3],e) || row_changed(s.splines,s.changes[4],e)}
     if has_collider && collider.kind==.External {has_collider=false}
     owner:=core.NONE
     if !has_rigid && !has_character && has_collider {owner=compound_owner(s,e)}

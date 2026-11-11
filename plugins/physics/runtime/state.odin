@@ -51,7 +51,7 @@ Physics_State :: struct {
     pass:u32,
     epoch:u32, // invalidates host caches when simulation storage is replaced
     synced:u64, // the versions of the tables and assets the bodies were last made from
-    rows_seen:[4]core.Seen, // of Rigid_Body, Collider, Character and Volume, at the end of the last sync that reached every body
+    rows_seen:[5]core.Seen, // of Rigid_Body, Collider, Character, Volume and Spline, at the end of the last sync that reached every body
     sealed_key:u64, // what a sync reads besides the Transform values, at the last one; 0 makes the next whole
     transforms_seen:core.Seen, // of Transform, at the end of the last tick that left the bodies as their rows
     unmade:bool, // the last sync left a body or character unmade, which a whole sync tries again
