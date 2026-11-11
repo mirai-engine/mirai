@@ -139,6 +139,8 @@ Net_Session :: struct {
     secret:[2]u64, // client: of the player it presents (Net_Player); kept while the World lives
     arrived:[dynamic]Connection_Event, // since the last tick began: Net_Connections of the next one
     received:[]core.Net_Arrived,       // likewise the messages of the game, by message: core.Net_Messages of the next one
+    held:[dynamic]Held_Message,        // client: the messages of the game that arrived, until they are due (messages_release)
+    held_bytes:[dynamic]u8,            // client: their records as core.Message, one after another
     parts_next:[dynamic]Journal_Arrived, // client: likewise the parts of the journals: parts of the next one
     parts:[dynamic]Journal_Arrived,    // client: the parts of the tick, which journal_receive hands to each journal
     incoming:[dynamic]u8,              // client: the part arriving on the channel of parts, until its last piece
@@ -437,6 +439,7 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
     if received_error!=nil {return false}
     s.received=received
     for &pending in s.received {pending.blocks.allocator=allocator}
+    s.held.allocator,s.held_bytes.allocator=allocator,allocator
     s.own={-1,-1,-1,-1,-1}
     for message,index in w.info.messages {
         switch message.type {
@@ -536,6 +539,8 @@ session_destroy :: proc(s:^Net_Session) {
     delete(s.arrived);s.arrived=nil
     for pending in s.received {delete(pending.blocks)}
     delete(s.received,allocator);s.received=nil
+    delete(s.held);delete(s.held_bytes)
+    s.held,s.held_bytes=nil,nil
     parts_clear(&s.parts);parts_clear(&s.parts_next)
     delete(s.parts);delete(s.parts_next);delete(s.incoming)
     s.parts,s.parts_next,s.incoming,s.incoming_over=nil,nil,nil,false

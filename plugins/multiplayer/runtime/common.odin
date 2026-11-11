@@ -185,6 +185,65 @@ messages_fill :: proc(s:^Net_Session,m:^core.Net_Messages) {
     s.parts,s.parts_next=s.parts_next,s.parts
 }
 
+// A message a client holds: of the server's tick it was sent in, about
+// object or none, its record at held_bytes[at:].
+@(private)
+Held_Message :: struct {
+    event:int,
+    object:Object,
+    tick:u32,
+    whole:u32, // the tick of the first whole state of its replica since tick; 0 until it came
+    at:int,
+}
+
+// Client, before the messages go to the tick: those that are due go, in the
+// order they came. One about a replica is due once the replica has the whole
+// state of the server from the tick it was sent in or later, which the server
+// sends after the message, and, interpolated, shows it; one about none, one
+// this client simulates or one whose replica is gone, at once.
+@(private)
+messages_release :: proc(s:^Net_Session) {
+    kept,bytes:=0,0
+    for &held in s.held {
+        event:=s.events[held.event]
+        sender,stride:=core.message_layout(event.size,event.align)
+        record:=s.held_bytes[held.at:][:stride]
+        r:=replica_of(s,held.object)
+        if r!=nil && held.whole==0 && i32(r.complete-held.tick)>=0 {held.whole=r.complete}
+        if r==nil || r.waits || r.mode==.Here || held.whole!=0 && (r.mode!=.Interpolated || r.shown_set && i32(r.shown-held.whole)>=0) {
+            if held.object!=0 {(^core.Entity)(&record[sender+8])^=core.Entity(wire.object_user(&s.host,held.object))}
+            message_push(s,held.event,record)
+            continue
+        }
+        copy(s.held_bytes[bytes:],record)
+        s.held[kept]=held
+        s.held[kept].at=bytes
+        kept+=1
+        bytes+=stride
+    }
+    base.truncate(&s.held,kept)
+    base.truncate(&s.held_bytes,bytes)
+}
+
+// A message for the next tick, after those of its type that came before.
+@(private)
+message_push :: proc(s:^Net_Session,event:int,record:[]u8) {
+    pending:=&s.received[event]
+    if pending.count>=PENDING_EVENTS {
+        s.stats.events_dropped+=1
+        core.report(s.problems,core.NONE,"net.events_pending","a message of type %v was dropped: %d of its type wait for the next tick of this world, which runs none (it is paused); resume it, or have the other ends send less while it is paused",s.events[event].type,PENDING_EVENTS)
+        return
+    }
+    used:=pending.count*len(record)
+    if resize(&pending.blocks,(used+len(record)+15)/16)!=nil {
+        s.stats.events_dropped+=1
+        core.report(s.problems,core.NONE,"net.memory","a message of type %v was dropped: out of memory to keep it until the next tick; free memory",s.events[event].type)
+        return
+    }
+    copy(([^]u8)(raw_data(pending.blocks))[used:][:len(record)],record)
+    pending.count+=1
+}
+
 @(private)
 parts_clear :: proc(parts:^[dynamic]Journal_Arrived) {
     for part in parts {delete(part.bytes)}

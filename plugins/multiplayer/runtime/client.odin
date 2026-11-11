@@ -118,6 +118,7 @@ Replica :: struct {
     type_before:wire.Type_Id, // the one it had until then: what a copy of the world older than that has of it
     spawned_set:bool,  // its entity is one this client made in tick spawned, ahead of the server (Predicted_Spawn)
     spawned:u32,
+    complete:u32,      // server tick of the newest state that was the whole of the server's: a creation, or the update after a message about it
 }
 
 // The world as a tick found it, with what else the tick started from.
@@ -349,6 +350,7 @@ replica_state :: proc(s:^Net_Session,r:^Replica,command:^wire.Command) {
     wire.object_read(&s.host,command,0,&r.pose,max(u64))
     if t.motion>=0 {wire.object_read(&s.host,command,t.motion,&r.motion,max(u64))}
     r.tick=command.tick
+    if command.kind==.Object_Created || command.complete {r.complete=command.tick}
     r.references=wire.object_references_pending(&s.host,command)
 }
 

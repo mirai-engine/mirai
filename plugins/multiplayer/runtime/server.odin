@@ -42,6 +42,7 @@ Server_Object :: struct {
     visibility:u32,        // the bits the host was told (Visibility.mask)
     retype:bool,           // its entity gained or lost what its type lists: it is given the type of what it has now
     predict:bool,          // Replicate.predict as it last published (Pose.predict)
+    said:bool,             // a message about it goes out in this tick: it publishes whether its turn has come or not
 }
 
 // Where a connection looks from: the entity it owns first.
@@ -441,32 +442,30 @@ member_of :: proc(w:core.World_Ref,e,section:core.Entity) -> base.Entity_Id {
     return core.id_of(core.world_table_of(w,core.Id),e)
 }
 
-// A message of the game that arrived waits in the session for the next tick, which has it in core.Net_Messages.
+// A message of the game that arrived, as a core.Message of its type: on a
+// server it waits for the next tick, which has it in core.Net_Messages; on a
+// client, until it is due (messages_release).
 @(private)
 event_deliver :: proc(s:^Net_Session,w:core.World_Ref,command:^wire.Command,inputs:^Remote_Inputs) {
     if int(command.event)>=len(s.events) || own_deliver(s,w,command,inputs) || !in_world(s,command.connection) {return}
     event:=s.events[command.event]
-    pending:=&s.received[command.event]
-    if pending.count>=PENDING_EVENTS {
-        s.stats.events_dropped+=1
-        core.report(s.problems,core.NONE,"net.events_pending","a message of type %v was dropped: %d of its type wait for the next tick of this world, which runs none (it is paused); resume it, or have the other ends send less while it is paused",event.type,PENDING_EVENTS)
-        return
-    }
-    // As a core.Message of its type, after those of the type that came before.
     sender,stride:=core.message_layout(event.size,event.align)
-    used:=pending.count*stride
-    if resize(&pending.blocks,(used+stride+15)/16)!=nil {
-        s.stats.events_dropped+=1
-        core.report(s.problems,core.NONE,"net.memory","a message of type %v was dropped: out of memory to keep it until the next tick; free memory",event.type)
+    record:=make([]u8,stride,context.temp_allocator)
+    if record==nil || event.size>0 && !wire.event_read(&s.host,command,raw_data(record)) {return}
+    (^u64)(&record[sender])^=u64(command.connection)
+    s.stats.events_received+=1
+    if s.mode==.Server {
+        if command.object!=0 {(^core.Entity)(&record[sender+8])^=core.Entity(wire.object_user(&s.host,command.object))}
+        message_push(s,int(command.event),record)
         return
     }
-    record:=([^]u8)(raw_data(pending.blocks))[used:][:stride]
-    mem.zero_slice(record)
-    if event.size>0 && !wire.event_read(&s.host,command,raw_data(record)) {return}
-    (^u64)(&record[sender])^=u64(command.connection)
-    if command.object!=0 {(^core.Entity)(&record[sender+8])^=core.Entity(wire.object_user(&s.host,command.object))}
-    pending.count+=1
-    s.stats.events_received+=1
+    at:=len(s.held_bytes)
+    if _,error:=append(&s.held_bytes,..record);error!=nil {
+        s.stats.events_dropped+=1
+        core.report(s.problems,core.NONE,"net.memory","a message of type %v was dropped: out of memory to keep it until it is due; free memory",event.type)
+        return
+    }
+    append(&s.held,Held_Message{event=int(command.event),object=command.object,tick=command.tick,at=at})
 }
 
 // The input each connection sent for the tick about to be simulated.
@@ -534,6 +533,10 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     moves:=core.world_table_of(w,input.Move_Input)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     seats:=core.world_table_of(w,input.Seat)
+    // What a message of the tick is about publishes the state of the tick, which the client shows before it reads the message.
+    for item in outbox.queue.items {
+        if object:=wire.object_of_user(h,u64(item.about));item.about!=core.NONE && object!=0 {server.objects[object_index(object)].said=true}
+    }
     // An entity with a component declared replicated="object" is replicated without Replicate of its own.
     for &info in w.info.tables {
         if info.replicated!=.Object || info.place!=.World {continue}
@@ -619,7 +622,8 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         if server_scope(s,slot,config,true) {waiting+=1}
         // What a client holds comes from it, and of what each end simulates only the creation travels.
         if slot.holder!=0 || config.simulation==.Each {continue}
-        if !wire.object_poll_due(h,object,tick) {continue}
+        if !slot.said && !wire.object_poll_due(h,object,tick) {continue}
+        slot.said=false
         local,has_pose:=core.get(transforms,e)
         if !has_pose {continue}
         bindings:=wire.object_binding_revision(h)

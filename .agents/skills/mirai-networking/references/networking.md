@@ -360,8 +360,11 @@ object are sent until its creation was acked.
 - An unreliable event encodes within `EVENT_MAX_BYTES`, a datagram; a reliable one within
   `RELIABLE_EVENT_MAX_BYTES`, which its channel cuts in chunks as for any reliable message, and
   every event within `MAX_STATE_WORDS`. `event_register` refuses one past them.
-- They name their object by handle and travel apart from the state: on the same object they arrive
-  in order, but there is no order between events and updates.
+- They name their object by handle. A server event carries the tick it was sent in (the one after
+  the last `host_publish`), and fanning it out about an object marks the link (`LINK_TICK`): the
+  next update goes even without changes and carries every field changed since what the connection
+  is known to have (`Command.complete`), so the receiver can wait for a state of that tick that a
+  lost update before it cannot leave incomplete.
 - A reliable event that arrives before its replica waits for it up to 5 s; one sent in the tick in
   which the object was created waits on the server for that tick's scope evaluation.
 

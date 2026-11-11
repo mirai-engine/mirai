@@ -86,6 +86,7 @@ Net_Test_Shared :: struct {
     spawn_at:u64, // the tick in which the game makes entities on both ends (predict_spawn); 0: none
     spawns:int,   // how many it makes then; 0: one
     sent:int,     // the messages it sent with them
+    outbox:^Net_Outbox, // what the server sends from, when the test sends messages
 }
 
 @(private)
@@ -211,7 +212,7 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
     net_test_physics(w,sh,app)
     if sh.session!=nil {
         outbox:Net_Outbox
-        net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)
+        net_tick_tail(ref,sh.session,sh.outbox!=nil?sh.outbox:&outbox,&w.made,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
     }
 }

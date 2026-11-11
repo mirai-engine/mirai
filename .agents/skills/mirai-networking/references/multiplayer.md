@@ -128,6 +128,10 @@ Ask :: struct {id:base.Entity_Id}
   since the tick before, like [`Net_Connections`](#connection-events). There is no bag of every
   message decoded by type. `send` returns `false` and does not enqueue in a tick that runs again
   (`Net_Outbox.replaying`): it sent the first time.
+- A client holds a message about a replica (`messages_release`) until the replica has the whole
+  state the server sends after it ([events](networking.md#events)) and, interpolated, the display
+  reached that state; the server publishes the entity in the message's tick, turn or not
+  (`Server_Object.said`). One about none, or about a replica the client simulates, goes at once.
 - `Net_Outbox` (`copy=false`) is not copied with the world: a correction does not lose what is
   waiting. A `reliable` message the host rejects because the queue is full (`Full`) waits there,
   with the ones that follow, until the next frame; the other rejections are the `net.event_send`

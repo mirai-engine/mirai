@@ -164,6 +164,7 @@ Front :: struct {
     input_seen:[]bool,
     server_connection:Connection,
     history:int, // client: the ticks of history the server announced when it accepted
+    published:u32, // the tick host_publish closed last: what is sent now is of the next
 }
 
 @(private)
@@ -721,6 +722,7 @@ event_send :: proc(h:^Host,event:Event_Id,object:Object,payload:rawptr,connectio
     serial.bit_write(&w,u64(System_Message.Event),3)
     serial.bit_write(&w,u64(event),16)
     serial.bit_write(&w,u64(object),64)
+    if h.desc.mode==.Server {serial.bit_write(&w,u64(h.front.published+1),32)}
     state_write(&w,&type.desc,type.desc.all,words,nil)
     if w.overflow {return .Too_Large}
     data:=serial.bit_writer_flush(&w)
@@ -816,6 +818,7 @@ host_publish :: proc(h:^Host,tick:u32) {
             if .Dormant not_in o.flags && .Listed not_in o.flags && poll_due(o,tick) {front_publish(h,o,index,max(Fragment_Mask))}
         }
     }
+    f.published=tick
     op_push(h,{kind=.Tick,c=tick})
     frame_submit(h)
 }
