@@ -544,7 +544,7 @@ render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
     worlds:^core.Table(core.World_Transform,.Read),meshes:^core.Table(Mesh_Renderer,.Read),values:^core.Table(Material_Values,.Read),
     hidden:^core.Table(Hidden,.Read),elsewhere:^core.Table(Drawn_Elsewhere,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
-    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
+    suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
     locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,frame_values:^Frame_Values_Requests,
@@ -738,7 +738,7 @@ render_sync :: proc(
     if preview.ptr!=nil && preview.section!=core.NONE {
         if at,placed:=core.get(worlds,preview.section);placed {looked=at.position}
     }
-    look:=view_volume_at(view_volumes,{volumes,worlds,parents,sections},looked)
+    look:=view_volume_at(view_volumes,{volumes,worlds,parents,sections,splines},looked)
     exposure:=host.render_exposure(view_exposure_of(look))
     exposure.own=false
     gpu.scene_set_exposure(r,exposure)

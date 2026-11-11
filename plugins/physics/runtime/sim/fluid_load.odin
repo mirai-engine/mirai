@@ -314,7 +314,7 @@ fluid_forces :: proc(w:^World,i:int,worker:int) -> (linear,angular:Vec3,k,angula
 @(private)
 body_load :: proc(w:^World,body:^Body,com:Vec3,q:Quat,wet:^Wet,water:int,flow:Vec3,clip:^Clip_Scratch) -> (load:Fluid_Load) {
     terms:[WET_TERMS]Fluid_Term
-    count:=fluid_terms(w,wet,water,com,&terms)
+    count:=fluid_terms(w,wet,water,com,body.max_extent,&terms)
     frame:=Transform{-q_rotate(q,body.local_center),q} // the body frame, relative to the center of mass
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
         shape:=&w.shapes[s]
@@ -324,13 +324,24 @@ body_load :: proc(w:^World,body:^Body,com:Vec3,q:Quat,wet:^Wet,water:int,flow:Ve
     return
 }
 
-// The parts of the region of one water of a body, with planes relative to its center of mass: the water, less
-// the first water of the second, less the dry boxes over it.
+// The parts of the region of one water of a body that reaches reach from its center of mass, with planes
+// relative to that center: the water, less the first water of the second, less the dry prisms over it.
 @(private)
-fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,terms:^[WET_TERMS]Fluid_Term) -> int #no_bounds_check {
+fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,reach:f32,terms:^[WET_TERMS]Fluid_Term) -> int #no_bounds_check {
     shift :: #force_inline proc "contextless" (p:Plane,com:Vec3) -> Plane {return {p.n,p.d-dot(p.n,com)}}
+    // The floor and the walls of a prism near the body.
+    prism :: proc "contextless" (w:^World,fluid:i32,com:Vec3,reach:f32,term:^Fluid_Term) {
+        f:=&w.fluids[fluid]
+        term.planes[term.count]=shift({-UP,-(f.position.y-f.depth)},com)
+        term.count+=1
+        walls:[PRISM_WALLS]Plane
+        for plane in walls[:prism_walls(fluid_points(w,fluid),com,reach,&walls)] {
+            term.planes[term.count]=shift(plane,com)
+            term.count+=1
+        }
+    }
     // The surface of a water and the walls and floor of its shape.
-    region :: proc "contextless" (w:^World,water:^Wet_Water,com:Vec3,term:^Fluid_Term) {
+    region :: proc "contextless" (w:^World,water:^Wet_Water,com:Vec3,reach:f32,term:^Fluid_Term) {
         term.planes[term.count]=shift(water.surface,com)
         term.count+=1
         f:=&w.fluids[water.fluid]
@@ -341,25 +352,21 @@ fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,terms:^[
                 term.planes[term.count]=shift(plane,com)
                 term.count+=1
             }
-        } else if f.shape==.Box {
-            for plane,k in fluid_box_planes(f) {
-                if k==3 {continue} // the top is the surface
-                term.planes[term.count]=shift(plane,com)
-                term.count+=1
-            }
+        } else if f.shape==.Prism {
+            prism(w,water.fluid,com,reach,term)
         }
     }
     own:=&wet.waters[water]
     terms[0]={sign=1,interface=1}
-    region(w,own,com,&terms[0])
+    region(w,own,com,reach,&terms[0])
     count:=1
     if water>0 {
         terms[1]=terms[0]
         terms[1].sign=-1
-        region(w,&wet.waters[0],com,&terms[1])
+        region(w,&wet.waters[0],com,reach,&terms[1])
         count=2
     }
-    // Each dry box over it in priority takes itself out of what is left: of a second water, the water less
+    // Each dry prism over it in priority takes itself out of what is left: of a second water, the water less
     // the first, so what both take out is given back once.
     bases:=count
     priority:=w.fluids[own.fluid].priority
@@ -369,12 +376,12 @@ fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,terms:^[
             term:=&terms[count]
             term^=terms[base]
             term.sign=-term.sign
-            for plane,k in fluid_box_planes(&w.fluids[d]) {
-                if k==2 {term.interface|=1<<u32(term.count)} // the floor of the air is the surface under it
-                term.planes[term.count]=shift(plane,com)
-                term.count+=1
-            }
+            term.planes[term.count]=shift({UP,w.fluids[d].position.y},com)
+            term.count+=1
+            term.interface|=1<<u32(term.count) // the floor of the air is the surface under it
+            prism(w,d,com,reach,term)
             count+=1
+
         }
     }
     return count

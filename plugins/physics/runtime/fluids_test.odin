@@ -118,18 +118,30 @@ a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: pro
     testing.expect(t,core.problem_find(&f.problems,b,"physics.fluid_overlap")!=nil)
     testing.expect(t,core.problem_find(&f.problems,over,"physics.fluid_overlap")==nil,"a higher priority decides where they meet")
     testing.expect_value(t,f.state.world.fluid_count,i32(made+3))
-    // They meet where a column holds both, not where their boxes do: a river that winds around a lake.
-    Meeting :: struct {name:string,river:[4][3]f32,meets:bool}
+    // They meet where a column holds both, not where their boxes do: a river that winds around a lake, or
+    // that runs into the notch of an L outline whose box it is in.
+    Meeting :: struct {name:string,river:[4][3]f32,outline:bool,meets:bool}
+    into_the_notch:=[4][3]f32{{4,0,10},{4,0,-2},{4,0,-14},{4,0,-18}}
     meetings:=[?]Meeting{
-        {"winds around the lake",{{-20,0,0},{-20,0,-40},{20,0,-40},{20,0,0}},false},
-        {"crosses the lake",{{-20,0,-20},{-6,0,-20},{6,0,-20},{20,0,-20}},true},
+        {"winds around the lake",{{-20,0,0},{-20,0,-40},{20,0,-40},{20,0,0}},false,false},
+        {"crosses the lake",{{-20,0,-20},{-6,0,-20},{6,0,-20},{20,0,-20}},false,true},
+        {"runs into a box lake",into_the_notch,false,true},
+        {"runs into the notch of an L",into_the_notch,true,false},
+        {"crosses the arm of an L",{{-20,0,-24},{-6,0,-24},{6,0,-24},{20,0,-24}},true,true},
     }
+    l:=volume.Spline{count=6,points={0={position={-8,0,-8}},1={position={8,0,-8}},2={position={8,0,0}},3={position={0,0,0}},4={position={0,0,8}},5={position={-8,0,8}}}}
     pairs:[len(meetings)][2]core.Entity
     for m,i in meetings {
         at:=[3]f32{300+100*f32(i),0,0}
         lake,river:=core.create(&f.entities),core.create(&f.entities)
         core.add(&f.fluids,lake,FLUID_DEFAULT)
-        core.add(&f.volumes,lake,volume.box({8,1,8}))
+        if m.outline {
+            core.add(&f.volumes,lake,volume.outline(2))
+            core.add(&f.splines,lake,l)
+        } else {
+            core.add(&f.volumes,lake,volume.box({8,1,8}))
+        }
+
         core.add(&f.transforms,lake,core.Transform{at+{0,0,-20},1,{1,1,1}})
         spline:=volume.Spline{count=4}
         for p,k in m.river {spline.points[k]={p,4,1,1}}

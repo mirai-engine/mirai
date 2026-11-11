@@ -278,7 +278,7 @@ navigation_agents :: proc(
     requests:^Nav_Requests,events:^Nav_Events,inputs:^core.Table(input.Move_Input),seats:^core.Table(input.Seat,.Read),
     characters:^core.Table(phys.Character,.Read),loco_states:^core.Table(locomotion.Locomotion_State,.Read),colliders:^core.Table(phys.Collider,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),
     grounds:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
+    obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
     roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
 ) {
     if core.reshaped(agents,&a.shapes[0]) | core.reshaped(paths,&a.shapes[1]) {
@@ -472,7 +472,7 @@ navigation_agents :: proc(
     }
     placed:=core.join(obstacles,worlds)
     for e,_,pose in core.each_joined(&placed) {
-        box,_:=volume_prism(volumes,e,pose.transform,0) or_continue
+        box,_:=volume_prism(volumes,splines,e,pose.transform,0) or_continue
         half:=(box.max-box.min)*0.5
         motion,_:=core.get(motions,e)
         append(&a.near,Near{entity=e,position=pose.position,velocity=motion.linear,radius=linalg.length(mm.Vec2{half.x,half.z}),height=half.y*2})

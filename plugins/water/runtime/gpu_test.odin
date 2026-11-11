@@ -144,7 +144,9 @@ a_lake_and_a_river_draw_where_their_fluids_are :: proc(t: ^testing.T) {
 	w := &f.world
 	lake := core.create(&w.entities)
 	core.add(&w.fluids, lake, phys.FLUID_DEFAULT)
-	core.add(&w.volumes, lake, volume.box({2, 0.5, 2}))
+	// An L 1 m deep whose notch is the square from -3 to -1 on x and from 0 to 2 on z.
+	core.add(&w.volumes, lake, volume.outline(1))
+	core.add(&w.splines, lake, volume.Spline{count = 6, points = {0 = {position = {-2, 0, -2}}, 1 = {position = {2, 0, -2}}, 2 = {position = {2, 0, 0}}, 3 = {position = {0, 0, 0}}, 4 = {position = {0, 0, 2}}, 5 = {position = {-2, 0, 2}}}})
 	core.add(&w.transforms, lake, core.Transform{{-3, 0.25, 0}, mm.QUAT_IDENTITY, {1, 1, 1}})
 	// A Spline with a Fluid: a bend 1.5 m wide and 0.4 m deep, flowing at 1 m/s.
 	river := core.create(&w.entities)
@@ -156,7 +158,9 @@ a_lake_and_a_river_draw_where_their_fluids_are :: proc(t: ^testing.T) {
 	defer delete(wet)
 	Case :: struct {name: string, at: [2]f32, water: bool}
 	for c in ([]Case{
-		{"in the lake", {-3, 0}, true},
+		{"in the lake", {-4, -1}, true},
+		{"in the notch of the lake", {-2, 1}, false},
+
 		{"on the river", {4, 0}, true},
 		{"beside the lake", {-3, 4}, false},
 		{"between the lake and the river", {0.5, 0}, false},

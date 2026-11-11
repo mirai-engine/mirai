@@ -52,7 +52,7 @@ Physics_State :: struct {
     pass:u32,
     epoch:u32, // invalidates host caches when simulation storage is replaced
     synced:u64, // the versions of the tables and assets the bodies were last made from
-    rows_seen:[4]core.Seen, // of Rigid_Body, Collider, Character and Volume, at the end of the last sync that reached every body
+    rows_seen:[5]core.Seen, // of Rigid_Body, Collider, Character, Volume and Spline, at the end of the last sync that reached every body
     sealed_key:u64, // what a sync reads besides the Transform values, at the last one; 0 makes the next whole
     transforms_seen:core.Seen, // of Transform, at the end of the last tick that left the bodies as their rows
     unmade:bool, // the last sync left a body or character unmade, which a whole sync tries again
@@ -187,7 +187,9 @@ Body_Request :: struct {
     point:[3]f32,
     at_point,override:bool,
     // Of an area request: the volume placed at position, rotation and scale, whose weight rises over
-    // blend metres inside its border; linear is where it pushes, zero for away from its center.
+    // blend metres inside its border; linear is where it pushes, zero for away from its center. The
+    // points of an Outline are those of the Spline of entity.
+
     area:volume.Volume,
     scale:[3]f32,
     blend:f32,
@@ -236,9 +238,9 @@ Field_Noise :: sim.Field_Noise
 // other way); with `along`, that way of the world instead. The body gets the strength by the weight of the volume
 // where it is, 1 inside and rising over blend metres from the border, through the falloff curve; range
 // and noise scale it. A pose without rotation or scale is one that neither turns nor scales.
-apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,strength:f32,along:[3]f32={},impulse:=false,velocity_change:=false,blend:f32=0,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) {
+apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,strength:f32,along:[3]f32={},impulse:=false,velocity_change:=false,blend:f32=0,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={},outline_of:=core.NONE) {
     core.push(&requests.queue,Body_Request{
-        kind=impulse?.Area_Impulse:.Area_Force,area=area,position=pose.position,rotation=pose.rotation,scale=pose.scale,blend=blend,
+        entity=outline_of,kind=impulse?.Area_Impulse:.Area_Force,area=area,position=pose.position,rotation=pose.rotation,scale=pose.scale,blend=blend,
         strength=strength,linear=along,override=velocity_change,falloff=falloff,filter=filter,falloff_range=range,noise=noise,
     })
 }
