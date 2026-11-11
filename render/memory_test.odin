@@ -19,6 +19,14 @@ memory_limit_proc :: proc(data: rawptr, mode: runtime.Allocator_Mode, size, alig
 	return limit.owner.procedure(limit.owner.data, mode, size, alignment, old_memory, old_size, loc)
 }
 
+@(private = "file")
+MEMORY_CATALOG :: `{"version":2,"programs":[{"id":3,"name":"Paint","domain":"Vfx","attributes":8,"size":24,
+	"resources":[{"name":"field","kind":"Grid"},{"name":"words","kind":"Data","words":4}],
+	"stages":[{"name":"spread","iterations":2,"over":0,"writes":1}],
+	"parameters":[
+		{"name":"image","kind":"Texture","components":1,"offset":0,"srgb":true},
+		{"name":"steps","kind":"Int","components":2,"offset":4,"defaults":[-2,5,0,0],"min":-8,"max":8,"group":"Pattern"}]}]}`
+
 // What the renderer asks its allocator for without a device, with the memory
 // ending at each request in turn: the call is refused, says so where it has
 // an error to say it in, and leaves what it had; with memory enough it goes
@@ -27,7 +35,7 @@ memory_limit_proc :: proc(data: rawptr, mode: runtime.Allocator_Mode, size, alig
 renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^testing.T) {
 	limit := Memory_Limit{owner = context.allocator, remaining = max(int)}
 	limited := runtime.Allocator{memory_limit_proc, &limit}
-	Call :: enum {Bvh, Light_Tree, Texture, Scene_Init, Materials, Scene_Whole, Scene_Update, Lights, Shader_Reload, Mesh}
+	Call :: enum {Bvh, Light_Tree, Texture, Catalog, Scene_Init, Materials, Scene_Whole, Scene_Update, Lights, Shader_Reload, Mesh}
 	SAYS :: bit_set[Call]{.Materials, .Scene_Whole, .Scene_Update, .Lights, .Shader_Reload}
 
 	vertices: [8]Mesh_Vertex
@@ -93,6 +101,11 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 				data, done = texture_build({pixels = pixels[:], width = 8, height = 8}, 8, limited)
 				if !done {testing.expectf(t, len(data.levels) == 0, "a texture refused with %d requests served keeps no level", served)}
 				texture_data_destroy(&data, limited)
+			case .Catalog:
+				catalog: Program_Catalog
+				catalog, done = program_catalog_parse(transmute([]u8)string(MEMORY_CATALOG), limited)
+				if !done {testing.expectf(t, len(catalog.programs) == 0, "a catalog refused with %d requests served keeps no program", served)}
+				program_catalog_destroy(&catalog)
 			case .Scene_Init:
 				fresh := new(Renderer)
 				fresh.allocator = limited

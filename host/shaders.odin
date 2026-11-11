@@ -167,7 +167,7 @@ app_shaders_load :: proc(app:^App,folder:string) -> u64 {
     }
     assets:render.Shader_Assets
     if !app_shaders_read(app,folder,&assets) {return 0}
-    catalog,valid:=render.program_catalog_parse(assets.catalog)
+    catalog,valid:=render.program_catalog_parse(assets.catalog,app.renderer.allocator)
     if !valid {
         render.shader_assets_destroy(&assets)
         sh.state=.Failed

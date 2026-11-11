@@ -61,7 +61,7 @@ fixture_frame :: proc(f: ^Fixture, frame: Frame_Desc) -> bool {
 fixture_catalog :: proc(t: ^testing.T, r: ^Renderer, loc := #caller_location) -> bool {
 	bytes, read_error := os.read_entire_file(TEST_GENERATION + "/catalog.json", context.temp_allocator)
 	if !testing.expectf(t, read_error == nil, "%s has no catalog: `mirai test render` generates it", TEST_GENERATION, loc = loc) {return false}
-	catalog, valid := program_catalog_parse(bytes)
+	catalog, valid := program_catalog_parse(bytes, r.allocator)
 	if !testing.expect(t, valid, "the catalog of the programs of testdata/ is read", loc = loc) {return false}
 	r.programs = catalog
 	r.programs.loaded = true

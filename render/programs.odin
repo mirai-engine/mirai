@@ -1,7 +1,8 @@
 package mirai_render
 
-import "core:mem/virtual"
+import "core:mem"
 import "mirai:render/abi"
+import "mirai:std/base"
 import "mirai:std/serial"
 
 // The programs of the shaders in use: what the catalog of their generation
@@ -27,24 +28,29 @@ Program_Vertex :: abi.Program_Vertex
 Program_Catalog :: struct {
     programs:[]Program,
     loaded:bool,
-    arena:virtual.Arena, // of what the catalog holds
+    arena:mem.Dynamic_Arena, // of what the catalog holds, in the allocator it was read with
 }
 
 @(private,rodata) EMBEDDED_CATALOG := #load("../shaders/build/catalog.json")
 
 program_catalog_destroy :: proc(catalog:^Program_Catalog) {
-    virtual.arena_destroy(&catalog.arena)
+    if catalog.arena.block_allocator.procedure!=nil {mem.dynamic_arena_destroy(&catalog.arena)}
     catalog^={}
 }
 
 // Reads a catalog of abi.Shader_Catalog. A program or parameter that does not
 // fit what a material row holds makes the whole catalog invalid, as running
 // out of memory does: nothing is kept.
-program_catalog_parse :: proc(bytes:[]u8) -> (catalog:Program_Catalog,ok:bool) {
-    if virtual.arena_init_growing(&catalog.arena)!=nil {return}
+program_catalog_parse :: proc(bytes:[]u8,allocator:=context.allocator) -> (catalog:Program_Catalog,ok:bool) {
+    // Blocks of four times the text, and room for their lists taken first:
+    // the arena keeps every block it got even when a later request is refused.
+    a:=&catalog.arena
+    size:=max(mem.DYNAMIC_ARENA_BLOCK_SIZE_DEFAULT,4*len(bytes))
+    mem.dynamic_arena_init(a,allocator,allocator,block_size=size,out_band_size=size)
+    room:=reserve(&a.used_blocks,16)==nil && reserve(&a.unused_blocks,16)==nil && reserve(&a.out_band_allocations,16)==nil
     read:abi.Shader_Catalog
-    if serial.text_decode(string(bytes),&read,virtual.arena_allocator(&catalog.arena))!="" || !catalog_valid(read) {
-        virtual.arena_destroy(&catalog.arena)
+    if !room || serial.text_decode(string(bytes),&read,base.dynamic_arena_allocator(a))!="" || !catalog_valid(read) {
+        mem.dynamic_arena_destroy(a)
         return {},false
     }
     catalog.programs=read.programs
@@ -78,7 +84,7 @@ catalog_valid :: proc(catalog:abi.Shader_Catalog) -> bool {
 // The programs of the shaders the renderer runs.
 renderer_programs :: proc(r:^Renderer) -> []Program {
     if !r.programs.loaded {
-        catalog,valid:=program_catalog_parse(r.shader_assets.owned?r.shader_assets.catalog:EMBEDDED_CATALOG)
+        catalog,valid:=program_catalog_parse(r.shader_assets.owned?r.shader_assets.catalog:EMBEDDED_CATALOG,r.allocator)
         if !valid {set_error(r,"material program catalog: invalid, or out of memory for it");return nil}
         r.programs=catalog
         r.programs.loaded=true

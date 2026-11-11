@@ -330,7 +330,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
 }
 renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
     if !assets.owned {return false}
-    catalog,valid:=program_catalog_parse(assets.catalog)
+    catalog,valid:=program_catalog_parse(assets.catalog,r.allocator)
     if !valid {set_error(r,"invalid material program catalog");return false}
     defer program_catalog_destroy(&catalog)
     if shader_assets_match_codes(assets,&r.shader_codes) {
