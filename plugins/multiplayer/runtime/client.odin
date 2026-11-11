@@ -1098,9 +1098,14 @@ driven_list :: proc(c:^Client) {
 
 // What each predicted replica is after a tick (replica_now: a correction that
 // just put it at the state of the server of the tick is that state), and
-// which of them share a group of the simulation (core.Motion.island) with
-// what this client drives (driven_list): what touches it or is joined to it
-// now. The groups are of the tick: each one of what it drives, once.
+// which are within reach of what this client drives (driven_list): what
+// shares a group of the simulation with it (core.Motion.island), touching or
+// joined to it now, and what is about to touch it: whose bounds, swept by its
+// velocity from its newest state to this tick (what a replay covers), reach
+// the bounds of what it drives grown by how far that goes meanwhile. That
+// one turns predicted before it touches it, to meet it where it really is,
+// not where it is shown. The groups are of the tick: each one of what it
+// drives, once.
 @(private)
 records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
     c:=&s.client
@@ -1118,12 +1123,33 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
         c.islands[islands]=motion.island
         islands+=1
     }
+    configs,transforms:=core.world_table_of(w,Replicate),core.world_table_of(w,core.Transform)
+    radius :: proc(configs:^core.Table(Replicate),e:core.Entity) -> f32 {
+        config,found:=core.get(configs,e)
+        return found?config.radius:REPLICATE_DEFAULT.radius
+    }
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || !core.alive(es,r.entity) {continue}
         motion,has_motion:=core.get(motions,r.entity)
         if has_motion && motion.island!=0 {
             for island in c.islands[:islands] {
                 if island==motion.island {r.touched,r.touched_set=tick,true;break}
+            }
+        }
+        if seconds:=f32(i32(tick-r.tick))/f32(s.host.desc.tick_rate);has_motion && r.role!=.Predicted && r.role!=.Held && seconds>0 {
+            from,swept:=r.pose.position,r.motion.linear*seconds
+            for driven in c.driven[:c.driven_count] {
+                d:=&c.replicas[driven]
+                local,placed:=core.get(transforms,d.entity)
+                if !placed {continue}
+                moving,_:=core.get(motions,d.entity)
+                along:=linalg.dot(local.position-from,swept)
+                closest:=from+swept*(along>0?min(along/max(linalg.dot(swept,swept),1e-12),1):0)
+                reach:=radius(configs,r.entity)+radius(configs,d.entity)+linalg.length(moving.linear)*seconds
+                if linalg.length2(local.position-closest)<=reach*reach {
+                    r.touched,r.touched_set=tick,true
+                    break
+                }
             }
         }
         if r.mode!=.Predicted || r.slot<0 {continue}

@@ -793,7 +793,8 @@ replicas_joined_to_any_of_many_driven_bodies_are_critical :: proc(t:^testing.T) 
     c:=&s.client
     ref:=core.world_ref(&world,&info)
     replica :: proc(s:^Net_Session,w:core.World_Ref,index:int,e:core.Entity,role:Role) {
-        s.client.replicas[index]={object=Object(index),entity=e,role=role,type=net_test_type(s,w,e),slot=-1,samples=-1}
+        local,_:=core.get(core.world_table_of(w,core.Transform),e)
+        s.client.replicas[index]={object=Object(index),entity=e,role=role,type=net_test_type(s,w,e),slot=-1,samples=-1,pose={position=local.position,rotation=1,scale={1,1,1}}}
     }
     for k in 0..<PAIRS {
         a,_:=core.get(&world.bodies,driven[k])

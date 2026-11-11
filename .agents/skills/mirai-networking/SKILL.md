@@ -206,7 +206,8 @@ In `plugins/multiplayer/runtime`:
   records, the server's input and lag compensation) is `history_seconds` at the tick rate plus the
   tick being written, made when the session opens or connects; none is a fixed count of ticks.
 - **One rule says how a replica is shown** (`replica_wanted`): predicted what the client drives,
-  what shared a simulation group with it in the last `critical_ticks`, what `Replicate.predict`
+  what shared a simulation group with it or swept its bounds into reach of it in the last
+  `critical_ticks`, what `Replicate.predict`
   asks and what the client spawned ahead; interpolated the rest, with pose, motion, `Move_Input`
   and components of the same server tick. There is no setting that changes it for every replica.
 - **A replica that changes timeline does not jump in what is drawn**, and neither does a

@@ -72,7 +72,7 @@ Replicate :: struct {
     audience:Audience,
     priority:f32 `mirai:"min=0"`,
     update_hz:f32 `mirai:"min=0"`, // 0: publish every tick
-    radius:f32 `mirai:"min=0,unit=m"`,
+    radius:f32 `mirai:"min=0,unit=m"`, // of its bounds: added to the reach of the views that see it, and swept by a client to tell it is about to touch what it drives
     predict:bool, // clients simulate it ahead of the server always, not only while it is in reach of what they drive: a ball to intercept
 }
 

@@ -444,6 +444,52 @@ a_status_that_comes_and_goes_on_a_lent_object_keeps_its_type_and_its_holder :: p
     testing.expect_value(t,p.problems[1].count,0)
 }
 
+// A ball the server throws at the body a client drives, at 15 m/s over a
+// round trip of 100 ms, turns predicted before the client simulates the tick
+// it hits the body in, so the client meets it where it really is: the hit
+// needs no correction after it.
+@(test)
+a_ball_thrown_at_a_driven_body_turns_predicted_before_it_hits :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    p:=new(Pair)
+    defer free(p)
+    if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
+    defer pair_destroy(p)
+    for index in 0..<2 {wire.sim_endpoint_conditions(&p.network,index,{latency=0.05})}
+    server,client:=&p.worlds[0],&p.worlds[1]
+    // Both bodies are of the scene of both ends: each replica takes the one of its Id.
+    body,ball:core.Entity
+    #reverse for &world in p.worlds {
+        body,ball=net_test_body(&world,&p.info,1,{0,0,0}),net_test_body(&world,&p.info,2,{12,0,0})
+        // Thicker than the 0.25 m the ball goes in a tick, so the hit is not tunneled through.
+        for e in ([2]core.Entity{body,ball}) {
+            core.edit(&world.values,e).force=0
+            core.edit(&world.colliders,e)^=phys.collider_box({0.25,0.25,0.25})
+        }
+    }
+    for _ in 0..<60 {pair_frame(p)}
+    if !testing.expect(t,p.sessions[1].client.answered) {return}
+    for e in ([2]core.Entity{body,ball}) {core.add(&server.objects,e,net_test_replicate(audience=.Always))}
+    net_test_own(server,body,own_connection(core.ref(&p.sessions[1])))
+    core.settle(&p.info,server,nil)
+    for _ in 0..<120 {pair_frame(p)}
+    driven,thrown:=replica_with(&p.sessions[1],1),replica_with(&p.sessions[1],2)
+    if !testing.expect(t,driven!=nil && thrown!=nil && driven.mode==.Predicted && thrown.mode==.Interpolated,"the client predicts its body and shows the ball") {return}
+    phys.set_velocity(&server.requests,ball,{-15,0,0},{})
+    switched,hit:u64
+    corrected:u64
+    for _ in 0..<120 {
+        pair_frame(p)
+        // What a frame of the client compares and switches before its next ticks.
+        client_reconcile(&p.sessions[1],core.world_ref(client,&p.info),&p.apps[1],1.0/60)
+        if switched==0 && thrown.mode==.Predicted {switched=p.tick+LEAD}
+        local,_:=core.get(&server.transforms,ball)
+        if hit==0 && local.position.x<0.3 {hit,corrected=p.tick,p.sessions[1].stats.corrected}
+    }
+    testing.expectf(t,switched!=0 && hit!=0 && switched<hit,"the ball turned predicted at tick %d of the client, and hit the body at tick %d",switched,hit)
+    testing.expectf(t,p.sessions[1].stats.corrected==corrected,"%d corrections after the hit",p.sessions[1].stats.corrected-corrected)
+}
+
 // The reference of a section, loaded or not.
 @(private="file")
 pair_section :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loaded:bool) -> core.Entity {
