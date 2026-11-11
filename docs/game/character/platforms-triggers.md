@@ -30,13 +30,13 @@ and `Rigid_Body` set to `phys.RIGID_BODY_KINEMATIC`. A conveyor belt needs no co
 
 ## Trigger zones
 
-A zone is an entity with a `Collider` whose `preset` is `trigger` (`phys.PRESET_TRIGGER`): it
-blocks nothing and reports what overlaps it. Scale the entity to size it. `Heal_Zone` is a
-component of the game, `@(component) Heal_Zone :: struct {amount:f32}`.
+A zone is an entity with a box or sphere `Volume` and no `Collider`: the physics makes it a sensor
+that blocks nothing and reports what goes in and out of it. `Heal_Zone` is a component of the game,
+`@(component) Heal_Zone :: struct {amount:f32}`.
 
 ```json
-{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Heal zone","scale":[4,2,4],
- "components":{"Collider":{"preset":"trigger"},"Heal_Zone":{"amount":10}}}]}}
+{"method":"scene.write","params":{"merge":true,"entities":[{"name":"Heal zone",
+ "components":{"Volume":{"shape":"Box","extents":[4,2,4]},"Heal_Zone":{"amount":10}}}]}}
 ```
 
 Read the events in `stage="react"`; each pair gives one event per side:
@@ -82,6 +82,9 @@ returns `(hit,ok)` with `hit.entity`, `hit.point`, `hit.normal`.
   before end when counting occupants.
 - Two static colliders never report each other; a zone over a sleeping dynamic body reports
   only once it wakes, a `Character` standing still too.
-- A new `Collider` blocks (preset `Default`): a zone must be given the trigger preset.
-- `PRESET_TRIGGER` sees every category. To see only players, declare a category and a preset in
-  code and in `Collision_Settings`, and name it in the zone's `Collider`.
+- A zone with a `Collider` reports only through that collider, which blocks unless its preset is
+  `trigger`; a `Plane` or `Unbounded` volume reports nothing.
+- A zone sees every category. To see only players, filter the events by a component of the
+  player, or give the zone a `Collider` with a preset declared in code and `Collision_Settings`.
+- A sensor carried by a moving body (a pickup, the reach of a weapon) is a `Collider` whose
+  `preset` is `trigger` on that body or on its child.

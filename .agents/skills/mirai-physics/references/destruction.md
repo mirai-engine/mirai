@@ -107,8 +107,9 @@ Topology:
   - If bodies are missing, it keeps the broken bonds and retries detaching in a later event.
 - `Strain_Field` on an entity with a box or sphere
   [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is persistent strain
-  (`strain_fields_step`): each tick it asks `physics.strain_area` for its strain in that volume. A
-  client asks for none; another shape is the `destruct.strain_field` problem.
+  (`strain_fields_step`): each tick it asks `physics.strain_area` for its strain in that volume,
+  rising over its own `blend`. A client asks for none; another shape is the
+  `destruct.strain_field` problem, since the region of a break travels as a box or a sphere.
 
 ## Removal
 

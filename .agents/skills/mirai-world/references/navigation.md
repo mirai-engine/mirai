@@ -26,10 +26,11 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   copies the marks of the tiles, the settings and the counts every time.
 - It builds by itself, in `navigation_build` (`fixed`, `react`, game and editor, `server`):
   - **Where.** Inside the `Nav_Bounds`; with none, in the box of all the static collision
-    (`phys.static_bounds`). The box of a `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle` is the
-    [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity, a `Box` taken
-    upright where the entity is (`box_half`); without one, the `navigation.volume` problem, and
-    the navigation does not see it.
+    (`phys.static_bounds`). A `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle` covers the upright
+    prism of the [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
+    (`volume_prism`): a box by its corners turned by the yaw, a sphere by the octagon around it.
+    Without one, or with a plane or an unbounded one, which no navmesh bounds, the
+    `navigation.volume` problem, and the navigation does not see it.
   - **What.** The physics static collision (`phys.static_triangles`) that blocks the agents of the
     class (above), without dynamic or kinematic bodies, characters or sensors; the arcs of the
     generated links are checked against the same collision. Terrain and foliage enter
