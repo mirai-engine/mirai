@@ -20,8 +20,8 @@ difference with the catalog, it rules.
 - Connecting a client, limits, errors, MCP: [the server](references/api.md#the-server),
   [method conventions](references/api.md#method-conventions) and
   [MCP over HTTP](references/api.md#mcp-over-http).
-- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
-  calls as one `batch`, whose calls can name the results of earlier ones) and
+- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (`mirai rpc batch --file`:
+  many calls as one request, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
   without `sleep` loops: [`--select` and `--wait-until`](references/api.md#fields-and-waits); the
   params and result of a method, with an example, and the methods of a plugin:
@@ -115,9 +115,9 @@ difference with the catalog, it rules.
    and initial values), `asset.list`; a single field with `--select` (`_select` in a call of MCP),
    and a state that takes time (`play.network.status`) with `--wait-until` (`_wait_until`).
 3. Edit the entities with `scene.write`, its `entities` the `tree` `scene.inspect` with `root`
-   gives: with `merge` it names only what it adds or changes; without it, it declares all there
-   is under `root`. Calls of several methods that succeed or fail together go in `batch` with
-   `transaction`.
+   gives: it names only what it adds or changes; with `replace` it declares all there is under
+   `root`, and what it leaves out goes. Calls of several methods that succeed or fail together
+   go in `batch` with `transaction`.
 4. Verify with `scene.inspect` or `capture`; undo with `history.undo`. A method that fails
    changes nothing.
 5. Debugging a game: `play.history` with `trace` reads what happened at past ticks, `verify`

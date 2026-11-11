@@ -62,25 +62,18 @@ Asset_Document :: struct {
     // its time of an animation. The plugin of its kind writes it while the
     // document is in front.
     shown:[256]u8,
-    // The last entry run on it of those its documents take in place of the
-    // scene (Asset_Document_Provider.takes), by its name: its plugin runs it
-    // once for each serial.
-    request:string,
-    request_serial:u64,
 }
 ASSET_DOCUMENT_PICKS :: 8
-ASSET_DOCUMENT_TAKES :: 8
 
 // A storage of an editor package whose sole field is this declares, in its
 // default, the kinds of asset its steps draw as documents, of those the ones
 // whose hierarchy it builds in hierarchy_room and the ones that draw no
 // world (flat: the bar leaves Graphics out), the ones Create of the content
 // browser and asset.create make (creates: kinds of asset.KINDS, whose empty
-// file create gives, made with the id it is given; nil: it could not), and the
-// entries that work on the scene its documents take instead (copy, paste,
-// duplicate, delete, rename, select_all, deselect), by their names: with one
-// in front their keys work on what the document has chosen, inside its panel,
-// and reach its plugin as Asset_Document.request. between, when given, runs between frames while one
+// file create gives, made with the id it is given; nil: it could not). What
+// works on what its documents have chosen is entries its plugin binds
+// (Binding.document), with the keys of those of the scene, which are off
+// while a document is in front. between, when given, runs between frames while one
 // of its documents is in front: what needs frames of its own (a world drawn
 // into a texture, host.app_world_draw).
 Asset_Document_Provider :: struct {
@@ -90,7 +83,6 @@ Asset_Document_Provider :: struct {
     flat:bit_set[0..<ASSET_DOCUMENT_KINDS],
     creates:bit_set[0..<ASSET_DOCUMENT_KINDS],
     create:proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8, // in the temporary allocator
-    takes:[ASSET_DOCUMENT_TAKES]string,
     between:proc(s:^Session,d:^Asset_Document),
 }
 
@@ -311,18 +303,6 @@ asset_document_kinds :: proc(s:^Session,allocator:=context.temp_allocator) -> []
         append(&kinds,..provider.kinds[:clamp(provider.count,0,len(provider.kinds))])
     }
     return kinds[:]
-}
-
-// Whether the documents of a kind take an entry that works on the scene.
-asset_document_takes :: proc(s:^Session,kind:asset.Fourcc,name:string) -> bool {
-    if s.info==nil {return false}
-    found:[PROVIDER_CAPACITY]Asset_Document_Provider
-    for &provider in found[:provided_all(s,found[:])] {
-        for i in 0..<clamp(provider.count,0,len(provider.kinds)) {
-            if provider.kinds[i]==kind && slice.contains(provider.takes[:],name) {return true}
-        }
-    }
-    return false
 }
 
 // Whether the documents of a kind show a hierarchy their plugin builds.

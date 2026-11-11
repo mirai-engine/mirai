@@ -34,7 +34,7 @@ Instance_Parts :: bit_set[Instance_Part]
 INSTANCE_PARTS_DEFAULT :: Instance_Parts{.Rig,.Match,.Modifiers,.Actions,.Motion,.Morphs}
 POSE_NAMES :: 16
 Instance_Inspect_Params :: struct {
-    entity:[editor.API_ENTITY_TEXT]u8 `mirai:"text,entity,label=By its name or a path Parent/Child or its id; in Play or Simulate also its handle as play.inspect gives it"`,
+    entity:[editor.API_ENTITY_TEXT]u8 `mirai:"text,entity,label=By its name or a path Parent/Child or its id; in Play or Simulate also its handle as scene.inspect with world Game gives it"`,
     parts:Instance_Parts `mirai:"optional,label=Omitted is all of them but Pose, which needs names"`,
     names:[POSE_NAMES][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=Pose: the bones and sockets to place; a bone by path or name or as a part of the body (@hand_r) and a socket by its name"`,
     offset:u32 `mirai:"optional,label=First bone; rig operation or morph target"`,

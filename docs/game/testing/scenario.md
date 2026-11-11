@@ -38,11 +38,11 @@ time. The first step that fails ends it.
 
 - The subject is an `entity`, by its name, a path Parent/Child, its id or its handle, or a
   `storage`. `field` names the value inside it: `Component.field.0.field` for an entity
-  (`Motion.linear.1`, where `a[0].b` is `a.0.b`), and `play.get` takes the same path.
+  (`Motion.linear.1`, where `a[0].b` is `a.0.b`).
 - `compare` is `Exists` unless given; `mirai rpc --project . describe play.check` lists the
   operators. A number is `number` (a bool is 1 or 0); an enum member or a text is `text`.
-- Names of components, storages and fields: `component.list` and `play.inspect`; `Open`,
-  `Door` and `Pickup` above stand for your own.
+- Names of components, storages and fields: `component.list` and `scene.inspect` with
+  `"world": "Game"`; `Open`, `Door` and `Pickup` above stand for your own.
 
 ## Wait
 
@@ -69,8 +69,9 @@ none run when they hold already. If they never hold, the step and the scenario f
   the pointer and the button as a click takes, and `for` runs after it.
 - A key named in consecutive steps stays held, with no release between them; a step that omits it
   releases it: a jump held over several steps is not cut.
-- Hold a game action by name for some ticks: `play.input`; teleport or change an entity:
-  `play.set`; place a prefab: `play.spawn`.
+- Hold a game action by name for some ticks: `play.input`. Teleport or change an entity, spawn a
+  prefab or take one away: `scene.write` with `"world": "Game"` and the document of
+  [a scene](../assets/text-sources.md#a-scene): `"entities": [{"name": "Crate", "delete": true}]`.
 
 ## Drive
 

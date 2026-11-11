@@ -1,7 +1,7 @@
 ---
 name: testing
 description: Verify a Mirai game cheaply - scenario files and mirai play test, play.explore,
-  play.qa.start and play.qa.report, the playtester agent, play.observe, play.get, captures.
+  play.qa.start and play.qa.report, the playtester agent, play.observe, play.check, captures.
 ---
 
 # Testing a game
@@ -37,7 +37,8 @@ runs the step and checks them; `mirai test game` (or `mirai test` inside the pro
 
 ## Look
 
-- `play.get` reads one field of one entity; `play.check` tests conditions on the game now.
+- `play.check` tests conditions on the game now and answers the value each one read: one field
+  of one entity is a condition with no `compare`.
 
 ## Play by hand
 

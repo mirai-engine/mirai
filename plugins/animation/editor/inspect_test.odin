@@ -97,7 +97,7 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     // Without its id the rig is as one the game made: only its handle names it.
     core.remove(&f.world.ids,f.rig);core.settle(&f.info,&f.world,nil)
-    // As play.inspect gives it.
+    // As an inspect of the game gives it.
     handle:=fmt.tprintf("0x%016x",u64(f.rig))
     missing:=authoring_test_execute(a,"instance",`{"entity":"Nobody"}`)
     testing.expectf(t,missing.code==api.INVALID_PARAMS && strings.contains(missing.message,"names no entity of the scene"),"%s",missing.message)
@@ -108,7 +108,7 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
         testing.expect(t,anim.animation_evaluate(world,&a.app,1.0/60))
     }
     missing=authoring_test_execute(a,"instance",`{"entity":"Nobody"}`)
-    testing.expectf(t,missing.code==api.INVALID_PARAMS && strings.contains(missing.message,"names no entity of the game; play.inspect"),"%s",missing.message)
+    testing.expectf(t,missing.code==api.INVALID_PARAMS && strings.contains(missing.message,"names no entity of the game; scene.inspect with world Game"),"%s",missing.message)
     result=authoring_test_execute(a,"instance",fmt.tprintf(`{{"entity":"%s","parts":["Rig","Match"]}}`,handle))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text:=api.json_compact(string(serial_bytes(a)))

@@ -8,7 +8,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // batch: calls of any methods in one request, in their order, the one list
-// of calls of the API (mirai rpc --batch sends it). It stops at the first
+// of calls of the API (mirai rpc batch --file sends one). It stops at the first
 // call that fails, with which one and what the ones before it answered. A
 // value of the params of a call that is exactly "$N" or "$N.path" (the paths
 // of --select) stands for the result of call N or for that field of it; "$$"
@@ -98,7 +98,7 @@ batch :: proc(call:^Call) {
         method:=method_find(server,given.method)
         params:=given.params!=""?string(given.params):"{}"
         if method==nil {
-            failure={INVALID_PARAMS,fmt.tprintf(`%q is not a method of this editor; a call is {{"method":"...","params":{{...}}}}`,given.method),""}
+            failure={INVALID_PARAMS,fmt.tprintf(`%q is not a method of this editor%s; a call is {{"method":"...","params":{{...}}}}`,given.method,methods_similar(server,given.method)),""}
         } else if strings.contains(params,`"$`) {
             problem:="params is not JSON"
             if value,malformed:=json.parse_string(params,parse_integers=true,allocator=context.temp_allocator);malformed==nil {

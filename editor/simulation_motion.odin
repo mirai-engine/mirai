@@ -34,7 +34,6 @@ Api_Simulation_Move_Params :: struct {
 
 @(private)
 api_simulation_move :: proc(s:^Session,call:^api.Call) {
-    if !api_simulation_guard(s,call) {return}
     params:=api.call_params(call,Api_Simulation_Move_Params)
     e,named:=api_call_entity(call,shown_world(s),params.entity[:],game=true)
     if !named {return}

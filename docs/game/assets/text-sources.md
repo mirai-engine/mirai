@@ -63,10 +63,11 @@ one grammar, with or without an editor.
 - An asset in a field is its path under `assets/` or its id. An entity in a field is the `id` of
   another entity of the document, which `mirai scene read` shows once the file exists.
 - Entities are matched by `id`, else by `name` among their siblings, else by place: keep the names
-  and a later write changes those entities instead of making new ones. What the document leaves
-  out goes.
-- `"merge": true` beside `entities` keeps what the document leaves out: it names only the
-  entities, components and fields it adds or changes, an entity says `"delete": true` to go and a
-  component `null`. `"root"` names the one entity the document declares instead of the whole
-  scene, by its name, a path `Parent/Child` or its id.
+  and a later write changes those entities instead of making new ones. A file is written whole:
+  what the document leaves out goes.
+- `"replace": false` beside `entities` keeps what the document leaves out, as `scene.write` does
+  in an open editor unless it says `"replace": true`: it names only the entities, components and
+  fields it adds or changes, an entity says `"delete": true` to go and a component `null`.
+  `"root"` names the one entity the document declares instead of the whole scene, by its name, a
+  path `Parent/Child` or its id.
 - A prefab is a scene with one entity at the top: the same document, and no other kind of file.

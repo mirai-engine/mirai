@@ -251,7 +251,7 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     scene_keys_write(keys,types,said[:])
     testing.expect(t,strings.contains(on(&p,.Scene,"check").out,"arena/main.scene: kept"),"a scene whose key did not move is not checked again")
     more:=project.path(root,"more.json",allocator=context.temp_allocator)
-    testing.expect(t,os.write_entire_file(more,`{"merge":true,"entities":[{"name":"Probe"}]}`)==nil)
+    testing.expect(t,os.write_entire_file(more,`{"replace":false,"entities":[{"name":"Probe"}]}`)==nil)
     testing.expect_value(t,on(&p,.Scene,"write","arena/main.scene",more).code,0)
     testing.expect(t,!strings.contains(on(&p,.Scene,"check").out,"kept"),"a scene that changed is checked again")
 }
@@ -353,13 +353,13 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     collider,has_table:=asset.scene_component(&after,"Collider")
     _,has_collider:=asset.scene_component_get(&after,collider,floor)
     testing.expect(t,has_table && has_collider,"a component the game of this build does not know stays")
-    taken,taken_why:=scene_write(&p,"arena/main.scene",fmt.tprintf(`{{"merge":true,"entities":[{{"id":"0x%016x","components":{{"Collider":null}}}}]}}`,u64(floor)))
+    taken,taken_why:=scene_write(&p,"arena/main.scene",fmt.tprintf(`{{"replace":false,"entities":[{{"id":"0x%016x","components":{{"Collider":null}}}}]}}`,u64(floor)))
     testing.expect(t,taken_why=="" && !taken.same,taken_why)
     stripped:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&stripped,&p.types,file,context.temp_allocator),asset.Error.None) {return}
     gone,_:=asset.scene_component(&stripped,"Collider")
     _,still:=asset.scene_component_get(&stripped,gone,floor)
-    testing.expect(t,!still,"a merge document takes it off by name")
+    testing.expect(t,!still,"a document that keeps the rest takes it off by name")
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
     testing.expect_value(t,scene_read(&p,"arena/main.scene",&out),"")
@@ -368,11 +368,11 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
         testing.expectf(t,strings.contains(text,part),"the document has %s: %s",part,text)
     }
     // A component with no field to show is {} in the document: written back whole or merged, it
-    // stays, and only null in a merge takes it away.
+    // stays, and only null in a document that keeps the rest takes it away.
     for c in ([]struct{document:string,kept:bool}{
         {text,true},
-        {`{"merge":true,"entities":[{"name":"Lamp","position":[2,4,0]}]}`,true},
-        {`{"merge":true,"entities":[{"name":"Lamp","components":{"Mark":null}}]}`,false},
+        {`{"replace":false,"entities":[{"name":"Lamp","position":[2,4,0]}]}`,true},
+        {`{"replace":false,"entities":[{"name":"Lamp","components":{"Mark":null}}]}`,false},
     }) {
         _,problem=scene_write(&p,"arena/main.scene",c.document)
         serial.writer_init(&out,0,context.temp_allocator)
@@ -516,9 +516,9 @@ a_scene_document_makes_entities_from_recipes_and_prefabs :: proc(t:^testing.T) {
     testing.expect(t,slice.equal(file_bytes(&p,"arena/Gate.scene"),gate),"a refused document leaves the file as it was")
 
     // A prefab has exactly one root: a scene with several is not made one, and a prefab keeps one.
-    _,many:=scene_write(&p,"arena/yard.scene",`{"merge":true,"kind":"Prefab","entities":[]}`)
+    _,many:=scene_write(&p,"arena/yard.scene",`{"replace":false,"kind":"Prefab","entities":[]}`)
     testing.expectf(t,strings.contains(many,"exactly one root"),"gave '%s'",many)
-    _,second:=scene_write(&p,"arena/Gate.scene",`{"merge":true,"entities":[{"name":"Second"}]}`)
+    _,second:=scene_write(&p,"arena/Gate.scene",`{"replace":false,"entities":[{"name":"Second"}]}`)
     testing.expectf(t,strings.contains(second,"exactly one root"),"gave '%s'",second)
 }
 

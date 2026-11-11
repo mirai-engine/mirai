@@ -1316,42 +1316,6 @@ prefab_target :: proc(s:^Session) -> core.Entity {
     return history.selection_active(s.selection)
 }
 
-// Whether an entry of the prefabs (prefab_create, prefab_apply,
-// prefab_apply_base, prefab_revert, prefab_unlink) cannot run on what is selected now.
-@(private)
-prefab_entry_disabled :: proc(s:^Session,entry:string) -> bool {
-    if s.mode!=.Edit || s.app==nil || s.app.assets==nil {return true}
-    w:=edited_world(s)
-    if entry=="prefab_create" {
-        roots:=history.selection_roots(s.selection,w)
-        if len(roots)==0 {return true}
-        for e in roots {
-            if prefab_member_locked(s,w,e) || api_entity_id(w,e)==0 {return true}
-        }
-        return false
-    }
-    if len(s.selection.entities)!=1 {return true}
-    e:=prefab_target(s)
-    if e==core.NONE {return true}
-    id:=api_entity_id(w,e)
-    if id==0 {return true}
-    link,linked:=prefab_link_of(w,e)
-    switch entry {
-    case "prefab_apply","prefab_revert","prefab_apply_base":
-        // A member with overrides, or an entity an instance added; to a base, the root of an instance of a variant.
-        if entry=="prefab_apply_base" && prefab_variant_of(s,w,link)=={} {return true}
-        root:=prefab_instance_for(w,e)
-        if root==core.NONE {return true}
-        overrides,_:=prefab_overrides_of(s,root)
-        for &override in overrides {
-            if linked && link.root || override.entity==id {return false}
-        }
-        return true
-    case "prefab_unlink": return !linked
-    }
-    return true
-}
-
 // Where a new prefab goes: beside the scene it comes from, at the root for one outside the assets.
 @(private)
 prefab_folder :: proc(s:^Session) -> string {
