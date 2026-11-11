@@ -49,7 +49,7 @@ Resource_Need :: struct {
     name:u64, // base.name_hash of its name
     kind:Resource_Kind,
     words:u32, // a data channel: of an entry
-    channel:core.Birth_Channel, // a channel: the one of its name (channel_needs)
+    channel:core.Birth_Channel, // a channel: the one of its name
 }
 
 // shaders/particles.slang: Particle_Resource.
@@ -64,11 +64,11 @@ Gpu_Resource :: struct {
 // resource without a source has kind None: the program reads nothing from it.
 @(private)
 emitter_resources :: proc(
-    sync:^Particle_Sync,shown:^Emitter_Shown,info:^effect.Particle_Info,bindings:^Particle_Bindings,
+    sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,
     e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
     source:=bindings.surface if bindings.surface!=core.NONE else e
-    #partial switch info.shape {
+    #partial switch shown.desc.info.shape {
     case .Surface: resources[0]=entity_surface(extras,drawn,meshes,worlds,id,assets,renderer,source)
     case .Bones: resources[0]=entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,source)
     }

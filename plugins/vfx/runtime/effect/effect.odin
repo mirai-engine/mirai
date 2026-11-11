@@ -6,6 +6,7 @@ import "core:math"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -64,27 +65,29 @@ Particle_Gradient :: struct {
 // normal with the velocity of the surface times inherit_velocity. Bones
 // starts them on the bones of a skinned mesh, by their length, away from the
 // bone by up to shape_size.x as shell says, with the velocity of the bone.
+// The editor shows a field in the group its tag names, or in that of the
+// field before it.
 Particle_Info :: struct {
-    duration:f32 `mirai:"min=0,unit=s"`,      // of a cycle
+    duration:f32 `mirai:"section=Spawn,min=0,unit=s"`, // of a cycle
     prewarm:bool,                             // a looping instance starts as if it had run a whole life
     max_particles:u32,                        // alive at once; 0: what the rate, the bursts and the lifetime need
     rate:f32 `mirai:"min=0,unit=1/s"`,
     rate_over_distance:f32 `mirai:"min=0,unit=1/m"`, // per metre the entity travels
     bursts:[PARTICLE_BURSTS]Particle_Burst,
-    shape:Particle_Shape,
+    shape:Particle_Shape `mirai:"section=Shape"`,
     shape_size:[3]f32 `mirai:"min=0,unit=m"`, // radius in x, half extents of a box, half length of a line
     shape_angle:f32 `mirai:"angle,min=0"`,    // of a cone, from its axis
     shell:f32 `mirai:"min=0,max=1"`,          // 0: from the volume of the shape, 1: from its surface
-    lifetime:[2]f32 `mirai:"min=0,unit=s"`,   // each particle takes a value between both
+    lifetime:[2]f32 `mirai:"section=Motion,min=0,unit=s"`, // each particle takes a value between both
     speed:[2]f32 `mirai:"unit=m/s"`,          // along the normal of the shape
     velocity:[2][3]f32 `mirai:"unit=m/s"`,    // in the space of the entity, between both, besides speed
-    size:[2]f32 `mirai:"min=0,unit=m"`,
+    size:[2]f32 `mirai:"section=Look,min=0,unit=m"`,
     rotation:[2]f32 `mirai:"angle"`,
     spin:[2]f32 `mirai:"angle"`,              // per second
     colors:[2][4]f32 `mirai:"color"`,         // each particle takes a mix
     intensity:f32 `mirai:"min=0"`,            // multiplies the color: above 1 it glows
     emission_mode:asset.Emission_Mode,        // what the color of an unlit particle is: nits, or the value the exposed image shows
-    inherit_velocity:f32,                     // share of the velocity of the entity a particle starts with
+    inherit_velocity:f32 `mirai:"section=Motion"`, // share of the velocity of the entity a particle starts with
     local_space:bool,                         // particles move with the entity
     gravity:f32,                              // share of the gravity of where each particle is (volume Gravity)
     acceleration:[3]f32 `mirai:"unit=m/s²"`,
@@ -94,11 +97,11 @@ Particle_Info :: struct {
     noise_speed:f32 `mirai:"unit=1/s"`,
     attractor:[3]f32 `mirai:"unit=m"`,        // a point of the entity that pulls the particles
     attractor_strength:f32 `mirai:"unit=m/s²"`,
-    collision:Particle_Collision,             // World: against the traced scene
+    collision:Particle_Collision `mirai:"section=Collision"`, // World: against the traced scene
     bounce:f32 `mirai:"min=0,max=1"`,
     friction:f32 `mirai:"min=0,max=1"`,       // tangent speed lost per normal speed a surface stops
     collision_life:f32 `mirai:"min=0,max=1"`, // share of its life a particle loses per hit
-    render:Particle_Render,
+    render:Particle_Render `mirai:"section=Look"`,
     blend:Particle_Blend,
     lit:bool,                                 // the sun, the lights and the light probes light it
     lights:u32,                               // of its particles that light the scene, at most
@@ -115,11 +118,11 @@ Particle_Info :: struct {
     flipbook_speed:f32 `mirai:"min=0"`,       // frames per second; 0: the whole flipbook over the life
     size_over_life:Particle_Curve,
     color_over_life:Particle_Gradient,
-    trigger:Particle_Event,                   // when sub_particle starts particles where one of these is
+    trigger:Particle_Event `mirai:"section=Collision"`, // when sub_particle starts particles where one of these is
     sub_particle:base.Asset_Id,               // a .particle
     sub_count:u32,                            // its particles per event
     report:Particle_Event,                    // what of its particles the game hears of (vfx.Particle_Reports), frames later: presentation alone
-    program:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`, // a Vfx program of the shaders; "" for none
+    program:[PARTICLE_NAME_BYTES]u8 `mirai:"section=Program,text"`, // a Vfx program of the shaders; "" for none
 }
 
 PARTICLE_CURVE_ONE :: Particle_Curve{values={1,1,1,1,1,1,1,1},times={0,1,1,1,1,1,1,1}}
@@ -147,6 +150,9 @@ Particle_Parameter :: struct {
     texture:base.Asset_Id,
 }
 
+// An effect as its file holds it: what particle_view reads (its tables are
+// those of the file, its id and source are not read) and what particle_bytes
+// writes.
 Particle_Desc :: struct {
     id:base.Asset_Id,
     info:Particle_Info,
@@ -155,25 +161,19 @@ Particle_Desc :: struct {
     source:^asset.Import_Info, // of an effect an import wrote; nil for one made here
 }
 
-Particle_View :: struct {
-    info:^Particle_Info,
-    parameters:[]Particle_Parameter,
-    hidden:[]Particle_Field,
-}
-
 particle_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc,allocator:=context.allocator) -> asset.Error {
-    info:=desc.info
-    if !particle_check({info=&info,parameters=desc.parameters,hidden=desc.hidden}) {return .Invalid}
+    if !particle_check(desc) {return .Invalid}
     asset.document_init(doc,PARTICLE_KIND,desc.id,allocator)
     doc.kind_version=VERSION
-    error:=particle_tables(doc,types,&info,desc)
+    error:=particle_tables(doc,types,desc)
     if error!=.None {asset.document_destroy(doc)}
     return error
 }
 
 @(private="file")
-particle_tables :: proc(doc:^asset.Document,types:^asset.Types,info:^Particle_Info,desc:Particle_Desc) -> asset.Error {
-    asset.document_put_row(doc,types,"particle",info) or_return
+particle_tables :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc) -> asset.Error {
+    info:=desc.info
+    asset.document_put_row(doc,types,"particle",&info) or_return
     asset.document_put(doc,types,"parameters",desc.parameters) or_return
     asset.document_put(doc,types,"hidden",desc.hidden) or_return
     if desc.source!=nil {asset.import_put(doc,types,desc.source) or_return}
@@ -195,13 +195,13 @@ particle_bytes :: proc(types:^asset.Types,desc:Particle_Desc,allocator:=context.
     return asset.document_bytes(&doc,allocator)
 }
 
-particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Particle_View,error:asset.Error) {
+particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (desc:Particle_Desc,error:asset.Error) {
     asset.kind_check(a,PARTICLE_KIND,VERSION) or_return
-    view.info=asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return
-    view.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
-    view.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
-    if !particle_check(view) {return {},.Corrupt}
-    return view,.None
+    desc.info=(asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return)^
+    desc.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
+    desc.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
+    if !particle_check(desc) {return {},.Corrupt}
+    return desc,.None
 }
 
 // What is wrong with the values of an effect: the field and how to correct
@@ -213,9 +213,9 @@ Particle_Problem :: struct {
 
 // Values the renderer can take as they are: finite, inside their ranges,
 // with enums it knows, curves that go forward and names that end.
-particle_validate :: proc(view:Particle_View) -> Particle_Problem {
-    p:=view.info
-    if p==nil {return {"particle","Give the values of the effect"}}
+particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
+    info:=desc.info
+    p:=&info
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line, Surface or Bones"}}
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
@@ -242,14 +242,14 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     if !particle_times_valid(p.size_over_life.times) {return {"size_over_life","Use key times that go up from 0 to 1"}}
     if !particle_times_valid(p.color_over_life.times) {return {"color_over_life","Use key times that go up from 0 to 1"}}
     for value in p.size_over_life.values {if value<0 {return {"size_over_life","Use sizes of zero or more"}}}
-    if problem:=particle_parameters_validate(view.parameters);problem.message!="" {return problem}
-    for &hidden in view.hidden {
+    if problem:=particle_parameters_validate(desc.parameters);problem.message!="" {return problem}
+    for &hidden in desc.hidden {
         if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return {"hidden","Name each hidden field in fewer than 64 bytes"}}
     }
     return {}
 }
 
-particle_check :: proc(view:Particle_View) -> bool {return particle_validate(view).message==""}
+particle_check :: proc(desc:Particle_Desc) -> bool {return particle_validate(desc).message==""}
 
 @(private="file")
 particle_times_valid :: proc(times:[PARTICLE_CURVE_KEYS]f32) -> bool {
