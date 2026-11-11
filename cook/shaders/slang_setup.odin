@@ -7,7 +7,7 @@ import "mirai:cook/workspace"
 import "mirai:project"
 
 // The Slang release the engine's shaders are generated with.
-SLANG_VERSION :: "2026.20"
+SLANG_VERSION :: "2026.22"
 
 @(private)
 Slang_Package :: struct {suffix,sha256:string}
@@ -16,10 +16,10 @@ Slang_Package :: struct {suffix,sha256:string}
 @(private)
 slang_package :: proc() -> (package_info:Slang_Package,ok:bool) {
     packages:=#partial [workspace.Target]Slang_Package{
-        .Macos_Arm64={"macos-aarch64.tar.gz","07fa8833fdbb343c3674c84fdd885910f495f3daaaa0c732b32980151e8b58c4"},
-        .Linux_X64={"linux-x86_64.tar.gz","e863e568c204810d6e8bc31852f056aef6763c55ea9925db2db7affa060347c9"},
-        .Linux_Arm64={"linux-aarch64.tar.gz","b0345743e2153d8c2bd33f56fb5696bcef63fc03513f054a1ae1b8d3dd0152a9"},
-        .Windows_X64={"windows-x86_64.zip","e6dd32bbddf1720ebb4e679d55e9635ce792865a5bd84f3d2cd9af28647c0174"},
+        .Macos_Arm64={"macos-aarch64.tar.gz","885b5bd9a79a1ae81fdb92212f5f7c785001f870d45c39f9bb5df01339db3fea"},
+        .Linux_X64={"linux-x86_64.tar.gz","a877b75c6ec515f5d8bf66ea4bae4f0a5ba85050b9540c2046670285808347e6"},
+        .Linux_Arm64={"linux-aarch64.tar.gz","b7d03e99de10caff973d45439159300d569d4220d2364eec34ffa7ef2a5baddd"},
+        .Windows_X64={"windows-x86_64.zip","dd0c4a86bd44cdb7e9cf712af0c8ebf2fff1bba19fa5e3c128ff87384e8ff17b"},
     }
     package_info=packages[workspace.TARGET]
     return package_info,package_info.suffix!=""
