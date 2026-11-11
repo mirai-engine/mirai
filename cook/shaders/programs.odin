@@ -10,9 +10,11 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
+import "mirai:asset"
 import "mirai:render/abi"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import "mirai:std/serial"
 
 // Programs: Slang sources that declare `//! mirai surface Name`,
 // `//! mirai postprocess Name`, `//! mirai vfx Name` or `//! mirai ui Name`,
@@ -48,75 +50,15 @@ MAX_STAGES :: abi.PROGRAM_STAGES
 MAX_ITERATIONS :: 64
 PARAMETER_GROUP_BYTES :: 32
 
-// nil: a value of a kind no parameter takes.
-Default :: union {bool,Number,string}
-
-Parameter :: struct {
-    name:       string,
-    kind:       string, // float32, int32, uint32, bool or texture
-    components: int,
-    offset:     int,    // bytes into the 256 of the program
-    defaults:   [4]Default,
-    default_list:bool,  // written as a list, even of one component
-    min,max:    Number,
-    srgb,normal,color:bool,
-    group:      string, // the section of Details that shows it; empty: the first, without a title
-}
-
-Program :: struct {
-    id:        int, // 1-based, in the order of the catalog
-    name:      string,
-    domain:    string, // surface, postprocess, vfx or ui
-    source:    string, // builtin/<file> or project/<file>, below include/programs
-    size:      int,
-    parameters:[]Parameter,
-    layers:    []string, // of a Surface program: the layers of the OpenPBR model its source writes (coat, fuzz, anisotropy, unlit, diffuse_transmission)
-    attributes:int,      // of a Vfx program: bytes of its Attributes
-    resources: []Resource, // of a Vfx program, in the order it declares them
-    stages:    []Vfx_Stage, // of a Vfx program, in the order they run
-    moves:     bool,        // of a Vfx program: it moves and ages its particles itself
-    births:    bool,        // of a Vfx program: it gives how many particles its emitter starts
-    prepare:   bool,        // of a Vfx program: it prepares each frame what its emitter keeps
-    coverage:  bool,        // of a Surface program: its alpha is not that of the default material (SURFACE_COVERAGE_INCLUDE)
-    standard:  bool,        // of a Surface program: its source names mirai_surface_standard, so its materials load their maps
-    vertex:    Vertex_Function, // of a Surface program that moves vertices (`//! vertex`)
-}
-
-// What `//! vertex` says of the function vertex of a Surface program. reach:
-// metres in the space of the mesh, or the float parameter that gives them.
-Vertex_Function :: struct {
-    declared,animated:bool,
-    reach:f64,
-    reach_parameter:string,
-}
-
-// A resource a Vfx program reads, which each emitter binds by its name. A
-// grid declared `cleared` starts at zero each stage that writes it; a data
-// channel, `//! resource name data words`, has entries of words words.
-Resource :: struct {
-    name,kind:string,
-    cleared:bool,
-    words:u32,
-}
-
-// A stage of a Vfx program: over the particles of its emitter or over the
-// cells of a grid it reads; iterations times, each seeing what the one before
-// wrote. writes: the grids it writes besides the one it goes over.
-Vfx_Stage :: struct {
-    name,over:string, // over: particles, or a grid resource
-    iterations:int,
-    writes:[]string,
-}
-
 // The layers a Surface program gives, by the fields of Mirai_Surface its
 // source names: a material shows them only where its program may give them.
 @(private)
-PROGRAM_LAYERS :: [?][2]string{{"coat","coat_weight"},{"fuzz","fuzz_weight"},{"anisotropy","specular_anisotropy"},{"unlit","unlit"},{"diffuse_transmission","diffuse_transmission_weight"}}
+PROGRAM_LAYERS :: [asset.Material_Layer]string{.Coat="coat_weight",.Fuzz="fuzz_weight",.Anisotropy="specular_anisotropy",.Unlit="unlit",.Diffuse_Transmission="diffuse_transmission_weight"}
 
 Catalog :: struct {
     fingerprint:string, // of the compiler, the shared includes and every program source
     compiler:   string,
-    programs:   []Program,
+    programs:   []abi.Program,
     extensions: Extensions, // what the sources ask of the stages besides programs
     refused:    []string,   // the programs left out and why, one each: the others are published
     vfx:        []string,   // the Vfx programs, each with an include of its own (VFX_FOLDER/<name>/VFX_INCLUDE)
@@ -128,9 +70,15 @@ Catalog :: struct {
 Layout_Field :: struct {name,kind,scalar:string,count,offset:int}
 @(private)
 Layout :: struct {size:int,fields:[]Layout_Field}
+// A layout in the cache, of the program whose sources have fingerprint.
+@(private)
+Layout_Cache :: struct {
+    fingerprint,layout_hash:string,
+    using layout:Layout `mirai:"inline"`,
+}
 
 // The stages a program reaches and the functions it declares.
-Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui}
+Program_Domain :: abi.Program_Domain
 PROGRAM_DOMAINS :: [Program_Domain]string{.Surface="surface",.Postprocess="postprocess",.Vfx="vfx",.Ui="ui"}
 
 program_domain :: proc(name:string) -> (domain:Program_Domain,ok:bool) {
@@ -190,8 +138,8 @@ program_directives :: proc(text:string,allocator:=context.temp_allocator) -> (d:
 // The resources of a Vfx program, from the words of its `//! resource name
 // kind` lines, or what is wrong with one.
 @(private)
-program_resources :: proc(program:string,lines:[][]string,allocator:=context.allocator) -> (resources:[]Resource,problem:string) {
-    list:=make([dynamic]Resource,allocator)
+program_resources :: proc(program:string,lines:[][]string,allocator:=context.allocator) -> (resources:[]abi.Program_Resource,problem:string) {
+    list:=make([dynamic]abi.Program_Resource,allocator)
     for words in lines {
         cleared:=len(words)==5 && words[3]=="grid" && words[4]=="cleared"
         data:=len(words)==5 && words[3]=="data"
@@ -202,14 +150,14 @@ program_resources :: proc(program:string,lines:[][]string,allocator:=context.all
             if !parsed || n<1 || n>DATA_WORDS {return nil,fmt.aprintf("%s.%s: an entry of a data channel has 1 to %d words, not %s",program,words[2],DATA_WORDS,words[4],allocator=allocator)}
             count=n
         }
-        known:=false
-        for kind in RESOURCE_KINDS {known||=kind==words[3]}
+        kind,known:=abi.Program_Resource_Kind(0),false
+        for name,i in RESOURCE_KINDS {if name==words[3] {kind,known=abi.Program_Resource_Kind(i),true}}
         if !known {return nil,fmt.aprintf("%s.%s: a resource is of kind %v, not %s",program,words[2],RESOURCE_KINDS,words[3],allocator=allocator)}
         for resource in list {
             if resource.name==words[2] {return nil,fmt.aprintf("%s.%s: the program declares this resource twice",program,words[2],allocator=allocator)}
         }
         if len(list)==MAX_RESOURCES {return nil,fmt.aprintf("%s: a program reads at most %d resources",program,MAX_RESOURCES,allocator=allocator)}
-        append(&list,Resource{strings.clone(words[2],allocator),strings.clone(words[3],allocator),cleared,u32(count)})
+        append(&list,abi.Program_Resource{strings.clone(words[2],allocator),kind,cleared,u32(count)})
     }
     return list[:],""
 }
@@ -217,20 +165,23 @@ program_resources :: proc(program:string,lines:[][]string,allocator:=context.all
 // The stages of a Vfx program, from the words of its `//! stage name over
 // target [iterations N] [writes grid,grid]` lines, or what is wrong with one.
 @(private)
-program_stages :: proc(program:string,lines:[][]string,resources:[]Resource,allocator:=context.allocator) -> (stages:[]Vfx_Stage,problem:string) {
-    list:=make([dynamic]Vfx_Stage,allocator)
+program_stages :: proc(program:string,lines:[][]string,resources:[]abi.Program_Resource,allocator:=context.allocator) -> (stages:[]abi.Program_Stage,problem:string) {
+    grid :: proc(resources:[]abi.Program_Resource,name:string) -> (index:int,found:bool) {
+        for resource,i in resources {if resource.name==name && resource.kind==.Grid {return i,true}}
+        return
+    }
+    list:=make([dynamic]abi.Program_Stage,allocator)
     for words in lines {
         if len(words)<5 || words[3]!="over" || !identifier_valid(words[2]) || len(words)%2!=1 {
             return nil,fmt.aprintf("%s: declare a stage as `//! stage name over particles|grid [iterations N] [writes grid,grid]`",program,allocator=allocator)
         }
         name,over:=words[2],words[4]
         if name=="initialize" || name=="update" || name=="render" {return nil,fmt.aprintf("%s.%s: initialize, update and render are not stages; name it otherwise",program,name,allocator=allocator)}
-        grid:=false
-        for resource in resources {grid||=resource.name==over && resource.kind=="grid"}
-        if over!="particles" && !grid {
+        index,is_grid:=grid(resources,over)
+        if over!="particles" && !is_grid {
             return nil,fmt.aprintf("%s.%s: a stage goes over particles or over a grid the program declares as a resource, not %s",program,name,over,allocator=allocator)
         }
-        stage:=Vfx_Stage{name=strings.clone(name,allocator),over=strings.clone(over,allocator),iterations=1}
+        stage:=abi.Program_Stage{name=strings.clone(name,allocator),over=is_grid?u8(index):abi.PROGRAM_STAGE_PARTICLES,iterations=1}
         for at:=5;at<len(words);at+=2 {
             switch words[at] {
             case "iterations":
@@ -238,16 +189,13 @@ program_stages :: proc(program:string,lines:[][]string,resources:[]Resource,allo
                 if !valid || count<1 || count>MAX_ITERATIONS {
                     return nil,fmt.aprintf("%s.%s: iterations is a number from 1 to %d",program,name,MAX_ITERATIONS,allocator=allocator)
                 }
-                stage.iterations=count
+                stage.iterations=u8(count)
             case "writes":
-                written:=make([dynamic]string,allocator)
                 for target in strings.split(words[at+1],",",context.temp_allocator) {
-                    known:=false
-                    for resource in resources {known||=resource.name==target && resource.kind=="grid"}
+                    written,known:=grid(resources,target)
                     if !known {return nil,fmt.aprintf("%s.%s: a stage writes grids the program declares as resources, not %s",program,name,target,allocator=allocator)}
-                    append(&written,strings.clone(target,allocator))
+                    stage.writes|=1<<u32(written)
                 }
-                stage.writes=written[:]
             case:
                 return nil,fmt.aprintf("%s.%s: a stage takes iterations or writes, not %s",program,name,words[at],allocator=allocator)
             }
@@ -265,9 +213,9 @@ program_stages :: proc(program:string,lines:[][]string,resources:[]Resource,allo
 // [animated] [reach <metres>|reach <parameter>]` line and the reflection of
 // its Parameters, or what is wrong with them. Without the line, none.
 @(private)
-program_vertex :: proc(program:string,words:[]string,parameters:Layout,allocator:=context.allocator) -> (vertex:Vertex_Function,problem:string) {
+program_vertex :: proc(program:string,words:[]string,parameters:Layout,allocator:=context.allocator) -> (vertex:abi.Program_Vertex,problem:string) {
     if words==nil {return}
-    vertex.declared=true
+    vertex.declared,vertex.reach_offset=true,-1
     usage:=fmt.tprintf("%s: declare a vertex function as `//! vertex [animated] [reach <metres>|reach <float parameter>]`",program)
     for at:=2;at<len(words);at+=1 {
         switch words[at] {
@@ -275,19 +223,19 @@ program_vertex :: proc(program:string,words:[]string,parameters:Layout,allocator
             if vertex.animated {return {},strings.clone(usage,allocator)}
             vertex.animated=true
         case "reach":
-            if at+1>=len(words) || vertex.reach!=0 || vertex.reach_parameter!="" {return {},strings.clone(usage,allocator)}
+            if at+1>=len(words) || vertex.reach!=0 || vertex.reach_offset>=0 {return {},strings.clone(usage,allocator)}
             at+=1
             if value,number:=strconv.parse_f64(words[at]);number {
                 if !(value>=0) || value>MAX_PARAMETER_RANGE {return {},fmt.aprintf("%s: reach is metres from 0 to %v, not %s",program,f64(MAX_PARAMETER_RANGE),words[at],allocator=allocator)}
-                vertex.reach=value
+                vertex.reach=f32(value)
                 continue
             }
             for field in parameters.fields {
                 if field.name!=words[at] {continue}
                 if field.scalar!="float32" || field.count!=1 {return {},fmt.aprintf("%s: the reach %s is a parameter of one float",program,field.name,allocator=allocator)}
-                vertex.reach_parameter=strings.clone(field.name,allocator)
+                vertex.reach_offset=i32(field.offset)
             }
-            if vertex.reach_parameter=="" {return {},fmt.aprintf("%s: reach %s is neither a number nor a parameter of the program",program,words[at],allocator=allocator)}
+            if vertex.reach_offset<0 {return {},fmt.aprintf("%s: reach %s is neither a number nor a parameter of the program",program,words[at],allocator=allocator)}
         case:
             return {},strings.clone(usage,allocator)
         }
@@ -394,23 +342,14 @@ json_truthy :: proc(value:json.Value) -> bool {
     return false
 }
 
-@(private)
-json_default :: proc(value:json.Value,allocator:=context.allocator) -> Default {
-    #partial switch v in value {
-    case json.Boolean: return v
-    case json.Integer: return Number{integer=v}
-    case json.Float: return Number{is_float=true,float=v}
-    case json.String: return strings.clone(v,allocator)
-    }
-    return nil
-}
-
 // A bound of a parameter: a finite number within the range the loader takes.
 @(private)
-json_bound :: proc(value:json.Value) -> (Number,bool) {
-    number,is_number:=json_default(value,context.temp_allocator).(Number)
-    v:=number_value(number)
-    return number,is_number && !math.is_nan(v) && !math.is_inf(v) && abs(v)<=MAX_PARAMETER_RANGE
+json_bound :: proc(value:json.Value) -> (bound:f64,ok:bool) {
+    #partial switch v in value {
+    case json.Integer: bound,ok=f64(v),true
+    case json.Float:   bound,ok=v,true
+    }
+    return bound,ok && !math.is_nan(bound) && !math.is_inf(bound) && abs(bound)<=MAX_PARAMETER_RANGE
 }
 
 @(private)
@@ -424,45 +363,17 @@ layout_hash :: proc(layout:Layout) -> string {
 
 @(private)
 layout_read :: proc(path,wanted_fingerprint:string,allocator:=context.allocator) -> (layout:Layout,ok:bool) {
-    object,readable:=read_json(path,context.temp_allocator)
-    if !readable || json_text(object["fingerprint"])!=wanted_fingerprint {return}
-    size,has_size:=json_int(object["size"])
-    fields,has_fields:=object["fields"].(json.Array)
-    if !has_size || !has_fields {return}
-    layout.size=size
-    layout.fields=make([]Layout_Field,len(fields),allocator)
-    for value,i in fields {
-        field,is_object:=value.(json.Object)
-        if !is_object {return}
-        count,_:=json_int(field["count"])
-        offset,_:=json_int(field["offset"])
-        layout.fields[i]={strings.clone(json_text(field["name"]),allocator),strings.clone(json_text(field["kind"]),allocator),strings.clone(json_text(field["scalar"]),allocator),count,offset}
-    }
-    if layout_hash(layout)!=json_text(object["layout_hash"]) {return}
+    data,error:=os.read_entire_file(path,context.temp_allocator)
+    cached:Layout_Cache
+    if error!=nil || serial.text_decode(string(data),&cached,allocator)!="" || cached.fingerprint!=wanted_fingerprint || layout_hash(cached.layout)!=cached.layout_hash {return}
     cache_touch(path)
-    return layout,true
+    return cached.layout,true
 }
 
 @(private)
 layout_write :: proc(path,layout_fingerprint:string,layout:Layout) {
-    writer:=json_writer(context.temp_allocator)
-    json_object_begin(&writer)
-    json_key(&writer,"fingerprint");json_string(&writer,layout_fingerprint)
-    json_key(&writer,"layout_hash");json_string(&writer,layout_hash(layout))
-    json_key(&writer,"size");json_integer(&writer,i64(layout.size))
-    json_key(&writer,"fields");json_array_begin(&writer)
-    for field in layout.fields {
-        json_object_begin(&writer)
-        json_key(&writer,"name");json_string(&writer,field.name)
-        json_key(&writer,"kind");json_string(&writer,field.kind)
-        json_key(&writer,"scalar");json_string(&writer,field.scalar)
-        json_key(&writer,"count");json_integer(&writer,i64(field.count))
-        json_key(&writer,"offset");json_integer(&writer,i64(field.offset))
-        json_object_end(&writer)
-    }
-    json_array_end(&writer)
-    json_object_end(&writer)
-    write_file_atomic(path,json_finish(&writer))
+    text,_:=serial.text_encode(Layout_Cache{layout_fingerprint,layout_hash(layout),layout},.Pretty,context.temp_allocator)
+    write_file_atomic(path,text)
 }
 
 // The layouts of the structs of a program, Name::Parameters and, with
@@ -546,56 +457,54 @@ layout_reflect :: proc(runner:^Runner,slangc,root,copied,source_folder,compiled_
 // A parameter of a program from the field Slang reflected and its metadata;
 // problem says what is wrong with them.
 @(private)
-program_parameter :: proc(field:Layout_Field,meta:json.Object,allocator:=context.allocator) -> (parameter:Parameter,problem:string) {
-    scalar,count:=field.scalar,field.count
-    supported_scalar:=scalar=="float32" || scalar=="int32" || scalar=="uint32" || scalar=="bool"
-    if (field.kind!="scalar" && field.kind!="vector") || count<1 || count>4 || !supported_scalar {return {},"only float/int/uint/bool scalars and vectors1..4 are supported"}
+program_parameter :: proc(field:Layout_Field,meta:json.Object,allocator:=context.allocator) -> (parameter:abi.Program_Parameter,problem:string) {
+    count:=field.count
+    switch field.scalar {
+    case "float32": parameter.kind=.Float
+    case "int32":   parameter.kind=.Int
+    case "uint32":  parameter.kind=.Uint
+    case "bool":    parameter.kind=.Bool
+    case: count=0
+    }
+    if (field.kind!="scalar" && field.kind!="vector") || count<1 || count>4 {return {},"only float/int/uint/bool scalars and vectors1..4 are supported"}
     if field.offset%4!=0 || field.offset+count*4>PARAMETER_BYTES {return {},"unaligned parameter"}
-    parameter={name=strings.clone(field.name,allocator),kind=strings.clone(scalar,allocator),components=count,offset=field.offset}
+    parameter.name,parameter.components,parameter.offset=strings.clone(field.name,allocator),u8(count),u16(field.offset)
     if json_text(meta["kind"])=="texture" {
-        parameter.kind="texture"
-        if scalar!="uint32" || count!=1 {return {},"texture parameters must be uint"}
+        if parameter.kind!=.Uint || count!=1 {return {},"texture parameters must be uint"}
+        parameter.kind=.Texture
     }
-    texture:=parameter.kind=="texture"
-    given,has_default:=meta["default"]
-    if list,is_list:=given.(json.Array);has_default && is_list {
-        if len(list)!=count {return {},fmt.aprintf("default must have %d components",count,allocator=allocator)}
-        parameter.default_list=true
-        for value,i in list {parameter.defaults[i]=json_default(value,allocator)}
-    } else if has_default {
-        if count!=1 {return {},fmt.aprintf("default must have %d components",count,allocator=allocator)}
-        parameter.defaults[0]=json_default(given,allocator)
-    } else {
-        parameter.default_list=count>1
-        for i in 0..<count {
-            switch {
-            case texture: parameter.defaults[i]=""
-            case scalar=="bool": parameter.defaults[i]=false
-            case: parameter.defaults[i]=Number{}
-            }
-        }
-    }
-    parameter.min,parameter.max=Number{is_float=true,float=-1e20},Number{is_float=true,float=1e20}
+    parameter.min,parameter.max=-1e20,1e20
     valid_range:=true
     if value,has:=meta["min"];has {parameter.min,valid_range=json_bound(value)}
     if value,has:=meta["max"];has && valid_range {parameter.max,valid_range=json_bound(value)}
-    lower,upper:=number_value(parameter.min),number_value(parameter.max)
-    if !valid_range || lower>upper {return {},"invalid parameter range"}
-    for value in parameter.defaults[:count] {
-        valid:bool
-        switch v in value {
-        case string: valid=texture
-        case bool: valid=!texture && scalar=="bool"
-        case Number:
-            n:=number_value(v)
-            valid=!texture && scalar!="bool" && !math.is_nan(n) && !math.is_inf(n) && lower<=n && n<=upper
-            if scalar=="uint32" {valid&&=math.trunc(n)==n && n>=0 && n<=4294967295}
-            if scalar=="int32" {valid&&=math.trunc(n)==n && n>=-2147483648 && n<=2147483647}
+    if !valid_range || parameter.min>parameter.max {return {},"invalid parameter range"}
+    given,has_default:=meta["default"]
+    defaults:=[]json.Value{given}
+    if list,is_list:=given.(json.Array);is_list {defaults=list[:]}
+    if has_default && len(defaults)!=count {return {},fmt.aprintf("default must have %d components",count,allocator=allocator)}
+    // Without a default, a texture is none, a bool false and a number 0.
+    for i in 0..<count {
+        n:f64
+        number:=!has_default && parameter.kind!=.Texture && parameter.kind!=.Bool
+        valid:=!has_default
+        if has_default {
+            #partial switch v in defaults[i] {
+            case json.String:  valid=parameter.kind==.Texture
+            case json.Boolean: valid,n=parameter.kind==.Bool,f64(u8(v))
+            case json.Integer: number,n=true,f64(v)
+            case json.Float:   number,n=true,v
+            }
+        }
+        if number {
+            valid=parameter.kind!=.Texture && parameter.kind!=.Bool && !math.is_nan(n) && !math.is_inf(n) && parameter.min<=n && n<=parameter.max
+            if parameter.kind==.Uint {valid&&=math.trunc(n)==n && n>=0 && n<=4294967295}
+            if parameter.kind==.Int {valid&&=math.trunc(n)==n && n>=-2147483648 && n<=2147483647}
         }
         if !valid {return {},"invalid typed default"}
+        parameter.defaults[i]=n
     }
     parameter.srgb,parameter.normal,parameter.color=json_truthy(meta["srgb"]),json_truthy(meta["normal"]),json_truthy(meta["color"])
-    if parameter.color && (parameter.kind!="float32" || count!=3) {return {},"a color is three floats"}
+    if parameter.color && (parameter.kind!=.Float || count!=3) {return {},"a color is three floats"}
     if group,has:=meta["group"];has {
         text,is_text:=group.(json.String)
         if !is_text || text=="" || len(text)>PARAMETER_GROUP_BYTES {return {},fmt.aprintf("group must be a name of 1 to %d bytes",PARAMETER_GROUP_BYTES,allocator=allocator)}
@@ -687,7 +596,7 @@ UI_INCLUDE :: "ui_programs.slang"
 // The indices of the resources of a Vfx program in its namespace, before
 // its source: its functions name them.
 @(private)
-vfx_prelude :: proc(name:string,resources:[]Resource) -> string {
+vfx_prelude :: proc(name:string,resources:[]abi.Program_Resource) -> string {
     if len(resources)==0 {return ""}
     names:=strings.builder_make(context.temp_allocator)
     fmt.sbprintf(&names,"namespace %s {{",name)
@@ -701,7 +610,7 @@ vfx_prelude :: proc(name:string,resources:[]Resource) -> string {
 // copy is at include/programs/<relative>. A message for Attributes a
 // particle does not hold.
 @(private)
-vfx_program_include :: proc(name,prelude,relative:string,parameters,attributes:Layout,stages:[]Vfx_Stage,said:Program_Directives) -> (text,problem:string) {
+vfx_program_include :: proc(name,prelude,relative:string,parameters,attributes:Layout,stages:[]abi.Program_Stage,said:Program_Directives) -> (text,problem:string) {
     own:=strings.builder_make(context.temp_allocator)
     strings.write_string(&own,VFX_HEADER)
     fmt.sbprintf(&own,"%s#include \"programs/%s\"\n",prelude,relative)
@@ -711,7 +620,7 @@ vfx_program_include :: proc(name,prelude,relative:string,parameters,attributes:L
     fmt.sbprintf(&own,"bool mirai_vfx_update(uint id,float4 packed[16],uint attributes,Mirai_Vfx_Context ctx,inout Mirai_Vfx_Particle value) {{%s::Attributes a=mirai_attributes_load_%s(attributes);%s::update(ctx,mirai_load_%s(packed),value,a);mirai_attributes_store_%s(attributes,a);return true;}}\n",name,name,name,name,name)
     particles,cells:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
     for stage,index in stages {
-        if stage.over=="particles" {
+        if stage.over==abi.PROGRAM_STAGE_PARTICLES {
             fmt.sbprintf(&particles,"case %d: {{%s::Attributes a=mirai_attributes_load_%s(attributes);%s::%s(ctx,mirai_load_%s(packed),value,a);mirai_attributes_store_%s(attributes,a);return true;}}",index,name,name,name,stage.name,name,name)
         } else {
             fmt.sbprintf(&cells,"case %d: %s::%s(cell,mirai_load_%s(packed));return true;",index,name,stage.name,name)
@@ -952,8 +861,8 @@ Program_Entry :: struct {
     metadata:        map[string]json.Object,
     metadata_problem:string, // why its metadata leaves it out
     problem:         string, // why its resources or stages leave it out
-    resources:       []Resource,
-    stages:          []Vfx_Stage,
+    resources:       []abi.Program_Resource,
+    stages:          []abi.Program_Stage,
     prelude:         string, // the indices of its resources, before it
     relative:        string, // below include/programs
     folder:          string,
@@ -1094,7 +1003,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     for entry in folders {
         if entry.label!="project" {append(&plugin_folders,entry.folder)}
     }
-    programs:=make([dynamic]Program,allocator)
+    programs:=make([dynamic]abi.Program,allocator)
     dispatchers:=dispatchers_make()
     vfx_names:=make([dynamic]string,allocator)
     surface_names:=make([dynamic]string,allocator)
@@ -1203,7 +1112,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             append(&refused,fmt.aprintf("%s: Parameters exceeds %d fields/%d bytes",name,MAX_PARAMETERS,PARAMETER_BYTES,allocator=allocator))
             continue
         }
-        parameters:=make([]Parameter,len(layout.fields),allocator)
+        parameters:=make([]abi.Program_Parameter,len(layout.fields),allocator)
         for field,index in layout.fields {
             parameter,problem:=program_parameter(field,metadata[field.name],allocator)
             if problem!="" {append(&refused,fmt.aprintf("%s.%s: %s",name,field.name,problem,allocator=allocator));continue programs_loop}
@@ -1211,14 +1120,14 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             parameters[index]=parameter
         }
         id:=len(programs)+1
-        layers:=make([dynamic]string,allocator)
+        layers:asset.Material_Layers
         if of==.Surface {
-            for entry in PROGRAM_LAYERS {
-                if word_in(e.text,entry[1]) {append(&layers,entry[0])}
+            for field,layer in PROGRAM_LAYERS {
+                if word_in(e.text,field) {layers+={layer}}
             }
         }
         attributes:int
-        vertex:Vertex_Function
+        vertex:abi.Program_Vertex
         if of==.Surface {
             problem:string
             if vertex,problem=program_vertex(name,e.said.vertex,layout,allocator);problem!="" {append(&refused,problem);continue}
@@ -1253,7 +1162,7 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
             dispatchers_add(&dispatchers,of,id,name,relative,layout,e.coverage,string(e.alpha[:]) if e.coverage else "")
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,Program{id=id,name=strings.clone(name,allocator),domain=strings.clone(e.domain,allocator),source=relative,size=layout.size,parameters=parameters,layers=layers[:],attributes=attributes,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),vertex=vertex})
+        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),vertex=vertex})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {
@@ -1261,109 +1170,18 @@ programs_generate :: proc(runner:^Runner,root,project,output,slangc,version,cach
     }
     if failed:=dispatchers_write(&dispatchers,include);failed!="" {return {},fmt.aprintf("could not write %s",failed,allocator=allocator)}
     catalog={fingerprint=sha_hex(&hash,allocator),compiler=strings.clone(version,allocator),programs=programs[:],refused=refused[:],vfx=vfx_names[:],surface=surface_names[:],vertex=vertex_names[:]}
-    if !write_file(path_join(output,"catalog.json",allocator=context.temp_allocator),catalog_json(catalog,context.temp_allocator)) {return {},strings.clone("could not write catalog.json",allocator)}
+    if !write_file(path_join(output,abi.SHADER_CATALOG,allocator=context.temp_allocator),catalog_text(catalog)) {return {},fmt.aprintf("could not write %s",abi.SHADER_CATALOG,allocator=allocator)}
     return catalog,""
 }
 
+// The text of SHADER_CATALOG, in temporary memory.
 @(private)
-catalog_json :: proc(catalog:Catalog,allocator:=context.allocator) -> []u8 {
-    default_json :: proc(writer:^Json_Writer,value:Default) {
-        switch v in value {
-        case bool: json_bool(writer,v)
-        case Number: json_number(writer,v)
-        case string: json_string(writer,v)
-        }
-    }
-    writer:=json_writer(allocator)
-    json_object_begin(&writer)
-    json_key(&writer,"version");json_integer(&writer,1)
-    json_key(&writer,"fingerprint");json_string(&writer,catalog.fingerprint)
-    json_key(&writer,"compiler");json_string(&writer,catalog.compiler)
-    json_key(&writer,"programs");json_array_begin(&writer)
-    for program in catalog.programs {
-        json_object_begin(&writer)
-        json_key(&writer,"id");json_integer(&writer,i64(program.id))
-        json_key(&writer,"name");json_string(&writer,program.name)
-        json_key(&writer,"domain");json_string(&writer,program.domain)
-        json_key(&writer,"source");json_string(&writer,program.source)
-        json_key(&writer,"size");json_integer(&writer,i64(program.size))
-        if len(program.layers)>0 {
-            json_key(&writer,"layers");json_array_begin(&writer)
-            for layer in program.layers {json_string(&writer,layer)}
-            json_array_end(&writer)
-        }
-        if program.domain=="vfx" {json_key(&writer,"attributes");json_integer(&writer,i64(program.attributes))}
-        if program.coverage {json_key(&writer,"coverage");json_bool(&writer,true)}
-        if program.standard {json_key(&writer,"standard");json_bool(&writer,true)}
-        if program.moves {json_key(&writer,"moves");json_bool(&writer,true)}
-        if program.births {json_key(&writer,"births");json_bool(&writer,true)}
-        if program.prepare {json_key(&writer,"prepare");json_bool(&writer,true)}
-        if program.vertex.declared {
-            json_key(&writer,"vertex");json_object_begin(&writer)
-            json_key(&writer,"animated");json_bool(&writer,program.vertex.animated)
-            json_key(&writer,"reach")
-            if program.vertex.reach_parameter!="" {json_string(&writer,program.vertex.reach_parameter)} else {json_float(&writer,program.vertex.reach)}
-            json_object_end(&writer)
-        }
-        if len(program.resources)>0 {
-            json_key(&writer,"resources");json_array_begin(&writer)
-            for resource in program.resources {
-                json_object_begin(&writer)
-                json_key(&writer,"name");json_string(&writer,resource.name)
-                json_key(&writer,"kind");json_string(&writer,resource.kind)
-                if resource.cleared {json_key(&writer,"cleared");json_bool(&writer,true)}
-                if resource.words>0 {json_key(&writer,"words");json_integer(&writer,i64(resource.words))}
-                json_object_end(&writer)
-            }
-            json_array_end(&writer)
-        }
-        if len(program.stages)>0 {
-            json_key(&writer,"stages");json_array_begin(&writer)
-            for stage in program.stages {
-                json_object_begin(&writer)
-                json_key(&writer,"name");json_string(&writer,stage.name)
-                json_key(&writer,"over");json_string(&writer,stage.over)
-                json_key(&writer,"iterations");json_integer(&writer,i64(stage.iterations))
-                if len(stage.writes)>0 {
-                    json_key(&writer,"writes");json_array_begin(&writer)
-                    for target in stage.writes {json_string(&writer,target)}
-                    json_array_end(&writer)
-                }
-                json_object_end(&writer)
-            }
-            json_array_end(&writer)
-        }
-        json_key(&writer,"parameters");json_array_begin(&writer)
-        for parameter in program.parameters {
-            json_object_begin(&writer)
-            json_key(&writer,"name");json_string(&writer,parameter.name)
-            json_key(&writer,"kind");json_string(&writer,parameter.kind)
-            json_key(&writer,"components");json_integer(&writer,i64(parameter.components))
-            json_key(&writer,"offset");json_integer(&writer,i64(parameter.offset))
-            json_key(&writer,"default")
-            if parameter.default_list {
-                json_array_begin(&writer)
-                for i in 0..<parameter.components {default_json(&writer,parameter.defaults[i])}
-                json_array_end(&writer)
-            } else {
-                default_json(&writer,parameter.defaults[0])
-            }
-            json_key(&writer,"min");json_number(&writer,parameter.min)
-            json_key(&writer,"max");json_number(&writer,parameter.max)
-            json_key(&writer,"srgb");json_bool(&writer,parameter.srgb)
-            json_key(&writer,"normal");json_bool(&writer,parameter.normal)
-            json_key(&writer,"color");json_bool(&writer,parameter.color)
-            if parameter.group!="" {json_key(&writer,"group");json_string(&writer,parameter.group)}
-            json_object_end(&writer)
-        }
-        json_array_end(&writer)
-        json_object_end(&writer)
-    }
-    json_array_end(&writer)
-    // A generation that adds nothing to the frame constants says nothing of them.
-    if catalog.extensions.nested || catalog.extensions.instance_ids || len(catalog.extensions.fields)>0 {extensions_json(&writer,catalog.extensions)}
-    json_object_end(&writer)
-    return json_finish(&writer)
+catalog_text :: proc(catalog:Catalog) -> []u8 {
+    e:=catalog.extensions
+    frame:=abi.Frame_Catalog{size=e.frame_size,nested=e.nested,instance_ids=e.instance_ids,extensions=make([]abi.Frame_Extension,len(e.fields),context.temp_allocator)}
+    for field,i in e.fields {frame.extensions[i]={field.name,field.offset,field.size}}
+    text,_:=serial.text_encode(abi.Shader_Catalog{abi.SHADER_CATALOG_VERSION,catalog.fingerprint,catalog.compiler,catalog.programs,frame},.Pretty,context.temp_allocator)
+    return text
 }
 
 // Whether text names word as a whole identifier.

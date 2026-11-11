@@ -359,11 +359,11 @@ program_catalog_names_the_programs_and_packs_their_parameters :: proc(t: ^testin
 	testing.expect_value(t, params[0].xyz, Vec3{0.5, 0.25, 1})
 	testing.expect(t, program_parameter(grid, "nothing") == nil)
 
-	text := `{"programs":[{"id":3,"name":"Paint","domain":"surface","size":24,"parameters":[
-		{"name":"image","kind":"texture","components":1,"offset":0,"default":"","min":0,"max":0,"srgb":true},
-		{"name":"steps","kind":"int32","components":2,"offset":4,"default":[-2,5],"min":-8,"max":8,"group":"Pattern"},
-		{"name":"on","kind":"bool","components":1,"offset":12,"default":true,"min":0,"max":1},
-		{"name":"mask","kind":"uint32","components":1,"offset":16,"default":7,"min":0,"max":4294967295}]}]}`
+	text := `{"version":2,"programs":[{"id":3,"name":"Paint","domain":"Surface","size":24,"parameters":[
+		{"name":"image","kind":"Texture","components":1,"offset":0,"srgb":true},
+		{"name":"steps","kind":"Int","components":2,"offset":4,"defaults":[-2,5,0,0],"min":-8,"max":8,"group":"Pattern"},
+		{"name":"on","kind":"Bool","components":1,"offset":12,"defaults":[1,0,0,0],"min":0,"max":1},
+		{"name":"mask","kind":"Uint","components":1,"offset":16,"defaults":[7,0,0,0],"min":0,"max":4294967295}]}]}`
 	catalog, parsed := program_catalog_parse(transmute([]u8)text)
 	if !testing.expect(t, parsed) {return}
 	defer program_catalog_destroy(&catalog)
@@ -385,7 +385,7 @@ program_catalog_names_the_programs_and_packs_their_parameters :: proc(t: ^testin
 	testing.expect(t, !program_parameter_set(&values, &paint.parameters[0], {1, 0, 0, 0}), "a texture is not a number")
 	testing.expect(t, paint.parameters[0].srgb && program_parameter_set_texture(r, &values, &paint.parameters[0], 0))
 	testing.expect(t, !program_parameter_set_texture(r, &values, &paint.parameters[1], 0))
-	broken := `{"programs":[{"id":1,"name":"Wide","domain":"surface","size":8,"parameters":[{"name":"far","kind":"float32","components":4,"offset":248}]}]}`
+	broken := `{"version":2,"programs":[{"id":1,"name":"Wide","domain":"Surface","size":8,"parameters":[{"name":"far","kind":"Float","components":4,"offset":248}]}]}`
 	_, wide := program_catalog_parse(transmute([]u8)broken)
 	testing.expect(t, !wide, "a parameter past the 256 bytes of a row makes the catalog invalid")
 }
@@ -401,16 +401,16 @@ program_catalog_keeps_the_ui_programs_apart :: proc(t: ^testing.T) {
 		testing.expectf(t, program_find(r, name, .Postprocess) == nil && program_find(r, name, .Surface) == nil, "%s is of the ui domain alone", name)
 	}
 	testing.expect(t, program_find(r, "ColorGrade", .Ui) == nil)
-	text := `{"programs":[{"id":4,"name":"Wipe","domain":"ui","size":8,"parameters":[
-		{"name":"fill","kind":"float32","components":1,"offset":0,"default":1,"min":0,"max":1},
-		{"name":"start","kind":"float32","components":1,"offset":4,"default":0,"min":-1,"max":1}]}]}`
+	text := `{"version":2,"programs":[{"id":4,"name":"Wipe","domain":"Ui","size":8,"parameters":[
+		{"name":"fill","kind":"Float","components":1,"offset":0,"defaults":[1,0,0,0],"min":0,"max":1},
+		{"name":"start","kind":"Float","components":1,"offset":4,"min":-1,"max":1}]}]}`
 	catalog, parsed := program_catalog_parse(transmute([]u8)text)
 	if !testing.expect(t, parsed) {return}
 	defer program_catalog_destroy(&catalog)
 	wipe := &catalog.programs[0]
 	testing.expect(t, wipe.domain == .Ui && wipe.id == 4 && len(wipe.parameters) == 2)
 	testing.expect_value(t, program_defaults(wipe)[0], Vec4{1, 0, 0, 0})
-	unknown := `{"programs":[{"id":1,"name":"Fog","domain":"volume","size":0,"parameters":[]}]}`
+	unknown := `{"version":2,"programs":[{"id":1,"name":"Fog","domain":"Volume","size":0,"parameters":[]}]}`
 	_, known := program_catalog_parse(transmute([]u8)unknown)
 	testing.expect(t, !known, "a domain the renderer does not know makes the catalog invalid")
 }

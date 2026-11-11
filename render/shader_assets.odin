@@ -2,7 +2,6 @@ package mirai_render
 
 import "base:runtime"
 import "core:encoding/endian"
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -76,11 +75,9 @@ embedded_shaders_decode :: proc(codes:^[Shader_Id]rhi.Shader_Code,programs:^[len
 
 FRAME_EXTENSION_CAPACITY :: 8
 
-// What an extension keeps in the constants of every view: the struct it declared for them.
-Frame_Extension :: struct {
-    name:string, // of the catalog the layout was read from
-    offset,size:int,
-}
+// What an extension keeps in the constants of every view: the struct it
+// declared for them. Its name is in the catalog the layout was read from.
+Frame_Extension :: abi.Frame_Extension
 
 // The constants of a view in a generation of the shaders: Gpu_Frame, then the
 // nested views when the generation has them, then what each extension declared.
@@ -96,36 +93,20 @@ Frame_Layout :: struct {
 @(private)
 frame_layout_of :: proc(assets:^Shader_Assets) -> Frame_Layout {
     layout:=Frame_Layout{size=size_of(Gpu_Frame)}
-    if len(assets.catalog)==0 {return layout}
-    value,parse_error:=json.parse(assets.catalog,allocator=context.temp_allocator)
-    root,is_object:=value.(json.Object)
-    if parse_error!=.None || !is_object {return layout}
-    frame,has_frame:=root["frame"].(json.Object)
-    if !has_frame {return layout}
-    whole :: proc(v:json.Value)->int {
-        if value,ok:=v.(json.Integer);ok {return int(value)}
-        if value,ok:=v.(json.Float);ok {return int(value)}
-        return 0
-    }
-    nested,_:=frame["nested"].(json.Boolean)
-    instance_ids,_:=frame["instance_ids"].(json.Boolean)
-    size:=whole(frame["size"])
-    core:=size_of(Gpu_Frame)+(NESTED_VIEW_CAPACITY*size_of(Gpu_Nested) if nested else 0)
-    if size==0 && !nested {size=core}
-    if size<core || size>65536 {return layout}
-    extensions,_:=frame["extensions"].(json.Array)
-    for entry in extensions {
-        item,_:=entry.(json.Object)
-        name,_:=item["name"].(json.String)
-        offset,bytes:=whole(item["offset"]),whole(item["size"])
-        if name=="" || offset<core || bytes<=0 || offset+bytes>size || layout.extension_count>=FRAME_EXTENSION_CAPACITY {return {size=size_of(Gpu_Frame)}}
+    catalog:abi.Shader_Catalog
+    if len(assets.catalog)==0 || serial.text_decode(string(assets.catalog),&catalog,context.temp_allocator)!="" {return layout}
+    frame:=catalog.frame
+    core:=size_of(Gpu_Frame)+(NESTED_VIEW_CAPACITY*size_of(Gpu_Nested) if frame.nested else 0)
+    size:=frame.size
+    if size==0 && !frame.nested {size=core}
+    if size<core || size>65536 || len(frame.extensions)>FRAME_EXTENSION_CAPACITY {return layout}
+    for extension,i in frame.extensions {
         // The name lives as long as the catalog of the generation: find it there.
-        at:=strings.index(string(assets.catalog),name)
-        if at<0 {return {size=size_of(Gpu_Frame)}}
-        layout.extensions[layout.extension_count]={string(assets.catalog[at:][:len(name)]),offset,bytes}
-        layout.extension_count+=1
+        at:=strings.index(string(assets.catalog),extension.name)
+        if extension.name=="" || at<0 || extension.offset<core || extension.size<=0 || extension.offset+extension.size>size {return {size=size_of(Gpu_Frame)}}
+        layout.extensions[i]={string(assets.catalog[at:][:len(extension.name)]),extension.offset,extension.size}
     }
-    layout.size,layout.nested,layout.instance_ids=size,bool(nested),bool(instance_ids)
+    layout.size,layout.nested,layout.instance_ids,layout.extension_count=size,frame.nested,frame.instance_ids,len(frame.extensions)
     return layout
 }
 
@@ -261,7 +242,7 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
     }
     if error=="" {for c in assets.codes {if c.name=="" {error="shader catalog is incomplete";break}}}
     if error=="" {
-        catalog,_:=filepath.join({directory,"catalog.json"},context.temp_allocator)
+        catalog,_:=filepath.join({directory,abi.SHADER_CATALOG},context.temp_allocator)
         assets.catalog,_=os.read_entire_file(catalog,allocator)
     }
     if error!="" {shader_assets_destroy(&assets)}
@@ -349,7 +330,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
 }
 renderer_reload_shaders :: proc(r:^Renderer,assets:^Shader_Assets)->bool {
     if !assets.owned {return false}
-    catalog,valid:=program_catalog_parse(assets.catalog,r.allocator)
+    catalog,valid:=program_catalog_parse(assets.catalog)
     if !valid {set_error(r,"invalid material program catalog");return false}
     defer program_catalog_destroy(&catalog)
     if shader_assets_match_codes(assets,&r.shader_codes) {

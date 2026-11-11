@@ -7,6 +7,7 @@ import "core:math"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "mirai:render/abi"
 import "mirai:std/base"
 import "mirai:std/jobs"
 
@@ -615,7 +616,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
     reflected:=false
     // A Vfx program declares its resources and stages; the indices of its resources go before it.
     directives:=program_directives(text)
-    stages_declared:[]Vfx_Stage
+    stages_declared:[]abi.Program_Stage
     prelude:string
     declared:=true
     if c.domain==.Vfx {

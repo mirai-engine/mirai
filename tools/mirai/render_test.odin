@@ -1,6 +1,5 @@
 package main
 
-import "core:encoding/json"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -177,26 +176,13 @@ render_options_parse_reads_the_flags_and_refuses_what_cannot_go_together :: proc
 }
 
 // A saved base serves the check that would measure the same images: the key
-// changes with the GPU, the view, its size and the frames of the plan, not
-// with the order of the keys of a play step.
+// changes with the GPU, the view, its size and the frames of the plan.
 @(test)
 render_base_key_names_what_a_measure_depends_on :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    step :: proc(a,b:string) -> json.Value {
-        object:=make(json.Object)
-        object[a]=json.Integer(1)
-        object[b]=json.Integer(2)
-        return object
-    }
-    view:=Render_View{name="night",scene="scenes/night.scene",position={0,1,2},target={0,0,0},play={step("ticks","repeat")}}
+    view:=Render_View{name="night",scene="scenes/night.scene",position={0,1,2},target={0,0,0},play={{repeat=2,step=`{"for":1}`}}}
     plan:=Render_Plan{sizes={{1440,900}},warmup=600,frames=180,interval=60,captures=3,views={view}}
     key:=render_base_key("demo","RTX 3070",plan,view,{1440,900})
-    reordered:=view
-    swapped:=make(json.Object)
-    swapped["repeat"]=json.Integer(2)
-    swapped["ticks"]=json.Integer(1)
-    reordered.play={swapped}
-    testing.expect_value(t,render_base_key("demo","RTX 3070",plan,reordered,{1440,900}),key)
     moved:=view
     moved.position={0,1,3}
     longer:=plan

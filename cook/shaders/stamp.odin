@@ -1,9 +1,11 @@
 package shaders
 
+import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "mirai:render/abi"
 import "mirai:std/serial"
 
 // What the last generation of a cache was made from and what it published:
@@ -57,7 +59,7 @@ request_digest :: proc(g:^Generation,sources:[]Source,odin:bool,allocator:=conte
     hash:Sha256
     sha_begin(&hash)
     zero:=[1]u8{0}
-    for text in ([]string{GENERATOR_CONTRACT,abi_text(),material_schema(),shared_constants(),g.root,g.project,g.output,"odin" if odin else "","vulkan" if .Vulkan in g.backends else "","metal" if .Metal in g.backends else ""}) {
+    for text in ([]string{GENERATOR_CONTRACT,fmt.tprint(abi.SHADER_CATALOG_VERSION),abi_text(),material_schema(),shared_constants(),g.root,g.project,g.output,"odin" if odin else "","vulkan" if .Vulkan in g.backends else "","metal" if .Metal in g.backends else ""}) {
         sha_text(&hash,text)
         sha_bytes(&hash,zero[:])
     }
