@@ -2,11 +2,9 @@ package animation_editor
 
 import "core:fmt"
 import cmath "core:math"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import aa "mirai:asset"
-import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import lib "mirai:std/anim"
@@ -72,7 +70,7 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
 
     result:=authoring_test_execute(f,"analyze",fmt.tprintf(`{{%s,"clip":"sway"}}`,ids))
     if !testing.expect(t,result.code==0,result.message) {return}
-    text:=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
+    text:=strings.clone(api.json_compact(string(serial.writer_bytes(&f.out))),context.temp_allocator)
     testing.expect_value(t,result_shape_mismatch(Metrics_Result,text),"")
     testing.expect(t,strings.contains(text,`"root":"root"`) && strings.contains(text,`"in_place":false`))
     testing.expectf(t,abs(clip_test_number(text,"speed","")-1)<.01,"speed in %s",text)
@@ -85,7 +83,7 @@ clip_edit_retimes_smooths_and_loops_into_a_new_clip_with_metrics_before_and_afte
     testing.expect_value(t,authoring_test_revision(f,"sway.anim"),before)
     result=authoring_test_execute(f,"edit",request)
     if !testing.expect(t,result.code==0,result.message) {return}
-    text=strings.clone(string(serial.writer_bytes(&f.out)),context.temp_allocator)
+    text=strings.clone(api.json_compact(string(serial.writer_bytes(&f.out))),context.temp_allocator)
     testing.expect_value(t,result_shape_mismatch(Clip_Edit_Result,text),"")
     after:=api.json_member(text,"after")
     testing.expectf(t,abs(clip_test_number(after,"duration","")-2)<1e-3,"after %s",after)

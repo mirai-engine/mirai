@@ -187,7 +187,8 @@ schema_string :: proc(s:^Schema,text:string) -> string {
     return copied
 }
 
-// Checks what schema_read promises. Also true of every schema built by schema_add.
+// Checks what schema_read promises. Also true of every schema built by
+// schema_add that is not unsized: a type of an unsized one has no binary form.
 schema_validate :: proc(s:^Schema) -> Schema_Error {
     depths,error:=make([]u8,len(s.types),s.allocator)
     if error!=nil {return .Out_Of_Memory}
@@ -248,6 +249,8 @@ schema_validate :: proc(s:^Schema) -> Schema_Error {
             if s.types[type.elem].size==0 && type.count>0 {return .Invalid_Type}
             type.first=0
             depth=depths[type.elem]+1
+        case .Slice,.String,.Json:
+            return .Invalid_Type
         }
         if depth>SCHEMA_MAX_DEPTH {return .Too_Deep}
         depths[index]=depth
@@ -275,7 +278,7 @@ schema_hashes_update :: proc(s:^Schema,hashes:^[dynamic]u64) -> bool {
                 hash=base.hash_combine(hash,u64(field.offset))
                 hash=base.hash_combine(hash,hashes[field.type])
             }
-        case .Array:
+        case .Array,.Slice:
             hash=base.hash_combine(hash,hashes[type.elem])
         }
         if layout_named(type) {hash=layout_choices(s,type,hash)}
@@ -332,12 +335,7 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
         if reserve(&dst.fields,len(dst.fields)+len(fields))!=nil {return TYPE_NONE}
         whole:=true
         for &field in fields {
-            from:=field
-            field.name=schema_string(dst,from.name)
-            field.label,field.unit=schema_string(dst,from.label),schema_string(dst,from.unit)
-            field.description=schema_string(dst,from.description)
-            field.asset_kinds,field.was=schema_string(dst,from.asset_kinds),schema_string(dst,from.was)
-            whole&&=len(field.name)==len(from.name) && len(field.label)==len(from.label) && len(field.unit)==len(from.unit) && len(field.description)==len(from.description) && len(field.asset_kinds)==len(from.asset_kinds) && len(field.was)==len(from.was)
+            if !schema_field_keep(dst,&field) {whole=false}
         }
         if !whole {
             for field in fields {schema_field_free(dst,field)}
@@ -353,7 +351,7 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
             schema_type_drop(dst,copied)
             return TYPE_NONE
         }
-    case .Array:
+    case .Array,.Slice:
         copied.elem=schema_import(link,source.elem)
         if copied.elem==TYPE_NONE {return TYPE_NONE}
     }
@@ -386,12 +384,8 @@ schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) -> Sc
     }
     for field in src.fields {
         copied:=field
-        copied.name=schema_string(dst,field.name)
-        copied.label,copied.unit=schema_string(dst,field.label),schema_string(dst,field.unit)
-        copied.description=schema_string(dst,field.description)
-        copied.asset_kinds,copied.was=schema_string(dst,field.asset_kinds),schema_string(dst,field.was)
+        if !schema_field_keep(dst,&copied) {whole=false}
         append(&dst.fields,copied)
-        whole&&=len(copied.name)==len(field.name) && len(copied.label)==len(field.label) && len(copied.unit)==len(field.unit) && len(copied.description)==len(field.description) && len(copied.asset_kinds)==len(field.asset_kinds) && len(copied.was)==len(field.was)
     }
     for choice in src.choices {
         name:=schema_string(dst,choice.name)

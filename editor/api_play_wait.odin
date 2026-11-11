@@ -16,7 +16,6 @@ import "mirai:std/serial"
 // name one, read by api_entity_value: Component.field.0.field, where a[0].b is
 // a.0.b, or a key of the document of the entity (world_position.2).
 
-API_PLAY_CONDITIONS :: 16
 
 Api_Compare :: enum u8 {Exists,Gone,Equal,Not_Equal,Below,At_Most,Above,At_Least}
 
@@ -31,18 +30,18 @@ Api_Play_Condition :: struct {
 }
 
 Api_Play_Check_Params :: struct {
-    conditions:[API_PLAY_CONDITIONS]Api_Play_Condition `mirai:"label=What must hold"`,
+    conditions:[]Api_Play_Condition `mirai:"label=What must hold"`,
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
 }
 
 Api_Play_Check_Result :: struct {
     passed:bool `mirai:"label=Every condition holds"`,
     tick:u64 `mirai:"label=The tick of the game they were read at"`,
-    results:[1]Api_Play_Check_Entry `mirai:"list,label=One per condition in their order"`,
+    results:[]Api_Play_Check_Entry `mirai:"label=One per condition in their order"`,
 }
 Api_Play_Check_Entry :: struct {
     passed:bool,
-    value:u8 `mirai:"any,label=What it read as play.inspect writes it; null when the entity or the component or the storage is not there"`,
+    value:serial.Json `mirai:"label=What it read as play.inspect writes it; null when the entity or the component or the storage is not there"`,
 }
 
 Api_Play_Get_Params :: struct {
@@ -52,15 +51,15 @@ Api_Play_Get_Params :: struct {
 }
 
 Api_Play_Get_Result :: struct {
-    entity:[API_HANDLE_TEXT]u8 `mirai:"text,label=The handle of the entity"`,
+    entity:core.Entity `mirai:"label=The handle of the entity"`,
     tick:u64 `mirai:"label=The tick of the game it was read at"`,
-    value:u8 `mirai:"any,label=The value as play.inspect writes it"`,
+    value:serial.Json `mirai:"label=The value as play.inspect writes it: a value whose type the world declares"`,
 }
 
 @(private)
 api_play_wait_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.get",summary="One value of one entity of the game of the caller now, without its whole document: a field of a component or a place of the world.",params=Api_Play_Get_Params,result=Api_Play_Get_Result,writes_result=true,flags={.Read_Only},run=api_play_get})
-    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=Api_Play_Check_Params,result=Api_Play_Check_Result,writes_result=true,flags={.Core,.Read_Only},run=api_play_check})
+    api_register(s,st,{name="play.get",summary="One value of one entity of the game of the caller now, without its whole document: a field of a component or a place of the world.",params=type_info_of(Api_Play_Get_Params),result=type_info_of(Api_Play_Get_Result),flags={.Read_Only},run=api_play_get})
+    api_register(s,st,{name="play.check",summary="Says whether conditions on the game of the caller hold now (values of components or storages compared, entities there or gone) with what each one read: the assertions of a test.",params=type_info_of(Api_Play_Check_Params),result=type_info_of(Api_Play_Check_Result),flags={.Core,.Read_Only},run=api_play_check})
 }
 
 // What a condition read of a world: whether it holds, and the value as JSON.
@@ -177,28 +176,17 @@ api_conditions_read :: proc(s:^Session,w:core.World_Ref,conditions:[]Api_Play_Co
 api_play_check :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Play_Check_Params)
     r,_:=api_play_run(s,call,params.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
-    values:[1]string
-    api.object_values(call.allocator,call.raw,{"conditions"},values[:])
-    count:=api.json_count(values[0])
-    if count==0 {api.call_fail(call,api.INVALID_PARAMS,"conditions is empty: give what must hold");return}
+    if r==nil {api_no_game(call);return}
+    if len(params.conditions)==0 {api.call_fail(call,api.INVALID_PARAMS,"conditions is empty: give what must hold");return}
     w:=run_ref(s,r)
-    reads:=make([]Api_Condition_Read,count,context.temp_allocator)
-    passed,problem:=api_conditions_read(s,w,params.conditions[:count],reads,"conditions")
+    reads:=make([]Api_Condition_Read,len(params.conditions),context.temp_allocator)
+    passed,problem:=api_conditions_read(s,w,params.conditions,reads,"conditions")
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
-    out:=call.out
-    serial.text_write_raw(out,`{"passed":`);api.write_flag(out,passed)
-    tick:u64
-    if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
-    api.write_key(out,"tick");serial.text_write_uint(out,tick)
-    api.write_key(out,"results");serial.write_u8(out,'[')
-    for read,i in reads {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_raw(out,`{"passed":`);api.write_flag(out,read.passed)
-        api.write_key(out,"value");serial.text_write_raw(out,read.value)
-        serial.write_u8(out,'}')
-    }
-    serial.text_write_raw(out,"]}")
+    result:=api.call_result(call,Api_Play_Check_Result)
+    result.passed=passed
+    if t:=core.world_storage_of(w,core.Time);t!=nil {result.tick=t.tick}
+    result.results=make([]Api_Play_Check_Entry,len(reads),call.allocator)
+    for read,i in reads {result.results[i]={read.passed,serial.Json(read.value)}}
 }
 
 // A value of a live entity at a path of the one syntax of Play: a component and
@@ -268,20 +256,15 @@ api_entity_field :: proc(s:^Session,w:core.World_Ref,e:core.Entity,field:string,
 api_play_get :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Get_Params)
     r,_:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     w:=run_ref(s,r)
     e,known:=api_call_entity(call,w,p.entity[:],game=true)
     if !known {return}
     value,wrong:=api_entity_field(s,w,e,base.text_get(p.field[:]),call.allocator)
     if wrong!="" {api.call_fail(call,api.INVALID_PARAMS,wrong);return}
-    out:=call.out
-    serial.text_write_raw(out,`{"entity":`);serial.text_write_string(out,api_handle_text(e))
-    api.write_key(out,"tick")
-    tick:u64
-    if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
-    serial.text_write_uint(out,tick)
-    api.write_key(out,"value");serial.text_write_raw(out,value)
-    serial.write_u8(out,'}')
+    result:=api.call_result(call,Api_Play_Get_Result)
+    result.entity,result.value=e,serial.Json(value)
+    if t:=core.world_storage_of(w,core.Time);t!=nil {result.tick=t.tick}
 }
 
 // The value at a path inside a JSON value: names of fields joined by dots and

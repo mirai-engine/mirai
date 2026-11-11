@@ -49,10 +49,10 @@ Api_Collab_Status :: struct {
 
 @(private)
 collab_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="collab.host",summary="Shares the scene: other editors connect to this one with the code of the invitation it gives.",params=Api_Collab_Host_Params,result=Api_Collab_Status,run=api_collab_host})
-    api_register(s,st,{name="collab.join",summary="Enters the session of another editor; the scene is replaced by its scene. Returns before the scene arrives: poll collab.status until phase is Joined.",params=Api_Collab_Join_Params,result=Api_Collab_Status,flags={.Destructive},run=api_collab_join})
-    api_register(s,st,{name="collab.leave",summary="Ends the session; the scene stays as it is.",result=Api_Collab_Status,flags={.Idempotent},run=api_collab_leave})
-    api_register(s,st,{name="collab.status",summary="The session this editor shares or joined: who is in it and how others join it.",result=Api_Collab_Status,flags={.Read_Only},run=api_collab_status})
+    api_register(s,st,{name="collab.host",summary="Shares the scene: other editors connect to this one with the code of the invitation it gives.",params=type_info_of(Api_Collab_Host_Params),result=type_info_of(Api_Collab_Status),run=api_collab_host})
+    api_register(s,st,{name="collab.join",summary="Enters the session of another editor; the scene is replaced by its scene. Returns before the scene arrives: poll collab.status until phase is Joined.",params=type_info_of(Api_Collab_Join_Params),result=type_info_of(Api_Collab_Status),flags={.Destructive},run=api_collab_join})
+    api_register(s,st,{name="collab.leave",summary="Ends the session; the scene stays as it is.",result=type_info_of(Api_Collab_Status),flags={.Idempotent},run=api_collab_leave})
+    api_register(s,st,{name="collab.status",summary="The session this editor shares or joined: who is in it and how others join it.",result=type_info_of(Api_Collab_Status),flags={.Read_Only},run=api_collab_status})
 }
 
 @(private)

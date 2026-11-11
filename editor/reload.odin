@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:os"
@@ -142,9 +141,9 @@ session_record_follow :: proc(s:^Session,pid:int) {
     path:=project.path(s.project_root,".mirai",api.SESSION_FILE,allocator=context.temp_allocator)
     data,error:=os.read_entire_file(path,context.temp_allocator)
     record:api.Session_Record
-    if error!=nil || json.unmarshal(data,&record,allocator=context.temp_allocator)!=nil || record.pid!=os.get_pid() {return}
+    if error!=nil || serial.text_decode(string(data),&record,context.temp_allocator)!="" || record.pid!=os.get_pid() {return}
     record.pid=pid
-    if written,marshal_error:=json.marshal(record,{pretty=true},context.temp_allocator);marshal_error==nil {
+    if written,encoded:=serial.text_encode(record,.Pretty,context.temp_allocator);encoded {
         _=serial.file_write_atomic(path,written)
     }
 }

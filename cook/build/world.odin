@@ -534,6 +534,7 @@ package_read :: proc(g:^Generator,pkg:^Package) {
             decl,is_value:=stmt.derived.(^ast.Value_Decl)
             if !is_value || len(decl.names)!=1 || len(decl.values)!=1 {continue}
             name:=ident_name(decl.names[0])
+            field_tags_check(g,file,name,decl.values[0])
             options:=attributes_read(decl.attributes[:])
             _,is_names:=options["names"]
             _,is_bits:=options["name_bits"]
@@ -2668,9 +2669,12 @@ test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Fie
                 test_fields_read(g,tw,storages,place,owner,from,group_file,group_record)
                 continue
             }
-            tag:=reflect.Struct_Tag(strings.trim(field.tag.text,"`"))
-            f:=Test_Field{place=place,offset=fmt.aprintf("offset_of(%s,%s)",tw.structs[place],name)}
-            _,f.game=core.field_option(tag,"game")
+            tag,invalid:=serial.field_tag(strings.trim(field.tag.text,"`"))
+            if invalid!="" {
+                append(&g.errors,fmt.aprintf("%s: %s",where_,invalid))
+                continue
+            }
+            f:=Test_Field{place=place,offset=fmt.aprintf("offset_of(%s,%s)",tw.structs[place],name),game=.Game in tag.hints}
             held,kind,by_world,count:=field.type,Kind.Storage,false,-1
             if array,is_array:=held.derived.(^ast.Array_Type);is_array && array.len!=nil {
                 if call,is_call:=array.elem.derived.(^ast.Call_Expr);is_call && type_key(g,file,pkg,call.expr)=="mirai:core.Table" {
@@ -2716,7 +2720,7 @@ test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Fie
                 }
             }
             f.name=t.name
-            if renamed,has:=core.field_option(tag,"name");has {f.name=renamed}
+            if tag.name!="" {f.name=tag.name}
             if kind==.Storage {
                 append(storages,f)
                 continue
@@ -3037,6 +3041,29 @@ attributes_read :: proc(attributes:[]^ast.Attribute) -> map[string]string {
         }
     }
     return options
+}
+
+// The tag of each field of a struct, and of the structs declared inside it,
+// is one std/serial reads (serial.field_tag): a tag that is not one would only
+// fail when the type reaches a schema, or leave the field without what it asks.
+@(private="file")
+field_tags_check :: proc(g:^Generator,file:^ast.File,name:string,value:^ast.Expr) {
+    record,is_struct:=value.derived.(^ast.Struct_Type)
+    if !is_struct || record.fields==nil {return}
+    for field in record.fields.list {
+        if field.type!=nil {field_tags_check(g,file,name,field.type)}
+        text:=field.tag.text
+        if len(text)<2 {continue}
+        if text[0]=='`' {
+            text=text[1:len(text)-1]
+        } else if unquoted,_,unquoted_ok:=strconv.unquote_string(text,context.temp_allocator);unquoted_ok {
+            text=unquoted
+        }
+        _,problem:=serial.field_tag(text)
+        if problem=="" {continue}
+        first:=len(field.names)>0?ident_name(field.names[0]):"_"
+        append(&g.errors,fmt.aprintf("%s(%d:%d): %s.%s: %s",file.fullpath,field.tag.pos.line,field.tag.pos.column,name,first,problem))
+    }
 }
 
 // The comment on the line of each field of the struct of a component: what

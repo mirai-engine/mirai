@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 // A bone or socket asked, found on the skeleton: its bone, and for a socket its offset on it.
@@ -74,7 +73,7 @@ pose_query :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Enti
 // Each bone and socket asked where its rig ended its last tick, in the space of the entity and in
 // the world from where the entity is now.
 @(private)
-instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_Query) {
+instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_Query) -> (r:Instance_Pose) {
     if query.rows==nil {
         authoring_failure(call,"entity","Missing_Skeleton","a rig with a skeleton","none","The entity has no skeleton to place bones on",fix="Give it a mesh with a skeleton and play it")
         return
@@ -87,16 +86,14 @@ instance_pose :: proc(call:^api.Call,w:core.World_Ref,e:core.Entity,query:^Pose_
     actor,placed:=core.world_of(core.world_table_of(w,core.Transform),core.world_table_of(w,core.Parent),e)
     if !placed {authoring_failure(call,"entity","Not_Placed","an entity with a transform","none","The entity has no transform",api.SERVER_ERROR);return}
     pose,posed:=anim.pose_space(playback,e,call.allocator)
-    out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"skeleton",true);serial.write_u8(out,'"');serial.text_write_asset_id(out,query.skeleton);serial.write_u8(out,'"')
-    api.write_key(out,"transforms");serial.text_write_raw(out,"[")
+    r.skeleton=query.skeleton
+    r.transforms=make([]Instance_Pose_Transform,len(query.rows),call.allocator)
     for &row,i in query.rows {
         space,placed:=lib.skeleton_socket(pose,row.bone+1,row.offset)
         if !posed || !placed {authoring_failure(call,"entity","Not_Posed","a pose of the rig in its last tick that has these bones","not posed","The pose of the rig cannot place a bone",api.SERVER_ERROR,fix="Run a tick of the world again; a pose with a value that is not finite is reported by engine.diagnostics");return}
         value:=Instance_Pose_Transform{kind=row.kind,bone=row.path,world=mm.transform_compose(actor,space),entity=space}
         copy(value.name[:len(value.name)-1],row.name)
-        if i>0 {serial.write_u8(out,',')}
-        authoring_write_value(call,&value,type_info_of(Instance_Pose_Transform))
+        if i<len(r.transforms) {r.transforms[i]=value}
     }
-    serial.text_write_raw(out,"]}")
+    return
 }

@@ -2,7 +2,6 @@ package editor
 
 import "core:fmt"
 import "core:log"
-import "core:math/linalg"
 import "core:os"
 import "core:path/filepath"
 import "core:strconv"
@@ -20,7 +19,6 @@ import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
-import mm "mirai:std/math"
 import "mirai:std/subprocess"
 import "mirai:ui"
 
@@ -483,7 +481,8 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     }
     if options.select!="" {select_ids(s,options.select)}
     if options.restore=="" {recovery_open(s)}
-    if !services_open(s,options) && options.headless && options.frames==0 {
+    // A headless editor is driven through its API: one that cannot open it ends.
+    if !services_open(s,options) && options.headless {
         close(s)
         return nil,EDITOR_API
     }

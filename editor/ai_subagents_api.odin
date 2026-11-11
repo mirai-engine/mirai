@@ -3,7 +3,6 @@ package editor
 import "mirai:editor/ai_store"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 Ai_Agent_Spawn_Params :: struct {
     prompt:[AI_MESSAGE_BYTES]u8 `mirai:"text,label=What the subagent has to do; it knows nothing of this chat but what this says"`,
@@ -23,49 +22,33 @@ Ai_Chat_Note_Result :: struct {saved:bool}
 
 Ai_Agent_Result :: struct {
     id:int `mirai:"label=What agent.message and agent.stop take"`,
-    title:[256]u8 `mirai:"text"`,
-    state:[16]u8 `mirai:"text,label=queued; running; done; failed; cancelled or interrupted"`,
-    connection:[32]u8 `mirai:"text,label=Id of the connection that runs it"`,
-    model:[128]u8 `mirai:"text"`,
-    effort:[32]u8 `mirai:"text"`,
-    document:[1024]u8 `mirai:"text,label=The document it works on"`,
+    title:string,
+    state:string `mirai:"label=queued; running; done; failed; cancelled or interrupted"`,
+    connection:string `mirai:"label=Id of the connection that runs it"`,
+    model,effort:string,
+    document:string `mirai:"label=The document it works on"`,
     changes:int `mirai:"label=Its changes that wait for the review of the user"`,
-    answer:[AI_FINISH_RESPONSE_BYTES+1]u8 `mirai:"text,label=What it answered once it finished; empty while it works"`,
+    answer:string `mirai:"label=What it answered once it finished; empty while it works"`,
 }
 Ai_Agent_List_Result :: struct {
-    agents:[1]Ai_Agent_Result `mirai:"list,label=The subagents of the main chat; the latest first"`,
+    agents:[]Ai_Agent_Result `mirai:"label=The subagents of the main chat; the latest first"`,
 }
 
 @(private)
 ai_subagents_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="agent.spawn",flags={.Core,.Turn},summary="Starts a subagent from a turn of the main chat, to work in parallel with its own review, and returns at once; when its turn ends its report reaches the main chat.",params=Ai_Agent_Spawn_Params,result=Ai_Agent_Result,writes_result=true,run=ai_method_agent_spawn})
-    api_register(s,st,{name="agent.list",summary="The subagents of the main chat with their state, connection, changes to review and, once finished, their answer.",result=Ai_Agent_List_Result,writes_result=true,flags={.Read_Only},run=ai_method_agent_list})
-    api_register(s,st,{name="agent.message",summary="Sends a message to a subagent: it joins the turn in progress at its next safe point, or starts its next turn when it is idle.",params=Ai_Agent_Message_Params,result=Ai_Agent_Result,writes_result=true,run=ai_method_agent_message})
-    api_register(s,st,{name="agent.stop",summary="Stops a subagent, or takes it out of the queue; what it changed stays for review.",params=Ai_Id_Params,result=Ai_Agent_Result,writes_result=true,flags={.Idempotent},run=ai_method_agent_stop})
-    api_register(s,st,{name="chat.note",flags={.Core},summary="Replaces the working notes of the main chat, which outlive its context.",params=Ai_Chat_Note_Params,result=Ai_Chat_Note_Result,run=ai_method_chat_note})
+    api_register(s,st,{name="agent.spawn",flags={.Core,.Turn},summary="Starts a subagent from a turn of the main chat, to work in parallel with its own review, and returns at once; when its turn ends its report reaches the main chat.",params=type_info_of(Ai_Agent_Spawn_Params),result=type_info_of(Ai_Agent_Result),run=ai_method_agent_spawn})
+    api_register(s,st,{name="agent.list",summary="The subagents of the main chat with their state, connection, changes to review and, once finished, their answer.",result=type_info_of(Ai_Agent_List_Result),flags={.Read_Only},run=ai_method_agent_list})
+    api_register(s,st,{name="agent.message",summary="Sends a message to a subagent: it joins the turn in progress at its next safe point, or starts its next turn when it is idle.",params=type_info_of(Ai_Agent_Message_Params),result=type_info_of(Ai_Agent_Result),run=ai_method_agent_message})
+    api_register(s,st,{name="agent.stop",summary="Stops a subagent, or takes it out of the queue; what it changed stays for review.",params=type_info_of(Ai_Id_Params),result=type_info_of(Ai_Agent_Result),flags={.Idempotent},run=ai_method_agent_stop})
+    api_register(s,st,{name="chat.note",flags={.Core},summary="Replaces the working notes of the main chat, which outlive its context.",params=type_info_of(Ai_Chat_Note_Params),result=type_info_of(Ai_Chat_Note_Result),run=ai_method_chat_note})
 }
 
 @(private)
-ai_agent_fields_write :: proc(w:^serial.Writer,id:int,title,state,connection,model,effort,document:string,changes:int,answer:string) {
-    serial.write_u8(w,'{')
-    api.write_int(w,"id",i64(id),true)
-    api.write_text(w,"title",title)
-    api.write_text(w,"state",state)
-    api.write_text(w,"connection",connection)
-    api.write_text(w,"model",model)
-    api.write_text(w,"effort",effort)
-    api.write_text(w,"document",document)
-    api.write_int(w,"changes",i64(changes))
-    api.write_text(w,"answer",answer)
-    serial.write_u8(w,'}')
-}
-
-@(private)
-ai_agent_write :: proc(task:^Ai_Task,w:^serial.Writer) {
+ai_agent_of :: proc(task:^Ai_Task) -> Ai_Agent_Result {
     names:=AI_STATE_NAMES
     c:=&task.conversation
     changes:=ai_task_reviewable(task)?ai_review_count(task):0
-    ai_agent_fields_write(w,task.id,string(c.title[:c.title_len]),names[task.state],string(c.provider[:c.provider_len]),string(c.model[:c.model_len]),string(c.effort[:c.effort_len]),string(c.document[:c.document_len]),changes,ai_task_answer(task))
+    return {task.id,string(c.title[:c.title_len]),names[task.state],string(c.provider[:c.provider_len]),string(c.model[:c.model_len]),string(c.effort[:c.effort_len]),string(c.document[:c.document_len]),changes,ai_task_answer(task)}
 }
 
 // The subagent an id names, brought back from the history if it left memory.
@@ -102,27 +85,26 @@ ai_method_agent_spawn :: proc(s:^Session,call:^api.Call) {
     }
     task,message:=ai_agent_spawn(s,m,base.text_get(p.prompt[:]),base.text_get(p.title[:]),base.text_get(p.agent[:]),base.text_get(p.model[:]),base.text_get(p.effort[:]))
     if task==nil {api.call_fail(call,api.INVALID_PARAMS,message);return}
-    ai_agent_write(task,call.out)
+    api.call_result(call,Ai_Agent_Result)^=ai_agent_of(task)
 }
 
 @(private)
 ai_method_agent_list :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
-    m:=s.ai;w:=call.out
-    serial.text_write_raw(w,`{"agents":[`)
+    m:=s.ai
     names:=AI_STATE_NAMES
-    conversations:[64]ai_store.Conversation
+    conversations:=make([]ai_store.Conversation,64,context.temp_allocator)
+    agents:=make([dynamic]Ai_Agent_Result,call.allocator)
     if m.main!=0 {
-        count,message:=ai_store.list(&m.store,conversations[:],kinds={.Agent},parent=u64(m.main))
+        count,message:=ai_store.list(&m.store,conversations,kinds={.Agent},parent=u64(m.main))
         if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-        for &c,index in conversations[:count] {
-            if index>0 {serial.write_u8(w,',')}
-            if task:=ai_task_find(m,int(c.id));task!=nil {ai_agent_write(task,w);continue}
+        for &c in conversations[:count] {
+            if task:=ai_task_find(m,int(c.id));task!=nil {append(&agents,ai_agent_of(task));continue}
             // Out of memory: it ended long ago, and its review is on the disk.
-            ai_agent_fields_write(w,int(c.id),string(c.title[:c.title_len]),names[.Done],string(c.provider[:c.provider_len]),string(c.model[:c.model_len]),string(c.effort[:c.effort_len]),string(c.document[:c.document_len]),0,string(c.last[:c.last_len]))
+            append(&agents,Ai_Agent_Result{int(c.id),string(c.title[:c.title_len]),names[.Done],string(c.provider[:c.provider_len]),string(c.model[:c.model_len]),string(c.effort[:c.effort_len]),string(c.document[:c.document_len]),0,string(c.last[:c.last_len])})
         }
     }
-    serial.text_write_raw(w,"]}")
+    api.call_result(call,Ai_Agent_List_Result).agents=agents[:]
 }
 
 @(private)
@@ -138,7 +120,7 @@ ai_method_agent_message :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,message)
         return
     }
-    ai_agent_write(task,call.out)
+    api.call_result(call,Ai_Agent_Result)^=ai_agent_of(task)
 }
 
 @(private)
@@ -146,7 +128,7 @@ ai_method_agent_stop :: proc(s:^Session,call:^api.Call) {
     task:=ai_subagent_of(s,call,api.call_params(call,Ai_Id_Params).id)
     if task==nil {return}
     ai_task_cancel(s,s.ai,task)
-    ai_agent_write(task,call.out)
+    api.call_result(call,Ai_Agent_Result)^=ai_agent_of(task)
 }
 
 @(private)

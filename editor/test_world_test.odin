@@ -47,7 +47,8 @@ Test_Session :: struct {
 // of the API, which stays where it is until test_commands_close.
 test_commands_open :: proc(t:^testing.T,s:^Session,a:^Api) -> bool {
     s.api=a
-    return testing.expect_value(t,api_open(s,0,false,listen=false),Api_Open_Error.None)
+    api_opened,api_problem:=api_open(s,0,false,listen=false)
+    return testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem)
 }
 
 test_commands_close :: proc(s:^Session) {

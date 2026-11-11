@@ -55,7 +55,7 @@ drop_free :: proc(tool:^Drop_Tool) {
 @(private)
 api_drop_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,DROP_TOOL,"Drop",.Import,{key=.P,set=true})
-    editor.api_method_register(s,Drop_Params,{name="physics.drop",summary="The Confirm and Cancel of the Drop tool, for the person who holds a drop open: Confirm keeps the dropped meshes where they are as one step of undo, Cancel takes them away. A call of an agent finds none open, since an edit of an agent ends what the person left open; an agent drops with physics.settle.",run=api_drop})
+    editor.api_method_register(s,{params=type_info_of(Drop_Params),name="physics.drop",summary="The Confirm and Cancel of the Drop tool, for the person who holds a drop open: Confirm keeps the dropped meshes where they are as one step of undo, Cancel takes them away. A call of an agent finds none open, since an edit of an agent ends what the person left open; an agent drops with physics.settle.",run=api_drop})
     editor.command_bind(s,{name="drop_confirm",method="physics.drop",params=`{"end":"Confirm"}`,label="Confirm",state=drop_state,scene=true})
     editor.command_bind(s,{name="drop_cancel",method="physics.drop",params=`{"end":"Cancel"}`,label="Cancel",state=drop_state,scene=true})
 }

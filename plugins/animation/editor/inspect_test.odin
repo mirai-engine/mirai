@@ -7,10 +7,9 @@ import "mirai:core"
 import "mirai:editor/api"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-result_shape_mismatch :: proc($T:typeid,text:string) -> string {return api.result_mismatch(T,text,type_info_of(T))}
+result_shape_mismatch :: proc($T:typeid,text:string) -> string {return api.result_mismatch(T,text)}
 
 @(test)
 inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^testing.T) {
@@ -26,11 +25,11 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     test_locomotion_modes(&f.info)
     result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"c"}}`,authoring_test_id_text(library)))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    testing.expect_value(t,result_shape_mismatch(Setup_Result,string(serial_bytes(a))),"")
+    testing.expect_value(t,result_shape_mismatch(Setup_Result,api.json_compact(string(serial_bytes(a)))),"")
     expect :: proc(t:^testing.T,a:^Authoring_Test,request:string,needles:..string,loc:=#caller_location) {
         result:=authoring_test_execute(a,"asset",request)
         if !testing.expectf(t,result.code==0,"%s: %s %s",request,result.message,result.data,loc=loc) {return}
-        text:=string(serial_bytes(a))
+        text:=api.json_compact(string(serial_bytes(a)))
         for needle in needles {testing.expectf(t,strings.contains(text,needle),"%s lacks %s",request,needle,loc=loc)}
         testing.expect_value(t,result_shape_mismatch(Asset_Inspect_Result,text),"",loc=loc)
     }
@@ -39,31 +38,31 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     expect(t,a,fmt.tprintf(`{{"asset":"%s","clip":"Walk","section":"Track","target":"root","property":"Position"}}`,authoring_test_id_text(library)),`"keys"`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s","section":"Body"}}`,id(a,"figure.skeleton")),`"part":"Head"`,`"stored":true`)
     expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"figure.skeleton")),`"bones_total"`)
-    expect(t,a,fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,id(a,"c/figure.character")),`"look"`,`"match_clips":[{"clip":"Idle"`,`"modes":["WALKING"]`,`"databases":[]`,`"warp"`,`"Wave Arm_R"`)
+    expect(t,a,fmt.tprintf(`{{"asset":"%s","table":"Look"}}`,id(a,"c/figure.character")),`"look"`,`"match_clips":[{"clip":"Idle"`,`"modes":["WALKING"]`,`"warp"`,`"Wave Arm_R"`)
     result=authoring_test_execute(a,"asset",fmt.tprintf(`{{"asset":"%s"}}`,id(a,"figure.mesh")))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Invalid_Kind"))
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011"}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text:=string(serial_bytes(a))
-    testing.expectf(t,strings.contains(text,`"rig":{"clips"`) && strings.contains(text,`"match":{"available":false,"code":"Not_Running"`) && strings.contains(text,`"modifiers":{`),"instance %s",text)
+    text:=api.json_compact(string(serial_bytes(a)))
+    testing.expectf(t,strings.contains(text,`"rig":{"clips"`) && strings.contains(text,`"match":{"code":"Not_Running"`) && strings.contains(text,`"modifiers":{`),"instance %s",text)
     testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,text),"")
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","diagnostics":true}`)
     testing.expect(t,result.code==0)
-    testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,string(serial_bytes(a))),"")
+    testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,api.json_compact(string(serial_bytes(a)))),"")
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Match"]}`)
-    testing.expect(t,result.code==0 && !strings.contains(string(serial_bytes(a)),`"rig"`))
+    testing.expect(t,result.code==0 && !strings.contains(api.json_compact(string(serial_bytes(a))),`"rig"`))
     // A preview plays the locomotion of the .character on a copy: it builds the database of the
     // skeleton, and an action of the set plays over it at the tick asked.
     result=authoring_test_execute(a,"preview",`{"entity":"0000000000000011","ticks":2,"trace":true,"actions":[{"name":"Wave","tick":1}]}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text=string(serial_bytes(a))
-    testing.expectf(t,strings.contains(text,`"match":{"available": true`) && strings.contains(text,`"kind": "Started", "action": "Wave"`),"preview %s",text)
+    text=api.json_compact(string(serial_bytes(a)))
+    testing.expectf(t,strings.contains(text,`"match":{"available":true`) && strings.contains(text,`"kind":"Started","action":"Wave"`),"preview %s",text)
     testing.expect_value(t,result_shape_mismatch(Preview_Result,text),"")
-    expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.character")),`"databases":[{"rows": `,`"error": "None"`)
+    expect(t,a,fmt.tprintf(`{{"asset":"%s"}}`,id(a,"c/figure.character")),`"databases":[{"rows":`,`"error":"None"`)
 
     // The Pose part: names that do not exist fail the call; a rig that has not posed says so.
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Pose"],"names":["@hand_r","baton"]}`)
-    testing.expect(t,result.code==0 && strings.contains(string(serial_bytes(a)),`"pose":{"available":false,"code":"Not_Posed"`))
+    testing.expect(t,result.code==0 && strings.contains(api.json_compact(string(serial_bytes(a))),`"pose":{"code":"Not_Posed"`))
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Pose"],"names":["@hand_r","batton"]}`)
     testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,"Missing_Name") && strings.contains(result.data,"batton") && strings.contains(result.data,"animation.asset.inspect"),"%s %s",result.message,result.data)
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Pose"]}`)
@@ -80,8 +79,8 @@ inspectors_read_every_definition_kind_and_the_parts_of_an_instance :: proc(t:^te
     core.add(&f.world.transforms,f.rig,core.from_math(mm.Transform{position={10,0,0},rotation=1,scale={1,1,1}}));core.settle(&f.info,&f.world,nil)
     result=authoring_test_execute(a,"instance",`{"entity":"0000000000000011","parts":["Pose"],"names":["@hand_r","baton","root/pelvis"]}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text=string(serial_bytes(a))
-    for needle in ([]string{`"name": "@hand_r", "kind": "Bone"`,`"world": {"position": [10.7, 1.45, 0]`,`"entity": {"position": [0.7, 1.45, 0]`,`"name": "baton", "kind": "Socket"`,`"entity": {"position": [0, 1, 0]`}) {testing.expectf(t,strings.contains(text,needle),"pose lacks %s in %s",needle,text)}
+    text=api.json_compact(string(serial_bytes(a)))
+    for needle in ([]string{`"name":"@hand_r","kind":"Bone"`,`"world":{"position":[10.7,1.45,0]`,`"entity":{"position":[0.7,1.45,0]`,`"name":"baton","kind":"Socket"`,`"entity":{"position":[0,1,0]`}) {testing.expectf(t,strings.contains(text,needle),"pose lacks %s in %s",needle,text)}
     testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,text),"")
 }
 
@@ -112,8 +111,8 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
     testing.expectf(t,missing.code==api.INVALID_PARAMS && strings.contains(missing.message,"names no entity of the game; play.inspect"),"%s",missing.message)
     result=authoring_test_execute(a,"instance",fmt.tprintf(`{{"entity":"%s","parts":["Rig","Match"]}}`,handle))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text:=string(serial_bytes(a))
-    for needle in ([]string{`"rig":{"clips"`,`"match":{"available": true`,`"ranges":[{"clip":"Idle"`,`"modes":["WALKING"]`,`"travel":[`,`"search":{"search":1,"mode":"WALKING","entry":false,"candidates":[{"range": `,`"costs": {"foot_position": `,`"reason": "None"`,`"reason": "Stationary"`}) {
+    text:=api.json_compact(string(serial_bytes(a)))
+    for needle in ([]string{`"rig":{"clips"`,`"match":{"available":true`,`"ranges":[{"clip":"Idle"`,`"modes":["WALKING"]`,`"travel":[`,`"search":{"search":1,"mode":"WALKING","entry":false,"candidates":[{"range":`,`"costs":{"foot_position":`,`"reason":"None"`,`"reason":"Stationary"`}) {
         testing.expectf(t,strings.contains(text,needle),"inspect lacks %s in %s",needle,text)
     }
     testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,text),"")
