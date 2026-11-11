@@ -44,7 +44,7 @@ Context_Desc :: struct {
     density:f32,        // device pixels per window point; 0 means 1
     font_texture:u32,   // travels in the data of glyph quads
     no_font:bool,       // lays out and draws shapes without rasterizing the atlas
-    theme:^Theme,       // copied; THEME_EDITOR when nil
+    sheet:^Tree_Data,   // the style file of what nothing else styles (context_sheet_set), read at init; nil: none
     navigation:bool,    // keyboard and gamepad move the focus between widgets
     clipboard_get:Clipboard_Get,
     clipboard_set:Clipboard_Set,
@@ -103,6 +103,14 @@ FOCUS_LINKS :: 256
 @(private)
 Clip :: struct {id:Id,parent:u16,surface:u16,scope:u16,rect:Rect,paint:^Paint,scroll:bool}
 
+// Layers of floating surfaces: the highest one under the pointer takes it.
+LAYER_PANEL   :: i16(1)
+LAYER_BAR     :: i16(2)
+LAYER_TOAST   :: i16(3)
+LAYER_POPUP   :: i16(10)
+LAYER_TOOLTIP :: i16(11)
+LAYER_MODAL   :: i16(20)
+
 ID_STACK_DEPTH :: 32
 LAYER_STACK_DEPTH :: 16
 // Elements left for what frame_end builds itself.
@@ -115,7 +123,10 @@ Effect_Entry :: struct {clip:u16,refused:int}
 
 Context :: struct {
     allocator:runtime.Allocator,
-    theme:Theme,
+    sheet:Widget_Tree,        // the styles of the style file of what nothing else styles
+    sheet_tokens:[]Tree_Token,
+    sheet_names:[]Sheet_Name, // of its styles and its tokens, by hash
+    release_activates:bool,   // a button activates when the pointer is let go over it, not when it is pressed
     font:Font,          // the context's own, or a copy of font_owner taken at frame_begin
     font_owner:^Font,   // the font the context borrows; nil when it has its own
     font_ask:proc(user:rawptr),
@@ -248,7 +259,6 @@ Frame :: struct {
 context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     ctx^={}
     ctx.allocator=desc.allocator if desc.allocator.procedure!=nil else context.allocator
-    ctx.theme=desc.theme^ if desc.theme!=nil else THEME_EDITOR
     ctx.navigation=desc.navigation
     ctx.clipboard_get,ctx.clipboard_set,ctx.clipboard_user=desc.clipboard_get,desc.clipboard_set,desc.clipboard_user
     ctx.draw_user,ctx.draw_user_data=desc.draw_user,desc.draw_user_data
@@ -300,6 +310,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
 
     words:=desc.max_text_words if desc.max_text_words>0 else ctx.max_elements*2
     if !layout_init(&ctx.layout,a,ctx.max_elements,words,len(ctx.text),count(desc.max_grid_tracks,64),count(desc.max_transitions,64)) {context_destroy(ctx);return false}
+    if desc.sheet!=nil && !context_sheet_set(ctx,desc.sheet^) {context_destroy(ctx);return false}
     return true
 }
 
@@ -311,6 +322,7 @@ context_destroy :: proc(ctx:^Context) {
     id_table_destroy(&ctx.previous_ids,a)
     delete(ctx.links,a);delete(ctx.previous_links,a);delete(ctx.groups,a);delete(ctx.previous_groups,a)
     retained_destroy(ctx)
+    sheet_destroy(ctx)
     base.region_release(&ctx.draw.region);delete(ctx.draw.commands,a)
     delete(ctx.draw.shapes,a);delete(ctx.draw.layers,a)
     delete(ctx.effects,a);delete(ctx.previous_effects,a)
@@ -450,7 +462,6 @@ text_commit :: proc(ctx:^Context,used:string) -> string {
     return used
 }
 
-@(private)
 paint_add :: proc(ctx:^Context,paint:Paint) -> ^Paint {
     if ctx.paint_count>=len(ctx.paints) {ctx.stats.dropped_paints+=1;return nil}
     stored:=paint

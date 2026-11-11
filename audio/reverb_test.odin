@@ -51,6 +51,30 @@ what_a_voice_sends_rings_on_in_the_reverb_after_it_ends :: proc(t:^testing.T) {
     testing.expect(t,got==Reverb{1,0,0,1} && bus==BUS_MASTER)
 }
 
+// A tail that rings down to silence passes through the subnormal floats, which
+// x86 computes about a hundred times slower: the render counts them as zero.
+@(test)
+a_reverb_tail_rings_down_to_zeros_without_subnormals :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    testing.expect(t,reverb_set(m,{wet=1,width=1}))
+    desc:=VOICE_DEFAULT
+    desc.reverb=1
+    testing.expect(t,voice_play(m,tone(t,m,440,CHUNK_FRAMES),desc)!=0)
+    subnormals:=0
+    for _ in 0..<100 {
+        test_render(m,RATE/10)
+        for sample in m.reverb.memory {
+            bits:=transmute(u32)sample
+            if bits&0x7f80_0000==0 && bits&0x007f_ffff!=0 {subnormals+=1}
+        }
+    }
+    testing.expect_value(t,subnormals,0)
+    silent:=true
+    for sample in m.reverb.memory {silent&&=sample==0}
+    testing.expect(t,silent,"ten seconds after the click the room holds zeros")
+}
+
 @(test)
 the_reverb_of_a_bus_rings_on_what_plays_in_it_alone :: proc(t:^testing.T) {
     tail :: proc(t:^testing.T,on_music:bool,wet:f32) -> f32 {

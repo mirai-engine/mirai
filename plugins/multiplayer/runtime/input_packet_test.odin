@@ -72,7 +72,7 @@ a_look_of_some_ticks_ago_corrects_the_look_of_the_server_once :: proc(t:^testing
             move:=core.edit(&w.move_inputs,body)
             move.look_yaw+=0.01
             entry.look,entry.look_behind,entry.has_look={client(at-int(behind)),0.1},behind,at>int(behind)
-            remote_look(core.ref(&s),&w.remote,core.read(&w.seats),core.read(&w.drivables),&w.move_inputs,w.time)
+            remote_look(core.ref(&s),&w.remote,core.read(&w.seats),&w.move_inputs,w.time)
             wanted:=0.01*f32(at)+(at-int(behind)>=8?0.2:0)
             testing.expectf(t,math.abs(move.look_yaw-wanted)<1e-5 && (at<=int(behind) || math.abs(move.look_pitch-0.1)<1e-6),"%d ticks behind, tick %d: the server looks at %.3f, and should at %.3f",behind,at,move.look_yaw,wanted)
         }

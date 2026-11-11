@@ -165,19 +165,18 @@ OUTLINER_SCOPE :: f32(28) // the bar of the document shown alone
 @(private)
 outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(OUTLINER_SCOPE),gap=6,align_y=.Center}) {
-        if ui.button(ctx,ui.id(ctx,"outliner_scope_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=22,height=22}).clicked {o.scope=core.NONE}
+        if ui.button(ctx,ui.id(ctx,"outliner_scope_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=22,height=22}).clicked {o.scope=core.NONE}
         kind:=container_kind(w,o.scope)
         icon,text:=container_color(s,kind)
         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={8,0,8,0},gap=5,align_y=.Center,fill=ui.color_alpha(icon,36),stroke=icon,radius=10}) {
             ui.icon(ctx,kind==.Section?ui.icon_user(u8(User_Icon.Scene)):.Prefab,icon,12)
-            ui.label(ctx,container_document(s,w,o.scope),th.font_label,text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,container_document(s,w,o.scope),ui.metric(ctx,"font_label"),text,0,font=ui.FONT_SEMIBOLD)
         }
         path:=make([dynamic]string,context.temp_allocator)
         for at:=container_of(w,o.scope);at!=core.NONE;at=container_of(w,at) {append(&path,entity_label(w,at))}
         append(&path,document_label(s))
-        ui.label(ctx,fmt.tprintf("in %s",strings.join(path[:]," › ",context.temp_allocator)),th.font_label,th.text_faint)
+        ui.label(ctx,fmt.tprintf("in %s",strings.join(path[:]," › ",context.temp_allocator)),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))
     }
 }
 
@@ -220,7 +219,6 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     o:=s.outliner
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     v:=s.viewport
     outliner_sync(o,w)
     if search_field(s,ui.id(ctx,"outliner_filter"),o.filter[:],&o.filter_length,"Search entities") {o.scroll=0}
@@ -228,9 +226,9 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     if o.scope!=core.NONE {outliner_scope_bar(s,o,w)}
     outliner_rows(o,w)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(16),align_y=.Center}) {
-        ui.label(ctx,fmt.tprintf("%d entities",len(o.nodes)),th.font_label,th.text_faint)
+        ui.label(ctx,fmt.tprintf("%d entities",len(o.nodes)),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))
         ui.spacer(ctx)
-        if n:=len(s.selection.entities);n>0 {ui.label(ctx,fmt.tprintf("%d selected",n),th.font_label,th.accent)}
+        if n:=len(s.selection.entities);n>0 {ui.label(ctx,fmt.tprintf("%d selected",n),ui.metric(ctx,"font_label"),ui.tone(ctx,"accent"))}
     }
     room:=max(height-28-16-2*10-(o.scope!=core.NONE?OUTLINER_SCOPE+4:0),OUTLINER_ROW*2)
     if o.reveal!=core.NONE {
@@ -284,7 +282,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             }
             if node.count>0 && o.filter_length==0 {
                 open:=outliner_expanded(o,e)
-                if ui.button(ctx,ui.id(ctx,"outliner_open",index+1),{icon=open?.Chevron_Down:.Chevron_Right,icon_color=th.text_muted,icon_size=10,style=.Ghost,width=16,height=OUTLINER_ROW}).clicked {outliner_toggle(o,e)}
+                if ui.button(ctx,ui.id(ctx,"outliner_open",index+1),{icon=open?.Chevron_Down:.Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,variant="ghost",width=16,height=OUTLINER_ROW}).clicked {outliner_toggle(o,e)}
             } else if arrows {
                 ui.spacer(ctx,16,1)
             }
@@ -297,7 +295,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             // While a section is edited in its world, the rest reads only and fades.
             if section_editing(s)!=core.NONE && section_locked(s,w,e) {
                 color=ui.color_alpha(color,110)
-                text_color=ui.color_alpha(text_color!={}?text_color:th.text,120)
+                text_color=ui.color_alpha(text_color!={}?text_color:ui.tone(ctx,"text"),120)
             }
             if o.rename==e {
                 field:=ui.id(ctx,"outliner_name")
@@ -346,12 +344,12 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             if history.selection_has(s.selection,e) || ui.rect_contains(line_rect,ctx.pointer) {
                 up:=container_of(w,e)
                 tree:=kind!=.None?e:up
-                if up!=core.NONE && ui.button(ctx,ui.id(ctx,"outliner_root",index+1),{icon=ui.icon_user(u8(User_Icon.Up)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=20,height=OUTLINER_ROW}).clicked {
+                if up!=core.NONE && ui.button(ctx,ui.id(ctx,"outliner_root",index+1),{icon=ui.icon_user(u8(User_Icon.Up)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=20,height=OUTLINER_ROW}).clicked {
                     history.selection_set(s.selection,{up})
                     if o.scope!=core.NONE && !entity_within(w,up,o.scope) {o.scope=core.NONE}
                     outliner_reveal(o,w,up)
                 }
-                if tree!=core.NONE && tree!=o.scope && ui.button(ctx,ui.id(ctx,"outliner_tree",index+1),{icon=ui.icon_user(u8(User_Icon.Tree)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=20,height=OUTLINER_ROW}).clicked {
+                if tree!=core.NONE && tree!=o.scope && ui.button(ctx,ui.id(ctx,"outliner_tree",index+1),{icon=ui.icon_user(u8(User_Icon.Tree)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=20,height=OUTLINER_ROW}).clicked {
                     o.scope,o.scroll=tree,0
                     if !outliner_expanded(o,tree) {append(&o.expanded,tree);o.expanded_serial+=1}
                     outliner_reveal(o,w,e)
@@ -359,7 +357,7 @@ outliner_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
             }
             eye:=ui.id(ctx,"outliner_eye",index+1)
             own_hidden:=entity_has(w,e,erender.Hidden)
-            if ui.button(ctx,eye,{icon=own_hidden?.Eye_Off:.Eye,icon_color=own_hidden?th.text_muted:th.text_faint,icon_size=14,style=.Ghost,width=22,height=OUTLINER_ROW}).clicked {
+            if ui.button(ctx,eye,{icon=own_hidden?.Eye_Off:.Eye,icon_color=own_hidden?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text_faint"),icon_size=14,variant="ghost",width=22,height=OUTLINER_ROW}).clicked {
                 tool_preview_cancel(s)
                 entity_hidden_set(s,e,!own_hidden)
             }
@@ -512,17 +510,16 @@ create_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_WI
 @(private)
 create_header :: proc(s:^Session,id:ui.Id,name:string,open:bool,width:f32) -> ui.Interaction {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     height:=CONTENT_HEADER+2
     if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(height),direction=.Column}) {
-        if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(height-1 if open else height),padding={CONTENT_INSET,0,8,0},gap=7,align_y=.Center,fill=th.field if it.hot else th.panel,radius=3}) {
-            ui.icon(ctx,.Chevron_Down if open else .Chevron_Right,th.text_faint,10)
-            ui.icon(ctx,ui.icon_user(u8(User_Icon.Folder)),th.text_faint,14)
-            ui.label(ctx,name,th.font,th.text if open else th.text_muted,0,font=ui.FONT_MEDIUM)
+        if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(height-1 if open else height),padding={CONTENT_INSET,0,8,0},gap=7,align_y=.Center,fill=ui.tone(ctx,"field") if it.hot else ui.tone(ctx,"panel"),radius=3}) {
+            ui.icon(ctx,.Chevron_Down if open else .Chevron_Right,ui.tone(ctx,"text_faint"),10)
+            ui.icon(ctx,ui.icon_user(u8(User_Icon.Folder)),ui.tone(ctx,"text_faint"),14)
+            ui.label(ctx,name,ui.metric(ctx,"font"),ui.tone(ctx,"text") if open else ui.tone(ctx,"text_muted"),0,font=ui.FONT_MEDIUM)
         }
         if open {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.divider}) {}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"divider")}) {}
         }
     }
     return it
@@ -533,18 +530,17 @@ create_header :: proc(s:^Session,id:ui.Id,name:string,open:bool,width:f32) -> ui
 @(private)
 create_card :: proc(s:^Session,id:ui.Id,card:Card,carried:bool,view:Content_View,cell:f32) -> (it:ui.Interaction) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it=ui.interact(ctx,id,{.Focusable})
     keyboard:=content_keyboard(ctx,it)
     if view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,carried,it.hot,keyboard)) {
             asset_frame(s,20,card.color,CONTENT_FRAME_EDGE,1,{},card.icon,card.color,0)
-            ui.label(ctx,card.label,th.font,th.text,0,font=ui.FONT_MEDIUM if carried else 0)
+            ui.label(ctx,card.label,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if carried else 0)
         }
         return
     }
     if ui.box(ctx,asset_card_box(ctx,id,view,cell,carried,keyboard)) {
-        edge,stroke:=asset_frame_edge(th,it.hot,carried)
+        edge,stroke:=asset_frame_edge(ctx,it.hot,carried)
         asset_frame(s,cell,card.color,edge,stroke,{},card.icon,card.color,0)
         names:=content_shows_names(view)
         if names {content_name(ctx,card.label,carried,cell)}

@@ -1,0 +1,8 @@
+{
+  "scene": "ai/ai.scene",
+  "steps": [
+    {"name": "with the player standing still, a zombie of the horde bites a runner", "method": "play.step",
+     "params": {"for": 1800, "until": [
+      {"storage": "Arena_State", "field": "bites", "compare": "At_Least", "number": 1}]}}
+  ]
+}

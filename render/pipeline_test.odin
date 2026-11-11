@@ -86,6 +86,21 @@ pipelines_keep_their_order_leave_out_what_nothing_reads_and_say_what_is_wrong ::
 	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Output}}, resources = []Render_Resource_Desc{{id = .Custom0, size = .Fixed, width = 4, height = 4, shift = 1, format = .R8_Unorm}}}, "Fixed with a shift")
 	writes_depth := []Render_Use{{.Depth, .Write, false}}
 	expect_error(t, {passes = []Render_Pass_Desc{{stage = .Custom, name = "depth", uses = writes_depth, record = nothing}}}, "writes Depth")
+	// A custom pass in place of the Indirect stage gives Gi; beside it, the two would write it.
+	{
+		gives := []Render_Use{{.Normal, .Read, false}, {.Gi, .Write, false}}
+		for indirect in ([]bool{false, true}) {
+			passes := [?]Render_Pass_Desc{{stage = .Geometry}, {stage = .Direct}, {stage = .Indirect}, {stage = .Custom, name = "gi", uses = gives, record = nothing}, {stage = .Composite}, {stage = .Output}}
+			listed := passes[:] if indirect else []Render_Pass_Desc{passes[0], passes[1], passes[3], passes[4], passes[5]}
+			if indirect {expect_error(t, {passes = listed}, "leave the Indirect stage out"); continue}
+			plan: Render_Plan
+			ok, error := plan_compile(&plan, {passes = listed}, buffer[:])
+			testing.expect(t, ok && plan.gi_given, error)
+		}
+		standard: Render_Plan
+		plan_compile(&standard, {passes = standard_pipeline_passes(.Full)}, buffer[:])
+		testing.expect(t, !standard.gi_given)
+	}
 	// A pass in place of the Resolve stage asks for the jitter of an upscaler.
 	{
 		resolves := []Render_Use{{.Display, .Read, false}, {.Depth, .Read, false}, {.Exposure, .Read, false}, {.Custom0, .Read, false}, {.Custom1, .Write, false}, {.Taa, .Write, false}}

@@ -1,0 +1,9 @@
+{
+  "version": 3,
+  "settings": {
+    "image": "Color"
+  },
+  "outputs": [
+    {"kind": "TEX", "name": "sky_night", "index": 0, "id": "8a6329018eb7b53a0215bd4bdbf5a2c9"}
+  ]
+}

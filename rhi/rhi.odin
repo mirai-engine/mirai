@@ -126,6 +126,27 @@ table_take :: proc "contextless" (changes: ^Table_Changes, copy: int, out: []u32
 	return
 }
 
+// What the table knows of a texture: how many entries name it and the last one
+// it was put in, so destroying it looks at that entry alone in the common case.
+@(private)
+Table_Refs :: struct {count, last: u32}
+
+// An entry moves from the texture it named to the one it names now (nil: the default).
+@(private)
+table_refs_move :: proc "contextless" (before, after: ^Table_Refs, index: u32) {
+	if before != nil {before.count -= 1}
+	if after != nil {after.count += 1; after.last = index}
+}
+
+// The entries to look at for a texture that goes: none when no entry names it,
+// the last one it was put in when that is its only one, else the whole table.
+@(private)
+table_refs_range :: proc "contextless" (entries: []Texture, texture: Texture, refs: Table_Refs) -> (from, to: int) {
+	if refs.count == 0 {return 0, 0}
+	if refs.count == 1 && int(refs.last) < len(entries) && entries[refs.last] == texture {return int(refs.last), int(refs.last) + 1}
+	return 0, len(entries)
+}
+
 // The copy of the table a list reads: that of its frame slot, or the last
 // one for an immediate list.
 @(private)
@@ -190,6 +211,9 @@ Memory :: enum u8 {
 
 Buffer_Usage_Flag :: enum u8 {Index, Uniform, Storage, Indirect, Transfer_Src, Transfer_Dst, Accel_Input}
 Buffer_Usage :: bit_set[Buffer_Usage_Flag; u16]
+// What transient memory may be bound or copied as.
+@(private)
+TRANSIENT_USAGE :: Buffer_Usage{.Uniform, .Storage, .Index, .Indirect, .Transfer_Src, .Transfer_Dst, .Accel_Input}
 
 // A new buffer reads zero in every byte, whatever its memory. One of GPU
 // memory is zeroed by the GPU unless an upload writes all of it first, and is
@@ -588,10 +612,13 @@ DEFAULT_DEVICE_CAPACITIES :: Device_Capacities{buffers = 4096, textures = 8192, 
 Device_Desc :: struct {
 	app_name:                   cstring,
 	validation:                 bool,     // also enabled with MIRAI_VALIDATION=1
-	allow_hardware_ray_tracing: bool,     // MIRAI_RT=software forces it off
+	allow_hardware_ray_tracing: bool,     // Vulkan: false, or MIRAI_RT=software, has the device report no ray queries, so rays are traced by software; Metal always traces them by hardware
 	vulkan_instance_extensions: []cstring, // window system extensions from the platform layer
 	upload_bytes_per_frame:     u64,      // transient ring capacity per frame in flight
 	preferred_device:           string,   // substring of the adapter name; MIRAI_GPU overrides
+	// The window the device presents to, made with the device: only a GPU that
+	// presents to it is chosen. Zero: no window, frames draw only into textures.
+	surface:                    Surface_Desc,
 	pipeline_cache_path:        string,   // Vulkan: compiled pipelines persisted across runs ("" = memory only)
 	capacities:                 Device_Capacities,
 	allocator:                  runtime.Allocator, // of the device and its tables; context.allocator when unset
@@ -678,8 +705,10 @@ device_fail :: proc(d: ^Device, failure: Device_Failure, format: string, args: .
 
 Device_Stats :: struct {
 	buffers, textures, samplers, pipelines, accels: int, // alive, of those the user made: what it has to destroy
-	exhausted:          int, // creations refused because a pool or the frame ring was full
+	exhausted:          int, // creations refused because a pool was full, and transients refused
 	deletion_overflows: int, // times a frame slot held more destroyed objects than its capacity
+	oversized:          int, // transients past the frame ring, each given a buffer for its frame
+	host_memory:        int, // Vulkan: resources of GPU memory placed in system memory because device memory was full
 }
 
 @(private)
@@ -712,8 +741,8 @@ device_stats :: proc(d: ^Device) -> Device_Stats {
 	return s
 }
 
-// Transient memory allocated from the current frame's upload ring. Valid until
-// the frame slot is reused (MAX_FRAMES_IN_FLIGHT frames later).
+// Transient memory of the frame being recorded. Valid until the frame slot is
+// reused (MAX_FRAMES_IN_FLIGHT frames later).
 Transient :: struct {
 	ptr:    rawptr,
 	buffer: Buffer,
@@ -736,6 +765,45 @@ Gpu_Timing :: struct {
 MAX_TIMESTAMPS :: 256
 // Bytes of the name of a timestamp that are kept; a longer one is cut.
 MAX_TIMESTAMP_NAME_BYTES :: 64
+
+// Oversized transients one frame holds.
+MAX_FRAME_OVERSIZED :: 16
+
+// Transient memory from the ring of the frame being recorded. Past the room of
+// the ring it gets a buffer of its own, released with the frame, so an upload
+// of any size reaches the GPU in the frame that asks for it: a load, or a
+// growth that dirties whole tables, is a frame that may allocate.
+frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
+	// Between frames the slot may still be in flight and frame_begin resets
+	// the ring, so transient memory only exists while a frame is recorded.
+	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
+	f := &d.frames[d.slot]
+	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
+	offset := align_up(f.upload_used, align)
+	if offset <= f.upload_size && size <= f.upload_size - offset {
+		f.upload_used = offset + size
+		return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
+	}
+	if size > d.info.max_storage_range || f.oversized_count == MAX_FRAME_OVERSIZED {
+		d.stats.exhausted += 1
+		set_error(d, "transient of %d bytes refused: past the frame ring of %d bytes one takes a buffer of at most %d bytes, %d per frame", size, f.upload_size, d.info.max_storage_range, MAX_FRAME_OVERSIZED)
+		return {}
+	}
+	buffer := buffer_create(d, {size = size, usage = TRANSIENT_USAGE, memory = .Upload, name = "frame upload past the ring"})
+	if buffer == 0 {return {}}
+	f.oversized[f.oversized_count] = buffer
+	f.oversized_count += 1
+	d.stats.oversized += 1
+	return {ptr = buffer_mapped(d, buffer), buffer = buffer, size = size}
+}
+
+// The oversized transients go once the GPU finished the frame that ends.
+@(private)
+frame_oversized_release :: proc(d: ^Device) {
+	f := &d.frames[d.slot]
+	for buffer in f.oversized[:f.oversized_count] {buffer_destroy(d, buffer)}
+	f.oversized_count = 0
+}
 
 // Optional helper for typed transient writes.
 frame_alloc_typed :: proc(d: ^Device, $T: typeid, count: int) -> ([]T, Transient) {

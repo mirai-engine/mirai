@@ -214,6 +214,7 @@ package_test_shaders :: proc(root,folder:string) -> bool {
         folder_shaders:=join(plugins,name,"shaders")
         if !os.is_dir(folder_shaders) {return true}
         append(&sources,shaders.Source{name=name,folder=folder_shaders})
+        dependency_shaders(plugins,name,&sources,tests=true)
     } else if inside(absolute,engine) {
         name,_=strings.replace_all(absolute[len(engine)+1:],"/","_",context.temp_allocator)
     } else {
@@ -237,6 +238,24 @@ package_test_shaders :: proc(root,folder:string) -> bool {
     if result.warnings!="" {fmt.eprint(result.warnings)}
     if result.error!="" {fmt.eprintfln("mirai test: the shaders of the tests of %s could not be generated: %s",name,result.error);return false}
     return true
+}
+
+// The shaders of the plugins a plugin depends on, and of theirs, once each: its own include them.
+// tests: also of those its tests depend on (test_dependencies).
+@(private="file")
+dependency_shaders :: proc(plugins,name:string,sources:^[dynamic]shaders.Source,tests:=false) {
+    manifest,error:=project.plugin_read(join(plugins,name,"plugin.mirai"))
+    if error.code!=.None {return}
+    for list in ([2][]project.Name{manifest.dependencies[:],tests?manifest.test_dependencies[:]:nil}) {
+        for &dependency in list {
+            other:=strings.clone(strings.truncate_to_byte(string(dependency[:]),0),context.temp_allocator)
+            known:=other==""
+            for source in sources {known||=source.name==other}
+            if known {continue}
+            if folder:=join(plugins,other,"shaders");os.is_dir(folder) {append(sources,shaders.Source{name=other,folder=folder})}
+            dependency_shaders(plugins,other,sources)
+        }
+    }
 }
 
 @(private="file")

@@ -91,7 +91,8 @@ component_listed :: proc(t:^core.Table_Info) -> bool {
         for tag in fields.tags[:fields.field_count] {if _,hidden:=core.field_option(reflect.Struct_Tag(tag),"hidden");!hidden {visible=true;break}}
         if !visible {return false}
     }
-    return type_saved(t.info)
+    // A component whose fields are all transient is saved by its presence.
+    return true
 }
 
 // Copies from kept the fields a document neither shows nor changes: hidden, transient and read-only ones.
@@ -175,6 +176,7 @@ Scene_Target :: struct {
     order:    proc(user:rawptr,node:Node,order:int),
     write:    proc(user:rawptr,reading:^Reading,node:Node,t:^core.Table_Info,text,path:string,from:[]u8,merge:bool) -> (changed,ok:bool), // from: the value of a preset it starts with
     drop:     proc(user:rawptr,node:Node,t:^core.Table_Info),
+    forget:   proc(user:rawptr,node:Node,name:string) -> bool, // takes off a stored component the game does not declare; nil where none is stored
     turn:     proc(user:rawptr,node:Node,t:^core.Table_Info,off:bool),
     remove:   proc(user:rawptr,nodes:[]Node) -> (removed:int,problem:string), // with what hangs from them
     kind:     proc(user:rawptr,prefab:bool) -> (changed:bool,problem:string), // after the entities: a prefab has exactly one root
@@ -647,6 +649,13 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
         for name,i in keys {
             path:=fmt.aprintf("%s.components.%s",d.path,name,allocator=reading.allocator)
             if component_links(name) {reading_failf(reading,COMPONENT_LINKS_TEXT,path,name);return false}
+            // A component the game no longer declares is taken off by name.
+            declares:=false
+            for t in a.tables {declares ||= t.name==name}
+            if a.forget!=nil && keeps && !declares && strings.trim_space(values[i])=="null" {
+                if a.forget(a.user,node,name) {scene_changed(a,d.path,name)}
+                continue
+            }
             t:=scene_table(a,name,path)
             if t==nil {return false}
             if strings.trim_space(values[i])=="null" {

@@ -42,7 +42,7 @@ Net_Test_Tables :: struct {
     offsets:core.Table(render.Draw_Offset),
     move_inputs:core.Table(inp.Move_Input),
     instances:core.Table(scene.Prefab_Instance),
-    drivables:core.Table(inp.Drivable),
+    pendings:core.Table(scene.Prefab_Pending),
     seats:core.Table(inp.Seat),
     absents:core.Table(Seat_Absent),
     visibility:core.Table(Visibility),
@@ -182,7 +182,7 @@ net_test_physics :: proc(w:^$W,shared:^Net_Test_Shared,app:^host.App) {
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
         core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),
         &w.character_states,&w.joint_states,{},nil,{},core.ref(&w.sync_check),&w.simulation_hash,nil,nil,
-        core.read(&w.gravities),core.read(&w.volumes),core.read(&w.worlds),{},{},core.ref(&w.hierarchy))
+        core.read(&w.gravities),core.read(&w.volumes),core.read(&w.worlds),{},{},core.ref(&w.hierarchy),{},{},{})
     core.settle(shared.info,w,nil)
 }
 
@@ -237,8 +237,7 @@ net_test_replicate :: proc(audience:=Audience.Near,simulation:=Simulation.Server
 @(private)
 net_test_own :: proc(w:^Net_Test_World,e:core.Entity,connection:Connection) {
     seat:=core.create(&w.entities)
-    core.add(&w.seats,seat,inp.Seat{peer=u64(connection)})
-    core.add(&w.drivables,e,inp.Drivable{seat=seat})
+    core.add(&w.seats,seat,inp.Seat{peer=u64(connection),body=e})
 }
 
 @(private)
@@ -249,7 +248,7 @@ net_test_session :: proc(s:^Net_Session,w:rawptr,info:^core.World_Info,app:^host
     if !protocol_build(s,core.world_ref(w,info)) {return false}
     exchange:=transport
     if exchange.send==nil {exchange=wire.sim_endpoint_transport(network,endpoint)}
-    desc:=wire.Host_Desc{mode=mode,protocol=&s.protocol,transport=exchange,protocol_id=99,seed=u64(endpoint+1),tick_rate=int(1/tick_dt+0.5),replication=s.desc.replication,hold=s.follows,allocator=context.allocator}
+    desc:=wire.Host_Desc{mode=mode,protocol=&s.protocol,transport=exchange,protocol_id=99,seed=u64(endpoint+1),tick_rate=int(1/tick_dt+0.5),replication=s.desc.replication,hold=s.follows,allocator=context.allocator,channels=JOURNAL_CHANNELS}
     desc.replication.max_objects=s.desc.max_objects
     if wire.host_init(&s.host,desc)!=.None {return false}
     s.host_ready,s.mode=true,mode

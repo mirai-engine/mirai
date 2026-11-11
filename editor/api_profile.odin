@@ -207,8 +207,7 @@ Api_Profile_Conditions :: struct {
     window:[2]int `mirai:"label=Pixels of the drawable"`,
     render:[2]int `mirai:"label=Pixels the scene is rendered at"`,
     preset:[16]u8 `mirai:"text,label=Low Medium High Ultra or Custom when the settings match none; empty without graphics settings"`,
-    render_scale:f32,
-    preset_height:u32,
+    resolution:u32,
     vsync:bool,
     frame_limit:u32 `mirai:"label=Frames per second; 0 is unlimited"`,
     refresh_hz:f32 `mirai:"label=Of the display the window is on; 0 when unknown"`,
@@ -944,8 +943,7 @@ profile_differences :: proc(a,b:Profile_Conditions) -> []Profile_Difference_Out 
     difference_check(&list,"window",a.window,b.window,true)
     difference_check(&list,"render",a.render,b.render,true)
     difference_check(&list,"preset",a.preset,b.preset,true)
-    difference_check(&list,"render_scale",a.render_scale,b.render_scale,true)
-    difference_check(&list,"preset_height",a.preset_height,b.preset_height,true)
+    difference_check(&list,"resolution",a.resolution,b.resolution,true)
     difference_check(&list,"vsync",a.vsync,b.vsync,true)
     difference_check(&list,"frame_limit",a.frame_limit,b.frame_limit,true)
     difference_check(&list,"document",a.document,b.document,true)

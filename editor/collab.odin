@@ -45,7 +45,7 @@ COLLAB_PRESENCE_INTERVAL :: 1.0/12
 COLLAB_EDIT_INTERVAL :: 1.0/30
 COLLAB_PRESENCE_SEEN :: 3.0 // seconds
 COLLAB_MESSAGE_BYTES :: 1<<30 // what one message may hold: a peer that sends more is cut off
-COLLAB_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10},{kind=.Unreliable}}
+COLLAB_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,queue_bytes=256<<10,window=512},{kind=.Unreliable}}
 COLLAB_HELLO_TIMEOUT :: 10.0
 COLLAB_WORKER_INTERVAL :: 2*time.Millisecond // between updates of the network half
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own
@@ -72,7 +72,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .None:      return ""
     case .Busy:      return "a session is open; leave it first"
     case .Playing:   return "a game is playing; stop it first"
-    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A; copy it again"
+    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT; copy it again"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .Dirty:     return "the scene has unsaved changes; save it or discard them"
@@ -163,7 +163,7 @@ Collab_State :: struct {
     mapping:wire.Port_Mapping,
     mapping_on:bool,
     port:int,
-    invite:u32,           // the token of the session
+    invite:u64,           // the token of the session
     invitation:wire.Invitation, // a guest: of the host
     self:u8,
     peers:[COLLAB_PEERS]Collab_Peer,

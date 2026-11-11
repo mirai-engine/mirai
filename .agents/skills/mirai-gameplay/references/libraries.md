@@ -44,13 +44,23 @@ the name of their type) and a world (handles and tables).
   `Not_A_Prefab`, and hangs whole from a `Scene_Reference` instead. One that fails returns `NONE`
   and is the problem `scene.spawn` of its `parent` (or of the world), with the fix. A zero
   rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
-  it. The root receives `Prefab_Instance{prefab}`, the one component that says what prefab an
+  it. It never reads a file: a prefab that is not loaded, or that takes something that is not,
+  gives its root at once with only its `Transform`, `Parent`, `Id` and `Prefab_Pending{prefab}`;
+  jobs read the prefab and what it takes (`prefab_warm_begin`, at most `PREFAB_WARMS` at once) and
+  `scene_spawns` (`frame`, both loops) places the rest on the root, which keeps what it was given
+  meanwhile (a seat that drives it keeps driving it); a prefab that does not place takes its root
+  away with the problem. `spawns_fill(all=true)` waits, for an answer of the editor that gives the
+  copy whole. `spawn_member`, the copy of an entity of a section that is not loaded, waits the same
+  way for the scene of its section. A load, in phases or in the call, reads the prefabs the fields
+  of its World name and
+  what they take, so their first spawn is whole in the call.
+  The root receives `Prefab_Instance{prefab}`, the one component that says what prefab an
   entity is of (with `Prefab_Member`, a linked instance; alone, a copy), which a server sends
   ([multiplayer](../../mirai-networking/references/multiplayer.md#what-the-game-declares)).
   The scenes the copy references load with it, under `Id`s made with that of its reference in
   the world; a `transient` copy, which has none, brings every section. A World keeps the form of
   each prefab it spawned (`Prefab_Forms`) until that prefab or one it places changes: spawning it
-  again reads no file. The forms are of their World and are not copied with it.
+  again makes nothing. The forms are of their World and are not copied with it.
 - With a project's assets, `load` and `spawn` instantiate a copy in which outdated prefab instances
   follow their current prefab
   ([resolution](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab));
@@ -106,7 +116,7 @@ the name of their type) and a world (handles and tables).
   `Duplicate_Id`, `Out_Of_Memory`, `Write_Failed` and, of `load_untrusted`, `Too_Large`,
   `Not_Allowed`, `Out_Of_Range`, `Unknown_Reference`; `error_text`.
 
-### Scene references
+## Scene references
 
 Any scene is loaded as the world or referenced as a section; a prefab is also copied by its one
 root (an instance with overrides in a document, `spawn` while running).
@@ -209,11 +219,14 @@ was, and `residents_past` leaves, out of a budget, the closest ones.
 
 Loading policy of the `Spatial` sections, optional, with the [residency of the
 sources](#sources-and-residency). `streaming_sections` (`frame`) loads turned off the section whose
-box falls within `load` of a source (or its `distance`) and turns it on within `active`; it turns it
-off or unloads it past `RESIDENT_KEEP` times each. It only looks again when the sources moved, the
-references changed or the box of one moved. `streaming_crossings` (`game`) takes what moves (with
-`Motion` awake and that moved) and leaves the box of its section to the loaded and on section that
-contains it, or to the root, where it is, and removes its `Section_Member`: unloading a section
+box falls within its distance of a source (`Scene_Reference.distance`, or the setting `load`; or the
+source's `distance`) and turns it on within the same share of it that `active` is of `load`; it
+turns it off or unloads it past `RESIDENT_KEEP` times each. It only looks again when the sources
+moved, the references changed or the box of one moved. `streaming_crossings` (`game`) takes what
+moves (with `Motion` awake and that moved) and leaves the box of its section to the loaded and on
+section that contains it, found in the tree of the boxes of the sections (`scene.Section_Boxes`,
+made again when a reference or where one is changes, which the server of `multiplayer` also asks),
+or to the root, where it is, and removes its `Section_Member`: unloading a section
 does not take what left, and its scene leaves a tombstone. What has `Roaming` and hangs from the
 root, on or not, hangs again from the loaded and on section whose box contains it. It remembers
 which section each one is from until the hierarchy changes. Physics accepts that parent change
@@ -225,29 +238,31 @@ section is not loaded and on, the far mesh of its scene next to its reference (`
 transient `Mesh_Renderer`, which follow the reference): it is seen from afar, enters the rays and
 keeps covering the sun and the sky.
 
-- The far mesh of a scene is one per application (`Streaming_Far`, `host`), shared by all its
-  references. It is made in jobs the first time a reference requests it, in rounds: the main thread
-  gives the registry's sources (`assets_source`) that each round asked for (the scene and those it
-  references, their meshes and materials, their textures) and the last one builds it with
-  `asset.mesh_build_far` and its rays. Up to `FAR_BUILDS` at a time.
+- The far mesh of a scene is a derived asset of it, an asset as any, shared by all its references
+  (`cook/far`), which `far_find` finds again when the registry changes (`Streaming_Far`): a
+  shipped game the one its cook wrote beside the scene
+  ([far meshes](../../mirai-projects/references/build.md#asset-cooking)), by
+  `asset.far_mesh_id`; a project that is not cooked, in the editor or in a game, the one of its far
+  cache (`project.FAR_CACHE`, which its registry mounts under `project.FAR_PREFIX`) made of what
+  the scene is now, by `asset.far_key`: the content of the scene and of the scenes, meshes,
+  materials and textures it takes. The editor part makes in jobs the ones the cache lacks
+  (`streaming_far_build`, up to `FAR_BUILDS` at a time), once: the main thread gives each round
+  the registry's sources it asked for (`far.far_wanted`) and the last one builds it with
+  `asset.mesh_build_far` and writes it into the cache, or a mark of a scene without static meshes.
+  A game makes none; while the cache lacks the one of what a scene is now, its proxies show the
+  one before.
 - Every on and drawn `Mesh_Renderer` of the scene and of the scenes it references enters, up to
   `REFERENCE_DEPTH`; not what is under `Hidden`, `Drawn_Elsewhere`, `Disabled`, `Rigid_Body` or
   `Character` (what moves) nor skinned meshes. From a `Mask` material the triangles that it covers
   less than its cutoff are left out (the leaves of a card). From a material with a program, whose
   program the CPU does not run, the base color is the texture of the parameter that names it
   (`asset.far_base_parameter`: base color, albedo, diffuse, color).
-- The meshes are cut from their DAG at the error one pixel covers at distance `active`
-  (`far_error`): from where the far shape starts to be seen the cut is not seen, and the far mesh
-  does the rest with its own DAG.
+- The meshes are cut from their DAG at the error one pixel covers where a section turns on with
+  the default settings (`far.FAR_ERROR`): from where the far shape starts to be seen the cut is not
+  seen, and the far mesh does the rest with its own DAG.
 - It carries the compressed blocks of its pages and the renderer pages it like an archive mesh
   ([pages](../../mirai-rendering/references/scene.md#scene-and-instances)): on the GPU is its
   root, the fine pages arrive when the cull asks for them and the far rays trace the root's cut.
-  The blocks stay in the renderer; the built geometry and what was read are released in a job on
-  publishing it (`host.app_release`).
-- It is redone like any cook: it stores each asset it read (and those it asked for without finding)
-  with its content hash, and when the registry revision advances it compares; a different one, or
-  another `active`, makes it again, and the references show the previous one until the new one is
-  there.
 - Terrain and foliage do not go into it: they keep their own far shape
   ([what is unloaded](#scene-references)).
 
@@ -451,6 +466,15 @@ the reverb of the room where the listener is and what covers each source.
   `transforms_propagate` and `camera_view`) tunes, starts and stops voices from the source rows
   written since it looked, follows each live voice (its end, its place, what hides it) and writes
   `Audio_Source_State` only when it changes.
+  - Voices are the mixer's fixed count: each frame `voices_assign` ranks the sources that are heard
+    by `priority` and then by their gain at the listener (volume, bus, attenuation), and the first
+    as many as the mixer has free or the sources hold are mixed. The others, and those out of
+    range, are virtual: an entry without a voice whose time follows the mixer clock at its pitch,
+    so it comes back where it would be, and a sound without `loop` ends when its time passes it.
+    One that comes back takes only a free voice, never a stolen one, and a held voice ranks
+    `VOICE_KEEP` louder: a steady scene starts, stops and steals nothing.
+  - Values that are not numbers, or a spatial source without a range (`min_distance` above 0 and
+    `max_distance` above it), are refused with the problem `audio.source`.
   - `pitch` is the speed: it moves the tone with it, like a "slowed" song; with the reverb of its
     bus it gives "slowed + reverb". There is no speed change without a tone change.
   - Volume, pitch, pan and loop are applied to the voice that is sounding; another sound, another
@@ -464,8 +488,10 @@ the reverb of the room where the listener is and what covers each source.
     until it continues; one-shots are not.
 - **One-shots.** `audio.play(sounds, path_or_id, at, bus, volume, pitch)` pushes to
   `Sound_Requests`, from any step and from the interface sounds of `gui` (on `BUS_UI`). Each is
-  an `Audio_Source` of `AUDIO_SOURCE_DEFAULT` with those values and starts through the same
-  `voice_start` as a source, so the mixer takes the same path for both, without a handle.
+  an `Audio_Source` with those values and the hearing of its `.sound_set` (attenuation, range,
+  reverb send, priority; `SOUND_HEARING_DEFAULT` for a `.sound`), started through the same voice
+  description as a source, so the mixer takes the same path for both, without a handle. One placed
+  beyond its `max_distance` from the listener does not start.
   `audio_requests` (`fixed` and `late`, stage `end`) takes the queue: at the end of the tick that
   asked, a tick that runs again (`time.resimulating`) drops what it asks, since it played the first
   time, and the copies of the world for a rollback are made between ticks, after the take; what
@@ -515,8 +541,10 @@ the reverb of the room where the listener is and what covers each source.
     game's gain: a slider binds its field and `save` stores it in the player's options.
   - `Audio_Output` (machine setting) is the output the player chose, by its name in
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
-    it changes, without losing its voices, and only if the application has an open output. A name
-    the system does not list sounds through the system's and is the problem `audio.output`. Its
+    it changes, without losing its voices, and only if the application has an open output. While
+    the chosen output is not connected (a name the system does not list, or one unplugged) the
+    sound plays through the system's, reported once as `audio.output`, and goes back to the chosen
+    one when it is plugged in again. Its
     `kind` (speakers by default, or headphones) is given to every mixer, open output or not.
   - `audio_buses` (`late`) compares each bus of the mixer with its entry and its volume and sends
     only what differs; a bus without an entry returns to 0 dB, without filter or ducking. The
@@ -796,6 +824,13 @@ does it.
   `Environment_Trigger`, the `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
   [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Each says which
   shapes it takes and reports a problem for another.
+- **`Spline`** (`spline.odin`) is the one path, as `Volume` is the one region: points in the frame
+  of its entity, each with a width and a height over the ground. What goes along it is another
+  component: a `Fluid` makes it a river ([physics](../../mirai-physics/references/physics.md)),
+  its `material` a ribbon on the ground ([shapes](../../mirai-world/references/shapes.md#splines)),
+  a patrol walks it. Every reader samples it with `spline_sample` (the one sampler,
+  `mm.path_sample`) and lays each sample with `spline_lay` on `core.Ground_Queries`, never with a
+  copy of its own, and nothing in it names a reader.
 
 The values that change per zone are gravity, wind, reverb, how views look and fog (`Fog_Volume` of
 the `fog` plugin):

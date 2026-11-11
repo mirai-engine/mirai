@@ -9,8 +9,7 @@ import "mirai:std/base"
 // The standard layout of a project. A plugin has the same shape below its
 // own folder: plugin.mirai, runtime/, editor/, shaders/ and assets/.
 Folder :: enum u8 {
-    Assets,    // cooked assets
-    Source,    // art sources with their import options
+    Assets,    // assets, with the art sources they are imported from and their import options
     Game,      // the runtime module of the project
     Editor,    // its engine-time module
     Plugins,
@@ -19,7 +18,7 @@ Folder :: enum u8 {
     Generated, // module roots, libraries and caches: never edited, never versioned
 }
 FOLDER_NAMES :: [Folder]string{
-    .Assets="assets",.Source="source",.Game="game",.Editor="editor",
+    .Assets="assets",.Game="game",.Editor="editor",
     .Plugins="plugins",.Shaders="shaders",.Panels="panels",.Generated=".mirai",
 }
 PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes"}
@@ -33,6 +32,8 @@ REGISTRY_CACHE :: "registry"   // in it: what the registry of the assets saw
 TEXTURE_CACHE :: "textures"    // in it: built textures, by image and settings
 MESH_CACHE :: "meshes"         // in it: built meshes, by geometry and settings
 ANIMATION_CACHE :: "animations" // in it: compressed .anim libraries, by asset and inputs
+FAR_CACHE :: "far"             // in it: the far meshes of scenes the editor made, by what they are made of (asset.far_key)
+FAR_PREFIX :: "mirai-far"      // where the registry of a project that is not cooked mounts the far cache
 THUMBNAIL_FOLDER :: "thumbs"   // beside it: the previews of the editor
 // Under the generated folder of a project or a plugin: what the imports of its
 // sources build that nobody edits (meshes, textures, sounds, fonts), each at

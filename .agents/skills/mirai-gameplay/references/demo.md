@@ -29,12 +29,12 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
   `physics`, `destruct`, `multiplayer`, `paint`, `terrain`, `animation`, `previews`,
   `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
   activates on its own.
-- `settings.mirai`: `Spawn_Settings` with `"players": true` and `UI_Settings` in English and
-  Spanish, with the prompt pack of `prompts_kenney`.
+- `settings.mirai`: `UI_Settings` in English and Spanish (no player prefab: the spawn points of
+  each gallery name its body), with the prompt pack of `prompts_kenney`.
 - `cook.mirai`: the prefabs and materials that only code picks by path.
 - `render_check.mirai`: the fixed views that `mirai render check` measures
   ([render check](../../mirai-rendering/references/verification.md#render-check)).
-- `game/`, `assets/` and the art sources in `source/`.
+- `game/` and `assets/`, with the art sources beside what they make.
 
 Scenes:
 
@@ -106,8 +106,8 @@ Scenes:
     destruction applies it in the same tick.
   - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
     `horror` and the fade of the physics gallery.
-  - The cameras of the prefabs are `Camera_Follow`: `Eyes` the player's, `Orbit` with `aim` those of
-    the person and the dog, whose `Drivable` walks them with `move_relative_to` `View`.
+  - The cameras of the prefabs are `Camera_Follow` children of the body: `Eyes` the player's,
+    `Orbit` those of the person and the dog, which walk where their camera says.
 - **`control.odin`**: `Follow` is an AI that takes the body behind its leader while no seat drives
   it.
   - `game_dogs` (`server`) gives each person a dog with `Follow`; `game_follow` writes the
@@ -225,16 +225,18 @@ inventories, dialogues or waves, and these are demo code that can be copied and 
 
 ## Local multiplayer
 
-`control.scene` carries an `inp.Local_Multiplayer{players=2}`, which applies with `mirai play`
-without `--players`; in the editor the Play selector rules. `input` creates one seat per player,
-each receives its person through `Spawn_Settings.players` and `engine/camera` splits the screen. In
+`mirai play --players 2` (or the editor's Play selector) gives the run two local players: `input`
+creates one seat per player, each receives its person at a spawn point of `control.scene` (the
+points name the person) and `engine/camera` splits the screen; each orbit turns with its own pad. In
 Play, F1 releases the mouse and the click that returns it chooses who receives keyboard and mouse.
 
 ## Generated content
 
-The scenes and prefabs of the demo are authored assets, changed with `scene.write`,
-`mirai scene write` or the editor; no code writes them. `tools/demo_content` writes what code
-computes and gives the same bytes on every run:
+The scenes, prefabs, materials, particles, tables of game data and clips of a few keys of the
+demo are authored assets, changed through the API (`scene.write`, `material.set`, `particle.set`,
+`records.set`), `mirai scene write` or the editor; no code writes them. The imports of
+`demo/source` are the build's. `tools/demo_content` writes what code computes and gives the same
+bytes on every run:
 
 ```sh
 mirai content demo
@@ -243,24 +245,19 @@ mirai content demo
 A `--<part>-only` flag after `--` regenerates only one part
 (`tools/demo_content/main.odin`).
 
-- `--control-only`: the intro clip of `control`. `--physics-only`: the fractures, their meshes,
-  the baked cuts, the dust and the ragdoll rig of `physics`.
-- `--raft-only`: the particles of the sea of `raft`.
-- `--features-only`: the meshes of the render plugins' scenes, the blockout slabs and the decal
-  images.
-- `--ai-only`: the horde's wave and zombie-kind tables.
-- `--interface-only`: the icons of the items, the tables of items and of the conversation
-  (`tools/demo_content/records.odin` writes a table with fixed ids) and the `.strings` of their
-  texts, in English and Spanish.
-- `--dig-only`: the dig terrain, its layer materials and its dust.
-- `--animation-only`: imports Mirai and writes what the [animation gallery](animation-gallery.md)
-  uses: the locomotion and gallery clips of Mirai and their programs, the taller Mirai and its
-  baked clips, the spider, the rig chains and the morph jelly. Contracts:
+- `--physics-only`: the fractures, their meshes, the baked cuts and the ragdoll rig of `physics`.
+- `--features-only`: the meshes of the render plugins' scenes and the decal images.
+- `--interface-only`: the icons of the items.
+- `--dig-only`: the dig terrain.
+- `--animation-only`: reads the import of Mirai and writes what the
+  [animation gallery](animation-gallery.md) uses: the locomotion and gallery clips of Mirai and
+  their programs, the taller Mirai and its baked clips, the spider, the rig chains and the source
+  of the morph jelly. Contracts:
   [animation plugin](../../mirai-animation/references/animation.md).
 
 Content:
 
-- **Skies**: whole-sky images of 4096×2048 in `source/textures` (`sky_day`, `sky_sunset`,
+- **Skies**: whole-sky images of 4096×2048 in `assets/sky` (`sky_day`, `sky_sunset`,
   `sky_overcast`, `sky_night`). A scene's `Sky` entity is turned around the vertical so that the
   image's sun has the heading of the scene's `Sun`, at the height it has in the image. Overcast
   and night have `disc` off.
@@ -280,12 +277,11 @@ Content:
   its lamps are wells of light in the dark and no compensation works from all its views. The
   others, the light meter alone: `lights` used to be clipped and `skeletal`, without light. No demo
   camera carries `Exposure`: the viewport and the game expose the same.
-- **Imports** (`sources.odin`, with `cook/import/sources.import_source`, like the editor and
-  `mirai import`): each image of `source/textures` is a `.tex` read according to the end of its name
-  (`_normal`, `_orm`, other: sRGB color) the first time, and as its sidecar says from then on. Those
-  that show masked materials are imported with their cutoff. Each model of `source/models` is a
-  folder with its materials and the prefab of its nodes. The textures and the meshes are not
-  versioned: they are in `demo/.mirai/imported`, which `mirai build` makes again from the sources.
+- **Imports**: each image is a source beside the materials that show it (`assets/surfaces/bricks`,
+  `assets/sky`, `assets/gallery`), read as its sidecar says; each model is a source beside a
+  folder with its materials and the prefab of its nodes (`assets/gallery/plant.gltf` and
+  `assets/gallery/plant/`). The textures and the meshes are not versioned: they are in
+  `demo/.mirai/imported`, which `mirai build` makes again from the sources.
   Re-importing keeps the ids, which the sidecars list
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
   demo generates over what was imported reads them from there (`imported.odin`); what it generates

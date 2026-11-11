@@ -27,11 +27,11 @@ ENVIRONMENT_TRIGGER_DEFAULT :: Environment_Trigger{seconds=1}
 @(step="frame")
 environment_triggers :: proc(
     triggers:^core.Table(Environment_Trigger),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
-    seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),drivables:core.Read(input.Drivable),
+    seat_state:core.Ref(input.Seats),seats:core.Read(input.Seat),
     requests:^render.Environment_Requests,
 ) {
     if core.count(triggers)==0 {return}
-    body:=input.body_of(drivables,input.focused(seat_state.ptr,seats))
+    body:=input.body_of(seats,input.focused(seat_state.ptr,seats))
     at,placed:=core.get(worlds,body)
     for row in 0..<core.count(triggers) {
         e:=core.entity_at(triggers,row)

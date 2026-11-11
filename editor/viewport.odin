@@ -806,7 +806,6 @@ overlays_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     if v.show_indicators {
         reach_draw(s,w)
         indicators_draw(s,w)
@@ -814,7 +813,7 @@ overlays_draw :: proc(s:^Session,w:core.World_Ref) {
     if !tool_holding(v) {gizmo_draw(s,w)}
     if v.capture==.Select && v.moved {
         rect:=rect_from_points(v.press,v.pointer)
-        ui.draw_rect_lines(ctx,rect,1,ui.color_alpha(th.accent,220))
+        ui.draw_rect_lines(ctx,rect,1,ui.color_alpha(ui.tone(ctx,"accent"),220))
     }
 }
 
@@ -829,7 +828,6 @@ level_color :: proc "contextless" (level:u8) -> ui.Color {
 indicators_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     indicators_sync(s,w,ghosts_shown(s))
     margin:=INDICATOR_RADIUS+8
     spots:=core.world_table_of(w,erender.Spot_Light)
@@ -853,10 +851,10 @@ indicators_draw :: proc(s:^Session,w:core.World_Ref) {
         if level!=0 {
             color:=level_color(level)
             ui.draw_circle(ctx,p,radius+6,ui.color_alpha(color,45))
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(th.panel,200))
+            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),200))
             ui.draw_ring(ctx,p,radius,2.2,color)
         } else {
-            ui.draw_circle(ctx,p,radius,ui.color_alpha(th.panel,hidden?110:165))
+            ui.draw_circle(ctx,p,radius,ui.color_alpha(ui.tone(ctx,"panel"),hidden?110:165))
             ui.draw_ring(ctx,p,radius,1.4,ui.color_alpha(base_color,hidden?110:210))
         }
         ui.draw_icon(ctx,icon,{p.x-7,p.y-7,14,14},glyph)
@@ -1034,7 +1032,8 @@ stroke_box :: proc(ctx:^ui.Context,v:^Viewport,pose:mm.Transform,extents:[3]f32,
 
 // How far what is selected reaches, as strokes over the scene, as wide as
 // the discs draw theirs: the range of a light, its cone or its square, the
-// distances of a sound, the box or the sphere of a volume.
+// distances of a sound, the box or the sphere of a volume, the points of a
+// spline.
 @(private)
 reach_draw :: proc(s:^Session,w:core.World_Ref) {
     v:=s.viewport
@@ -1060,6 +1059,10 @@ reach_draw :: proc(s:^Session,w:core.World_Ref) {
             flat:=mm.Transform{world.position,world.rotation,{1,1,1}}
             stroke_box(ctx,v,flat,{REACH_PLANE,0,REACH_PLANE},REACH_VOLUME)
             stroke_line(ctx,v,world.position,world.position-mm.quat_rotate(world.rotation,[3]f32{0,REACH_PLANE*0.5,0}),REACH_VOLUME)
+        }
+        // A path nothing may draw: a river, a patrol.
+        if path,ok:=entity_get(w,e,evolume.Spline);ok {
+            for i in 1..<min(int(path.count),evolume.SPLINE_POINTS) {stroke_line(ctx,v,mm.transform_point(world,path.points[i-1].position),mm.transform_point(world,path.points[i].position),REACH_VOLUME)}
         }
         if entity_has(w,e,erender.Mesh_Renderer) {continue}
         if point,ok:=entity_get(w,e,erender.Point_Light);ok && point.range>0 {stroke_sphere(ctx,v,world.position,point.range,REACH_LIGHT)}

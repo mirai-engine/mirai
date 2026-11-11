@@ -14,7 +14,7 @@ import "mirai:std/compressor/lz"
 
 @(private="file") TOY_JOURNAL :: u32(0x746f79)
 @(private="file") TOY_KEY :: Journal_Key{1,0}
-@(private="file") TOY_PADDING :: 12000 // what a base of the toy carries besides its value: more than JOURNAL_BUDGET
+@(private="file") TOY_PADDING :: 40000 // what a base of the toy carries besides its value: pieces of a part, and more than the window starts with
 
 // One end of the library of these tests: a value its operations fold in
 // order (value*31+amount, so one applied twice or out of order shows), and
@@ -80,7 +80,7 @@ Toy_Pair :: struct {
     udp:bool,
     base:f64,
     rewinds:Net_Rewinds,
-    sent:[dynamic]u64, // server: JOURNAL bytes sent by tick
+    seen:u64,          // server: the cursor of its connection events, as a generated call keeps it
 }
 
 @(private="file")
@@ -128,7 +128,6 @@ pair_destroy :: proc(p:^Toy_Pair) {
     for &socket in p.sockets {wire.udp_close(&socket)}
     if !p.udp {wire.sim_network_destroy(&p.network)}
     delete(p.rewinds.queue.items)
-    delete(p.sent)
     delete(p.info.messages)
     core.test_info_destroy(&p.info)
 }
@@ -143,7 +142,6 @@ pair_tick :: proc(p:^Toy_Pair,tick:u64,amount:u32) {
     for &session in p.sessions {wire.host_update(&session.host,now)}
     server_commands(&p.sessions[0],core.world_ref(&p.worlds[0],&p.info),nil,wire.host_poll(&p.sessions[0].host),&p.worlds[0].remote)
     client_commands(&p.sessions[1],core.world_ref(&p.worlds[1],&p.info),p.apps[1].assets,p.apps[1].allocator,wire.host_poll(&p.sessions[1].host))
-    before:=p.toys[0].journal.stats.bytes_sent
     for index in 0..<2 {
         w:=&p.worlds[index]
         ref:=core.world_ref(w,&p.info)
@@ -152,12 +150,15 @@ pair_tick :: proc(p:^Toy_Pair,tick:u64,amount:u32) {
         toy:=&p.toys[index]
         // By their places in the messages of pair_init.
         m:=&w.messages
-        inbox:=Journal_Inbox{core.inbox(m,0,Net_Journal_Op),core.inbox(m,1,Net_Journal_Part),core.inbox(m,4,Net_Journal_Refused),core.inbox(m,3,Net_Journal_Ask),core.inbox(m,2,Net_Journal_Resync)}
+        inbox:=Journal_Inbox{core.inbox(m,0,Net_Journal_Op),core.inbox(m,1,Net_Journal_Part),core.ref(&p.sessions[index]),core.inbox(m,4,Net_Journal_Refused),core.inbox(m,3,Net_Journal_Ask),core.inbox(m,2,Net_Journal_Resync)}
         journal_receive(&toy.journal,inbox,index==0,own_connection(core.ref(&p.sessions[index])),w.time,&p.rewinds,true,0,&p.problems[index])
         if index==0 {
             if amount!=0 {toy_publish(toy,&w.outbox,w.time,amount)}
-            journal_connections(&toy.journal,core.ref(&w.connections))
-            for event in w.connections.events.items {
+            // The view of the log a step that reads Net_Connections is handed: what came since it last ran.
+            connections:=w.connections
+            core.events_read(&connections.events,&p.seen)
+            journal_connections(&toy.journal,core.ref(&connections))
+            for event in connections.events.items {
                 if event.kind==.Entered {journal_offer(&toy.journal,event.connection,TOY_KEY,true)}
             }
             toy_serve(toy,&w.outbox,w.time)
@@ -167,7 +168,6 @@ pair_tick :: proc(p:^Toy_Pair,tick:u64,amount:u32) {
         }
         net_tick_tail(ref,&p.sessions[index],&w.outbox,&w.made,&p.problems[index])
     }
-    append(&p.sent,p.toys[0].journal.stats.bytes_sent-before)
     for &session in p.sessions {wire.host_update(&session.host,now)}
 }
 
@@ -194,10 +194,10 @@ pair_connect :: proc(t:^testing.T,p:^Toy_Pair,tick:^u64) -> bool {
 
 // The operations a server applies reach a client once and in its order, on a
 // network that loses, duplicates and reorders datagrams and over UDP; one
-// that joins late gets the base of what was applied before, sent within the
-// budget of each tick, and the operations after it as any other.
+// that joins late gets the base of what was applied before, streamed whole on
+// the channel of parts, and the operations after it as any other.
 @(test)
-operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_within_the_budget :: proc(t:^testing.T) {
+operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_whole :: proc(t:^testing.T) {
     Case :: struct {udp:bool,late:bool}
     for c in ([]Case{{false,false},{false,true},{true,false}}) {
         p:=new(Toy_Pair)
@@ -225,13 +225,8 @@ operations_reach_a_client_once_and_in_order_and_a_late_one_gets_the_base_within_
         testing.expectf(t,client.journal.stats.desyncs==0,"%v: nothing differs: %d",c,client.journal.stats.desyncs)
         if c.late {
             testing.expect(t,client.padding==server.padding,"the base brings what the server holds")
-            testing.expect(t,client.journal.stats.parts_applied==1 && server.journal.stats.parts_sent==1,"one base")
-            ticks:=0
-            for bytes in p.sent {
-                testing.expectf(t,bytes<=JOURNAL_BUDGET+JOURNAL_PIECE,"a tick sends %d bytes of parts",bytes)
-                ticks+=int(bytes>0)
-            }
-            testing.expectf(t,ticks>1,"a base larger than the budget goes over %d ticks",ticks)
+            testing.expectf(t,client.journal.stats.parts_applied==1 && server.journal.stats.parts_sent==1,"one base: %d applied, %d sent, %d resyncs",client.journal.stats.parts_applied,server.journal.stats.parts_sent,client.journal.stats.resyncs)
+            testing.expect(t,len(p.worlds[0].outbox.parts)==0,"the outbox holds no part once it went")
         }
         testing.expect_value(t,p.problems[0].count,0)
         testing.expect_value(t,p.problems[1].count,0)
@@ -301,8 +296,9 @@ memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
 
 // What a client receives with the memory ending at each request in turn: an
 // operation that opens the log, one past its end and one before its start,
-// and a part in one piece and in two. Each is left out with a problem and
-// nothing stands half written; with memory enough each stands.
+// and a part told with its bytes, small and of many pieces, and one whose
+// bytes came first. Each is left out with a problem and nothing stands half
+// written; with memory enough each stands.
 @(test)
 what_a_client_receives_without_memory_is_left_out_and_reported :: proc(t:^testing.T) {
     owner:=context.allocator
@@ -340,30 +336,41 @@ what_a_client_receives_without_memory_is_left_out_and_reported :: proc(t:^testin
     testing.expect(t,s.first==3 && len(s.log)==7 && s.newest==9)
     encoder:lz.Encoder
     defer lz.encoder_destroy(&encoder)
-    for total in ([]u32{64,JOURNAL_PIECE+8}) {
-        raw:=make([]u8,int(total),context.temp_allocator)
+    session:=new(Net_Session)
+    defer {parts_clear(&session.parts);delete(session.parts);free(session)}
+    // A part as the server tells it and its bytes, together or the bytes first.
+    Case :: struct {total:u32,early:bool}
+    number:u32
+    for c in ([]Case{{64,false},{40000,false},{40000,true}}) {
+        raw:=make([]u8,int(c.total),context.temp_allocator)
         for &b,i in raw {b=u8(i*13)}
-        packed:=make([]u8,asset.pack_bound(int(total)),context.temp_allocator)
+        packed:=make([]u8,asset.pack_bound(int(c.total)),context.temp_allocator)
         size,_:=asset.pack(&encoder,asset.PACK_EDIT,raw,packed)
         stood,refused:=false,false
         for served in 0..<8 {
+            number+=1
+            heard:=Net_Journal_Part{journal=TOY_JOURNAL,key=TOY_KEY,number=number,first=true,last=true,base=true,raw=c.total,total=u32(size)}
+            parts_clear(&session.parts)
+            append(&session.parts,Journal_Arrived{head={journal=u32le(TOY_JOURNAL),number=u32le(number)},bytes=slice.clone(packed[:size])})
             problems:core.Problems
             parts:=len(s.parts)
-            for offset,left:=0,served;offset==0 || offset<size;offset+=JOURNAL_PIECE {
-                piece:=Net_Journal_Part{journal=TOY_JOURNAL,key=TOY_KEY,first=true,last=true,base=true,raw=total,total=u32(size),offset=u32(offset),count=u16(min(size-offset,JOURNAL_PIECE))}
-                copy(piece.bytes[:],packed[offset:][:piece.count])
-                take(&j,{parts=one(piece)},&problems,&limit,left)
-                left=limit.remaining
-                s=&j.streams[0]
+            if c.early {
+                take(&j,{session=core.ref(session)},&problems,&limit,served)
+                take(&j,{parts=one(heard)},&problems,&limit,limit.remaining)
+            } else {
+                take(&j,{parts=one(heard),session=core.ref(session)},&problems,&limit,served)
             }
+            s=&j.streams[0]
             if len(s.parts)>parts && s.parts[len(s.parts)-1].complete && !s.parts[len(s.parts)-1].broken {
-                stood=testing.expectf(t,len(s.parts[len(s.parts)-1].bytes)==int(total) && problems.count==0,"part of %d bytes with %d requests served stands with a problem",total,served)
+                stood=testing.expectf(t,len(s.parts[len(s.parts)-1].bytes)==int(c.total) && problems.count==0,"%v with %d requests served stands with a problem",c,served)
                 break
             }
             refused=true
-            testing.expectf(t,problems.count>0 || len(s.parts)>parts && s.parts[len(s.parts)-1].broken,"part of %d bytes with %d requests served is neither held nor told",total,served)
+            testing.expectf(t,problems.count>0 || len(s.parts)>parts && s.parts[len(s.parts)-1].broken,"%v with %d requests served is neither held nor told",c,served)
             for len(s.parts)>parts {delete(s.parts[len(s.parts)-1].bytes);pop(&s.parts)}
+            for early in j.early {delete(early.bytes)}
+            clear(&j.early)
         }
-        testing.expectf(t,stood && refused,"part of %d bytes: left out without memory, and it stands with it",total)
+        testing.expectf(t,stood && refused,"%v: left out without memory, and it stands with it",c)
     }
 }

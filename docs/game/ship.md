@@ -53,6 +53,6 @@ says how to fix each finding.
 
 - An asset only code names works in `mirai play` and is missing from `build game` unless it is
   a [root](assets.md#reference). Build before delivering.
-- `source/` (art sources) never ships, and a game package that imports an editor package fails the
-  build with `Engine_Time_Code`.
+- Art sources and their sidecars never ship, and a game package that imports an editor package
+  fails the build with `Engine_Time_Code`.
 - The shipped game on Windows is a console program.

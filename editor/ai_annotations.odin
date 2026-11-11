@@ -201,7 +201,7 @@ ai_annotations_visible :: proc(s:^Session) -> bool {
 ai_annotations_build :: proc(s:^Session) {
     m:=s.ai
     if m==nil || !s.has_project {return}
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     a:=&m.annotations
     annotating:=tool_on(s,AI_ANNOTATE_TOOL)
     ai_annotations_sync(s)
@@ -214,10 +214,10 @@ ai_annotations_build :: proc(s:^Session) {
             id:=ui.id(ctx,"ai_annotation",int(row.id))
             it:=ui.interact(ctx,id)
             open:=a.editing==row.id
-            fill:=open?th.text:th.accent
-            ink:=open?th.panel:th.on_accent
-            if ui.box(ctx,{id=id,width=ui.fixed(AI_ANNOTATION_PIN),height=ui.fixed(AI_ANNOTATION_PIN),align_x=.Center,align_y=.Center,float={to=.Surface,offset=p,pivot=.Center},fill=fill,stroke=th.panel,stroke_width=1.5,radius=AI_ANNOTATION_PIN*0.5}) {
-                ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",index+1)),th.font_caption,ink,font=ui.FONT_SEMIBOLD)
+            fill:=open?ui.tone(ctx,"text"):ui.tone(ctx,"accent")
+            ink:=open?ui.tone(ctx,"panel"):ui.tone(ctx,"on_accent")
+            if ui.box(ctx,{id=id,width=ui.fixed(AI_ANNOTATION_PIN),height=ui.fixed(AI_ANNOTATION_PIN),align_x=.Center,align_y=.Center,float={to=.Surface,offset=p,pivot=.Center},fill=fill,stroke=ui.tone(ctx,"panel"),stroke_width=1.5,radius=AI_ANNOTATION_PIN*0.5}) {
+                ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",index+1)),ui.metric(ctx,"font_caption"),ink,font=ui.FONT_SEMIBOLD)
             }
             if it.clicked {ai_annotation_edit(s,row.id)}
             if it.hot {
@@ -239,9 +239,9 @@ ai_annotations_build :: proc(s:^Session) {
         ui.id_push(ctx,popup)
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=6,align_y=.Center}) {
-            ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",a.number)),th.font_small,th.text,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",a.number)),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             if ui.text_field(ctx,ui.id(ctx,"group"),a.group[:len(a.group)-1],&a.group_length,{live=true,keep_caret=true,placeholder="Group",height=24}).committed && .Enter in ctx.input.keys_pressed {ui.popup_close(ctx,popup)}
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=24,height=24}).clicked {
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=24,height=24}).clicked {
                 ai_annotation_remove(s,a.editing)
                 a.editing=0
                 ui.popup_close(ctx,popup)
@@ -259,9 +259,9 @@ ai_annotate_icon :: proc() -> ui.Icon {return ui.icon_user(u8(User_Icon.Annotate
 // The tool from the composer, beside the button that attaches an image.
 @(private)
 ai_annotate_button :: proc(s:^Session) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     on:=s.viewport!=nil && tool_on(s,AI_ANNOTATE_TOOL)
-    if ui.button(ctx,ui.id(ctx,"annotate"),{icon=ai_annotate_icon(),icon_color=th.text_muted,icon_size=14,style=.Ghost,width=24,height=24,active=on,disabled=s.mode!=.Edit || scene_covered(s)}).clicked {tool_set(s,AI_ANNOTATE_TOOL,!on)}
+    if ui.button(ctx,ui.id(ctx,"annotate"),{icon=ai_annotate_icon(),icon_color=ui.tone(ctx,"text_muted"),icon_size=14,variant="ghost",width=24,height=24,active=on,disabled=s.mode!=.Edit || scene_covered(s)}).clicked {tool_set(s,AI_ANNOTATE_TOOL,!on)}
 }
 
 @(private)
@@ -282,7 +282,7 @@ ai_annotation_group_rows :: proc(s:^Session,width:f32) -> int {
 @(private)
 ai_annotation_groups_build :: proc(s:^Session,width:f32,rows:int) {
     if rows<=0 {return}
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     a:=&m.annotations
     remove:=-1
     used:=f32(0);row:=0
@@ -292,11 +292,11 @@ ai_annotation_groups_build :: proc(s:^Session,width:f32,rows:int) {
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=th.field,radius=th.radius_control}) {
-            ui.icon(ctx,ai_annotate_icon(),th.text_muted,12)
-            ui.label(ctx,ai_chat_menu_label(ctx,group,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),th.font_small),th.font_small,th.text_muted,size-40-AI_CHIP_PIN_ROOM)
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
+            ui.icon(ctx,ai_annotate_icon(),ui.tone(ctx,"text_muted"),12)
+            ui.label(ctx,ai_chat_menu_label(ctx,group,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40-AI_CHIP_PIN_ROOM)
             ai_chip_pin(s,ui.id(ctx,"pin_annotation_group",i+1),AI_PIN_GROUP,group,group)
-            if ui.button(ctx,ui.id(ctx,"remove_annotation_group",i+1),{icon=.Cross,icon_color=th.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {remove=i}
+            if ui.button(ctx,ui.id(ctx,"remove_annotation_group",i+1),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,variant="ghost",width=12,height=12}).clicked {remove=i}
         }
         used+=size+5
     }

@@ -99,7 +99,6 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
     if c.table==nil || c.table.type!=vfx.Particle_Emitter || len(c.entities)==0 {return false}
     s:=c.session
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     ins:=s.inspector
     single:=len(c.entities)==1
     active:=c.entities[len(c.entities)-1]
@@ -114,7 +113,7 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
     }
     editor.inspector_fields(c,c.table.info)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.MATERIAL_ROW),gap=4,align_y=.Center}) {
-        ui.label(ctx,"Particle",th.font_small,th.text_label,th.label_width)
+        ui.label(ctx,"Particle",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
         given,_:=editor.entity_get(c.world,active,vfx.Particle_Parameters)
         local:=single && (f.override.count>0 || given.count>0)
         open:=editor.asset_list_shown(s,c.table,offset)
@@ -125,11 +124,11 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
         if clicked {editor.asset_list_open(s,c.table,offset,effect.PARTICLE_KIND,"Default",anchor)}
         if dropped!={} {editor.field_write(s,c.table,c.entities,offset,mem.ptr_to_bytes(&dropped))}
         if revert {particle_revert(s,active)}
-        if local && f.particle!={} && ui.button(ctx,ui.id(ctx,"apply"),{icon=.Save_Prefab,style=.Ghost,width=22,height=editor.MATERIAL_ROW}).clicked {particle_apply(s,active)}
+        if local && f.particle!={} && ui.button(ctx,ui.id(ctx,"apply"),{icon=.Save_Prefab,variant="ghost",width=22,height=editor.MATERIAL_ROW}).clicked {particle_apply(s,active)}
         inspected:=editor.inspect_component(s,c.world,vfx.Particle_Emitter,c.entities)
         inspected.width=c.width
         editor.field_reset_button(&inspected,offset,size_of(base.Asset_Id))
-        if single && ui.button(ctx,ui.id(ctx,"parameters"),{icon=unfolded?.Chevron_Down:.Chevron_Right,style=.Ghost,width=th.row,height=editor.MATERIAL_ROW}).clicked {editor.inspector_section_toggle(ins,key)}
+        if single && ui.button(ctx,ui.id(ctx,"parameters"),{icon=unfolded?.Chevron_Down:.Chevron_Right,variant="ghost",width=ui.metric(ctx,"row"),height=editor.MATERIAL_ROW}).clicked {editor.inspector_section_toggle(ins,key)}
     }
     if !single || !unfolded {return true}
     inherited:vfx.Particle_Override

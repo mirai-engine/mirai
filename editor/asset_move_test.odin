@@ -368,7 +368,7 @@ the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: p
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil))
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Archive",root)),os.Error(nil))
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}

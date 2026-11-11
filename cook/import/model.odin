@@ -3,6 +3,7 @@ package importer
 import "core:fmt"
 import "core:mem"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -50,22 +51,20 @@ Import_Options :: struct {
     // one, unless ignore_stored.
     using settings:Import_Settings,
     ignore_stored:bool,
-    // The project or the plugin the import belongs to: sources are named
-    // relative to it in Import_Info, its documents are found under its assets
-    // folder, and what it builds of the cache kinds goes to its imported
-    // folder when the source is inside it and the folder under its assets
-    // (sidecar.odin). "": sources are named by absolute path, and every output
-    // is a file of the folder written to.
+    // The project or the plugin whose assets folder the source is in: sources
+    // are named relative to it in Import_Info, its documents are found among
+    // its assets, and what it builds of the cache kinds goes to its imported
+    // folder (sidecar.odin).
     root:string,
-    documents:bool,       // every output is a document of the folder, also those of the cache kinds: an import that sources.sync cannot run again (a format of a plugin)
-    rebuild:bool,         // writes every asset, also one whose file already is the one the import would write
+    registry:^asset.Registry, // the scanned assets of root, which the import does not change; nil: it scans them
+    world:^core.World_Info,   // the types of the game of root, which the prefab of a model is written in
+    rebuild:bool,        // writes every asset, also one whose file already is the one the import would write
     texture_cache:string, // folder of textures built before, kept by image and settings (textures.cache_read); "": none
     // A texture is built Fast unless the texture cache keeps it as Final
     // (textures.Encode_Speed): the imports of the editor, which a cook
     // encodes again as Final. False: Final, what tools and the CLI build.
     fast_textures:bool,
     mesh_cache:string,    // folder of meshes built before, kept by geometry and settings (mesh_cook); "": none
-    earlier_cache:^Earlier_Cache, // the fronts of assets that earlier writes of the same import read; nil: each write reads them
     material_index:int,   // the index of the first material among those of the source: imports that write its materials apart give each its own
     // Where the import cooks: the worker that calls it (the owner of its
     // job system, or the job that imports), which runs its builds in
@@ -176,6 +175,7 @@ Imported_Model :: struct {
     source_hash:u64,
     format:string,      // the name of the Format it was read with
     name:string,        // of its prefab and its animations (Reader.stem)
+    folder:string,      // beside the source, where a first import puts its assets (Format.folder, else its stem)
     version:u32,        // import_version of that format: what its assets record
     meshes:[]Imported_Mesh,
     materials:[]Imported_Material,

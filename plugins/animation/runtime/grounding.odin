@@ -21,8 +21,8 @@ GROUNDED_LEG_DEFAULT :: Grounded_Leg{
     step_distance=0.2,step_height=0.15,step_duration=0.2,max_distance=0.7,contact=1,
 }
 
+// The grounding of the feet of the rig that plays the .character: none while count is 0.
 Foot_Grounding :: struct {
-    rig:core.Entity `mirai:"transient"`,
     mode:Grounding_Mode,
     legs:[GROUNDING_LEGS]Grounded_Leg `mirai:"hidden"`,
     count:i32 `mirai:"min=0,max=16"`,
@@ -49,7 +49,7 @@ Grounding_Alignment :: struct {offset:mm.Vec3,turn:mm.Quat,weight:f32}
 Grounding_Hierarchy :: struct {bound:u64,first,count:int}
 
 Grounding_Record :: struct {
-    config,rig:core.Entity `mirai:"transient"`,
+    rig:core.Entity `mirai:"transient"`,
     bound,version:u64,
     count,body:i32,
     mode:Grounding_Mode,
@@ -113,12 +113,7 @@ grounding_prepare :: proc(cache:^Grounding_Runtime,configs:core.Read(Foot_Ground
     layout:=core.layout(configs) if configs.table!=nil else 0
     rebuild:=cache.layout!=layout || len(cache.records)!=count || len(cache.hierarchies)!=count
     if !rebuild {
-        for i in 0..<count {
-            config:=core.at(configs,i)
-            entity:=core.entity_at(configs,i)
-            rig:=config.rig if config.rig!=core.NONE else entity
-            if cache.records[i].config!=entity || cache.records[i].rig!=rig {rebuild=true;break}
-        }
+        for i in 0..<count {if cache.records[i].rig!=core.entity_at(configs,i) {rebuild=true;break}}
     }
     if !rebuild {cache.stamp=stamp;return true}
     records:[dynamic]Grounding_Record;rows:[dynamic]i32
@@ -126,19 +121,13 @@ grounding_prepare :: proc(cache:^Grounding_Runtime,configs:core.Read(Foot_Ground
     defer {delete(records);delete(rows);delete(hierarchies);delete(links)}
     if resize(&records,count)!=nil || resize(&hierarchies,count)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
     for i in 0..<count {
-        config:=core.at(configs,i)
-        entity:=core.entity_at(configs,i)
-        rig:=config.rig if config.rig!=core.NONE else entity
+        rig:=core.entity_at(configs,i)
         index:=core.entity_index(rig)
         if index>=len(rows) && resize(&rows,index+1)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-        if rows[index]!=0 {
-            core.report(problems,rig,"animation.grounding_twice","two Foot_Grounding ground this rig, so no foot of any rig is grounded; keep one of them")
-            return false
-        }
         rows[index]=i32(i+1)
-        records[i]={config=entity,rig=rig}
+        records[i]={rig=rig}
         for previous,j in cache.records {
-            if previous.config!=entity || previous.rig!=rig {continue}
+            if previous.rig!=rig {continue}
             records[i]=previous
             if j<len(cache.hierarchies) {hierarchies[i]=cache.hierarchies[j]}
             break
@@ -264,7 +253,7 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
         return false
     }
     if record.count!=config.count || record.mode!=config.mode || record.bound!=state.bound || record.bones!=bones || record.contact_bones!=contacts || record.body!=i32(body) {
-        record^=Grounding_Record{config=record.config,rig=record.rig}
+        record^=Grounding_Record{rig=record.rig}
     }
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     record.bones=bones

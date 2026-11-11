@@ -174,6 +174,8 @@ frame_begin :: proc(p:^Platform) {
     if !p.headless {
         window_rect_apply(&p.window)
         window_pump(p,now)
+    } else if p.audio.subsystem {
+        audio_device_pump(p)
     }
     for i in 0..<s.pending_count {input_apply(p,s.pending[i])}
     s.pending_count=0

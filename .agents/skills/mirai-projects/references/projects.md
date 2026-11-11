@@ -10,8 +10,9 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   project.mirai     manifest: what makes the folder a project
   settings.mirai    project settings, the bindings in Input_Settings: what differs (optional)
   cook.mirai        cooking roots that no scene names (optional)
-  assets/           assets: what is authored, and the documents imports write
-  source/           art sources, each with its sidecar (<source>.import): settings and asset ids
+  assets/           assets, by theme: what is authored, the art sources beside what they make,
+                    each with its sidecar (<source>.import: settings, folder and asset ids), and
+                    the documents their imports write
   game/             game library of the project
   editor/           editor package of the project (engine-time)
   plugins/<name>/   plugin.mirai, runtime/, editor/, shaders/, assets/
@@ -19,7 +20,7 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   panels/           editor panels built by the chat agent (engine-time)
   tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
   .mirai/           generated; not edited or versioned
-    imported/       what imports build from source/ that nobody edits (meshes, textures, sounds,
+    imported/       what imports build from the sources that nobody edits (meshes, textures, sounds,
                     fonts), each file named by its id and what it was built from; a build makes
                     it again
     gen/            generated packages: the worlds and the root of each target
@@ -165,8 +166,8 @@ Settings of the engine and its plugins:
 - `Audio_Output` (`audio`, machine): the sound output by its name.
 - `Net_Settings` (plugin `multiplayer`, `Shared`): port, protocol, version, capacities and
   tolerances.
-- `Spawn_Settings` (plugin `spawn`): `players` gives a body at a spawn point to each player that
-  has none; off, the game gives them a body.
+- `Spawn_Settings` (plugin `spawn`): `prefab`, the player prefab, of which each player that has
+  no body gets one at a spawn point; none, and no point with one, the game gives them a body.
 - `Input_Settings` (`engine/input`, machine): the bindings of the actions the project or the
   player changed, a keyed entry per action
   ([actions](../../mirai-gameplay/references/control.md#actions)).

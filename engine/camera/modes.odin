@@ -12,17 +12,6 @@ import mm "mirai:std/math"
 
 Camera_Preset :: enum u8 {Isometric,Top_Down,Side,First_Person,Third_Person,Aim}
 
-// What a mode gives the render.Camera of its camera.
-Camera_Lens :: struct {
-    projection:render.Camera_Projection,
-    fov:f32,    // vertical, radians
-    near:f32,   // m
-    height:f32, // m: what an orthographic one covers from bottom to top
-    shift:[2]f32,
-    layers:u32, // of the meshes it draws; 0: every one
-    own_hidden:u32, // of the body of its own player, those it does not draw
-}
-
 // The render.Layers of a head, which a camera at the eyes of its own body
 // does not draw of that body: a mesh in this layer, or a part of a skinned
 // mesh (animation Skin_Part). Every other camera, and the views of other
@@ -31,16 +20,10 @@ HEAD_LAYER :: u32(1)<<15
 
 Camera_Setup :: struct {
     follow:Camera_Follow, // its target and its transient fields are not used: the camera keeps its own
-    lens:Camera_Lens,
+    lens:render.Camera,   // its active and clip_plane are not used: the camera keeps its own
 }
 
 ISOMETRIC_PITCH :: 0.6154797 // radians: atan(1/sqrt(2)), a cube seen along its diagonal
-
-@(private) ARM_GRACE :: SPRING_ARM_GRACE
-@(private) ARM_PULL_TIME :: SPRING_ARM_PULL_TIME
-@(private) ARM_HOLD :: SPRING_ARM_HOLD
-@(private) ARM_RETURN_TIME :: SPRING_ARM_RETURN_TIME
-@(private) ARM_MARGIN :: SPRING_ARM_MARGIN
 
 CAMERA_PRESETS :: [Camera_Preset]Camera_Setup{
     // Orthographic, along the diagonal of a cube. It looks down from above
@@ -48,13 +31,13 @@ CAMERA_PRESETS :: [Camera_Preset]Camera_Setup{
     .Isometric={
         follow={mode=.Orbit,offset={0,1,0},distance=20,half_life=0.12,probe_radius=0,dead_zone={0.3,0.3,0},look_ahead=0.25,look_ahead_max=2,
             yaw=45*mm.RAD_PER_DEG,pitch=ISOMETRIC_PITCH,min_pitch=ISOMETRIC_PITCH,max_pitch=ISOMETRIC_PITCH,
-            pull_grace=ARM_GRACE,pull_time=ARM_PULL_TIME,return_delay=ARM_HOLD,return_time=ARM_RETURN_TIME,arm_margin=ARM_MARGIN},
+            pull_grace=SPRING_ARM_GRACE,pull_time=SPRING_ARM_PULL_TIME,return_delay=SPRING_ARM_HOLD,return_time=SPRING_ARM_RETURN_TIME,arm_margin=SPRING_ARM_MARGIN},
         lens={projection=.Orthographic,fov=45*mm.RAD_PER_DEG,near=0.1,height=14},
     },
     .Top_Down={
         follow={mode=.Orbit,offset={0,1,0},distance=24,half_life=0.12,probe_radius=0,dead_zone={0.5,0.5,2},look_ahead=0.3,look_ahead_max=3,
             pitch=80*mm.RAD_PER_DEG,min_pitch=80*mm.RAD_PER_DEG,max_pitch=80*mm.RAD_PER_DEG,
-            pull_grace=ARM_GRACE,pull_time=ARM_PULL_TIME,return_delay=ARM_HOLD,return_time=ARM_RETURN_TIME,arm_margin=ARM_MARGIN},
+            pull_grace=SPRING_ARM_GRACE,pull_time=SPRING_ARM_PULL_TIME,return_delay=SPRING_ARM_HOLD,return_time=SPRING_ARM_RETURN_TIME,arm_margin=SPRING_ARM_MARGIN},
         lens={projection=.Orthographic,fov=45*mm.RAD_PER_DEG,near=0.1,height=20},
     },
     // 2.5D, looking along -Z: it never follows depth, and the target moves in
@@ -73,15 +56,15 @@ CAMERA_PRESETS :: [Camera_Preset]Camera_Setup{
     .Third_Person={
         follow={mode=.Orbit,offset={0,1.45,0},distance=3.6,half_life=0.06,probe_radius=0.25,shoulder={0.55,0.15},dead_zone={0,0.3,0},
             pitch=0.25,min_pitch=-0.7,max_pitch=1.2,turn=true,recenter=3,
-            pull_grace=ARM_GRACE,pull_time=ARM_PULL_TIME,return_delay=ARM_HOLD,return_time=ARM_RETURN_TIME,arm_margin=ARM_MARGIN,hide_within=0.9},
+            pull_grace=SPRING_ARM_GRACE,pull_time=SPRING_ARM_PULL_TIME,return_delay=SPRING_ARM_HOLD,return_time=SPRING_ARM_RETURN_TIME,arm_margin=SPRING_ARM_MARGIN,hide_within=0.9},
         lens={projection=.Perspective,fov=60*mm.RAD_PER_DEG,near=0.05},
     },
-    // Closer over the shoulder, with a narrower field, and the body looks
-    // where it looks: the camera a Camera_Activation brings while aiming.
+    // Closer over the shoulder, with a narrower field, turning with the look
+    // of the body: the camera a Camera_Activation brings while aiming.
     .Aim={
         follow={mode=.Orbit,offset={0,1.45,0},distance=1.8,half_life=0.04,probe_radius=0.25,shoulder={0.65,0.1},
-            pitch=0.1,min_pitch=-0.7,max_pitch=1.2,turn=true,facing=true,
-            pull_grace=ARM_GRACE,pull_time=ARM_PULL_TIME,return_delay=ARM_HOLD,return_time=ARM_RETURN_TIME,arm_margin=ARM_MARGIN,hide_within=0.7},
+            pitch=0.1,min_pitch=-0.7,max_pitch=1.2,aim=true,
+            pull_grace=SPRING_ARM_GRACE,pull_time=SPRING_ARM_PULL_TIME,return_delay=SPRING_ARM_HOLD,return_time=SPRING_ARM_RETURN_TIME,arm_margin=SPRING_ARM_MARGIN,hide_within=0.7},
         lens={projection=.Perspective,fov=45*mm.RAD_PER_DEG,near=0.05},
     },
 }
@@ -133,7 +116,7 @@ camera_preset_of :: proc(follows:core.Read(Camera_Follow),cameras:core.Read(rend
     config.target=core.NONE
     for preset in Camera_Preset {
         setup:=camera_preset(preset)
-        if camera_follow_config(setup.follow)==config && setup.lens==lens_of(lens) {return preset,true}
+        if camera_follow_config(setup.follow)==config && lens_on(lens,setup.lens)==lens {return preset,true}
     }
     return {},false
 }
@@ -146,9 +129,11 @@ camera_follow_config :: proc "contextless" (follow:Camera_Follow) -> Camera_Foll
     return config
 }
 
-@(private)
-lens_of :: proc "contextless" (camera:render.Camera) -> Camera_Lens {
-    return {projection=camera.projection,fov=camera.fov,near=camera.near,height=camera.height,shift=camera.shift,layers=camera.layers,own_hidden=camera.own_hidden}
+// A lens on a camera: it keeps whether the camera is active and its clip plane.
+lens_on :: proc "contextless" (camera,lens:render.Camera) -> render.Camera {
+    out:=lens
+    out.active,out.clip_plane=camera.active,camera.clip_plane
+    return out
 }
 
 // Why a setup cannot be taken; empty when it can.

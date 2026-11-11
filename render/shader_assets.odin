@@ -232,14 +232,17 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
         no_name:runtime.Allocator_Error
         if code.name,no_name=strings.clone(text(item["name"]),allocator);no_name!=nil {error="out of memory for the name of a shader";break}
         stage,valid_stage:=reflect.enum_from_name(rhi.Shader_Stage,text(item["stage"]));if !valid_stage {error="invalid shader stage";break};code.stage=stage
-        file,_:=filepath.join({directory,text(item["msl" if rhi.SHADER_FORMAT==.Msl else "spv"])},context.temp_allocator)
-        data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
-        rhi.shader_code_set(code,data,"")
-        if rhi.SHADER_FORMAT==.Msl {
-            entry,no_entry:=strings.clone(text(item["entry"]),allocator)
-            if no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
-            rhi.shader_code_set(code,data,entry)
-            if entry=="" {error="shader has no Metal entry point";break}
+        // A stage of the rays traced by software has no Metal code.
+        if name:=text(item["msl" if rhi.SHADER_FORMAT==.Msl else "spv"]);name!="" || SOFTWARE_TRACER {
+            file,_:=filepath.join({directory,name},context.temp_allocator)
+            data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
+            rhi.shader_code_set(code,data,"")
+            if rhi.SHADER_FORMAT==.Msl {
+                entry,no_entry:=strings.clone(text(item["entry"]),allocator)
+                if no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
+                rhi.shader_code_set(code,data,entry)
+                if entry=="" {error="shader has no Metal entry point";break}
+            }
         }
         group:=item["group"].(json.Array) or_else nil
         if len(group)!=3 {error="invalid workgroup";break}
@@ -350,7 +353,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     r.overlay_hw_pipelines=candidate.overlay_hw_pipelines
     candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.variant_count=0
     if !scene {return true}
-    r.targets.reflect_valid=false;r.targets.gi_reference_valid=false;r.targets.taa_valid=false;r.targets.glass_valid=false
+    r.targets.reflect_valid=false;r.targets.taa_valid=false;r.targets.glass_valid=false
     renderer_camera_cut(r)
     world_light_stale(r)
     return true

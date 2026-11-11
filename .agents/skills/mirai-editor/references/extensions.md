@@ -390,10 +390,12 @@ and joins them with the engine's.
   those of `sources.FORMATS`, with the same reading, writing, cache and identity
   ([plugin formats](../../mirai-imports/references/imports.md#plugin-formats)); its
   `Format.folder` chooses the folder of the import. Its extensions enter the dialog's Models
-  filter and what the editor recognizes on dropping a file. With `prepare(s, allocator)`, the
-  editor asks it in its thread, before importing a model, for the format's options for that import
-  (`Format.data`, for example what other providers give), and `release(data, allocator)` releases
-  them on finishing.
+  filter and what the editor recognizes on dropping a file. With `prepare(assets, info,
+  allocator)` it gives, before a model is imported, the format's options for that import
+  (`Format.data`) from the registry of the project and the library of its plugins (for example
+  what other providers give), with no session: the import program of the engine prepares it the
+  same way when a build syncs the project (`import_library`). `release(data, allocator)`
+  releases them on finishing.
 - `editor.Import_Source_Provider{source}` gives a `Source_Importer`, a source the plugin imports
   whole and that is not a model, without a folder. Its fields are `name` (the dialog's filter and
   the messages), `extensions`, `claims(path, head)` (claims the file by its extension and its first

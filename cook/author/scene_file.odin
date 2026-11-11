@@ -125,15 +125,9 @@ scene_value :: proc(f:^Scene_File,t:^core.Table_Info,v:^core.Value_Schema,id:bas
 scene_value_set :: proc(f:^Scene_File,t:^core.Table_Info,v:^core.Value_Schema,id:base.Entity_Id,value:[]u8) -> bool {
     table,error:=asset.scene_component_add(&f.scene,t.name,&f.ws.schema,v.type)
     if error!=.None {return false}
-    stored:=f.scene.doc.tables[table].columns[1]
-    if f.scene.doc.hashes[stored.type]==v.hash {return asset.scene_component_set(&f.scene,table,id,value)==.None}
-    image:=make([]u8,max(stored.size,1),context.temp_allocator)[:stored.size]
-    migration:serial.Migration
-    if serial.migration_init(&migration,&f.ws.schema,v.type,&f.scene.doc.schema,stored.type,context.temp_allocator)!=.None {return false}
-    defer serial.migration_destroy(&migration)
-    if current,has:=asset.scene_component_get(&f.scene,table,id);has {copy(image,current)}
-    serial.migration_apply(&migration,image,value,1)
-    return asset.scene_component_set(&f.scene,table,id,image)==.None
+    // A table stored with another layout takes the game's first, so no value of the document is lost.
+    if f.scene.doc.hashes[f.scene.doc.tables[table].columns[1].type]!=v.hash && asset.document_column_retype(&f.scene.doc,table,1,&f.ws.schema,v.type,scene_start(t,v))!=.None {return false}
+    return asset.scene_component_set(&f.scene,table,id,value)==.None
 }
 
 @(private="file")
@@ -358,6 +352,11 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
         write=proc(user:rawptr,reading:^Reading,node:Node,t:^core.Table_Info,text,path:string,from:[]u8,merge:bool) -> (changed,ok:bool) {
             return scene_component_apply((^Scene_File)(user),reading,base.Entity_Id(node),t,text,path,from,merge)
         },
+        forget=proc(user:rawptr,node:Node,name:string) -> bool {
+            f:=(^Scene_File)(user)
+            table,found:=asset.scene_component(&f.scene,name)
+            return found && asset.scene_component_remove(&f.scene,table,base.Entity_Id(node))
+        },
         drop=proc(user:rawptr,node:Node,t:^core.Table_Info) {
             f:=(^Scene_File)(user)
             table,_:=asset.scene_component(&f.scene,t.name)
@@ -415,33 +414,32 @@ scene_file_apply :: proc(f:^Scene_File,text:string) -> (applied:Scene_Applied,pr
     return
 }
 
-// The bytes of the file as a save of the editor writes a scene: its entities
-// in a world of the game, captured, so the same scene is the same bytes
-// whoever wrote it.
-@(private="file")
-scene_file_bytes :: proc(f:^Scene_File) -> (bytes:[]u8,problem:string) {
-    p:=f.p
+// The bytes of a scene as a save of the editor writes it: its entities in a
+// world of the game info describes, captured, so the same scene is the same
+// bytes whoever wrote it, every component in the layout the game declares.
+// scratch: that world, made the first time; in the temp allocator.
+scene_file_bytes :: proc(scene:^asset.Scene,types:^asset.Types,info:^core.World_Info,scratch:^Scratch_World) -> (bytes:[]u8,problem:string) {
     FAILED :: "the file could not be written: "
-    edited,packing:=asset.scene_bytes(&f.scene,context.temp_allocator)
+    edited,packing:=asset.scene_bytes(scene,context.temp_allocator)
     file:asset.Asset
     if packing!=.None || asset.asset_open(&file,edited,context.temp_allocator)!=.None {return nil,FAILED+"memory ran out"}
     defer asset.asset_close(&file)
-    if p.scratch.w.data==nil {
+    if scratch.w.data==nil {
         made:bool
-        if p.scratch,made=scratch_world_make(p.info);!made {return nil,FAILED+"a scene is written through a world of the game, and the library of the project gives none; "+BUILD_FIX}
+        if scratch^,made=scratch_world_make(info);!made {return nil,FAILED+"a scene is written through a world of the game, and the library of the project gives none; "+BUILD_FIX}
     }
-    w:=p.scratch.w
+    w:=scratch.w
     defer {
         if ids:=core.world_table_of(w,core.Id);ids!=nil {
             for e in slice.clone(ids.entities[:],context.temp_allocator) {core.destroy(core.world_entities(w),e)}
         }
         core.world_settle(w)
     }
-    if _,error:=escene.instantiate(w,&file,&p.types);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
+    if _,error:=escene.instantiate(w,&file,types);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
     core.world_settle(w)
     captured:asset.Scene
-    if _,error:=escene.capture(w,&captured,&p.types,{previous=&f.scene},context.temp_allocator);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
-    for override in f.scene.overrides {append(&captured.overrides,override)}
+    if _,error:=escene.capture(w,&captured,types,{previous=scene},context.temp_allocator);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
+    for override in scene.overrides {append(&captured.overrides,override)}
     if bytes,packing=asset.scene_bytes(&captured,context.temp_allocator);packing!=.None {return nil,FAILED+"memory ran out"}
     return bytes,""
 }
@@ -457,8 +455,15 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
     applied:Scene_Applied
     if applied,problem=scene_file_apply(&f,text);problem!="" {return}
     written={path=path,fresh=!exists,made=applied.made,removed=applied.removed}
-    // A file that says the same stays as it is, in the layout it was written with.
-    if exists && applied.made==0 && applied.removed==0 && !applied.changed {
+    relaid:=make([dynamic]escene.Stored,context.temp_allocator)
+    if exists {
+        for entry in scene_stored(p,path) {
+            if !entry.unknown {append(&relaid,entry)}
+        }
+    }
+    written.stored=relaid[:]
+    // A file that says the same and stores every component of the game as the game reads it stays as it is.
+    if exists && applied.made==0 && applied.removed==0 && !applied.changed && len(relaid)==0 {
         written.same=true
         return written,""
     }
@@ -466,7 +471,7 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
         if refused:=asset.prefab_refused(&f.scene);refused!="" {return {},fmt.tprintf("%s: %s",path,refused)}
     }
     bytes:[]u8
-    if bytes,problem=scene_file_bytes(&f);problem!="" {return {},problem}
+    if bytes,problem=scene_file_bytes(&f.scene,&p.types,p.info,&p.scratch);problem!="" {return {},problem}
     file:=asset.registry_file_path(&p.registry,path,context.temp_allocator) if exists else fmt.tprintf("%s/%s",p.assets_root,path)
     problem=file_put(p,file,path,bytes,&written)
     return

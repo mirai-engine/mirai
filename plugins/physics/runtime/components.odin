@@ -139,7 +139,7 @@ Character :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // of the body in a fluid, whose volume is its mass over this: 985 a person; 0: no buoyancy
     up_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its up turns toward the opposite of its gravity: around a planet; 0: it keeps its up
     locks:Body_Locks,                       // world axes the simulation never moves its feet along, as for a Rigid_Body; a place still does. Its move turns it: the angular ones do nothing
-    turn_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its yaw toward where it goes, as a seat that moves it relative to the camera or the world or an agent that steers it turn it; 0: at once
+    turn_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its yaw toward the look its input.Move_Input asks, whoever drives it; 0: at once
 }
 
 // A human of 80 kg: the values of sim.CHARACTER_DESC_DEFAULT. Its capsule is collider_character().

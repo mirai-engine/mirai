@@ -43,10 +43,11 @@ err:=asset.texture_save("assets/hud/badge.tex",&c.types,
 
 ## Sound
 
-Write the WAV into `source/sounds/` and import it, so the `.sound` is what `mirai import` makes:
+Write the WAV into the assets, where the sound goes, and import it, so the `.sound` is what
+`mirai import` makes:
 
 ```odin
-report,error:=importer.import_sound("source/sounds/hum.wav","assets/arena",{},{root="."})
+report,error:=importer.import_sound("assets/arena/hum.wav",{},{root="."})
 if error.code!=.None {fmt.eprintln(error.message);return}
 defer importer.report_destroy(&report)
 hum:=report.assets[0].id // random the first time, kept after
@@ -67,15 +68,15 @@ err:=asset.sound_set_save("assets/player/steps.sound_set",&c.types,
     {id=asset.content_id(PROJECT,"sound_set","steps"),info=info})
 ```
 
-`Sound_Set_Info` also has `volume_min`, `volume_max`, `pitch_min`, `pitch_max`, `no_repeat`
-and a `weight` per sound. A set that is invalid returns `.Invalid`.
+`Sound_Set_Info` also has the volume and pitch ranges, `no_repeat`, a `weight` per sound and
+`hearing`, how `audio.play` hears it. A set that is invalid returns `.Invalid`.
 
 ## Import
 
 A tool can import art too, with the function `mirai import` calls:
 
 ```odin
-report,error:=sources.import_source("source/models/crate.glb","assets/arena/crate",{root="."})
+report,error:=sources.import_source("assets/arena/crate.glb")
 ```
 
 `sources` is `mirai:cook/import/sources`. It keeps the settings and the ids in `<file>.import`

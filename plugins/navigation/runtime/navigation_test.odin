@@ -35,7 +35,7 @@ Nav_World :: struct {
     agents:core.Table(Nav_Agent),
     paths:core.Table(Nav_Path),
     inputs:core.Table(input.Move_Input),
-    drivables:core.Table(input.Drivable),
+    seats:core.Table(input.Seat),
     loco_states:core.Table(locomotion.Locomotion_State),
     walks:core.Table(locomotion.Walk),
     flights:core.Table(locomotion.Fly),
@@ -105,7 +105,7 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,{dt=0,playing=false},
             core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
             &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),
+            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},
         )
         nav_test_settle(f)
         navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
@@ -744,7 +744,7 @@ agents_test_step :: proc(f:^Nav_Test) {
     }
     nav_test_settle(f)
     navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
-    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.drivables),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
+    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.seats),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
     navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
@@ -754,7 +754,7 @@ agents_test_step :: proc(f:^Nav_Test) {
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,time,
         core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
         &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),
+        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},
     )
 }
 
@@ -1505,7 +1505,7 @@ a_seated_agent_walks_where_it_is_asked_while_its_seat_drives_it :: proc(t:^testi
     walkers:[2]core.Entity
     for &e,i in walkers {
         e=agents_test_walker(&f,{-6,0,f32(i)*4-2})
-        core.add(&f.drivables,e,input.Drivable{seat=core.create(&f.entities)})
+        core.add(&f.seats,core.create(&f.entities),input.Seat{body=e})
     }
     nav_test_settle(&f)
     core.edit(&f.agents,walkers[0]).seated=true

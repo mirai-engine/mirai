@@ -5,7 +5,7 @@ import "core:testing"
 @(test)
 an_icon_given_as_data_is_drawn_from_its_parts :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     // A square over the middle half of the icon.
     testing.expect(t,icon_custom_set(&ctx,3,icon_drawing(icon_part(.Fill,{{-4,-4},{4,-4},{4,4},{-4,4}}))))

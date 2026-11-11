@@ -39,7 +39,7 @@ tools_popups :: proc(s:^Session,w:core.World_Ref) {
 API_IMPORT_SECONDS :: 1800
 
 Import_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a table of texts (CSV) that becomes .strings; a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
     folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in (a model keeps a folder of its name inside); without it, the root of the assets. A source a plugin imports whole takes none"`,
     profile:bool `mirai:"optional,label=Records where its time goes: the answer gives the seconds of each zone"`,
     seconds:int `mirai:"optional,min=1,max=7200,unit=s,label=How long it waits for the end of the import; past that it answers importing and the import goes on"`,
@@ -84,8 +84,7 @@ Graphics_Status :: struct {
     vsync:bool,
     frame_generation:bool `mirai:"label=Asked for: only a technique that offers it (FSR 3.1) generates frames"`,
     generated:bool `mirai:"label=The last frame drew an image shown before its own"`,
-    render_scale:f32 `mirai:"label=The 3D image per point of the window; 0 follows the target of the preset"`,
-    preset_height:u32 `mirai:"label=The lines the last preset aims for; 0 is one per point"`,
+    resolution:u32 `mirai:"label=The lines the views of the window aim for, never above one pixel per point"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
     options:[GRAPHICS_ROWS_CAPACITY]Api_Graphics_Option `mirai:"trim,label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,
@@ -112,7 +111,7 @@ tools_api_register :: proc(s:^Session,st:^Api_State) {
     programs_api_register(s,st)
     material_document_register(s,st)
     import_default:=Import_Params{seconds=API_IMPORT_SECONDS}
-    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, a CSV of texts, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Status_Result,writes_result=true,defaults=&import_default,run=api_asset_import})
+    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Status_Result,writes_result=true,defaults=&import_default,run=api_asset_import})
     api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=Import_Status_Result,writes_result=true,flags={.Read_Only},run=api_asset_import_status})
     api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
 }
@@ -243,7 +242,7 @@ api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
 api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics_Settings) {
     if g==nil {return}
     base.text_set(result.preset[:],graphics_quality_label(erender.graphics_quality_of(g^)))
-    result.frame_limit,result.vsync,result.render_scale,result.preset_height=g.frame_limit,g.vsync,g.render_scale,g.preset_height
+    result.frame_limit,result.vsync,result.resolution=g.frame_limit,g.vsync,g.resolution
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
     base.text_set(result.antialiasing[:],base.text_get(technique[:]))

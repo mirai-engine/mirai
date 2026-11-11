@@ -54,6 +54,7 @@ Instantiate_Desc :: struct {
     scope_extents:[3]f32,
     saved:bool,             // a saved game: what hangs from its references came with it, loaded as it was
     only:base.Entity_Id,    // when given, only the entity whose Id in the world (id_in with salt) is this and what hangs from it, a root; its references stay unloaded
+    root:core.Entity,       // when given, the entity of the first root of the document, which keeps what it has: a spawned copy
     stored:^[dynamic]Stored, // when given, receives each component the document and the scenes it loads store otherwise than the world reads them
 }
 
@@ -99,7 +100,11 @@ Spawner :: struct {
 // Places a copy of a prefab, a scene of the assets with one root, by its path
 // ("pets/Dog.scene") or its id, and gives back its root, whose rows wait for
 // the end of the function. NONE when it did not spawn, which is the problem
-// scene.spawn that says why.
+// scene.spawn that says why. A prefab that is not loaded, or that takes
+// something that is not, is read in jobs: its root comes at once with its
+// Transform, Parent, Id and Prefab_Pending, and nothing else, and takes the
+// rest of the prefab once it is read (scene_spawns); what was given to it
+// meanwhile stays, and its own value of a component wins over the prefab's.
 spawn :: proc{spawn_path,spawn_id}
 
 spawn_path :: proc(s:Spawner,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
@@ -225,10 +230,29 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
     root_set(candidate,a.blob.header.id)
     references_resolve(candidate)
     propagate(candidate,app)
+    prefabs_warm(candidate,app)
     core.world_swap(w.info,w.data,data)
     // A look without memory for it stays asked for: scene_sections looks again, and reports it.
     _=records_look(w)
     return
+}
+
+// The prefabs the fields of a World that was just loaded name, and what they
+// take, read now, as a load in phases reads them in jobs: their first spawn
+// is whole in its call.
+@(private)
+prefabs_warm :: proc(w:core.World_Ref,app:^host.App) {
+    names:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    host.world_asset_ids(w,&names)
+    prefabs:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for id in names {
+        if file,found:=asset.registry_find(&app.assets.registry,id);found && asset.registry_prefab(file) {append(&prefabs,id)}
+    }
+    if len(prefabs)==0 {return}
+    if job,begun:=prefab_warm_begin(app,prefabs[:]);begun==.None {
+        load_step(job,true)
+        load_free(job)
+    }
 }
 
 // The world transforms of a World that was just loaded, now: the propagation
@@ -243,47 +267,70 @@ propagate :: proc(w:core.World_Ref,app:^host.App) {
 // What spawn runs, for the editor method that answers with the report and the
 // error: games and plugins call spawn. Its entities exist at once and their
 // rows wait for the end of the function: whoever spawned it reads and finishes
-// them with core.added.
+// them with core.added. A prefab that waits for jobs gives its root alone
+// (spawn).
 spawn_prefab :: proc(c:core.Commands,assets:^host.Assets,s:Spawn) -> (report:Report,error:Error) {
     return spawn_placed(c,assets,s,core.world_storage_of(core.world_ref(c.data,c.info),Prefab_Forms))
 }
 
-// spawn_prefab with the forms the prefab is prepared in; none: it is read now.
+// spawn_prefab with the forms the prefab is prepared in; none: it is made now.
 @(private)
 spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_Forms) -> (report:Report,error:Error) {
     if assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(assets,s.prefab)
-    if file==nil {return {},.Not_Found}
+    file,found:=asset.registry_find(&assets.registry,s.prefab)
+    if !found || file.state!=.Asset || file.kind!=asset.KIND_SCENE {return {},.Not_Found}
+    if !asset.registry_prefab(file) {return {},.Not_A_Prefab}
     if s.parent!=core.NONE && !core.alive(c.entities,s.parent) {return {},.Invalid}
-    if !asset.asset_prefab(file) {return {},.Not_A_Prefab}
     w:=core.world_ref(c.data,c.info)
-    form,entities:=prefab_form(forms,w,assets,s.prefab,file) or_return
-    report,error=form_place(w,form,&assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient,documents=assets_documents(assets)},entities)
-    if error!=.None {return}
-    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {
-        root^=s.transform
-        if root.rotation==0 {root.rotation=1}
-        if root.scale=={} {root.scale={1,1,1}}
+    form,entities,loaded:=prefab_form(forms,w,assets,s.prefab) or_return
+    root:=core.create(c)
+    transform:=s.transform
+    if transform.rotation==0 {transform.rotation=1}
+    if transform.scale=={} {transform.scale={1,1,1}}
+    core.commands_add(c,root,transform)
+    if s.parent!=core.NONE {core.commands_add(c,root,core.Parent{s.parent,0})}
+    if !s.transient {core.commands_add(c,root,core.Id{core.id_next(c.entities)})}
+    core.commands_add(c,root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
+    if !loaded {
+        core.commands_add(c,root,Prefab_Pending{prefab=s.prefab})
+        return {root=root,entities=1},.None
     }
-    core.commands_add(c,report.root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
+    report,error=form_place(w,form,&assets.types,{transient=s.transient,fresh=!s.transient,documents=assets_documents(assets),root=root},entities)
+    if error!=.None {core.destroy(c,root)}
     return
 }
 
 // A copy of an entity of the scene of a section, by its Id in the world, and
 // of what hangs from it, as a root of the world without Ids (Spawn.transient):
 // what stands for it where its section is not loaded. salt is the Id of the
-// reference of the section.
+// reference of the section. Like spawn it reads no file: a scene that is not
+// loaded, or that takes something that is not, gives the root at once with
+// its Transform and Prefab_Pending, filled once jobs read them.
 spawn_member :: proc(c:core.Commands,assets:^host.Assets,section_scene:base.Asset_Id,salt,id:base.Entity_Id,transform:core.Transform) -> (report:Report,error:Error) {
     if assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(assets,section_scene)
+    if file,found:=asset.registry_find(&assets.registry,section_scene);!found || file.state!=.Asset || file.kind!=asset.KIND_SCENE {return {},.Not_Found}
+    root:=core.create(c)
+    core.commands_add(c,root,transform)
+    pending:=Prefab_Pending{prefab=section_scene,salt=salt,member=id}
+    if !prefab_loaded(assets,section_scene,documents=true) {
+        core.commands_add(c,root,pending)
+        return {root=root,entities=1},.None
+    }
+    report,error=member_place(core.world_ref(c.data,c.info),assets,pending,root)
+    if error!=.None {core.destroy(c,root)}
+    return
+}
+
+// Places on root the entity of a section a pending copy stands for, with
+// what hangs from it.
+@(private)
+member_place :: proc(w:core.World_Ref,assets:^host.Assets,pending:Prefab_Pending,root:core.Entity) -> (report:Report,error:Error) {
+    file:=host.assets_scene(assets,pending.prefab)
     if file==nil {return {},.Not_Found}
     resolved:asset.Asset
     defer asset.asset_close(&resolved)
     document:=current(assets_documents(assets),file,&resolved) or_return
-    report,error=instantiate(core.world_ref(c.data,c.info),document,&assets.types,{transient=true,salt=salt,only=id})
-    if error!=.None {return}
-    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {root^=transform}
-    return
+    return instantiate(w,document,&assets.types,{transient=true,salt=pending.salt,only=pending.member,root=root})
 }
 
 // The document a load or a spawn instantiates. With the assets of a project
@@ -547,7 +594,6 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         linked:=info.type==Prefab_Instance?core.world_table_of(w,Prefab_Member):nil // a spawned copy has none: no document holds it
         if slice.contains(desc.excluded,info.type) {continue}
         size:=info.info.size
-        if size>0 && len(value_type.layout.runs)==0 {continue}
         table:=core.world_table_at(w,&info)
         hash:=base.name_hash(info.name)
         clear(&table_rows);clear(&images)

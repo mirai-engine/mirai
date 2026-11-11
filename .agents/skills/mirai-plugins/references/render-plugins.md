@@ -141,7 +141,7 @@ inscribed ellipse).
 
 **Travel** (`portals.odin`):
 
-- `portals_travel` (`fixed`, before `locomotion_seat`: before the game input and the physics)
+- `portals_travel` (`fixed`, before `camera_drive`: before the game input and the physics)
   looks at the stretch that each traveler covered in the previous tick. If its point entered
   through the front of an opening, it places it on the other side with `core.place` (a
   [jump][jump]: the `previous` goes with it, so drawing interpolates on the other side), asks
@@ -211,8 +211,10 @@ several window views none gets ahead of the tick or carries its history (`portal
 `Fog_Volume` is a medium that darkens what is behind it and shows the light that crosses it, with
 the shafts that what blocks the sun and the lights cuts in it. It is a
 [volume](../../mirai-gameplay/references/libraries.md#volume) value: the `Volume` of its entity says
-where it is (without one, the whole world), its edge and whether it replaces or adds to what is
-below; the shaders combine it at each point with `volume_weight` and `volume_mix`.
+where it is (a box, a sphere or everything under a plane), its edge and whether it replaces or adds
+to what is below; the shaders combine it at each point with `volume_weight` and `volume_mix`. The
+haze of the whole world is the air of the sky, not a fog: one without a bounded `Volume` is the
+`fog.volume` problem and fills nothing.
 
 - `density` (per meter): of the light that crosses a meter, more or less the part it stops.
 - `color`: of what it stops, the part it scatters in each channel; it absorbs the rest.
@@ -240,8 +242,6 @@ lit:
 - `Every_Frame`: like those that are seen.
 - `Every_Fourth` (default): one frame in four, in turns; in the others it keeps its reprojected
   light. When the camera shows it, it already has its light settled.
-- `Never`: it is not lit, and on being shown its light starts again: a few frames with more grain
-  than the rest.
 
 ### Media from other plugins
 
@@ -278,8 +278,8 @@ boxes.
 - `fog_light.comp` takes at each froxel a fixed point of the cell and writes two textures: the
   medium of the volumes there, with the wisps of the variable ones as they are now, and the light
   that point receives for each meter of what it scatters (except a hidden cell out of its turn,
-  which copies its reprojected light and leaves the medium empty, or with `Never` is marked as not
-  lit; one without history is lit at once). The light is weighted with the mean medium of each
+  which copies its reprojected light and leaves the medium empty; one without history is lit at
+  once). The light is weighted with the mean medium of each
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
   the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):
@@ -319,6 +319,10 @@ boxes.
   up to the end of the view): `image · transmittance + light`. With an atmosphere the fog is
   composited over the aerial perspective that the composite already applied, and the sun of both
   comes from `sun_light`.
+- What `fog_integrate` leaves, the grid and its far slices, is the
+  [media of the view](../../mirai-rendering/references/views.md#restrictions-of-the-pass_)
+  (`render.MEDIA_TEXTURE`, in the cells of `render.media_grid`): the sprites and volumes of `vfx`
+  drawn after it go behind the same fog.
 - With glass in view the `Lit` stage runs on each side of the nearest layer and `fog_apply` splits
   at that point, with the same composition: behind it applies the fog from the glass to the
   surface (what the grid gives up to the surface without the part up to the glass, divided by what

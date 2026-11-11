@@ -22,8 +22,9 @@ Outputs :: struct {
 }
 
 // Starts the outputs of an import of the file at source, whose bytes have
-// size and hash, read by a writer of version (import_version). folder is
-// where new outputs go unless output_part names another.
+// size and hash, read by a writer of version (import_version). folder: under
+// the folder of the source, where the new documents of a first import go
+// ("" beside it), unless output_part names another.
 outputs_begin :: proc(o:^Outputs,source,folder:string,size,hash:u64,version:u32,options:Import_Options,allocator:=context.allocator) -> Error {
     o^={size=size,hash=hash,version=version}
     caller:=context.temp_allocator
@@ -47,8 +48,7 @@ outputs_error :: proc(o:^Outputs,allocator:mem.Allocator) -> Error {
 }
 
 // The file (in the temp allocator) and id of the root of the import: the
-// output of kind the sidecar of the source lists, else a new one in the
-// folder.
+// output of kind the sidecar of the source lists, else a new one.
 output_root :: proc(o:^Outputs,kind:asset.Fourcc,name,extension:string) -> (id:base.Asset_Id,path:string,error:Error) {
     caller:=context.temp_allocator
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
@@ -57,8 +57,8 @@ output_root :: proc(o:^Outputs,kind:asset.Fourcc,name,extension:string) -> (id:b
 }
 
 // The file and id of another output of kind: the one the sidecar of the
-// source lists with that name (the same index first), else with that index,
-// else a new one in folder ("": that of outputs_begin).
+// source lists with that name (the same index first), else a new one, a
+// document in folder ("": that of the import).
 output_part :: proc(o:^Outputs,kind:asset.Fourcc,name:string,index:int,extension:string,folder:="") -> (id:base.Asset_Id,path:string) {
     caller:=context.temp_allocator
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
@@ -71,18 +71,11 @@ output_part :: proc(o:^Outputs,kind:asset.Fourcc,name:string,index:int,extension
     } else {
         parts_plan(&o.w,parts[:])
     }
-    if parts[0].shared>=0 {parts[0].path=o.w.earlier[parts[0].shared].path}
     return parts[0].id,strings.clone(parts[0].path,caller)
 }
 
-// What the earlier imports outputs_begin found keep instead of building.
-outputs_known :: proc(o:^Outputs,allocator:=context.allocator) -> Known {
-    return known_make(o.w.earlier[:],allocator)
-}
-
 // The files and ids of other outputs of kind, by name, as output_part gives
-// each: every name is looked for before any is given an output of the sidecar
-// by index. In the temp allocator.
+// each. In the temp allocator.
 output_parts :: proc(o:^Outputs,kind:asset.Fourcc,names:[]string,index:int,extension:string,folder:="") -> (ids:[]base.Asset_Id,paths:[]string) {
     caller:=context.temp_allocator
     context.temp_allocator=base.dynamic_arena_allocator(&o.scratch)
@@ -94,10 +87,7 @@ output_parts :: proc(o:^Outputs,kind:asset.Fourcc,names:[]string,index:int,exten
     o.w.folder=kept
     ids=make([]base.Asset_Id,len(parts),caller)
     paths=make([]string,len(parts),caller)
-    for &p,i in parts {
-        if p.shared>=0 {p.path=o.w.earlier[p.shared].path}
-        ids[i],paths[i]=p.id,strings.clone(p.path,caller)
-    }
+    for &p,i in parts {ids[i],paths[i]=p.id,strings.clone(p.path,caller)}
     return
 }
 

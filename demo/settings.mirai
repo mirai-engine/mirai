@@ -8,8 +8,5 @@
     "glass_shadows": true,
     "glass_layers": 2,
     "frame_limit": 0
-  },
-  "Spawn_Settings": {
-    "players": true
   }
 }

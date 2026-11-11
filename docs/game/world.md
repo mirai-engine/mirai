@@ -16,6 +16,7 @@ editor.
   **Use the terrain and foliage plugins for natural ground and vegetation; never build them
   from cubes, planes or hand-made meshes.**
 - Sea, lakes, fog and haze: [water-fog.md](world/water-fog.md).
+- Roads, paths and rivers along a line of points: [splines.md](world/splines.md).
 - A place where something happens (a gravity, a force, water, a trigger, a navigation area), and a
   blast or a gust from code: [regions.md](world/regions.md).
 - Sun, sky, indoor lights: [Light](#light). Brightness of the image: [Exposure](#exposure). Its
@@ -25,7 +26,7 @@ editor.
 
 ## Plugins
 
-In `project.mirai`: `"plugins": ["spawn","physics","terrain","foliage","water","fog"]`.
+In `project.mirai`: `"plugins": ["spawn","physics","terrain","foliage","water","fog","shapes"]`.
 Foliage stands on whatever ground the world has (terrain); `water` brings `fog`. A plugin not
 listed skips its components in a scene without an error.
 
