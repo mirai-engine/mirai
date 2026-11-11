@@ -263,7 +263,8 @@ cmd_check :: proc(root:string,args:[]string) -> int {
 // (build.test_worlds_write), which a check and a build of tests from the sources of the engine
 // read. False after saying what is wrong in one.
 test_worlds :: proc(root,folder:string) -> bool {
-    errors:=build.test_worlds_write(root,project_of(folder),{folder},true,context.temp_allocator)
+    stamp:=fmt.tprintf("%s.worlds",build.test_executable(join(root,"bin","tests"),root,folder,context.temp_allocator))
+    errors:=build.test_worlds_write(root,project_of(folder),{folder},true,stamp,context.temp_allocator)
     for e in errors {fmt.eprintfln("mirai: %s",e)}
     return len(errors)==0
 }

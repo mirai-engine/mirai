@@ -240,7 +240,7 @@ job_start :: proc(desc:Desc) -> ^Job {
             for part in project.PART_NAMES {append(&folders,project.path(plugin.folder,part,allocator=context.temp_allocator))}
         }
         if desc.test_package!="" {append(&folders,desc.test_package)}
-        if errors:=test_worlds_write(p.engine_root,p.root,folders[:],false,context.temp_allocator);len(errors)>0 {
+        if errors:=test_worlds_write(p.engine_root,p.root,folders[:],false,project.path(project_tests_folder(p.root,context.temp_allocator),"worlds.stamp",allocator=context.temp_allocator),context.temp_allocator);len(errors)>0 {
             job.result.text=strings.join(errors,"\n",a)
             return job_fail(job,.Generate)
         }

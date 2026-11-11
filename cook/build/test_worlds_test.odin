@@ -56,7 +56,8 @@ Toy_World :: struct {
 `
     testing.expect_value(t,os.write_entire_file(world,valid),nil)
     file:=project.path(toy,TEST_WORLDS_FILE)
-    errors:=test_worlds_write(engine,"",{toy},true)
+    stamp:=project.path(folder,"worlds.stamp")
+    errors:=test_worlds_write(engine,"",{toy},true,stamp)
     data,_:=os.read_entire_file(file,context.temp_allocator)
     text:=string(data)
     if !testing.expectf(t,len(errors)==0 && text!="","%v",errors) {return}
@@ -79,7 +80,7 @@ Toy_World :: struct {
         testing.expectf(t,strings.contains(text,wanted),"the generated world lacks %s in\n%s",wanted,text)
     }
     // Written again from the same sources it is left as it is; without a world, it goes.
-    errors=test_worlds_write(engine,"",{toy},true)
+    errors=test_worlds_write(engine,"",{toy},true,stamp)
     again,_:=os.read_entire_file(file,context.temp_allocator)
     testing.expect(t,len(errors)==0 && string(again)==text)
 
@@ -101,11 +102,11 @@ Toy_World :: struct {
         changed,_:=strings.replace(valid,c.from,c.to,1)
         if c.what=="a type that is no component or storage" {changed,_=strings.replace(changed,"plain:[dynamic]u32","plain:Toy_Other",1)}
         testing.expect_value(t,os.write_entire_file(world,changed),nil)
-        errors=test_worlds_write(engine,"",{toy},true)
+        errors=test_worlds_write(engine,"",{toy},true,stamp)
         said:=strings.join(errors,"\n")
         testing.expectf(t,len(errors)>0 && strings.contains(said,c.says) && strings.contains(said,"toy_test.odin("),"%s: %q",c.what,said)
     }
     testing.expect_value(t,os.write_entire_file(world,"package toy\n"),nil)
-    errors=test_worlds_write(engine,"",{toy},true)
+    errors=test_worlds_write(engine,"",{toy},true,stamp)
     testing.expect(t,len(errors)==0 && !os.is_file(file),fmt.tprint(errors))
 }

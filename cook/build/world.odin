@@ -9,6 +9,7 @@ import "core:reflect"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:project"
@@ -2492,9 +2493,30 @@ Test_World :: struct {
 // project (project_root; "" outside one) and, when the build reads the engine
 // from its sources and not from its libraries, which bring no test, those of
 // the engine and its plugins. errors: what no World_Info can be written of,
-// with how to fix it.
-test_worlds_write :: proc(engine_root,project_root:string,starts:[]string,engine_sources:bool,allocator:=context.allocator) -> (errors:[]string) {
+// with how to fix it. stamp: a file that keeps the folders the last call
+// read and what they held, by the names, sizes and dates of their sources,
+// with the program that read them: while they stand nothing is read again.
+test_worlds_write :: proc(engine_root,project_root:string,starts:[]string,engine_sources:bool,stamp:string,allocator:=context.allocator) -> (errors:[]string) {
     context.allocator=allocator
+    // What the folders hold, with what was asked and who asks: another build of the generator may write otherwise.
+    held :: proc(folders:[]string,starts:[]string,engine_sources:bool) -> u64 {
+        hash:=u64(engine_sources)
+        if program,error:=os.stat(os.args[0],context.temp_allocator);error==nil {hash=base.hash_combine(hash,u64(time.to_unix_nanoseconds(program.modification_time)))}
+        for start in starts {hash=base.hash_combine(hash,base.name_hash(start))}
+        for folder in folders {
+            entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
+            slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
+            for entry in entries {
+                if !strings.has_suffix(entry.name,".odin") {continue}
+                hash=base.hash_combine(base.hash_combine(base.hash_combine(hash,base.name_hash(entry.name)),u64(entry.size)),u64(time.to_unix_nanoseconds(entry.modification_time)))
+            }
+        }
+        return hash
+    }
+    if data,error:=os.read_entire_file(stamp,context.temp_allocator);error==nil {
+        lines:=strings.split_lines(strings.trim_space(string(data)),context.temp_allocator)
+        if saved,parsed:=strconv.parse_u64_of_base(lines[0],16);parsed && saved==held(lines[1:],starts,engine_sources) {return nil}
+    }
     g:Generator
     g.by_key=make(map[string]^Type)
     g.engine_root,g.root=slashes(engine_root,allocator),slashes(project_root,allocator)
@@ -2533,6 +2555,12 @@ test_worlds_write :: proc(engine_root,project_root:string,starts:[]string,engine
         text:=test_worlds_text(&g,pkg,core_package,worlds)
         if current,error:=os.read_entire_file(file,context.temp_allocator);error==nil && string(current)==text {continue}
         if os.write_entire_file(file,text)!=nil {append(&g.errors,fmt.aprintf("%s: could not be written",file))}
+    }
+    if len(g.errors)==0 {
+        folders:=make([dynamic]string,context.temp_allocator)
+        for pkg in g.packages {append(&folders,pkg.folder)}
+        _=os.make_directory_all(stamp[:max(strings.last_index_byte(stamp,'/'),0)])
+        _=os.write_entire_file(stamp,fmt.tprintf("%x\n%s\n",held(folders[:],starts,engine_sources),strings.join(folders[:],"\n",context.temp_allocator)))
     }
     return g.errors[:]
 }
