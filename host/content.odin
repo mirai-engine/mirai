@@ -382,6 +382,10 @@ content_sound_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound) -> bo
     data:=view.lossless if view.info.encoding==.Lossless else view.file
     stream:=.Stream in view.info.flags
     if stream {sound,failed=audio.sound_stream(mixer,data)} else {sound,failed=audio.sound_load(mixer,data)}
+    if failed==.None && !audio.sound_set_loop_start(mixer,sound,int(view.info.loop_start)) {
+        audio.sound_destroy(mixer,sound)
+        failed=.Invalid_Data
+    }
     if failed!=.None {
         asset.asset_close(&file)
         return false

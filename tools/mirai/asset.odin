@@ -387,7 +387,7 @@ verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
     case asset.KIND_SKELETON:
         if _,error:=asset.skeleton_view(a,types);error!=.None {return "skeleton: an invalid hierarchy, transform or bone reference"}
     case asset.KIND_SOUND:
-        if _,error:=asset.sound_view(a,types);error!=.None {return "sound: inconsistent channels, sample rate, lossless data or file"}
+        if _,error:=asset.sound_view(a,types);error!=.None {return "sound: inconsistent channels, sample rate, loop start, lossless data or file"}
     case asset.KIND_UI:
         if !asset.ui_check(a,types) {return "interface: nodes out of preorder or without a box, or a style, image, animation, track or key that does not exist"}
     case asset.KIND_FONT:

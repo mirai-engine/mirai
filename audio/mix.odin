@@ -8,6 +8,7 @@ import "core:sync"
 Voice_Source :: struct {
     samples:[^]f32, // interleaved
     frames:u32,
+    loop_start:u32, // the frame a loop goes back to
     channels:u32,   // 1 or 2
     rate:u32,
     feed:i32,       // the feed it plays from; -1 for a sound decoded in memory
@@ -37,7 +38,7 @@ Mix_Voice :: struct {
     phase:Voice_Phase,
     using start:Voice_Start,
     cursor:u64, // 32.32 frames into the source
-    wrapped:bool, // a loop went round: the frame before its first is its last
+    wrapped:bool, // a loop went round: the frame before its loop start is its last
     kept:[2]f32,  // a voice of a feed: the frame before those its ring holds
     // Gains from each source channel to each output: {left to left, left to
     // right, right to left, right to right}; a mono source uses the first two.
@@ -315,14 +316,16 @@ segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,
     at:=from
     stereo:=v.source.channels==2
     length:=frames<<32
-    // Positions from low to below high have their four frames in memory.
+    // A loop goes back to start. Positions from low to below high have their
+    // four frames in memory; once a loop wrapped, the one at start does not.
+    start:=u64(v.source.loop_start)<<32 if !before else 0
     low:=u64(0) if before else ONE
     high:=(frames-2)<<32 if frames>2 else 0
     for at<to {
         if v.cursor>=length {
             if holds {return true,at-from}
             if !loop || frames==0 {return false,at-from}
-            v.cursor%=length
+            v.cursor=start+(v.cursor-length)%(length-start)
             v.wrapped=true
         }
         segment:=to-at
@@ -332,7 +335,7 @@ segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,
         count:=0
         if direct {
             count=int(min(u64(segment),frames-index))
-        } else if v.cursor>=low && v.cursor<high {
+        } else if v.cursor>=(start+low if v.wrapped else low) && v.cursor<high {
             count=int(min(u64(segment),(high-1-v.cursor)/step+1))
         }
         slow:=count==0
@@ -379,7 +382,8 @@ segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,
     // A sound that ends exactly with the chunk ends now, not a chunk later.
     if v.cursor>=length && !holds {
         if !loop || frames==0 {return false,at-from}
-        v.cursor%=length
+        v.cursor=start+(v.cursor-length)%(length-start)
+        v.wrapped=true
     }
     return true,at-from
 }
@@ -421,11 +425,12 @@ hermite :: #force_inline proc "contextless" (y0,y1,y2,y3,mu:f32) -> f32 {
 // ends silence, the frame a feed kept before it, or the frames around a loop.
 edge_sample :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,before:bool,i:i64,c:int) -> f32 {
     i:=i
+    start:=i64(v.source.loop_start)
     switch {
-    case v.wrapped && i==-1:i=i64(frames)-1
+    case v.wrapped && i==start-1:i=i64(frames)-1
     case i>=i64(frames):
         if !loop {return 0}
-        i%=i64(frames)
+        i=start+(i-i64(frames))%(i64(frames)-start)
     case i<0 && !before:return 0
     }
     return samples[int(i)*int(v.source.channels)+c]

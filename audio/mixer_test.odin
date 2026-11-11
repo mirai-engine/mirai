@@ -358,6 +358,29 @@ loop_seam_has_no_gap_and_no_repeated_frame :: proc(t:^testing.T) {
     testing.expect_value(t,out[599*2],f32(0))
     mixer_update(m)
     testing.expect(t,!voice_valid(m,voice))
+    // With a loop start the frames before it play once, as an intro, and the
+    // loop goes back to it; at half speed the seam is interpolated with the
+    // frames of the loop on both sides.
+    testing.expect(t,sound_set_loop_start(m,sound,30))
+    testing.expect(t,!sound_set_loop_start(m,sound,100) && !sound_set_loop_start(m,sound,-1))
+    body :: proc(j:int) -> f32 {return test_ramp(j if j<100 else 30+(j-100)%70)}
+    for pitch in ([?]f32{1,0.5}) {
+        desc.pitch=pitch
+        voice=voice_play(m,sound,desc)
+        out=test_render(m,600)
+        for i in 0..<600 {
+            want:=body(i)
+            if pitch!=1 {
+                j:=i/2
+                want=body(j) if i%2==0 else hermite(body(j-1) if j>0 else 0,body(j),body(j+1),body(j+2),0.5)
+            }
+            if !test_near(t,out[i*2],want,1e-6) {break}
+        }
+        voice_stop(m,voice)
+        test_render(m,CHUNK_FRAMES)
+        mixer_update(m)
+    }
+    test_near(t,out[201*2],hermite(test_ramp(99),test_ramp(30),test_ramp(31),test_ramp(32),0.5),1e-6)
 }
 
 @(test)

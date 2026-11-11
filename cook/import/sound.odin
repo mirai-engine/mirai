@@ -15,7 +15,8 @@ import "mirai:std/serial"
 // loads; one of SOUND_STREAM_SECONDS or more is streamed instead, so that it
 // never sits decoded in memory. A long Ogg Vorbis keeps its file, which is
 // smaller than its samples coded, and so does a long WAV with samples that
-// 16 bits would round.
+// 16 bits would round. Where a loop of it goes back to is what its file says:
+// the first loop of the smpl chunk of a WAV, the LOOPSTART comment of a Vorbis.
 
 SOUND_STREAM_SECONDS :: f32(10)
 
@@ -45,7 +46,7 @@ sound_build :: proc(bytes:[]u8,options:Sound_Options={},allocator:=context.alloc
     if frames==0 {return {},.Invalid_Data}
     limit:=options.stream_seconds>0?options.stream_seconds:SOUND_STREAM_SECONDS
     stream:=options.storage==.Stream || options.storage==.Auto && f32(frames)/f32(pcm.sample_rate)>=limit
-    desc={channels=pcm.channels,sample_rate=pcm.sample_rate,frames=frames}
+    desc={channels=pcm.channels,sample_rate=pcm.sample_rate,frames=frames,loop_start=pcm.loop_start}
     if stream {desc.flags={.Stream}}
     samples,failed:=make([]i16,len(pcm.samples),allocator)
     if failed!=nil {return {},.Out_Of_Memory}

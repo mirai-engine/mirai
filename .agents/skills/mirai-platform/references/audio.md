@@ -47,6 +47,9 @@ WAV, an Ogg Vorbis or a lossless file, told apart by their first bytes:
   them, in blocks that decode on their own, each indexed so that a stream starts at any frame.
   Decoding gives the same f32 as a 16-bit WAV of the same samples.
 
+- **Loop start.** `sound_set_loop_start` names the frame a loop goes back to at the end, so an
+  intro plays once; the `.sound` asset carries it, read on import from a WAV's sampler chunk or
+  a Vorbis `LOOPSTART` comment (`Pcm.loop_start`).
 - `sound_stream` decodes while playing and does not copy the file: it must stay in memory until
   the sound is destroyed and a later `mixer_update` frees it.
 - `sound_destroy` invalidates the handle at once and ends its voices; the memory is freed in a
@@ -75,8 +78,8 @@ feed, with its own decoder and a larger ring.
   `start_frame` far enough ahead is kept exactly.
 - A lossless block of a feed of the pool is decoded whole, once the rest of it fits the ring: a
   seek is block exact plus a discard.
-- `offset` seeks before the ring fills; a loop starts over from the beginning and is sample exact,
-  also for interpolating. `voice_set_loop(false)` ends at the next end of the sound, whatever was
+- `offset` seeks before the ring fills; a loop seeks to the loop start and is sample exact, also
+  for interpolating. `voice_set_loop(false)` ends at the next end of the sound, whatever was
   decoded ahead; turning a loop on applies at an end not decoded yet.
 - The pitch of a voice that plays from a feed has a cap of source frames per output frame.
 - No free feed: `voice_play` returns 0 (`feeds_busy`). A stolen voice holds its feed until the
@@ -94,7 +97,8 @@ invalid one return false.
 - **Resampling** is Godot's cubic Hermite over four frames, so a 44.1 kHz sound keeps its highs
   at the mixer's rate; with a step of exactly 1 the samples are copied. The neighbours of a frame
   are those it plays between: silence before the start and after the end, the frames across the
-  seam of a loop, and the frame before an offset (a feed decodes it too).
+  seam of a loop (its last frame and its loop start), and the frame before an offset (a feed
+  decodes it too).
 - **Pan.** Mono: constant power. Stereo: balance, lowers the side it moves away from.
 - **Fades**: an exact linear envelope to the sample. A voice that is leaving to stop does not
   accept another fade.

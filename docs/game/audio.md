@@ -26,8 +26,9 @@ source.volume, source.max_distance = 0.7, 25
 - Put it in the scene; the library starts, moves and stops it. `spatial` places it at the entity,
   attenuated and duller far away, else `pan` does; `directivity` aims it toward -Z; `near_radius`
   keeps one through the camera from jumping between ears; `delay` starts it late by its distance.
-- The listener is the entity with `Audio_Listener` (the player's eyes), else the view. Game code
-  writes `playing`, `plays`, `volume`, `pitch`, `pan`, `loop` (`core.writable` on its table).
+- The listener is the entity with `Audio_Listener`, else the view. Game code writes `playing`,
+  `plays`, `volume`, `pitch`, `pan`, `loop` (`core.writable`). A loop goes back to the loop start
+  its file names (a WAV sampler loop, an Ogg `LOOPSTART` comment), so an intro plays once.
 - Silent at `max_distance`. With more sources than voices, higher `priority` and then the loudest
   play; the rest keep their time and come back where they would be.
 
@@ -42,9 +43,8 @@ crash_sound :: proc(sounds:^audio.Sound_Requests, broken:core.Ref(destruct.Destr
 ```
 
 - A path or an id; `at` places it, else it is not placed. `bus` (default `BUS_EFFECTS`), `volume`,
-  `pitch`; heard as its set's `hearing` (range, reverb, priority): beyond the range it does not
-  start. It plays once, even when a rollback runs the tick again; no handle: what stops, loops or
-  follows is an `Audio_Source`.
+  `pitch`; heard as its set's `hearing` (range, reverb, priority), not started beyond its range.
+  Once, even if a rollback reruns the tick; what stops, loops or follows is an `Audio_Source`.
 
 ## Sets
 A `.sound_set` picks one sound (weights, volume, pitch) each time it starts; it goes where a sound

@@ -73,7 +73,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         testing.expect(t,written.kind==asset.KIND_SOUND && written.id!={} && strings.has_suffix(written.path,".sound") && strings.contains(written.path,"/.mirai/imported/") && written.bytes<len(samples)*2)
         a:asset.Asset
         if view,ok:=sound_open(t,written.path,&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,.Lossless,{}})
+            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,0,.Lossless,{}})
             lossless_same(t,view,samples)
             testing.expect(t,view.source!=nil && serial.text_field(view.source.importer[:])==IMPORTER_NAME && view.source.source_size==u64(len(wav)))
         }
@@ -86,7 +86,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         testing.expect(t,again.assets[0].id==report.assets[0].id)
         a:asset.Asset
         if view,ok:=sound_open(t,again.assets[0].path,&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,.Lossless,{.Stream}})
+            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,0,.Lossless,{.Stream}})
             lossless_same(t,view,samples)
         }
         asset.asset_close(&a)
@@ -102,7 +102,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     if len(report.assets)==1 {
         a:asset.Asset
         if view,ok:=sound_open(t,report.assets[0].path,&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,.File,{.Stream}} && mem.compare(view.file,deep)==0)
+            testing.expect(t,view.info^==asset.Sound_Info{2,44100,4410,0,.File,{.Stream}} && mem.compare(view.file,deep)==0)
         }
         asset.asset_close(&a)
     }

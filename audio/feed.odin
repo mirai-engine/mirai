@@ -31,6 +31,7 @@ Feed :: struct {
     // Written by the game thread while the feed is Free; then the decoder's.
     decoder:Decoder,
     offset:int,   // the frame the play begins at
+    loop_start:int, // the frame a loop goes back to
     sound:u32,    // slot of the sound it decodes
     owner:Voice,  // the voice it was handed to last; game thread
     stream:bool,  // the feed of a stream: its decoder stays open from one play to the next
@@ -59,9 +60,9 @@ feed_phase_set :: #force_inline proc "contextless" (f:^Feed,phase:Feed_Phase) {
 // Readies a Free feed for a play that begins at offset. The audio thread may
 // see the voice before the decoder sees the feed: it then finds nothing to play.
 @(private)
-feed_prepare :: proc(m:^Mixer,f:^Feed,source:Decoder,sound:u32,offset:int,loop:bool) {
+feed_prepare :: proc(m:^Mixer,f:^Feed,source:Decoder,sound:u32,offset,loop_start:int,loop:bool) {
     if !f.stream {f.decoder=source}
-    f.offset=offset
+    f.offset,f.loop_start=offset,loop_start
     f.sound=sound
     sync.atomic_store_explicit(&f.loop,u32(loop),.Relaxed)
     sync.atomic_store_explicit(&f.write,0,.Relaxed)
@@ -208,12 +209,12 @@ feed_fill :: proc(m:^Mixer,f:^Feed) {
         write+=u64(got);free-=u64(got)
         sync.atomic_store_explicit(&f.write,write,.Release)
         if got>0 {rewound=false;continue}
-        // The end of the sound: start over for a loop, unless the sound is empty.
+        // The end of the sound: back to its loop start for a loop, unless nothing is left after it.
         if sync.atomic_load_explicit(&f.loop,.Relaxed)==0 || rewound {
             sync.atomic_store_explicit(&f.ended,1,.Release)
             return
         }
-        decoder_seek(d,0)
+        decoder_seek(d,f.loop_start)
         rewound=true
     }
 }
@@ -231,8 +232,9 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     if !v.loop && frames>0 {
         // The decoder may have gone round already: the sound ends at its next end all the same.
         first:=frames-u64(v.offset)+u64(min(v.offset,1))
+        body:=frames-u64(v.source.loop_start)
         end:=first
-        if read>first {end=first+(read-first+frames-1)/frames*frames}
+        if read>first {end=first+(read-first+body-1)/body*body}
         if write>=end {write=end;ended=true}
     }
     mask:=f.capacity-1
