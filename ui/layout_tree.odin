@@ -1491,7 +1491,9 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
 
 // The children are placed from the place of their parent as laid out and each
 // box is rounded on its own, so neighbours share an edge. What transitions is
-// not rounded while it moves, nor what it holds: ppu 0.
+// not rounded while it moves, nor what it holds: ppu 0. A text is not rounded:
+// it draws no rectangle, its lines broke at the width it was given and its
+// glyphs fall on pixels as they are drawn.
 @(private)
 layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32,ppu:f32) {
     n:=&t.nodes[index]
@@ -1503,7 +1505,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32,ppu:f32) {
         if e.time<e.seconds {ppu=0}
     }
     n.box={position.x,position.y,n.dim.x,n.dim.y}
-    if ppu>0 {
+    if ppu>0 && n.text<0 {
         // Edges on whole device pixels and the size between them (taffy's round_layout).
         lo:=[2]f32{math.round(position.x*ppu),math.round(position.y*ppu)}
         hi:=[2]f32{math.round((position.x+n.dim.x)*ppu),math.round((position.y+n.dim.y)*ppu)}

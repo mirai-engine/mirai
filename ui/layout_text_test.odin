@@ -49,7 +49,7 @@ a_text_breaks_to_the_width_the_layout_gives_it_in_the_same_frame :: proc(t:^test
         testing.expectf(t,test_near(r.h,text_height(&ctx,CONTENT,STYLE,r.w)),"%s: laid out %v, measured %v",c.name,r.h,text_height(&ctx,CONTENT,STYLE,r.w))
         // Spans in a line break where one span of words does, and what holds them took their height in this frame.
         testing.expectf(t,test_near(rich.w,r.w,0.05) && test_near(rich.h,r.h),"%s: rich text %v, text %v",c.name,rich,r)
-        testing.expectf(t,test_near(test_rect(t,&ctx,id(&ctx,"case",i+1)).h,r.h+rich.h),"%s: its column is as high as its lines",c.name)
+        testing.expectf(t,test_near(test_rect(t,&ctx,id(&ctx,"case",i+1)).h,r.h+rich.h,PIXEL_SIZE),"%s: its column is as high as its lines",c.name)
         broken:[16]string
         count:=test_text_lines(&ctx,id(&ctx,"text",i+1),broken[:])
         for shown in broken[:min(count,len(broken))] {
@@ -175,7 +175,7 @@ a_row_puts_the_first_lines_of_its_children_on_one_baseline :: proc(t:^testing.T)
     small:=test_rect(t,&ctx,id(&ctx,"small"))
     testing.expectf(t,test_near(small.y+ascent*12,baseline),"small text: %v under %v",small.y+ascent*12,baseline)
     mark:=test_rect(t,&ctx,id(&ctx,"mark"))
-    testing.expectf(t,test_near(mark.y+mark.h,baseline),"what has no text stands on the baseline: %v",mark)
+    testing.expectf(t,test_near(mark.y+mark.h,baseline,PIXEL_EDGE),"what has no text stands on the baseline: %v",mark)
     inner:=test_rect(t,&ctx,id(&ctx,"inner"))
     testing.expectf(t,test_near(inner.y+ascent*16,baseline),"the first line inside a container: %v",inner)
     // The row is as high as what goes over the baseline and what hangs under it.
@@ -233,6 +233,6 @@ a_grid_takes_the_heights_of_its_row_tracks_and_children_span_rows :: proc(t:^tes
     // 200 high: 30, 20 and 8 are taken with four gaps, and 102 is shared by one to three.
     testing.expect(t,test_rect_near(rect(t,&ctx,"fixed"),{400,0,100,30}) && test_rect_near(rect(t,&ctx,"fit"),{400,40,100,20}))
     one,three:=rect(t,&ctx,"one"),rect(t,&ctx,"three")
-    testing.expectf(t,test_near(one.y,70) && test_near(one.h,25.5,0.05) && test_near(three.y,105.5,0.05) && test_near(three.h,76.5*0.5,0.05),"one %v, three %v",one,three)
+    testing.expectf(t,test_near(one.y,70) && test_near(one.h,25.5,PIXEL_SIZE) && test_near(three.y,105.5,PIXEL_EDGE) && test_near(three.h,76.5*0.5,PIXEL_SIZE),"one %v, three %v",one,three)
     testing.expectf(t,test_near(rect(t,&ctx,"after").y,192,0.05),"after %v in %v",rect(t,&ctx,"after"),rect(t,&ctx,"rows"))
 }

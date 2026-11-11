@@ -59,10 +59,10 @@ game_controls_take_every_color_corner_and_size_from_their_style :: proc(t:^testi
     testing.expect_value(t,arrows,5) // two of the selector, two of the number and the one of the dropdown
     // Without a size, a control is a line of its text and its room tall, ten of its sizes wide; a checkbox is a line square.
     line:=10*TEXT_LINE
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"volume")),{8,8,100,line+10}))
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"volume")),{8,8,100,line+10},PIXEL_SIZE))
     on:=test_rect(t,&ctx,id(&ctx,"on"))
-    testing.expect(t,test_near(on.w,line) && test_near(on.h,line))
-    testing.expect(t,test_near(slider.radius,(line+10)*0.5),"The knob is as tall as the slider")
+    testing.expect(t,test_near(on.w,line,PIXEL_SIZE) && test_near(on.h,line,PIXEL_SIZE))
+    testing.expect(t,test_near(slider.radius,(line+10)*0.5,PIXEL_EDGE),"The knob is as tall as the slider")
     // A password shows a mark for each character, and the theme gives nothing.
     copy(s.secret[:],"abc");s.secret_length=3
     test_frame(&ctx,&input,test_controls_build,&s)

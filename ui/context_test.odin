@@ -29,6 +29,9 @@ test_rect :: proc(t:^testing.T,ctx:^Context,id:Id,loc:=#caller_location) -> Rect
     return rect
 }
 test_near :: proc(a,b:f32,tolerance:f32=0.01) -> bool {return abs(a-b)<=tolerance}
+// How far the rounding to device pixels at density 1 moves an edge, and a size.
+PIXEL_EDGE :: f32(0.5)
+PIXEL_SIZE :: f32(1)
 test_rect_near :: proc(a,b:Rect,tolerance:f32=0.01) -> bool {
     return test_near(a.x,b.x,tolerance)&&test_near(a.y,b.y,tolerance)&&test_near(a.w,b.w,tolerance)&&test_near(a.h,b.h,tolerance)
 }

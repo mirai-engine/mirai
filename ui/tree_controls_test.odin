@@ -343,7 +343,7 @@ a_layout_transition_carries_the_rectangle_of_a_node_to_a_new_layout :: proc(t:^t
     s.tree.nodes[mover].layout.width=fixed(60)
     test_frame(&ctx,&input,tracked,&s)
     grown,after:=rect(t,&ctx,"mover"),rect(t,&ctx,"after")
-    testing.expectf(t,grown.w>30 && grown.w<60 && after.x==grown.w,"its size on the way, which the layout around it follows: %v %v",grown,after)
+    testing.expectf(t,grown.w>30 && grown.w<60 && test_near(after.x,grown.w,PIXEL_EDGE),"its size on the way, which the layout around it follows: %v %v",grown,after)
     for _ in 0..<20 {test_frame(&ctx,&input,tracked,&s)}
     testing.expect(t,rect(t,&ctx,"mover").w==60 && rect(t,&ctx,"after").x==60)
     elsewhere :: proc(ctx:^Context,user:rawptr) {if box(ctx,{id=id(ctx,"elsewhere"),width=fixed(10),height=fixed(10)}) {}}
