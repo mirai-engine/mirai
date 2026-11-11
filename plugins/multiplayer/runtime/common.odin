@@ -28,16 +28,17 @@ row_changed :: proc(table:^core.Raw_Table,e:core.Entity,stamp,layout:^u64) -> bo
 
 // The fragments an entity replicates: its pose, its motion when a simulation
 // moves it, its driver when it has a Move_Input, and its replicated
-// components, on or off. False when they do not fit an object.
+// components, on or off; with listed, also what that type lists. False when
+// they do not fit an object.
 @(private)
-entity_kinds :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,kinds:^[wire.MAX_FRAGMENTS]wire.Fragment_Id) -> (count:int,fits:bool) {
+entity_kinds :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,kinds:^[wire.MAX_FRAGMENTS]wire.Fragment_Id,listed:^Net_Type=nil) -> (count:int,fits:bool) {
     kinds[0]=FRAGMENT_POSE
     count=1
-    if core.staged(core.world_table_of(w,core.Motion),e)!=nil {
+    if core.staged(core.world_table_of(w,core.Motion),e)!=nil || listed!=nil && listed.motion>=0 {
         kinds[count]=FRAGMENT_MOTION
         count+=1
     }
-    if moves:=core.world_table_of(w,input.Move_Input);moves!=nil && core.staged(moves,e)!=nil {
+    if moves:=core.world_table_of(w,input.Move_Input);moves!=nil && core.staged(moves,e)!=nil || listed!=nil && listed.driver>=0 {
         kinds[count]=FRAGMENT_DRIVER
         count+=1
     }
@@ -45,7 +46,7 @@ entity_kinds :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,kinds:^[wire.
     for kind,table in s.fragments {
         if kind==wire.FRAGMENT_NONE {continue}
         info:=&w.info.tables[table]
-        if core.raw_staged(core.world_table_at(w,info),info.info,e)==nil {continue}
+        if core.raw_staged(core.world_table_at(w,info),info.info,e)==nil && (listed==nil || !type_has(listed,table)) {continue}
         if components==COMPONENTS {return count,false}
         kinds[count]=kind
         count+=1
@@ -63,19 +64,28 @@ motion_read :: proc(w:core.World_Ref,e:core.Entity) -> (motion:Motion_State,awak
 }
 
 // The fields of the components of a type that mask names, from the state a
-// command carries into the entity; a component it lacks is added whole. One
-// that names an entity this end does not have, not here yet or not
-// replicated, leaves the entity until it does: it would name something else.
+// command carries into the entity; a component it lacks is added whole, also
+// when the pose changed (it came back), and one the pose says the entity
+// lacks (Pose.absent) goes. One that names an entity this end does not have,
+// not here yet or not replicated, leaves the entity until it does: it would
+// name something else.
 @(private)
 components_apply :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,t:^Net_Type,command:^wire.Command,mask:u64) {
     pending:=t.references!=0?wire.object_references_pending(&s.host,command):0
+    pose:Pose
+    wire.object_read(&s.host,command,0,&pose,max(u64))
+    posed:=mask&wire.type_fragment_mask(&s.protocol,t.type,0)!=0
     for k in 0..<t.count {
         fragment:=t.first+k
         bits:=wire.type_fragment_mask(&s.protocol,t.type,fragment)
-        if mask&bits==0 {continue}
         info:=&w.info.tables[t.tables[k]]
         table:=core.world_table_at(w,info)
         row:=core.raw_staged(table,info.info,e)
+        if pose.absent&(1<<u16(k))!=0 {
+            if row!=nil {core.raw_remove(table,e)}
+            continue
+        }
+        if mask&bits==0 && (row!=nil || !posed) {continue}
         if pending&bits!=0 {
             if row!=nil {core.raw_remove(table,e)}
             continue
@@ -133,13 +143,16 @@ replica_write :: proc(w:core.World_Ref,e:core.Entity,value:core.Pose_Target) {
     if held:=core.staged(replicas,e);held!=nil {held^=value} else {core.add(replicas,e,value)}
 }
 
-// The components of a type that the entity turned off by themselves, a bit each.
+// The components of a type that the entity turned off by themselves, and
+// those it lacks, a bit each (Pose.off, Pose.absent).
 @(private)
-components_off :: proc(w:core.World_Ref,e:core.Entity,t:^Net_Type) -> (mask:u16) {
+components_off :: proc(w:core.World_Ref,e:core.Entity,t:^Net_Type) -> (off,absent:u16) {
     for k in 0..<t.count {
+        info:=&w.info.tables[t.tables[k]]
+        _,turned,found:=core.raw_state(core.world_table_at(w,info),e)
+        if !found {absent|=1<<u16(k)}
         // Which one of a single component is on is of each end: a sky active here, another there.
-        if w.info.tables[t.tables[k]].single {continue}
-        if _,off,_:=core.raw_state(core.world_table_at(w,&w.info.tables[t.tables[k]]),e);off {mask|=1<<u16(k)}
+        if turned && !info.single {off|=1<<u16(k)}
     }
     return
 }

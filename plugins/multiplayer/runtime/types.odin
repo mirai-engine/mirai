@@ -101,6 +101,7 @@ Pose :: struct {
     rotation:mm.Quat `mirai:"bits=15"`,
     scale:[3]f32,
     off:u16 `mirai:"bits=13"`, // a bit by replicated component of its type: turned off by itself
+    absent:u16 `mirai:"bits=13"`, // a bit by replicated component of its type the entity lacks: the replica drops it
     disabled:bool,
     predict:bool, // Replicate.predict
 }

@@ -32,11 +32,13 @@ Usually its prefab carries it: everything that appears from that prefab is repli
   - its driver (its `input.Move_Input`, published when it changes) if it has `Move_Input`;
   - each of its `@(component,replicated)` components, on or off.
 - Each distinct set is a protocol type that both ends compose from the list its creation carries
-  ([types](networking.md#protocol-and-descriptors)). When a replicated component, its motion or
-  its `Move_Input` comes or goes later, the server gives the object the type of what the entity
-  has now (`server_kinds`, [re-typing](networking.md#replication)) with its whole state, and each
-  replica goes on with its entity, which gains or loses the component. What a client holds is
-  re-typed when it comes back, and of what each end simulates only the creation travels.
+  ([types](networking.md#protocol-and-descriptors)). The type lists everything the entity
+  replicated: one that goes stays listed and travels as absent (`Pose.absent`), and the replica
+  drops it and takes it back whole when it returns, a small update each way (bevy_replicon's
+  insertions and removals). Only one the type never listed widens it (`server_kinds`,
+  [re-typing](networking.md#replication)) with its whole state; each replica goes on with its
+  entity, and whoever holds the object keeps it and takes only the components it lacks. Of what
+  each end simulates only the creation travels.
 - `replicated="owner"` sends it only to the owner, `replicated="others"` to everyone but the owner.
   `replicated="object"` sends it to every end and makes an entity that has it replicated without a
   `Replicate` of its own (`Simulation.Server`, `Audience.Always`): what a plugin writes that does
@@ -585,7 +587,7 @@ One rule says how it lives (`replica_wanted`):
   - Each repeated tick is `host.app_tick_replay`. `core.Time` returns with the copy and each tick
     advances it, so it ends where it was; `core.Frame_Time` is not part of the copy, and of the
     present only the frame's `Input` is kept by hand.
-  - A replica re-typed since the copy loses there the components of the type it had then.
+  - A replica whose type widened since the copy takes there the components it lacked.
 - What cannot go back (the frame or the budget have no room, or the state is older than the
   history, `unverified`) takes the state in the present (`replica_place_now`): it moves by what it
   was off at the tick of the state, with the velocity error carried to now, or, without a record

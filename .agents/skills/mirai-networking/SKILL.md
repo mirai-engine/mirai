@@ -219,8 +219,9 @@ In `plugins/multiplayer/runtime`:
     to then are dropped: nothing is closed over later ticks.
   - What a library knows has changed in already simulated ticks comes back through `rewind`, not
     on its own.
-- **The type of an object is what its entity has now.** A replicated component that comes or goes
-  re-types the object in place (`object_retype`); it is never destroyed and made again for it.
+- **The type of an object lists all its entity replicated.** A replicated component that goes
+  travels as absent in the pose; only one the type never listed widens it in place
+  (`object_retype`), never destroyed and made again, and its holder keeps it.
 - **A spawn both ends make in a tick is one entity** (`predict_spawn`): the plugin numbers the
   spawns of each seat in the tick, never the game, and the replica takes the client's by the Id
   both draw, also when a correction runs the tick of the spawn again (`replicas_relink`,

@@ -754,16 +754,17 @@ replica_update :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comma
     r.pending=r.mode==.Predicted
 }
 
-// The server gave the object another list of fragments, for its entity gained
-// or lost a replicated component: the replica and its entity go on. The entity
-// loses the components that left the list and takes the whole state of the
-// new one; what was kept of it, in the words of the type before, is dropped.
+// The server widened the list of fragments of the object, for its entity
+// gained a replicated component the list lacked: the replica and its entity go
+// on and take the whole state of the new type; what was kept of it, in the
+// words of the type before, is dropped. What this client holds takes only the
+// components it lacks: the rest it simulates.
 @(private)
 replica_retype :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Replica,command:^wire.Command) {
     c:=&s.client
-    after:=net_type(s,command.type)
+    after,before:=net_type(s,command.type),net_type(s,r.type)
     if !after.fits {return}
-    if !r.waits && core.alive(core.world_entities(w),r.entity) {components_prune(w,r.entity,net_type(s,r.type),after)}
+    held:=r.role==.Held && command.role==.Held
     if r.samples>=0 {wire.interpolation_clear(&c.interpolation,int(r.samples))}
     if r.slot>=0 {
         authority_clear(s,r)
@@ -774,19 +775,20 @@ replica_retype :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Re
     replica_state(s,r,command)
     replica_place(s,w,assets,r)
     if r.waits {return}
-    if core.alive(core.world_entities(w),r.entity) {components_apply(s,w,r.entity,after,command,r.available)}
+    if core.alive(core.world_entities(w),r.entity) {
+        mask:=r.available
+        if held {
+            mask=0
+            for table,k in after.tables[:after.count] {
+                if !type_has(before,table) {mask|=wire.type_fragment_mask(&s.protocol,after.type,after.first+k)}
+            }
+        }
+        components_apply(s,w,r.entity,after,command,mask)
+    }
     replica_classify(s,w,r)
     replica_sample(s,r,r.available)
     authoritative_capture(s,r,command)
     r.pending=r.mode==.Predicted
-}
-
-// The components of a type that another one does not list leave the entity.
-@(private)
-components_prune :: proc(w:core.World_Ref,e:core.Entity,before,after:^Net_Type) {
-    for table in before.tables[:before.count] {
-        if !type_has(after,table) {core.raw_remove(core.world_table_at(w,&w.info.tables[table]),e)}
-    }
 }
 
 @(private)
@@ -1145,7 +1147,8 @@ client_upload :: proc(s:^Net_Session,w:core.World_Ref) {
         t:=net_type(s,r.type)
         local,has_pose:=core.get(transforms,r.entity)
         if !has_pose {continue}
-        pose:=Pose{id=r.pose.id,prefab=r.pose.prefab,sections=r.pose.sections,position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,r.entity,t)}
+        pose:=Pose{id=r.pose.id,prefab=r.pose.prefab,sections=r.pose.sections,position=local.position,rotation=local.rotation,scale=local.scale}
+        pose.off,pose.absent=components_off(w,r.entity,t)
         motion,_:=motion_read(w,r.entity)
         if pose!=r.pose {
             r.pose=pose
@@ -1608,9 +1611,8 @@ replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,star
             replica_spawn(s,w,assets,&r)
             s.stats.spawned-=1
         } else if r.retyped_set && i32(r.retyped-start)>=0 {
-            // The copy has the components of the type the replica had then.
+            // The copy lacks the components the type widened to since.
             command:=replica_command(s,&r)
-            components_prune(w,r.entity,net_type(s,r.type_before),net_type(s,r.type))
             components_apply(s,w,r.entity,net_type(s,r.type),&command,r.available)
         }
         // The copy has the mode the replica had then; it may have changed since.

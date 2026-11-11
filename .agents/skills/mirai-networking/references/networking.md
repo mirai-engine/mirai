@@ -222,8 +222,8 @@ its whole state: the object, its parent, owner, scope and events go on.
   (`Command.retyped`), keeping what the game bound the replica to. A creation in flight is
   followed by the new one once it is acked, and a link that was leaving takes it if it returns.
 - The baselines of the object are dropped: they are of the words of the type before.
-- It bumps the epoch, and the server reads what an older epoch still sends (a client that held
-  the object) with the type before, to drop it.
+- It bumps the epoch, and the server reads what an older epoch still sends (the client that holds
+  the object, which keeps it) with the type before, to drop it.
 
 **Large states** (`Object_Type.large`, whose maximum encoding exceeds `MAX_STATE_BYTES`):
 

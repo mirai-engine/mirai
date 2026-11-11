@@ -401,6 +401,49 @@ a_message_about_an_entity_is_read_after_the_state_of_its_tick :: proc(t:^testing
     testing.expect_value(t,p.problems[1].count,0)
 }
 
+// A replicated status that comes and goes on a lent object travels as its
+// presence in the pose: the client that holds it toggles it ten times, the
+// server follows, and nothing is re-typed or taken back. A component the type
+// never listed widens it once, and the holder keeps it.
+@(test)
+a_status_that_comes_and_goes_on_a_lent_object_keeps_its_type_and_its_holder :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    p:=new(Pair)
+    defer free(p)
+    if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
+    defer pair_destroy(p)
+    server,client:=&p.worlds[0],&p.worlds[1]
+    thing:=pair_thing(server,&p.info,7,true)
+    core.edit(&server.objects,thing).simulation=.Lent
+    core.add(&server.lates,thing,Net_Test_Late{level=1})
+    core.settle(&p.info,server,nil)
+    for _ in 0..<120 {pair_frame(p)}
+    if !testing.expect(t,p.sessions[1].client.answered) {return}
+    object:=wire.object_of_user(&p.sessions[0].host,u64(thing))
+    connection:=own_connection(core.ref(&p.sessions[1]))
+    testing.expect_value(t,wire.authority_grant(&p.sessions[0].host,object,connection),wire.Error.None)
+    for _ in 0..<30 {pair_frame(p)}
+    r:=replica_with(&p.sessions[1],7)
+    if !testing.expect(t,r!=nil && r.role==.Held && core.has(&client.lates,r.entity),"the client holds the replica, with its status") {return}
+    held:=r.entity
+    for toggle in 0..<10 {
+        if toggle%2==0 {core.remove(&client.lates,held)} else {core.add(&client.lates,held,Net_Test_Late{level=1})}
+        core.settle(&p.info,client,nil)
+        for _ in 0..<12 {pair_frame(p)}
+        testing.expectf(t,core.has(&server.lates,thing)==core.has(&client.lates,held),"toggle %d: the server follows the status of the holder",toggle)
+    }
+    slot:=&p.sessions[0].server.objects[object_index(object)]
+    testing.expect(t,p.sessions[0].stats.retyped==0 && slot.holder==connection && r.role==.Held && r.entity==held,"no re-type, and the holder keeps it")
+    // A component the type never listed: it widens once, and the holder keeps it and takes the component.
+    core.add(&server.values,thing,Net_Test_Value{force=2})
+    core.settle(&p.info,server,nil)
+    for _ in 0..<30 {pair_frame(p)}
+    value,has_value:=core.get(&client.values,held)
+    testing.expect(t,p.sessions[0].stats.retyped==1 && slot.holder==connection && r.role==.Held && has_value && value.force==2,"widened once, still held, with the new component")
+    testing.expect_value(t,p.problems[0].count,0)
+    testing.expect_value(t,p.problems[1].count,0)
+}
+
 // The reference of a section, loaded or not.
 @(private="file")
 pair_section :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loaded:bool) -> core.Entity {

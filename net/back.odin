@@ -553,9 +553,7 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         payload:Create_Payload
         mem.copy(&payload,raw_data(data),size_of(Create_Payload))
         type:=&r.protocol.types[payload.type]
-        // Whoever held it simulates the type before: the server takes it back, and
-        // the epoch tells apart what that client still sends.
-        if r.holder[o]!=0 {authority_set(h,o,0,0)}
+        // Whoever holds it keeps it; the epoch tells apart what it still sends of the type before.
         r.type_before[o],r.type[o]=r.type[o],payload.type
         r.epoch[o]=(r.epoch[o]+1)&15
         r.fresh[o]=0

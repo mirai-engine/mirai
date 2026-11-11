@@ -678,7 +678,7 @@ net_test_physical_convergence :: proc(t:^testing.T,udp:bool) {
     }
     late,has_late:=core.get(&worlds[1].lates,entities[1][1])
     testing.expectf(t,has_late && late.level==9 && !core.has(&worlds[1].lates,entities[1][0]),"the client has the late component of the second body %v at level %d, and that of the first %v",has_late,late.level,core.has(&worlds[1].lates,entities[1][0]))
-    testing.expect_value(t,sessions[0].stats.retyped,u64(3))
+    testing.expect_value(t,sessions[0].stats.retyped,u64(2)) // the gains; the loss goes as absent in the pose
     testing.expect_value(t,sessions[1].stats.spawned,u64(2))
     testing.expect(t,sessions[1].stats.corrected>0)
     testing.expect_value(t,problems[0].count,0)
