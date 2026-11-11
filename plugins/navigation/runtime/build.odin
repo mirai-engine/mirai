@@ -40,7 +40,6 @@ NAV_FIELDS :: 64               // tiles whose heightfield is kept to build them 
 // meanwhile, and one not done by then is waited for, so a tile arrives at the same tick whatever
 // the threads do. A dev build of the AI arena takes about 9 ms a tile, under one tick at 60 Hz.
 NAV_BUILD_TICKS :: 4
-NAV_BUILD_REACH :: f32(50)    // m: reach of a streaming source with no distance, for the build order
 
 // What the application keeps to build the meshes of a world: the jobs and
 // what the build tracks of the world. None of it is the state of the world.
@@ -483,7 +482,7 @@ tile_inside :: proc "contextless" (c:^Class_Mesh,coord:[2]i32,limits:[]mm.Aabb) 
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
     bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
-    ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Streaming_Sources),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
+    ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Simulation_Sources),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
     if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
@@ -731,10 +730,11 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
 }
 
 // Gathers, hashes and starts the builds of marked tiles, up to the free jobs:
-// with streaming sources, those nearest them first (scene.box_near); without,
-// in the order of the marks.
+// with simulation sources, those nearest them first, in metres past what each
+// keeps around it (scene.sources_distance); without, in the order of the marks.
+// With no build free it looks at no mark.
 @(private)
-builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Streaming_Sources,job_system:^jobs.Job_System,problems:^core.Problems) {
+builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Simulation_Sources,job_system:^jobs.Job_System,problems:^core.Problems) {
     b.jobs=job_system
     per_tick:=int(n.settings.builds) if n.settings.builds>0 else 4
     for len(b.builds)<per_tick*NAV_BUILD_TICKS {
@@ -743,7 +743,8 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
         append(&b.builds,build)
     }
     start:=Build_Start{n=n,b=b,physics=physics,limits=limits,jobs=job_system,problems=problems,per_tick=per_tick,due=b.ticks+NAV_BUILD_TICKS}
-    near:=scene.sources_near(sources,mm.MAT4_IDENTITY,NAV_BUILD_REACH)
+    if build_free(&start)==nil {return}
+    ordered:=sources!=nil && sources.count>0
     // The marks nearest the sources, nearest first: no tick gathers more than NAV_CHECKS_PER_TICK.
     nearest:[NAV_CHECKS_PER_TICK]Build_Near
     count:=0
@@ -777,14 +778,14 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 }
                 continue
             }
-            if near.count==0 {
+            if !ordered {
                 if !build_start(&start,i,key,mark) {return}
                 continue
             }
             // Kept in order, the farthest of a full list giving its place.
-            at:=box_near_of(c,key,volume,&near)
+            at:=mark_distance(c,key,volume,sources)
             slot:=count
-            for slot>0 && nearest[slot-1].near>at {slot-=1}
+            for slot>0 && nearest[slot-1].distance>at {slot-=1}
             if slot>=len(nearest) {continue}
             last:=min(count,len(nearest)-1)
             copy(nearest[slot+1:last+1],nearest[slot:last])
@@ -800,17 +801,28 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
 }
 
 @(private)
-Build_Near :: struct {near:f32,class:int,key:u64}
+Build_Near :: struct {distance:f32,class:int,key:u64}
 
-// How near the streaming sources come to a tile, or a zone, in their reaches.
+// m from a tile, or a zone, to the nearest simulation source.
 @(private)
-box_near_of :: proc "contextless" (c:^Class_Mesh,key:u64,volume:bool,near:^scene.Sources_Near) -> f32 {
+mark_distance :: proc "contextless" (c:^Class_Mesh,key:u64,volume:bool,sources:^scene.Simulation_Sources) -> f32 {
     if volume {
         box:=ai.nav_volume_zone_box(&c.volume,zone_of_key(key))
-        return scene.box_near(near,box.min,box.max)
+        return scene.sources_distance(sources,box.min,box.max)
     }
     rect:=ai.nav_tile_rect(c.config,coord_of_key(key))
-    return scene.box_near(near,rect.min,rect.max)
+    return scene.sources_distance(sources,rect.min,rect.max)
+}
+
+// A build free to start in this tick: none when every build is busy or the
+// tick started as many as it may.
+@(private)
+build_free :: proc "contextless" (s:^Build_Start) -> (free:^Build) {
+    started:=0
+    for build in s.b.builds {
+        if !build.busy {free=build} else if build.due==s.due {started+=1}
+    }
+    return nil if started>=s.per_tick else free
 }
 
 // What the builds a tick starts share.
@@ -835,12 +847,8 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
     n,b,limits,problems:=s.n,s.b,s.limits,s.problems
     c:=&n.classes[i]
     if s.checks>=NAV_CHECKS_PER_TICK {return false}
-    free:^Build
-    started:=0
-    for build in b.builds {
-        if !build.busy {free=build} else if build.due==s.due {started+=1}
-    }
-    if free==nil || started>=s.per_tick {return false}
+    free:=build_free(s)
+    if free==nil {return false}
     s.checks+=1
     next:=mark^
     collision:=mark.collision

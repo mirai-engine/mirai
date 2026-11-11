@@ -69,7 +69,7 @@ Nav_Test :: struct {
     builds:Navigation_Builds,
     unloaded:[dynamic]mm.Aabb, // what the ground names unloaded
     ground:core.Ground_Queries,
-    sources:scene.Streaming_Sources, // where the world streams around: tiles near them build first
+    sources:scene.Simulation_Sources, // tiles near them build first
     run:Navigation_Agents,
     time:core.Time, // of the build
     tick:u64,
@@ -276,8 +276,9 @@ a_tile_is_published_a_fixed_number_of_ticks_after_its_build_whatever_the_threads
     }
 }
 
-// With a streaming source, the marked tiles build nearest it first: with one
-// build a tick, no tile is published farther from it than one published after.
+// With simulation sources, the marked tiles build nearest them first, in
+// metres past what each keeps around it: with one build a tick, no tile is
+// published farther from them than one published after.
 @(test)
 tiles_build_nearest_the_streaming_sources_first :: proc(t:^testing.T) {
     f:Nav_Test
@@ -285,9 +286,9 @@ tiles_build_nearest_the_streaming_sources_first :: proc(t:^testing.T) {
     defer nav_test_destroy(&f)
     nav_test_box(&f,{0,-0.5,0},{30,0.5,30})
     f.nav_settings.builds=1
-    source:=mm.Vec3{-26,0,-26}
-    f.sources.items[0]={position=source,ahead=source}
-    f.sources.count=1
+    f.sources.items[0]={position={-26,0,-26}}
+    f.sources.items[1]={position={40,0,40},distance=20}
+    f.sources.count=2
     published:[256][2]i32
     count:=0
     farthest:=f32(0)
@@ -299,13 +300,17 @@ tiles_build_nearest_the_streaming_sources_first :: proc(t:^testing.T) {
             published[count]=tile.data.coord
             count+=1
             rect:=ai.nav_tile_rect(c.config,tile.data.coord)
-            away:=linalg.length(mm.Vec2{max(rect.min.x-source.x,0,source.x-rect.max.x),max(rect.min.z-source.z,0,source.z-rect.max.z)})
-            testing.expectf(t,away>=farthest-1e-3,"tile %v, %.1f m from the source, published after one %.1f m from it",tile.data.coord,away,farthest)
+            away:=max(f32)
+            for source in f.sources.items[:f.sources.count] {
+                outside:=mm.Vec2{max(rect.min.x-source.position.x,0,source.position.x-rect.max.x),max(rect.min.z-source.position.z,0,source.position.z-rect.max.z)}
+                away=min(away,max(linalg.length(outside)-source.distance,0))
+            }
+            testing.expectf(t,away>=farthest-1e-3,"tile %v, %.1f m from the sources, published after one %.1f m from them",tile.data.coord,away,farthest)
             farthest=max(farthest,away)
         }
         if f.nav.count>0 && f.nav.classes[0].pending==0 && count>0 {break}
     }
-    testing.expect(t,count>16 && farthest>40)
+    testing.expect(t,count>16 && farthest>25)
     testing.expect_value(t,f.problems.count,0)
 }
 
