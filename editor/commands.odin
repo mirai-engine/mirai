@@ -568,7 +568,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,scene=true},
         {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},
         {name="build",method="build.start",label="Build",icon=user(.Hammer),shortcut=key(.B,{.Primary}),menu=.File,group=3,state=state_build},
-        {name="settings",view=settings_toggle,label="Project settings",icon=user(.Gear),menu=.File,group=3,modes=edit,state=state_settings},
+        {name="settings",view=settings_toggle,label="Settings",icon=user(.Gear),menu=.File,group=3,modes=edit,state=state_settings},
         {name="quit",view=quit_request,label="Quit",icon=.Cross,shortcut=key(.Q,{.Primary}),menu=.File,group=4},
 
         {name="undo",method="history.undo",params=`{"asset":"$document"}`,label="Undo",icon=user(.Undo),shortcut=key(.Z,{.Primary}),state=state_undo},
@@ -594,7 +594,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="grid",preference=VIEWPORT,on=`"show_grid":true`,off=`"show_grid":false`,label="Grid",icon=.Grid,menu=.View,group=1,scene=true},
         {name="indicators",preference=VIEWPORT,on=`"show_indicators":true`,off=`"show_indicators":false`,label="Indicators",icon=.Eye,menu=.View,group=1,scene=true},
         {name="output_frame",preference=VIEWPORT,on=`"show_output_frame":true`,off=`"show_output_frame":false`,label="Output frame",icon=user(.Camera),menu=.View,group=1,scene=true},
-        {name="game_detail",preference=VIEWPORT,on=`"game_detail":true`,off=`"game_detail":false`,label="Detail of the game camera",menu=.View,group=1,scene=true},
+        {name="game_detail",preference=VIEWPORT,on=`"game_detail":true`,off=`"game_detail":false`,label="Detail of the game camera",icon=.Target,menu=.View,group=1,scene=true},
         {name="studio_light",view=proc(s:^Session) {s.viewport.studio_light=!s.viewport.studio_light},label="Studio light",icon=.Sun,menu=.View,group=1,modes=edit,state=state_studio_light,scene=true},
         {name="graphics",view=graphics_toggle,label="Graphics",icon=user(.Graphics),menu=.View,group=1,state=state_graphics},
         {name="inspector_panel",preference=LAYOUT,on=`"right_open":true`,off=`"right_open":false`,label="Details",icon=user(.Graphics),menu=.View,group=2},

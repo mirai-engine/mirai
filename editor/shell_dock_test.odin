@@ -77,7 +77,7 @@ an_asset_document_fills_the_window_from_under_the_left_panel :: proc(t:^testing.
 }
 
 @(test)
-the_editor_settings_list_the_modes_of_the_panels_first :: proc(t:^testing.T) {
+the_editor_settings_list_the_modes_of_the_panels_after_the_project :: proc(t:^testing.T) {
     ctx:ui.Context
     testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
@@ -88,7 +88,16 @@ the_editor_settings_list_the_modes_of_the_panels_first :: proc(t:^testing.T) {
     s.settings_dialog.search_length=copy(s.settings_dialog.search[:],"docked")
     categories=settings_categories(&s)
     testing.expect(t,len(categories)==1 && categories[0].storage==SETTINGS_CATEGORY_EDITOR,"the search finds the panels by their modes")
-    s.settings_layer=.Project
+    s.settings_dialog.search_length=0
+    s.settings_layer,s.has_project=.Project,true
+    categories=settings_categories(&s)
+    project_at,editor_at:=-1,-1
+    for c,i in categories {
+        if c.storage==SETTINGS_CATEGORY_PROJECT {project_at=i}
+        if c.storage==SETTINGS_CATEGORY_EDITOR {editor_at=i}
+    }
+    testing.expect(t,project_at>=0 && editor_at>project_at,"the editor comes after the project")
+    s.has_project=false
     s.settings_plugins.count=1
     s.settings_dialog.search_length=copy(s.settings_dialog.search[:],"git")
     categories=settings_categories(&s)

@@ -26,7 +26,7 @@ panel_of :: proc(s:^editor.Session) -> ^Profiler_Panel {
 
 @(private)
 api_register :: proc(s:^editor.Session) {
-	editor.command_bind(s,{name="profiler",label="Profiler",menu=.View,group=editor.MENU_GROUP_PLUGINS,state=panel_state,
+	editor.command_bind(s,{name="profiler",label="Profiler",icon=.History,menu=.View,group=editor.MENU_GROUP_PLUGINS,state=panel_state,
 		view=proc(s:^editor.Session) {if p:=panel_of(s);p!=nil {p.open=!p.open}},
 	})
 }
