@@ -24,7 +24,7 @@ import "mirai:core"
 // Edits made while a Play runs are made to its World and are not kept: the
 // history is that of the World of the document.
 
-EDITS_STEP_CAPACITY :: 256    // steps kept: the oldest goes first
+EDITS_STEP_CAPACITY :: 256    // steps kept: the oldest of the author with the most goes first
 EDITS_BYTE_CAPACITY :: 512<<20 // bytes the steps may hold
 EDIT_LABEL_BYTES :: 48
 
