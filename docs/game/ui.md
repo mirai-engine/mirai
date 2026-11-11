@@ -48,8 +48,8 @@ A fixed or a frame step reads what the widgets asked in `gui.UI_Events`, once ea
 
 ```odin
 @(step="frame")
-menu_frame :: proc(ui:core.Ref(gui.UI_Events),screens:^core.Table(Menu_Screen,.Read),opts:^Options) {
-    screen:=core.entity_at(screens,0)
+menu_frame :: proc(ui:core.Ref(gui.UI_Events),menus:^core.Table(Menu_Screen,.Read),opts:^Options) {
+    screen:=core.entity_at(menus,0)
     if gui.clicked(ui.ptr,screen,"menu_play") {start_game()}
     if value,ok:=gui.changed_value(ui.ptr,screen,"difficulty");ok {opts.difficulty=i32(value)}
 }
