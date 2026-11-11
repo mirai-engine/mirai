@@ -225,8 +225,11 @@ table_take :: proc(dst,src:^Raw_Table) {
 // shape, and every one of a type that is not plain data, start at the default.
 @(private="file")
 table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Table) {
-    // What waits to be added is of the old type: none does after a settle.
+    // What waits to be added is of the old type: none does after a settle. So is what the
+    // edits kept: the rows asked for stay written.
+    edits_drop(t)
     t.added,old_table.added=old_table.added,t.added
+    t.edited,old_table.edited=old_table.edited,t.edited
     count:=t.values.len
     old:=t.values
     size,align:=to.info.size,to.info.align
@@ -241,6 +244,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
         clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
         rows_zero(t)
         t.on=0
+        t.version=version_top(t)+1
         t.layout+=1
     }
     // The old values go to the struct the old library destroys.

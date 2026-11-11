@@ -2,5 +2,5 @@
   "name": "decals",
   "version": "0.1.0",
   "dependencies": [],
-  "parts": ["Runtime", "Editor", "Shaders"]
+  "parts": ["Runtime", "Editor", "Shaders", "Recipes"]
 }

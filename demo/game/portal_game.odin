@@ -12,8 +12,7 @@ import portals "plugins:portals/runtime"
 // The portal chamber of portals/portal_chamber.scene. The player carries a gun
 // that opens two portals, a blue and an orange one, on the white surfaces
 // (Portal_Surface); what goes into one comes out of the other, the player
-// included, and a cube halfway through shows on both sides. The actions of
-// ../input.mirai:
+// included, and a cube halfway through shows on both sides. Its actions:
 //   portal_blue    left button, left trigger   opens the blue portal; with a cube in hand, throws it
 //   portal_orange  right button, left shoulder opens the orange portal
 //   grab           E, West                     picks up the cube in front, or puts it down
@@ -360,11 +359,10 @@ door_opened :: proc(doors:^core.Table(Door,$A),buttons:^core.Table(Floor_Button,
     return false
 }
 
-// What portal_hud.ui shows of the body with the gun it is on, while a seat
-// drives it: the screen is on the body, so it shows in the view of its player.
+// What portal_hud.ui shows of the body with the gun it is on: the screen is on
+// the body, so it shows in the view of its player, and only then.
 @(component,description="The HUD of a portal gun: the crosshair with the portals it has open, what its actions do and the caption of what is near.")
 Portal_Hud :: struct {
-    shown:bool,   // a seat drives this body
     blue,orange:bool, // that portal is open
     holding:bool, // it carries a cube
     aiming:bool,  // it does not: its buttons open portals
@@ -375,14 +373,14 @@ Portal_Hud :: struct {
 @(step="frame")
 portal_hud :: proc(
     huds:^core.Table(Portal_Hud),guns:^core.Table(Portal_Gun,.Read),mouths:^core.Table(Portal_Mouth,.Read),exhibits:^core.Table(Exhibit,.Read),
-    drivables:^core.Table(inp.Drivable,.Read),worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),
 ) {
     for row in 0..<core.count(huds) {
         body:=core.entity_at(huds,row)
         next:Portal_Hud
         gun,has_gun:=core.get(guns,body)
-        if placed,has_world:=core.get(worlds,body);has_world && has_gun && inp.seat_of(drivables,body)!=core.NONE {
-            next.shown,next.holding,next.aiming=true,gun.held!=core.NONE,gun.held==core.NONE
+        if placed,has_world:=core.get(worlds,body);has_world && has_gun {
+            next.holding,next.aiming=gun.held!=core.NONE,gun.held==core.NONE
             for at in 0..<core.count(mouths) {
                 mouth:=core.at(mouths,at)
                 if !mouth.placed {continue}

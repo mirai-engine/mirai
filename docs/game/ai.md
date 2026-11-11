@@ -24,7 +24,7 @@ Plugin `behavior` (brings `navigation`, `physics`) in `project.mirai`; import
 
 Components on one entity: `core.Transform`, a physics `Character` with a capsule collider and a
 `Walk` (or `Fly`, `Swim`), `nav.Nav_Agent`, `behavior.Perceiver`, `behavior.Perceivable` (its
-team), `behavior.Mind_Agent{mind=behavior.mind_name("zombie")}` and `behavior.Mind_Presentation`.
+team), `behavior.Mind_Agent{mind=behavior.mind_name("zombie")}` and an `anim.Animation` to be seen.
 The agent's navigation class is chosen from its capsule; with none that fits, the problem
 `navigation.agent_class` says what size is missing.
 
@@ -61,9 +61,9 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - **Move requests:** `nav.nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`, `nav_look_along`
   on `Nav_Requests`. `Nav_Path.state` is `Idle`, `Waiting`, `Moving`, `Crossing`, `Arrived` or
   `Failed`; `partial`: it got as near as the mesh goes.
-- **Presentation (multiplayer):** minds run on the server; clients receive `Mind_Presentation`
-  (the action, what it looks at, an animation id). Ask with `behavior.present_look(a, target)` and
-  `behavior.present_animation(a, id)`; the entity must carry it from the start.
+- **Show it:** an action that takes `requests:^anim.Animation_Requests` calls
+  `anim.play(requests,behavior.agent(a),"Bite")` and `anim.look`. Minds run on the server, and every
+  client plays what the server played, as far into it as the server is.
 
 ## Pitfalls that fail silently
 
@@ -74,7 +74,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   an action that calls `nav.nav_move_to` itself must `nav_stop` when `a.cause == .Aborted`.
 - `think` only reads and proposes; state changes go in the actions.
 - `behavior.PERCEIVER_DEFAULT` notices every team, its own included; set `notices`.
-- A runtime-spawned agent needs a `core.Id` for the API (`behavior.inspect`, `nav.agent`).
+- Agents that appear while playing: [at spawn points](core/prefabs.md#at-spawn-points).
 - The navmesh builds in the background: an early `Nav_Path` is `Waiting`. `Failed`: see
   `engine.diagnostics` (`navigation.off_mesh`: the agent must start on walkable ground).
 - To see why an agent chose, in Play: `behavior.inspect`, `behavior.perception`, `nav.agent`.

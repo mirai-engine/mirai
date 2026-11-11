@@ -21,7 +21,7 @@ Foliage_View :: struct {cells:bool}
 
 @(step="frame")
 foliage_view_modes :: proc(s:^editor.Session,view:^Foliage_View) {
-    view.cells=s.mode!=.Play && !editor.document_is_prefab(s) && strings.equal_fold(editor.view_mode_current(s.viewport),VIEW_CELLS)
+    view.cells=s.mode!=.Play && strings.equal_fold(editor.view_mode_current(s.viewport),VIEW_CELLS)
     editor.view_mode_declare(s,{name=VIEW_CELLS,label="Foliage cells",title="Foliage: cells",group="Advanced",submenu="Foliage",icon=.Grid,record=foliage_view_lit,user=view})
 }
 

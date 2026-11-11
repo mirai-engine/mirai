@@ -109,13 +109,11 @@ physics_gallery_piece_center :: proc(view:destruct.Destruct_View,e:core.Entity,f
 }
 
 @(step="fixed")
-physics_gallery_motion :: proc(motions:^core.Table(Physics_Gallery_Motion,.Read),transforms:^core.Table(core.Transform),time:core.Time) {
+physics_gallery_motion :: proc(motions:^core.Table(Physics_Gallery_Motion,.Read),bodies:^phys.Body_Requests,time:core.Time) {
     if !time.playing {return}
     for row in 0..<core.count(motions) {
         motion:=core.at(motions,row)
-        if local:=core.free(transforms,core.entity_at(motions,row));local!=nil {
-            local.position=motion.origin+motion.axis*(motion.amplitude*math.sin(f32(time.tick)*time.dt*motion.frequency))
-        }
+        phys.move_kinematic(bodies,core.entity_at(motions,row),motion.origin+motion.axis*(motion.amplitude*math.sin(f32(time.tick)*time.dt*motion.frequency)))
     }
 }
 
@@ -225,7 +223,7 @@ physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:^core.Ta
                 if ready && state.broken {next.note=.Released} else if item.activations>0 {next.note=.Strained}
             case PHYSICS_CACHE_STATION:
                 if player,ready:=core.get(players,item.target);ready {
-                    next.line,next.playing,next.forward,next.seconds=.Playback,player.playing,player.rate>=0,math.round(player.time*100)/100
+                    next.line,next.playing,next.forward,next.seconds=.Playback,player.playing,player.rate>=0,player.time
                 }
             case PHYSICS_RAGDOLL_STATION:
                 if config,ready:=core.get(ragdolls,item.target);ready {next.line,next.ragdoll=.Ragdoll,config.mode}

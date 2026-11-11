@@ -30,6 +30,7 @@ Test_Physics :: struct {
     fluids:core.Table(Fluid),
     verticals:core.Table(core.Vertical),
     volumes:core.Table(volume.Volume), // where the fluids and the gravities are
+    splines:core.Table(volume.Spline),
     // The gravity of the places of the world: a step reads them when its host says fields.
     gravities:core.Table(volume.Gravity),
     worlds:core.Table(core.World_Transform), // of what has a Gravity: the bodies of a test have none
@@ -125,6 +126,6 @@ test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
         core.read(&p.rigids),core.read(&p.colliders),core.read(&p.characters),core.read(&p.moves),
         &p.joints,core.read(&p.statics),core.read(&p.parents),core.read(&p.names),
         &p.transforms,&p.bodies,core.read(&p.replicas),&p.character_states,&p.joint_states,core.read(&p.fluids),&p.joint_requests,core.ref(&p.collision),core.ref(&p.sync_check),&p.simulation_hash,nil,&h.problems,
-        gravities,core.read(&p.volumes),worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),
+        gravities,core.read(&p.volumes),worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),core.read(&p.splines),{},{},
     )
 }

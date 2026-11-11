@@ -71,8 +71,8 @@ test_step :: proc(w:^Test_World,steps:=1) {
 }
 // Steps until the client reports a connection or gives up; returns both handles.
 @(private)
-test_connect :: proc(w:^Test_World,server,client:^Host,limit:=600,credentials:=Credentials{}) -> (on_server,on_client:Connection) {
-    host_connect(client,address_memory(0),credentials)
+test_connect :: proc(w:^Test_World,server,client:^Host,limit:=600) -> (on_server,on_client:Connection) {
+    host_connect(client,address_memory(0))
     for _ in 0..<limit {
         test_step(w)
         for command in host_poll(server) {
@@ -192,13 +192,16 @@ Test_Secret :: struct {ammo:u16,stamina:f32 `mirai:"precision=0.01"`}
 Test_Input :: struct {move:[2]f32 `mirai:"min=-1,max=1,precision=0.01"`,buttons:u8}
 @(private)
 Test_Hit :: struct {damage:i32,from:base.Entity,point:[3]f32 `mirai:"precision=0.01"`}
+// 6 KB, 4 KB of it an array of bytes: more than a datagram carries.
+@(private)
+Test_Big :: struct {values:[511]u32,count:u32,bytes:[4096]u8}
 
 @(private)
 Test_Protocol :: struct {
     schema:serial.Schema,
     protocol:Protocol,
     actor,prop:Type_Id,
-    hit,ping,use,notice:Event_Id,
+    hit,ping,use,notice,big:Event_Id,
 }
 // Actor: transform, vitals and an owner-only fragment. Prop: a transform.
 @(private)
@@ -210,12 +213,14 @@ test_protocol_init :: proc(tp:^Test_Protocol) {
     secret,_:=serial.schema_add(&tp.schema,Test_Secret)
     input,_:=serial.schema_add(&tp.schema,Test_Input)
     hit,_:=serial.schema_add(&tp.schema,Test_Hit)
+    big,_:=serial.schema_add(&tp.schema,Test_Big)
     tp.actor,_=type_register(&tp.protocol,"Actor",{{schema=&tp.schema,type=transform},{schema=&tp.schema,type=vitals},{schema=&tp.schema,type=secret,condition=.Owner}})
     tp.prop,_=type_register(&tp.protocol,"Prop",{{schema=&tp.schema,type=transform}})
     tp.hit,_=event_register(&tp.protocol,"Hit",&tp.schema,hit,{.Reliable})
     tp.ping,_=event_register(&tp.protocol,"Ping",&tp.schema,hit,{.From_Client})
     tp.use,_=event_register(&tp.protocol,"Use",&tp.schema,hit,{.Reliable,.From_Client,.Owner_Only})
     tp.notice,_=event_register(&tp.protocol,"Notice",&tp.schema,hit,{.Reliable,.Held})
+    tp.big,_=event_register(&tp.protocol,"Big",&tp.schema,big,{.Reliable,.From_Client})
     input_register(&tp.protocol,&tp.schema,input)
     protocol_seal(&tp.protocol)
 }

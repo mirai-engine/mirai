@@ -230,18 +230,18 @@ propagating_what_changed_equals_propagating_all_on_random_hierarchies :: proc(t:
         // A reader that reads after every settle is told each link, however many moved before;
         // one that read none of more than the log holds is told to read the tree whole.
         seen,behind:u64
-        _,_=hierarchy_moved(ref(&a.hierarchy),&seen)
-        _,_=hierarchy_moved(ref(&a.hierarchy),&behind)
+        _,_=log_since(a.hierarchy.moved,&seen)
+        _,_=log_since(a.hierarchy.moved,&behind)
         homes:=[2]Entity{create(&a.es),create(&a.es)}
         child:=create(&a.es)
         for k in 0..<3*HIERARCHY_MOVED {
             add(&a.parents,child,Parent{homes[k%2],0})
             table_settle(&a.parents,&a.es)
             hierarchy_settle(&a.hierarchy,&a.parents,&a.es)
-            moved,whole:=hierarchy_moved(ref(&a.hierarchy),&seen)
+            moved,whole:=log_since(a.hierarchy.moved,&seen)
             if !testing.expect(t,!whole && len(moved)==1 && moved[0]==child) {break}
         }
-        _,whole:=hierarchy_moved(ref(&a.hierarchy),&behind)
+        _,whole:=log_since(a.hierarchy.moved,&behind)
         testing.expect(t,whole)
     }
 }

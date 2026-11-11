@@ -3,7 +3,7 @@ package input
 import "mirai:core"
 
 // Input contexts. Every action is in one context (the base one unless its
-// default or input.mirai name another), and a seat takes the actions of a
+// default or Input_Settings name another), and a seat takes the actions of a
 // context only while it is in it. Every seat is always in the base context;
 // something (a menu, a vehicle) puts seats in others until its owner takes
 // them out, and the one entered last is on top. A context on top takes from

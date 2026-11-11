@@ -23,11 +23,11 @@ source.sound, source.loop, source.spatial = HUM, true, true
 source.volume, source.max_distance = 0.7, 25
 ```
 
-- Put it in the scene; the library starts, moves and stops the voice. `spatial` places it at the
-  entity: attenuated, duller far away, heard from its direction; without it `pan` places it.
-  `directivity` (0 to 1, `directivity_power` narrower) aims it toward -Z of the entity.
+- Put it in the scene; the library starts, moves and stops it. `spatial` places it at the entity,
+  attenuated and duller far away, else `pan` does; `directivity` aims it toward -Z; `near_radius`
+  keeps one through the camera from jumping between ears; `delay` starts it late by its distance.
 - The listener is the entity with `Audio_Listener` (the player's eyes), else the view. Game code
-  writes `playing`, `volume`, `pitch`, `pan`, `loop` (`core.writable` on its table).
+  writes `playing`, `plays`, `volume`, `pitch`, `pan`, `loop` (`core.writable` on its table).
 
 ## One-shots from code
 Push to `Sound_Requests`, from any step:
@@ -72,8 +72,8 @@ options: a slider bound to `Audio_Volumes.music` writes it itself; the game writ
   mids and highs get through; without one, as a wall.
 
 ## Pitfalls
-- A non-looping source that ended stays `ended` until `playing` is cleared: set false, then true.
-  Changing `sound`, `bus` or the curve restarts the voice; the other fields tune it live. Zero
+- An ended one-shot stays `ended`; `plays += 1` plays it again (also while it sounds). `sound`,
+  `bus` or the curve restart the voice; the other fields tune it live. Zero
   `pitch` means 1.
 - A source that cannot sound is a problem of its entity, a request one of no entity: see
   `engine.diagnostics` (`audio.*`). Headless, nothing plays and nothing is said.

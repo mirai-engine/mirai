@@ -190,6 +190,9 @@ Memory :: enum u8 {
 
 Buffer_Usage_Flag :: enum u8 {Index, Uniform, Storage, Indirect, Transfer_Src, Transfer_Dst, Accel_Input}
 Buffer_Usage :: bit_set[Buffer_Usage_Flag; u16]
+// What transient memory may be bound or copied as.
+@(private)
+TRANSIENT_USAGE :: Buffer_Usage{.Uniform, .Storage, .Index, .Indirect, .Transfer_Src, .Transfer_Dst, .Accel_Input}
 
 // A new buffer reads zero in every byte, whatever its memory. One of GPU
 // memory is zeroed by the GPU unless an upload writes all of it first, and is
@@ -588,7 +591,7 @@ DEFAULT_DEVICE_CAPACITIES :: Device_Capacities{buffers = 4096, textures = 8192, 
 Device_Desc :: struct {
 	app_name:                   cstring,
 	validation:                 bool,     // also enabled with MIRAI_VALIDATION=1
-	allow_hardware_ray_tracing: bool,     // MIRAI_RT=software forces it off
+	allow_hardware_ray_tracing: bool,     // Vulkan: false, or MIRAI_RT=software, has the device report no ray queries, so rays are traced by software; Metal always traces them by hardware
 	vulkan_instance_extensions: []cstring, // window system extensions from the platform layer
 	upload_bytes_per_frame:     u64,      // transient ring capacity per frame in flight
 	preferred_device:           string,   // substring of the adapter name; MIRAI_GPU overrides
@@ -678,8 +681,9 @@ device_fail :: proc(d: ^Device, failure: Device_Failure, format: string, args: .
 
 Device_Stats :: struct {
 	buffers, textures, samplers, pipelines, accels: int, // alive, of those the user made: what it has to destroy
-	exhausted:          int, // creations refused because a pool or the frame ring was full
+	exhausted:          int, // creations refused because a pool was full, and transients refused
 	deletion_overflows: int, // times a frame slot held more destroyed objects than its capacity
+	oversized:          int, // transients past the frame ring, each given a buffer for its frame
 }
 
 @(private)
@@ -712,8 +716,8 @@ device_stats :: proc(d: ^Device) -> Device_Stats {
 	return s
 }
 
-// Transient memory allocated from the current frame's upload ring. Valid until
-// the frame slot is reused (MAX_FRAMES_IN_FLIGHT frames later).
+// Transient memory of the frame being recorded. Valid until the frame slot is
+// reused (MAX_FRAMES_IN_FLIGHT frames later).
 Transient :: struct {
 	ptr:    rawptr,
 	buffer: Buffer,
@@ -736,6 +740,45 @@ Gpu_Timing :: struct {
 MAX_TIMESTAMPS :: 256
 // Bytes of the name of a timestamp that are kept; a longer one is cut.
 MAX_TIMESTAMP_NAME_BYTES :: 64
+
+// Oversized transients one frame holds.
+MAX_FRAME_OVERSIZED :: 16
+
+// Transient memory from the ring of the frame being recorded. Past the room of
+// the ring it gets a buffer of its own, released with the frame, so an upload
+// of any size reaches the GPU in the frame that asks for it: a load, or a
+// growth that dirties whole tables, is a frame that may allocate.
+frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
+	// Between frames the slot may still be in flight and frame_begin resets
+	// the ring, so transient memory only exists while a frame is recorded.
+	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
+	f := &d.frames[d.slot]
+	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
+	offset := align_up(f.upload_used, align)
+	if offset <= f.upload_size && size <= f.upload_size - offset {
+		f.upload_used = offset + size
+		return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
+	}
+	if size > d.info.max_storage_range || f.oversized_count == MAX_FRAME_OVERSIZED {
+		d.stats.exhausted += 1
+		set_error(d, "transient of %d bytes refused: past the frame ring of %d bytes one takes a buffer of at most %d bytes, %d per frame", size, f.upload_size, d.info.max_storage_range, MAX_FRAME_OVERSIZED)
+		return {}
+	}
+	buffer := buffer_create(d, {size = size, usage = TRANSIENT_USAGE, memory = .Upload, name = "frame upload past the ring"})
+	if buffer == 0 {return {}}
+	f.oversized[f.oversized_count] = buffer
+	f.oversized_count += 1
+	d.stats.oversized += 1
+	return {ptr = buffer_mapped(d, buffer), buffer = buffer, size = size}
+}
+
+// The oversized transients go once the GPU finished the frame that ends.
+@(private)
+frame_oversized_release :: proc(d: ^Device) {
+	f := &d.frames[d.slot]
+	for buffer in f.oversized[:f.oversized_count] {buffer_destroy(d, buffer)}
+	f.oversized_count = 0
+}
 
 // Optional helper for typed transient writes.
 frame_alloc_typed :: proc(d: ^Device, $T: typeid, count: int) -> ([]T, Transient) {
@@ -779,12 +822,14 @@ format_linear :: proc "contextless" (f: Format) -> Format {
 	return f
 }
 
-// Why cmd_copy_texture cannot copy a texture into another, "" when it can:
-// both are 2D, with one size and as many layers, and their formats hold the
-// same bytes (one format, or two that differ only in the sRGB encoding).
-texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc) -> string {
+// Why cmd_copy_texture cannot copy `mips` mips of a texture from src_mip
+// into another from dst_mip, "" when it can: both are 2D and have those mips,
+// of one size and as many layers, and their formats hold the same bytes (one
+// format, or two that differ only in the sRGB encoding).
+texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc, src_mip: u32 = 0, dst_mip: u32 = 0, mips: u32 = 1) -> string {
 	if src.depth > 1 || dst.depth > 1 {return "a 3D texture is written by shaders"}
-	if src.width != dst.width || src.height != dst.height || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers"}
+	if mips == 0 || u64(src_mip) + u64(mips) > u64(max(src.mip_levels, 1)) || u64(dst_mip) + u64(mips) > u64(max(dst.mip_levels, 1)) {return "the mips copied are past those of a texture"}
+	if max(src.width >> src_mip, 1) != max(dst.width >> dst_mip, 1) || max(src.height >> src_mip, 1) != max(dst.height >> dst_mip, 1) || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers at the mips copied"}
 	if format_linear(src.format) != format_linear(dst.format) {return "the two formats differ in more than the sRGB encoding"}
 	return ""
 }

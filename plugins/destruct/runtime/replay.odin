@@ -103,7 +103,6 @@ event_replay :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,entry:^Entry,re
 state_apply :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,asked:State_Replay) -> (done,failed:bool) {
     remake :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State) {
         physics.breakable_destroy(c.state,st.handle)
-        c.cache.stats.destroyed+=1
         core.add(c.states,e,Destructible_State{})
     }
     if physics.breakable_revision(c.view,st.handle)!=0 || st.sequence!=0 {

@@ -3,6 +3,7 @@ package audio
 import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 import "mirai:core"
 import "mirai:host"
 import "mirai:platform"
@@ -53,11 +54,11 @@ BUS_UI :: Audio_Bus(4)
 // A voice that follows the entity. While playing is set the library keeps a
 // voice of the sound alive: it starts it, moves it with the entity when
 // spatial, applies volume, pitch and pan when they change and stops it when
-// playing is cleared or the component goes away; a change of sound, bus or
-// how it is heard starts it again. A .sound_set chooses one of its sounds each
-// time the voice starts, and a loop repeats the one it chose. A sound that
-// ends without loop sets Audio_Source_State.ended; clearing playing makes the
-// source ready to play again.
+// playing is cleared or the component goes away; a change of sound, bus, how
+// it is heard or plays starts it again. A .sound_set chooses one of its sounds
+// each time the voice starts, and a loop repeats the one it chose. A sound
+// that ends without loop sets Audio_Source_State.ended; one more in plays
+// plays it again from its start.
 @(component,description="Plays a .sound or a .sound_set: placed at the entity when spatial, or as it is.")
 Audio_Source :: struct {
     sound:base.Asset_Id, // a .sound or a .sound_set
@@ -67,18 +68,21 @@ Audio_Source :: struct {
     pan:f32 `mirai:"min=-1,max=1"`, // -1 left to 1 right, when not spatial
     loop:bool,
     playing:bool,
+    plays:u32, // a change starts the sound again from its start, also one that ended
     spatial:bool, // placed at the entity and heard from the listener: from its direction, attenuated and dulled by the air
     attenuation:Attenuation_Model, // how it falls between min_distance and max_distance
     min_distance:f32 `mirai:"min=0,unit=m"`,
     max_distance:f32 `mirai:"min=0,unit=m"`,
     rolloff:f32 `mirai:"min=0"`, // how fast it falls: 1 is the curve as its model says it
+    near_radius:f32 `mirai:"min=0,unit=m"`, // nearer, it is heard less from its direction, so passing through the listener does not jump between ears
+    delay:bool, // starts later by its distance over the speed of sound, as thunder after its flash
     doppler:f32 `mirai:"min=0"`, // 0: none; 1: the physical shift of pitch as it and the listener move
     reverb:f32 `mirai:"min=0,max=1"`, // share of it the room of the listener reverberates
     directivity:f32 `mirai:"min=0,max=1"`, // 0: the same all around; 0.5: loudest toward -Z of the entity and silent behind; 1: silent at its sides
     directivity_power:f32 `mirai:"min=0"`,  // how narrow the directivity is: 1 as it is, higher narrower
 }
 
-AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,directivity_power=1}
+AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,near_radius=1,directivity_power=1}
 
 // A spatial source that what collides between it and the listener hides:
 // Audio_Source_State.occlusion is the part of it out of sight, 0 to 1, which
@@ -122,6 +126,7 @@ AUDIO_REVERB_DEFAULT :: Audio_Reverb{room_size=0.6,damping=0.4,wet=1,width=1}
 Audio_Source_State :: struct {
     voice:mixer.Voice `mirai:"transient,readonly,local,hidden"`,
     ended:bool `mirai:"transient,readonly,local"`,
+    plays:u32 `mirai:"transient,readonly,local,hidden"`, // Audio_Source.plays its last voice started at
     occlusion:f32 `mirai:"transient,readonly,local"`, // 0 in sight to 1 hidden, of a source with an Audio_Occlusion
     // Of the OCCLUSION_SAMPLES points of its sphere: those the source reaches,
     // those the listener sees, and the next to test.
@@ -196,34 +201,36 @@ Audio_Output :: struct {
 Mixer_Output :: struct {
     device:[AUDIO_OUTPUT_NAME_BYTES]u8,
     set:bool,
+    missing:bool, // device is not connected: the default plays until it is
 }
 
 Audio_Stats :: struct {
     started,ended:u64,
 }
 
+// The voice of a source that plays, or waits to start (voice 0: its sound
+// does not load yet, or the mixer had no voice for it).
 Voice_Entry :: struct {
     voice:mixer.Voice,
+    kind:Voice_Kind,
+    generation:u32, // of what the content loaded for sound
+    pick:[2]f32,    // volume and pitch its variation takes over those of the source
+    // Of a spatial voice: where it was placed last, how it faces and what hides it.
+    moving:bool,
+    position:[3]f32,
+    rotation:quaternion128,
+    transmission:[mixer.BANDS]f32,
+}
+
+// What a voice starts with and cannot change while it sounds: another starts it again.
+Voice_Kind :: struct {
     sound:base.Asset_Id,
-    generation:u32,  // of what the content loaded for sound
-    pick:[2]f32,     // volume and pitch its variation takes over those of the source
-    volume,pitch,pan,reverb:f32, // as the voice was told
     bus:Audio_Bus,
-    loop,spatial,moving:bool,
+    spatial:bool,
     attenuation:mixer.Attenuation,
     directivity:mixer.Directivity,
     doppler:f32,
-    occlusion:f32,
-    transmission:[mixer.BANDS]f32,
-    position:[3]f32,
-    rotation:quaternion128,
-}
-
-// The linear gain and the rate of playback the voice of an entry was given
-// last: those of its source by the variation of its set, before buses,
-// distance and what hides it.
-voice_entry_given :: proc "contextless" (entry:Voice_Entry) -> (volume,pitch:f32) {
-    return entry.volume,entry.pitch*entry.pick[1]
+    plays:u32,
 }
 
 // The voices of the sources of a world, which the mixer of the application
@@ -288,19 +295,29 @@ sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(A
     if cap(voices.entries.values)==0 {core.entity_map_reserve(&voices.entries,VOICE_RESERVE)}
     hearing:=hearing
     listener_update(listener,m,&hearing,dt)
-    // The voices of the sources that went, or were turned off, stop.
-    gone,at,left:=core.changes(sources,&voices.seen),0,Voice_Entry{}
-    for _ in core.entity_map_left(&voices.entries,sources,gone,&at,&left) {mixer.voice_stop(m,left.voice)}
-    for row in 0..<core.count(sources) {
-        e:=core.entity_at(sources,row)
-        source:=core.at(sources,row)
-        local:Audio_Source_State
-        state:=core.edit(states,e)
-        fresh:=state==nil
-        if fresh {state=&local}
-        voice_update(voices,m,app,&hearing,listener.position,source,e,dt,state,problems)
-        if fresh {core.add(states,e,local)}
+    // The voices of the sources that went stop.
+    changes,at,left:=core.changes(sources,&voices.seen),0,Voice_Entry{}
+    for _ in core.entity_map_left(&voices.entries,sources,changes,&at,&left) {mixer.voice_stop(m,left.voice)}
+    // Each voice follows its entity; then a source written starts, stops or tunes its own.
+    for i:=len(voices.entries.entities)-1;i>=0;i-=1 {
+        e:=voices.entries.entities[i]
+        source,_:=core.get(sources,e)
+        state,_:=core.get(states,e)
+        voice_follow(voices,m,app,&hearing,listener.position,source,e,dt,&state,problems)
+        state_put(states,e,state)
     }
+    for row in core.each_changed(sources,&changes) {
+        e:=core.entity_at(sources,row)
+        state,_:=core.get(states,e)
+        source_set(voices,m,app,&hearing,listener.position,core.at(sources,row),e,&state,problems)
+        state_put(states,e,state)
+    }
+}
+
+// The state of a source, written only when it is another.
+@(private)
+state_put :: proc(states:^core.Table(Audio_Source_State),e:core.Entity,state:Audio_Source_State) {
+    if held:=core.edit(states,e);held!=nil {held^=state} else {core.add(states,e,state)}
 }
 
 // The reverb of the mixer goes to that of the volumes where the listener is
@@ -385,7 +402,8 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
     }
 }
 
-// Plays the mixer on the output of the settings when they change. The mixer
+// Plays the mixer on the output of the settings when they change; while that
+// output is not connected, on the default, until it comes back. The mixer
 // keeps its voices and its clock. An application whose mixer the system does
 // not play (headless, or one nobody plays) has no output to change.
 @(step="late",stage="end",loops="game editor")
@@ -393,20 +411,30 @@ audio_output :: proc(output:Audio_Output,applied:^Mixer_Output,app:^host.App,pro
     if app.mixer==nil {return}
     kind:=output.kind if output.kind<=max(Output_Kind) else .Speakers
     if mixer.mixer_output(app.mixer)!=kind {mixer.mixer_set_output(app.mixer,kind)}
-    if !platform.audio_device_is_open(app.platform) || applied.set && applied.device==output.device {return}
-    first:=!applied.set
-    applied.device,applied.set=output.device,true
+    p:=app.platform
+    if !platform.audio_device_is_open(p) {return}
+    changes:=platform.audio_device_changes(p)
     device:=output.device
     name:=base.text_get(device[:])
+    lost:bool
+    if applied.set && applied.device==device {
+        // The chosen output left, or one came that may be it coming back.
+        lost=.Lost in changes && !applied.missing
+        back:=.Added in changes && applied.missing && slice.contains(platform.audio_device_names(p,context.temp_allocator),name)
+        if !lost && !back {return}
+    }
+    first:=!applied.set
+    applied.device,applied.set=device,true
     // The application opened the default.
     if first && name=="" {return}
-    p:=app.platform
-    if error,found:=platform.audio_device_switch(p,name);error!=.None {
+    error,found:=platform.audio_device_switch(p,"" if lost else name)
+    applied.missing=error!=.None || lost || !found
+    if error!=.None {
         // The default, which the application opened, opens again.
         reopened:=platform.audio_device_open(p,app.mixer)==.None
         core.report(problems,core.NONE,"audio.output","the output \"%s\" did not open (%v): %s; choose another in Audio_Output.device, or leave it empty for the default",name,error,reopened?"the sound plays on the default one":"the game plays no sound")
-    } else if !found {
-        core.report(problems,core.NONE,"audio.output","Audio_Output.device \"%s\" is not an output of this machine, so the sound plays on the default one; give it one of %v, or leave it empty",name,platform.audio_device_names(p,context.temp_allocator))
+    } else if applied.missing {
+        core.report(problems,core.NONE,"audio.output","the output \"%s\" is not connected, so the sound plays on the default one until it is; give Audio_Output.device one of %v, or leave it empty",name,platform.audio_device_names(p,context.temp_allocator))
     }
 }
 
@@ -606,93 +634,134 @@ transmission_through :: proc(h:^Hearing,source:core.Entity,from,listener:[3]f32)
 @(private)
 attenuation_of :: proc "contextless" (source:Audio_Source) -> mixer.Attenuation {
     a:=mixer.ATTENUATION_DEFAULT
-    a.model,a.rolloff=source.attenuation,source.rolloff
+    a.model,a.rolloff,a.delay=source.attenuation,source.rolloff,source.delay
     if source.min_distance>0 {a.min_distance=source.min_distance}
     if source.max_distance>0 {a.max_distance=source.max_distance}
+    if source.near_radius>0 {a.near_radius=source.near_radius}
     return a
 }
 
+// A source as it was written: its voice stops, starts again when its kind is
+// another, or takes its volume, pitch, loop, pan and send.
 @(private)
-voice_update :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
+source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,state:^Audio_Source_State,problems:^core.Problems) {
     entry:=core.entity_map_get(&voices.entries,e)
     if !source.playing {
         if entry!=nil {
             mixer.voice_stop(m,entry.voice)
             core.entity_map_remove(&voices.entries,e)
         }
-        state.voice,state.ended,state.occlusion={},false,0
+        state^={}
         return
     }
-    if state.ended {return}
-    generation:=host.content_sound_generation(app,source.sound)
-    pitch:=source.pitch>0?source.pitch:1
-    world,placed:=core.get(h.worlds,e)
-    spatial:=source.spatial && placed
-    attenuation:=attenuation_of(source)
-    directivity:=mixer.Directivity{clamp(source.directivity,0,1),max(source.directivity_power,0)}
-    rotation:=world.rotation if spatial && directivity.weight>0 else 1
-    occlusion,hides:=core.get(h.occlusions,e)
-    transmission:=mixer.TRANSMISSION_DEFAULT
-    if hides && spatial {
-        // A voice that starts takes how hidden it is at once.
-        target:=occlusion_amount(h.query,e,world.position,listener,occlusion.radius,state,entry==nil)
-        if entry==nil || !(occlusion.fade>0) || dt<=0 {
-            state.occlusion=target
-        } else {
-            step:=dt/occlusion.fade
-            state.occlusion+=clamp(target-state.occlusion,-step,step)
-        }
-        if state.occlusion>0 {transmission=transmission_through(h,e,world.position,listener)}
-    } else {
-        state.occlusion=0
-        state.rays_valid,state.rays_open,state.ray_next=0,0,0
+    _,placed:=core.get(h.worlds,e)
+    if entry!=nil && entry.voice!={} && entry.kind==kind_of(source,placed) {
+        mixer.voice_set_volume(m,entry.voice,source.volume*entry.pick[0])
+        mixer.voice_set_pitch(m,entry.voice,(source.pitch>0?source.pitch:1)*entry.pick[1])
+        mixer.voice_set_loop(m,entry.voice,source.loop)
+        mixer.voice_set_reverb(m,entry.voice,source.reverb)
+        if !entry.kind.spatial {mixer.voice_set_pan(m,entry.voice,source.pan)}
+        return
     }
     if entry!=nil {
-        if entry.sound!=source.sound || entry.generation!=generation || entry.bus!=source.bus || entry.spatial!=spatial || entry.attenuation!=attenuation || entry.doppler!=source.doppler || entry.directivity!=directivity {
-            mixer.voice_stop(m,entry.voice)
-            core.entity_map_remove(&voices.entries,e)
-        } else if mixer.voice_valid(m,entry.voice) {
-            if volume:=source.volume*entry.pick[0];entry.volume!=volume {mixer.voice_set_volume(m,entry.voice,volume);entry.volume=volume}
-            if entry.pitch!=pitch {mixer.voice_set_pitch(m,entry.voice,pitch*entry.pick[1]);entry.pitch=pitch}
-            if entry.loop!=source.loop {mixer.voice_set_loop(m,entry.voice,source.loop);entry.loop=source.loop}
-            if !spatial && entry.pan!=source.pan {mixer.voice_set_pan(m,entry.voice,source.pan);entry.pan=source.pan}
-            if entry.reverb!=source.reverb {mixer.voice_set_reverb(m,entry.voice,source.reverb);entry.reverb=source.reverb}
-            if spatial && (entry.occlusion!=state.occlusion || entry.transmission!=transmission) {
-                mixer.voice_set_occlusion(m,entry.voice,state.occlusion,transmission)
-                entry.occlusion,entry.transmission=state.occlusion,transmission
-            }
-            if spatial && (entry.position!=world.position || entry.moving || entry.rotation!=rotation) {
-                velocity:[3]f32
-                if source.doppler>0 && dt>0 {velocity=(world.position-entry.position)/dt}
-                mixer.voice_set_position(m,entry.voice,world.position,velocity,rotation)
-                entry.position,entry.moving,entry.rotation=world.position,velocity!={},rotation
-            }
-            state.voice=entry.voice
-            return
-        } else {
-            core.entity_map_remove(&voices.entries,e)
-            state.voice={}
-            if !source.loop {
-                state.ended=true
-                voices.stats.ended+=1
-                return
-            }
-        }
+        mixer.voice_stop(m,entry.voice)
+        core.entity_map_remove(&voices.entries,e)
+    }
+    if state.ended && state.plays==source.plays {return}
+    state.ended,state.plays=false,source.plays
+    source_start(voices,m,app,h,listener,source,e,state,problems)
+}
+
+// What the voice of a source is started as, placed or not.
+@(private)
+kind_of :: proc "contextless" (source:Audio_Source,placed:bool) -> Voice_Kind {
+    return {
+        sound=source.sound,bus=source.bus,spatial=source.spatial && placed,attenuation=attenuation_of(source),
+        directivity={clamp(source.directivity,0,1),max(source.directivity_power,0)},doppler=source.doppler,plays=source.plays,
+    }
+}
+
+// Starts the voice of a source, as hidden as it is now; one that cannot start
+// yet waits in its entry for a later frame.
+@(private)
+source_start :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,state:^Audio_Source_State,problems:^core.Problems) {
+    world,placed:=core.get(h.worlds,e)
+    entry:=Voice_Entry{kind=kind_of(source,placed),generation=host.content_sound_generation(app,source.sound),rotation=1,transmission=mixer.TRANSMISSION_DEFAULT}
+    if entry.kind.spatial {
+        entry.position=world.position
+        if entry.kind.directivity.weight>0 {entry.rotation=world.rotation}
+        entry.transmission=hidden(h,listener,e,world,0,state,true)
     }
     heard:=source
-    heard.spatial=spatial
-    position:=world.position if spatial else {}
-    voice,pick:=voice_start(m,app,heard,e,problems,position,rotation,state.occlusion,transmission)
-    if voice=={} {return}
+    heard.spatial=entry.kind.spatial
+    pick:host.Sound_Pick
+    entry.voice,pick=voice_start(m,app,heard,e,problems,entry.position,entry.rotation,state.occlusion,entry.transmission)
+    entry.pick={pick.volume,pick.pitch}
     // Without memory to keep it the voice cannot be followed: it does not play.
-    kept_entry:=Voice_Entry{voice=voice,sound=source.sound,generation=generation,pick={pick.volume,pick.pitch},volume=source.volume*pick.volume,pitch=pitch,pan=source.pan,reverb=source.reverb,bus=source.bus,loop=source.loop,spatial=spatial,attenuation=attenuation,directivity=directivity,doppler=source.doppler,occlusion=state.occlusion,transmission=transmission,position=position,rotation=rotation}
-    if _,kept:=core.entity_map_put(&voices.entries,e,kept_entry);!kept {
-        mixer.voice_stop(m,voice)
+    if _,kept:=core.entity_map_put(&voices.entries,e,entry);!kept {
+        mixer.voice_stop(m,entry.voice)
         core.report(problems,e,"audio.memory","its Audio_Source did not start: out of memory to follow its voice; free memory")
         return
     }
-    state.voice=voice
-    voices.stats.started+=1
+    state.voice=entry.voice
+    if entry.voice!={} {voices.stats.started+=1}
+}
+
+// How hidden a spatial source is from the listener, which state follows over
+// the fade of its Audio_Occlusion (at once when start), and what lets it
+// through. In sight without one.
+@(private)
+hidden :: proc(h:^Hearing,listener:[3]f32,e:core.Entity,world:core.World_Transform,dt:f32,state:^Audio_Source_State,start:bool) -> (transmission:[mixer.BANDS]f32) {
+    transmission=mixer.TRANSMISSION_DEFAULT
+    occlusion,hides:=core.get(h.occlusions,e)
+    if !hides {
+        state.occlusion,state.rays_valid,state.rays_open,state.ray_next=0,0,0,0
+        return
+    }
+    target:=occlusion_amount(h.query,e,world.position,listener,occlusion.radius,state,start)
+    if start || !(occlusion.fade>0) || dt<=0 {
+        state.occlusion=target
+    } else {
+        step:=dt/occlusion.fade
+        state.occlusion+=clamp(target-state.occlusion,-step,step)
+    }
+    if state.occlusion>0 {transmission=transmission_through(h,e,world.position,listener)}
+    return
+}
+
+// A voice in the frame: one waiting starts, one whose sound was loaded again
+// starts again, one that ended goes, or plays again when it loops, and a
+// spatial one follows its entity and what hides it.
+@(private)
+voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
+    entry:=core.entity_map_get(&voices.entries,e)
+    world,placed:=core.get(h.worlds,e)
+    valid:=mixer.voice_valid(m,entry.voice)
+    if entry.voice!={} && !valid && !source.loop {
+        core.entity_map_remove(&voices.entries,e)
+        state.voice,state.ended={},true
+        voices.stats.ended+=1
+        return
+    }
+    if !valid || entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
+        mixer.voice_stop(m,entry.voice)
+        core.entity_map_remove(&voices.entries,e)
+        source_start(voices,m,app,h,listener,source,e,state,problems)
+        return
+    }
+    if !entry.kind.spatial {return}
+    occlusion:=state.occlusion
+    if transmission:=hidden(h,listener,e,world,dt,state,false);state.occlusion!=occlusion || transmission!=entry.transmission {
+        mixer.voice_set_occlusion(m,entry.voice,state.occlusion,transmission)
+        entry.transmission=transmission
+    }
+    rotation:=world.rotation if entry.kind.directivity.weight>0 else 1
+    if entry.position!=world.position || entry.moving || entry.rotation!=rotation {
+        velocity:[3]f32
+        if entry.kind.doppler>0 && dt>0 {velocity=(world.position-entry.position)/dt}
+        mixer.voice_set_position(m,entry.voice,world.position,velocity,rotation)
+        entry.position,entry.moving,entry.rotation=world.position,velocity!={},rotation
+    }
 }
 
 // Starts a voice of a source as it is set: at position, facing rotation and

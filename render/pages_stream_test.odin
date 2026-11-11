@@ -292,7 +292,7 @@ the_ray_cut_of_a_streamed_mesh_falls_back_toward_the_coarsest :: proc(t: ^testin
 	testing.expect_value(t, always, int(m.ray_count) - 1)
 	testing.expect_value(t, m.stream.cut_missing[always], 0)
 	testing.expect(t, m.stream.cut_missing[0] > 0, "level 0 has pages out of the root")
-	scene_set(r, []Instance_Desc{{object_id = 1, mesh = handle, transform = Mat4(1)}}, nil, {}, {})
+	scene_given(r, []Instance_Desc{{object_id = 1, mesh = handle, transform = Mat4(1)}}, nil, {}, {})
 	cut :: proc(s: ^Scene_State) -> int {return int(s.instances[0].meta.x >> INSTANCE_RAY_SHIFT & 3)}
 	testing.expect_value(t, cut(s), always)
 	eye := (m.bounds_min + m.bounds_max) * 0.5

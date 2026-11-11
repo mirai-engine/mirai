@@ -2,12 +2,14 @@
 
 Add `"Editor"` to `parts` and `editor/`, which imports `mirai:editor` and may import `runtime/`;
 the game never imports it. An `@(storage)` whose only field is a provider adds Create cards
-(also `Inspector_Provider`, `Component_Provider`, `Api_Provider`, `Preferences_Provider`):
+(also `Inspector_Provider`, `Component_Provider`, `Api_Provider`, `Preferences_Provider`). A card
+places a recipe: a scene of one entity in the plugin's `recipes/` (add `"Recipes"` to `parts`),
+written with `mirai scene write` and moved there; the name of its file is the name a `preset`
+gives, and its entity's name is the card's label:
 
 ```odin
 package heal_editor
 
-import "mirai:core"
 import "mirai:editor"
 import "mirai:ui"
 import heal "project:plugins/heal/runtime"
@@ -17,16 +19,15 @@ Heal_Cards :: struct {provider:editor.Card_Provider}
 
 heal_cards_default :: proc() -> (cards:Heal_Cards) {
     cards.provider.count = 1
-    cards.provider.cards[0] = {label="Healer", group="Logic", color={120,214,140,255},
-        component=heal.Health, make=heal_make,
+    cards.provider.cards[0] = {recipe="healer", group="Logic", color={120,214,140,255},
+        component=heal.Health,
         drawing=ui.icon_drawing(ui.icon_part(.Loop, {{-6,-6},{6,-6},{6,6},{-6,6}}))}
     return
 }
-
-heal_make :: proc(s:^editor.Session, w:core.World_Ref, e:core.Entity) {
-    if t := core.world_table_of(w, heal.Health); t != nil {core.add(t, e, heal.Health{hp=10})}
-}
 ```
+
+`plugins/heal/recipes/healer.scene` is `{"entities":[{"name":"Healer","components":{"Health":
+{"hp":10}}}]}` as `mirai scene write` makes it.
 
 Editor steps run in the `editor` loop and take what they use (`^editor.Session`, `^host.Assets`,
 `^host.Frame_Extras`, `^host.App` for the application itself).

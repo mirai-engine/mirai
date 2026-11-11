@@ -76,4 +76,5 @@ zombie_bite :: proc(a:^ai.Act(Zombie_Act), w:Senses) -> ai.Status {
 - Every value of the enum has one `@(act)`; one procedure may run several (`@(act="Chase
   Circle")`, then `a.action` says which). The build fails with what to write otherwise.
 - `behavior.agent(a)` is the agent; the helpers of `behavior` (`move_act`, `chase_act`,
-  `path_status`, `agent_path`, `present_look`, smart objects) take only `a` or `t`.
+  `path_status`, `agent_path`, smart objects) take only `a` or `t`; an action shows what it does
+  with `anim.play` and `anim.look` ([animation](../animation.md)).

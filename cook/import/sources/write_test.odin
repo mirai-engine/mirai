@@ -17,6 +17,8 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 import importer "mirai:cook/import"
+import "mirai:cook/prefab"
+import "mirai:cook/author"
 
 Png_Sink :: struct {bytes:[dynamic]u8,allocator:runtime.Allocator}
 
@@ -61,19 +63,19 @@ written_of :: proc(report:^importer.Import_Report,kind:asset.Fourcc,name:string)
 
 @(test)
 a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-obj")
+    _,folder:=test_project(t,"write-obj")
     if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"concave.obj")
     if !ok {return}
     defer importer.model_destroy(&model)
-    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder))
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder))
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.assets),2)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     mesh_written,has_mesh:=written_of(&report,asset.KIND_MESH,"ConcaveL")
     material_written,has_material:=written_of(&report,asset.KIND_MATERIAL,"red")
-    testing.expect(t,has_mesh && has_material && strings.has_suffix(mesh_written.path,"/ConcaveL.mesh") && mesh_written.bytes>0)
+    testing.expect(t,has_mesh && has_material && strings.contains(mesh_written.path,"/.mirai/imported/") && strings.has_suffix(material_written.path,"/assets/concave/red.mat") && mesh_written.bytes>0)
     if !has_mesh || !has_material {return}
 
     a,loaded:=read_asset(t,mesh_written,&types)
@@ -100,12 +102,12 @@ a_written_obj_is_read_back_with_its_material_and_its_dependencies :: proc(t:^tes
 
 @(test)
 a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-plant")
+    _,folder:=test_project(t,"write-plant")
     if folder=="" {return}
-    model,ok:=import_ok(t,DEMO+"models/plant.gltf")
+    model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
-    report,error:=importer.import_write(&model,folder)
+    report,error:=write_into(&model,folder)
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),0)
@@ -126,7 +128,7 @@ a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
 
     plain_folder:=base.test_folder(t,"write-plant-rgba8")
     if plain_folder=="" {return}
-    plain_report,plain_error:=importer.import_write(&model,plain_folder,{textures=.Uncompressed,ignore_stored=true})
+    plain_report,plain_error:=write_into(&model,plain_folder,{textures=.Uncompressed,ignore_stored=true})
     defer importer.report_destroy(&plain_report)
     testing.expect_value(t,plain_error.code,importer.Error_Code.None)
     if plain_written,found:=written_of(&plain_report,asset.KIND_TEXTURE,"leaves_color");testing.expect(t,found) {
@@ -149,7 +151,7 @@ a_written_model_with_textures_links_materials_to_them :: proc(t:^testing.T) {
 
 @(test)
 a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-skin")
+    _,folder:=test_project(t,"write-skin")
     if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"skeletal-analytic.glb")
     if !ok {return}
@@ -159,7 +161,7 @@ a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
     tracks:=[1]asset.Animation_Track_Desc{{target=base.text_get(model.skeletons[0].bones[len(model.skeletons[0].bones)-1].path[:]),property=.Rotation,keys=keys[:]}}
     bend:=[1]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:]}}
     brought:=model.animations;model.animations=bend[:]
-    report,error:=importer.import_write(&model,folder)
+    report,error:=write_into(&model,folder)
     model.animations=brought
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
@@ -196,11 +198,57 @@ a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
     testing.expect(t,len(clips.clips)==1 && clips.clips[0].skeleton==report.skeleton_ids[0])
 }
 
+// The prefab of an import stores each component in the layout the game declares, starting the
+// fields the import does not set at their default, as mirai scene write writes it: that command
+// finds nothing to convert and writes the same bytes. A game without the animation plugin gets
+// none of its components.
+@(test)
+the_prefab_of_an_import_is_written_in_the_layout_of_the_game :: proc(t:^testing.T) {
+    Case :: struct {files:[]string,animated:bool}
+    cases:=[?]Case{
+        {{"characters/jelly/jelly.gltf","characters/jelly/jelly.bin"},true},
+        {{"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png"},false},
+    }
+    for c in cases {
+        root,assets:=test_project(t,"prefab-layout")
+        if root=="" {return}
+        world:=prefab.import_world(t,c.animated)
+        if world==nil {return}
+        report,error:=import_source(copy_in(root,DEMO,..c.files),{world=world,root=root,textures=.Uncompressed})
+        if !testing.expectf(t,error.code==.None,"%s: %s",c.files[0],error.message) {return}
+        defer importer.report_destroy(&report)
+        p:=author.Project{name="layout",assets_root=assets,info=world}
+        asset.registry_init(&p.registry,assets,imported=fmt.tprintf("%s/.mirai/imported",root))
+        asset.types_init(&p.types)
+        defer {asset.registry_destroy(&p.registry);asset.types_destroy(&p.types);author.scratch_world_free(&p.scratch)}
+        p.assets={&p.registry,&p.types}
+        testing.expect_value(t,asset.registry_scan(&p.registry),asset.Error.None)
+        path,_:=filepath.rel(assets,report.prefab_path,context.temp_allocator)
+        path,_=strings.replace_all(path,"\\","/",context.temp_allocator)
+        testing.expectf(t,len(author.scene_stored(&p,path))==0,"%s: no component is stored with another layout",path)
+        saved,_:=os.read_entire_file(report.prefab_path,context.temp_allocator)
+        scene:asset.Scene
+        if !testing.expect_value(t,asset.scene_load(&scene,&p.types,report.prefab_path,context.temp_allocator),asset.Error.None) {return}
+        resaved,problem:=author.scene_file_bytes(&scene,&p.types,world,&p.scratch)
+        testing.expectf(t,problem=="" && slice.equal(saved,resaved),"%s: written again as mirai scene write writes it, the same bytes (%s)",path,problem)
+        _,targeted:=asset.scene_component(&scene,"Animation_Target")
+        threshold:=f32(-1)
+        if root,rooted:=asset.prefab_root(&scene);rooted {
+            if animation,found:=asset.scene_get(&scene,root,"Animation",prefab.Game_Animation);found {threshold=animation.event_threshold}
+        }
+        if c.animated {
+            testing.expectf(t,targeted && threshold==prefab.GAME_ANIMATION_DEFAULT.event_threshold,"%s: the components of the plugin, a field the import does not set at its default (%v)",path,threshold)
+        } else {
+            testing.expectf(t,!targeted && threshold<0,"%s: without the plugin, none of its components",path)
+        }
+    }
+}
+
 // With Import_Settings.skeleton the import writes only the clips, as an .anim bound to that
 // skeleton of the project: the motion of another file onto a character imported before.
 @(test)
 clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-clips-onto")
+    _,folder:=test_project(t,"write-clips-onto")
     if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"skeletal-analytic.glb")
     if !ok {return}
@@ -212,7 +260,7 @@ clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
     bend:=[2]asset.Animation_Clip_Desc{{name="bend",tracks=tracks[:]},{name="cue",markers=cue[:]}}
     brought:=model.animations;model.animations=bend[:]
     player:=base.Asset_Id{0x1234,0x5678}
-    report,error:=importer.import_write(&model,folder,{settings={skeleton=player}})
+    report,error:=write_into(&model,folder,{settings={skeleton=player}})
     model.animations=brought
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
@@ -231,15 +279,15 @@ clips_onto_a_skeleton_write_only_the_anim :: proc(t:^testing.T) {
 
 @(test)
 a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-body")
+    _,folder:=test_project(t,"write-body")
     if folder=="" {return}
     options:=importer.Import_Options{ignore_stored=true}
     options.max_texture_size=4
     body_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (map_:anim.Body_Map,bones:[]asset.Skeleton_Bone,path:string,sockets:[]asset.Skeleton_Socket) {
-        model,ok:=import_ok(t,DEMO+"models/mirai/mirai.glb",options)
+        model,ok:=import_ok(t,DEMO+"characters/mirai/mirai.glb",options)
         if !ok {return}
         defer importer.model_destroy(&model)
-        report,error:=importer.import_write(&model,folder,options)
+        report,error:=write_into(&model,folder,options)
         defer importer.report_destroy(&report)
         testing.expect_value(t,error.code,importer.Error_Code.None)
         written,found:=written_of(&report,asset.KIND_SKELETON,model.skeletons[0].name)
@@ -299,13 +347,13 @@ a_humanoid_skeleton_is_written_with_its_body_and_keeps_what_a_person_set :: proc
 // in place, and one that leaves it still gets none. A root a person set stays on importing again.
 @(test)
 imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-root")
+    _,folder:=test_project(t,"write-root")
     if folder=="" {return}
     options:=importer.Import_Options{ignore_stored=true}
     options.max_texture_size=4
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     roots_of :: proc(t:^testing.T,folder:string,options:importer.Import_Options,types:^asset.Types) -> (roots:map[string]asset.Animation_Root,path:string,armature:string) {
-        model,ok:=import_ok(t,DEMO+"models/mirai/mirai.glb",options)
+        model,ok:=import_ok(t,DEMO+"characters/mirai/mirai.glb",options)
         if !ok {return}
         defer importer.model_destroy(&model)
         bones:=model.skeletons[0].bones
@@ -323,7 +371,7 @@ imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: pro
             {name="mixamo",tracks={{target=hips,property=.Position,keys=bob[:]}}},
         }
         brought:=model.animations;model.animations=clips[:]
-        report,error:=importer.import_write(&model,folder,options)
+        report,error:=write_into(&model,folder,options)
         model.animations=brought
         defer importer.report_destroy(&report)
         testing.expect_value(t,error.code,importer.Error_Code.None)
@@ -367,12 +415,12 @@ imported_clips_that_move_the_bone_above_the_pelvis_carry_it_as_their_root :: pro
 
 @(test)
 importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the_source :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-material-layers")
+    _,folder:=test_project(t,"write-material-layers")
     if folder=="" {return}
     source:=fmt.tprintf("%s/plant.gltf",folder)
-    text,error:=os.read_entire_file(DEMO+"models/plant.gltf",context.temp_allocator)
+    text,error:=os.read_entire_file(DEMO+"gallery/plant.gltf",context.temp_allocator)
     if !testing.expect(t,error==nil) {return}
-    texture,_:=filepath.abs(DEMO+"textures/leaves_color.png",context.temp_allocator)
+    texture,_:=filepath.abs(DEMO+"gallery/leaves_color.png",context.temp_allocator)
     texture,_=strings.replace_all(texture,"\\","/",context.temp_allocator)
     gltf,_:=strings.replace_all(string(text),"../textures/leaves_color.png",texture,context.temp_allocator)
     if !testing.expect(t,os.write_entire_file(source,transmute([]u8)gltf)==nil) {return}
@@ -381,7 +429,7 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
     import_once :: proc(t:^testing.T,source,folder:string,options:importer.Import_Options,types:^asset.Types) -> string {
         model,ok:=import_ok(t,source,options);if !ok {return ""}
         defer importer.model_destroy(&model)
-        report,error:=importer.import_write(&model,folder,options);defer importer.report_destroy(&report)
+        report,error:=write_into(&model,folder,options);defer importer.report_destroy(&report)
         if !testing.expect_value(t,error.code,importer.Error_Code.None) {return ""}
         written,found:=written_of(&report,asset.KIND_MATERIAL,"Terracotta")
         if !testing.expect(t,found) {return ""}
@@ -413,19 +461,19 @@ importing_again_keeps_what_was_changed_in_a_material_and_takes_the_rest_from_the
 
 @(test)
 importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-identity")
+    _,folder:=test_project(t,"write-identity")
     if folder=="" {return}
-    model,ok:=import_ok(t,DEMO+"models/plant.gltf")
+    model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
-    first,first_error:=importer.import_write(&model,fmt.tprintf("%s/one",folder))
+    first,first_error:=write_into(&model,fmt.tprintf("%s/one",folder))
     defer importer.report_destroy(&first)
     testing.expect_value(t,first_error.code,importer.Error_Code.None)
 
-    again,again_ok:=import_ok(t,DEMO+"models/plant.gltf")
+    again,again_ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !again_ok {return}
     defer importer.model_destroy(&again)
-    second,second_error:=importer.import_write(&again,fmt.tprintf("%s/one",folder))
+    second,second_error:=write_into(&again,fmt.tprintf("%s/one",folder))
     defer importer.report_destroy(&second)
     testing.expect_value(t,second_error.code,importer.Error_Code.None)
     testing.expect_value(t,len(first.assets),len(second.assets))
@@ -438,47 +486,28 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
         testing.expect(t,!ids[item.id],"ids are distinct")
         ids[item.id]=true
     }
-    // The assets, and the sidecar that lists them.
-    names,_:=os.read_all_directory_by_path(fmt.tprintf("%s/one",folder),context.temp_allocator)
-    testing.expect_value(t,len(names),len(first.assets)+1)
+    // The documents beside the source and what nobody edits in the imported folder, with the sidecar that lists them.
+    documents,_:=os.read_all_directory_by_path(fmt.tprintf("%s/one/assets/plant",folder),context.temp_allocator)
+    cached,_:=os.read_all_directory_by_path(fmt.tprintf("%s/one/.mirai/imported",folder),context.temp_allocator)
+    testing.expect(t,len(documents)+len(cached)==len(first.assets) && os.exists(fmt.tprintf("%s/one/assets/plant.gltf.import",folder)))
 
-    // A copy of a project, its sources and their sidecars with its assets, imports again with the ids of its assets.
-    for root in ([]string{"a","b"}) {
-        source:=fmt.tprintf("%s/%s/models",folder,root)
-        os.make_directory_all(source)
-        data,_:=os.read_entire_file(DEMO+"models/vase.mtl",context.temp_allocator)
-        _=os.write_entire_file(fmt.tprintf("%s/vase.mtl",source),data)
-        data,_=os.read_entire_file(DEMO+"models/vase.obj",context.temp_allocator)
-        _=os.write_entire_file(fmt.tprintf("%s/vase.obj",source),data)
-    }
+    // A copy of a project, its sources and their sidecars with its documents, imports again with the ids of its assets.
+    copy_in(fmt.tprintf("%s/a",folder),DEMO,"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png")
     ids_by_root:[2][dynamic]base.Asset_Id
     for root,i in ([]string{"a","b"}) {
-        if i==1 {
-            os.make_directory_all(fmt.tprintf("%s/b/out",folder))
-            copied,_:=os.read_all_directory_by_path(fmt.tprintf("%s/a/out",folder),context.temp_allocator)
-            for entry in copied {
-                data,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-                _=os.write_entire_file(fmt.tprintf("%s/b/out/%s",folder,entry.name),data)
-            }
-            sidecar,_:=os.read_entire_file(fmt.tprintf("%s/a/models/vase.obj.import",folder),context.temp_allocator)
-            testing.expect(t,len(sidecar)>0 && os.write_entire_file(fmt.tprintf("%s/b/models/vase.obj.import",folder),sidecar)==nil)
-        }
-        options:=importer.Import_Options{root=fmt.tprintf("%s/%s",folder,root)}
-        vase,vase_ok:=import_ok(t,fmt.tprintf("%s/%s/models/vase.obj",folder,root),options)
-        if !vase_ok {continue}
-        report,vase_error:=importer.import_write(&vase,fmt.tprintf("%s/%s/out",folder,root),options)
+        if i==1 {testing.expect(t,os.copy_directory_all(fmt.tprintf("%s/b/assets",folder),fmt.tprintf("%s/a/assets",folder))==nil)}
+        report,vase_error:=import_source(fmt.tprintf("%s/%s/assets/gallery/vase.obj",folder,root),{world=prefab.import_world(t)})
         testing.expect_value(t,vase_error.code,importer.Error_Code.None)
         ids_by_root[i].allocator=context.temp_allocator
         for item in report.assets {append(&ids_by_root[i],item.id)}
         importer.report_destroy(&report)
-        importer.model_destroy(&vase)
     }
     testing.expect(t,len(ids_by_root[0])>0 && slice.equal(ids_by_root[0][:],ids_by_root[1][:]),"the copy of a project keeps the ids of its assets")
 }
 
 @(test)
 images_that_are_missing_or_not_images_leave_a_warning_and_no_reference :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-images")
+    _,folder:=test_project(t,"write-images")
     if folder=="" {return}
     write_text(folder,"m.mtl","newmtl paint\nKd 1 0 0\nmap_Kd gone.png\nmap_Ke garbage.png\nmap_Bump good.png\n")
     _=os.write_entire_file(fmt.tprintf("%s/garbage.png",folder),[]u8{1,2,3,4,5,6,7,8})
@@ -488,7 +517,7 @@ images_that_are_missing_or_not_images_leave_a_warning_and_no_reference :: proc(t
     if !ok {return}
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.warnings),0)
-    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder))
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder))
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),2)
@@ -508,7 +537,7 @@ images_that_are_missing_or_not_images_leave_a_warning_and_no_reference :: proc(t
 
 @(test)
 embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-embedded")
+    _,folder:=test_project(t,"write-embedded")
     if folder=="" {return}
     encoded,_:=base64.encode(png_bytes(64,32,{200,100,50}),allocator=context.temp_allocator)
     positions:=[9]f32{0,0,0,1,0,0,0,1,0}
@@ -526,7 +555,7 @@ embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.images),1)
     testing.expect(t,model.images[0].path=="" && len(model.images[0].data)>0 && model.images[0].name=="wood")
-    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder),{max_texture_size=16})
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{max_texture_size=16})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),0)
@@ -543,7 +572,7 @@ embedded_images_and_the_maximum_texture_size_are_honored :: proc(t:^testing.T) {
 
 @(test)
 gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"pbr-gltf-glb")
+    _,folder:=test_project(t,"pbr-gltf-glb")
     if folder=="" {return}
     images:=[3][]u8{png_bytes(8,8,{180,70,25}),png_bytes(8,8,{32,96,224}),png_bytes(8,8,{128,128,255})}
     names:=[3]string{"paint color","orm","normal"}
@@ -609,7 +638,7 @@ gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: pr
             testing.expect(t,(image.path=="")==binary && (len(image.data)>0)==binary)
         }
         options:=importer.Import_Options{root=folder,textures=.Uncompressed}
-        report,error:=importer.import_write(&model,fmt.tprintf("%s/%s",folder,"glb-out" if binary else "gltf-out"),options)
+        report,error:=write_into(&model,fmt.tprintf("%s/%s",folder,"glb-out" if binary else "gltf-out"),options)
         if !testing.expect_value(t,error.code,importer.Error_Code.None) {continue}
         defer importer.report_destroy(&report)
         testing.expect_value(t,len(report.warnings),0)
@@ -667,7 +696,7 @@ gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: pr
                 if testing.expect(t,asset.mesh_level_decode(mesh.geometry,0,&vertices,&indices)) {testing.expect_value(t,vertices[0].uv1,[2]f32{0.25,0.75})}
             }
         }
-        blocks,blocks_error:=importer.import_write(&model,fmt.tprintf("%s/%s-blocks",folder,"glb" if binary else "gltf"),{root=folder,textures=.Blocks})
+        blocks,blocks_error:=write_into(&model,fmt.tprintf("%s/%s",folder,"glb-out" if binary else "gltf-out"),{textures=.Blocks,ignore_stored=true})
         if !testing.expect_value(t,blocks_error.code,importer.Error_Code.None) {continue}
         defer importer.report_destroy(&blocks)
         testing.expect_value(t,len(blocks.warnings),0)
@@ -687,32 +716,34 @@ gltf_and_glb_write_pbr_maps_with_color_spaces_channels_and_independent_uvs :: pr
 
 @(test)
 a_standalone_image_becomes_a_texture :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-texture")
+    root,folder:=test_project(t,"write-texture")
     if folder=="" {return}
     path:=fmt.tprintf("%s/Bricks Color.png",folder)
     _=os.write_entire_file(path,png_bytes(16,16,{150,60,40}))
-    report,error:=importer.import_texture(path,fmt.tprintf("%s/out",folder),{image=.Color})
+    report,error:=importer.import_texture(path,{root=root,image=.Color})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.assets),1)
-    testing.expect(t,report.assets[0].id!={} && strings.has_suffix(report.assets[0].path,"/Bricks Color.tex"))
-    again,again_error:=importer.import_texture(path,fmt.tprintf("%s/out",folder),{image=.Normal})
+    testing.expect(t,report.assets[0].id!={} && strings.contains(report.assets[0].path,"/.mirai/imported/"))
+    again,again_error:=importer.import_texture(path,{root=root,image=.Normal,ignore_stored=true})
     defer importer.report_destroy(&again)
     testing.expect_value(t,again_error.code,importer.Error_Code.None)
-    testing.expect(t,again.assets[0].id==report.assets[0].id && again.assets[0].path==report.assets[0].path,"imported again as a normal map, the image is the same texture")
+    testing.expect(t,again.assets[0].id==report.assets[0].id && again.assets[0].path!=report.assets[0].path && !os.exists(report.assets[0].path),"imported again as a normal map, the image is the same texture, and its file of before goes")
 
     _=os.write_entire_file(path,[]u8{1,2,3})
-    _,bad:=importer.import_texture(path,fmt.tprintf("%s/other",folder),{image=.Color})
+    _,bad:=importer.import_texture(path,{root=root,image=.Color})
     testing.expect_value(t,bad.code,importer.Error_Code.Unsupported)
-    testing.expect(t,!os.exists(fmt.tprintf("%s/other/Bricks Color.tex",folder)),"a failed import leaves no file")
-    _,missing:=importer.import_texture(fmt.tprintf("%s/none.png",folder),fmt.tprintf("%s/other",folder),{image=.Color})
+    testing.expect(t,os.exists(again.assets[0].path),"a failed import leaves the files it had")
+    _,missing:=importer.import_texture(fmt.tprintf("%s/none.png",folder),{root=root,image=.Color})
     testing.expect_value(t,missing.code,importer.Error_Code.Not_Found)
+    _,outside:=importer.import_texture(fmt.tprintf("%s/outside.png",root),{root=root,image=.Color})
+    testing.expect(t,outside.code==.Not_Found && strings.contains(outside.message,"is not in the assets folder"),outside.message)
 }
 
 // A Radiance image is an image whose light above 1 the texture keeps, in BC6H.
 @(test)
 a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-hdr")
+    _,folder:=test_project(t,"write-hdr")
     if folder=="" {return}
     path:=fmt.tprintf("%s/sky.hdr",folder)
     hdr:=make([dynamic]u8,context.temp_allocator)
@@ -720,7 +751,7 @@ a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
     for _ in 0..<8 {append(&hdr,200,200,200,135)} // 100
     _=os.write_entire_file(path,hdr[:])
     testing.expect_value(t,source_kind(path),Source_Kind.Image)
-    report,error:=import_source(path,fmt.tprintf("%s/out",folder),{})
+    report,error:=import_source(path,{world=prefab.import_world(t)})
     defer importer.report_destroy(&report)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     a:asset.Asset
@@ -737,7 +768,7 @@ a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
 
 @(test)
 embedded_images_with_the_same_name_keep_distinct_texture_ids :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"duplicate-image-names")
+    _,folder:=test_project(t,"duplicate-image-names")
     if folder=="" {return}
     red,_:=base64.encode(png_bytes(4,4,{255,0,0}),allocator=context.temp_allocator)
     blue,_:=base64.encode(png_bytes(4,4,{0,0,255}),allocator=context.temp_allocator)
@@ -751,7 +782,7 @@ embedded_images_with_the_same_name_keep_distinct_texture_ids :: proc(t:^testing.
         "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC2"}]}`},context.temp_allocator)
     path:=write_text(folder,"names.gltf",source)
     model,ok:=import_ok(t,path);if !ok {return};defer importer.model_destroy(&model)
-    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder),{textures=.Uncompressed})
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{textures=.Uncompressed})
     if !testing.expect_value(t,error.code,importer.Error_Code.None) {return};defer importer.report_destroy(&report)
     testing.expect(t,len(report.image_ids)==2 && report.image_ids[0]!=report.image_ids[1])
     testing.expect_value(t,len(report.warnings),0)
@@ -775,7 +806,7 @@ embedded_images_with_the_same_name_keep_distinct_texture_ids :: proc(t:^testing.
 
 @(test)
 names_are_made_safe_and_unique_as_file_names :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-names")
+    _,folder:=test_project(t,"write-names")
     if folder=="" {return}
     path:=write_text(folder,"n.obj","o a/b:c\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\no a_b_c\nv 0 0 1\nv 1 0 1\nv 0 1 1\nf 4 5 6\no a/b:c\nv 0 0 2\nv 1 0 2\nv 0 1 2\nf 7 8 9\n")
     model,ok:=import_ok(t,path)
@@ -783,7 +814,7 @@ names_are_made_safe_and_unique_as_file_names :: proc(t:^testing.T) {
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.meshes),3)
     testing.expect(t,model.meshes[0].name!=model.meshes[2].name,"a repeated name is made unique in the model")
-    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder))
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder))
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     seen:=make(map[string]bool,context.temp_allocator)
@@ -796,26 +827,26 @@ names_are_made_safe_and_unique_as_file_names :: proc(t:^testing.T) {
 
 @(test)
 a_destination_that_cannot_be_a_folder_fails_without_leaving_files :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-fail")
+    _,folder:=test_project(t,"write-fail")
     if folder=="" {return}
     model,ok:=import_ok(t,FIXTURES+"concave.obj")
     if !ok {return}
     defer importer.model_destroy(&model)
     blocker:=write_text(folder,"blocker","this is a file")
-    _,error:=importer.import_write(&model,blocker)
+    _,error:=write_into(&model,blocker)
     testing.expect_value(t,error.code,importer.Error_Code.Write)
-    _,error=importer.import_write(&model,fmt.tprintf("%s/inside",blocker))
+    _,error=write_into(&model,fmt.tprintf("%s/inside",blocker))
     testing.expect_value(t,error.code,importer.Error_Code.Write)
 }
 
 @(test)
 every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-fixtures")
+    _,folder:=test_project(t,"write-fixtures")
     if folder=="" {return}
     sources:=[]string{
         FIXTURES+"concave.obj",FIXTURES+"multiple.obj",FIXTURES+"hierarchy.gltf",FIXTURES+"hierarchy.glb",FIXTURES+"single-transform.gltf",
         FIXTURES+"skeletal-analytic.gltf",FIXTURES+"skeletal-analytic.glb",FIXTURES+"khronos-simple-skin/SimpleSkin.gltf",FIXTURES+"hierarchy.usda",
-        DEMO+"models/vase.obj",DEMO+"models/plant.gltf",DEMO+"models/skeletal-character/robot.glb",DEMO+"models/skeletal-character/robot.gltf",
+        DEMO+"gallery/vase.obj",DEMO+"gallery/plant.gltf",DEMO+"characters/robot/robot.glb",DEMO+"characters/robot/robot.gltf",
     }
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     for source,i in sources {
@@ -824,7 +855,7 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
         model,ok:=import_ok(t,source,formats=text[:])
         if !ok {continue}
         defer importer.model_destroy(&model)
-        report,error:=importer.import_write(&model,out)
+        report,error:=write_into(&model,out)
         defer importer.report_destroy(&report)
         testing.expectf(t,error.code==.None && len(report.warnings)==0,"%s: %v %s",source,error.code,error.message)
         counts:[3]int
@@ -849,7 +880,7 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
         }
         testing.expectf(t,counts[0]==len(model.meshes) && counts[1]==len(model.materials),"%s: every mesh and material is an asset",source)
         registry:asset.Registry
-        asset.registry_init(&registry,out)
+        asset.registry_init(&registry,fmt.tprintf("%s/assets",out),imported=fmt.tprintf("%s/.mirai/imported",out))
         testing.expect_value(t,asset.registry_scan(&registry),asset.Error.None)
         missing:[dynamic]asset.Registry_Missing
         missing.allocator=context.temp_allocator
@@ -861,12 +892,12 @@ every_fixture_imports_writes_and_reads_back_with_its_dependencies_resolved :: pr
 
 @(test)
 the_report_names_the_asset_of_every_row_of_the_model :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-rows")
+    _,folder:=test_project(t,"write-rows")
     if folder=="" {return}
-    model,ok:=import_ok(t,DEMO+"models/plant.gltf")
+    model,ok:=import_ok(t,DEMO+"gallery/plant.gltf")
     if !ok {return}
     defer importer.model_destroy(&model)
-    report,error:=importer.import_write(&model,folder)
+    report,error:=write_into(&model,folder)
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.mesh_ids),1)
@@ -888,7 +919,7 @@ the_report_names_the_asset_of_every_row_of_the_model :: proc(t:^testing.T) {
 // amounts, and the factors become 1.
 @(test)
 gltf_anisotropy_with_a_roughness_texture_is_converted_texel_by_texel :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"write-anisotropy")
+    _,folder:=test_project(t,"write-anisotropy")
     if folder=="" {return}
     encoded,_:=base64.encode(png_bytes(8,8,{255,128,64}),allocator=context.temp_allocator)
     positions:=[9]f32{0,0,0,1,0,0,0,1,0}
@@ -919,7 +950,7 @@ gltf_anisotropy_with_a_roughness_texture_is_converted_texel_by_texel :: proc(t:^
     base:=f32(128)/255
     testing.expectf(t,abs(along-(base*base+(1-base*base)*0.36))<0.01 && abs(across-base*base)<0.01,"alphas %v and %v",along,across)
     testing.expect(t,model.images[rough].made.texels[0]==255 && model.images[rough].made.texels[2]==64,"occlusion and metallic stay")
-    report,error:=importer.import_write(&model,fmt.tprintf("%s/out",folder),{})
+    report,error:=write_into(&model,fmt.tprintf("%s/out",folder),{})
     defer importer.report_destroy(&report)
     testing.expect_value(t,error.code,importer.Error_Code.None)
     testing.expect_value(t,len(report.warnings),0)

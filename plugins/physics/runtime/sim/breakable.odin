@@ -643,7 +643,7 @@ cluster_hull_build :: proc(w:^World,index,cluster:i32,points:[]Vec3,counts,indic
 // of the mesh as shape, connected to the pieces it shares a face with. It starts as one body, static if
 // any piece is anchored and dynamic otherwise. A transaction that allocates: not for the middle of a tick.
 breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Handle,error:Breakable_Error) {
-    if !(desc.density>0) || !break_finite(desc.density,desc.friction,desc.restitution,desc.gravity_scale,desc.strength,desc.damage_threshold,desc.damage_radius,desc.debris_volume,
+    if !(desc.density>0) || !finite(desc.density,desc.friction,desc.restitution,desc.gravity_scale,desc.strength,desc.damage_threshold,desc.damage_radius,desc.debris_volume,
        desc.position.x,desc.position.y,desc.position.z,desc.rotation.x,desc.rotation.y,desc.rotation.z,desc.rotation.w) ||
        desc.friction<0 || desc.restitution<0 || desc.restitution>1 || desc.strength<0 || desc.damage_threshold<0 || desc.damage_radius<0 || desc.debris_volume<0 {return {},.Invalid_Desc}
     if desc.fracture==nil && (len(desc.sites)==0 || !geom.mesh_is_valid(desc.mesh) || len(desc.mesh.indices)==0) {return {},.Invalid_Desc}
@@ -833,6 +833,13 @@ breakable_body :: proc(w:^World,h:Breakable_Handle) -> Body_Handle {
     return d!=nil?d.body:{}
 }
 
+// The surface and collision its pieces were made with; false for one that is gone.
+breakable_surface :: proc(w:^World,h:Breakable_Handle) -> (density,friction,restitution:f32,filter:Filter,ok:bool) {
+    d,_:=breakable_read(w,h)
+    if d==nil {return}
+    return d.density,d.friction,d.restitution,d.filter,true
+}
+
 // Changes what every piece meets, those that came off included.
 breakable_set_filter :: proc(w:^World,h:Breakable_Handle,filter:Filter) {
     d,_:=breakable_get(w,h)
@@ -926,8 +933,8 @@ break_apply :: proc(w:^World,event:Break_Event) -> (applied:Break_Event,changed,
 break_damage :: proc(w:^World,index:i32,event:^Break_Event) -> (broke,strained:bool) {
     d:=&w.breakables[index]
     size:=event.strain
-    if !(size>0) || !(event.blend>=0) || !break_finite(size,event.blend,event.radius,event.rotation.x,event.rotation.y,event.rotation.z,event.rotation.w) ||
-       !is_finite3(event.point) || !is_finite3(event.vector) || !is_finite3(event.half_extents) {return}
+    if !(size>0) || !(event.blend>=0) || !finite(size,event.blend,event.radius,event.rotation.x,event.rotation.y,event.rotation.z,event.rotation.w) ||
+       !finite(event.point) || !finite(event.vector) || !finite(event.half_extents) {return}
     if event.half_extents=={} {if !(event.radius>0) {return}}
     else if !(event.half_extents.x>0 && event.half_extents.y>0 && event.half_extents.z>0) {return}
     only:=piece_body(w,index,event.piece)

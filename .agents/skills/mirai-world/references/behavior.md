@@ -26,18 +26,17 @@ reservations) belongs to
   procedures of a mind reach it through `ai.Mind_Context.user`, and `ctx.holder` is the agent
   (`agent(a)`). So the helpers take only the action or the think: `move_act`, `chase_act` (follows
   its target and the new one when it changes), `path_status`, `agent_path`, `smart_offer`,
-  `smart_nearest`, `offer_act`, `cross_act`, `present_look` and `present_animation`.
+  `smart_nearest`, `offer_act`, `cross_act`. An action shows what it does with `anim.play` and
+  `anim.look`, taking `^anim.Animation_Requests` as any other parameter.
 - What those actions request goes on when the agent's section unloads
   ([the far field](navigation.md#the-far-field)): `minds_tick` also runs the agents with
   `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), and what they reserve lasts
   until their next decision (`ctx.lease`). Their movement actions read their disabled `Nav_Path`;
   the rest of the agent is disabled. One asleep in a section that sleeps does not decide.
 - **Over the network**: the minds decide only on the server and the clients do not predict their
-  actions. What they see is `Mind_Presentation`, replicated, which `minds_tick` writes when it
-  changes: the action and step they run, and what
-  their actions request with `present_look` and `present_animation`. An agent without it receives
-  it before its first tick; it travels if it has it when it is first replicated, so its prefab
-  carries it with the `Mind_Agent`.
+  actions. What their actions play reaches the clients through the replicated state of the
+  animation
+  ([network](../../mirai-animation/references/animation-actions.md#requests-and-lifecycle)).
 
 ## Enemies with minds
 
@@ -165,7 +164,7 @@ what it perceives; `think` only reads and proposes, and the actions write.
 ## Verification
 
 - `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick
-  without allocating, the presentation and that it does not decide when resimulating or stopped,
+  without allocating, that it does not decide when resimulating or stopped,
   far agents and their lease, movement and chase actions, sight by cone and team, noise,
   forgetting, a remembered subject that is
   destroyed, ray turns, random crowds that remember by the grid whom they would among every
@@ -174,8 +173,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
   target that is destroyed, the offers by team, ability, capacity, uses and cooldown, and the
   influence maps without allocating.
   `mirai test plugins/multiplayer/runtime
-  a_mind_decides_on_the_server_and_the_client_sees_its_presentation`: a mind in a session, its
-  presentation on the client and the snapshot of the server world. The wiring of `@(mind)` and its
+  a_mind_decides_on_the_server_and_the_client_plays_what_it_plays`: a mind in a session, the
+  action it plays played on the client within the delay it shows the server by, and the snapshot
+  of the server world. The wiring of `@(mind)` and its
   errors: `mirai test cook/build` (`minds_test.odin`).
 - In the demo, the [AI arenas](../../mirai-gameplay/references/demo.md#ai-arenas) in Play, with
   `behavior.minds`, `behavior.inspect`, `behavior.offers`, `behavior.influence`, `nav.agent` and

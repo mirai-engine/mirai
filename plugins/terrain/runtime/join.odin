@@ -80,10 +80,10 @@ join_band_chunk :: proc "contextless" (s:^Source,index:int,level:u8) -> bool {
 // grid while the page is in its block.
 join_height :: proc "contextless" (g:^Source,x,z:int) -> f32 {
     x,z:=clamp(x,0,int(g.samples.x)-1),clamp(z,0,int(g.samples.z)-1)
-    if grid_absent(&g.heights,x/PAGE+g.heights.counts.x*(z/PAGE)) {
+    if grid_absent(&g.field,x/PAGE+g.field.counts.x*(z/PAGE)) {
         if !grid_none(&g.coarse.heights) {return coarse_height(g,x,z)}
     }
-    return grid_get(&g.heights,x,z)
+    return grid_get(&g.field,x,z)
 }
 
 // The distance of a sample of a Volume to the ground of the Heightfield it
@@ -128,10 +128,10 @@ source_volume_ground :: proc(s:^Source,join:Chunk_Join) -> bool {
     }
     ground:=Ground{s,join}
     next:Grid(f32)
-    if !grid_init(&next,s.distances.size,s.cell*SDF_BAND_CELLS,s.allocator) {return false}
+    if !grid_init(&next,s.field.size,s.cell*SDF_BAND_CELLS,s.allocator) {return false}
     if !grid_generate(&next,&ground,page,s.allocator) {grid_destroy(&next,s.allocator);return false}
-    grid_destroy(&s.distances,s.allocator)
-    s.distances=next
+    grid_destroy(&s.field,s.allocator)
+    s.field=next
     return true
 }
 

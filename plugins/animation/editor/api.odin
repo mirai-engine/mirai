@@ -160,7 +160,8 @@ play :: proc(s:^editor.Session,call:^api.Call) {
     name:=base.text_get(p.clip[:])
     if source!=value.asset && name!="" {authoring_failure(call,"clip","Program_Source","no clip with a .character whose locomotion picks its clips","base clip supplied","The locomotion of a .character picks its clips",fix="Play a clip over it as an action of its .character: animation.action.set, then animation.request actions");return}
     if name!="" && lib.clip_find(&content.lib,base.name_hash(name))==0 {authoring_failure(call,"clip","Missing_Clip","a clip name in the source",name,"The clip does not exist in this animation asset");return}
-    if !anim.animation_clip(&value,name,p.fade,p.loop,p.speed) {authoring_failure(call,"clip","Invalid_Value","a clip name under 64 bytes",name,"The clip could not be set");return}
+    if !anim.animation_clip(&value,name,p.fade,p.loop) {authoring_failure(call,"clip","Invalid_Value","a clip name under 64 bytes",name,"The clip could not be set");return}
+    value.speed,value.playing=p.speed,true
     if !edit_begin(s,call,"Play animation") {return}
     core.add(table,e,value)
     if !edit_end(s,call,w,true) {return}

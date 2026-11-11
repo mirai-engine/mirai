@@ -52,7 +52,7 @@ groups :: proc(v:Destruct_View,e:core.Entity,out:[]Group_Info) -> int {
         }
         return true
     }
-    count:=int(fill(v,state.handle,e,0,state.body,false,out,0))
+    count:=int(fill(v,state.handle,e,0,phys.breakable_body(v.physics,state.handle),false,out,0))
     for row in 0..<core.count(v.groups) {
         group:=core.at(v.groups,row)
         if group.owner!=e || group.group==0 {continue}

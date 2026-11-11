@@ -7,6 +7,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
@@ -61,12 +62,16 @@ prefab_fixture_init :: proc(t:^testing.T,f:^Prefab_Fixture,name:string) -> bool 
     f.app=host.App{assets=&f.assets,info=&f.info,allocator=context.allocator}
     test_session_open(&f.edited,core.world_ref(&f.world,&f.info))
     f.s.editor_world,f.s.assets_root,f.s.app,f.s.inspector,f.s.outliner,f.s.ai=&f.editor,f.root,&f.app,&f.inspector,&f.outliner,&f.ai
+    // The engine whose recipes it makes entities of: mirai test sets it.
+    f.s.engine_root,_=os.lookup_env("MIRAI_ROOT",context.allocator)
     return true
 }
 
 @(private)
 prefab_fixture_destroy :: proc(f:^Prefab_Fixture) {
     prefabs_free(&f.s)
+    author.recipes_free(f.s.recipes)
+    delete(f.s.engine_root)
     test_session_close(&f.edited)
     core.value_free(&f.inspector,type_info_of(Inspector))
     delete(f.app.worlds)
@@ -447,7 +452,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     testing.expect_value(t,asset.scene_load(&saved,&assets.types,fmt.tprintf("%s/single.scene",root)),asset.Error.None)
     defer asset.scene_destroy(&saved)
     saved_root,rooted:=asset.prefab_root(&saved)
-    testing.expect(t,rooted && saved_root==group_id,"what was saved is a scene with the group as its one root: a prefab")
+    testing.expect(t,rooted && saved_root==group_id && .Prefab in saved.doc.flags,"what was saved is a prefab with the group as its one root")
     row,_:=asset.scene_entity_find(&saved,group_id)
     testing.expect_value(t,base.text_get(asset.scene_names(&saved)[row][:]),"Saved prefab")
     scene_new(s)
@@ -455,7 +460,7 @@ prefab_selection_and_file_overrides_share_the_undo_history :: proc(t:^testing.T)
     // frame it was let go in, which draws the World its fixed phase ran on.
     alive:=world.entities.alive
     s.requests={} // the Open above was run by hand
-    placement_commit(s,w,Drag{kind=.Asset,asset_kind=SHOWN_PREFAB,asset_id=id},Pick{},true)
+    placement_commit(s,w,Drag{kind=.Asset,asset_kind=asset.KIND_SCENE,asset_id=id},Pick{},true)
     testing.expect(t,world.entities.alive>alive)
     testing.expect_value(t,len(selection.entities),1)
     if len(selection.entities)==1 {
@@ -1199,6 +1204,7 @@ prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testin
     Lamp_Without_Range :: struct {intensity:f32}
     old:asset.Scene
     if !testing.expect_value(t,asset.scene_init(&old,&f.assets.types,{1,2}),asset.Error.None) {return}
+    old.doc.flags+={.Prefab}
     lamp_id,bulb_id:=base.Entity_Id(0x11),base.Entity_Id(0x12)
     asset.scene_entity_add(&old,lamp_id,0,"Lamp")
     asset.scene_entity_add(&old,bulb_id,lamp_id,"Bulb")
@@ -1366,14 +1372,14 @@ an_asset_is_named_by_its_path_with_or_without_its_extension_or_by_its_id :: proc
     }
 }
 
-// One kind of file, told apart by its roots: a scene with one is a prefab to
-// the browser, to a field of prefabs and to what places it. With a second
-// root it is a scene, which nothing places as an instance or makes a variant
-// of, and the instance it placed before stays linked.
+// One kind of file, told apart by what its header says: a prefab to the
+// browser and to what places it, whatever its roots. Made a scene, nothing
+// places it as an instance or makes a variant of it, and the instance it
+// placed before stays linked.
 @(test)
-the_editor_tells_a_prefab_from_a_scene_by_its_one_root :: proc(t:^testing.T) {
+the_editor_tells_a_prefab_from_a_scene_by_its_kind :: proc(t:^testing.T) {
     f:=new(Prefab_Fixture);defer free(f)
-    if !testing.expect(t,prefab_fixture_init(t,f,"one-root")) {return}
+    if !testing.expect(t,prefab_fixture_init(t,f,"kind")) {return}
     defer prefab_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
@@ -1386,26 +1392,27 @@ the_editor_tells_a_prefab_from_a_scene_by_its_one_root :: proc(t:^testing.T) {
     shown :: proc(t:^testing.T,s:^Session,registry:^asset.Registry,id:base.Asset_Id,prefab:bool) {
         file,found:=asset.registry_find(registry,id)
         if !testing.expect(t,found) {return}
-        kind:=shown_kind(file)
-        category,_:=content_category(kind)
         testing.expect_value(t,file.kind,asset.KIND_SCENE)
-        testing.expect_value(t,kind,prefab?SHOWN_PREFAB:asset.KIND_SCENE)
-        testing.expect_value(t,category,prefab?Content_Category.Prefab:Content_Category.Scene)
+        testing.expect_value(t,content_file_category(file),prefab?Content_Category.Prefab:Content_Category.Scene)
         testing.expect_value(t,path_is_prefab(s,file.path),prefab)
-        testing.expect_value(t,asset_kind_takes({0=SHOWN_PREFAB},kind),prefab)
-        testing.expect(t,asset_kind_takes({0=asset.KIND_SCENE},kind),"a field of scenes takes a prefab, which is one")
-        testing.expect(t,asset_color(kind)==asset_color(prefab?SHOWN_PREFAB:asset.KIND_SCENE) && asset_color(SHOWN_PREFAB)!=asset_color(asset.KIND_SCENE))
+        testing.expect(t,asset_kind_takes({0=asset.KIND_SCENE},file.kind),"a field of scenes takes a prefab, which is one")
+        testing.expect(t,(asset_file_color(s,file)==PREFAB_ASSET_COLOR)==prefab && PREFAB_ASSET_COLOR!=asset_color(asset.KIND_SCENE))
     }
     shown(t,s,registry,id,true)
-
-    data,read:=asset.registry_read(registry,"crate.scene",context.temp_allocator)
-    edited:asset.Scene
-    if !testing.expect(t,read==.None && asset.scene_read(&edited,&f.assets.types,data)==.None) {return}
-    defer asset.scene_destroy(&edited)
-    _,added:=asset.scene_entity_add(&edited,asset.scene_new_id(&edited),0,"Second root")
-    bytes,encoded:=asset.scene_bytes(&edited,context.temp_allocator)
-    testing.expect(t,added==.None && encoded==.None)
-    testing.expect_value(t,asset.registry_memory_set(registry,"crate.scene",bytes),asset.Error.None)
+    edit :: proc(t:^testing.T,f:^Prefab_Fixture,change:proc(scene:^asset.Scene)) {
+        registry:=&f.assets.registry
+        data,read:=asset.registry_read(registry,"crate.scene",context.temp_allocator)
+        edited:asset.Scene
+        if !testing.expect(t,read==.None && asset.scene_read(&edited,&f.assets.types,data)==.None) {return}
+        defer asset.scene_destroy(&edited)
+        change(&edited)
+        bytes,encoded:=asset.scene_bytes(&edited,context.temp_allocator)
+        testing.expect(t,encoded==.None)
+        testing.expect_value(t,asset.registry_memory_set(registry,"crate.scene",bytes),asset.Error.None)
+    }
+    edit(t,f,proc(scene:^asset.Scene) {asset.scene_entity_add(scene,asset.scene_new_id(scene),0,"Second root")})
+    shown(t,s,registry,id,true)
+    edit(t,f,proc(scene:^asset.Scene) {scene.doc.flags-={.Prefab}})
     shown(t,s,registry,id,false)
     _,placed:=prefab_instantiate(s,id,{})
     testing.expect_value(t,placed,Prefab_Error.Not_Found)

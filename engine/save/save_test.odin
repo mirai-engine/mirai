@@ -254,7 +254,7 @@ serve_init :: proc(t:^testing.T,f:^Save_Test,s:^Serve) -> bool {
 
 @(private="file")
 serve_destroy :: proc(f:^Save_Test,s:^Serve) {
-    saves_release(host.app_world_ref(&f.app,f.w),&s.work,&s.thumbnails,&f.app,&s.state,{},s.problems)
+    saves_release(host.app_world_ref(&f.app,f.w),&s.work,&s.thumbnails,&f.app,&s.state,s.problems)
     work_free(&s.work)
     delete(s.state.folder,f.app.allocator)
     delete(s.requests.queue.items)
@@ -267,7 +267,7 @@ serve_destroy :: proc(f:^Save_Test,s:^Serve) {
 serve :: proc(f:^Save_Test,s:^Serve) {
     clear(&s.results.queue.items) // the log of a frame, as its readers are handed it
     saves_serve(
-        host.app_world_ref(&f.app,f.w),&f.app,&s.requests,&s.results,&s.state,&s.work,&s.thumbnails,&s.game,core.ref(&s.settings),&s.profile,{},
+        host.app_world_ref(&f.app,f.w),&f.app,&s.requests,&s.results,&s.state,&s.work,&s.thumbnails,&s.game,core.ref(&s.settings),&s.profile,
         core.ref(&s.network),core.ref(&s.frame),core.ref(&s.clock),core.read(&f.w.references),s.problems,
     )
 }
@@ -438,7 +438,7 @@ a_thumbnail_becomes_a_texture_the_game_shows_until_the_slot_changes :: proc(t:^t
     testing.expect(t,!host.assets_loaded(&assets,fresh),"a deleted slot lets go of its texture")
     write(t,&f,&s,ref,"gate",pixels)
     last,_:=thumbnail_texture(&s.thumbnails,&s.state,&f.app,"gate")
-    saves_release(host.app_world_ref(&f.app,f.w),&s.work,&s.thumbnails,&f.app,&s.state,{},s.problems)
+    saves_release(host.app_world_ref(&f.app,f.w),&s.work,&s.thumbnails,&f.app,&s.state,s.problems)
     testing.expect(t,last!={} && !host.assets_loaded(&assets,last),"the world that goes lets go of them")
     testing.expect_value(t,assets.stats.generated,0)
 }

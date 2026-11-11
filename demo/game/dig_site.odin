@@ -131,8 +131,7 @@ dig_hud :: proc(huds:^core.Table(Dig_Hud),inventories:^core.Table(Dig_Inventory,
         row:=&next.rows[i]
         name:[base.ASSET_ID_TEXT]u8
         base.text_set(row.name[:],assets!=nil?host.assets_name(assets,inventory.materials[i],&name):"Material")
-        // Hundredths of a cubic metre, as the HUD writes them.
-        row.cubic_metres=math.round(inventory.cubic_metres[i]*100)/100
+        row.cubic_metres=inventory.cubic_metres[i]
         row.drops,row.picked=i32(inventory.drops[i]),inventory.drops[i]>0
     }
     for row in 0..<core.count(huds) {

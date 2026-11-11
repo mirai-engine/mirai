@@ -35,10 +35,10 @@ net_free :: proc(n:^Destruct_Net) {multiplayer.journal_free(&n.journal)}
 key_of :: proc(ids:^core.Table(core.Id,$A),e:core.Entity) -> multiplayer.Journal_Key {return {u64(core.id_of(ids,e)),0}}
 
 @(step="fixed",stage="begin")
-destruct_net_receive :: proc(events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),problems:^core.Problems) {
+destruct_net_receive :: proc(inbox:multiplayer.Journal_Inbox,authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),problems:^core.Problems) {
     multiplayer.journal_world(&n.journal,DESTRUCT_JOURNAL,root)
     if authority.role==.Standalone {return}
-    multiplayer.journal_receive(&n.journal,events,authority.role==.Server,0,time,rewinds,true,0,problems)
+    multiplayer.journal_receive(&n.journal,inbox,authority.role==.Server,0,time,rewinds,true,0,problems)
 }
 
 // Client, before destruct replays in the tick: what the journal hands of each destructible.
@@ -69,7 +69,7 @@ destruct_net_follow :: proc(
 // for their bodies on the network.
 @(step="fixed",stage="react")
 destruct_net_send :: proc(
-    authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,adoptions:^multiplayer.Net_Adoptions,session:core.Ref(multiplayer.Net_Session),
+    authority:core.Ref(core.Network),n:^Destruct_Net,time:core.Time,outbox:^multiplayer.Net_Outbox,spawns:^multiplayer.Net_Spawns,session:core.Ref(multiplayer.Net_Session),
     connections:core.Ref(multiplayer.Net_Connections),
     events:core.Ref(destruct.Destruct_Events),physics_state:core.Ref(physics.Physics_State),commands:core.Commands,
     states:^core.Table(destruct.Destructible_State,.Read),ids:^core.Table(core.Id,.Read),objects:^core.Table(multiplayer.Replicate,.Read),entities:core.Ref(core.Entities),root:core.Ref(scene.Scene_Root),problems:^core.Problems,
@@ -131,7 +131,7 @@ destruct_net_send :: proc(
                 core.commands_add(commands,group.entity,multiplayer.Replicate{audience=held.audience,priority=held.priority,radius=multiplayer.REPLICATE_DEFAULT.radius})
             }
         } else {
-            multiplayer.adopt(adoptions,group.id,group.entity)
+            multiplayer.predict_kept(spawns,group.entity)
         }
     }
 }

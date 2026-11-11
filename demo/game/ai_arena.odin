@@ -6,11 +6,14 @@ import "mirai:core"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 import "mirai:std/ai"
+import "mirai:std/base"
 import mm "mirai:std/math"
+import anim "plugins:animation/runtime"
 import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
 import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
+import spawn "plugins:spawn/runtime"
 
 // AI arenas: an entity with an AI_Arena builds, when its world runs, a place
 // and the agents that show one kind of AI, each deciding with a mind:
@@ -18,7 +21,8 @@ import phys "plugins:physics/runtime"
 //   they see, jumping from roof to roof and dropping to the street, around a
 //   cart that parks in a street; three bite at once and the rest circle the
 //   runner until a place frees (attack tokens). With Horde_Waves, more come in
-//   waves that are rows of a table.
+//   waves that are rows of a table, at the spawn points of the game, each of
+//   the zombie of its point.
 // - Firefight: two squads of tactical bots. They fire holding a token, take
 //   the cover a query of places finds among the walls, reload, fetch ammo and
 //   health from the crates of their side, man a turret and sound an alarm:
@@ -37,55 +41,42 @@ import phys "plugins:physics/runtime"
 
 Arena_Kind :: enum u8 {Horde,Firefight,Boss,Swarm,Paths,Senses}
 
+// The .character of the zombies and the boss (demo_content writes it): the moves their minds play
+// over the body that shows them, and its look.
+ARENA_AGENT :: base.Asset_Id{0x41524541_4147454e,0x54_0000_0001}
+
 @(component,description="Builds an arena of AI when the world runs: a block of roofs with a horde, two squads in a firefight, a boss fight, a swarm of drones, patrollers on the ways of navigation, or listeners and bells. Without place, the scene holds its place.")
 AI_Arena :: struct {
     kind:Arena_Kind,
     agents:i32 `mirai:"min=1,max=2000"`, // zombies, drones, patrollers or listeners, or soldiers of each squad
     place:bool, // it builds its place too; false when the scene holds it
-    built:bool `mirai:"transient"`,
 }
 AI_ARENA_DEFAULT :: AI_Arena{agents=60,place=true}
 
-HORDE_WAVE_KINDS :: 4
 HORDE_MOST :: 2000 // zombies the waves of a horde send at most
 HORDE_SENDS :: 64  // zombies the waves of a horde send in a tick at most
 
-@(record,description="A kind of zombie a wave of a horde sends: how fast it runs, how far it sees and its color.")
-Zombie_Kind :: struct {
-    speed:f32 `mirai:"min=0,unit=m/s"`,
-    sight:f32 `mirai:"min=0,unit=m"`,
-    color:[4]f32 `mirai:"color"`,
-}
-ZOMBIE_KIND_DEFAULT :: Zombie_Kind{speed=3.5,sight=25,color={0.45,0.75,0.35,1}}
-
-Horde_Wave_Kind :: struct {
-    kind:core.Record(Zombie_Kind),
-    weight:f32 `mirai:"min=0"`, // the chances of the kind are its share of the weights of the wave
-}
-
-@(record,description="A wave of a horde: delay seconds after the wave before it, count zombies interval seconds apart, each of a kind picked by weight; then the wave next. A wave that names one before it repeats them.")
+@(record,description="A wave of a horde: delay seconds after the wave before it, count zombies interval seconds apart, each at the next spawn point of the game; then the wave next. A wave that names one before it repeats them.")
 Horde_Wave :: struct {
     delay,interval:f32 `mirai:"min=0,unit=s"`,
     count:i32 `mirai:"min=0,max=500"`,
-    kinds:[HORDE_WAVE_KINDS]Horde_Wave_Kind, // without any, the zombies of the arena
     next:core.Record(Horde_Wave),
 }
 
-@(component,description="Sends more zombies to a horde arena in waves, rows of Horde_Wave: first, then the one each names next. The same seed sends the same kinds.")
+@(component,description="Sends more zombies to a horde arena in waves, rows of Horde_Wave: first, then the one each names next. Each zombie is the prefab of the next Spawn_Point without players.")
 Horde_Waves :: struct {
     first:core.Record(Horde_Wave),
-    seed:u64,
     wave:core.Record(Horde_Wave) `mirai:"transient,readonly"`, // the one sending; none: over
     sent:i32 `mirai:"transient,readonly"`,                     // of that wave
     total:i32 `mirai:"transient,readonly"`,                    // of every wave
-    wait:f32 `mirai:"transient,hidden"`,                       // s to the next zombie
-    rng:mm.Rng `mirai:"transient,hidden"`,
 }
 
+// The hordes that wait for their next zombie, each pushed for the tick it is due at.
+@(storage,queue)
+Horde_Sends :: struct {queue:core.Queue(core.Entity)}
+
 @(component,description="A zombie of an arena: it wanders, chases what it sees and bites what it reaches.")
-Zombie :: struct {
-    bites:u32 `mirai:"transient,readonly"`,
-}
+Zombie :: struct {}
 
 @(component,description="A soldier of an arena: it fires, takes cover, reloads, and fetches ammo and health from the crates of its side.")
 Soldier :: struct {
@@ -142,6 +133,7 @@ Arena :: struct {
 @(storage)
 Arena_State :: struct {
     rng:mm.Rng,
+    bites:u32, // that the zombies of every arena played
 }
 arena_state_default :: proc() -> Arena_State {return {rng=mm.rng_make(17)}}
 
@@ -224,14 +216,15 @@ zombie_chase :: proc(a:^ai.Act(Zombie_Act),w:Arena) -> ai.Status {
 
 // Bites now and again 0.8 s later, holding one of the places to bite its target.
 @(act="Bite")
-zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,zombies:^core.Table(Zombie)) -> ai.Status {
-    if a.phase==.Exit {return .Success}
+zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,state:^Arena_State,requests:^anim.Animation_Requests) -> ai.Status {
+    e:=behavior.agent(a)
+    if a.phase==.Exit {anim.look(requests,e,anim.spatial_point({}),0);return .Success}
     if a.phase==.Enter {
-        e:=behavior.agent(a)
         subject,_,_:=arena_seen(w,e)
         if subject==core.NONE || !ai.token_take(a,u64(subject),ZOMBIE_BITERS) {return .Failure}
-        if z:=core.edit(zombies,e);z!=nil {z.bites+=1}
-        behavior.present_look(a,subject)
+        state.bites+=1
+        anim.look(requests,e,anim.spatial_entity(subject))
+        anim.play(requests,e,"Bite")
     }
     return ai.after(a,0.8)
 }
@@ -463,8 +456,9 @@ boss_think :: proc(t:^ai.Think(Boss_Act),w:Arena,bosses:^core.Table(Boss,.Read))
 }
 
 @(act="Slam Charge Summon Roar")
-boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss)) -> ai.Status {
-    b:=core.edit(bosses,behavior.agent(a))
+boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss),requests:^anim.Animation_Requests) -> ai.Status {
+    e:=behavior.agent(a)
+    b:=core.edit(bosses,e)
     if b==nil {return .Failure if a.phase!=.Exit else .Success}
     if a.action==.Charge {
         if a.phase==.Enter {
@@ -479,11 +473,10 @@ boss_attack :: proc(a:^ai.Act(Boss_Act),w:Arena,bosses:^core.Table(Boss)) -> ai.
     case .Enter:
         ai.commit(a,BOSS_COMMITTED)
         #partial switch a.action {
-        case .Slam: b.slams+=1
-        case .Summon: b.summons+=1
-        case .Roar: b.roars+=1
+        case .Slam: b.slams+=1;anim.play(requests,e,"Slam")
+        case .Summon: b.summons+=1;anim.play(requests,e,"Summon")
+        case .Roar: b.roars+=1;anim.play(requests,e,"Roar")
         }
-        behavior.present_animation(a,u16(a.action))
         return .Running
     case .Update: return ai.after(a,1)
     case .Exit:
@@ -556,16 +549,16 @@ guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,links:^core.Table(nav.Nav_Link,
 }
 
 // Builds the arenas that have not been built, once the world runs: their
-// place, unless the scene holds it, and their agents.
+// place, unless the scene holds it, and their agents. An arena is built when
+// its row is no longer new (core.added): the build writes it.
 @(step="fixed",stage="apply",server)
 arena_build :: proc(
     commands:core.Commands,arenas:^core.Table(AI_Arena),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,
 ) {
     if !time.playing {return}
     for row in 0..<core.count(arenas) {
+        if !core.added(arenas,row) {continue}
         a:=core.edit_at(arenas,row)
-        if a.built {continue}
-        a.built=true
         e:=core.entity_at(arenas,row)
         origin:mm.Vec3
         if pose,ok:=core.get(worlds,e);ok {origin=pose.position}
@@ -754,12 +747,28 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     walk.max_speed=speed
     core.commands_add(c,e,walk)
     core.commands_add_default(c,e,nav.Nav_Agent)
+    arena_shown(c,e,{{0,0.9,0},1,{0.6,0.9,0.6}},color)
+    return e
+}
+
+// The capsule that shows an agent: the Body its moves turn.
+@(private)
+arena_shown :: proc(c:core.Commands,e:core.Entity,transform:core.Transform,color:[4]f32) {
     look:=core.commands_create(c)
-    core.commands_add(c,look,core.Transform{{0,0.9,0},1,{0.6,0.9,0.6}})
+    name:core.Name;base.text_set(name.text[:],"Body")
+    core.commands_add(c,look,transform)
+    core.commands_add(c,look,name)
     core.commands_add(c,look,core.Parent{entity=e})
     core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule})
     core.commands_add(c,look,render.Tint{color=color})
-    return e
+}
+
+// An agent whose mind plays the moves of ARENA_AGENT.
+@(private)
+arena_animated :: proc(c:core.Commands,e:core.Entity) {
+    animation:=core.default(c,anim.Animation)
+    animation.asset=ARENA_AGENT
+    core.commands_add(c,e,animation)
 }
 
 @(private)
@@ -770,76 +779,49 @@ arena_target :: proc(c:core.Commands,position:mm.Vec3,team:behavior.Team) -> cor
     return e
 }
 
-// Sends the waves of the horde arenas that have them, once the arena is built.
+// Sends the waves of the horde arenas that have them, once the arena is
+// built: a horde waits for its next zombie as a request due at its tick.
 @(step="fixed",stage="apply",server)
 horde_waves :: proc(
-    commands:core.Commands,hordes:^core.Table(Horde_Waves),arenas:^core.Table(AI_Arena,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    waves:core.Records(Horde_Wave),kinds:core.Records(Zombie_Kind),time:core.Time,problems:^core.Problems,
+    hordes:^core.Table(Horde_Waves),sends:^Horde_Sends,arenas:^core.Table(AI_Arena,.Read),requests:^spawn.Spawn_Requests,
+    waves:core.Records(Horde_Wave),time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
         e:=core.entity_at(hordes,row)
-        arena,built:=core.get(arenas,e)
-        if !built || !arena.built || arena.kind!=.Horde {continue}
+        at:=core.row_of(arenas,e)
+        if !core.added(hordes,row) || at<0 || core.added(arenas,at) || core.at(arenas,at).kind!=.Horde {continue}
         h:=core.edit_at(hordes,row)
-        if core.added(hordes,row) {
-            h.rng=mm.rng_make(h.seed,7)
-            h.wave=h.first
-            first,_:=core.record(waves,h.wave,problems,e)
-            h.wait=first.delay
-        }
-        origin:mm.Vec3
-        if pose,ok:=core.get(worlds,e);ok {origin=pose.position}
-        left:=f32(time.dt)
-        // A chain of waves that send nothing and wait nothing would never end the tick.
+        h.wave=h.first
+        first,_:=core.record(waves,h.wave,problems,e)
+        core.later(&sends.queue,time,first.delay,e)
+    }
+    for e in core.take_due(&sends.queue,time) {
+        h:=core.edit(hordes,e)
+        if h==nil {continue}
+        // A chain of waves that send nothing and wait nothing goes on in the next tick.
+        wait:f32 // s to the next zombie; below 0: the waves are over
         for _ in 0..<HORDE_SENDS {
+            wait=-1
             if h.wave=={} || h.total>=HORDE_MOST {break}
-            if left<h.wait {h.wait-=left;break}
-            left-=h.wait
             wave,found:=core.record(waves,h.wave,problems,e)
             if !found {h.wave={};break}
             if h.sent<wave.count {
-                kind:=ZOMBIE_KIND_DEFAULT
-                if picked,ok:=core.record(kinds,horde_pick(&h.rng,wave.kinds),problems,e);ok {kind=picked}
-                arena_zombie(commands,arena_body(commands,horde_spot(origin,int(h.total)),kind.color,kind.speed),kind.sight)
+                spawn.spawn(requests,core.NONE)
                 h.sent+=1
                 h.total+=1
             }
             if h.sent<wave.count {
-                h.wait=wave.interval
-                continue
+                wait=wave.interval
+            } else {
+                h.wave,h.sent=wave.next,0
+                next,_:=core.record(waves,h.wave,problems,e)
+                wait=next.delay
             }
-            h.wave,h.sent=wave.next,0
-            next,_:=core.record(waves,h.wave,problems,e)
-            h.wait=next.delay
+            if wait>0 {break}
         }
+        if wait>=0 {core.later(&sends.queue,time,wait,e)}
     }
-}
-
-// A kind of the wave with chances in proportion to its weight; none when no
-// kind has weight.
-@(private)
-horde_pick :: proc(rng:^mm.Rng,kinds:[HORDE_WAVE_KINDS]Horde_Wave_Kind) -> (picked:core.Record(Zombie_Kind)) {
-    total:f32
-    for k in kinds {
-        if k.kind!={} && k.weight>0 {total+=k.weight}
-    }
-    if !(total>0) || total>max(f32) {return}
-    at:=mm.random_f32(rng)*total
-    for k in kinds {
-        if k.kind=={} || !(k.weight>0) {continue}
-        picked=k.kind
-        if at<k.weight {return}
-        at-=k.weight
-    }
-    return
-}
-
-// Where the zombie number i of the waves comes in: along the streets at the
-// edge of the block, a little further each round.
-@(private)
-horde_spot :: proc(origin:mm.Vec3,i:int) -> mm.Vec3 {
-    return origin+{-30+f32(i%12)*5+f32((i/36)%4)*0.6,0.05,32-f32((i/12)%3)*2}
 }
 
 // A zombie, or a drone with the mind of the zombies: it wanders, chases what it sees or hears, bites what it reaches.
@@ -847,7 +829,7 @@ horde_spot :: proc(origin:mm.Vec3,i:int) -> mm.Vec3 {
 arena_zombie :: proc(c:core.Commands,e:core.Entity,sight:f32,hearing:f32=1,forget:f32=8) {
     core.commands_add(c,e,Zombie{})
     core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("zombie")})
-    core.commands_add_default(c,e,behavior.Mind_Presentation)
+    arena_animated(c,e)
     perceiver:=behavior.PERCEIVER_DEFAULT
     perceiver.notices=behavior.Teams(1<<u32(TEAM_RUNNER))
     perceiver.sight,perceiver.hearing,perceiver.forget=sight,hearing,forget
@@ -880,7 +862,6 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
                 e:=arena_body(c,origin+{f32(i)*2.5-f32(count)*1.25,0.05,side*18},{0.9,0.3,0.25,1} if team==0 else {0.3,0.45,0.9,1},4.5)
                 core.commands_add(c,e,Soldier{health=100,ammo=SOLDIER_MAG,reserve=SOLDIER_MAG,ahead=-side})
                 core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("soldier")})
-                core.commands_add_default(c,e,behavior.Mind_Presentation)
                 mine,theirs:=TEAM_RED,TEAM_BLUE
                 if team==1 {mine,theirs=TEAM_BLUE,TEAM_RED}
                 perceiver:=behavior.PERCEIVER_DEFAULT
@@ -896,7 +877,7 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
         boss:=arena_body(c,origin+{0,0.05,-6},{0.6,0.15,0.6,1},3)
         core.commands_add(c,boss,Boss{health=BOSS_HEALTH,hero=hero})
         core.commands_add(c,boss,behavior.Mind_Agent{mind=behavior.mind_name("boss")})
-        core.commands_add_default(c,boss,behavior.Mind_Presentation)
+        arena_animated(c,boss)
     case .Swarm:
         arena_target(c,origin+{-22,0,-22},TEAM_RUNNER)
         for i in 0..<count {arena_zombie(c,arena_drone(c,origin+{f32(i%8)*4-14,4+f32((i/8)%3)*3,8+f32(i/24)*3}),30)}
@@ -910,7 +891,6 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
             core.commands_add(c,e,agent)
             core.commands_add(c,e,Arena_Patrol{points=points,next=i32(i%4)})
             core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("guard")})
-            core.commands_add_default(c,e,behavior.Mind_Presentation)
         }
     case .Senses:
         // Bells ring in turn behind the walls; listeners that barely see go to what they hear and forget it.
@@ -939,11 +919,7 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     core.commands_add(c,e,phys.collider_character(0.25,0.8))
     core.commands_add(c,e,locomotion.Fly{speed=5,acceleration=20})
     core.commands_add_default(c,e,nav.Nav_Agent)
-    look:=core.commands_create(c)
-    core.commands_add(c,look,core.Transform{{0,0.4,0},1,{0.5,0.4,0.5}})
-    core.commands_add(c,look,core.Parent{entity=e})
-    core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule})
-    core.commands_add(c,look,render.Tint{color={0.95,0.6,0.2,1}})
+    arena_shown(c,e,{{0,0.4,0},1,{0.5,0.4,0.5}},{0.95,0.6,0.2,1})
     return e
 }
 

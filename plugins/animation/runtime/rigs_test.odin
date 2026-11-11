@@ -155,7 +155,7 @@ Rigs_World :: struct {
     attachments:core.Table(Bone_Attachment),
     playback:Playback,
     modifiers:Modifier_Runtime,
-    requests:Modifier_Requests,
+    requests:Animation_Requests,
 }
 
 @(test)
@@ -244,8 +244,8 @@ named_modifier_controls_preserve_full_bone_paths_and_reject_ambiguous_references
     left.bone,right.bone=bone_ref(fmt.tprintf("%sleft",prefix)),bone_ref(fmt.tprintf("%sright",prefix))
     left.rig,right.rig=rig,rig
     testing.expect(t,modifier_append(&modifiers.look,rig,right) && modifier_append(&modifiers.look,rig,left))
-    ground:=FOOT_GROUNDING_DEFAULT;ground.rig=rig;testing.expect(t,modifier_append(&modifiers.grounding,rig,ground))
-    requests:Modifier_Requests;defer delete(requests.controls.items)
+    ground:=FOOT_GROUNDING_DEFAULT;testing.expect(t,modifier_append(&modifiers.grounding,rig,ground))
+    requests:Animation_Requests;defer delete(requests.controls.items)
     modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.5,enabled=true},modifier_operation_name(&left))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     slot,ok:=modifier_named_slot(&modifiers,rig,.Look,modifier_operation_name(&left))
@@ -279,7 +279,7 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
-    requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
+    requests:Animation_Requests;defer delete(requests.goals.items);defer delete(requests.controls.items)
     modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm")
     modifier_controls_take(&modifiers,&requests,&problems,0)
     testing.expect_value(t,modifiers.chain_ik.values[0].weight,f32(.2))
@@ -343,7 +343,7 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_chain_retarget_goal
     modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({1,2,3}),weight=1,enabled=true})
     modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=1,target=spatial_point({4,5,6}),weight=1,enabled=true})
     modifier_goal(&w.requests,{rig=transfer,kind=.Chain_Retarget,weight=.4,enabled=true})
-    modifier_take(&w.modifiers,&w.requests,&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     testing.expect_value(t,len(w.modifiers.goals),3)
     testing.expect_value(t,w.modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{1,2,3})
     testing.expect_value(t,w.modifiers.multi_ik.values[0].effectors[1].target.position,mm.Vec3{4,5,6})
@@ -353,7 +353,7 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_chain_retarget_goal
     stable:=true
     for _ in 0..<64 {
         modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({7,8,9}),weight=1,enabled=true})
-        modifier_take(&w.modifiers,&w.requests,&problems)
+        modifier_take(&w.modifiers,&w.requests,&problems,0)
         stable &&=len(w.modifiers.goals)==3 && w.modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{4,5,6} && w.modifiers.retarget_chains.values[0].enabled
     }
     context=saved;testing.expect(t,stable && problems.count==0)
@@ -370,9 +370,9 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     testing.expect(t,rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Multi_IK,0);testing.expect(t,found && diagnostic.valid && diagnostic.reached)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
-    requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
+    requests:Animation_Requests;defer delete(requests.goals.items);defer delete(requests.controls.items)
     modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true},"body")
-    for goal in core.take(&requests.queue) {modifier_apply_goal(&modifiers,goal,nil)}
+    for goal in core.take(&requests.goals) {modifier_apply_goal(&modifiers,goal,nil)}
     testing.expect_value(t,modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{.5,1.8,0})
     copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)

@@ -84,7 +84,7 @@ gallery_internal_strain_holds_then_releases_a_suspended_collection_without_launc
     target,station:=core.create(&entities),core.create(&entities)
     core.add(&views,core.create(&entities),PHYSICS_GALLERY_VIEW_DEFAULT)
     core.add(&stations,station,Physics_Gallery{station=11,target=target,origin={0,1,0},trigger=1})
-    core.add(&states,target,destruct.Destructible_State{handle=h,body=root})
+    core.add(&states,target,destruct.Destructible_State{handle=h})
     core.table_settle(&views,&entities);core.table_settle(&stations,&entities);core.table_settle(&states,&entities)
     for activation in 1..=2 {
         core.edit(&stations,station).trigger=u32(activation)
@@ -142,7 +142,7 @@ gallery_keeps_initial_trigger_until_ready_and_slices_through_a_live_piece_center
     h,error:=phys.breakable_create(&physics,config)
     if !testing.expect_value(t,error,phys.Breakable_Error.None) {return}
     body:=phys.breakable_body(core.ref(&physics),h)
-    core.add(&states,target,destruct.Destructible_State{handle=h,body=body});core.table_settle(&states,&entities)
+    core.add(&states,target,destruct.Destructible_State{handle=h});core.table_settle(&states,&entities)
     physics_gallery_actions(&views,&stations,{actions=core.ref(&actions)},&requests,&bodies,&force_fields,&strain_fields,&caches,&ragdolls,{playing=true,dt=1.0/60},destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)})
     testing.expect_value(t,core.at(&stations,core.row_of(&stations,station)).activations,u32(1));testing.expect_value(t,len(requests.queue.items),1)
     command:=requests.queue.items[0];testing.expect_value(t,command.kind,destruct.Fracture_Kind.Slice)
@@ -220,9 +220,9 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     body:phys.Body_Handle
     for piece in pieces[:min(count,len(pieces))] {if piece.body!=root && piece.body!=0 {body=piece.body;break}}
     if !testing.expect(t,body!=0) {return}
-    phys.proxy_set(&physics,target,root,{},1);phys.proxy_set(&physics,fragment,body,{},1)
+    phys.proxy_set(&physics,target,root);phys.proxy_set(&physics,fragment,body)
     core.add(&stations,core.create(&entities),Physics_Gallery{station=9,target=target,fade_seconds=2})
-    core.add(&states,target,destruct.Destructible_State{handle=handle,body=root})
+    core.add(&states,target,destruct.Destructible_State{handle=handle})
     core.add(&groups,fragment,destruct.Destructible_Group{owner=target,group=1})
     original:=render.Tint{color={.3,.4,.5,1}}
     core.add(&tints,fragment,original);core.add(&tints,target,original)

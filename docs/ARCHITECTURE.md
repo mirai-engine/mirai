@@ -140,8 +140,8 @@ The field of each type is its `snake_case` name, with the package in front if tw
 ```odin
 @(step="fixed", stage="react")
 door_move :: proc(
-    doors:^core.Table(Door,.Read), states:^core.Table(Door_State),
-    transforms:^core.Table(core.Transform), requests:^Door_Requests, time:core.Time,
+    doors:^core.Table(Door), transforms:^core.Table(core.Transform),
+    requests:^Door_Requests, time:core.Time,
 ) {...}
 ```
 
@@ -168,6 +168,7 @@ door_move :: proc(
 | `core.Ref(S)` | Reads storage `S` without copying it |
 | `S` | Reads a copy of storage `S`; for small ones (`Time`, `Input`, `View`) |
 | `core.Stamp(S)` | Asks `core.touched` whether storage `S` was written since it looked |
+| `core.Inbox(M)` | Reads the messages of the `@(net_message)` type `M` that arrived for the tick |
 | `core.Ref(core.Entities)` | Reads which entities are alive |
 | `core.Commands` | Creates and destroys entities, with rows of any component |
 | `core.World_Ref` | The whole world by reflection: scenes, saving, network, editor |

@@ -20,53 +20,53 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     delete(source.lib.markers);source.lib.markers=make([]lib.Marker,3);source.lib.marker_count=3
     source.lib.markers[0],source.lib.markers[1],source.lib.markers[2]={time=.25,id=0},{time=0,id=1,duration=1},{time=.125,id=0}
     for index in ([2]int{2,5}) {source.lib.clips[index].first_marker,source.lib.clips[index].marker_count=1,2}
-    delete(source.markers);source.markers=make([]u64,2);source.markers[0],source.markers[1]=base.name_hash("step"),base.name_hash("ledge")
+    delete(source.markers);source.markers=make([]host.Content_Marker,2);source.markers[0].name,source.markers[1].name=base.name_hash("step"),base.name_hash("ledge")
     source.id,source.generation={0x710,0x711},1;append(&content.animations,source);content.index[source.id]={kind=.Animation,index=0}
     test_character_register(&assets,{1,2});defer test_registry_free(&assets)
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    transforms:core.Table(core.Transform);parents:core.Table(core.Parent);names:core.Table(core.Name);targets:core.Table(Animation_Target);animations:core.Table(Animation);roots:core.Table(Root_Motion)
-    defer {core.table_destroy(&transforms);core.table_destroy(&parents);core.table_destroy(&names);core.table_destroy(&targets);core.table_destroy(&animations);core.table_destroy(&roots)}
+    transforms:core.Table(core.Transform);parents:core.Table(core.Parent);names:core.Table(core.Name);targets:core.Table(Animation_Target);animations:core.Table(Animation)
+    defer {core.table_destroy(&transforms);core.table_destroy(&parents);core.table_destroy(&names);core.table_destroy(&targets);core.table_destroy(&animations)}
     actor,hip:=core.create(&entities),core.create(&entities)
     core.add(&transforms,actor,core.TRANSFORM_IDENTITY);core.add(&transforms,hip,core.TRANSFORM_IDENTITY);core.add(&parents,hip,{entity=actor})
     name:core.Name;base.text_set(name.text[:],"hip");core.add(&names,hip,name)
     animation:=ANIMATION_DEFAULT;animation.asset=source.id;animation.loop=false;animation.root_motion=.Extract;base.text_set(animation.clip[:],"walk")
     core.add(&animations,actor,animation)
-    manual:=Root_Motion{bone=bone_ref("hip"),translation=true};core.add(&roots,actor,manual)
-    core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&names,&entities);core.table_settle(&targets,&entities);core.table_settle(&animations,&entities);core.table_settle(&roots,&entities)
+    core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&names,&entities);core.table_settle(&targets,&entities);core.table_settle(&animations,&entities)
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
     core.hierarchy_settle(&hierarchy,&parents,&entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets
     defer {delete(requests.timeline.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
-    motion:Motion_Runtime;motion_requests:Motion_Requests;motion_assets:Character_Assets
-    defer {motion_runtime_free(&motion);delete(motion_requests.targets.items);delete(motion_requests.locomotion.items);character_assets_free(&motion_assets)}
+    motion:Motion_Runtime;motion_assets:Character_Assets;extra:Test_Storages
+    defer {motion_runtime_free(&motion);delete(requests.warps.items);delete(requests.locomotion.items);character_assets_free(&motion_assets);test_storages_free(&extra)}
     profile:=motion_test_profile();defer motion_test_free(&profile)
     test_character_seed(&motion_assets,{1,2},{info={animation=source.id},motion=profile})
     problems:core.Problems
-    step:=proc(animations:^core.Table(Animation),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),hierarchy:^core.Hierarchy,names:^core.Table(core.Name),targets:^core.Table(Animation_Target),roots:^core.Table(Root_Motion),requests:^Animation_Requests,events:^Animation_Events,playback:^Playback,app:^host.App,skeletons:^Skeleton_Assets,motion:^Motion_Runtime,motion_requests:^Motion_Requests,motion_assets:^Character_Assets,dt:f32,problems:^core.Problems) {
+    step:=proc(animations:^core.Table(Animation),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),hierarchy:^core.Hierarchy,names:^core.Table(core.Name),targets:^core.Table(Animation_Target),extra:^Test_Storages,requests:^Animation_Requests,events:^Animation_Events,playback:^Playback,app:^host.App,skeletons:^Skeleton_Assets,motion:^Motion_Runtime,motion_assets:^Character_Assets,dt:f32,problems:^core.Problems) {
         clear(&events.items) // the log of a tick, as its readers are handed it
-        animation_tick(animations,transforms,parents,core.ref(hierarchy),names,requests,events,targets,core.read(roots),playback,app,{dt=dt,playing=true},{},skeletons,problems,characters=motion_assets,motion=motion,motion_requests=motion_requests)
+        test_tick(core.read(animations),transforms,core.read(parents),core.ref(hierarchy),core.read(names),requests,events,core.read(targets),playback,app,{dt=dt,playing=true},{},skeletons,problems,extra,characters=motion_assets,motion=motion)
     }
-    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
+    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     state:=&playback.states[0]
     animation_distance(&requests,actor,base.name_hash("walk"),.8)
-    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
+    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     testing.expect(t,abs(state.time-.8)<1e-5 && abs(state.motion.translation.x-.7)<1e-5 && len(events.items)==1)
     animation_clip(core.edit_at(&animations,0),"run",fade=1,loop=false)
-    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
+    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     animation_distance(&requests,actor,base.name_hash("run"),.8)
-    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
+    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     content.animations[0].roots[2]={}
     clock:=animation_motion_clock(state,&content.animations[0],nil,.1,.7)
     testing.expect(t,abs(state.fader.current.time-.8)<1e-5 && abs(state.fader.outgoing[0].player.time-1)<1e-5 && abs(state.fader.elapsed-.2)<1e-5)
     testing.expect(t,clock.player.clip==1 && abs(clock.from-.9)<1e-5 && abs(clock.to-1)<1e-5 && abs(clock.weight-.8)<1e-5 && clock.root.translation)
+    content.animations[0].roots[2]=content.animations[0].roots[0]
     value:=core.edit_at(&animations,0);value.asset={1,2};value.fade=0
     animation_distance(&requests,actor,base.name_hash("run"),0,true)
-    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
+    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     testing.expect(t,state.motion==ROOT_DELTA_DEFAULT && len(events.items)==0)
     state.fader.outgoing_count=0;state.fader.duration=0
-    target:=mm.TRANSFORM_IDENTITY;target.position.x=7;motion_target(&motion_requests,actor,"ledge",spatial_world(target))
+    target:=mm.TRANSFORM_IDENTITY;target.position.x=7;motion_target(&requests,actor,"ledge",spatial_world(target))
     animation_distance(&requests,actor,base.name_hash("run"),1)
-    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&roots,&requests,&events,&playback,&app,&skeletons,&motion,&motion_requests,&motion_assets,.1,&problems)
+    step(&animations,&transforms,&parents,&hierarchy,&names,&targets,&extra,&requests,&events,&playback,&app,&skeletons,&motion,&motion_assets,.1,&problems)
     testing.expect(t,abs(state.motion.translation.x-7)<1e-5 && motion.instances[0].error==.None && problems.count==0,fmt.tprint(core.problems_list(&problems)))
 }
 

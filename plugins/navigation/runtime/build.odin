@@ -57,7 +57,7 @@ Navigation_Builds :: struct {
     away_count:int,
     sections_seen:u64,               // the hash of the sections at the last look
     bakes:core.Entity_Map(base.Asset_Id), // each Navigation_Bake put in the meshes, with the asset it named
-    bakes_seen:u64,
+    bakes_seen:core.Seen,
     coarse_revision,coarse_sections:u64, // what the coarse graph was last checked against
     query:ai.Nav_Query,                  // that finds the ways of the coarse graph
     volume_query:ai.Nav_Volume_Query,    // through the volumes
@@ -65,17 +65,18 @@ Navigation_Builds :: struct {
     region_busy:bool,
     region_class:int,
     region_sections:u64,                 // the hash of the sections it began with
-    // The versions each look last saw: a tick that changed none of them skips it.
-    bounds_stamps:[7]u64,
-    areas_stamps,obstacles_stamps,links_stamps:[6]u64,
+    // What each look last saw of its tables: a tick that changed none of them skips it.
+    bounds_seen,areas_seen,obstacles_seen,links_seen:[4]core.Seen,
+    bounds_unloaded:u64,  // Unloaded.revision the bounds were last made with
     settling:int,         // obstacles that are not blocking yet
+    unloaded:u64,         // advances with each tick the unloaded ground changed in (core.Ground_Queries.unloaded)
     unloaded_seen:u64,    // Unloaded.revision the marks waiting for it were last looked at with
     // By class, the tiles and zones that went in a run where the terrain is not loaded, with the
     // hash of the one each had (0: none), to read again from the bakes.
     paged:[NAV_CLASS_CAPACITY]base.Hash_Map(u64),
     paged_seen:u64,       // the revision of the unloaded ground and whether the world ran when they were last looked at
     seen:[dynamic]bool,   // scratch of the looks: the entries still there
-    sections_stamps:[6]u64, // the versions the sections were last gathered from
+    sections_tables:[3]core.Seen, // what the sections were last gathered from
     fields:[dynamic]Tile_Field, // the heightfields kept, at most NAV_FIELDS: the one unused longest gives its place
     fields_clock:u64,
     looked:u64,           // rows, marks and builds the build went through so far: a tick with nothing to do adds none
@@ -93,21 +94,12 @@ Tile_Field :: struct {
     used:u64,      // fields_clock when it was kept or last built from
 }
 
-// The versions of a table of boxes in the frame of their entities and of the poses that place them.
+// Whether a table of boxes in the frame of their entities, the poses that
+// place them or the Volumes that size them (when there are) changed since
+// seen, which it moves to now.
 @(private)
-poses_stamps :: proc "contextless" (rows:^core.Table($T,$A),transforms:^core.Table(core.Transform,$B),parents:^core.Table(core.Parent,$C)) -> [6]u64 {
-    return {core.version(rows),core.layout(rows),core.version(transforms),core.layout(transforms),core.version(parents),core.layout(parents)}
-}
-
-// poses_stamps of rows whose box is the Volume of their entity.
-@(private)
-boxes_stamps :: proc "contextless" (rows:^core.Table($T,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D)) -> [6]u64 {
-    stamps:=poses_stamps(rows,transforms,parents)
-    if volumes!=nil {
-        stamps[0]+=core.version(volumes)
-        stamps[1]+=core.layout(volumes)
-    }
-    return stamps
+boxes_touched :: proc "contextless" (rows:^core.Table($T,.Read),volumes:^core.Table(volume.Volume,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),seen:^[4]core.Seen) -> bool {
+    return core.touched(rows,&seen[0]) | core.touched(transforms,&seen[1]) | core.touched(parents,&seen[2]) | core.touched(volumes,&seen[3])
 }
 
 // Half the size of the box of a Nav_Bounds, a Nav_Area or a Nav_Obstacle: the
@@ -464,16 +456,15 @@ navigation_build :: proc(
     bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
     ground:core.Ref(core.Ground_Queries),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
+    if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
     // A section away is not loaded: like the terrain that is not, its tiles wait for it.
-    section_stamps:=[6]u64{core.version(references),core.layout(references),core.version(worlds),core.layout(worlds),core.version(ids),core.layout(ids)}
-    if section_stamps!=b.sections_stamps || !n.ready {
-        b.sections_stamps=section_stamps
+    if core.touched(references,&b.sections_tables[0]) | core.touched(worlds,&b.sections_tables[1]) | core.touched(ids,&b.sections_tables[2]) || !n.ready {
         b.sections=sections_gather(references,worlds,ids)
         b.looked+=u64(core.count(references))
     }
     q:=core.ground_query(world,ground)
-    gone:=Unloaded{q.unloaded,&b.sections,base.hash_combine(q.unloaded_revision,b.sections.hash)}
+    gone:=Unloaded{q.unloaded,&b.sections,base.hash_combine(b.unloaded,b.sections.hash)}
     fresh,reset:=false,false
     // A class is made again when it changes, or when what blocks its agents does (Collision_Settings).
     collision:=&physics.ptr.collision
@@ -483,7 +474,7 @@ navigation_build :: proc(
             return
         }
         core.entity_map_clear(&b.bakes)
-        b.bakes_seen=0
+        b.bakes_seen={}
         fields_clear(b)
         fresh,reset=true,true
     }
@@ -502,7 +493,7 @@ navigation_build :: proc(
         b.region_busy=false
         // A copy has the meshes of the bakes of its world already.
         if !reset {core.entity_map_clear(&b.bakes)}
-        b.bakes_seen=0
+        b.bakes_seen={}
         fresh=true
     }
     bakes_update(n,b,bakes,app,problems,fresh && !reset)
@@ -537,7 +528,7 @@ navigation_build :: proc(
         next,count,overflow=phys.static_changes(physics,b.cursor,b.boxes[:])
     }
     sections_update(n,b,limits,fresh)
-    paging_update(n,b,q,time.playing,fresh,reset,app,problems)
+    paging_update(n,b,q.unloaded,time.playing,fresh,reset,app,problems)
     published,spent:=builds_publish(n,b,problems)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
     builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
@@ -559,10 +550,9 @@ navigation_build :: proc(
 @(private)
 bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_Bounds,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
     // The water and the box of the collision change with the collision, through its change log.
-    poses:=boxes_stamps(bounds,volumes,transforms,parents)
-    stamps:=[7]u64{poses[0],poses[1],poses[2],poses[3],poses[4],poses[5],unloaded.revision}
-    if !fresh && !collision_changed && stamps==b.bounds_stamps {return {b.bounds[:],b.air[:],b.water[:],b.dry[:]}}
-    b.bounds_stamps=stamps
+    moved:=boxes_touched(bounds,volumes,transforms,parents,&b.bounds_seen) || unloaded.revision!=b.bounds_unloaded
+    if !fresh && !collision_changed && !moved {return {b.bounds[:],b.air[:],b.water[:],b.dry[:]}}
+    b.bounds_unloaded=unloaded.revision
     b.looked+=u64(core.count(bounds))+1
     surface,air:[64]mm.Aabb
     count,count_air:=0,0
@@ -623,7 +613,7 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_
     // Room for the four first: without it the bounds stay as they were, and are looked at again.
     if reserve(&b.bounds,count)!=nil || reserve(&b.air,count_air)!=nil || reserve(&b.water,count_water)!=nil || reserve(&b.dry,count_dry)!=nil ||
        resize(&b.bounds,count)!=nil || resize(&b.air,count_air)!=nil || resize(&b.water,count_water)!=nil || resize(&b.dry,count_dry)!=nil {
-        b.bounds_stamps={}
+        b.bounds_seen,b.bounds_unloaded={},0
         core.report(problems,core.NONE,"navigation.memory","No memory for the bounds of the navigation: it keeps those it had; free memory")
         return {b.bounds[:],b.air[:],b.water[:],b.dry[:]}
     }
@@ -676,12 +666,10 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_
 
 // Marks where a Nav_Area was and is, when it moved, changed or went.
 @(private)
-areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Area,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),limits:Limits,fresh:bool,problems:^core.Problems) {
-    stamps:=boxes_stamps(areas,volumes,transforms,parents)
-    if !fresh && stamps==b.areas_stamps {return}
+areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Area,.Read),volumes:^core.Table(volume.Volume,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),limits:Limits,fresh:bool,problems:^core.Problems) {
+    if !boxes_touched(areas,volumes,transforms,parents,&b.areas_seen) && !fresh {return}
     seen,enough:=seen_reset(b,len(b.areas.values),problems)
-    if !enough {return}
-    b.areas_stamps=stamps
+    if !enough {b.areas_seen={};return}
     b.looked+=u64(core.count(areas))+u64(len(seen))
     for i in 0..<core.count(areas) {
         e:=core.entity_at(areas,i)
@@ -1074,14 +1062,12 @@ zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Pro
 // Obstacles block the surface under them once they have been still long
 // enough, and stop when they move; outside a run (the editor) they are still.
 @(private)
-obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Table(Nav_Obstacle,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
-    stamps:=boxes_stamps(obstacles,volumes,transforms,parents)
-    moved:=fresh || stamps!=b.obstacles_stamps
+obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
+    moved:=boxes_touched(obstacles,volumes,transforms,parents,&b.obstacles_seen) || fresh
     // Unmoved, only those that settle need the tick.
     if !moved && b.settling==0 {return}
     seen,enough:=seen_reset(b,len(b.obstacles.values) if moved else 0,problems)
-    if !enough {return}
-    b.obstacles_stamps=stamps
+    if !enough {b.obstacles_seen={};return}
     running:=time.playing && time.dt>0
     b.settling=0
     b.looked+=u64(core.count(obstacles))+u64(len(seen))
@@ -1185,12 +1171,12 @@ sections_update :: proc(n:^Navigation,b:^Navigation_Builds,limits:Limits,fresh:b
 // have or what changed. The edited world keeps them all: the editor bakes its
 // meshes.
 @(private)
-paging_update :: proc(n:^Navigation,b:^Navigation_Builds,ground:core.Ground_Query,playing,fresh,reset:bool,app:^host.App,problems:^core.Problems) {
+paging_update :: proc(n:^Navigation,b:^Navigation_Builds,unloaded:[]mm.Aabb,playing,fresh,reset:bool,app:^host.App,problems:^core.Problems) {
     if reset {for &paged in b.paged {base.hash_map_clear(&paged)}}
-    seen:=base.hash_combine(ground.unloaded_revision,u64(playing))
+    seen:=base.hash_combine(b.unloaded,u64(playing))
     if seen==b.paged_seen && !fresh {return}
     b.paged_seen=seen
-    boxes:=ground.unloaded if playing else nil
+    boxes:=unloaded if playing else nil
     paging_restore(n,b,boxes,app,problems)
     if len(boxes)==0 {return}
     gone:=make([dynamic]u64,context.temp_allocator)
@@ -1285,10 +1271,8 @@ paged_put :: proc(paged:^base.Hash_Map(u64),key,hash:u64) -> bool {
 // loads, puts in the meshes what its .navmesh has that they do not. adopt:
 // the meshes have them already (a copy of the world).
 @(private)
-bakes_update :: proc(n:^Navigation,b:^Navigation_Builds,bakes:^core.Table(Navigation_Bake,$A),app:^host.App,problems:^core.Problems,adopt:bool) {
-    seen:=core.version(bakes)+core.layout(bakes)+1
-    if seen==b.bakes_seen {return}
-    b.bakes_seen=seen
+bakes_update :: proc(n:^Navigation,b:^Navigation_Builds,bakes:^core.Table(Navigation_Bake,.Read),app:^host.App,problems:^core.Problems,adopt:bool) {
+    if !core.touched(bakes,&b.bakes_seen) {return}
     kept:=make([]bool,len(b.bakes.values),context.temp_allocator)
     for row in 0..<core.count(bakes) {
         e:=core.entity_at(bakes,row)

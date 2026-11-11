@@ -25,13 +25,18 @@ a server or as a client; the server decides, a client predicts the body it drive
 mirai play <project> --server                           # serves and plays
 mirai play <project> --connect 127.0.0.1 --new-player   # a client; --new-player: own player
 mirai play <project> --connect 127.0.0.1 --latency 60 --loss 2   # --jitter <ms> too
+mirai play <project> --server --invite                  # serves only who brings its code
+mirai play <project> --connect R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT
 mirai build server                                      # dedicated build, run with --dedicated
 ```
 
-`--server [port]` serves, `--connect <address or invitation>` joins, `--invite` makes a code
-(`multiplayer.invite_code`, good from anywhere), `--until-empty` ends a server with nobody,
-`--status <file>` logs. `--server` with `--connect` is refused. Settings, read when the session
-opens, go in `settings.mirai`:
+Two ways in. **By address**: `--server [port]` serves, and anyone who reaches it joins with
+`--connect <address>`. **By invitation**: `--server --invite` serves only who brings its code,
+which it prints and `multiplayer.invite_code` gives the game to show; the code carries the host's
+address on its network and the one its router mapped, so one `--connect <code>` joins from the
+same network and from the internet. Every connection is encrypted either way. `--until-empty` ends
+a server with nobody, `--status <file>` logs. `--server` with `--connect` is refused. Settings,
+read when the session opens, go in `settings.mirai`:
 `{"Net_Settings": {"max_clients": 8}, "Spawn_Settings": {"players": true}}`.
 
 ## Replicate

@@ -1,6 +1,7 @@
 package multiplayer
 
 import "base:runtime"
+import "core:mem"
 import "core:slice"
 import "core:testing"
 import "core:time"
@@ -80,6 +81,7 @@ Toy_Pair :: struct {
     base:f64,
     rewinds:Net_Rewinds,
     sent:[dynamic]u64, // server: JOURNAL bytes sent by tick
+    seen:u64,          // server: the cursor of its connection events, as a generated call keeps it
 }
 
 @(private="file")
@@ -147,13 +149,19 @@ pair_tick :: proc(p:^Toy_Pair,tick:u64,amount:u32) {
         w:=&p.worlds[index]
         ref:=core.world_ref(w,&p.info)
         w.time.tick=tick+(index==1?8:0)
-        net_tick_head(ref,&p.apps[index],&p.sessions[index],&w.remote,&w.connections,&w.received,&p.problems[index])
+        net_tick_head(ref,&p.apps[index],&p.sessions[index],&w.remote,&w.connections,&w.messages,&p.problems[index])
         toy:=&p.toys[index]
-        journal_receive(&toy.journal,core.ref(&w.received),index==0,own_connection(core.ref(&p.sessions[index])),w.time,&p.rewinds,true,0,&p.problems[index])
+        // By their places in the messages of pair_init.
+        m:=&w.messages
+        inbox:=Journal_Inbox{core.inbox(m,0,Net_Journal_Op),core.inbox(m,1,Net_Journal_Part),core.inbox(m,4,Net_Journal_Refused),core.inbox(m,3,Net_Journal_Ask),core.inbox(m,2,Net_Journal_Resync)}
+        journal_receive(&toy.journal,inbox,index==0,own_connection(core.ref(&p.sessions[index])),w.time,&p.rewinds,true,0,&p.problems[index])
         if index==0 {
             if amount!=0 {toy_publish(toy,&w.outbox,w.time,amount)}
-            journal_connections(&toy.journal,core.ref(&w.connections))
-            for event in w.connections.events.items {
+            // The view of the log a step that reads Net_Connections is handed: what came since it last ran.
+            connections:=w.connections
+            core.events_read(&connections.events,&p.seen)
+            journal_connections(&toy.journal,core.ref(&connections))
+            for event in connections.events.items {
                 if event.kind==.Entered {journal_offer(&toy.journal,event.connection,TOY_KEY,true)}
             }
             toy_serve(toy,&w.outbox,w.time)
@@ -161,9 +169,7 @@ pair_tick :: proc(p:^Toy_Pair,tick:u64,amount:u32) {
             toy_follow(toy,w.time)
             journal_flush(&toy.journal,&w.outbox,w.time,core.ref(&p.sessions[index]))
         }
-        adoptions:Net_Adoptions
-        net_tick_tail(ref,&p.sessions[index],&w.outbox,&adoptions,&p.problems[index])
-        core.value_free(&adoptions,type_info_of(Net_Adoptions))
+        net_tick_tail(ref,&p.sessions[index],&w.outbox,&w.made,&p.problems[index])
     }
     append(&p.sent,p.toys[0].journal.stats.bytes_sent-before)
     for &session in p.sessions {wire.host_update(&session.host,now)}
@@ -246,17 +252,21 @@ a_correction_hands_each_operation_again_at_its_tick_and_never_twice :: proc(t:^t
     defer {journal_free(&server.journal);journal_free(&client.journal);free(server);free(client)}
     server.journal.id,client.journal.id=TOY_JOURNAL,TOY_JOURNAL
     outbox:Net_Outbox
-    events:Net_Events
     rewinds:Net_Rewinds
     problems:core.Problems
-    defer {core.value_free(&outbox,type_info_of(Net_Outbox));core.value_free(&events,type_info_of(Net_Events));delete(rewinds.queue.items)}
-    deliver :: proc(outbox:^Net_Outbox,events:^Net_Events) {
-        core.queue_clear(&events.received)
-        for item in core.take(&outbox.queue) {core.push(&events.received,Received{type=item.type,size=item.size,data=item.data})}
+    defer {core.value_free(&outbox,type_info_of(Net_Outbox));delete(rewinds.queue.items)}
+    // The operations the server queued, as the client hears them.
+    deliver :: proc(outbox:^Net_Outbox) -> Journal_Inbox {
+        ops:=make([dynamic]core.Message(Net_Journal_Op),context.temp_allocator)
+        for item in core.take(&outbox.queue) {
+            op:core.Message(Net_Journal_Op)
+            if item.type==Net_Journal_Op {mem.copy(&op.value,&outbox.bytes[item.at],size_of(op.value));append(&ops,op)}
+        }
+        clear(&outbox.bytes)
+        return {ops={ops[:]}}
     }
     for tick in u64(1)..=6 {toy_publish(server,&outbox,{tick=tick},u32(tick))}
-    deliver(&outbox,&events)
-    journal_receive(&client.journal,core.ref(&events),false,0,{tick=1},&rewinds,true,0,&problems)
+    journal_receive(&client.journal,deliver(&outbox),false,0,{tick=1},&rewinds,true,0,&problems)
     saved:=client.value
     for tick in u64(1)..=10 {toy_follow(client,{tick=tick})}
     present,applied:=client.value,client.applied
@@ -273,8 +283,7 @@ a_correction_hands_each_operation_again_at_its_tick_and_never_twice :: proc(t:^t
     testing.expect_value(t,client.value,present)
     // An operation of a tick the client ran.
     toy_publish(server,&outbox,{tick=7},9)
-    deliver(&outbox,&events)
-    journal_receive(&client.journal,core.ref(&events),false,0,{tick=11},&rewinds,true,0,&problems)
+    journal_receive(&client.journal,deliver(&outbox),false,0,{tick=11},&rewinds,true,0,&problems)
     asked:=core.take(&rewinds.queue)
     testing.expect(t,len(asked)==1 && asked[0]==7,"a late operation asks to go back to its tick")
     testing.expect_value(t,client.journal.stats.desyncs,0)
@@ -306,29 +315,25 @@ what_a_client_receives_without_memory_is_left_out_and_reported :: proc(t:^testin
     defer journal_free(&j)
     j.id=TOY_JOURNAL
     // The event is in its queue before the memory ends.
-    take :: proc(j:^Journal,item:Received,problems:^core.Problems,limit:^Memory_Limit,served:int) {
-        events:Net_Events
-        core.push(&events.received,item)
+    take :: proc(j:^Journal,inbox:Journal_Inbox,problems:^core.Problems,limit:^Memory_Limit,served:int) {
         rewinds:Net_Rewinds
         owner:=context.allocator
         limit.remaining=served
         context.allocator={memory_limit_proc,limit}
-        journal_receive(j,core.ref(&events),false,0,{tick=1},&rewinds,false,0,problems)
+        journal_receive(j,inbox,false,0,{tick=1},&rewinds,false,0,problems)
         context.allocator=owner
-        delete(events.received.items);delete(rewinds.queue.items)
+        delete(rewinds.queue.items)
     }
-    received :: proc(value:$T) -> Received {
-        value:=value
-        item:=Received{type=T,size=size_of(T)}
-        copy(item.data[:],([^]u8)(&value)[:size_of(T)])
-        return item
+    one :: proc(value:$T) -> core.Inbox(T) {
+        items:=make([]core.Message(T),1,context.temp_allocator)
+        items[0].value=value
+        return {items}
     }
     for sequence in ([]u32{5,9,3}) {
         logged,refused:=false,false
         for served in 0..<8 {
             problems:core.Problems
-            item:=received(Net_Journal_Op{journal=TOY_JOURNAL,op={key=TOY_KEY,sequence=sequence}})
-            take(&j,item,&problems,&limit,served)
+            take(&j,{ops=one(Net_Journal_Op{journal=TOY_JOURNAL,op={key=TOY_KEY,sequence=sequence}})},&problems,&limit,served)
             if logged=len(j.streams)==1 && entry_at(&j.streams[0],sequence)!=nil;logged {break}
             refused=true
             testing.expectf(t,problems.count==1,"operation %d with %d requests served is left out without a problem",sequence,served)
@@ -351,7 +356,7 @@ what_a_client_receives_without_memory_is_left_out_and_reported :: proc(t:^testin
             for offset,left:=0,served;offset==0 || offset<size;offset+=JOURNAL_PIECE {
                 piece:=Net_Journal_Part{journal=TOY_JOURNAL,key=TOY_KEY,first=true,last=true,base=true,raw=total,total=u32(size),offset=u32(offset),count=u16(min(size-offset,JOURNAL_PIECE))}
                 copy(piece.bytes[:],packed[offset:][:piece.count])
-                take(&j,received(piece),&problems,&limit,left)
+                take(&j,{parts=one(piece)},&problems,&limit,left)
                 left=limit.remaining
                 s=&j.streams[0]
             }

@@ -53,10 +53,8 @@ Link_Seen :: struct {
 // across it (changed): a class the arc does not fit does not get the link,
 // or gets it one way only.
 @(private)
-links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Link,$A),transforms:^core.Table(core.Transform,$B),parents:^core.Table(core.Parent,$C),physics:core.Ref(phys.Physics_State),changed:mm.Aabb,fresh:bool,problems:^core.Problems) {
-    stamps:=poses_stamps(links,transforms,parents)
-    if !fresh && stamps==b.links_stamps && mm.aabb_is_empty(changed) {return}
-    b.links_stamps=stamps
+links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Link,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),physics:core.Ref(phys.Physics_State),changed:mm.Aabb,fresh:bool,problems:^core.Problems) {
+    if !boxes_touched(links,{},transforms,parents,&b.links_seen) && !fresh && mm.aabb_is_empty(changed) {return}
     if fresh {
         for i in 0..<n.count {
             if class_in_volume(n,i) {continue}
@@ -68,7 +66,7 @@ links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Li
         core.entity_map_clear(&b.links)
     }
     seen,enough:=seen_reset(b,len(b.links.values),problems)
-    if !enough {b.links_stamps={};return}
+    if !enough {b.links_seen={};return}
     b.looked+=u64(core.count(links))+u64(len(seen))
     for row in 0..<core.count(links) {
         e:=core.entity_at(links,row)

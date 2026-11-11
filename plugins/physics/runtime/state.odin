@@ -36,23 +36,31 @@ Physics_State :: struct {
     ready:bool,
     world:sim.World,
     links:core.Entity_Map(Link),        // by entity with a body, a collider, a character or a proxy
+    // Of the chunks of links.values: the revision of the world at their last write, as the pools of the
+    // simulation are stamped. A copy takes the chunks that differ, and the entities and rows with any.
+    link_stamps:[dynamic]u64,
     joints:core.Entity_Map(Joint_Link), // by entity with a Joint
     fluids:core.Entity_Map(Fluid_Link), // by entity with a Fluid
     fluids_synced:u64, // the versions of the tables the fluids were last made from
     world_body:sim.Body_Handle, // the static body joints to the world hold on to
     geometry:[dynamic]Geometry_Mark, // by slot of the hulls, then the meshes, then the heightfields of the world
     sources:[dynamic]Geometry_Source, // by slot as geometry: what it was made from, to share it
+    source_stamps:[dynamic]u64, // of the chunks of sources, as link_stamps
     pieces:[dynamic]Piece, // runs of Link.pieces; a zero entry is free
     forwarded:[6]int, // events of the simulation already sent
     pass:u32,
     epoch:u32, // invalidates host caches when simulation storage is replaced
     synced:u64, // the versions of the tables and assets the bodies were last made from
+    rows_seen:[3]core.Seen, // of Rigid_Body, Collider and Character, at the end of the last sync that reached every body
     sealed_key:u64, // what a sync reads besides the Transform values, at the last one; 0 makes the next whole
     transforms_seen:core.Seen, // of Transform, at the end of the last tick that left the bodies as their rows
     unmade:bool, // the last sync left a body or character unmade, which a whole sync tries again
     sealed:[dynamic]Sealed_Body, // scratch of sealed_sync, as long as the rows of the bodies
+    visited:[dynamic]u32, // scratch of a sync, by link: the pass that synced it
     proxies:[dynamic]core.Entity, // the entities of the Proxy links
+    held:[dynamic]Held, // what a manipulation or a pose target steers
     owned:[dynamic]Owned, // by slot of the bodies of the world: those another library owns (owned.odin)
+    owned_stamps:[dynamic]u64, // of the chunks of owned, as link_stamps
     // The links, by where they are, whose rows the next step brings back besides those of the bodies it moves
     // (link_touch); with touched_all, every link.
     touched:[dynamic]u32,
@@ -91,11 +99,10 @@ Piece :: struct {shape:sim.Shape_Handle,hull:sim.Hull_Handle}
 @(private)
 Piece_Run :: struct {first,count:u32}
 
-// What the simulation made for one entity and the copy of what it was made
-// from: a change shows by comparing.
+// What the simulation made for one entity. Whether its rows changed is told by their stamps, and
+// what its shapes were made from by made.
 @(private)
 Link :: struct {
-    pass:u32,
     kind:Link_Kind,
     body:sim.Body_Handle,
     shape:sim.Shape_Handle,
@@ -105,42 +112,27 @@ Link :: struct {
     heightfield:sim.Heightfield_Handle,
     character:sim.Character_Handle,
     owner:core.Entity, // compound: the ancestor whose body carries the shape
-    rigid:Rigid_Body,
-    has_rigid:bool,
-    collider:Collider,
-    has_collider:bool,
-    filter:sim.Filter, // what the collider meets under the settings
-    config:Character,
-    scale:[3]f32,
-    relative:mm.Transform, // compound: where the entity is in the frame of the owner
-    shown:Shown,
-    placed:sim.Transform, // the pose the body was reconciled with
-    written_position:[3]f32, // what the simulation wrote to the Transform last
-    written_rotation:mm.Quat,
-    hold:Hold,
-    target_placed:u32,          // the core.Pose_Target.placed it took
-    // A character a following pose target leads (a shown replica): put at the
-    // pose after every step, so neither its move nor what it touches takes it
-    // away from what the other owner shows.
-    followed:bool,
-    follow:sim.Transform,
-    follow_linear:[3]f32,
-    refused:bool,        // the simulation did not accept the shape: not asked again until the collider changes
-    height_asked:f32,    // character: the height of the capsule its Character_Move asked in the last step
+    made:u64, // a hash of what its shapes or its capsule were made from (shape_key): another asks to make them again
 }
 
-// Who holds a body as kinematic, heading for a pose in every step: a
-// manipulation (a tool, a ragdoll) or a following pose target, which goes first.
+// Who holds a body, heading for a pose in every step: a manipulation (a tool, a
+// ragdoll) or a following pose target, which goes first and holds it as kinematic.
+// A character a following target leads is put at its pose after every step.
 @(private)
 Hold_Source :: enum u8 {Manipulation,Target}
 
+// What steers a body or a character: the sources that hold it, and the pose target it took.
 @(private)
-Hold :: struct {
+Held :: struct {
+    entity:core.Entity,
     by:bit_set[Hold_Source;u8],
-    type_before:Body_Type, // what the body was before the first one held it
+    type_before:Body_Type, // what the body was before it was held as kinematic
+    release:bool,          // the following manipulation lets go once its pose is reached
+    follow:bool,           // the manipulation holds the body as kinematic; else a spring pulls it
+    placed:u32,            // the core.Pose_Target.placed it took
     pose:[Hold_Source]sim.Transform,
-    release:bool,          // the manipulation lets go once its pose is reached
-    keep_velocity:bool,    // and leaves the body moving
+    linear:[3]f32,         // of a character a following target leads
+    pull:sim.Joint_Handle, // the spring from the world body of a manipulation that pulls
 }
 
 @(private)
@@ -250,13 +242,17 @@ apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,
 move_kinematic :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1) {
     core.push(&requests.queue,Body_Request{entity=e,kind=.Kinematic,position=position,rotation=rotation})
 }
-// Temporarily holds a body as kinematic, pursuing the world pose at the solver's speed limits.
-manipulation_target :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1) {
-    core.push(&requests.queue,Body_Request{entity=e,kind=.Manipulate,position=position,rotation=rotation})
+// Holds a body toward a world pose until manipulation_end. A dynamic body stays dynamic: a spring of bounded
+// force pulls it, so it collides and pushes with at most PULL_WEIGHTS times its weight. A static or
+// kinematic body, or any with follow (a pose by design: an animated ragdoll), is held as kinematic and
+// reaches the pose at the solver's speed limits, pushing what it touches.
+manipulation_target :: proc(requests:^Body_Requests,e:core.Entity,position:[3]f32,rotation:mm.Quat=1,follow:=false) {
+    core.push(&requests.queue,Body_Request{entity=e,kind=.Manipulate,position=position,rotation=rotation,override=follow})
 }
-// Releases once the pending target is reached, preserving pose and clearing velocity.
-manipulation_end :: proc(requests:^Body_Requests,e:core.Entity,preserve_velocity:=false) {
-    core.push(&requests.queue,Body_Request{entity=e,kind=.Release_Manipulation,override=preserve_velocity})
+// Lets go: a pulled body at once, a held one once it reaches its pose. A body dynamic again keeps its
+// velocity; any other stops.
+manipulation_end :: proc(requests:^Body_Requests,e:core.Entity) {
+    core.push(&requests.queue,Body_Request{entity=e,kind=.Release_Manipulation})
 }
 
 // a and b are the entities of the bodies; collider_a and collider_b those of the colliders that touched,
@@ -269,7 +265,7 @@ Contact_Begin :: struct {
 }
 Contact_End :: struct {a,b,collider_a,collider_b:core.Entity}
 // One for each side of a pair that overlaps: entity is the body and collider the collider of that side.
-// crossed: a bullet went through the other collider within the tick, which begins and ends the pair at once.
+// crossed: a fast body went through the other collider within the tick, which begins and ends the pair at once.
 Overlap_Event :: struct {entity,other,collider,other_collider:core.Entity,crossed:bool}
 Body_Event :: struct {entity:core.Entity}
 Joint_Break :: struct {
@@ -568,25 +564,28 @@ overlap :: proc(physics:core.Ref(Physics_State),geometry:sim.Geometry,transform:
 }
 
 // Makes dst the world of src: the same bodies, geometry and links.
-state_copy :: proc(dst,src:^Physics_State) -> bool {return state_copy_as(dst,src,false)}
+state_copy :: proc(dst,src:^Physics_State) -> bool {_,ok:=state_copy_as(dst,src,false);return ok}
 
 // The copy a history keeps to copy back later: the pools of its simulation
 // only as large as those of src are used, not as their capacities.
-state_copy_kept :: proc(dst,src:^Physics_State) -> bool {return state_copy_as(dst,src,true)}
+state_copy_kept :: proc(dst,src:^Physics_State) -> bool {_,ok:=state_copy_as(dst,src,true);return ok}
 
+// Returns the bytes it wrote of the simulation and of the links, the geometry sources and the owned bodies:
+// those of the chunks written since the copy dst holds, or all of them from another timeline.
 @(private)
-state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
-    if dst==src {return true}
-    if !core.entity_map_copy(&dst.links,&src.links) || !core.entity_map_copy(&dst.joints,&src.joints) || !core.entity_map_copy(&dst.fluids,&src.fluids) {return false}
-    if !array_copy(&dst.sources,src.sources[:]) || !array_copy(&dst.pieces,src.pieces[:]) || !array_copy(&dst.proxies,src.proxies[:]) || !array_copy(&dst.owned,src.owned[:]) {return false}
+state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> (written:int,ok:bool) {
+    if dst==src {return 0,true}
+    if !core.entity_map_copy(&dst.joints,&src.joints) || !core.entity_map_copy(&dst.fluids,&src.fluids) {return}
+    if !array_copy(&dst.pieces,src.pieces[:]) || !array_copy(&dst.proxies,src.proxies[:]) || !array_copy(&dst.held,src.held[:]) {return}
+    clear(&dst.visited)
     dst.touched_all=true
-    dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen
+    dst.world_body,dst.pass,dst.stats,dst.collision,dst.targets_seen,dst.rows_seen=src.world_body,src.pass,src.stats,src.collision,src.targets_seen,src.rows_seen
     dst.forwarded={}
     if !src.ready {
         if dst.ready {sim.world_destroy(&dst.world)}
         dst.ready=false
         dst.epoch=max(dst.epoch,src.epoch)+1;if dst.epoch==0 {dst.epoch=1}
-        return true
+        return stamped_state_copy(dst,src,true)
     }
     wanted:=src.world.desc
     wanted.parallel_user=nil
@@ -600,22 +599,65 @@ state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
             dst.ready=false
         }
     }
-    if !dst.ready {
+    remade:=!dst.ready
+    if remade {
         clear(&dst.geometry)
         if !(kept?sim.world_kept_init(&dst.world,&src.world,wanted.allocator):sim.world_init(&dst.world,wanted)) {
-            return false
+            return
         }
         dst.ready=true
     }
-    if !geometry_copy(dst,src) {return false}
+    // Of one timeline, as the simulation copies its pools: what dst holds of src since they were last alike.
+    written=stamped_state_copy(dst,src,remade || dst.world.lineage!=src.world.lineage) or_return
+    if !geometry_copy(dst,src) {return}
     dst.pushes_set=src.pushes_set
     dst.own_gravity=src.own_gravity
     dst.gravity.index.made=false
-    if _,copied:=sim.world_state_copy(&dst.world,&src.world);!copied {return false}
+    pools,copied:=sim.world_state_copy(&dst.world,&src.world)
+    if !copied {return}
     dst.synced,dst.fluids_synced=src.synced,src.fluids_synced
     dst.sealed_key,dst.transforms_seen,dst.unmade=0,{},src.unmade
     dst.epoch=max(dst.epoch,src.epoch)+1;if dst.epoch==0 {dst.epoch=1}
+    return written+pools,true
+}
+
+// The links, the geometry sources and the owned bodies of src in dst, chunk by chunk.
+@(private)
+stamped_state_copy :: proc(dst,src:^Physics_State,whole:bool) -> (written:int,ok:bool) {
+    d,s:=&dst.links,&src.links
+    had:=len(d.values)
+    written=stamped_copy(&d.values,&dst.link_stamps,s.values[:],src.link_stamps[:],whole) or_return
+    if written>0 || len(s.values)<had {
+        if !array_copy(&d.entities,s.entities[:]) || !array_copy(&d.rows,s.rows[:]) {return}
+        written+=len(s.entities)*size_of(core.Entity)+len(s.rows)*size_of(i32)
+    }
+    sources:=stamped_copy(&dst.sources,&dst.source_stamps,src.sources[:],src.source_stamps[:],whole) or_return
+    owned:=stamped_copy(&dst.owned,&dst.owned_stamps,src.owned[:],src.owned_stamps[:],whole) or_return
+    return written+sources+owned,true
+}
+
+// dst as src, taking the chunks stamped otherwise in src, or all with whole. Returns the bytes written.
+@(private)
+stamped_copy :: proc(dst:^[dynamic]$T,dst_stamps:^[dynamic]u64,src:[]T,src_stamps:[]u64,whole:bool) -> (written:int,ok:bool) {
+    had:=len(dst)
+    if resize(dst,len(src))!=nil || !stamps_fit(dst_stamps,had,len(src)) {return}
+    arrays:=[1]base.Chunk_Copy{{mem.slice_to_bytes(dst[:]),mem.slice_to_bytes(src),size_of(T)}}
+    return base.chunks_copy(arrays[:],dst_stamps[:],src_stamps,len(src),whole || len(src_stamps)<base.chunks_of(len(src))),true
+}
+
+// Stamps for the chunks of count slots; when there were had, those of the slots it gains at zero, so a copy
+// takes them.
+@(private)
+stamps_fit :: proc(stamps:^[dynamic]u64,had,count:int) -> bool {
+    if resize(stamps,base.chunks_of(count))!=nil {return false}
+    if count>had {for &stamp in stamps[min(had>>base.CHUNK_BITS,len(stamps)):] {stamp=0}}
     return true
+}
+
+// A slot of an array of the state was written: a copy takes its chunk again.
+@(private)
+slot_stamp :: proc(state:^Physics_State,stamps:[]u64,slot:int) {
+    if k:=slot>>base.CHUNK_BITS;slot>=0 && k<len(stamps) {stamps[k]=state.world.revision}
 }
 
 state_swap :: proc(a,b:^Physics_State) {
@@ -634,7 +676,8 @@ state_swap :: proc(a,b:^Physics_State) {
 state_destroy :: proc(state:^Physics_State) {
     if state.ready {sim.world_destroy(&state.world)}
     core.entity_map_destroy(&state.links);core.entity_map_destroy(&state.joints);core.entity_map_destroy(&state.fluids);delete(state.geometry);delete(state.sources);delete(state.pieces)
-    delete(state.sealed);delete(state.proxies);delete(state.touched);delete(state.owned)
+    delete(state.sealed);delete(state.proxies);delete(state.touched);delete(state.owned);delete(state.held);delete(state.visited)
+    delete(state.link_stamps);delete(state.source_stamps);delete(state.owned_stamps)
     volume.index_destroy(&state.gravity.index)
     state^={}
 }
@@ -644,11 +687,12 @@ state_reset :: proc(state:^Physics_State) {
     if state.ready {sim.world_destroy(&state.world)}
     state.ready=false
     clear(&state.geometry)
-    clear(&state.sources)
+    clear(&state.sources);clear(&state.source_stamps)
     clear(&state.pieces)
     clear(&state.proxies)
+    clear(&state.held)
     clear(&state.touched)
-    clear(&state.owned)
+    clear(&state.owned);clear(&state.owned_stamps)
     core.entity_map_clear(&state.links);core.entity_map_clear(&state.joints);core.entity_map_clear(&state.fluids)
     state.world_body={}
     state.forwarded={}
@@ -819,8 +863,8 @@ state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^j
     desc.worker_count=jobs_workers(job_system)
     desc.parallel_for=physics_parallel_for
     clear(&state.geometry)
-    clear(&state.sources)
-    clear(&state.owned)
+    clear(&state.sources);clear(&state.source_stamps)
+    clear(&state.owned);clear(&state.owned_stamps)
     if !sim.world_init(&state.world,desc) {
         core.report(problems,core.NONE,"physics.world","the simulation of this world was not made: out of memory for the capacities of Physics_Settings (%d bodies, %d shapes, %d contacts), or one of them is not valid; lower them, or free memory",desc.body_capacity,desc.shape_capacity,desc.contact_capacity)
         return false

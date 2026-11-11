@@ -25,7 +25,7 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     // 257 samples on a side: 25 pages of heights, a stroke in one of them.
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{257,1,257},1,32)) {return}
-    for x in 0..<257 {for z in 0..<257 {terrain.grid_put(&source.heights,{x,0,z},f32((x*7+z*3)%11)*0.125,source.allocator)}}
+    for x in 0..<257 {for z in 0..<257 {terrain.grid_put(&source.field,{x,0,z},f32((x*7+z*3)%11)*0.125,source.allocator)}}
     id:=base.Asset_Id{91,92};source.revision=1
     testing.expect_value(t,terrain.source_save(&source,path,id,&assets.types),asset.Error.None)
     host.assets_scan(&assets)
@@ -61,7 +61,7 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     second:=test_held(t,&assets,relative);defer delete(second)
     if !testing.expect_value(t,len(tool.steps),2) {return}
     for &step in tool.steps {
-        testing.expect(t,!step.whole && !step.heights.whole && len(step.heights.pages)==1,"a stroke keeps the one page it changed")
+        testing.expect(t,!step.whole && !step.field.whole && len(step.field.pages)==1,"a stroke keeps the one page it changed")
     }
     // Undo twice and redo twice put back the bytes of each revision.
     walk :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,world:^Create_Test_World,app:^host.App,undo:bool) {

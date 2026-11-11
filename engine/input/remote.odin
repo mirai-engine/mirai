@@ -47,7 +47,7 @@ seat_remote :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input_
         }
         sent.down|=bit
         sent.motion|=moved&bit
-        kind:=bindings.kinds[i]
+        kind:=bindings.actions[i].kind
         if kind==.Button {continue}
         if int(sent.axis_count)>=REMOTE_AXES {
             ok=false
@@ -105,7 +105,7 @@ actions_receive :: proc(actions:^Actions,m:^Input_Map,sent:Remote_Actions,dt:f32
         down:=sent.down&bit!=0
         value:f32
         vector:math.Vec2
-        switch m.kinds[i] {
+        switch m.actions[i].kind {
         case .Button: value=down?1:0
         case .Axis:   value=down?values[i].x:0
         case .Axis2:
@@ -121,10 +121,8 @@ actions_receive :: proc(actions:^Actions,m:^Input_Map,sent:Remote_Actions,dt:f32
 // The actions a mouse axis drives: what moves by the movement of the tick.
 @(private)
 motion_actions :: proc "contextless" (m:^Input_Map) -> (mask:Action_Mask) {
-    for &binding in m.bindings[:min(int(m.binding_count),BINDING_CAPACITY)] {
-        for code in binding.codes[:min(int(binding.count),len(binding.codes))] {
-            if code.device==.Mouse_Axis && int(binding.action)<ACTION_CAPACITY {mask|=action_bit(binding.action)}
-        }
+    for i in 0..<action_end(m) {
+        if action_reads_mouse(m,Action(i)) {mask|=action_bit(Action(i))}
     }
     return
 }

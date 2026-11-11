@@ -42,6 +42,7 @@ Scene_Test :: struct {
 @(private="file")
 lamp_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
     asset.scene_init(&lamp,types,TEST_LAMP)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
     light:=Scene_Test_Lamp{range,1}
@@ -567,12 +568,14 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     if !testing.expect_value(t,capture_error,Error.None) {return}
     testing.expect_value(t,captured.dangling,1)
     defer asset.scene_destroy(&document)
+    document.doc.flags+={.Prefab}
     out:serial.Writer;serial.writer_init(&out,0,context.allocator);defer serial.writer_destroy(&out)
     if !testing.expect(t,asset.scene_write(&document,&out)==.None) {return}
     file:asset.Asset
     if !testing.expect(t,asset.asset_open(&file,serial.writer_bytes(&out),context.allocator)==.None) {return}
     defer asset.asset_close(&file)
-    testing.expect(t,asset.asset_prefab(&file),"what is under one entity is a scene with one root: a prefab")
+    _,rooted:=asset.prefab_root(&document)
+    testing.expect(t,rooted && asset.asset_prefab(&file),"what is under one entity is a scene with one root, written as a prefab")
 
     core.test_world_clear(w)
     made:[2][2]core.Entity

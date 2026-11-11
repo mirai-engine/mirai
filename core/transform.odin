@@ -169,7 +169,9 @@ transforms_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^
         previous_moving=p.spare[:]
     }
     c:=changes(locals,&p.seen_locals)
-    moved,whole:=hierarchy_moved(h,&p.seen_tree)
+    moved:[]Entity
+    whole:bool
+    if h.ptr!=nil {moved,whole=log_since(h.moved,&p.seen_tree)}
     if size:=raw_indices(raw(locals));len(p.worlds)<size && (resize(&p.worlds,size)!=nil || resize(&p.computed,size)!=nil || resize(&p.listed,size)!=nil) {
         p.seen_locals.gone=max(u64) // the next pass has not seen these rows
         return

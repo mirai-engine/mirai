@@ -50,10 +50,9 @@ Table :: struct($T:typeid,$A:=Access.Write) {
     added:[dynamic]T,         // values of the pending adds
     edits:[dynamic]Edit,      // the rows asked for to write since the table last settled
     edited:[dynamic]T,        // by edit: the value its row had when it was asked for
-    gone:[dynamic]Entity,     // the entities whose row stopped being on, oldest first; made when the first one goes
+    gone:Log(Entity),         // the entities whose row stopped being on; its room is made when the first one goes
     version:u64,
     layout:u64,               // grows when rows are added, removed, turned on or off, or replaced whole
-    gone_first:u64,           // how many entities went before gone[0]
     edit_from,edit_to:u64,    // the version before the first of the edits, and the stamp of the last ones
     on:int,                   // the rows below it are on
     base:bool,                // identity, transform or hierarchy: on while its entity is disabled
@@ -270,7 +269,7 @@ raw_init :: proc(t:^Raw_Table,name:string,allocator:=context.allocator) {
     t.added={allocator=allocator}
     t.edits=make([dynamic]Edit,allocator)
     t.edited={allocator=allocator}
-    t.gone=make([dynamic]Entity,allocator)
+    t.gone.items=make([dynamic]Entity,allocator)
     t.owners=make([dynamic]Row_Owner,allocator)
     t.name=name
 }
@@ -284,7 +283,7 @@ raw_destroy :: proc(t:^Raw_Table,size:int) {
     }
     for page in t.rows {delete(page,t.rows.allocator)}
     delete(t.entities);delete(t.stamps);delete(t.page_stamps);delete(t.off);delete(t.turns);delete(t.rows)
-    delete(t.pending);delete(t.gone);delete(t.owners);delete(t.edits)
+    delete(t.pending);delete(t.gone.items);delete(t.owners);delete(t.edits)
     t^={}
 }
 
@@ -425,10 +424,11 @@ table_append :: proc(t:^Table($T),e:Entity,value:T) -> bool {
 }
 
 // Whether the row at an index is new to its writer: it has its value from an
-// add and no function of its writer wrote it yet. What the writer asks, before
-// or after it asks for the row, to set up in its first tick what the row
-// starts with, in place of a field that says it did. It is of the row: a World
-// copied, or rolled back, keeps it.
+// add and no function of its writer wrote it yet, nor its author outside the
+// loops (the editor, which Play copies: raw_author). What the writer asks,
+// before or after it asks for the row, to set up in its first tick what the
+// row starts with, in place of a field that says it did. It is of the row: a
+// World copied, or rolled back, keeps it.
 added :: #force_inline proc "contextless" (t:^Table($T,$A),row:int) -> bool {return t.stamps[row]&1==1}
 
 // The value the entity will have at the end of the function, to write: the
@@ -499,17 +499,14 @@ Changes :: struct {
 // table settles again. off: each_changed also goes through the rows off, for
 // code that walks every row by reflection.
 raw_changes :: proc "contextless" (t:^Raw_Table,seen:^Seen,off:=false) -> (c:Changes) {
-    end:=t.gone_first+u64(len(t.gone))
     c.since=seen.version
+    gone,whole:=log_since(t.gone,&seen.gone)
     // Versions only grow: one seen above this one is of other rows.
-    if seen.gone<t.gone_first || seen.gone>end || seen.version>t.version {
-        c.all=true
-    } else {
-        c.gone=t.gone[seen.gone-t.gone_first:]
-    }
+    c.all=whole || seen.version>t.version
+    if !c.all {c.gone=gone}
     c.written=c.all || t.version!=seen.version
     if c.written {c.rows=off?len(t.stamps):t.on}
-    seen^={t.version,end}
+    seen.version=t.version
     return
 }
 changes :: #force_inline proc "contextless" (t:^Table($T,$A),seen:^Seen) -> Changes {return raw_changes(raw(t),seen)}
@@ -580,8 +577,10 @@ each_joined :: proc{joined2,joined3}
 
 // Whether anything changed in a table since seen, which it moves to now:
 // what a reader asks that makes again whole what it derives from the table.
+// A table the World does not have (nil) never changes.
 raw_touched :: proc "contextless" (t:^Raw_Table,seen:^Seen) -> bool {
-    now:=Seen{t.version,t.gone_first+u64(len(t.gone))}
+    if t==nil {return false}
+    now:=Seen{t.version,log_end(t.gone)}
     if seen^==now {return false}
     seen^=now
     return true
@@ -611,6 +610,7 @@ Shape :: distinct u64
 // moves to now, whatever was written in them: what orders or indexes the
 // rows of a table written every tick asks.
 raw_reshaped :: proc "contextless" (t:^Raw_Table,shape:^Shape) -> bool {
+    if t==nil {return false}
     if shape^==Shape(t.layout) {return false}
     shape^=Shape(t.layout)
     return true
@@ -624,7 +624,7 @@ raw_clear :: proc(t:^Raw_Table) {
     edits_drop(t)
     t.values.len,t.added.len=0,0
     clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);clear(&t.off);clear(&t.turns);clear(&t.pending)
-    gone_reset(t)
+    log_reset(&t.gone)
     rows_zero(t)
     t.on=0
     t.version=version_top(t)+1
@@ -765,7 +765,7 @@ table_settle_reserve :: proc(t:^Raw_Table,size,align:int,es:^Entities) -> bool {
 @(private)
 raw_reserve :: proc(t:^Raw_Table,size,align,rows,high:int) -> bool {
     if !raw_rows_reserve(t,size,align,rows) {return false}
-    if cap(t.gone)>0 && cap(t.gone)<2*rows && reserve(&t.gone,max(2*rows,2*cap(t.gone)))!=nil {return false}
+    if cap(t.gone.items)>0 && cap(t.gone.items)<2*rows && reserve(&t.gone.items,max(2*rows,2*cap(t.gone.items)))!=nil {return false}
     for lock in t.locks {
         if owners:=lock_owners(t,lock);high>=len(owners) && resize(owners,high+1)!=nil {return false}
     }
@@ -921,30 +921,11 @@ table_swap_rows :: proc "contextless" (t:^Raw_Table,size,a,b:int) {
 // older half; without room every reader reads the table whole.
 @(private)
 gone_push :: proc(t:^Raw_Table,e:Entity) {
-    gone:=cast(^runtime.Raw_Dynamic_Array)&t.gone
-    if gone.cap==0 && reserve(&t.gone,max(GONE_CAPACITY,2*cap(t.entities)))!=nil {
-        gone_reset(t)
+    if cap(t.gone.items)==0 && reserve(&t.gone.items,max(GONE_CAPACITY,2*cap(t.entities)))!=nil {
+        log_reset(&t.gone)
         return
     }
-    if gone.len==gone.cap {
-        if gone.len==0 {
-            gone_reset(t)
-            return
-        }
-        half:=(gone.len+1)/2
-        copy(t.gone[:],t.gone[half:])
-        gone.len-=half
-        t.gone_first+=u64(half)
-    }
-    gone.len+=1
-    t.gone[gone.len-1]=e
-}
-
-// No reader has seen what the table holds now.
-@(private)
-gone_reset :: proc "contextless" (t:^Raw_Table) {
-    t.gone_first+=u64(len(t.gone))+1
-    clear(&t.gone)
+    log_push(&t.gone,e,cap(t.gone.items))
 }
 
 table_copy :: proc(dst,src:^Table($T)) -> bool {return raw_copy(raw(dst),raw(src),type_info_of(T),false)}
@@ -968,9 +949,7 @@ raw_copy :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool) -> bool {
        !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.owners,cast(^runtime.Raw_Dynamic_Array)&src.owners,size_of(Row_Owner),align_of(Row_Owner)) {return false}
     clear(&dst.pending)
     dst.added.len=0
-    first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
-    clear(&dst.gone)
-    dst.gone_first=first
+    log_reset(&dst.gone,log_end(src.gone))
     dst.on=src.on
     dst.version=max(version_top(dst),src.version)+1
     dst.layout=max(dst.layout,src.layout)+1
@@ -1030,9 +1009,7 @@ raw_copy_changed :: proc(dst,src:^Raw_Table,info:^runtime.Type_Info,flat:bool,ma
     if !slice.equal(dst.owners[:],src.owners[:]) && !array_copy_flat(cast(^runtime.Raw_Dynamic_Array)&dst.owners,cast(^runtime.Raw_Dynamic_Array)&src.owners,size_of(Row_Owner),align_of(Row_Owner)) {return false}
     clear(&dst.pending)
     dst.added.len=0
-    first:=max(dst.gone_first+u64(len(dst.gone)),src.gone_first+u64(len(src.gone)))+1
-    clear(&dst.gone)
-    dst.gone_first=first
+    log_reset(&dst.gone,log_end(src.gone))
     dst.version=max(version_top(dst),src.version)+1
     dst.layout=max(dst.layout,src.layout)+1
     mark^={src.version,src.layout,true}
@@ -1098,7 +1075,7 @@ raw_swap :: proc(a,b:^Raw_Table) {
     edits_drop(a);edits_drop(b)
     version:=max(version_top(a),version_top(b))+1
     layout:=max(a.layout,b.layout)+1
-    first:=max(a.gone_first+u64(len(a.gone)),b.gone_first+u64(len(b.gone)))+1
+    gone:=max(log_end(a.gone),log_end(b.gone))
     a.values,b.values=b.values,a.values
     a.entities,b.entities=b.entities,a.entities
     a.stamps,b.stamps=b.stamps,a.stamps
@@ -1112,8 +1089,7 @@ raw_swap :: proc(a,b:^Raw_Table) {
     a.on,b.on=b.on,a.on
     table_waits(a,len(a.pending)>0)
     table_waits(b,len(b.pending)>0)
-    clear(&a.gone);clear(&b.gone)
-    a.gone_first,b.gone_first=first,first
+    log_reset(&a.gone,gone);log_reset(&b.gone,gone)
     a.version,b.version=version,version
     a.layout,b.layout=layout,layout
 }
@@ -1186,10 +1162,9 @@ Raw_Table :: struct {
     added:runtime.Raw_Dynamic_Array,
     edits:[dynamic]Edit,
     edited:runtime.Raw_Dynamic_Array,
-    gone:[dynamic]Entity,
+    gone:Log(Entity),
     version:u64,
     layout:u64,
-    gone_first:u64,
     edit_from,edit_to:u64,
     on:int,
     base:bool,
@@ -1236,6 +1211,17 @@ raw_edit :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,e:Entity) -
     return raw_value(t,type,row)
 }
 
+// The row of an entity to write as its author, outside the loops (the
+// editor, an undo): it takes a stamp and stays added, since the library that
+// writes the table has not seen it yet. nil without one.
+raw_author :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,e:Entity) -> rawptr {
+    row:=raw_row(t,e)
+    if row<0 {return nil}
+    t.version=version_write(t)+(t.stamps[row]&1)
+    stamp_set(t,row,t.version)
+    return raw_value(t,type,row)
+}
+
 // The row of an entity to read, on or off; nil without one.
 raw_find :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,e:Entity) -> rawptr {
     row:=raw_row(t,e)
@@ -1248,6 +1234,10 @@ raw_value :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,row:int) -
     if type.size==0 {return t}
     return rawptr(uintptr(t.values.data)+uintptr(row)*uintptr(type.size))
 }
+
+// The stamp the next settle gives what it adds or turns: a reader that is to
+// see past what that settle makes takes it as seen.
+raw_settle_stamp :: #force_inline proc "contextless" (t:^Raw_Table) -> u64 {return ((version_top(t)+2)&~u64(1))+1}
 
 // Says that the row of an entity was written in place, through a pointer
 // raw_find gave: a widget bound to its fields.
@@ -1366,7 +1356,7 @@ raw_room :: proc(t:^Raw_Table,limit:int) -> bool {
     for i:=0;i<limit;i+=ROWS_PAGE {
         if !rows_room(t,i,limit) {return false}
     }
-    return cap(t.gone)>0 || reserve(&t.gone,max(GONE_CAPACITY,2*cap(t.entities)))==nil
+    return cap(t.gone.items)>0 || reserve(&t.gone.items,max(GONE_CAPACITY,2*cap(t.entities)))==nil
 }
 
 // Every row, on or off.

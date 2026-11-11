@@ -208,6 +208,11 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
 - **Image.** `Output` finishes the last image written: an own pass that writes `Taa` takes the
   place of `Resolve`, like an upscaler, and one that writes `Display` returns to the unresolved
   image.
+- **Given light.** An own pass that writes `Direct` takes the place of `Direct`; one that writes
+  `Gi`, of `Indirect` (both is an error): `Gi` is then the diffuse indirect light itself, which the
+  composite takes instead of the probe volume's (`FRAME_FLAG_GI_GIVEN`), and it keeps what the pass
+  left the frame before. The references of the tests are such passes
+  ([indirect reference](gi.md#indirect-reference)).
 - **Request.** A pipeline is requested in every frame that uses it; the renderer compiles it the
   first time, identifies it by a hash of the description (including `record` and `user`: a project
   reload gives another) and keeps up to `RENDER_PIPELINE_CAPACITY` (16); one that no recent frame
@@ -429,6 +434,14 @@ frame and the current one:
     without requesting it, or with the view;
   - `pass_texture_sample(pass, slot, desc, previous)` binds it for the dispatches or draws that
     read it.
+    `pass_volume_sample(pass, slot, name)` binds a volume another extension of the view asked
+    for, or a stand-in.
+- **The media of a view** (`engine/render/media.odin`, `shaders/include/media_grid.slang`): one
+  volume along the frustum, in the cells of `media_grid`, holding from the eye to each cell what
+  the media scatter towards the eye and let through. The plugin that has media writes it in the
+  `Lit` stage as `MEDIA_TEXTURE` ([fog](../../mirai-plugins/references/render-plugins.md#fog));
+  what is blended later binds it with `pass_media` before its pass and calls `media_over` at its
+  place, so it goes behind the same haze as the opaque scene.
 - **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in `SLOT_PASS0 +
   slot` a buffer that the renderer keeps for the extension under that name and the pass's world,
   until it releases it (`buffer_release(renderer, world, name)`, in the world's `release`) or the

@@ -15,8 +15,8 @@ import "mirai:platform"
 @(actions)
 Menu_Action :: enum u8 {Menu}
 
-// The bindings of the menu action when input.mirai of the project does not name it.
-menu_action_defaults :: proc "contextless" () -> [Menu_Action]inp.Action_Default {
+// The bindings of the menu action when Input_Settings does not name it.
+menu_action_defaults :: proc "contextless" () -> [Menu_Action]inp.Action_Bindings {
     return {.Menu=inp.action_default_in(inp.CONTEXT_ALWAYS,.Button,inp.binding_key(.Escape),inp.binding_gamepad_button(.Start))}
 }
 

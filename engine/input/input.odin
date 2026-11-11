@@ -2,12 +2,10 @@ package input
 
 import "base:intrinsics"
 import "base:runtime"
-import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:os"
-import "core:reflect"
 import "core:strings"
 import "mirai:core"
 import "mirai:host"
@@ -23,14 +21,13 @@ import "mirai:std/math"
 // simulated again gives the same.
 //
 // Each library declares its actions as an enum @(actions), and beside it the
-// defaults of the ones it wants driven without input.mirai (Action_Default).
-// The map is built once, in the first input phase: those defaults, and then
-// input.mirai of the project, which gives the kind and the bindings of the
-// actions it names. A step reads the actions of an enum through Input_Of(E).
+// defaults of the ones it wants driven (Action_Bindings). The map is built in
+// the first input phase, and again whenever Input_Settings changes: those
+// defaults, and over them the actions the setting names (settings.odin). A
+// step reads the actions of an enum through Input_Of(E).
 
 ACTION_CAPACITY :: 64
-BINDING_CAPACITY :: 192
-DEFAULT_BINDING_CAPACITY :: 4
+ACTION_BINDINGS :: 8 // bindings of one action
 GAMEPAD_ANY :: u8(core.GAMEPAD_CAPACITY) // the buttons of every gamepad joined, and of each axis the widest value
 
 // An input action of the world: what the map, a seat, a mask and data that
@@ -76,8 +73,8 @@ Look_Action :: enum u8 {Look}
 // Radians the look turns per unit of the look action: a point of mouse movement.
 LOOK_SPEED :: f32(0.12*math.RAD_PER_DEG)
 
-// The bindings of look when input.mirai of the project does not name it.
-look_action_defaults :: proc "contextless" () -> [Look_Action]Action_Default {
+// The bindings of look when Input_Settings does not name it.
+look_action_defaults :: proc "contextless" () -> [Look_Action]Action_Bindings {
     return {.Look=action_default(.Axis2,binding_mouse_delta(),binding_gamepad_stick(.Right,25))}
 }
 
@@ -100,10 +97,55 @@ Mouse_Axis :: enum u8 {X,Y,Wheel_X,Wheel_Y}
 
 Gamepad_Stick :: enum u8 {Left,Right}
 
-// code is a core.Key, core.Mouse_Button, Mouse_Axis, core.Gamepad_Button or core.Gamepad_Axis.
-Input_Code :: struct {device:Input_Device,code:u8}
+// An input a binding reads, named as the enums of core name it: the keys, the
+// mouse buttons and axes with Mouse_ before them (and the wheel as Wheel_X
+// and Wheel_Y), and the gamepad buttons and axes. The codes of a device follow
+// the order of its enum (code_device).
+Input_Code :: enum u8 {
+    None,
+    A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,
+    Zero,One,Two,Three,Four,Five,Six,Seven,Eight,Nine,
+    F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12,
+    Escape,Enter,Tab,Space,Backspace,Delete,Insert,
+    Home,End,Page_Up,Page_Down,Left,Right,Up,Down,
+    Left_Shift,Right_Shift,Left_Control,Right_Control,Left_Alt,Right_Alt,Left_Super,Right_Super,
+    Minus,Equals,Left_Bracket,Right_Bracket,Semicolon,Apostrophe,Comma,Period,Slash,Backslash,Grave,
+    Mouse_Left,Mouse_Right,Mouse_Middle,Mouse_X1,Mouse_X2,
+    Mouse_X,Mouse_Y,Wheel_X,Wheel_Y,
+    South,East,West,North,Back,Guide,Start,Left_Stick,Right_Stick,Left_Shoulder,Right_Shoulder,
+    Dpad_Up,Dpad_Down,Dpad_Left,Dpad_Right,
+    Left_X,Left_Y,Right_X,Right_Y,Left_Trigger,Right_Trigger,
+}
 
-// One way of driving an action. What the codes mean follows from the kind of
+@(private) CODE_FIRST :: [Input_Device]Input_Code{.None=.None,.Key=.A,.Mouse_Button=.Mouse_Left,.Mouse_Axis=.Mouse_X,.Gamepad_Button=.South,.Gamepad_Axis=.Left_X}
+#assert(int(Input_Code.Mouse_Left)-int(Input_Code.A)==len(core.Key))
+#assert(int(Input_Code.Mouse_X)-int(Input_Code.Mouse_Left)==len(core.Mouse_Button))
+#assert(int(Input_Code.South)-int(Input_Code.Mouse_X)==len(Mouse_Axis))
+#assert(int(Input_Code.Left_X)-int(Input_Code.South)==len(core.Gamepad_Button))
+#assert(len(Input_Code)-int(Input_Code.Left_X)==len(core.Gamepad_Axis))
+
+// The device of a code and its member in the enum of that device; None for
+// None and for a value no member has.
+code_device :: proc "contextless" (code:Input_Code) -> (device:Input_Device,index:u8) {
+    switch {
+    case code==.None || int(code)>=len(Input_Code): return .None,0
+    case code<.Mouse_Left: device=.Key
+    case code<.Mouse_X:    device=.Mouse_Button
+    case code<.South:      device=.Mouse_Axis
+    case code<.Left_X:     device=.Gamepad_Button
+    case:                  device=.Gamepad_Axis
+    }
+    first:=CODE_FIRST
+    return device,u8(code)-u8(first[device])
+}
+
+code_key :: proc "contextless" (key:core.Key) -> Input_Code {return Input_Code(u8(Input_Code.A)+u8(key))}
+code_mouse_button :: proc "contextless" (button:core.Mouse_Button) -> Input_Code {return Input_Code(u8(Input_Code.Mouse_Left)+u8(button))}
+code_mouse_axis :: proc "contextless" (axis:Mouse_Axis) -> Input_Code {return Input_Code(u8(Input_Code.Mouse_X)+u8(axis))}
+code_gamepad_button :: proc "contextless" (button:core.Gamepad_Button) -> Input_Code {return Input_Code(u8(Input_Code.South)+u8(button))}
+code_gamepad_axis :: proc "contextless" (axis:core.Gamepad_Axis) -> Input_Code {return Input_Code(u8(Input_Code.Left_X)+u8(axis))}
+
+// One way of driving an action. What the inputs mean follows from the kind of
 // the action and from their device:
 //   Button  one key or button; or one axis, down from dead_zone (0: 0.5) on
 //   Axis    a negative and a positive key or button; one gamepad axis, with
@@ -112,51 +154,55 @@ Input_Code :: struct {device:Input_Device,code:u8}
 //           a radial dead zone (0: 0.2); or two mouse axes, as they come
 // A chord is keys or buttons that must be held too (binding_chord).
 Input_Binding :: struct {
-    action:Action,
-    count:u8,       // codes in use; 0: none
-    gamepad:u8,     // 0 to 3, or GAMEPAD_ANY; of its gamepad codes and of its chord
-    chord_count:u8,
-    codes:[4]Input_Code,
-    chord:[CHORD_CAPACITY]Input_Code,
-    scale:f32,      // of the value; 0: 1
-    dead_zone:f32,
+    inputs:[4]Input_Code `mirai:"trim"`,             // up to the first None
+    chord:[CHORD_CAPACITY]Input_Code `mirai:"trim"`, // up to the first None
+    gamepad:u8,    // 0: every gamepad; n: the gamepad n, of its gamepad inputs and of its chord
+    scale:f32,     // of the value; 0: 1
+    dead_zone:f32, // 0: the one of its kind
 }
 
-// How an action is driven when input.mirai of the project does not name it.
-// Whoever declares an enum @(actions) E gives the defaults of its members
-// beside it, by the naming rule of defaults: <e>_defaults :: proc() ->
-// [E]Action_Default, or a constant <E>_DEFAULTS. The compiler asks for every
-// member, and the map reads them when it is built.
-Action_Default :: struct {
+// How an action is driven: its kind, its context and its bindings, up to the
+// first that reads no input. Whoever declares an enum @(actions) E gives the
+// defaults of its members beside it, by the naming rule of defaults:
+// <e>_defaults :: proc() -> [E]Action_Bindings, or a constant <E>_DEFAULTS.
+// The compiler asks for every member, and the map reads them when it is
+// built; the map and Input_Settings hold the same per action.
+Action_Bindings :: struct {
     kind:Action_Kind,
-    input_context:Input_Context,
-    count:u8, // bindings given, also those beyond the capacity, which the map reports
-    bindings:[DEFAULT_BINDING_CAPACITY]Input_Binding,
+    input_context:Input_Context `mirai:"name=context"`,
+    bindings:[ACTION_BINDINGS]Input_Binding `mirai:"trim"`,
 }
 
-action_default :: proc "contextless" (kind:Action_Kind,bindings:..Input_Binding) -> (d:Action_Default) {
-    d.kind,d.count=kind,u8(min(len(bindings),255))
-    for binding,i in bindings[:min(len(bindings),DEFAULT_BINDING_CAPACITY)] {d.bindings[i]=binding}
+// Bindings beyond ACTION_BINDINGS are left out.
+action_default :: proc "contextless" (kind:Action_Kind,bindings:..Input_Binding) -> (d:Action_Bindings) {
+    d.kind=kind
+    for binding,i in bindings[:min(len(bindings),ACTION_BINDINGS)] {d.bindings[i]=binding}
     return
 }
 
 // The default of an action of a context other than the base one.
-action_default_in :: proc "contextless" (input_context:Input_Context,kind:Action_Kind,bindings:..Input_Binding) -> (d:Action_Default) {
+action_default_in :: proc "contextless" (input_context:Input_Context,kind:Action_Kind,bindings:..Input_Binding) -> (d:Action_Bindings) {
     d=action_default(kind,..bindings)
     d.input_context=input_context
     return
 }
 
-// The actions of the project and their bindings, by value of Action.
+// The bindings of an action in use: up to the first that reads no input.
+action_bindings :: proc "contextless" (a:^Action_Bindings) -> []Input_Binding {
+    n:=0
+    for n<ACTION_BINDINGS && a.bindings[n].inputs[0]!=.None {n+=1}
+    return a.bindings[:n]
+}
+
+// The actions of the project and their bindings, by value of Action: the
+// defaults of the code with Input_Settings over them.
 @(storage,shared,keep)
 Input_Map :: struct {
-    kinds:[ACTION_CAPACITY]Action_Kind,
-    contexts:[ACTION_CAPACITY]Input_Context,
-    bindings:[BINDING_CAPACITY]Input_Binding,
+    actions:[ACTION_CAPACITY]Action_Bindings,
     declared:Action_Mask,
-    binding_count:u32,
     tap_seconds,hold_seconds:f32, // 0: TAP_SECONDS and HOLD_SECONDS
-    built:bool,               // from the defaults of the code and input.mirai
+    built:bool,
+    seen:core.Seen, // the revision of Input_Settings it was built from
 }
 
 // What every action of the map is doing this tick, by value of Action.
@@ -239,32 +285,23 @@ seat_holding :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> bool {return se
 seat_value :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> f32 {return seat_state(input,seat,a).value}
 seat_vector :: proc(input:Input_Of($E),seat:core.Entity,a:E) -> math.Vec2 {return seat_state(input,seat,a).vector}
 
-Input_Map_Error :: enum u8 {
-    None,
-    Syntax,         // not JSON, or not the shape of the file
-    Unknown_Action, // a name that no constant of Action declares
-    Unknown_Context, // a context that no constant of Input_Context declares
-    Unknown_Kind,   // an action whose kind is not Button, Axis or Axis2
-    Unknown_Input,  // a key, button, axis or stick that does not exist
-    Invalid,        // a binding that does not suit the kind of its action, or names no input
-    Capacity,       // more bindings than the map holds
-}
+// The file that held the bindings of a project before Input_Settings: one
+// found is not read, and the map says where they go.
+@(private) OLD_BINDINGS_FILE :: "input.mirai"
 
-// Builds the map once: the defaults of the code, then input.mirai of the
-// project, then the one of the options of the player.
+// Builds the map from the defaults of the code and Input_Settings, the first
+// time and whenever the setting was handed out to write (its revision moved):
+// a frame that wrote nothing looks at no byte of it.
 @(step="input",stage="begin")
-input_map_build :: proc(bindings:^Input_Map,app:^host.App,problems:^core.Problems) {
-    if bindings.built {return}
-    file,text:string
-    if app.root!="" {
-        path:=project.path(app.root,project.INPUT_FILE,allocator=context.temp_allocator)
-        if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil {file,text=path,string(data)}
+input_map_build :: proc(bindings:^Input_Map,settings:core.Ref(Input_Settings),written:core.Stamp(Input_Settings),app:^host.App,problems:^core.Problems) {
+    seen:=bindings.seen
+    if !core.touched(written,&seen) && bindings.built {return}
+    input_map_make(bindings,app.info,settings.ptr,problems)
+    bindings.seen=seen
+    if app.root=="" {return}
+    if old:=project.path(app.root,OLD_BINDINGS_FILE,allocator=context.temp_allocator);os.is_file(old) {
+        input_report(problems,"input.old_file","%s is no longer read: its bindings go in the section Input_Settings of %s (Project Settings > Input, or settings.set, writes them); bind the actions there again and delete %s",old,project.path(app.root,project.SETTINGS_FILE,allocator=context.temp_allocator),old)
     }
-    options,options_text:string
-    if path:=input_options_file(app);path!="" {
-        if data,read_error:=os.read_entire_file(path,context.temp_allocator);read_error==nil {options,options_text=path,string(data)}
-    }
-    input_map_make(bindings,app.info,file,text,problems,options,options_text)
 }
 
 // The actions of the machine, in the contexts of the focused seat.
@@ -281,57 +318,73 @@ input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_A
 }
 
 binding_key :: proc "contextless" (key:core.Key) -> Input_Binding {
-    return {count=1,gamepad=GAMEPAD_ANY,codes={0={.Key,u8(key)}}}
+    return {inputs={0=code_key(key)}}
 }
 // Axis: -1 while negative is held and +1 while positive is.
 binding_key_axis :: proc "contextless" (negative,positive:core.Key,scale:f32=1) -> Input_Binding {
-    return {count=2,gamepad=GAMEPAD_ANY,codes={0={.Key,u8(negative)},1={.Key,u8(positive)}},scale=scale}
+    return {inputs={0=code_key(negative),1=code_key(positive)},scale=scale}
 }
 // Axis2: diagonals keep unit length.
 binding_keys :: proc "contextless" (left,right,down,up:core.Key) -> Input_Binding {
-    return {count=4,gamepad=GAMEPAD_ANY,codes={{.Key,u8(left)},{.Key,u8(right)},{.Key,u8(down)},{.Key,u8(up)}}}
+    return {inputs={code_key(left),code_key(right),code_key(down),code_key(up)}}
 }
 binding_mouse_button :: proc "contextless" (button:core.Mouse_Button) -> Input_Binding {
-    return {count=1,gamepad=GAMEPAD_ANY,codes={0={.Mouse_Button,u8(button)}}}
+    return {inputs={0=code_mouse_button(button)}}
 }
 binding_mouse_axis :: proc "contextless" (axis:Mouse_Axis,scale:f32=1) -> Input_Binding {
-    return {count=1,gamepad=GAMEPAD_ANY,codes={0={.Mouse_Axis,u8(axis)}},scale=scale}
+    return {inputs={0=code_mouse_axis(axis)},scale=scale}
 }
 // Axis2: the movement of the mouse, times scale.
 binding_mouse_delta :: proc "contextless" (scale:f32=1) -> Input_Binding {
-    return {count=2,gamepad=GAMEPAD_ANY,codes={0={.Mouse_Axis,u8(Mouse_Axis.X)},1={.Mouse_Axis,u8(Mouse_Axis.Y)}},scale=scale}
+    return {inputs={0=.Mouse_X,1=.Mouse_Y},scale=scale}
 }
-binding_gamepad_button :: proc "contextless" (button:core.Gamepad_Button,gamepad:=GAMEPAD_ANY) -> Input_Binding {
-    return {count=1,gamepad=gamepad,codes={0={.Gamepad_Button,u8(button)}}}
+// gamepad: 0 for every gamepad, n for the gamepad n.
+binding_gamepad_button :: proc "contextless" (button:core.Gamepad_Button,gamepad:u8=0) -> Input_Binding {
+    return {inputs={0=code_gamepad_button(button)},gamepad=gamepad}
 }
-binding_gamepad_axis :: proc "contextless" (axis:core.Gamepad_Axis,scale:f32=1,dead_zone:f32=0,gamepad:=GAMEPAD_ANY) -> Input_Binding {
-    return {count=1,gamepad=gamepad,codes={0={.Gamepad_Axis,u8(axis)}},scale=scale,dead_zone=dead_zone}
+binding_gamepad_axis :: proc "contextless" (axis:core.Gamepad_Axis,scale:f32=1,dead_zone:f32=0,gamepad:u8=0) -> Input_Binding {
+    return {inputs={0=code_gamepad_axis(axis)},scale=scale,dead_zone=dead_zone,gamepad=gamepad}
 }
 // Axis2: a stick, with up positive.
-binding_gamepad_stick :: proc "contextless" (stick:Gamepad_Stick,scale:f32=1,dead_zone:f32=0,gamepad:=GAMEPAD_ANY) -> Input_Binding {
-    x,y:=core.Gamepad_Axis.Left_X,core.Gamepad_Axis.Left_Y
-    if stick==.Right {x,y=.Right_X,.Right_Y}
-    return {count=2,gamepad=gamepad,codes={0={.Gamepad_Axis,u8(x)},1={.Gamepad_Axis,u8(y)}},scale=scale,dead_zone=dead_zone}
+binding_gamepad_stick :: proc "contextless" (stick:Gamepad_Stick,scale:f32=1,dead_zone:f32=0,gamepad:u8=0) -> Input_Binding {
+    if stick==.Right {return {inputs={0=.Right_X,1=.Right_Y},scale=scale,dead_zone=dead_zone,gamepad=gamepad}}
+    return {inputs={0=.Left_X,1=.Left_Y},scale=scale,dead_zone=dead_zone,gamepad=gamepad}
 }
 
 // The binding, driving its action only while the keys or buttons of chord
 // are held too: binding_chord(binding_key(.S),code_key(.Left_Control)). A held
 // chord in use takes its inputs from the bindings with a shorter chord or
-// none, so Ctrl+S does not also press S. At most CHORD_CAPACITY; more, or an
-// axis, make a binding the map refuses.
+// none, so Ctrl+S does not also press S. At most CHORD_CAPACITY, and no axis:
+// the map refuses more.
 binding_chord :: proc "contextless" (binding:Input_Binding,chord:..Input_Code) -> (b:Input_Binding) {
     b=binding
-    b.chord_count=u8(min(len(chord),255))
+    b.chord={}
     for code,i in chord[:min(len(chord),CHORD_CAPACITY)] {b.chord[i]=code}
+    if len(chord)>CHORD_CAPACITY {b.inputs={}}
     return
 }
-code_key :: proc "contextless" (key:core.Key) -> Input_Code {return {.Key,u8(key)}}
-code_mouse_button :: proc "contextless" (button:core.Mouse_Button) -> Input_Code {return {.Mouse_Button,u8(button)}}
-code_gamepad_button :: proc "contextless" (button:core.Gamepad_Button) -> Input_Code {return {.Gamepad_Button,u8(button)}}
+
+// The inputs of a binding in use, and of its chord: up to the first None.
+binding_inputs :: proc "contextless" (b:^Input_Binding) -> []Input_Code {
+    n:=0
+    for n<len(b.inputs) && b.inputs[n]!=.None {n+=1}
+    return b.inputs[:n]
+}
+chord_inputs :: proc "contextless" (b:^Input_Binding) -> []Input_Code {
+    n:=0
+    for n<CHORD_CAPACITY && b.chord[n]!=.None {n+=1}
+    return b.chord[:n]
+}
+
+// The gamepad a binding reads as std/input numbers it: 0 to 3, or GAMEPAD_ANY.
+@(private)
+binding_pad :: #force_inline proc "contextless" (b:^Input_Binding) -> u8 {
+    return b.gamepad==0?GAMEPAD_ANY:b.gamepad-1
+}
 
 // Whether the map has an action of that kind.
 input_map_has :: proc "contextless" (m:^Input_Map,action:Action,kind:Action_Kind) -> bool {
-    return m.declared&action_bit(action)!=0 && m.kinds[action]==kind
+    return int(action)<ACTION_CAPACITY && m.declared&action_bit(action)!=0 && m.actions[action].kind==kind
 }
 
 // Declares an action of a kind. One the map has keeps its bindings when the
@@ -339,31 +392,26 @@ input_map_has :: proc "contextless" (m:^Input_Map,action:Action,kind:Action_Kind
 // ACTION_CAPACITY on.
 input_map_action :: proc "contextless" (m:^Input_Map,action:Action,kind:Action_Kind) -> bool {
     if int(action)>=ACTION_CAPACITY {return false}
-    if m.declared&action_bit(action)!=0 && m.kinds[action]!=kind {input_map_unbind(m,action)}
-    m.kinds[action]=kind
+    if m.declared&action_bit(action)!=0 && m.actions[action].kind!=kind {input_map_unbind(m,action)}
+    m.actions[action].kind=kind
     m.declared|=action_bit(action)
     return true
 }
 
-// False when the map does not have the action, the binding does not suit its kind or the map is full.
+// False when the map does not have the action, the binding does not suit its
+// kind or the action holds ACTION_BINDINGS already.
 input_map_bind :: proc "contextless" (m:^Input_Map,action:Action,binding:Input_Binding) -> bool {
-    if int(action)>=ACTION_CAPACITY || m.declared&action_bit(action)==0 || m.binding_count>=BINDING_CAPACITY {return false}
-    if _,valid:=binding_kind(m.kinds[action],binding);!valid {return false}
-    stored:=binding
-    stored.action=action
-    m.bindings[m.binding_count]=stored
-    m.binding_count+=1
+    if int(action)>=ACTION_CAPACITY || m.declared&action_bit(action)==0 {return false}
+    a:=&m.actions[action]
+    used:=len(action_bindings(a))
+    if used>=ACTION_BINDINGS || !binding_suits(a.kind,binding) {return false}
+    a.bindings[used]=binding
     return true
 }
 
 // Removes every binding of an action.
 input_map_unbind :: proc "contextless" (m:^Input_Map,action:Action) {
-    kept:=u32(0)
-    for &binding in m.bindings[:m.binding_count] {
-        if binding.action==action {continue}
-        m.bindings[kept]=binding;kept+=1
-    }
-    m.binding_count=kept
+    if int(action)<ACTION_CAPACITY {m.actions[action].bindings={}}
 }
 
 // The values of the actions of the map are below it.
@@ -372,12 +420,12 @@ action_end :: #force_inline proc "contextless" (m:^Input_Map) -> int {
     return 64-int(intrinsics.count_leading_zeros(u64(m.declared)))
 }
 
-// The defaults of the actions that the code of a world declares
-// (Action_Default), and then the text of input.mirai (file, "" without one)
-// over them. What the code and the file do not agree on is a problem of the
-// world that says how to fix it (none with problems nil); a file with an
-// error is not read.
-input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,problems:^core.Problems,options:="",options_text:="") {
+// The defaults of the actions that the code of a world declares, and then the
+// actions Input_Settings names over them (none with settings nil). What the
+// code and the setting do not agree on is a problem of the world that says
+// how to fix it (none with problems nil): an action the setting cannot give
+// keeps its default.
+input_map_make :: proc(m:^Input_Map,info:^core.World_Info,settings:^Input_Settings,problems:^core.Problems) {
     result:Input_Map
     result.built=true
     names:=core.names_of(info,Action)
@@ -393,49 +441,38 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,probl
         for &enum_actions in info.actions {
             if enum_actions.defaults==nil || enum_actions.info==nil {continue}
             members:=runtime.type_info_base(enum_actions.info).variant.(runtime.Type_Info_Enum) or_continue
-            defaults:=make([]Action_Default,len(members.values),context.temp_allocator)
+            defaults:=make([]Action_Bindings,len(members.values),context.temp_allocator)
             enum_actions.defaults(raw_data(defaults))
             for &d,member in defaults {
                 action:=Action(enum_actions.base+i64(member))
                 name,declared:=core.name_of(info,Action,i64(action))
                 if !declared || int(action)>=ACTION_CAPACITY {continue}
-                if int(d.count)>DEFAULT_BINDING_CAPACITY {
-                    input_report(problems,"input.default_bindings","the default of the action %q has %d bindings, and a default holds %d; bind the rest in %s",name,d.count,DEFAULT_BINDING_CAPACITY,project.INPUT_FILE)
+                if int(d.input_context)>=CONTEXT_CAPACITY {
+                    input_report(problems,"input.default_context","the default of the action %q puts it in the input context of value %d; contexts take values below %d: declare it as a free one",name,d.input_context,CONTEXT_CAPACITY)
+                    d.input_context=CONTEXT_BASE
                 }
                 input_map_action(&result,action,d.kind)
-                if int(d.input_context)<CONTEXT_CAPACITY {
-                    result.contexts[action]=d.input_context
-                } else {
-                    input_report(problems,"input.default_context","the default of the action %q puts it in the input context of value %d; contexts take values below %d: declare it as a free one",name,d.input_context,CONTEXT_CAPACITY)
-                }
-                for binding in d.bindings[:min(int(d.count),DEFAULT_BINDING_CAPACITY)] {
+                result.actions[action].input_context=d.input_context
+                for binding,i in action_bindings(&d) {
                     if !input_map_bind(&result,action,binding) {
-                        input_report(problems,"input.default_binding","a default binding of the action %q does not suit its kind %v, or the map holds %d bindings already; fix that binding",name,d.kind,BINDING_CAPACITY)
+                        input_report(problems,"input.default_binding","the default binding %d of the action %q is not one its kind %v takes: %s",i,name,d.kind,kind_takes(d.kind))
                     }
                 }
             }
         }
     }
-    if file!="" {
-        error,at:=input_map_parse(&result,info,text)
-        switch error {
-        case .None:
-        case .Unknown_Action:
-            known:=strings.builder_make(context.temp_allocator)
-            for entry,i in names {fmt.sbprintf(&known,"%s%s",i>0?", ":"",entry.name)}
-            input_report(problems,"input.unknown_action","%s names the action %q, which the code does not declare, and was not read; declare it as a member %s of the enum @(actions) of the game, or rename it to one the code declares: %s",file,at,member_name(at),strings.to_string(known))
-        case .Syntax, .Unknown_Context, .Unknown_Kind, .Unknown_Input, .Invalid, .Capacity:
-            input_report(problems,"input.file","%s was not read: %v in the action %q; %s",file,error,at,input_map_error_fix(error))
-        }
-    }
-    // The options of the player: a file that does not read leaves the bindings
-    // of the project; an action the game no longer declares is only left out.
-    if options!="" {
-        gone:=make([dynamic]string,context.temp_allocator)
-        if error,at:=input_map_parse(&result,info,options_text,&gone);error!=.None {
-            input_report(problems,"input.options","%s, the bindings the player chose, was not read: %v in the action %q; the player binds again from the options menu, or delete the file",options,error,at)
-        } else if len(gone)>0 {
-            input_report(problems,"input.options_gone","%s binds %v, which the game no longer declares, and those were left out; the rest of what the player chose holds, and they go when the player changes the options again",options,gone[:])
+    if settings!=nil {
+        result.tap_seconds,result.hold_seconds=seconds_kept(settings.tap_seconds),seconds_kept(settings.hold_seconds)
+        for &entry in settings.actions {
+            name:=base.text_get(entry.action[:])
+            if name=="" {continue}
+            if problem:=action_setting_problem(info,&entry);problem!="" {
+                input_report(problems,"input.settings","%s",problem)
+                continue
+            }
+            value,_:=core.name_value(info,Action,name)
+            result.actions[value]=entry.driven
+            result.declared|=action_bit(Action(value))
         }
     }
     unbound:=strings.builder_make(context.temp_allocator)
@@ -445,8 +482,7 @@ input_map_make :: proc(m:^Input_Map,info:^core.World_Info,file,text:string,probl
         fmt.sbprintf(&unbound,"%s%q (%s:%d)",strings.builder_len(unbound)>0?", ":"",entry.name,entry.file,entry.line)
     }
     if strings.builder_len(unbound)>0 {
-        where_:=file!=""?file:project.INPUT_FILE
-        input_report(problems,"input.action_unbound","%s: no binding, neither a default in code nor in %s; give each its kind and default bindings beside its enum (<enum>_defaults :: proc() -> [E]Action_Default), or bind it in Project Settings > Input",strings.to_string(unbound),where_)
+        input_report(problems,"input.action_unbound","%s: no binding, neither a default in code nor in Input_Settings; give each its kind and default bindings beside its enum (<enum>_defaults :: proc() -> [E]Action_Bindings), or bind it in Project Settings > Input",strings.to_string(unbound))
     }
     m^=result
 }
@@ -459,17 +495,20 @@ input_report :: proc(problems:^core.Problems,code,format:string,args:..any) {
     core.report(problems,core.NONE,code,"%s",message)
 }
 
-// How to fix a file with that error.
-input_map_error_fix :: proc(error:Input_Map_Error) -> string {
-    #partial switch error {
-    case .Syntax:        return `write {"tap_seconds":...,"hold_seconds":...,"actions":[{"name":...,"kind":...,"bindings":[...]}]} in JSON`
-    case .Unknown_Context: return "name a constant of input.Input_Context in its context, or leave it out for the base one"
-    case .Unknown_Kind:  return "its kind is Button, Axis or Axis2"
-    case .Unknown_Input: return "name keys, buttons, axes and sticks as the enums of core and input name them"
-    case .Invalid:       return "give it bindings that suit its kind, and a chord of one or two keys or buttons"
-    case .Capacity:      return fmt.tprintf("the map holds %d bindings: remove some",BINDING_CAPACITY)
+/// What the bindings of an action of a kind read, for whoever fixes one.
+kind_takes :: proc(kind:Action_Kind) -> string {
+    switch kind {
+    case .Button: return "a Button reads one input: a key, a button, or an axis pressed past its dead_zone"
+    case .Axis:   return "an Axis reads two keys or buttons (negative, positive), one gamepad axis, or one of Mouse_X, Mouse_Y, Wheel_X and Wheel_Y"
+    case .Axis2:  return "an Axis2 reads four keys or buttons (left, right, down, up), the two axes of a stick (Left_X and Left_Y, Right_X and Right_Y), Mouse_X and Mouse_Y, or Wheel_X and Wheel_Y"
     }
-    return ""
+    return "its kind is Button, Axis or Axis2"
+}
+
+// The seconds of a tap or a hold as the map takes them: 0 (the default) for one that is not a time.
+@(private)
+seconds_kept :: proc "contextless" (seconds:f32) -> f32 {
+    return seconds>0 && seconds<=SECONDS_MAX?seconds:0
 }
 
 // The identifier of the enum member an action name is: "layer_back" is Layer_Back.
@@ -486,28 +525,26 @@ member_name :: proc(name:string) -> string {
 @(private)
 binding_kind :: proc "contextless" (kind:Action_Kind,binding:Input_Binding) -> (result:si.Binding_Kind,valid:bool) {
     binding:=binding
-    count:=int(binding.count)
-    if count<1 || count>4 || binding.gamepad>GAMEPAD_ANY {return}
+    codes,chord:=binding_inputs(&binding),chord_inputs(&binding)
+    if len(codes)==0 || int(binding.gamepad)>core.GAMEPAD_CAPACITY || !(abs(binding.scale)<=SCALE_MAX) || !(binding.dead_zone>=0 && binding.dead_zone<1) {return}
+    for code in binding.inputs[len(codes):] {if code!=.None {return}}
+    for code in binding.chord[len(chord):] {if code!=.None {return}}
     digital,analog,mouse:=0,0,0
-    for code in binding.codes[:count] {
-        switch code.device {
+    for code in codes {
+        switch device,_:=code_device(code);device {
         case .None: return
-        case .Key: if int(code.code)>=len(core.Key) {return};digital+=1
-        case .Mouse_Button: if int(code.code)>=len(core.Mouse_Button) {return};digital+=1
-        case .Gamepad_Button: if int(code.code)>=len(core.Gamepad_Button) {return};digital+=1
-        case .Gamepad_Axis: if int(code.code)>=len(core.Gamepad_Axis) {return};analog+=1
-        case .Mouse_Axis: if int(code.code)>=len(Mouse_Axis) {return};mouse+=1
+        case .Key,.Mouse_Button,.Gamepad_Button: digital+=1
+        case .Gamepad_Axis: analog+=1
+        case .Mouse_Axis: mouse+=1
         }
     }
-    if int(binding.chord_count)>CHORD_CAPACITY {return}
-    for code in binding.chord[:binding.chord_count] {
-        switch code.device {
-        case .Key: if int(code.code)>=len(core.Key) {return}
-        case .Mouse_Button: if int(code.code)>=len(core.Mouse_Button) {return}
-        case .Gamepad_Button: if int(code.code)>=len(core.Gamepad_Button) {return}
-        case .None, .Mouse_Axis, .Gamepad_Axis: return
+    for code in chord {
+        #partial switch device,_:=code_device(code);device {
+        case .Key,.Mouse_Button,.Gamepad_Button:
+        case: return
         }
     }
+    count:=len(codes)
     switch kind {
     case .Button:
         if count!=1 {return}
@@ -527,15 +564,18 @@ binding_kind :: proc "contextless" (kind:Action_Kind,binding:Input_Binding) -> (
 
 @(private) ACTION_AXES :: int(si.AXIS_MOUSE)+len(Mouse_Axis)
 @(private) ACTION_CODES :: 512
+@(private) SCALE_MAX :: f32(1e6)  // of a binding
+SECONDS_MAX :: f32(10) // the longest tap or hold
 
 @(private)
-action_code :: proc "contextless" (code:Input_Code,gamepad:u8) -> u16 {
-    #partial switch code.device {
-    case .Key: return u16(si.CODE_KEYBOARD)+u16(code.code)
-    case .Mouse_Button: return u16(si.CODE_MOUSE)+u16(code.code)
-    case .Gamepad_Button: return u16(si.code_gamepad(u16(gamepad),u16(code.code)))
-    case .Gamepad_Axis: return u16(si.axis_gamepad(u16(gamepad),u16(code.code)))
-    case .Mouse_Axis: return u16(si.AXIS_MOUSE)+u16(code.code)
+action_code :: proc "contextless" (code:Input_Code,pad:u8) -> u16 {
+    device,index:=code_device(code)
+    #partial switch device {
+    case .Key: return u16(si.CODE_KEYBOARD)+u16(index)
+    case .Mouse_Button: return u16(si.CODE_MOUSE)+u16(index)
+    case .Gamepad_Button: return u16(si.code_gamepad(u16(pad),u16(index)))
+    case .Gamepad_Axis: return u16(si.axis_gamepad(u16(pad),u16(index)))
+    case .Mouse_Axis: return u16(si.AXIS_MOUSE)+u16(index)
     }
     return 0
 }
@@ -548,9 +588,9 @@ Taken :: struct {
 }
 
 @(private)
-taken_at :: proc "contextless" (taken:^Taken,code:Input_Code,gamepad:u8) -> ^u8 {
-    n:=int(action_code(code,gamepad))
-    if code.device==.Mouse_Axis || code.device==.Gamepad_Axis {return &taken.axes[n]}
+taken_at :: proc "contextless" (taken:^Taken,code:Input_Code,pad:u8) -> ^u8 {
+    n:=int(action_code(code,pad))
+    if device,_:=code_device(code);device==.Mouse_Axis || device==.Gamepad_Axis {return &taken.axes[n]}
     return &taken.codes[n]
 }
 
@@ -559,7 +599,7 @@ taken_at :: proc "contextless" (taken:^Taken,code:Input_Code,gamepad:u8) -> ^u8 
 @(private)
 inputs_take :: proc "contextless" (taken:^Taken,binding:^Input_Binding,level:u8) {
     take :: proc "contextless" (taken:^Taken,code:Input_Code,gamepad,level:u8) {
-        if code.device!=.Gamepad_Button && code.device!=.Gamepad_Axis {
+        if device,_:=code_device(code);device!=.Gamepad_Button && device!=.Gamepad_Axis {
             at:=taken_at(taken,code,gamepad)
             at^=max(at^,level)
             return
@@ -570,15 +610,17 @@ inputs_take :: proc "contextless" (taken:^Taken,binding:^Input_Binding,level:u8)
             at^=max(at^,level)
         }
     }
-    for code in binding.codes[:binding.count] {take(taken,code,binding.gamepad,level)}
-    for code in binding.chord[:binding.chord_count] {take(taken,code,binding.gamepad,level)}
+    pad:=binding_pad(binding)
+    for code in binding_inputs(binding) {take(taken,code,pad,level)}
+    for code in chord_inputs(binding) {take(taken,code,pad,level)}
 }
 
 // Whether a higher layer reads something a binding reads.
 @(private)
 inputs_taken :: proc "contextless" (taken:^Taken,binding:^Input_Binding,level:u8) -> bool {
-    for code in binding.codes[:binding.count] {if taken_at(taken,code,binding.gamepad)^>level {return true}}
-    for code in binding.chord[:binding.chord_count] {if taken_at(taken,code,binding.gamepad)^>level {return true}}
+    pad:=binding_pad(binding)
+    for code in binding_inputs(binding) {if taken_at(taken,code,pad)^>level {return true}}
+    for code in chord_inputs(binding) {if taken_at(taken,code,pad)^>level {return true}}
     return false
 }
 
@@ -601,62 +643,67 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,co
             if contexts.modal&(1<<u8(i))!=0 {floor=u8(i+2)}
         }
     }
-    layer :: proc "contextless" (m:^Input_Map,binding:^Input_Binding,layers:^[CONTEXT_CAPACITY]u8,floor:u8) -> u8 {
-        c:=m.contexts[binding.action]
+    layer :: proc "contextless" (c:Input_Context,layers:^[CONTEXT_CAPACITY]u8,floor:u8) -> u8 {
         if c==CONTEXT_ALWAYS {return 1}
         if int(c)>=CONTEXT_CAPACITY || layers[c]<floor {return 0}
         return layers[c]
     }
-    scratch:[12<<10]u8
+    scratch:[20<<10]u8
     arena:mem.Arena
     mem.arena_init(&arena,scratch[:])
     state:si.Input
     count:=action_end(m)
+    bindings:=0
+    for &a in m.actions[:count] {bindings+=len(action_bindings(&a))}
     if count==0 || !si.input_init(&state,{
-        max_actions=count,max_bindings=max(int(m.binding_count),1),code_count=ACTION_CODES,axis_count=ACTION_AXES,
+        max_actions=count,max_bindings=max(bindings,1),code_count=ACTION_CODES,axis_count=ACTION_AXES,
         tap=m.tap_seconds,hold=m.hold_seconds,allocator=mem.arena_allocator(&arena),
     }) {
         actions^={}
         return
     }
     for i in 0..<count {
-        si.input_add_action(&state,m.kinds[i])
+        si.input_add_action(&state,m.actions[i].kind)
         if i<int(actions.count) {state.states[i]=actions.states[i]}
     }
     taken:Taken
     if stacked {
-        for &binding in m.bindings[:m.binding_count] {
-            if int(binding.action)>=count {continue}
-            if _,valid:=binding_kind(m.kinds[binding.action],binding);!valid {continue}
-            if level:=layer(m,&binding,&layers,floor);level>0 {inputs_take(&taken,&binding,level)}
+        for &a in m.actions[:count] {
+            level:=layer(a.input_context,&layers,floor)
+            if level==0 {continue}
+            for &binding in action_bindings(&a) {
+                if binding_suits(a.kind,binding) {inputs_take(&taken,&binding,level)}
+            }
         }
     }
-    for &binding in m.bindings[:m.binding_count] {
-        if int(binding.action)>=count {continue}
-        kind,valid:=binding_kind(m.kinds[binding.action],binding)
-        if !valid {continue}
-        level:=layer(m,&binding,&layers,floor)
-        if level==0 || stacked && inputs_taken(&taken,&binding,level) {continue}
-        codes:[4]u16
-        for code,i in binding.codes[:binding.count] {codes[i]=action_code(code,binding.gamepad)}
-        action:=si.Action(binding.action)+1
-        scale:=binding.scale!=0?binding.scale:1
-        zone:=binding.dead_zone
-        bound:bool
-        switch kind {
-        case .Code:       bound=si.input_bind_code(&state,action,si.Input_Code(codes[0]))
-        case .Axis_Above: bound=si.input_bind_axis_button(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_BUTTON,scale)
-        case .Code_Axis:  bound=si.input_bind_codes_axis(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),scale)
-        case .Analog:     bound=si.input_bind_axis(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_AXIS,scale)
-        case .Codes_2D:   bound=si.input_bind_codes_2d(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),si.Input_Code(codes[2]),si.Input_Code(codes[3]))
-        case .Analog_2D:  bound=si.input_bind_axes_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),zone>0?zone:DEAD_ZONE_STICK,scale)
-        case .Delta:      bound=si.input_bind_delta(&state,action,si.Axis_Code(codes[0]),scale)
-        case .Delta_2D:   bound=si.input_bind_delta_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),scale)
-        }
-        if bound && binding.chord_count>0 {
-            chord:[CHORD_CAPACITY]si.Input_Code
-            for code,i in binding.chord[:binding.chord_count] {chord[i]=si.Input_Code(action_code(code,binding.gamepad))}
-            si.input_chord(&state,..chord[:binding.chord_count])
+    for &a,index in m.actions[:count] {
+        level:=layer(a.input_context,&layers,floor)
+        if level==0 {continue}
+        for &binding in action_bindings(&a) {
+            kind,valid:=binding_kind(a.kind,binding)
+            if !valid || stacked && inputs_taken(&taken,&binding,level) {continue}
+            pad:=binding_pad(&binding)
+            codes:[4]u16
+            for code,i in binding_inputs(&binding) {codes[i]=action_code(code,pad)}
+            action:=si.Action(index)+1
+            scale:=binding.scale!=0?binding.scale:1
+            zone:=binding.dead_zone
+            bound:bool
+            switch kind {
+            case .Code:       bound=si.input_bind_code(&state,action,si.Input_Code(codes[0]))
+            case .Axis_Above: bound=si.input_bind_axis_button(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_BUTTON,scale)
+            case .Code_Axis:  bound=si.input_bind_codes_axis(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),scale)
+            case .Analog:     bound=si.input_bind_axis(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_AXIS,scale)
+            case .Codes_2D:   bound=si.input_bind_codes_2d(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),si.Input_Code(codes[2]),si.Input_Code(codes[3]))
+            case .Analog_2D:  bound=si.input_bind_axes_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),zone>0?zone:DEAD_ZONE_STICK,scale)
+            case .Delta:      bound=si.input_bind_delta(&state,action,si.Axis_Code(codes[0]),scale)
+            case .Delta_2D:   bound=si.input_bind_delta_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),scale)
+            }
+            if held:=chord_inputs(&binding);bound && len(held)>0 {
+                chord:[CHORD_CAPACITY]si.Input_Code
+                for code,i in held {chord[i]=si.Input_Code(action_code(code,pad))}
+                si.input_chord(&state,..chord[:len(held)])
+            }
         }
     }
 
@@ -687,7 +734,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,co
     for hold in holds {
         a:=int(hold.action)
         if a>=count || m.declared&action_bit(hold.action)==0 {continue}
-        if c:=m.contexts[a];c!=CONTEXT_ALWAYS && (int(c)>=CONTEXT_CAPACITY || layers[c]<floor) {continue}
+        if c:=m.actions[a].input_context;c!=CONTEXT_ALWAYS && (int(c)>=CONTEXT_CAPACITY || layers[c]<floor) {continue}
         si.input_feed_action(&state,si.Action(a+1),hold.value.x!=0,hold.value.x,hold.value)
     }
 
@@ -703,169 +750,12 @@ action :: #force_inline proc "contextless" (actions:^Actions,a:Action) -> Action
     return u32(a)<actions.count?actions.states[a]:{}
 }
 
-// Reads the text of an input file over a map: each action of the file gets
-// its kind, and its bindings replace the ones the map had for it; the
-// actions the file does not name stay. On an error the map is left as it
-// was, and at is the name of the action where it was found.
-//
-//   {"tap_seconds":0.2,"hold_seconds":0.5,"actions":[
-//     {"name":"move","kind":"Axis2","bindings":[{"keys":["A","D","S","W"]},{"gamepad_stick":"Left"}]},
-//     {"name":"look","kind":"Axis2","bindings":[{"mouse":"Delta","scale":0.1}]},
-//     {"name":"jump","kind":"Button","bindings":[{"key":"Space"},{"gamepad_button":"South"}]}]}
-//
-// name is the name of an action (a member of an enum @(actions), in lower
-// case), and context, an optional one of Input_Context. A binding names its input with one of key,
-// keys (two for an Axis, four for an Axis2: left, right, down, up),
-// mouse_button, mouse (X, Y, Wheel_X, Wheel_Y, or Delta and Wheel for both
-// axes), gamepad_button, gamepad_axis and gamepad_stick (Left, Right), with
-// the names of the core enums. scale, dead_zone, gamepad (0 to 3; every
-// gamepad when absent) and chord (one or two of {"key"}, {"mouse_button"} and
-// {"gamepad_button"} held too) are optional.
-//
-// With skipped, an action the code does not declare (renamed or removed since
-// the file was written) is left out and its name appended there, instead of
-// failing the whole file: what the options of a player do.
-input_map_parse :: proc(m:^Input_Map,info:^core.World_Info,text:string,skipped:^[dynamic]string=nil) -> (error:Input_Map_Error,at:string) {
-    value,parse_error:=json.parse_string(text,json.DEFAULT_SPECIFICATION,true,context.temp_allocator)
-    root,is_object:=value.(json.Object)
-    if parse_error!=.None || !is_object {return .Syntax,""}
-    result:=m^
-    for old in ([]string{"tap_ticks","hold_ticks"}) {if old in root {return .Syntax,old}}
-    if seconds,has:=input_number(root["tap_seconds"]);has {result.tap_seconds=f32(max(seconds,0))}
-    if seconds,has:=input_number(root["hold_seconds"]);has {result.hold_seconds=f32(max(seconds,0))}
-    list,_:=root["actions"].(json.Array)
-    for item in list {
-        entry,is_action:=item.(json.Object)
-        if !is_action {return .Syntax,""}
-        name,_:=entry["name"].(json.String)
-        found,declared:=core.name_value(info,Action,name)
-        if !declared || found<0 || found>=ACTION_CAPACITY {
-            if skipped==nil {return .Unknown_Action,name}
-            append(skipped,name)
-            continue
-        }
-        action:=Action(found)
-        kind_name,_:=entry["kind"].(json.String)
-        kind,known:=reflect.enum_from_name(Action_Kind,kind_name)
-        if !known {return .Unknown_Kind,name}
-        input_map_action(&result,action,kind)
-        if context_name,has:=entry["context"].(json.String);has {
-            value,named:=core.name_value(info,Input_Context,context_name)
-            if !named || value<0 || value>=CONTEXT_CAPACITY {return .Unknown_Context,name}
-            result.contexts[action]=Input_Context(value)
-        }
-        input_map_unbind(&result,action)
-        bindings,_:=entry["bindings"].(json.Array)
-        for raw in bindings {
-            described,is_binding:=raw.(json.Object)
-            if !is_binding {return .Syntax,name}
-            binding,binding_error,_:=input_binding_parse(described)
-            if binding_error!=.None {return binding_error,name}
-            if !input_map_bind(&result,action,binding) {return result.binding_count>=BINDING_CAPACITY?.Capacity:.Invalid,name}
-        }
-    }
-    m^=result
-    return .None,""
-}
-
-@(private="file")
-input_number :: proc(value:json.Value) -> (number:f64,ok:bool) {
-    #partial switch v in value {
-    case json.Float: return v,true
-    case json.Integer: return f64(v),true
-    }
-    return
-}
-
-@(private="file")
-input_code :: proc(value:json.Value,device:Input_Device,$E:typeid) -> (code:Input_Code,error:Input_Map_Error) {
-    name,is_text:=value.(json.String)
-    if !is_text {return {},.Syntax}
-    found,known:=reflect.enum_from_name(E,name)
-    if !known {return {},.Unknown_Input}
-    return {device,u8(found)},.None
-}
-
-// One binding as input.mirai writes it (see input_map_parse). On an error,
-// field is the key whose value is wrong; "" when the binding names no input.
-input_binding_parse :: proc(o:json.Object) -> (binding:Input_Binding,error:Input_Map_Error,field:string) {
-    binding.gamepad=GAMEPAD_ANY
-    if pad,has:=input_number(o["gamepad"]);has {
-        if pad<0 || pad>=core.GAMEPAD_CAPACITY {return {},.Unknown_Input,"gamepad"}
-        binding.gamepad=u8(pad)
-    }
-    if scale,has:=input_number(o["scale"]);has {binding.scale=f32(scale)}
-    if zone,has:=input_number(o["dead_zone"]);has {binding.dead_zone=f32(zone)}
-    code:Input_Code
-    switch {
-    case "key" in o:
-        field="key"
-        code,error=input_code(o[field],.Key,core.Key)
-        binding.codes[0],binding.count=code,1
-    case "keys" in o:
-        field="keys"
-        keys,is_list:=o[field].(json.Array)
-        if !is_list {return {},.Syntax,field}
-        if len(keys)!=2 && len(keys)!=4 {return {},.Invalid,field}
-        for key,i in keys {
-            binding.codes[i],error=input_code(key,.Key,core.Key)
-            if error!=.None {break}
-        }
-        binding.count=u8(len(keys))
-    case "mouse_button" in o:
-        field="mouse_button"
-        code,error=input_code(o[field],.Mouse_Button,core.Mouse_Button)
-        binding.codes[0],binding.count=code,1
-    case "gamepad_button" in o:
-        field="gamepad_button"
-        code,error=input_code(o[field],.Gamepad_Button,core.Gamepad_Button)
-        binding.codes[0],binding.count=code,1
-    case "gamepad_axis" in o:
-        field="gamepad_axis"
-        code,error=input_code(o[field],.Gamepad_Axis,core.Gamepad_Axis)
-        binding.codes[0],binding.count=code,1
-    case "gamepad_stick" in o:
-        field="gamepad_stick"
-        code,error=input_code(o[field],.Gamepad_Axis,Gamepad_Stick)
-        if error==.None {binding=binding_gamepad_stick(Gamepad_Stick(code.code),binding.scale,binding.dead_zone,binding.gamepad)}
-    case "mouse" in o:
-        field="mouse"
-        switch name,_:=o[field].(json.String);name {
-        case "Delta": binding.codes[0],binding.codes[1],binding.count={.Mouse_Axis,u8(Mouse_Axis.X)},{.Mouse_Axis,u8(Mouse_Axis.Y)},2
-        case "Wheel": binding.codes[0],binding.codes[1],binding.count={.Mouse_Axis,u8(Mouse_Axis.Wheel_X)},{.Mouse_Axis,u8(Mouse_Axis.Wheel_Y)},2
-        case:
-            code,error=input_code(o[field],.Mouse_Axis,Mouse_Axis)
-            binding.codes[0],binding.count=code,1
-        }
-    case:
-        return {},.Invalid,""
-    }
-    if error!=.None {return {},error,field}
-    if chord,has:=o["chord"].(json.Array);has {
-        field="chord"
-        if len(chord)==0 || len(chord)>CHORD_CAPACITY {return {},.Invalid,field}
-        for item,i in chord {
-            held,is_object:=item.(json.Object)
-            if !is_object {return {},.Syntax,field}
-            switch {
-            case "key" in held:            binding.chord[i],error=input_code(held["key"],.Key,core.Key)
-            case "mouse_button" in held:   binding.chord[i],error=input_code(held["mouse_button"],.Mouse_Button,core.Mouse_Button)
-            case "gamepad_button" in held: binding.chord[i],error=input_code(held["gamepad_button"],.Gamepad_Button,core.Gamepad_Button)
-            case:                          return {},.Invalid,field
-            }
-            if error!=.None {return {},error,field}
-        }
-        binding.chord_count=u8(len(chord))
-    }
-    return binding,.None,""
-}
-
 // Whether a binding of an action reads the movement of the mouse.
 action_reads_mouse :: proc "contextless" (m:^Input_Map,action:Action) -> bool {
-    for &binding in m.bindings[:m.binding_count] {
-        if binding.action!=action {continue}
-        for code in binding.codes[:min(int(binding.count),4)] {
-            if code.device==.Mouse_Axis {return true}
+    if int(action)>=ACTION_CAPACITY {return false}
+    for &binding in action_bindings(&m.actions[action]) {
+        for code in binding_inputs(&binding) {
+            if device,_:=code_device(code);device==.Mouse_Axis {return true}
         }
     }
     return false
@@ -881,7 +771,10 @@ binding_suits :: proc "contextless" (kind:Action_Kind,binding:Input_Binding) -> 
 // zone (zone: the one it uses, its own or the default) and gamepad.
 binding_uses :: proc "contextless" (kind:Action_Kind,binding:Input_Binding) -> (scale,dead_zone,gamepad:bool,zone:f32) {
     binding:=binding
-    for code in binding.codes[:min(int(binding.count),4)] {gamepad||=code.device==.Gamepad_Button || code.device==.Gamepad_Axis}
+    for code in binding_inputs(&binding) {
+        device,_:=code_device(code)
+        gamepad||=device==.Gamepad_Button || device==.Gamepad_Axis
+    }
     read,valid:=binding_kind(kind,binding)
     if !valid {return}
     switch read {

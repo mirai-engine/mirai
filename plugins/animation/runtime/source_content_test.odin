@@ -26,7 +26,7 @@ sources_test_content :: proc(t:^testing.T,id:base.Asset_Id,duration,distance,mor
     host.content_animation_loops(&content.lib,1)
     content.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,1);base.text_set(content.names[0][:],"Walk")
     content.roots=make([]asset.Animation_Root,1);base.text_set(content.roots[0].bone[:],"hip");content.roots[0].translation=true
-    content.markers=make([]u64,1);content.markers[0]=base.name_hash("step")
+    content.markers=make([]host.Content_Marker,1);content.markers[0].name=base.name_hash("step")
     return content
 }
 @(private="file")
@@ -73,7 +73,7 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     append(&actions.plans,Action_Plan{profile=action_profile,animation=sources[0].id});action_test_add_state(&actions,{entity=state.entity,plan=0,slots={0={active=true,starting=true,section=-1}}})
     animation.root_motion=.None
     stack_asks(&actions,&state,animation,combined)
-    actions_sample(&actions,&state,animation,.1,&problems,combined,&playback,&events)
+    actions_sample(&actions,&state,animation,.1,&problems,combined,&playback,&events,nil,1)
     testing.expect(t,state.layers[0].clip==alias && actions.states[0].slots[0].active && problems.count==0)
     // A layer whose space names a clip of each source keeps them apart.
     samples:=[2]Blend_Sample{{position={0,0},speed=1},{position={1,0},speed=1,animation=sources[1].id}}
@@ -195,8 +195,9 @@ an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems ::
     core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems
+    extra:Test_Storages;defer test_storages_free(&extra)
     for ready in 0..<2 {
-        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,&app,{dt=.25,playing=true},{},&skeletons,&problems)
+        test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,&app,{dt=.25,playing=true},{},&skeletons,&problems,&extra)
         testing.expect_value(t,problems.count,0)
         if ready==1 {break}
         testing.expect(t,host.content_animation_pending(&app,id),"it compresses in a job")
@@ -252,13 +253,14 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     Swap_Test :: struct {
         w:^Source_World,
         app:^host.App,skeletons:^Skeleton_Assets,problems:^core.Problems,graphs:^Character_Assets,
-        sources:^Source_Assets,
+        sources:^Source_Assets,extra:^Test_Storages,
     }
     tick :: proc(s:Swap_Test) {
         w:=s.w
-        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,&w.targets,{},&w.playback,s.app,{dt=.1,playing=true},{},s.skeletons,s.problems,characters=s.graphs,actions=&w.actions,sources=s.sources)
+        test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,s.app,{dt=.1,playing=true},{},s.skeletons,s.problems,s.extra,characters=s.graphs,actions=&w.actions,sources=s.sources)
     }
-    s:=Swap_Test{&w,&app,&skeletons,&problems,&graphs,&sources}
+    extra:Test_Storages;defer test_storages_free(&extra)
+    s:=Swap_Test{&w,&app,&skeletons,&problems,&graphs,&sources,&extra}
     if !testing.expect(t,host.content_animation_wait(&app,CLIPS)!=nil) {return}
     // Its only problem, once it is bound: it has no feet to search by.
     only_unmatched :: proc(problems:^core.Problems,actor:core.Entity) -> bool {return problems.count==0 || problems.count==1 && core.problem_find(problems,actor,"animation.match_database")!=nil}

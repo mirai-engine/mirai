@@ -201,6 +201,9 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     testing.expect_value(t,result.code,api.INVALID_PARAMS)
     result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"step","at":0.5,"remove":true}}`,identity))
     testing.expect_value(t,result.code,0)
+    // The same name on an actor is another marker, which keeps its target.
+    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"walk","name":"step","target":"Hero","time":0.25,"duration":0.5}}`,identity))
+    testing.expect_value(t,result.code,0)
     result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":0.5,"key":{{"value":[3,0,0,0]}}}}`,identity))
     testing.expect_value(t,result.code,0)
     result=authoring_test_execute(f,"key",fmt.tprintf(`{{"asset":"%s","clip":"walk","target":"pulse","property":"Float","time":0.5,"key":{{"value":[4,0,0,0]}}}}`,identity))
@@ -216,7 +219,8 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     testing.expect_value(t,authoring_test_load(f,"clip.anim",&file),asset.Error.None);defer asset.asset_close(&file)
     view,error:=asset.animation_view(&file,&f.assets.types)
     testing.expect_value(t,error,asset.Error.None);testing.expect_value(t,file.blob.header.id,id)
-    testing.expect_value(t,len(view.markers),1);testing.expect(t,view.clips[0].root.translation)
+    testing.expect_value(t,len(view.markers),2);testing.expect(t,view.clips[0].root.translation)
+    testing.expect(t,base.text_get(view.markers[1].target[:])=="Hero" && view.markers[1].duration==.5)
     result=authoring_test_execute(f,"track",fmt.tprintf(`{{"asset":"%s","clip":"stride","target":"pulse","property":"Float","remove":true}}`,identity))
     testing.expect_value(t,result.code,0)
     // The clip exists only in memory, unsaved, until it is saved.

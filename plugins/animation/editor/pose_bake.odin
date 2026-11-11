@@ -54,10 +54,7 @@ pose_bake_state :: proc(world:core.World_Ref,entity:core.Entity) -> ^anim.Playin
 @(private)
 pose_bake_root :: proc(call:^api.Call,world:core.World_Ref,state:^anim.Playing,root:^Pose_Bake_Root_State,origin:[]mm.Transform,mode:Pose_Bake_Root) -> (mm.Transform,bool) {
     transforms:=core.world_table_of(world,core.Transform)
-    active:=state.base_root;has_root:=state.has_base_root
-    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-    if state.has_action_root {active=state.action_root;has_root=true}
-    if state.has_action_in_place {active=state.action_in_place_root;has_root=true}
+    active:=state.root;has_root:=active.translation || active.rotation
     if has_root && (active.translation || active.rotation) {
         bone,_,ok:=anim.animation_root_reference(state,active,state.sampled[:],transforms)
         if !ok || bone>=len(origin) {authoring_failure(call,"root_motion","Missing_Bone","a resolved root bone","unbound root","The effective root could not be baked");return {},false}
@@ -173,7 +170,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             for track in tracks {if track.bone==root.bone {base.text_set(root_metadata.bone[:],track.desc.target);break}}
             root_metadata.translation,root_metadata.rotation=root.root.translation,root.root.rotation
         }
-        if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {crossed:=core.events_since(events.queue,&cursor);if frame>0 {for event in crossed {
+        if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {crossed,_:=core.log_since(events.queue.log,&cursor);if frame>0 {for event in crossed {
             if event.entity!=entity || event.kind!=.Marker {continue}
             name:=preview_marker_name(preview_trace_source_view(&trace,event.animation),event.name)
             if name[0]==0 {authoring_failure(call,"markers","Missing_Name","a source name for every crossed marker",fmt.tprintf("%x",event.name),"A marker name could not be resolved");return false}

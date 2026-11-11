@@ -5,7 +5,7 @@ prediction and rollback. It is the `multiplayer` plugin (`package multiplayer` i
 `plugins/multiplayer/runtime`); import it with `import multiplayer "plugins:multiplayer/runtime"`
 and the low-level package as `wire "mirai:net"`. It knows nothing about physics: it talks to it
 through [`core` tables](#what-another-library-simulates). Types, settings and their defaults
-(`Replicate`, `Net_Settings`, `Net_Events`) are commented in `types.odin`.
+(`Replicate`, `Net_Settings`, `Net_Spawns`) are commented in `types.odin`.
 
 Its functions wrap the tick. Its session (`Net_Session`, with its socket and port) is
 `@(storage,host,by_world)`: one per `World`, held outside it. A correction restores the `World` and
@@ -61,7 +61,8 @@ Usually its prefab carries it: everything that appears from that prefab is repli
   - It occupies its place in `max_objects` and `state_words` while it is disabled.
 - A client makes the entity from the prefab of the pose (`scene.spawn`, `transient`), takes it from
   the scene if it has that `Id`, or makes it empty; the one of a section it has not loaded waits
-  for it to load.
+  for it to load. A copy whose prefab this client has not read is filled later
+  (`scene.Prefab_Pending`); what the server sent stays on it.
 - A replicated component that names an entity the other end does not have (it has not arrived yet,
   or it is not replicated) is removed from the replica until it arrives: it would name something
   else. A `Joint` toward something that is not there is not anchored to the world.
@@ -109,20 +110,24 @@ value,found:=multiplayer.collection_get(&inventory.items,42)
   Quantization and deltas: those of the
   [collection contract](networking.md#protocol-and-descriptors).
 
-**Messages.** A struct of up to `EVENT_BYTES` declared `@(net_message)` is a message: the server
-sends it; `from="client"` lets a client send it to the server, and `from="owner"` does too, but
-only about entities it owns. `reliable` delivers it once and in order.
+**Messages.** A struct declared `@(net_message)` is a message: the server sends it;
+`from="client"` lets a client send it to the server, and `from="owner"` does too, but only about
+entities it owns. `reliable` delivers it once and in order, and streams one larger than a datagram;
+one the protocol cannot carry refuses the session with the reason
+([events](networking.md#events)). Its size is its type's: nothing caps it in the plugin.
 
 ```odin
 @(net_message,from="client",reliable)
 Ask :: struct {id:base.Entity_Id}
 ```
 
-- It is sent with `multiplayer.send(&outbox, value, about?, to?)` and read with
-  `multiplayer.event_read(item, T)` from `Net_Events.received`, which has at the start of each
-  tick the messages that arrived since the tick before, like
-  [`Net_Connections`](#connection-events): `fixed` functions read it. `send` returns `false` and
-  does not enqueue in a tick that runs again (`Net_Outbox.replaying`): it sent the first time.
+- It is sent with `multiplayer.send(&outbox, value, about?, to?)`, which keeps the value at its
+  size in `Net_Outbox.bytes`. A step that receives `core.Inbox(T)` reads the messages of type `T`
+  (`core.Message(T)`: `value`, `sender`, `about`); the generator binds it to that type's row of
+  `core.Net_Messages`, which `net_tick_head` fills at the start of each tick with what arrived
+  since the tick before, like [`Net_Connections`](#connection-events). There is no bag of every
+  message decoded by type. `send` returns `false` and does not enqueue in a tick that runs again
+  (`Net_Outbox.replaying`): it sent the first time.
 - `Net_Outbox` (`copy=false`) is not copied with the world: a correction does not lose what is
   waiting. A `reliable` message the host rejects because the queue is full (`Full`) waits there,
   with the ones that follow, until the next frame; the other rejections are the `net.event_send`
@@ -175,8 +180,8 @@ The network and physics share only `core` tables, each with one writer:
 `terrain_multiplayer` terrain edits
 ([terrain](../../mirai-world/references/terrain.md#network)), both as
 [operation journals](#operation-journal). The `behavior` minds decide only on
-the server, and clients see what each agent does in its replicated `Mind_Presentation`, without
-predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
+the server, and clients play what their actions play through the replicated `Animation_Played`,
+without predicting it ([minds](../../mirai-world/references/behavior.md#minds)).
 
 ## Operation journal
 
@@ -302,8 +307,11 @@ reason, and with `--until-empty` a server that emptied ends normally.
   delayed `latency`: the ping is double.
 - The editor's Play serves the game from its own world and opens its online players this way
   ([networked Play](#networked-play)).
-- `invite_code(session)` gives the invitation code of a server, when the router answered: one
-  code from the internet, its network and its machine (a client with a code asks nearby too).
+- **Two ways in.** By address: `--server` serves, anyone who reaches its port joins with
+  `--connect <address>`. By invitation: `--server --invite` serves only who brings its code, which
+  it prints and `invite_code(session)` gives once the router answered; it carries the host's
+  address on its network and on its router, so the same `--connect <code>` joins from both.
+  `--invite <token>` fixes the token and maps nothing: the code carries only the LAN address.
 - A server saves and loads its world with `save`; a client does not (`Unavailable`). Loading with
   clients is a [scene change](#scene-change).
 
@@ -416,7 +424,7 @@ input  -1000     opens the network; datagrams are changes to the world; a client
                  repeats; it keeps the world clock with that of the connection
 input  -800      client: goes back to the oldest tick a library asked for (rewind) and repeats
 fixed  -100000   who arrived and who left, and the messages that arrived, since the previous
-                 tick (Net_Connections, Net_Events)
+                 tick (Net_Connections, core.Net_Messages)
                  server: the input each connection sent for this tick
                  client: copy of the world as the tick found it; interpolated replicas go to
                  where they are shown at that tick
@@ -503,9 +511,8 @@ are written where they wait for the end of the function (`core.raw_staged`, `cor
 settles once at the end.
 
 A library that makes on the client the entity of what a replica represents (a group of a broken
-destructible, with the `Id` both ends compute) asks for it with `multiplayer.adopt` in
-`^multiplayer.Net_Adoptions`: at the end of the tick that entity takes the place of the replica's,
-which is destroyed.
+destructible, with the `Id` both ends compute) marks it with `multiplayer.predict_kept`: it goes
+the one way of [predicted spawns](#predicted-spawns-and-input-delay), and the library keeps it.
 
 One rule says how it lives (`replica_wanted`):
 
@@ -595,16 +602,21 @@ One rule says how it lives (`replica_wanted`):
 ## Predicted spawns and input delay
 
 **Predicted spawns.** A `fixed` function that makes an entity on both ends in the tick of the
-input that causes it (a projectile) marks it with `multiplayer.predict_spawn`: it gets the `Id`
-both ends draw from the connection, the tick and a sequence (`spawn_id`) and, on a client,
-`Predicted_Spawn`.
+input that causes it (a projectile) marks it with `multiplayer.predict_spawn(spawns, e, seat)`,
+which queues it in `Net_Spawns`. At the end of the tick (`spawns_take`) it gets the `Id` both ends
+draw from the connection of the seat, the tick and how many that seat made before it in that tick
+(`spawn_id`), and, on a client, `Predicted_Spawn`. The queue is part of the `World`: a tick that
+runs again numbers its spawns alike. `predict_kept` queues an entity that has its `Id` already and
+that its library keeps (`Predicted_Spawn.kept`).
 
 - The replica the server sends takes that entity instead of making one (`replica_adoptable`, by
-  its `Id`), as its own: it goes with the replica. It is predicted while it lives.
+  its `Id`; `replica_adopt` when the replica came first), as its own: it goes with the replica and
+  is predicted while it lives. One a library keeps outlives the replica (`Replica.adopted`).
 - A correction that goes back past the tick of the spawn runs it again: the replica waits without
   an entity for that tick to make it (`replicas_relink`) and takes it at its end
   (`spawns_settle`); if the ticks that run again no longer make it, the replica makes its own.
-- One no replica took within the history was not made by the server, and is destroyed.
+- One no replica took within the history was not made by the server, and is destroyed; one a
+  library keeps loses only its mark.
 
 **Input delay.** With `Net_Settings.input_delay` a client acts on its input that many ticks after
 taking it, and submits it for that tick at once, so its tick runs that many less ahead of the
@@ -702,11 +714,10 @@ and the others interpolate it. The server puts what arrives in `core.Pose_Target
 
 - `Net_Connections.events` brings `Connected`/`Disconnected` with the connection and the reason,
   and on the server `Entered` when a connection enters its world (on arriving and after each scene
-  change): from then on what the game sends reaches it. `fixed` functions read it directly: at the
-  start of each tick the network leaves there what happened since the previous one, and in
-  `Net_Events` the messages that arrived. A frame without
-  ticks keeps it for the next and of a frame with several only the first has it; a tick that
-  repeats has the ones it had.
+  change): from then on what the game sends reaches it. It is a `core.Events`: at the start of each
+  tick the network pushes what happened since the previous one, and each reader gets it once. In
+  `core.Net_Messages` are the messages that arrived: a frame without ticks keeps them for the next
+  and of a frame with several only the first has them; a tick that repeats has the ones it had.
 - The identity of a player between one connection and the next is that of its seat
   ([players](#authority-and-players)).
 
@@ -789,7 +800,7 @@ one set by whoever tests those functions by hand).
   `what_a_client_receives_without_memory_is_left_out_and_reported`.
 - The display rule and predicted spawns (`switch_test.odin`):
   `a_replica_changes_between_interpolated_and_predicted_without_a_jump_in_what_is_drawn` and
-  `a_predicted_spawn_is_taken_by_its_replica_also_across_a_correction`.
+  `a_predicted_spawn_is_taken_by_its_replica_once_across_a_loss_and_a_correction`.
 - Correction without going back:
   `an_error_too_deep_for_the_frame_puts_the_replica_where_the_server_carries_it`. With a
   `Conditioner` of 100 ms per direction, 20 ms of jitter and 5% loss, a client pushes boxes while
@@ -840,7 +851,9 @@ one set by whoever tests those functions by hand).
   (replicated seat, hold until the notice, nothing of the previous world names the new one),
   `a_client_without_the_scene_of_its_server_leaves_saying_so`,
   `a_client_follows_the_pause_and_the_time_scale_of_its_server` and
-  `the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them`. Sections:
+  `the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them`; a typed message
+  with 4 KB of bytes:
+  `a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole`. Sections:
   `what_is_in_a_section_reaches_a_client_while_it_has_the_section_loaded`,
   `a_replica_of_a_section_that_is_not_loaded_waits_for_it`,
   `what_is_in_sections_that_overlap_reaches_a_client_that_has_either` and

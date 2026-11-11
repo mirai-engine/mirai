@@ -1,6 +1,7 @@
 package host
 
 import "base:runtime"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -50,13 +51,20 @@ Content_Animation :: struct {
     lib:anim.Library,
     clip_count:int,
     roots:[]asset.Animation_Root,
-    markers:[]u64, // name_hash of each marker: anim.Marker.id is its index
+    markers:[]Content_Marker, // of each marker: anim.Marker.id is its index
     names:[][asset.ANIMATION_NAME_CAPACITY]u8, // of each clip
     morphs:[]Content_Morph, // its curves of morph weights, each once
     fields:[]Content_Field, // its curves that drive a field of a component, each once
     load:^Content_Animation_Load, // a load of its file under way (content_animation.odin)
     adopted:u32, // generation of its first load when a job made it; 0 when it loaded at once
 }
+// The name_hash of the name of a marker and of its target (0: none); a marker on an entity keeps its
+// name too, the action it plays there.
+Content_Marker :: struct {
+    name,target:u64,
+    text:[asset.ANIMATION_NAME_CAPACITY]u8,
+}
+
 // A curve "<path>/@morph/<target>": the name_hash of the curve and of the target, which binds a
 // mesh that names no path to the curve of each of its targets.
 Content_Morph :: struct {curve,target:u64}
@@ -799,6 +807,12 @@ project_asset_mounts :: proc(p:^project.Project,allocator:=context.allocator) ->
     mounts:=make([dynamic]asset.Registry_Mount,allocator)
     for folder in project.asset_folders(p,allocator) {
         if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix,imported=folder.imported})}
+    }
+    // The far meshes the editor made, where the assets are not cooked: a game that runs them shows them.
+    assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
+    far:=project.cache_path(p.root,project.FAR_CACHE,allocator=allocator)
+    if !os.exists(project.path(assets,asset.REGISTRY_INDEX,allocator=context.temp_allocator)) && (os.is_dir(far) || os.make_directory_all(far)==nil) {
+        append(&mounts,asset.Registry_Mount{folder=far,prefix=project.FAR_PREFIX})
     }
     return mounts[:]
 }

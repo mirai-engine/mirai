@@ -91,6 +91,8 @@ Mtl_Frame :: struct {
 	upload_ptr:  [^]u8,
 	upload_size: u64,
 	upload_used: u64,
+	oversized:       [MAX_FRAME_OVERSIZED]Buffer, // see frame_alloc
+	oversized_count: int,
 	deletions:   [dynamic]^NS.Object, // released once the slot's command buffer completed
 	ranges:      [dynamic][3]u64,     // block, offset and size of the arena given back then
 	queries:     ^MTL.CounterSampleBuffer, // two samples per encoder, at its start and its end; nil without stage boundary sampling
@@ -393,8 +395,8 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	if (desc.validation || env_flag("MIRAI_VALIDATION") == "1") && !d.info.features.validation {
 		if d.on_message != nil {d.on_message(.Validation_Warning, "validation requested; run with MTL_DEBUG_LAYER=1 to enable Metal API validation", d.message_user)}
 	}
-	rt_env := env_flag("MIRAI_RT")
-	d.info.features.ray_query = bool(MTL.Device_supportsRaytracing(d.device)) && desc.allow_hardware_ray_tracing && rt_env != "software" && rt_env != "0"
+	// Metal traces rays by hardware alone: allow_hardware_ray_tracing and MIRAI_RT choose the tracer only on Vulkan.
+	d.info.features.ray_query = bool(MTL.Device_supportsRaytracing(d.device))
 	d.info.features.draw_indirect_count = false
 	d.info.features.texture_bc = bool(MTL.Device_supportsBCTextureCompression(d.device))
 	d.info.features.timestamps = false
@@ -427,7 +429,7 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	MTL.Device_sampleTimestamps(d.device, &d.clock_cpu, &d.clock_gpu)
 
 	for &f, i in d.frames {
-		f.upload = mtl_create_buffer(d, Buffer_Desc{size = upload_size, usage = {.Uniform, .Storage, .Index, .Indirect, .Transfer_Src, .Transfer_Dst, .Accel_Input}, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
+		f.upload = mtl_create_buffer(d, Buffer_Desc{size = upload_size, usage = TRANSIENT_USAGE, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
 		if f.upload == 0 {
 			if counter_descriptor != nil {mtl_release(counter_descriptor)}
 			return false
@@ -655,7 +657,7 @@ device_validation_forget :: proc(d: ^Device) {}
 // What the device made for itself, which device_stats leaves out.
 @(private)
 device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
-	for f in d.frames {if f.upload != 0 {buffers += 1}}
+	for f in d.frames {buffers += int(f.upload != 0) + f.oversized_count}
 	if d.scratch != 0 {buffers += 1}
 	if d.compact_sizes != 0 {buffers += 1}
 	if d.table_default != 0 {textures += 1}
@@ -896,6 +898,7 @@ mtl_release_drawable :: proc(d: ^Device) {
 frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	if !d.in_frame || cmd != &d.frames[d.slot].list {set_error(d, "frame_end without the list its frame_begin gave"); return false}
 	f := &d.frames[d.slot]
+	frame_oversized_release(d)
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	mtl_end_encoder(cmd)
 	mtl_release_labels(cmd)
@@ -928,22 +931,6 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 }
 
 frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
-
-frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
-	// Between frames the slot may still be in flight and frame_begin resets
-	// the ring, so transient memory only exists while a frame is recorded.
-	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
-	f := &d.frames[d.slot]
-	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
-	offset := align_up(f.upload_used, align)
-	if offset + size > f.upload_size {
-		d.stats.exhausted += 1
-		set_error(d, "frame upload ring exhausted (%d of %d bytes)", offset + size, f.upload_size)
-		return {}
-	}
-	f.upload_used = offset + size
-	return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
-}
 
 // ---------------------------------------------------------------- immediate transactions
 

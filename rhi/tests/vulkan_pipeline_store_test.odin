@@ -22,7 +22,17 @@ rhi_kept_pipelines_are_read_back_and_do_not_grow :: proc(t: ^testing.T) {
 	for run in 0 ..< len(sizes) {
 		d := shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai pipeline store test", validation = true, upload_bytes_per_frame = 1 << 20, pipeline_cache_path = path})
 		if d == nil {return}
+		// As if the run had already added a part of the limit: the next pipeline writes the file.
+		if run == 0 {d.pipelines_kept.unsaved = d.pipelines_kept.limit}
 		compute := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = "fill"})
+		if run == 0 {
+			// A process that ends here, without device_destroy, leaves the store the next one hits.
+			left: rhi.Pipeline_Store
+			rhi.pipeline_store_init(&left, d.pipelines_kept.device)
+			rhi.pipeline_store_load(&left, path)
+			testing.expect(t, len(left.entries) == 1 && left.entries[0].key == d.pipelines_kept.entries[0].key, "the file holds the pipeline before the device is destroyed")
+			rhi.pipeline_store_destroy(&left)
+		}
 		graphics := rhi.pipeline_create_graphics(d, {
 			vertex = rhi.test_shader("triangle.vert"), fragment = rhi.test_shader("triangle.frag"),
 			color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "triangle",

@@ -62,10 +62,8 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
     net_test_physics(w,sh,app)
     if sh.session!=nil {
         outbox:Net_Outbox
-        adoptions:Net_Adoptions
-        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
-        core.value_free(&adoptions,type_info_of(Net_Adoptions))
     }
 }
 
@@ -167,7 +165,6 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         now=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_events,client_events:Net_Events
         server_commands(&sessions[0],core.world_ref(&worlds[0],&info),nil,wire.host_poll(&sessions[0].host),&worlds[0].remote)
         for event in net_test_arrived(&sessions[0]) {
             if event.kind!=.Connected {continue}
@@ -181,8 +178,6 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
         before:=sessions[1].stats.resimulated
         client_reconcile(&sessions[1],core.world_ref(&worlds[1],&info),&apps[1],1.0/60)
         result.frame_resimulated=max(result.frame_resimulated,int(sessions[1].stats.resimulated-before))
-        core.value_free(&server_events,type_info_of(Net_Events))
-        core.value_free(&client_events,type_info_of(Net_Events))
         core.edit(&worlds[0].values,bodies[0][CORRECTION_BODIES-1]).force=correction_force(tick)
         client_tick:=tick+lead
         worlds[1].input.keys_down=correction_keys(client_tick)

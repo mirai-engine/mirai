@@ -1,5 +1,6 @@
 package physics
 
+import "core:math/linalg"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
@@ -18,33 +19,37 @@ mesh_geometry_equal :: proc(a,b:sim.Mesh) -> bool {
     return sliced_equal(a.vertices,b.vertices) && sliced_equal(a.triangles,b.triangles) && sliced_equal(a.flags,b.flags)
 }
 
+// Whether the shape of a Mesh or Heightfield collider is what it would make now, where it would put it.
 @(private)
-collider_geometry_unchanged :: proc(s:^Sync,l:^Link,e:core.Entity,relative:=mm.TRANSFORM_IDENTITY) -> bool {
+collider_geometry_unchanged :: proc(s:^Sync,l:^Link,e:core.Entity,collider:Collider,scale:[3]f32,relative:=mm.TRANSFORM_IDENTITY) -> bool {
     static,_:=core.get(s.statics,e)
     w:=&s.state.world
-    switch l.collider.kind {
+    origin:=collider.center*scale
+    #partial switch collider.kind {
     case .Mesh:
         actual:=sim.mesh_geometry(w,l.mesh)
-        built:=mesh_cached(s.app,s.meshes,static.mesh,static.shape,l.scale)
-        return actual!=nil && built!=nil && mesh_geometry_equal(actual^,built^)
+        built:=mesh_cached(s.app,s.meshes,static.mesh,static.shape,scale)
+        if actual==nil || built==nil || !mesh_geometry_equal(actual^,built^) {return false}
     case .Heightfield:
         actual:=sim.heightfield_geometry(w,l.heightfield)
         field,found:=host.assets_heightfield(s.app.assets,static.mesh)
-        if actual==nil || !found || actual.columns!=field.columns || actual.rows!=field.rows || actual.cell!=field.cell*l.scale || !sliced_equal(actual.heights,field.heights) || !sliced_equal(actual.disabled_borders,field.disabled_borders) || !sliced_equal(actual.holes,field.holes) {return false}
-        origin:=l.collider.center*l.scale+field.origin*l.scale
-        expected:=sim.Transform{relative.position+mm.quat_rotate(relative.rotation,origin),relative.rotation}
-        return sim.shape_local_transform(w,l.shape).p==expected.p
-    case .Box,.Sphere,.Capsule,.Cylinder,.Hull,.External:
+        if actual==nil || !found || actual.columns!=field.columns || actual.rows!=field.rows || actual.cell!=field.cell*scale || !sliced_equal(actual.heights,field.heights) || !sliced_equal(actual.disabled_borders,field.disabled_borders) || !sliced_equal(actual.holes,field.holes) {return false}
+        origin+=field.origin*scale
+    case:
         return false
     }
-    return false
+    return !pose_differs(sim.shape_local_transform(w,l.shape),{relative.position+mm.quat_rotate(relative.rotation,origin),relative.rotation})
 }
 
 // The convex radius of a collider at the scale of its entity: the smallest axis of the scale shrinks it.
 @(private)
 collider_round :: proc "contextless" (collider:Collider,scale:[3]f32) -> f32 {
-    return collider.convex_radius*min(scale.x,scale.y,scale.z)
+    return collider.convex_radius*min(abs(scale.x),abs(scale.y),abs(scale.z))
 }
+
+// Whether a scale mirrors: an odd number of negative axes turns a surface inside out.
+@(private)
+inside_out :: proc "contextless" (scale:[3]f32) -> bool {return ((scale.x<0)!=(scale.y<0))!=(scale.z<0)}
 
 // Whether the rounding of a collider leaves its shape a core: below the smallest half extent of a box and the
 // radius and half height of a cylinder at the scale of the entity. A hull finds out when it is built.
@@ -54,12 +59,12 @@ collider_round_fits :: proc "contextless" (collider:Collider,scale:[3]f32) -> bo
     if !(round>=0 && round<max(f32)) {return false}
     if round==0 {return true}
     smallest:=max(f32)
+    size:=collider.size*linalg.abs(scale)
     #partial switch collider.kind {
     case .Box:
-        size:=collider.size*scale
         smallest=min(size.x,size.y,size.z)
     case .Cylinder:
-        smallest=min(collider.size.x*max(scale.x,scale.z),collider.size.y*scale.y)
+        smallest=min(collider.size.x*max(abs(scale.x),abs(scale.z)),size.y)
     }
     // A shape without size is refused as such, not for its rounding.
     return !(smallest>0) || round<smallest
@@ -140,7 +145,7 @@ mesh_cached :: proc(app:^host.App,meshes:^Collider_Meshes,mesh:base.Asset_Id,sha
     _,found:=host.assets_collision(app.assets,mesh,shape,.Mesh,&buffer)
     for &position in buffer.positions {position*=scale}
     disabled:=host.assets_mesh_disabled_edges(app.assets,mesh)
-    if !found || !sim.mesh_build(&entry.built,{buffer.positions[:],buffer.indices[:],disabled},context.allocator) {
+    if !found || !sim.mesh_build(&entry.built,{buffer.positions[:],buffer.indices[:],disabled,inside_out(scale)},context.allocator) {
         // Kept empty: what cannot be built is not tried again for every entity that shows it.
         entry.built={}
         return nil
@@ -212,7 +217,7 @@ geometry_remember :: proc(s:^Sync,geometry:sim.Geometry,source:Geometry_Source) 
     state:=s.state
     w:=&state.world
     total:=len(w.hulls)+len(w.meshes)+len(w.heightfields)
-    if len(state.sources)!=total && resize(&state.sources,total)!=nil {return}
+    if len(state.sources)!=total && (resize(&state.sources,total)!=nil || resize(&state.source_stamps,base.chunks_of(total))!=nil) {return}
     at:=-1
     handle:base.Handle
     #partial switch g in geometry {
@@ -224,6 +229,7 @@ geometry_remember :: proc(s:^Sync,geometry:sim.Geometry,source:Geometry_Source) 
     known:=source
     known.generation=base.handle_generation(handle)
     state.sources[at]=known
+    slot_stamp(state,state.source_stamps[:],at)
 }
 
 // Collision geometry of the Mesh_Renderer, scaled and copied into the simulation; a hull rounded by
@@ -236,6 +242,7 @@ collider_geometry :: proc(s:^Sync,l:^Link,kind:Collider_Kind,e:core.Entity,scale
     if kind==.Heightfield {
         field,found:=host.assets_heightfield(s.app.assets,static.mesh)
         if !found {return {},{},.No_Heightfield}
+        if scale.x<0 || scale.y<0 || scale.z<0 {return {},{},.Mirrored_Heightfield}
         origin=field.origin*scale
         for value in origin {if value-value!=0 {return {},{},.No_Heightfield}}
     }
@@ -341,7 +348,7 @@ collider_geometry_make :: proc(s:^Sync,l:^Link,kind:Collider_Kind,static:render.
     if _,found:=host.assets_collision(s.app.assets,static.mesh,static.shape,kind==.Mesh?.Mesh:.Hull,&buffer);!found {return {},.No_Geometry}
     for &position in buffer.positions {position*=scale}
     if kind==.Mesh {
-        l.mesh,made=sim.mesh_create(w,{buffer.positions[:],buffer.indices[:],host.assets_mesh_disabled_edges(s.app.assets,static.mesh)})
+        l.mesh,made=sim.mesh_create(w,{buffer.positions[:],buffer.indices[:],host.assets_mesh_disabled_edges(s.app.assets,static.mesh),inside_out(scale)})
         if !made {return {},.Geometry_Budget}
         return l.mesh,.None
     }

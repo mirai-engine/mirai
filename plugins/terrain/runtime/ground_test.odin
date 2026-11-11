@@ -15,11 +15,13 @@ Ground_World :: struct {
     using terrain:Test_Terrain,
 }
 
+// A call of terrain_update as its readers see it: what it pushed in it.
 @(private="file")
 ground_step :: proc(w:^Ground_World,resident:^Terrain_Resident,focus:=Terrain_Focus{}) -> core.Ground_Query {
-    ground_update(resident,&w.data,&w.terrains,&w.colliders,&w.worlds,focus)
+    clear(&w.ground_queries.changed.items);clear(&w.ground_queries.unloaded.items)
+    ground_update(resident,&w.data,core.read(&w.terrains),&w.colliders,core.read(&w.worlds),focus,&w.ground_queries)
     g:=&resident.ground
-    return {user=g,probe=ground_probe,spacing=g.spacing,revision=g.revision,changes=g.changes[:g.count],unloaded=g.unloaded[:],unloaded_revision=g.unloaded_revision}
+    return {user=g,probe=ground_probe,spacing=g.spacing,unloaded=g.unloaded[:]}
 }
 
 @(private="file")
@@ -91,33 +93,38 @@ the_ground_answers_each_line_as_its_terrain_has_it :: proc(t:^testing.T) {
     }
     _,found=q.probe(q.user,{0,10,0},{0,0,0},false)
     testing.expect_value(t,found,core.Ground_Found.None)
+    changed:=&w.ground_queries.changed.items
+    // A call where nothing changed announces nothing.
+    q=ground_step(&w,&resident)
+    testing.expect_value(t,len(changed),0)
     // A stroke held over (12, 12) leaves its region without surface until it ends, announced both times.
-    revision:=q.revision
     held:=Terrain_Focus{source={3,3},center={12,0,12},radius=2,stroke=true,low={10,10},high={14,14}}
     q=ground_step(&w,&resident,held)
     _,found=q.probe(q.user,{12,50,12},{0,-1,0},false)
-    testing.expect(t,found==.Empty && q.revision==revision+1)
+    testing.expect(t,found==.Empty && len(changed)==1)
     q=ground_step(&w,&resident)
     _,found=q.probe(q.user,{12,50,12},{0,-1,0},false)
-    testing.expect(t,found==.Ground && q.revision==revision+2)
+    testing.expect(t,found==.Ground && len(changed)==1)
     // An edit announces the box of its chunks, and a terrain that moves all it covered and covers.
     change:=source_edit(s,{kind=.Raise,center={20,0,20},radius=3,amount=1.5})
     low,high:=chunk_range(s,change)
     w.data.entries[0].change=2
     for z in low.z..=high.z {for x in low.x..=high.x {w.data.entries[0].versions[chunk_index(s,{i32(x),0,i32(z)})]=2}}
     q=ground_step(&w,&resident)
-    last:=q.changes[len(q.changes)-1].box
-    testing.expect(t,q.revision==revision+3 && mm.aabb_contains(last,{{20,0,20},{20,0,20}}) && !mm.aabb_contains(last,{{-16,0,-16},{-16,0,-16}}))
+    testing.expect(t,len(changed)==1 && mm.aabb_contains(changed[0],{{20,0,20},{20,0,20}}) && !mm.aabb_contains(changed[0],{{-16,0,-16},{-16,0,-16}}))
     hit,_:=q.probe(q.user,{20,50,20},{0,-1,0},false)
     testing.expect(t,hit.point.y>1)
     core.edit(&w.worlds,land).transform.position={0,0,100}
     core.test_world_settle(&w)
     q=ground_step(&w,&resident)
-    testing.expect_value(t,q.revision,revision+5)
-    // Another epoch of the data starts the revision anew: whoever read the last one reads all.
+    testing.expect_value(t,len(changed),2)
+    // Another epoch of the data starts the resident anew (terrain_update): every terrain is announced.
     w.data.epoch+=1
+    terrain_resident_free(&resident)
     q=ground_step(&w,&resident)
-    testing.expect(t,q.revision>>32==u64(w.data.epoch) && q.changes[0].revision>revision+6)
+    testing.expect_value(t,len(changed),2)
+    q=ground_step(&w,&resident)
+    testing.expect_value(t,len(changed),0)
 }
 
 // A heightfield of 4 by 4 chunks of 16 m: the first row has its colliders
@@ -148,22 +155,30 @@ the_chunks_of_a_terrain_without_collider_are_unloaded_ground :: proc(t:^testing.
     q:=ground_step(&w,&resident)
     // Row 0: chunk 2. Row 1: chunk 4, and 6 to 7. Rows 2 and 3: one run each.
     testing.expect_value(t,len(q.unloaded),5)
-    revision:=q.unloaded_revision
-    testing.expect(t,revision>0)
+    unloaded:=&w.ground_queries.unloaded.items
+    testing.expect_value(t,len(unloaded),1)
     for box in q.unloaded {
         testing.expect(t,box.min.y<=-1e3 && box.max.y>=1e3)
         // The loaded chunks, from -32 to -16 m and -16 to 0 m along x on the first row, are left out.
         testing.expect(t,!(box.max.z<=-16 && box.min.x< -16+1e-3 && box.max.x> -32+1e-3 && box.max.x<= -16+1e-3))
     }
+    // A call where nothing of the terrains changed looks at no chunk, also while another entity
+    // moves: one that turns shown waits for its mark.
+    shown[9].shown=true
+    other:=core.create(&w.entities)
+    core.add(&w.worlds,other,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
+    core.test_world_settle(&w)
     q=ground_step(&w,&resident)
-    testing.expect_value(t,q.unloaded_revision,revision)
+    testing.expect(t,len(q.unloaded)==5 && len(unloaded)==0)
+    resident.marks+=1
+    q=ground_step(&w,&resident)
+    testing.expect(t,len(q.unloaded)==6 && len(unloaded)==1 && mm.aabb_contains(unloaded[0],{{-16,0,0},{0,0,16}}))
     // Chunk 2 loads: one box fewer.
     chunks[2]=core.create(&w.entities)
     core.add(&w.colliders,chunks[2],phys.Collider{kind=.Heightfield})
     core.test_world_settle(&w)
     q=ground_step(&w,&resident)
-    testing.expect_value(t,len(q.unloaded),4)
-    testing.expect(t,q.unloaded_revision>revision)
+    testing.expect(t,len(q.unloaded)==5 && len(unloaded)==1)
 }
 
 @(private="file")
@@ -181,8 +196,9 @@ a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     defer core.test_world_destroy(&w)
     dusty,bare:=core.create(&w.entities),core.create(&w.entities)
     dust:=TERRAIN_DUST_DEFAULT
-    dust.layers[1]={channel=core.Birth_Channel(20),color={1,0,0,1}}
-    dust.layers[3].channel=core.CHANNEL_NONE
+    dust.layers[1].color={1,0,0,1}
+    base.text_set(dust.layers[1].channel[:],"gravel")
+    dust.layers[3].channel={}
     core.add(&w.dusts,dusty,dust)
     core.test_world_settle(&w)
     core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25}})
@@ -190,6 +206,6 @@ a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
     births:=w.births.queue.items[:]
     if !testing.expect_value(t,len(births),2) {return}
-    testing.expect(t,births[0].channel==CHANNEL_DUST && births[0].count==20 && births[0].position==[3]f32{1,2,3})
-    testing.expect(t,births[1].channel==core.Birth_Channel(20) && births[1].count==10 && births[1].color==[4]f32{1,0,0,1})
+    testing.expect(t,births[0].channel==core.birth_channel(CHANNEL_DUST) && births[0].count==20 && births[0].position==[3]f32{1,2,3})
+    testing.expect(t,births[1].channel==core.birth_channel("gravel") && births[1].count==10 && births[1].color==[4]f32{1,0,0,1})
 }

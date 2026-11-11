@@ -211,5 +211,13 @@ emission_key :: proc(particle:base.Asset_Id,a:^host.Assets,stamp:u64) -> u64 {
     return base.hash_combine(base.hash_combine(base.hash_combine(particle[0],particle[1]),a!=nil?a.revision:0),stamp)|1
 }
 
+// The stamp of the row of an entity, 0 without one: it moves when the row is
+// written, added or taken.
+@(private)
+row_stamp :: proc "contextless" (rows:^core.Table($T,$A),e:core.Entity) -> u64 {
+    at:=core.row_of(rows,e)
+    return at>=0?core.stamp(rows,at):0
+}
+
 // The color of a gradient at x.
 gradient_at :: proc "contextless" (g:^effect.Particle_Gradient,x:f32) -> [4]f32 {return keys_at(g.times[:],g.colors[:],x)}

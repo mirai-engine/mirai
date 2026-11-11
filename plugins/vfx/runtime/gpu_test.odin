@@ -10,11 +10,13 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
+import evolume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
+import fog "plugins:fog/runtime"
 import "plugins:vfx/runtime/effect"
 import "plugins:vfx/runtime/gridfile"
 
@@ -162,7 +164,8 @@ particles_start_glow_and_die_on_the_gpu :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.2, 0.2, 0.2}}}, nil, {}, {sky = {0.05, 0.05, 0.05}})
+	gpu.scene_set_environment(r,{},{sky = {0.05, 0.05, 0.05}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.2, 0.2, 0.2}}},true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.5, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	emitter := test_emitter(7, {0, 0.5, 0})
 	DT :: f32(1.0 / 60)
@@ -201,13 +204,15 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
 	gpu.materials_set(r, {{base_color = {0.8, 0.9, 1}, opacity = 0.25, alpha_mode = .Blend, roughness = 0.1, ior = 1.5}})
-	gpu.scene_set(r, {
+	gpu.scene_light_update(r,0,{position = {1, 2, 1}, color = {1, 0.8, 0.6}, intensity = 8 * math.PI, range = 10})
+	gpu.scene_set_environment(r,{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true},{sky = {0.2, 0.3, 0.5}})
+	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.6, 0.6, 0.6}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 0.5, 1.2}, {3, 2, 0.05}), material = 1},
-	}, {{position = {1, 2, 1}, color = {1, 0.8, 0.6}, intensity = 8 * math.PI, range = 10}}, {direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
+	},true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	smoke := test_emitter(1, {0, 0, 0})
-	smoke.blend, smoke.lit, smoke.sort, smoke.collision = .Alpha, true, true, .Screen
+	smoke.blend, smoke.lit, smoke.sort, smoke.collision = .Alpha, true, true, .World
 	smoke.speed, smoke.shape, smoke.shape_angle, smoke.acceleration = {1, 2}, .Cone, 0.4, {0, -4, 0}
 	smoke.noise_strength, smoke.noise_frequency, smoke.noise_speed = 2, 1, 1
 	smoke.event, smoke.event_target, smoke.event_count = .Death, 2, 4
@@ -256,7 +261,8 @@ particles_keep_steady_frames_allocation_free :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12})}}, nil, {}, {sky = {0.2, 0.3, 0.5}})
+	gpu.scene_set_environment(r,{},{sky = {0.2, 0.3, 0.5}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12})}},true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	emitters := [2]Emitter_Desc{test_emitter(1, {0, 0, 0}), test_emitter(2, {1, 0, 0})}
 	emitters[1].blend, emitters[1].sort, emitters[1].lit = .Alpha, true, true
@@ -288,7 +294,8 @@ ribbon_lays_a_band_along_the_path_of_its_emitter :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.1, 0.1, 0.1}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.1, 0.1, 0.1}}},true)
 	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	trail := test_emitter(1, {-2, 0, 0})
 	trail.render, trail.lifetime, trail.size, trail.soft = .Ribbon, {2, 2}, {0.3, 0.3}, 0
@@ -323,7 +330,8 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	red := gpu.DEFAULT_MATERIAL
 	red.base_color, red.alpha_mode = {1, 0.05, 0.05}, .Blend
 	gpu.materials_set(r, {red})
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, 0, -2}, {12, 12, 0.2}), tint = {0.1, 0.1, 0.1}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, 0, -2}, {12, 12, 0.2}), tint = {0.1, 0.1, 0.1}}},true)
 	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	// Two cubes of the material: one with full alpha, one whose curve takes its alpha to zero.
 	shown := test_emitter(1, {-1.2, 0, 0})
@@ -370,7 +378,8 @@ mesh_particles_face_scale_and_turn_their_mesh_as_their_effect_says :: proc(t: ^t
 	red := gpu.DEFAULT_MATERIAL
 	red.base_color, red.alpha_mode = {1, 0.05, 0.05}, .Blend
 	gpu.materials_set(r, {red})
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, 0, -2}, {12, 12, 0.2}), tint = {0.1, 0.1, 0.1}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, 0, -2}, {12, 12, 0.2}), tint = {0.1, 0.1, 0.1}}},true)
 	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	bar := test_emitter(1, {-1, 0.4, 0})
 	bar.render, bar.mesh, bar.material, bar.blended, bar.blend = .Mesh, f.cube_range, 1, true, .Alpha
@@ -657,7 +666,8 @@ particle_programs_move_and_keep_their_particles :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1.6, 0}, {12, 0.2, 12}), tint = {0.1, 0.1, 0.1}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1.6, 0}, {12, 0.2, 12}), tint = {0.1, 0.1, 0.1}}},true)
 	camera := gpu.Camera{position = {0, 3, 3}, forward = {0, -3, -3}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	program := erender.program_find(&f.assets, "Orbit", .Vfx)
 	testing.expect(t, program != nil, "the plugin has the Vfx program Orbit")
@@ -703,7 +713,8 @@ particle_surface_shape_starts_particles_on_its_mesh :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	shell := test_emitter(1, {-2.5, 2, 0})
 	shell.capacity, shell.lifetime, shell.size = 512, {5, 5}, {0.12, 0.12}
@@ -740,7 +751,8 @@ particle_programs_follow_a_surface_that_moves :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	program := erender.program_find(&f.assets, "Stick", .Vfx)
 	if !testing.expect(t, program != nil && len(program.resources) == 1 && program.resources[0].kind == .Surface, "testdata has the Vfx program Stick, which reads a surface") {return}
@@ -782,7 +794,8 @@ particle_channel_births_start_where_the_game_says :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	impacts := test_emitter(1, {0, 3, 0})
 	impacts.capacity, impacts.lifetime, impacts.size = 512, {5, 5}, {0.15, 0.15}
@@ -912,7 +925,8 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 		testing.expect(t, linalg.length(segment.start - (arm + {0, 1, 0})) < 1e-4 && linalg.length(segment.end - (hand + {0, 1, 0})) < 1e-4)
 	}
 	bone.previous = bone.transform
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	along := test_emitter(1, {-2.5, 2, 0})
 	along.capacity, along.lifetime, along.size = 512, {5, 5}, {0.12, 0.12}
@@ -1166,7 +1180,8 @@ particle_volumes_draw_the_medium_of_a_grid :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	// Two metres of cells of an eighth around (0, 0.5, 0).
 	smoke := test_grid(f, "smoke", {16, 16, 16}, 0.125, 1, {-8, -4, -8}, Particle_Volume{density = 6, albedo = {0.5, 0.5, 0.5}, emission = {4, 1.6, 0.4}})
@@ -1202,7 +1217,8 @@ particle_stages_trace_the_scene :: proc(t: ^testing.T) {
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
 	// A cube from x 1 to 2, around the middles of the cells.
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({1.5, 0.25, 0.25}, {1, 1, 1})}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({1.5, 0.25, 0.25}, {1, 1, 1})}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	// Cells of half a metre from x -1 to 3, their middles at y and z 0.25.
 	first := [3]i32{-2, 0, 0}
@@ -1248,10 +1264,11 @@ particle_lights_light_the_scene_and_cast_shadows :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {
+	gpu.scene_set_environment(r,{},{})
+	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}},
 		{object_id = 2, mesh = f.cube, transform = trs({0.6, -0.3, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
-	}, nil, {}, {})
+	},true)
 	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	spark := test_emitter(1, {0, 0.3, 0})
 	spark.lifetime, spark.size, spark.lights, spark.light, spark.shadows = {10, 10}, {0.02, 0.02}, 4, {5, 2.5, 0.05}, true
@@ -1288,7 +1305,8 @@ particle_lights_grow_the_light_buffers_before_the_room_goes_up :: proc(t: ^testi
 	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}}}, nil, {}, {})
+	gpu.scene_set_environment(r,{},{})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}}},true)
 	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	spark := test_emitter(1, {0, 0.3, 0})
 	spark.lifetime, spark.size, spark.lights, spark.light = {10, 10}, {0.02, 0.02}, 40, {5, 2.5, 0.05}
@@ -1315,10 +1333,11 @@ particle_lights_without_shadows_light_through_what_stands_in_their_way :: proc(t
 	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {
+	gpu.scene_set_environment(r,{},{})
+	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}},
 		{object_id = 2, mesh = f.cube, transform = trs({0.6, -0.3, 0}, {0.4, 0.4, 0.4}), tint = {0.5, 0.5, 0.5}},
-	}, nil, {}, {})
+	},true)
 	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	spark := test_emitter(1, {0, 0.3, 0})
 	spark.lifetime, spark.size, spark.lights, spark.light = {10, 10}, {0.02, 0.02}, 4, {5, 2.5, 0.05}
@@ -1365,7 +1384,8 @@ particle_world_textures_reach_the_materials :: proc(t: ^testing.T) {
 	material.program_id = program.id
 	material.custom_params[0] = {0.01, 0, 0, 0}
 	gpu.materials_set(r, {material})
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
+	gpu.scene_set_environment(r,{},{})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), material = 1, tint = {1, 1, 1}}},true)
 	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	// Another grid with a texture before it: their texels lie one after the other.
 	other := test_grid(f, "other", {4, 1, 4}, 0.25, 1, {10, 0, 10})
@@ -1411,7 +1431,8 @@ particle_collisions_land_on_the_scene_and_slide_by_their_friction :: proc(t: ^te
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 0.6, 4}, forward = {0, -0.3, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	// Thrown at 2 m/s along x from half a metre over the floor: they land 0.64 m on.
 	stops := test_emitter(1, {-1.5, 0, 0})
@@ -1462,7 +1483,8 @@ particle_sprites_hand_their_data_to_the_program_of_their_material :: proc(t: ^te
 	material := gpu.DEFAULT_MATERIAL
 	material.program_id = surface.id
 	gpu.materials_set(r, {material})
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, nil, {}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 0, 4}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	given := test_emitter(1, {-1, 0, 0})
 	plain := test_emitter(2, {1, 0, 0})
@@ -1582,10 +1604,11 @@ programs_see_the_vertex_colors_and_the_object_of_their_point_drawn_and_reflected
 	mesh, made := gpu.mesh_add(r, quad, []u32{0, 2, 1, 0, 3, 2})
 	if !testing.expect(t, made, r.error) {return}
 	// The probe is 3 by 3 m over the mirror, its object twice as tall as its mesh.
-	gpu.scene_set(r, {
+	gpu.scene_set_environment(r,{},{sky = {0, 0, 0}})
+	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), material = 2, tint = {1, 1, 1}},
 		{object_id = 2, mesh = mesh, transform = trs({0, 2, -2}, {3, 2, 3}), material = 1, tint = {1, 1, 1}},
-	}, nil, {}, {sky = {0, 0, 0}})
+	},true)
 	seen :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, points: [2][3]f32) -> (out: [2][3]f32) {
 		r := &f.renderer
 		for _ in 0 ..< 3 {testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)}
@@ -1608,5 +1631,63 @@ programs_see_the_vertex_colors_and_the_object_of_their_point_drawn_and_reflected
 		testing.expectf(t, left.g > 20 && left.g < left.r, "%s, the scale of its object along y: %v", what, left)
 		testing.expectf(t, right.b > left.b + 40, "%s, its +x side of the object: %v against %v", what, right, left)
 	}
+	expect_clean(t, f.device)
+}
+
+// Particles go behind the media of the view: a fog box between the eye and a
+// sprite takes what the sprite sends by what the box lets through, and a
+// sprite in front of the box sends as much as without it.
+@(test)
+particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 192, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, 0, -20}, {40, 40, 0.2}), tint = {0.02, 0.02, 0.02}}},true)
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	BEHIND :: [3]f32{-0.8, 0, -9}
+	FRONT :: [3]f32{0.8, 0, -3}
+	behind := test_emitter(1, BEHIND)
+	front := test_emitter(2, FRONT)
+	behind.lifetime, front.lifetime = {5, 5}, {5, 5}
+	behind.intensity, front.intensity = 0.5, 0.5
+	// Two metres of a medium that stops 1.5 of each metre and scatters nothing: it lets through e^-3.
+	medium := fog.Medium{box = {position = {0, 0, -6}, rotation = 1, scale = {6, 6, 2}}, density = 1.5}
+	state := fog.Fog_Gpu{}
+	settings_fog := fog.Fog_Settings{hidden = .Every_Frame}
+	media: fog.Fog_Media
+	defer delete(media.queue.items)
+	volumes: core.Table(fog.Fog_Volume)
+	places: core.Table(evolume.Volume)
+	worlds: core.Table(core.World_Transform)
+	hidden: core.Table(erender.Hidden)
+	parents: core.Table(core.Parent)
+	DT :: f32(1.0 / 60)
+	seconds: f32
+	seen: [2][2][3]f32 // without and with the fog: the sprite behind it and the one in front
+	for &frame, foggy in seen {
+		for i in 0 ..< 10 {
+			behind.spawns = test_burst(1) if foggy == 0 && i == 0 else {}
+			front.spawns = behind.spawns
+			testing.expect(t, frame_emitters(f, &f.sync, {behind, front}, DT))
+			if foggy == 1 {fog.medium_add(&media, medium)}
+			fog.fog_render(&state, core.read(&volumes), core.read(&places), &media, core.read(&worlds), core.read(&hidden), core.read(&parents), core.ref(&settings_fog), &f.app, nil)
+			seconds += DT
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = seconds}), r.error)
+		}
+		rhi.device_wait_idle(f.device)
+		pixels, w, _, ok := gpu.renderer_capture(r)
+		if !testing.expect(t, ok, r.error) {return}
+		frame = {pixel(pixels, w, project(r, camera, BEHIND)), pixel(pixels, w, project(r, camera, FRONT))}
+		delete(pixels)
+	}
+	open, misty := seen[0], seen[1]
+	testing.expectf(t, open[0].r > 40 && open[1].r > 40, "without fog both sprites show: %v", open)
+	testing.expectf(t, misty[0].r < open[0].r * 0.3, "the sprite behind the fog %v is dimmed by it, from %v", misty[0], open[0])
+	testing.expectf(t, abs(misty[1].r - open[1].r) <= 0.1 * open[1].r + 2, "the sprite in front of the fog %v shows as without it %v", misty[1], open[1])
 	expect_clean(t, f.device)
 }

@@ -9,12 +9,12 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 // No temporal jitter, so a pixel center always shows the same surface point.
+// Shadows are checked ray by ray, at single pixels of small images: the
+// fixtures draw with the reference of the lights, whose every pixel traces
+// its own rays.
 @(private = "file")
 material_settings :: proc() -> Settings {
 	s := DEFAULT_SETTINGS
-	// Shadows are checked ray by ray, at single pixels of small images:
-	// every pixel traces its own rays.
-	s.reference_lights = true
 	s.gi_enabled = false
 	s.taa = false
 	s.reflections = .Detailed
@@ -41,7 +41,7 @@ OVERHEAD :: Camera{position = {0, 2, 0}, forward = {0, -2, 0}, up = {0, 0, -1}, 
 @(test)
 material_selector_thumbnails_sample_the_material_table :: proc(t: ^testing.T) {
     f: Fixture
-    if !fixture_init(t, &f, 128, 64, material_settings()) {return}
+    if !fixture_init(t, &f, 128, 64, material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     pixels:=make([]u8,32*32*4,context.temp_allocator)
@@ -74,7 +74,7 @@ material_selector_thumbnails_sample_the_material_table :: proc(t: ^testing.T) {
         d:=a;d.position={x,52,0};d.uv={0,1}
         copy(ui[6+id*6:][0:6],([]Ui_Vertex{a,b,c,a,c,d}))
     }
-    testing.expect(t,renderer_frame(r,{camera=OVERHEAD,ui={{vertices=ui[:]}}}),r.error)
+    testing.expect(t,fixture_frame(&f, {camera=OVERHEAD,ui={{vertices=ui[:]}}}),r.error)
     shown,width,_,ok:=golden_capture(r)
     testing.expect(t,ok,r.error)
     if !ok {return}
@@ -91,7 +91,7 @@ material_selector_thumbnails_sample_the_material_table :: proc(t: ^testing.T) {
     testing.expectf(t,int(emitter.g)>int(emitter.r)+50 && int(emitter.g)>int(emitter.b)+50,"thumbnail uses the second material's emission: %v",emitter)
     // Editing the existing row updates its thumbnail without a preview resource.
     glow.emission={0,0,500};materials_set(r,{textured,glow})
-    testing.expect(t,renderer_frame(r,{camera=OVERHEAD,ui={{vertices=ui[:]}}}),r.error)
+    testing.expect(t,fixture_frame(&f, {camera=OVERHEAD,ui={{vertices=ui[:]}}}),r.error)
     updated,_,_,updated_ok:=golden_capture(r)
     testing.expect(t,updated_ok,r.error)
     if updated_ok {
@@ -151,8 +151,8 @@ near_bytes :: proc(a, b: [4]int, tolerance: int) -> bool {
 }
 
 @(private = "file")
-frames :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, count: int, mode := Debug_View.None) {
-	for _ in 0 ..< count {testing.expect(t, renderer_frame(r, {camera = camera, inspection = {mode = mode}}), r.error)}
+frames :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, count: int, mode := Debug_View.None) {
+	for _ in 0 ..< count {testing.expect(t, fixture_frame(f, {camera = camera, inspection = {mode = mode}}), f.renderer.error)}
 }
 
 // A view that fades out the body of its player leaves out as many of its
@@ -161,7 +161,7 @@ frames :: proc(t: ^testing.T, r: ^Renderer, camera: Camera, count: int, mode := 
 @(test)
 a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	red := DEFAULT_MATERIAL
@@ -169,7 +169,7 @@ a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^tes
 	materials_set(r, {red})
 	quad := ground_quad(r, 1)
 	wide := Mat4{4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1}
-	scene_set(r, {{object_id = 1, mesh = quad, transform = wide, tint = {1, 1, 1}, owner = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = quad, transform = wide, tint = {1, 1, 1}, owner = 1}}, nil, {}, {})
 	Case :: struct {own: u8, fade: f32, drawn: int}
 	ALL :: 64 * 64
 	cases := [?]Case{{0, 0, ALL}, {1, 0, ALL}, {1, 0.25, ALL * 3 / 4}, {1, 0.5, ALL / 2}, {1, 1, 0}, {2, 1, ALL}}
@@ -177,7 +177,7 @@ a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^tes
 	for c in cases {
 		camera := OVERHEAD
 		camera.own, camera.fade = c.own, c.fade
-		frames(t, r, camera, 2)
+		frames(t, &f, camera, 2)
 		rhi.device_wait_idle(f.device)
 		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
 		drawn := 0
@@ -194,7 +194,7 @@ a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^tes
 @(test)
 a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	red := DEFAULT_MATERIAL
@@ -203,7 +203,7 @@ a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
 	quad := ground_quad(r, 1)
 	wide := Mat4{4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1}
 	HEAD_LAYER :: u32(1) << 15
-	scene_set(r, {{object_id = 1, mesh = quad, transform = wide, tint = {1, 1, 1}, layers = HEAD_LAYER, owner = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = quad, transform = wide, tint = {1, 1, 1}, layers = HEAD_LAYER, owner = 1}}, nil, {}, {})
 	ALL :: 64 * 64
 	Case :: struct {own: u8, own_hidden, layers: u32, drawn: int}
 	cases := [?]Case{
@@ -217,7 +217,7 @@ a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
 	for c in cases {
 		camera := OVERHEAD
 		camera.own, camera.own_hidden, camera.layers = c.own, c.own_hidden, c.layers
-		frames(t, r, camera, 2)
+		frames(t, &f, camera, 2)
 		rhi.device_wait_idle(f.device)
 		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
 		drawn := 0
@@ -230,7 +230,7 @@ a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
 @(test)
 material_texture_is_upright_and_keeps_its_colors :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// Four quadrants, from the top: red, green / blue, gray. Their centers are
@@ -251,8 +251,8 @@ material_texture_is_upright_and_keeps_its_colors :: proc(t: ^testing.T) {
 	material.textures[.Base_Color] = texture
 	materials_set(r, {material})
 	quad := ground_quad(r, 1)
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, r, OVERHEAD, 2)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 2)
 	metallic := 64
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {-0.25, 0, -0.25}), {255, 0, 0, metallic}, 3), "top left is the first texel: %v", read_albedo(t, &f, OVERHEAD, {-0.25, 0, -0.25}))
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {0.25, 0, -0.25}), {0, 255, 0, metallic}, 3), "top right: %v", read_albedo(t, &f, OVERHEAD, {0.25, 0, -0.25}))
@@ -265,14 +265,14 @@ material_texture_is_upright_and_keeps_its_colors :: proc(t: ^testing.T) {
 	material.uv_scale = {0.5, 0.5}
 	material.uv_offset = {0.5, 0}
 	materials_set(r, {material})
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 0}}}, nil, {}, {})
-	frames(t, r, OVERHEAD, 2)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 0}}}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 2)
 	// The whole quad now shows the top right quadrant: green.
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {-0.25, 0, 0.25}), {0, 188, 0, metallic}, 3), "half of green: %v", read_albedo(t, &f, OVERHEAD, {-0.25, 0, 0.25}))
 	material.maps.base_color.scale = {2, 2}
 	material.maps.base_color.offset = {-1, 0}
 	materials_set(r, {material})
-	frames(t, r, OVERHEAD, 2)
+	frames(t, &f, OVERHEAD, 2)
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {-0.25, 0, -0.25}), {255, 0, 0, metallic}, 3), "per-map placement cancels global UV: %v", read_albedo(t, &f, OVERHEAD, {-0.25, 0, -0.25}))
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
@@ -280,7 +280,7 @@ material_texture_is_upright_and_keeps_its_colors :: proc(t: ^testing.T) {
 @(test)
 material_instance_overrides_the_mesh_materials :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	red, blue := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -289,17 +289,17 @@ material_instance_overrides_the_mesh_materials :: proc(t: ^testing.T) {
 	blue.roughness = 0.5
 	materials_set(r, {red, blue})
 	quad := ground_quad(r, 1)
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, r, OVERHEAD, 2)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 2)
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {}), {255, 0, 0, 0}, 2), "the mesh's own material: %v", read_albedo(t, &f, OVERHEAD, {}))
 	testing.expectf(t, abs(read_normal(t, &f, OVERHEAD, {}).w - 1) < 0.01, "roughness of the default: %v", read_normal(t, &f, OVERHEAD, {}))
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 2, tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, r, OVERHEAD, 2)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 2, tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 2)
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {}), {0, 0, 255, 0}, 2), "the material of the instance: %v", read_albedo(t, &f, OVERHEAD, {}))
 	testing.expectf(t, abs(read_normal(t, &f, OVERHEAD, {}).w - 0.5) < 0.01, "its roughness: %v", read_normal(t, &f, OVERHEAD, {}))
 	// A row past the table is ignored instead of read out of bounds.
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 40, tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, r, OVERHEAD, 2)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 40, tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 2)
 	testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {}), {255, 0, 0, 0}, 2), "an unknown row keeps the mesh's material: %v", read_albedo(t, &f, OVERHEAD, {}))
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
@@ -307,7 +307,7 @@ material_instance_overrides_the_mesh_materials :: proc(t: ^testing.T) {
 @(test)
 material_mips_average_light_and_follow_distance :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	SIZE :: 64
@@ -327,11 +327,11 @@ material_mips_average_light_and_follow_distance :: proc(t: ^testing.T) {
 	material.textures[.Base_Color] = texture
 	materials_set(r, {material})
 	quad := ground_quad(r, 1)
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
 	// The quad covers about 8 pixels: each one spans several texels.
 	far := OVERHEAD
 	far.position = {0, 7, 0}
-	frames(t, r, far, 2)
+	frames(t, &f, far, 2)
 	// Half of the light is sRGB 188; averaging the encoded bytes would give 128,
 	// and reading the full-size level would give black or white.
 	center := read_albedo(t, &f, far, {})
@@ -342,7 +342,7 @@ material_mips_average_light_and_follow_distance :: proc(t: ^testing.T) {
 @(test)
 material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// 30 degrees towards +X of the image, and towards its top (+Y).
@@ -360,15 +360,15 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 	quad := ground_quad(r)
 	expected := [3]Vec3{{0.5, 0.866, 0}, {0, 0.866, -0.5}, {0, 1, 0}}
 	for want, i in expected {
-		scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = Material_Handle(i + 1), tint = {1, 1, 1}}}, nil, {}, {})
-		frames(t, r, OVERHEAD, 2)
+		scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = Material_Handle(i + 1), tint = {1, 1, 1}}}, nil, {}, {})
+		frames(t, &f, OVERHEAD, 2)
 		n := read_normal(t, &f, OVERHEAD, {0.2, 0, 0.1})
 		testing.expectf(t, abs(n.x - want.x) < 0.03 && abs(n.y - want.y) < 0.03 && abs(n.z - want.z) < 0.03, "material %d: normal %v, expected %v", i + 1, n.xyz, want)
 	}
 	// Seen from below, the sheet is the same surface: its normal is the opposite of the front one.
 	below := Camera{position = {0, -2, 0}, forward = {0, 2, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, r, below, 2)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), material = 1, tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, below, 2)
 	n := read_normal(t, &f, below, {0.2, 0, 0.1})
 	testing.expectf(t, abs(n.x + 0.5) < 0.03 && abs(n.y + 0.866) < 0.03 && abs(n.z) < 0.03, "back face: normal %v", n.xyz)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
@@ -377,7 +377,7 @@ material_normal_map_tilts_towards_its_axes :: proc(t: ^testing.T) {
 @(test)
 material_gloss_adds_a_highlight_and_metal_tints_it :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	matte, glossy, metal := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -394,8 +394,8 @@ material_gloss_adds_a_highlight_and_metal_tints_it :: proc(t: ^testing.T) {
 	lights := []Light_Desc{{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 30}}
 	shot :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, lights: []Light_Desc, camera: Camera, material: Material_Handle, world: Vec3) -> [3]f32 {
 		r := f.renderer
-		scene_set(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = material, tint = {1, 1, 1}}}, lights, {}, {})
-		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = material, tint = {1, 1, 1}}}, lights, {}, {})
+		for _ in 0 ..< 3 {testing.expect(t, fixture_frame(f, {camera = camera}), r.error)}
 		rhi.device_wait_idle(f.device)
 		pixels, w, _, ok := golden_capture(r)
 		testing.expect(t, ok, r.error)
@@ -495,9 +495,9 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 			lamp.maps.emission.uv_set = u32(uv_set)
 			materials_set(r, {lamp})
 			instances[1].mesh = mesh
-			scene_set(r, instances, nil, {}, {sky = {0, 0, 0}})
+			scene_given(r, instances, nil, {}, {sky = {0, 0, 0}})
 			renderer_reset_history(r)
-			frames(t, r, camera, 16, .Indirect)
+			frames(t, &f, camera, 16, .Indirect)
 			rhi.device_wait_idle(f.device)
 			pixels, w, _, captured := golden_capture(r)
 			testing.expect(t, captured, r.error)
@@ -533,9 +533,9 @@ material_textures_color_the_bounced_light :: proc(t: ^testing.T) {
 				wall.material = Material_Handle(2 + k)
 				wall.tint = {1, 1, 1}
 			}
-			scene_set(r, room[:], lamp_light, {}, {sky = {0, 0, 0}})
+			scene_given(r, room[:], lamp_light, {}, {sky = {0, 0, 0}})
 			renderer_reset_history(r)
-			frames(t, r, camera, 16, .Indirect)
+			frames(t, &f, camera, 16, .Indirect)
 			rhi.device_wait_idle(f.device)
 			pixels, w, _, captured := golden_capture(r)
 			testing.expect(t, captured, r.error)
@@ -596,7 +596,7 @@ texture_table_has_a_budget :: proc(t: ^testing.T) {
 @(test)
 material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	texel := [4]u8{90, 160, 220, 255}
@@ -606,8 +606,8 @@ material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
 	material.textures[.Base_Color] = texture
 	materials_set(r, {material})
 	quad := ground_quad(r, 1)
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, r, OVERHEAD, 4)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 4)
 	tlas_nodes := len(r.scene.tlas_nodes)
 	tracker: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&tracker, context.allocator)
@@ -618,7 +618,7 @@ material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
 			material.roughness = 0.2 + 0.2 * f32(i)
 			materials_set(r, {material})
 			testing.expect(t, !r.scene.instances_dirty && !r.scene.lights_dirty, "a change of values leaves the instances, the TLAS and the lights alone")
-			testing.expect(t, renderer_frame(r, {camera = OVERHEAD}), r.error)
+			testing.expect(t, fixture_frame(&f, {camera = OVERHEAD}), r.error)
 		}
 	}
 	testing.expect_value(t, tracker.total_allocation_count, i64(0))
@@ -630,7 +630,7 @@ material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
 @(test)
 material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	mirror, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -650,11 +650,11 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = emitter, material = 2, tint = {1, 1, 1}},
 	}
-	scene_set(r, instances, nil, {}, {sky = {0, 0, 0.2}})
+	scene_given(r, instances, nil, {}, {sky = {0, 0, 0.2}})
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	floor_point :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
 		r := f.renderer
-		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		for _ in 0 ..< 3 {testing.expect(t, fixture_frame(f, {camera = camera}), r.error)}
 		rhi.device_wait_idle(f.device)
 		pixels, w, _, ok := golden_capture(r)
 		testing.expect(t, ok, r.error)
@@ -668,7 +668,7 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 	beside := floor_point(t, &f, camera, {3, 0, 0})
 	testing.expectf(t, mirrored.r > 150 && mirrored.r > mirrored.b * 3, "the mirror shows the red emitter: %v", mirrored)
 	testing.expectf(t, beside.b > beside.r + 20, "next to it the mirror shows the sky: %v", beside)
-	testing.expect_value(t, r.stats.rays_per_frame, u64(r.targets.width * r.targets.height) * 2) // a sun ray and a mirror ray per pixel
+	testing.expect_value(t, r.stats.rays_per_frame, u64(r.targets.half_width * r.targets.half_height) + u64(r.targets.width * r.targets.height)) // a mirror ray per pixel, and the sun ray of each block the statistics count of the Direct stage
 
 	settings := r.settings
 	settings.reflections = .Off
@@ -695,15 +695,15 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 @(test)
 material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	grid, ocean := program_find(r, "Grid", .Surface), program_find(r, "Ocean", .Surface)
-	testing.expect(t, grid != nil && ocean != nil, "the tests have the Grid and Ocean programs")
-	if grid == nil || ocean == nil {return}
-	mirror, wall, sea := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
-	sea.program_id = ocean.id
-	sea.custom_params = program_defaults(ocean)
+	grid, pieces := program_find(r, "Grid", .Surface), program_find(r, "Pieces", .Surface)
+	testing.expect(t, grid != nil && pieces != nil, "the tests have the Grid and Pieces programs")
+	if grid == nil || pieces == nil {return}
+	mirror, wall, other := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	other.program_id = pieces.id
+	other.custom_params = program_defaults(pieces)
 	mirror.base_color = {0.9, 0.9, 0.9}
 	mirror.metallic = 1
 	mirror.roughness = 0.05
@@ -726,8 +726,8 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for binned in ([]bool{false, true}) {
 		// The other program is in a row of the table that no instance takes.
-		materials_set(r, {mirror, wall, sea if binned else DEFAULT_MATERIAL})
-		scene_set(r, instances, nil, sun, {sky = {0, 0, 0.05}})
+		materials_set(r, {mirror, wall, other if binned else DEFAULT_MATERIAL})
+		scene_given(r, instances, nil, sun, {sky = {0, 0, 0.05}})
 		testing.expect_value(t, r.scene.programs_used, u32(2 if binned else 1))
 		mirrored := screen_color(t, &f, camera, {0, 0, 0})
 		testing.expectf(t, mirrored.r > 100 && mirrored.r > 3 * mirrored.b, "binned %v: the mirror shows the wall as its program paints it: %v", binned, mirrored)
@@ -743,7 +743,7 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 @(test)
 material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings(), desc = {pipeline_thread = true}, programs = true) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), desc = {pipeline_thread = true}, programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
@@ -771,7 +771,7 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 	standing := scale_matrix(10)
 	standing[1, 1], standing[1, 2], standing[2, 1], standing[2, 2] = 0, -10, 10, 0
 	standing[2, 3] = -3
-	scene_set(r, {
+	scene_given(r, {
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
 	}, nil, {direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0, 0, 0.05}})
@@ -789,14 +789,14 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 		}
 		return at(f.renderer, pixels, w, camera, {0, 0.3, -3}), at(f.renderer, pixels, w, camera, {0, 0, 0})
 	}
-	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
 	testing.expect(t, renderer_pipelines_pending(r), "the frame asked the thread for the pipelines of the program")
 	seen, mirrored := look(t, &f, camera)
 	testing.expectf(t, seen.b > seen.r + 40 && mirrored.b > mirrored.r + 40, "until they are made the wall is its row: %v, in the mirror %v", seen, mirrored)
 	for renderer_pipelines_pending(r) {
 		renderer_pipelines_wait(r)
 		renderer_reset_history(r)
-		frames(t, r, camera, 3)
+		frames(t, &f, camera, 3)
 	}
 	seen, mirrored = look(t, &f, camera)
 	testing.expectf(t, seen.r > 3 * seen.b && mirrored.r > 3 * mirrored.b, "then it is what its program paints: %v, in the mirror %v", seen, mirrored)
@@ -809,7 +809,7 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 @(test)
 material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid := program_find(r, "Grid", .Surface)
@@ -827,11 +827,11 @@ material_program_shows_on_what_the_camera_sees :: proc(t: ^testing.T) {
 	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}
 	camera := OVERHEAD
 	camera.position.y = 5
-	scene_set(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}}}, nil, sun, {})
+	scene_given(r, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}}}, nil, sun, {})
 	floor := screen_color(t, &f, camera, {})
 	testing.expectf(t, floor.r > 100 && floor.r > 3 * floor.b, "the floor shows its program: %v", floor)
 	// A white floor under a sheet of the glass.
-	scene_set(r, {
+	scene_given(r, {
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = placed(4, 1), material = 2, tint = {1, 1, 1}},
 	}, nil, sun, {})
@@ -861,7 +861,7 @@ pieces_material :: proc(t: ^testing.T, pieces: ^Program, progress: f64) -> Mater
 @(test)
 material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	pieces := program_find(r, "Pieces", .Surface)
@@ -887,10 +887,10 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 		testing.expect(t, renderer_apply_settings(r, settings), r.error)
 		for progress in ([]f64{0, 1}) {
 			materials_set(r, {pieces_material(t, pieces, progress)})
-			scene_set(r, instances, nil, sun, {})
+			scene_given(r, instances, nil, sun, {})
 			there, away := Vec3{3, 1, 0}, Vec3{0, 1, 0}
 			if progress == 1 {there, away = away, there}
-			frames(t, r, above, 2)
+			frames(t, &f, above, 2)
 			seen, left := read_albedo(t, &f, above, there), read_albedo(t, &f, above, away)
 			// The pivot in its vertex color (grey) tints its red.
 			testing.expectf(t, seen.r > 100 && seen.g < 30 && seen.b < 30, "%v progress %v: the camera sees the piece where its program put it: %v", provider, progress, seen)
@@ -903,17 +903,17 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 	// Half way the piece is at 3 * 0.5^3 along X: the frame it moves in draws
 	// it coming from 3, the next one at rest.
 	materials_set(r, {pieces_material(t, pieces, 0)})
-	scene_set(r, instances, nil, sun, {})
-	frames(t, r, above, 3)
+	scene_given(r, instances, nil, sun, {})
+	frames(t, &f, above, 3)
 	materials_update(r, {pieces_material(t, pieces, 0.5)}, {1})
-	frames(t, r, above, 1)
+	frames(t, &f, above, 1)
 	now := Vec3{3 * 0.125, 1, 0}
 	half := read_albedo(t, &f, above, now)
 	testing.expectf(t, half.r > 100 && half.g < 30 && half.b < 30, "the piece is half way: %v", half)
 	moving := target_at(t, &f, r.targets.motion, above, now)
 	// From 3 to 0.375 m along X, 5 m under a camera of 60 degrees: 0.45 of the image.
 	testing.expectf(t, moving.x > 0.3 && moving.x < 0.6 && abs(moving.y) < 0.02, "the pixel comes from where the piece was: %v", moving)
-	frames(t, r, above, 1)
+	frames(t, &f, above, 1)
 	still := target_at(t, &f, r.targets.motion, above, now)
 	testing.expectf(t, abs(still.x) < 0.01 && abs(still.y) < 0.01, "a piece that stopped draws no motion: %v", still)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
@@ -923,7 +923,7 @@ material_program_moves_the_vertices_the_camera_the_rays_and_the_motion_see :: pr
 @(private = "file")
 screen_color :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
 	r := f.renderer
-	frames(t, r, camera, 3)
+	frames(t, f, camera, 3)
 	rhi.device_wait_idle(f.device)
 	pixels, w, _, ok := golden_capture(r)
 	testing.expect(t, ok, r.error)
@@ -944,7 +944,7 @@ placed :: proc(scale: f32, height: f32) -> Mat4 {
 @(test)
 material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// The left half of the image is solid and the right half is a hole.
@@ -988,8 +988,8 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 			cutout.maps.base_color.uv_set = u32(uv_set)
 			materials_set(r, {cutout})
 			instances[1].mesh = mesh
-			scene_set(r, instances, nil, sun, {})
-			frames(t, r, above, 2)
+			scene_given(r, instances, nil, sun, {})
+			frames(t, &f, above, 2)
 			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {-0.5, 1, 0}), {255, 0, 0, 0}, 3), "%v UV%d solid half is drawn", provider, uv_set)
 			testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v UV%d floor shows through the hole", provider, uv_set)
 			testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_ALPHA_TESTED != 0 && r.scene.instances[0].meta.w & INSTANCE_FLAG_ALPHA_TESTED == 0, "only the masked instance asks its material")
@@ -1002,18 +1002,18 @@ material_mask_cuts_holes_for_the_camera_and_for_rays :: proc(t: ^testing.T) {
 		cutout.opacity = 1
 		materials_set(r, {cutout})
 		covered := screen_color(t, &f, side, {0.5, 0, 0.8})
-		frames(t, r, above, 2)
+		frames(t, &f, above, 2)
 		testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 0, 0, 0}, 3), "%v uniform mask covers the camera", provider)
 		cutout.opacity = 0
 		materials_set(r, {cutout})
 		open := screen_color(t, &f, side, {0.5, 0, 0.8})
-		frames(t, r, above, 2)
+		frames(t, &f, above, 2)
 		testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 255, 255, 0}, 3), "%v uniform mask opens for the camera", provider)
 		testing.expectf(t, open.g > covered.g + 40, "%v uniform mask opens for rays: %v vs %v", provider, open, covered)
 		// A material that turns opaque fills its holes and stops asking.
 		cutout.alpha_mode = .Opaque
 		materials_set(r, {cutout})
-		frames(t, r, above, 2)
+		frames(t, &f, above, 2)
 		testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0.5, 1, 0}), {255, 0, 0, 0}, 3), "an opaque material has no holes: %v", read_albedo(t, &f, above, {0.5, 1, 0}))
 		testing.expect(t, r.scene.instances[1].meta.w & INSTANCE_FLAG_ALPHA_TESTED == 0)
 	}
@@ -1037,7 +1037,7 @@ material_selection_mask_respects_surface_alpha :: proc(t:^testing.T) {
     cutout:=DEFAULT_MATERIAL;cutout.base_color={0.1,0.1,0.1};cutout.alpha_mode=.Mask;cutout.textures[.Base_Color]=texture
     materials_set(r,{cutout})
     mesh:=ground_quad(r)
-    scene_set(r,{{object_id=1,mesh=mesh,transform=Mat4(1),material=1,tint={1,1,1},highlight=1}},nil,{},{background={0,0,0},use_background=true})
+    scene_given(r,{{object_id=1,mesh=mesh,transform=Mat4(1),material=1,tint={1,1,1},highlight=1}},nil,{},{background={0,0,0},use_background=true})
     testing.expect(t,renderer_set_highlight_style(r,{colors={0={0,1,0,1}},fill={0=1},width=2}))
     camera:=Camera{position={0,4,0},forward={0,-4,0},up={0,0,-1},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     // Probe inside each texture half, away from the quad silhouette where
@@ -1050,19 +1050,19 @@ material_selection_mask_respects_surface_alpha :: proc(t:^testing.T) {
     // Retina drawable from both internal resolutions. Compare mask coverage,
     // independently of the scene lighting/history beneath the editor coat.
     renderer_resize(r,192,128,2,2)
-    for scale in ([]f32{0.5,1}) {
-        settings.resolution=Render_Scale(scale);settings.taa=true
+    for lines in ([]u32{32,64}) {
+        settings.resolution=lines;settings.taa=true
         testing.expect(t,renderer_apply_settings(r,settings),r.error)
         solid_scaled:=screen_color(t,&f,camera,{-0.25,0,0})
         hole_scaled:=screen_color(t,&f,camera,{0.25,0,0})
-        testing.expectf(t,solid_scaled.g>200 && hole_scaled.g<20,"Cutout remains covered/open under TAA and scale %v: solid%v hole%v",scale,solid_scaled,hole_scaled)
+        testing.expectf(t,solid_scaled.g>200 && hole_scaled.g<20,"Cutout remains covered/open under TAA and %v lines: solid%v hole%v",lines,solid_scaled,hole_scaled)
         testing.expect_value(t,r.targets.highlight_width,u32(96))
         testing.expect_value(t,r.targets.highlight_height,u32(64))
         mask:[96*64*2]f32
         testing.expect(t,golden_read_texture(f.device,r.targets.highlight,mem.slice_data_cast([]u8,mask[:])))
         changed:=0
         for pixel in 0..<96*64 {if mask[pixel*2]!=reference_mask[pixel*2] {changed+=1}}
-        testing.expectf(t,changed==0,"Logical-point alpha coverage is identical across Retina/TAA/downscale: %d changed texels at scale %v",changed,scale)
+        testing.expectf(t,changed==0,"Logical-point alpha coverage is identical across Retina/TAA/downscale: %d changed texels at %v lines",changed,lines)
     }
     cutout.alpha_mode=.Opaque;materials_set(r,{cutout})
     filled:=screen_color(t,&f,camera,{0.25,0,0})
@@ -1076,7 +1076,7 @@ material_selection_mask_respects_surface_alpha :: proc(t:^testing.T) {
 @(test)
 material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 64, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 64, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// Leaves: the alpha of every texel is random, and 40% of them reach the
@@ -1112,8 +1112,8 @@ material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
 			{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}},
 			{object_id = 2, mesh = quad, transform = placed(2, 1), material = material, tint = {1, 1, 1}},
 		}
-		scene_set(r, instances, nil, {}, {})
-		frames(t, r, camera, 2)
+		scene_given(r, instances, nil, {}, {})
+		frames(t, f, camera, 2)
 		rhi.device_wait_idle(f.device)
 		pixels := make([]u8, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
 		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
@@ -1132,7 +1132,7 @@ material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
 @(test)
 material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	red, blue := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -1147,7 +1147,7 @@ material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T
 	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}
 	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}
 	glass := Instance_Desc{object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}}
-	scene_set(r, {floor, glass}, nil, sun, {})
+	scene_given(r, {floor, glass}, nil, sun, {})
 	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	through := screen_color(t, &f, above, {0, 1, 0})
 	testing.expectf(t, through.r > through.g + 30 && through.g > 40, "the floor shows through the red sheet: %v", through)
@@ -1160,15 +1160,15 @@ material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T
 
 	// Two sheets are drawn back to front whatever the order they were given in.
 	lower := Instance_Desc{object_id = 3, mesh = quad, transform = placed(2, 0.5), material = 2, tint = {1, 1, 1}}
-	scene_set(r, {floor, glass, lower}, nil, sun, {})
+	scene_given(r, {floor, glass, lower}, nil, sun, {})
 	first := screen_color(t, &f, above, {0, 1, 0})
-	scene_set(r, {floor, lower, glass}, nil, sun, {})
+	scene_given(r, {floor, lower, glass}, nil, sun, {})
 	second := screen_color(t, &f, above, {0, 1, 0})
 	testing.expectf(t, first.r > first.b + 30, "the red sheet, nearer the camera, is drawn over the blue one: %v", first)
 	testing.expectf(t, abs(first.r - second.r) < 4 && abs(first.b - second.b) < 4, "the order of the instances does not matter: %v and %v", first, second)
 	from_below := Camera{position = {0, -5, 0}, forward = {0, 5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	sun.direction = {0, -1, 0}
-	scene_set(r, {glass, lower}, nil, sun, {})
+	scene_given(r, {glass, lower}, nil, sun, {})
 	below := screen_color(t, &f, from_below, {0, 0.5, 0})
 	testing.expectf(t, below.b > below.r + 30, "from the other side the blue sheet is the near one: %v", below)
 
@@ -1176,7 +1176,7 @@ material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T
 	red.alpha_mode = .Opaque
 	blue.alpha_mode = .Opaque
 	materials_set(r, {red, blue})
-	frames(t, r, from_below, 2)
+	frames(t, &f, from_below, 2)
 	testing.expect_value(t, len(r.scene.translucent), 0)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
@@ -1196,7 +1196,7 @@ read_light :: proc(t:^testing.T,f:^Fixture,camera:Camera,world:Vec3,target:rhi.T
 @(test)
 material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings(), programs = true) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), programs = true, reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     image:[16*16*4]u8
@@ -1232,16 +1232,16 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
             filter.mesh=mesh
             settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=false
             testing.expect(t,renderer_apply_settings(r,settings))
-            scene_set(r,{floor,filter},nil,sun,{})
-            frames(t,r,camera,2)
+            scene_given(r,{floor,filter},nil,sun,{})
+            frames(t, &f,camera,2)
             white:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
             testing.expectf(t,abs(white.r-white.b)<0.01,"%v UV%d disabled filter passes white: %v",provider,uv_set,white)
             settings.colored_shadows=true;testing.expect(t,renderer_apply_settings(r,settings))
             for source in 0..<3 {
                 settings.light_budget=0 if source==2 else 8 // source 2 exercises the shadow ray of a sampled light.
                 testing.expect(t,renderer_apply_settings(r,settings))
-                scene_set(r,{floor,filter},nil if source==0 else ([]Light_Desc{spot}),sun if source==0 else Sun_Desc{},{})
-                frames(t,r,camera,4)
+                scene_given(r,{floor,filter},nil if source==0 else ([]Light_Desc{spot}),sun if source==0 else Sun_Desc{},{})
+                frames(t, &f,camera,4)
                 // The spot gives the scene another light scale: in nits.
                 red:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)/r.scene.light_scale
                 blue:=read_light(t,&f,camera,{0.4,0,-0.4},r.targets.direct)/r.scene.light_scale
@@ -1253,13 +1253,13 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
             // must not return as soon as it finds a transmitting surface.
             // Look from the side so the opaque blocker is not the visible pixel.
             camera.position={0,3,6};camera.forward={0,-3,-6};camera.up={0,1,0}
-            scene_set(r,{floor,filter,opaque},nil,sun,{})
-            frames(t,r,camera,2)
+            scene_given(r,{floor,filter,opaque},nil,sun,{})
+            frames(t, &f,camera,2)
             blocked:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
             testing.expectf(t,blocked.r+blocked.g+blocked.b<0.01,"%v UV%d opaque geometry behind the filter blocks: %v",provider,uv_set,blocked)
             glass.alpha_mode=.Mask;materials_set(r,{glass})
-            scene_set(r,{floor,filter},nil,sun,{})
-            frames(t,r,camera,2)
+            scene_given(r,{floor,filter},nil,sun,{})
+            frames(t, &f,camera,2)
             masked:=read_light(t,&f,camera,{-0.4,0,-0.4},r.targets.direct)
             hole:=read_light(t,&f,camera,{0,0,0.4},r.targets.direct)
             testing.expectf(t,masked.r+masked.g+masked.b<0.01 && hole.r>0.2,"%v UV%d Mask keeps opaque coverage and transparent holes: %v and %v",provider,uv_set,masked,hole)
@@ -1280,12 +1280,13 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
     materials_set(r,{painted})
     wide:=Instance_Desc{object_id=2,mesh=quad,transform=placed(8,1),material=1,tint={1,1,1}}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if provider==.Hardware && !r.hardware_rt_verified {continue}
+        if provider==.Hardware && !r.hardware_rt_verified || provider==.Software && !SOFTWARE_TRACER {continue}
         for reference in ([2]bool{false,true}) {
-            settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true;settings.light_budget=8;settings.reference_lights=reference
+            f.reference=Reference_Set{.Lights} if reference else {}
+            settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true;settings.light_budget=8
             testing.expect(t,renderer_apply_settings(r,settings))
-            scene_set(r,{floor,wide},nil,sun,{})
-            frames(t,r,camera,4)
+            scene_given(r,{floor,wide},nil,sun,{})
+            frames(t, &f,camera,4)
             line:=read_light(t,&f,camera,{},r.targets.direct)
             cell:=read_light(t,&f,camera,{2,0,2},r.targets.direct)
             testing.expectf(t,line.b>0.2 && line.b>4*line.r && cell.r>0.2 && cell.r>4*cell.b && line.g+cell.g<0.05,"%v reference %v: the shadow of the glass shows its program where each ray crosses it: line %v, cell %v",provider,reference,line,cell)
@@ -1297,7 +1298,7 @@ material_colored_shadows_filter_textures_and_respect_blockers :: proc(t:^testing
 @(test)
 uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     vertices:=[4]Mesh_Vertex{
@@ -1309,16 +1310,16 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
     mesh,ok:=mesh_add(r,vertices[:],[]u32{0,2,1,0,3,2})
     testing.expect(t,ok);if !ok {return}
     source:=Instance_Desc{object_id=11,mesh=mesh,transform=Mat4(1),tint={1,1,1}}
-    scene_set(r,{source},nil,{}, {})
-    frames(t,r,OVERHEAD,2)
+    scene_given(r,{source},nil,{}, {})
+    frames(t, &f,OVERHEAD,2)
     testing.expect(t,near_bytes(read_albedo(t,&f,OVERHEAD,{}),{255,0,0,0},2),"The source retains its authored vertex color")
     source.uniform_color=true
-    scene_set(r,{source},nil,{}, {})
-    frames(t,r,OVERHEAD,2)
+    scene_given(r,{source},nil,{}, {})
+    frames(t, &f,OVERHEAD,2)
     testing.expect(t,near_bytes(read_albedo(t,&f,OVERHEAD,{}),{255,255,255,0},2),"Uniform white overrides red mesh vertices")
     source.tint={0,1,0}
-    scene_set(r,{source},nil,{}, {})
-    frames(t,r,OVERHEAD,2)
+    scene_given(r,{source},nil,{}, {})
+    frames(t, &f,OVERHEAD,2)
     testing.expect(t,near_bytes(read_albedo(t,&f,OVERHEAD,{}),{0,255,0,0},2),"Uniform appearance keeps the instance tint")
 
     glass:=DEFAULT_MATERIAL;glass.alpha_mode=.Blend;glass.opacity=0.5
@@ -1332,13 +1333,13 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
         settings:=r.settings;settings.trace_mode=provider;settings.colored_shadows=true
         testing.expect(t,renderer_apply_settings(r,settings))
         source.uniform_color=false
-        scene_set(r,{floor,source},nil,sun,{})
-        frames(t,r,camera,2)
+        scene_given(r,{floor,source},nil,sun,{})
+        frames(t, &f,camera,2)
         colored:=read_light(t,&f,camera,{},r.targets.direct)
         testing.expectf(t,colored.r>colored.g*1.5 && colored.r>colored.b*1.5,"%v shadows retain ordinary red vertex colors: %v",provider,colored)
         source.uniform_color=true
-        scene_set(r,{floor,source},nil,sun,{})
-        frames(t,r,camera,2)
+        scene_given(r,{floor,source},nil,sun,{})
+        frames(t, &f,camera,2)
         white:=read_light(t,&f,camera,{},r.targets.direct)
         visible:=screen_color(t,&f,camera,{0,1,0})
         testing.expectf(t,white.r>0.2 && abs(white.r-white.g)<0.01 && abs(white.r-white.b)<0.01,"%v uniform white passes light without coloring it: %v",provider,white)
@@ -1350,7 +1351,7 @@ uniform_instance_color_overrides_vertex_colors_in_raster_and_shadow_rays :: proc
 @(test)
 material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     mirror:=DEFAULT_MATERIAL;mirror.metallic=1;mirror.roughness=0.03
@@ -1367,7 +1368,7 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
         {position={10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6},
         {position={-10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6},
     }
-    scene_set(r,instances,lights,{},{})
+    scene_given(r,instances,lights,{},{})
     camera:=Camera{position={0,2,2},forward={0,-2,-2},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
         if provider==.Hardware && !r.hardware_rt_verified {continue}
@@ -1375,7 +1376,7 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
         testing.expect(t,renderer_apply_settings(r,settings))
         low,high:=f32(1e6),f32(0)
         for _ in 0..<12 {
-            frames(t,r,camera,1)
+            frames(t, &f,camera,1)
             lit:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
             low=min(low,lit);high=max(high,lit)
         }
@@ -1386,18 +1387,18 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
         crowd:[8]Light_Desc
         crowd[0]=lights[0]
         for &light,i in crowd[1:] {light={position={f32(i%3)-1,3+0.2*f32(i),-2},color={1,1,1},intensity=6 * math.PI,range=6}}
-        scene_set_lights(r,crowd[:],{},{})
-        frames(t,r,camera,4)
+        scene_lights_given(r,crowd[:],{},{})
+        frames(t, &f,camera,4)
         every:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
         settings.reflection_light_budget=2;testing.expect(t,renderer_apply_settings(r,settings))
         low,high=1e6,0
         for _ in 0..<16 {
-            frames(t,r,camera,1)
+            frames(t, &f,camera,1)
             raw:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
             low=min(low,raw);high=max(high,raw)
         }
         testing.expectf(t,high-low<0.005 && abs(low-every)<0.25*every,"%v grouped lighting holds still near that of every light: %v..%v, every light %v",provider,low,high,every)
-        scene_set_lights(r,lights,{},{})
+        scene_lights_given(r,lights,{},{})
     }
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
@@ -1407,7 +1408,7 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := material_settings()
 	settings.reflections = .Traced
-	if !fixture_init(t, &f, 96, 64, settings) {return}
+	if !fixture_init(t, &f, 96, 64, settings, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	floor, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -1428,12 +1429,12 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	inside := Vec3{0, 0, 0}
 	beside := Vec3{0.6, 0, 0}
 	settled :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
-		frames(t, f.renderer, camera, 24)
+		frames(t, f, camera, 24)
 		return screen_color(t, f, camera, world)
 	}
 	floor.roughness = 0.05
 	materials_set(r, {floor, lamp})
-	scene_set(r, instances, nil, {}, {})
+	scene_given(r, instances, nil, {}, {})
 	mirror_inside := settled(t, &f, camera, inside)
 	mirror_beside := settled(t, &f, camera, beside)
 	floor.roughness = 0.3
@@ -1451,13 +1452,14 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, high - low < 12, "the filtered reflection flickers between %v and %v", low, high)
 	// The rays above were one per block of 2x2 pixels. A ray per pixel shows the same image.
-	pixels := u64(r.targets.width * r.targets.height)
-	testing.expect_value(t, r.stats.rays_per_frame, pixels + u64(r.targets.half_width * r.targets.half_height))
+	// The statistics count the sun rays of the Direct stage, one per block, not those of the reference.
+	pixels, blocks := u64(r.targets.width * r.targets.height), u64(r.targets.half_width * r.targets.half_height)
+	testing.expect_value(t, r.stats.rays_per_frame, 2 * blocks)
 	settings.reflections = .Detailed
 	testing.expect(t, renderer_apply_settings(r, settings))
 	full_inside := settled(t, &f, camera, inside)
 	full_beside := settled(t, &f, camera, beside)
-	testing.expect_value(t, r.stats.rays_per_frame, pixels * 2)
+	testing.expect_value(t, r.stats.rays_per_frame, blocks + pixels)
 	testing.expectf(t, abs(full_inside.r - rough_inside.r) < 14 && abs(full_beside.r - rough_beside.r) < 14, "shared rays change the image: %v and %v against %v and %v", rough_inside, rough_beside, full_inside, full_beside)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
@@ -1500,8 +1502,8 @@ block_textures_and_the_pool_bound_memory :: proc(t: ^testing.T) {
 	material.textures[.Base_Color] = texture
 	materials_set(r, {material})
 	quad := ground_quad(r, 1)
-	scene_set(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
-	frames(t, r, OVERHEAD, 2)
+	scene_given(r, {{object_id = 1, mesh = quad, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {})
+	frames(t, &f, OVERHEAD, 2)
 	// What is drawn is the color of the blocks: 24, 25 and 6 widened to 8 bits.
 	for point in ([]Vec3{{-0.2, 0, -0.05}, {0.3, 0, 0.45}}) {
 		shown := read_albedo(t, &f, OVERHEAD, point)
@@ -1530,7 +1532,7 @@ block_textures_and_the_pool_bound_memory :: proc(t: ^testing.T) {
 @(test)
 material_slots_instance_palette_preserves_triangle_partition_and_geometry :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,128,128,material_settings()) {return}
+    if !fixture_init(t,&f,128,128,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     red,green,blue:=DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL
@@ -1543,16 +1545,16 @@ material_slots_instance_palette_preserves_triangle_partition_and_geometry :: pro
     mesh,ok:=mesh_add(r,vertices[:],indices[:]);testing.expect(t,ok)
     desc:=Instance_Desc{object_id=1,mesh=mesh,transform=Mat4(1),tint={1,1,1}}
     desc.slot_materials[1]=4 // row 3, blue; source slot 1 stays red
-    scene_set(r,{desc},nil,{},{})
-    testing.expect(t,renderer_frame(r, {camera = OVERHEAD}),r.error)
+    scene_given(r,{desc},nil,{},{})
+    testing.expect(t,fixture_frame(&f, {camera = OVERHEAD}),r.error)
     a:=read_albedo(t,&f,OVERHEAD,{.25,0,-.25})
     b:=read_albedo(t,&f,OVERHEAD,{-.25,0,.25})
     testing.expect(t,a[0]>230 && a[1]<10 && a[2]<10,"Unassigned triangles retain source material")
     testing.expect(t,b[2]>230 && b[0]<10 && b[1]<10,"Only triangles belonging to the assigned source slot change")
     geometry_vertices,geometry_meshes:=len(r.scene.vertices),len(r.scene.meshes)
     desc.slot_materials={};desc.material=3
-    scene_set(r,{desc},nil,{},{})
-    testing.expect(t,renderer_frame(r, {camera = OVERHEAD}),r.error)
+    scene_given(r,{desc},nil,{},{})
+    testing.expect(t,fixture_frame(&f, {camera = OVERHEAD}),r.error)
     a=read_albedo(t,&f,OVERHEAD,{.25,0,-.25});b=read_albedo(t,&f,OVERHEAD,{-.25,0,.25})
     testing.expect(t,a[2]>230 && b[2]>230,"A global assignment preserves the previous whole mesh behavior")
     testing.expect(t,len(r.scene.vertices)==geometry_vertices && len(r.scene.meshes)==geometry_meshes,"Palette changes reuse the registered geometry and BLAS")
@@ -1563,7 +1565,7 @@ material_slots_instance_palette_preserves_triangle_partition_and_geometry :: pro
 @(test)
 material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     SIZE :: 32
@@ -1589,8 +1591,8 @@ material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:
     for p,i in corners {vertices[i]={position=p,normal={0,1,0},uv={0.25,0.5},uv1={p.x+0.5,p.z+0.5},color={1,1,1},material=1}}
     mesh,ok:=mesh_add(r,vertices[:],[]u32{0,2,1,0,3,2})
     testing.expect(t,ok,r.error)
-    scene_set(r,{{object_id=1,mesh=mesh,transform=Mat4(1),tint={1,1,1}}},nil,{},{})
-    frames(t,r,OVERHEAD,2)
+    scene_given(r,{{object_id=1,mesh=mesh,transform=Mat4(1),tint={1,1,1}}},nil,{},{})
+    frames(t, &f,OVERHEAD,2)
     at:=Vec3{0.25,0,-0.25}
     testing.expectf(t,near_bytes(read_albedo(t,&f,OVERHEAD,at),{0,0,255,0},4),"Base color selects UV1: %v",read_albedo(t,&f,OVERHEAD,at))
     read_half_target :: proc(t:^testing.T,f:^Fixture,target:rhi.Texture,world:Vec3)->Vec4 {
@@ -1609,7 +1611,7 @@ material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:
     material.maps.base_color.offset={1,1}
     material.ior=0;material.specular_factor=1;material.specular_color={1,1,1}
     materials_set(r,{material})
-    frames(t,r,OVERHEAD,2)
+    frames(t, &f,OVERHEAD,2)
     testing.expectf(t,near_bytes(read_albedo(t,&f,OVERHEAD,at),{255,0,0,0},4),"Only the base map rotates by pi: %v",read_albedo(t,&f,OVERHEAD,at))
     emission=read_half_target(t,&f,r.targets.emission,at)
     testing.expect(t,emission.x>0.95 && emission.z<0.01,"Other map transforms remain unchanged")
@@ -1629,9 +1631,9 @@ material_specular_conserves_diffuse_energy_and_ior_zero_is_angle_independent :: 
     material.base_color={1,1,1};material.roughness=1;material.specular_factor=0
     materials_set(r,{material})
     mesh:=ground_quad(r)
-    scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
     direct_at_origin :: proc(t:^testing.T,f:^Fixture,camera:Camera)->Vec3 {
-        frames(t,f.renderer,camera,2)
+        frames(t,f,camera,2)
         rhi.device_wait_idle(f.device)
         values:=make([]f16,int(f.renderer.targets.width*f.renderer.targets.height)*4,context.temp_allocator)
         testing.expect(t,golden_read_texture(f.device,f.renderer.targets.direct,mem.slice_data_cast([]u8,values)),rhi.device_error(f.device))
@@ -1668,7 +1670,7 @@ material_specular_conserves_diffuse_energy_and_ior_zero_is_angle_independent :: 
         testing.expectf(t,abs(a-b)<0.018,"IOR-zero colored reflectance is constant at normal and oblique views, channel %d: %f vs %f",channel,a,b)
     }
     material.alpha_mode=.Blend;material.opacity=0.5
-    materials_set(r,{material});frames(t,r,OVERHEAD,2);rhi.device_wait_idle(f.device)
+    materials_set(r,{material});frames(t, &f,OVERHEAD,2);rhi.device_wait_idle(f.device)
     testing.expect(t,r.targets.glass[0].surface!=0,"Visible glass allocates its reflectance target")
     if r.targets.glass[0].surface!=0 {
         values:=make([]f16,int(r.targets.width*r.targets.height)*4,context.temp_allocator)
@@ -1698,7 +1700,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     offscreen:=scale_matrix(4);offscreen[0,3]=20
     floor:=Instance_Desc{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}
     other:=Instance_Desc{object_id=2,mesh=mesh,transform=offscreen,material=2,tint={1,1,1}}
-    scene_set(r,{floor,other},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
+    scene_given(r,{floor,other},nil,{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true},{})
     testing.expect_value(t,len(r.scene.reflective),1)
     camera_needs_reflectance :: proc(r:^Renderer,camera:Camera)->bool {
         view,proj,_:=camera_matrices(camera,1)
@@ -1706,20 +1708,20 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
         return reflectance
     }
     testing.expect(t,!camera_needs_reflectance(r,OVERHEAD),"An off-camera reflective surface uses the plain G-buffer")
-    frames(t,r,OVERHEAD,2)
+    frames(t, &f,OVERHEAD,2)
     testing.expect(t,r.targets.surface==0,"Stored reflectance is allocated only when its surface enters the frustum")
     baseline,returned:[32*32*4]f16
     testing.expect(t,golden_read_texture(f.device,r.targets.display,mem.slice_data_cast([]u8,baseline[:])),rhi.device_error(f.device))
     visible:=OVERHEAD;visible.position.x=20
     testing.expect(t,camera_needs_reflectance(r,visible),"The same cached surface requires stored reflectance when the camera sees it")
-    frames(t,r,visible,2)
+    frames(t, &f,visible,2)
     testing.expect(t,r.targets.surface!=0,"The stored reflectance target is allocated lazily")
     if r.targets.surface!=0 {
         value:=read_reflectance(t,f.device,r,r.targets.surface,{16,16})
         testing.expectf(t,abs(value.x-.2)<.004 && abs(value.y-.8)<.004 && abs(value.z-.4)<.004 && value.w<0,"The visible surface retains its authored F0/IOR: %v",value)
     }
     testing.expect(t,!camera_needs_reflectance(r,OVERHEAD),"Leaving the frustum restores the plain path while the target stays allocated")
-    frames(t,r,OVERHEAD,2)
+    frames(t, &f,OVERHEAD,2)
     testing.expect(t,golden_read_texture(f.device,r.targets.display,mem.slice_data_cast([]u8,returned[:])),rhi.device_error(f.device))
     max_error:f32
     for value,i in returned {max_error=max(max_error,abs(f32(value)-f32(baseline[i])))}
@@ -1727,7 +1729,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     materials_set(r,{plain,DEFAULT_MATERIAL})
     testing.expect(t,len(r.scene.reflective)==0,"A material edit updates the cached classification")
     materials_set(r,{plain,reflective});other.hidden=true
-    scene_set(r,{floor,other},nil,{},{})
+    scene_given(r,{floor,other},nil,{},{})
     testing.expect(t,len(r.scene.reflective)==0,"Hidden instances never require stored reflectance")
     meshes_clear(r)
     testing.expect(t,len(r.scene.reflective)==0,"Scene geometry reset clears the cached references")
@@ -1740,7 +1742,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
 @(test)
 material_gbuffer_stage_surfaces_ask_for_their_targets :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,32,32,material_settings()) {return}
+    if !fixture_init(t,&f,32,32,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     plain,reflective,coated:=DEFAULT_MATERIAL,DEFAULT_MATERIAL,DEFAULT_MATERIAL
@@ -1748,21 +1750,22 @@ material_gbuffer_stage_surfaces_ask_for_their_targets :: proc(t:^testing.T) {
     coated.coat.weight=1
     materials_set(r,{plain,reflective,coated})
     mesh:=ground_quad(r)
-    scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(4),material=1,tint={1,1,1}}},nil,{direction={0,1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
     Seen :: struct {reflectance,layered:bool}
     record :: proc(s:^Stage_Pass,user:rawptr) {(^Seen)(user)^={s.pass.reflectance,s.pass.layered}}
-    drawn :: proc(t:^testing.T,r:^Renderer,mesh:Mesh_Handle,material:Material_Handle) -> (seen:Seen) {
+    drawn :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_Handle) -> (seen:Seen) {
+        r:=f.renderer
         testing.expect(t,frame_pass(r,.Gbuffer,record,rawptr(&seen)))
         if material!=0 {frame_gbuffer_mesh(r,mesh,material)}
-        frames(t,r,OVERHEAD,1)
+        frames(t,f,OVERHEAD,1)
         return
     }
-    testing.expect_value(t,drawn(t,r,mesh,0),Seen{false,false})
-    testing.expect_value(t,drawn(t,r,mesh,1),Seen{false,false})
-    testing.expect_value(t,drawn(t,r,mesh,2),Seen{true,false})
-    testing.expect_value(t,drawn(t,r,mesh,3),Seen{true,true})
+    testing.expect_value(t,drawn(t,&f,mesh,0),Seen{false,false})
+    testing.expect_value(t,drawn(t,&f,mesh,1),Seen{false,false})
+    testing.expect_value(t,drawn(t,&f,mesh,2),Seen{true,false})
+    testing.expect_value(t,drawn(t,&f,mesh,3),Seen{true,true})
     testing.expect(t,r.targets.surface!=0 && r.targets.layers!=0,"The targets the surfaces asked for are made")
-    testing.expect_value(t,drawn(t,r,mesh,0),Seen{false,false})
+    testing.expect_value(t,drawn(t,&f,mesh,0),Seen{false,false})
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
@@ -1862,8 +1865,8 @@ layered_cases :: proc(base:Vec3) -> [5]Layered_Case {
 @(private = "file")
 sky_albedo :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_Handle,camera:Camera) -> Vec3 {
     r:=f.renderer
-    scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{},{sky={1,1,1}})
-    frames(t,r,camera,2)
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{},{sky={1,1,1}})
+    frames(t, f,camera,2)
     return target_at(t,f,r.targets.display,camera,{})
 }
 
@@ -1881,8 +1884,8 @@ light_albedo :: proc(t:^testing.T,f:^Fixture,mesh:Mesh_Handle,material:Material_
         angle:=2*math.PI*(f32(i/SIDE)+0.5)/SIDE
         up:=math.sqrt(1-u)
         direction:=Vec3{math.sqrt(u)*math.cos(angle),up,math.sqrt(u)*math.sin(angle)}
-        scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
-        frames(t,r,camera,2)
+        scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
+        frames(t, f,camera,2)
         sum+=target_at(t,f,r.targets.direct,camera,{})/up
     }
     return sum/(SIDE*SIDE)
@@ -1934,8 +1937,8 @@ diffuse_transmission_lets_the_light_of_the_other_side_through :: proc(t:^testing
     quad:=ground_quad(r)
     below:=proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,material:Material_Handle) -> Vec3 {
         r:=f.renderer
-        scene_set(r,{{object_id=1,mesh=quad,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
-        frames(t,r,OVERHEAD,2)
+        scene_given(r,{{object_id=1,mesh=quad,transform=scale_matrix(12),material=material,tint={1,1,1}}},nil,{direction={0,-1,0},color={1,1,1},illuminance=math.PI,enabled=true},{})
+        frames(t, f,OVERHEAD,2)
         return target_at(t,f,r.targets.direct,OVERHEAD,{})
     }
     through:=below(t,&f,quad,1)
@@ -2031,8 +2034,8 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
     seen :: proc(t:^testing.T,f:^Fixture,quad:Mesh_Handle,turn:mm.Quat,spin:f32,camera:Camera,sun:Vec3) -> f32 {
         transform:=mm.transform_matrix({rotation=turn*mm.quat_axis_angle({0,1,0},spin),scale={12,12,12}})
         direction:=mm.quat_rotate(turn,sun)
-        scene_set(f.renderer,{{object_id=1,mesh=quad,transform=transform,material=1,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
-        frames(t,f.renderer,camera,2)
+        scene_given(f.renderer,{{object_id=1,mesh=quad,transform=transform,material=1,tint={1,1,1}}},nil,{direction=direction,color={1,1,1},illuminance=math.PI,enabled=true},{})
+        frames(t,f,camera,2)
         return target_at(t,f,f.renderer.targets.direct,camera,{}).x
     }
     identity:=mm.Quat(1)
@@ -2053,7 +2056,7 @@ material_anisotropy_turns_with_its_object :: proc(t:^testing.T) {
 @(test)
 material_mirrored_uvs_share_their_bitangent :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings()) {return}
+    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
     right:=[4]u8{191,128,238,255}
@@ -2083,14 +2086,14 @@ material_mirrored_uvs_share_their_bitangent :: proc(t:^testing.T) {
     testing.expect(t,added,r.error)
     // Scaled: the tangent in the world keeps the length of the normal.
     left_half,right_half:=Vec3{-0.8,0,0.2},Vec3{0.8,0,0.2}
-    scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(2),material=2,tint={1,1,1}}},nil,{},{})
-    frames(t,r,OVERHEAD,2)
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(2),material=2,tint={1,1,1}}},nil,{},{})
+    frames(t, &f,OVERHEAD,2)
     for at in ([2]Vec3{left_half,right_half}) {
         n:=read_normal(t,&f,OVERHEAD,at)
         testing.expectf(t,abs(n.x)<0.03 && abs(n.y-0.866)<0.03 && abs(n.z+0.5)<0.03,"+Y of the map is up the image on both halves, at %v: %v",at,n.xyz)
     }
-    scene_set(r,{{object_id=1,mesh=mesh,transform=scale_matrix(2),material=1,tint={1,1,1}}},nil,{},{})
-    frames(t,r,OVERHEAD,2)
+    scene_given(r,{{object_id=1,mesh=mesh,transform=scale_matrix(2),material=1,tint={1,1,1}}},nil,{},{})
+    frames(t, &f,OVERHEAD,2)
     left,mirrored:=read_normal(t,&f,OVERHEAD,left_half),read_normal(t,&f,OVERHEAD,right_half)
     testing.expectf(t,abs(left.x-0.5)<0.03 && abs(mirrored.x+0.5)<0.03 && abs(left.z)<0.03 && abs(mirrored.z)<0.03,"+X of the map follows u: %v and %v",left.xyz,mirrored.xyz)
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))

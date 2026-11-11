@@ -55,8 +55,12 @@ timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Ti
         base.text_set(rows[i].target[:],track.target)
     }
     marks:=make([]lib.Marker,len(markers),context.temp_allocator)
-    source.markers=make([]u64,len(markers),app.allocator)
-    for marker,i in markers {marks[i]={time=marker.time,id=u32(i)};source.markers[i]=base.name_hash(marker.name)}
+    source.markers=make([]host.Content_Marker,len(markers),app.allocator)
+    for marker,i in markers {
+        marks[i]={time=marker.time,id=u32(i),duration=marker.duration}
+        source.markers[i].name=base.name_hash(marker.name)
+        if marker.target!="" {source.markers[i].target=base.name_hash(marker.target);base.text_set(source.markers[i].text[:],marker.name)}
+    }
     clip,error:=lib.clip_add(&source.lib,{name=base.name_hash("open"),tracks=descs,markers=marks})
     if !testing.expect(t,clip==1 && error==.None) {return false}
     host.content_animation_loops(&source.lib,1)
@@ -73,7 +77,8 @@ timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Ti
 @(private="file")
 timeline_tick :: proc(w:^Timeline_World,app:^host.App,problems:^core.Problems,dt:f32=.25) {
     time:=core.Time{dt=dt,playing=true}
-    animation_tick(&w.animations,&w.transforms,&w.parents,core.ref(&w.hierarchy),&w.names,&w.requests,&w.events,&w.targets,{},&w.playback,app,time,{},nil,problems)
+    extra:Test_Storages;defer test_storages_free(&extra)
+    test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,app,time,{},nil,problems,&extra)
     animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,{},app,problems)
     animation_finish(&w.playback,{problems=problems},&w.constraints,&w.transforms,&w.parents,dt,nil,{},places=&w.places)
     core.test_world_settle(w)
@@ -192,15 +197,12 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     timeline_tick(&w,&app,&problems)
     testing.expect(t,!animation_playing(&w.playback,door))
     testing.expect_value(t,at(&w,leaf),[3]f32{0,0,0})
-    // The Animation is the game's: when the game writes playing, that is what the clip does.
+    // Animation.playing only starts it: once it plays, the game writing it changes nothing.
     core.edit(&w.animations,door).playing=true
     timeline_tick(&w,&app,&problems)
-    testing.expect(t,animation_playing(&w.playback,door))
-    testing.expect_value(t,at(&w,leaf),[3]f32{2,0,0})
-    progress,_=core.get(&w.progress,door)
-    testing.expect_value(t,progress.transport,Timeline_Transport.Component)
+    testing.expect(t,!animation_playing(&w.playback,door))
     animation_command(&w.requests,door,.Play)
-    for _ in 0..<6 {timeline_tick(&w,&app,&problems)}
+    for _ in 0..<7 {timeline_tick(&w,&app,&problems)}
     testing.expect_value(t,at(&w,leaf),[3]f32{8,0,0})
     _,_,ended,_:=animation_progress(&w.playback,door)
     testing.expect(t,ended)
@@ -212,6 +214,10 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     lamp,_=core.get(&w.lamps,actor)
     testing.expect_value(t,lamp.steps,min(i16))
     testing.expect_value(t,len(w.fields.fields),7)
+    // Resume at a negative speed takes it back from where it is.
+    animation_command(&w.requests,door,.Resume,speed=-1)
+    timeline_tick(&w,&app,&problems)
+    testing.expect(t,animation_playing(&w.playback,door) && at(&w,leaf)==[3]f32{6,0,0})
     // A command needs an Animation, a real command and a finite time.
     animation_command(&w.requests,leaf,.Play)
     timeline_tick(&w,&app,&problems)
@@ -220,8 +226,9 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     animation_command(&w.requests,core.NONE,.Play)
     animation_command(&w.requests,door,Timeline_Command(200))
     animation_command(&w.requests,door,.Seek,f32(0h7fc00000))
+    animation_command(&w.requests,door,.Resume,speed=f32(0h7f800000))
     animation_command(nil,door,.Play)
-    testing.expect_value(t,w.requests.timeline.refused,refused+3)
+    testing.expect_value(t,w.requests.timeline.refused,refused+4)
     testing.expect_value(t,len(w.requests.timeline.items),0)
 }
 

@@ -9,6 +9,7 @@ import volume "mirai:engine/volume"
 import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:std/spatial"
 import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
@@ -40,7 +41,7 @@ MODE_NAV_LINK :: locomotion.Locomotion_Mode(8)
 NAV_AGENT_HORIZON :: f32(1.5)  // s ahead that agents avoid each other
 NAV_AGENT_WALL_HORIZON :: f32(0.5) // s ahead that an agent that steps aside keeps from the edges of its mesh
 NAV_AGENT_CELL :: f32(2)       // m across a cell of the neighbor grid
-NAV_AGENT_REACH :: 32          // cells around its own, at most, an agent gathers neighbors from
+NAV_AGENT_REACH :: 32          // cells, at most, from an agent to the neighbors it gathers
 NAV_REPLAN_FOLLOW :: f32(0.5)  // s between plans while following a target that moves
 NAV_FOLLOW_TREES :: 4          // targets whose followers share a search at once
 NAV_FOLLOW_IDLE :: f32(2)      // s without a follower asking before the search toward a target is let go
@@ -173,10 +174,9 @@ Navigation_Agents :: struct {
     far_sections:u64,      // the sections the far simulation last looked at
     waiting:[dynamic]core.Entity, // from head on, in order of arrival
     head:int,
-    layouts:[2]u64,        // of the agents and the paths when the agents last got their Nav_Path
+    shapes:[2]core.Shape,  // of the agents and the paths when the agents last got their Nav_Path
     refs:[dynamic]ai.Nav_Ref,
-    sorted:[dynamic]base.Sort_Key64, // the agents of the tick by the cell they are in
-    scratch:[dynamic]base.Sort_Key64,
+    grid:spatial.Grid,     // the agents and obstacles of the tick (near) by where they stand on the ground
     neighbors:[dynamic]ai.Avoid_Agent(2),
     neighbors_air:[dynamic]ai.Avoid_Agent(3),
     near:[dynamic]Near,
@@ -219,7 +219,7 @@ agents_free :: proc(a:^Navigation_Agents) {
     for &tree in a.trees {ai.nav_query_destroy(&tree.query)}
     ai.search_destroy(&a.coarse)
     delete(a.space_links)
-    delete(a.waiting);delete(a.refs);delete(a.sorted);delete(a.scratch);delete(a.neighbors);delete(a.neighbors_air);delete(a.near)
+    delete(a.waiting);delete(a.refs);spatial.grid_destroy(&a.grid);delete(a.neighbors);delete(a.neighbors_air);delete(a.near)
     a^={}
 }
 
@@ -271,9 +271,7 @@ navigation_agents :: proc(
     obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
     roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),placer:core.Placer,bodies:^phys.Body_Requests,crossings:^Nav_Crossings,time:core.Time,problems:^core.Problems,
 ) {
-    layouts:=[2]u64{core.layout(agents),core.layout(paths)}
-    if layouts!=a.layouts {
-        a.layouts=layouts
+    if core.reshaped(agents,&a.shapes[0]) | core.reshaped(paths,&a.shapes[1]) {
         for row in 0..<core.count(agents) {
             e:=core.entity_at(agents,row)
             if !core.has(paths,e) {core.add(paths,e,NAV_PATH_DEFAULT)}
@@ -969,90 +967,39 @@ agent_medium_path :: proc(n:^Navigation,a:^Navigation_Agents,p:^Nav_Path,e:core.
 // velocity, with ORCA: on the plane, among those at its height and within the
 // edges of its mesh near it, for an agent that walks; in three axes, every
 // neighbor a sphere, for one that flies. Its neighbors are those it may meet
-// within the horizon, gathered from the cells around its own in blocks that
-// grow until they hold that reach, or as many neighbors nearer than the block
-// as ORCA counts.
+// within the horizon (agent_neighbors).
 @(private)
 agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),dt:f32,problems:^core.Problems) {
     count:=len(a.near)
     if count<2 {return}
-    if resize(&a.sorted,count)!=nil || resize(&a.scratch,count)!=nil {
-        core.report(problems,core.NONE,"navigation.memory","No memory for %d agents and obstacles to step aside from each other: they do not in this tick; free memory, or give fewer agents avoidance",count)
-        return
+    if count>len(a.grid.items) {
+        capacity:=64
+        for capacity<count {capacity*=2}
+        spatial.grid_destroy(&a.grid)
+        if !spatial.grid_init(&a.grid,{cell_size=NAV_AGENT_CELL,buckets=capacity*2,item_capacity=capacity}) {
+            core.report(problems,core.NONE,"navigation.memory","No memory for %d agents and obstacles to step aside from each other: they do not in this tick; free memory, or give fewer agents avoidance",count)
+            return
+        }
     }
-    // In the order of the cells: by x, then by z.
-    cell_key :: #force_inline proc "contextless" (x,z:i32) -> u64 {return u64(u32(x)~0x80000000)<<32|u64(u32(z)~0x80000000)}
-    cell_of :: #force_inline proc "contextless" (v:f32) -> i32 {return i32(math.floor(clamp(v,-1e9,1e9)/NAV_AGENT_CELL))}
-    sphere :: #force_inline proc "contextless" (near:Near) -> f32 {return max(near.radius,near.height*0.5)}
+    spatial.grid_clear(&a.grid)
     // The fastest and the widest: farther than those close within the horizon, nobody shapes a velocity.
     fastest,widest:f32
     for near,i in a.near {
-        a.sorted[i]={cell_key(cell_of(near.position.x),cell_of(near.position.z)),u32(i)}
+        spatial.grid_insert(&a.grid,ground_box(near.position,0),u64(i))
         if near.avoids {fastest=max(fastest,linalg.length(near.velocity))}
-        widest=max(widest,sphere(near))
+        widest=max(widest,near_sphere(near))
     }
-    base.radix_sort64(a.sorted[:],a.scratch[:])
-    sorted:=a.sorted[:]
     for near,i in a.near {
         if !near.avoids {continue}
         p:=core.edit(paths,near.entity)
         if p==nil || p.state!=.Moving {continue}
-        clear(&a.neighbors)
-        clear(&a.neighbors_air)
         speed:=linalg.length(p.velocity)
         // Farther than both can close within the horizon, a neighbor shapes no velocity it may choose.
         top:=max(speed,linalg.length(near.velocity))
-        far:=NAV_AGENT_HORIZON*(top+fastest)+sphere(near)+widest
-        cells:=i32(clamp(math.ceil(far/NAV_AGENT_CELL),1,NAV_AGENT_REACH))
-        cx,cz:=cell_of(near.position.x),cell_of(near.position.z)
-        gathered:=i32(-1) // the block of cells around its own already looked at
-        for block:=i32(1);;block=min(block*2,cells) {
-            for dx in -block..=block {
-                // Of a column of the block before, only the cells above and below it.
-                spans:=[2][2]i32{{cz-block,cz+block},{1,0}}
-                if abs(dx)<=gathered {spans={{cz-block,cz-gathered-1},{cz+gathered+1,cz+block}}}
-                for span in spans {
-                    if span[0]>span[1] {continue}
-                    first,last:=cell_key(cx+dx,span[0]),cell_key(cx+dx,span[1])
-                    low,high:=0,count
-                    for low<high {
-                        mid:=(low+high)/2
-                        if sorted[mid].key<first {low=mid+1} else {high=mid}
-                    }
-                    for k:=low;k<count && sorted[k].key<=last;k+=1 {
-                        other:=a.near[sorted[k].index]
-                        if int(sorted[k].index)==i {continue}
-                        velocity:=other.velocity
-                        if !other.avoids {velocity={}}
-                        reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
-                        if near.flies {
-                            reach+=sphere(near)+sphere(other)
-                            if linalg.length2(other.position-near.position)>reach*reach {continue}
-                            append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=velocity,radius=sphere(other)})
-                            continue
-                        }
-                        if abs(other.position.y-near.position.y)>max(near.height,other.height) {continue}
-                        reach+=near.radius+other.radius
-                        if linalg.length2(mm.Vec2{other.position.x-near.position.x,other.position.z-near.position.z})>reach*reach {continue}
-                        append(&a.neighbors,ai.Avoid_Agent(2){position={other.position.x,other.position.z},velocity={velocity.x,velocity.z},radius=other.radius})
-                    }
-                }
-            }
-            if block>=cells {break}
-            // Every neighbor nearer than the block reaches is in it: with as many of those as ORCA counts, the rest are farther.
-            held:=f32(block)*NAV_AGENT_CELL
-            within:=0
-            if near.flies {
-                for other in a.neighbors_air {if linalg.length2(other.position-near.position)<=held*held {within+=1}}
-            } else {
-                for other in a.neighbors {if linalg.length2(other.position-mm.Vec2{near.position.x,near.position.z})<=held*held {within+=1}}
-            }
-            if within>=ai.AVOID_MAX_NEIGHBORS {break}
-            gathered=block
-        }
+        agent_neighbors(a,i,top,NAV_AGENT_HORIZON*(top+fastest)+near_sphere(near)+widest)
         if near.flies {
             if len(a.neighbors_air)==0 {continue}
-            self:=ai.Avoid_Agent(3){position=near.position,velocity=near.velocity,radius=sphere(near)}
+            self:=ai.Avoid_Agent(3){position=near.position,velocity=near.velocity,radius=near_sphere(near)}
             p.velocity=ai.avoid_velocity(self,p.velocity,max(speed,0.01),a.neighbors_air[:],NAV_AGENT_HORIZON,dt)
             continue
         }
@@ -1073,6 +1020,56 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
         chosen:=ai.avoid_velocity(self,{p.velocity.x,p.velocity.z},max(speed,0.01),a.neighbors[:],NAV_AGENT_HORIZON,dt,walls[:wall_count],NAV_AGENT_WALL_HORIZON)
         p.velocity={chosen.x,0,chosen.y}
     }
+}
+
+// The neighbors of near[i] in a.neighbors (it walks) or a.neighbors_air (it
+// flies): those it may meet within the horizon at speed top, from boxes of the
+// grid that grow up to wanted until they hold as many neighbors nearer than the
+// box as ORCA counts.
+@(private)
+agent_neighbors :: proc(a:^Navigation_Agents,i:int,top,wanted:f32) {
+    near:=a.near[i]
+    far:=clamp(wanted,NAV_AGENT_CELL,NAV_AGENT_REACH*NAV_AGENT_CELL)
+    for held:=NAV_AGENT_CELL;;held=min(held*2,far) {
+        clear(&a.neighbors)
+        clear(&a.neighbors_air)
+        within:=0
+        query:=spatial.grid_query(&a.grid,ground_box(near.position,held))
+        for {
+            _,index,ok:=spatial.grid_query_next(&query)
+            if !ok {break}
+            if int(index)==i {continue}
+            other:=a.near[index]
+            velocity:=other.avoids?other.velocity:{}
+            to:=other.position-near.position
+            reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
+            if near.flies {
+                reach+=near_sphere(near)+near_sphere(other)
+            } else {
+                if abs(to.y)>max(near.height,other.height) {continue}
+                to.y=0
+                reach+=near.radius+other.radius
+            }
+            distance2:=linalg.length2(to)
+            if distance2>reach*reach {continue}
+            if distance2<=held*held {within+=1}
+            if near.flies {
+                append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=velocity,radius=near_sphere(other)})
+            } else {
+                append(&a.neighbors,ai.Avoid_Agent(2){position=other.position.xz,velocity=velocity.xz,radius=other.radius})
+            }
+        }
+        if held>=far || within>=ai.AVOID_MAX_NEIGHBORS {return}
+    }
+}
+
+@(private)
+near_sphere :: #force_inline proc "contextless" (near:Near) -> f32 {return max(near.radius,near.height*0.5)}
+
+// The box of the neighbor grid around a point on the ground: all its cells are of one height.
+@(private)
+ground_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb {
+    return {{at.x-reach,NAV_AGENT_CELL*0.5,at.z-reach},{at.x+reach,NAV_AGENT_CELL*0.5,at.z+reach}}
 }
 
 // Writes the Move_Input of every agent no seat drives, and of a seated one

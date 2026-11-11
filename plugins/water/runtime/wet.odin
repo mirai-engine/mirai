@@ -64,7 +64,7 @@ wet_members :: proc "contextless" (wet:^Water_Wet) -> (sum:u64) {
 water_wet_render :: proc(state:^Water_Wet_Render,wet:core.Ref(Water_Wet),synced:core.Ref(render.Render_Sync),parents:^core.Table(core.Parent,.Read),renderer:^render.Renderer) {
     if renderer==nil || wet.ptr==nil || synced.ptr==nil {return}
     sync:=synced.ptr
-    seen:=[5]u64{sync.stats.instance_updates,u64(render.instance_count(renderer)),core.layout(parents),core.version(parents),wet_members(wet.ptr)}
+    seen:=[5]u64{render.instance_revision(renderer),u64(render.instance_count(renderer)),core.layout(parents),core.version(parents),wet_members(wet.ptr)}
     if seen!=state.seen || sync.world!=state.world {
         // What it gave before, or another world the renderer drew, may have left wet instances: all are told.
         held:=state.count>0 || sync.world!=state.world

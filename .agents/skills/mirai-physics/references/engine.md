@@ -102,10 +102,10 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   cap, and the friction of the ground does not define how much it slips.
 - `COLLIDER_DEFAULT` (also when adding it from the inspector) uses the `Default` preset without
   group: a door with a new collider blocks everything. The inspector shows all fields, also those
-  that do not correspond to the `kind`. Adding a `Character` or a `Destructible` (editor or API)
-  adds `collider_character()` or `collider_fracture()` if the entity has no collider.
+  that do not correspond to the `kind`. Adding a `Character` (editor or API) adds
+  `collider_character()` if the entity has no collider.
 - `kind`: `Hull`, `Mesh` and `Heightfield` read the entity's `Mesh_Renderer`; `External` leaves the
-  shape to another plugin (`destruct`, for the pieces), which takes surface and collision from this
+  shape to another plugin (`shapes`, for a brush), which takes surface and collision from this
   collider. `Mesh` and `Heightfield` contribute no mass and are for static geometry: nothing rejects
   a dynamic with them, but that case has no coverage.
 - A `Hull` whose mesh has several convex pieces (`host.assets_collision_hulls`: those of a generated
@@ -113,7 +113,12 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   body, with the collider's surface, filter and density; otherwise it is the hull of all the points.
   It fits in the hull budget whole or not at all.
 - `size` is multiplied by the absolute world scale: the sphere takes the largest; capsule and
-  cylinder, the largest of XZ for the radius and Y for the height.
+  cylinder, the largest of XZ for the radius and Y for the height. A negative axis mirrors the
+  collider where it is drawn: its center, and the points of a mesh or hull, whose triangles turn
+  so they keep facing out. A heightfield cannot be mirrored (`physics.collider_mirrored`), and a
+  collider turned under a scale that is not uniform across the turn is sheared, which a shape
+  cannot be (`physics.collider_sheared`).
+- A world Transform that is not finite is `physics.transform`: the body keeps its last pose.
 - `convex_radius` rounds the edges of `Box`, `Cylinder` or `Hull` without changing their size
   ([geometry](physics.md#geometry)) and is scaled by the smallest axis. It must stay below the
   smallest half-axis, the radius and half the height of the cylinder, or the distance from the hull
@@ -192,10 +197,9 @@ Overlaps:
 - They are evaluated when at least one body is awake. A zone that appears over a sleeping dynamic
   body or an idle `Character` may not emit an entry until it wakes. Gameplay keeps its occupants
   if it needs to know who is still inside.
-- A `bullet` that crosses a trigger in one tick emits both events in that tick, with `crossed`:
-  whoever counts occupants processes the `overlap_begin` before the `overlap_end`. A body that is
-  not a bullet and travels in one tick more than the thickness of the trigger and its own can cross
-  it without events.
+- A dynamic body that crosses a static trigger in one tick emits both events in that tick, with
+  `crossed`: whoever counts occupants processes the `overlap_begin` before the `overlap_end`. Only
+  a `bullet` does it also for a trigger on a moving body.
 
 ## Binding and world step
 
@@ -213,8 +217,13 @@ Overlaps:
   entity → body and entity → joint links in two `core.Entity_Map`: dense, the size of what the
   simulation has and not of the entity indices. The link of another generation of an index is
   released before taking its place; without memory for the links, synchronization waits for the next
-  tick (`physics.memory`). Copying it (rollback, Play) copies the simulation state block by block
-  (`sim.world_state_copy`) with its hulls, meshes and heightfields. The copy that keeps a history
+  tick (`physics.memory`). A link holds the handles of what was made and a hash of what its
+  shapes were made from; which rows changed comes from their stamps (`core.changes`), and taking a
+  row again changes nothing in the simulation, as after a rollback that brings the row back.
+  Copying it (rollback, Play) copies the simulation state block by block (`sim.world_state_copy`)
+  with its hulls, meshes and heightfields, and the links, the geometry sources and the owned bodies
+  by chunks stamped as the pools are: a history copy of a tick where nothing changed writes none of
+  them. The copy that keeps a history
   (`state_copy_kept`, the storage's `copy_kept`) is a kept world (`sim.world_kept_init`): its pools
   have what the original uses with margin and its `desc` the capacities of the original, with which
   the world that is copied back is made; it never advances. What each geometry slot has is told by
@@ -355,14 +364,17 @@ zone; `gravity.odin` applies it to the simulation.
 
 Manipulation:
 
-- `manipulation_target` moves a body temporarily as kinematic without modifying its `Rigid_Body`,
-  also a collider without that component or a proxy. It chases the pose in fixed steps and transmits
-  velocity to contacts: a large jump needs several ticks because of the solver's velocity limits.
-  Afterwards it stays held at the pose reached.
-- `manipulation_end` releases it on reaching the pending destination and restores authoring type
-  and mass (or the previous type of the proxy); it sets the velocity to zero except with
-  `preserve_velocity` (animation-to-simulation transition). With `dt=0`, placing and releasing are
-  immediate and without contacts.
+- `manipulation_target` holds a body toward a world pose without modifying its `Rigid_Body`, also a
+  collider without that component or a proxy. A dynamic body stays dynamic: a joint from the world
+  body drives its six axes toward the pose with a soft spring (Box2D's mouse drag) whose force is
+  bounded by `PULL_WEIGHTS` times its weight, so it collides, stops at walls and pushes no more than
+  that force allows. A static or kinematic body, or any with `follow` (a pose by design: the
+  animated ragdoll), is held as kinematic: it chases the pose in fixed steps, pushes what it touches
+  as infinite mass and needs several ticks for a large jump because of the solver's velocity limits.
+- `manipulation_end` lets a pulled body go at once and a kinematic hold once it reaches the pending
+  pose, restoring the authored type and mass (or the previous type of the proxy). A body dynamic
+  again keeps its velocity (a throw, the ragdoll going limp); any other stops. With `dt=0`, placing
+  and releasing are immediate and without contacts.
 - Requests go to the owner that `manipulation_owner` gives (the ancestor of a compound collider;
   `NONE` for characters) and their poses are in its world frame: they do not move a child shape
   separately. Two proxies of the same body share a hold and the last request wins. The hold is
@@ -539,7 +551,7 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
   `crouch` belong to `locomotion` (`Walk_Action`) and `look` to `engine/input` (`Look_Action`)
   ([actions](../../mirai-gameplay/references/control.md#actions)).
 - Without a seat, before `locomotion_step` takes its initial look or where another end decides
-  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `input.mirai`
+  (`core.Remote`), it does not touch it: what an AI or the network wrote stays. If `Input_Settings`
   gives `move` or `look` another type, it is the `locomotion.seat_action` problem.
 - A step that adjusts what it wrote runs with `after="locomotion_seat"`; a portal turns only the
   look of the traveler that drives its tip.
@@ -671,18 +683,19 @@ Physics does not know the network: both share `core` tables.
     (`step_followed`), and does not walk by its `Character_Move`: neither its step nor what it
     touches moves it away from what the other owner shows. It does not push like a kinematic body:
     what it touches moves aside by itself.
-  - Following and manipulation are two sources of the same hold (`Link.hold`): the first that takes
-    the body makes it kinematic and stores its type, the last that releases it gives it back, and
-    the target's pose goes before that of manipulation. While the target continues,
-    `manipulation_target` stores the destination without moving the body and `manipulation_end`
-    releases the manipulation without changing its type or velocity; when following ends, a
-    manipulation that is still requested holds it.
+  - Following and manipulation are two sources of the same hold (`Physics_State.held`, which lists
+    only what a manipulation or a pose target steers): the first that holds the body as kinematic
+    stores its type, the last that releases it gives it back, and the target's pose goes before
+    that of manipulation. While the target continues, `manipulation_target` stores the destination
+    without moving the body (a pull has no spring) and `manipulation_end` releases the manipulation
+    without changing its type or velocity; when following ends, a manipulation that is still
+    requested holds or pulls it.
   - A body that is not yet made receives the pose in its `Transform` and the velocities in
     `core.Motion`, from where it takes them when made. An entity with a parent is left to the
     parent.
 - **`core.Simulation_Hash`**: with `core.Sync_Check.on`, the step leaves the simulation hash to
   compare two runs.
-- **Proxy** (`proxies.odin`): `proxy_set/proxy_pose/proxy_written` make an entity represent a body
+- **Proxy** (`proxies.odin`): `proxy_set` makes an entity represent a body
   that another library owns.
   - It accepts requests, places, manipulation, constraints and pose targets like a body of its own.
   - `proxy_remove` removes the link and its joints, restores a pending hold and never destroys the
@@ -708,7 +721,9 @@ Joints over the network:
 `plugins/physics/editor` gives the editor what belongs to physics through its
 [providers](../../mirai-editor/references/extensions.md): the preset of a `Collider` and
 `Collision_Settings` in the inspector, the `physics.collision.*` methods of the API, the `Collider`
-that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the wireframes of
+that accompanies a new `Character`, the bodies that Simulate drags with the gizmo, the
+[Simulate limited](../../mirai-editor/references/editor.md#simulate) to some entities that
+`physics.settle`, **Drop to rest** and the **Drop** tool run, the wireframes of
 the selection's colliders, the `collision` and `collision.<category>` view modes, and the fluids of
 the world that is seen (box edges and a grid over the sea), editing and in Play: nothing else shows
 them while no plugin draws them. Without the plugin none of that appears.
@@ -721,6 +736,15 @@ them while no plugin draws them. Without the plugin none of that appears.
   changing them.
 - The settings list categories, presets, pushes and the entries of undeclared values, with a button
   that removes them.
+- The **Drop** tool (shortcut **P**): the left button held on the scene drops the chosen mesh, at
+  its height and scale, under the pointer and keeps dropping at its speed; what fell is seen
+  falling in the document until **Confirm** (one undo step with the meshes and their poses),
+  **Cancel**, Escape or another tool, which leave the document as it was (`physics.drop` ends it
+  by API). Each dropped mesh gets a `Collider` of kind `Hull`, which stays: in the game it is a
+  static prop that collides.
+- In a settle, the moving entities are dynamic bodies (their `Rigid_Body` when dynamic) and every
+  other body is static and every character the still capsule of its collider; joints act. Only
+  physics runs, so an `External` collider is the mesh its entity shows (a hull when it moves).
 
 ## Changing these libraries
 

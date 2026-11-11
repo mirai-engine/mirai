@@ -517,19 +517,19 @@ modifier_effector_named :: proc(runtime:^Modifier_Runtime,rig:core.Entity,slot:u
 
 // A goal for an operation by name: it keeps finding it by name when the
 // profile is read again, and is refused with Missing_Operation once it is gone.
-modifier_goal_named :: proc(requests:^Modifier_Requests,runtime:^Modifier_Runtime,goal:Modifier_Goal,name:string) {
+modifier_goal_named :: proc(requests:^Animation_Requests,runtime:^Modifier_Runtime,goal:Modifier_Goal,name:string) {
     if requests==nil {return}
-    slot,ok:=modifier_named_slot(runtime,goal.rig,goal.kind,name);if !ok {core.refuse(&requests.queue);return}
+    slot,ok:=modifier_named_slot(runtime,goal.rig,goal.kind,name);if !ok {core.refuse(&requests.goals);return}
     goal:=goal;goal.slot=slot
-    if !base.text_set(goal.name[:],name) {core.refuse(&requests.queue);return}
+    if !base.text_set(goal.name[:],name) {core.refuse(&requests.goals);return}
     if goal.kind==.Multi_IK {
         row:=rig_slot_row(&runtime.multi_ik,goal.rig,slot)
-        if row<0 || goal.effector>=runtime.multi_ik.values[row].effector_count {core.refuse(&requests.queue);return}
+        if row<0 || goal.effector>=runtime.multi_ik.values[row].effector_count {core.refuse(&requests.goals);return}
         goal.effector_name=runtime.multi_ik.values[row].effectors[goal.effector].name
     }
     modifier_goal(requests,goal)
 }
-modifier_control_named :: proc(requests:^Modifier_Requests,runtime:^Modifier_Runtime,control:Modifier_Control,name:string) {
+modifier_control_named :: proc(requests:^Animation_Requests,runtime:^Modifier_Runtime,control:Modifier_Control,name:string) {
     if requests==nil {return}
     slot,ok:=modifier_named_slot(runtime,control.rig,control.kind,name);if !ok {core.refuse(&requests.controls);return}
     control:=control;control.slot=slot

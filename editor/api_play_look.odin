@@ -71,7 +71,7 @@ api_look_problem :: proc(s:^Session,w:core.World_Ref,look:^Api_Look) -> string {
     actions:=core.actions_of(s.info,input.Look_Action)
     if m==nil || requests==nil || actions==nil {return "look_at turns the look of a seat through its look action, and this game has none"}
     look.action=input.Action(actions.base)+input.Action(input.Look_Action.Look)
-    if m.declared&input.action_bit(look.action)==0 {return "look_at turns the look of a seat through its look action, and this game binds none: bind Look in input.mirai"}
+    if m.declared&input.action_bit(look.action)==0 {return "look_at turns the look of a seat through its look action, and this game binds none: bind look in Input_Settings with settings.set"}
     return ""
 }
 

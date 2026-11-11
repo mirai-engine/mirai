@@ -42,9 +42,9 @@ binaural_add :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,x:[]f32,dire
     if !v.binaural_live || v.binaural_clock!=clock {for &s in dry {s=0}}
     v.binaural_live=true
     d:=v.binaural_direction
-    if !v.binaural_direction_valid || direction.x*d.x+direction.y*d.y+direction.z*d.z<m.hrtf.reblend_cos {
-        hrtf_interpolate(&m.hrtf,&m.conv,direction,spectra)
-        v.binaural_direction,v.binaural_direction_valid=direction,true
+    if !v.binaural_direction_valid || v.blend!=v.binaural_blend || direction.x*d.x+direction.y*d.y+direction.z*d.z<m.hrtf.reblend_cos {
+        hrtf_interpolate(&m.hrtf,&m.conv,direction,v.blend,spectra)
+        v.binaural_direction,v.binaural_blend,v.binaural_direction_valid=direction,v.blend,true
     }
     kept:=m.binaural_kept
     fall:=min(BINAURAL_OVERLAP,count)
@@ -79,6 +79,7 @@ binaural_add :: proc "contextless" (m:^Mixer,v:^Mix_Voice,index:u32,x:[]f32,dire
 // Once per chunk of n frames, after the voices: the sums of each bus back to
 // time and into its ring, and the next n frames of each ring into its bus.
 binaural_flush :: proc "contextless" (m:^Mixer,n:int) #no_bounds_check {
+    if !m.binaural_ready {return}
     bins:=m.conv.n/2+1
     ring_frames:=m.binaural_ring
     mask:=ring_frames-1

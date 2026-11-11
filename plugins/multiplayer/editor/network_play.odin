@@ -29,7 +29,7 @@ import multiplayer "plugins:multiplayer/runtime"
 
 NET_PLAY_PORTS :: 16               // tried from the default port of the player
 NET_PLAY_STEPPED_TIMEOUT :: 600.0 // seconds the runs of a turn wait for each other: they advance when the turn asks
-NET_PLAY_OFFER :: 13              // bytes of the offer: port, port on the router, game, invitation, whether the router is still asked
+NET_PLAY_OFFER :: 17              // bytes of the offer: port, port on the router, game, invitation, whether the router is still asked
 
 Net_Play_Phase :: enum u8 {
     Idle,
@@ -60,7 +60,7 @@ Net_Play :: struct {
     pending:Net_Play_Pending,
     serial:u32,     // of the game: the offer of the host says which one it serves
     port:int,       // of the server
-    invite:u32,     // the token of the invitation of the server
+    invite:u64,     // the token of the invitation of the server
     scene_ready:bool,
     mapping:wire.Port_Mapping, // of the port of the server on the router, while the session is shared
     mapping_on:bool,
@@ -217,37 +217,22 @@ join :: proc(s:^editor.Session,n:^Net_Play) -> string {
     return ""
 }
 
-// The game the host serves on the network, as a guest reaches it: the address
-// of the session with the port of the server, or the one the router of the
-// host mapped when the session is reached from outside its network. Not
-// reachable yet while that router is still asked for the port.
+// The game the host serves on the network, as a guest reaches it: at the
+// addresses of the invitation of the session, with the port of the server
+// and the one the router of the host mapped for it. Not reachable yet while
+// that router is still asked for the port.
 @(private)
 host_game :: proc(s:^editor.Session) -> (code:string,game:u32,ok,reachable:bool) {
-    offer,target,offered:=editor.collab_host_offer(s)
+    offer,invitation,offered:=editor.collab_host_offer(s)
     if !offered || len(offer)<NET_PLAY_OFFER {return}
     port,_:=endian.get_u16(offer[0:2],.Little)
     external,_:=endian.get_u16(offer[2:4],.Little)
     game,_=endian.get_u32(offer[4:8],.Little)
-    invite,_:=endian.get_u32(offer[8:12],.Little)
-    mapping:=offer[12]!=0
-    outside:=!address_local(target)
-    target.port=external!=0 && outside?external:port
-    code=wire.invite_encode(target,invite,context.temp_allocator)
-    return code,game,code!="",!(outside && mapping)
-}
-
-// An address of this machine or of its network: loopback, private, link-local.
-@(private)
-address_local :: proc "contextless" (a:wire.Address) -> bool {
-    ip:=a.ip
-    #partial switch a.kind {
-    case .IP4: return ip[0]==127 || ip[0]==10 || ip[0]==172 && ip[1]&0xf0==16 || ip[0]==192 && ip[1]==168 || ip[0]==169 && ip[1]==254
-    case .IP6:
-        loopback:=ip[15]==1
-        for b in ip[:15] {loopback&&=b==0}
-        return loopback || ip[0]&0xfe==0xfc || ip[0]==0xfe && ip[1]&0xc0==0x80
-    }
-    return false
+    invitation.token,_=endian.get_u64(offer[8:16],.Little)
+    invitation.lan.port,invitation.public.port=port,external
+    if external==0 {invitation.public={}}
+    code=wire.invite_encode(invitation,context.temp_allocator)
+    return code,game,code!="",offer[16]==0
 }
 
 // What the session tells its guests of the game this editor serves.
@@ -264,8 +249,8 @@ net_play_offer :: proc(s:^editor.Session,out:[]u8) -> int {
     endian.put_u16(out[0:2],.Little,u16(n.port))
     endian.put_u16(out[2:4],.Little,external)
     endian.put_u32(out[4:8],.Little,n.serial)
-    endian.put_u32(out[8:12],.Little,n.invite)
-    out[12]=u8(mapping)
+    endian.put_u64(out[8:16],.Little,n.invite)
+    out[16]=u8(mapping)
     return NET_PLAY_OFFER
 }
 
@@ -379,7 +364,7 @@ launch :: proc(s:^editor.Session,n:^Net_Play) {
     commands:=make([][]string,count,context.temp_allocator)
     for &command in commands {
         args:=make([dynamic]string,context.temp_allocator)
-        connect:=wire.invite_encode(wire.address_ip4(127,0,0,1,n.port),n.invite,context.temp_allocator)
+        connect:=wire.invite_encode({lan=wire.address_loopback(n.port),token=n.invite},context.temp_allocator)
         if n.role==.Client {connect,_,_,_=host_game(s)}
         append(&args,"--project",s.project_root,"--scene",file,"--connect",connect)
         // Each way of a datagram is delayed: the ping is twice the latency.
@@ -500,7 +485,7 @@ net_play_turn :: proc(s:^editor.Session,owner,players,online,ping:int) -> string
     token,made:=wire.invite_token()
     if !made {return "The game could not start: this system gives no secure random bytes to seal the network with"}
     session_open(editor.run_ref(s,r),{server=true,port=port,invite=true,invite_token=token,timeout=NET_PLAY_STEPPED_TIMEOUT})
-    code:=wire.invite_encode(wire.address_ip4(127,0,0,1,port),token,context.temp_allocator)
+    code:=wire.invite_encode({lan=wire.address_loopback(port),token=token},context.temp_allocator)
     for player in 1..=online {
         client:=editor.run_create(s,owner,player)
         if client==nil {return "There is no room for another run"}
@@ -550,5 +535,5 @@ net_play_port :: proc(s:^editor.Session) -> (port:int,refused:string) {
 // The code players outside the editor join the game this editor serves with.
 @(private)
 net_play_invite :: proc(n:^Net_Play) -> string {
-    return wire.invite_encode(wire.address_reachable(&n.mapping,n.mapping_on,n.port),n.invite,context.temp_allocator)
+    return wire.invite_encode(wire.invite_make(n.invite,n.port,n.mapping_on?&n.mapping:nil),context.temp_allocator)
 }

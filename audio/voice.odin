@@ -36,8 +36,7 @@ Voice_Desc :: struct {
     // of each band (low, mid, high) what hides it lets through.
     occlusion:f32,
     transmission:[BANDS]f32,
-    lowpass:f32, // Hz, cutoff of a one-pole low-pass on the voice (6 dB per octave); 0: none
-    reverb:f32,  // share of the voice sent to the reverb of the mixer, after its gains and its filter
+    reverb:f32, // share of the voice sent to the reverb of the mixer, after its gains
 }
 VOICE_DEFAULT :: Voice_Desc{volume=1,pitch=1,rotation=1,attenuation=ATTENUATION_DEFAULT,directivity={power=1},transmission=TRANSMISSION_DEFAULT}
 
@@ -115,7 +114,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
         position=desc.position,velocity=desc.velocity,rotation=quat_unit(desc.rotation),
         attenuation=desc.attenuation,directivity={clamp(desc.directivity.weight,0,1),max(desc.directivity.power,0)},doppler=max(desc.doppler,0),
         occlusion=clamp(desc.occlusion,0,1),transmission=transmission_clamp(desc.transmission),
-        lowpass=max(desc.lowpass,0),reverb=max(desc.reverb,0),
+        reverb=max(desc.reverb,0),
     }
     frames:=slot.frames
     offset:=frames>0?u32(min(max(f64(desc.offset),0)*rate,f64(frames-1))):0
@@ -188,9 +187,6 @@ voice_set_loop :: proc(m:^Mixer,voice:Voice,loop:bool) -> bool {
 voice_fade :: proc(m:^Mixer,voice:Voice,level:f32,seconds:f32) -> bool {
     return voice_send(m,voice,{kind=.Voice_Fade,value=max(level,0),frames=u32(max(f64(seconds),0)*f64(m.sample_rate)+0.5)})
 }
-voice_set_lowpass :: proc(m:^Mixer,voice:Voice,cutoff_hz:f32) -> bool {
-    return voice_send(m,voice,{kind=.Voice_Lowpass,value=max(cutoff_hz,0)})
-}
 voice_set_reverb :: proc(m:^Mixer,voice:Voice,send:f32) -> bool {
     return voice_send(m,voice,{kind=.Voice_Reverb,value=max(send,0)})
 }
@@ -214,7 +210,7 @@ transmission_clamp :: proc "contextless" (t:[BANDS]f32) -> [BANDS]f32 {
 @(private)
 voice_desc_finite :: proc "contextless" (d:Voice_Desc) -> bool {
     a:=d.attenuation
-    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,d.directivity.weight,d.directivity.power,
+    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,a.near_radius,d.directivity.weight,d.directivity.power,
         real(d.rotation),imag(d.rotation),jmag(d.rotation),kmag(d.rotation)}
     for x in numbers {
         if !finite(x) {return false}

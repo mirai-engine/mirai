@@ -2,5 +2,5 @@
   "name": "portals",
   "version": "0.2.0",
   "dependencies": ["physics"],
-  "parts": ["Runtime", "Editor", "Shaders"]
+  "parts": ["Runtime", "Editor", "Shaders", "Recipes"]
 }

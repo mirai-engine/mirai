@@ -29,7 +29,7 @@ Large :: struct {path,out:string,model_bytes,asset_bytes:int,triangles,vertices:
 bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
     if !BENCH {return}
     SIDE :: 400
-    folder:=base.test_folder(t,"bench")
+    _,folder:=test_project(t,"bench")
     if folder=="" {return}
     text:=strings.builder_make();defer strings.builder_destroy(&text)
     for y in 0..=SIDE {
@@ -58,7 +58,7 @@ bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
         model,_:=importer.import_model(large.path,FORMATS[:])
         defer importer.model_destroy(&model)
         // Every round builds the mesh: the one before left the same file.
-        report,error:=importer.import_write(&model,large.out,{rebuild=true})
+        report,error:=write_into(&model,large.out,{rebuild=true})
         assert(error.code==.None)
         large.asset_bytes=report.assets[0].bytes
         importer.report_destroy(&report)
@@ -69,7 +69,7 @@ bench_import_and_write_of_a_large_obj :: proc(t:^testing.T) {
 @(test)
 bench_import_of_a_skinned_glb :: proc(t:^testing.T) {
     if !BENCH {return}
-    path:=DEMO+"models/skeletal-character/robot.glb"
+    path:=DEMO+"characters/robot/robot.glb"
     best:=best_of(proc(data:rawptr) {
         model,error:=importer.import_model((^string)(data)^,FORMATS[:])
         assert(error.code==.None)

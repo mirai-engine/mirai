@@ -35,13 +35,14 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
         test_character_seed(&characters,{3,4},{info={animation={1,2}},actions=profile,motion=motion_profile})
         actions:Action_Runtime;defer actions_runtime_free(&actions)
         motion:Motion_Runtime;defer motion_runtime_free(&motion)
-        requests:Animation_Requests;defer {delete(requests.plays.items);delete(requests.values.items);delete(requests.looks.items)}
+        requests:Animation_Requests;defer {delete(requests.plays.items);delete(requests.values.items);delete(requests.warps.items);delete(requests.locomotion.items)}
         events:Animation_Events;defer delete(events.items)
-        targets:Motion_Requests;defer {delete(targets.targets.items);delete(targets.locomotion.items)}
+        played:core.Table(Animation_Played);defer core.table_destroy(&played)
+        remotes:core.Table(core.Remote);defer core.table_destroy(&remotes)
         playback:Playback;defer playback_free(&playback)
         problems:core.Problems
         for _ in 0..<2 {
-            if !testing.expect(t,actions_prepare(&actions,&requests,&characters,&w.descriptions,&playback,&events,&app,&problems) && motion_prepare(&motion,&targets,&w.descriptions,&playback,&characters,app.assets,app.allocator,&problems)) {return}
+            if !testing.expect(t,actions_prepare(&actions,&requests,&characters,core.read(&w.descriptions),&playback,&events,&app,core.read(&remotes),&played,{dt=1.0/60,playing=true},&problems) && motion_prepare(&motion,&requests,core.read(&w.descriptions),&playback,&characters,app.assets,app.allocator,&problems)) {return}
         }
         best:=max(time.Duration);valid:=true
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
@@ -49,12 +50,12 @@ bench_animation_optional_feature_discovery :: proc(t:^testing.T) {
             start:=time.tick_now()
             for tick in 0..<REPEATS {
                 if case_index==3 {core.edit_at(&w.descriptions,COUNT-1).weight=f32(tick&1)}
-                valid &&=actions_prepare(&actions,&requests,&characters,&w.descriptions,&playback,&events,&app,&problems)
-                valid &&=motion_prepare(&motion,&targets,&w.descriptions,&playback,&characters,app.assets,app.allocator,&problems)
+                valid &&=actions_prepare(&actions,&requests,&characters,core.read(&w.descriptions),&playback,&events,&app,core.read(&remotes),&played,{dt=1.0/60,playing=true},&problems)
+                valid &&=motion_prepare(&motion,&requests,core.read(&w.descriptions),&playback,&characters,app.assets,app.allocator,&problems)
             }
             best=min(best,time.tick_since(start))
         }
-        context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;action_assets.allocator=saved.allocator;motion_assets.allocator=saved.allocator
+        context=saved;app.allocator=saved.allocator;actions.allocator=saved.allocator;characters.allocator=saved.allocator
         testing.expect(t,valid && len(actions.states)==feature_count && len(motion.instances)==feature_count && problems.count==0 && len(events.items)==0)
         log.infof("animation feature preparation, %d components / %d configured, changed unrelated row %v: %.2f ns/tick",COUNT,feature_count,case_index==3,f64(time.duration_nanoseconds(best))/REPEATS)
     }

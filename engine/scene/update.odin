@@ -94,7 +94,6 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         if info.place!=w.place || is_structural(info.type) || info.type==Section_Member || value_type.type==serial.TYPE_NONE {continue}
         size:=info.info.size
         layout:=&value_type.layout
-        if size>0 && len(layout.runs)==0 {continue}
         table:=core.world_table_at(w,&info)
         hash:=base.name_hash(info.name)
         slice.fill(given,false)

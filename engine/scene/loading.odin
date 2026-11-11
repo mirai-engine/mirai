@@ -88,6 +88,7 @@ Load_Job :: struct {
     salt:base.Entity_Id, // a section: the Id of its reference
     cooked:bool,
     far:bool, // only what draws a far form of its own, kept (far_keep), and what that names
+    scenes:bool, // a warm: the scenes it names are read whatever roots they have (assets_unloaded)
     gated:bool, // a section: it waits for the libraries before it ends (Load_Phase.Waiting)
     whole:bool, // nothing on the screen to keep smooth: it has the job workers and the frames (host.assets_load_whole)
     passes:int, // frames it waited
@@ -123,6 +124,29 @@ Load_Job :: struct {
 Load_Item :: struct {
     prepared:host.Assets_Prepared,
     ready:bool, // a job prepared it
+}
+
+// Starts reading in jobs prefabs and what they take that is not loaded, for
+// the spawns that wait for them (Prefab_Pending): a load without a World,
+// all Warming. nil, with the error, when it cannot start.
+prefab_warm_begin :: proc(app:^host.App,prefabs:[]base.Asset_Id,documents:=false) -> (job:^Load_Job,error:Error) {
+    a:=app.assets
+    if a==nil {return nil,.No_Assets}
+    heap:=runtime.heap_allocator()
+    no_job:runtime.Allocator_Error
+    if job,no_job=new(Load_Job,heap);no_job!=nil {return nil,.Out_Of_Memory}
+    job^={app=app,cooked=a.indexed,scenes=documents,started=time.tick_now()}
+    job.names=make([dynamic]base.Asset_Id,heap)
+    job.animations=make([dynamic]base.Asset_Id,heap)
+    asset.types_init(&job.types,heap)
+    append(&job.names,..prefabs)
+    load_warm_begin(job)
+    if job.error!=.None {
+        error=job.error
+        load_free(job)
+        return nil,error
+    }
+    return job,.None
 }
 
 // Starts loading the scene id. nil, with the error, when it cannot start.
@@ -174,8 +198,8 @@ load_free :: proc(job:^Load_Job) {
         host.app_world_free(job.app,job.world)
     }
     if job.budget!=0 {host.assets_load_close(job.app.assets,job.budget)}
-    // A far form has no record: what it took counts in the current load.
-    if job.far {host.load_job_merge(job.app,&job.tally)}
+    // A far form or a warmed prefab has no record: what it took counts in the current load.
+    if job.record==0 && job.salt==0 {host.load_job_merge(job.app,&job.tally)}
     heap:=runtime.heap_allocator()
     for &source in job.queue {host.assets_source_free(&source)}
     delete(job.queue);delete(job.wanted)
@@ -326,36 +350,54 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
 }
 
 // The World is instantiated: what reads it on this thread does, and the
-// assets it names that are not loaded, with what they take, are read in jobs:
-// also what the other assets it names take, as the meshes of a foliage
-// source or of a prefab, but not what a scene of several roots takes, which
-// is a section of its own.
+// assets it names are warmed (load_warm_begin).
 @(private)
 load_named :: proc(job:^Load_Job) {
-    app,a:=job.app,job.app.assets
+    app:=job.app
     host.app_assets_building(app,job.world,false)
     w:=host.app_world_ref(app,job.world)
     settling:=host.load_phase_begin(app,.Settle)
     propagate(w,app)
     references_resolve(w)
     host.load_phase_end(app,settling,0,&job.tally)
-    // Textures, then materials, which take them, then meshes, which take materials.
-    kinds:=[3]asset.Fourcc{asset.KIND_TEXTURE,asset.KIND_MATERIAL,asset.KIND_MESH}
-    lists:[3][dynamic]base.Asset_Id
+    load_warm_begin(job)
+}
+
+// The assets ids name that are not loaded, with what they take, in the order
+// they load: the documents of prefabs, which a spawn places, then textures,
+// materials, which take them, and meshes, which take materials. Also what
+// the other assets take, as the meshes of a foliage source or of a prefab,
+// but not what a scene of several roots takes, which is a section of its own;
+// with documents, the scenes ids names whatever roots they have.
+@(private)
+assets_unloaded :: proc(a:^host.Assets,ids:[]base.Asset_Id,documents:=false) -> (lists:[4][dynamic]base.Asset_Id) {
+    kinds:=[4]asset.Fourcc{asset.KIND_SCENE,asset.KIND_TEXTURE,asset.KIND_MATERIAL,asset.KIND_MESH}
     for &list in lists {list=make([dynamic]base.Asset_Id,context.temp_allocator)}
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
     pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    append(&pending,..job.names[:])
+    append(&pending,..ids)
     for len(pending)>0 {
         id:=pop(&pending)
         if id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || host.assets_loaded(a,id) || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {continue}
-        for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
+        if !found || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) && !(documents && slice.contains(ids,id)) {continue}
+        if !host.assets_loaded(a,id) {
+            for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
+        }
         append(&pending,..asset.registry_dependencies(&a.registry,file))
     }
-    count:=len(lists[0])+len(lists[1])+len(lists[2])
+    return
+}
+
+// The assets job.names names that are not loaded, with what they take
+// (assets_unloaded), read in jobs and given to the assets a part of each
+// frame (Load_Phase.Warming).
+@(private)
+load_warm_begin :: proc(job:^Load_Job) {
+    app,a:=job.app,job.app.assets
+    lists:=assets_unloaded(a,job.names[:],job.scenes)
+    count:=len(lists[0])+len(lists[1])+len(lists[2])+len(lists[3])
     items,no_items:=make([]Load_Item,count,runtime.heap_allocator())
     if no_items!=nil {
         job.error=.Out_Of_Memory
@@ -374,7 +416,7 @@ load_named :: proc(job:^Load_Job) {
     job.items=job.items[:count]
     host.content_animations_start(app,job.names[:],&job.animations)
     // A section loads ahead, far away: its textures come with their smallest
-    // levels, and their distance asks for the others once it shows them.
+    // levels, and the frames that sample them ask for the others.
     job.limits=host.assets_limits(a,tail=job.salt!=0)
     job.phase=.Warming
     job.budget=host.assets_load_open(a)

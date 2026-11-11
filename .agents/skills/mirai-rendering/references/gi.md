@@ -50,11 +50,12 @@ Each technique states its status; what is listed as prepared is not implemented.
     it, and only then does it have GPU buffers.
   - A device makes only the pipelines of the tracer in use (`tracer_settle`): the other one's are
     made when settings switch to it, or at start when hardware RT falls back. Hardware RT requires
-    all the `_hw` variants of the passes (`tracer_missing`): with it no pass traverses the
-    software BVH.
+    the `hw` variant of every stage that traces rays (`tracer_missing`): with it no pass traverses
+    the software BVH.
 - **Hardware ray tracing** (implemented). Inline ray queries in the `_hw` variants of direct
   light, probes, contact occlusion and reflections; SPIRV-Cross translates them to Metal. The
-  self-test and the fallback to software protect it ([RHI](rhi.md#hardware-ray-tracing)).
+  self-test protects it, with the fallback to software on Vulkan
+  ([RHI](rhi.md#hardware-ray-tracing)).
 - **Hybrid rendering** (implemented). G-buffer by rasterization; shadows, bounces and probes by
   tracing in compute.
 - **SDF tracing** (prepared). `trace.slang` is the only provider interface: an SDF or surface
@@ -206,19 +207,23 @@ keeps `Renderer_Desc.worlds` (edit and play).
 
 ## Indirect reference
 
-`Settings.reference_gi` replaces the volume and the contact occlusion with what they approximate
-(`pass_gi_reference`, `shaders/gi_reference.comp.slang`):
+What the tests compare the volume and the contact occlusion with: not in the renderer games run,
+but a custom pass of the tests (`render/reference_test.odin`, stage
+`render/testdata/gi_reference.comp.slang` in `TEST_GENERATION`) that writes `Gi` in place of the
+`Indirect` stage ([given light](views.md#render-pipelines)):
 
 - Each pixel traces `GI_REFERENCE_PATHS` paths per frame by the cosine. At each surface it adds
   its emission (unless a light represents it) and the light of the sun and of each local light by
-  a ray to a point of each (`reference_lighting`, the same as `reference_lights`), and continues;
+  a ray to a point of each (`reference_lighting`, the same as the reference of the lights), and
+  continues;
   Russian roulette cuts from the third bounce, up to `GI_REFERENCE_BOUNCES`. A ray with no hit
   sees the sky.
 - The side of the surface the ray arrived at is that of its triangle, not that of the
   interpolated normal.
-- `Targets.gi_reference` stores the mean and the frames it gathers; it starts over when
-  instances, materials, lights, the camera or the GI history change. Composite and the debug views
-  take its mean instead of the volume.
+- `Gi` (`Targets.gi_given`) stores the mean and the frames it gathers; it starts over when the
+  view loses its history, the camera or the settings change, or the test says so (another
+  scene). Composite and the debug views take a `Gi` a custom pass wrote as the diffuse indirect
+  light instead of the volume's.
 - White furnace test: `gi_reference_gives_the_light_of_a_white_furnace`, with each tracer.
 - Scenes and metrics that use it: [measuring GI](verification.md#measuring-gi).
 

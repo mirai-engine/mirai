@@ -478,16 +478,15 @@ The Content Browser tab shows the registry of the assets of the project and its 
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
 - **Strip** under the search: a bar per family (Prefab, Model, Material, Scene, Plugins), each named
-  only in its tooltip. Prefab and Scene are one kind of file told apart by what the registry knows
-  of each (`shown_kind`: a scene with one root is shown as a prefab, in its color, with its icon
-  and under its filter; [what a prefab is](prefabs.md)); a funnel opens the rest (Texture,
-  Animation, Sound, UI) and lights up while one of them is on, and a cross by it, there only
-  while a filter is on, clears them and the viewport selection. They combine; none active shows
-  everything. Model gathers meshes, fractures and physics caches; Sound, sounds and sound sets;
-  Plugins, every kind of a plugin
-  ([types of a plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in
-  its folder when the filters leave out its owner (Model shows the meshes of an imported prefab).
-  Skeletons are not listed: the mesh that uses them represents them (`content_listed`).
+  only in its tooltip. Prefab and Scene are one kind of file told apart by the kind its header says,
+  in its color, with its icon and under its filter ([what a prefab is](prefabs.md)); a funnel opens
+  the rest (Texture, Animation, Sound, UI) and lights up while one of them is on, and a cross by it,
+  there only while a filter is on, clears them and the viewport selection. They combine; none active
+  shows everything. Model gathers meshes, fractures and physics caches; Sound, sounds and sound
+  sets; Plugins, every kind of a plugin ([types of a
+  plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in its folder when
+  the filters leave out its owner (Model shows the meshes of an imported prefab). Skeletons are not
+  listed: the mesh that uses them represents them (`content_listed`).
 - What a scene makes of itself (`Asset_Kind.scene_data`: foliage, terrain, navmesh bakes) shows only
   with the Plugins filter or a search. Every kind of a plugin has the same color; each keeps its
   icon. The type of an asset is written nowhere but in a tooltip.
@@ -817,12 +816,13 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 ## Import
 
 `import_file(s, path)` converts a source file into project assets, only in `Edit`, with
-`sources.import_source` like `mirai import`. A source inside the project is versioned with its
-sidecar, and what it builds that nobody edits goes to the imported folder of the project; a source
-outside it keeps every asset in the assets folder, with its sidecar in `source/` of the project
-([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). It goes to the
-folder of its type or to `folder` (`asset_folder_clean`). The imported folder is brought up to
-date with the sources by the build that opens the editor
+`sources.import_source` like `mirai import`. A source in the assets of the project or of a plugin
+imports where it is; one from outside the project is first copied into `folder`
+(`asset_folder_clean`, the folder of the browser), and one in the project but outside its assets
+is refused. The source is versioned with its sidecar beside what it makes, and what it builds
+that nobody edits goes to the imported folder
+([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). The imported folder
+is brought up to date with the sources by the build that opens the editor
 ([sync](../../mirai-imports/references/imports.md#sync)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
@@ -855,11 +855,10 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
 - **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
   detaching or deleting a part on its own is refused, saying to duplicate it. Moving the root of
-  an import (`asset_move`) moves its source and sidecar under `source/`, and moving a folder moves
-  the folder of the same path under `source/` with it: the registry lists their assets there at
-  once, without an import. Deleting the root of an import
-  (its prefab, the texture of an image) gives the import up: its sidecar goes to the trash with
-  what only the import can build, and the source stays. A
+  an import of the cache (`asset_move`, the texture of an image) moves its source and sidecar, and
+  moving a folder moves the sources in it: the registry lists their assets there at once, without
+  an import. Deleting the root of an import (its prefab, the texture of an image) gives the import
+  up: its source and its sidecar go to the trash with what only the import can build. A
   copy made outside the editor receives an id of its own on scanning
   ([repeated ids](../../mirai-assets/references/formats.md#registry)).
 
@@ -925,9 +924,9 @@ plugins and the game, with the Details rows.
   the new world.
 - Input (`input_settings.odin`, only in the Project layer): a card per action declared by the code
   of the game or an active plugin, with its type, its bindings and the arrow that returns it to the
-  code's default, and one for the tap and hold ticks. What the window edits and writes is
-  [`input.mirai`](../../mirai-gameplay/references/control.md#actions); the key images are another
-  thing, of UI (`UI_Settings.prompt_images`).
+  code's default, and one for the tap and hold seconds. What the window edits is the setting
+  [`Input_Settings`](../../mirai-gameplay/references/control.md#actions), which the generic
+  categories leave out; the key images are another thing, of UI (`UI_Settings.prompt_images`).
   - The card is that of the other categories, with a rule between rows. A binding shows its device
     in the label column and each input with the prompt the game would draw (the image from
     `prompt_images` or from the pack of `UI_Settings.prompts`, or the drawing), and its label
@@ -942,9 +941,10 @@ plugins and the game, with the Details rows.
     two or four consecutive keys; a key of a key binding is changed alone. What does not serve the
     type is ignored; Escape cancels and a click while listening binds the mouse button without
     doing anything else.
-  - A change takes effect when its gesture ends; a file that cannot be read is shown and blocks
-    editing.
-- API: `settings.get` and `settings.set`; input, `input.get` and `input.set`; the manifest and the
+  - A change takes effect at once in the edited world and the Plays, and the project's file takes
+    it when its gesture ends; an action back to the code's default leaves the setting.
+- API: `settings.get` and `settings.set` (the bindings too, in `Input_Settings`); `input.get` lists
+  every action with what drives it; the manifest and the
   plugins, `project.get` and `project.set`
   ([catalog](../../mirai-agent-api/references/methods.md#project)).
 

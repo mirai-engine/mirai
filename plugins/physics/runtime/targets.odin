@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 // character takes the rotation, its up and its yaw, and no angular velocity. A
 // following target makes its body head for the pose in the step as a
 // kinematic body, pushing what it touches, until it no longer follows; a
-// manipulation underneath holds it again then. A following character is put at
+// manipulation underneath holds or pulls it again then. A following character is put at
 // its pose after every step (step_followed), so neither its own move nor what
 // it touches takes it away from what the other owner shows. A body that was not made yet
 // is made at the pose, with the velocities of its target (target_made). An
@@ -21,24 +21,15 @@ physics_pose_targets :: proc(
     rigids:^core.Table(Rigid_Body,.Read),characters:^core.Table(Character,.Read),
 ) {
     c:=core.changes(targets,&state.targets_seen)
-    if c.all {
-        // What left the table was not kept: every follow of what no longer has a target ends.
-        for &l,at in state.links.values {
-            if !core.has(targets,state.links.entities[at]) {
-                if .Target in l.hold.by {
-                    hold_end(&state.world,&l,.Target,true)
-                    link_touch(state,&l)
-                }
-                l.followed=false
+    // What left the table was not kept: every follow of what no longer has a target ends.
+    if c.all || len(c.gone)>0 {
+        for &h in state.held {
+            if core.has(targets,h.entity) {continue}
+            if l:=link_find(state,h.entity);l!=nil {
+                hold_end(state,&h,l,.Target,rigids)
+                link_touch(state,l)
             }
-        }
-    }
-    for e in c.gone {
-        if core.has(targets,e) {continue}
-        if l:=link_find(state,e);l!=nil {
-            hold_end(&state.world,l,.Target,true)
-            l.followed=false
-            link_touch(state,l)
+            h.placed=0
         }
     }
     for row in core.each_changed(targets,&c) {
@@ -55,33 +46,40 @@ physics_pose_targets :: proc(
             continue
         }
         link_touch(state,l)
-        if l.target_placed!=target.placed {
-            l.target_placed=target.placed
-            target_place(state,l,local,target.position,rotation,target.linear,target.angular,target.rest)
+        h:=held_take(state,e)
+        if h==nil {continue}
+        if h.placed!=target.placed {
+            h.placed=target.placed
+            target_place(state,l,e,local,target.position,rotation,target.linear,target.angular,target.rest)
         }
-        l.followed=target.follow && l.kind==.Character
-        if l.followed {
-            l.follow,l.follow_linear={target.position,rotation},target.linear
-        } else if target.follow {
-            hold_begin(&state.world,l,.Target,{target.position,rotation})
-        } else {
-            hold_end(&state.world,l,.Target,true)
-        }
+        target_follow(state,h,l,target,rigids)
     }
 }
 
 // A body made for an entity with a target starts as its target asks: placed
 // where it was made, and heading for the pose when it follows.
 @(private)
-target_made :: proc(state:^Physics_State,l:^Link,targets:^core.Table(core.Pose_Target,$A),e:core.Entity) {
-    target,on:=core.get(targets,e)
+target_made :: proc(s:^Sync,l:^Link,e:core.Entity) {
+    target,on:=core.get(s.targets,e)
     if !on {return}
-    l.target_placed=target.placed
-    l.followed=target.follow && l.kind==.Character
-    if l.followed {l.follow,l.follow_linear={target.position,target.rotation==0?mm.QUAT_IDENTITY:linalg.normalize(target.rotation)},target.linear}
-    if target.follow && l.kind!=.Character {
-        hold_begin(&state.world,l,.Target,{target.position,target.rotation==0?mm.QUAT_IDENTITY:linalg.normalize(target.rotation)})
+    h:=held_take(s.state,e)
+    if h==nil {return}
+    h.placed=target.placed
+    target_follow(s.state,h,l,target,s.rigids)
+}
+
+// A following target holds the body, or leads the character, toward its pose.
+@(private)
+target_follow :: proc(state:^Physics_State,h:^Held,l:^Link,target:core.Pose_Target,rigids:^core.Table(Rigid_Body,.Read)) {
+    if !target.follow {
+        hold_end(state,h,l,.Target,rigids)
+        return
     }
+    was:=held_kinematic(h^)
+    h.by+={.Target}
+    h.pose[.Target]={target.position,target.rotation==0?mm.QUAT_IDENTITY:linalg.normalize(target.rotation)}
+    hold_type(state,h,l,was,rigids)
+    h.linear=target.linear
 }
 
 @(private)
@@ -101,7 +99,7 @@ link_made :: proc(state:^Physics_State,l:^Link) -> bool {
 }
 
 @(private)
-target_place :: proc(state:^Physics_State,l:^Link,local:^core.Transform,position:[3]f32,rotation:mm.Quat,linear,angular:[3]f32,rest:bool) {
+target_place :: proc(state:^Physics_State,l:^Link,e:core.Entity,local:^core.Transform,position:[3]f32,rotation:mm.Quat,linear,angular:[3]f32,rest:bool) {
     world:=&state.world
     state.stats.teleports+=1
     if l.kind==.Character {
@@ -122,21 +120,20 @@ target_place :: proc(state:^Physics_State,l:^Link,local:^core.Transform,position
         }
         local.position,local.rotation=position,rotation
     }
-    l.placed={local.position,local.rotation}
-    l.written_position,l.written_rotation=local.position,local.rotation
 }
 
 // Puts every character a following target leads at its pose, with its
 // velocity: after the step, so what the step did to it is undone. It looks
-// at the characters, not at every body.
+// at what is held, not at every body.
 @(private)
-step_followed :: proc(state:^Physics_State,characters:^core.Table(Character,$A)) {
+step_followed :: proc(state:^Physics_State) {
     world:=&state.world
-    for row in 0..<core.count(characters) {
-        l:=link_find(state,core.entity_at(characters,row))
-        if l==nil || l.kind!=.Character || !l.followed || !sim.character_valid(world,l.character) {continue}
-        sim.character_set_position(world,l.character,l.follow.p)
-        sim.character_set_rotation(world,l.character,l.follow.q)
-        sim.body_set_linear_velocity(world,sim.character_body(world,l.character),l.follow_linear)
+    for h in state.held {
+        if .Target not_in h.by {continue}
+        l:=link_find(state,h.entity)
+        if l==nil || l.kind!=.Character || !sim.character_valid(world,l.character) {continue}
+        sim.character_set_position(world,l.character,h.pose[.Target].p)
+        sim.character_set_rotation(world,l.character,h.pose[.Target].q)
+        sim.body_set_linear_velocity(world,sim.character_body(world,l.character),h.linear)
     }
 }

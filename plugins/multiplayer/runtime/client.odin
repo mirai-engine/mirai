@@ -515,11 +515,7 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
     transforms:=core.world_table_of(w,core.Transform)
     e:=replica_adoptable(s,w,r)
     r.adopted=e!=core.NONE
-    // One this client made ahead of the server (predict_spawn) is the replica's own: it goes with it.
-    if spawn,predicted:=core.get(core.world_table_of(w,Predicted_Spawn),e);predicted {
-        r.adopted,r.spawned,r.spawned_set=false,u32(spawn.tick),true
-        core.remove(core.world_table_of(w,Predicted_Spawn),e)
-    }
+    if spawn,predicted:=core.get(core.world_table_of(w,Predicted_Spawn),e);predicted {spawn_taken(w,r,e,spawn)}
     if e==core.NONE {
         local:=core.Transform{r.pose.position,r.pose.rotation,r.pose.scale}
         // Where its section is not loaded, a copy of it from the scene of that section.
@@ -1638,10 +1634,39 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
     return nil
 }
 
-// Client, after a tick: an entity this client made ahead of the server
-// (Predicted_Spawn) takes the place of the entity of the replica the server
-// sent for it; one no replica took within the history was not made by the
-// server, and goes.
+// The spawns of the tick get the Id both ends draw (one of a seat: from its
+// connection, the tick and how many that seat made before it in the tick),
+// and a client marks what it made for the replica of the server's to take.
+@(private)
+spawns_take :: proc(s:^Net_Session,w:core.World_Ref,made:[]Spawn,tick:u64) {
+    if len(made)==0 {return}
+    for item,i in made {
+        if !core.alive(core.world_entities(w),item.entity) {continue}
+        if !item.kept {
+            sequence:u32
+            for before in made[:i] {sequence+=u32(!before.kept && before.peer==item.peer)}
+            connection:=item.peer!=0?Connection(item.peer):own_connection(core.ref(s))
+            core.add(core.world_table_of(w,core.Id),item.entity,core.Id{spawn_id(connection,tick,sequence)})
+        }
+        if s.mode==.Client {core.add(core.world_table_of(w,Predicted_Spawn),item.entity,Predicted_Spawn{tick=tick,kept=item.kept})}
+    }
+    core.world_settle(w)
+}
+
+// What a replica that took an entity this client made keeps of it: one the
+// replica owns goes with it and is predicted from the tick it was made in;
+// one a library keeps stays when the replica goes.
+@(private)
+spawn_taken :: proc(w:core.World_Ref,r:^Replica,e:core.Entity,spawn:Predicted_Spawn) {
+    r.adopted=spawn.kept
+    if !spawn.kept {r.spawned,r.spawned_set=u32(spawn.tick),true}
+    core.remove(core.world_table_of(w,Predicted_Spawn),e)
+}
+
+// Client, after a tick: an entity this client made (Predicted_Spawn) takes
+// the place of the entity of the replica the server sent for it. One no
+// replica took within the history was not made by the server: it goes, or,
+// kept by its library, loses its mark.
 @(private)
 spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
     spawns:=core.world_table_of(w,Predicted_Spawn)
@@ -1649,11 +1674,10 @@ spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
     for row in 0..<core.count(spawns) {
         e,spawn:=core.entity_at(spawns,row),spawns.values[row]
         if r:=replica_adopt(s,w,core.id_of(core.world_table_of(w,core.Id),e),e);r!=nil {
-            r.adopted,r.spawned,r.spawned_set=false,u32(spawn.tick),true
-            core.remove(spawns,e)
+            spawn_taken(w,r,e,spawn)
             replica_classify(s,w,r)
         } else if !time.resimulating && time.tick>spawn.tick+u64(s.client.history) {
-            core.world_destroy_tree(w,e)
+            if spawn.kept {core.remove(spawns,e)} else {core.world_destroy_tree(w,e)}
         }
     }
 }

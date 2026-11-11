@@ -16,8 +16,8 @@ graphics_rows_are_the_tagged_fields_of_the_settings_of_the_machine :: proc(t:^te
     if !testing.expect_value(t,len(rows),14) {return}
     Case :: struct {label:string, change:proc(g:^erender.Graphics_Settings), choice:string, rate:bool}
     cases:=[?]Case{
-        {"Resolution",proc(g:^erender.Graphics_Settings) {g.render_scale=0.75},"75%",false},
-        {"Resolution",proc(g:^erender.Graphics_Settings) {g.render_scale=0.6},"",false},
+        {"Resolution",proc(g:^erender.Graphics_Settings) {g.resolution=1440},"1440",false},
+        {"Resolution",proc(g:^erender.Graphics_Settings) {g.resolution=600},"",false},
         {"Antialiasing",proc(g:^erender.Graphics_Settings) {g.antialiasing={0='o',1='f',2='f'}},"Off",false},
         {"Antialiasing",proc(g:^erender.Graphics_Settings) {g.antialiasing={0='x'}},"TAA",false},
         {"Shadowed lights",proc(g:^erender.Graphics_Settings) {g.shadowed_lights=16},"16",false},

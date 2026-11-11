@@ -19,7 +19,7 @@ errors of the attributes.
   `mirai-player` runs its game (`mirai play`, `player.start`, the editor's attached players).
   Optimized (`Size`, `Speed`, `Aggressive`) it is a single LLVM module, as the shipped game
   compiles it, because a `#force_inline` procedure of another package is not inlined across
-  modules; with `--dev` (`minimal`) or `None`, one module per package
+  modules; in dev (`minimal`) or `None`, one module per package
   (`library_optimization_append`).
 - `Game`: a `main` that calls `host.player_run` over `gen/shipped_world`, the world without the
   development plugins, which only this target generates. It compiles the whole engine, the
@@ -202,7 +202,7 @@ build.shaders_destroy(job)            // waits for a generation in progress
 ## Shipped game
 
 The `Game` folder (`Desc.output`, or `.mirai/game`) receives the executable, `project.mirai`, the
-icon it names if it exists, `input.mirai` if it exists, `settings.mirai` with the
+icon it names if it exists, `settings.mirai` with the
 [combined](projects.md#project-settings) settings, `assets/` with what was
 [cooked](#asset-cooking) of the project and of each active plugin that declares `Assets` (in
 `assets/plugins/<name>/`), `shaders/` with the manifest, the catalog and the code of this system of
@@ -210,9 +210,9 @@ the published generation (no Slang sources; `mirai build game` generates the sha
 SDL3 if the system does not provide it.
 
 The copy replaces files and merges folders without deleting anything from the destination, except
-`assets/`, which ends up exactly with what was cooked. `source/`, the code, `cook.mirai` and the
-`plugin.mirai` are not copied. `mirai play` copies nothing: `mirai-player` runs with
-`--project <project>` and reads assets and shaders from the project.
+`assets/`, which ends up exactly with what was cooked, without the sources and sidecars among the
+assets. The code, `cook.mirai` and the `plugin.mirai` are not copied. `mirai play` copies nothing:
+`mirai-player` runs with `--project <project>` and reads assets and shaders from the project.
 
 ## Dedicated server
 
@@ -221,7 +221,7 @@ The copy replaces files and merges folders without deleting anything from the de
 ([player](../../mirai-core/references/host.md#arguments)). It leaves out what is only seen or
 heard: neither the icon nor `shaders/` (it does not generate the project's), and its cooking leaves
 behind the `presentation` asset kinds of `asset.KINDS` (textures, sounds, interfaces, fonts and
-prompts) without counting them as missing. It carries `input.mirai`, with the bindings Project
+prompts) without counting them as missing. It carries `settings.mirai`, with the bindings Project
 Settings > Input changed, and SDL3, which the executable links.
 
 ## Imported sources
@@ -230,12 +230,13 @@ The meshes, textures, sounds and fonts an import builds are not versioned: they 
 `.mirai/imported/` of the project and of each plugin with assets, and are built again from the
 sources and their sidecars ([sync](../../mirai-imports/references/imports.md#sync)).
 
-- **A build imports first, and says so.** Every build of a project starts by running the sync of
-  the project and of its active plugins (`job_start`, `build.imports_sync`): the editor, the game,
-  the server, `mirai play` and the builds the editor starts. It uses the engine's import program,
-  since the tool builds without the importers, and builds the engine first when that program is
-  not current. A source that does not import fails the build naming it (`Import_Failed`). There is
-  no other step: a checkout that was just cloned runs after any build.
+- **A build imports, and says so.** Every build of a project runs the sync of the project and of
+  its active plugins once its target stands (`job_imports`, `build.imports_sync`): the editor,
+  the game, the server, `mirai play` and the builds the editor starts. It uses the engine's import
+  program, since the tool builds without the importers, which reads the formats the plugins of
+  the project add from its editor library. A source that does not import fails the build naming
+  it (`Import_Failed`). There is no other step: a checkout that was just cloned runs after any
+  build.
 - **What ships.** A game has no imported folder and no sources: the cook writes every asset it
   reaches at its path in the assets of the game, whichever of the two folders it came from.
 - **The installed engine** carries the imported folder of each of its plugins, built when it is
@@ -266,7 +267,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A `--dev` game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
+  A dev game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
   release one with `SHIP`.
 - **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
   `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.
@@ -285,6 +286,10 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   to date, by an `asset.Prefab_Resolver` of the project prefabs
   ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
   shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.
+- **Far meshes.** A game with the `streaming` plugin (`Cook_Desc.far`) ships beside each scene a
+  section references its far mesh, `<scene>.far.mesh` with the id `asset.far_mesh_id` gives
+  (`cook/far`): the game shows it and makes none
+  ([far shape](../../mirai-gameplay/references/libraries.md#plugin-streaming)).
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
   `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.

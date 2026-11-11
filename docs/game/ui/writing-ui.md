@@ -97,7 +97,7 @@ mirai ui check
   makes the asset say the document of that file, making an asset that does not exist.
   `check` also reads `game/`: the literals `gui.clicked` and its like name are nodes of a `.ui`.
 - `write` refuses what `ui.write` refuses, with its message, and leaves the file as it was. Paths
-  are checked against the built game: `mirai build editor . --dev` after its code changes.
+  are checked against the built game: `mirai build editor .` after its code changes.
 
 ## Controls
 
@@ -114,7 +114,7 @@ A node with `key` shows that key of the texts of the game in the language of the
 ## Pitfalls that fail silently
 
 - A `.ui` that does not load shows nothing: `engine.diagnostics` has `gui.asset`.
-- Controls need distinct `name`s: events carry only its hash. A name no `.ui` has is refused by
-  `mirai ui check` when the code says it as a literal, and is a problem `gui.names` at run time.
+- Controls need distinct `name`s: events carry only its hash. A name the screen's `.ui` lacks is
+  a problem `gui.names` the first frame a step asks for it.
 - `ui.write` without `save=true` waits for Save (the changes are one step of history); agents pass
   `save=true`.
