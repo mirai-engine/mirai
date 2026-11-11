@@ -24,7 +24,7 @@ Force_Field :: struct {
 FORCE_FIELD_DEFAULT :: Force_Field{falloff=.Linear,filter={objects=COLLISION_LAYERS_ALL}}
 
 @(step="fixed",stage="simulate",before="physics_prepare")
-force_fields_step :: proc(fields:core.Read(Force_Field),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),sections:core.Read(scene.Scene_Reference),bodies:^Body_Requests,time:core.Time) {
+force_fields_step :: proc(fields:^core.Table(Force_Field,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),bodies:^Body_Requests,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
     for row in 0..<core.count(fields) {
         field:=core.at(fields,row)

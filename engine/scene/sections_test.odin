@@ -800,7 +800,7 @@ a_prefab_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^test
     testing.expect_value(t,core.count(&f.world.placed),4)
     loaded,waiting:=0,0
     for row in 0..<core.count(&f.world.references) {
-        reference:=core.at(core.read(&f.world.references),row)
+        reference:=core.at(&f.world.references,row)
         if reference.scene==SECTION_CELLAR && reference.loaded==SECTION_CELLAR {loaded+=1}
         if reference.scene==SECTION_YARD && reference.loaded=={} && reference.rule==.Manual {waiting+=1}
         // A copy without Ids has none to ask its yard by later: it came with it.

@@ -153,7 +153,7 @@ wind_set_free :: proc(renderer:^render.Renderer,set:^Wind_Set) {
 // sway with the wind at the first streaming source. The benders nearest that
 // source go to the hook too.
 @(step="render",loops="game editor")
-foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),sections:core.Read(scene.Scene_Reference),sources:core.Ref(scene.Streaming_Sources),benders:core.Read(Foliage_Bender),frame:core.Frame_Time,renderer:^render.Renderer) {
+foliage_wind :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),sources:core.Ref(scene.Streaming_Sources),benders:^core.Table(Foliage_Bender,.Read),frame:core.Frame_Time,renderer:^render.Renderer) {
     if resident==nil || len(resident.owners)==0 {return}
     zones:=volume.Where{volumes,worlds,parents,sections}
     resident.wind=volume.gpu_wind(winds,zones)
@@ -181,7 +181,7 @@ foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),vol
 
 // The BENDERS benders nearest `at` where they are drawn this frame, each
 // with where it was the frame before (the motion vectors of what it bends).
-benders_gather :: proc(resident:^Foliage_Resident,benders:core.Read(Foliage_Bender),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),frame:core.Frame_Time,at:[3]f32) {
+benders_gather :: proc(resident:^Foliage_Resident,benders:^core.Table(Foliage_Bender,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C),frame:core.Frame_Time,at:[3]f32) {
     before:=resident.benders
     count:=resident.bender_count
     resident.bender_count=0

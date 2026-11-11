@@ -57,8 +57,8 @@ far_find :: proc(far:^Streaming_Far,a:^host.Assets,added:bool) {
 // reference, when the section is on, and when its scene has no far mesh.
 @(step="frame",loops="game editor")
 streaming_far :: proc(
-    world:core.World_Ref,app:^host.App,references:core.Read(scene.Scene_Reference),views:core.Ref(scene.Section_Views),
-    transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),proxies:core.Read(scene.Section_Proxy),renderers:core.Read(render.Mesh_Renderer),
+    world:core.World_Ref,app:^host.App,references:^core.Table(scene.Scene_Reference,.Read),views:core.Ref(scene.Section_Views),
+    transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),proxies:^core.Table(scene.Section_Proxy,.Read),renderers:^core.Table(render.Mesh_Renderer,.Read),
     far:^Streaming_Far,
 ) {
     if far==nil || app==nil || app.assets==nil {return}
@@ -98,7 +98,7 @@ streaming_far :: proc(
         if !posed {pose=core.TRANSFORM_IDENTITY}
         if proxy,has:=shown[e];has {
             // It follows its reference.
-            if now,has:=core.get(transforms,proxy);has && now!=pose {core.edit(transforms,proxy)^=pose}
+            if now:=core.edit(transforms,proxy);now!=nil {now^=pose}
             continue
         }
         if mesh=={} || !far_shows(views.ptr,e,reference) {continue}

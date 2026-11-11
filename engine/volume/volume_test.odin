@@ -45,8 +45,8 @@ level_at :: proc(f:^Fixture,point:[3]f32) -> f32 {
 // points: the base where no bounded volume holds it.
 @(private="file")
 level_indexed :: proc(f:^Fixture,ix:^Index,point:[3]f32) -> f32 {
-    levels:=core.read(&f.levels)
-    of :: proc(levels:core.Read(Level),row:i32) -> Level {return core.at(levels,int(row))}
+    levels:=&f.levels
+    of :: proc(levels:^core.Table(Level),row:i32) -> Level {return core.at(levels,int(row))}
     h,_:=index_hits(ix,point)
     return combine(h,Level{value=1},levels,of,mix_level).value
 }

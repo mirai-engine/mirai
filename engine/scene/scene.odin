@@ -492,8 +492,8 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     parent_table:=core.world_table_of(w,core.Parent)
     hierarchy_storage:=core.world_storage_of(w,core.Hierarchy)
     if id_table==nil || parent_table==nil || hierarchy_storage==nil {return {},.Invalid}
-    ids,parents:=core.read(id_table),core.read(parent_table)
-    names:=core.read(core.world_table_of(w,core.Name))
+    ids,parents:=id_table,parent_table
+    names:=core.world_table_of(w,core.Name)
     previous:=desc.previous
     id:=desc.id
     if id=={} && previous!=nil {id=previous.doc.id}
@@ -504,7 +504,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     roots:=make([dynamic]Root,context.temp_allocator)
     // The Id an entity has in the document: in a section, the one of its own scene.
     members:=core.world_table_of(w,Section_Member)
-    doc_id :: proc(ids:core.Read(core.Id),members:^core.Table(Section_Member),section:core.Entity,e:core.Entity) -> base.Entity_Id {
+    doc_id :: proc(ids:^core.Table(core.Id,$A),members:^core.Table(Section_Member),section:core.Entity,e:core.Entity) -> base.Entity_Id {
         if section!=core.NONE && members!=nil {
             if member,ok:=core.get(members,e);ok && member.local!=0 {return member.local}
         }
@@ -573,7 +573,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         report={}
     }
     for visit in placed {
-        label:=names.table!=nil?core.name_get(names,visit.entity):""
+        label:=names!=nil?core.name_get(names,visit.entity):""
         parent:=visit.parent==NONE_ROW?0:asset.scene_ids(scene)[visit.parent]
         _,add_error:=asset.scene_entity_add(scene,doc_id(ids,members,desc.section,visit.entity),parent,label,int(visit.order))
         if add_error!=.None {return report,add_error==.Invalid?.Duplicate_Id:.Out_Of_Memory}

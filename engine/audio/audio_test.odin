@@ -455,7 +455,7 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     w.view=core.View{position={0,15,0},rotation=1}
     mixer_reverb:Mixer_Reverb
     run :: proc(p:^Audio_World,settings:^Audio_Settings,dt:f32,r:^Mixer_Reverb,app:^host.App) {
-        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),{},{},core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
+        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),nil,nil,core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
     }
     run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_:=mixer.reverb_get(f.app.mixer)
@@ -503,19 +503,19 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     core.test_world_settle(&room)
     room.view=core.View{position={0,-2,0},rotation=1}
     mixed:Mixer_Reverb
-    hear :: proc(r:core.Read(Audio_Reverb),v:core.Read(volume.Volume),w:core.Read(core.World_Transform),l:core.Read(Audio_Listener),view:^core.View,settings:^Audio_Settings,medium:^Audio_Medium,mixed:^Mixer_Reverb,app:^host.App) -> Reverb {
-        for _ in 0..<60 {audio_reverb(r,v,w,{},{},l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
+    hear :: proc(r:^core.Table(Audio_Reverb,$A),v:^core.Table(volume.Volume,$B),w:^core.Table(core.World_Transform,$C),l:^core.Table(Audio_Listener,$D),view:^core.View,settings:^Audio_Settings,medium:^Audio_Medium,mixed:^Mixer_Reverb,app:^host.App) -> Reverb {
+        for _ in 0..<60 {audio_reverb(r,v,w,nil,nil,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
         got,_:=mixer.reverb_get(app.mixer)
         return got
     }
     near :: proc(a,b:Reverb) -> bool {return abs(a.room_size-b.room_size)<1e-3 && abs(a.damping-b.damping)<1e-3 && abs(a.wet-b.wet)<1e-3 && abs(a.width-b.width)<1e-3}
-    r,v,w,l:=core.read(&room.reverbs),core.read(&room.volumes),core.read(&room.worlds),core.read(&room.listeners)
-    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&water,&mixed,&f.app),water.reverb),"under the water, the reverb of the water")
+    r,v,w,l:=&room.reverbs,&room.volumes,&room.worlds,&room.listeners
+    testing.expect(t,near(hear(core.read(r),core.read(v),core.read(w),core.read(l),&room.view,&settings,&water,&mixed,&f.app),water.reverb),"under the water, the reverb of the water")
     water.weight=0.5
     half:=Reverb{0.4,0.5,0.4,0.75}
-    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&water,&mixed,&f.app),half),"half of each")
-    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&air,&mixed,&f.app),(^Reverb)(&level)^),"in the air, the room")
-    position,found:=listener_position(w,l,core.ref(&room.view))
+    testing.expect(t,near(hear(core.read(r),core.read(v),core.read(w),core.read(l),&room.view,&settings,&water,&mixed,&f.app),half),"half of each")
+    testing.expect(t,near(hear(core.read(r),core.read(v),core.read(w),core.read(l),&room.view,&settings,&air,&mixed,&f.app),(^Reverb)(&level)^),"in the air, the room")
+    position,found:=listener_position(core.read(w),core.read(l),core.ref(&room.view))
     testing.expect(t,found && position==room.view.position,"without an Audio_Listener the View hears")
 }
 

@@ -107,9 +107,9 @@ source_displacement :: proc "contextless" (s:^Source) -> (reach:f32) {
 
 @(step="render",loops="game editor",before="render_sync")
 terrain_displace :: proc(
-    d:^Terrain_Displacement,data:core.Ref(Terrain_Data),settings:Terrain_Settings,terrains:core.Read(Terrain),chunks:core.Read(Terrain_Chunk),
-    meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),hidden:core.Read(render.Hidden),
-    offsets:core.Read(render.Draw_Offset),assets:^host.Assets,renderer:^render.Renderer,allocator:runtime.Allocator,frame:core.Frame_Time,view:core.View,poses:^render.Posed_Meshes,
+    d:^Terrain_Displacement,data:core.Ref(Terrain_Data),settings:Terrain_Settings,terrains:^core.Table(Terrain,.Read),chunks:^core.Table(Terrain_Chunk,.Read),
+    meshes:^core.Table(render.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),hidden:^core.Table(render.Hidden,.Read),
+    offsets:^core.Table(render.Draw_Offset,.Read),assets:^host.Assets,renderer:^render.Renderer,allocator:runtime.Allocator,frame:core.Frame_Time,view:core.View,poses:^render.Posed_Meshes,
 ) {
     if renderer==nil || assets==nil {return}
     d.assets=assets

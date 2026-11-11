@@ -22,9 +22,9 @@ wind_value :: proc "contextless" (w:Wind,pose:mm.Transform) -> [4]f32 {
 }
 
 // The wind at a point, as wind_value.
-wind_at :: proc(winds:core.Read(Wind),at:Where,point:[3]f32) -> [4]f32 {
-    if winds.table==nil {return {}}
-    Winds :: struct {winds:core.Read(Wind),worlds:core.Read(core.World_Transform)}
+wind_at :: proc(winds:^core.Table(Wind,$A),at:Where,point:[3]f32) -> [4]f32 {
+    if winds==nil {return {}}
+    Winds :: struct {winds:^core.Table(Wind,.Read),worlds:^core.Table(core.World_Transform,.Read)}
     of :: proc(w:Winds,row:i32) -> [4]f32 {
         pose,placed:=core.get(w.worlds,core.entity_at(w.winds,int(row)))
         if !placed {pose.transform=mm.TRANSFORM_IDENTITY}
@@ -42,7 +42,7 @@ Gpu_Wind :: struct {
     values:[WIND_VOLUMES][4]f32, // as wind_value
 }
 
-gpu_wind :: proc(winds:core.Read(Wind),at:Where) -> (g:Gpu_Wind) {
+gpu_wind :: proc(winds:^core.Table(Wind,$A),at:Where) -> (g:Gpu_Wind) {
     rows:[WIND_VOLUMES]i32
     n:=ordered(at,winds,rows[:])
     for i in 0..<n {

@@ -56,7 +56,7 @@ correction_fixed :: proc(world,shared,editor,application:rawptr) {
         sent,_:=remote_input(core.ref(&w.remote),sh.connection)
         push=net_test_axis(sent,NET_TEST_PUSH)
     } else {
-        push=inp.seat_action(core.read(&w.seats),inp.local_seat(core.read(&w.seats),0),NET_TEST_PUSH).value
+        push=inp.seat_action(core.read(&w.seats),inp.local_seat(&w.seats,0),NET_TEST_PUSH).value
     }
     if push!=0 {phys.apply_force(&w.requests,sh.player,{push*CORRECTION_PUSH,0,0})}
     net_test_physics(w,sh,app)
@@ -187,15 +187,15 @@ correction_run :: proc(t:^testing.T,settings:Net_Settings,link:Correction_Link,s
             net_test_fixed_with(&world,&shares[index],&apps[index])
         }
         for e,k in bodies[1] {
-            local,_:=core.get(core.read(&worlds[1].transforms),e)
+            local,_:=core.get(&worlds[1].transforms,e)
             // What it shows in the past (the interpolated) is not where the server has it at the same tick.
-            link,_:=core.get(core.read(&worlds[1].links),e)
+            link,_:=core.get(&worlds[1].links,e)
             r:=replica_of(&sessions[1],link.object)
             shown[client_tick%len(shown)][k]=r!=nil && r.mode==.Predicted?local.position:{max(f32),0,0}
         }
         if tick>lead+120 && sessions[1].status==.Connected {
             for e,k in bodies[0] {
-                local,_:=core.get(core.read(&worlds[0].transforms),e)
+                local,_:=core.get(&worlds[0].transforms,e)
                 if was:=shown[tick%len(shown)][k];was.x!=max(f32) {append(&errors,linalg.length(local.position-was))}
             }
         }

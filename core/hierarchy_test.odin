@@ -17,7 +17,7 @@ Tree_World :: struct {
 @(private="file")
 tree_settle :: proc(t:^testing.T,w:^Tree_World) {
     test_world_settle(w)
-    testing.expect(t,hierarchy_settle(&w.hierarchy,read(&w.parents),&w.entities))
+    testing.expect(t,hierarchy_settle(&w.hierarchy,&w.parents,&w.entities))
 }
 
 @(private="file")
@@ -74,7 +74,7 @@ children_follow_their_parent_rows_in_order :: proc(t:^testing.T) {
     other:Hierarchy
     defer value_free(&other,type_info_of(Hierarchy))
     testing.expect(t,value_copy(&other,&w.hierarchy,type_info_of(Hierarchy)))
-    testing.expect(t,hierarchy_settle(&other,read(&copied),&w.entities))
+    testing.expect(t,hierarchy_settle(&other,&copied,&w.entities))
     testing.expect(t,same(children(ref(&other),root),{c,b}))
 }
 
@@ -146,9 +146,9 @@ ancestors_are_found_through_parent :: proc(t:^testing.T) {
     add(&marked,root,{})
     tree_settle(t,&w)
     table_settle(&marked,&w.entities)
-    parents:=read(&w.parents)
-    testing.expect(t,ancestor_with(parents,read(&marked),leaf)==root && ancestor_with(parents,read(&marked),root)==root)
-    testing.expect(t,ancestor_with(parents,read(&marked),loose)==NONE)
+    parents:=&w.parents
+    testing.expect(t,ancestor_with(parents,&marked,leaf)==root && ancestor_with(parents,&marked,root)==root)
+    testing.expect(t,ancestor_with(parents,&marked,loose)==NONE)
     testing.expect(t,is_under(parents,leaf,root) && is_under(parents,leaf,leaf) && !is_under(parents,root,leaf) && !is_under(parents,loose,root))
 
     // A cycle in the rows ends the walk.
@@ -157,7 +157,7 @@ ancestors_are_found_through_parent :: proc(t:^testing.T) {
     unmarked:Table(Name)
     table_init(&unmarked,"Name")
     defer table_destroy(&unmarked)
-    testing.expect(t,!is_under(parents,leaf,loose) && ancestor_with(parents,read(&unmarked),leaf)==NONE)
+    testing.expect(t,!is_under(parents,leaf,loose) && ancestor_with(parents,&unmarked,leaf)==NONE)
 }
 
 @(test)
@@ -171,8 +171,8 @@ a_world_pose_is_written_under_the_parent :: proc(t:^testing.T) {
     add(&w.parents,held,Parent{holder,0})
     tree_settle(t,&w)
     rotation:=mm.quat_axis_angle({1,0,0},0.5)
-    testing.expect(t,world_set(edit(&w.locals,held),read(&w.locals),read(&w.parents),held,{1,2,3},rotation))
-    world,placed:=world_of(read(&w.locals),read(&w.parents),held)
+    testing.expect(t,world_set(edit(&w.locals,held),&w.locals,&w.parents,held,{1,2,3},rotation))
+    world,placed:=world_of(&w.locals,&w.parents,held)
     testing.expect(t,placed && linalg.length(world.position-[3]f32{1,2,3})<1e-4)
     testing.expect(t,linalg.length(mm.quat_rotate(world.rotation,{1,0,0})-mm.quat_rotate(rotation,{1,0,0}))<1e-4)
     local,_:=get(&w.locals,held)
@@ -180,8 +180,8 @@ a_world_pose_is_written_under_the_parent :: proc(t:^testing.T) {
 
     // A parent without size cannot hold it anywhere.
     edit(&w.locals,holder).scale={0,1,1}
-    testing.expect(t,!world_set(edit(&w.locals,held),read(&w.locals),read(&w.parents),held,{1,2,3},rotation))
-    under_root,ok:=local_under(read(&w.locals),read(&w.parents),NONE,mm.Transform{{1,2,3},rotation,{1,1,1}})
+    testing.expect(t,!world_set(edit(&w.locals,held),&w.locals,&w.parents,held,{1,2,3},rotation))
+    under_root,ok:=local_under(&w.locals,&w.parents,NONE,mm.Transform{{1,2,3},rotation,{1,1,1}})
     testing.expect(t,ok && under_root.position==[3]f32{1,2,3})
 }
 
@@ -199,7 +199,7 @@ the_world_of_a_deep_chain_composes_every_link :: proc(t:^testing.T) {
         above=leaf
     }
     tree_settle(t,&w)
-    world,placed:=world_of(read(&w.locals),read(&w.parents),leaf)
+    world,placed:=world_of(&w.locals,&w.parents,leaf)
     testing.expect(t,placed && abs(world.position.x-150)<1e-3)
-    testing.expect_value(t,depth_of(read(&w.parents),leaf),149)
+    testing.expect_value(t,depth_of(&w.parents,leaf),149)
 }

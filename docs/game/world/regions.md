@@ -57,11 +57,11 @@ entering does is game code on that event; a sky that changes in a passage:
 @(component) Sky_Zone :: struct {sky,sun:core.Entity, seconds:f32}
 
 @(step="fixed",stage="react")
-game_sky_zones :: proc(zones:core.Read(Sky_Zone),drivables:core.Read(input.Drivable),
+game_sky_zones :: proc(zones:^core.Table(Sky_Zone,.Read),seats:^core.Table(input.Seat,.Read),
                        events:core.Ref(phys.Physics_Events),requests:^render.Environment_Requests) {
     for event in events.overlap_begin.items {
         zone:=core.get(zones,event.collider) or_continue
-        if !core.has(drivables,event.other) {continue}
+        if input.seat_of(seats,event.other)==core.NONE {continue}
         render.activate(requests,zone.sky,zone.sun,zone.seconds)
     }
 }

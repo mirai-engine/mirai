@@ -24,7 +24,7 @@ STRAIN_FIELD_DEFAULT :: Strain_Field{filter={objects=phys.COLLISION_LAYERS_ALL}}
 // The server decides what breaks: a client asks for no strain.
 @(step="fixed",stage="simulate",before="physics_prepare")
 strain_fields_step :: proc(
-    fields:core.Read(Strain_Field),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),sections:core.Read(scene.Scene_Reference),authority:core.Ref(core.Network),
+    fields:^core.Table(Strain_Field,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),authority:core.Ref(core.Network),
     bodies:^phys.Body_Requests,time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing || !(time.dt>0) || authority.role==.Client {return}

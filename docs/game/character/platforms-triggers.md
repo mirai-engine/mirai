@@ -10,7 +10,7 @@ standing on it travels with it and turns with it. Request its pose every tick:
 Lift :: struct {from,to:[3]f32, seconds:f32}
 
 @(step="fixed")
-game_lifts :: proc(lifts:core.Read(Lift),bodies:^phys.Body_Requests,time:core.Time) {
+game_lifts :: proc(lifts:^core.Table(Lift,.Read),bodies:^phys.Body_Requests,time:core.Time) {
     for row in 0..<core.count(lifts) {
         lift:=core.at(lifts,row)
         along:=0.5-0.5*math.cos(f32(time.seconds)/lift.seconds*2*math.PI)   // 0 to 1 and back
@@ -43,7 +43,7 @@ Read the events in `stage="react"`; each pair gives one event per side:
 
 ```odin
 @(step="fixed",stage="react")
-game_zones :: proc(zones:core.Read(Heal_Zone),players:core.Read(Player),
+game_zones :: proc(zones:^core.Table(Heal_Zone,.Read),players:^core.Table(Player,.Read),
                    events:core.Ref(phys.Physics_Events),healths:^core.Table(Health)) {
     for event in events.overlap_begin.items {
         if !core.has(zones,event.collider) || !core.has(players,event.other) {continue}

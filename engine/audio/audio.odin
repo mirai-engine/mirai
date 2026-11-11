@@ -290,8 +290,8 @@ Mixer_Reverb :: struct {
 
 @(step="late",stage="end",after="camera_view")
 audio_sources :: proc(
-    world:core.World_Ref,sources:core.Read(Audio_Source),states:^core.Table(Audio_Source_State),worlds:core.Read(core.World_Transform),
-    occlusions:core.Read(Audio_Occlusion),materials:core.Read(Audio_Material),listeners:core.Read(Audio_Listener),view:core.Ref(core.View),queries:core.Ref(core.World_Queries),
+    world:core.World_Ref,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State),worlds:^core.Table(core.World_Transform,.Read),
+    occlusions:^core.Table(Audio_Occlusion,.Read),materials:^core.Table(Audio_Material,.Read),listeners:^core.Table(Audio_Listener,.Read),view:core.Ref(core.View),queries:core.Ref(core.World_Queries),
     frame:core.Frame_Time,clock:core.Clock,voices:^Voices,listener:^Mixer_Listener,app:^host.App,problems:^core.Problems,
 ) {
     if voices!=nil && app.mixer!=nil && clock.paused!=voices.paused {
@@ -310,16 +310,16 @@ audio_sources :: proc(
 // What the voices of a frame look at besides their sources.
 @(private)
 Hearing :: struct {
-    worlds:core.Read(core.World_Transform),
-    occlusions:core.Read(Audio_Occlusion),
-    materials:core.Read(Audio_Material),
-    listeners:core.Read(Audio_Listener),
+    worlds:^core.Table(core.World_Transform,.Read),
+    occlusions:^core.Table(Audio_Occlusion,.Read),
+    materials:^core.Table(Audio_Material,.Read),
+    listeners:^core.Table(Audio_Listener,.Read),
     view:core.Ref(core.View),
     query:core.World_Query, // what hides a source
 }
 
 @(private)
-sources_update :: proc(sources:core.Read(Audio_Source),states:^core.Table(Audio_Source_State),hearing:Hearing,dt:f32,voices:^Voices,listener:^Mixer_Listener,app:^host.App,problems:^core.Problems) {
+sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(Audio_Source_State),hearing:Hearing,dt:f32,voices:^Voices,listener:^Mixer_Listener,app:^host.App,problems:^core.Problems) {
     m:=app.mixer
     if m==nil || voices==nil {return}
     if cap(voices.ranks)==0 && (!core.entity_map_reserve(&voices.entries,VOICE_RESERVE) || reserve(&voices.ranks,VOICE_RESERVE)!=nil) {
@@ -353,7 +353,7 @@ sources_update :: proc(sources:core.Read(Audio_Source),states:^core.Table(Audio_
 // virtual, and one that comes in plays where its time is, on a voice that is
 // free: none is stolen, so a steady scene starts and stops nothing.
 @(private)
-voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources:core.Read(Audio_Source),states:^core.Table(Audio_Source_State)) {
+voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State)) {
     free:=mixer.voices_free(m)
     budget:=free
     clear(&voices.ranks)
@@ -397,7 +397,7 @@ voice_virtual :: proc(voices:^Voices,m:^Mixer,at:int,states:^core.Table(Audio_So
 
 // The entry at plays again where its time is; false when the mixer refused it.
 @(private)
-voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources:core.Read(Audio_Source),states:^core.Table(Audio_Source_State),at:int) -> bool {
+voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State),at:int) -> bool {
     entry:=&voices.entries.values[at]
     e:=voices.entries.entities[at]
     source,_:=core.get(sources,e)
@@ -434,7 +434,7 @@ state_put :: proc(states:^core.Table(Audio_Source_State),e:core.Entity,state:Aud
 // over about REVERB_FADE.
 @(step="late",stage="end",after="camera_view")
 audio_reverb :: proc(
-    reverbs:core.Read(Audio_Reverb),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),sections:core.Read(scene.Scene_Reference),listeners:core.Read(Audio_Listener),
+    reverbs:^core.Table(Audio_Reverb,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),listeners:^core.Table(Audio_Listener,.Read),
     view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,m:^Mixer,
 ) {
     if m==nil || reverb==nil {return}
@@ -622,7 +622,7 @@ bus_ready :: proc(m:^Mixer,bus:Audio_Bus) -> bool {
 
 // Where the listener hears from: the first Audio_Listener with a world
 // transform, or the View; false without either.
-listener_position :: proc(worlds:core.Read(core.World_Transform),listeners:core.Read(Audio_Listener),view:core.Ref(core.View)) -> (position:[3]f32,found:bool) {
+listener_position :: proc(worlds:^core.Table(core.World_Transform,$A),listeners:^core.Table(Audio_Listener,$B),view:core.Ref(core.View)) -> (position:[3]f32,found:bool) {
     hearing:=Hearing{worlds=worlds,listeners=listeners,view=view}
     position,_,_,found=listener_pose(&hearing)
     return

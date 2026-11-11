@@ -32,10 +32,10 @@ Gpu_Fields :: struct {
 #assert(size_of(Gpu_Fields)==16+16+GRAVITY_VOLUMES*(80+32)+size_of(volume.Gpu_Wind))
 
 // The gravity and the wind of the world, from its fields.
-fields_of :: proc(gravities:core.Read(volume.Gravity),winds:core.Read(volume.Wind),zones:volume.Where) -> (f:Gpu_Fields) {
+fields_of :: proc(gravities:^core.Table(volume.Gravity,$A),winds:^core.Table(volume.Wind,.Read),zones:volume.Where) -> (f:Gpu_Fields) {
     f.fallback.xyz=volume.GRAVITY_WORLD
-    if winds.table!=nil {f.wind=volume.gpu_wind(winds,zones)}
-    if gravities.table==nil {return}
+    if winds!=nil {f.wind=volume.gpu_wind(winds,zones)}
+    if gravities==nil {return}
     rows:[GRAVITY_VOLUMES]i32
     n:=volume.ordered(zones,gravities,rows[:])
     g:=&f.gravity

@@ -57,7 +57,7 @@ json_is_written_one_member_per_line_with_two_spaces :: proc(t:^testing.T) {
 
 @(test)
 shader_entry_survives_the_manifest :: proc(t:^testing.T) {
-    bindings:=[]Binding{{0,"Uniform_Buffer"},{2,"Sampler"},{34,"Texture_Table"}}
+    bindings:=[]Binding{{0,"Uniform_Buffer"},{2,"Sampler"},{35,"Texture_Table"}}
     shader:=Shader{id="Gbuffer_Plain_Frag",name="gbuffer_plain.frag",stage=.Fragment,spv="gbuffer_plain.frag.spv",msl="gbuffer_plain.frag.metal",entry="main0",bindings=bindings,constants={"nested","other"},fingerprint="f",spv_hash="s",msl_hash="m",staged=true}
     writer:=json_writer(context.temp_allocator)
     shader_to_json(&writer,shader)
@@ -175,7 +175,7 @@ metal_texture_table_moves_to_the_buffer_index_of_the_rhi :: proc(t:^testing.T) {
     // What SPIRV-Cross writes for the texture table with --msl-argument-buffers.
     table:=`struct spvDescriptorSetBuffer1
 {
-    array<texture2d<float>, 1024> table [[id(34)]];
+    array<texture2d<float>, 1024> table [[id(35)]];
 };
 
 kernel void main0(constant spvDescriptorSetBuffer1& spvDescriptorSet1 [[buffer(1)]], device StructuredBuffer& queries [[buffer(1)]], sampler table_sampler [[sampler(2)]])
@@ -231,7 +231,7 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
     data:=reflection(t,`{"parameters":[
         {"name":"results","binding":{"kind":"descriptorTableSlot","index":4},"type":{"kind":"resource","baseShape":"structuredBuffer","access":"readWrite"}},
         {"name":"unused","binding":{"kind":"descriptorTableSlot","index":9},"type":{"kind":"resource","baseShape":"texture2D"}},
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
         {"name":"params","binding":{"kind":"descriptorTableSlot","index":1},"type":{"kind":"constantBuffer"}},
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20},"type":{"kind":"resource","baseShape":"texture2D","access":"readWrite"}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29},"type":{"kind":"resource","baseShape":"accelerationStructure"}},
@@ -239,20 +239,20 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
       "entryPoints":[{"name":"main","bindings":[
         {"name":"results","binding":{"kind":"descriptorTableSlot","index":4,"used":1}},
         {"name":"unused","binding":{"kind":"descriptorTableSlot","index":9,"used":0}},
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34,"used":1}},
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35,"used":1}},
         {"name":"params","binding":{"kind":"descriptorTableSlot","index":1,"used":true}},
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20,"used":1}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29,"used":1}},
         {"name":"filter","binding":{"kind":"descriptorTableSlot","index":2,"used":1}}]}]}`)
     resources,problem:=reflected_resources(data,context.temp_allocator)
     testing.expect_value(t,problem,"")
-    expected:=[]Binding{{1,"Uniform_Buffer"},{2,"Sampler"},{4,"Storage_Buffer_RW"},{20,"Storage_Texture"},{29,"Accel"},{34,"Texture_Table"}}
+    expected:=[]Binding{{1,"Uniform_Buffer"},{2,"Sampler"},{4,"Storage_Buffer_RW"},{20,"Storage_Texture"},{29,"Accel"},{35,"Texture_Table"}}
     testing.expect_value(t,len(resources),len(expected))
     for binding,i in expected {if i<len(resources) {testing.expect_value(t,resources[i],binding)}}
     // A table with a size is not the one of the RHI, which grows.
     sized:=reflection(t,`{"parameters":[
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}}],
-      "entryPoints":[{"name":"main","bindings":[{"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34,"used":1}}]}]}`)
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}}],
+      "entryPoints":[{"name":"main","bindings":[{"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35,"used":1}}]}]}`)
     _,problem=reflected_resources(sized,context.temp_allocator)
     testing.expect(t,strings.contains(problem,"texture table"),problem)
 }
@@ -263,10 +263,10 @@ resources_outside_the_portable_binding_abi_are_rejected :: proc(t:^testing.T) {
     cases:=[]Case{
         {`"binding":{"kind":"descriptorTableSlot","index":30},"type":{"kind":"constantBuffer"}`,"exceeds the 30 portable slots"},
         {`"binding":{"kind":"descriptorTableSlot","index":16},"type":{"kind":"samplerState"}`,"exceeds 16 Metal indices"},
-        {`"binding":{"kind":"descriptorTableSlot","index":34},"type":{"kind":"resource","baseShape":"texture2D"}`,"overlaps the texture table"},
+        {`"binding":{"kind":"descriptorTableSlot","index":35},"type":{"kind":"resource","baseShape":"texture2D"}`,"overlaps the texture table"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"array","elementCount":4,"elementType":{"kind":"resource","baseShape":"texture2D"}}`,"only set 0 scalar resources"},
         {`"binding":{"kind":"descriptorTableSlot","space":2,"index":3},"type":{"kind":"constantBuffer"}`,"only set 0 scalar resources"},
-        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
+        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
         {`"binding":{"kind":"uniform","offset":0},"type":{"kind":"scalar"}`,"explicit descriptor binding"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"resource","baseShape":"textureCube"}`,"unsupported resource type"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"struct"}`,"unsupported parameter type"},

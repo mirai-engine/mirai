@@ -113,11 +113,11 @@ Mind_World :: struct {
     minds:^Minds,
     agents:^core.Table(Mind_Agent),
     requests:^nav.Nav_Requests,
-    paths:core.Read(nav.Nav_Path),
-    fars:core.Read(nav.Nav_Far),
-    objects:core.Read(Smart_Object),
-    states:core.Read(Smart_State),
-    worlds:core.Read(core.World_Transform),
+    paths:^core.Table(nav.Nav_Path,.Read),
+    fars:^core.Table(nav.Nav_Far,.Read),
+    objects:^core.Table(Smart_Object,.Read),
+    states:^core.Table(Smart_State,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
     claims:^Claims,
     time:core.Time,
 }
@@ -141,24 +141,24 @@ minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think
         if agents.values[row].mind!=key {continue}
         mind_run(w,core.entity_at(agents,row),&core.edit_at(agents,row).state,acts,think,&ctx)
     }
-    if w.fars.table==nil || !nav.nav_far_decide(time) {return}
+    if w.fars==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.
     ctx.lease=u32(nav.NAV_FAR_PERIOD/max(time.dt,1e-6)+0.5)+1
     // The rows after those on are off: of them, the agents far.
     for row in core.count(agents)..<len(agents.entities) {
         if agents.values[row].mind!=key {continue}
         e:=agents.entities[row]
-        if core.raw_find(core.raw(w.fars.table),type_info_of(nav.Nav_Far),e)==nil {continue}
+        if core.raw_find(core.raw(w.fars),type_info_of(nav.Nav_Far),e)==nil {continue}
         mind_run(w,e,&core.edit_at(agents,row).state,acts,think,&ctx)
     }
 }
 
 // Reports the agents of a name no mind of the game declares.
 @(step="fixed",stage="apply",server)
-minds_unknown :: proc(minds:core.Ref(Minds),agents:core.Read(Mind_Agent),time:core.Time,problems:^core.Problems) {
+minds_unknown :: proc(minds:core.Ref(Minds),agents:^core.Table(Mind_Agent,.Read),time:core.Time,problems:^core.Problems) {
     if !time.playing || time.resimulating {return}
     for row in 0..<core.count(agents) {
-        name:=agents.table.values[row].mind
+        name:=agents.values[row].mind
         if mind_of(minds.ptr,name)!=nil {continue}
         text:=base.text_get(name[:])
         core.report(problems,core.entity_at(agents,row),"behavior.mind","No mind is declared as %q: give the think procedure of a mind @(mind=%q), or fix the name of its Mind_Agent",text,text)
@@ -181,8 +181,8 @@ world_of :: #force_inline proc "contextless" (a:^$T) -> ^Mind_World {return (^Mi
 // while it is far.
 agent_path :: proc(a:^$T) -> (p:nav.Nav_Path,ok:bool) {
     w,e:=world_of(a),agent(a)
-    if p,ok=core.get(w.paths,e);ok || w.paths.table==nil {return}
-    found:=cast(^nav.Nav_Path)core.raw_find(core.raw(w.paths.table),type_info_of(nav.Nav_Path),e)
+    if p,ok=core.get(w.paths,e);ok || w.paths==nil {return}
+    found:=cast(^nav.Nav_Path)core.raw_find(core.raw(w.paths),type_info_of(nav.Nav_Path),e)
     if found==nil {return}
     return found^,true
 }

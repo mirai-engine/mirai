@@ -116,7 +116,7 @@ test_host_destroy :: proc(h:^Test_Physics_Host) {
 
 // physics_step alone, on the rows as they are and as the loop calls it.
 test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
-    gravities:core.Read(volume.Gravity);worlds:core.Read(core.World_Transform)
+    gravities:^core.Table(volume.Gravity,.Read);worlds:^core.Table(core.World_Transform,.Read)
     if h.fields {gravities,worlds=core.read(&p.gravities),core.read(&p.worlds)}
     if state_make(&p.state,&p.settings,&h.app.jobs,&h.problems) {
         if !h.fields {sim.world_set_gravity(&p.state.world,h.gravity)}

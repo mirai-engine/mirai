@@ -64,7 +64,7 @@ particles_take_the_gravity_of_their_place_as_the_bodies :: proc(t:^testing.T) {
     place(&w,{acceleration=3,zone={priority=2,mode=.Add}},volume.box({4,4,4}),{10020,0,0},mm.quat_axis_angle({0,0,1},mm.PI/2))
     origin:=[3]f32{10032,0,0}
     fields:=fields_relative(fields_of(core.read(&w.gravities),{},{volumes=core.read(&w.volumes),worlds=core.read(&w.worlds)}),origin)
-    Of :: struct {gravities:core.Read(volume.Gravity),worlds:core.Read(core.World_Transform),point:[3]f32}
+    Of :: struct {gravities:^core.Table(volume.Gravity,.Read),worlds:^core.Table(core.World_Transform,.Read),point:[3]f32}
     of :: proc(o:Of,row:i32) -> [3]f32 {
         world,_:=core.get(o.worlds,core.entity_at(o.gravities,int(row)))
         return volume.gravity_of(core.at(o.gravities,int(row)),world.transform,o.point)

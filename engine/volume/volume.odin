@@ -74,10 +74,10 @@ world :: proc "contextless" () -> Volume {return {shape=.Unbounded}}
 // The tables where a volume is: its shape, its pose and, unbounded under a
 // section, the box of that section.
 Where :: struct {
-    volumes:core.Read(Volume),
-    worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),
-    sections:core.Read(scene.Scene_Reference),
+    volumes:^core.Table(Volume,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    sections:^core.Table(scene.Scene_Reference,.Read),
 }
 
 // When a table of volumes changes: an unbounded volume with extents was meant
@@ -86,7 +86,7 @@ Where :: struct {
 Volume_Check :: struct {seen:core.Seen `mirai:"transient,hidden"`}
 
 @(step="frame")
-volumes_check :: proc(volumes:core.Read(Volume),check:^Volume_Check,problems:^core.Problems) {
+volumes_check :: proc(volumes:^core.Table(Volume,.Read),check:^Volume_Check,problems:^core.Problems) {
     if !core.touched(volumes,&check.seen) {return}
     for row in 0..<core.count(volumes) {
         if v:=core.at(volumes,row);v.shape==.Unbounded && v.extents!={} {
@@ -273,7 +273,7 @@ placed :: proc(at:Where,e:core.Entity) -> (v:Volume,pose:mm.Transform,ok:bool) {
     v,found=core.get(at.volumes,e)
     if !found {return {},mm.TRANSFORM_IDENTITY,true}
     if v.shape==.Unbounded {
-        section:=at.sections.table!=nil?core.ancestor_with(at.parents,at.sections,e):core.NONE
+        section:=at.sections!=nil?core.ancestor_with(at.parents,at.sections,e):core.NONE
         if section==core.NONE {return v,mm.TRANSFORM_IDENTITY,true}
         reference,_:=core.get(at.sections,section)
         box,boxed:=core.get(at.worlds,section)
@@ -286,7 +286,7 @@ placed :: proc(at:Where,e:core.Entity) -> (v:Volume,pose:mm.Transform,ok:bool) {
 
 // The volumes of the value of table that hold point, in the order they are
 // applied, in one pass over them.
-gather :: proc(at:Where,table:core.Read($T),point:[3]f32) -> (h:Hits) {
+gather :: proc(at:Where,table:^core.Table($T,$A),point:[3]f32) -> (h:Hits) {
     for row in 0..<core.count(table) {
         v,pose,ok:=placed(at,core.entity_at(table,row))
         if !ok {continue}
@@ -305,9 +305,9 @@ combine :: proc(h:Hits,value:$V,user:$U,value_of:proc(user:U,row:i32) -> V,mix:p
 }
 
 // The value of table at a point: every volume that holds it over fallback.
-at :: proc(zones:Where,table:core.Read($T),point:[3]f32,fallback:T,mix:proc(value:^T,by:T,weight:f32,add:bool)) -> T {
-    if table.table==nil {return fallback}
-    of :: proc(table:core.Read(T),row:i32) -> T {return core.at(table,int(row))}
+at :: proc(zones:Where,table:^core.Table($T,$A),point:[3]f32,fallback:T,mix:proc(value:^T,by:T,weight:f32,add:bool)) -> T {
+    if table==nil {return fallback}
+    of :: proc(table:^core.Table(T,A),row:i32) -> T {return core.at(table,int(row))}
     return combine(gather(zones,table,point),fallback,table,of,mix)
 }
 
@@ -351,7 +351,7 @@ index_destroy :: proc(ix:^Index) {
 }
 
 @(private)
-place_of :: proc(at:Where,table:core.Read($T),row:int) -> (p:Place) {
+place_of :: proc(at:Where,table:^core.Table($T,$A),row:int) -> (p:Place) {
     e:=core.entity_at(table,row)
     p.volume,p.pose,p.rules=placed(at,e)
     p.world=mm.TRANSFORM_IDENTITY
@@ -364,10 +364,10 @@ place_of :: proc(at:Where,table:core.Read($T),row:int) -> (p:Place) {
 // or where they are changed. changed: it was made again, and what a library
 // combined from it is to be combined again. ok is false without memory: then
 // no volume holds any point until an update finds it.
-index_update :: proc(ix:^Index,at:Where,table:core.Read($T)) -> (changed,ok:bool) {
+index_update :: proc(ix:^Index,at:Where,table:^core.Table($T,$A)) -> (changed,ok:bool) {
     moved:=core.touched(at.volumes,&ix.seen[0]) | core.touched(at.sections,&ix.seen[2])
     count:=0
-    if table.table!=nil {
+    if table!=nil {
         moved|=core.touched(table,&ix.seen[1])
         count=core.count(table)
     }
@@ -453,7 +453,7 @@ index_hits :: proc(ix:^Index,point:[3]f32) -> (h:Hits,bounded:bool) {
 // they are: what a shader that combines them at each point gets, with
 // gpu_volume. rows takes their rows; past its length the lowest priorities
 // are left out.
-ordered :: proc(at:Where,table:core.Read($T),rows:[]i32) -> int {
+ordered :: proc(at:Where,table:^core.Table($T,$A),rows:[]i32) -> int {
     h:Hits
     for row in 0..<core.count(table) {
         v,pose,ok:=placed(at,core.entity_at(table,row))

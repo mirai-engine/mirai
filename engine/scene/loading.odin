@@ -571,7 +571,7 @@ section_load_begin :: proc(app:^host.App,w:core.World_Ref,e:core.Entity) -> (job
     reference:=(^Scene_Reference)(core.raw_find(core.raw(references),type_info_of(Scene_Reference),e))
     if reference==nil {return nil,.Invalid}
     if slice.contains(section_path(w,e),reference.scene) {return nil,.Cycle}
-    return load_begin(app,reference.scene,{},core.id_of(core.read(ids),e))
+    return load_begin(app,reference.scene,{},core.id_of(ids,e))
 }
 
 // What a section load leaves. Before what it loaded joins the world under
@@ -616,7 +616,7 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
             x:=core.entity_make(index,generation)
             if index==0 || !core.alive(apart_es,x) {continue}
             parent,_:=core.get(apart_parents,x)
-            of[index]=core.ancestor_with(core.read(apart_parents),core.read(inner),parent.entity)
+            of[index]=core.ancestor_with(apart_parents,inner,parent.entity)
         }
     }
     made:[dynamic]core.Entity
@@ -689,7 +689,7 @@ apart_locals :: proc(apart:core.World_Ref) -> []base.Entity_Id {
         x:=core.raw(members).entities[row]
         if parents!=nil && references!=nil {
             parent,placed:=core.get(parents,x)
-            if placed && core.ancestor_with(core.read(parents),core.read(references),parent.entity)!=core.NONE {continue}
+            if placed && core.ancestor_with(parents,references,parent.entity)!=core.NONE {continue}
         }
         append(&locals,(^Section_Member)(core.raw_value(core.raw(members),type_info_of(Section_Member),row)).local)
     }
