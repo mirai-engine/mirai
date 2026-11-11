@@ -80,6 +80,39 @@ rows_written_take_a_stamp_above_the_version_a_reader_saw :: proc(t:^testing.T) {
     for row in 0..<count(&other) {testing.expect(t,stamp(&other,row)<=other.version)}
 }
 
+// An edit is followed until its table settles: what the check of writes keeps
+// at a settle finds, at the next, a row written through a pointer asked for
+// before it, unless the row was asked for and written again since.
+@(test)
+a_row_written_through_an_edit_asked_for_before_the_last_settle_is_found :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    Case :: struct {after:proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name),stale:bool}
+    cases:=[?]Case{
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {late^=name_make("late");table_settle(names,es)},true},
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {late^=name_make("late");_=edit(names,e);table_settle(names,es)},true},
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {late^=name_make("late");edit(names,e)^=name_make("asked");table_settle(names,es)},false},
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {edit(names,e)^=name_make("asked");table_settle(names,es)},false},
+    }
+    for c in cases {
+        names:Table(Name)
+        table_init(&names,"Name")
+        defer table_destroy(&names)
+        kept:Settled_Rows
+        defer delete(kept.values)
+        a,b:=create(&es),create(&es)
+        add(&names,a,name_make("a"));add(&names,b,name_make("b"))
+        table_settle(&names,&es)
+        testing.expect_value(t,settled_check(raw(&names),&kept,size_of(Name)),NONE)
+        late:=edit(&names,b)
+        table_settle(&names,&es)
+        testing.expect_value(t,settled_check(raw(&names),&kept,size_of(Name)),NONE)
+        c.after(&names,&es,b,late)
+        testing.expect_value(t,settled_check(raw(&names),&kept,size_of(Name))==b,c.stale)
+    }
+}
+
 // What each_changed goes through is what a walk of every stamp finds, and no
 // page is below a stamp of its rows, whatever wrote, moved or took the rows.
 @(test)
