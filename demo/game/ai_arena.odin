@@ -76,9 +76,7 @@ Horde_Waves :: struct {
 Horde_Sends :: struct {queue:core.Queue(core.Entity)}
 
 @(component,description="A zombie of an arena: it wanders, chases what it sees and bites what it reaches.")
-Zombie :: struct {
-    bites:u32 `mirai:"transient,readonly"`,
-}
+Zombie :: struct {}
 
 @(component,description="A soldier of an arena: it fires, takes cover, reloads, and fetches ammo and health from the crates of its side.")
 Soldier :: struct {
@@ -135,6 +133,7 @@ Arena :: struct {
 @(storage)
 Arena_State :: struct {
     rng:mm.Rng,
+    bites:u32, // that the zombies of every arena played
 }
 arena_state_default :: proc() -> Arena_State {return {rng=mm.rng_make(17)}}
 
@@ -217,13 +216,13 @@ zombie_chase :: proc(a:^ai.Act(Zombie_Act),w:Arena) -> ai.Status {
 
 // Bites now and again 0.8 s later, holding one of the places to bite its target.
 @(act="Bite")
-zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,zombies:^core.Table(Zombie),requests:^anim.Animation_Requests) -> ai.Status {
+zombie_bite :: proc(a:^ai.Act(Zombie_Act),w:Arena,state:^Arena_State,requests:^anim.Animation_Requests) -> ai.Status {
     e:=behavior.agent(a)
     if a.phase==.Exit {anim.look(requests,e,anim.spatial_point({}),0);return .Success}
     if a.phase==.Enter {
         subject,_,_:=arena_seen(w,e)
         if subject==core.NONE || !ai.token_take(a,u64(subject),ZOMBIE_BITERS) {return .Failure}
-        if z:=core.edit(zombies,e);z!=nil {z.bites+=1}
+        state.bites+=1
         anim.look(requests,e,anim.spatial_entity(subject))
         anim.play(requests,e,"Bite")
     }
