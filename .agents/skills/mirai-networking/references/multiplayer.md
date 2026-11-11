@@ -535,8 +535,8 @@ One rule says how it lives (`replica_wanted`):
   its newest state to the client tick, bring within the bounds of what it drives grown by how far
   that goes meanwhile (`records_capture`), so a ball turns predicted before the hit and not one
   round trip after it; what `Replicate.predict` asks always; and what this client spawned ahead of
-  the server. The client simulates it ahead of the server, which corrects it. More than `predicted_capacity` at once is
-  the `net.predicted` problem, and the rest stay interpolated.
+  the server. The client simulates it ahead of the server, which corrects it. More than
+  `predicted_capacity` at once is the `net.predicted` problem, and the rest stay interpolated.
 - **Interpolated** (`core.Pose_Target` with `follow`): everything else, shown between the server's
   states.
   - On each tick it goes to the state of the display tick of that tick (`clock_interpolation_tick`)
