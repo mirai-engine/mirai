@@ -62,73 +62,30 @@ particle_span :: proc(info:^effect.Particle_Info) -> (cycle,shown:f32) {
 }
 
 @(private)
-parameter_same :: proc(a,b:^effect.Particle_Parameter) -> bool {
-    return a.name==b.name && a.kind==b.kind && a.components==b.components && a.value==b.value && a.texture==b.texture
-}
-
-@(private)
-parameters_same :: proc(a,b:^Particle_File) -> bool {
-    if a.parameter_count!=b.parameter_count {return false}
-    for i in 0..<a.parameter_count {
-        if !parameter_same(&a.parameters[i],&b.parameters[i]) {return false}
-    }
-    return true
-}
-
-@(private)
-Span_Visitor :: #type proc(offset:uintptr,size:int,user:rawptr)
-
-// The values of Particle_Info, and its program, as spans of its bytes.
-@(private)
-info_spans :: proc(visit:Span_Visitor,user:rawptr) {
-    Spans :: struct {visit:Span_Visitor,user:rawptr}
-    spans:=Spans{visit,user}
-    each :: proc(value:effect.Particle_Value,user:rawptr) -> bool {
-        s:=cast(^Spans)user
-        s.visit(value.offset,value.size,s.user)
-        return true
-    }
-    effect.particle_values_visit(each,&spans)
-    // The program is text, which is no value of an instance.
-    visit(offset_of(effect.Particle_Info,program),size_of(effect.Particle_Info{}.program),user)
-}
-
-@(private)
 span_of :: proc(info:^effect.Particle_Info,offset:uintptr,size:int) -> []u8 {
     return mem.byte_slice(rawptr(uintptr(info)+offset),size)
 }
 
-// Whether the panel holds values the file does not have.
-effect_edited :: proc(held,file:^Particle_File) -> bool {
-    if !hidden_same(held,file) || !parameters_same(held,file) {return true}
-    Compare :: struct {held,file:^effect.Particle_Info,differ:bool}
-    compare:=Compare{&held.info,&file.info,false}
-    visit :: proc(offset:uintptr,size:int,user:rawptr) {
-        c:=cast(^Compare)user
-        if mem.compare(span_of(c.held,offset,size),span_of(c.file,offset,size))!=0 {c.differ=true}
-    }
-    info_spans(visit,&compare)
-    return compare.differ
-}
+// Whether the panel holds values the file does not have. The room past the
+// parameters and the hidden fields of a Particle_File is empty.
+effect_edited :: proc(held,file:^Particle_File) -> bool {return held^!=file^}
 
 // What a file read again brings: each value the panel did not change takes
-// the one of the file now. The parameters and the hidden fields go whole.
+// the one of the file now. The program, the parameters and the hidden fields
+// go whole.
 effect_merge :: proc(held,before,now:^Particle_File) {
     Merge :: struct {held,before,now:^effect.Particle_Info}
     merge:=Merge{&held.info,&before.info,&now.info}
-    visit :: proc(offset:uintptr,size:int,user:rawptr) {
+    visit :: proc(value:effect.Particle_Value,user:rawptr) -> bool {
         m:=cast(^Merge)user
-        kept:=span_of(m.held,offset,size)
-        if mem.compare(kept,span_of(m.before,offset,size))==0 {copy(kept,span_of(m.now,offset,size))}
+        kept:=span_of(m.held,value.offset,value.size)
+        if mem.compare(kept,span_of(m.before,value.offset,value.size))==0 {copy(kept,span_of(m.now,value.offset,value.size))}
+        return true
     }
-    info_spans(visit,&merge)
-    if parameters_same(held,before) {held.parameters,held.parameter_count=now.parameters,now.parameter_count}
-    if hidden_same(held,before) {held.hidden,held.hidden_count=now.hidden,now.hidden_count}
-}
-
-@(private)
-hidden_same :: proc(a,b:^Particle_File) -> bool {
-    return a.hidden_count==b.hidden_count && a.hidden==b.hidden
+    effect.particle_values_visit(visit,&merge)
+    if held.info.program==before.info.program {held.info.program=now.info.program}
+    if held.parameter_count==before.parameter_count && held.parameters==before.parameters {held.parameters,held.parameter_count=now.parameters,now.parameter_count}
+    if held.hidden_count==before.hidden_count && held.hidden==before.hidden {held.hidden,held.hidden_count=now.hidden,now.hidden_count}
 }
 
 // The value stored for a parameter of the program; nil without one.

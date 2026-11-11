@@ -83,7 +83,6 @@ Particle_Sync :: struct {
     timed:bool,
     descs:[dynamic]Emitter_Desc,
     fields:Gpu_Fields, // the gravity and the wind of the world, as the frame found them
-    owners:[dynamic]core.Entity, // the entity of each of descs
     births:[dynamic]Gpu_Birth,   // of the channels, those the GPU starts in this frame
     regions:[dynamic]Channel_Region,
     started:[dynamic]Channel_Started,
@@ -111,7 +110,6 @@ Particle_Sync :: struct {
 particle_sync_free :: proc(sync:^Particle_Sync) {
     delete(sync.shown.values);delete(sync.shown.entities);delete(sync.shown.rows)
     delete(sync.descs)
-    delete(sync.owners)
     delete(sync.births);delete(sync.regions);delete(sync.started)
     pool_free(&sync.pool)
     surfaces_free(&sync.surfaces)
@@ -186,7 +184,6 @@ particles_sync :: proc(
     r,a:=app.renderer,app.assets
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.descs)
-    clear(&sync.owners)
     clear(&sync.resources)
     clear(&sync.stage_rows)
     clear(&sync.segments)
@@ -271,10 +268,8 @@ particles_sync :: proc(
             sub.transform,sub.previous=transform,previous
             sub.paused,sub.generation=paused,shown.generation
             append(&sync.descs,sub)
-            append(&sync.owners,e)
         }
         append(&sync.descs,desc)
-        append(&sync.owners,e)
     }
     grids_release(&sync.grids,&sync.pool)
     watched:[]u64
@@ -290,7 +285,6 @@ particles_sync :: proc(
             dt=clamp(frame.dt,0,1)
         }
         ui_effects_sync(ui_effects,asked,app.assets,app.renderer,clamp(frame.dt,0,1),shaders,&sync.descs)
-        for len(sync.owners)<len(sync.descs) {append(&sync.owners,core.NONE)}
     }
     if r==nil {return}
     if a!=nil {host.assets_commit(a)}
@@ -299,8 +293,8 @@ particles_sync :: proc(
         if len(sync.descs)>0 {core.report(problems,core.NONE,"vfx.capacity","the device takes no pool of %d particles: ask a smaller Particle_Settings.capacity",capacity)}
         return
     } else if dropped>0 {
-        for desc,at in sync.descs {
-            if pool_slot_find(&sync.pool,desc.id)<0 {core.report(problems,sync.owners[at],"vfx.capacity","this emitter found no room among the %d particles and %d emitters of the world: ask a larger Particle_Settings.capacity, or fewer max_particles of its effect",sync.pool.capacity,EMITTER_CAPACITY)}
+        for desc in sync.descs {
+            if pool_slot_find(&sync.pool,desc.id)<0 {core.report(problems,desc.owner,"vfx.capacity","this emitter found no room among the %d particles and %d emitters of the world: ask a larger Particle_Settings.capacity, or fewer max_particles of its effect",sync.pool.capacity,EMITTER_CAPACITY)}
         }
     }
     if sync.pool.refused==capacity && sync.pool.capacity!=capacity {

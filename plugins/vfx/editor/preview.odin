@@ -184,7 +184,7 @@ preview_values :: proc(held,file:^Particle_File) -> (override:vfx.Particle_Overr
     effect.particle_values_visit(visit,&gather)
     for &parameter in held.parameters[:held.parameter_count] {
         stored:=effect.particle_parameter_find(file.parameters[:file.parameter_count],base.text_get(parameter.name[:]))
-        if stored!=nil && parameter_same(stored,&parameter) {continue}
+        if stored!=nil && stored^==parameter {continue}
         value:=vfx.parameter_value(&parameter)
         if vfx.value_put(&override,vfx.parameter_hash(base.text_get(parameter.name[:])),value[:])!=.None {break}
     }

@@ -126,7 +126,7 @@ Emitter_Desc :: struct {
     births:[2]u32,                          // of its channel: the first among those of the frame, and how many
     age:f32,                                // seconds since it started, at the end of the frame
     born:u32,                               // particles it started before this frame
-    owner:core.Entity,                      // whose reports they are
+    owner:core.Entity,                      // its entity, whose reports and problems they are; NONE for an effect of the UI
     revision:u64,                           // of what is not given each frame (all but transform, previous, spawns, paused, resources, stages, births, age and born): another builds its row again; 0: every frame
 }
 
