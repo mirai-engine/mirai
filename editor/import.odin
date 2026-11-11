@@ -198,7 +198,7 @@ import_file :: proc(s:^Session,source:string,folder:="",profiled:=false,rig:Mayb
             options.settings,options.ignore_stored=stored,true
             options.image=use
         }
-    case .Sound,.Font,.Strings,.Prompts:
+    case .Sound,.Font,.Prompts:
     }
     destination:=asset.registry_file_path(&a.registry,import_destination(kind,folder,kind==.Model?sources.model_folder(source,formats):""),context.temp_allocator)
     job:=new(Import_Job,allocator)
@@ -565,12 +565,12 @@ dialog_patterns :: proc(extensions:[]string,b:^strings.Builder) -> string {
 import_ask :: proc(s:^Session) {
     models:=strings.builder_make(context.temp_allocator)
     for &format in import_formats(s) {dialog_patterns(format.extensions[:],&models)}
-    images,sounds,fonts,texts:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
-    image_extensions,sound_extensions,font_extensions,text_extensions:=sources.IMAGE_EXTENSIONS,sources.SOUND_EXTENSIONS,sources.FONT_EXTENSIONS,importer.STRINGS_EXTENSIONS
+    images,sounds,fonts:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
+    image_extensions,sound_extensions,font_extensions:=sources.IMAGE_EXTENSIONS,sources.SOUND_EXTENSIONS,sources.FONT_EXTENSIONS
     filters:=make([dynamic]platform.Dialog_Filter,context.temp_allocator)
     append(&filters,
         platform.Dialog_Filter{"Models",strings.to_string(models)},{"Images",dialog_patterns(image_extensions[:],&images)},{"Sounds",dialog_patterns(sound_extensions[:],&sounds)},
-        {"Fonts",dialog_patterns(font_extensions[:],&fonts)},{"Texts",dialog_patterns(text_extensions[:],&texts)},{"Prompt packs","json"},
+        {"Fonts",dialog_patterns(font_extensions[:],&fonts)},{"Prompt packs","json"},
     )
     found:[PROVIDER_CAPACITY]Import_Source_Provider
     for &provider in found[:provided_all(s,found[:])] {

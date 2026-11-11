@@ -1,6 +1,7 @@
 package host
 
 import "core:fmt"
+import "core:strings"
 import "mirai:asset"
 import "mirai:platform"
 
@@ -35,16 +36,6 @@ app_assets_destroy :: proc(app:^App) {
 ASSETS_WATCH_SECONDS :: 1  // a pass over the asset folder takes about this long, at any frame rate
 ASSETS_WATCH_SLICE :: 64   // units of platform.watch_poll in the frames that look
 ASSETS_WATCH_RATE :: ASSETS_WATCH_SLICE*60 // units per second at most: the pass of a larger folder takes longer
-
-app_assets_watch_reset :: proc(app:^App) {
-    if app.assets_watch.watch!=0 {platform.watch_destroy(app.platform,app.assets_watch.watch)}
-    if app.assets_watch.sources!=0 {platform.watch_destroy(app.platform,app.assets_watch.sources)}
-    app.assets_watch={}
-    if app.assets!=nil {
-        app.assets_watch.watch,_=platform.watch_create(app.platform,{path=app.assets.registry.root,recursive=true})
-        app_assets_watch_sources(app)
-    }
-}
 
 // Watches the source folder beside the imported folder of the asset folder:
 // what its sources give is listed where they and their sidecars are, so one
@@ -89,10 +80,14 @@ app_assets_watch :: proc(app:^App,dt:f32) {
         aw.quiet,aw.spent=quiet,0
     }
     app_assets_watch_apply(app,events[:count])
-    if aw.sources!=0 {
-        if count,_=platform.watch_poll(app.platform,aw.sources,ASSETS_WATCH_SLICE,events[:]);count>0 {
+    if aw.sources==0 {return}
+    // Only a sidecar or a source that comes, goes or moves changes the listing.
+    count,_=platform.watch_poll(app.platform,aw.sources,ASSETS_WATCH_SLICE,events[:])
+    for event in events[:count] {
+        if event.kind!=.Changed || strings.has_suffix(event.path,asset.SIDECAR_EXTENSION) {
             assets_scan(app.assets)
             content_refresh(app)
+            return
         }
     }
 }

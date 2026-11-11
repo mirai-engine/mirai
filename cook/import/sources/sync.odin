@@ -17,7 +17,9 @@ import "mirai:std/serial"
 // their sidecars: what every build of a project runs first. An output is
 // current when its file is named by the key of what its import builds from
 // now (importer.import_key): the bytes of the source and of the files it
-// read, its settings and the importer, with textures built Final. A source
+// read, its settings and the importer, with textures built Final; a file
+// whose size and modification time the cache of the root knows is not read
+// (importer.Source_Hashes). A source
 // with an output that is not is imported; a file of the folder that no
 // sidecar with its source lists is removed.
 
@@ -63,6 +65,9 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
         texture_cache=options.texture_cache if options.texture_cache!="" else project.content_cache_path(top,project.TEXTURE_CACHE,context.temp_allocator),
         mesh_cache=options.mesh_cache if options.mesh_cache!="" else project.content_cache_path(top,project.MESH_CACHE,context.temp_allocator),
     }
+    hashes_path:=project.cache_path(top,importer.SOURCE_HASHES,allocator=context.temp_allocator)
+    hashes:=importer.source_hashes_load(hashes_path,context.temp_allocator)
+    defer importer.source_hashes_save(&hashes,hashes_path)
     listed:=make(map[string]struct{},context.temp_allocator) // the files of the imported folder the sidecars list
     whole:=true
     todo:=make([dynamic]string,context.temp_allocator)
@@ -89,8 +94,8 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
                 head,_,_:=serial.file_read_head(source,buffer[:])
                 if format,found:=importer.format_find(FORMATS[:],head,filepath.ext(source));found {version=importer.import_version(format.version)}
             }
+            key:=importer.import_key(source,sidecar,version,false,&hashes)
             for pass in 0..<2 {
-                key:=importer.import_key(source,sidecar,version,false)
                 cached,current:=false,!options.rebuild || pass==1
                 for output in sidecar.outputs {
                     known,_:=asset.kind_info(output.kind)
@@ -114,6 +119,7 @@ sync :: proc(root:string,options:Sync_Options={},allocator:=context.allocator) -
                 importer.report_destroy(&written)
                 // What the import gives now: a part the source gained, or lost.
                 if sidecar,_,error=importer.sidecar_load(file,context.temp_allocator);error.code!=.None {whole=false;break}
+                key=importer.import_key(source,sidecar,version,false,&hashes)
             }
         }
     }

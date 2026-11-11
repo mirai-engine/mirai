@@ -135,32 +135,6 @@ mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
     return feet
 }
 
-SEQUENCE_PLATFORM :: mm.Vec3{1.2,.25,1.2}
-
-// The clip of the platform of station 1.4: it holds, rises with an ease, holds, slides back turning
-// a quarter and growing, holds, and returns the way it came. Its keys are in the space of the
-// entity that plays it, so the same clip moves a platform wherever that entity is put.
-@(private)
-write_sequence_clip :: proc(o:^Out) {
-    id:=asset.content_id(PROJECT,"animation","animation_gallery_sequence")
-    quarter:=lib.quat_vec4(mm.quat_axis_angle({0,1,0},mm.PI*.5))
-    grown:=SEQUENCE_PLATFORM*mm.Vec3{1.4,1,1.4}
-    Stop :: struct {position:mm.Vec3,rotation:mm.Vec4,scale:mm.Vec3}
-    low,high,back:=Stop{{0,0,0},{0,0,0,1},SEQUENCE_PLATFORM},Stop{{0,1,0},{0,0,0,1},SEQUENCE_PLATFORM},Stop{{0,.5,-.6},quarter,grown}
-    stops:=[]Stop{low,low,high,high,back,back,high,high,low,low}
-    times:=[]f32{0,.5,2,2.5,3.5,4.5,5.5,6,7.5,8}
-    eased:=[]bool{false,false,true,false,false,false,false,false,true,false}
-    position,rotation,scale:=make([]lib.Keyframe,len(stops),context.temp_allocator),make([]lib.Keyframe,len(stops),context.temp_allocator),make([]lib.Keyframe,len(stops),context.temp_allocator)
-    for stop,i in stops {
-        ease:=mm.Ease.Sine_In_Out if eased[i] else .Linear
-        position[i]={time=times[i],value={stop.position.x,stop.position.y,stop.position.z,0},ease=ease}
-        rotation[i]={time=times[i],value=stop.rotation,ease=ease}
-        scale[i]={time=times[i],value={stop.scale.x,stop.scale.y,stop.scale.z,0},ease=ease}
-    }
-    clips:=[]asset.Animation_Clip_Desc{{name="ride",tracks={{target="Platform",property=.Position,keys=position},{target="Platform",property=.Rotation,keys=rotation},{target="Platform",property=.Scale,keys=scale}}}}
-    asset.content_check(&o.content,"assets/animation_gallery/sequence.anim",asset.animation_save(path(o,"assets/animation_gallery/sequence.anim"),&o.content.types,{id=id,clips=clips}))
-}
-
 // The clips, .character sets, rigs and meshes of the animation gallery
 // (animation_gallery/animation.scene), made from the import of Mirai.
 write_animation_assets :: proc(o:^Out) {
@@ -174,7 +148,6 @@ write_animation_assets :: proc(o:^Out) {
     if o.content.failed {return}
     gallery_program_assets(o,&model,clip)
     gallery_mirai_matching(o,&model,locomotion)
-    write_sequence_clip(o)
     mirai_constraints(o,&model,clip)
     gallery_retarget(o,&model,source)
     gallery_rigs(o)

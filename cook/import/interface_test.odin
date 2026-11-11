@@ -70,33 +70,21 @@ csv_fields_follow_rfc_4180 :: proc(t:^testing.T) {
 }
 
 @(test)
-strings_import_from_csv_by_key_and_language :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"strings")
-    if folder=="" {return}
+strings_table_reads_a_csv_by_key_and_language :: proc(t:^testing.T) {
     long:=strings.repeat("ñandú ",40,context.temp_allocator)
-    source:=fmt.tprintf("%s/menu.csv",folder)
-    _=os.write_entire_file(source,transmute([]u8)fmt.tprintf("key,es,en,pt-BR\nmenu.play,Jugar,Play,Jogar\nmenu.quit,Salir,Quit,\nstory,\"%s\",Long,\"Ελληνικά, Русский\"\n",long))
-    report,error:=import_strings(source,folder)
-    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
-    defer report_destroy(&report)
-    testing.expect(t,len(report.assets)==1 && report.assets[0].kind==asset.KIND_STRINGS && report.assets[0].detail=="3 languages, 3 keys, 8 texts",report.assets[0].detail)
-    testing.expect(t,len(report.warnings)==1 && strings.contains(report.warnings[0],"1 texts are missing") && strings.contains(report.warnings[0],"menu.quit in pt-BR"))
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    a:asset.Asset
-    if !testing.expect_value(t,asset.asset_load(&a,report.assets[0].path),asset.Error.None) {return}
-    defer asset.asset_close(&a)
-    view,view_error:=asset.strings_view(&a,&types)
-    if !testing.expect_value(t,view_error,asset.Error.None) {return}
-    text :: proc(view:asset.Strings_View,key,language:string) -> string {
-        for entry in view.entries {
-            if serial.text_field(view.keys[entry.key].name[:])==key && serial.text_field(view.languages[entry.language].code[:])==language {return string(view.text[entry.offset:][:entry.length])}
+    table,message:=strings_table(fmt.tprintf("key,es,en,pt-BR\nmenu.play,Jugar,Play,Jogar\nmenu.quit,Salir,Quit,\nstory,\"%s\",Long,\"Ελληνικά, Русский\"\n",long),context.temp_allocator)
+    if !testing.expectf(t,message=="","%s",message) {return}
+    testing.expect(t,len(table.languages)==3 && len(table.keys)==3 && len(table.entries)==8,"An empty cell is no text")
+    text :: proc(table:Strings_Table,key,language:string) -> string {
+        for entry in table.entries {
+            if serial.text_field(table.keys[entry.key].name[:])==key && serial.text_field(table.languages[entry.language].code[:])==language {return string(table.text[entry.offset:][:entry.length])}
         }
         return "<none>"
     }
-    testing.expect_value(t,text(view,"menu.play","pt-BR"),"Jogar")
-    testing.expect_value(t,text(view,"menu.quit","pt-BR"),"<none>")
-    testing.expect_value(t,text(view,"story","es"),long)
-    testing.expect_value(t,text(view,"story","pt-BR"),"Ελληνικά, Русский")
+    testing.expect_value(t,text(table,"menu.play","pt-BR"),"Jogar")
+    testing.expect_value(t,text(table,"menu.quit","pt-BR"),"<none>")
+    testing.expect_value(t,text(table,"story","es"),long)
+    testing.expect_value(t,text(table,"story","pt-BR"),"Ελληνικά, Русский")
 
     Case :: struct {csv,says:string}
     for c in ([]Case{
@@ -106,11 +94,10 @@ strings_import_from_csv_by_key_and_language :: proc(t:^testing.T) {
         {"key,es\na,b,c\n","3 cells"},
         {"key,e s\na,b\n","language"},
         {"key,es\n,b\n","no key"},
+        {"key,es\na,\xff\n","UTF-8"},
     }) {
-        bad:=fmt.tprintf("%s/bad.csv",folder)
-        _=os.write_entire_file(bad,transmute([]u8)c.csv)
-        _,refused:=import_strings(bad,folder)
-        testing.expectf(t,refused.code==.Malformed && strings.contains(refused.message,c.says),"%q: %s",c.csv,refused.message)
+        _,refused:=strings_table(c.csv,context.temp_allocator)
+        testing.expectf(t,strings.contains(refused,c.says),"%q: %s",c.csv,refused)
     }
 }
 

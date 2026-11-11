@@ -3,7 +3,9 @@ package importer
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:cook/textures"
 import "mirai:project"
@@ -59,8 +61,10 @@ settings_valid :: proc(settings:Import_Settings) -> bool {
         settings.rig_crotch>=0 && settings.rig_neck>=0 && (settings.rig==.Humanoid || settings.rig_crotch==0 && settings.rig_neck==0)
 }
 
+// The settings are written only where they differ from their defaults (the
+// zero value), so a sidecar shows what was chosen; reading fills the rest.
 sidecar_text :: proc(sidecar:Sidecar,allocator:=context.allocator) -> string {
-    settings:=sidecar.settings
+    settings,defaults:=sidecar.settings,Import_Settings{}
     schema:serial.Schema
     serial.schema_init(&schema,context.temp_allocator)
     defer serial.schema_destroy(&schema)
@@ -70,7 +74,7 @@ sidecar_text :: proc(sidecar:Sidecar,allocator:=context.allocator) -> string {
     serial.text_write_raw(&w,"{\n  \"version\": ")
     serial.text_write_int(&w,SIDECAR_VERSION)
     serial.text_write_raw(&w,",\n  \"settings\": ")
-    serial.text_write(&w,&schema,type,([^]u8)(&settings)[:size_of(Import_Settings)],depth=1)
+    serial.text_write_changed(&w,&schema,type,([^]u8)(&settings)[:size_of(Import_Settings)],([^]u8)(&defaults)[:size_of(Import_Settings)],.Pretty,depth=1)
     if sidecar.documents {serial.text_write_raw(&w,",\n  \"documents\": true")}
     if len(sidecar.inputs)>0 {
         serial.text_write_raw(&w,",\n  \"inputs\": [")
@@ -145,17 +149,77 @@ sidecar_parse :: proc(text:string,allocator:=context.allocator) -> (sidecar:Side
 // the source at path and of each input its sidecar lists, its settings, the
 // version of what reads and writes it and whether its textures are built
 // Fast. An output of the cache is current when its file is named by this key.
-import_key :: proc(path:string,sidecar:Sidecar,version:u32,fast:bool) -> u64 {
+// With hashes, a file whose size and modification time it knows is not read.
+import_key :: proc(path:string,sidecar:Sidecar,version:u32,fast:bool,hashes:^Source_Hashes=nil) -> u64 {
     key:=base.hash_combine(u64(version)<<1|u64(fast),u64(asset.MESH_VERSION)<<32|u64(asset.TEXTURE_VERSION)<<16|u64(textures.BUILD_VERSION))
     key=base.hash_combine(key,base.hash64(transmute([]u8)sidecar_text({settings=sidecar.settings},context.temp_allocator)))
     folder:=filepath.dir(path)
     for at in -1..<len(sidecar.inputs) {
-        file:=path if at<0 else fmt.tprintf("%s/%s",folder,sidecar.inputs[at])
-        bytes,_:=serial.file_read(file,context.temp_allocator,limit=MAX_SOURCE_BYTES)
-        key=base.hash_combine(key,base.hash64(bytes))
-        delete(bytes,context.temp_allocator)
+        key=base.hash_combine(key,file_hash(hashes,path if at<0 else fmt.tprintf("%s/%s",folder,sidecar.inputs[at])))
     }
     return key|1
+}
+
+// The hashes of the files the imports of a root read, by path, as they were
+// when read: kept in the cache of the root (SOURCE_HASHES), so a build reads
+// only the files whose size or modification time changed. The bytes still
+// decide: a file that changed is read again.
+Source_Hashes :: struct {
+    files:map[string]Source_Hash,
+    changed:bool,
+}
+Source_Hash :: struct {size,modified:i64,hash:u64}
+
+SOURCE_HASHES :: "sources"
+// A file modified this close to when it was hashed may change again within the
+// same modification time: it is hashed again on the next build.
+@(private="file") SETTLED_NANOSECONDS :: 2_000_000_000
+
+// The hashes of the root kept in path, in allocator; none when it is missing or does not read.
+source_hashes_load :: proc(path:string,allocator:=context.allocator) -> (hashes:Source_Hashes) {
+    hashes.files=make(map[string]Source_Hash,allocator=allocator)
+    data,error:=serial.file_read(path,context.temp_allocator)
+    if error!=.None {return}
+    text:=string(data)
+    for line in strings.split_lines_iterator(&text) {
+        parts:=strings.split_n(line," ",4,context.temp_allocator)
+        if len(parts)!=4 {continue}
+        hash,hash_ok:=strconv.parse_u64(parts[0],16)
+        size,size_ok:=strconv.parse_i64(parts[1])
+        modified,modified_ok:=strconv.parse_i64(parts[2])
+        if hash_ok && size_ok && modified_ok {hashes.files[strings.clone(parts[3],allocator)]={size,modified,hash}}
+    }
+    return
+}
+
+// Writes the hashes to path when a build changed them.
+source_hashes_save :: proc(hashes:^Source_Hashes,path:string) {
+    if !hashes.changed {return}
+    b:=strings.builder_make(context.temp_allocator)
+    for file,known in hashes.files {fmt.sbprintf(&b,"%016x %d %d %s\n",known.hash,known.size,known.modified,file)}
+    if folder:=filepath.dir(path);!os.is_dir(folder) {_=os.make_directory_all(folder)}
+    _=serial.file_write_atomic(path,transmute([]u8)strings.to_string(b))
+}
+
+// The hash of the bytes of a file, from hashes when its size and modification
+// time are those it knows; 0 for a file that cannot be read.
+@(private="file")
+file_hash :: proc(hashes:^Source_Hashes,file:string) -> u64 {
+    info,stat_error:=os.stat(file,context.temp_allocator)
+    size,modified:=info.size,time.time_to_unix_nano(info.modification_time)
+    if hashes!=nil && stat_error==nil {
+        if known,found:=hashes.files[file];found && known.size==size && known.modified==modified {return known.hash}
+    }
+    bytes,_:=serial.file_read(file,context.temp_allocator,limit=MAX_SOURCE_BYTES)
+    hash:=base.hash64(bytes)
+    delete(bytes,context.temp_allocator)
+    if hashes!=nil && stat_error==nil && time.time_to_unix_nano(time.now())-modified>SETTLED_NANOSECONDS {
+        allocator:=hashes.files.allocator
+        if _,found:=hashes.files[file];!found {hashes.files[strings.clone(file,allocator)]={}}
+        hashes.files[file]={size,modified,hash}
+        hashes.changed=true
+    }
+    return hash
 }
 
 // The sidecar at path, in allocator. found is false, with an empty one, when
