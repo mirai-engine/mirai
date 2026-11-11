@@ -34,12 +34,12 @@ says how to fix each finding.
 | `mirai build server . [--out dir]` | a dedicated server folder, run with `--dedicated` |
 | `mirai package engine --out dir` | assembles the engine itself as an installed engine |
 
-- Every command builds `--dev` (`-o:minimal`) unless `--release` is given, which compiles the
+- Every command builds in dev (`-o:minimal`) unless `--release` is given, which compiles the
   project at the `build.optimization` of `project.mirai`. `package engine` is always `--release`.
 - `play` compiles the project and reads assets and shaders from the project: nothing is cooked,
   so it starts fast.
 - `build game` generates the shaders, cooks the assets that every scene and `cook.mirai`
-  reach and writes `.mirai/game` (or `--out`): the executable, `project.mirai`, `input.mirai`,
+  reach and writes `.mirai/game` (or `--out`): the executable, `project.mirai`,
   `settings.mirai`, `assets/` and `shaders/`. It alone shows what the built game lacks.
 - `build server` is the same executable without what is only seen or heard; run it with
   `--dedicated` (no window, renderer or local players).
@@ -53,6 +53,6 @@ says how to fix each finding.
 
 - An asset only code names works in `mirai play` and is missing from `build game` unless it is
   a [root](assets.md#reference). Build before delivering.
-- `source/` (art sources) never ships, and a game package that imports an editor package fails the
-  build with `Engine_Time_Code`.
+- Art sources and their sidecars never ship, and a game package that imports an editor package
+  fails the build with `Engine_Time_Code`.
 - The shipped game on Windows is a console program.

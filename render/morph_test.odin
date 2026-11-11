@@ -63,7 +63,7 @@ gpu_morphs_move_the_bind_shape_before_the_skin_with_motion_tangents_bounds_and_b
         palette:=[2]Mat4{Mat4(1),Mat4(1)}
         palette[1][1,1]=1.3;palette[1][0,3]=.25
         sun:=Sun_Desc{direction={-.4,1,.3},color={1,1,1},illuminance=2*math.PI,enabled=true}
-        scene_set(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,.5,.2}}},nil,sun,{})
+        scene_given(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,.5,.2}}},nil,sun,{})
         camera:=Camera{position={3,4,6},forward={-3,-3.2,-6},up={0,1,0},fov_y=50,near=.05,far=100,exposure=UNIT_EXPOSURE}
         testing.expect(t,skin_update(r,skin,palette[:],true,{.75}))
         if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}
@@ -98,14 +98,14 @@ gpu_morphs_move_the_bind_shape_before_the_skin_with_motion_tangents_bounds_and_b
         image,_,_,captured:=golden_capture(r);defer delete(image)
         if !testing.expect(t,captured,r.error) {return}
         shape,_:=mesh_add(r,reference[:],indices[:])
-        scene_set(r,{{object_id=1,mesh=shape,transform=Mat4(1),tint={1,.5,.2}}},nil,sun,{})
+        scene_given(r,{{object_id=1,mesh=shape,transform=Mat4(1),tint={1,.5,.2}}},nil,sun,{})
         for _ in 0..<3 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
         expected_image,_,_,captured_reference:=golden_capture(r);defer delete(expected_image)
         if !testing.expect(t,captured_reference,r.error) {return}
         difference:=0
         for value,i in image {if abs(int(value)-int(expected_image[i]))>2 {difference+=1}}
         testing.expectf(t,difference<12,"the morphed raster and its rays differ from the shape they make (%d channels; hardware %v)",difference,hardware)
-        scene_set(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,.5,.2}}},nil,sun,{})
+        scene_given(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,.5,.2}}},nil,sun,{})
         for _ in 0..<3 {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
         // What did not change is not made again.
         testing.expect(t,skin_update(r,skin,palette[:],false,{-1.5}))
@@ -175,7 +175,7 @@ gpu_skins_with_influences_of_every_level_pose_each_level_and_keep_its_history_an
     testing.expect(t,record.level_count==2 && record.flags&MESH_FLAG_LEVEL0==0 && record.vertices_posed==record.vertex_count,"the levels follow the pose")
     testing.expect_value(t,gpu_mesh(record).previous_word,record.posed_word+record.vertices_posed*POSED_WORDS)
     coarse,_:=record_level(&r.scene,record,1)
-    scene_set(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,1,1}}},nil,{},{})
+    scene_given(r,{{object_id=1,mesh=skin,transform=Mat4(1),tint={1,1,1}}},nil,{},{})
     camera:=Camera{position={0,0,5},forward={0,0,-5},up={0,1,0},fov_y=50,near=.1,far=100,exposure=UNIT_EXPOSURE}
     previous_palette:=[2]Mat4{Mat4(1),Mat4(1)}
     previous_weight:f32
@@ -221,7 +221,7 @@ gpu_skin_benchmark_reports_the_cost_of_posing_every_level_and_morph_targets :: p
         if !testing.expect(t,device!=nil,message) {return}
         defer rhi.device_destroy(device)
         r:Renderer
-        settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+        settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
         if !testing.expect(t,renderer_init(&r,{device=device,width=640,height=360,settings=settings}),r.error) {return}
         defer renderer_destroy(&r)
         vertices,indices,grid:=skin_test_grid(128)
@@ -263,7 +263,7 @@ gpu_skin_benchmark_reports_the_cost_of_posing_every_level_and_morph_targets :: p
                 transform:=Mat4(1);transform[0,3]=f32(i%4)*2.5-4;transform[2,3]=f32(i/4)*2.5
                 instances[i]={object_id=u64(i+1),mesh=skin,transform=transform,tint={1,1,1}}
             }
-            scene_set(&r,instances[:],nil,sun,{})
+            scene_given(&r,instances[:],nil,sun,{})
             weights:[4]f32
             for hardware in ([2]bool{false,true}) {
                 settings.trace_mode=.Hardware if hardware else .Software

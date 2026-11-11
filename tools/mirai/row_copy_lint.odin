@@ -2,8 +2,6 @@ package main
 
 import "core:fmt"
 import "core:odin/ast"
-import "core:odin/parser"
-import "core:os"
 import "core:slice"
 import "core:strings"
 
@@ -35,25 +33,13 @@ ROW_COPY_FIX :: "this writes a copy of the row: use core.edit to write it, or co
 
 Row_Copy_Finding :: struct {line,column:int,name:string}
 
-// Prints the writes of the sources of a package, its tests included, that
-// write a copy of a row and nothing else. False when there is one or a source
-// does not parse.
-row_copy_lint_package :: proc(folder:string) -> bool {
-    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
-    clean:=true
-    for entry in entries {
-        if entry.type!=.Regular || !strings.has_suffix(entry.name,".odin") {continue}
-        data,error:=os.read_entire_file(entry.fullpath,context.temp_allocator)
-        if error!=nil {fmt.eprintfln("mirai check: could not read %s",entry.fullpath);clean=false;continue}
-        findings:=make([dynamic]Row_Copy_Finding,context.temp_allocator)
-        if !row_copy_lint_source(entry.fullpath,string(data),&findings) {clean=false}
-        for f in findings {
-            clean=false
-            fmt.eprintfln("%s(%d:%d) Error: `%s` is the value core.get or core.at read: %s.",entry.fullpath,f.line,f.column,f.name,ROW_COPY_FIX)
-        }
-    }
-    return clean
+// Prints the writes of a source that write a copy of a row and nothing else.
+// False when there is one.
+row_copy_lint_print :: proc(file:^ast.File) -> bool {
+    findings:=make([dynamic]Row_Copy_Finding,context.temp_allocator)
+    row_copy_lint_file(file,&findings)
+    for f in findings {fmt.eprintfln("%s(%d:%d) Error: `%s` is the value core.get or core.at read: %s.",file.fullpath,f.line,f.column,f.name,ROW_COPY_FIX)}
+    return len(findings)==0
 }
 
 @(private="file")
@@ -90,23 +76,18 @@ Copy_Scan :: struct {
     loop_ids,order,deferred:int,
 }
 
-// The findings of one source. False when it does not parse: the parser has
-// printed where.
-row_copy_lint_source :: proc(path,text:string,findings:^[dynamic]Row_Copy_Finding) -> bool {
+// The findings of one parsed source.
+row_copy_lint_file :: proc(file:^ast.File,findings:^[dynamic]Row_Copy_Finding) {
     context.allocator=context.temp_allocator
-    file:=ast.File{src=text,fullpath=path}
-    p:=parser.default_parser()
-    if !parser.parse_file(&p,&file) || file.syntax_error_count>0 {return false}
     scan:=Copy_Scan{findings=findings,in_core=file.pkg_name=="core"}
     for decl in file.imports {
         if strings.trim(decl.fullpath,"\"`")!=CORE_IMPORT {continue}
         scan.core=decl.name.text!=""?decl.name.text:"core"
     }
-    if scan.core=="" && !scan.in_core {return true}
+    if scan.core=="" && !scan.in_core {return}
     visitor:=ast.Visitor{visit=copy_visit,data=&scan}
     for decl in file.decls {ast.walk(&visitor,decl)}
     slice.stable_sort_by(findings[:],proc(a,b:Row_Copy_Finding) -> bool {return a.line<b.line || (a.line==b.line && a.column<b.column)})
-    return true
 }
 
 @(private="file")

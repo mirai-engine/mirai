@@ -158,10 +158,13 @@ For a renderer that generates frames (`rhi/present.odin`):
 
 ## Synchronization and commands
 
-- **Hazards.** Each resource keeps its last access; barriers are derived from the bindings before
-  each dispatch and `cmd_barrier_*` emits only the necessary ones. Inside a render pass there are
-  no barriers: the RHI validates that what is read was declared earlier and reports an error
-  instead of a silent hazard. Metal tracks hazards by itself.
+- **Hazards.** Each resource keeps its last access; barriers are derived from what each dispatch
+  and draw binds (and its index and indirect buffers) and only the necessary ones go out. A render
+  pass holds no barriers, so Vulkan records it and sends it at `cmd_end_render_pass`, after the
+  barriers of everything its draws used; a resource it writes takes one, and one of its targets
+  that a draw samples is an error. `cmd_barrier_*` declares what nothing binds: a buffer the host
+  reads, a texture sampled through the texture table or by another process. Metal tracks hazards
+  by itself.
 - **Clip space.** Y up and depth in [0,1] on both backends; the renderer uses reversed Z.
 - `cmd_fill_buffer` repeats a byte; a word of another value is written with `buffer_upload`
   before the frame, from a shader or by copying a buffer that has it (the GPU-counted indirect
@@ -185,10 +188,13 @@ For a renderer that generates frames (`rhi/present.odin`):
 
 - Vulkan: `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`; Metal: `MTLAccelerationStructure`
   instanced with user IDs.
-- It is enabled if the device supports it, the self-test at start (`render/selftest.odin`)
+- Vulkan: it is enabled if the device supports it, the self-test at start (`render/selftest.odin`)
   gives the expected hits and its pipelines are made; otherwise, the software BVH, whose pipelines
   are made only then ([tracer in use](gi.md#bvh-and-acceleration-structures)).
-  `MIRAI_RT=software` forces it.
+  `MIRAI_RT=software` forces the software BVH.
+- Metal traces rays by hardware alone: its shaders have no software tracer, `MIRAI_RT` is not read,
+  and a device without ray tracing, a failed self-test or a missing `_hw` pipeline is an error of
+  `renderer_create` that says which, never a switch of tracer.
 - **TLAS instances.** `cmd_build_tlas` reads the instances from a GPU buffer in a neutral layout
   (`Tlas_Instance`: row-wise transform, the BLAS `accel_id`, mask and flags, own index), which the
   caller writes with the CPU or with a compute. An RHI compute (`tlas_instances.comp.slang`, a

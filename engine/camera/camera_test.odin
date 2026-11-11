@@ -366,19 +366,24 @@ look_offset_follows_the_pitch :: proc(t:^testing.T) {
     }
 }
 
-// The keys of a channel join by cubic Hermite with their slopes, and hold their first and last
-// values outside them.
+// The keys of a shake are std/anim keys: cubic ones with their slopes give the samples of a cubic
+// Hermite through them, and outside them it holds their first and last values.
 @(test)
-a_shake_channel_joins_its_keys_by_their_slopes :: proc(t:^testing.T) {
-    c:Shake_Channel
-    c.keys[0],c.keys[1],c.keys[2]={time=0.5,value=0,slope=0},{time=1.5,value=2,slope=0},{time=2.5,value=0,slope=-4}
-    c.count=3
-    testing.expect(t,shake_channel_at(c,0)==0 && shake_channel_at(c,3)==0,"before and after its keys, their values")
-    testing.expectf(t,abs(shake_channel_at(c,1)-1)<1e-5,"flat at both ends, halfway is half: %v",shake_channel_at(c,1))
-    testing.expect(t,abs(shake_channel_at(c,1.5)-2)<1e-6)
-    // From 2, flat, to 0 arriving with slope -4: it stays above the flat curve, which would be 1.
-    testing.expectf(t,abs(shake_channel_at(c,2)-1.5)<1e-5,"the slope of the last key bends the way in: %v",shake_channel_at(c,2))
-    testing.expect(t,shake_channel_at({},1)==0,"a channel without keys adds nothing")
+a_shake_joins_its_keys_by_their_slopes :: proc(t:^testing.T) {
+    s:=Shake_Sequence{length=10,scale=1,count=3}
+    s.keys[0]={time=0.5,interpolation=.Cubic,tangents=true}
+    s.keys[1]={time=1.5,value={2,0,0,0},interpolation=.Cubic,tangents=true}
+    s.keys[2]={time=2.5,interpolation=.Cubic,tangents=true,in_slope={-4,0,0,0},out_slope={-4,0,0,0}}
+    pitch :: proc(s:Shake_Sequence,time:f32) -> f32 {
+        s:=s
+        turn,_:=shake_sequence_at(&s,time)
+        return 2*math.asin(clamp(imag(turn),-1,1))
+    }
+    // The samples of the cubic Hermite of the same keys, flat at the first two.
+    cases:=[]struct{time,pitch:f32}{{0,0},{1,1},{1.5,2},{2,1.5},{3,0}}
+    for c in cases {testing.expectf(t,abs(pitch(s,c.time)-c.pitch)<1e-4,"at %v s: %v",c.time,pitch(s,c.time))}
+    s.count=0
+    testing.expect(t,pitch(s,1)==0,"a shake without keys adds nothing")
 }
 
 // A camera turns its view and widens its perspective lens by the shakes asked of it, at their rate
@@ -397,8 +402,8 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     core.test_world_settle(&f.w)
     problems:core.Problems
     nod:Shake_Sequence
-    nod.pitch.keys[0]={value=0.1}
-    nod.pitch.count=1
+    nod.keys[0]={value={0.1,0,0,0}}
+    nod.count=1
     nod.length,nod.rate,nod.scale,nod.blend_in,nod.blend_out=1,2,0.5,0.1,0.1
     camera_shake(&f.shakes,camera,nod)
     shakes_take(&f.follows,&f.shakes,&problems)
@@ -443,8 +448,8 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     testing.expect(t,core.problem_find(&problems,body,"camera.shake")!=nil,"and one asked of what does not follow")
 
     zoom:Shake_Sequence
-    zoom.fov.keys[0]={value=0.2}
-    zoom.fov.count=1
+    zoom.keys[0]={value={0,0,0,0.2}}
+    zoom.count=1
     zoom.length,zoom.scale=1,0.5
     camera_shake(&f.shakes,camera,zoom)
     shakes_take(&f.follows,&f.shakes,&problems)
@@ -458,7 +463,7 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
     testing.expect(t,lens.fov==1.2,"an orthographic lens keeps its own")
     lens.projection=.Perspective
     for &p in following.state.shakes {
-        if p.sequence.fov.count>0 {p.sequence.scale=100}
+        if p.sequence.keys[0].value.w>0 {p.sequence.scale=100}
     }
     shake_test_look(f,camera,body,0.1)
     testing.expect(t,lens.fov==SHAKE_FOV_MAX,"and a perspective one stays below pi")

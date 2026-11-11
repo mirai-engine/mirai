@@ -456,6 +456,13 @@ Preview_Input :: struct {
 }
 Preview_Action :: struct {hash:u64,action:inp.Action}
 
+// The bindings the project gives over the defaults of the code; nil without the Shared.
+@(private)
+app_input_settings :: proc(app:^host.App) -> ^inp.Input_Settings {
+    if app.shared==nil || app.info==nil {return nil}
+    return core.world_storage_of(core.world_ref(app.shared,app.info,.Shared),inp.Input_Settings)
+}
+
 @(private)
 preview_input :: proc(u:^Ui_Inspector,app:^host.App) -> ^Preview_Input {
     p:=&u.input
@@ -465,12 +472,7 @@ preview_input :: proc(u:^Ui_Inspector,app:^host.App) -> ^Preview_Input {
     for entry in core.names_of(app.info,inp.Action) {
         if entry.value>=0 && entry.value<inp.ACTION_CAPACITY {append(&p.actions,Preview_Action{base.name_hash(entry.name),inp.Action(entry.value)})}
     }
-    file,text:string
-    if app.root!="" {
-        path:=project.path(app.root,project.INPUT_FILE,allocator=context.temp_allocator)
-        if data,error:=os.read_entire_file(path,context.temp_allocator);error==nil {file,text=path,string(data)}
-    }
-    inp.input_map_make(&p.map_,app.info,file,text,&p.problems)
+    inp.input_map_make(&p.map_,app.info,app_input_settings(app),&p.problems)
     return p
 }
 

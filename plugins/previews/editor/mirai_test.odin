@@ -34,7 +34,7 @@ preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T)
         device:=shared_device.take_or_skip(t,hardware_rt=false)
         if device==nil {return}
         renderer:gpu.Renderer
-        settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
+        settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled=false
         if !testing.expect(t,gpu.renderer_init(&renderer,{device=device,width=64,height=64,settings=settings}),renderer.error) {return}
         defer gpu.renderer_destroy(&renderer)
         assets:host.Assets

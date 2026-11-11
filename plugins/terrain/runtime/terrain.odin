@@ -216,12 +216,14 @@ Terrain_Resident :: struct {
     owners:[dynamic]Resident_Owner,
     ready:bool,
     pass:u32,
-    gc_stamps:[6]u64,
-    shown:[3]u64, // the versions of Terrain, Tint and Material_Override after the owners last showed their chunks
+    gc_shapes:[4]core.Shape, // of the transforms, the chunks, the ids and the terrains at the last prune
+    gc_parents:core.Seen,
+    shown:[3]core.Seen, // Terrain, Tint and Material_Override after the owners last showed their chunks
     stats:Terrain_Resident_Stats,
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
-    lod_stamp:[5]u64, // the version of the transforms, the revision of the streaming sources, the count of owners, marks, the version of the colliders
-    marks:u64,        // advances when what the levels are chosen from changes: a page, a source, a chunk that empties or fills
+    lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
+    lod_seen:[2]core.Seen, // the transforms and the colliders
+    marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
     lod_distances:[3]f32, // of Terrain_Settings then
     focus:Terrain_Focus,  // then
     room:Collider_Room,
@@ -327,7 +329,7 @@ terrain_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
 terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,paged:=false) -> bool {
     if paged {
         record,found:=asset.registry_find(&a.registry,id)
-        if !found || record.kind!=KIND {return false}
+        if !found || record.kind!=TERRAIN_KIND {return false}
         if _,held:=asset.registry_memory_find(&a.registry,record.path);!held {
             path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
             front:asset.Asset
@@ -338,7 +340,7 @@ terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=contex
         }
     }
     file:asset.Asset
-    if host.assets_file(a,id,KIND,&file)!=.None {return false}
+    if host.assets_file(a,id,TERRAIN_KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
     loaded,ok:=source_read(s,&file,&a.types,allocator)
     return ok && loaded==id
@@ -485,7 +487,7 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
 data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^Source_Load {
     if load:=data_loading(data,id);load!=nil {return load}
     record,found:=asset.registry_find(&a.registry,id)
-    if !found || record.kind!=KIND {return nil}
+    if !found || record.kind!=TERRAIN_KIND {return nil}
     if _,held:=asset.registry_memory_find(&a.registry,record.path);held {return nil}
     heap:=runtime.heap_allocator()
     load,allocation_error:=new(Source_Load,heap)
@@ -764,18 +766,17 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
     writer:Page_Writer
     if !page_writer_init(&writer,context.temp_allocator) {return}
     defer page_writer_destroy(&writer)
-    low,high,differ:=grid_take(&next.heights,&s.heights,&writer,true)
+    low,high,differ:=grid_take(&next.field,&s.field,&writer,next.kind==.Heightfield)
     if differ {widen(&change,low,high)}
     if grid_none(&next.holes)!=grid_none(&s.holes) {
         widen(&change,{},{last.x,0,last.z})
     } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
         widen(&change,low,high+{1,0,1})
     }
-    if low,high,differ=grid_take(&next.distances,&s.distances,&writer,false);differ {widen(&change,low,high)}
     if layers_reshape(next.info,s.info) {
         widen(&change,{},last)
     } else if low,high,differ=grid_take(&next.weights,&s.weights,&writer,false);differ {
-        if next.kind==.Volume {widen(&change,low,high)} else {widen(&change,{low.x,0,low.z},{high.x,last.y,high.z})}
+        widen(&change,low,high)
     }
     return change,true
 }

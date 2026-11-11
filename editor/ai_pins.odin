@@ -160,7 +160,7 @@ ai_pin_look :: proc(s:^Session,row:^Ai_Pin_Row) -> (icon:ui.Icon,color:ui.Color,
     switch base.text_get(row.kind[:]) {
     case AI_PIN_ASSET:
         if s.app!=nil && s.app.assets!=nil {
-            if file,found:=asset.registry_find_path(&s.app.assets.registry,ref);found {icon,color=asset_icon(s,shown_kind(file))}
+            if file,found:=asset.registry_find_path(&s.app.assets.registry,ref);found {icon,color=asset_file_icon(s,file)}
         }
     case AI_PIN_IMAGE:
         icon=.Texture

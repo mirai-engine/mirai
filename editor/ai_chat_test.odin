@@ -18,7 +18,7 @@ ai_chat_test_paint :: proc(ctx:^ui.Context,text:string) -> ^ui.Paint {
 @(test)
 ai_chat_agent_icons_select_tasks_and_finish_review :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -109,7 +109,7 @@ ai_chat_agent_icons_select_tasks_and_finish_review :: proc(t:^testing.T) {
 @(test)
 asking_the_agent_about_a_range_of_the_play_attaches_it_to_the_next_message :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -146,7 +146,7 @@ asking_the_agent_about_a_range_of_the_play_attaches_it_to_the_next_message :: pr
 @(test)
 ai_chat_draws_the_first_prompt_and_does_not_reuse_another_conversations_scroll :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -174,7 +174,7 @@ ai_chat_draws_the_first_prompt_and_does_not_reuse_another_conversations_scroll :
 @(test)
 ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -191,11 +191,14 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
     }
     painted:=frame(&s,task)
     testing.expect(t,!painted.overflow && ctx.stats.layout_errors==0)
+    // The first frame builds every message to measure it; the next only those in sight.
+    frame(&s,task)
     testing.expectf(t,ctx.stats.elements<60,"only the messages in sight become elements: %d",ctx.stats.elements)
     total:f32
     for h in task.transcript.heights[:task.transcript.count] {total+=h}
     testing.expect(t,m.scroll==total-200,"a new chat opens at its last message")
-    // The answer that streams grows its own line and only that one is measured again.
+    // The answer that streams grows its own line and only that one is measured again, by the
+    // frame that builds it.
     ai_transcript_add(&task.transcript,"And the lamp?",.Prompt)
     task.stream_open=true
     ai_transcript_add(&task.transcript,"Done.",.Output)
@@ -204,7 +207,8 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
     before:=task.transcript.heights[last]
     second:=task.transcript.heights[last-1]
     ai_stream_add(&s,task," The table sits under the window and the lamp beside it, both inside the light of the sun.")
-    testing.expect(t,task.transcript.heights[last]==0 && task.transcript.heights[last-1]==second)
+    testing.expect(t,!task.transcript.built[last] && task.transcript.heights[last-1]==second)
+    frame(&s,task)
     frame(&s,task)
     testing.expect(t,task.transcript.heights[last]>before,"the grown answer takes more lines")
     total=0
@@ -217,7 +221,7 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
 @(test)
 ai_chat_keeps_partial_failed_changes_available_for_review :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -265,7 +269,7 @@ ai_chat_keeps_partial_failed_changes_available_for_review :: proc(t:^testing.T) 
 @(test)
 ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -298,7 +302,7 @@ ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents :: proc(t:
 @(test)
 ai_chat_hides_tools_and_viewport_context_and_only_lists_supported_codex_models :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -352,7 +356,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     core.add(&world.transforms,entity,core.TRANSFORM_IDENTITY)
     core.test_world_settle(&world)
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     ai:=new(Ai)
@@ -542,7 +546,7 @@ ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills :: proc
     testing.expect_value(t,ai_entity_marks_plain("Moved [Crate 4](entity:7) beside [Table](entity:9).",buffer[:]),"Moved Crate 4 beside Table.")
     testing.expect_value(t,ai_entity_marks_plain("No marks here",buffer[:]),"No marks here")
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -558,15 +562,19 @@ ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills :: proc
     tr:=&task.transcript
     ai_transcript_add(tr,"Light the table",.Prompt)
     ai_transcript_add(tr,"I added a light over [Table](entity:3):\n\n```odin\nlight := 1\n```\n\n- [Point Light 1](entity:4)",.Output)
-    ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
-    ai_transcript_draw(&s,m,task,400,300)
-    painted:=ui.frame_end(&ctx)
+    painted:ui.Frame
+    for _ in 0..<2 {
+        ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
+        ai_transcript_draw(&s,m,task,400,300)
+        painted=ui.frame_end(&ctx)
+    }
     testing.expect(t,!painted.overflow && ctx.stats.layout_errors==0)
     shown:[AI_TRANSCRIPT_LINES]bool
     ai_transcript_shown(task,shown[:tr.count])
     message:=ai_message_text(tr,1,shown[:tr.count])
     testing.expect(t,strings.has_suffix(message,"](entity:4)") && strings.contains(message,"```odin\nlight := 1\n```"),"the lines of the answer join by their breaks")
-    testing.expect_value(t,tr.heights[1],AI_MESSAGE_GAP+ui.markdown_height(&ctx,message,300,ai_markdown_style(&s,ui.metric(&ctx,"font_small"))))
+    answer,_:=ui.widget_rect(&ctx,ui.id(&ctx,"line",1))
+    testing.expect(t,tr.heights[1]==answer.h && answer.h>AI_MESSAGE_GAP,"its height is that of what it builds")
     for index in 2..<tr.count {testing.expectf(t,tr.heights[index]==0,"line %d goes on the answer",index)}
 }
 
@@ -606,7 +614,7 @@ ai_history_lists_only_chats_without_a_row_and_says_how_long_ago :: proc(t:^testi
     testing.expect_value(t,ai_time_ago(2*86_400_000),"2d")
     testing.expect_value(t,ai_time_ago(15*86_400_000),"2w")
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -631,7 +639,7 @@ ai_history_lists_only_chats_without_a_row_and_says_how_long_ago :: proc(t:^testi
 @(test)
 ai_sessions_say_what_they_wait_for_and_are_answered_in_their_thread :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -750,7 +758,7 @@ ai_chat_test_units :: proc(m:^Ai) {
 @(test)
 ai_chat_has_one_status_line_and_no_new_chat_button :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -780,7 +788,7 @@ ai_chat_has_one_status_line_and_no_new_chat_button :: proc(t:^testing.T) {
 @(test)
 ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -818,7 +826,7 @@ ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat :: proc(t:^testi
 @(test)
 ai_a_subagent_is_inspected_from_its_own_view_and_written_to :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}

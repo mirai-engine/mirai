@@ -1,7 +1,7 @@
 # Networking: current behavior
 
-Descriptors, defaults and statistics (`Host_Desc`, `Replication_Desc`, `Security_Desc`,
-`Object_Desc`, `Channel_Desc`, `Sim_Conditions`, `Clock`, `Host_Stats`) are commented in `net/`.
+Descriptors, defaults and statistics (`Host_Desc`, `Replication_Desc`, `Object_Desc`,
+`Channel_Desc`, `Sim_Conditions`, `Clock`, `Host_Stats`) are commented in `net/`.
 
 ## Bitstream (`std/serial/bitstream.odin`)
 
@@ -63,30 +63,25 @@ like `replication.hysteresis`) and the values it admits.
 ## Connections
 
 - **Four-datagram handshake, always sealed.** The client's request and response are padded.
-  - *Request*: the client salt, to every candidate of the attempt at once: the address given and,
-    with `host_connect(nearby=true)` (an invitation code), loopback and the broadcast of the
-    network the machine routes through (`connect_candidates`), because the address of a code may
-    be a router that does not loop its own public address back. The client proves itself to each
-    server that answers (`CANDIDATES` at most) and goes on with the one that accepts; with several
-    candidates a denial or another version ends the attempt only when its time is up.
+  - *Request*: the client salt, to every address `host_connect` got at once: one, or the two of
+    an invitation. The client proves itself to each that answers and goes on with the one that
+    accepts; answers from any other address are ignored. A denial or another version ends the
+    attempt once every candidate gave one: the other may be the host while this one is another
+    machine at a private address of the client's own network.
   - *Challenge*: a SipHash cookie of the address, the salt and the
-    time, the server's version and its lasting X25519 key; every request gets it, the server
-    stores nothing, and a client of another version ends with `Denied_Version` on reading it.
+    time, the server's version and its lasting X25519 key; every request gets it and the server
+    stores nothing.
   - *Response*: the cookie, the protocol hash, the client's key for the attempt and its proof,
-    sealed with a key from the exchange of that key with the server's lasting one (the pinned one
-    or the one of the challenge) and the invitation; a connect token travels inside it.
+    sealed with a key from the exchange of that key with the server's lasting one and the
+    invitation.
   - *Accepted*: the server's key for the connection and, sealed with the session keys, its salt,
     object capacity and history.
   - Nothing but the challenge answers an address that has not returned a valid cookie, and
-    nothing at all a proof that does not open (a wrong invitation, a client that pinned another
-    server): both count in `handshakes_dropped`. Denials (`Denied_Protocol`, `Denied_Token*`,
-    `Denied_Full`) go only to a returned cookie, and those after the protocol only to a proof
-    that opened; they count in `handshakes_refused`. The idea is netcode's: answer only when
-    necessary, and deny only a request that passed every check
+    nothing at all a proof that does not open (a wrong invitation): both count in
+    `handshakes_dropped`. Denials (`Denied_Protocol`, `Denied_Full`) go only to a returned cookie,
+    and `Denied_Full` only to a proof that opened; they count in `handshakes_refused`. The idea
+    is netcode's: answer only when necessary, and deny only a request that passed every check
     ([standard](https://raw.githubusercontent.com/mas-bandwidth/netcode/main/STANDARD.md)).
-  - A server reached through its router's address may answer from its own address on the network
-    (hairpin): a Challenge, Accepted or Denied with the salt of a request in progress is for it,
-    and the connection continues with the address that answered (`Host_Stats.readdressed`).
 - **Format.** Every datagram starts with a type byte. The handshake ends in an XXH3 checksum keyed
   with `protocol_id`, which only filters strays; data ends in the ChaCha20-Poly1305 tag, with the
   type and sequence as associated data. The protocol hash includes fragments, events, input,
@@ -94,26 +89,27 @@ like `replication.hysteresis`) and the values it admits.
   datagrams changes.
 - **Sealing** (`net/secure.odin`, only with `core:crypto`; there is no unsealed mode): the session
   keys come from HKDF-SHA256 over the exchange of the two keys made for the connection and that of
-  the client's key with the server's lasting one, salted with the key of the invitation. A client
-  that pins the server's key (`Credentials.server_key`) talks only to its owner; one that does not
-  takes the key of the challenge, so only an active attacker on the path could pose as the server,
-  and only knowing the invitation. One key per direction, with the 64-bit sequence as nonce, which
-  every `REKEY_INTERVAL` datagrams is derived from the previous one; the receiver's only advances
-  when a datagram with the new one turns out authentic. A tampered, truncated, repeated or
-  older-than-the-last-accepted datagram is discarded. A system without secure random bytes cannot
-  make a host (`host_init` refuses `security`) nor an invitation (`invite_token` is not ok).
-- **Invitations** (`net/invite.odin`): `Host_Desc.invite` is in every key, so both ends must have
-  the same one (zero at both: none); a client without it times out with `Connect_Timeout`. It is a
-  short secret so that whoever received the code gets in, not a credential: nobody can try
-  invitations from the server's answers, but whoever poses as an unpinned server on the path can
-  try them against the client's proof. The code (`invite_encode`) carries IP, port, token and a
-  check in Crockford base32, tolerant of case, separators and confusable characters;
-  `address_reachable` gives the address the router mapped or the LAN one.
-- **Connection tokens**: the game's backend signs with Ed25519 (`token_issue`) a token that the
-  server verifies with `token_key` and requires with `require_token`. The client must pin the
-  server's key, because the token travels sealed for it and nobody on the path can read and use it
-  first. The `client_id` arrives with `Connected`; if the same id comes back, the previous
-  connection closes with `Replaced`.
+  the client's key with the server's lasting one, salted with the key of the invitation. The
+  client takes the server's key from the challenge, so only an active attacker on the path could
+  pose as the server, and only knowing the invitation. One key per direction, with the 64-bit
+  sequence as nonce, which every `REKEY_INTERVAL` datagrams is derived from the previous one; the
+  receiver's only advances when a datagram with the new one turns out authentic. A tampered,
+  truncated, repeated or older-than-the-last-accepted datagram is discarded. A system without
+  secure random bytes cannot make a host (`host_init` refuses `invite`) nor an invitation
+  (`invite_token` is not ok).
+- **Two ways in.** By address: a server whose `Host_Desc.invite` is zero admits anyone who reaches
+  it, and the client calls `host_connect` with that address. By invitation: `Host_Desc.invite` is
+  in every key, so both ends must have the same one, and a client without it times out with
+  `Connect_Timeout`. It is a short secret so that whoever received the code gets in, not a
+  credential: nobody can try invitations from the server's answers, but whoever poses as the
+  server on the path can try them against the client's proof.
+- **Invitation codes** (`net/invite.odin`): the host says where it is, as ICE gathers a host and a
+  reflexive candidate: `invite_make` takes its address on its network (`address_lan`) and, once
+  the router mapped its port, the mapped one; `invite_encode` writes both with the token and a
+  CRC-12 in Crockford base32, tolerant of case, separators and confusable characters, and the
+  client passes both addresses of `invite_decode` to `host_connect`. On the host's network the LAN
+  address answers; from outside, the mapped one; a router that does not loop its public address
+  back does not matter, and the client asks no other address.
 - **Amplification.** The Challenge is smaller than the padded request, and the server does X25519
   exchanges (two per accepted client, one per refused proof) only for whoever returned the cookie,
   `handshakes_per_update` at a time per update.
@@ -150,11 +146,14 @@ command. `budget` limits the bytes of a channel per update.
 
 - `Unreliable` is sent once; `Sequenced` too, and a message that is still waiting is replaced by
   the next one.
-- `Reliable` is resent until its ack, delivered in order and cut into chunks with a window: a
-  message can exceed the datagram. `message_send` returns `Full` and sends nothing if the message
-  does not fit in the queue of some destination connection (it knows from
-  `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the sender
-  retries after `host_poll`.
+- `Reliable` is resent until its ack, delivered in order and cut into chunks as the window draws
+  them from the queue: the one fragmentation of the transport. `message_send` returns `Full` and
+  sends nothing if the message does not fit in the queue of some destination connection (it knows
+  from `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the
+  sender retries after `host_poll`. With `sent`, a message to one connection streams: each call
+  queues what has room, and the channel takes nothing else until it is in, so a message has no
+  size limit. A message longer than `PIECE_BYTES` arrives in pieces (`Command.more`), which the
+  receiver joins; the library's own reliable channel takes only whole messages.
 - The library channels count their queue the same way: `event_send` of a `Reliable` event and the
   authority requests return `Full` and send nothing if they do not fit in the queue of some
   connection they may go to, and the sender retries. The connection is not closed;
@@ -179,6 +178,9 @@ register the same in the same order.
   types and `TYPE_LEAVES` leaves. `type_register` registers and composes before sealing (tests).
 - Each replicated field (without `local`) produces leaves with a serializer according to its type
   and its tags (`bits`, `min`/`max`, `precision`, `text`; an array inherits those of its field).
+  - An array of one-byte values (a `text` too, and a `rotation` sent whole) is one field of its
+    bytes, packed four to a word: whole it travels up to its last nonzero byte, and as a delta the
+    run from the first to the last byte that changed. Its bytes must fit a part of a state.
   - A `base.Entity` travels as the network object of that game id, and the client receives its own
     id (`object_bind`). If the referenced replica does not exist yet it reads zero and the
     reference stays pending (`object_references_pending`); an entity that the sender does not
@@ -336,6 +338,9 @@ object are sent until its creation was acked.
   on the server those that do not come from the owner. Only `Held` ones reach a held connection:
   what the server says while it loads the world the connection will see.
 - They arrive as an `Event` command and are read with `event_read`.
+- An unreliable event encodes within `EVENT_MAX_BYTES`, a datagram; a reliable one within
+  `RELIABLE_EVENT_MAX_BYTES`, which its channel cuts in chunks as for any reliable message, and
+  every event within `MAX_STATE_WORDS`. `event_register` refuses one past them.
 - They name their object by handle and travel apart from the state: on the same object they arrive
   in order, but there is no order between events and updates.
 - A reliable event that arrives before its replica waits for it up to 5 s; one sent in the tick in

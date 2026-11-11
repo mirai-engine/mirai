@@ -289,9 +289,9 @@ paint_restore :: proc(world:core.World_Ref,entities:[]core.Entity) -> (restored:
     meshes:=core.world_table_of(world,erender.Mesh_Renderer)
     if painted==nil || meshes==nil {return}
     for e in entities {
-        record:=core.edit(painted,e)
-        row:=core.edit(meshes,e)
-        if record==nil || row==nil {continue}
+        record,found:=core.get(painted,e)
+        row:=core.edit(meshes,e) if found else nil
+        if row==nil {continue}
         row.mesh,row.shape=record.source,record.shape
         core.remove(painted,e)
         restored+=1

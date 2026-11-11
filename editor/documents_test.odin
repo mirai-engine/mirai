@@ -19,7 +19,7 @@ documents_test_frame :: proc(s:^Session,input:ui.Input) -> ui.Frame {
 @(test)
 document_tabs_hover_as_one_surface_and_close_independently :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx}
     document:Document
@@ -68,7 +68,7 @@ document_tabs_hover_as_one_surface_and_close_independently :: proc(t:^testing.T)
 @(test)
 document_tabs_scroll_and_reveal_the_active_document_with_clipped_native_regions :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx,documents_reveal=true}
     document:Document

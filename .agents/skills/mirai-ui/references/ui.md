@@ -214,10 +214,10 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
 - **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
-  where Clay breaks a text (`layout_break_next`): a word goes to the next line unless it fits with
-  the space after it, and one wider than the line takes a line of its own. A text of several spans
-  fills its lines with `Flow`, which breaks at the same places and keeps on one line what no space
-  parts. `text_line` is that break for the text a field edits.
+  with one `Flow`, whatever its spans: a word goes to the next line unless it fits with the space
+  after it, one wider than the line takes a line of its own, a line gives up the space it breaks
+  or ends at, and what no space parts stays on one line. `text_line` is that break for the text a
+  field edits, which keeps the spaces of its last line.
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way and `Text_Style.line_height` distributes the excess of each line;
@@ -250,8 +250,8 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 
 All take the context, an id and their state by parameter.
 
-- **Canvas.** `canvas` is an area that its owner draws with `Context_Desc.draw_user`: the layout
-  places it, the container with clip clips it and the pointer over it is its interaction.
+- **Canvas.** `canvas` is an area that `Context.draw_user` draws as its `Draw_Node` says: the
+  layout places it, the container with clip clips it and the pointer over it is its interaction.
 - **Text and icons.** `label` is a line clipped to its box, which can fade out at its end, and
   `text` with `prose` is the running text ([text](#text)). The `Icon`s are drawn on a 16 vector
   grid.
@@ -266,18 +266,18 @@ All take the context, an id and their state by parameter.
 - **Markdown.** `markdown` builds Markdown text at a width (paragraphs, `#` to `###` headings,
   lists nested by indentation, quotes, fenced code, rules; inline bold, code, links and escapes).
   It is a parser: each paragraph and each heading is one [text](#text) whose spans are its words,
-  its inline code (a chip), its links and its pills, and the layout breaks it. `markdown_height`
-  walks the same parser and asks those texts for their heights without building them: the height
-  is exactly the one that is built, so a list of replies measures them once and builds only those
-  in view with `rows_begin`.
+  its inline code (a chip), its links and its pills, and the layout breaks it. Its height is the
+  one the layout gives what it builds: a list of replies keeps the height of the row each was built
+  in, builds one that changed where nothing shows it when it is out of sight, and otherwise builds
+  only those in view with `rows_begin` (the chat of the editor).
   - It is parsed line by line: it stores nothing between frames or allocates. What it does not
     recognize (HTML, tables) stays as text; italic has no face and its marks are removed. Bold and
     italic open and close on the same line.
   - A word longer than the line is cut where the line ends (`text_begin` with `cut`), and a line
     of fenced code is a `solid` span, which breaks at no space and is cut the same way, so its
     height does not depend on where the spaces fall. A tab is room up to the next stop of its line.
-  - Each link goes through `Markdown_Style.resolve`, which is called when measuring and when
-    building and must give the same answer for the same destination in a frame. A `pill` link is not
+  - Each link goes through `Markdown_Style.resolve`, which must give the same answer for the same
+    destination in a frame. A `pill` link is not
     split: it passes whole to the next line and, if it is wider than a line, it is cut to it; a
     `live` one lights up whole under the pointer, on every line it is on, and its destination is
     what `markdown` returns the frame of the click. The text that `resolve` writes in `buffer`
@@ -416,10 +416,9 @@ belongs to the caller (`Anim_Player` or `Anim_State` with `anim_react`, which pl
 What an element looks like hovered, pressed, focused or selected is a state of its style, with its
 `transition`: an `Anim_Set` has no animation for a state.
 
-- `Width`, `Height`, `Value`, `Frame` and `Reveal` are properties that the tree applies to its node:
-  the size replaces that of the layout before building it and what surrounds the node follows it;
-  the others give the value of a control, the frame of an image and the visible part of a text
-  (typewriter).
+- An animation changes how a node is drawn, never its size: a size is what the layout computes, and
+  a node goes to a new one with the `layout_transition` of its style. `Value`, `Frame` and `Reveal`
+  give the value of a control, the frame of an image and the visible part of a text (typewriter).
 - `anim_play` after another animation starts from the value that one left; the first of an element
   starts from its keys. In the tree, `clicked` arrives the frame after the click.
 - `animated(ctx, id, value)` draws what is built inside moved, scaled, rotated and tinted around the
@@ -440,7 +439,7 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   not those of a component, which the game writes and which show what was asked until it has had a
   tick to. A `Button` that binds a value writes its `choice` when clicked, as a `Radio` does, and
   emits `Changed` after `Clicked`.
-- **Draw.** A `Draw` node is a leaf whose paint (`Paint_Kind.Draw`) calls `Game_Source.draw` at
+- **Draw.** A `Draw` node is a leaf whose paint (`Paint_Kind.Draw`) calls `Context.draw_user` at
   `frame_end` with a `Draw_Node`: the rectangle, the colors and text of its style, and the bytes
   of the field its `bind_value` names, of any type (`Bound_Want.Data`, `draw_value`). `draw` names
   who draws it. It is replayed with its screen, so what it shows comes from what it binds. A
@@ -475,6 +474,9 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   - The instance copies only the bytes it reads: the ranges read from each region are joined and
     packed into `values`. `tree_values_refresh` copies only those ranges, skips what did not change
     according to its stamp and stores which ranges changed until the next build.
+  - What changed is what a node shows: an f32 shown only by a number of a template is copied when
+    it moves a shown step (its decimals, a second of a clock), and the value of a Progress when its
+    fill moves a pixel; below that nothing is copied and no node is built. Games never round.
   - The formats after the colon are in `tree_bind.odin`: numbers with the separators of the
     language of `Game_Source.language` (`NUMBER_LOCALES`), times, texts by value and CLDR plurals
     (`{n:one=# coin|other=# coins}`). An enum name or a category that does not exist fails like a
@@ -540,6 +542,16 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
+- `Node_Style.layout_transition` carries the rectangle of the node to a new layout (an item inserted
+  above it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the
+  last rectangle of each element that asks (`layout_transition_ask`, in a table by id of
+  `Context_Desc.max_transitions`), and the node goes from where it was drawn to where the layout
+  puts it with the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a
+  parent that moves or scrolls carries it without starting it; a size on its way is fixed for a
+  second layout, so what surrounds it follows. The first time, after a frame it was not asked for (a
+  node shown again), and on a surface of another size, it is where the layout puts it at once.
+  `Frame.transitioning` says the next frame differs, and `engine/gui` keeps no screen of that
+  context. Only tree nodes ask: what code builds, as the editor, goes to its new place at once.
 - `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and
   the pointer do not see (`animated_begin` with `still`), so what lifts a button under the pointer
   does not lose it.
@@ -606,9 +618,9 @@ a camera.
 - The clipboard and the system cursor are not its own: they arrive through the context callbacks
   and through `ctx.cursor`, which says what shape the widget under the pointer asks for and the host
   shows (the editor, when its tools did not ask for another).
-- A text is built every frame: a long list of texts measures each one with `text_height` or
-  `markdown_height`, with the same measure and the same breaks, and builds only the visible ones
-  with `rows_begin`.
+- A text is built every frame: a long list of texts measures each one with `text_height`, with the
+  same measure and the same breaks, or keeps the height a Markdown row was built with, and builds
+  only the visible ones with `rows_begin`.
 - The text of a `markdown` link does not take bold or code from inside.
 - A `.ui` document names the `columns` of a Grid, not its tracks nor the spans of its children:
   those are set from code, and the rows of a `.ui` hold neither `row_span` nor row tracks.

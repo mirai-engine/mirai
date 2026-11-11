@@ -748,3 +748,45 @@ a_commit_writes_the_field_of_a_storage_the_host_lets_write :: proc(t:^testing.T)
     testing.expect(t,!tree_commit_event(&s.instance,{node=node[0],kind=.Changed,value=0.75},host))
     testing.expect_value(t,s.values.volume,f32(0.5))
 }
+
+// A bound value changes its interface only when what it shows changes: a
+// float that moves under the decimals of its text or a pixel of its bar
+// copies nothing and rebuilds no node; one that changes the text or the fill
+// does, once.
+@(test)
+a_value_changes_the_interface_only_when_what_it_shows_changes :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="hud",layout={direction=.Column}})
+    tree_node(&s.tree,root,{kind=.Text,name="time",style=style,text="{time:1} s",fields={{"time","Test.stats.seconds"},{},{},{}}})
+    tree_node(&s.tree,root,{kind=.Progress,name="bar",style=style,bind_value="Test.ratio",layout={width=fixed(100),height=fixed(8)}})
+    testing.expect(t,test_game_instance(&s))
+    s.values.stats.seconds,s.values.ratio=1,0.5
+    ctx:Context
+    test_game_context(t,&ctx,&s)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    test_frame(&ctx,&input,test_game_build,&s)
+    refresh :: proc(s:^Test_Game) -> bool {
+        changed,_:=tree_values_refresh(&s.instance,&s.host.host,0)
+        return changed
+    }
+    Case :: struct {seconds,ratio:f32,changes:bool}
+    cases:=[]Case{
+        {1.01,0.5,false},{1.04,0.503,false},{1.02,0.497,false}, // under a tenth and a pixel of the bar
+        {1.06,0.497,true},{1.07,0.497,false},                     // the text says 1.1, once
+        {1.07,0.52,true},{1.07,0.521,false},                      // the bar moves two pixels, once
+    }
+    for c in cases {
+        s.values.stats.seconds,s.values.ratio=c.seconds,c.ratio
+        testing.expectf(t,refresh(&s)==c.changes,"%v: changed should be %v",c,c.changes)
+        testing.expect(t,s.instance.dirty_any==c.changes,"what changes nothing shown marks no node to build")
+        test_frame(&ctx,&input,test_game_build,&s)
+    }
+    testing.expect(t,test_paint(&ctx,"1.1 s")!=nil)
+    s.values.stats.seconds=0h7fc00000 // NaN shows anew
+    testing.expect(t,refresh(&s))
+}

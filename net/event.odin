@@ -99,7 +99,7 @@ event_pop :: proc(r:^Repl,out:[]u8) -> (time:f64,size:int) {
 events_flush :: proc(h:^Host,p:^Peer) {
     r:=&h.back.repl
     left:=r.events.used
-    buffer:[EVENT_MAX_BYTES+32]u8
+    buffer:[RELIABLE_EVENT_MAX_BYTES+32]u8
     for left>0 {
         time,size:=event_pop(r,buffer[:])
         left-=12+size
@@ -142,7 +142,7 @@ event_fanout :: proc(h:^Host,to,object:u64,sent:u8,data:[]u8) {
 @(private)
 events_replay :: proc(h:^Host) {
     r:=&h.back.repl
-    buffer:[EVENT_MAX_BYTES+32]u8
+    buffer:[RELIABLE_EVENT_MAX_BYTES+32]u8
     for r.deferred.used>0 {
         header:[3]u64
         ring_read(&r.deferred,mem.slice_data_cast([]u8,header[:]))

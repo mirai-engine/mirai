@@ -40,9 +40,10 @@ EVENT_NONE :: Event_Id(0xffff)
 MAX_FRAGMENTS :: 16 // of an object type
 TYPE_CAPACITY :: 128
 TYPE_LEAVES :: 1<<15 // of all the types composed after sealing
-MAX_STATE_WORDS :: 1024
+MAX_STATE_WORDS :: 2048
 MAX_STATE_BYTES :: 880 // on the wire: a larger state goes in parts, each field of it within this
-EVENT_MAX_BYTES :: 880
+EVENT_MAX_BYTES :: 880 // an unreliable event on the wire, within a datagram
+RELIABLE_EVENT_MAX_BYTES :: 4*MAX_STATE_WORDS // a reliable event on the wire: its channel streams it in chunks
 
 // A bit per fragment of an object type.
 Fragment_Mask :: u16
@@ -72,22 +73,22 @@ Leaf_Kind :: enum u8 {
     Bit_Set,
     Object,     // base.Entity sent as the network object the user id belongs to
     Quaternion, // smallest three
-    Rotation,   // quaternion sent whole
-    Text,
+    Bytes,      // an array of one-byte values, or a quaternion sent whole
+    Text,       // bytes up to the first zero
 }
 @(private)
 Leaf :: struct {
     kind:Leaf_Kind,
     fragment:u8,
     bit:u8,      // of the change mask
-    bits:u8,     // width when sent whole; Quaternion: per component; Text: of the length
+    bits:u8,     // width when sent whole; Quaternion: per component; Bytes, Text: of a byte index
     words:u16,   // in the quantized state
     word:u16,
     size:u16,    // bytes in the fragment
     unit:u16,    // the field of its fragment that owns its change bit
     source:u32,  // offset in the fragment
     choices:u32, // Enum: first value in Protocol.choices
-    count:u32,   // Enum: values; Text: bytes
+    count:u32,   // Enum: values; Bytes, Text: bytes
     low:f64,
     step:f64,
 }
@@ -264,10 +265,12 @@ type_kinds :: proc(p:^Protocol,type:Type_Id) -> []Fragment_Id {
 
 // Registers an event: a structure sent to the replicas of an object, or to
 // nobody in particular, once. The name identifies it in the protocol hash.
+// False when it encodes larger than its kind carries (EVENT_MAX_BYTES,
+// RELIABLE_EVENT_MAX_BYTES) or holds more than MAX_STATE_WORDS.
 event_register :: proc(p:^Protocol,name:string,schema:^serial.Schema,type:serial.Type_Index,flags:Event_Flags={}) -> (Event_Id,bool) {
     if p.sealed || len(p.events)>=int(EVENT_NONE) {return EVENT_NONE,false}
     leaves,choices:=len(p.leaves),len(p.choices)
-    desc,ok:=descriptor_build(p,name,{{schema=schema,type=type}},EVENT_MAX_BYTES)
+    desc,ok:=descriptor_build(p,name,{{schema=schema,type=type}},.Reliable in flags?RELIABLE_EVENT_MAX_BYTES:EVENT_MAX_BYTES)
     if !ok {return EVENT_NONE,false}
     if _,error:=append(&p.events,Event_Type{name_hash=desc.name_hash,flags=flags,desc=desc});error!=nil {
         delete(desc.name,p.allocator)
@@ -547,8 +550,7 @@ leaf_max_bits :: proc(leaf:Leaf) -> int {
     case .Bool:       return 1
     case .Quantized:  return 34
     case .Quaternion: return 3+3*int(leaf.bits)
-    case .Rotation:   return 129
-    case .Text:       return 1+int(leaf.bits)+int(leaf.count)*8
+    case .Bytes,.Text:return 1+2*int(leaf.bits)+int(leaf.count)*8
     }
     return int(leaf.bits)+2
 }
@@ -618,16 +620,15 @@ leaves_add :: proc(p:^Protocol,s:^serial.Schema,index:serial.Type_Index,field:^s
         return true
     case .Array:
         element:=serial.schema_type(s,type.elem)^
-        if field!=nil && .Text in field.flags && element.kind==.Uint && element.size==1 {
-            if type.count==0 || type.count>255 {return false}
-            leaf.kind,leaf.count=.Text,type.count
-            leaf.bits=u8(serial.bit_count_for(u64(type.count)))
-            leaf.words=u16((type.count+3)/4)
+        if serial.type_is_bytes(s,index) && (field==nil || field.bits==0 && !ranged) {
+            if type.count==0 {return true}
+            if type.count>4*MAX_STATE_WORDS {return false}
+            leaf.kind,leaf.count=field!=nil && .Text in field.flags?.Text:.Bytes,type.count
         } else if field!=nil && .Rotation in field.flags && type.count==4 && element.kind==.Float && element.size==4 {
-            leaf.kind,leaf.words,leaf.bits=.Rotation,4,32
+            leaf.kind,leaf.count=.Bytes,16
             if field.bits>0 || field.precision>0 {
                 bits:=field.bits>0?int(field.bits):serial.bit_count_for(u64(math.ceil(math.SQRT_TWO/f64(field.precision))))
-                leaf.kind,leaf.words,leaf.bits=.Quaternion,2,u8(clamp(bits,2,serial.BIT_QUATERNION_MAX_BITS))
+                leaf.kind,leaf.bits=.Quaternion,u8(clamp(bits,2,serial.BIT_QUATERNION_MAX_BITS))
             }
         } else {
             for i in 0..<type.count {
@@ -636,7 +637,10 @@ leaves_add :: proc(p:^Protocol,s:^serial.Schema,index:serial.Type_Index,field:^s
             return true
         }
     }
-    if leaf.kind!=.Text && leaf.kind!=.Rotation && (leaf.bits>32 || leaf.kind==.Quaternion) {leaf.words=2}
+    if leaf.kind==.Bytes || leaf.kind==.Text {
+        leaf.bits=u8(serial.bit_count_for(u64(leaf.count)))
+        leaf.words=u16((leaf.count+3)/4)
+    } else if leaf.bits>32 || leaf.kind==.Quaternion {leaf.words=2}
     leaf.word=u16(words^)
     words^+=int(leaf.words)
     _,error:=append(&p.leaves,leaf)
@@ -725,12 +729,10 @@ fragment_quantize :: proc(p:^Protocol,type:^Object_Type,fragment:int,source:rawp
             value=to_object==nil?0:to_object(h,intrinsics.unaligned_load((^u64)(at)))
         case .Quaternion:
             value=serial.quantize_quaternion(intrinsics.unaligned_load((^quaternion128)(at)),int(leaf.bits))
-        case .Rotation:
-            mem.copy(&words[leaf.word],at,16)
-            continue
-        case .Text:
+        case .Bytes,.Text:
             target:=([^]u8)(&words[leaf.word])
             mem.zero(target,int(leaf.words)*4)
+            if leaf.kind==.Bytes {mem.copy(target,at,int(leaf.count));continue}
             for i in 0..<int(leaf.count) {
                 c:=([^]u8)(at)[i]
                 if c==0 {break}
@@ -750,7 +752,7 @@ fragment_dequantize :: proc(p:^Protocol,type:^Object_Type,fragment:int,words:[]u
     for &leaf in type.leaves[info.first_leaf:][:info.leaf_count] {
         if mask&(1<<leaf.bit)==0 {continue}
         at:=rawptr(uintptr(target)+uintptr(leaf.source))
-        value:=leaf.kind==.Text || leaf.kind==.Rotation?0:word_load(words,&leaf)
+        value:=leaf.kind==.Bytes || leaf.kind==.Text?0:word_load(words,&leaf)
         switch leaf.kind {
         case .Bool:              (^u8)(at)^=u8(value&1)
         case .Unsigned,.Bit_Set: source_store(at,leaf.size,value&low_mask(leaf.bits))
@@ -764,10 +766,9 @@ fragment_dequantize :: proc(p:^Protocol,type:^Object_Type,fragment:int,words:[]u
         case .Enum:      source_store(at,leaf.size,u64(p.choices[leaf.choices+u32(value<u64(leaf.count)?value:0)]))
         case .Object:    intrinsics.unaligned_store((^u64)(at),to_user==nil?0:to_user(h,value))
         case .Quaternion:intrinsics.unaligned_store((^quaternion128)(at),serial.dequantize_quaternion(value,int(leaf.bits)))
-        case .Rotation:  mem.copy(at,&words[leaf.word],16)
-        case .Text:
+        case .Bytes,.Text:
             mem.copy(at,&words[leaf.word],int(leaf.count))
-            ([^]u8)(at)[leaf.count-1]=0
+            if leaf.kind==.Text {([^]u8)(at)[leaf.count-1]=0}
         }
     }
 }
@@ -792,7 +793,9 @@ var_read :: #force_inline proc "contextless" (r:^serial.Bit_Reader,widths:[4]u8)
 @(private) unzigzag32 :: #force_inline proc "contextless" (value:u32) -> i32 {return i32(value>>1)~-i32(value&1)}
 
 // Writes the leaves of the change bits in mask. With a base, each leaf is
-// written as its difference to the same leaf of the base.
+// written as its difference to the same leaf of the base. Bytes go whole up to
+// the last nonzero one, or as the run from the first to the last that differs
+// from the base.
 @(private)
 state_write :: proc(w:^serial.Bit_Writer,type:^Object_Type,mask:u64,words:[]u32,base:[]u32) {
     rest:=mask&type.all
@@ -800,21 +803,21 @@ state_write :: proc(w:^serial.Bit_Writer,type:^Object_Type,mask:u64,words:[]u32,
         bit:=intrinsics.count_trailing_zeros(rest)
         rest&=rest-1
         for &leaf in type.leaves[type.bit_leaf[bit]:][:type.bit_leaves[bit]] {
-            if leaf.kind==.Text || leaf.kind==.Rotation {
-                span:=words[leaf.word:][:leaf.words]
+            if leaf.kind==.Bytes || leaf.kind==.Text {
+                bytes:=mem.slice_data_cast([]u8,words[leaf.word:][:leaf.words])[:leaf.count]
+                first,end:=0,len(bytes)
                 if base!=nil {
-                    same:=mem.compare_ptrs(&words[leaf.word],&base[leaf.word],int(leaf.words)*4)==0
-                    serial.bit_write_bool(w,same)
-                    if same {continue}
+                    old:=mem.slice_data_cast([]u8,base[leaf.word:][:leaf.words])[:leaf.count]
+                    for first<end && bytes[first]==old[first] {first+=1}
+                    serial.bit_write_bool(w,first==end)
+                    if first==end {continue}
+                    for bytes[end-1]==old[end-1] {end-=1}
+                    serial.bit_write(w,u64(first),int(leaf.bits))
+                } else {
+                    for end>0 && bytes[end-1]==0 {end-=1}
                 }
-                bytes:=mem.slice_data_cast([]u8,span)
-                if leaf.kind==.Text {
-                    length:=0
-                    for length<int(leaf.count) && bytes[length]!=0 {length+=1}
-                    serial.bit_write(w,u64(length),int(leaf.bits))
-                    bytes=bytes[:length]
-                }
-                serial.bit_write_bytes(w,bytes)
+                serial.bit_write(w,u64(end),int(leaf.bits))
+                serial.bit_write_bytes(w,bytes[first:end])
                 continue
             }
             value:=word_load(words,&leaf)
@@ -853,20 +856,19 @@ state_read :: proc(r:^serial.Bit_Reader,type:^Object_Type,mask:u64,words:[]u32,b
         bit:=intrinsics.count_trailing_zeros(rest)
         rest&=rest-1
         for &leaf in type.leaves[type.bit_leaf[bit]:][:type.bit_leaves[bit]] {
-            if leaf.kind==.Text || leaf.kind==.Rotation {
+            if leaf.kind==.Bytes || leaf.kind==.Text {
                 span:=words[leaf.word:][:leaf.words]
-                if base!=nil && serial.bit_read_bool(r) {
+                first:=0
+                if base!=nil {
                     copy(span,base[leaf.word:][:leaf.words])
-                    continue
+                    if serial.bit_read_bool(r) {continue}
+                    first=int(serial.bit_read(r,int(leaf.bits)))
+                } else {
+                    mem.zero_slice(span)
                 }
-                bytes:=mem.slice_data_cast([]u8,span)
-                if leaf.kind==.Text {
-                    length:=int(serial.bit_read(r,int(leaf.bits)))
-                    if length>int(leaf.count) {return false}
-                    mem.zero_slice(bytes)
-                    bytes=bytes[:length]
-                }
-                if !serial.bit_read_bytes(r,bytes) {return false}
+                end:=int(serial.bit_read(r,int(leaf.bits)))
+                if first>end || end>int(leaf.count) {return false}
+                if !serial.bit_read_bytes(r,mem.slice_data_cast([]u8,span)[first:end]) {return false}
                 continue
             }
             width:=leaf.kind==.Quaternion?2+3*int(leaf.bits):int(leaf.bits)

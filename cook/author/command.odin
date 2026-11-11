@@ -13,6 +13,7 @@ import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:ui"
 
 // The commands mirai ui, mirai scene and mirai texts, which the author
 // program of the engine runs: a project reads, checks and writes the
@@ -41,8 +42,7 @@ import "mirai:std/serial"
 //
 // The types of the game, which the paths an interface binds and the
 // components of a scene are read against, are those of the library of the
-// editor of the project as it was built last, which also has the cards its
-// plugins add to the presets. Without it only an interface is read: nothing
+// editor of the project as it was built last. Without it only an interface is read: nothing
 // is written or checked that the game could not be asked about, and the
 // command says what builds the library.
 //
@@ -88,17 +88,17 @@ Project :: struct {
     info:^core.World_Info, // the types of the game as it was built last; nil: none
     languages:[]string,    // the codes of the languages of the game, the one its texts are written in first
     untyped:string,        // why it has none, with what gives them
-    plugins:Plugin_Recipes, // the cards of its plugins, when whoever runs the command reads them
+    recipes:[]Recipe,       // of the engine and of its active plugins
     scratch:Scratch_World,  // where a recipe is run; made the first time
 }
 
 // What builds the library the types of a game come from.
-BUILD_FIX :: "mirai build editor <project> --dev builds it"
+BUILD_FIX :: "mirai build editor <project> builds it"
 
 
 // Opens the project at root with the assets of its plugins. library false
 // leaves the types of its game out. problem: why it does not open.
-project_open :: proc(p:^Project,root,engine:string,library:=true,recipes:Plugin_Recipes_Proc=nil) -> (problem:string) {
+project_open :: proc(p:^Project,root,engine:string,library:=true) -> (problem:string) {
     opened,error:=project.open(root,engine,context.temp_allocator)
     if error.code!=.None {return project.error_text(root,error,context.temp_allocator)}
     p.root=strings.clone(opened.root)
@@ -113,12 +113,13 @@ project_open :: proc(p:^Project,root,engine:string,library:=true,recipes:Plugin_
     project.settings_load({{name="UI_Settings",info=type_info_of(gui.UI_Settings),value=&ui_settings}},p.root,engine,{.Project})
     p.languages=slice.clone(texts_languages(ui_settings))
     if library {project_library_open(p)}
-    if p.info!=nil && recipes!=nil {p.plugins=recipes(p.info,context.allocator)}
+    p.recipes=recipes_read(project.recipe_folders(&opened,context.temp_allocator))
     return ""
 }
 
 project_close :: proc(p:^Project) {
     scratch_world_free(&p.scratch)
+    recipes_free(p.recipes)
     if p.library.handle!=nil {host.project_library_unload(&p.library)}
     asset.registry_destroy(&p.registry)
     asset.types_destroy(&p.types)
@@ -129,8 +130,7 @@ project_close :: proc(p:^Project) {
     p^={}
 }
 
-// The types of the game of the project: those of the library of its editor,
-// which its plugins give their cards in.
+// The types of the game of the project: those of the library of its editor.
 @(private="file")
 project_library_open :: proc(p:^Project) {
     path:=project.project_library(p.root,"editor",context.temp_allocator)
@@ -182,6 +182,7 @@ Written :: struct {
     first:string, // a scene: the first thing that is, in the temporary allocator
     followed:int, // an interface: the files that use it as a widget and were written to follow its parameters
     made,removed:int,
+    stored:[]escene.Stored, // a scene: the components of the game the file stored with another layout, now written with the game's
 }
 
 // Makes the .ui a path names say what a document declares, as ui.write does
@@ -208,14 +209,11 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         record,_=asset.registry_find(&p.registry,id)
         path=strings.clone(record.path,context.temp_allocator)
     }
-    reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
     texts:=texts_read(p.assets,p.languages[0])
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=&texts}
-    applied:bool
-    if written.made,written.removed,applied=document_apply(&args,&r,-1,text);!applied {return {},reading.problem}
     params:=widget_params(p.assets,id)
-    bytes,imports,loads:=document_bytes(&args,id,&r)
-    if !loads {return {},reading.problem}
+    bytes:[]u8
+    imports:[]ui.Tree_Data
+    if bytes,imports,problem=ui_apply(p,id,&r,text,&texts,&written);problem!="" {return {},problem}
     written.path,written.fresh=path,fresh
     file:=project.path(p.assets_root,path,allocator=context.temp_allocator) if fresh else asset.registry_file_path(&p.registry,path,context.temp_allocator)
     if problem=file_put(p,file,path,bytes,&written);problem!="" {return}
@@ -231,6 +229,18 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         put:Written
         return file_put(p,asset.registry_file_path(&p.registry,path,context.temp_allocator),path,bytes,&put)==""
     },p)
+    return
+}
+
+// The bytes of the .ui id once the document text declares it in r, with what
+// its keys say set in texts. problem: why the document is refused.
+@(private)
+ui_apply :: proc(p:^Project,id:base.Asset_Id,r:^Records,text:string,texts:^Texts,written:^Written) -> (bytes:[]u8,imports:[]ui.Tree_Data,problem:string) {
+    reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
+    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=texts}
+    applied,loads:bool
+    if written.made,written.removed,applied=document_apply(&args,r,-1,text);!applied {return nil,nil,reading.problem}
+    if bytes,imports,loads=document_bytes(&args,id,r);!loads {return nil,nil,reading.problem}
     return
 }
 
@@ -298,14 +308,12 @@ texts_command :: proc(p:^Project,args:[]string,output,errors:io.Writer) -> int {
 
 // Checks the .ui of the project, or those of ids, against the types of the
 // game: what does not load, the names that resolve to nothing, the paths
-// they bind that it lacks and the procedures their Draw nodes name; checking
-// all of them, also the node names the code of the game asks them for.
+// they bind that it lacks and the procedures their Draw nodes name.
 ui_check :: proc(p:^Project,ids:[]base.Asset_Id,problems:^[dynamic]Bind_Problem) {
     types:Bind_Types
     defer bind_types_free(&types)
     if len(ids)==0 {
         bind_check_all(problems,&types,context.allocator,p.assets,p.info)
-        code_names_check(problems,p.assets,{project.folder_path(p.root,.Game,context.temp_allocator)})
     } else {
         for id in ids {bind_check_file(problems,&types,context.allocator,p.assets,p.info,id)}
     }
@@ -329,10 +337,7 @@ run_fail :: proc(run:^Run,what,why:string) {
     else {fmt.wprintfln(run.errors,"mirai %s %s: %s: %s",kind_name(run.kind),run.verb,what,why)}
 }
 
-// recipes reads the cards of the plugins of the library of the project
-// (editor.plugin_recipes, in the program of the engine); without it a
-// document names the presets alone.
-command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Proc=nil) -> int {
+command :: proc(args:[]string,output,errors:io.Writer) -> int {
     engine:string
     roots:=make([dynamic]string,context.temp_allocator)
     rest:=make([dynamic]string,context.temp_allocator)
@@ -356,7 +361,7 @@ command :: proc(args:[]string,output,errors:io.Writer,recipes:Plugin_Recipes_Pro
     root:=project_choose(roots[:],engine,rest[2] if len(rest)>2 else "")
     p:Project
     reads:=kind==.Ui && verb=="read" || rest[0]=="texts"
-    if problem:=project_open(&p,root,engine,!reads,recipes);problem!="" {
+    if problem:=project_open(&p,root,engine,!reads);problem!="" {
         fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)
         return 1
     }
@@ -505,6 +510,10 @@ command_write :: proc(run:^Run,args:[]string) -> int {
     fmt.wprintf(run.output,"%s: %s, %d made and %d removed",written.path,state,written.made,written.removed)
     if written.followed>0 {fmt.wprintf(run.output,"; %d files that use it follow its parameters",written.followed)}
     fmt.wprintln(run.output)
+    for entry in written.stored {
+        text,_:=escene.stored_text(entry,written.path)
+        fmt.wprintln(run.output,text)
+    }
     return 0
 }
 

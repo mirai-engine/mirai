@@ -322,7 +322,7 @@ screen_node_rect :: proc(ctx:^ui.Context,tree:^ui.Widget_Tree,e:core.Entity,inde
 // the screen, and what it does have.
 @(private)
 asked_check :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
-    for &asked in gui.names_asked[:gui.names_asked_count] {
+    for &asked in gui.names_asked.names[:gui.names_asked.count] {
         if asked.checked {continue}
         found:=false
         slots:=core.entity_map_get(&gui.index,asked.entity)
@@ -433,7 +433,7 @@ instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,s
             if missing>0 {
                 file:[base.ASSET_ID_TEXT]u8
                 more:=fmt.tprintf(" and %d more",missing-1) if missing>1 else ""
-                core.report(problems,e,"gui.action","interface %s of its %s names the input action '%s'%s, which the game does not declare: its buttons do not take it and its prompts show nothing; declare it as an inp.Action constant and bind it in input.mirai, or choose another action in the .ui",host.assets_name(app.assets,asset,&file),kind,first,more)
+                core.report(problems,e,"gui.action","interface %s of its %s names the input action '%s'%s, which the game does not declare: its buttons do not take it and its prompts show nothing; declare it as a member of an enum @(actions) with its default bindings, or choose another action in the .ui",host.assets_name(app.assets,asset,&file),kind,first,more)
             }
         }
         // A Draw whose procedure the game does not declare keeps its place and shows nothing.
@@ -537,8 +537,8 @@ bind_rows :: proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u
     if source==nil || source.storage {return}
     table,_:=core.world_table(b.world,source.type)
     if table==nil || table.on<=0 {return}
-    // Both only grow: a write raises the version, rows that come or go the layout.
-    return core.raw_value(table,source.info,0),table.on,source.info.size,table.version+table.layout
+    // The version only grows, with every write and every row that comes, goes or moves.
+    return core.raw_value(table,source.info,0),table.on,source.info.size,table.version
 }
 
 // Brings the copy an interface is built with up to date: what its paths

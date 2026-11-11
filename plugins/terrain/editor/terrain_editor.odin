@@ -20,11 +20,6 @@ RING_SEGMENTS :: 64
 SCROLL_GUTTER :: ui.SCROLL_BAR+4 // the bar of the scroll area floats over the right edge of its content
 PREVIEW_OWNER :: u64(0x7465727261696e)
 
-// A .terrain in the browser and in the field of a Terrain.
-@(storage)
-Terrain_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-TERRAIN_KINDS_DEFAULT :: Terrain_Kinds{provider={kinds={0={kind=terrain.KIND,label="Terrain",color={168,124,72,255},icon=ui.Icon(u8(ui.Icon.User)+u8(editor.User_Icon.Terrain)),extension=terrain.EXTENSION,scene_data=true}},count=1}}
-
 @(storage,free="terrain_tool_free")
 Terrain_Tool :: struct {
     active,begin,over,ready:bool,
@@ -77,7 +72,7 @@ Stroke :: struct {
     builds:[dynamic]Preview_Build,
     previews:[dynamic]Preview,
     preview_at:[dynamic]i32, // the preview of each chunk of the grid, by preview_slot; -1: none
-    levels_seen:u64,         // the version of the chunks when the levels of the previews were last chosen
+    levels_seen:core.Seen,   // the chunks when the levels of the previews were last chosen
     to_local,to_world:mm.Mat4,
     scale,target:f32,
     normal:[3]f32,
@@ -330,8 +325,7 @@ preview_find :: proc(stroke:^Stroke,coord:[3]i32) -> int {
 preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk)) {
     dirty:=false
     for preview in stroke.previews {dirty||=preview.dirty}
-    if !dirty && core.version(chunks)==stroke.levels_seen {return}
-    stroke.levels_seen=core.version(chunks)
+    if !core.touched(chunks,&stroke.levels_seen) && !dirty {return}
     s:=&stroke.source
     if s.kind!=.Heightfield {return}
     counts:=terrain.chunk_counts(s)

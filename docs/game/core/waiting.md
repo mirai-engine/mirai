@@ -1,9 +1,10 @@
-# Waiting: deadlines and cooldowns
+# Waiting: deadlines, cooldowns and requests for later
 
-A wait is the tick it ends at, kept in your component. `core.deadline(time,seconds)` gives that
-tick and `core.due(time,at)` says whether it came; a deadline nobody set (0) has, and `core.NEVER`
-never does. It lasts the same seconds at any tick rate, and a rollback and a save keep it. This is
-the one way to wait: there is no `await`, no coroutine and no timer object.
+A wait is the tick it ends at, kept in your component or carried by a request.
+`core.deadline(time,seconds)` gives that tick and `core.due(time,at)` says whether it came; a
+deadline nobody set (0) has, and `core.NEVER` never does. It lasts the same seconds at any tick
+rate, and a rollback keeps it. This is the one way to wait: there is no `await`, no coroutine and
+no timer object.
 
 ```odin
 @(component)
@@ -31,6 +32,10 @@ game_mines :: proc(mines:core.Read(Mine),commands:core.Commands,time:core.Time) 
 - **How long ago:** `core.elapsed(time,door.opened_at)` gives the seconds since a tick, for a
   blend; `core.seconds_of` and `core.ticks_of` convert between ticks and seconds.
 - **Every so often:** `if core.due(time,next) {next=core.deadline(time,2.5)}`.
+- **A request for later:** `core.later(&requests.queue,time,2,Hit{target,5})` carries its due tick;
+  the owner takes with `core.take_due(&requests.queue,time)` what was pushed and what is due. A
+  library may push to its own queue: a spawner that sends a wave pushes the entity of the wave
+  for the tick of its next enemy, and takes it then.
 - **Bullet time:** an entity with `core.Own_Pace` waits on `core.own_time(time,clock,paces,e)`
   instead of `time`.
 - **Steps in a row** (open, hold, close): an enum of the step it is in and the tick it entered it;
@@ -43,7 +48,7 @@ game_mines :: proc(mines:core.Read(Mine),commands:core.Commands,time:core.Time) 
 - Counting ticks (`ticks-=1`, `time.tick%60`) lasts half as long at 120 Hz: give seconds to
   `core.deadline` or `core.ticks_of`.
 - `left-=time.dt` writes the row every tick, so it is copied and sent every tick: keep a deadline.
-- A request is taken in the tick it was pushed in: "do this in 2 s" is a deadline in a component,
-  and the request is pushed when it is due.
+- An owner that takes with `core.take` refuses what was pushed with `core.later`.
+- A queue is not saved: a wait a save must keep is a deadline in a component, not `core.later`.
 - A deadline of 0 is due: test `at!=0` when 0 means "not started".
 - While the clock does not advance (`time.dt` 0) a wait ends on the next tick.

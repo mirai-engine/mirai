@@ -8,6 +8,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
@@ -103,7 +104,7 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
   --api-port    port of the agent API (JSON-RPC and MCP); 7940 if missing, or a free one when it is taken; 0: a free one, never 7940
   --no-api      without the agent API
   --share       shares the scene with other editors; port 7950 if missing. Prints the invitation code
-  --join        joins the session of another editor with the code of its invitation (K7Q2-9XMA-PL3F-0B2C)
+  --join        joins the session of another editor with the code of its invitation (R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A)
   --name        name in the shared session
   --project     project folder; the current one if missing
   --scene       scene to open: a file or a path relative to the assets folder
@@ -150,10 +151,13 @@ Session :: struct {
     info:^core.World_Info,
     libraries:[dynamic]host.Project_Library, // loaded by Builds after the first: they stay until the editor ends
     library_generation:int,
-    cards:[CARD_CAPACITY]Card,                   // of cards(): the presets and those of the plugins of the library in use
+    cards:[CARD_CAPACITY]Card,                   // of cards(): those of the editor and of the plugins of the library in use
     card_tables:[CARD_CAPACITY]^core.Table_Info, // of the component each one is the icon of
     card_count:int,
+    cards_editor:int,                            // the first card of a plugin
     cards_library:int,                           // library_generation+1 of the cards held
+    recipes:[]author.Recipe,
+    recipes_library:int,                         // library_generation+1 of the recipes held
     providers:Providers,                         // of the plugins of the library in use
     edit_world:rawptr,   // the World being edited
     runs:[EDITOR_RUNS]Run,
@@ -196,6 +200,7 @@ Session :: struct {
     gpu_failure:Gpu_Failure_Reaction, // what the editor did once its GPU stopped working (gpu_failure.odin)
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
+    new_prefab:bool,     // what New makes: a prefab, or a scene
     frame:u64,
     quit:bool,
     frames:int,          // frames to run before it ends; 0: until it is asked to
@@ -748,7 +753,7 @@ requests_run :: proc(s:^Session) {
     if .New in requests {
         runs_stop(s)
         asset_document_activate(s,-1)
-        scene_new(s)
+        scene_new(s,s.new_prefab)
     }
     if .Open in requests {open_run(s)}
     if .Document_Switch in requests {
@@ -909,14 +914,22 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     if r==nil {return nil}
     if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,history.edits_error_text(s.edits.error));return nil}
     if !recovery_protect(s) {return nil}
+    world:=document_copy(s)
+    if world==nil {return nil}
+    s.run_serial+=1
+    r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
+    return r
+}
+
+// A World that copies the edited one, which Play and Simulate run: nil without memory.
+@(private)
+document_copy :: proc(s:^Session) -> rawptr {
     world:=host.app_world_create(s.app)
     if world==nil {return nil}
     // Physics takes the edits since the last frame as its own, or the copy reads them as written by another.
     simulation_settle(s,edited_world(s))
     if !core.world_copy(s.info,world,s.edit_world) {host.app_world_free(s.app,world);return nil}
-    s.run_serial+=1
-    r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
-    return r
+    return world
 }
 
 // Ends the run of the user and returns to Edit. A turn that began inside it
@@ -1157,6 +1170,8 @@ session_destroy :: proc(s:^Session) {
     s.edit_selection={}
     delete(s.copied)
     s.copied=nil
+    author.recipes_free(s.recipes)
+    s.recipes=nil
     console_destroy(s.console)
     settings_engine_free(s)
     delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)

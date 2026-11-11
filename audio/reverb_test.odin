@@ -19,35 +19,6 @@ energy :: proc(samples:[]f32) -> (sum:f32) {
 }
 
 @(test)
-the_low_pass_of_a_voice_keeps_the_lows_and_takes_away_the_highs :: proc(t:^testing.T) {
-    heard :: proc(t:^testing.T,hz,cutoff:f32) -> f32 {
-        m:=test_mixer(t)
-        defer mixer_destroy(m)
-        desc:=VOICE_DEFAULT
-        desc.lowpass=cutoff
-        testing.expect(t,voice_play(m,tone(t,m,hz,RATE/4),desc)!=0)
-        test_render(m,CHUNK_FRAMES*4) // past the filter settling
-        return energy(test_render(m,CHUNK_FRAMES*8))
-    }
-    open,low:=heard(t,100,0),heard(t,100,400)
-    testing.expectf(t,low>open*0.8,"a 100 Hz tone under a 400 Hz cutoff keeps its energy: %v of %v",low,open)
-    bright,high:=heard(t,8000,0),heard(t,8000,400)
-    testing.expectf(t,high<bright*0.01,"an 8 kHz tone under a 400 Hz cutoff loses it: %v of %v",high,bright)
-
-    // Turned on and off while it plays, the voice keeps going.
-    m:=test_mixer(t)
-    defer mixer_destroy(m)
-    voice:=voice_play(m,tone(t,m,8000,RATE/4))
-    test_render(m,CHUNK_FRAMES)
-    testing.expect(t,voice_set_lowpass(m,voice,400))
-    test_render(m,CHUNK_FRAMES)
-    testing.expect(t,energy(test_render(m,CHUNK_FRAMES))<bright*0.01/8)
-    testing.expect(t,voice_set_lowpass(m,voice,0))
-    test_render(m,CHUNK_FRAMES)
-    testing.expect(t,energy(test_render(m,CHUNK_FRAMES))>bright/8*0.5)
-}
-
-@(test)
 what_a_voice_sends_rings_on_in_the_reverb_after_it_ends :: proc(t:^testing.T) {
     // A click, then what the room gives back after it.
     tail :: proc(t:^testing.T,send:f32,reverb:Reverb,muted:=false) -> f32 {

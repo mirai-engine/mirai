@@ -7,6 +7,7 @@ import "core:reflect"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
+import input "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
@@ -265,7 +266,7 @@ Settings_Dialog :: struct {
     search:[64]u8,
     search_length:int,
     scroll,nav_scroll:[2]f32,
-    input:Input_Settings, // the category Input (input_settings.odin)
+    input:Input_Dialog,   // the category Input (input_settings.odin)
 }
 
 // Where unfolded keeps a category: a storage at its index +1, Input at the last.
@@ -314,7 +315,8 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     for pass in 0..<3 {
         first:=len(list)
         for &info,index in s.info.storages {
-            if info.setting==.None || s.settings_layer==.Engine && info.setting!=.Machine {continue}
+            // The category Input shows Input_Settings.
+            if info.setting==.None || s.settings_layer==.Engine && info.setting!=.Machine || info.type==input.Input_Settings {continue}
             group:=settings_group(s,&info)
             if pass==0 && group!="Engine" || pass==1 && (group=="Engine" || group=="Game") || pass==2 && group!="Game" {continue}
             owner:=settings_owner(&info)

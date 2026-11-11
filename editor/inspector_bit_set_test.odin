@@ -26,7 +26,7 @@ inspector_bits_frame :: proc(t:^testing.T,ctx:^ui.Context,type:runtime.Type_Info
 @(test)
 named_bit_sets_keep_axis_groups_inside_details_and_toggle_wide_members :: proc(t:^testing.T) {
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
     defer ui.context_destroy(&ctx)
     axes:Inspector_Axes={.Linear_Y,.Angular_Z}
     axis_type:=runtime.type_info_base(type_info_of(Inspector_Axes)).variant.(runtime.Type_Info_Bit_Set)

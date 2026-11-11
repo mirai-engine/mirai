@@ -14,7 +14,7 @@ Api_Collab_Host_Params :: struct {
 }
 
 Api_Collab_Join_Params :: struct {
-    invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like K7Q2-9XMA-PL3F-0B2C)"`,
+    invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A)"`,
     name:[COLLAB_NAME_BYTES]u8 `mirai:"text,optional"`,
     discard:bool `mirai:"optional,label=Replace the scene even with unsaved changes"`,
 }
@@ -158,19 +158,21 @@ share_row :: proc(ctx:^ui.Context,name:string,height:f32=26) -> bool {
 @(private)
 share_row_end :: proc(ctx:^ui.Context,name:string,height:f32) {ui.box_end(ctx,{})}
 
-// A code of the invitation in its box, with its own Copy; without a code, why there is none.
+// A code of the invitation with its own Copy, then in its box across the popup, which a code of
+// two addresses needs; without a code, why there is none.
 @(private)
 share_code :: proc(s:^Session,id,name,code,missing:string) {
     g:=s.gui
     ctx:=g.ctx
     if share_row(ctx,name) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={6,0,6,0},align_y=.Center,fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control"),clip_x=true}) {
-            ui.label(ctx,code!=""?code:missing,code!=""?10.5:ui.metric(ctx,"font_label"),code!=""?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),0)
-        }
+        ui.spacer(ctx,-1,0)
         if ui.button(ctx,shell_id(g,id),{label="Copy",variant="field",width=0,height=24,size=10.5,padding=8,center=true,disabled=code==""}).clicked {
             platform.clipboard_set(s.app.platform,code)
             notify(s,"Copied the code")
         }
+    }
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={6,0,6,0},align_y=.Center,fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control"),clip_x=true}) {
+        ui.label(ctx,code!=""?code:missing,code!=""?10.5:ui.metric(ctx,"font_label"),code!=""?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),0)
     }
 }
 
@@ -193,7 +195,7 @@ share_build :: proc(s:^Session) {
         case st==nil || st.role==.None:
             if share_row(ctx,"Name") {ui.text_field(ctx,shell_id(g,"share_name"),c.name[:],&c.name_length,{height=24,size=11,live=true,keep_caret=true})}
             if c.joining {
-                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="K7Q2-9XMA-PL3F-0B2C",live=true,keep_caret=true})}
+                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A",live=true,keep_caret=true})}
             }
             if c.error!=.None {
                 if share_row(ctx,"Error") {ui.label(ctx,collab_error_text(c.error),ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft"),0)}
@@ -216,7 +218,7 @@ share_build :: proc(s:^Session) {
                 if share_row(ctx,"Reason") {ui.label(ctx,st.reason,10.5,ui.tone(ctx,"text"),0)}
             }
             if st.role==.Host {
-                // One code joins from anywhere: a guest asks at its address and nearby.
+                // One code joins from anywhere: a guest asks at both of its addresses.
                 share_code(s,"share_copy","Code",string(st.code[:st.code_length]),"Opening the port on the router...")
             }
             for &peer,i in st.peers {

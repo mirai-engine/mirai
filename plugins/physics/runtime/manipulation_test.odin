@@ -56,6 +56,16 @@ physics_test_box :: proc(f:^Physics_Test,position,half:[3]f32,rigid:Maybe(Rigid_
     return e
 }
 
+// A Joint on an entity of its own under a, at a place relative to it.
+@(private)
+physics_test_joint :: proc(f:^Physics_Test,a:core.Entity,at:[3]f32,joint:Joint,rotation:=mm.Quat(1)) -> core.Entity {
+    e:=core.create(&f.entities)
+    core.add(&f.transforms,e,core.Transform{at,rotation,{1,1,1}})
+    core.add(&f.parents,e,core.Parent{entity=a})
+    core.add(&f.joints,e,joint)
+    return e
+}
+
 @(private)
 physics_test_pose :: proc(f:^Physics_Test,e:core.Entity) -> core.Transform {
     pose,_:=core.get(&f.transforms,e)
@@ -108,7 +118,8 @@ held_dynamic_bodies_restore_mass_gravity_and_copy_their_manipulation_state :: pr
     copied:Physics_State
     state_copy(&copied,&f.state)
     defer state_destroy(&copied)
-    testing.expect(t,.Manipulation in link_find(&copied,box).hold.by)
+    held:=held_of(&copied,box)
+    testing.expect(t,held!=nil && .Manipulation in held.by)
     testing.expect_value(t,sim.body_type(&copied.world,body),Body_Type.Kinematic)
     for _ in 0..<10 {physics_test_step(&f)}
     testing.expect(t,abs(physics_test_pose(&f,box).position.y-3)<0.001)

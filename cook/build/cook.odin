@@ -55,7 +55,7 @@ Cook_Desc :: struct {
     root:string,          // of the project: the sources of imported assets are named relative to it. "": the folder of assets
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
-    quick:bool,  // a cook that checks a change (a --dev game): lz_optimal.QUICK in place of SHIP
+    quick:bool,  // a cook that checks a change (a dev game): lz_optimal.QUICK in place of SHIP
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
 
@@ -197,9 +197,9 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     for file,at in files {
         if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS || file.kind==asset.KIND_STRINGS) {root_add(reached,&pending,&report,u32(at))}
-        // What a plugin brings is for its code, which no scene names.
+        // What a plugin brings is for its code, which no scene names; its sources stay behind.
         for folder in desc.plugins {
-            if strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
+            if file.state==.Asset && strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
         }
     }
     for root in manifest.roots {
@@ -211,7 +211,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
             }
         } else if strings.has_suffix(root,"/") {
             for file,at in files {
-                if strings.has_prefix(file.path,root) {
+                if file.state==.Asset && strings.has_prefix(file.path,root) {
                     root_add(reached,&pending,&report,u32(at))
                     named=true
                 }

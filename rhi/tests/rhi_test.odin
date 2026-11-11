@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "core:math"
+import "core:mem"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -216,12 +217,23 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 		{{0.8, -0.8, 0.5, 1}, {0, 0, 1, 1}},
 		{{0, 0.9, 0.5, 1}, {1, 0, 0, 1}},
 	}
+	// A compute copy writes the vertices the pass reads in the same frame, and
+	// nothing declares that read: the pass transitions what its draws bind.
+	source := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "source"})
 	buffer := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "vertices"})
-	rhi.buffer_upload_slice(d, buffer, 0, vertices[:])
+	rhi.buffer_upload_slice(d, source, 0, vertices[:])
+	fill := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = "fill"})
+	testing.expect(t, fill != 0, rhi.device_error(d))
 	cmd, ok := rhi.frame_begin(d)
 	testing.expect(t, ok)
 	if !ok {return}
-	rhi.cmd_barrier_buffer(cmd, buffer, .Shader_Read)
+	Params :: struct {count: u32, scale, offset: f32, pad: u32}
+	params := Params{count = size_of(vertices) / size_of(f32), scale = 1}
+	rhi.cmd_bind_pipeline(cmd, fill)
+	rhi.cmd_set_constants(cmd, 0, &params, size_of(params))
+	rhi.cmd_bind_buffer(cmd, 1, source)
+	rhi.cmd_bind_buffer(cmd, 2, buffer)
+	rhi.cmd_dispatch(cmd, 1)
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = "triangle"}
 	pass.colors[0] = {texture = target, load = .Clear, store = .Store, clear = {0, 0.5, 0, 1}}
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -239,8 +251,10 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	testing.expectf(t, pixels[bottom + 2] > 150 && pixels[bottom] < 120, "base color near the bottom row: %v", pixels[bottom:bottom + 4])
 	testing.expectf(t, pixels[1] > 100 && pixels[0] < 10, "clear color outside the triangle: %v", pixels[0:4])
 	rhi.buffer_destroy(d, buffer)
+	rhi.buffer_destroy(d, source)
 	rhi.texture_destroy(d, target)
 	rhi.pipeline_destroy(d, pipeline)
+	rhi.pipeline_destroy(d, fill)
 	expect_clean(t, d)
 }
 
@@ -428,48 +442,53 @@ rhi_pipelines_are_made_on_other_threads_while_frames_are_recorded :: proc(t: ^te
 	expect_clean(t, d)
 }
 
-// Devices made and destroyed at the same time by several threads, as the
-// tests of a package or the sessions of a tool do: the loader lock of the
-// application keeps the Vulkan loader to one of them at a time.
+// Devices made, used and destroyed one after another and then at the same
+// time by several threads, as the tests of a package or the sessions of a tool
+// do: the loader lock of the application keeps the Vulkan loader to one of
+// them at a time. The NVIDIA driver of Windows ended the process within a few
+// devices in a row when none other was alive (shared_device.keep_one).
 @(test)
-rhi_devices_are_created_and_destroyed_on_several_threads_with_one_loader_lock :: proc(t: ^testing.T) {
+rhi_devices_are_created_and_destroyed_in_turn_and_on_several_threads :: proc(t: ^testing.T) {
 	THREADS :: 4
 	ROUNDS :: 3
+	IN_TURN :: 24
 	Shared :: struct {
 		lock:                               sync.Mutex,
 		created, refused, wrong, complaints: i64,
 	}
+	use :: proc(shared: ^Shared, round: int) {
+		d, _ := rhi.device_create({app_name = "mirai rhi threads", validation = true, upload_bytes_per_frame = 1 << 20, loader_lock = &shared.lock})
+		if d == nil {
+			intrinsics.atomic_add(&shared.refused, 1)
+			return
+		}
+		values, echo: [256]u32
+		for &value, at in values {value = u32(at * (round + 3))}
+		buffer := rhi.buffer_create(d, {size = size_of(values), usage = {.Storage}, memory = .GPU, name = "threads"})
+		if buffer == 0 || !rhi.buffer_upload_slice(d, buffer, 0, values[:]) || !rhi.buffer_read_slice(d, buffer, 0, echo[:]) || echo != values {
+			intrinsics.atomic_add(&shared.wrong, 1)
+		}
+		intrinsics.atomic_add(&shared.complaints, i64(rhi.device_validation_errors(d)))
+		rhi.device_destroy(d)
+		intrinsics.atomic_add(&shared.created, 1)
+	}
 	work :: proc(shared: ^Shared) {
 		defer free_all(context.temp_allocator)
-		for round in 0 ..< ROUNDS {
-			d, _ := rhi.device_create({app_name = "mirai rhi threads", validation = true, upload_bytes_per_frame = 1 << 20, loader_lock = &shared.lock})
-			if d == nil {
-				intrinsics.atomic_add(&shared.refused, 1)
-				continue
-			}
-			values, echo: [256]u32
-			for &value, at in values {value = u32(at * (round + 3))}
-			buffer := rhi.buffer_create(d, {size = size_of(values), usage = {.Storage}, memory = .GPU, name = "threads"})
-			if buffer == 0 || !rhi.buffer_upload_slice(d, buffer, 0, values[:]) || !rhi.buffer_read_slice(d, buffer, 0, echo[:]) || echo != values {
-				intrinsics.atomic_add(&shared.wrong, 1)
-			}
-			intrinsics.atomic_add(&shared.complaints, i64(rhi.device_validation_errors(d)))
-			rhi.device_destroy(d)
-			intrinsics.atomic_add(&shared.created, 1)
-		}
+		for round in 0 ..< ROUNDS {use(shared, round)}
 	}
 	// One device first: without a GPU the test has nothing to say.
 	first := test_device(t)
 	if first == nil {return}
 	rhi.device_destroy(first)
 	shared: Shared
+	for round in 0 ..< IN_TURN {use(&shared, round)}
 	threads: [THREADS]^thread.Thread
 	for &worker in threads {worker = thread.create_and_start_with_poly_data(&shared, work)}
 	for worker in threads {
 		thread.join(worker)
 		thread.destroy(worker)
 	}
-	testing.expect_value(t, shared.created, THREADS * ROUNDS)
+	testing.expect_value(t, shared.created, IN_TURN + THREADS * ROUNDS)
 	testing.expect_value(t, shared.refused, 0)
 	testing.expect_value(t, shared.wrong, 0)
 	testing.expect_value(t, shared.complaints, 0)
@@ -547,7 +566,7 @@ rhi_texture_upload_writes_a_region_alone :: proc(t: ^testing.T) {
 
 // A texture takes on the GPU the bytes of another as they are, into its own
 // sRGB encoding too, each time it is copied; one of another size is refused
-// and keeps what it had.
+// and keeps what it had, and takes the mip of a chain of its size.
 @(test)
 rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -582,7 +601,18 @@ rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
 	for b in seen[:SIZE * SIZE] {if b != 40 {testing.expect(t, false, "a texture of another size keeps what it had"); break}}
-	for texture in ([]rhi.Texture{source, encoded, same, small}) {rhi.texture_destroy(d, texture)}
+	// A mip of a chain into the first of a texture of its size.
+	chain := rhi.texture_create(d, {width = SIZE, height = SIZE, mip_levels = 2, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy chain"})
+	second: [SIZE * SIZE]u8
+	for &b, i in second {b = u8(i * 3 + 1)}
+	testing.expect(t, chain != 0 && rhi.texture_upload_levels(d, chain, {texels[:], second[:]}), rhi.device_error(d))
+	cmd := rhi.immediate_begin(d)
+	rhi.cmd_copy_texture(cmd, chain, small, src_mip = 1)
+	for texture in ([]rhi.Texture{chain, small}) {rhi.cmd_barrier_texture(cmd, texture, .Shader_Read)}
+	testing.expect(t, rhi.immediate_end(d, cmd), rhi.device_error(d))
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	testing.expect(t, mem.compare(seen[:SIZE * SIZE], second[:]) == 0, "the smaller texture holds the second mip of the chain")
+	for texture in ([]rhi.Texture{source, encoded, same, small, chain}) {rhi.texture_destroy(d, texture)}
 	expect_clean(t, d)
 }
 

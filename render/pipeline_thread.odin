@@ -4,11 +4,13 @@ import "core:sync"
 import "core:thread"
 import "mirai:rhi"
 
-// The pipelines of the stages of Surface programs (program_stages.odin), made
-// on a thread of the renderer when it has one (Renderer_Desc.pipeline_thread):
-// a frame that asks for one does not wait for the driver, and the materials of
-// the program are drawn as their rows until a later frame finds it made.
-// Without the thread a pipeline is made where it is asked for.
+// The variants of the stages (pipeline_variants_ask), made on a thread of the
+// renderer before a frame needs them, which waits for one it needs that is not
+// made yet; and with Renderer_Desc.pipeline_thread the pipelines of the stages
+// of Surface programs (program_stages.odin): a frame that asks for one does not
+// wait for the driver, and the materials of the program are drawn as their
+// rows until a later frame finds it made. Without it they are made where they
+// are asked for.
 
 PIPELINE_JOBS :: 64 // pipelines asked for and not yet in place; past them one is asked for again later
 
@@ -87,13 +89,14 @@ pipeline_thread_destroy :: proc(r: ^Renderer) {
 }
 
 // The pipeline of graphics, or of compute when it has a shader, into owner^:
-// made now without the thread or when `now`, else asked of the thread, and
+// made now without the thread, when `now` or, unless `background`, without
+// pipelines_async; else asked of the thread, and
 // owner^ stays 0 until the frame that finds it made. owner must stay where it
 // is until then. False when no job is free: the caller asks again later.
 @(private)
-pipeline_make :: proc(r: ^Renderer, owner: ^rhi.Pipeline, graphics: rhi.Graphics_Pipeline_Desc = {}, compute: rhi.Compute_Pipeline_Desc = {}, now := false) -> bool {
+pipeline_make :: proc(r: ^Renderer, owner: ^rhi.Pipeline, graphics: rhi.Graphics_Pipeline_Desc = {}, compute: rhi.Compute_Pipeline_Desc = {}, now := false, background := false) -> bool {
 	t := r.pipeline_thread
-	if t == nil || now {
+	if t == nil || now || !r.pipelines_async && !background {
 		owner^ = rhi.pipeline_create_compute(r.device, compute) if compute.shader != nil else rhi.pipeline_create_graphics(r.device, graphics)
 		return true
 	}
@@ -131,6 +134,8 @@ pipelines_install :: proc(r: ^Renderer) {
 // at 0 asks again.
 @(private)
 pipelines_drop :: proc(r: ^Renderer) {
+	// The variants of the stages are asked for again, of the shaders in use then.
+	r.variants_wanted = true
 	t := r.pipeline_thread
 	if t == nil {return}
 	sync.mutex_lock(&t.mutex)
@@ -150,6 +155,35 @@ pipelines_drop :: proc(r: ^Renderer) {
 		if !making {return}
 		sync.cond_wait(&t.made, &t.mutex)
 	}
+}
+
+// Whether the thread was asked for the pipeline of owner and has not put it in place.
+@(private)
+pipeline_asked :: proc(r: ^Renderer, owner: ^rhi.Pipeline) -> bool {
+	t := r.pipeline_thread
+	if t == nil || sync.atomic_load(&t.busy) == 0 {return false}
+	sync.mutex_lock(&t.mutex)
+	defer sync.mutex_unlock(&t.mutex)
+	for job in t.jobs {if job.state != .Free && job.owner == owner {return true}}
+	return false
+}
+
+// A frame that needs the pipeline of owner, which the thread was asked for,
+// waits for it and puts what is made in place. False when it was not asked.
+@(private)
+pipeline_wait :: proc(r: ^Renderer, owner: ^rhi.Pipeline) -> bool {
+	t := r.pipeline_thread
+	if !pipeline_asked(r, owner) {return false}
+	sync.mutex_lock(&t.mutex)
+	for {
+		waiting := false
+		for job in t.jobs {waiting ||= job.owner == owner && (job.state == .Asked || job.state == .Making)}
+		if !waiting {break}
+		sync.cond_wait(&t.made, &t.mutex)
+	}
+	sync.mutex_unlock(&t.mutex)
+	pipelines_install(r)
+	return true
 }
 
 // Whether a pipeline of a program that was asked for is not in place: the

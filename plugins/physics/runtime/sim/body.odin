@@ -23,7 +23,7 @@ body_create :: proc(w:^World,desc:Body_Desc) -> Body_Handle {
         position=desc.position,rotation=rotation,center=desc.position,
         linear_damping=max(desc.linear_damping,0),angular_damping=max(desc.angular_damping,0),
         gravity_scale=desc.gravity_scale,sleep_threshold=max(desc.sleep_threshold,0),
-        shape_list=-1,contact_list=-1,joint_list=-1,island=-1,island_prev=-1,island_next=-1,solver_index=-1,
+        shape_list=-1,contact_list=-1,joint_list=-1,island=-1,island_prev=-1,island_next=-1,solver_index=-1,awake_prev=-1,awake_next=-1,
         generation=body.generation+1,type=desc.type,flags=desc.locks&BODY_LOCKS,
     }
     if desc.bullet {body.flags+={.Bullet}}
@@ -31,7 +31,7 @@ body_create :: proc(w:^World,desc:Body_Desc) -> Body_Handle {
     if desc.debris {body.flags+={.Debris}}
     if desc.type!=.Static {
         body.linear_velocity,body.angular_velocity=desc.linear_velocity,desc.angular_velocity
-        if !desc.asleep || desc.sleep_disabled {body.flags+={.Awake}}
+        if !desc.asleep || desc.sleep_disabled {body_awake_set(w,index,true)}
         island_create(w,index)
     }
     body_update_mass(w,index)
@@ -47,6 +47,7 @@ body_destroy :: proc(w:^World,h:Body_Handle) {
     for body.joint_list>=0 {joint_destroy_index(w,body.joint_list>>1)}
     for body.shape_list>=0 {shape_destroy_index(w,body.shape_list,false,false)}
     island_leave(w,index)
+    body_awake_set(w,index,false)
     body.generation+=1
     body.flags={}
     body.shape_list=w.body_free
@@ -66,7 +67,7 @@ body_wake :: proc(w:^World,index:i32) {
     for i:=w.islands[body.island].head;i>=0;i=w.bodies[i].island_next {
         other:=&w.bodies[i]
         stamp(w,other)
-        other.flags+={.Awake}
+        body_awake_set(w,i,true)
         other.sleep_time=0
         if st:=&w.step;st.woken_count<len(st.woken) {st.woken[st.woken_count]=i;st.woken_count+=1}
         if .Debris not_in other.flags {event_push(w,w.events.wake,6,Body_Event{body_handle(w,i),other.user_data})}
@@ -77,12 +78,43 @@ body_wake :: proc(w:^World,index:i32) {
 body_sleep :: proc(w:^World,index:i32) {
     body:=&w.bodies[index]
     stamp(w,body)
-    body.flags-={.Awake}
+    body_awake_set(w,index,false)
     body.linear_velocity,body.angular_velocity={},{}
     body.force,body.torque={},{}
     body.sleep_time=0
     body.solver_index=-1
     if .Debris not_in body.flags {event_push(w,w.events.sleep,5,Body_Event{body_handle(w,index),body.user_data})}
+}
+
+// Gives a body the Awake flag or takes it away, and keeps it in the list of the awake bodies, which the step
+// walks instead of every slot.
+@(private)
+body_awake_set :: proc "contextless" (w:^World,index:i32,awake:bool) #no_bounds_check {
+    body:=&w.bodies[index]
+    if (.Awake in body.flags)==awake {return}
+    stamp(w,body)
+    if awake {
+        body.flags+={.Awake}
+        body.awake_prev,body.awake_next=-1,w.awake_head
+        if w.awake_head>=0 {stamp(w,.Bodies,w.awake_head);w.bodies[w.awake_head].awake_prev=index}
+        w.awake_head=index
+        return
+    }
+    body.flags-={.Awake}
+    if body.awake_prev>=0 {stamp(w,.Bodies,body.awake_prev);w.bodies[body.awake_prev].awake_next=body.awake_next} else {w.awake_head=body.awake_next}
+    if body.awake_next>=0 {stamp(w,.Bodies,body.awake_next);w.bodies[body.awake_next].awake_prev=body.awake_prev}
+}
+
+// The awake bodies in `out`, in the order of their list, which the state holds: the order of the step.
+// Returns how many there are.
+@(private)
+bodies_awake :: proc(w:^World,out:[]i32) -> int #no_bounds_check {
+    count:=0
+    for i:=w.awake_head;i>=0;i=w.bodies[i].awake_next {
+        out[count]=i
+        count+=1
+    }
+    return count
 }
 
 // Wakes the bodies in contact with a body or joined to it: what it supported or pushed may now move.
@@ -125,6 +157,9 @@ body_update_mass :: proc(w:^World,index:i32) {
     }
     if body.min_extent==max(f32) {body.min_extent=0}
     if .Mass_Override not_in body.flags {
+        // Only a dynamic body keeps a given mass: one made dynamic again is given it anew.
+        given:=.Mass_Given in body.flags && body.type==.Dynamic?body.mass:0
+        if given==0 {body.flags-={.Mass_Given}}
         body.mass,body.inv_mass=0,0
         body.inertia,body.inv_inertia={},{}
         body.local_center={}
@@ -133,9 +168,13 @@ body_update_mass :: proc(w:^World,index:i32) {
                 body.local_center=center/mass
                 body.mass=mass
                 body.inertia=inertia-mat3_point_inertia(mass,body.local_center)
+                if given>0 {
+                    for row in 0..<3 {for column in 0..<3 {body.inertia[row,column]*=given/mass}}
+                    body.mass=given
+                }
             } else {
-                body.mass=1
-                body.inertia=mat3_diagonal({1,1,1})
+                body.mass=given>0?given:1
+                body.inertia=mat3_diagonal({body.mass,body.mass,body.mass})
             }
             body.inv_mass=1/body.mass
             body.inv_inertia=mat3_inverse(body.inertia)
@@ -158,7 +197,7 @@ body_update_proxies :: proc(w:^World,index:i32) {
         stamp(w,shape)
         shape.aabb=shape_aabb(w,shape,xf)
         shape.fat=body.type==.Static?shape.aabb:shape_fat(shape.aabb)
-        shape.flags+={.Moved}
+        shape_moved(w,s)
         if shape.proxy>=0 {spatial.dynamic_tree_move(tree,shape.proxy,shape.fat)}
     }
 }
@@ -323,10 +362,10 @@ body_set_type :: proc(w:^World,h:Body_Handle,type:Body_Type) {
     }
     if type==.Static {
         body.linear_velocity,body.angular_velocity={},{}
-        body.flags-={.Awake}
+        body_awake_set(w,index,false)
         body.solver_index=-1
     } else {
-        body.flags+={.Awake}
+        body_awake_set(w,index,true)
         body.sleep_time=0
         island_create(w,index)
         for key:=body.joint_list;key>=0;key=w.joints[key>>1].edges[key&1].next {
@@ -380,10 +419,23 @@ body_mass_update :: proc(w:^World,h:Body_Handle) {
     body_wake(w,index)
 }
 
+// Gives a dynamic body a mass, kg, whose center and inertia its shapes give, now and whenever they change;
+// zero or less takes the mass of its shapes too. A mass it already has changes nothing.
+body_set_mass :: proc(w:^World,h:Body_Handle,mass:f32) {
+    body,index:=body_read(w,h)
+    if body==nil || body.type!=.Dynamic || !(mass<=max(f32)) {return}
+    given:=mass>0
+    if .Mass_Override not_in body.flags && given==(.Mass_Given in body.flags) && (!given || body.mass==mass) {return}
+    body,_=body_get(w,h)
+    body.flags-={.Mass_Override,.Mass_Given}
+    if given {body.flags+={.Mass_Given};body.mass=mass}
+    body_update_mass(w,index)
+}
+
 body_reset_mass_properties :: proc(w:^World,h:Body_Handle) {
     body,index:=body_get(w,h)
     if body==nil {return}
-    body.flags-={.Mass_Override}
+    body.flags-={.Mass_Override,.Mass_Given}
     body_update_mass(w,index)
 }
 
@@ -496,16 +548,19 @@ body_gravity_of :: #force_inline proc "contextless" (w:^World,body:^Body) -> Vec
 world_set_body_gravity :: proc(w:^World,world:Vec3,at:proc(user:rawptr,point:Vec3) -> Vec3,user:rawptr,all:=false) {
     previous:=w.gravity
     w.gravity=world
-    Gravity_Task :: struct {w:^World,at:proc(user:rawptr,point:Vec3) -> Vec3,user:rawptr}
+    Gravity_Task :: struct {w:^World,at:proc(user:rawptr,point:Vec3) -> Vec3,user:rawptr,awake:[]i32}
     task :: proc(data:rawptr,first,last,worker:int) {
         t:=(^Gravity_Task)(data)
-        for &body in t.w.bodies[first:last] {
-            if body.generation&1==0 || body.type!=.Dynamic || .Awake not_in body.flags {continue}
-            body_gravity_take(t.w,&body,t.at==nil?t.w.gravity:t.at(t.user,body.center))
+        for index in t.awake[first:last] {
+            body:=&t.w.bodies[index]
+            if body.type!=.Dynamic {continue}
+            body_gravity_take(t.w,body,t.at==nil?t.w.gravity:t.at(t.user,body.center))
         }
     }
-    data:=Gravity_Task{w,at,user}
-    world_parallel(w,int(w.body_high),64,&data,task)
+    // Between steps the bodies of an island being split are free scratch.
+    awake:=w.step.island_bodies[:bodies_awake(w,w.step.island_bodies)]
+    data:=Gravity_Task{w,at,user,awake}
+    world_parallel(w,len(awake),64,&data,task)
     if !all {return}
     for &body,index in w.bodies[:w.body_high] {
         if body.generation&1==0 || body.type!=.Dynamic || .Awake in body.flags {continue}

@@ -37,7 +37,7 @@ a_reader_sees_the_settings_kept_with_its_source :: proc(t:^testing.T) {
     model_destroy(&model)
     testing.expect_value(t,seen.skeleton,given)
     kept:=base.Asset_Id{3,4}
-    if !testing.expect(t,sidecar_save(sidecar_path(path,folder,allocator=context.temp_allocator),{settings={skeleton=kept}})) {return}
+    if !testing.expect(t,sidecar_save(path,{settings={skeleton=kept}})) {return}
     model,error=import_model(path,formats[:],{root=folder,settings={skeleton=given}})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     model_destroy(&model)

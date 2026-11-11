@@ -10,6 +10,7 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import behavior "plugins:behavior/runtime"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 @(storage)
@@ -357,11 +358,11 @@ query :: proc(s:^editor.Session,call:^api.Call) {
     defer behavior.places_free(&places)
     result:behavior.Place_Result
     agents:=core.world_table_of(world,nav.Nav_Agent)
-    walks:=core.world_table_of(world,phys.Walk)
+    walks:=core.world_table_of(world,locomotion.Walk)
     empty_agents:core.Table(nav.Nav_Agent)
-    empty_walks:core.Table(phys.Walk)
-    swims:=core.world_table_of(world,phys.Swim)
-    empty_swims:core.Table(phys.Swim)
+    empty_walks:core.Table(locomotion.Walk)
+    swims:=core.world_table_of(world,locomotion.Swim)
+    empty_swims:core.Table(locomotion.Swim)
     paths_read:=core.read(paths if paths!=nil else &empty_paths)
     agents_read:=core.read(agents if agents!=nil else &empty_agents)
     time:core.Time

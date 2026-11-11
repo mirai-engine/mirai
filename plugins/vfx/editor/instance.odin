@@ -119,9 +119,9 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
         open:=editor.asset_list_shown(s,c.table,offset)
         revert:bool
         label,quad:="Multiple",ui.Quad{}
-        if same {label,quad=editor.asset_label_of(s,particle,"Default"),editor.asset_quad(s,effect.KIND,particle,editor.MATERIAL_ROW)}
-        clicked,anchor,dropped:=editor.asset_box(s,"particle",1,label,quad,open,local?&revert:nil,effect.KIND,particle if same else {})
-        if clicked {editor.asset_list_open(s,c.table,offset,effect.KIND,"Default",anchor)}
+        if same {label,quad=editor.asset_label_of(s,particle,"Default"),editor.asset_quad(s,effect.PARTICLE_KIND,particle,editor.MATERIAL_ROW)}
+        clicked,anchor,dropped:=editor.asset_box(s,"particle",1,label,quad,open,local?&revert:nil,effect.PARTICLE_KIND,particle if same else {})
+        if clicked {editor.asset_list_open(s,c.table,offset,effect.PARTICLE_KIND,"Default",anchor)}
         if dropped!={} {editor.field_write(s,c.table,c.entities,offset,mem.ptr_to_bytes(&dropped))}
         if revert {particle_revert(s,active)}
         if local && f.particle!={} && ui.button(ctx,ui.id(ctx,"apply"),{icon=.Save_Prefab,variant="ghost",width=22,height=editor.MATERIAL_ROW}).clicked {particle_apply(s,active)}

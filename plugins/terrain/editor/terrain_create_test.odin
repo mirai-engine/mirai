@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/kit"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -96,7 +97,7 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     core.world_settle(ref)
     // On the heap: with the session and the app, a context on the stack of a test thread overflows it.
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -171,7 +172,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     defer core.test_world_destroy(&world)
     ref:=core.test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,assets=&assets,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -208,7 +209,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     // Every kind starts with one layer that covers all of it.
     testing.expect_value(t,source.layer_count,u32(1))
     testing.expect_value(t,terrain.source_weights_at(&source,terrain.source_origin(&source)),[4]f32{1,0,0,0})
-    if kind==.Volume {testing.expect_value(t,source.distances.size,[3]int{5,5,5})} else {testing.expect_value(t,source.heights.size,[3]int{5,1,5})}
+    if kind==.Volume {testing.expect_value(t,source.field.size,[3]int{5,5,5})} else {testing.expect_value(t,source.field.size,[3]int{5,1,5})}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)
     testing.expect(t,!editor.file_exists(&s,path))
@@ -316,7 +317,7 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     defer core.test_world_destroy(&world)
     ref:=core.test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,assets=&assets,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -398,7 +399,8 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
     id:=world.terrains.values[0].source
-    operand:=editor.entity_create(&s,{preset=.Cube,name="Operand"})
+    operand:=editor.entity_create(&s,{name="Operand"})
+    core.add(&world.meshes,operand,erender.Mesh_Renderer{shape=.Cube})
     core.test_world_settle(&world)
     history.selection_set(&selection,{owner,operand})
     history.edits_reset(&edits,ref)
@@ -410,7 +412,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect(t,stroke_baseline(&tool)) {return}
     change:=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=2})
     if !testing.expect(t,change.changed && change.error==.None) {return}
-    cached_values:=raw_data(tool.stroke.source.heights.pages[0].values)
+    cached_values:=raw_data(tool.stroke.source.field.pages[0].values)
     stroke_end(&s,&tool,ref,app.assets)
     if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,edits.cursor,1)
@@ -418,7 +420,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(2))
     testing.expect_value(t,tool.stroke.id,id)
     testing.expect_value(t,tool.stroke.revision,u32(2))
-    testing.expect_value(t,raw_data(tool.stroke.source.heights.pages[0].values),cached_values)
+    testing.expect_value(t,raw_data(tool.stroke.source.field.pages[0].values),cached_values)
     testing.expect(t,!tool.stroke.active && !tool.stroke.changed)
     committed:=test_held(t,&assets,relative)
     defer delete(committed)
@@ -440,7 +442,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     change=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=9})
     if !testing.expect(t,change.changed && change.error==.None) {return}
     // A height the format refuses: the file cannot be written.
-    terrain.grid_set(&tool.stroke.source.heights,0,0,2*terrain.HEIGHT_LIMIT)
+    terrain.grid_set(&tool.stroke.source.field,0,0,2*terrain.HEIGHT_LIMIT)
     stroke_end(&s,&tool,ref,app.assets,consume=operand,label="Subtract terrain")
     testing.expect_value(t,string(s.toast[:s.toast_length]),"The terrain could not be written")
     testing.expect_value(t,edits.cursor,0)
@@ -454,14 +456,14 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect(t,core.alive(&world.entities,operand) && core.has(&world.meshes,operand))
     testing.expect_value(t,len(selection.entities),2)
     testing.expect_value(t,history.selection_active(&selection),operand)
-    testing.expect(t,tool.stroke.id=={} && len(tool.stroke.source.heights.pages)==0)
+    testing.expect(t,tool.stroke.id=={} && len(tool.stroke.source.field.pages)==0)
     // The step to revision 2 still holds what redo brings back.
     testing.expect_value(t,len(tool.steps),1)
     at:=editor.revision_find(&tool.history,id,1,2)
-    if !testing.expect(t,at>=0 && len(tool.steps[at].heights.pages)==1) {return}
+    if !testing.expect(t,at>=0 && len(tool.steps[at].field.pages)==1) {return}
     redo_step:=&tool.steps[at]
     testing.expect_value(t,redo_step.info.revision,u32(2))
-    for value,i in redo_values {testing.expect_value(t,redo_step.heights.pages[0].page.values[i],value)}
+    for value,i in redo_values {testing.expect_value(t,redo_step.field.pages[0].page.values[i],value)}
     after_failure:=test_held(t,&assets,relative)
     defer delete(after_failure)
     testing.expect_value(t,string(after_failure),string(original))
@@ -472,12 +474,4 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     after_redo:=test_held(t,&assets,relative)
     defer delete(after_redo)
     testing.expect_value(t,string(after_redo),string(committed))
-}
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(TERRAIN_KINDS_DEFAULT.provider,&m),"")
 }

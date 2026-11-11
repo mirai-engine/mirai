@@ -604,7 +604,7 @@ projects_body :: proc(s:^Session,popup:bool) {
     if ui.box(ctx,{width=ui.fixed(PROJECTS_SIDEBAR),height=ui.GROW,direction=.Column,padding={18,top,18,20},fill=ui.tone(ctx,"bar_top"),corners=corners}) {
         if ui.box(ctx,{width=ui.FIT,height=ui.FIT,gap=8,align_y=.Center}) {
             ui.icon(ctx,ui.icon_user(u8(User_Icon.Mirai)),MARK_ARM,44)
-            ui.canvas(ctx,ui.id(ctx,"projects_wordmark"),ui.fixed(WORDMARK_SIZE.x*0.6),ui.fixed(WORDMARK_SIZE.y*0.6),u32(User_Icon.Wordmark),0)
+            ui.canvas(ctx,ui.id(ctx,"projects_wordmark"),ui.fixed(WORDMARK_SIZE.x*0.6),ui.fixed(WORDMARK_SIZE.y*0.6),{name=u64(User_Icon.Wordmark)})
         }
         if branch:=base.text_get(p.engine_branch[:]);branch!="" {
             ui.spacer(ctx,0,10)

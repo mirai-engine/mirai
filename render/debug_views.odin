@@ -49,10 +49,10 @@ debug_view_status :: proc(r: ^Renderer, plan: ^Render_Plan, mode: Debug_View) ->
 	s := &r.settings
 	#partial switch mode {
 	case .Shadows:
-		if plan.direct != .Blocks || s.reference_lights {return false, "The direct light of this pipeline has no blocks of shadows to show"}
+		if plan.direct != .Blocks {return false, "The direct light of this pipeline has no blocks of shadows to show"}
 	case .Reflections, .Reflections_Raw:
 		if .Reflections not_in plan.stages {return false, "This pipeline has no traced reflections"}
-		if !s.reflections {return false, "Traced reflections are off in the settings"}
+		if s.reflections == .Off {return false, "Traced reflections are off in the settings"}
 		if r.scene.smoothest >= s.reflection_roughness {return false, "No material is smooth enough to trace a reflection"}
 	case .Indirect:
 		if !s.gi_enabled {return false, "Indirect light is off in the settings"}
@@ -77,7 +77,7 @@ debug_view_pass_needed :: proc "contextless" (mode: Debug_View) -> bool {
 debug_views_pass :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	mode := p.inspection.mode
-	if !debug_view_pass_needed(mode) || !ensure_pipelines(r, {.Debug_Views}) {return}
+	if !debug_view_pass_needed(mode) || pipeline_of(r, .Debug_Views)^ == 0 {return}
 	available, _ := debug_view_status(r, p.plan, mode)
 	source := r.dummy_texture
 	#partial switch mode {

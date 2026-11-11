@@ -28,6 +28,7 @@ Entries are for Odin `dev-2026-11`.
 | `sad_u8x16` (`cook/compressor/texture/common/vector.odin`) and `sad_halves` (`vector_other.odin`): `simd.reduce_add_ordered` | llvm/llvm-project#239204 | `simd.reduce_add_bisect` of a widened byte difference returns the whole sum at `-o:minimal` and `-o:speed` |
 | the 256-bit kernels (`cook/compressor/texture/common/dispatch_amd64.odin`, `cook/compressor/texture/bc7/dispatch_amd64.odin`): `x86._mm256_shuffle_epi8` and `x86._mm256_permutevar8x32_epi32` | odin-lang/Odin#8199 | `simd.runtime_swizzle` of two `#simd[32]u8` in an `avx2` procedure has no `vpinsrb` with `-build-mode:asm -o:speed` |
 | `base.remove_all` (`std/base/remove_all.odin`): every folder of the engine and its tests is removed with it instead of `os.remove_all`, whose Windows version calls `SHFileOperationW`; the shell raises first-chance C++ exceptions inside it, and the vectored handler of `core:testing` stops the test for any of them ("Signal caught: Unknown"), or kills the runner when the cleanup of a stopped test runs on the main thread | none | `os.remove_all` on Windows walks the folder with `DeleteFileW` and `RemoveDirectoryW`, and `core:testing` on Windows lets an exception that a handler of the program catches go by; go back to `os.remove_all` and run the editor tests of `ai_subagents_test.odin` and `sections_test.odin` together |
+| `constant_field_compare` (`engine/render/graphics_test.odin`): compares a field of a constant through `testing.expect_value` | none | with `A :: struct {x:f32, e:E}` and `C :: A{x=1}`, `C.e == .Off` (a field the literal leaves out compared with `==`) is true; today it folds to false |
 | one kernel body per vector width (`cook/compressor/texture/common/vqhelp.odin`, `bc7/quant.odin`, `dispatch_amd64.odin`) | odin-lang/Odin#8198 | `total :: proc($W:int,v:#simd[W]u32) -> u32` builds |
 
 ## Slang and SPIRV
@@ -39,3 +40,11 @@ Defects of the tools that translate the shaders (`cook/shaders`).
 | `SURFACE_COVERAGE_INCLUDE` (`cook/shaders/programs.odin`): the stages that trace include the alpha of the programs with coverage, and their fingerprint follows it | shader-slang/slang#14212, #6607 | `slangc -incomplete-library -target spirv` compiles a stage that calls an `extern` function in a loop and a module that only exports functions links; a ray stage with the `extern` alpha plus the alpha of each program linked with `spirv-link` then costs the same |
 | `shader_reduced` (`cook/shaders/shaders.odin`): compiles `fsr3_prepare_reactivity` and `fsr3_shading_change` with `-O1` | KhronosGroup/SPIRV-Tools#7005 | the `spirv-opt -O` of `.deps` and of the Vulkan SDK optimizes both stages |
 | `metal_table_buffer` (`cook/shaders/shaders.odin`): moves the argument buffer of the texture table to `TEXTURE_TABLE_METAL_BUFFER` (`rhi/rhi.odin`) | none | the SPIRV-Cross of `.deps` and of the SDK has `--msl-resource-binding`; use it to place the table |
+
+## Drivers
+
+Defects of GPU drivers that the GPU tests reach.
+
+| Marker in code | Upstream | Remove when |
+| --- | --- | --- |
+| `keep_one` (`rhi/shared_device/shared_device.odin`): the GPU tests of a process keep one device alive from the first `hold` to the end; the NVIDIA Windows driver 616.92 (`nvoglv64.dll`) frees the context of the worker threads of the last device of a process while they still run, and one of them then calls through freed memory (0xC0000005) | none | without `keep_one`, `mirai test rhi/tests rhi_devices_are_created_and_destroyed_in_turn_and_on_several_threads` passes 20 runs in a row under `MIRAI_VALIDATION=1` on that driver's successor |

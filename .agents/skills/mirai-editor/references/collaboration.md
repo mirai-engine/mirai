@@ -19,13 +19,14 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   `discard`, and `--join` enters with `discard`. Sharing and joining require `Edit`, a project with
   an assets folder and no open session (`Busy`). `COLLAB_PEERS` editors fit.
 - On sharing, the host creates a token and shows its invitation code
-  ([invitations](../../mirai-networking/references/networking.md)): the address the router mapped
-  for it ([port mapping](../../mirai-networking/references/port-mapping.md)) or, without a mapping,
-  that of its network (`address_lan`: the one the system uses toward the internet, not a virtual
-  adapter's), and the token. Whoever enters without that token gets no answer and times out; the
-  host's log shows the code each time it changes.
-- The host sees one code in Session, once the router answered: a guest asks at the address of the
-  code and nearby, so the same code joins from the host's network and from outside it.
+  ([invitations](../../mirai-networking/references/networking.md)): the address of its network
+  (`address_lan`: the one the system uses toward the internet, not a virtual adapter's), the one
+  the router mapped for it ([port mapping](../../mirai-networking/references/port-mapping.md)) and
+  the token. Whoever enters without that token gets no answer and times out; the host's log shows
+  the code each time it changes.
+- The host sees one code in Session, once the router answered: a guest asks at both addresses at
+  once, so the same code joins from the host's network and from outside it. A guest's networked
+  Play joins the host's game at those same addresses with the game's port and its mapping.
 - **Rejoining.** Each editor has an id (`Collab.client`, in the Hello): one that enters again while
   the host holds its previous connection takes its place and its color, and that connection is
   closed with what it had selected. Whoever leaves the session's list retains nothing.
@@ -34,15 +35,15 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
 
 ## What travels
 
-- **The whole scene**, once on entering: what `scene.capture` writes, in chunks over the reliable
-  channel. The guest loads it with `scene.replace`: one that does not fit
+- **The whole scene**, once on entering: what `scene.capture` writes, as one message over the
+  reliable channel. The guest loads it with `scene.replace`: one that does not fit
   whole leaves its world as it was and ends the session. Assets do not travel, except the unsaved
   ones: both editors must have the same files.
 - The network half of the session runs in its own thread (`worker_start`): an editor busy for a
   while (generating a game's world, a long frame) keeps responding and nobody gives it up for gone.
-- Reliable data waits in each peer's queue (`Collab_Peer.out`) and enters the channel as long as it
-  fits (`message_send` returns `Full`): a scene larger than the queue takes longer, it does not
-  cut the connection.
+- Reliable messages wait in each peer's queue (`Collab_Peer.out`) and stream into the channel as
+  it drains (`message_send` with `sent`); the pieces they arrive in are joined in
+  `Collab_Peer.incoming`. Collaboration never cuts a message itself: the transport does.
 - **The differences**, every `COLLAB_EDIT_INTERVAL`: per component and entity, identified by
   `core.Id`, the fields of each row that changed (`core.Entity` fields as `Id`), the whole row when
   the others have none, whether it was turned off or on by itself and the `Id`s of the rows that
@@ -80,7 +81,7 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   the two an editor may hold instances of a file it does not have yet: they read as stale and no
   end refreshes them by itself ([overrides](prefabs.md#overrides)).
 - **Pings** (`collab_ping.odin`): [figures](editor.md#pings).
-- **Asset files** (`collab_files.odin`, `File` message in chunks): what changes an asset file in
+- **Asset files** (`collab_files.odin`, one `File` message): what changes an asset file in
   an editor (an agent's material, a painted texture, an undo) travels to the others and stays in the
   memory of their registry, unsaved, as where it was edited (`file_changed`, `file_set`). The host
   forwards it and, to whoever enters, sends its unsaved files after the scene.
@@ -134,7 +135,7 @@ online players. How a guest joins:
    already returned, nothing unsent from the journal, `collab_unsent`, nor an open gesture or
    preview) has the server's scene and copies it to `.mirai/play/host.scene`.
 3. If it could not, or entered the session after the mark, on joining it requests it
-   (`Play_Scene_Request`) and the host sends it in chunks its `.mirai/play/play.scene`
+   (`Play_Scene_Request`) and the host sends its `.mirai/play/play.scene`
    (`Play_Scene`), if the game continues.
 4. The guest's player connects to the session's address with the server's port; from outside the
    host's network, with the one its router mapped, and waits (`Waiting`) while the router has not

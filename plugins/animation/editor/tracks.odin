@@ -51,7 +51,7 @@ Tracks :: struct {
     hash:u64,
 }
 TRACKS_DEFAULT :: Tracks{speed=1,shown=-1,track=-1,key=-1,field=-1}
-Tracks_Menu :: struct {track:int,time:f32,on_key:bool}
+Tracks_Menu :: struct {track:int,time:f32,on_key:bool,marker:int} // marker: the row in the view of the one it deletes; -1: none
 
 @(storage)
 Tracks_Api :: struct {provider:editor.Api_Provider}
@@ -243,9 +243,15 @@ tracks_key_moved :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.An
     }
 }
 
-// The ruler of the clip with a lane of keys for each track in view: a press chooses a key, a drag
-// moves it, the button of a lane adds one at the head with the value the track has there, and the
-// right button adds or deletes one.
+// A lane of the strip: a track of the clip, or the markers of the clip on one target (the shots
+// of a camera, the actions of an actor) after the tracks.
+@(private)
+Tracks_Lane :: struct {track:int,target:string,markers:[]int} // track -1: markers, by their row in the view
+
+// The ruler of the clip with a lane of keys for each track in view and one of markers for each
+// target they are on: a press chooses a key, a drag moves a key or a marker, the button of a track
+// adds a key at the head with the value the track has there, and the right button adds or deletes
+// a key or deletes a marker.
 @(private)
 tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animation_View,clip:int,duration,span:f32) {
     ctx:=s.gui.ctx
@@ -254,23 +260,41 @@ tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animat
     c:=view.clips[clip]
     name:=base.text_get(c.name[:])
     tracks:=view.tracks[c.first_track:][:c.track_count]
-    count:=len(tracks)
-    if t.track>=count {t.track,t.key=-1,-1}
+    rows:=make([dynamic]Tracks_Lane,context.temp_allocator)
+    for _,i in tracks {append(&rows,Tracks_Lane{track=i})}
+    for &marker,i in view.markers[c.first_marker:][:c.marker_count] {
+        target:=base.text_get(marker.target[:])
+        lane:=-1
+        for row,j in rows {if row.track<0 && row.target==target {lane=j}}
+        if lane<0 {append(&rows,Tracks_Lane{track=-1,target=target});lane=len(rows)-1}
+        indices:=make([dynamic]int,context.temp_allocator)
+        append(&indices,..rows[lane].markers);append(&indices,int(c.first_marker)+i)
+        rows[lane].markers=indices[:]
+    }
+    count:=len(rows)
+    if t.track>=len(tracks) {t.track,t.key=-1,-1}
     if t.track>=0 {
         if t.track<t.first {t.first=t.track} else if t.track>=t.first+TRACKS_LANES {t.first=t.track-TRACKS_LANES+1}
     }
     t.first=clamp(t.first,0,max(count-TRACKS_LANES,0))
-    shown:=tracks[t.first:][:min(TRACKS_LANES,count-t.first)]
+    shown:=rows[t.first:][:min(TRACKS_LANES,count-t.first)]
     lanes:=make([]editor.Timeline_Lane,len(shown),context.temp_allocator)
     t.strip.mark={}
-    for &track,i in shown {
+    for row,i in shown {
+        if row.track<0 {
+            marks:=make([]editor.Timeline_Mark,len(row.markers),context.temp_allocator)
+            for at,j in row.markers {marks[j]={frame=view.markers[at].time*rate,name=base.text_get(view.markers[at].name[:])}}
+            lanes[i]={name=row.target!=""?row.target:"Markers",marks=marks}
+            continue
+        }
+        track:=&tracks[row.track]
         keys:=view.keys[track.first_key:][:track.key_count]
         marks:=make([]editor.Timeline_Mark,len(keys),context.temp_allocator)
         for key,j in keys {
             marks[j].frame=key.time*rate
-            if t.first+i==t.track && t.key>=0 && abs(key.time-t.key)<=AUTHORING_TIME_EPSILON {t.strip.mark={i,j+1}}
+            if row.track==t.track && t.key>=0 && abs(key.time-t.key)<=AUTHORING_TIME_EPSILON {t.strip.mark={i,j+1}}
         }
-        lanes[i]={name=track_label(&track),marks=marks,add=true}
+        lanes[i]={name=track_label(track),marks=marks,add=true}
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),padding={12,0,12,0},gap=8,align_y=.Center}) {
         ui.label(ctx,editor.entity_label(w,t.entity),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
@@ -292,26 +316,36 @@ tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animat
         t.playing=!t.playing
         if t.playing && t.head>=duration {t.head=0}
     }
-    if picked:=t.strip.mark;picked[1]>0 && picked[0]<len(shown) {
-        track:=shown[picked[0]]
-        t.track,t.key=t.first+picked[0],view.keys[track.first_key+u32(picked[1]-1)].time
+    if picked:=t.strip.mark;picked[1]>0 && picked[0]<len(shown) && shown[picked[0]].track>=0 {
+        track:=tracks[shown[picked[0]].track]
+        t.track,t.key=shown[picked[0]].track,view.keys[track.first_key+u32(picked[1]-1)].time
     } else {t.key=-1}
+    lane:=Tracks_Lane{track=-2}
+    if r.lane>=0 && r.lane<len(shown) {lane=shown[r.lane]}
     switch {
-    case r.moved && r.lane<len(shown):
-        track:=shown[r.lane]
+    case r.moved && lane.track==-1 && r.index>=0 && r.index<len(lane.markers):
+        marker:=view.markers[lane.markers[r.index]]
+        editor.command_call(s,"animation.marker.set",tracks_marker_params(animation.asset,name,marker,fmt.tprintf(`"time":%v,"duration":%v`,max(r.to,0)/rate,marker.duration)))
+    case r.moved && lane.track>=0:
+        track:=tracks[lane.track]
         from,to:=view.keys[track.first_key+u32(r.index)].time,max(r.to,0)/rate
         params:=tracks_params(animation.asset,name,base.text_get(track.target[:]),track.property,track.slot)
         editor.command_call(s,"animation.key.set",fmt.tprintf(`{{%s,"time":%v,"to":%v}}`,params,from,to))
-        t.track,t.key=t.first+r.lane,to
-    case r.add && r.lane<len(shown):
-        tracks_key_add(s,animation.asset,name,view,&shown[r.lane],t.head)
-    case r.menu && r.lane<len(shown):
-        track:=shown[r.lane]
-        t.menu={t.first+r.lane,view.keys[track.first_key+u32(r.index)].time if r.index>=0 else max(r.to,0)/rate,r.index>=0}
+        t.track,t.key=lane.track,to
+    case r.add && lane.track>=0:
+        tracks_key_add(s,animation.asset,name,view,&tracks[lane.track],t.head)
+    case r.menu && lane.track>=0:
+        track:=tracks[lane.track]
+        t.menu={lane.track,view.keys[track.first_key+u32(r.index)].time if r.index>=0 else max(r.to,0)/rate,r.index>=0,-1}
+        ui.popup_open(ctx,ui.id(ctx,"menu"),r.anchor)
+    case r.menu && lane.track==-1 && r.index>=0 && r.index<len(lane.markers):
+        t.menu={-1,0,false,lane.markers[r.index]}
         ui.popup_open(ctx,ui.id(ctx,"menu"),r.anchor)
     }
     if ui.popup(ctx,ui.id(ctx,"menu"),{min_width=ui.MENU_CHOICE_WIDTH}) {
-        if t.menu.track<count {
+        if t.menu.marker>=0 && t.menu.marker<len(view.markers) {
+            if ui.menu_item(ctx,ui.id(ctx,"menu_marker"),"Delete marker",{icon=.Cross,danger=true}) {editor.command_call(s,"animation.marker.set",tracks_marker_params(animation.asset,name,view.markers[t.menu.marker],`"remove":true`))}
+        } else if t.menu.track>=0 && t.menu.track<len(tracks) {
             track:=&tracks[t.menu.track]
             if !t.menu.on_key {
                 if ui.menu_item(ctx,ui.id(ctx,"menu_add"),"Add key",{icon=.Plus}) {tracks_key_add(s,animation.asset,name,view,track,t.menu.time)}
@@ -321,6 +355,15 @@ tracks_strip :: proc(s:^editor.Session,t:^Tracks,w:core.World_Ref,view:aa.Animat
             }
         }
     }
+}
+
+// The params of animation.marker.set that change a marker of the clip shown, found by its name,
+// target and time, with what is asked of it.
+@(private)
+tracks_marker_params :: proc(asset:base.Asset_Id,clip:string,marker:aa.Animation_Marker,asked:string) -> string {
+    marker:=marker
+    text:[base.ASSET_ID_TEXT]u8
+    return fmt.tprintf(`{{"asset":"%s","clip":%q,"name":%q,"target":%q,"at":%v,%s}}`,base.asset_id_format(asset,text[:]),clip,base.text_get(marker.name[:]),base.text_get(marker.target[:]),marker.time,asked)
 }
 
 // Adds a key at a time with the value the track has there.

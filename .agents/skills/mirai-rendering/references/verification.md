@@ -9,14 +9,17 @@
   installed, `VK_LAYER_PATH` points to it (on Windows, the SDK `Bin` or
   `.deps/vulkan-sdk-windows`). Metal: `MTL_DEBUG_LAYER=1`.
 - The `_hw` variants need a GPU with ray queries or Mesa lavapipe (`VK_DRIVER_FILES` pointing to
-  its ICD). `MIRAI_RT=software` forces the software BVH.
+  its ICD). On Vulkan, `MIRAI_RT=software` forces the software BVH; Metal has only the hardware
+  tracer.
 - A GPU test takes its device with `shared_device.take_or_skip` (`rhi/shared_device`), and one of
   `render` its renderer with `fixture_init` (`render/fixture_test.odin`): the tests of a
   process share one per variant (with and without hardware ray tracing) and run one at a time
   even if there are several threads. It fails if it leaves alive anything it made or if the
   device or the validation report errors. Only a test that exercises a device (capacities, ring,
   messages, loss) or measures without validation makes its own device, with
-  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone. The GPU tests of
+  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone; a shared device stays
+  alive beside it, so no test destroys the last device of the process
+  ([driver defect](../../../../docs/ODIN_WORKAROUNDS.md#drivers)). The GPU tests of
   `rhi` are in `rhi/tests`
   (`mirai test rhi/tests`), which can import it; those of `rhi` do not touch the GPU.
 - The GPU tests of a plugin load the shaders that `mirai test` generates before compiling them in
@@ -119,13 +122,14 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
 - The indirect (`Debug_View.Indirect`, without TAA) is compared in nits with the
   [reference](gi.md#indirect-reference) at its key moments (error, SSIM, bias and leak); the
   shadow cases (`Gi_Case.direct`: a pushed body and a falling one, with the view still) compare
-  the direct light (`Debug_View.Direct`) with `reference_lights` in the same pose, while moving
+  the direct light (`Debug_View.Direct`) with the [reference of the lights](lights.md#shadows)
+  in the same pose, while moving
   and after stopping;
   in a still window noise, boiling, flicker, fireflies and blotches are measured, whose floor is
   the noise of the reference (`MIRAI_GI_REFERENCE_FRAMES` lowers it); in the pans, the
   reprojected flicker and the settling on stopping; after each change, the time to 90 % and 99 %
   of the settled value; and the GPU and CPU cost.
-- Controls: `MIRAI_RT=software`, `MIRAI_GI_REFERENCE=<folder>` (stores and reuses the
+- Controls: `MIRAI_RT=software` (Vulkan), `MIRAI_GI_REFERENCE=<folder>` (stores and reuses the
   references), `MIRAI_GI_DUMP=<folder>`, `MIRAI_GI_CASES`, `MIRAI_GI_SETTINGS=name=value,...` and
   `MIRAI_GI_WINDOW=from,to` for ablations.
 - Blotches in an editor scene: the deviation of the luminance against its blur on a smooth wall,
@@ -135,7 +139,7 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
 ## Render check
 
 `mirai render check demo` measures what the user sees: the fixed views of `demo/render_check.mirai`
-in a windowless editor compiled at `--dev`, measured only between checkouts (it takes the `mirai
+in a windowless editor compiled in dev, measured only between checkouts (it takes the `mirai
 measure` turn), against the `main` build measured the same way. A global change of the image or its
 cost (GI, light, shadows, TAA, exposure, tonemap, demo materials, a pass that runs in every scene)
 is accepted only with this check, without regressions, besides the reference metrics of `gi_test`:
@@ -153,10 +157,10 @@ depends on what the GPU receives and does:
 
 While working, `--views` and `--quality`.
 
-- **`--dev` or `--release`.** Both builds of a check are built in the same mode, `--dev` unless it
+- **Dev or `--release`.** Both builds of a check are built in the same mode, dev unless it
   says otherwise. The image, the frame and the GPU of each pass come out the same in the two modes;
-  the CPU costs about twice as much in `--dev`, and its figures only compare against another
-  `--dev`. `--release` only when the doubt is the cost of the CPU or a budget in absolute numbers,
+  the CPU costs about twice as much in dev, and its figures only compare against another
+  dev. `--release` only when the doubt is the cost of the CPU or a budget in absolute numbers,
   or when the user asks for it. Measures saved of one mode do not serve the other, and against a
   report of the other mode the cost is not compared.
 - **Views** (`render_check.mirai`): window sizes (the demo measures only 1440×900; another with
@@ -183,8 +187,8 @@ While working, `--views` and `--quality`.
     samples (`main_wall` flies sideways).
   - In a pushing view (`church_push`): the luma MAE at mid push against the same settled pose,
     judged like the stability, and the frames after stopping until the image is within 10 % and
-    1 % of what it deviated by on stopping (`RENDER_PUSH_AFTER`). The editor does not expose
-    `reference_lights`: against it `gi_benchmark` measures.
+    1 % of what it deviated by on stopping (`RENDER_PUSH_AFTER`). The references are not in the
+    editor: against them `gi_benchmark` measures.
   - Captures, the difference map and, with a base, the two builds side by side.
 - **Regressions**, with the limits of `tools/mirai/render.odin` (`RENDER_COST_LIMIT`,
   `RENDER_STABILITY_*`, `RENDER_MOTTLE_FLOOR`, `RENDER_LUMA_LIMIT`): the longest frame; the

@@ -212,7 +212,7 @@ post_process_inspecting :: proc(s:^Session,sel:Post_Process_Selection,index:int)
 post_process_inspect_render :: proc(s:^Session,app:^host.App) {
 	e:=&s.inspector.post_process
 	if e.inspect_entity==core.NONE {return}
-	if s.mode==.Play || document_is_prefab(s) {return}
+	if s.mode==.Play {return}
 	w:=shown_world(s)
 	for &t in w.info.tables {
 		if t.type!=erender.View_Volume {continue}

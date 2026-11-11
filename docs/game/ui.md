@@ -44,25 +44,24 @@ menu:=gui.UI_Screen{asset=shell_id,order=10,input=.Modal}     // over the HUD, f
 
 ## Events
 
-A frame step reads what the widgets asked, once each, also while the clock is stopped:
+A fixed or a frame step reads what the widgets asked in `gui.UI_Events`, once each:
 
 ```odin
 @(step="frame")
-menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), options:^Menu_Options) {
+menu_frame :: proc(ui:core.Ref(gui.UI_Events),screens:core.Read(Menu_Screen),opts:^Options) {
     screen:=core.entity_at(screens,0)
-    events:=gui.events_this_frame(g)
-    if gui.clicked(events,screen,"menu_play") {start_game()}
-    if value,ok:=gui.changed_value(events,screen,"difficulty");ok {options.difficulty=i32(value)}
+    if gui.clicked(ui.ptr,screen,"menu_play") {start_game()}
+    if value,ok:=gui.changed_value(ui.ptr,screen,"difficulty");ok {opts.difficulty=i32(value)}
 }
 ```
 
-- Names are `base.name_hash` of the node name: `mirai ui check` refuses a literal no `.ui` has. A
+- Names are `base.name_hash` of the node name; one the screen lacks is a `gui.names` problem. A
   control bound to a storage writes it (a setting is also kept); one bound to a component asks,
   and the game writes it on `Changed`. A `Button` with `bind_value` writes its `choice` there.
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
-  `menu_pressed`...) take a frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a
-  fixed step reads the storage and sees nothing while the clock is stopped, as under a pause menu.
-- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `input.mirai` like
+  `menu_pressed`...) take that storage. While the clock is stopped, as under a pause menu, no tick
+  runs: a frame step reads them then, and a fixed step in the next tick.
+- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `Input_Settings` like
   any other) when no interface used that Escape: what opens and closes a menu.
 
 ## Focus

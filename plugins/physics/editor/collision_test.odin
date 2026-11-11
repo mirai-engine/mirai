@@ -1,6 +1,7 @@
 package physics_editor
 
 import "mirai:editor"
+import "mirai:editor/kit"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/history"
@@ -81,7 +82,7 @@ collision_inspector_init :: proc(t:^testing.T,f:^Collision_Inspector) -> bool {
     f.info.names,f.info.named_types,f.info.name_bits=f.names[:],f.named_types[:],f.name_bits[:]
     core.test_info_index(&f.info)
     if !core.world_init(&f.info,.World,&f.world,context.allocator) {return false}
-    if !ui.context_init(&f.ctx,{}) {return false}
+    if !ui.context_init(&f.ctx,{}) || !kit.theme_set(&f.ctx) {return false}
     f.gui={ctx=&f.ctx}
     f.session={info=&f.info,edit_world=&f.world,editor_world=&f.editor_world,gui=&f.gui,selection=&f.selection,inspector=&f.inspector,document=&f.document,viewport=&f.viewport,edits=&f.edits}
     return true

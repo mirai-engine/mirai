@@ -52,8 +52,6 @@ key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^std_anim.Keyframe) -> (ch
     case .Rotation: changed=one(p,"Rotation",Key_Angle,v,d,"How far it turns clockwise, in radians")
     case .Opacity:  changed=one(p,"Opacity",Unit_Value,v,d,"0: it does not show; 1: as it is")
     case .Color:    changed=value_row(p,"Color",Color_Value,v,d,"What its colors are multiplied by; white leaves them")
-    case .Width:    changed=one(p,"Width",Positive_Value,v,d,"Its width, which the layout around it follows")
-    case .Height:   changed=one(p,"Height",Positive_Value,v,d,"Its height, which the layout around it follows")
     case .Value:    changed=one(p,"Value",Key_Number,v,d,"What a Progress, a Slider or a Number shows in place of its value")
     case .Frame:    changed=one(p,"Frame",Positive_Value,v,d,"The frame of the sheet of sprites of its image")
     case .Reveal:   changed=one(p,"Reveal",Unit_Value,v,d,"The part of the characters of its text shown, 0 to 1")
@@ -104,7 +102,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
                     property:=track.property
-                    if value_row(p,fmt.tprintf("Track %d",t+1),Enum_Value(ui.Anim_Property),&property,track.property,"What it changes: Width and Height move the layout around it, the others only how it is drawn") {
+                    if value_row(p,fmt.tprintf("Track %d",t+1),Enum_Value(ui.Anim_Property),&property,track.property,"What it changes of how it is drawn; the layout around it stays") {
                         // Keys of another property start from what that property holds alone.
                         if property!=track.property {
                             for &key in r.keys[track.first_key:][:track.key_count] {key.value=author.property_default(property)}

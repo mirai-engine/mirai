@@ -54,6 +54,9 @@ rows_written_take_a_stamp_above_the_version_a_reader_saw :: proc(t:^testing.T) {
     testing.expect(t,!table_settle(&names,&es))
     testing.expect(t,stamp(&names,row_of(&names,c))>seen && names.version>seen)
     testing.expect(t,touched(&names,&looked) && !reshaped(&names,&shape))
+    // A table the World does not have never changes.
+    absent:Read(Name)
+    testing.expect(t,!touched(absent,&looked) && !reshaped(absent,&shape) && !touched((^Table(Name))(nil),&looked))
 
     // Copied over, a table only grows its version and layout.
     other:Table(Name)
@@ -518,7 +521,7 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     pages:=0
     for page in names.rows {if len(page)>0 {pages+=1}}
     testing.expect_value(t,pages,2)
-    testing.expect(t,cap(names.gone)==0,"no entity went: there is no room for them yet")
+    testing.expect(t,cap(names.gone.items)==0,"no entity went: there is no room for them yet")
     value,found:=get(&names,far)
     testing.expect(t,found && value==2 && !has(&names,entity_make(2*ROWS_PAGE,1)))
     testing.expect(t,table_copy(&copied,&names))
@@ -541,8 +544,8 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
 }
 
 // A row is added, new to its writer, from the add that gives it its value
-// until it is written: by any write, and not by a read, a turn, a settle of
-// other rows or a move of its row. It is of the row, so a copy of the table,
+// until it is written: by any write but its author's (the editor), and not by
+// a read, a turn, a settle of other rows or a move of its row. It is of the row, so a copy of the table,
 // a copy of what changed and a swap keep it, as a rollback does.
 @(test)
 a_row_is_added_until_its_writer_writes_it :: proc(t:^testing.T) {
@@ -552,14 +555,14 @@ a_row_is_added_until_its_writer_writes_it :: proc(t:^testing.T) {
     names,kept,rolled:Table(Name)
     table_init(&names,"Name");table_init(&kept,"Name");table_init(&rolled,"Name")
     defer {table_destroy(&names);table_destroy(&kept);table_destroy(&rolled)}
-    entities:[6]Entity
+    entities:[7]Entity
     for &e in entities {
         e=create(&es)
         add(&names,e,name_make("new"))
     }
     testing.expect(t,table_settle(&names,&es))
     for row in 0..<count(&names) {testing.expect(t,added(&names,row) && added(read(&names),row))}
-    Write :: enum {Edit,Edit_At,Set,Set_Same,Raw_Edit,Raw_Touch}
+    Write :: enum {Edit,Edit_At,Set,Set_Same,Raw_Edit,Raw_Touch,Raw_Author}
     for write in Write {
         e:=entities[int(write)]
         _,_=get(&names,e)
@@ -571,8 +574,16 @@ a_row_is_added_until_its_writer_writes_it :: proc(t:^testing.T) {
         case .Set_Same:  set(&names,e,name_make("new"))
         case .Raw_Edit:  raw_edit(raw(&names),type_info_of(Name),e)
         case .Raw_Touch: raw_touch(raw(&names),e)
+        case .Raw_Author:
+            // What the editor writes is still new to the writer, and its readers see it.
+            seen:Seen
+            _=touched(&names,&seen)
+            (^Name)(raw_author(raw(&names),type_info_of(Name),e))^=name_make("d")
+            c:=changes(&names,&seen)
+            row,found:=each_changed(&names,&c)
+            testing.expect(t,found && entity_at(&names,row)==e && !touched(&names,&seen))
         }
-        testing.expectf(t,added(&names,row_of(&names,e))==(write==.Set_Same),"%v",write)
+        testing.expectf(t,added(&names,row_of(&names,e))==(write==.Set_Same || write==.Raw_Author),"%v",write)
     }
     // A row turned off and on, and one whose row moved when another went, are as they were.
     mark:Copy_Mark

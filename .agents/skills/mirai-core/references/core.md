@@ -170,10 +170,15 @@ write: a prefab, a piece of terrain, a piece of something broken.
   happened and never clears. Each reader gets what came since it last looked, whatever its
   cadence: a function that receives the storage to read finds exactly that in `items` (the
   generated call keeps its cursor), and code outside the loops keeps a cursor and asks
-  `events_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
+  `log_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
   `World_Info.events_age`; `world_events_age` after a `world_run` of a World no loop runs), those
   a `fixed` function reads only when the frame ran a tick. A test that calls the owner by hand
   reads the log it holds: it clears it between ticks, or keeps a cursor.
+- **One log read by cursor.** `core.Log(T)` is the append-only log behind `Events`, the `gone` of a
+  table and the `moved` of the `Hierarchy`; each owner keeps only its trim rule (the age of
+  `Events`, a room whose older half goes when full for the other two). `log_since` gives what came
+  since a cursor, or says `whole` to a reader that fell behind the trim or holds the cursor of
+  another log, which reads the state whole (for `Events`, what the log holds).
 - There are two ways to learn that something happened and no more: state, read by change
   (`changes`, `touched`, `added`), and occurrences, read by cursor.
 - `Ref(S)` is a read-only pointer to a storage: writing through it is a bug that the generator does
@@ -191,8 +196,10 @@ back with the world, and a save keeps it with the clock.
 - The row is written when the wait starts and when it ends: nothing counts down tick by tick.
 - An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
   has now. What must follow a pace that changes during the wait adds its own time up every tick.
-- A request is never delayed: a queue is taken in the tick it was pushed in. What must happen
-  later keeps its deadline in a component.
+- A request may wait in its queue: `later(&q, time, seconds, item)` carries its due tick, and the
+  owner takes with `take_due(&q, time)` what was pushed and what is due. An owner that takes with
+  `take` refuses what was pushed for later, and its `queue_serve` reports it. A queue is not
+  saved: a wait that a save must keep is a deadline in a component.
 - There is no coroutine and no `await`: what waits and then acts is a component with its tick.
 
 ## Core storages
@@ -321,17 +328,18 @@ with its `World_Ref`.
 ## Ground
 
 `core/ground.odin`: the same shape for the ground. The library that makes it sets
-`Ground_Queries.open` once (terrain, in `terrain_update`); the storage is not `shared`, so its one
-writer runs before the readers of its stage. `ground_query` gives a `Ground_Query` or, without one,
-one without a probe, and whoever reads it keeps its own default (foliage the plane of its entity).
+`Ground_Queries.open` once and pushes where the ground changed to its logs (terrain, in
+`terrain_update`); the storage is not `shared`, so its one writer runs before the readers of its
+stage. `ground_query` gives a `Ground_Query` or, without one, one without a probe, and whoever
+reads it keeps its own default (foliage the plane of its entity).
 The probe answers the highest ground along a line: `Ground` with the point, normal and layer
 weights, `None` where no ground covers it, `Empty` where ground covers it without a surface, and
 `Unloaded` where it is not in memory, far from every viewer, which a change announces when it loads;
-`coarse` asks for the cheaper answer from what stays in memory. A reader keeps the revision it last
-read and takes the boxes of `changes` after it, or everything when the oldest kept is newer than the
-next one (a ring that overflowed, or a revision that started anew with another world). `unloaded`
-names where the collision of the ground is not loaded, for navigation. The query is valid during the
-function that opens it, and its probe may run from the jobs of that function.
+`coarse` asks for the cheaper answer from what stays in memory. Where the ground changed is two
+`core.Events` of boxes of the world, read as any other: `changed` (its surface, for foliage) and
+`unloaded` (whether its collision is loaded, which `Ground_Query.unloaded` names, for
+navigation). The query is valid during the function that opens it, and its probe may run from the
+jobs of that function.
 
 ## Births
 
@@ -399,8 +407,8 @@ Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibl
 hierarchy is not a spatial structure: culling, physics and queries use their own.
 
 - It composes what changed and what hangs from it, higher entities first: the `Transform` rows
-  stamped, the entities whose link moved (`hierarchy_moved`, a log of the `Hierarchy` read by
-  cursor as the `gone` of a table) and the children of one that lost its `Transform`. It composes
+  stamped, the entities whose link moved (`Hierarchy.moved`, a `core.Log` read by cursor as the
+  `gone` of a table) and the children of one that lost its `Transform`. It composes
   everything only when it had not seen the rows or the tree there are (a World copied over, more
   links moved than the log holds), and only stamps a `World_Transform` whose value changed.
 - A jump (`Jumps`) carries by `by` also the `previous` of the entity and of what hangs from it: who

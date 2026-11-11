@@ -43,7 +43,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     core.add(&world.transforms,selected,core.TRANSFORM_IDENTITY)
     core.test_world_settle(&world)
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx,layout={left_open=true,right_open=true}}
     app:host.App

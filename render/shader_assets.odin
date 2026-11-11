@@ -232,14 +232,17 @@ shader_assets_load :: proc(directory:string,allocator:=context.allocator)->(asse
         no_name:runtime.Allocator_Error
         if code.name,no_name=strings.clone(text(item["name"]),allocator);no_name!=nil {error="out of memory for the name of a shader";break}
         stage,valid_stage:=reflect.enum_from_name(rhi.Shader_Stage,text(item["stage"]));if !valid_stage {error="invalid shader stage";break};code.stage=stage
-        file,_:=filepath.join({directory,text(item["msl" if rhi.SHADER_FORMAT==.Msl else "spv"])},context.temp_allocator)
-        data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
-        rhi.shader_code_set(code,data,"")
-        if rhi.SHADER_FORMAT==.Msl {
-            entry,no_entry:=strings.clone(text(item["entry"]),allocator)
-            if no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
-            rhi.shader_code_set(code,data,entry)
-            if entry=="" {error="shader has no Metal entry point";break}
+        // A stage of the rays traced by software has no Metal code.
+        if name:=text(item["msl" if rhi.SHADER_FORMAT==.Msl else "spv"]);name!="" || SOFTWARE_TRACER {
+            file,_:=filepath.join({directory,name},context.temp_allocator)
+            data,problem:=os.read_entire_file(file,allocator);if problem!=nil {error=fmt.tprintf("cannot read %s",file);break}
+            rhi.shader_code_set(code,data,"")
+            if rhi.SHADER_FORMAT==.Msl {
+                entry,no_entry:=strings.clone(text(item["entry"]),allocator)
+                if no_entry!=nil {error=fmt.tprintf("out of memory for the entry point of shader %s",code.name);break}
+                rhi.shader_code_set(code,data,entry)
+                if entry=="" {error="shader has no Metal entry point";break}
+            }
         }
         group:=item["group"].(json.Array) or_else nil
         if len(group)!=3 {error="invalid workgroup";break}
@@ -287,7 +290,7 @@ renderer_shader_reload_begin :: proc(r:^Renderer,assets:^Shader_Assets,stop:^boo
     candidate,candidate_error:=new(Renderer,r.allocator)
     if candidate_error!=nil {set_error(r,"shader reload: out of memory for its renderer");return nil}
     candidate^=r^
-    candidate.shader_codes=assets.codes;candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.program_graphics={};candidate.pipeline_thread=nil
+    candidate.shader_codes=assets.codes;candidate.pipelines={};candidate.variant_count=0;candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.program_graphics={};candidate.pipeline_thread=nil
     candidate.reload_stop=stop
     candidate.frame_layout=frame_layout_of(assets)
     return candidate
@@ -304,7 +307,7 @@ renderer_shader_reload_build :: proc(candidate:^Renderer)->bool {
 }
 renderer_abort_shader_reload :: proc(candidate:^Renderer) {
     if candidate==nil {return}
-    for p in candidate.pipelines {if p!=0 {rhi.pipeline_destroy(candidate.device,p)}}
+    pipelines_destroy(candidate)
     for p in candidate.overlay_pipelines {if p!=0 {rhi.pipeline_destroy(candidate.device,p)}}
     for p in candidate.overlay_hw_pipelines {if p!=0 {rhi.pipeline_destroy(candidate.device,p)}}
     free(candidate,candidate.allocator)
@@ -335,7 +338,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     }
     rhi.device_wait_idle(r.device)
     pipelines_drop(r)
-    for p in r.pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}
+    pipelines_destroy(r)
     for p in r.overlay_pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}
     for p in r.overlay_hw_pipelines {if p!=0 {rhi.pipeline_destroy(r.device,p)}}
     shader_assets_destroy(&r.shader_assets)
@@ -346,10 +349,11 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     program_graphics_destroy(r)
     program_catalog_destroy(&r.programs)
     r.shader_codes=candidate.shader_codes;r.pipelines=candidate.pipelines;r.overlay_pipelines=candidate.overlay_pipelines
+    r.variants,r.variant_count=candidate.variants,candidate.variant_count
     r.overlay_hw_pipelines=candidate.overlay_hw_pipelines
-    candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={}
+    candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.variant_count=0
     if !scene {return true}
-    r.targets.reflect_valid=false;r.targets.gi_reference_valid=false;r.targets.taa_valid=false;r.targets.glass_valid=false
+    r.targets.reflect_valid=false;r.targets.taa_valid=false;r.targets.glass_valid=false
     renderer_camera_cut(r)
     world_light_stale(r)
     return true

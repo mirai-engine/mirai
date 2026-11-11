@@ -394,7 +394,7 @@ text_field_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
             if row(p,label) {ui.label(ctx,fmt.tprintf("At most %d names",ui.TREE_TEXT_FIELDS),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger"))}
             continue
         }
-        bind_only(p,label,n.fields[at].path[:],.Shown,"The field of the game this name of the text shows; translations name it as the text does")
+        bind_only(p,label,n.fields[at].path[:],.Shown,"The field of the game this name of the text shows; every language of its key names it as the text does")
     }
 }
 

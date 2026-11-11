@@ -57,11 +57,15 @@ owned_body_create :: proc(state:^Physics_State,body:Owned_Body,position:[3]f32,r
     made=sim.body_create(&state.world,{type=.Static,position=position,rotation=rotation,user_data=u64(body.entity)})
     if made=={} {return {},.Capacity}
     slot:=int(base.handle_index(base.Handle(made)))
-    if slot>=len(state.owned) && resize(&state.owned,min(max(slot+1,2*len(state.owned)),state.world.desc.body_capacity))!=nil {
-        sim.body_destroy(&state.world,made)
-        return {},.Out_Of_Memory
+    if slot>=len(state.owned) {
+        count:=min(max(slot+1,2*len(state.owned)),state.world.desc.body_capacity)
+        if resize(&state.owned,count)!=nil || resize(&state.owned_stamps,base.chunks_of(count))!=nil {
+            sim.body_destroy(&state.world,made)
+            return {},.Out_Of_Memory
+        }
     }
     state.owned[slot]={made,body.owner,body.user}
+    slot_stamp(state,state.owned_stamps[:],slot)
     return made,.None
 }
 

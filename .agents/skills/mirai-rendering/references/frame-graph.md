@@ -77,7 +77,7 @@ or interleave its own passes.
      shadows ([GPU lights](lights.md#gpu-lights)).
    - `direct` does not trace: a pixel with no block on its surface enters a list that
      `direct rays` (`lighting_traced.comp`, indirect dispatch) traces. Without blocks (pipeline
-     `Light` or `reference_lights`), `direct rays` lights each pixel and `direct` does not run.
+     `Light`), `direct rays` lights each pixel and `direct` does not run.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
    second pass filters in space and time; it is omitted while no material of the table can go
    below that limit ([traced reflections](materials.md#traced-reflections)).

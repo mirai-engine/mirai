@@ -47,6 +47,7 @@ Part :: struct {
 Subject :: struct {
     root:core.Entity,
     key:u64, // of what it was gathered from: 0 when nothing was
+    seen:[9]core.Seen, // the tables of the scene it was gathered from
     parts:[PART_CAPACITY]Part,
     part_count:int,
     worlds:[PART_CAPACITY]mm.Transform, // of the parts in the pose last sampled, in the space of the parent of the root
@@ -406,14 +407,11 @@ subject_gather_mesh :: proc(app:^host.App,w:core.World_Ref,sub:^Subject,mesh:bas
     subject_end(app,w,sub)
 }
 
-// What changes the subject: the tables that describe it and the assets it is made of.
+// Whether a table that describes the subject changed since seen, which it moves to now.
 @(private)
-scene_key :: proc(scene:Scene,root:core.Entity,mesh:base.Asset_Id,a:^host.Assets,reloads:u64) -> u64 {
-    version :: proc(t:^core.Table($T)) -> u64 {return t!=nil?t.version+t.layout:0}
-    return signature_of({
-        u64(root),mesh[0],mesh[1],version(scene.transforms),version(scene.names),version(scene.targets),version(scene.parents),version(scene.meshes),version(scene.hidden),
-        version(scene.tints),version(scene.overrides),version(scene.skins),a!=nil?a.revision:0,reloads,
-    })
+scene_touched :: proc(scene:Scene,seen:^[9]core.Seen) -> bool {
+    return core.touched(scene.transforms,&seen[0]) | core.touched(scene.names,&seen[1]) | core.touched(scene.targets,&seen[2]) | core.touched(scene.parents,&seen[3]) | core.touched(scene.meshes,&seen[4]) |
+        core.touched(scene.hidden,&seen[5]) | core.touched(scene.tints,&seen[6]) | core.touched(scene.overrides,&seen[7]) | core.touched(scene.skins,&seen[8])
 }
 
 // The entity of the scene a clip of the asset plays on: one whose Animation
@@ -433,9 +431,10 @@ animation_scene_subject :: proc(s:^editor.Session,scene:Scene,chosen:base.Asset_
 animation_refresh :: proc(s:^editor.Session,app:^host.App,w:core.World_Ref,scene:Scene,p:^Animation,root:core.Entity) {
     a:=app.assets
     clip:=animation_clip(p)
-    key:=scene_key(scene,root,p.mesh,a,app.shaders.reloads)
+    // The subject and the assets it is made of.
+    key:=signature_of({u64(root),p.mesh[0],p.mesh[1],a!=nil?a.revision:0,app.shaders.reloads})
     sub:=&p.subject
-    if key!=sub.key || sub.renderer!=app.renderer {
+    if scene_touched(scene,&sub.seen) || key!=sub.key || sub.renderer!=app.renderer {
         if p.mesh!={} {subject_gather_mesh(app,w,sub,p.mesh,key)} else {subject_gather(app,w,scene,sub,root,key)}
     }
     fit_key:=signature_of({sub.key,u64(p.loaded[0]),u64(p.stamp[1]),u64(clip)})

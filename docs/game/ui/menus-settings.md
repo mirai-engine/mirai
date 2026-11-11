@@ -66,20 +66,19 @@ fields; the engine brings the window and the renderer to them at once:
 
 ```odin
 render.graphics_preset_apply(graphics,.Medium) // ^render.Graphics_Settings: the fields of a preset
-graphics.render_scale=0.75      // the fraction of the window drawn; 0: the target of the preset
+graphics.resolution=720         // the lines the window aims for, never above a pixel per point
 graphics.sun_shadows=false      // no ray goes to the sun
 graphics.frame_limit,graphics.vsync=60,true // 0: no limit
 display.mode=.Fullscreen        // ^render.Display_Settings; .Project as authored
 ```
 
-`frame_limit`, `vsync`, `antialiasing` and `show_fps` do not count for a preset. No setting stores
-the preset: `render.graphics_preset_apply` writes its fields, the fields written after it stay on
-top, and `render.graphics_quality_of(graphics^)` gives the preset the fields are at, `Custom` when
-a field was changed by hand. A preset selector is a `Selector` of its own name (inside a
-`select_row` every control is named `control`), bound to a field the game fills with that value;
-on `Changed` the game calls `render.graphics_preset_apply`. Naming a preset resets `render_scale`
-to 0, which follows the target of the preset: a height of lines over the window, never above a
-pixel per point.
+`frame_limit`, `vsync`, `antialiasing`, `show_fps` and `reflections` do not count for a preset.
+No setting stores the preset: `render.graphics_preset_apply` writes its fields, the fields written
+after it stay on top, and `render.graphics_quality_of(graphics^)` gives the preset the fields are
+at, `Custom` when a field was changed by hand. A preset selector is a `Selector` of its own name
+(inside a `select_row` every control is named `control`), bound to a field the game fills with
+that value; on `Changed` the game calls `render.graphics_preset_apply`. A preset writes
+`resolution` too: a height of lines over the window, never above a pixel per point.
 
 ## Persist
 
@@ -103,8 +102,8 @@ no `Modal` screen is up; a game does not call the window for it. For a free curs
 to try:
 
 - Over gameplay for a moment: a `Modal` screen, the one way to free it while a body is driven.
-- For good, a cursor game: leave the look without a mouse binding in `input.mirai`, or let the seat
-  drive nothing (`inp.release`, `inp.drive` to take the body back): no capture happens.
+- For good, a cursor game: leave the look without a mouse binding in `Input_Settings`, or let the
+  seat drive nothing (`inp.release`, `inp.drive` to take the body back): no capture happens.
 - A `Menu` or `Passive` screen leaves the mouse where it is.
 
 ## Pitfalls that fail silently

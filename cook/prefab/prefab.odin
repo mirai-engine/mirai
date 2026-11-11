@@ -135,6 +135,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
     // One root, the model's own or the entity that wraps several: the scene is a prefab.
     root,rooted:=asset.prefab_root(&scene)
     if !rooted {return report,.Write}
+    scene.doc.flags+={.Prefab}
     if assets.animation_id!={} {
         animation:=Animation{asset=assets.animation_id,speed=1,weight=1,loop=true,playing=true,fade=0.2}
         if asset.scene_set(&scene,root,"Animation",&animation)!=.None {return report,.Write}
@@ -243,20 +244,20 @@ entity_add :: proc(scene:^asset.Scene,id,parent:base.Entity_Id,name:string,trans
     return asset.scene_set(scene,id,"Transform",&transform)==.None
 }
 
-// Imports a model of one of formats into folder: its assets and, when it has
-// nodes, the prefab of its hierarchy, which the report lists last. keep, when
-// given, receives the model that was read; its caller destroys it.
-model_import :: proc(path,folder:string,formats:[]importer.Format,options:importer.Import_Options,allocator:=context.allocator,keep:^importer.Imported_Model=nil) -> (report:importer.Import_Report,error:importer.Error) {
+// Imports a model of one of formats: its assets and, when it has nodes, the
+// prefab of its hierarchy, which the report lists last. keep, when given,
+// receives the model that was read; its caller destroys it.
+model_import :: proc(path:string,formats:[]importer.Format,options:importer.Import_Options,allocator:=context.allocator,keep:^importer.Imported_Model=nil) -> (report:importer.Import_Report,error:importer.Error) {
     model:importer.Imported_Model
     if model,error=importer.import_model(path,formats,options,allocator);error.code!=.None {return}
     defer if keep!=nil {keep^=model} else {importer.model_destroy(&model)}
-    return model_write(&model,path,folder,options,allocator)
+    return model_write(&model,path,options,allocator)
 }
 
 // Writes a model read from path as model_import does: its assets and the
 // prefab of its hierarchy; only its clips with Import_Settings.skeleton.
-model_write :: proc(model:^importer.Imported_Model,path,folder:string,options:importer.Import_Options,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
-    if report,error=importer.import_write(model,folder,options,allocator);error.code!=.None {return}
+model_write :: proc(model:^importer.Imported_Model,path:string,options:importer.Import_Options,allocator:=context.allocator) -> (report:importer.Import_Report,error:importer.Error) {
+    if report,error=importer.import_write(model,options,allocator);error.code!=.None {return}
     if len(model.nodes)==0 || report.settings.skeleton!={} {return report,{}}
     name:=filepath.stem(path)
     source:=importer.source_path(options,path)

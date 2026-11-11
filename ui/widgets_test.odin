@@ -134,7 +134,10 @@ text_breaks_into_the_same_lines_wherever_it_is_shown :: proc(t:^testing.T) {
     build :: proc(ctx:^Context,user:rawptr) {
         s:=cast(^Test_Lines)user
         if panel(ctx,id(ctx,"panel"),{width=fixed(700),height=FIT,offset={0,0}}) {
-            for c,i in s.shown[:s.count] {rich_text(ctx,id(ctx,"rich",i+1),c.text,{size=s.size},{width=fixed(c.width)})}
+            for c,i in s.shown[:s.count] {
+                rich_text(ctx,id(ctx,"rich",i+1),c.text,{size=s.size},{width=fixed(c.width)})
+                if box(ctx,{id=id(ctx,"marked",i+1),width=fixed(c.width),height=FIT,track=true}) {markdown(ctx,id(ctx,"markdown",i+1),c.text,c.width,{size=s.size})}
+            }
         }
     }
     input:=test_input(800,20000)
@@ -147,7 +150,7 @@ text_breaks_into_the_same_lines_wherever_it_is_shown :: proc(t:^testing.T) {
         rich:=int(test_rect(t,&ctx,id(&ctx,"rich",i+1)).h/(s.size*TEXT_LINE)+0.5)
         testing.expectf(t,rich==lines,"%q at %v: a rich text takes %d lines, a paragraph %d",c.text,c.width,rich,lines)
         if !cases[i/len(widths)].markdown {continue}
-        marked:=int(markdown_height(&ctx,c.text,c.width,{size=s.size})/line+0.5)
+        marked:=int(test_rect(t,&ctx,id(&ctx,"marked",i+1)).h/line+0.5)
         testing.expectf(t,marked==lines,"%q at %v: Markdown takes %d lines, a paragraph %d",c.text,c.width,marked,lines)
     }
 }

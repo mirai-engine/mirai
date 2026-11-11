@@ -88,18 +88,18 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return}
         defer textures.heightmap_destroy(&heightmap)
         if !terrain.source_make(&source,.Heightfield,{heightmap.width,1,heightmap.height},tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The heightmap dimensions exceed their budget");return}
-        if !terrain.grid_prepare(&source.heights,{0,0,0},{heightmap.width-1,0,heightmap.height-1},source.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return}
+        if !terrain.grid_prepare(&source.field,{0,0,0},{heightmap.width-1,0,heightmap.height-1},source.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return}
         for value,i in heightmap.values {
             height:=value*tool.height_scale+tool.height_offset
             if abs(height)>terrain.HEIGHT_LIMIT {editor.notify(s,"Heightmap heights exceed the terrain limit");return}
-            terrain.grid_set(&source.heights,i%heightmap.width,i/heightmap.width,height)
+            terrain.grid_set(&source.field,i%heightmap.width,i/heightmap.width,height)
         }
     } else {
         samples:=[3]int{tool.samples,tool.create_kind==.Volume?tool.depth:1,tool.samples}
         if !terrain.source_make(&source,tool.create_kind==.Volume?.Volume:.Heightfield,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
     }
     if !terrain_budget(s,world,&source) {return}
-    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.EXTENSION,name!="")
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.TERRAIN_EXTENSION,name!="")
     source.revision=1;seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Terrain"))}
     bytes,error:=terrain.source_bytes(&source,id,&a.types,allocator)
@@ -112,7 +112,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
     transform:=core.Transform{position=position,rotation=1,scale={1,1,1}}
     if ground!=core.NONE {transform=over.transform}
-    e:=editor.entity_create(s,{preset=.Empty,name=label,transform=transform})
+    e:=editor.entity_create(s,{name=label,transform=transform})
     core.add(terrains,e,terrain.Terrain{source=id,revision=1,solid=true,ground=over.id})
     history.edits_end(s.edits);history.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=terrain.terrain_stamp(a,id)})
@@ -144,7 +144,7 @@ volume_over_ground :: proc(s:^editor.Session,world:core.World_Ref,assets:^host.A
     center:=[2]int{int(linalg.round((local.x-origin.x)/g.cell)),int(linalg.round((local.z-origin.z)/g.cell))}
     offset:=[2]int{clamp(center.x-(n.x-1)/2,0,int(g.samples.x)-n.x),clamp(center.y-(n.y-1)/2,0,int(g.samples.z)-n.y)}
     if !terrain.source_make(source,.Volume,{n.x,tool.depth,n.y},g.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
-    middle:=terrain.grid_get(&g.heights,offset.x+(n.x-1)/2,offset.y+(n.y-1)/2)
+    middle:=terrain.grid_get(&g.field,offset.x+(n.x-1)/2,offset.y+(n.y-1)/2)
     lift:=middle-f32(tool.depth-1)*0.5*g.cell
     if !terrain.source_volume_ground(source,{ground=&g,offset=offset,lift=lift}) {editor.notify(s,"There is not enough memory for the Volume");return}
     corner:=origin+[3]f32{f32(offset.x)*g.cell,lift,f32(offset.y)*g.cell}

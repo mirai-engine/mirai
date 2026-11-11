@@ -111,7 +111,7 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
     testing.expect(t,resident.sources[0].chunks[quad_total(&o.quad)-1].shown,"the root of a streamed source stays built")
     testing.expect_value(t,len(w.statics.values),nodes+chunks)
     s:=&w.data.entries[0].source
-    testing.expect(t,grid_dense(&s.heights)<len(s.heights.pages)*PAGE*PAGE/2,"the pages far from the viewer are not in memory")
+    testing.expect(t,grid_dense(&s.field)<len(s.field.pages)*PAGE*PAGE/2,"the pages far from the viewer are not in memory")
     hit,ok:=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y)<1)
     _,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})

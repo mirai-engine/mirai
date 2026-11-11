@@ -84,8 +84,7 @@ Graphics_Status :: struct {
     vsync:bool,
     frame_generation:bool `mirai:"label=Asked for: only a technique that offers it (FSR 3.1) generates frames"`,
     generated:bool `mirai:"label=The last frame drew an image shown before its own"`,
-    render_scale:f32 `mirai:"label=The 3D image per point of the window; 0 follows the target of the preset"`,
-    preset_height:u32 `mirai:"label=The lines the last preset aims for; 0 is one per point"`,
+    resolution:u32 `mirai:"label=The lines the views of the window aim for, never above one pixel per point"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
     options:[GRAPHICS_ROWS_CAPACITY]Api_Graphics_Option `mirai:"trim,label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,
@@ -243,7 +242,7 @@ api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
 api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics_Settings) {
     if g==nil {return}
     base.text_set(result.preset[:],graphics_quality_label(erender.graphics_quality_of(g^)))
-    result.frame_limit,result.vsync,result.render_scale,result.preset_height=g.frame_limit,g.vsync,g.render_scale,g.preset_height
+    result.frame_limit,result.vsync,result.resolution=g.frame_limit,g.vsync,g.resolution
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
     base.text_set(result.antialiasing[:],base.text_get(technique[:]))

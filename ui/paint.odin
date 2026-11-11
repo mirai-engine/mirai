@@ -24,12 +24,11 @@ Paint_Kind :: enum u8 {
     Progress,   // a bar filled up to value over its track
     Slider,
     Switch,     // a track of fill with a knob of stroke, at its right end while value is 1
-    User,       // Context_Desc.draw_user
     Prompt,     // an input of an action
     Checker,    // squares of fill and fill2, value units wide: what shows through transparency
     Replay,     // what a retained subtree drew, user_data says which (retain.odin)
     Arrow,      // a triangle of fill, size units wide, pointing left, right, up or down as value is 0 to 3
-    Draw,       // a Draw node: Game_Source.draw, with the colors of its style and the bytes it binds
+    Draw,       // a canvas or a Draw node: Context.draw_user, with draw
 }
 
 // What a run of text adds to its glyphs. Bold is synthetic: the run drawn
@@ -91,8 +90,8 @@ Paint :: struct {
     value:f32,               // progress, 0 to 1
     program:u32,             // of Rect, Panel, Bar and the bar of Progress: a ui program that colors the fill
     program_values:[4]f32,
-    user_kind:u32,
-    user_data:u64,
+    user_data:u64,           // of Replay: the retained subtree
+    draw:Draw_Node,          // of Draw: what Context.draw_user is handed, but its rect
     prompt:Prompt,
     fill_mode:Progress_Fill, // of a Progress
     faint:Color,             // the placeholder of a Field; the theme's text_faint when transparent
@@ -393,16 +392,15 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
             clip_pop(ctx)
         }
         if p.stroke[3]>0 {draw_shape(ctx,r,{stroke=p.stroke,stroke_width=1,radii=radii})}
-    case .User:
-        if ctx.draw_user!=nil {ctx.draw_user(ctx,r,p.user_kind,p.user_data,p.fill)}
     case .Prompt:
         prompt_paint(ctx,r,p.prompt)
     case .Replay:
         retained_draw(ctx,p.user_data)
     case .Draw:
-        if ctx.game.draw!=nil {
-            ctx.game.draw(ctx.game.user,ctx,{name=p.user_data,rect=r,fill=p.fill,stroke=p.stroke,track=p.fill2,knob=p.icon_color,mark=p.text_color,
-                text=p.style,radius=p.corners,stroke_width=p.stroke_width,data=transmute([]u8)p.text,item=i32(p.caret)})
+        if ctx.draw_user!=nil {
+            node:=p.draw
+            node.rect=r
+            ctx.draw_user(ctx.draw_user_data,ctx,node)
         }
     case .Arrow:
         // A chevron whose lines are an eighth of its size thick.

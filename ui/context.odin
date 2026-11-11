@@ -8,15 +8,16 @@ import "mirai:std/base"
 // Reads the clipboard into buffer and returns the bytes written.
 Clipboard_Get :: #type proc(user:rawptr,buffer:[]u8) -> int
 Clipboard_Set :: #type proc(user:rawptr,text:string)
-// Draws what the library does not know: a paint_user element (kind, data) or
-// an icon from Icon.User on (kind: its index). Only draw_* procedures may be
-// called from it.
-Draw_User :: #type proc(ctx:^Context,rect:Rect,kind:u32,data:u64,color:Color)
+// Draws what the library does not know, by node.name: a canvas, a Draw node of
+// a tree, or an icon from Icon.User on (its index). Only draw_* procedures may
+// be called from it.
+Draw_Proc :: #type proc(user:rawptr,ctx:^Context,node:Draw_Node)
 
 Context_Desc :: struct {
     allocator:runtime.Allocator, // context.allocator when unset
     // Capacities of one frame; zero takes the default.
     max_elements:int,   // layout elements (8192)
+    max_transitions:int, // elements a style carries to a new layout at once (64)
     max_text_words:int, // words kept measured for this frame, and as many for earlier ones (2 * max_elements)
     max_clips:int,      // containers that clip (256, at most 65535)
     max_widgets:int,    // interactive or tracked elements (2048)
@@ -48,7 +49,8 @@ Context_Desc :: struct {
     clipboard_get:Clipboard_Get,
     clipboard_set:Clipboard_Set,
     clipboard_user:rawptr,
-    draw_user:Draw_User,
+    draw_user:Draw_Proc,
+    draw_user_data:rawptr, // what draw_user is called with
 }
 
 Widget_Flag :: enum u8 {
@@ -236,7 +238,8 @@ Context :: struct {
     clipboard_get:Clipboard_Get,
     clipboard_set:Clipboard_Set,
     clipboard_user:rawptr,
-    draw_user:Draw_User,
+    draw_user:Draw_Proc,
+    draw_user_data:rawptr, // what draw_user is called with
 }
 
 // What a frame leaves for the renderer and the host. The slices belong to the
@@ -250,6 +253,7 @@ Frame :: struct {
     pointer_consumed:bool,  // the pointer is over the UI or held by it
     keyboard_consumed:bool, // typing or navigation belongs to the UI
     overflow:bool,          // something did not fit in a capacity this frame: see Stats
+    transitioning:bool,     // an element is on its way to where the layout put it: the next frame differs
 }
 
 context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
@@ -257,7 +261,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     ctx.allocator=desc.allocator if desc.allocator.procedure!=nil else context.allocator
     ctx.navigation=desc.navigation
     ctx.clipboard_get,ctx.clipboard_set,ctx.clipboard_user=desc.clipboard_get,desc.clipboard_set,desc.clipboard_user
-    ctx.draw_user=desc.draw_user
+    ctx.draw_user,ctx.draw_user_data=desc.draw_user,desc.draw_user_data
     ctx.max_elements=desc.max_elements if desc.max_elements>0 else 8192
     count :: proc(value,fallback:int) -> int {return value if value>0 else fallback}
     ok:=true
@@ -305,7 +309,7 @@ context_init :: proc(ctx:^Context,desc:Context_Desc) -> bool {
     ctx.draw.font_quad=quad_pack(.Glyph,desc.font_texture)
 
     words:=desc.max_text_words if desc.max_text_words>0 else ctx.max_elements*2
-    if !layout_init(&ctx.layout,a,ctx.max_elements,words,len(ctx.text),count(desc.max_grid_tracks,64)) {context_destroy(ctx);return false}
+    if !layout_init(&ctx.layout,a,ctx.max_elements,words,len(ctx.text),count(desc.max_grid_tracks,64),count(desc.max_transitions,64)) {context_destroy(ctx);return false}
     if desc.sheet!=nil && !context_sheet_set(ctx,desc.sheet^) {context_destroy(ctx);return false}
     return true
 }
@@ -550,7 +554,7 @@ clips_resume :: proc(ctx:^Context) {
 
 @(private)
 dropped_total :: proc "contextless" (s:^Stats) -> u32 {
-    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks+s.dropped_nesting
+    return s.dropped_elements+s.dropped_widgets+s.dropped_paints+s.dropped_vertices+s.dropped_commands+s.dropped_text+s.dropped_scopes+s.dropped_panels+s.dropped_clips+s.layout_errors+s.dropped_shapes+s.dropped_layers+s.dropped_tree+s.dropped_tracks+s.dropped_nesting+s.dropped_transitions
 }
 
 // Begun inside a frame that was not ended, it starts over and that frame is lost.
@@ -632,10 +636,11 @@ frame_end :: proc(ctx:^Context) -> Frame {
 
     // Without an element in the frame there is no layout to end.
     laid:=ctx.layout_started
+    transitioning:=false
     ctx.widget_pieces=ctx.widget_count
     if laid {
         t:=&ctx.layout
-        layout_finish(t,&ctx.font)
+        transitioning=layout_finish(t,&ctx.font,ctx.stats.frame,ctx.input.dt)
         ctx.stats.layout_errors+=u32(t.duplicates)
         if t.overflow {ctx.stats.dropped_elements+=1}
         for &w in ctx.widgets[:ctx.widget_count] {
@@ -702,6 +707,7 @@ frame_end :: proc(ctx:^Context) -> Frame {
         pointer_consumed=ctx.over || ctx.active!=0,
         keyboard_consumed=ctx.edit.id!=0 || ctx.popup.count>0 || ctx.modal_open || (ctx.navigation && ctx.focus!=0),
         overflow=dropped_total(s)!=ctx.dropped_before,
+        transitioning=transitioning,
     }
 }
 

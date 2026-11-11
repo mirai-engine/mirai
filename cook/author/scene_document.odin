@@ -17,14 +17,14 @@ import "mirai:std/serial"
 // editor applies it to the world it edits, and mirai scene write to a file,
 // through what each gives as a Scene_Target.
 //
-//   {"root": "Yard/Lamp", "merge": true, "entities": [...]}
+//   {"root": "Yard/Lamp", "merge": true, "kind": "Prefab", "entities": [...]}
 //
 // Entities nest by children and give what differs from a new entity: their
 // transform local to the parent, being hidden or off, and by name the
 // components they have with the fields that differ from the value a
-// component starts with. A preset or the card of a plugin stands for the
-// components its recipe gives; a new entity with prefab is a linked instance
-// of that one-root scene, and one with copy a copy of another entity.
+// component starts with. A preset names a recipe and stands for the
+// components it gives; a new entity with prefab is a linked instance
+// of that prefab, and one with copy a copy of another entity.
 //
 // Without root the entities are those at the top of the scene; with it, the
 // one entity is root. Entities are matched by id, else by name among their
@@ -36,7 +36,8 @@ import "mirai:std/serial"
 // and places. An entity is matched by id or by name and never by place, one at
 // the top named by id stays under the parent it has, a component takes the
 // fields given over the value it has, null takes it away, and delete true
-// takes the entity away. An entity placed or matched by the path or the id of
+// takes the entity away. kind makes the scene a Scene or a Prefab, which has
+// exactly one root; left out, it stays what it is. An entity placed or matched by the path or the id of
 // its prefab alone, and what a copy holds, keep what the document leaves out
 // the same way in any write.
 
@@ -90,7 +91,8 @@ component_listed :: proc(t:^core.Table_Info) -> bool {
         for tag in fields.tags[:fields.field_count] {if _,hidden:=core.field_option(reflect.Struct_Tag(tag),"hidden");!hidden {visible=true;break}}
         if !visible {return false}
     }
-    return type_saved(t.info)
+    // A component whose fields are all transient is saved by its presence.
+    return true
 }
 
 // Copies from kept the fields a document neither shows nor changes: hidden, transient and read-only ones.
@@ -142,12 +144,10 @@ Node_Info :: struct {
     instance:Node,        // the root of that instance; 0: of none
 }
 
-// What a preset or the card of a plugin gives the entity it makes.
+// What the recipe a preset names gives the entity it makes.
 Scene_Preset :: struct {
-    name:string,      // as the document names it
-    rotation:mm.Quat,
-    scale:[3]f32,
-    parts:[]Part,     // its components, each as the target keeps a value
+    using recipe:Recipe,
+    parts:[]Part, // its components, each as the target keeps a value
 }
 
 // Where a document is read from and written to. The procedures that can
@@ -178,6 +178,7 @@ Scene_Target :: struct {
     drop:     proc(user:rawptr,node:Node,t:^core.Table_Info),
     turn:     proc(user:rawptr,node:Node,t:^core.Table_Info,off:bool),
     remove:   proc(user:rawptr,nodes:[]Node) -> (removed:int,problem:string), // with what hangs from them
+    kind:     proc(user:rawptr,prefab:bool) -> (changed:bool,problem:string), // after the entities: a prefab has exactly one root
 }
 
 // ---------------------------------------------------------------- reading a document
@@ -211,7 +212,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
     if !listed {return false}
     for item,at in items {
         index:=len(out)
-        append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe={rotation=1,scale={1,1,1}}})
+        append(out,Scene_Entity{path=fmt.aprintf("%s[%d]",path,at,allocator=reading.allocator),parent=parent,recipe={local=core.TRANSFORM_IDENTITY}})
         keys,values:=tree_object(reading,item,out[index].path) or_return
         vector :: proc(reading:^Reading,text,what:string,value:^[3]f32) -> bool {
             items:=doc_items(reading,text,what,"3 numbers") or_return
@@ -245,7 +246,7 @@ scene_entities_read :: proc(reading:^Reading,text:string,parent:int,path:string,
             case "preset","copy":
                 word,is_text:=doc_string(reading,value)
                 if !is_text || word=="" {
-                    reading_failf(reading,"%s must be %s",what,"the name of a preset or of the card of a plugin" if key=="preset" else "the entity it copies: its name, a path Parent/Child or its id")
+                    reading_failf(reading,"%s must be %s",what,"the name of a recipe" if key=="preset" else "the entity it copies: its name, a path Parent/Child or its id")
                     return false
                 }
                 if key=="preset" {d.preset=word} else {d.copy=word}
@@ -308,9 +309,12 @@ Scene_Apply :: struct {
 scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string) -> (applied:Scene_Applied,ok:bool) {
     keys,values:=tree_object(reading,text,"document") or_return
     a:=Scene_Apply{target=target,reading=reading}
-    root,entities:="",""
+    root,entities,kind:="","",""
     for key,i in keys {
         switch key {
+        case "kind":
+            is_text:bool
+            if kind,is_text=doc_string(reading,values[i]);!is_text || kind!="Scene" && kind!="Prefab" {reading_fail(reading,"kind must be Scene or Prefab");return}
         case "root":
             if strings.trim_space(values[i])=="null" {break}
             is_text:bool
@@ -320,7 +324,7 @@ scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string) -> (appli
             if a.merge,known=doc_bool(values[i]);!known {reading_fail(reading,"merge must be true or false");return}
         case "entities": entities=values[i]
         case:
-            reading_failf(reading,"document has no '%s'; it has root, merge and entities: the entities at the top of the scene, or root alone, nesting what hangs from them by children",key)
+            reading_failf(reading,"document has no '%s'; it has root, merge, kind and entities: the entities at the top of the scene, or root alone, nesting what hangs from them by children",key)
             return
         }
     }
@@ -345,6 +349,11 @@ scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string) -> (appli
     for node in roots {
         a.decls=slice.clone(read[:],reading.allocator)
         scene_apply_at(&a,node) or_return
+    }
+    if kind!="" {
+        changed,problem:=a.target.kind(a.user,kind=="Prefab")
+        if scene_refused(&a,"kind",problem) {return}
+        if changed {scene_changed(&a,"kind","")}
     }
     return a.applied,true
 }
@@ -609,9 +618,9 @@ scene_values_apply :: proc(a:^Scene_Apply,d:^Scene_Entity) -> bool {
     }
     keeps:=!d.made && (a.merge || d.keeps || a.placed[info.instance])
     local:=info.local
-    rotation:=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG) if d.has_rotation else d.recipe.rotation
+    rotation:=mm.quat_from_euler(d.rotation_deg*mm.RAD_PER_DEG) if d.has_rotation else d.recipe.local.rotation
     target:=local
-    target.position,target.scale=d.position,d.scale if d.has_scale else d.recipe.scale
+    target.position,target.scale=d.position,d.scale if d.has_scale else d.recipe.local.scale
     // The rotation the document of the scene gave keeps its quaternion: degrees do not say it to the last bit.
     angles:=d.rotation_deg if d.has_rotation else mm.quat_to_euler(rotation)*mm.DEG_PER_RAD
     if mm.quat_to_euler(local.rotation)*mm.DEG_PER_RAD!=angles {target.rotation=rotation}
@@ -797,7 +806,7 @@ scene_prefab_open :: proc(reading:^Reading,a:Assets,given:Scene_Prefab,path:stri
     if given.asset=={} {reading_failf(reading,"%s.prefab must be the path or the id of a prefab of the project",path);return false}
     if a.registry==nil {reading_brokef(reading,"%s.prefab: the project has no assets folder to read a prefab from",path);return false}
     record,found:=asset.registry_find(a.registry,given.asset)
-    if !found || !asset.registry_prefab(record) {reading_failf(reading,"%s.prefab: %q is no prefab of the project; give the path or the id of a .scene with one entity at its top",path,given.named);return false}
+    if !found || !asset.registry_prefab(record) {reading_failf(reading,"%s.prefab: %q is no prefab of the project; give the path or the id of a .scene whose kind is Prefab, or make it one in the editor",path,given.named);return false}
     files:asset.Registry_Prefabs
     asset.registry_prefabs_init(&files,a.registry,context.temp_allocator)
     defer asset.registry_prefabs_destroy(&files)

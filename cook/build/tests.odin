@@ -53,12 +53,12 @@ Test_Build :: struct {
     root,compiler,executable:string,
     flags:[]string,                // what identifies the build besides its sources and the compiler
     command:[]string,              // of the compiler; none when the executable there stands
-    staging,sources_staged,log:string,
+    compile:Compile,               // its compiler, which writes compile.staged
+    sources_staged:string,
     states_added,states_seen:bool, // test_states_asked of the flags
     started:time.Time,
-    process:os.Process,
-    running,failed:bool,
-    code:int,                      // of a compiler that failed; -1 when it did not run
+    running:bool,
+    failure:Failure,               // .None: it stands or was built
     diagnostics:[]Diagnostic,
     said:string,                   // by the compiler besides its diagnostics, or why it did not build
 }
@@ -141,13 +141,13 @@ test_build_plan :: proc(root,compiler,folder,executable:string,flags:[]string,al
     if test_build_current(&b) {return}
     slash:=strings.last_index_byte(b.executable,'/')
     stem:=strings.trim_suffix(b.executable[slash+1:],project.EXECUTABLE_SUFFIX)
-    b.staging=fmt.aprintf("%s/.%s-build-%d%s",b.executable[:max(slash,0)],stem,os.get_pid(),project.EXECUTABLE_SUFFIX)
-    b.sources_staged=test_sources_file(b.staging)
-    b.log=fmt.aprintf("%s.log",b.staging)
+    staging:=fmt.aprintf("%s/.%s-build-%d",b.executable[:max(slash,0)],stem,os.get_pid())
+    b.compile={staged=strings.concatenate({staging,project.EXECUTABLE_SUFFIX}),streams={fmt.aprintf("%s.err",staging),fmt.aprintf("%s.out",staging)},library=-1}
+    b.sources_staged=test_sources_file(b.compile.staged)
     command:=make([dynamic]string)
     append(&command,b.compiler)
     append(&command,..b.flags)
-    append(&command,fmt.aprintf("-out:%s",b.staging),"-json-errors","-export-dependencies:json",fmt.aprintf("-export-dependencies-file:%s",b.sources_staged))
+    append(&command,fmt.aprintf("-out:%s",b.compile.staged),"-json-errors","-export-dependencies:json",fmt.aprintf("-export-dependencies-file:%s",b.sources_staged))
     b.command=command[:]
     return
 }
@@ -170,29 +170,20 @@ test_build_current :: proc(b:^Test_Build) -> bool {
     return hash==saved
 }
 
-// Starts the compiler of a test executable that needs one, within what it may
-// use (compiler_limits), with what it says going to its log. environment: of
-// the compiler; nil, the one of this process. false, with why in said, when it
-// does not start.
+// Starts the compiler of a test executable that needs one (compile_start).
+// environment: of the compiler; nil, the one of this process. false, with why
+// in said, when it does not start.
 test_build_start :: proc(b:^Test_Build,environment:[]string=nil) -> bool {
     if len(b.command)==0 {return true}
     context.allocator=b.allocator
     folder:=b.executable[:max(strings.last_index_byte(b.executable,'/'),0)]
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {
-        b.failed,b.code,b.said=true,-1,fmt.aprintf("could not make %s",folder)
-        return false
-    }
-    log,error:=os.open(b.log,{.Write,.Create,.Trunc})
-    if error!=nil {
-        b.failed,b.code,b.said=true,-1,fmt.aprintf("could not write %s: %v",b.log,error)
+        b.failure,b.said=.Write_Failed,fmt.aprintf("could not make %s",folder)
         return false
     }
     b.started=time.now()
-    b.process,error=subprocess.start({working_dir=b.root,command=b.command,env=environment,stdout=log,stderr=log},compiler_limits(b.root))
-    os.close(log)
-    if error!=nil {
-        _=os.remove(b.log)
-        b.failed,b.code,b.said=true,-1,fmt.aprintf("could not run %s: %v",b.compiler,error)
+    if !compile_start(&b.compile,b.root,b.command,environment) {
+        b.failure,b.said=.Compiler_Failed,fmt.aprintf("could not run %s",b.compiler)
         return false
     }
     b.running=true
@@ -201,28 +192,34 @@ test_build_start :: proc(b:^Test_Build,environment:[]string=nil) -> bool {
 
 // Waits at most wait for the compiler of a test executable. True once it
 // ended, or when there was none: the executable stands, published with its
-// fingerprint, unless failed says it was not built.
+// fingerprint (publish_and_stamp), unless failure says why it was not built.
 test_build_poll :: proc(b:^Test_Build,wait:time.Duration=0) -> bool {
     if !b.running {return true}
-    state,error:=os.process_wait(b.process,wait)
+    state,error:=os.process_wait(b.compile.process,wait)
     if error==os.General_Error.Timeout || (error==nil && !state.exited) {return false}
     b.running=false
     context.allocator=b.allocator
-    data,_:=os.read_entire_file(b.log,context.temp_allocator)
-    _=os.remove(b.log)
-    b.diagnostics,b.said=diagnostics_parse(string(data),b.allocator)
-    errors:=false
-    for d in b.diagnostics {errors||=d.severity==.Error}
-    switch {
-    case error!=nil:
-        b.failed,b.code,b.said=true,-1,fmt.aprintf("%s: %v",b.compiler,error)
-    case state.exit_code!=0 || errors:
-        b.failed,b.code=true,state.exit_code
-    case !test_build_publish(b):
-        b.failed,b.code=true,0
+    if error!=nil {
+        b.failure,b.said=.Compiler_Failed,fmt.aprintf("%s: %v",b.compiler,error)
+    } else {
+        b.diagnostics,b.said,b.failure,_=compile_end(&b.compile,state.exit_code,b.allocator)
     }
-    if b.failed {
-        _=os.remove(b.staging)
+    if b.failure==.None {
+        sources,_:=dependencies_read(b.sources_staged,context.temp_allocator)
+        // One a run left aside is free once a later build gets here.
+        slash:=strings.last_index_byte(b.executable,'/')
+        if entries,listed:=os.read_all_directory_by_path(b.executable[:max(slash,0)],context.temp_allocator);listed==nil {
+            for entry in entries {
+                if strings.has_prefix(entry.name,b.executable[slash+1:]) && strings.has_suffix(entry.name,".old") {_=os.remove(entry.fullpath)}
+            }
+        }
+        retired:=fmt.tprintf("%s.%d.old",b.executable,os.get_pid())
+        if published,_:=publish_and_stamp(b.compile.staged,b.executable,retired,sources,{file=test_stamp_file(b.executable),sources_file=test_sources_file(b.executable),sources_staged=b.sources_staged,root=b.root,compiler=b.compiler,flags=b.flags,tests=true,started=b.started});!published {
+            b.failure,b.said=.Output_Locked,fmt.aprintf("could not replace %s",b.executable)
+        }
+    }
+    if b.failure!=.None {
+        _=os.remove(b.compile.staged)
         _=os.remove(b.sources_staged)
     }
     return true
@@ -231,48 +228,10 @@ test_build_poll :: proc(b:^Test_Build,wait:time.Duration=0) -> bool {
 // Stops the compiler of a test executable; the executable of before stands.
 test_build_cancel :: proc(b:^Test_Build) {
     if !b.running {return}
-    _=os.process_kill(b.process)
-    _,_=os.process_wait(b.process)
+    _=os.process_kill(b.compile.process)
+    _,_=os.process_wait(b.compile.process)
     b.running=false
-    for file in ([3]string{b.log,b.staging,b.sources_staged}) {_=os.remove(file)}
-}
-
-// Puts what the compiler wrote in place of the executable, which a running
-// one on Windows is not but may be renamed out of the way, and stamps it with
-// the fingerprint of what the compiler read. A source saved while it compiled
-// is not what was built: without the stamp the next build compiles again.
-@(private)
-test_build_publish :: proc(b:^Test_Build) -> bool {
-    if !os.is_file(b.staging) {
-        b.said=fmt.aprintf("the compiler succeeded and %s is missing%s",b.staging,ODIN_OS==.Windows?"; an antivirus may have quarantined it: exclude its folder from real-time scanning":"")
-        return false
-    }
-    slash:=strings.last_index_byte(b.executable,'/')
-    folder,name:=b.executable[:max(slash,0)],b.executable[slash+1:]
-    if entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator);error==nil {
-        for entry in entries {
-            if strings.has_prefix(entry.name,name) && strings.has_suffix(entry.name,".old") {_=os.remove(entry.fullpath)}
-        }
-    }
-    if os.rename(b.staging,b.executable)!=nil {
-        retired:=fmt.tprintf("%s.%d.old",b.executable,os.get_pid())
-        if os.rename(b.executable,retired)!=nil || os.rename(b.staging,b.executable)!=nil {
-            b.said=fmt.aprintf("could not replace %s",b.executable)
-            return false
-        }
-    }
-    stamp:=test_stamp_file(b.executable)
-    sources_file:=test_sources_file(b.executable)
-    sources,listed:=dependencies_read(b.sources_staged,context.temp_allocator)
-    hash,latest:=fingerprint(b.root,b.compiler,b.flags,sources,tests=true)
-    _=os.remove(sources_file)
-    stamped:=listed && time.diff(latest,b.started)>0 && os.rename(b.sources_staged,sources_file)==nil
-    if stamped {stamped=os.write_entire_file(stamp,fmt.tprintf("%x",hash))==nil}
-    if !stamped {
-        _=os.remove(stamp)
-        _=os.remove(b.sources_staged)
-    }
-    return true
+    for file in ([4]string{b.compile.streams[0],b.compile.streams[1],b.compile.staged,b.sources_staged}) {_=os.remove(file)}
 }
 
 // Starts the executable b left, with the tests of options and environment (nil:

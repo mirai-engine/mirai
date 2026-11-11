@@ -127,11 +127,11 @@ view_modes_begin :: proc(modes: ^View_Modes) {modes.count = 0}
 
 // What the viewport shows in this frame: the mode of the renderer (black
 // where it cannot show it) or of a plugin that can show it, which the frame
-// names. Nothing in a Play or a prefab, whose views are lit; a mode no longer
+// names. Nothing in a Play; a mode no longer
 // declared goes back to Lit.
 @(step="render",after="render_sync")
 view_mode_render :: proc(s: ^Session, v: ^Viewport, modes: ^View_Modes, app: ^host.App) {
-	if s.mode == .Play || document_is_prefab(s) {return}
+	if s.mode == .Play {return}
 	w := shown_world(s)
 	entry, found := view_mode_resolve(app.renderer, modes, w, view_mode_current(v))
 	if !found {
@@ -389,7 +389,6 @@ api_view_mode :: proc(s: ^Session, call: ^api.Call) {
 	r := s.app.renderer
 	if r == nil {api.call_fail(call, api.SERVER_ERROR, "The editor has no renderer: it runs without a GPU"); return}
 	name := base.text_get(api.call_params(call, Api_View_Mode_Params).mode[:])
-	if document_is_prefab(s) {api.call_fail(call, api.INVALID_PARAMS, "The view of a prefab shows its lit image: open a scene to inspect it"); return}
 	entry, found := view_mode_resolve(r, s.view_modes, shown_world(s), name)
 	if !found {api.call_failf(call, api.INVALID_PARAMS, "%q is not a view mode; editor.view_mode.list lists them", name); return}
 	if !entry.available {api.call_failf(call, api.INVALID_PARAMS, "%s cannot be shown now: %s", entry.name, entry.reason); return}
