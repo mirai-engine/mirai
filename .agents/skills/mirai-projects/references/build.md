@@ -33,7 +33,8 @@ check and a test build read the project itself, with its tests.
 
 ## Flags and environment
 
-- Every target gets the `defines` of the manifest, `platform_flags`, `MIRAI_ODIN_FLAGS` and
+- Every target gets the `defines` of the manifest (a library of the engine, those its sources
+  read: [defines](projects.md#engine-binaries)), `platform_flags`, `MIRAI_ODIN_FLAGS` and
   `Desc.flags`; `mirai` applies the same flags and the same environment (`platform_environment`) to
   `test`, `check` and `build`. SDL3 comes from `.deps/linux-amd64/sdl3` on Linux (from
   `scripts/setup_linux_deps.py`, with its folder as `rpath`), on macOS from

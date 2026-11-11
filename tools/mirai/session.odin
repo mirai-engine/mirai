@@ -267,7 +267,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     engine:=build.engine_mode_resolve(root,mode)
     editor_args:=session_api_args(editor_args)
     command:=make([dynamic]string)
-    append(&command,build.engine_paths(root,engine).editor_program,"--project",folder,"--headless")
+    append(&command,project_engine_paths(root,folder,engine).editor_program,"--project",folder,"--headless")
     append(&command,..editor_args)
     process,error:=subprocess.detached(command[:],log,root)
     if error!=nil {fmt.eprintfln("mirai session: could not open %s: %v",command[0],error);return {},1}
@@ -304,12 +304,12 @@ session_reusable :: proc(root,folder:string,mode:Build_Mode,file:api.Port_File,c
         return false
     }
     engine:=build.engine_mode_resolve(root,mode)
-    paths:=build.engine_paths(root,engine,context.temp_allocator)
+    paths:=project_engine_paths(root,folder,engine)
     stale:string
     switch {
     case !project.path_same(file.engine,paths.folder): stale=fmt.tprintf("runs the binaries of %s, not those of %s",file.engine,paths.folder)
     case file.stamp!=build.engine_stamp_of(paths.folder,context.temp_allocator): stale="runs engine binaries older than the last build"
-    case !build.engine_current(root,engine): stale="runs an engine whose sources changed afterwards"
+    case !build.engine_current(root,engine,paths.defines): stale="runs an engine whose sources changed afterwards"
     case file.library!=build.target_stamp_of(folder,.Editor,context.temp_allocator): stale="runs a project library older than the last one built"
     case:
         p,error:=project.open(folder,root,context.temp_allocator)
@@ -768,8 +768,7 @@ engine_process_text :: proc(p:Engine_Process,role:Engine_Role) -> string {
 // each one said in a line, until they start again. Not the session mirai
 // session opened for the project at folder, which takes the build when it
 // ends (session_take).
-engine_release :: proc(root,folder:string,mode:Build_Mode,command:string) {
-    binaries:=build.engine_paths(root,mode,context.temp_allocator).folder
+engine_release :: proc(folder,binaries,command:string) {
     running:=engine_processes(binaries)
     session:=0
     for p in running {
@@ -794,12 +793,15 @@ SESSION_TAKE_S :: 180
 // whose declarations stand go in place, with its documents, its Play and its
 // history as they are (build.engine_swap); otherwise it starts again with its
 // documents. Says which in a line, with what keeps it from going on.
-session_take :: proc(root,folder:string,mode:Build_Mode) {
+session_take :: proc(folder:string,paths:build.Engine_Paths) {
     file,alive:=session_find(folder)
-    paths:=build.engine_paths(root,mode,context.temp_allocator)
-    if !alive || !file.manual || !project.path_same(file.engine,paths.folder) {return}
+    if !alive || !file.manual {return}
+    if !project.path_same(file.engine,paths.folder) {
+        fmt.eprintfln("mirai build: the session of %s (pid %d) runs the engine binaries of %s, and the project builds the engine with %s in %s; mirai session restart opens it with them",folder,file.pid,file.engine,len(paths.defines)>0?strings.join(paths.defines,", ",context.temp_allocator):"no defines it reads",paths.folder)
+        return
+    }
     now:=build.engine_stamp_of(paths.folder,context.temp_allocator)
-    libraries,restart:=build.engine_swap(mode,file.stamp,now,context.temp_allocator)
+    libraries,restart:=build.engine_swap(paths.mode,file.stamp,now,context.temp_allocator)
     started:=time.tick_now()
     result,err,called:=api.rpc_call(file.port,"build.start",`{"target":"built"}`,1,SESSION_TAKE_S*1000,context.temp_allocator)
     reply:struct {restarting:bool}

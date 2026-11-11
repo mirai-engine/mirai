@@ -349,7 +349,7 @@ projects_build_start :: proc(s:^Session) {
     built^=opened
     p.built=built
     p.shaders=build.shaders_start(built)
-    p.job=build.job_start({project=built,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE})
+    p.job=build.job_start({project=built,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=engine_folder_here(s)})
     log.infof("building %s to open it",absolute)
 }
 
