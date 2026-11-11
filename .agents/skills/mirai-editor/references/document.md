@@ -96,7 +96,8 @@ Procedures:
   Quitting with [pending changes](git.md#pending-and-kept) lists them, to keep or discard.
 - The dialog says how many agents are working and how many changes await review. Accepting stops
   the agents first (`ai_working_stop`), and from that moment the API rejects their calls; Cancel
-  lets them work. The review that remains: [persistence](ai-review.md#persistence-and-capacity).
+  lets them work. The review ends with the editor:
+  [the record](ai-review.md#the-record-and-its-capacity).
 
 ## Sections
 

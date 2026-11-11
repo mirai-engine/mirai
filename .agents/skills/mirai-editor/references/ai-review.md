@@ -67,10 +67,13 @@ without changing the chosen conversation; a question without changes is also con
 **Revert** declines the turn, walking its transactions in reverse order (`ai_review_apply`
 backward):
 
-- It restores only the fields the turn changed and whose current value matches the one it left. A
-  field another wrote afterwards is kept and counts as a skipped conflict; the other fields of the
-  same component are restored. If the agent wrote a field before and after another writer, it
-  restores its last write up to the other's value and skips the earlier one.
+- **It validates per entity.** An entity of the turn that another author changed in a later step
+  of the history is firm (`ai_review_firm`): what the turn did to it stays, whole. An entity the
+  turn created stays when something kept hangs from it or names it. The chat and a toast say which
+  stay and why (`ai_review_stays`). The steps that reverted or restored the turn are not another
+  author's (`Ai_Review.moves`).
+- Of the entities it takes back, it restores the fields the turn changed and whose current value
+  matches the one it left; one that differs is kept and counts as skipped.
 - A component's off state is reverted like a field (`core.raw_disable` or `raw_enable`, on the next
   settle). A component the turn added is removed only if it keeps the value and off state it left;
   one it removed returns with its own.
@@ -94,13 +97,14 @@ saved with the chat.
 **Partial resolution:**
 
 - An entity is accepted or reverted alone. Reverting it (`ai_review_entity_revert`) walks its rows
-  from newest to oldest with the Revert rules. A field returns, from its before row in Details, to
-  the value from before the turn's first step, even if the turn changed it several times; what
+  from newest to oldest with the Revert rules, and is refused for a firm entity. A field returns,
+  from its before row in Details, to the value from before the turn's first step, even if the
+  turn changed it several times; what
   another wrote afterwards is kept and counts as skipped.
 - Resolving removes rows from the record: accepting an entity deletes its rows (also those of one
   created or deleted by the turn), reverting a field stops recording it and a row without
   differences leaves. An entity without rows leaves `changed_ids` and loses its outline; a turn
-  without entities or files stops requesting review. The review file is rewritten on the next save.
+  without entities or files stops requesting review.
 - A file is accepted (`ai_review_file_accept`) or reverted (`ai_review_file_revert`: it returns to
   what it was before the turn's first step if it keeps what the last one left, in one undo step); in
   both cases it leaves the record.
@@ -159,25 +163,16 @@ it was already confirmed, it repeats without reverting. It also reverts the reco
   writes them.
 - Restoring scene changes requires `Edit`, the original document and a complete record.
 
-## Persistence and capacity
+## The record and its capacity
 
-- The last turn of each chat is saved atomically in
-  `.mirai/ai/chats/<conversation-id>.review.json`, versioned (`AI_REVIEW_VERSION`; another version
-  is not read): the record (rows with presence, value and off state of each side, and files with
-  their content and a relative path inside the project), terminal or interrupted state,
-  confirmation, last request, region, ids of the sent context, icon, color and position of the
-  indicator.
-- The turn's name must match the sequence of the last request: an earlier record is not attached to
-  a newer request. The sequence is recovered from the `user_message` annotation of the history,
-  also after several visual turns in a row without a text answer.
-- On reopening, components are resolved by name and their hash is checked; a layout change or an
-  invalid row is reported without applying bytes over another type. A row is invalid if its bytes
-  do not match its presence, or if it turns a side off without the component or a component of the
-  entity's base.
-- `ai_review_reconcile`, on loading and on each `document_opened`, follows the scene (values and off
-  state) and the files it is read with: with what the turn had before (the files went back, as
-  with a git discard) it is left declined with `AI_UNDONE_NOTE` and Restore; with what the turn
-  left it returns to review even if it was declined; with part, it stays as the record says.
+- The record of a turn lives in memory, with the history it was taken from: closing the editor
+  ends the review, and what the turn wrote is then pending in git like any other change
+  ([pending and kept](git.md#pending-and-kept)). A chat restored from its history comes back
+  without a record. Accepting a turn ends its review and keeps nothing in git.
+- `ai_review_reconcile`, on each `document_opened`, follows the scene (values and off state) and
+  the files it is read with: with what the turn had before (the files went back, as with a git
+  discard) it is left declined with `AI_UNDONE_NOTE` and Restore; with what the turn left it
+  returns to review even if it was declined; with part, it stays as the record says.
 - A `running` or `queued` turn returns as `failed` and starts no process; a subagent the editor
   closed on returns `interrupted` ([reopening](ai-tasks.md#compaction-and-handoff)). If the editor
   closed with the dialog, its changes are those its steps had written
@@ -186,11 +181,6 @@ it was already confirmed, it repeats without reverting. It also reverts the reco
   file counts as one row). On reaching it the review is left incomplete, and the turn keeps the
   history states of each step it confirmed (`Ai_Review.states`): Revert and Restore take those
   steps from the undo history, without the record's cap, one per step and by ids, like the
-  [undo by author](document.md#undo-by-author). If the history already released any, or the
-  incomplete record was read from disk, Revert does not undo a part and says so. The per-entity
-  review walks what entered the record.
-- Reservations and serialization happen in transactions or loads; the stable frame only consumes
-  prepared ids and states. The saved JSON has a cap and is checked before reading. Each read, poll
-  and write uses its own virtual scratch (`AI_REVIEW_SCRATCH_CAPACITY`), released on finishing,
-  outside the frame's temporary allocator. The initial load stops polling on filling the
-  conversation cache.
+  [undo by author](document.md#undo-by-author). If the history already released any, Revert does
+  not undo a part and says so. The per-entity review walks what entered the record.
+- Reservations happen in transactions; the stable frame only consumes prepared ids and states.

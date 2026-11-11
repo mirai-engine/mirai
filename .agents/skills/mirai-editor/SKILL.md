@@ -83,10 +83,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [pins](references/ai-tasks.md#pins-annotations-and-provenance); how the panel shows all of it
   (status line, report cards, subagent view, expanded chat, popups, marks):
   [AI panel](references/panels.md#ai-panel).
-- **Attribution, Finish, Revert, Restore, Retry, persistence of the review**:
+- **Attribution, Finish, Revert, Restore, Retry, the record of the review**:
   [change sets](references/ai-review.md#change-sets),
   [finish, revert and retry](references/ai-review.md#finish-revert-and-retry) and
-  [persistence](references/ai-review.md#persistence-and-capacity).
+  [the record](references/ai-review.md#the-record-and-its-capacity).
 - **Git** (Git tab, init, commit, push, pull, merge mode, `git.*` methods):
   [operations](references/git.md#operations) and [merge mode](references/git.md#merge-mode).
 - **Tools, panels, cards, inspection modes, API methods, inspector, asset types and thumbnails of

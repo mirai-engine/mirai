@@ -79,13 +79,6 @@ ai_initialize :: proc(s:^Session) {
         }
     }
     ai_agents_interrupted_restore(s,m)
-    // What still waits for review: the subagents, and the agents outside the editor.
-    waiting:[64]ai_store.Conversation
-    count,_:=ai_store.list(&m.store,waiting[:],document_path(s.document),kinds={.Agent,.Archived})
-    for &conversation in waiting[:count] {
-        if m.task_count==AI_TASK_CAPACITY {break}
-        if task:=ai_conversation_restore(s,&conversation,only_pending=true);task!=nil {ai_held_count(&m.store,task)}
-    }
 }
 
 // The messages a chat kept for its next turn when the editor closed.
@@ -140,15 +133,9 @@ ai_history_outcome :: proc(m:^Ai,c:^ai_store.Conversation) {
     }
 }
 
-ai_conversation_restore :: proc(s:^Session,conversation:^ai_store.Conversation,only_pending:bool=false) -> ^Ai_Task {
+ai_conversation_restore :: proc(s:^Session,conversation:^ai_store.Conversation) -> ^Ai_Task {
     m:=s.ai
-    if task:=ai_task_find(m,int(conversation.id));task!=nil {
-        ai_task_review_follow(s,task)
-        return task
-    }
-    if only_pending {
-        if m.task_count==AI_TASK_CAPACITY || !ai_review_pending(s,conversation.id) {return nil}
-    }
+    if task:=ai_task_find(m,int(conversation.id));task!=nil {return task}
     task:=ai_task_slot(m)
     if task==nil {return nil}
     task.id=int(conversation.id);task.state=.Done;task.conversation=conversation^
@@ -180,24 +167,8 @@ ai_conversation_restore :: proc(s:^Session,conversation:^ai_store.Conversation,o
             _=os.write_entire_file(path,strings.to_string(b))
         }
     }
-    // The review names entities of the scene of the conversation: it is read
-    // with that scene open (ai_task_review_follow).
-    task.review_deferred=string(conversation.document[:conversation.document_len])!=document_path(s.document)
-    if !task.review_deferred {
-        if message:=ai_review_load(s,task);message!="" {notify(s,message)}
-    }
     m.scene_serial+=1
     return task
-}
-
-// A conversation restored while another scene was open takes its review once
-// its scene is the one open and it is shown again.
-ai_task_review_follow :: proc(s:^Session,task:^Ai_Task) {
-    if !task.review_deferred || task.document_closed || s.document==nil || string(task.conversation.document[:task.conversation.document_len])!=document_path(s.document) {return}
-    task.review_deferred=false
-    task.world=s.edit_world
-    if message:=ai_review_load(s,task);message!="" {notify(s,message)}
-    s.ai.scene_serial+=1
 }
 
 ai_history_select :: proc(s:^Session,conversation:^ai_store.Conversation) {
@@ -219,7 +190,6 @@ ai_task_persist :: proc(s:^Session,task:^Ai_Task) {
         notify(s,message);return
     }
     task.dirty=false
-    if message:=ai_review_save(s,task);message!="" {notify(s,message)}
 }
 
 // The message of a turn in its chat: what the chat has not saved is saved

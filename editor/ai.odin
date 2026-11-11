@@ -103,7 +103,6 @@ Ai_Task :: struct {
     options:[AI_QUESTION_BYTES]u8, // one choice per line
     options_length:int,
     review_finished:bool,
-    review_deferred:bool, // restored while another scene was open: its review waits for that scene
     image_write:host.Png_Write, // of region.png, while a job writes it
     references:int, // the reference images of the message, reference-<n>.jpg from 1
     attachments:[AI_ATTACHMENTS]base.Asset_Id, // the assets the message is about
@@ -359,7 +358,6 @@ ai_input :: proc(s:^Session,m:^Ai) {
     for &task in m.tasks[:m.task_count] {
         if task.image_write.busy {host.app_png_write_poll(s.app,&task.image_write)}
         for &write in task.reference_writes {if write.busy {host.app_png_write_poll(s.app,&write)}}
-        if task.review_deferred {ai_task_review_follow(s,&task)}
     }
     if m.pending && s.frame>m.submit_frame {
         m.pending=false

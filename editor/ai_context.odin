@@ -642,7 +642,6 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
             ai_context_drop(task)
         }
         if !task.review_finished {ai_task_finish(s,m,task)}
-        task.review_deferred=false
         task.state=.Queued;task.stop=false;task.exit_code=0;task.pid=0;task.seconds=0
         task.question=.None;task.options_length=0
         task.state_before=0;task.state_after=0;task.step_count=0;task.undone=false;task.declined=false;task.needs_build=false;task.files_changed=false

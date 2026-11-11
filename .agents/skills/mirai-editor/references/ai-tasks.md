@@ -379,9 +379,8 @@ The chat outlives any native context of its agent.
 
 One SQLite database, `<project>/.mirai/ai/chat.db` (package `editor/ai_store`, WAL, without
 credentials), holds what Mirai queries and updates; several editors of the same project share it.
-The review of each conversation
-(`.mirai/ai/chats/<id>.review.json`, [review](ai-review.md#persistence-and-capacity)), the captures
-and the turn folders stay files.
+The captures and the turn folders stay files; the
+[review](ai-review.md#the-record-and-its-capacity) of a turn lives in memory.
 
 - **A frame never waits for the database.** A chat is saved at its events (a message, a step of
   its turn, the end, a review, a full transcript), never on a stable frame. A write that finds

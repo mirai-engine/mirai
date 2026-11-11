@@ -250,13 +250,6 @@ ai_review_reverts_restores_and_resolves_the_files_of_a_turn :: proc(t:^testing.T
     testing.expect_value(t,len(b.review.changed_files),1)
     testing.expect(t,a.review.pending && b.review.pending)
 
-    // The record of a turn survives the editor closing.
-    testing.expect_value(t,ai_review_save(s,a),"")
-    ai_review_free(&a.review)
-    testing.expect_value(t,ai_review_load(s,a),"")
-    testing.expect_value(t,len(a.review.changed_files),2)
-    testing.expect_value(t,string(a.review.transactions[0].files[0].before),"rock")
-
     // Revert puts back what the turn changed and keeps the turn of the other agent;
     // a file the user wrote since keeps what they wrote.
     testing.expect(t,os.write_entire_file(program,"program by the user")==nil)

@@ -46,6 +46,15 @@ change_entity :: proc(w:core.World_Ref,id:base.Entity_Id) -> core.Entity {
     return core.entity_of(core.world_entities(w),id)
 }
 
+// The ids of the entities a step holds rows of, each once, added to out.
+step_ids :: proc(w:core.World_Ref,step:^Edit_Step,out:^[dynamic]base.Entity_Id) {
+    for &rows in step.tables {
+        for e in rows.entities {
+            if id:=change_step_id(w,step,e);id!=0 && !slice.contains(out[:],id) {append(out,id)}
+        }
+    }
+}
+
 // The id of an entity: in the World, or in the rows of Id of a step, on either side.
 @(private)
 change_step_id :: proc(w:core.World_Ref,step:^Edit_Step,e:core.Entity) -> base.Entity_Id {

@@ -13,8 +13,7 @@ import "mirai:third_party/sqlite"
 
 // The chats of a project live in one SQLite database, .mirai/ai/chat.db, in
 // WAL mode so that several editors of the project can share it: a write that
-// finds another one under way is kept and runs later (queue.odin). The review
-// of a conversation stays in .mirai/ai/chats/<id>.review.json.
+// finds another one under way is kept and runs later (queue.odin).
 VERSION :: 1 // PRAGMA user_version of the database
 
 @(private="file")

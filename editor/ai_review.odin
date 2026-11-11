@@ -1,13 +1,8 @@
 package editor
 
 import "base:runtime"
-import "core:encoding/base64"
-import "core:encoding/json"
 import "core:fmt"
-import "core:math"
 import "core:mem"
-import vmem "core:mem/virtual"
-import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:core"
@@ -15,17 +10,17 @@ import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 AI_REVIEW_BYTE_CAPACITY :: 16<<20
 AI_REVIEW_ROW_CAPACITY :: 4096
-AI_REVIEW_SCRATCH_CAPACITY :: AI_REVIEW_BYTE_CAPACITY*24
+AI_REVIEW_STAYS :: 6 // entities a revert names when it leaves them as they are; the rest is a count
 
 Ai_Review :: struct {
     transactions:[dynamic]history.Change_Set,
     changed_ids:[dynamic]base.Entity_Id,
     changed_files:[dynamic]string, // project paths, in the order the turn changed them
     states:[dynamic]u64, // of the steps of the history the turn committed, oldest first
+    moves:[dynamic]u64,  // of the steps that reverted or restored it: they are not of another author
     pending:bool,
     skipped,bytes,rows:int,
     incomplete:bool, // the transactions lack what did not fit: Revert takes the steps of states from the history
@@ -47,7 +42,7 @@ ai_review_add_file :: proc(review:^Ai_Review,path:string) {
 ai_review_free :: proc(review:^Ai_Review) {
     for &transaction in review.transactions {history.change_set_free(&transaction)}
     for path in review.changed_files {delete(path)}
-    delete(review.transactions);delete(review.changed_ids);delete(review.changed_files);delete(review.states)
+    delete(review.transactions);delete(review.changed_ids);delete(review.changed_files);delete(review.states);delete(review.moves)
     review^={}
 }
 
@@ -134,7 +129,12 @@ ai_task_revert :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     if !task.review.pending {ai_task_finish(s,m,task);return ""}
     if !ai_review_revertible(s,&task.review) {return "The task outgrew its review and the history no longer holds all its steps; use scene history to revert"}
     if s.mode!=.Edit {return "Stop Play before reverting scene changes"}
-    if !ai_review_apply(s,task,false) {return "The task outgrew its review and the history cannot put it back; use scene history to revert"}
+    firm:=ai_review_firm(s,task)
+    if !ai_review_apply(s,task,false,firm) {return "The task outgrew its review and the history cannot put it back; use scene history to revert"}
+    if stays:=ai_review_stays(s,task,firm);stays!="" {
+        ai_transcript_add(&task.transcript,stays,.Note)
+        notify(s,stays)
+    }
     task.kept,task.rejected=0,0
     // The record stays: the chat offers to take the changes back for review.
     task.undone,task.declined,task.review_finished=true,true,true
@@ -154,23 +154,70 @@ ai_task_restore :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     if line:=ai_transcript_declined(&task.transcript);line>=0 {task.transcript.heights[line]=0}
     if task.document_closed || task.world!=nil && task.world!=s.edit_world || !ai_task_current(s,task) {return "Open the task's document before taking its changes back"}
     if s.mode!=.Edit {return "Stop Play before taking the changes back"}
-    if !ai_review_revertible(s,&task.review) || !ai_review_apply(s,task,true) {return "The task outgrew its review and the history no longer holds all its steps"}
+    if !ai_review_revertible(s,&task.review) || !ai_review_apply(s,task,true,nil) {return "The task outgrew its review and the history no longer holds all its steps"}
     task.undone,task.declined,task.review_finished=false,false,false
     ai_transcript_add(&task.transcript,AI_RESTORED_NOTE,.Note)
     ai_review_settle(s,m,task)
     return ""
 }
 
+// The entities of a turn that another author changed after the turn began:
+// what the turn did to them is firm, and a revert leaves them as they are.
+// In the temporary allocator.
+ai_review_firm :: proc(s:^Session,task:^Ai_Task) -> []base.Entity_Id {
+    review:=&task.review
+    if s.edits==nil || len(review.states)==0 {return nil}
+    w:=edited_world(s)
+    author:=history.Edit_Author(task.id)
+    firm:=make([dynamic]base.Entity_Id,context.temp_allocator)
+    touched:=make([dynamic]base.Entity_Id,context.temp_allocator)
+    for &step in s.edits.steps[:s.edits.cursor] {
+        if step.state<=review.states[0] || step.author==author || step.reverted || step.swapped || slice.contains(review.moves[:],step.state) {continue}
+        clear(&touched)
+        history.step_ids(w,&step,&touched)
+        for id in touched {
+            if slice.contains(review.changed_ids[:],id) && !slice.contains(firm[:],id) {append(&firm,id)}
+        }
+    }
+    return firm[:]
+}
+
+// What a revert of a turn left as it is, and why: the entities another
+// author changed after, and those the turn created that something else
+// hangs from or names. "" when it took everything back.
+@(private="file")
+ai_review_stays :: proc(s:^Session,task:^Ai_Task,firm:[]base.Entity_Id) -> string {
+    w:=edited_world(s)
+    b:=strings.builder_make(context.temp_allocator)
+    count:=0
+    say :: proc(b:^strings.Builder,count:^int,w:core.World_Ref,id:base.Entity_Id,why:string) {
+        e:=history.change_entity(w,id)
+        if e==core.NONE {return}
+        if count^<AI_REVIEW_STAYS {fmt.sbprintf(b,"%s%s (%s)",count^>0?", ":"",entity_label(w,e),why)}
+        count^+=1
+    }
+    for id in firm {say(&b,&count,w,id,"changed by someone else after the agent")}
+    for &transaction in task.review.transactions {
+        for &row in transaction.rows {
+            created:=row.table>=0 && row.table<len(w.info.tables) && w.info.tables[row.table].type==core.Id && !row.before_present
+            if created && !slice.contains(firm,row.id) {say(&b,&count,w,row.id,"something else hangs from it or names it")}
+        }
+    }
+    if count==0 {return ""}
+    more:=count>AI_REVIEW_STAYS?fmt.tprintf(" and %d more",count-AI_REVIEW_STAYS):""
+    return fmt.tprintf("%d %s as %s: %s%s",count,count==1?"entity stays":"entities stay",count==1?"it is":"they are",strings.to_string(b),more)
+}
+
 // Puts the scene where the record of a turn says: back to before it
 // (forward false), newest first, or again to what it left (forward true),
-// oldest first. A field is written only while it still holds what the other
-// side left; what someone else wrote since is kept and counted as skipped.
-// An entity goes only when all of it is still as that side left it and
-// nothing kept depends on it; one comes back with its id when the id is free.
-// It is one step of undo. False, changing nothing, when the record outgrew
-// the journal and the history cannot give all of the turn back.
+// oldest first. The entities of firm are left as they are. Of the others, an
+// entity the turn created goes only when nothing kept hangs from it or names
+// it, and one it removed comes back with its id when the id is free; a field
+// someone else wrote since is kept and counted as skipped. It is one step
+// of undo. False, changing nothing, when the record outgrew the journal and
+// the history cannot give all of the turn back.
 @(private="file")
-ai_review_apply :: proc(s:^Session,task:^Ai_Task,forward:bool) -> bool {
+ai_review_apply :: proc(s:^Session,task:^Ai_Task,forward:bool,firm:[]base.Entity_Id) -> bool {
     w:=edited_world(s)
     label:=forward?"Restore agent task":"Revert agent task"
     sets:=task.review.transactions[:]
@@ -183,12 +230,23 @@ ai_review_apply :: proc(s:^Session,task:^Ai_Task,forward:bool) -> bool {
         if !ai_review_history_sets(s,&task.review,&taken) {return false}
         sets=taken[:]
     }
+    if len(firm)>0 {
+        // The same sets without the rows of what is firm: they share the bytes of the record.
+        partial:=make([]history.Change_Set,len(sets),context.temp_allocator)
+        for &set,i in sets {
+            partial[i]={state=set.state,files=set.files,rows=make([dynamic]history.Change_Row,0,len(set.rows),context.temp_allocator)}
+            for row in set.rows {
+                if !slice.contains(firm,row.id) {append(&partial[i].rows,row)}
+            }
+        }
+        sets=partial
+    }
     tools_release(s)
     history.edits_cancel(s.edits,w)
     history.edits_begin(s.edits,s.selection,label)
     task.review.skipped+=change_sets_apply(s,sets,forward,label)
     history.edits_end(s.edits)
-    history.edits_commit(s.edits,w,s.selection)
+    if history.edits_commit(s.edits,w,s.selection) {append(&task.review.moves,s.edits.serial)}
     history.selection_prune(s.selection,w)
     return true
 }
@@ -218,192 +276,11 @@ ai_review_history_sets :: proc(s:^Session,review:^Ai_Review,sets:^[dynamic]histo
     return true
 }
 
-Ai_Review_Disk_Row :: struct {
-    component:string,
-    layout:u64,
-    id:base.Entity_Id,
-    before_present,after_present:bool,
-    before_off,after_off:bool,
-    before,after:[]u8,
-}
-Ai_Review_Disk_File :: struct {
-    path:string,
-    before_present,after_present:bool,
-    before,after:string, // base64
-}
-Ai_Review_Disk_Transaction :: struct {state:u64,rows:[]Ai_Review_Disk_Row,files:[]Ai_Review_Disk_File}
-AI_REVIEW_VERSION :: 5
-Ai_Review_Disk :: struct {
-    version:int,
-    turn:string,
-    state:Ai_Task_State,
-    review_finished,pending,incomplete:bool,
-    declined:bool, // the user reverted the changes; the record takes them back
-    skipped:int,
-    icon,color_index:u8,
-    anchor:[3]f32,
-    anchor_set:bool,
-    context_ids:[]base.Entity_Id,
-    region:[4]f32,
-    window:[2]f32,
-    files_changed:bool,
-    question:Ai_Question, // the turn ended asking; absent in a file of a turn that did not
-    options:string,
-    transactions:[]Ai_Review_Disk_Transaction,
-}
-
-// A path of the project as the record names files: relative, with forward
-// slashes, and inside the project.
-@(private="file")
-ai_review_path_valid :: proc(path:string) -> bool {
-    if path=="" || len(path)>=1024 || path[0]=='/' || strings.index_byte(path,':')>=0 || strings.index_byte(path,'\\')>=0 {return false}
-    rest:=path
-    for part in strings.split_iterator(&rest,"/") {if part=="" || part=="." || part==".." {return false}}
-    return true
-}
-
-@(private="file")
-ai_review_path :: proc(s:^Session,task:^Ai_Task) -> string {
-    return project.path(s.project_root,fmt.tprintf(".mirai/ai/chats/%d.review.json",task.conversation.id),allocator=context.temp_allocator)
-}
-
-ai_review_save :: proc(s:^Session,task:^Ai_Task) -> string {
-    // What it found on the disk is still there, and not in memory yet.
-    if task==nil || task.conversation.id==0 || s.project_root=="" || task.review_deferred {return ""}
-    scratch:vmem.Arena
-    if vmem.arena_init_static(&scratch,uint(AI_REVIEW_SCRATCH_CAPACITY),64<<10)!=nil {return "No memory for project scene review storage"}
-    defer vmem.arena_destroy(&scratch)
-    previous:=context.temp_allocator
-    context.temp_allocator=vmem.arena_allocator(&scratch)
-    defer context.temp_allocator=previous
-    folder:=project.path(s.project_root,".mirai/ai/chats",allocator=context.temp_allocator)
-    if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return "Could not create project scene review storage"}
-    disk:=Ai_Review_Disk{version=AI_REVIEW_VERSION,turn=base.text_get(task.name[:]),state=task.state,review_finished=task.review_finished,declined=task.declined,
-        pending=task.review.pending,incomplete=task.review.incomplete,skipped=task.review.skipped,
-        icon=task.icon,color_index=task.color_index,anchor=task.anchor,anchor_set=task.anchor_set,context_ids=task.context_ids[:task.context_count],
-        region={task.region.x,task.region.y,task.region.w,task.region.h},
-        window=task.window,files_changed=task.files_changed,question=task.question,options=string(task.options[:task.options_length])}
-    disk.transactions=make([]Ai_Review_Disk_Transaction,len(task.review.transactions),context.temp_allocator)
-    for transaction,i in task.review.transactions {
-        out:=&disk.transactions[i]
-        out.state=transaction.state
-        out.rows=make([]Ai_Review_Disk_Row,len(transaction.rows),context.temp_allocator)
-        for &row,j in transaction.rows {out.rows[j]={s.info.tables[row.table].name,row.layout,row.id,row.before_present,row.after_present,row.before_off,row.after_off,row.before,row.after}}
-        out.files=make([]Ai_Review_Disk_File,len(transaction.files),context.temp_allocator)
-        for &file,j in transaction.files {
-            before,before_error:=base64.encode(file.before,allocator=context.temp_allocator)
-            after,after_error:=base64.encode(file.after,allocator=context.temp_allocator)
-            if before_error!=nil || after_error!=nil {return "No memory for project scene review storage"}
-            out.files[j]={file.path,file.before_present,file.after_present,before,after}
-        }
-    }
-    data,error:=json.marshal(disk,{},context.temp_allocator)
-    if error!=nil || len(data)>AI_REVIEW_BYTE_CAPACITY*6 {return "Could not encode project scene review"}
-    if serial.file_write_atomic(ai_review_path(s,task),data)!=.None {return "Could not save project scene review"}
-    return ""
-}
-
-ai_review_pending :: proc(s:^Session,id:u64) -> bool {
-    scratch:vmem.Arena
-    if vmem.arena_init_static(&scratch,uint(AI_REVIEW_SCRATCH_CAPACITY),64<<10)!=nil {return false}
-    defer vmem.arena_destroy(&scratch)
-    allocator:=vmem.arena_allocator(&scratch)
-    path:=project.path(s.project_root,fmt.tprintf(".mirai/ai/chats/%d.review.json",id),allocator=allocator)
-    info,error:=os.stat(path,allocator)
-    if error!=nil || info.size>AI_REVIEW_BYTE_CAPACITY*6 {return false}
-    bytes,read_error:=os.read_entire_file(path,allocator)
-    if read_error!=nil {return false}
-    disk:struct{version:int,review_finished:bool}
-    return json.unmarshal(bytes,&disk,allocator=allocator)==nil && disk.version==AI_REVIEW_VERSION && !disk.review_finished
-}
-
-ai_review_load :: proc(s:^Session,task:^Ai_Task) -> string {
-    if task==nil || task.conversation.id==0 || s.project_root=="" {return ""}
-    scratch:vmem.Arena
-    if vmem.arena_init_static(&scratch,uint(AI_REVIEW_SCRATCH_CAPACITY),64<<10)!=nil {return "No memory to restore project scene review"}
-    defer vmem.arena_destroy(&scratch)
-    previous:=context.temp_allocator
-    context.temp_allocator=vmem.arena_allocator(&scratch)
-    defer context.temp_allocator=previous
-    path:=ai_review_path(s,task)
-    if !os.exists(path) {return ""}
-    info,error:=os.stat(path,context.temp_allocator)
-    if error!=nil || info.size>AI_REVIEW_BYTE_CAPACITY*6 {return "Stored project scene review exceeds capacity"}
-    data,read_error:=os.read_entire_file(path,context.temp_allocator)
-    if read_error!=nil {return "Could not read project scene review"}
-    disk:Ai_Review_Disk
-    if json.unmarshal(data,&disk,allocator=context.temp_allocator)!=nil || disk.version!=AI_REVIEW_VERSION || len(disk.turn)>len(task.name)-1 || len(disk.transactions)>AI_REVIEW_ROW_CAPACITY || len(disk.context_ids)>len(task.context_ids) || len(disk.options)>len(task.options) {return "Stored project scene review is invalid"}
-    for id in disk.context_ids {if id==0 {return "Stored scene review context is invalid"}}
-    for value in disk.region {if math.is_nan(value) || math.is_inf(value) {return "Stored scene review region is invalid"}}
-    for value in disk.window {if math.is_nan(value) || math.is_inf(value) || value<0 {return "Stored scene review window is invalid"}}
-    for value in disk.anchor {if math.is_nan(value) || math.is_inf(value) {return "Stored scene review anchor is invalid"}}
-    if disk.region[2]<0 || disk.region[3]<0 {return "Stored scene review region is invalid"}
-    if expected:=base.text_get(task.name[:]);expected!="" && expected!=disk.turn {return "Stored scene review belongs to an earlier chat turn"}
-    loaded:Ai_Review
-    complete:=false
-    defer if !complete {ai_review_free(&loaded)}
-    w:=edited_world(s)
-    for transaction in disk.transactions {
-        if len(transaction.rows)==0 && len(transaction.files)==0 {return "Stored scene review transaction is empty"}
-        append(&loaded.transactions,history.Change_Set{state=transaction.state})
-        out:=&loaded.transactions[len(loaded.transactions)-1]
-        for row in transaction.rows {
-            table:=-1
-            for descriptor,i in w.info.tables {if descriptor.place==.World && descriptor.name==row.component {table=i;break}}
-            if table<0 || row.id==0 {return "Stored scene review component is unavailable"}
-            descriptor:=&w.info.tables[table]
-            if !core.value_flat(descriptor.info) || history.change_layout(descriptor.info)!=row.layout {return "Stored scene review component layout changed"}
-            if row.before_present && len(row.before)!=descriptor.info.size || row.after_present && len(row.after)!=descriptor.info.size || !row.before_present && len(row.before)!=0 || !row.after_present && len(row.after)!=0 {return "Stored scene review row is invalid"}
-            // Only a component there turns off by itself, and never the base of an entity.
-            if !row.before_present && row.before_off || !row.after_present && row.after_off || (row.before_off || row.after_off) && core.world_table_at(w,descriptor).base {return "Stored scene review row is invalid"}
-            if loaded.rows>=AI_REVIEW_ROW_CAPACITY || loaded.bytes>AI_REVIEW_BYTE_CAPACITY-len(row.before)-len(row.after) {return "Stored project scene review exceeds capacity"}
-            copy_row:=history.Change_Row{table=table,layout=row.layout,id=row.id,before_present=row.before_present,after_present=row.after_present,before_off=row.before_off,after_off=row.after_off}
-            if row.before_present {copy_row.before=make([]u8,len(row.before));copy(copy_row.before,row.before)}
-            if row.after_present {copy_row.after=make([]u8,len(row.after));copy(copy_row.after,row.after)}
-            append(&out.rows,copy_row)
-            loaded.bytes+=len(copy_row.before)+len(copy_row.after);loaded.rows+=1
-            ai_review_add_id(&loaded,row.id)
-        }
-        for file in transaction.files {
-            if !ai_review_path_valid(file.path) {return "Stored review file path is invalid"}
-            before,before_error:=base64.decode(file.before,allocator=context.temp_allocator)
-            after,after_error:=base64.decode(file.after,allocator=context.temp_allocator)
-            if before_error!=nil || after_error!=nil || !file.before_present && len(before)>0 || !file.after_present && len(after)>0 {return "Stored review file is invalid"}
-            if loaded.rows>=AI_REVIEW_ROW_CAPACITY || loaded.bytes>AI_REVIEW_BYTE_CAPACITY-len(before)-len(after) {return "Stored project scene review exceeds capacity"}
-            append(&out.files,history.Change_File{path=strings.clone(file.path),before_present=file.before_present,after_present=file.after_present,before=slice.clone(before),after=slice.clone(after)})
-            loaded.bytes+=len(before)+len(after);loaded.rows+=1
-            ai_review_add_file(&loaded,file.path)
-        }
-    }
-    loaded.pending,loaded.incomplete,loaded.skipped=disk.pending,disk.incomplete,disk.skipped
-    ai_review_free(&task.review)
-    task.review=loaded
-    task.review_finished,task.declined=disk.review_finished,disk.declined
-    task.undone=disk.declined
-    task.icon,task.color_index=disk.icon,disk.color_index
-    task.anchor,task.anchor_set=disk.anchor,disk.anchor_set
-    task.context_count=copy(task.context_ids[:],disk.context_ids)
-    task.region={disk.region[0],disk.region[1],disk.region[2],disk.region[3]}
-    task.window=disk.window
-    task.files_changed=disk.files_changed
-    task.question=disk.question
-    task.options_length=copy(task.options[:],disk.options)
-    base.text_set(task.name[:],disk.turn)
-    task.state=disk.state
-    // A turn the editor closed on did not end; that of an agent outside the editor ended with the editor.
-    if task.state==.Queued || task.state==.Running {
-        task.state=ai_external_client(string(task.conversation.provider[:task.conversation.provider_len]))!=""?.Done:.Failed
-    }
-    s.ai.scene_serial+=1
-    complete=true
-    ai_review_reconcile(s,s.ai,task)
-    return ""
-}
-
-// The record of a turn follows the scene it is read with: what was closed
-// without saving lost the changes of the turn, which wait declined to be
-// taken back; a scene that holds them has them waiting for review again.
-// A scene with part of them stays as the record says.
+// The record of a turn follows the scene when its document is read again
+// (its file changed outside the editor, as a discard does): a scene without
+// the changes of the turn has them declined, to be taken back; one that
+// holds them has them waiting for review again. A scene with part of them
+// stays as the record says.
 ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     if len(task.review.transactions)==0 || task.world==nil || task.world!=s.edit_world || !ai_task_current(s,task) {return}
     w:=edited_world(s)
@@ -572,6 +449,8 @@ ai_review_field_revert :: proc(s:^Session,m:^Ai,w:core.World_Ref,t:^core.Table_I
     current:=cast([^]u8)core.raw_find(core.world_table_at(w,t),t.info,active)
     if current!=nil && slice.equal(current[offset:][:size],last.after[offset:][:size]) {
         restored=field_write(s,t,{active},offset,first.before[offset:][:size])
+        // Its step is of the review, not of another author that makes the entity firm.
+        if restored && history.edits_commit(s.edits,w,document_selection(s)) {append(&review.moves,s.edits.serial)}
     } else {
         kept=true
         review.skipped+=1
@@ -717,6 +596,7 @@ ai_review_entity_put_back :: proc(s:^Session,m:^Ai,task:^Ai_Task,id:base.Entity_
     if ai_review_deleted(w,task,id) {return ai_review_entity_restore(s,m,task,id)}
     e:=history.change_entity(w,id)
     if e==core.NONE {return "That entity is no longer in the scene"}
+    if slice.contains(ai_review_firm(s,task),id) {return fmt.tprintf("%s stays as it is: it was changed by someone else after the agent",entity_label(w,e))}
     for &transaction in task.review.transactions {
         for &row in transaction.rows {
             if row.id==id && row.table>=0 && row.table<len(w.info.tables) && w.info.tables[row.table].type==core.Id && !row.before_present {return ai_review_entity_take_out(s,m,task,id,e)}
