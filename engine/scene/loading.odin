@@ -92,6 +92,7 @@ Load_Job :: struct {
     whole:bool, // nothing on the screen to keep smooth: it has the job workers and the frames (host.assets_load_whole)
     passes:int, // frames it waited
     ready:bool, // a frame passed in which no library waited for what it names
+    stopped:bool, // no longer wanted: its jobs take no more work (load_stop)
     phase:Load_Phase,
     // Reading, in rounds: what the main thread found for a round, and what the round asked for that it has to find.
     queue:[dynamic]host.Assets_Source,
@@ -189,8 +190,7 @@ load_begin :: proc(app:^host.App,id:base.Asset_Id,request:Scene_Request={},salt:
 
 load_free :: proc(job:^Load_Job) {
     if job==nil {return}
-    // The jobs that prepare its assets take no other; the one that runs ends.
-    intrinsics.atomic_store(&job.next,len(job.items))
+    load_stop(job)
     if jobs.pending(&job.counter) {jobs.wait(&job.app.jobs,jobs.OWNER,&job.counter)}
     if job.world!=nil {
         host.app_assets_building(job.app,job.world,false)
@@ -213,6 +213,15 @@ load_free :: proc(job:^Load_Job) {
     delete(job.items,heap);delete(job.names);delete(job.animations)
     asset.types_destroy(&job.types)
     free(job,heap)
+}
+
+// Its jobs take no more work: a round reads no other document and does not
+// instantiate, the jobs that prepare its assets take no other, and the one
+// that runs ends.
+@(private)
+load_stop :: proc(job:^Load_Job) {
+    intrinsics.atomic_store(&job.stopped,true)
+    intrinsics.atomic_store(&job.next,len(job.items))
 }
 
 // Runs a phase of the load in a job, or here without job threads.
@@ -240,6 +249,7 @@ load_read :: proc(job:^Load_Job,worker:int) {
     reading:=host.load_phase_begin(job.app,.Read,worker)
     exhausted:=false
     for &source in job.queue {
+        if intrinsics.atomic_load(&job.stopped) {break}
         document,no_document:=new(asset.Asset)
         if no_document!=nil || host.assets_source_open(&source,document)!=.None {
             exhausted||=no_document!=nil
@@ -267,6 +277,7 @@ load_read :: proc(job:^Load_Job,worker:int) {
     for &source in job.queue {host.assets_source_free(&source)}
     clear(&job.queue)
     host.load_phase_end(job.app,reading,documents_read,&job.tally)
+    if intrinsics.atomic_load(&job.stopped) {return}
     if exhausted {
         job.error=.Out_Of_Memory
         return
@@ -478,8 +489,11 @@ load_warm :: proc(job:^Load_Job,all:bool,start:time.Tick,taken:^int) -> bool {
         taken^+=cost
         first=false
     }
-    // The jobs that prepared it are done before what they read goes.
-    if jobs.pending(&job.counter) {jobs.wait(&app.jobs,jobs.OWNER,&job.counter)}
+    // The jobs that prepared it are done before what they read goes: a frame waits for none.
+    if jobs.pending(&job.counter) {
+        if !all {return false}
+        jobs.wait(&app.jobs,jobs.OWNER,&job.counter)
+    }
     // The levels of the textures and the geometry of the meshes that go over frames are there before it ends.
     if !all && host.app_assets_uploading(app) {return false}
     // Nothing it can play holds a rest pose while its .anim compresses.

@@ -343,6 +343,41 @@ a_scene_that_replaces_the_world_takes_the_sections_loading :: proc(t:^testing.T)
     for l in f.loads.items {testing.expect(t,l.job==nil,"the load of the world that was went")}
 }
 
+// A section no longer wanted while its jobs still run, at any stage, leaves
+// its place in the frame without waiting for them; the section asked again
+// loads in another place meanwhile, and the load that was goes once its jobs
+// end. A job that still runs is one its counter has not counted down.
+@(test)
+a_section_cancelled_mid_load_does_not_wait_for_its_jobs :: proc(t:^testing.T) {
+    for stage in ([]Load_Phase{.Reading,.Warming,.Waiting}) {
+        f:Section_Fixture
+        if !section_fixture_open(t,&f,fmt.tprintf("cancel-%v",stage)) {return}
+        defer section_fixture_close(&f)
+        section_level_write(t,&f)
+        if _,error:=load(section_ref(&f),&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
+        room:=section_entity(&f,1)
+        section_stream(&f.requests,room,.Active)
+        section_frame(&f)
+        job:=f.loads.items[0].job
+        if !testing.expect(t,job!=nil && f.loads.items[0].entity==room,"the room is loading") {return}
+        job.phase=stage
+        job.counter.pending+=1
+        section_stream(&f.requests,room,.Unloaded)
+        section_frame(&f)
+        for l in f.loads.items {testing.expect(t,l.job==nil,"its place is free")}
+        testing.expect(t,len(f.loads.cancelled)==1 && f.loads.cancelled[0]==job,"it goes once its jobs end")
+        section_stream(&f.requests,room,.Active)
+        section_frame(&f)
+        section_frame(&f)
+        reference,_:=core.get(&f.world.references,room)
+        testing.expect_value(t,reference.loaded,SECTION_ROOM)
+        testing.expect_value(t,len(f.loads.cancelled),1)
+        job.counter.pending-=1
+        section_frame(&f)
+        testing.expect_value(t,len(f.loads.cancelled),0)
+    }
+}
+
 @(private="file") SECTION_A :: base.Asset_Id{0x6b,1}
 @(private="file") SECTION_B :: base.Asset_Id{0x6b,2}
 

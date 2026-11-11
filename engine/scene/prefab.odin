@@ -63,7 +63,7 @@ Prefab_Warm :: struct {
 Prefab_Warms :: struct {items:[dynamic]Prefab_Warm}
 
 prefab_warms_free :: proc(warms:^Prefab_Warms) {
-    for w in warms.items {load_cancel(w.job)}
+    for w in warms.items {load_free(w.job)}
     delete(warms.items)
     warms^={}
 }

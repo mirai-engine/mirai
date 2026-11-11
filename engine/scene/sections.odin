@@ -77,20 +77,30 @@ Section_Load :: struct {
 Section_Loads :: struct {
     items:[SECTION_LOADS]Section_Load,
     far:[SECTION_FAR_LOADS]Section_Load, // of the far forms of sections that are not loaded (far_load_begin)
+    cancelled:[dynamic]^Load_Job, // loads no longer wanted whose jobs still run: freed once they end
     root:u32, // Scene_Root.changes when they began
 }
 
 section_loads_free :: proc(loads:^Section_Loads) {
-    for &l in loads.items {load_cancel(l.job)}
-    for &l in loads.far {load_cancel(l.job)}
+    for l in loads.items {load_free(l.job)}
+    for l in loads.far {load_free(l.job)}
+    for job in loads.cancelled {load_free(job)}
+    delete(loads.cancelled)
     loads^={}
 }
 
-// Frees a load, waiting for its job.
+// Takes a load from its place without waiting for its jobs: they stop at
+// their next step, and the load goes once they end. Without memory to keep
+// it meanwhile, it waits for them.
 @(private)
-load_cancel :: proc(job:^Load_Job) {
+load_cancel :: proc(loads:^Section_Loads,l:^Section_Load) {
+    job:=l.job
+    l^={}
     if job==nil {return}
-    if jobs.pending(&job.counter) {jobs.wait(&job.app.jobs,0,&job.counter)}
+    load_stop(job)
+    if jobs.pending(&job.counter) {
+        if _,no_room:=append(&loads.cancelled,job);no_room==nil {return}
+    }
     load_free(job)
 }
 
@@ -111,16 +121,15 @@ scene_sections :: proc(
         reference.failed={}
     }
     if loads!=nil {
+        for i:=len(loads.cancelled)-1;i>=0;i-=1 {
+            if jobs.pending(&loads.cancelled[i].counter) {continue}
+            load_free(loads.cancelled[i])
+            unordered_remove(&loads.cancelled,i)
+        }
         changes:=root.ptr!=nil?root.ptr.changes:0
         if loads.root!=changes {
-            for &l in loads.items {
-                load_cancel(l.job)
-                l={}
-            }
-            for &l in loads.far {
-                load_cancel(l.job)
-                l={}
-            }
+            for &l in loads.items {load_cancel(loads,&l)}
+            for &l in loads.far {load_cancel(loads,&l)}
             loads.root=changes
         }
         loads_waits_settle(loads,waited)
@@ -160,10 +169,7 @@ scene_sections :: proc(
         if loads!=nil {for l,i in loads.items {if l.job!=nil && l.entity==e {slot=i}}}
         switch {
         case state==.Unloaded || reference.rule!=.With_Document && reference.loaded!={} && reference.loaded!=reference.scene:
-            if slot>=0 {
-                load_cancel(loads.items[slot].job)
-                loads.items[slot]={}
-            }
+            if slot>=0 {load_cancel(loads,&loads.items[slot])}
             if reference.loaded=={} {break}
             section_drop(world,documents,e)
         case reference.loaded=={} && slot<0 && loads!=nil && reference.failed!=reference.scene && reference.scene!={}:
