@@ -197,6 +197,36 @@ ray_hits_triangles_on_both_faces :: proc(t:^testing.T) {
     testing.expect_value(t,triangle_normal({{0,0,0},{1,0,0},{2,0,0}}),Vec3{})
 }
 
+// Four triangles around a corner they share, on a tilted plane: a ray through
+// that corner or through an edge two of them share, at any angle down to
+// grazing, meets one of them and never passes between.
+@(test)
+ray_meets_triangles_through_their_shared_edges_and_corner :: proc(t:^testing.T) {
+    center:=Vec3{0.37,1.13,-2.71}
+    u,v:=Vec3{0.83,0.21,-0.44},Vec3{-0.17,0.91,0.35}
+    corners:=[4]Vec3{center+u+v,center-u+v,center-u-v,center+u-v}
+    normal:=linalg.normalize(linalg.cross(u,v))
+    rng:=rng_make(2013)
+    missed:=0
+    for ray in 0..<20000 {
+        edge:=ray%4
+        target:=center if ray%5==0 else center+(corners[edge]-center)*random_range(&rng,0.01,0.99)
+        along:=random_unit_vec3(&rng)
+        along=linalg.normalize(along-normal*linalg.dot(along,normal))
+        rise:=random_range(&rng,0.3,90)*DEG
+        side:=f32(1) if ray%2==0 else -1
+        from:=target+(along*math.cos(rise)+normal*side*math.sin(rise))*random_range(&rng,0.5,50)
+        direction:=linalg.normalize(target-from)
+        met:=false
+        for k in 0..<4 {
+            _,_,hit:=ray_triangle({from,direction},{center,corners[k],corners[(k+1)%4]})
+            met||=hit
+        }
+        if !met {missed+=1}
+    }
+    testing.expectf(t,missed==0,"%d of 20000 rays through a shared edge or corner passed between the triangles",missed)
+}
+
 @(test)
 ray_is_clipped_by_a_frustum :: proc(t:^testing.T) {
     frustum:=frustum_from_matrix(perspective(90*DEG,1,1,100)*look_at({},{0,0,-1},{0,1,0}))
