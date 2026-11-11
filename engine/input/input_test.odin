@@ -40,10 +40,11 @@ TEST_NAMES :: [3]core.Name_Info{
 
 @(private="file")
 named_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(dst:rawptr)=test_action_defaults) -> (info:core.World_Info,ok:bool) {
-    @(static) actions:=[1]core.Actions_Info{{type=Test_Action,base=3,library="test"}}
-    actions[0].info,actions[0].defaults=type_info_of(Test_Action),defaults
+    // Of this call: the tests run at once, each with its defaults.
+    actions:=make([]core.Actions_Info,1,context.temp_allocator)
+    actions[0]={type=Test_Action,info=type_info_of(Test_Action),base=3,library="test",defaults=defaults}
     info=test_info(t,W) or_return
-    info.names,info.actions=names,actions[:]
+    info.names,info.actions=names,actions
     return info,true
 }
 

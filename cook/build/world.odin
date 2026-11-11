@@ -2457,8 +2457,7 @@ TEST_WORLDS_FILE :: "worlds_gen_test.odin"
 Test_Field :: struct {
     type:^Type,
     name:string,   // of its table or storage in the World_Info
-    field:string,  // of the struct of its place, through its groups
-    offset:string, // in that struct
+    offset:string, // in the struct of its place
     place:core.Place,
     game:bool,
 }
@@ -2643,7 +2642,7 @@ test_fields_read :: proc(g:^Generator,tw:^Test_World,storages:^[dynamic]Test_Fie
                 continue
             }
             tag:=reflect.Struct_Tag(strings.trim(field.tag.text,"`"))
-            f:=Test_Field{field=name,place=place,offset=fmt.aprintf("offset_of(%s,%s)",tw.structs[place],name)}
+            f:=Test_Field{place=place,offset=fmt.aprintf("offset_of(%s,%s)",tw.structs[place],name)}
             _,f.game=core.field_option(tag,"game")
             held,kind,by_world,count:=field.type,Kind.Storage,false,-1
             if array,is_array:=held.derived.(^ast.Array_Type);is_array && array.len!=nil {
@@ -2820,19 +2819,14 @@ test_worlds_text :: proc(g:^Generator,pkg,core_package:^Package,worlds:[]^Test_W
             }
             table_row(w,i,f.type,f.name,f.offset,f.place,f.game,locks)
         }
-        fmt.sbprint(w,"    info.sizes,info.aligns={.World=")
-        for place in core.Place {
-            name:=tw.structs[place]
-            if place!=.World {fmt.sbprintf(w,",.%v=",place)}
-            fmt.sbprint(w,name!=""?fmt.tprintf("size_of(%s)",name):"1")
+        for of in ([2]string{"size_of","align_of"}) {
+            fmt.sbprintf(w,"    info.%ss={{",of[:len(of)-3])
+            for place in core.Place {
+                fmt.sbprintf(w,"%s.%v=%s",place==.World?"":",",place,tw.structs[place]!=""?fmt.tprintf("%s(%s)",of,tw.structs[place]):"1")
+            }
+            fmt.sbprint(w,"}\n")
         }
-        fmt.sbprint(w,"},{.World=")
-        for place in core.Place {
-            name:=tw.structs[place]
-            if place!=.World {fmt.sbprintf(w,",.%v=",place)}
-            fmt.sbprint(w,name!=""?fmt.tprintf("align_of(%s)",name):"1")
-        }
-        fmt.sbprintf(w,"}}\n    info.entities,info.revisions=offset_of(%s,entities),offset_of(%s,storage_revisions)\n",tw.name,tw.name)
+        fmt.sbprintf(w,"    info.entities,info.revisions=offset_of(%s,entities),offset_of(%s,storage_revisions)\n",tw.name,tw.name)
         fmt.sbprintf(w,"    info.tables,info.storages=tables,storages\n    %sworld_info_index(&info)\n    return info,true\n}}\n\n",c)
     }
     fmt.sbprintf(w,"// The World_Info of a @(test_world) of this package, which says of its tables\n// and storages what that of a game says: test_info_destroy frees it.\ntest_info :: proc(t:^testing.T,$W:typeid,allocator:=context.allocator,loc:=#caller_location) -> (info:%sWorld_Info,ok:bool) {{\n",c)
@@ -2895,8 +2889,6 @@ test_world_ref :: proc(w:^$W) -> C.World_Ref {return {w,&w.made_of,.World}}
 test_world_settle :: proc(w:^$W) -> int {return C.settle(&w.made_of,w,nil)}
 
 test_world_copy :: proc(dst,src:^$W) -> bool {return C.world_copy(&src.made_of,dst,src)}
-
-test_world_copy_changed :: proc(dst,src:^$W,marks:[]C.Copy_Mark) -> bool {return C.world_copy_changed(&src.made_of,dst,src,marks)}
 
 test_world_swap :: proc(a,b:^$W) {C.world_swap(&a.made_of,a,b)}
 

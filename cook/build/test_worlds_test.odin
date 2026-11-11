@@ -72,7 +72,8 @@ Toy_World :: struct {
         `offset_of(Toy_Shared,problems),.Shared,.None,nil,true,nil,false,false,"",false,false,{free=free_test_world_p_core_problems},false}`,
         `offset_of(Toy_Shared,quality),.Shared,.Machine,nil,false,for_device_test_world_p_core_quality,`,
         "default_test_world_p_core_clock :: proc(dst:rawptr) {(cast(^p_core.Clock)dst)^=p_core.clock_default()}",
-        "info.sizes,info.aligns={.World=size_of(Toy_World),.Shared=size_of(Toy_Shared),.Editor=1},",
+        "info.sizes={.World=size_of(Toy_World),.Shared=size_of(Toy_Shared),.Editor=1}",
+        "info.aligns={.World=align_of(Toy_World),.Shared=align_of(Toy_Shared),.Editor=1}",
         "when W==Toy_World {info,ok=test_info_toy_world(allocator)}",
     }) {
         testing.expectf(t,strings.contains(text,wanted),"the generated world lacks %s in\n%s",wanted,text)
