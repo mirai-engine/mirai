@@ -93,13 +93,8 @@ DepthExtents FindDepthExtents(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
         if (IsOnScreen(iPos, RenderSize())) {
 
             FfxFloat32 fNdDepth = depth[iSampleIndex];
-#if FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH
             if (fNdDepth > extents.fNearest) {
                 extents.fFarthest       = ffxMin(extents.fFarthest, fNdDepth);
-#else
-            if (fNdDepth < extents.fNearest) {
-                extents.fFarthest       = ffxMax(extents.fFarthest, fNdDepth);
-#endif
                 extents.fNearestCoord   = iPos;
                 extents.fNearest        = fNdDepth;
             }
@@ -111,13 +106,8 @@ DepthExtents FindDepthExtents(FFX_PARAMETER_IN FfxInt32x2 iPxPos)
 
 FfxFloat32x2 DilateMotionVector(FfxInt32x2 iPxPos, const DepthExtents depthExtents)
 {
-#if FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS
     const FfxInt32x2 iSamplePos       = iPxPos;
     const FfxInt32x2 iMotionVectorPos = depthExtents.fNearestCoord;
-#else
-    const FfxInt32x2 iSamplePos       = ComputeHrPosFromLrPos(iPxPos);
-    const FfxInt32x2 iMotionVectorPos = ComputeHrPosFromLrPos(depthExtents.fNearestCoord);
-#endif
 
     const FfxFloat32x2 fDilatedMotionVector = LoadInputMotionVector(iMotionVectorPos);
 

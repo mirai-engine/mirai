@@ -22,23 +22,7 @@
 
 #include "ffx_fsr3upscaler_resources.h"
 
-#if defined(FFX_GPU)
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic push
-#pragma dxc diagnostic ignored "-Wambig-lit-shift"
-#endif //__hlsl_dx_compiler
 #include "ffx_core.h"
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic pop
-#endif //__hlsl_dx_compiler
-#endif // #if defined(FFX_GPU)
-
-#if defined(FFX_GPU)
-#ifndef FFX_PREFER_WAVE64
-#define FFX_PREFER_WAVE64
-#endif // FFX_PREFER_WAVE64
-
-#pragma warning(disable: 3205)  // conversion from larger type to smaller
 
 #define DECLARE_SRV_REGISTER(regIndex)  t##regIndex
 #define DECLARE_UAV_REGISTER(regIndex)  u##regIndex
@@ -82,8 +66,6 @@ cbuffer cbFSR3Upscaler : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_FSR3UP
     FfxFloat32    fAccumulationAddedPerFrame;
     FfxFloat32    fMinDisocclusionAccumulation;
 };
-
-#define FFX_FSR3UPSCALER_CONSTANT_BUFFER_1_SIZE (sizeof(cbFSR3Upscaler) / 4)  // Number of 32-bit values. This must be kept in sync with the cbFSR3Upscaler size.
 
 /* Define getter functions in the order they are defined in the CB! */
 FfxInt32x2 RenderSize()
@@ -193,50 +175,6 @@ FfxFloat32 MinDisocclusionAccumulation()
 
 #endif // #if defined(FSR3UPSCALER_BIND_CB_FSR3UPSCALER)
 
-#define FFX_FSR3UPSCALER_ROOTSIG_STRINGIFY(p) FFX_FSR3UPSCALER_ROOTSIG_STR(p)
-#define FFX_FSR3UPSCALER_ROOTSIG_STR(p) #p
-#define FFX_FSR3UPSCALER_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_FSR3UPSCALER_ROOTSIG_STRINGIFY(FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_FSR3UPSCALER_ROOTSIG_STRINGIFY(FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_POINT, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK), " \
-                                    "StaticSampler(s1, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-
-#define FFX_FSR3UPSCALER_CONSTANT_BUFFER_2_SIZE 6  // Number of 32-bit values. This must be kept in sync with max( cbRCAS , cbSPD) size.
-
-#define FFX_FSR3UPSCALER_CB2_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_FSR3UPSCALER_ROOTSIG_STRINGIFY(FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_FSR3UPSCALER_ROOTSIG_STRINGIFY(FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "CBV(b1), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_POINT, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK), " \
-                                    "StaticSampler(s1, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-#if defined(FFX_FSR3UPSCALER_EMBED_ROOTSIG)
-#define FFX_FSR3UPSCALER_EMBED_ROOTSIG_CONTENT FFX_FSR3UPSCALER_ROOTSIG
-#define FFX_FSR3UPSCALER_EMBED_CB2_ROOTSIG_CONTENT FFX_FSR3UPSCALER_CB2_ROOTSIG
-#else
-#define FFX_FSR3UPSCALER_EMBED_ROOTSIG_CONTENT
-#define FFX_FSR3UPSCALER_EMBED_CB2_ROOTSIG_CONTENT
-#endif // #if FFX_FSR3UPSCALER_EMBED_ROOTSIG
-
 #if defined(FSR3UPSCALER_BIND_CB_AUTOREACTIVE)
 cbuffer cbGenerateReactive : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_AUTOREACTIVE)
 {
@@ -278,7 +216,6 @@ FfxUInt32x4 RCASConfig()
     return rcasConfig;
 }
 #endif // #if defined(FSR3UPSCALER_BIND_CB_RCAS)
-
 
 #if defined(FSR3UPSCALER_BIND_CB_REACTIVE)
 cbuffer cbGenerateReactive : FFX_FSR3UPSCALER_DECLARE_CB(FSR3UPSCALER_BIND_CB_REACTIVE)
@@ -444,10 +381,6 @@ FfxFloat32x2 LoadInputMotionVector(FfxUInt32x2 iPxDilatedMotionVectorPos)
     FfxFloat32x2 fSrcMotionVector = r_input_motion_vectors[iPxDilatedMotionVectorPos].xy;
 
     FfxFloat32x2 fUvMotionVector = fSrcMotionVector * MotionVectorScale();
-
-#if FFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS
-    fUvMotionVector -= MotionVectorJitterCancellation();
-#endif
 
     return fUvMotionVector;
 }
@@ -726,11 +659,7 @@ void StoreReconstructedDepth(FfxUInt32x2 iPxSample, FfxFloat32 fDepth)
 {
     FfxUInt32 uDepth = asuint(fDepth);
 
-#if FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH
     InterlockedMax(rw_reconstructed_previous_nearest_depth[iPxSample], uDepth);
-#else
-    InterlockedMin(rw_reconstructed_previous_nearest_depth[iPxSample], uDepth); // min for standard, max for inverted depth
-#endif
 }
 
 void SetReconstructedDepth(FfxUInt32x2 iPxSample, const FfxUInt32 uValue)
@@ -792,15 +721,9 @@ FfxFloat32 Exposure()
 {
     FfxFloat32 exposure = r_input_exposure[FfxUInt32x2(0, 0)].x;
 
-#if defined(__XBOX_SCARLETT)
-    if (exposure < 0.000030517578/** 2^-15 */) {
-        exposure = 1.0f;
-    }
-#else
     if (exposure == 0.0f) {
         exposure = 1.0f;
     }
-#endif // #if defined(__XBOX_SCARLETT)
 
     return exposure;
 }
@@ -973,7 +896,7 @@ void StorePyramid(FFX_PARAMETER_IN FfxInt32x2 iPxPos, FFX_PARAMETER_IN FfxFloat3
 }
 #endif
 
-#if defined FSR3UPSCALER_BIND_UAV_SPD_GLOBAL_ATOMIC
+#if defined(FSR3UPSCALER_BIND_UAV_SPD_GLOBAL_ATOMIC)
 globallycoherent RWTexture2D<FfxUInt32>   rw_spd_global_atomic : FFX_FSR3UPSCALER_DECLARE_UAV(FSR3UPSCALER_BIND_UAV_SPD_GLOBAL_ATOMIC);
 
 void SPD_IncreaseAtomicCounter(inout FfxUInt32 spdCounter)
@@ -987,4 +910,3 @@ void SPD_ResetAtomicCounter()
 }
 #endif
 
-#endif // #if defined(FFX_GPU)

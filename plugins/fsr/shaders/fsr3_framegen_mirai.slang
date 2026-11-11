@@ -4,20 +4,13 @@
 // (CUSTOM_SLOT_n, custom_slots.slang) each resource takes, as framegen.odin
 // binds them; the constants go at slot 0 and the second block at slot 1.
 //
-// 32 bits: FFX_HALF stays undefined. The depth is reversed (1 nearest), the
-// motion vectors are offsets in UV at the render size, without the jitter,
-// and the image interpolated is the final one, sRGB encoded. The sampler is
-// the renderer's (SLOT_LINEAR_SAMPLER).
+// The headers are reduced to the configuration Mirai compiles: HLSL on the
+// GPU at 32 bits, the depth reversed (1 nearest), the motion vectors offsets
+// in UV at the render size without the jitter, and SPD over shared memory
+// instead of quad intrinsics. The image interpolated is the final one, sRGB
+// encoded. The sampler is the renderer's (SLOT_LINEAR_SAMPLER).
 #ifndef MIRAI_FSR3_FRAMEGEN_SLANG
 #define MIRAI_FSR3_FRAMEGEN_SLANG
-
-#define FFX_GPU 1
-#define FFX_HLSL 1
-#define FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH 1
-#define FFX_FRAMEINTERPOLATION_OPTION_LOW_RES_MOTION_VECTORS 1
-#define FFX_FRAMEINTERPOLATION_OPTION_JITTERED_MOTION_VECTORS 0
-// The SPD reductions walk shared memory instead of quad intrinsics.
-#define FFX_SPD_NO_WAVE_OPERATIONS 1
 
 // HLSL qualifiers that have no meaning in SPIR-V, as in fsr3_mirai.slang.
 #define unorm

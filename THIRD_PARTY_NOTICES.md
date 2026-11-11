@@ -110,7 +110,8 @@ are kept here and, where the license asks for it, in the header of the file.
   `shaders/display_tables.comp.slang`. Game.
 - **AMD FidelityFX Super Resolution 3.1.4** (MIT; © 2024 Advanced Micro Devices, Inc.),
   <https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>. `plugins/fsr/shaders/fsr3` (the
-  upscaler, optical flow, frame interpolation and SPD headers) and the pass sequence of
+  upscaler, optical flow, frame interpolation and SPD headers, altered: reduced to the one
+  configuration Mirai compiles, as their `UPSTREAM.md` says) and the pass sequence of
   `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp` and
   `ffx_frameinterpolation.cpp`. Game, with the `fsr` plugin.
 

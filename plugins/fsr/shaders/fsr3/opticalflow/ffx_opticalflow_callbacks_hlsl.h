@@ -23,35 +23,11 @@
 #ifndef FFX_OPTICALFLOW_CALLBACKS_HLSL_H
 #define FFX_OPTICALFLOW_CALLBACKS_HLSL_H
 
-#if defined(FFX_GPU)
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic push
-#pragma dxc diagnostic ignored "-Wambig-lit-shift"
-#endif //__hlsl_dx_compiler
 #include "../fsr3upscaler/ffx_core.h" // Mirai: the core of fsr3upscaler/
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic pop
-#endif //__hlsl_dx_compiler
 
-#define FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION 1
-#define FFX_OPTICALFLOW_FIX_TOP_LEFT_BIAS 1
-#define FFX_OPTICALFLOW_USE_HEURISTICS 1
 #define FFX_OPTICALFLOW_BLOCK_SIZE 8
-#define FFX_LOCAL_SEARCH_FALLBACK 1
-
-// perf optimization for h/w not supporting accelerated msad4()
-#if !defined(FFX_PREFER_WAVE64) && defined(FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION)
-#undef FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION
-#endif
 
 #include "ffx_opticalflow_common.h" // Mirai: beside this file
-
-#ifndef FFX_PREFER_WAVE64
-#define FFX_PREFER_WAVE64
-#endif
-
-
-#pragma warning(disable: 3205)  // conversion from larger type to smaller
 
 #define DECLARE_SRV_REGISTER(regIndex)  t##regIndex
 #define DECLARE_UAV_REGISTER(regIndex)  u##regIndex
@@ -71,7 +47,6 @@
         FfxUInt32 backbufferTransferFunction;
         FfxFloat32x2 minMaxLuminance;
     };
-#define FFX_OPTICALFLOW_CONSTANT_BUFFER_1_SIZE 8
 
 #endif //FFX_OPTICALFLOW_BIND_CB_COMMON
 
@@ -92,51 +67,6 @@ FfxUInt32 NumWorkGroups()
     return numWorkGroupOpticalFlowInputPyramid;
 }
 #endif //FFX_OPTICALFLOW_BIND_CB_SPD
-
-#define FFX_OPTICALFLOW_CONSTANT_BUFFER_2_SIZE 8
-
-#define FFX_OPTICALFLOW_DESCRIPTOR_COUNT 32
-
-#define FFX_OPTICALFLOW_ROOTSIG_STRINGIFY(p) FFX_OPTICALFLOW_ROOTSIG_STR(p)
-#define FFX_OPTICALFLOW_ROOTSIG_STR(p) #p
-#define FFX_OPTICALFLOW_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_OPTICALFLOW_ROOTSIG_STRINGIFY(FFX_OPTICALFLOW_DESCRIPTOR_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_OPTICALFLOW_ROOTSIG_STRINGIFY(FFX_OPTICALFLOW_DESCRIPTOR_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_POINT, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK), " \
-                                    "StaticSampler(s1, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-
-#define FFX_OPTICALFLOW_CB2_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_OPTICALFLOW_ROOTSIG_STRINGIFY(FFX_OPTICALFLOW_DESCRIPTOR_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_OPTICALFLOW_ROOTSIG_STRINGIFY(FFX_OPTICALFLOW_DESCRIPTOR_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_POINT, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK), " \
-                                    "StaticSampler(s1, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-#if defined(FFX_OPTICALFLOW_EMBED_ROOTSIG)
-#define FFX_OPTICALFLOW_EMBED_ROOTSIG_CONTENT FFX_OPTICALFLOW_ROOTSIG
-#define FFX_OPTICALFLOW_EMBED_CB2_ROOTSIG_CONTENT FFX_OPTICALFLOW_CB2_ROOTSIG
-#else
-#define FFX_OPTICALFLOW_EMBED_ROOTSIG_CONTENT
-#define FFX_OPTICALFLOW_EMBED_CB2_ROOTSIG_CONTENT
-#endif // #if FFX_OPTICALFLOW_EMBED_ROOTSIG
 
 FfxInt32x2 DisplaySize()
 {
@@ -181,87 +111,87 @@ FfxInt32x2 OpticalFlowHistogramMaxVelocity()
     return FfxInt32x2(maxVelocity, maxVelocity);
 }
 
-    #if defined FFX_OPTICALFLOW_BIND_SRV_INPUT_COLOR
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_INPUT_COLOR)
         Texture2D<FfxFloat32x4>                   r_input_color                       : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_INPUT_COLOR);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_INPUT_MOTION_VECTORS
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_INPUT_MOTION_VECTORS)
         Texture2D<FfxFloat32x2>                   r_input_motion_vectors              : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_INPUT_MOTION_VECTORS);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_INPUT
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_INPUT)
         [[vk::image_format("r8ui")]] Texture2D<FfxUInt32>                      r_optical_flow_input                : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_INPUT); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_PREVIOUS_INPUT
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_PREVIOUS_INPUT)
         [[vk::image_format("r8ui")]] Texture2D<FfxUInt32>                      r_optical_flow_previous_input       : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_PREVIOUS_INPUT); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW)
         [[vk::image_format("rg16i")]] Texture2D<FfxInt32x2>                     r_optical_flow                      : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW); // Mirai: R16G16_SINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_PREVIOUS
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_PREVIOUS)
         [[vk::image_format("rg16i")]] Texture2D<FfxInt32x2>                     r_optical_flow_previous             : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_PREVIOUS); // Mirai: R16G16_SINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_ADDITIONAL_INFO
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_ADDITIONAL_INFO)
         Texture2D<FfxUInt32x2>                    r_optical_flow_additional_info      : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_ADDITIONAL_INFO);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_ADDITIONAL_INFO_PREVIOUS
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_ADDITIONAL_INFO_PREVIOUS)
         Texture2D<FfxUInt32x2>                    r_optical_flow_additional_info_previous : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_ADDITIONAL_INFO_PREVIOUS);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_HISTOGRAM
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_HISTOGRAM)
         Texture2D<FfxUInt32>                      r_optical_flow_histogram            : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_HISTOGRAM);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_GLOBAL_MOTION_SEARCH
+    #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_GLOBAL_MOTION_SEARCH)
         Texture2D<FfxUInt32>                      r_optical_flow_global_motion_search : FFX_OPTICALFLOW_DECLARE_SRV(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_GLOBAL_MOTION_SEARCH);
     #endif
 
     // UAV declarations
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT)
         [[vk::image_format("r8ui")]] RWTexture2D<FfxUInt32>                   rw_optical_flow_input               : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_1
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_1)
         [[vk::image_format("r8ui")]] globallycoherent RWTexture2D<FfxUInt32>  rw_optical_flow_input_level_1       : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_1); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_2
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_2)
         [[vk::image_format("r8ui")]] globallycoherent RWTexture2D<FfxUInt32>  rw_optical_flow_input_level_2       : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_2); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_3
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_3)
         [[vk::image_format("r8ui")]] globallycoherent RWTexture2D<FfxUInt32>  rw_optical_flow_input_level_3       : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_3); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_4
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_4)
         [[vk::image_format("r8ui")]] globallycoherent RWTexture2D<FfxUInt32>  rw_optical_flow_input_level_4       : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_4); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_5
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_5)
         [[vk::image_format("r8ui")]] globallycoherent RWTexture2D<FfxUInt32>  rw_optical_flow_input_level_5       : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_5); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_6
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_6)
         [[vk::image_format("r8ui")]] globallycoherent RWTexture2D<FfxUInt32>  rw_optical_flow_input_level_6       : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_6); // Mirai: R8_UINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW)
         [[vk::image_format("rg16i")]] RWTexture2D<FfxInt32x2>                   rw_optical_flow                     : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW); // Mirai: R16G16_SINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_NEXT_LEVEL
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_NEXT_LEVEL)
         [[vk::image_format("rg16i")]] RWTexture2D<FfxInt32x2>                   rw_optical_flow_next_level          : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_NEXT_LEVEL); // Mirai: R16G16_SINT
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_ADDITIONAL_INFO
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_ADDITIONAL_INFO)
         RWTexture2D<FfxUInt32x2>                  rw_optical_flow_additional_info     : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_ADDITIONAL_INFO);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_ADDITIONAL_INFO_NEXT_LEVEL
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_ADDITIONAL_INFO_NEXT_LEVEL)
         RWTexture2D<FfxUInt32x2>                  rw_optical_flow_additional_info_next_level : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_ADDITIONAL_INFO_NEXT_LEVEL);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_HISTOGRAM
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_HISTOGRAM)
         RWTexture2D<FfxUInt32>                    rw_optical_flow_histogram           : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_HISTOGRAM);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_GLOBAL_MOTION_SEARCH
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_GLOBAL_MOTION_SEARCH)
         globallycoherent RWTexture2D<FfxUInt32>   rw_optical_flow_global_motion_search: FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_GLOBAL_MOTION_SEARCH);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_HISTOGRAM
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_HISTOGRAM)
         RWTexture2D<FfxUInt32>                    rw_optical_flow_scd_histogram       : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_HISTOGRAM);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_PREVIOUS_HISTOGRAM
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_PREVIOUS_HISTOGRAM)
         RWTexture2D<FfxFloat32>                   rw_optical_flow_scd_previous_histogram : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_PREVIOUS_HISTOGRAM);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_TEMP
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_TEMP)
         RWTexture2D<FfxUInt32>                    rw_optical_flow_scd_temp            : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_TEMP);
     #endif
-    #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_OUTPUT
+    #if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_OUTPUT)
         RWTexture2D<FfxUInt32>                    rw_optical_flow_scd_output          : FFX_OPTICALFLOW_DECLARE_UAV(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_SCD_OUTPUT);
     #endif
 
@@ -290,11 +220,7 @@ void StoreOpticalFlowInput(FfxInt32x2 iPxPos, FfxUInt32 fLuma)
 #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_INPUT)
 FfxUInt32 LoadOpticalFlowInput(FfxInt32x2 iPxPos)
 {
-#if FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION == 1
-    return max(1, r_optical_flow_input[iPxPos]);
-#else
     return r_optical_flow_input[iPxPos];
-#endif
 }
 #endif
 
@@ -308,11 +234,7 @@ FfxUInt32 LoadRwOpticalFlowInput(FfxInt32x2 iPxPos)
 #if defined(FFX_OPTICALFLOW_BIND_SRV_OPTICAL_FLOW_PREVIOUS_INPUT)
 FfxUInt32 LoadOpticalFlowPreviousInput(FfxInt32x2 iPxPos)
 {
-#if FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION == 1
-    return max(1, r_optical_flow_previous_input[iPxPos]);
-#else
     return r_optical_flow_previous_input[iPxPos];
-#endif
 }
 #endif
 
@@ -591,44 +513,41 @@ FfxUInt32 LoadSecondImagePackedLuma(FfxInt32x2 iPxPos)
 }
 #endif
 
-
 void SPD_SetMipmap(int2 iPxPos, int index, float value)
 {
     switch (index)
     {
     case 0:
-#if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_1
+#if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_1)
         rw_optical_flow_input_level_1[iPxPos] = value;
 #endif // #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_1
         break;
     case 1:
-#if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_2
+#if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_2)
         rw_optical_flow_input_level_2[iPxPos] = value;
 #endif // #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_2
         break;
     case 2:
-#if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_3
+#if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_3)
         rw_optical_flow_input_level_3[iPxPos] = value;
 #endif // #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_3
         break;
     case 3:
-#if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_4
+#if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_4)
         rw_optical_flow_input_level_4[iPxPos] = value;
 #endif // #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_4
         break;
     case 4:
-#if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_5
+#if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_5)
         rw_optical_flow_input_level_5[iPxPos] = value;
 #endif // #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_5
         break;
     case 5:
-#if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_6
+#if defined(FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_6)
         rw_optical_flow_input_level_6[iPxPos] = value;
 #endif // #if defined FFX_OPTICALFLOW_BIND_UAV_OPTICAL_FLOW_INPUT_LEVEL_6
         break;
     }
 }
-
-#endif // #if defined(FFX_GPU)
 
 #endif // FFX_OPTICALFLOW_CALLBACKS_HLSL_H

@@ -12,7 +12,17 @@ Devices: `LICENSE.txt` in this folder and the header of each file.
   the debug view or the GLSL callbacks; `spd/ffx_spd.h` is the `gpu/spd/ffx_spd.h` of the same tag
   (SPD 2.0), which their pyramids include. The portability layers of `gpu/` are those of
   `fsr3upscaler/`, byte-identical.
-- The changes, each with a `Mirai:` comment on its line:
+- The headers are reduced to the one configuration Mirai compiles: every preprocessor conditional
+  on HLSL on the GPU without `FFX_HALF` or `FFX_HLSL_SM`, without GLSL, CPU, Xbox or DXC paths,
+  with the options of `../fsr3_mirai.slang` and `../fsr3_framegen_mirai.slang` (reversed depth,
+  HDR input color, motion vectors at the render size without jitter, SPD without wave
+  operations, RCAS in 32 bits with its denoise, the approximate Lanczos of the upsample, the
+  optical flow without `msad4`) and the defaults of the headers is resolved, and the dead
+  branches, the macros that only chose between them, the D3D root signatures and pragmas and the
+  files left unincluded (`ffx_core_gpu_common_half.h`, `ffx_opticalflow_resources.h`) are
+  deleted. What stays conditional is the binding of each resource, which each entry point
+  declares, the `sharpen` variant of the accumulation and `FFX_WAVE`.
+- The other changes, each with a `Mirai:` comment on its line:
   - In `ffx_fsr3upscaler_callbacks_hlsl.h` and `ffx_frameinterpolation_callbacks_hlsl.h`, the
     samplers take the registers of Mirai's (`s3`, `SLOT_POINT_SAMPLER`; `s2`,
     `SLOT_LINEAR_SAMPLER`) instead of `s0` and `s1`, which in Vulkan are the bindings of the frame
@@ -33,5 +43,5 @@ Devices: `LICENSE.txt` in this folder and the header of each file.
   which `runtime/fsr.odin` and `runtime/framegen.odin` bind. `../fsr3_mirai.slang` and
   `../fsr3_framegen_mirai.slang` fix the compilation options.
 - To update: replace the files with those of another tag, compare the portability layers of
-  `gpu/` with those of `fsr3upscaler/`, reapply the changes, change the commit above, and test
-  the plugin in the demo with validation.
+  `gpu/` with those of `fsr3upscaler/`, reduce them to the same configuration, reapply the
+  changes, change the commit above, and test the plugin in the demo with validation.

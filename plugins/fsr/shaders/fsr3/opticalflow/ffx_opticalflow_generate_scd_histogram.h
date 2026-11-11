@@ -64,17 +64,10 @@ void GenerateSceneChangeDetectionHistogram(FfxInt32x3 iGlobalId, FfxInt32x2 iLoc
 
             FfxUInt32 scramblingOffset = iLocalIndex % LBASE;
 
-#if defined(FFX_HLSL)
             InterlockedAdd(scdBuffer[color.x + scramblingOffset], 1);
             InterlockedAdd(scdBuffer[color.y + scramblingOffset], 1);
             InterlockedAdd(scdBuffer[color.z + scramblingOffset], 1);
             InterlockedAdd(scdBuffer[color.w + scramblingOffset], 1);
-#elif defined(FFX_GLSL)
-            atomicAdd(scdBuffer[color.x + scramblingOffset], 1);
-            atomicAdd(scdBuffer[color.y + scramblingOffset], 1);
-            atomicAdd(scdBuffer[color.z + scramblingOffset], 1);
-            atomicAdd(scdBuffer[color.w + scramblingOffset], 1);
-#endif
         }
     }
     FFX_GROUP_MEMORY_BARRIER;

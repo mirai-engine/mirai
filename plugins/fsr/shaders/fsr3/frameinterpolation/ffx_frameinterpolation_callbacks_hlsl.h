@@ -22,18 +22,7 @@
 
 #include "ffx_frameinterpolation_resources.h"
 
-#if defined(FFX_GPU)
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic push
-#pragma dxc diagnostic ignored "-Wambig-lit-shift"
-#endif //__hlsl_dx_compiler
 #include "../fsr3upscaler/ffx_core.h" // Mirai: the core of fsr3upscaler/
-#ifdef __hlsl_dx_compiler
-#pragma dxc diagnostic pop
-#endif //__hlsl_dx_compiler
-#endif // #if defined(FFX_GPU)
-
-#if defined(FFX_GPU)
 
 #define COUNTER_SPD                          0
 #define COUNTER_FRAME_INDEX_SINCE_LAST_RESET 1
@@ -218,37 +207,6 @@
         return workGroupOffset;
     }
 #endif // #if defined(FFX_FRAMEINTERPOLATION_BIND_CB_INPAINTING_PYRAMID)
-
-#define FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(p) FFX_FRAMEINTERPOLATION_ROOTSIG_STR(p)
-#define FFX_FRAMEINTERPOLATION_ROOTSIG_STR(p) #p
-#define FFX_FRAMEINTERPOLATION_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-
-#define FFX_FRAMEINTERPOLATION_INPAINTING_ROOTSIG [RootSignature( "DescriptorTable(UAV(u0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "DescriptorTable(SRV(t0, numDescriptors = " FFX_FRAMEINTERPOLATION_ROOTSIG_STRINGIFY(FFX_FRAMEINTERPOLATION_RESOURCE_IDENTIFIER_COUNT) ")), " \
-                                    "CBV(b0), " \
-                                    "CBV(b1), " \
-                                    "StaticSampler(s0, filter = FILTER_MIN_MAG_MIP_LINEAR, " \
-                                                      "addressU = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressV = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "addressW = TEXTURE_ADDRESS_CLAMP, " \
-                                                      "comparisonFunc = COMPARISON_NEVER, " \
-                                                      "borderColor = STATIC_BORDER_COLOR_TRANSPARENT_BLACK)" )]
-
-#if defined(FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG)
-#define FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG_CONTENT FFX_FRAMEINTERPOLATION_ROOTSIG
-#define FFX_FRAMEINTERPOLATION_EMBED_INPAINTING_ROOTSIG_CONTENT FFX_FRAMEINTERPOLATION_INPAINTING_ROOTSIG
-#else
-#define FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG_CONTENT
-#define FFX_FRAMEINTERPOLATION_EMBED_INPAINTING_ROOTSIG_CONTENT
-#endif // #if FFX_FRAMEINTERPOLATION_EMBED_ROOTSIG
 
 ///////////////////////////////////////////////
 // declare samplers
@@ -502,10 +460,6 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
 
     FfxFloat32x2 fUvMotionVector = fSrcMotionVector * MotionVectorScale();
 
-#if FFX_FRAMEINTERPOLATION_OPTION_JITTERED_MOTION_VECTORS
-    fUvMotionVector -= MotionVectorJitterCancellation();
-#endif
-
     return fUvMotionVector;
 }
 #endif
@@ -590,11 +544,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     {
         FfxUInt32 uDepth = ffxAsUInt32(fDepth);
 
-#if FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
         InterlockedMax(rw_reconstructed_depth_previous_frame[iPxSample], uDepth);
-#else
-        InterlockedMin(rw_reconstructed_depth_previous_frame[iPxSample], uDepth);  // min for standard, max for inverted depth
-#endif
     }
 #endif
 
@@ -616,11 +566,7 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     {
         FfxUInt32 uDepth = ffxAsUInt32(fDepth);
 
-#if FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
         InterlockedMax(rw_reconstructed_depth_interpolated_frame[iPxSample], uDepth);
-#else
-        InterlockedMin(rw_reconstructed_depth_interpolated_frame[iPxSample], uDepth);  // min for standard, max for inverted depth
-#endif
     }
 #endif
 
@@ -730,7 +676,6 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     }
 #endif
 
-
 #if defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_0)    && \
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_1)    && \
     defined(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_2)    && \
@@ -758,7 +703,6 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid10  : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_10);
     RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid11  : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_11);
     RWTexture2D<FfxFloat32x4>                   rw_inpainting_pyramid12  : FFX_DECLARE_UAV(FFX_FRAMEINTERPOLATION_BIND_UAV_INPAINTING_PYRAMID_MIPMAP_12);
-
 
     FfxFloat32x4 RWLoadInpaintingPyramid(FFX_PARAMETER_IN FfxInt32x2 iPxPos, FFX_PARAMETER_IN FfxUInt32 index)
     {
@@ -811,4 +755,3 @@ FfxFloat32x2 LoadInputMotionVector(FfxInt32x2 iPxDilatedMotionVectorPos)
     }
 #endif
 
-#endif // #if defined(FFX_GPU)

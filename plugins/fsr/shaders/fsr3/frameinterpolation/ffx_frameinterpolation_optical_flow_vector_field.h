@@ -78,7 +78,6 @@ void computeOpticalFlowVectorField(FfxInt32x2 iPxPos)
             FfxFloat32x2 vs = LoadOpticalFlow(samplePos);
             FfxFloat32   fConfidenceFactor = ffxMax(FFX_FRAMEINTERPOLATION_EPSILON, LoadOpticalFlowConfidence(samplePos));
 
-
             FfxFloat32 len        = length(vs * InterpolationRectSize());
             FfxFloat32 len_factor = ffxMax(0.0f, 512.0f - len) * FfxFloat32(len > 1.0f);
             FfxFloat32 w = len_factor;
@@ -91,7 +90,6 @@ void computeOpticalFlowVectorField(FfxInt32x2 iPxPos)
 
     fOpticalFlowVector3x3Avg /= sw;
 
-
     sw = 0.0f;
     for(FfxInt32 y = -size; y <= size; y++) {
         for(FfxInt32 x = -size; x <= size; x++) {
@@ -103,7 +101,6 @@ void computeOpticalFlowVectorField(FfxInt32x2 iPxPos)
             FfxFloat32 fConfidenceFactor = ffxMax(FFX_FRAMEINTERPOLATION_EPSILON, LoadOpticalFlowConfidence(samplePos));
             FfxFloat32 len               = length(vs * InterpolationRectSize());
             FfxFloat32 len_factor        = ffxMax(0.0f, 512.0f - len) * FfxFloat32(len > 1.0f);
-
 
             FfxFloat32 w = ffxMax(0.0f, ffxPow(dot(fOpticalFlowVector3x3Avg, vs), 1.25f)) * len_factor;
 

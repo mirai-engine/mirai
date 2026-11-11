@@ -1102,7 +1102,6 @@ FfxFloat32 ffxDot4(FfxFloat32x4 a, FfxFloat32x4 b)
     return dot(a, b);
 }
 
-
 /// Compute an approximate conversion from PQ to Gamma2 space.
 ///
 /// PQ is very close to x^(1/8). The functions below Use the fast FfxFloat32 approximation method to do

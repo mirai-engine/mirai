@@ -40,7 +40,6 @@ FfxFloat32x4 SpdLoadSourceImage(FfxInt32x2 tex, FfxUInt32 slice)
     // reverse sample weights
     fColor.w = ffxSaturate(1.0f - fColor.w);
 
-
     if (tex.x < InterpolationRectBase().x || tex.x >= (InterpolationRectSize().x + InterpolationRectBase().x) || tex.y < InterpolationRectBase().y ||
         tex.y >= (InterpolationRectSize().y + InterpolationRectBase().y))
     {
