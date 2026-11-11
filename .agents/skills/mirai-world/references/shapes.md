@@ -157,7 +157,10 @@ it back.
   away whole is deleted.
 - **Corners** (2): one tool over the corners of an entity (`Corners`): the polygon of its `Shape`,
   else the points of its `Spline` (in its local XZ, open, at their height; a point inserted takes
-  the width and height in proportion and the path keeps two). The selected entity shows its loops
+  the width and height in proportion and the path keeps two). With a `Volume` `Outline` they are a
+  loop at its top, edited as the loop of a `Shape` is: its closing edge takes a corner, a move that
+  makes edges cross does not apply, and it keeps three. The selected entity shows its loops
+
   or path and corners. A drag moves a corner on its plane, a double click on an edge inserts
   one, Ctrl+click or Delete removes the one under the pointer; a click elsewhere selects the shape
   under it. An edit the shape refuses does not apply. The width and height of each point of a

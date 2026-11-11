@@ -66,10 +66,11 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   While it is off it does not own the `Transform`.
 - `Fluid`: water or another fluid in the
   [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
-  ([fluids](physics.md#fluids)): a `Plane` (below the height of the entity) or a
-  `Box` (its extents times the scale), with density and current in the frame of the entity; with
-  zero density, a dry box over the fluids of lower `priority` (its own). The entity's yaw turns
-  the box and its current. It is
+  ([fluids](physics.md#fluids)): a `Plane` (below the height of the entity), a `Box` (its extents
+  times the scale) or an `Outline` (the loop of the points of its `Spline`, a lake), with density
+  and current in the frame of the entity; with zero density, a dry box over the fluids of lower
+  `priority` (its own). The entity's yaw turns the box, the loop and its current. It is
+
   `replicated`: a flood that the server decides reaches the clients.
 - `Force_Field`: a force that lasts on the bodies in the `Volume` of its entity (any shape; without
   one, the whole world), rising over its own `blend` inside the border. `force_fields_step`

@@ -825,20 +825,26 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 ## `volume`
 
 `Volume` is the only region of the world and only a shape: unbounded, a box or a sphere by the
-entity's scale, or a plane (everything under the entity, along its up). What happens in it is
+entity's scale, a plane (everything under the entity, along its up), or an outline: the column
+over the loop of the points of the entity's `Spline` seen from above, `extents.y` half its height
+(a lake, a valley, an L-shaped room). A closed outline is that shape, not a flag of `Spline`: a
+lake, a fog bank and a nav area take the outline the same way through the region they already
+read, and the points stay the one `Spline` the corner tool edits. What happens in it is
 another component of the same entity, of the library that does it, which keeps its own data: how
 a zone value combines is its `Zone`, a `Fluid` has its priority, a `Force_Field` its blend.
 
 - **No component carries a shape of its own.** A library that needs a region reads the `Volume`
   of its entity and asks `depth`, `weight`, `holds` (a point) or `overlaps` (a box of the world),
   the one containment and overlap test, or `bounds` (the box of the world it is in); `valid` says
-  whether a volume can hold anything. A size, a pose or a point that is not a number is outside.
+  whether a volume can hold anything. Each takes the points of an outline, which `placed` gives
+  with the shape (`Where.splines`). A size, a pose or a point that is not a number is outside.
   Who reads it: the per-zone values below, `Fluid`, `Force_Field` and the area requests of
   [physics](../../mirai-physics/references/engine.md#requests), `Strain_Field` of destruct, the
   `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
   [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Every reader takes
-  any shape; only a real limit refuses one, with a problem: a fluid is a plane or a box, a strain
-  region travels as a box or a sphere, a navmesh and a fog need a shape with an end.
+  any shape; only a real limit refuses one, with a problem: a fluid is not a sphere, a strain
+  region travels as a box or a sphere and an area request carries no outline, a navmesh and a fog
+  need a shape with an end, and a shader takes no outline.
 - **Something went in.** With physics, a box or sphere `Volume` on an entity without a `Collider`,
   `Rigid_Body` or `Character` is a sensor of the solver: `Physics_Events.overlap_begin` and
   `overlap_end` name it as `collider` when a body goes in and out
@@ -874,7 +880,9 @@ the `fog` plugin):
 - The value and its `Volume` are replicated.
 - **On the GPU** (`shaders/include/volume.slang`): `ordered` gives the rows in the order in which
   they are applied, which does not depend on the point, and `gpu_volume` their shape;
-  `volume_weight` and `volume_mix` are the same weight and the same mix.
+  `volume_weight` and `volume_mix` are the same weight and the same mix. An outline weighs 0
+  there.
+
 - **`Wind`** (`wind.odin`): `speed` toward the front (-Z) of its entity and `gusts` (cycles per
   second). Without any, the air is still. `gpu_wind` gives it to foliage, which mixes it at each
   plant's place, and to particles, which mix it where each one is and approach it as fast as their

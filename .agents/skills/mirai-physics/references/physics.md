@@ -306,8 +306,8 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   reach.
   - With zero density it is a dry prism: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
-  - A fluid does not overlap another one, nor a dry prism another dry prism; where they would, the one
-    with the highest priority decides for the whole body.
+  - A fluid does not overlap another one, nor a dry prism another dry prism; where they would, the
+    one with the highest priority decides for the whole body.
   - Creating, changing or removing a fluid wakes the bodies it reached and those it reaches.
   - Fluids are a block of the snapshot. The scratch of the step is reserved with the first fluid
     (or when restoring a world that has them): a world without fluids neither has it nor pays for
@@ -340,8 +340,9 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     `Fluid_Info.top` is the still surface and `desc.waves` its waves, which it evaluates with
     `wave_terms` at `fluid_time`) and whether a point is in it, without subtracting dry boxes, with
     `fluid_holds`: it does not repeat the shape or the priority rule.
-  - **`Fluid_Waves`** (integration, replicated) on the entity of a `Fluid` of a sea or a lake describes
-    its waves: its own (amplitude, length and heading from the front of the entity) and those of the
+  - **`Fluid_Waves`** (integration, replicated) on the entity of a `Fluid` of a sea or a lake
+    describes its waves: its own
+ (amplitude, length and heading from the front of the entity) and those of the
     world's `Wind` where the volume is, a Pierson-Moskowitz sea in the waves that remain free, with
     its significant height from `wind`; `spread`, `steepness`, `speed` and `seed` are the artistic
     options. Changing the wind or the component redoes the waves of the volume. On a river it is a
