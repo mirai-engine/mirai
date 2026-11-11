@@ -836,9 +836,7 @@ ai_a_subagent_is_inspected_from_its_own_view_and_written_to :: proc(t:^testing.T
     m.selected=2
     ai_chat_test_frame(&s);ai_chat_test_frame(&s)
     testing.expect(t,ai_chat_test_paint(&ctx,"Main chat")!=nil && ai_chat_test_paint(&ctx,"Working")!=nil,"the way back and its state")
-    named:=false
-    for &paint in ctx.paints[:ctx.paint_count] {named|=paint.placeholder=="Message Cover..."}
-    testing.expect(t,named,"the composer names it")
+    testing.expect(t,ai_chat_test_paint(&ctx,"Message Cover...")!=nil,"the composer names it")
     testing.expect(t,ai_chat_test_paint(&ctx,"Luna 6")==nil,"no selector of the model")
     ui.id_push(&ctx,shell_id(&g,"ai_chat"))
     _,stop_found:=ui.widget_rect(&ctx,ui.id(&ctx,"stop"))

@@ -86,45 +86,75 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     if b.disabled && b.icon_color[3]>0 {icon_color=color_faded(icon_color)}
     icon_size:=b.icon_size if b.icon_size>0 else 16
     width,height:Size
-    padding:f32
+    padding:[4]f32
     if l:=b.layout;l!=nil {
-        width,height,padding=l.width,l.height,l.padding[0]
-        if width=={} {width=fixed(context_whole(ctx,text_width(&ctx.font,b.label,size,int(look.text.font))+l.padding[0]+l.padding[2]+1))}
+        width,height,padding=l.width,l.height,l.padding
         if height=={} {height=fixed(size*TEXT_LINE+l.padding[1]+l.padding[3])}
     } else {
         row:=b.height if b.height>0 else metric(ctx,"row")
         width,height=fixed(b.width),fixed(row)
-        padding=f32(10) if b.label!="" else (row-16)/2
-        if b.padding!=0 {padding=max(b.padding,0)}
-        if b.width==0 {
-            content:=f32(0)
-            if b.icon!=.None {content+=icon_size}
-            if b.quad.kind!=.Solid {content+=row-8+6}
-            if b.label!="" {content+=text_width(&ctx.font,b.label,size);if b.icon!=.None {content+=6}}
-            if b.detail!="" {content+=text_width(&ctx.font,b.detail,metric(ctx,"font_small"))+(16 if b.label!="" else 6)}
-            width=fixed(context_whole(ctx,content+2*padding))
-        } else if b.width<0 {width=GROW}
+        side:=f32(10) if b.label!="" else (row-16)/2
+        if b.padding!=0 {side=max(b.padding,0)}
+        padding={side,0,side,0}
+        if b.width==0 {width=FIT} else if b.width<0 {width=GROW}
     }
     style:=look.text
-    style.size,style.color=size,text_color
-    if b.block {style.align_x,style.align_y=.Center,.Center}
+    style.size,style.color,style.align_y=size,text_color,.Center
+    // A centered label that does not size its button centers in the whole of it.
+    center:=(b.center || b.block || (b.label=="" && b.detail=="")) && width.kind!=.Fit
+    if center {style.align_x,padding[0],padding[2]=.Center,0,0}
+    // A text that fits keeps a unit for the edge of its last glyph, which the padding after it already holds.
+    if b.detail!="" || b.icon_after || width.kind==.Fit {padding[2]=max(padding[2]-1,0)}
+    if !b.block {style.wrap=.None}
     fill:=look.fill
     if b.image.quad.kind!=.Solid && fill=={} {fill={255,255,255,255}}
-    detail_color:=color_alpha(tone(ctx,"on_accent"),170) if text_color==tone(ctx,"on_accent") else tone(ctx,"text_faint")
-    paint:=Paint{kind=.Box,fill=fill,fill2=look.fill2,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
+    paint:=paint_add(ctx,{kind=.Box,fill=fill,fill2=look.fill2,stroke=look.stroke,corners=look.radius,stroke_width=look.stroke_width,
         shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset,
-        style=style,text=b.label,detail=b.detail,text_color=text_color,detail_color=detail_color,size=size,center=b.center||(b.label==""&&b.detail==""),padding=padding,
-        icon=b.icon,icon_color=icon_color,icon_size=icon_size,icon_after=b.icon_after,quad=b.quad,
-        quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv}
-    if b.block {
-        // Its label is a text over the whole of it.
-        paint.text,paint.style="",{}
-        if element_open(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,paint)}) {text(ctx,b.label,style,GROW,GROW)}
-        element_close(ctx)
-        return it
+        quad2=b.image.quad,border=b.image.border,border_uv=b.image.border_uv})
+    if element_open(ctx,{id=id,layout={width=width,height=height,padding=padding,gap=box_gap(b.label,b.detail),align_y=.Center},custom=paint}) {
+        detail:=color_alpha(tone(ctx,"on_accent"),170) if text_color==tone(ctx,"on_accent") else tone(ctx,"text_faint")
+        box_content(ctx,{label=b.label,detail=b.detail,style=style,detail_color=detail,icon=b.icon,icon_color=icon_color,icon_size=icon_size,icon_after=b.icon_after,
+            quad=b.quad,preview=max(height.value-(8 if b.label!="" else 4),0),fit=width.kind==.Fit,fade=!center && (b.icon_after || b.detail!="")})
     }
-    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,paint)})
+    element_close(ctx)
     return it
+}
+
+// What a button or a row holds inside its padding, each a text: its icon and
+// preview in the line of its label, then its detail and the icon that follows
+// the label.
+@(private)
+Box_Content :: struct {
+    label,detail:string,
+    style:Text_Style,      // of the label
+    detail_color:Color,
+    icon:Icon,
+    icon_color:Color,
+    icon_size:f32,
+    icon_after:bool,
+    quad:Quad,
+    preview:f32,           // the side of the quad
+    fit:bool,              // the label is as wide as it says, instead of taking what is left
+    fade:bool,             // a label that does not fit fades out before what follows it
+}
+// Between the content of a button or a row: a label and its detail are 16
+// apart and anything else 6, less the unit a text keeps for its last glyph.
+@(private)
+box_gap :: proc "contextless" (label,detail:string) -> f32 {return 15 if label!="" && detail!="" else 5}
+@(private)
+box_content :: proc(ctx:^Context,c:Box_Content) {
+    leads:=c.icon!=.None && !c.icon_after
+    if (c.label!="" || leads || c.quad.kind!=.Solid) && text_begin(ctx,c.style) {
+        if leads {text_box(ctx,c.icon_size,c.icon_size,{kind=.Icon,icon=c.icon,icon_color=c.icon_color},gap=6 if c.label!="" || c.quad.kind!=.Solid else 0)}
+        if c.quad.kind!=.Solid {text_box(ctx,c.preview,c.preview,{kind=.Image,quad=c.quad,fill={255,255,255,255}},gap=6 if c.label!="" else 0)}
+        text_span(ctx,c.label)
+        text_end(ctx,{width=FIT if c.fit else GROW,height=GROW},fade=c.fade)
+    }
+    if c.detail!="" {text(ctx,c.detail,{size=metric(ctx,"font_small"),color=c.detail_color,align_y=.Center},FIT,GROW)}
+    if c.icon!=.None && c.icon_after && text_begin(ctx,c.style) {
+        text_box(ctx,c.icon_size,c.icon_size,{kind=.Icon,icon=c.icon,icon_color=c.icon_color})
+        text_end(ctx,{height=GROW})
+    }
 }
 
 // A square button that shows an icon alone.
@@ -152,10 +182,10 @@ checkbox :: proc(ctx:^Context,id:Id,value:^bool,disabled:bool=false,look:^Node_S
     w:=width if width!={} else fixed(line)
     h:=height if height!={} else fixed(line)
     side:=line if h==fixed(line) else control_height(ctx,id,h,line)
-    paint:=paint_add(ctx,{kind=.Box,fill=look.fill,fill2=look.fill2,stroke=look.stroke,stroke_width=look.stroke_width,corners=look.radius,center=true,
-        shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset,
-        icon=.Check if on else .None,icon_color=look.mark,icon_size=side*0.75})
-    element_leaf(ctx,{id=id,layout={width=w,height=h},custom=paint})
+    paint:=paint_add(ctx,{kind=.Box,fill=look.fill,fill2=look.fill2,stroke=look.stroke,stroke_width=look.stroke_width,corners=look.radius,
+        shadow=look.shadow,shadow_color=look.shadow_color,shadow_blur=look.shadow_blur,shadow_offset=look.shadow_offset})
+    if element_open(ctx,{id=id,layout={width=w,height=h,align_x=.Center,align_y=.Center},custom=paint}) && on {icon(ctx,.Check,look.mark,side*0.75)}
+    element_close(ctx)
     return
 }
 CHECKBOX_SIDE :: f32(16) // of a checkbox of the theme
@@ -207,17 +237,16 @@ row :: proc(ctx:^Context,id:Id,r:Row) -> Interaction {
         fill=tone(ctx,"accent");text_color=tone(ctx,"on_accent");detail_color=color_alpha(tone(ctx,"on_accent"),190)
     } else if r.selected {fill=tone(ctx,"accent_soft")} else if it.hot && !r.accent && !r.quiet {fill=tone(ctx,"field_hover")}
     if r.disabled {text_color,detail_color,icon_color=color_faded(text_color),color_faded(detail_color),color_faded(icon_color)}
-    paint:=Paint{kind=.Box,fill=fill,radius=metric(ctx,"radius_control"),text=r.label,detail=r.detail,text_color=text_color,detail_color=detail_color,size=metric(ctx,"font_small"),padding=8,icon=r.icon,icon_color=icon_color,icon_size=r.icon_size if r.icon_size>0 else 16,quad=r.quad,style={font=r.font}}
-    if r.checked {paint.icon=.Check;paint.icon_color=tone(ctx,"on_accent") if r.accent&&(it.hot || keyed) else tone(ctx,"accent");paint.icon_size=14} else if r.check_room {paint.padding=28}
+    mark,mark_size,padding:=r.icon,r.icon_size if r.icon_size>0 else 16,f32(8)
+    if r.checked {mark,icon_color,mark_size=.Check,tone(ctx,"on_accent") if r.accent && (it.hot || keyed) else tone(ctx,"accent"),14} else if r.check_room {padding=28}
     height:=r.height if r.height>0 else metric(ctx,"row")
-    if r.depth>0 {
-        if box(ctx,{width=GROW,height=fixed(height)}) {
-            spacer(ctx,f32(r.depth)*(r.indent if r.indent>0 else 12),1)
-            element_leaf(ctx,{id=id,layout={width=GROW,height=fixed(height)},custom=paint_add(ctx,paint)})
-        }
-    } else {
-        element_leaf(ctx,{id=id,layout={width=GROW,height=fixed(height)},custom=paint_add(ctx,paint)})
+    if r.depth>0 {box_begin(ctx,{width=GROW,height=fixed(height),padding={f32(r.depth)*(r.indent if r.indent>0 else 12),0,0,0}})}
+    if element_open(ctx,{id=id,layout={width=GROW,height=fixed(height),padding={padding,0,padding-1 if r.detail!="" else padding,0},gap=box_gap(r.label,r.detail),align_y=.Center},custom=paint_add(ctx,{kind=.Box,fill=fill,radius=metric(ctx,"radius_control")})}) {
+        box_content(ctx,{label=r.label,detail=r.detail,style={font=r.font,size=metric(ctx,"font_small"),color=text_color,align_y=.Center},detail_color=detail_color,
+            icon=mark,icon_color=icon_color,icon_size=mark_size,quad=r.quad,preview=height-8,fade=r.detail!=""})
     }
+    element_close(ctx)
+    if r.depth>0 {box_end(ctx,{})}
     return it
 }
 

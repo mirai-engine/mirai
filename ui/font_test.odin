@@ -202,7 +202,6 @@ font_takes_several_fonts_and_sizes :: proc(t:^testing.T) {
 @(test)
 text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
     // Without an atlas every character but the space is half a size wide, and a space a quarter.
-    font:Font
     Case :: struct {text:string,width:f32,wrap:Text_Wrap,lines:[]string}
     cases:=[]Case{
         {"alpha beta gamma",60,.Words,{"alpha beta","gamma"}},
@@ -226,17 +225,21 @@ text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
         {"a\n",100,.Words,{"a",""}},
         {"\n",100,.Words,{"",""}},
     }
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL));defer context_destroy(&ctx)
     for c in cases {
-        it:=text_lines(&font,c.text,10,c.width,c.wrap)
-        for {
-            start,end,ok:=text_lines_next(&it)
+        e:Text_Edit
+        text_edit_begin(&e,1,c.text,multiline=true)
+        e.wrap=c.width if c.wrap==.Words else 0
+        it:=text_edit_lines(&ctx,&e,10)
+        row:=0
+        for ;;row+=1 {
+            start,end,ok:=text_edit_lines_next(&it)
             if !ok {break}
-            testing.expectf(t,it.row<len(c.lines) && c.text[start:end]==c.lines[min(it.row,len(c.lines)-1)],"%q at %v: line %d is %q",c.text,c.width,it.row,c.text[start:end])
+            testing.expectf(t,row<len(c.lines) && c.text[start:end]==c.lines[min(row,len(c.lines)-1)],"%q at %v: line %d is %q",c.text,c.width,row,c.text[start:end])
         }
-        testing.expectf(t,it.row+1==len(c.lines),"%q at %v: %d lines",c.text,c.width,it.row+1)
+        testing.expectf(t,row==len(c.lines),"%q at %v: %d lines",c.text,c.width,row)
     }
-    _,_,width:=text_line(&font,"alpha beta gamma",10,60,.Words)
-    testing.expect_value(t,width,f32(47.5))
 }
 
 @(test)

@@ -442,13 +442,13 @@ md_link :: proc(m:^Md,s:string,i,start:int) -> int {
     color:=link.color
     if link.pill {
         if color=={} {color=tone(ctx,"on_accent") if link.button else tone(ctx,"text")}
-        width:=text_width(&ctx.font,shown,m.size,int(m.font))+2*MARKDOWN_PILL_PAD+(m.size+6 if link.icon!=.None else 0)
-        paint:=Paint{kind=.Box,radius=metric(ctx,"radius_control"),text=shown,text_color=color,size=m.size,style={font=m.font},fill=color_alpha(tone(ctx,"accent"),61 if lit else 36),
-            padding=MARKDOWN_PILL_PAD,icon=link.icon,icon_color=color,icon_size=m.size}
-        if link.button {paint.fill=tone(ctx,"accent_hover") if lit else tone(ctx,"accent")}
-        if link.selected {paint.stroke,paint.stroke_width=tone(ctx,"text"),1.5}
-        if widget!=0 && interact(ctx,widget).clicked {m.clicked=target}
-        text_box(ctx,min(width,m.room),m.line,paint,widget,MARKDOWN_PILL_GAP)
+        span:=Text_Span{font=m.font,size=m.size,color=color,back=color_alpha(tone(ctx,"accent"),61 if lit else 36),radius=metric(ctx,"radius_control"),pad=2*MARKDOWN_PILL_PAD,height=m.line,icon=link.icon}
+        if link.button {span.back=tone(ctx,"accent_hover") if lit else tone(ctx,"accent")}
+        if link.selected {span.edge=tone(ctx,"text")}
+        if widget==0 {
+            text_span(ctx,shown,span)
+        } else if text_link(ctx,widget,shown,span).clicked {m.clicked=target}
+        if ctx.text_open.open {text_put(ctx,{width=MARKDOWN_PILL_GAP})}
         return end+1
     }
     if color=={} {color=tone(ctx,"accent")}

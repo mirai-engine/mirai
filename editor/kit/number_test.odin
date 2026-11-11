@@ -56,8 +56,7 @@ a_click_on_a_number_types_it_and_enter_applies_it :: proc(t:^testing.T) {
     test_press(&input)
     test_numbers_frame(&ctx,&input,&s)
     testing.expect(t,!s.result.editing && !s.result.scrubbing && s.began==0,"The press waits to see whether it is a drag")
-    held:^ui.Paint
-    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.text=="1.235" {held=&p}}
+    held:=test_box(&ctx,"1.235")
     testing.expect(t,held!=nil && held.fill==ui.tone(&ctx,"field_active"))
     test_release(&input)
     test_numbers_frame(&ctx,&input,&s)
@@ -93,11 +92,11 @@ a_number_shows_that_it_drags_and_a_double_click_places_the_caret :: proc(t:^test
     test_release(&input);test_numbers_frame(&ctx,&input,&s)
     lo,hi:=ui.text_edit_selection(&ctx.edit)
     testing.expect(t,s.result.editing && lo==0 && hi==6)
-    field:=test_paint(&ctx,"1234.5")
+    field:=test_box(&ctx,"1234.5")
     testing.expect(t,field!=nil && field.fill==ui.tone(&ctx,"well") && field.stroke==ui.tone(&ctx,"accent"))
     testing.expect_value(t,ctx.cursor,ui.Cursor.Text)
     // The second click of a double click puts the caret where it lands, between 2 and 3.
-    x,_:=ui.field_text_span(&ctx,rect,"")
+    x:=test_rect(t,&ctx,ui.id_derive(&ctx,ui.id(&ctx,"value"),"text")).x
     input.pointer={x+ui.text_width(&ctx.font,"12",ui.metric(&ctx,"font_small"))+1,rect.y+rect.h*0.5}
     test_numbers_frame(&ctx,&input,&s)
     test_press(&input,2);test_numbers_frame(&ctx,&input,&s)
@@ -304,7 +303,7 @@ a_vector_is_a_row_of_fields_and_tab_moves_along_its_axes :: proc(t:^testing.T) {
         previous=rect
         paint:^ui.Paint
         for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.strip==ui.tone(&ctx,AXIS_TOKENS[axis]) {paint=&p}}
-        testing.expect(t,paint!=nil && paint.label=="","Each axis has its color and no letter")
+        testing.expect(t,paint!=nil && test_paint(&ctx,"X")==nil,"Each axis has its color and no letter")
     }
     x:=test_rect(t,&ctx,ui.id_derive(&ctx,ui.id(&ctx,"vector"),"axis",1))
     test_point(&input,x)
@@ -373,7 +372,7 @@ a_color_is_a_swatch_and_its_channels :: proc(t:^testing.T) {
     testing.expect(t,test_rect_near(swatch,{ui.metric(&ctx,"label_width")+4,0,ui.metric(&ctx,"row"),ui.metric(&ctx,"row")}))
     for i in 0..<3 {
         found:=false
-        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.label=="" && p.strip==ui.tone(&ctx,CHANNEL_TOKENS[i]) {found=true}}
+        for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.strip==ui.tone(&ctx,CHANNEL_TOKENS[i]) && test_paint(&ctx,"R")==nil {found=true}}
         testing.expect(t,found,"Each channel has its color and no letter")
     }
     testing.expect(t,test_paint(&ctx,"0.65")!=nil)

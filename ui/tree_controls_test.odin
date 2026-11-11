@@ -569,9 +569,7 @@ a_field_and_a_number_node_follow_their_flags_and_range :: proc(t:^testing.T) {
     input:=test_input()
     test_frame(&ctx,&input,test_shop_build,&s)
     test_frame(&ctx,&input,test_shop_build,&s)
-    placeholder:=false
-    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.placeholder=="Your pin" {placeholder=true}}
-    testing.expect(t,placeholder,"The text of a field is its placeholder while it is empty")
+    testing.expect(t,test_paint(&ctx,"Your pin")!=nil,"The text of a field is its placeholder while it is empty")
     test_click(&ctx,&input,test_shop_build,&s,tree_element_id(&ctx,"pin"))
     test_type(&input,"12345")
     test_frame(&ctx,&input,test_shop_build,&s)

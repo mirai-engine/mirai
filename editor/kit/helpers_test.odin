@@ -414,6 +414,15 @@ test_paint :: proc(ctx:^ui.Context,text:string) -> ^ui.Paint {
     return nil
 }
 
+// The box of the button, row or field whose text says text: the last one built before it.
+test_box :: proc(ctx:^ui.Context,text:string) -> ^ui.Paint {
+    for &p,i in ctx.paints[:ctx.paint_count] {
+        if p.text!=text {continue}
+        for j:=i-1;j>=0;j-=1 {if ctx.paints[j].kind==.Box || ctx.paints[j].kind==.Field {return &ctx.paints[j]}}
+    }
+    return nil
+}
+
 // context_init with the theme of the editor as the sheet.
 test_context_init :: proc(ctx:^ui.Context,desc:ui.Context_Desc) -> bool {
     if !ui.context_init(ctx,desc) {return false}
