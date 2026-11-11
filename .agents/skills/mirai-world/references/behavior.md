@@ -86,7 +86,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   object) or with a place query of layout `Offers`, scored like the others.
 - The action that uses it reserves it for its whole life (`smart_claim`, in `Claims` with the
   attack tokens) and the mind releases it in its `Exit`. `offer_act` does the whole trip: it takes
-  the closest, reserves it, walks and waits; whoever spends it says so with `smart_used`, and
+  the closest, reserves it, walks (after it, if it moves) and waits, and fails when the offer is
+  gone or closed to it before; whoever spends it says so with `smart_used`, and
   `smart_update` (`fixed`, `react`, `server`), sole writer of `Smart_State`, counts the use and
   starts the cooldown.
 - `Claims` belongs to the world and is written by the steps of the minds (`ctx.reservations`);

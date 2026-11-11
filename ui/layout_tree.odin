@@ -194,6 +194,7 @@ Layout_Tree :: struct {
     aspects:bool,  // an element of the frame keeps an aspect
     transitions:[]Layout_Transition, // by id: a power of two of slots, found from the id on
     dt:f32,        // seconds since the last frame, which carry what transitions
+    ppu:f32,       // device pixels per layout unit: the grid boxes and the sizes of texts fall on
     allocator:mem.Allocator,
 }
 
@@ -260,7 +261,8 @@ layout_destroy :: proc(t:^Layout_Tree) {
 // Starts the tree of a frame on a surface of this size. Node zero is the
 // surface: every element at the top level is inside it.
 @(private)
-layout_begin :: proc(t:^Layout_Tree,size:[2]f32) {
+layout_begin :: proc(t:^Layout_Tree,size:[2]f32,ppu:f32) {
+    t.ppu=ppu
     t.text_count=0;t.span_count=0;t.piece_count=0;t.kids_len=0;t.pending_len=0;t.line_count=0;t.command_count=0
     t.duplicates=0;t.overflow=false;t.aspects=false
     id_table_clear(&t.ids)
@@ -419,8 +421,20 @@ layout_fit_text :: proc(t:^Layout_Tree,font:^Font,n:^Layout_Node) {
         n.min_dim.x=n.dim.x if text.wrap==.None else least
     }
     if l.height.kind==.Fit {n.dim.y,n.min_dim.y=text.line,text.line}
+    n.dim={layout_whole(t.ppu,n.dim.x),layout_whole(t.ppu,n.dim.y)}
+    if text.wrap==.None {n.min_dim.x=n.dim.x}
+    n.min_dim.y=n.dim.y
     layout_limit(n)
 }
+// What a text asks for, up to whole device pixels (ppu per unit): a box
+// rounded to them is never smaller than the text it holds.
+@(private)
+layout_whole :: #force_inline proc "contextless" (ppu,v:f32) -> f32 {
+    return math.ceil(v*ppu-LAYOUT_EPSILON)/ppu if ppu>0 && abs(v)<math.F32_MAX/16 else v
+}
+// A size a widget measures from its text, up to the device pixels of the context.
+@(private)
+context_whole :: #force_inline proc "contextless" (ctx:^Context,v:f32) -> f32 {return layout_whole(ctx.scale*ctx.font.density,v)}
 // The words of a span in order: those its measure kept, or the span walked again.
 @(private)
 layout_span_walk :: proc "contextless" (t:^Layout_Tree,font:^Font,s:^Layout_Span) -> (w:Layout_Walk) {
@@ -1090,11 +1104,12 @@ layout_fit_grid :: proc(t:^Layout_Tree,n:^Layout_Node,kids:[]i32) {
 layout_size :: proc(t:^Layout_Tree,x:bool) {
     for &root in t.roots[:t.root_count] {
         r:=&t.nodes[root.node]
-        // A growing floating element takes the size of what it hangs from.
+        // A growing floating element takes the size of what it hangs from, a percent its share of it.
         if r.floating {
             p:=[2]f32{root.rect.w,root.rect.h} if root.hung else t.nodes[root.parent].dim
-            if r.layout.width.kind==.Grow {r.dim.x=p.x}
-            if r.layout.height.kind==.Grow {r.dim.y=p.y}
+            w,h:=r.layout.width,r.layout.height
+            if w.kind==.Grow {r.dim.x=p.x} else if w.kind==.Percent {r.dim.x=p.x*w.value}
+            if h.kind==.Grow {r.dim.y=p.y} else if h.kind==.Percent {r.dim.y=p.y*h.value}
         }
         r.dim.x=clamp(r.dim.x,axis_min(r.layout.width),axis_max(r.layout.width))
         r.dim.y=clamp(r.dim.y,axis_min(r.layout.height),axis_max(r.layout.height))
@@ -1383,7 +1398,7 @@ layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt:f32) -> (moving:boo
                 position=float_contain(p,&root,r.dim,bounds,position)
             }
         }
-        layout_place(t,root.node,position,origin)
+        layout_place(t,root.node,position,origin,t.ppu)
     }
     for &e in t.transitions {moving||=e.frame==frame && e.placed && e.time<e.seconds}
     return
@@ -1408,7 +1423,7 @@ layout_solve :: proc(t:^Layout_Tree,font:^Font) {
     for &text in t.texts[:t.text_count] {
         n:=&t.nodes[text.node]
         height:=layout_text_wrap(t,font,&text,n.dim.x,true)
-        if l:=&n.layout;l.height.kind==.Fit {n.dim.y=clamp(height,axis_min(l.height),axis_max(l.height))}
+        if l:=&n.layout;l.height.kind==.Fit {n.dim.y=clamp(layout_whole(t.ppu,height),axis_min(l.height),axis_max(l.height))}
     }
     for root in t.roots[:t.root_count] {layout_heights(t,root.node)}
     layout_size(t,false)
@@ -1527,12 +1542,26 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
     return position
 }
 
+// The children are placed from the place of their parent as laid out and each
+// box is rounded on its own, so neighbours share an edge. What transitions is
+// not rounded while it moves, nor what it holds: ppu 0.
 @(private)
-layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
+layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32,ppu:f32) {
     n:=&t.nodes[index]
     position:=position
-    if n.transition>0 {position=origin+layout_transition_place(&t.transitions[n.transition-1],position-origin,n.dim,t.nodes[0].dim,t.dt)}
+    ppu:=ppu
+    if n.transition>0 {
+        e:=&t.transitions[n.transition-1]
+        position=origin+layout_transition_place(e,position-origin,n.dim,t.nodes[0].dim,t.dt)
+        if e.time<e.seconds {ppu=0}
+    }
     n.box={position.x,position.y,n.dim.x,n.dim.y}
+    if ppu>0 {
+        // Edges on whole device pixels and the size between them (taffy's round_layout).
+        lo:=[2]f32{math.round(position.x*ppu),math.round(position.y*ppu)}
+        hi:=[2]f32{math.round((position.x+n.dim.x)*ppu),math.round((position.y+n.dim.y)*ppu)}
+        if abs(hi.x)+abs(hi.y)<math.F32_MAX {n.box={lo.x/ppu,lo.y/ppu,(hi.x-lo.x)/ppu,(hi.y-lo.y)/ppu}}
+    }
     if n.text>=0 {
         layout_place_text(t,index)
         return
@@ -1571,7 +1600,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 child.box.x=x+align_offset(self_align(l.align_x,child.layout.self_x),width-child.dim.x)+offset.x
                 child.box.y=y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)+offset.y
             }
-            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y},position+offset)}
+            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y},position+offset,ppu)}
         case .Wrap:
             inner:=n.dim.x-left_right
             y:=position.y+l.padding[1]
@@ -1582,7 +1611,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 x:=position.x+l.padding[0]+align_offset(l.align_x,inner-used)
                 for kid in kids[start:end] {
                     child:=&t.nodes[kid]
-                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset,position+offset)
+                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset,position+offset,ppu)
                     x+=child.dim.x+l.gap
                 }
                 y+=high+l.gap
@@ -1594,7 +1623,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 at:=position+{l.padding[0],l.padding[1]}
                 at.x+=align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)
                 at.y+=align_offset(self_align(l.align_y,child.layout.self_y),n.dim.y-top_bottom-child.dim.y)
-                layout_place(t,kid,at+offset,position+offset)
+                layout_place(t,kid,at+offset,position+offset,ppu)
             }
         case .Row,.Column:
             row:=l.direction==.Row
@@ -1624,7 +1653,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 } else {
                     at.x=position.x+l.padding[0]+align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)+offset.x
                 }
-                layout_place(t,kid,at,position+offset)
+                layout_place(t,kid,at,position+offset,ppu)
                 if row {next.x+=child.dim.x+l.gap} else {next.y+=child.dim.y+l.gap}
             }
         }

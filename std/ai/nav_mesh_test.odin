@@ -81,6 +81,9 @@ tiles_join_across_their_border_and_part_when_one_is_removed :: proc(t:^testing.T
     testing.expect(t,!nav_ref_valid(&mesh,path[count-1]))
     _,_,found:=nav_find_nearest_any(&mesh,b,{0.5,1,0.5})
     testing.expect(t,!found)
+    // The straight path through the part that is gone ends on the last polygon left, without the end.
+    n,complete=nav_straight_path(&mesh,a,b,path[:count],corners[:])
+    testing.expect(t,!complete && n==2 && corners[1].flags=={} && abs(corners[1].position.x-4)<1e-3)
 }
 
 @(test)

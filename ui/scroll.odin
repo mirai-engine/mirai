@@ -71,14 +71,15 @@ scroll_follow_focus :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,view
 
 // What the wheel, the keys and the stick do to the offset of the area id
 // this frame, on the axes it moves. Shift turns the wheel sideways, and an
-// area that only scrolls sideways takes the wheel so. view, content: their
+// area that only scrolls sideways, or whose content fits its height, takes
+// the wheel so. view, content: their
 // sizes, for the page keys and End.
 @(private)
 scroll_move :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,step:f32,view,content:[2]f32) {
     in_:=&ctx.input
     step:=step if step>0 else WHEEL_STEP
     if ctx.wheel_target==id && in_.wheel!={} {
-        sideways:=moves.x && (.Shift in in_.modifiers || !moves.y)
+        sideways:=moves.x && (.Shift in in_.modifiers || !moves.y || content.y<=view.y+0.5)
         if moves.y && !sideways {offset.y-=in_.wheel.y*step}
         if moves.x {offset.x+=in_.wheel.x*step-(in_.wheel.y*step if sideways else 0)}
     }
@@ -91,6 +92,18 @@ scroll_move :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,step:f32,vie
         if .End in in_.keys_pressed {offset[axis]=max(content[axis]-view[axis],0)}
     }
     for axis in 0..<2 {if moves[axis] {offset[axis]+=in_.scroll[axis]*SCROLL_STICK*in_.dt}}
+}
+
+// Whether the area w can still move its content the way the wheel turns, by
+// the rectangles of the last frame. An area without content of its own pans
+// or zooms, and Ctrl and the wheel zoom: they take any wheel.
+@(private)
+scroll_room :: proc(ctx:^Context,w:^Widget) -> bool {
+    content:=widget_previous(ctx,scroll_content_id(ctx,w.id))
+    if content==nil || .Primary in ctx.input.modifiers {return true}
+    v,c,wheel:=w.rect,content.rect,ctx.input.wheel
+    if .Shift in ctx.input.modifiers || c.h<=v.h+0.5 {wheel={wheel.x-wheel.y,0}}
+    return wheel.y>0 && c.y<v.y-0.5 || wheel.y<0 && c.y+c.h>v.y+v.h+0.5 || wheel.x<0 && c.x<v.x-0.5 || wheel.x>0 && c.x+c.w>v.x+v.w+0.5
 }
 
 // The area the page keys and the stick move this frame: the innermost one
@@ -107,10 +120,7 @@ scroll_route :: proc(ctx:^Context) {
     areas:=ctx.previous[:ctx.previous_count]
     if !in_.pointer_absent {
         for &w in areas {
-            if .Scroll not_in w.flags || w.surface!=0 || ctx.hot!=0 && w.layer<ctx.hot_layer {continue}
-            p:=ctx.screen_pointer
-            if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],p)}
-            if !rect_contains(w.area,p) || !effect_hit(ctx,w.effect_clip,ctx.screen_pointer) {continue}
+            if .Scroll not_in w.flags || w.surface!=0 || ctx.hot!=0 && w.layer<ctx.hot_layer || !widget_contains(ctx,&w,ctx.screen_pointer) {continue}
             if target==nil || w.layer>=target.layer {target=&w}
         }
     }
@@ -269,11 +279,13 @@ list_begin :: proc(ctx:^Context,id:Id,offset:^f32,count:int,row_height,height:f3
     box_begin(ctx,{id=id,width=GROW,height=fixed(height),direction=.Column,clip_y=true,scroll={0,offset^}})
     scroll_clip_mark(ctx,id)
     widget_add(ctx,id,{.Passive,.Scroll})
+    box_begin(ctx,{id=scroll_content_id(ctx,id),width=GROW,height=FIT,direction=.Column,track=true})
     spacer(ctx,-1,f32(first)*row_height)
     return
 }
 list_end :: proc(ctx:^Context,id:Id,count,last:int,row_height:f32) {
     spacer(ctx,-1,f32(count-last)*row_height)
+    box_end(ctx,{id=scroll_content_id(ctx,id)})
     box_end(ctx,{id=id,clip_y=true})
 }
 
