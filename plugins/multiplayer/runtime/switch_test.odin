@@ -62,8 +62,10 @@ a_replica_changes_between_interpolated_and_predicted_without_a_jump_in_what_is_d
 // once: one whose creation arrives at once, one whose creation is lost and
 // arrives ticks later, also when a correction goes back past the tick of the
 // spawn and runs it again, and when the ticks that run again no longer make
-// them. One the server never makes goes when the history passes. One a library
-// keeps is taken and outlives its replica; without a replica only its mark goes.
+// them. One the server never makes goes when the history passes, and does not
+// shift the others: of a bullet and a grenade the server makes only the
+// grenade, which takes the client's grenade. One a library keeps is taken and
+// outlives its replica; without a replica only its mark goes.
 @(test)
 a_predicted_spawn_is_taken_by_its_replica_once_across_a_loss_and_a_correction :: proc(t:^testing.T) {
     f:Correction_Fixture
@@ -73,8 +75,21 @@ a_predicted_spawn_is_taken_by_its_replica_once_across_a_loss_and_a_correction ::
     c:=&s.client
     ref:=core.world_ref(&f.world,&f.info)
     c.connection=7
-    ids:=[2]base.Entity_Id{spawn_id(7,12,0),spawn_id(7,12,1)}
-    testing.expect(t,ids[0]!=0 && ids[0]!=ids[1] && ids[0]!=spawn_id(7,13,0) && ids[0]!=spawn_id(8,12,0))
+    // What net_test_fixed makes: a bullet (Net_Test_Value), and with late a grenade (and Net_Test_Late).
+    kind_of :: proc(f:^Correction_Fixture,late:bool) -> u64 {
+        e:=core.create(&f.world.entities)
+        core.add(&f.world.transforms,e,core.TRANSFORM_IDENTITY)
+        core.add(&f.world.values,e,Net_Test_Value{})
+        if late {core.add(&f.world.lates,e,Net_Test_Late{})}
+        core.settle(&f.info,&f.world,nil)
+        kind:=spawn_kind(&f.session,core.world_ref(&f.world,&f.info),e)
+        core.destroy(&f.world.entities,e)
+        core.settle(&f.info,&f.world,nil)
+        return kind
+    }
+    bullet,grenade:=kind_of(&f,false),kind_of(&f,true)
+    ids:=[2]base.Entity_Id{spawn_id(7,12,bullet,0),spawn_id(7,12,bullet,1)}
+    testing.expect(t,ids[0]!=0 && ids[0]!=ids[1] && ids[0]!=spawn_id(7,13,bullet,0) && ids[0]!=spawn_id(8,12,bullet,0) && ids[0]!=spawn_id(7,12,grenade,0))
     f.shared.spawn_at,f.shared.spawns=12,2
     for tick in u32(11)..=14 {correction_fixture_tick(&f,tick)}
     made:[2]core.Entity
@@ -129,11 +144,26 @@ a_predicted_spawn_is_taken_by_its_replica_once_across_a_loss_and_a_correction ::
 
     // One the server never makes goes once the history is past.
     f.shared.spawn_at,f.shared.spawns=u64(c.newest+1),1
-    alone:=spawn_id(7,f.shared.spawn_at,0)
+    alone:=spawn_id(7,f.shared.spawn_at,bullet,0)
     correction_fixture_tick(&f,c.newest+1)
     testing.expect(t,core.entity_of(&f.world.entities,alone)!=core.NONE)
     for _ in 0..<c.history+1 {correction_fixture_tick(&f,c.newest+1)}
     testing.expect(t,core.entity_of(&f.world.entities,alone)==core.NONE,"nothing confirmed it within the history")
+
+    // A bullet and a grenade in a tick, and the server, out of ammo, makes only the grenade: its only spawn of that kind.
+    f.shared.spawn_at,f.shared.spawns,f.shared.late=u64(c.newest+1),2,true
+    shot:=spawn_id(7,f.shared.spawn_at,bullet,0)
+    thrown:=spawn_id(7,f.shared.spawn_at,grenade,0)
+    correction_fixture_tick(&f,c.newest+1)
+    f.shared.spawn_at,f.shared.late=0,false
+    made[0],made[1]=core.entity_of(&f.world.entities,shot),core.entity_of(&f.world.entities,thrown)
+    if !testing.expect(t,made[0]!=core.NONE && made[1]!=core.NONE && core.has(&f.world.lates,made[1]),"the client made both, each with the Id of its kind") {return}
+    entities=core.count(&f.world.transforms)
+    throw:=create(&f,ref,net_test_type(s,ref,made[1]),words,Object(5),thrown)
+    taken(t,&f,throw,thrown,entities,"the grenade")
+    testing.expect(t,throw.entity==made[1] && core.has(&f.world.spawns,made[0]),"the grenade takes the grenade; the bullet waits")
+    for _ in 0..<c.history+1 {correction_fixture_tick(&f,c.newest+1)}
+    testing.expect(t,!core.alive(&f.world.entities,made[0]) && throw.entity==made[1],"the bullet nothing confirmed goes")
 
     // What a library makes with the Id both ends draw and keeps (the piece of a fracture).
     kept :: proc(f:^Correction_Fixture,id:base.Entity_Id) -> core.Entity {

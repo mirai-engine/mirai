@@ -159,7 +159,7 @@ styled_text_is_aligned_and_wrapped_inside_its_box :: proc(t:^testing.T) {
     input:=test_input()
     frame:=test_frame(&ctx,&input,test_styles_build,&s)
     width:=text_width(&ctx.font,"Score",16)
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"text")),{20,20,width+1,16*TEXT_LINE}),"A box that fits holds one line")
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"text")),{20,20,math.ceil(width+1),math.ceil(16*TEXT_LINE)}),"A box that fits holds one line, up to whole pixels")
     testing.expect_value(t,len(frame.vertices),5*6)
     // Aligned in a larger box.
     s.width,s.height=fixed(300),fixed(100)
@@ -180,7 +180,7 @@ styled_text_is_aligned_and_wrapped_inside_its_box :: proc(t:^testing.T) {
     broken:[8]string
     lines:=test_text_lines(&ctx,id(&ctx,"text"),broken[:])
     testing.expect(t,lines>=3)
-    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"text")).h,f32(lines)*16*TEXT_LINE))
+    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"text")).h,math.ceil(f32(lines)*16*TEXT_LINE)))
     bounds:=test_bounds(frame.vertices)
     testing.expect(t,bounds.x>=18 && bounds.x+bounds.w<=20+120+2 && bounds.h>f32(lines-1)*16*TEXT_LINE,"Every line stays inside the width")
     testing.expect_value(t,len(frame.vertices),(len(s.content)-8)*6)

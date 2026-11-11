@@ -118,6 +118,7 @@ Replica :: struct {
     type_before:wire.Type_Id, // the one it had until then: what a copy of the world older than that has of it
     spawned_set:bool,  // its entity is one this client made in tick spawned, ahead of the server (Predicted_Spawn)
     spawned:u32,
+    complete:u32,      // server tick of the newest state that was the whole of the server's: a creation, or the update after a message about it
 }
 
 // The world as a tick found it, with what else the tick started from.
@@ -147,7 +148,11 @@ Shown :: struct {
 
 // The actions the devices of a tick gave the seat a client drives with; tick is that tick plus one.
 @(private)
-Taken :: struct {tick:u32,actions:input.Remote_Actions}
+Taken :: struct {
+    tick:u32,
+    actions:input.Remote_Actions,
+    delay:u8, // the input delay of the tick: it sent them for that many ticks later
+}
 
 @(private)
 Client :: struct {
@@ -163,8 +168,8 @@ Client :: struct {
     authoritative:[]Authoritative,
     authoritative_words:[]u32,
     record_ticks:[]u32, // by tick modulo history: the tick of its row plus one
-    taken:[]Taken,      // with input_delay, by tick modulo its length: the actions the devices gave in each of the last ticks
-    fed_seat,delayed:input.Seat, // with input_delay: the seat it drives with as its devices left it, and as the game had it at the start of the tick
+    taken:[]Taken,      // by tick modulo its length: the actions the devices gave in each of the last ticks
+    fed_seat,delayed:input.Seat, // the seat it drives with as its devices left it, and as the game had it at the start of the tick
     record_free:[]i32,
     record_free_count:int,
     islands:[]u32,      // of what this client drives, by records_capture
@@ -262,7 +267,7 @@ history_make :: proc(s:^Net_Session,w:core.World_Ref,c:^Client,ticks:int) -> (ok
     if c.authoritative,error=make([]Authoritative,slots*d.predicted_capacity,allocator);error!=nil {return false}
     if c.authoritative_words,error=make([]u32,slots*d.predicted_capacity*c.words_per,allocator);error!=nil {return false}
     if c.record_ticks,error=make([]u32,slots,allocator);error!=nil {return false}
-    if c.taken,error=make([]Taken,slots+INPUT_DELAY_MAX,allocator);error!=nil {return false}
+    if c.taken,error=make([]Taken,slots+wire.INPUT_DELAY_MAX,allocator);error!=nil {return false}
     if d.sync_test>0 {
         if c.sync_hashes,error=make([]u64,(slots+1)*(len(w.info.tables)+1),allocator);error!=nil {return false}
         if c.sync_fed,error=make([]u64,slots+1,allocator);error!=nil {return false}
@@ -349,6 +354,7 @@ replica_state :: proc(s:^Net_Session,r:^Replica,command:^wire.Command) {
     wire.object_read(&s.host,command,0,&r.pose,max(u64))
     if t.motion>=0 {wire.object_read(&s.host,command,t.motion,&r.motion,max(u64))}
     r.tick=command.tick
+    if command.kind==.Object_Created || command.complete {r.complete=command.tick}
     r.references=wire.object_references_pending(&s.host,command)
 }
 
@@ -748,16 +754,17 @@ replica_update :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,comma
     r.pending=r.mode==.Predicted
 }
 
-// The server gave the object another list of fragments, for its entity gained
-// or lost a replicated component: the replica and its entity go on. The entity
-// loses the components that left the list and takes the whole state of the
-// new one; what was kept of it, in the words of the type before, is dropped.
+// The server widened the list of fragments of the object, for its entity
+// gained a replicated component the list lacked: the replica and its entity go
+// on and take the whole state of the new type; what was kept of it, in the
+// words of the type before, is dropped. What this client holds takes only the
+// components it lacks: the rest it simulates.
 @(private)
 replica_retype :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Replica,command:^wire.Command) {
     c:=&s.client
-    after:=net_type(s,command.type)
+    after,before:=net_type(s,command.type),net_type(s,r.type)
     if !after.fits {return}
-    if !r.waits && core.alive(core.world_entities(w),r.entity) {components_prune(w,r.entity,net_type(s,r.type),after)}
+    held:=r.role==.Held && command.role==.Held
     if r.samples>=0 {wire.interpolation_clear(&c.interpolation,int(r.samples))}
     if r.slot>=0 {
         authority_clear(s,r)
@@ -768,19 +775,20 @@ replica_retype :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Re
     replica_state(s,r,command)
     replica_place(s,w,assets,r)
     if r.waits {return}
-    if core.alive(core.world_entities(w),r.entity) {components_apply(s,w,r.entity,after,command,r.available)}
+    if core.alive(core.world_entities(w),r.entity) {
+        mask:=r.available
+        if held {
+            mask=0
+            for table,k in after.tables[:after.count] {
+                if !type_has(before,table) {mask|=wire.type_fragment_mask(&s.protocol,after.type,after.first+k)}
+            }
+        }
+        components_apply(s,w,r.entity,after,command,mask)
+    }
     replica_classify(s,w,r)
     replica_sample(s,r,r.available)
     authoritative_capture(s,r,command)
     r.pending=r.mode==.Predicted
-}
-
-// The components of a type that another one does not list leave the entity.
-@(private)
-components_prune :: proc(w:core.World_Ref,e:core.Entity,before,after:^Net_Type) {
-    for table in before.tables[:before.count] {
-        if !type_has(after,table) {core.raw_remove(core.world_table_at(w,&w.info.tables[table]),e)}
-    }
 }
 
 @(private)
@@ -1053,9 +1061,11 @@ client_tail :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,outbox:^Net_Outbox)
         sync_hashes(s,w,c.sync_hashes[(int(tick)%s.client.history)*(len(w.info.tables)+1):][:len(w.info.tables)+1])
     }
     if s.status==.Connected {
-        // With an input delay, what the devices gave in this tick is the input of a later one.
-        delay:=u32(s.desc.input_delay)
-        packet:=Input_Packet{actions=delay>0?c.taken[int(tick)%len(c.taken)].actions:driven_actions(s,w),look_behind=u8(delay)}
+        // What the devices gave in this tick is the input of the tick its input delay says (net_input_delay).
+        taken:=c.taken[int(tick)%len(c.taken)]
+        if taken.tick!=tick+1 {taken={tick+1,{},u8(wire.clock_state(h).input_delay)}}
+        delay:=u32(taken.delay)
+        packet:=Input_Packet{actions=taken.actions,look_behind=taken.delay}
         look:[2]f32
         look,packet.has_look=driven_look(w)
         packet.look_yaw,packet.look_pitch=mm.angle_wrap(look[0]),look[1]
@@ -1088,9 +1098,14 @@ driven_list :: proc(c:^Client) {
 
 // What each predicted replica is after a tick (replica_now: a correction that
 // just put it at the state of the server of the tick is that state), and
-// which of them share a group of the simulation (core.Motion.island) with
-// what this client drives (driven_list): what touches it or is joined to it
-// now. The groups are of the tick: each one of what it drives, once.
+// which are within reach of what this client drives (driven_list): what
+// shares a group of the simulation with it (core.Motion.island), touching or
+// joined to it now, and what is about to touch it: whose bounds, swept by its
+// velocity from its newest state to this tick (what a replay covers), reach
+// the bounds of what it drives grown by how far that goes meanwhile. That
+// one turns predicted before it touches it, to meet it where it really is,
+// not where it is shown. The groups are of the tick: each one of what it
+// drives, once.
 @(private)
 records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
     c:=&s.client
@@ -1108,12 +1123,33 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
         c.islands[islands]=motion.island
         islands+=1
     }
+    configs,transforms:=core.world_table_of(w,Replicate),core.world_table_of(w,core.Transform)
+    radius :: proc(configs:^core.Table(Replicate),e:core.Entity) -> f32 {
+        config,found:=core.get(configs,e)
+        return found?config.radius:REPLICATE_DEFAULT.radius
+    }
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || !core.alive(es,r.entity) {continue}
         motion,has_motion:=core.get(motions,r.entity)
         if has_motion && motion.island!=0 {
             for island in c.islands[:islands] {
                 if island==motion.island {r.touched,r.touched_set=tick,true;break}
+            }
+        }
+        if seconds:=f32(i32(tick-r.tick))/f32(s.host.desc.tick_rate);has_motion && r.role!=.Predicted && r.role!=.Held && seconds>0 {
+            from,swept:=r.pose.position,r.motion.linear*seconds
+            for driven in c.driven[:c.driven_count] {
+                d:=&c.replicas[driven]
+                local,placed:=core.get(transforms,d.entity)
+                if !placed {continue}
+                moving,_:=core.get(motions,d.entity)
+                along:=linalg.dot(local.position-from,swept)
+                closest:=from+swept*(along>0?min(along/max(linalg.dot(swept,swept),1e-12),1):0)
+                reach:=radius(configs,r.entity)+radius(configs,d.entity)+linalg.length(moving.linear)*seconds
+                if linalg.length2(local.position-closest)<=reach*reach {
+                    r.touched,r.touched_set=tick,true
+                    break
+                }
             }
         }
         if r.mode!=.Predicted || r.slot<0 {continue}
@@ -1137,7 +1173,8 @@ client_upload :: proc(s:^Net_Session,w:core.World_Ref) {
         t:=net_type(s,r.type)
         local,has_pose:=core.get(transforms,r.entity)
         if !has_pose {continue}
-        pose:=Pose{id=r.pose.id,prefab=r.pose.prefab,sections=r.pose.sections,position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,r.entity,t)}
+        pose:=Pose{id=r.pose.id,prefab=r.pose.prefab,sections=r.pose.sections,position=local.position,rotation=local.rotation,scale=local.scale}
+        pose.off,pose.absent=components_off(w,r.entity,t)
         motion,_:=motion_read(w,r.entity)
         if pose!=r.pose {
             r.pose=pose
@@ -1600,9 +1637,8 @@ replicas_relink :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,star
             replica_spawn(s,w,assets,&r)
             s.stats.spawned-=1
         } else if r.retyped_set && i32(r.retyped-start)>=0 {
-            // The copy has the components of the type the replica had then.
+            // The copy lacks the components the type widened to since.
             command:=replica_command(s,&r)
-            components_prune(w,r.entity,net_type(s,r.type_before),net_type(s,r.type))
             components_apply(s,w,r.entity,net_type(s,r.type),&command,r.available)
         }
         // The copy has the mode the replica had then; it may have changed since.
@@ -1637,22 +1673,35 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
 }
 
 // The spawns of the tick get the Id both ends draw (one of a seat: from its
-// connection, the tick and how many that seat made before it in the tick),
-// and a client marks what it made for the replica of the server's to take.
+// connection, the tick, its kind and how many of that kind the seat made
+// before it in the tick), and a client marks what it made for the replica of
+// the server's to take.
 @(private)
 spawns_take :: proc(s:^Net_Session,w:core.World_Ref,made:[]Spawn,tick:u64) {
     if len(made)==0 {return}
+    kinds:=make([]u64,len(made),context.temp_allocator)
     for item,i in made {
         if !core.alive(core.world_entities(w),item.entity) {continue}
         if !item.kept {
+            kinds[i]=spawn_kind(s,w,item.entity)
             sequence:u32
-            for before in made[:i] {sequence+=u32(!before.kept && before.peer==item.peer)}
+            for before,k in made[:i] {sequence+=u32(!before.kept && before.peer==item.peer && kinds[k]==kinds[i])}
             connection:=item.peer!=0?Connection(item.peer):own_connection(core.ref(s))
-            core.add(core.world_table_of(w,core.Id),item.entity,core.Id{spawn_id(connection,tick,sequence)})
+            core.add(core.world_table_of(w,core.Id),item.entity,core.Id{spawn_id(connection,tick,kinds[i],sequence)})
         }
         if s.mode==.Client {core.add(core.world_table_of(w,Predicted_Spawn),item.entity,Predicted_Spawn{tick=tick,kept=item.kept})}
     }
     core.world_settle(w)
+}
+
+// What an entity a player makes is, alike on both ends: the prefab it was
+// spawned from, or, made without one, the fragments it replicates.
+@(private)
+spawn_kind :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity) -> u64 {
+    if instance,found:=scene.prefab_instance(w,e);found && instance.prefab!={} {return base.hash64(mem.ptr_to_bytes(&instance.prefab),1)}
+    kinds:[wire.MAX_FRAGMENTS]wire.Fragment_Id
+    count,_:=entity_kinds(s,w,e,&kinds)
+    return base.hash64(mem.slice_to_bytes(kinds[:count]),2)
 }
 
 // What a replica that took an entity this client made keeps of it: one the
@@ -1693,19 +1742,6 @@ driven_look :: proc(w:core.World_Ref) -> (look:[2]f32,ok:bool) {
     if seats==nil || moves==nil {return}
     move:=core.get(moves,input.body_of(core.read(seats),input.local_seat(core.read(seats),0))) or_return
     return {move.look_yaw,move.look_pitch},true
-}
-
-// The actions of the first local seat, the one that drives what the server
-// lets this client predict, as the game here saw them this tick.
-@(private)
-driven_actions :: proc(s:^Net_Session,w:core.World_Ref) -> (sent:input.Remote_Actions) {
-    seats:=core.world_table_of(w,input.Seat)
-    bindings:=core.world_storage_of(w,input.Input_Map)
-    if seats==nil || bindings==nil {return}
-    ok:bool
-    sent,ok=input.seat_remote(seats,input.local_seat(seats,0),bindings)
-    if !ok {core.report(s.problems,core.NONE,"net.input_axes","more than %d axis actions of the seat that drives were away from zero in one tick, and the server got only the first %d; give the actions that move together fewer axes, or make some of them buttons",input.REMOTE_AXES,input.REMOTE_AXES)}
-    return
 }
 
 // Client, at the start of a frame, before its ticks: what the input the frame takes is aimed at,

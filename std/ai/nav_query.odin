@@ -343,10 +343,21 @@ Nav_Corner :: struct {
 
 // The corners of the straight path from `start` to `end` through the nodes
 // of `path`: the start, every corner the funnel turns around, every link start
-// and the end. Writes as many as fit; `complete` when the end did.
+// and the end. Writes as many as fit; `complete` when the end did. A node that
+// is no longer valid (a tile built again) ends it at the point of the last
+// valid polygon nearest the end, without the End flag (Detour's findStraightPath).
 nav_straight_path :: proc(mesh:^Nav_Mesh,start,end:math.Vec3,path:[]Nav_Ref,out:[]Nav_Corner) -> (count:int,complete:bool) {
     if len(path)==0 || len(out)==0 || !nav_point_finite(start) || !nav_point_finite(end) {return}
-    for ref in path {if !nav_ref_valid(mesh,ref) {return}}
+    path,end:=path,end
+    valid:=0
+    for valid<len(path) && nav_ref_valid(mesh,path[valid]) {valid+=1}
+    for valid>0 && nav_ref_is_link(path[valid-1]) {valid-=1}
+    if valid==0 {return}
+    cut:=valid<len(path)
+    if cut {
+        path=path[:valid]
+        end,_=nav_closest_point_on_poly(mesh,path[valid-1],end)
+    }
     push :: proc "contextless" (out:[]Nav_Corner,count:^int,corner:Nav_Corner) -> bool {
         if count^>0 {
             last:=&out[count^-1]
@@ -373,8 +384,8 @@ nav_straight_path :: proc(mesh:^Nav_Mesh,start,end:math.Vec3,path:[]Nav_Ref,out:
     if first<len(path) {
         if !nav_funnel_path(mesh,from,end,path[first:],out,&count) {return}
     } else if !push(out,&count,{position=from,ref=0}) {return}
-    if !push(out,&count,{position=end,flags={.End}}) {return}
-    return count,true
+    if !push(out,&count,{position=end,flags={} if cut else {.End}}) {return}
+    return count,!cut
 }
 
 // Pushes the corners of the straight path from `from` to `to` over polygons,
