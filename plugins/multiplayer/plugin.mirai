@@ -2,6 +2,6 @@
   "name": "multiplayer",
   "version": "0.1.0",
   "dependencies": [],
-  "test_dependencies": ["physics", "behavior"],
+  "test_dependencies": ["physics", "behavior", "animation"],
   "parts": ["Runtime", "Editor"]
 }

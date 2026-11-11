@@ -206,7 +206,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             request_note(applied,"Gesture",name)
         }
     }
-    modifiers:=core.world_storage_of(world,anim.Modifier_Requests)
+    modifiers:=core.world_storage_of(world,anim.Animation_Requests)
     for &control,i in p.controls[:controls] {
         file:Authoring_File;defer asset.asset_close(&file.file)
         profile,_,ok:=program_modifier_profile(s,call,world,entity,&file);if !ok {return false}
@@ -215,7 +215,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
         if !finite(control.fade) || control.fade<0 {authoring_failure(call,fmt.tprintf("controls[%d].fade",i),"Range","finite nonnegative seconds",fmt.tprintf("%g",control.fade),"The control fade is invalid");return false}
         waiting:=len(modifiers.controls.items)
         anim.modifier_control(modifiers,{rig=entity,kind=control.kind,slot=slot,name=control.name,weight=control.weight,enabled=control.enabled,fade=control.fade})
-        if len(modifiers.controls.items)==waiting {authoring_failure(call,"controls","Capacity","space in Modifier_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
+        if len(modifiers.controls.items)==waiting {authoring_failure(call,"controls","Capacity","space in Animation_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
         request_note(applied,"Control",base.text_get(control.name[:]),control.weight)
     }
     if goals>0 {
@@ -225,9 +225,9 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             profile,_,ok:=program_modifier_profile(s,call,world,entity,&file);if !ok {return false}
             raw,_:=authoring_json_element(text,i,call.allocator)
             value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,fmt.tprintf("goals[%d]",i));if !valid {return false}
-            waiting:=len(modifiers.queue.items)
+            waiting:=len(modifiers.goals.items)
             anim.modifier_goal(modifiers,value)
-            if len(modifiers.queue.items)==waiting {authoring_failure(call,"goals","Capacity","space in Modifier_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+            if len(modifiers.goals.items)==waiting {authoring_failure(call,"goals","Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
             request_note(applied,"Goal",base.text_get(goal.name[:]))
         }
     }
@@ -251,14 +251,14 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             file:Authoring_File;defer asset.asset_close(&file.file)
             set,ok:=character_open(s,call,character,&file);if !ok {return false}
             profile:=set.motion
-            requests:=core.world_storage_of(world,anim.Motion_Requests)
+            requests:=core.world_storage_of(world,anim.Animation_Requests)
             for &motion,i in p.motion[:motions] {
                 declared:=false;for &window in profile.windows {if window.name==motion.name {declared=true;break}}
                 if !declared {authoring_failure(call,fmt.tprintf("motion[%d].name",i),"Missing_Target","a target name declared by a warp window",base.text_get(motion.name[:]),"The warp target is undeclared");return false}
                 target,valid:=spatial_target_value(call,world,motion.target,fmt.tprintf("motion[%d].target",i));if !valid {return false}
-                waiting:=len(requests.targets.items)
+                waiting:=len(requests.warps.items)
                 anim.motion_target(requests,entity,base.text_get(motion.name[:]),target,motion.enabled)
-                if len(requests.targets.items)==waiting {authoring_failure(call,fmt.tprintf("motion[%d]",i),"Capacity","space in Motion_Requests.targets","full or unavailable","The warp target could not be queued",api.SERVER_ERROR);return false}
+                if len(requests.warps.items)==waiting {authoring_failure(call,fmt.tprintf("motion[%d]",i),"Capacity","space in Animation_Requests.warps","full or unavailable","The warp target could not be queued",api.SERVER_ERROR);return false}
                 request_note(applied,"Motion",base.text_get(motion.name[:]))
             }
             if authoring_field_present(call,"locomotion") {
@@ -300,9 +300,9 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 request_note(applied,"Locomotion","",speed)
                 for &window in profile.windows {
                     if base.text_get(window.name[:])!="locomote" {continue}
-                    waiting:=len(requests.targets.items)
+                    waiting:=len(requests.warps.items)
                     anim.motion_target(requests,entity,"locomote",anim.spatial_point(position))
-                    if len(requests.targets.items)==waiting {authoring_failure(call,"locomote","Rejected_Request","queue capacity","full","The locomotion target was rejected",api.SERVER_ERROR);return false}
+                    if len(requests.warps.items)==waiting {authoring_failure(call,"locomote","Rejected_Request","queue capacity","full","The locomotion target was rejected",api.SERVER_ERROR);return false}
                     request_note(applied,"Motion","locomote")
                     break
                 }
@@ -355,19 +355,19 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
         return false
     }
     definition,_:=program_modifier_definition(profile,kind,slot)
-    requests:=core.world_storage_of(world,anim.Modifier_Requests)
+    requests:=core.world_storage_of(world,anim.Animation_Requests)
+    // Asking for it turns on an operation the .character keeps off until asked; off, it lets go
+    // from where it aims.
+    value:=anim.Modifier_Goal{rig=entity,kind=kind,slot=slot,target=anim.spatial_point({}),fade=fade}
     if !off {
         goal:=Preview_Goal{kind=.Look if kind==.Look else .IK,name=definition.name,target=target}
-        value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);if !valid {return false}
-        // Asking for it turns on an operation the .character keeps off until asked.
-        value.enabled=true
-        waiting:=len(requests.queue.items)
-        anim.modifier_goal(requests,value)
-        if len(requests.queue.items)==waiting {authoring_failure(call,path,"Capacity","space in Modifier_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+        valid:bool
+        if value,valid=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);!valid {return false}
+        value.weight,value.enabled,value.fade=weight,true,fade
     }
-    waiting:=len(requests.controls.items)
-    anim.modifier_control(requests,{rig=entity,kind=kind,slot=slot,name=definition.name,weight=0 if off else weight,enabled=!off,fade=fade})
-    if len(requests.controls.items)==waiting {authoring_failure(call,path,"Capacity","space in Modifier_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
+    waiting:=len(requests.goals.items)
+    anim.modifier_goal(requests,value)
+    if len(requests.goals.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
     request_note(applied,"Look" if kind==.Look else "Reach",base.text_get(definition.name[:]),0 if off else weight)
     return true
 }

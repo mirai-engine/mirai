@@ -47,12 +47,12 @@ graphs or locomotion blend spaces.
 anim.play(requests,e,"Vault")              // an action: a clip once, in its layer or whole body
 anim.stop(requests,e,"Reload")             // ends it early, as its cancel policy allows
 anim.set(requests,e,"aim_yaw",yaw)         // an axis of an aim space, or the weight of a layer
-anim.look(requests,e,anim.spatial_entity(target))   // the head turns to it; weight 0 lets go
+anim.look(requests,e,anim.spatial_entity(target))   // the head fades to it; weight 0 lets go
 ```
 
-- An action without a layer takes the whole body: over locomotion it leaves the search and comes
-  back by an inertial blend, in any locomotion mode. One in a layer plays over a part of the body
-  while it walks. With `root_motion` and `body_move` its clip moves the `Character` (a lunge).
+- An action without a layer fades in over the whole body, in any locomotion mode; one in a layer
+  plays over a part of it. With `root_motion` and `body_move` its clip moves the `Character` (a
+  lunge). What the server plays, every client plays from the tick it started.
 - `set` stays until set again; past the range of an axis it is the end of the range.
 - `look` needs a `Look` in the set (`animation.character.setup` writes one).
 
