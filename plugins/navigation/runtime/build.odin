@@ -604,7 +604,7 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_
     for info in fluids[:min(phys.fluids_in(physics,{{-far,-far,-far},{far,far,far}},fluids[:]),len(fluids))] {
         if info.desc.density<=0 {
             if count_dry<len(dry) {dry[count_dry]=info.bounds;count_dry+=1}
-        } else if info.desc.shape==.Box {
+        } else if info.desc.shape==.Prism {
             if count_water<len(water) {water[count_water]=info.bounds;count_water+=1}
         } else {
             for limit in surface[:count] {
