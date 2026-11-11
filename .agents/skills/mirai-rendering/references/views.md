@@ -439,10 +439,11 @@ frame and the current one:
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
     `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
     and `.Quad`, the six of a quad.
-- **Lights.** `lights_ask(renderer, with_shadow, without_shadow)` asks for room for lights that
-  a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like those of the
-  scene; those of the first part cast shadows and those of the second trace no rays
-  ([GPU lights](lights.md#gpu-lights)).
+- **Lights.** `lights_ask(renderer, with_shadow, without_shadow, box, reach)` asks for room for
+  lights that a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like
+  those of the scene; those of the first part cast shadows, lie within `box` and light up to
+  `reach` metres from it (`LIGHTS_ANYWHERE` when the pass cannot tell), and those of the second
+  trace no rays ([GPU lights](lights.md#gpu-lights)).
 - **Table textures.** `table_texture(renderer, world, Table_Texture_Desc{name, width, height})`,
   between frames, gives the table place of an RGBA16F texture of the world under that name, which
   the extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a

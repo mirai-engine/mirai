@@ -62,7 +62,9 @@
 
 An extension that asks for room for lights it writes on the GPU (`lights_ask`) has it from the
 next frame, before the scene tree (`light_region_first`), in two parts: those that cast shadows
-and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`:
+and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`. Those that cast
+shadows come with where they lie and how far they light, which the CPU does not see otherwise:
+the grid of the lights holds what of the scene they light.
 
 - Node 0 is the root of the lights with shadows; from 1, the tree of the leaves of that part, in
   the usual depth order; then, a leaf without light. The tree of the lights without shadows
@@ -139,7 +141,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 - **Grid of lights** (`render/light_grid.odin`, `light_grid.comp`). The world in cells whose lists
   hold the lights that reach them; past `DIRECT_FEW` a cell holds an alias table to draw from.
   The GPU rebuilds it in the frame the lights change; `light_weight.slang` weighs each light at a
-  point.
+  point. It covers the ranges of the lights of the scene and the part of the scene that the lights
+  with shadows a pass writes on the GPU light, from the box and reach of `lights_ask` (all of the
+  scene for `LIGHTS_ANYWHERE`), held with a margin so that a moving box does not place it again
+  every frame. A cell whose entries would not fit the rows counted on the CPU lists none.
 - **Spread.** A point weighs the lights of its cell and spreads its samples over them by weight,
   systematically (one at each m-th of the sum of weights, from the place of the pixel in a 3x3
   pattern): a light that gives much takes many samples and none depends on chance. A light that

@@ -611,6 +611,8 @@ Renderer :: struct {
 	counters:        Extension_Counters, // of pass_counters
 	readbacks:       [EXTENSION_READBACK_CAPACITY]Extension_Readback, // of pass_readback, by world
 	lights_asked:    u32, // of lights_ask since the last frame began, that cast shadows
+	lights_asked_box: [2]Vec3, // where they lie
+	lights_asked_reach: f32, // and how far they light from there, metres
 	gbuffer_asked:   bit_set[Gbuffer_Target], // of frame_gbuffer_mesh for the next frame
 	shadowless_asked: u32, // and that do not
 	table_textures:  [EXTENSION_TABLE_TEXTURE_CAPACITY]Extension_Table_Texture, // of pass_table_texture, by world

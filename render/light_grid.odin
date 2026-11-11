@@ -38,9 +38,18 @@ LIGHT_GRID_WEIGHT_ROWS :: abi.LIGHT_WEIGHT_ROWS
 // The farthest a light reaches for the grid, metres: past it the cells hold it whole.
 LIGHT_GRID_REACH_MAX :: f32(1e9)
 
-// The grid around the ranges of the lights; `count`, the lights the GPU holds,
-// those that a pass writes on it included, each with its record.
-light_grid_place :: proc(lights: []Gpu_Light, count: int) -> (grid: Light_Grid) {
+// The lights with shadows a pass writes on the GPU, which the CPU does not
+// see: the box of the scene they light, how many, and how far each lights.
+Light_Grid_Region :: struct {
+	box:    [2]Vec3,
+	lights: int,
+	reach:  f32,
+}
+
+// The grid around the ranges of the lights and the box of those of region;
+// `count`, the lights the GPU holds, those that a pass writes on it included,
+// each with its record.
+light_grid_place :: proc(lights: []Gpu_Light, count: int, region: Light_Grid_Region = {}) -> (grid: Light_Grid) {
 	lo, hi := Vec3{max(f32), max(f32), max(f32)}, Vec3{-max(f32), -max(f32), -max(f32)}
 	for l in lights {
 		if !light_placed(l) || !(l.position_range.w > 0) {continue}
@@ -48,6 +57,10 @@ light_grid_place :: proc(lights: []Gpu_Light, count: int) -> (grid: Light_Grid) 
 		reach := Vec3{range, range, range}
 		lo, hi = linalg.min(lo, l.position_range.xyz - reach), linalg.max(hi, l.position_range.xyz + reach)
 	}
+	far := Vec3{LIGHT_GRID_REACH_MAX, LIGHT_GRID_REACH_MAX, LIGHT_GRID_REACH_MAX}
+	lit := [2]Vec3{linalg.clamp(region.box[0], -far, far), linalg.clamp(region.box[1], -far, far)}
+	held := region.lights > 0 && lit[0].x <= lit[1].x && lit[0].y <= lit[1].y && lit[0].z <= lit[1].z
+	if held {lo, hi = linalg.min(lo, lit[0]), linalg.max(hi, lit[1])}
 	if !(lo.x <= hi.x) {return}
 	// No smaller than the cells LIGHT_GRID_ROWS_MAX rows would leave, so that
 	// however far the lights reach their counts fit.
@@ -70,6 +83,14 @@ light_grid_place :: proc(lights: []Gpu_Light, count: int) -> (grid: Light_Grid) 
 			box := b - a + 1
 			grid.rows += int(box.x) * int(box.y) * int(box.z)
 		}
+		if held {
+			// Each of those of region within its box, over the cells its range spans.
+			a := linalg.clamp(linalg.floor((lit[0] - grid.origin) / grid.cell), Vec3{}, last)
+			b := linalg.clamp(linalg.floor((lit[1] - grid.origin) / grid.cell), Vec3{}, last)
+			side := min(math.ceil(2 * min(region.reach, LIGHT_GRID_REACH_MAX) / grid.cell) + 1, LIGHT_GRID_ROWS_MAX)
+			each := linalg.min(b - a + 1, Vec3{side, side, side})
+			grid.rows += min(region.lights, LIGHT_GRID_ROWS_MAX) * int(each.x) * int(each.y) * int(each.z)
+		}
 		// One cell that holds every light is as far as it goes.
 		if grid.rows <= LIGHT_GRID_ROWS_MAX || cells == 1 {return}
 		grid.cell *= 1.26
@@ -82,8 +103,8 @@ light_grid_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	s := &r.scene
 	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
 	if cells == 0 || s.light_grid_buffer == 0 {return}
-	Params :: struct {origin: Vec3, cell: f32, size: [3]u32, cells, lights, grow, pad0, pad1: u32}
-	params := Params{origin = s.light_grid.origin, cell = s.light_grid.cell, size = s.light_grid.size, cells = cells, lights = u32(len(s.lights) + light_region_lights(s.light_region))}
+	Params :: struct {origin: Vec3, cell: f32, size: [3]u32, cells, lights, grow, rows, pad0: u32}
+	params := Params{origin = s.light_grid.origin, cell = s.light_grid.cell, size = s.light_grid.size, cells = cells, lights = u32(len(s.lights) + light_region_lights(s.light_region)), rows = u32(s.light_grid.rows)}
 	for b in ([]rhi.Buffer{s.light_buffer, s.light_tree_buffer}) {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}
 	for id in ([]Pipeline_Id{.Light_Grid_Weights, .Light_Grid_Count, .Light_Grid_Scan, .Light_Grid_Fill}) {
 		rhi.cmd_barrier_buffer(cmd, s.light_grid_buffer, .Shader_Write)
@@ -105,7 +126,8 @@ light_grid_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 light_grid_update :: proc(r: ^Renderer) -> bool {
 	s := &r.scene
 	if s.light_grid_stale {
-		s.light_grid = light_grid_place(s.lights[:], len(s.lights) + light_region_lights(s.light_region))
+		region := Light_Grid_Region{s.light_region_box, int(min(s.light_region_asked, s.light_region.lights)), s.light_region_reach}
+		s.light_grid = light_grid_place(s.lights[:], len(s.lights) + light_region_lights(s.light_region), region)
 		s.light_grid_stale = false
 		s.light_grid_dirty = true
 	}

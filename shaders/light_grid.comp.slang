@@ -24,8 +24,8 @@
 // origin: the corner of the first cell; cell: metres a side; size: cells
 // along each axis, x first; cells: all of them; lights: all of them, whose
 // records come before the entries; grow: 1 for a cell to take the lights
-// that reach it grown by half a cell to each side.
-struct Params_Block { float3 origin; float cell; uint3 size; uint cells; uint lights; uint grow; uint pad0; uint pad1; };
+// that reach it grown by half a cell to each side; rows: of the buffer.
+struct Params_Block { float3 origin; float cell; uint3 size; uint cells; uint lights; uint grow; uint rows; uint pad0; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // A row for each cell, the row of its first entry, how many there are in its
 // table, how many after them it lists apart and what those of its table could
@@ -181,6 +181,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint4 row = light_grid[cell];
     if (row.y == 0u) return;
     uint first = row.x;
+    // The lights a pass writes on the GPU are not in the rows the CPU counted:
+    // a cell whose entries would go past the buffer lists none.
+    if (first > params.rows || row.y > params.rows - first) {
+        light_grid[cell] = uint4(first, 0u, 0u, 0u);
+        return;
+    }
     uint apart;
     uint n = min(light_grid_walk(low, first, row.y, total, apart), row.y) - apart;
     light_grid[cell] = uint4(first, n, apart, asuint(total));
