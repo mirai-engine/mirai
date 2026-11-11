@@ -171,10 +171,14 @@ clip_sample :: proc(call:^api.Call,animation:aa.Animation_View,index:int,skeleto
     case .Once: sampled.frames.loop=false
     case .Auto:
         metrics,measured:=clip_measure(sampled.rig,sampled.frames,nil)
-        sampled.frames.loop=measured && metrics.seam_position<.02*metrics.height && metrics.seam_rotation<5*mm.RAD_PER_DEG
+        sampled.frames.loop=measured && clip_loops(metrics)
     }
     return sampled,true
 }
+
+// Whether measured frames loop: their seam jumps little.
+@(private)
+clip_loops :: proc(metrics:lib.Clip_Metrics) -> bool {return metrics.seam_position<.02*metrics.height && metrics.seam_rotation<5*mm.RAD_PER_DEG}
 
 @(private)
 clip_measure :: proc(rig:lib.Body_Rig,frames:lib.Frames,contacts:[]lib.Contact) -> (lib.Clip_Metrics,bool) {
@@ -285,7 +289,7 @@ clip_step :: proc(call:^api.Call,step:Clip_Edit_Step,raw:string,index:int) -> (e
         target:lib.Offset_Target
         if step.part==.Spine {target=lib.Body_Region.Spine} else {target=lib.Body_Part(u8(step.part)-(1 if step.part>.Spine else 0))}
         edit=lib.Offset{target=target,direction=step.direction,amount=step.strength,range=range,fade=step.fade}
-    case .Lock_Feet: edit=lib.Lock_Feet{step.blend}
+    case .Lock_Feet: edit=lib.Lock_Feet{blend=step.blend}
     case .Mirror: edit=lib.Mirror{}
     case .Face_Rest: edit=lib.Face_Rest{}
     }

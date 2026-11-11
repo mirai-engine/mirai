@@ -29,8 +29,11 @@ Make_Loop :: struct {blend:f32}
 Offset_Target :: union {Body_Part,Body_Region}
 Offset :: struct {target:Offset_Target,direction:Body_Direction,amount:Body_Amount,range:Time_Range,fade:f32}
 // Feet stay where they stand, legs bending (and hips lowering when needed)
-// to reach, easing over `blend` seconds at the ends of each contact.
-Lock_Feet :: struct {blend:f32}
+// to reach, easing over `blend` seconds at the ends of each contact. The
+// contacts are found in the clip, or given by foot and frames in contacts (of
+// the clip a retarget was made from, frame by frame), their anchors where the
+// feet of this clip stand.
+Lock_Feet :: struct {blend:f32,contacts:[]Contact}
 // Left becomes right: needs Body_Rig.mirror.
 Mirror :: struct {}
 // The root joint keeps the rotation about up it has at rest, the rest of the pose as it was: a
@@ -123,8 +126,8 @@ clip_edit_layout :: proc "contextless" (edit:Clip_Edit,f:Frames,max_count:int) -
 
 // The scratch an edit needs: transforms of world, contacts and heights.
 clip_edit_buffers :: proc "contextless" (edit:Clip_Edit,f:Frames) -> (transforms,contacts,heights:int) {
-    #partial switch _ in edit {
-    case Lock_Feet: return frames_scratch_size(f),frames_count(f)+4,2*frames_count(f)
+    #partial switch e in edit {
+    case Lock_Feet: return frames_scratch_size(f),max(frames_count(f)+4,len(e.contacts)),2*frames_count(f)
     case Offset,Mirror,Face_Rest: return 2*max(f.bones,0),0,0
     }
     return 0,0,0

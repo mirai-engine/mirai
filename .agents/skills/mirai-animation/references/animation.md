@@ -194,6 +194,11 @@ Per tick:
   those played in the `reselect` seconds before the rig left them; with `keep_loop_phase`, to no
   row of the loop that plays. A clip without a loop that ends, or that enters its last trajectory
   window, is left whole, because its still pose, or its tail again, would win all the searches.
+- The `spans` of the set rule the rows of its clips inside the spans of each name: `Exclude` keeps
+  them out of every search and a clip that plays into them searches at once, without the bias;
+  `Block` keeps them out of every search while the clip that plays goes on into them (the end of a
+  swing). A blended sample has no spans. A span name no clip has, or Exclude spans over a whole
+  clip, is the problem `animation.match_span`.
 - With `stationary_speed`, a root slower than it plays only the clips that stand and a faster one
   those that travel, loops or not (entry clips are not filtered); a loop that does not move as the
   root does searches in that tick, without waiting for the interval, the hold or the bias, while a
@@ -497,9 +502,9 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
 - Data that does not apply: a clip, a layer, a bone, a socket or a parameter that do not exist
   (`animation.clip`, `layer_clip`, `layer_bone`, `pose_bone`, `attachment_socket`,
   `parameter`, `match_clip`, `layer_space`), a matching database that is not built
-  (`match_database`, `match_memory`, `match_blend`, `match_mirror`), operations of a set that are
-  not bound or not resolved (`rig_*`, `constraint_*`, `grounding_*`, `retarget_*`, `motion_*`,
-  `morph_*`) and rejected requests (`action_*`, `modifier_*`, `distance`, `match_goal`).
+  (`match_database`, `match_memory`, `match_blend`, `match_mirror`, `match_span`), operations of
+  a set that are not bound or not resolved (`rig_*`, `constraint_*`, `grounding_*`, `retarget_*`,
+  `motion_*`, `morph_*`) and rejected requests (`action_*`, `modifier_*`, `distance`, `match_goal`).
 - A rig that cannot follow its leader (`follow_rig`, `follow_bones`, `follow_pose`), curve poses
   of bones its skeleton lacks or with curves that are not finite (`curve_pose_bone`,
   `curve_pose_value`) and curve materials past the capacity of the `Material_Values`

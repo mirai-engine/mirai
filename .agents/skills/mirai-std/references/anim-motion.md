@@ -58,6 +58,11 @@ temporal state. The world integration and the authoring are in
   (`match_event_window`: the marker is reached at a rate of `event_rates` within half a row, and
   not further than `event_from`), scored as usual and given at that rate; entry or not, without tail
   or stationary filter unless it enters.
+- Spans (`Match_Span`, by `Marker.id`, of clips that are not blends): `match_database_build`
+  keeps every row and gives each the kinds of span it is in (`Match_Row_Flags`; none kept when no
+  span covers a row). The search skips excluded and blocked rows; the bounds of the runs stay
+  lower bounds. The playing row is weighed by the caller, so a blocked row can play on and an
+  excluded one makes it search (`match_row_flags`).
 - The database keeps per mode which have entry clips, clips with the event, clips that stand and
   clips that travel, so a tick asks them without walking its clips.
 - A database of more than `MATCH_LINEAR_ROWS` rows stores the minimum and maximum of its features
